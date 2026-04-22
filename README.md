@@ -160,16 +160,18 @@ specs-ai-cli/
 │   ├── version.sh
 │   └── _internal/
 │       ├── toml-read.py        ← read sections of ai-specs.toml
-│       ├── deps-render.py      ← [[deps]] → vendor.manifest.toml
+│       ├── vendor-skills.py    ← clones [[deps]] → ai-specs/skills/<id>/
 │       ├── gitignore-render.py ← [[deps]] → ai-specs/.gitignore
+│       ├── agents-md-render.py ← skills/ → AGENTS.md
 │       ├── mcp-render.py       ← [mcp.*] → per-agent format (merge-safe)
 │       └── platform.sh         ← per-agent paths/keys
 ├── bundled-skills/             ← copied INTO each project on `init`
 │   ├── skill-creator/          ← scaffolds new skills (template-driven)
 │   └── skill-sync/             ← discovers SKILL.md, regenerates AGENTS.md table
+├── bundled-commands/           ← copied INTO ai-specs/commands/ on `init`
+│   └── skills-as-rules.md      ← interactive skill authoring slash command
 ├── templates/
 │   ├── ai-specs.toml.tmpl
-│   ├── AGENTS.md.tmpl
 │   └── gitignore-root.tmpl
 ├── install.sh
 ├── VERSION

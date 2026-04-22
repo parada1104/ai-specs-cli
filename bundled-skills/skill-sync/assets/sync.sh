@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Sync skill metadata to AGENTS.md Auto-invoke sections
+# Sync skill metadata to AGENTS.md Auto-invoke sections.
+# Vendoring of external skills is NOT done here — that lives in the CLI
+# (`specs-ai sync` → lib/_internal/vendor-skills.py).
+#
 # Usage: ./sync.sh [--dry-run] [--scope <scope>]
 
 set -e
@@ -27,7 +30,6 @@ NC='\033[0m'
 # Options
 DRY_RUN=false
 FILTER_SCOPE=""
-RUN_VENDOR=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -40,12 +42,8 @@ while [[ $# -gt 0 ]]; do
             FILTER_SCOPE="$2"
             shift 2
             ;;
-        --vendor)
-            RUN_VENDOR=true
-            shift
-            ;;
         --help|-h)
-            echo "Usage: $0 [--dry-run] [--scope <scope>] [--vendor]"
+            echo "Usage: $0 [--dry-run] [--scope <scope>]"
             echo ""
             echo "Discovers SKILL.md under:"
             echo "  \$REPO_ROOT/skills/<name>/SKILL.md"
@@ -58,7 +56,6 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --dry-run    Show what would change without modifying files"
             echo "  --scope      Only sync specific scope"
-            echo "  --vendor     Run vendor-skills.sh for this repo first (needs network)"
             exit 0
             ;;
         *)
@@ -67,16 +64,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-if $RUN_VENDOR; then
-    VENDOR_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vendor-skills.sh"
-    if [ -f "$VENDOR_SH" ]; then
-        echo -e "${BLUE}Running vendor-skills.sh...${NC}"
-        bash "$VENDOR_SH" --target-skills-dir "$REPO_ROOT/ai-specs/skills" || exit 1
-    else
-        echo -e "${YELLOW}vendor-skills.sh not found; skipping --vendor${NC}"
-    fi
-fi
 
 # Map scope to AGENTS.md path (melon-alquimia monorepo vs standalone service repo)
 get_agents_path() {

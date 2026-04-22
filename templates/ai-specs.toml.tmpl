@@ -22,18 +22,28 @@ subrepos = []
 enabled = ["claude", "cursor", "opencode"]
 
 # -----------------------------------------------------------------------------
-# Deps de skills externas (vendoreadas con vendor-skills.sh)
+# Deps de skills externas
 # -----------------------------------------------------------------------------
-# Cada [[deps]] se clona a ai-specs/skills/<id>/ con frontmatter inyectado.
-# Ejemplo:
+# Cada [[deps]] se clona a ai-specs/skills/<id>/ por `specs-ai sync`
+# (lib/_internal/vendor-skills.py). El frontmatter upstream se reemplaza por
+# uno estándar (name, description con atribución, license, metadata).
+#
+# Schema:
+#   id                  (req) carpeta destino bajo skills/
+#   source              (req) URL git (cualquier cosa que acepte `git clone`)
+#   path                (opt) subdir del repo donde vive SKILL.md (multi-skill repos)
+#   scope               (opt) lista — default ["root"]
+#   auto_invoke         (opt) lista de frases para la tabla Auto-invoke de AGENTS.md
+#   license             (opt) SPDX id
+#   vendor_attribution  (opt) autor/org upstream — citado en la description
+#
+# Ejemplo (skill puntual de un repo multi-skill):
 # [[deps]]
-# id = "obra-superpowers"
+# id = "tdd"
 # source = "https://github.com/obra/superpowers"
-# scope_at_monorepo_root = "root"
-# auto_invoke_root = ["When starting a complex task"]
-# auto_invoke_subrepo = []
-# install_into_subrepos = false
-# only_subrepos = []
+# path = "skills/test-driven-development"
+# scope = ["root"]
+# auto_invoke = ["Writing or modifying tests"]
 # license = "MIT"
 # vendor_attribution = "obra"
 

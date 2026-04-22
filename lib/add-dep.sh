@@ -2,15 +2,16 @@
 # add-dep.sh — register a new vendored skill in ai-specs.toml [[deps]] and sync.
 #
 # The vendored skill is later cloned into <path>/ai-specs/skills/<id>/ by
-# vendor-skills.sh (which `specs-ai sync` runs).
+# `lib/_internal/vendor-skills.py` (which `specs-ai sync` runs).
 #
 # Usage:
 #   specs-ai add-dep <git-url> [path]
 #                    [--id <id>]                 (default: derived from URL)
-#                    [--scope <root|subrepo>]    (default: root)
+#                    [--subdir <subpath>]        (subdir within the repo where SKILL.md lives)
+#                    [--scope <s1,s2,...>]       (default: root)
 #                    [--license <license>]       (default: empty)
 #                    [--attribution <author>]    (default: derived from URL)
-#                    [--trigger <text>]          (auto_invoke_root entry)
+#                    [--trigger <text>]          (auto_invoke entry)
 #                    [--no-sync]                 (skip 'specs-ai sync' at the end)
 
 set -euo pipefail
@@ -30,10 +31,11 @@ Arguments:
 
 Flags:
   --id <id>             Skill ID (default: last URL path component, .git stripped)
-  --scope <s>           scope_at_monorepo_root (default: root)
+  --subdir <subpath>    Subdir within the repo where SKILL.md lives (multi-skill repos)
+  --scope <s1,s2,...>   Comma-list for metadata.scope (default: root)
   --license <license>   License string (default: empty)
   --attribution <auth>  vendor_attribution (default: URL author)
-  --trigger <text>      auto_invoke_root entry (default: "When working on <id>")
+  --trigger <text>      auto_invoke entry (default: "When working on <id>")
   --no-sync             Don't run 'specs-ai sync' after registering
 EOF
 }
@@ -41,6 +43,7 @@ EOF
 URL=""
 TARGET_PATH=""
 ID=""
+SUBDIR=""
 SCOPE="root"
 LICENSE=""
 ATTRIBUTION=""
@@ -51,6 +54,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --id)              ID="${2:-}"; shift 2 ;;
         --id=*)            ID="${1#*=}"; shift ;;
+        --subdir)          SUBDIR="${2:-}"; shift 2 ;;
+        --subdir=*)        SUBDIR="${1#*=}"; shift ;;
         --scope)           SCOPE="${2:-}"; shift 2 ;;
         --scope=*)         SCOPE="${1#*=}"; shift ;;
         --license)         LICENSE="${2:-}"; shift 2 ;;
@@ -134,31 +139,35 @@ echo ""
 echo "specs-ai add-dep"
 echo "  url:         $URL"
 echo "  id:          $ID"
+echo "  subdir:      ${SUBDIR:-(none)}"
 echo "  scope:       $SCOPE"
 echo "  license:     ${LICENSE:-(none)}"
 echo "  attribution: $ATTRIBUTION"
 echo ""
 
 # Append [[deps]] block. Use Python to escape strings safely.
-python3 - "$TOML_PATH" "$ID" "$URL" "$SCOPE" "$TRIGGER" "$LICENSE" "$ATTRIBUTION" <<'PY'
+python3 - "$TOML_PATH" "$ID" "$URL" "$SUBDIR" "$SCOPE" "$TRIGGER" "$LICENSE" "$ATTRIBUTION" <<'PY'
 import sys, pathlib
 
-toml_path, dep_id, url, scope, trigger, license_, attribution = sys.argv[1:8]
+toml_path, dep_id, url, subdir, scope_csv, trigger, license_, attribution = sys.argv[1:9]
 
 def s(x: str) -> str:
     return '"' + x.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
+scopes = [x.strip() for x in scope_csv.split(",") if x.strip()] or ["root"]
+
 block = ["", "[[deps]]"]
 block.append(f"id = {s(dep_id)}")
 block.append(f"source = {s(url)}")
-block.append(f"scope_at_monorepo_root = {s(scope)}")
-block.append(f"auto_invoke_root = [{s(trigger)}]")
-block.append("auto_invoke_subrepo = []")
-block.append("install_into_subrepos = false")
-block.append("only_subrepos = []")
+if subdir:
+    block.append(f"path = {s(subdir)}")
+block.append("scope = [" + ", ".join(s(x) for x in scopes) + "]")
+if trigger:
+    block.append(f"auto_invoke = [{s(trigger)}]")
 if license_:
     block.append(f"license = {s(license_)}")
-block.append(f"vendor_attribution = {s(attribution)}")
+if attribution:
+    block.append(f"vendor_attribution = {s(attribution)}")
 block.append("")
 
 p = pathlib.Path(toml_path)

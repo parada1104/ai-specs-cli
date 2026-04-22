@@ -2,12 +2,11 @@
 # sync.sh — full reconciliation of a project's ai-specs/ from its manifest.
 #
 # Pipeline:
-#   1. Derive  <path>/ai-specs/skills/vendor.manifest.toml  from [[deps]]
-#   2. Render  <path>/ai-specs/.gitignore                   from [[deps]]
-#   3. Vendor  external skills                              via skill-sync/assets/vendor-skills.sh
-#   4. Render  <path>/AGENTS.md (skills index + agents.d)   via agents-md-render.py
-#   5. Refresh <path>/AGENTS.md auto-invoke table           via skill-sync/assets/sync.sh
-#   6. Fan-out per-agent configs                            via sync-agent --all
+#   1. Render  <path>/ai-specs/.gitignore                   from [[deps]]
+#   2. Vendor  external skills                              via _internal/vendor-skills.py
+#   3. Render  <path>/AGENTS.md (skills index)              via agents-md-render.py
+#   4. Refresh <path>/AGENTS.md auto-invoke table           via skill-sync/assets/sync.sh
+#   5. Fan-out per-agent configs                            via sync-agent --all
 #
 # Usage:
 #   specs-ai sync [path]
@@ -59,13 +58,11 @@ TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"
 AI_SPECS_DIR="$TARGET_PATH/ai-specs"
 TOML_PATH="$AI_SPECS_DIR/ai-specs.toml"
 AI_GITIGNORE="$AI_SPECS_DIR/.gitignore"
-VENDOR_MANIFEST="$AI_SPECS_DIR/skills/vendor.manifest.toml"
 
 SKILL_SYNC_DIR="$AI_SPECS_DIR/skills/skill-sync/assets"
-VENDOR_SKILLS_SH="$SKILL_SYNC_DIR/vendor-skills.sh"
 SYNC_SH="$SKILL_SYNC_DIR/sync.sh"
 
-DEPS_RENDER="$SPECS_AI_HOME/lib/_internal/deps-render.py"
+VENDOR_SKILLS_PY="$SPECS_AI_HOME/lib/_internal/vendor-skills.py"
 GITIGNORE_RENDER="$SPECS_AI_HOME/lib/_internal/gitignore-render.py"
 AGENTS_MD_RENDER="$SPECS_AI_HOME/lib/_internal/agents-md-render.py"
 SYNC_AGENT_SH="$SPECS_AI_HOME/lib/sync-agent.sh"
@@ -86,37 +83,23 @@ echo "specs-ai sync"
 echo "  target: $TARGET_PATH"
 echo ""
 
-# 1. Derive vendor.manifest.toml from [[deps]]
-echo "▸ deps-render"
-python3 "$DEPS_RENDER" "$TOML_PATH" "$VENDOR_MANIFEST"
-
-# 2. Render ai-specs/.gitignore from [[deps]]
+# 1. Render ai-specs/.gitignore from [[deps]]
 echo "▸ gitignore-render"
 python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$AI_GITIGNORE"
 
-# 3. Vendor external skills (only if there are deps)
-DEP_COUNT="$(python3 - "$TOML_PATH" <<'PY'
-import sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    print(len(tomllib.load(f).get("deps", []) or []))
-PY
-)"
-if [[ "$DEP_COUNT" -gt 0 ]]; then
-    echo "▸ vendor-skills ($DEP_COUNT dep(s))"
-    bash "$VENDOR_SKILLS_SH" --scope root
-else
-    echo "▸ vendor-skills (skipped — 0 deps)"
-fi
+# 2. Vendor external skills
+echo "▸ vendor-skills"
+python3 "$VENDOR_SKILLS_PY" "$TARGET_PATH"
 
-# 4. Render AGENTS.md from skills index + agents.d/
+# 3. Render AGENTS.md from skills index
 echo "▸ agents-md-render"
 python3 "$AGENTS_MD_RENDER" "$TARGET_PATH" "$TARGET_PATH/AGENTS.md"
 
-# 5. Refresh AGENTS.md auto-invoke table on top of the freshly-rendered file
+# 4. Refresh AGENTS.md auto-invoke table on top of the freshly-rendered file
 echo "▸ skill-sync (AGENTS.md auto-invoke)"
 bash "$SYNC_SH"
 
-# 6. Fan-out per-agent configs
+# 5. Fan-out per-agent configs
 echo "▸ sync-agent --all"
 bash "$SYNC_AGENT_SH" "$TARGET_PATH" --all
 
