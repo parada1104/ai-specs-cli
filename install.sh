@@ -5,20 +5,20 @@
 # then symlinks bin/specs-ai into $INSTALL_BIN (default: ~/.local/bin).
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/nnodes/specs-ai-cli/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/parada1104/specs-ai-cli/main/install.sh | bash
 #   bash install.sh                       # from a local clone
 #
 # Env overrides:
 #   SPECS_AI_HOME=~/path        Where to clone the repo (default: ~/.specs-ai)
 #   INSTALL_BIN=~/path          Where to symlink the entrypoint (default: ~/.local/bin)
-#   SPECS_AI_REPO=git://...     Repo URL for first install (default: github.com/nnodes/specs-ai-cli)
+#   SPECS_AI_REPO=git://...     Repo URL for first install (default: github.com/parada1104/specs-ai-cli)
 #   SPECS_AI_REF=tag-or-branch  Git ref to checkout (default: main)
 
 set -e
 
 SPECS_AI_HOME="${SPECS_AI_HOME:-$HOME/.specs-ai}"
 INSTALL_BIN="${INSTALL_BIN:-$HOME/.local/bin}"
-SPECS_AI_REPO="${SPECS_AI_REPO:-https://github.com/nnodes/specs-ai-cli.git}"
+SPECS_AI_REPO="${SPECS_AI_REPO:-https://github.com/parada1104/specs-ai-cli.git}"
 SPECS_AI_REF="${SPECS_AI_REF:-main}"
 
 GREEN='\033[0;32m'

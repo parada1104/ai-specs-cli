@@ -48,7 +48,7 @@ FOOTER = """\
 ## How AI tooling is wired
 
 This project uses the **`ai-specs`** standard, driven by the global
-[`specs-ai`](https://github.com/nnodes/specs-ai-cli) CLI. The manifest at
+[`specs-ai`](https://github.com/parada1104/specs-ai-cli) CLI. The manifest at
 [`ai-specs/ai-specs.toml`](ai-specs/ai-specs.toml) declares enabled agents,
 vendored skills, and MCP servers. Per-agent configs (`.claude/`, `.cursor/`,
 `opencode.json`, …) are generated from the manifest — do not hand-edit; they're

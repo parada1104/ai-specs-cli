@@ -15,13 +15,13 @@ committable and shareable with a team.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nnodes/specs-ai-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/parada1104/specs-ai-cli/main/install.sh | bash
 ```
 
 Or from a clone:
 
 ```bash
-git clone https://github.com/nnodes/specs-ai-cli ~/.specs-ai
+git clone https://github.com/parada1104/specs-ai-cli ~/.specs-ai
 bash ~/.specs-ai/install.sh
 ```
 
@@ -47,7 +47,7 @@ manifest changes.
 
 ```
 my-project/
-├── AGENTS.md                       ← root agent instructions (template; edit freely)
+├── AGENTS.md                       ← generated artifact (do not edit; managed by skill-sync)
 ├── .gitignore                      ← appended with an ai-specs block (gitignores agent files)
 └── ai-specs/
     ├── ai-specs.toml               ← YOUR manifest (edit this)

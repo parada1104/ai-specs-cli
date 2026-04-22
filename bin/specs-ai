@@ -53,7 +53,7 @@ Commands:
 
 Path defaults to current directory. Run any subcommand with --help for details.
 
-Repo: https://github.com/nnodes/specs-ai-cli
+Repo: https://github.com/parada1104/specs-ai-cli
 EOF
         ;;
     *)
