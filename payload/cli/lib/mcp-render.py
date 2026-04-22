@@ -19,6 +19,7 @@ Format detection: by target file extension (.json vs .toml).
 """
 
 import json
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -28,6 +29,59 @@ def load_mcp(toml_path: Path) -> dict:
     with toml_path.open("rb") as f:
         data = tomllib.load(f)
     return data.get("mcp", {})
+
+
+# --- Per-agent translators -------------------------------------------------
+# Most agents use the generic Claude/Cursor format (command:string, args:array,
+# env:dict, $VAR env vars). Agents with native non-generic schemas register a
+# translator here.
+
+_ENV_VAR_RE = re.compile(r"^\$([A-Z_][A-Z0-9_]*)$")
+
+
+def _translate_opencode(servers: dict) -> dict:
+    """OpenCode native schema:
+      type: "local"
+      command: [cmd, *args]                (no separate `args` key)
+      environment: {KEY: val}              (not `env`)
+      env-var refs as "{env:VAR}"          (not "$VAR")
+    """
+    out = {}
+    for name, cfg in servers.items():
+        cmd = cfg.get("command")
+        args = cfg.get("args", []) or []
+        if isinstance(cmd, str):
+            full_cmd = [cmd, *args]
+        elif isinstance(cmd, list):
+            full_cmd = list(cmd)
+        else:
+            full_cmd = []
+
+        new = {"type": "local", "command": full_cmd}
+
+        env = cfg.get("env") or cfg.get("environment") or {}
+        if env:
+            new["environment"] = {
+                k: _ENV_VAR_RE.sub(r"{env:\1}", v) if isinstance(v, str) else v
+                for k, v in env.items()
+            }
+
+        for passthrough in ("timeout", "enabled"):
+            if passthrough in cfg:
+                new[passthrough] = cfg[passthrough]
+
+        out[name] = new
+    return out
+
+
+_TRANSLATORS = {
+    "opencode": _translate_opencode,
+}
+
+
+def translate_servers(agent: str, servers: dict) -> dict:
+    fn = _TRANSLATORS.get(agent)
+    return fn(servers) if fn else servers
 
 
 def merge_into_json(target: Path, mcp_key: str, servers: dict) -> str:
@@ -132,6 +186,8 @@ def main() -> int:
     if not servers:
         print(f"info: no [mcp.*] entries — skipping {agent}", file=sys.stderr)
         return 0
+
+    servers = translate_servers(agent, servers)
 
     if target_path.suffix == ".toml":
         content = merge_into_toml(target_path, mcp_key, servers)

@@ -30,10 +30,12 @@ platform_get() {
             esac
             ;;
         cursor)
+            # Cursor reads AGENTS.md natively at root and has no native
+            # skill auto-invocation (skills are referenced via AGENTS.md table).
             case "$field" in
-                instructions_path) echo "" ;;  # native: lee AGENTS.md directo
-                skills_dir)        echo ".cursor/skills" ;;
-                agents_dir)        echo ".cursor/agents" ;;
+                instructions_path) echo "" ;;
+                skills_dir)        echo "" ;;
+                agents_dir)        echo "" ;;
                 mcp_config_path)   echo ".cursor/mcp.json" ;;
                 mcp_key)           echo "mcpServers" ;;
                 native)            echo "true" ;;
@@ -41,10 +43,11 @@ platform_get() {
             esac
             ;;
         opencode)
+            # OpenCode reads AGENTS.md natively at root; no native skill dir.
             case "$field" in
-                instructions_path) echo "" ;;  # native
-                skills_dir)        echo ".opencode/skills" ;;
-                agents_dir)        echo ".opencode/agents" ;;
+                instructions_path) echo "" ;;
+                skills_dir)        echo "" ;;
+                agents_dir)        echo "" ;;
                 mcp_config_path)   echo "opencode.json" ;;
                 mcp_key)           echo "mcp" ;;
                 native)            echo "true" ;;
@@ -52,10 +55,11 @@ platform_get() {
             esac
             ;;
         codex)
+            # Codex reads AGENTS.md natively at root; no native skill dir.
             case "$field" in
-                instructions_path) echo "" ;;  # native
-                skills_dir)        echo ".codex/skills" ;;
-                agents_dir)        echo ".codex/agents" ;;
+                instructions_path) echo "" ;;
+                skills_dir)        echo "" ;;
+                agents_dir)        echo "" ;;
                 mcp_config_path)   echo ".codex/config.toml" ;;
                 mcp_key)           echo "mcp_servers" ;;
                 native)            echo "true" ;;
