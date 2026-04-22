@@ -3,10 +3,11 @@
 #
 # Pipeline:
 #   1. Render  <path>/ai-specs/.gitignore                   from [[deps]]
-#   2. Vendor  external skills                              via _internal/vendor-skills.py
-#   3. Render  <path>/AGENTS.md (skills index)              via agents-md-render.py
-#   4. Refresh <path>/AGENTS.md auto-invoke table           via skill-sync/assets/sync.sh
-#   5. Fan-out per-agent configs                            via sync-agent --all
+#   2. Refresh bundled skills/commands + lock file          via _internal/refresh-bundled.py
+#   3. Vendor  external skills                              via _internal/vendor-skills.py
+#   4. Render  <path>/AGENTS.md (skills index)              via agents-md-render.py
+#   5. Refresh <path>/AGENTS.md auto-invoke table           via skill-sync/assets/sync.sh
+#   6. Fan-out per-agent configs                            via sync-agent --all
 #
 # Usage:
 #   specs-ai sync [path]
@@ -65,6 +66,7 @@ SYNC_SH="$SKILL_SYNC_DIR/sync.sh"
 VENDOR_SKILLS_PY="$SPECS_AI_HOME/lib/_internal/vendor-skills.py"
 GITIGNORE_RENDER="$SPECS_AI_HOME/lib/_internal/gitignore-render.py"
 AGENTS_MD_RENDER="$SPECS_AI_HOME/lib/_internal/agents-md-render.py"
+REFRESH_BUNDLED_PY="$SPECS_AI_HOME/lib/_internal/refresh-bundled.py"
 SYNC_AGENT_SH="$SPECS_AI_HOME/lib/sync-agent.sh"
 
 if [[ ! -f "$TOML_PATH" ]]; then
@@ -87,19 +89,25 @@ echo ""
 echo "▸ gitignore-render"
 python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$AI_GITIGNORE"
 
-# 2. Vendor external skills
+# 2. Refresh bundled skills & commands (auto-update clean files, drop .new for
+#    customized ones). Runs before vendor so any upstream skill-sync upgrade is
+#    active when we regen the AGENTS.md auto-invoke table below.
+echo "▸ refresh-bundled"
+python3 "$REFRESH_BUNDLED_PY" "$TARGET_PATH" "$SPECS_AI_HOME"
+
+# 3. Vendor external skills
 echo "▸ vendor-skills"
 python3 "$VENDOR_SKILLS_PY" "$TARGET_PATH"
 
-# 3. Render AGENTS.md from skills index
+# 4. Render AGENTS.md from skills index
 echo "▸ agents-md-render"
 python3 "$AGENTS_MD_RENDER" "$TARGET_PATH" "$TARGET_PATH/AGENTS.md"
 
-# 4. Refresh AGENTS.md auto-invoke table on top of the freshly-rendered file
+# 5. Refresh AGENTS.md auto-invoke table on top of the freshly-rendered file
 echo "▸ skill-sync (AGENTS.md auto-invoke)"
 bash "$SYNC_SH"
 
-# 5. Fan-out per-agent configs
+# 6. Fan-out per-agent configs
 echo "▸ sync-agent --all"
 bash "$SYNC_AGENT_SH" "$TARGET_PATH" --all
 

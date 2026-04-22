@@ -71,15 +71,18 @@ my-project/
 
 | Command | Description |
 |---------|-------------|
-| `specs-ai init [path] [--name N] [--force]` | Bootstrap `ai-specs/` (idempotent; `--force` rewrites templates and bundled skills) |
-| `specs-ai sync [path]` | Vendor `[[deps]]`, refresh AGENTS.md auto-invoke table, fan out per agent |
+| `specs-ai init [path] [--name N] [--force]` | Bootstrap `ai-specs/` (idempotent; never touches your `ai-specs.toml`). `--force` re-copies bundled skills/commands & regenerates AGENTS.md |
+| `specs-ai sync [path]` | Refresh bundled, vendor `[[deps]]`, regen AGENTS.md auto-invoke, fan out per agent |
 | `specs-ai sync-agent [path] [--all|--<agent>]` | Fan out per-agent only (no vendoring/regen) |
+| `specs-ai refresh-bundled [path]` | Update bundled skills/commands from the CLI — keeps your edits, drops `.new` sidecars for files you customized |
 | `specs-ai add-skill <name> [path]` | Scaffold a local skill |
 | `specs-ai add-dep <git-url> [path]` | Register a vendored skill in `[[deps]]` and `sync` |
 | `specs-ai version` | Print CLI version |
 | `specs-ai help` | Show help |
 
 Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
+
+> **`ai-specs.toml` is never overwritten.** It's your source of truth: enabled agents, `[[deps]]`, `[mcp.*]`. Mutated only by `add-dep` or by you.
 
 ## How MCP distribution works
 
@@ -135,6 +138,24 @@ specs-ai add-dep https://github.com/foo/superskill \
 Appends a `[[deps]]` block to `ai-specs.toml` and runs `specs-ai sync`, which
 clones the skill into `ai-specs/skills/<id>/`. Vendored skills are
 **gitignored** — they're restored on every clone via `specs-ai sync`.
+
+## Updating bundled skills & commands
+
+You own `skill-creator`, `skill-sync`, and `skills-as-rules` — customize them
+freely. When the CLI ships new versions, `specs-ai sync` (or the standalone
+`specs-ai refresh-bundled`) reconciles them against your edits using a
+SHA-256 baseline at `ai-specs/.specs-ai.lock` (committable).
+
+| Your file vs baseline | Upstream changed? | What happens |
+|-----------------------|-------------------|--------------|
+| Untouched | Yes | **Auto-updated** to the new CLI version |
+| Untouched | No  | Nothing (silent) |
+| Customized | Yes | CLI version saved as `<name>.new` alongside yours — diff & merge by hand |
+| Customized | No  | Your edits stand |
+| Deleted by you | — | Respected (stops tracking) |
+
+The lock file records what the CLI shipped to your project last time. Commit
+it so teammates stay on the same baseline.
 
 ## Updating the CLI
 

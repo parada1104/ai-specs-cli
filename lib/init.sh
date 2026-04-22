@@ -6,12 +6,17 @@
 #
 # Flags:
 #   --name <name>   Project name baked into ai-specs.toml (default: basename of path)
-#   --force         Overwrite ai-specs.toml, AGENTS.md, bundled skills, and the
-#                   agent-block in <path>/.gitignore. Default behavior preserves
-#                   user-edited files (idempotent).
+#   --force         Re-copy bundled skills & commands, regenerate AGENTS.md,
+#                   and refresh the agent-block in <path>/.gitignore. Default
+#                   behavior preserves user-edited files (idempotent).
+#
+# NEVER overwritten (user-owned, source of truth):
+#   <path>/ai-specs/ai-specs.toml   — mutated only by `add-dep` or by the user.
 #
 # Always (re)generated regardless of --force:
-#   <path>/ai-specs/.gitignore   (derived from [[deps]] in ai-specs.toml)
+#   <path>/ai-specs/.gitignore      (derived from [[deps]] in ai-specs.toml)
+#   <path>/AGENTS.md                (generated artifact)
+#   <path>/ai-specs/.specs-ai.lock  (bundled-file SHA baseline)
 #
 # Layout produced:
 #   <path>/
@@ -155,8 +160,11 @@ if [[ -d "$BUNDLED_COMMANDS_DIR" ]]; then
     done
 fi
 
-# 3. Render ai-specs.toml from template
-if [[ -f "$TOML_PATH" && $FORCE -eq 0 ]]; then
+# 3. Render ai-specs.toml from template (ONLY if missing — never overwritten).
+#    The TOML is user-owned source of truth: [agents].enabled, [[deps]], [mcp.*]
+#    are all hand-edited. `--force` does NOT touch it; mutations go through
+#    `add-dep` or by hand.
+if [[ -f "$TOML_PATH" ]]; then
     echo "  ✓ keep   ai-specs/ai-specs.toml"
 else
     sed "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" \
@@ -202,7 +210,14 @@ fi
 # 6. Generate ai-specs/.gitignore (always, derived)
 python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$AI_GITIGNORE"
 
-# 7. Next steps
+# 7. Establish the bundled-file SHA baseline (ai-specs/.specs-ai.lock).
+#    --init mode: never writes .new sidecars; just records CLI shas so future
+#    `refresh-bundled` can diff against them.
+echo "▸ refresh-bundled --init"
+python3 "$SPECS_AI_HOME/lib/_internal/refresh-bundled.py" \
+    "$TARGET_PATH" "$SPECS_AI_HOME" --init
+
+# 8. Next steps
 cat <<EOF
 
 ✓ specs-ai initialized at $TARGET_PATH
