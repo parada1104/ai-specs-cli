@@ -4,14 +4,12 @@
 # servidores MCP. Skills locales viven en ai-specs/skills/<name>/ y se
 # autodescubren del filesystem (no se listan acá).
 #
-# Comandos:
-#   ai-specs init                # clona deps, regenera AGENTS.md
-#   ai-specs sync-agent --all    # distribuye skills + MCP a cada agente
-#   ai-specs add-skill <name>    # crea skill local (no toca este TOML)
-#   ai-specs add-dep <url>       # agrega skill vendoreada a [[deps]]
-#   ai-specs sync                # init + sync-agent --all
-#
-# Entrypoint: ai-specs/cli/ai-specs
+# Comandos (CLI global, instalado vía https://github.com/nnodes/specs-ai-cli):
+#   specs-ai init                # bootstrap el directorio ai-specs/ (idempotente)
+#   specs-ai sync                # vendoreá deps + regenerá AGENTS.md + sync-agent --all
+#   specs-ai sync-agent --all    # distribuí skills + MCP a cada agente habilitado
+#   specs-ai add-skill <name>    # creá una skill local (no toca este TOML)
+#   specs-ai add-dep <url>       # agregá una skill vendoreada a [[deps]]
 
 [project]
 name = "{{PROJECT_NAME}}"

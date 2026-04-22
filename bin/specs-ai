@@ -1,54 +1,57 @@
 #!/usr/bin/env bash
-# specs-ai — global entrypoint for the specs-ai standard.
+# specs-ai — global CLI for the ai-specs standard.
 #
 # Subcommands:
-#   init-project [path]   Bootstrap ai-specs/ in target directory (default: cwd)
-#   upgrade [path]        Refresh payload (cli/ + skill-creator + skill-sync) in an existing project
-#   version               Print CLI version
-#   help                  Show this help
-#
-# Per-project commands (after init-project) live at <project>/ai-specs/cli/ai-specs.
+#   init       [path]                Bootstrap ai-specs/ in a project (idempotent)
+#   sync       [path]                Reconcile manifest → vendor + AGENTS.md + agents
+#   sync-agent [path] [--all|--<a>]  Fan out per-agent configs only
+#   add-skill  <name> [path]         Scaffold a local skill
+#   add-dep    <url> [path]          Register a vendored skill ([[deps]]) and sync
+#   version                          Print CLI version
+#   help                             Show this help
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# When installed via install.sh, bin/specs-ai is symlinked into ~/.local/bin.
-# Resolve the symlink to find the real repo root.
-REAL_SCRIPT="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-case "$REAL_SCRIPT" in
-    /*) REPO_ROOT="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)" ;;
-    *)  REPO_ROOT="$(cd "$SCRIPT_DIR/$(dirname "$REAL_SCRIPT")/.." && pwd)" ;;
-esac
+# Resolve real install location (script may be invoked through a symlink).
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+    DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+BIN_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+SPECS_AI_HOME="$(cd "$BIN_DIR/.." && pwd)"
+export SPECS_AI_HOME
 
-LIB_DIR="$REPO_ROOT/lib"
+LIB_DIR="$SPECS_AI_HOME/lib"
 
 cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
-    init-project) bash "$LIB_DIR/init-project.sh" "$@" ;;
-    upgrade)      bash "$LIB_DIR/upgrade.sh" "$@" ;;
-    version)      bash "$LIB_DIR/version.sh" ;;
-    -v|--version) bash "$LIB_DIR/version.sh" ;;
+    init)         bash "$LIB_DIR/init.sh" "$@" ;;
+    sync)         bash "$LIB_DIR/sync.sh" "$@" ;;
+    sync-agent)   bash "$LIB_DIR/sync-agent.sh" "$@" ;;
+    add-skill)    bash "$LIB_DIR/add-skill.sh" "$@" ;;
+    add-dep)      bash "$LIB_DIR/add-dep.sh" "$@" ;;
+    version|-v|--version) bash "$LIB_DIR/version.sh" ;;
     help|-h|--help)
         cat <<EOF
-specs-ai — declarative AI agent config standard
+specs-ai — declarative per-project AI agent config
 
 Usage:
   specs-ai <command> [args]
 
 Commands:
-  init-project [path]   Bootstrap ai-specs/ in target directory (default: cwd)
-  upgrade [path]        Refresh payload in an existing project
-  version               Print CLI version
-  help                  Show this help
+  init       [path]                       Bootstrap ai-specs/ in a project
+  sync       [path]                       Vendor deps + regen AGENTS.md + sync agents
+  sync-agent [path] [--all | --<agent>]   Fan out per-agent configs only
+  add-skill  <name> [path]                Scaffold a local skill
+  add-dep    <url>  [path]                Register a vendored skill (then sync)
+  version                                 Print CLI version
+  help                                    Show this help
 
-Per-project commands (after init-project):
-  cd <project>
-  ./ai-specs/cli/ai-specs init             # vendor [[deps]], regenerate AGENTS.md
-  ./ai-specs/cli/ai-specs sync-agent --all # distribute to enabled agents
-  ./ai-specs/cli/ai-specs add-skill <name>
-  ./ai-specs/cli/ai-specs add-dep <git-url>
+Path defaults to current directory. Run any subcommand with --help for details.
 
 Repo: https://github.com/nnodes/specs-ai-cli
 EOF

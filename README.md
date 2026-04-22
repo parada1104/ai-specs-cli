@@ -1,11 +1,11 @@
 # specs-ai
 
-One declarative manifest per project — fan-out to Claude, Cursor, OpenCode, Codex, Copilot, and Gemini.
+One declarative manifest per project — fan out to Claude, Cursor, OpenCode, Codex, Copilot, and Gemini.
 
 `specs-ai` is a per-project standard for managing AI agent configuration: skills,
-MCP servers, and agent-specific instruction files. Each project owns its
-manifest at `ai-specs/ai-specs.toml`; the CLI distributes that manifest to every
-enabled agent in their native format.
+MCP servers, and per-agent instruction files. Each project owns its manifest at
+`ai-specs/ai-specs.toml`; the global `specs-ai` CLI distributes that manifest
+into every enabled agent's native format.
 
 Inspired by [`charliesbot/chai`](https://github.com/charliesbot/chai) (global
 fan-out, merge-safe MCP) but **per-project** so different repos can have
@@ -34,137 +34,146 @@ Requirements: `bash`, `git`, `python3` (3.11+ for `tomllib`).
 
 ```bash
 cd my-project
-specs-ai init-project                    # scaffolds ai-specs/ + AGENTS.md + .gitignore
-# edit ai-specs/ai-specs.toml — add your MCP servers, [[deps]]
-./ai-specs/cli/ai-specs sync             # vendor deps + distribute to agents
+specs-ai init               # scaffolds ai-specs/ + AGENTS.md + .gitignore (idempotent)
+# edit ai-specs/ai-specs.toml — set [agents].enabled, add [[deps]], add [mcp.*]
+specs-ai sync               # vendor deps + regen AGENTS.md + fan out per agent
 ```
 
 That's it — `.claude/`, `.cursor/`, `.opencode/`, `CLAUDE.md`, `.mcp.json`, etc.
-are now generated from your manifest.
+are now generated from your manifest. Re-run `specs-ai sync` whenever the
+manifest changes.
 
 ## What gets created in your project
 
 ```
 my-project/
-├── AGENTS.md                      ← root agent instructions (template, edit freely)
-├── .gitignore                     ← appended with ai-specs block
+├── AGENTS.md                       ← root agent instructions (template; edit freely)
+├── .gitignore                      ← appended with an ai-specs block (gitignores agent files)
 └── ai-specs/
-    ├── ai-specs.toml              ← YOUR manifest (edit this)
-    ├── cli/                       ← payload (do not edit; refresh via specs-ai upgrade)
-    │   ├── ai-specs               ← per-project entrypoint
-    │   ├── init.sh
-    │   ├── sync-agent.sh
-    │   ├── add-skill.sh
-    │   ├── add-dep.sh
-    │   └── lib/
-    │       ├── toml-read.py
-    │       ├── mcp-render.py
-    │       ├── deps-render.py
-    │       └── platform.sh
+    ├── ai-specs.toml               ← YOUR manifest (edit this)
+    ├── .gitignore                  ← derived; lists vendored skill dirs
     └── skills/
-        ├── skill-creator/         ← payload (do not edit)
-        ├── skill-sync/            ← payload (do not edit)
-        ├── <your-local-skill>/    ← skills you create (autodiscovered)
-        └── <vendored-skill>/      ← from [[deps]]
+        ├── skill-creator/          ← bundled (committable; customize freely)
+        ├── skill-sync/             ← bundled (committable; customize freely)
+        ├── <your-local-skill>/     ← scaffolded by `specs-ai add-skill` (committed)
+        └── <vendored-skill>/       ← cloned from [[deps]] (gitignored)
 ```
+
+### Three skill categories
+
+| Category   | Lives in            | Listed in toml? | Committed? | Created by             |
+|------------|---------------------|-----------------|------------|------------------------|
+| Local      | `ai-specs/skills/<name>/`   | No (autodiscovered) | Yes        | `specs-ai add-skill <name>` |
+| Bundled    | `ai-specs/skills/{skill-creator,skill-sync}/` | No | Yes (own-and-customize) | `specs-ai init` (one-time copy) |
+| Vendored   | `ai-specs/skills/<dep-id>/` | Yes (`[[deps]]`)    | No (gitignored) | `specs-ai add-dep <url>` → cloned by sync |
 
 ## CLI
 
-### Global commands (after install)
-
 | Command | Description |
 |---------|-------------|
-| `specs-ai init-project [path]` | Bootstrap `ai-specs/` in target dir (default: cwd) |
-| `specs-ai upgrade [path]` | Refresh `cli/` + bundled skills from latest payload |
+| `specs-ai init [path] [--name N] [--force]` | Bootstrap `ai-specs/` (idempotent; `--force` rewrites templates and bundled skills) |
+| `specs-ai sync [path]` | Vendor `[[deps]]`, refresh AGENTS.md auto-invoke table, fan out per agent |
+| `specs-ai sync-agent [path] [--all|--<agent>]` | Fan out per-agent only (no vendoring/regen) |
+| `specs-ai add-skill <name> [path]` | Scaffold a local skill |
+| `specs-ai add-dep <git-url> [path]` | Register a vendored skill in `[[deps]]` and `sync` |
 | `specs-ai version` | Print CLI version |
 | `specs-ai help` | Show help |
 
-### Per-project commands (after `init-project`)
-
-| Command | Description |
-|---------|-------------|
-| `./ai-specs/cli/ai-specs init` | Vendor `[[deps]]`, regenerate `AGENTS.md` |
-| `./ai-specs/cli/ai-specs sync-agent --all` | Distribute to every enabled agent |
-| `./ai-specs/cli/ai-specs sync-agent --claude --cursor` | Distribute to selected agents |
-| `./ai-specs/cli/ai-specs add-skill <name>` | Scaffold a local skill |
-| `./ai-specs/cli/ai-specs add-dep <git-url>` | Add a vendored skill (mutates manifest) |
-| `./ai-specs/cli/ai-specs sync` | `init` + `sync-agent --all` |
-
-All accept `--dry-run` (where applicable) and `--help`.
+Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
 
 ## How MCP distribution works
 
-`[mcp.*]` entries in `ai-specs.toml` are rendered into each agent's config file
-using a **merge-safe** strategy: `specs-ai` owns the MCP key (e.g.
-`mcpServers`), every other top-level key is preserved.
+`[mcp.*]` entries in `ai-specs.toml` are rendered into each agent's native
+config via a **merge-safe** strategy: `specs-ai` owns the MCP key (e.g.
+`mcpServers`), and every other top-level key is preserved.
 
-| Agent    | Target file              | Key            | Format |
-|----------|--------------------------|----------------|--------|
-| Claude   | `.mcp.json`              | `mcpServers`   | JSON   |
-| Cursor   | `.cursor/mcp.json`       | `mcpServers`   | JSON   |
-| OpenCode | `opencode.json`          | `mcp`          | JSON   |
-| Codex    | `.codex/config.toml`     | `mcp_servers`  | TOML   |
-| Gemini   | `.gemini/settings.json`  | `mcpServers`   | JSON   |
-| Copilot  | (no MCP support)         | —              | —      |
+| Agent    | Target file              | Key            | Format | Notes |
+|----------|--------------------------|----------------|--------|-------|
+| Claude   | `.mcp.json`              | `mcpServers`   | JSON   | per-project |
+| Cursor   | `.cursor/mcp.json`       | `mcpServers`   | JSON   | merge preserves other keys |
+| OpenCode | `opencode.json`          | `mcp`          | JSON   | translated to OpenCode native schema (`type:"local"`, `command:[…]`, `environment:{…}`, `{env:VAR}`) |
+| Codex    | `.codex/config.toml`     | `mcp_servers`  | TOML   | rewrites `[mcp_servers.*]` blocks only |
+| Gemini   | `.gemini/settings.json`  | `mcpServers`   | JSON   | |
+| Copilot  | (no MCP support)         | —              | —      | reads AGENTS.md only |
+
+## How skills are surfaced to each agent
+
+| Agent    | Reads AGENTS.md natively? | Native skill auto-invoke? | What sync-agent generates |
+|----------|---------------------------|---------------------------|---------------------------|
+| Claude   | No (needs `CLAUDE.md`)    | Yes (`.claude/skills/<name>/SKILL.md`) | `CLAUDE.md` symlink + `.claude/skills` symlink → `ai-specs/skills` + `.mcp.json` |
+| Cursor   | Yes                       | No (skills via AGENTS.md text)         | `.cursor/mcp.json` |
+| OpenCode | Yes                       | No                                     | `opencode.json` |
+| Codex    | Yes                       | No                                     | `.codex/config.toml` |
+| Copilot  | No (`.github/copilot-instructions.md`) | No                          | `.github/copilot-instructions.md` symlink |
+| Gemini   | No (needs `GEMINI.md`)    | Yes (`.gemini/skills/<name>/SKILL.md`) | `GEMINI.md` symlink + `.gemini/skills` symlink + `.gemini/settings.json` |
+
+The `Auto-invoke` table in `AGENTS.md` is regenerated automatically by
+`skill-sync` whenever you `specs-ai sync` or `specs-ai add-skill`.
 
 ## Adding skills
 
 ### Local skill (lives in your project)
 
 ```bash
-./ai-specs/cli/ai-specs add-skill mi-skill \
+specs-ai add-skill mi-skill \
     --description "What it does" \
     --trigger "When the AI should load it"
 ```
 
-Scaffolds `ai-specs/skills/mi-skill/SKILL.md` from the template. **Local skills
-are autodiscovered** from the filesystem — they are NOT listed in
-`ai-specs.toml`.
+Scaffolds `ai-specs/skills/mi-skill/SKILL.md` from `skill-creator`'s template.
+**Local skills are autodiscovered** — they are NOT listed in `ai-specs.toml`.
+Commit them with the rest of the repo.
 
 ### Vendored skill (cloned from a Git repo)
 
 ```bash
-./ai-specs/cli/ai-specs add-dep https://github.com/foo/superskill \
-    --auto-invoke "When doing X" \
+specs-ai add-dep https://github.com/foo/superskill \
+    --trigger "When doing X" \
     --license MIT
 ```
 
-Appends a `[[deps]]` block to `ai-specs.toml` and re-runs `init` to clone the
-skill into `ai-specs/skills/<id>/`.
+Appends a `[[deps]]` block to `ai-specs.toml` and runs `specs-ai sync`, which
+clones the skill into `ai-specs/skills/<id>/`. Vendored skills are
+**gitignored** — they're restored on every clone via `specs-ai sync`.
 
-## Updating the CLI in an existing project
-
-When `specs-ai` itself improves, refresh the payload bundled in your project:
+## Updating the CLI
 
 ```bash
-specs-ai upgrade               # in cwd
-specs-ai upgrade ~/code/foo    # specific path
+cd ~/.specs-ai && git pull       # one global install, one update
 ```
 
-This overwrites `ai-specs/cli/` and the bundled `skill-creator` /
-`skill-sync` skills. Your `ai-specs.toml`, local skills, and vendored deps are
-preserved.
+The CLI lives only at `~/.specs-ai`. Projects don't carry a copy of the CLI —
+they only carry their manifest, local skills, and the bundled `skill-creator` /
+`skill-sync` skills (which they own and may customize).
 
 ## Layout (this repo)
 
 ```
 specs-ai-cli/
-├── bin/specs-ai                ← global entrypoint
+├── bin/specs-ai                ← global entrypoint (dispatcher)
 ├── lib/
-│   ├── init-project.sh         ← scaffolds ai-specs/ in a target dir
-│   ├── upgrade.sh              ← refreshes payload in an existing project
-│   └── version.sh
-├── payload/                    ← what gets copied INTO each project's ai-specs/
-│   ├── cli/                    ← per-project CLI (init / sync-agent / add-skill / add-dep)
-│   └── skills/
-│       ├── skill-creator/
-│       └── skill-sync/
+│   ├── init.sh                 ← bootstrap a project
+│   ├── sync.sh                 ← vendor + regen + fan out
+│   ├── sync-agent.sh           ← per-agent fan-out
+│   ├── add-skill.sh            ← scaffold local skill
+│   ├── add-dep.sh              ← register vendored skill
+│   ├── version.sh
+│   └── _internal/
+│       ├── toml-read.py        ← read sections of ai-specs.toml
+│       ├── deps-render.py      ← [[deps]] → vendor.manifest.toml
+│       ├── gitignore-render.py ← [[deps]] → ai-specs/.gitignore
+│       ├── mcp-render.py       ← [mcp.*] → per-agent format (merge-safe)
+│       └── platform.sh         ← per-agent paths/keys
+├── bundled-skills/             ← copied INTO each project on `init`
+│   ├── skill-creator/          ← scaffolds new skills (template-driven)
+│   └── skill-sync/             ← discovers SKILL.md, regenerates AGENTS.md table
 ├── templates/
 │   ├── ai-specs.toml.tmpl
 │   ├── AGENTS.md.tmpl
-│   └── gitignore.tmpl
+│   └── gitignore-root.tmpl
 ├── install.sh
-└── VERSION
+├── VERSION
+└── LICENSE
 ```
 
 ## License

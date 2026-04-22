@@ -51,7 +51,14 @@ else
     git clone --branch "$SPECS_AI_REF" "$SPECS_AI_REPO" "$SPECS_AI_HOME"
 fi
 
-chmod +x "$SPECS_AI_HOME/bin/specs-ai" "$SPECS_AI_HOME/lib/"*.sh "$SPECS_AI_HOME/payload/cli/ai-specs" "$SPECS_AI_HOME/payload/cli/"*.sh
+chmod +x \
+    "$SPECS_AI_HOME/bin/specs-ai" \
+    "$SPECS_AI_HOME/lib/"*.sh \
+    "$SPECS_AI_HOME/lib/_internal/"*.py \
+    "$SPECS_AI_HOME/lib/_internal/"*.sh 2>/dev/null || true
+# Bundled skill scripts (shipped to projects via init)
+chmod +x "$SPECS_AI_HOME/bundled-skills/skill-sync/assets/"*.sh 2>/dev/null || true
+chmod +x "$SPECS_AI_HOME/bundled-skills/skill-sync/assets/"*.py 2>/dev/null || true
 
 # 2. Symlink entrypoint
 echo -e "${YELLOW}[2/2]${NC} Symlinking entrypoint"
@@ -70,5 +77,6 @@ if ! echo ":$PATH:" | grep -q ":$INSTALL_BIN:"; then
     echo ""
 fi
 
-echo -e "Test it: ${BOLD}specs-ai version${NC}"
-echo -e "Bootstrap a project: ${BOLD}cd <your-project> && specs-ai init-project${NC}"
+echo -e "Test it:             ${BOLD}specs-ai version${NC}"
+echo -e "Bootstrap a project: ${BOLD}cd <your-project> && specs-ai init${NC}"
+echo -e "Then:                ${BOLD}specs-ai sync${NC}"
