@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# platform.sh — paths/keys por agente.
+# Source: source "ai-specs/cli/lib/platform.sh"
+#
+# Cada agente está descripto por 5 valores: instructions_path, skills_dir,
+# agents_dir, mcp_config_path, mcp_key. Acceso vía función `platform_get`.
+#
+# Inspirado en charliesbot/chai internal/platform/platform.go pero adaptado
+# a per-project (paths relativos al REPO_ROOT, no a $HOME).
+
+# platform_get <agent> <field>
+#   agent ∈ claude|cursor|opencode|codex|copilot|gemini
+#   field ∈ instructions_path|skills_dir|agents_dir|mcp_config_path|mcp_key|native
+#
+# Imprime el valor en stdout. Exit 1 si agent/field desconocidos.
+platform_get() {
+    local agent="$1"
+    local field="$2"
+
+    case "$agent" in
+        claude)
+            case "$field" in
+                instructions_path) echo "CLAUDE.md" ;;
+                skills_dir)        echo ".claude/skills" ;;
+                agents_dir)        echo ".claude/agents" ;;
+                mcp_config_path)   echo ".mcp.json" ;;
+                mcp_key)           echo "mcpServers" ;;
+                native)            echo "false" ;;
+                *) return 1 ;;
+            esac
+            ;;
+        cursor)
+            case "$field" in
+                instructions_path) echo "" ;;  # native: lee AGENTS.md directo
+                skills_dir)        echo ".cursor/skills" ;;
+                agents_dir)        echo ".cursor/agents" ;;
+                mcp_config_path)   echo ".cursor/mcp.json" ;;
+                mcp_key)           echo "mcpServers" ;;
+                native)            echo "true" ;;
+                *) return 1 ;;
+            esac
+            ;;
+        opencode)
+            case "$field" in
+                instructions_path) echo "" ;;  # native
+                skills_dir)        echo ".opencode/skills" ;;
+                agents_dir)        echo ".opencode/agents" ;;
+                mcp_config_path)   echo "opencode.json" ;;
+                mcp_key)           echo "mcp" ;;
+                native)            echo "true" ;;
+                *) return 1 ;;
+            esac
+            ;;
+        codex)
+            case "$field" in
+                instructions_path) echo "" ;;  # native
+                skills_dir)        echo ".codex/skills" ;;
+                agents_dir)        echo ".codex/agents" ;;
+                mcp_config_path)   echo ".codex/config.toml" ;;
+                mcp_key)           echo "mcp_servers" ;;
+                native)            echo "true" ;;
+                *) return 1 ;;
+            esac
+            ;;
+        copilot)
+            case "$field" in
+                instructions_path) echo ".github/copilot-instructions.md" ;;
+                skills_dir)        echo "" ;;  # no skills dir nativo
+                agents_dir)        echo "" ;;
+                mcp_config_path)   echo "" ;;  # no MCP nativo
+                mcp_key)           echo "" ;;
+                native)            echo "true" ;;
+                *) return 1 ;;
+            esac
+            ;;
+        gemini)
+            case "$field" in
+                instructions_path) echo "GEMINI.md" ;;
+                skills_dir)        echo ".gemini/skills" ;;
+                agents_dir)        echo ".gemini/agents" ;;
+                mcp_config_path)   echo ".gemini/settings.json" ;;
+                mcp_key)           echo "mcpServers" ;;
+                native)            echo "false" ;;
+                *) return 1 ;;
+            esac
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}

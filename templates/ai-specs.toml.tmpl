@@ -1,0 +1,52 @@
+# ai-specs.toml — manifiesto raíz del estándar ai-specs.
+#
+# Source of truth para: agentes habilitados, skills vendoreadas (deps),
+# servidores MCP. Skills locales viven en ai-specs/skills/<name>/ y se
+# autodescubren del filesystem (no se listan acá).
+#
+# Comandos:
+#   ai-specs init                # clona deps, regenera AGENTS.md
+#   ai-specs sync-agent --all    # distribuye skills + MCP a cada agente
+#   ai-specs add-skill <name>    # crea skill local (no toca este TOML)
+#   ai-specs add-dep <url>       # agrega skill vendoreada a [[deps]]
+#   ai-specs sync                # init + sync-agent --all
+#
+# Entrypoint: ai-specs/cli/ai-specs
+
+[project]
+name = "{{PROJECT_NAME}}"
+# Lista de subrepos relativos al root. Vacío = monorepo plano.
+subrepos = []
+
+[agents]
+# Agentes habilitados para sync-agent. Solo estos reciben configs.
+# Opciones: claude, cursor, opencode, codex, copilot, gemini
+enabled = ["claude", "cursor", "opencode"]
+
+# -----------------------------------------------------------------------------
+# Deps de skills externas (vendoreadas con vendor-skills.sh)
+# -----------------------------------------------------------------------------
+# Cada [[deps]] se clona a ai-specs/skills/<id>/ con frontmatter inyectado.
+# Ejemplo:
+# [[deps]]
+# id = "obra-superpowers"
+# source = "https://github.com/obra/superpowers"
+# scope_at_monorepo_root = "root"
+# auto_invoke_root = ["When starting a complex task"]
+# auto_invoke_subrepo = []
+# install_into_subrepos = false
+# only_subrepos = []
+# license = "MIT"
+# vendor_attribution = "obra"
+
+# -----------------------------------------------------------------------------
+# MCP servers — distribuidos por sync-agent al formato de cada plataforma
+# -----------------------------------------------------------------------------
+# Variables de entorno se cargan vía .envrc; los agentes interpolan los valores
+# (p. ej. $TRELLO_API_KEY en runtime).
+
+# [mcp.example]
+# command = "npx"
+# args = ["-y", "@example/mcp-server"]
+# env = { API_KEY = "$EXAMPLE_API_KEY" }
+# timeout = 30000

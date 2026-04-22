@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# specs-ai — global entrypoint for the specs-ai standard.
+#
+# Subcommands:
+#   init-project [path]   Bootstrap ai-specs/ in target directory (default: cwd)
+#   upgrade [path]        Refresh payload (cli/ + skill-creator + skill-sync) in an existing project
+#   version               Print CLI version
+#   help                  Show this help
+#
+# Per-project commands (after init-project) live at <project>/ai-specs/cli/ai-specs.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# When installed via install.sh, bin/specs-ai is symlinked into ~/.local/bin.
+# Resolve the symlink to find the real repo root.
+REAL_SCRIPT="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+case "$REAL_SCRIPT" in
+    /*) REPO_ROOT="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)" ;;
+    *)  REPO_ROOT="$(cd "$SCRIPT_DIR/$(dirname "$REAL_SCRIPT")/.." && pwd)" ;;
+esac
+
+LIB_DIR="$REPO_ROOT/lib"
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+    init-project) bash "$LIB_DIR/init-project.sh" "$@" ;;
+    upgrade)      bash "$LIB_DIR/upgrade.sh" "$@" ;;
+    version)      bash "$LIB_DIR/version.sh" ;;
+    -v|--version) bash "$LIB_DIR/version.sh" ;;
+    help|-h|--help)
+        cat <<EOF
+specs-ai — declarative AI agent config standard
+
+Usage:
+  specs-ai <command> [args]
+
+Commands:
+  init-project [path]   Bootstrap ai-specs/ in target directory (default: cwd)
+  upgrade [path]        Refresh payload in an existing project
+  version               Print CLI version
+  help                  Show this help
+
+Per-project commands (after init-project):
+  cd <project>
+  ./ai-specs/cli/ai-specs init             # vendor [[deps]], regenerate AGENTS.md
+  ./ai-specs/cli/ai-specs sync-agent --all # distribute to enabled agents
+  ./ai-specs/cli/ai-specs add-skill <name>
+  ./ai-specs/cli/ai-specs add-dep <git-url>
+
+Repo: https://github.com/nnodes/specs-ai-cli
+EOF
+        ;;
+    *)
+        echo "specs-ai: unknown command '$cmd'" >&2
+        echo "Run 'specs-ai help' for usage." >&2
+        exit 1 ;;
+esac

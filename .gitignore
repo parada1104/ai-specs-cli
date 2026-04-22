@@ -1,0 +1,14 @@
+.DS_Store
+node_modules/
+*.log
+.idea/
+.vscode/
+.claude/
+.cursor/
+.opencode/
+opencode.json
+.codex/
+.gemini/
+CLAUDE.md
+GEMINI.md
+.mcp.json

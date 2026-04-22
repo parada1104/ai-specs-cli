@@ -1,0 +1,36 @@
+# {{PROJECT_NAME}} — Agent Instructions
+
+Source of truth for AI agents (Claude, Cursor, OpenCode, Codex, Copilot, Gemini)
+working on this project. Per-agent files (`CLAUDE.md`, `GEMINI.md`, etc.) are
+symlinks to this file.
+
+## Project
+
+(Describe the project: purpose, stack, conventions.)
+
+## How AI tooling is wired
+
+This project uses the **`ai-specs`** standard. The manifest at
+`ai-specs/ai-specs.toml` declares enabled agents, vendored skills, and MCP
+servers. Per-agent configs live under each agent's directory (`.claude/`,
+`.cursor/`, etc.) and are **generated** from the manifest — do not hand-edit.
+
+To regenerate after changing `ai-specs.toml`:
+
+```bash
+./ai-specs/cli/ai-specs sync   # init + sync-agent --all
+```
+
+To add a skill:
+
+```bash
+./ai-specs/cli/ai-specs add-skill <name>          # local skill (this repo)
+./ai-specs/cli/ai-specs add-dep <git-url>         # vendored skill (external)
+```
+
+## Auto-invoke skills
+
+(This table is regenerated automatically by `skill-sync`. Do not edit by hand.)
+
+<!-- AUTO-INVOKE-TABLE:BEGIN -->
+<!-- AUTO-INVOKE-TABLE:END -->
