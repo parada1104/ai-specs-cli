@@ -11,6 +11,11 @@
 # platform_get <agent> <field>
 #   agent ∈ claude|cursor|opencode|codex|copilot|gemini
 #   field ∈ instructions_path|skills_dir|agents_dir|mcp_config_path|mcp_key|native
+#         | commands_dir
+#
+# `commands_dir` is the directory where slash-command files (like
+# `/skills-as-rules`) get written. Empty string means the agent has no native
+# slash-command UX and we skip the fan-out for it.
 #
 # Imprime el valor en stdout. Exit 1 si agent/field desconocidos.
 platform_get() {
@@ -26,6 +31,7 @@ platform_get() {
                 mcp_config_path)   echo ".mcp.json" ;;
                 mcp_key)           echo "mcpServers" ;;
                 native)            echo "false" ;;
+                commands_dir)      echo ".claude/commands" ;;
                 *) return 1 ;;
             esac
             ;;
@@ -39,6 +45,7 @@ platform_get() {
                 mcp_config_path)   echo ".cursor/mcp.json" ;;
                 mcp_key)           echo "mcpServers" ;;
                 native)            echo "true" ;;
+                commands_dir)      echo ".cursor/commands" ;;
                 *) return 1 ;;
             esac
             ;;
@@ -51,6 +58,7 @@ platform_get() {
                 mcp_config_path)   echo "opencode.json" ;;
                 mcp_key)           echo "mcp" ;;
                 native)            echo "true" ;;
+                commands_dir)      echo ".opencode/command" ;;
                 *) return 1 ;;
             esac
             ;;
@@ -63,6 +71,7 @@ platform_get() {
                 mcp_config_path)   echo ".codex/config.toml" ;;
                 mcp_key)           echo "mcp_servers" ;;
                 native)            echo "true" ;;
+                commands_dir)      echo "" ;;  # codex has no slash commands
                 *) return 1 ;;
             esac
             ;;
@@ -74,6 +83,7 @@ platform_get() {
                 mcp_config_path)   echo "" ;;  # no MCP nativo
                 mcp_key)           echo "" ;;
                 native)            echo "true" ;;
+                commands_dir)      echo "" ;;  # copilot has no slash commands
                 *) return 1 ;;
             esac
             ;;
@@ -85,6 +95,7 @@ platform_get() {
                 mcp_config_path)   echo ".gemini/settings.json" ;;
                 mcp_key)           echo "mcpServers" ;;
                 native)            echo "false" ;;
+                commands_dir)      echo "" ;;  # gemini has no slash commands
                 *) return 1 ;;
             esac
             ;;

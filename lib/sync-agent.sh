@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# sync-agent.sh — fan out skills + MCP to per-agent native locations.
+# sync-agent.sh — fan out skills + MCP + slash commands to per-agent locations.
 #
 # For every selected agent:
 #   - skills_dir         (Claude/Gemini): symlink → <path>/ai-specs/skills
 #   - instructions_path  (Claude/Gemini/Copilot): symlink AGENTS.md → CLAUDE.md / etc.
 #   - mcp_config_path    (Claude/Cursor/OpenCode/Codex/Gemini): merged write via mcp-render.py
+#   - commands_dir       (Claude/Cursor/OpenCode): copy bundled-commands/*.md
 #
 # Native agents (Cursor/OpenCode/Codex/Copilot) read AGENTS.md directly — no
 # instructions symlink, no skills_dir.
@@ -22,6 +23,7 @@ source "$SPECS_AI_HOME/lib/_internal/platform.sh"
 
 TOML_READ="$SPECS_AI_HOME/lib/_internal/toml-read.py"
 MCP_RENDER="$SPECS_AI_HOME/lib/_internal/mcp-render.py"
+BUNDLED_COMMANDS_DIR="$SPECS_AI_HOME/bundled-commands"
 
 ALL_AGENTS=(claude cursor opencode codex copilot gemini)
 
@@ -192,6 +194,23 @@ for agent in "${TARGETS[@]}"; do
                 "$TARGET_PATH/$mcp_path" "$mcp_key"
         else
             echo "    · mcp skipped (no [mcp.*] in manifest)"
+        fi
+    fi
+
+    # 4. Slash commands — copy bundled-commands/*.md into the agent's
+    # commands_dir (idempotent, overwrite). Skip agents without slash-command UX.
+    cmd_dir="$(platform_get "$agent" commands_dir)"
+    if [[ -n "$cmd_dir" && -d "$BUNDLED_COMMANDS_DIR" ]]; then
+        dest="$TARGET_PATH/$cmd_dir"
+        mkdir -p "$dest"
+        copied=0
+        for src in "$BUNDLED_COMMANDS_DIR"/*.md; do
+            [[ -f "$src" ]] || continue
+            cp "$src" "$dest/$(basename "$src")"
+            copied=$((copied + 1))
+        done
+        if [[ $copied -gt 0 ]]; then
+            echo "    ✓ commands     $cmd_dir/ ($copied file(s))"
         fi
     fi
 done

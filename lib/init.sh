@@ -15,11 +15,13 @@
 #
 # Layout produced:
 #   <path>/
-#   ├── AGENTS.md                       (template if missing; never overwritten without --force)
+#   ├── AGENTS.md                       (always regenerated from ai-specs/* by `sync`)
 #   ├── .gitignore                      (agent-block appended; idempotent via marker)
 #   └── ai-specs/
 #       ├── ai-specs.toml               (template if missing)
 #       ├── .gitignore                  (always rendered from ai-specs.toml)
+#       ├── agents.d/                   (user content fragments for AGENTS.md)
+#       │   └── README.md
 #       └── skills/
 #           ├── skill-creator/          (bundled — committable)
 #           └── skill-sync/             (bundled — committable)
@@ -94,6 +96,7 @@ TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"
 # Paths
 AI_SPECS_DIR="$TARGET_PATH/ai-specs"
 SKILLS_DIR="$AI_SPECS_DIR/skills"
+AGENTS_D_DIR="$AI_SPECS_DIR/agents.d"
 TOML_PATH="$AI_SPECS_DIR/ai-specs.toml"
 AGENTS_PATH="$TARGET_PATH/AGENTS.md"
 ROOT_GITIGNORE="$TARGET_PATH/.gitignore"
@@ -102,6 +105,7 @@ AI_GITIGNORE="$AI_SPECS_DIR/.gitignore"
 BUNDLED_SKILLS_DIR="$SPECS_AI_HOME/bundled-skills"
 TEMPLATES_DIR="$SPECS_AI_HOME/templates"
 GITIGNORE_RENDER="$SPECS_AI_HOME/lib/_internal/gitignore-render.py"
+AGENTS_MD_RENDER="$SPECS_AI_HOME/lib/_internal/agents-md-render.py"
 
 GITIGNORE_MARKER_BEGIN="# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---"
 GITIGNORE_MARKER_END="# --- end ai-specs ---"
@@ -114,8 +118,18 @@ echo "  force:   $([ $FORCE -eq 1 ] && echo "yes" || echo "no")"
 echo ""
 
 # 1. Create directories
-mkdir -p "$SKILLS_DIR"
+mkdir -p "$SKILLS_DIR" "$AGENTS_D_DIR"
 echo "  ✓ ensure $AI_SPECS_DIR/skills/"
+echo "  ✓ ensure $AI_SPECS_DIR/agents.d/"
+
+# 1b. Drop a README inside agents.d/ so users know what to put there.
+AGENTS_D_README="$AGENTS_D_DIR/README.md"
+if [[ -f "$AGENTS_D_README" && $FORCE -eq 0 ]]; then
+    echo "  ✓ keep   ai-specs/agents.d/README.md"
+else
+    cp "$TEMPLATES_DIR/agents.d-readme.md" "$AGENTS_D_README"
+    echo "  ✓ wrote  ai-specs/agents.d/README.md"
+fi
 
 # 2. Copy bundled skills
 for skill in skill-creator skill-sync; do
@@ -143,14 +157,8 @@ else
     echo "  ✓ wrote  ai-specs/ai-specs.toml"
 fi
 
-# 4. Render AGENTS.md from template (never overwrite without --force; user content)
-if [[ -f "$AGENTS_PATH" && $FORCE -eq 0 ]]; then
-    echo "  ✓ keep   AGENTS.md"
-else
-    sed "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" \
-        "$TEMPLATES_DIR/AGENTS.md.tmpl" > "$AGENTS_PATH"
-    echo "  ✓ wrote  AGENTS.md"
-fi
+# 4. AGENTS.md is fully generated from ai-specs/* — render it now.
+python3 "$AGENTS_MD_RENDER" "$TARGET_PATH" "$AGENTS_PATH"
 
 # 5. Append agent-block to root .gitignore (idempotent via marker)
 append_block() {
