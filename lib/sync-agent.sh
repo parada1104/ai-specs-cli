@@ -5,7 +5,7 @@
 #   - skills_dir         (Claude/Gemini): symlink → <path>/ai-specs/skills
 #   - instructions_path  (Claude/Gemini/Copilot): symlink AGENTS.md → CLAUDE.md / etc.
 #   - mcp_config_path    (Claude/Cursor/OpenCode/Codex/Gemini): merged write via mcp-render.py
-#   - commands_dir       (Claude/Cursor/OpenCode): copy bundled-commands/*.md
+#   - commands_dir       (Claude/Cursor/OpenCode): copy ai-specs/commands/*.md
 #
 # Native agents (Cursor/OpenCode/Codex/Copilot) read AGENTS.md directly — no
 # instructions symlink, no skills_dir.
@@ -23,7 +23,6 @@ source "$SPECS_AI_HOME/lib/_internal/platform.sh"
 
 TOML_READ="$SPECS_AI_HOME/lib/_internal/toml-read.py"
 MCP_RENDER="$SPECS_AI_HOME/lib/_internal/mcp-render.py"
-BUNDLED_COMMANDS_DIR="$SPECS_AI_HOME/bundled-commands"
 
 ALL_AGENTS=(claude cursor opencode codex copilot gemini)
 
@@ -82,6 +81,7 @@ TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"
 
 TOML_PATH="$TARGET_PATH/ai-specs/ai-specs.toml"
 AI_SKILLS="$TARGET_PATH/ai-specs/skills"
+AI_COMMANDS="$TARGET_PATH/ai-specs/commands"
 AGENTS_MD="$TARGET_PATH/AGENTS.md"
 
 if [[ ! -f "$TOML_PATH" ]]; then
@@ -197,14 +197,15 @@ for agent in "${TARGETS[@]}"; do
         fi
     fi
 
-    # 4. Slash commands — copy bundled-commands/*.md into the agent's
-    # commands_dir (idempotent, overwrite). Skip agents without slash-command UX.
+    # 4. Slash commands — copy ai-specs/commands/*.md into the agent's
+    # commands_dir (idempotent, overwrite). Source of truth is the project,
+    # not the CLI. Skip agents without slash-command UX.
     cmd_dir="$(platform_get "$agent" commands_dir)"
-    if [[ -n "$cmd_dir" && -d "$BUNDLED_COMMANDS_DIR" ]]; then
+    if [[ -n "$cmd_dir" && -d "$AI_COMMANDS" ]]; then
         dest="$TARGET_PATH/$cmd_dir"
         mkdir -p "$dest"
         copied=0
-        for src in "$BUNDLED_COMMANDS_DIR"/*.md; do
+        for src in "$AI_COMMANDS"/*.md; do
             [[ -f "$src" ]] || continue
             cp "$src" "$dest/$(basename "$src")"
             copied=$((copied + 1))

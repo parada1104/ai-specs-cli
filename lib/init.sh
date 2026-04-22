@@ -20,11 +20,11 @@
 #   └── ai-specs/
 #       ├── ai-specs.toml               (template if missing)
 #       ├── .gitignore                  (always rendered from ai-specs.toml)
-#       ├── agents.d/                   (user content fragments for AGENTS.md)
-#       │   └── README.md
-#       └── skills/
-#           ├── skill-creator/          (bundled — committable)
-#           └── skill-sync/             (bundled — committable)
+#       ├── skills/
+#       │   ├── skill-creator/          (bundled — committable)
+#       │   └── skill-sync/             (bundled — committable)
+#       └── commands/
+#           └── skills-as-rules.md      (bundled — committable, fan-out to agents)
 
 set -euo pipefail
 
@@ -96,13 +96,14 @@ TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"
 # Paths
 AI_SPECS_DIR="$TARGET_PATH/ai-specs"
 SKILLS_DIR="$AI_SPECS_DIR/skills"
-AGENTS_D_DIR="$AI_SPECS_DIR/agents.d"
+COMMANDS_DIR="$AI_SPECS_DIR/commands"
 TOML_PATH="$AI_SPECS_DIR/ai-specs.toml"
 AGENTS_PATH="$TARGET_PATH/AGENTS.md"
 ROOT_GITIGNORE="$TARGET_PATH/.gitignore"
 AI_GITIGNORE="$AI_SPECS_DIR/.gitignore"
 
 BUNDLED_SKILLS_DIR="$SPECS_AI_HOME/bundled-skills"
+BUNDLED_COMMANDS_DIR="$SPECS_AI_HOME/bundled-commands"
 TEMPLATES_DIR="$SPECS_AI_HOME/templates"
 GITIGNORE_RENDER="$SPECS_AI_HOME/lib/_internal/gitignore-render.py"
 AGENTS_MD_RENDER="$SPECS_AI_HOME/lib/_internal/agents-md-render.py"
@@ -118,18 +119,9 @@ echo "  force:   $([ $FORCE -eq 1 ] && echo "yes" || echo "no")"
 echo ""
 
 # 1. Create directories
-mkdir -p "$SKILLS_DIR" "$AGENTS_D_DIR"
+mkdir -p "$SKILLS_DIR" "$COMMANDS_DIR"
 echo "  ✓ ensure $AI_SPECS_DIR/skills/"
-echo "  ✓ ensure $AI_SPECS_DIR/agents.d/"
-
-# 1b. Drop a README inside agents.d/ so users know what to put there.
-AGENTS_D_README="$AGENTS_D_DIR/README.md"
-if [[ -f "$AGENTS_D_README" && $FORCE -eq 0 ]]; then
-    echo "  ✓ keep   ai-specs/agents.d/README.md"
-else
-    cp "$TEMPLATES_DIR/agents.d-readme.md" "$AGENTS_D_README"
-    echo "  ✓ wrote  ai-specs/agents.d/README.md"
-fi
+echo "  ✓ ensure $AI_SPECS_DIR/commands/"
 
 # 2. Copy bundled skills
 for skill in skill-creator skill-sync; do
@@ -147,6 +139,21 @@ for skill in skill-creator skill-sync; do
         echo "  ✓ copy   skills/$skill"
     fi
 done
+
+# 2b. Copy bundled commands (same pattern as skills: idempotent, --force overwrites)
+if [[ -d "$BUNDLED_COMMANDS_DIR" ]]; then
+    for src in "$BUNDLED_COMMANDS_DIR"/*.md; do
+        [[ -f "$src" ]] || continue
+        base="$(basename "$src")"
+        dst="$COMMANDS_DIR/$base"
+        if [[ -f "$dst" && $FORCE -eq 0 ]]; then
+            echo "  ✓ keep   commands/$base (use --force to overwrite)"
+        else
+            cp "$src" "$dst"
+            echo "  ✓ copy   commands/$base"
+        fi
+    done
+fi
 
 # 3. Render ai-specs.toml from template
 if [[ -f "$TOML_PATH" && $FORCE -eq 0 ]]; then
