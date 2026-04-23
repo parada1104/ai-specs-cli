@@ -9,21 +9,14 @@ For each entry:
   - replace the upstream YAML frontmatter with a standardized block
     (preserves the upstream body verbatim)
 
-[[deps]] schema:
-  id                   (required) folder name under skills/
-  source               (required) git URL (anything `git clone` accepts)
-  path                 (optional) relative dir inside the repo where SKILL.md lives
-  scope                (optional) list[str] for metadata.scope (default ["root"])
-  auto_invoke          (optional) list[str] action phrases for AGENTS.md
-  license              (optional) SPDX id (default: "Unknown")
-  vendor_attribution   (optional) upstream author/org (cited in description)
-
-Bundled / local skills under skills/ are left untouched — only the directories
-matching declared dep ids are wiped and re-populated.
+Root sync remains the ONLY place that vendors external skills. Multi-target
+fan-out mirrors the already-vendored root ai-specs/skills tree into subrepos.
 
 Usage:
   vendor-skills.py <project_root>
 """
+
+from __future__ import annotations
 
 import shutil
 import subprocess
@@ -42,26 +35,20 @@ def fail(msg: str) -> None:
 
 
 def strip_frontmatter(text: str) -> tuple[str, str]:
-    """Return (frontmatter_block, body). Frontmatter is content between the
-    first two `---` lines. If no frontmatter, returns ("", text)."""
     if not text.startswith("---"):
         return "", text
     rest = text[3:]
-    # Match the closing ---. Tolerate both `\n---` and `\n---\n`.
     end = rest.find("\n---")
     if end < 0:
         return "", text
     fm = rest[:end].lstrip("\n")
     after = rest[end + 4 :]
-    # Drop the newline immediately after the closing fence, if any.
     if after.startswith("\n"):
         after = after[1:]
     return fm, after
 
 
 def extract_description(fm: str) -> str:
-    """Pull `description:` from a YAML frontmatter block. Supports inline and
-    block-scalar (`>` / `|`) forms. Hand-rolled so we don't depend on PyYAML."""
     lines = fm.splitlines()
     i = 0
     while i < len(lines):
@@ -77,7 +64,6 @@ def extract_description(fm: str) -> str:
                 if not nxt.strip():
                     j += 1
                     continue
-                # Top-level key terminates the block scalar.
                 if nxt and not nxt[0].isspace():
                     break
                 buf.append(nxt.strip())
@@ -123,7 +109,16 @@ def clone(source: str, dest: Path) -> None:
     )
 
 
-def vendor_one(dep: dict, project_root: Path) -> None:
+def load_deps(project_root: Path) -> list[dict]:
+    toml_path = project_root / "ai-specs" / "ai-specs.toml"
+    if not toml_path.is_file():
+        fail(f"{toml_path} not found")
+    with toml_path.open("rb") as f:
+        data = tomllib.load(f)
+    return data.get("deps", []) or []
+
+
+def sync_dep_target(dep: dict, project_root: Path) -> None:
     dep_id = dep.get("id")
     source = dep.get("source")
     if not dep_id or not source:
@@ -160,29 +155,26 @@ def vendor_one(dep: dict, project_root: Path) -> None:
                 shutil.copytree(a_src, target_dir / ancillary, dirs_exist_ok=False)
 
 
+def sync_vendored_skills(project_root: Path, deps: list[dict]) -> int:
+    if not deps:
+        print("  (no [[deps]] declared — nothing to vendor)")
+        return 0
+
+    for dep in deps:
+        sync_dep_target(dep, project_root)
+
+    print(f"  ✓ vendored {len(deps)} dep(s)")
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} <project_root>", file=sys.stderr)
         return 2
 
     project_root = Path(sys.argv[1]).resolve()
-    toml_path = project_root / "ai-specs" / "ai-specs.toml"
-    if not toml_path.is_file():
-        fail(f"{toml_path} not found")
-
-    with toml_path.open("rb") as f:
-        data = tomllib.load(f)
-    deps = data.get("deps", []) or []
-
-    if not deps:
-        print("  (no [[deps]] declared — nothing to vendor)")
-        return 0
-
-    for dep in deps:
-        vendor_one(dep, project_root)
-
-    print(f"  ✓ vendored {len(deps)} dep(s)")
-    return 0
+    deps = load_deps(project_root)
+    return sync_vendored_skills(project_root, deps)
 
 
 if __name__ == "__main__":

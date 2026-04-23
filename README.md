@@ -36,12 +36,13 @@ Requirements: `bash`, `git`, `python3` (3.11+ for `tomllib`).
 cd my-project
 ai-specs init               # scaffolds ai-specs/ + AGENTS.md + .gitignore (idempotent)
 # edit ai-specs/ai-specs.toml — set [agents].enabled, add [[deps]], add [mcp.*]
-ai-specs sync               # vendor deps + regen AGENTS.md + fan out per agent
+ai-specs sync               # vendor deps + regen AGENTS.md + fan out root + declared subrepos
 ```
 
 That's it — `.claude/`, `.cursor/`, `.opencode/`, `CLAUDE.md`, `.mcp.json`, etc.
 are now generated from your manifest. Re-run `ai-specs sync` whenever the
-manifest changes.
+manifest changes. If `project.subrepos` is declared, the root sync also mirrors
+local derived artifacts into each subrepo so agents work from either location.
 
 ## What gets created in your project
 
@@ -72,8 +73,8 @@ my-project/
 | Command | Description |
 |---------|-------------|
 | `ai-specs init [path] [--name N] [--force]` | Bootstrap `ai-specs/` (idempotent; never touches your `ai-specs.toml`). `--force` re-copies bundled skills/commands & regenerates AGENTS.md |
-| `ai-specs sync [path]` | Refresh bundled, vendor `[[deps]]`, regen AGENTS.md auto-invoke, fan out per agent |
-| `ai-specs sync-agent [path] [--all|--<agent>]` | Fan out per-agent only (no vendoring/regen) |
+| `ai-specs sync [path]` | Resolve `[root, ...project.subrepos]`, refresh bundled, vendor `[[deps]]` once, regen AGENTS.md auto-invoke, then fan out local derived artifacts per target + per agent |
+| `ai-specs sync-agent [path] [--all|--<agent>]` | Fan out per-agent only for the current target (no vendoring/regen) |
 | `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI — keeps your edits, drops `.new` sidecars for files you customized |
 | `ai-specs add-dep <git-url> [path]` | Register a vendored skill in `[[deps]]` and `sync` |
 | `ai-specs version` | Print CLI version |
@@ -111,6 +112,26 @@ config via a **merge-safe** strategy: `ai-specs` owns the MCP key (e.g.
 
 The `Auto-invoke` table in `AGENTS.md` is regenerated automatically by
 `skill-sync` whenever you `ai-specs sync` or run `/skills-as-rules`.
+
+## Root + subrepo sync
+
+`project.subrepos` is now an active sync input. When declared, `ai-specs sync`
+resolves targets as `[root, ...project.subrepos]`, validates each path before
+writing anything, vendors external skills ONCE in the root workspace, and then
+mirrors a local derived artifact set into every target:
+
+- `AGENTS.md`
+- `ai-specs/.gitignore`
+- `ai-specs/skills/**`
+- `ai-specs/commands/**`
+- per-agent configs/symlinks such as `CLAUDE.md`, `.mcp.json`, `.cursor/mcp.json`, `opencode.json`
+
+Versioning policy: these subrepo files are derived outputs from the latest root
+sync run. Do not hand-edit them, and do not add a subrepo `ai-specs.toml` in V1.
+
+Failure semantics: `.gitmodules` is advisory-only in V1. If a declared subrepo
+path is invalid or a target cannot be updated, `sync` stops on the FIRST failure
+with explicit target reporting. Previous writes are not rolled back.
 
 ## Adding skills
 
@@ -199,8 +220,8 @@ ai-specs-cli/
 ├── bin/ai-specs                ← global entrypoint (dispatcher)
 ├── lib/
 │   ├── init.sh                 ← bootstrap a project
-│   ├── sync.sh                 ← vendor + regen + fan out
-│   ├── sync-agent.sh           ← per-agent fan-out
+│   ├── sync.sh                 ← resolve targets + root refresh + target fan-out
+│   ├── sync-agent.sh           ← render one target from the root manifest
 │   ├── add-dep.sh              ← register vendored skill
 │   ├── version.sh
 │   └── _internal/

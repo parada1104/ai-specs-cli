@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # sync-agent.sh — fan out skills + MCP + slash commands to per-agent locations.
 #
-# For every selected agent:
-#   - skills_dir         (Claude/Gemini): symlink → <path>/ai-specs/skills
-#   - instructions_path  (Claude/Gemini/Copilot): symlink AGENTS.md → CLAUDE.md / etc.
-#   - mcp_config_path    (Claude/Cursor/OpenCode/Codex/Gemini): merged write via mcp-render.py
-#   - commands_dir       (Claude/Cursor/OpenCode): copy ai-specs/commands/*.md
-#
-# Native agents (Cursor/OpenCode/Codex/Copilot) read AGENTS.md directly — no
-# instructions symlink, no skills_dir.
-#
 # Usage:
-#   ai-specs sync-agent [path] (--all | --claude | --cursor | --opencode | --codex | --copilot | --gemini)...
+#   ai-specs sync-agent [path] [--all | --<agent>...]
+#   ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...]
+#
+# In multi-target mode the root manifest remains the source of truth, while the
+# target receives a fully local derived artifact set:
+#   - AGENTS.md
+#   - ai-specs/.gitignore
+#   - ai-specs/skills/**
+#   - ai-specs/commands/**
+#   - per-agent configs/symlinks (CLAUDE.md, .cursor/mcp.json, opencode.json, ...)
 
 set -euo pipefail
 
@@ -23,19 +23,23 @@ source "$AI_SPECS_HOME/lib/_internal/platform.sh"
 
 TOML_READ="$AI_SPECS_HOME/lib/_internal/toml-read.py"
 MCP_RENDER="$AI_SPECS_HOME/lib/_internal/mcp-render.py"
-
-ALL_AGENTS=(claude cursor opencode codex copilot gemini)
+AGENTS_MD_RENDER="$AI_SPECS_HOME/lib/_internal/agents-md-render.py"
+GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
+TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 
 usage() {
     cat <<'EOF'
 Usage: ai-specs sync-agent [path] [--all | --<agent>...]
+       ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...]
 
-Render per-agent configs (skills + MCP + instructions) from ai-specs.toml.
+Render per-agent configs from the root manifest.
 
 Arguments:
-  path             Project root (default: current directory)
+  path             Target path when using the legacy single-target form
 
-Selectors (pick one or many):
+Flags:
+  --source-root    Root project that owns ai-specs/ai-specs.toml (default: target)
+  --target         Target directory receiving derived local artifacts
   --all            All agents listed under [agents].enabled in ai-specs.toml
   --claude         Claude Code  (CLAUDE.md, .claude/skills, .mcp.json)
   --cursor         Cursor       (.cursor/mcp.json)
@@ -49,16 +53,21 @@ EOF
 }
 
 TARGET_PATH=""
+SOURCE_ROOT=""
 SELECT_ALL=0
+EXPLICIT_SOURCE_ROOT=0
+EXPLICIT_TARGET=0
 declare -a SELECTED_AGENTS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --all)        SELECT_ALL=1; shift ;;
+        --source-root) SOURCE_ROOT="${2:-}"; EXPLICIT_SOURCE_ROOT=1; shift 2 ;;
+        --target)      TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
+        --all)         SELECT_ALL=1; shift ;;
         --claude|--cursor|--opencode|--codex|--copilot|--gemini)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
-        -h|--help)    usage; exit 0 ;;
-        --)           shift; break ;;
+        -h|--help)     usage; exit 0 ;;
+        --)            shift; break ;;
         -*)
             echo "ERROR: unknown flag: $1" >&2
             echo "Run 'ai-specs sync-agent --help' for usage." >&2
@@ -78,49 +87,76 @@ done
 
 [[ -z "$TARGET_PATH" ]] && TARGET_PATH="$(pwd)"
 TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"
+[[ -z "$SOURCE_ROOT" ]] && SOURCE_ROOT="$TARGET_PATH"
+SOURCE_ROOT="$(cd "$SOURCE_ROOT" && pwd)"
 
-TOML_PATH="$TARGET_PATH/ai-specs/ai-specs.toml"
-AI_SKILLS="$TARGET_PATH/ai-specs/skills"
-AI_COMMANDS="$TARGET_PATH/ai-specs/commands"
-AGENTS_MD="$TARGET_PATH/AGENTS.md"
+if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
+    PLAN_JSON="$(python3 "$TARGET_RESOLVE_PY" "$TARGET_PATH")" || {
+        echo "ERROR: target resolution failed before any writes." >&2
+        exit 1
+    }
+
+    ROOT_PATH="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["root"])' <<<"$PLAN_JSON")"
+    RESOLVED_TARGETS=()
+    while IFS= read -r target; do
+        [[ -n "$target" ]] && RESOLVED_TARGETS+=("$target")
+    done < <(python3 -c 'import json,sys; [print(t["path"]) for t in json.loads(sys.stdin.read())["targets"]]' <<<"$PLAN_JSON")
+
+    if [[ ${#RESOLVED_TARGETS[@]} -gt 1 ]]; then
+        echo ""
+        echo "ai-specs sync-agent"
+        echo "  source root: $ROOT_PATH"
+        echo "  targets:     ${RESOLVED_TARGETS[*]}"
+        echo "  mode:        public root fan-out"
+        echo ""
+
+        FORWARD_ARGS=()
+        if [[ $SELECT_ALL -eq 1 ]]; then
+            FORWARD_ARGS+=("--all")
+        elif [[ ${#SELECTED_AGENTS[@]} -gt 0 ]]; then
+            for agent in "${SELECTED_AGENTS[@]}"; do
+                FORWARD_ARGS+=("--$agent")
+            done
+        fi
+
+        for resolved_target in "${RESOLVED_TARGETS[@]}"; do
+            if ! bash "$0" --source-root "$ROOT_PATH" --target "$resolved_target" "${FORWARD_ARGS[@]}"; then
+                echo "ERROR: sync-agent failed for target: $resolved_target" >&2
+                echo "       Stopped on first failure; no overall success reported." >&2
+                exit 1
+            fi
+        done
+        exit 0
+    fi
+fi
+
+TOML_PATH="$SOURCE_ROOT/ai-specs/ai-specs.toml"
+SOURCE_AI_SPECS="$SOURCE_ROOT/ai-specs"
+SOURCE_AI_SKILLS="$SOURCE_AI_SPECS/skills"
+SOURCE_AI_COMMANDS="$SOURCE_AI_SPECS/commands"
+TARGET_AI_SPECS="$TARGET_PATH/ai-specs"
+TARGET_AI_SKILLS="$TARGET_AI_SPECS/skills"
+TARGET_AI_COMMANDS="$TARGET_AI_SPECS/commands"
+TARGET_AGENTS_MD="$TARGET_PATH/AGENTS.md"
 
 if [[ ! -f "$TOML_PATH" ]]; then
-    echo "ERROR: $TOML_PATH not found. Run 'ai-specs init $TARGET_PATH' first." >&2
-    exit 1
-fi
-if [[ ! -f "$AGENTS_MD" ]]; then
-    echo "ERROR: $AGENTS_MD not found. Run 'ai-specs init $TARGET_PATH' first." >&2
+    echo "ERROR: $TOML_PATH not found. Run 'ai-specs init $SOURCE_ROOT' first." >&2
     exit 1
 fi
 
-# Resolve enabled agents from ai-specs.toml
-ENABLED_JSON="$(python3 "$TOML_READ" "$TOML_PATH" agents)"
-mapfile -t ENABLED_AGENTS < <(python3 -c "import json,sys; [print(a) for a in json.loads(sys.argv[1])]" "$ENABLED_JSON")
+mirror_directory() {
+    local src="$1"
+    local dest="$2"
+    rm -rf "$dest"
+    mkdir -p "$(dirname "$dest")"
+    if [[ -d "$src" ]]; then
+        cp -R "$src" "$dest"
+    else
+        mkdir -p "$dest"
+    fi
+}
 
-# Pick targets
-declare -a TARGETS=()
-if [[ $SELECT_ALL -eq 1 || ${#SELECTED_AGENTS[@]} -eq 0 ]]; then
-    TARGETS=("${ENABLED_AGENTS[@]}")
-else
-    TARGETS=("${SELECTED_AGENTS[@]}")
-fi
-
-if [[ ${#TARGETS[@]} -eq 0 ]]; then
-    echo "WARNING: no agents to sync. Set [agents].enabled in ai-specs.toml." >&2
-    exit 0
-fi
-
-# Detect MCP presence (so we can skip mcp-render for empty cases without noise)
-MCP_COUNT="$(python3 - "$TOML_PATH" <<'PY'
-import sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    print(len(tomllib.load(f).get("mcp", {}) or {}))
-PY
-)"
-
-# Helpers
 make_relative_symlink() {
-    # ln -s <target_relative_to_link_dir> <link_path>
     local target_abs="$1"
     local link_path="$2"
     local link_dir
@@ -147,22 +183,73 @@ make_relative_symlink() {
     echo "    ✓ symlink created $link_path → $rel"
 }
 
+ensure_target_workspace() {
+    if [[ "$TARGET_PATH" == "$SOURCE_ROOT" ]]; then
+        [[ -f "$TARGET_AGENTS_MD" ]] || {
+            echo "ERROR: $TARGET_AGENTS_MD not found. Run 'ai-specs init $TARGET_PATH' first." >&2
+            exit 1
+        }
+        return 0
+    fi
+
+    mkdir -p "$TARGET_AI_SPECS"
+    python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
+    mirror_directory "$SOURCE_AI_SKILLS" "$TARGET_AI_SKILLS"
+    mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
+
+    python3 "$AGENTS_MD_RENDER" "$SOURCE_ROOT" "$TARGET_AGENTS_MD" --skills-dir "$TARGET_AI_SKILLS"
+
+    local target_skill_sync="$TARGET_AI_SKILLS/skill-sync/assets/sync.sh"
+    if [[ -f "$target_skill_sync" ]]; then
+        (cd "$TARGET_PATH" && bash "$target_skill_sync")
+    fi
+}
+
+# Resolve enabled agents from ai-specs.toml
+ENABLED_JSON="$(python3 "$TOML_READ" "$TOML_PATH" agents)"
+ENABLED_AGENTS=()
+while IFS= read -r agent; do
+    [[ -n "$agent" ]] && ENABLED_AGENTS+=("$agent")
+done < <(python3 -c "import json,sys; [print(a) for a in json.loads(sys.argv[1])]" "$ENABLED_JSON")
+
+# Pick targets
+declare -a TARGETS=()
+if [[ $SELECT_ALL -eq 1 || ${#SELECTED_AGENTS[@]} -eq 0 ]]; then
+    TARGETS=("${ENABLED_AGENTS[@]}")
+else
+    TARGETS=("${SELECTED_AGENTS[@]}")
+fi
+
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+    echo "WARNING: no agents to sync. Set [agents].enabled in ai-specs.toml." >&2
+    exit 0
+fi
+
+MCP_COUNT="$(python3 - "$TOML_PATH" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    print(len(tomllib.load(f).get("mcp", {}) or {}))
+PY
+)"
+
 echo ""
 echo "ai-specs sync-agent"
-echo "  target:  $TARGET_PATH"
-echo "  agents:  ${TARGETS[*]}"
-echo "  enabled: ${ENABLED_AGENTS[*]:-(none)}"
-echo "  mcp:     $MCP_COUNT server(s)"
+echo "  source root: $SOURCE_ROOT"
+echo "  target:      $TARGET_PATH"
+echo "  agents:      ${TARGETS[*]}"
+echo "  enabled:     ${ENABLED_AGENTS[*]:-(none)}"
+echo "  mcp:         $MCP_COUNT server(s)"
 echo ""
 
+echo "  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs"
+ensure_target_workspace
+
 for agent in "${TARGETS[@]}"; do
-    # Validate agent
     if ! platform_get "$agent" native >/dev/null 2>&1; then
         echo "  ✗ unknown agent: $agent" >&2
         continue
     fi
 
-    # Warn if not in enabled list (when explicitly selected)
     is_enabled=0
     for e in "${ENABLED_AGENTS[@]}"; do
         [[ "$e" == "$agent" ]] && is_enabled=1 && break
@@ -173,19 +260,16 @@ for agent in "${TARGETS[@]}"; do
 
     echo "  ▸ $agent"
 
-    # 1. instructions_path → symlink AGENTS.md → CLAUDE.md / GEMINI.md / etc.
     instr="$(platform_get "$agent" instructions_path)"
     if [[ -n "$instr" ]]; then
-        make_relative_symlink "$AGENTS_MD" "$TARGET_PATH/$instr"
+        make_relative_symlink "$TARGET_AGENTS_MD" "$TARGET_PATH/$instr"
     fi
 
-    # 2. skills_dir → symlink → ai-specs/skills
     skills="$(platform_get "$agent" skills_dir)"
     if [[ -n "$skills" ]]; then
-        make_relative_symlink "$AI_SKILLS" "$TARGET_PATH/$skills"
+        make_relative_symlink "$TARGET_AI_SKILLS" "$TARGET_PATH/$skills"
     fi
 
-    # 3. MCP rendering (skip if no servers or no native MCP support)
     mcp_path="$(platform_get "$agent" mcp_config_path)"
     mcp_key="$(platform_get "$agent" mcp_key)"
     if [[ -n "$mcp_path" && -n "$mcp_key" ]]; then
@@ -197,15 +281,12 @@ for agent in "${TARGETS[@]}"; do
         fi
     fi
 
-    # 4. Slash commands — copy ai-specs/commands/*.md into the agent's
-    # commands_dir (idempotent, overwrite). Source of truth is the project,
-    # not the CLI. Skip agents without slash-command UX.
     cmd_dir="$(platform_get "$agent" commands_dir)"
-    if [[ -n "$cmd_dir" && -d "$AI_COMMANDS" ]]; then
+    if [[ -n "$cmd_dir" && -d "$TARGET_AI_COMMANDS" ]]; then
         dest="$TARGET_PATH/$cmd_dir"
         mkdir -p "$dest"
         copied=0
-        for src in "$AI_COMMANDS"/*.md; do
+        for src in "$TARGET_AI_COMMANDS"/*.md; do
             [[ -f "$src" ]] || continue
             cp "$src" "$dest/$(basename "$src")"
             copied=$((copied + 1))

@@ -1,0 +1,6 @@
+[project]
+name = "fixture-multi"
+subrepos = ["packages/a", "packages/a", "./packages/b", ""]
+
+[agents]
+enabled = ["claude"]

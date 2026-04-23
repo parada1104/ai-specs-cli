@@ -23,7 +23,7 @@
 #   ├── AGENTS.md                       (always regenerated from ai-specs/* by `sync`)
 #   ├── .gitignore                      (agent-block appended; idempotent via marker)
 #   └── ai-specs/
-#       ├── ai-specs.toml               (template if missing)
+#       ├── ai-specs.toml               (template if missing; source of truth only at root)
 #       ├── .gitignore                  (always rendered from ai-specs.toml)
 #       ├── skills/
 #       │   ├── skill-creator/          (bundled — committable)

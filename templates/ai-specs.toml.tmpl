@@ -6,7 +6,7 @@
 #
 # Comandos (CLI global, publicado hoy desde https://github.com/parada1104/ai-specs-cli):
 #   ai-specs init                # bootstrap el directorio ai-specs/ (idempotente)
-#   ai-specs sync                # vendoreá deps + regenerá AGENTS.md + sync-agent --all
+#   ai-specs sync                # vendoreá deps + regenerá AGENTS.md + fan-out root + subrepos
 #   ai-specs sync-agent --all    # distribuí skills + MCP a cada agente habilitado
 #   /skills-as-rules             # desde tu agente: formalizá una convención como skill local
 #   ai-specs add-dep <url>       # agregá una skill vendoreada a [[deps]]
@@ -14,6 +14,7 @@
 [project]
 name = "{{PROJECT_NAME}}"
 # Lista de subrepos relativos al root. Vacío = monorepo plano.
+# V1: se usan solo como targets derivados de sync; NO crean manifests locales.
 subrepos = []
 
 [agents]
