@@ -13,10 +13,58 @@ Sections:
 Output: JSON to stdout. Exit 1 on missing file or unknown section.
 """
 
+from __future__ import annotations
+
 import json
 import sys
 import tomllib
 from pathlib import Path
+from typing import Any
+
+
+def load_toml(toml_path: str | Path) -> dict[str, Any]:
+    path = Path(toml_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"{path} not found")
+    with path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def _normalize_subrepos(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        value = item.strip()
+        if value:
+            out.append(value)
+    return out
+
+
+def read_project(data: dict[str, Any]) -> dict[str, Any]:
+    project = data.get("project", {}) or {}
+    if not isinstance(project, dict):
+        project = {}
+    return {
+        **project,
+        "name": str(project.get("name") or ""),
+        "subrepos": _normalize_subrepos(project.get("subrepos", [])),
+    }
+
+
+def read_section(data: dict[str, Any], section: str) -> Any:
+    if section == "project":
+        return read_project(data)
+    if section == "agents":
+        return data.get("agents", {}).get("enabled", [])
+    if section == "deps":
+        return data.get("deps", [])
+    if section == "mcp":
+        return data.get("mcp", {})
+    raise KeyError(section)
 
 
 def main() -> int:
@@ -27,25 +75,17 @@ def main() -> int:
     toml_path = Path(sys.argv[1])
     section = sys.argv[2]
 
-    if not toml_path.is_file():
-        print(f"error: {toml_path} not found", file=sys.stderr)
+    try:
+        data = load_toml(toml_path)
+        payload = read_section(data, section)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
-
-    with toml_path.open("rb") as f:
-        data = tomllib.load(f)
-
-    if section == "project":
-        print(json.dumps(data.get("project", {})))
-    elif section == "agents":
-        print(json.dumps(data.get("agents", {}).get("enabled", [])))
-    elif section == "deps":
-        print(json.dumps(data.get("deps", [])))
-    elif section == "mcp":
-        print(json.dumps(data.get("mcp", {})))
-    else:
+    except KeyError:
         print(f"error: unknown section '{section}'", file=sys.stderr)
         return 1
 
+    print(json.dumps(payload))
     return 0
 
 
