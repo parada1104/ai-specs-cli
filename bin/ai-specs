@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# ai-specs — global CLI for the ai-specs standard.
+#
+# Subcommands:
+#   init              [path]                 Bootstrap ai-specs/ in a project (idempotent)
+#   sync              [path]                 Reconcile manifest → refresh-bundled + vendor + AGENTS.md + agents
+#   sync-agent        [path] [--all|--<a>]   Fan out per-agent configs only
+#   refresh-bundled   [path]                 Refresh bundled skills/commands from CLI (lock-aware)
+#   add-dep           <url> [path]           Register a vendored skill ([[deps]]) and sync
+#   version                                  Print CLI version
+#   help                                     Show this help
+
+set -e
+
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+    DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+BIN_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+AI_SPECS_HOME="$(cd "$BIN_DIR/.." && pwd)"
+export AI_SPECS_HOME
+
+LIB_DIR="$AI_SPECS_HOME/lib"
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+    init)             bash "$LIB_DIR/init.sh" "$@" ;;
+    sync)             bash "$LIB_DIR/sync.sh" "$@" ;;
+    sync-agent)       bash "$LIB_DIR/sync-agent.sh" "$@" ;;
+    refresh-bundled)  bash "$LIB_DIR/refresh-bundled.sh" "$@" ;;
+    add-dep)          bash "$LIB_DIR/add-dep.sh" "$@" ;;
+    version|-v|--version) bash "$LIB_DIR/version.sh" ;;
+    help|-h|--help)
+        cat <<EOF
+ai-specs — declarative per-project AI agent config
+
+Usage:
+  ai-specs <command> [args]
+
+Commands:
+  init             [path]                       Bootstrap ai-specs/ in a project
+  sync             [path]                       Refresh bundled + vendor deps + regen AGENTS.md + sync agents
+  sync-agent       [path] [--all | --<agent>]   Fan out per-agent configs only
+  refresh-bundled  [path]                       Update bundled skills/commands (keeps your edits, drops .new sidecars)
+  add-dep          <url>  [path]                Register a vendored skill (then sync)
+  version                                       Print CLI version
+  help                                          Show this help
+
+Path defaults to current directory. Run any subcommand with --help for details.
+
+Repo: https://github.com/parada1104/ai-specs-cli
+EOF
+        ;;
+    *)
+        echo "ai-specs: unknown command '$cmd'" >&2
+        echo "Run 'ai-specs help' for usage." >&2
+        exit 1 ;;
+esac

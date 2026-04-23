@@ -134,7 +134,7 @@ def vendor_one(dep: dict, project_root: Path) -> None:
 
     print(f"  ▸ {dep_id}  ←  {source}" + (f"  (path: {skill_subpath})" if skill_subpath else ""))
 
-    with tempfile.TemporaryDirectory(prefix="specs-ai-vendor-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="ai-specs-vendor-") as tmp:
         tmp_path = Path(tmp)
         clone(source, tmp_path)
 

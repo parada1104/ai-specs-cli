@@ -10,16 +10,16 @@
 #   6. Fan-out per-agent configs                            via sync-agent --all
 #
 # Usage:
-#   specs-ai sync [path]
+#   ai-specs sync [path]
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SPECS_AI_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: specs-ai sync [path]
+Usage: ai-specs sync [path]
 
 Reconcile a project's ai-specs/ with its manifest:
   - vendor [[deps]] from ai-specs.toml
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
         --)        shift; break ;;
         -*)
             echo "ERROR: unknown flag: $1" >&2
-            echo "Run 'specs-ai sync --help' for usage." >&2
+            echo "Run 'ai-specs sync --help' for usage." >&2
             exit 2
             ;;
         *)
@@ -63,25 +63,25 @@ AI_GITIGNORE="$AI_SPECS_DIR/.gitignore"
 SKILL_SYNC_DIR="$AI_SPECS_DIR/skills/skill-sync/assets"
 SYNC_SH="$SKILL_SYNC_DIR/sync.sh"
 
-VENDOR_SKILLS_PY="$SPECS_AI_HOME/lib/_internal/vendor-skills.py"
-GITIGNORE_RENDER="$SPECS_AI_HOME/lib/_internal/gitignore-render.py"
-AGENTS_MD_RENDER="$SPECS_AI_HOME/lib/_internal/agents-md-render.py"
-REFRESH_BUNDLED_PY="$SPECS_AI_HOME/lib/_internal/refresh-bundled.py"
-SYNC_AGENT_SH="$SPECS_AI_HOME/lib/sync-agent.sh"
+VENDOR_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/vendor-skills.py"
+GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
+AGENTS_MD_RENDER="$AI_SPECS_HOME/lib/_internal/agents-md-render.py"
+REFRESH_BUNDLED_PY="$AI_SPECS_HOME/lib/_internal/refresh-bundled.py"
+SYNC_AGENT_SH="$AI_SPECS_HOME/lib/sync-agent.sh"
 
 if [[ ! -f "$TOML_PATH" ]]; then
     echo "ERROR: $TOML_PATH not found." >&2
-    echo "       Run 'specs-ai init $TARGET_PATH' first." >&2
+    echo "       Run 'ai-specs init $TARGET_PATH' first." >&2
     exit 1
 fi
 if [[ ! -d "$SKILL_SYNC_DIR" ]]; then
     echo "ERROR: $SKILL_SYNC_DIR not found." >&2
-    echo "       Run 'specs-ai init --force $TARGET_PATH' to restore bundled skills." >&2
+    echo "       Run 'ai-specs init --force $TARGET_PATH' to restore bundled skills." >&2
     exit 1
 fi
 
 echo ""
-echo "specs-ai sync"
+echo "ai-specs sync"
 echo "  target: $TARGET_PATH"
 echo ""
 
@@ -93,7 +93,7 @@ python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$AI_GITIGNORE"
 #    customized ones). Runs before vendor so any upstream skill-sync upgrade is
 #    active when we regen the AGENTS.md auto-invoke table below.
 echo "▸ refresh-bundled"
-python3 "$REFRESH_BUNDLED_PY" "$TARGET_PATH" "$SPECS_AI_HOME"
+python3 "$REFRESH_BUNDLED_PY" "$TARGET_PATH" "$AI_SPECS_HOME"
 
 # 3. Vendor external skills
 echo "▸ vendor-skills"
@@ -112,4 +112,4 @@ echo "▸ sync-agent --all"
 bash "$SYNC_AGENT_SH" "$TARGET_PATH" --all
 
 echo ""
-echo "✓ specs-ai sync complete"
+echo "✓ ai-specs sync complete"

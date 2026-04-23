@@ -12,7 +12,7 @@
 #   ai-specs add-dep <url>       # agregá una skill vendoreada a [[deps]]
 
 [project]
-name = "{{PROJECT_NAME}}"
+name = "ai-specs"
 # Lista de subrepos relativos al root. Vacío = monorepo plano.
 subrepos = []
 

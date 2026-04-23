@@ -2,24 +2,24 @@
 # refresh-bundled.sh — refresh bundled skills & commands, respecting user edits.
 #
 # Usage:
-#   specs-ai refresh-bundled [path]
+#   ai-specs refresh-bundled [path]
 #
 # Behavior (per bundled file):
 #   - Untouched by user → auto-update to the latest CLI version
 #   - Customized by user → drop the latest version as <name>.new alongside
 #   - Deleted by user    → respected (removed from lock, not re-installed)
 #
-# A baseline of SHA-256 hashes is kept at <path>/ai-specs/.specs-ai.lock.
+# A baseline of SHA-256 hashes is kept at <path>/ai-specs/.ai-specs.lock.
 # Commit it with the rest of the project.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SPECS_AI_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: specs-ai refresh-bundled [path]
+Usage: ai-specs refresh-bundled [path]
 
 Refresh bundled skills and commands from the CLI, preserving user edits.
 
@@ -31,8 +31,8 @@ Flags:
   -h, --help
 
 Examples:
-  specs-ai refresh-bundled
-  specs-ai refresh-bundled ~/code/my-app
+  ai-specs refresh-bundled
+  ai-specs refresh-bundled ~/code/my-app
 EOF
 }
 
@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
         --)         shift; break ;;
         -*)
             echo "ERROR: unknown flag: $1" >&2
-            echo "Run 'specs-ai refresh-bundled --help' for usage." >&2
+            echo "Run 'ai-specs refresh-bundled --help' for usage." >&2
             exit 2
             ;;
         *)
@@ -67,10 +67,10 @@ if [[ ! -d "$TARGET_PATH" ]]; then
 fi
 TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"
 
-REFRESH_PY="$SPECS_AI_HOME/lib/_internal/refresh-bundled.py"
+REFRESH_PY="$AI_SPECS_HOME/lib/_internal/refresh-bundled.py"
 
 echo ""
-echo "specs-ai refresh-bundled"
+echo "ai-specs refresh-bundled"
 echo "  target: $TARGET_PATH"
 echo ""
-python3 "$REFRESH_PY" "$TARGET_PATH" "$SPECS_AI_HOME" $INIT_FLAG
+python3 "$REFRESH_PY" "$TARGET_PATH" "$AI_SPECS_HOME" $INIT_FLAG

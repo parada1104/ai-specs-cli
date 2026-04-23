@@ -3,12 +3,16 @@ node_modules/
 *.log
 .idea/
 .vscode/
+# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---
 .claude/
 .cursor/
 .opencode/
 opencode.json
 .codex/
 .gemini/
+.github/copilot-instructions.md
 CLAUDE.md
+**/CLAUDE.md
 GEMINI.md
 .mcp.json
+# --- end ai-specs ---

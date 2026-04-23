@@ -1,10 +1,10 @@
-# specs-ai
+# ai-specs
 
 One declarative manifest per project — fan out to Claude, Cursor, OpenCode, Codex, Copilot, and Gemini.
 
-`specs-ai` is a per-project standard for managing AI agent configuration: skills,
+`ai-specs` is a per-project standard for managing AI agent configuration: skills,
 MCP servers, and per-agent instruction files. Each project owns its manifest at
-`ai-specs/ai-specs.toml`; the global `specs-ai` CLI distributes that manifest
+`ai-specs/ai-specs.toml`; the global `ai-specs` CLI distributes that manifest
 into every enabled agent's native format.
 
 Inspired by [`charliesbot/chai`](https://github.com/charliesbot/chai) (global
@@ -15,18 +15,18 @@ committable and shareable with a team.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/parada1104/specs-ai-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/parada1104/ai-specs-cli/main/install.sh | bash
 ```
 
 Or from a clone:
 
 ```bash
-git clone https://github.com/parada1104/specs-ai-cli ~/.specs-ai
-bash ~/.specs-ai/install.sh
+git clone https://github.com/parada1104/ai-specs-cli ~/.ai-specs
+bash ~/.ai-specs/install.sh
 ```
 
-This clones the repo to `~/.specs-ai` and symlinks `bin/specs-ai` into
-`~/.local/bin`. Override with `SPECS_AI_HOME` and `INSTALL_BIN`.
+This clones the repo to `~/.ai-specs` and symlinks `bin/ai-specs` into
+`~/.local/bin`. Override with `AI_SPECS_HOME` and `INSTALL_BIN`. (`SPECS_AI_HOME` sigue funcionando como compatibilidad temporal).
 
 Requirements: `bash`, `git`, `python3` (3.11+ for `tomllib`).
 
@@ -34,13 +34,13 @@ Requirements: `bash`, `git`, `python3` (3.11+ for `tomllib`).
 
 ```bash
 cd my-project
-specs-ai init               # scaffolds ai-specs/ + AGENTS.md + .gitignore (idempotent)
+ai-specs init               # scaffolds ai-specs/ + AGENTS.md + .gitignore (idempotent)
 # edit ai-specs/ai-specs.toml — set [agents].enabled, add [[deps]], add [mcp.*]
-specs-ai sync               # vendor deps + regen AGENTS.md + fan out per agent
+ai-specs sync               # vendor deps + regen AGENTS.md + fan out per agent
 ```
 
 That's it — `.claude/`, `.cursor/`, `.opencode/`, `CLAUDE.md`, `.mcp.json`, etc.
-are now generated from your manifest. Re-run `specs-ai sync` whenever the
+are now generated from your manifest. Re-run `ai-specs sync` whenever the
 manifest changes.
 
 ## What gets created in your project
@@ -55,7 +55,7 @@ my-project/
     └── skills/
         ├── skill-creator/          ← bundled (committable; customize freely)
         ├── skill-sync/             ← bundled (committable; customize freely)
-        ├── <your-local-skill>/     ← scaffolded by `specs-ai add-skill` (committed)
+        ├── <your-local-skill>/     ← creada con `/skills-as-rules` (committed)
         └── <vendored-skill>/       ← cloned from [[deps]] (gitignored)
 ```
 
@@ -63,22 +63,21 @@ my-project/
 
 | Category   | Lives in            | Listed in toml? | Committed? | Created by             |
 |------------|---------------------|-----------------|------------|------------------------|
-| Local      | `ai-specs/skills/<name>/`   | No (autodiscovered) | Yes        | `specs-ai add-skill <name>` |
-| Bundled    | `ai-specs/skills/{skill-creator,skill-sync}/` | No | Yes (own-and-customize) | `specs-ai init` (one-time copy) |
-| Vendored   | `ai-specs/skills/<dep-id>/` | Yes (`[[deps]]`)    | No (gitignored) | `specs-ai add-dep <url>` → cloned by sync |
+| Local      | `ai-specs/skills/<name>/`   | No (autodiscovered) | Yes        | `/skills-as-rules` |
+| Bundled    | `ai-specs/skills/{skill-creator,skill-sync}/` | No | Yes (own-and-customize) | `ai-specs init` (one-time copy) |
+| Vendored   | `ai-specs/skills/<dep-id>/` | Yes (`[[deps]]`)    | No (gitignored) | `ai-specs add-dep <url>` → cloned by sync |
 
 ## CLI
 
 | Command | Description |
 |---------|-------------|
-| `specs-ai init [path] [--name N] [--force]` | Bootstrap `ai-specs/` (idempotent; never touches your `ai-specs.toml`). `--force` re-copies bundled skills/commands & regenerates AGENTS.md |
-| `specs-ai sync [path]` | Refresh bundled, vendor `[[deps]]`, regen AGENTS.md auto-invoke, fan out per agent |
-| `specs-ai sync-agent [path] [--all|--<agent>]` | Fan out per-agent only (no vendoring/regen) |
-| `specs-ai refresh-bundled [path]` | Update bundled skills/commands from the CLI — keeps your edits, drops `.new` sidecars for files you customized |
-| `specs-ai add-skill <name> [path]` | Scaffold a local skill |
-| `specs-ai add-dep <git-url> [path]` | Register a vendored skill in `[[deps]]` and `sync` |
-| `specs-ai version` | Print CLI version |
-| `specs-ai help` | Show help |
+| `ai-specs init [path] [--name N] [--force]` | Bootstrap `ai-specs/` (idempotent; never touches your `ai-specs.toml`). `--force` re-copies bundled skills/commands & regenerates AGENTS.md |
+| `ai-specs sync [path]` | Refresh bundled, vendor `[[deps]]`, regen AGENTS.md auto-invoke, fan out per agent |
+| `ai-specs sync-agent [path] [--all|--<agent>]` | Fan out per-agent only (no vendoring/regen) |
+| `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI — keeps your edits, drops `.new` sidecars for files you customized |
+| `ai-specs add-dep <git-url> [path]` | Register a vendored skill in `[[deps]]` and `sync` |
+| `ai-specs version` | Print CLI version |
+| `ai-specs help` | Show help |
 
 Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
 
@@ -87,7 +86,7 @@ Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
 ## How MCP distribution works
 
 `[mcp.*]` entries in `ai-specs.toml` are rendered into each agent's native
-config via a **merge-safe** strategy: `specs-ai` owns the MCP key (e.g.
+config via a **merge-safe** strategy: `ai-specs` owns the MCP key (e.g.
 `mcpServers`), and every other top-level key is preserved.
 
 | Agent    | Target file              | Key            | Format | Notes |
@@ -111,40 +110,41 @@ config via a **merge-safe** strategy: `specs-ai` owns the MCP key (e.g.
 | Gemini   | No (needs `GEMINI.md`)    | Yes (`.gemini/skills/<name>/SKILL.md`) | `GEMINI.md` symlink + `.gemini/skills` symlink + `.gemini/settings.json` |
 
 The `Auto-invoke` table in `AGENTS.md` is regenerated automatically by
-`skill-sync` whenever you `specs-ai sync` or `specs-ai add-skill`.
+`skill-sync` whenever you `ai-specs sync` or run `/skills-as-rules`.
 
 ## Adding skills
 
 ### Local skill (lives in your project)
 
 ```bash
-specs-ai add-skill mi-skill \
-    --description "What it does" \
-    --trigger "When the AI should load it"
+/skills-as-rules
 ```
 
-Scaffolds `ai-specs/skills/mi-skill/SKILL.md` from `skill-creator`'s template.
+This is the official workflow for local skills. The slash command runs inside
+your agent, asks one convention at a time, uses `skill-creator` to author the
+skill, and then runs `skill-sync` so `AGENTS.md` stays aligned.
+
+Result: a committed local skill at `ai-specs/skills/<name>/SKILL.md`.
 **Local skills are autodiscovered** — they are NOT listed in `ai-specs.toml`.
-Commit them with the rest of the repo.
 
 ### Vendored skill (cloned from a Git repo)
 
 ```bash
-specs-ai add-dep https://github.com/foo/superskill \
+ai-specs add-dep https://github.com/foo/superskill \
     --trigger "When doing X" \
     --license MIT
 ```
 
-Appends a `[[deps]]` block to `ai-specs.toml` and runs `specs-ai sync`, which
+Appends a `[[deps]]` block to `ai-specs.toml` and runs `ai-specs sync`, which
 clones the skill into `ai-specs/skills/<id>/`. Vendored skills are
-**gitignored** — they're restored on every clone via `specs-ai sync`.
+**gitignored** — they're restored on every clone via `ai-specs sync`.
 
 ## Updating bundled skills & commands
 
 You own `skill-creator`, `skill-sync`, and `skills-as-rules` — customize them
-freely. When the CLI ships new versions, `specs-ai sync` (or the standalone
-`specs-ai refresh-bundled`) reconciles them against your edits using a
-SHA-256 baseline at `ai-specs/.specs-ai.lock` (committable).
+freely. When the CLI ships new versions, `ai-specs sync` (or the standalone
+`ai-specs refresh-bundled`) reconciles them against your edits using a
+SHA-256 baseline at `ai-specs/.ai-specs.lock` (committable).
 
 | Your file vs baseline | Upstream changed? | What happens |
 |-----------------------|-------------------|--------------|
@@ -160,23 +160,22 @@ it so teammates stay on the same baseline.
 ## Updating the CLI
 
 ```bash
-cd ~/.specs-ai && git pull       # one global install, one update
+cd ~/.ai-specs && git pull       # one global install, one update
 ```
 
-The CLI lives only at `~/.specs-ai`. Projects don't carry a copy of the CLI —
+The CLI lives only at `~/.ai-specs`. Projects don't carry a copy of the CLI —
 they only carry their manifest, local skills, and the bundled `skill-creator` /
 `skill-sync` skills (which they own and may customize).
 
 ## Layout (this repo)
 
 ```
-specs-ai-cli/
-├── bin/specs-ai                ← global entrypoint (dispatcher)
+ai-specs-cli/
+├── bin/ai-specs                ← global entrypoint (dispatcher)
 ├── lib/
 │   ├── init.sh                 ← bootstrap a project
 │   ├── sync.sh                 ← vendor + regen + fan out
 │   ├── sync-agent.sh           ← per-agent fan-out
-│   ├── add-skill.sh            ← scaffold local skill
 │   ├── add-dep.sh              ← register vendored skill
 │   ├── version.sh
 │   └── _internal/

@@ -11,24 +11,24 @@
 # instructions symlink, no skills_dir.
 #
 # Usage:
-#   specs-ai sync-agent [path] (--all | --claude | --cursor | --opencode | --codex | --copilot | --gemini)...
+#   ai-specs sync-agent [path] (--all | --claude | --cursor | --opencode | --codex | --copilot | --gemini)...
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SPECS_AI_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=lib/_internal/platform.sh
-source "$SPECS_AI_HOME/lib/_internal/platform.sh"
+source "$AI_SPECS_HOME/lib/_internal/platform.sh"
 
-TOML_READ="$SPECS_AI_HOME/lib/_internal/toml-read.py"
-MCP_RENDER="$SPECS_AI_HOME/lib/_internal/mcp-render.py"
+TOML_READ="$AI_SPECS_HOME/lib/_internal/toml-read.py"
+MCP_RENDER="$AI_SPECS_HOME/lib/_internal/mcp-render.py"
 
 ALL_AGENTS=(claude cursor opencode codex copilot gemini)
 
 usage() {
     cat <<'EOF'
-Usage: specs-ai sync-agent [path] [--all | --<agent>...]
+Usage: ai-specs sync-agent [path] [--all | --<agent>...]
 
 Render per-agent configs (skills + MCP + instructions) from ai-specs.toml.
 
@@ -61,7 +61,7 @@ while [[ $# -gt 0 ]]; do
         --)           shift; break ;;
         -*)
             echo "ERROR: unknown flag: $1" >&2
-            echo "Run 'specs-ai sync-agent --help' for usage." >&2
+            echo "Run 'ai-specs sync-agent --help' for usage." >&2
             exit 2
             ;;
         *)
@@ -85,11 +85,11 @@ AI_COMMANDS="$TARGET_PATH/ai-specs/commands"
 AGENTS_MD="$TARGET_PATH/AGENTS.md"
 
 if [[ ! -f "$TOML_PATH" ]]; then
-    echo "ERROR: $TOML_PATH not found. Run 'specs-ai init $TARGET_PATH' first." >&2
+    echo "ERROR: $TOML_PATH not found. Run 'ai-specs init $TARGET_PATH' first." >&2
     exit 1
 fi
 if [[ ! -f "$AGENTS_MD" ]]; then
-    echo "ERROR: $AGENTS_MD not found. Run 'specs-ai init $TARGET_PATH' first." >&2
+    echo "ERROR: $AGENTS_MD not found. Run 'ai-specs init $TARGET_PATH' first." >&2
     exit 1
 fi
 
@@ -148,7 +148,7 @@ make_relative_symlink() {
 }
 
 echo ""
-echo "specs-ai sync-agent"
+echo "ai-specs sync-agent"
 echo "  target:  $TARGET_PATH"
 echo "  agents:  ${TARGETS[*]}"
 echo "  enabled: ${ENABLED_AGENTS[*]:-(none)}"

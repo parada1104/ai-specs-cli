@@ -5,7 +5,7 @@ Patterns derived:
   - Vendored deps (each [[deps]].id → skills/<id>/)
 
 Bundled skills (skill-creator, skill-sync) are NOT ignored — they are
-committed by the project after `specs-ai init` so the project can customize
+committed by the project after `ai-specs init` so the project can customize
 the skill template / sync behavior.
 
 Usage:
@@ -18,18 +18,18 @@ from pathlib import Path
 
 
 HEADER = """\
-# --- specs-ai: managed by `specs-ai init`/`sync` — do not edit ---
+# --- ai-specs: managed by `ai-specs init`/`sync` — do not edit ---
 """
 
 FOOTER = """\
-# --- end specs-ai ---
+# --- end ai-specs ---
 """
 
 
 def render(deps: list[dict]) -> str:
     lines = [HEADER]
     if deps:
-        lines.append("\n# Vendored skill deps (restored via `specs-ai sync`)")
+        lines.append("\n# Vendored skill deps (restored via `ai-specs sync`)")
         for d in deps:
             dep_id = d.get("id")
             if dep_id:

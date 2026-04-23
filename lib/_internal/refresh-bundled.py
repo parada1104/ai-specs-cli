@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Refresh bundled skills and commands, respecting user customizations.
 
-Algorithm: content-hash + lock file at <project>/ai-specs/.specs-ai.lock.
+Algorithm: content-hash + lock file at <project>/ai-specs/.ai-specs.lock.
 
 For each bundled file shipped by the CLI:
   - cli_sha  = sha256 of CLI's current source
@@ -31,7 +31,7 @@ Lock entries for files removed upstream are purged.
 Line endings are normalized (CRLF → LF) before hashing.
 
 Usage:
-  refresh-bundled.py <project_root> <specs_ai_home> [--init]
+  refresh-bundled.py <project_root> <ai_specs_home> [--init]
 """
 
 from __future__ import annotations
@@ -43,12 +43,12 @@ import tomllib
 from pathlib import Path
 from typing import Optional
 
-LOCK_REL = "ai-specs/.specs-ai.lock"
+LOCK_REL = "ai-specs/.ai-specs.lock"
 
 LOCK_HEADER = """\
-# Managed by specs-ai. Do not edit by hand.
+# Managed by ai-specs. Do not edit by hand.
 # Tracks SHA-256 of bundled files as last installed by the CLI.
-# Used by `specs-ai refresh-bundled` to detect user customizations.
+# Used by `ai-specs refresh-bundled` to detect user customizations.
 """
 
 
@@ -128,7 +128,7 @@ def write_lock(lock_path: Path, lock: dict) -> None:
         out.append("[opted-out]")
         out.append("# Bundled files the user deleted intentionally; the CLI will")
         out.append("# not re-install them. Remove a line here to let the file be")
-        out.append("# restored on the next `specs-ai refresh-bundled`.")
+        out.append("# restored on the next `ai-specs refresh-bundled`.")
         formatted = ", ".join(f'"{name}"' for name in opted)
         out.append(f"files = [{formatted}]")
         out.append("")
@@ -282,7 +282,7 @@ def main() -> int:
         init_mode = True
     if len(args) != 2:
         print(
-            "Usage: refresh-bundled.py <project_root> <specs_ai_home> [--init]",
+            "Usage: refresh-bundled.py <project_root> <ai_specs_home> [--init]",
             file=sys.stderr,
         )
         return 2
@@ -292,7 +292,7 @@ def main() -> int:
 
     if not (project / "ai-specs").is_dir():
         print(
-            f"ERROR: {project}/ai-specs not found. Run `specs-ai init` first.",
+            f"ERROR: {project}/ai-specs not found. Run `ai-specs init` first.",
             file=sys.stderr,
         )
         return 1

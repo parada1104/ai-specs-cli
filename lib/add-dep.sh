@@ -2,26 +2,26 @@
 # add-dep.sh — register a new vendored skill in ai-specs.toml [[deps]] and sync.
 #
 # The vendored skill is later cloned into <path>/ai-specs/skills/<id>/ by
-# `lib/_internal/vendor-skills.py` (which `specs-ai sync` runs).
+# `lib/_internal/vendor-skills.py` (which `ai-specs sync` runs).
 #
 # Usage:
-#   specs-ai add-dep <git-url> [path]
+#   ai-specs add-dep <git-url> [path]
 #                    [--id <id>]                 (default: derived from URL)
 #                    [--subdir <subpath>]        (subdir within the repo where SKILL.md lives)
 #                    [--scope <s1,s2,...>]       (default: root)
 #                    [--license <license>]       (default: empty)
 #                    [--attribution <author>]    (default: derived from URL)
 #                    [--trigger <text>]          (auto_invoke entry)
-#                    [--no-sync]                 (skip 'specs-ai sync' at the end)
+#                    [--no-sync]                 (skip 'ai-specs sync' at the end)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SPECS_AI_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: specs-ai add-dep <git-url> [path] [flags]
+Usage: ai-specs add-dep <git-url> [path] [flags]
 
 Register a vendored skill in ai-specs.toml (under [[deps]]) and run sync.
 
@@ -36,7 +36,7 @@ Flags:
   --license <license>   License string (default: empty)
   --attribution <auth>  vendor_attribution (default: URL author)
   --trigger <text>      auto_invoke entry (default: "When working on <id>")
-  --no-sync             Don't run 'specs-ai sync' after registering
+  --no-sync             Don't run 'ai-specs sync' after registering
 EOF
 }
 
@@ -69,7 +69,7 @@ while [[ $# -gt 0 ]]; do
         --)                shift; break ;;
         -*)
             echo "ERROR: unknown flag: $1" >&2
-            echo "Run 'specs-ai add-dep --help' for usage." >&2
+            echo "Run 'ai-specs add-dep --help' for usage." >&2
             exit 2
             ;;
         *)
@@ -97,7 +97,7 @@ TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"
 TOML_PATH="$TARGET_PATH/ai-specs/ai-specs.toml"
 
 if [[ ! -f "$TOML_PATH" ]]; then
-    echo "ERROR: $TOML_PATH not found. Run 'specs-ai init $TARGET_PATH' first." >&2
+    echo "ERROR: $TOML_PATH not found. Run 'ai-specs init $TARGET_PATH' first." >&2
     exit 1
 fi
 
@@ -136,7 +136,7 @@ if [[ "$existing" == "YES" ]]; then
 fi
 
 echo ""
-echo "specs-ai add-dep"
+echo "ai-specs add-dep"
 echo "  url:         $URL"
 echo "  id:          $ID"
 echo "  subdir:      ${SUBDIR:-(none)}"
@@ -181,9 +181,9 @@ PY
 # Run sync (unless --no-sync)
 if [[ $RUN_SYNC -eq 1 ]]; then
     echo ""
-    echo "▸ specs-ai sync $TARGET_PATH"
-    bash "$SPECS_AI_HOME/lib/sync.sh" "$TARGET_PATH"
+    echo "▸ ai-specs sync $TARGET_PATH"
+    bash "$AI_SPECS_HOME/lib/sync.sh" "$TARGET_PATH"
 else
     echo ""
-    echo "✓ dep registered. Run 'specs-ai sync $TARGET_PATH' to vendor it."
+    echo "✓ dep registered. Run 'ai-specs sync $TARGET_PATH' to vendor it."
 fi
