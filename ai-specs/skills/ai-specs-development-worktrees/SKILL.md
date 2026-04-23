@@ -4,15 +4,14 @@ description: >
   Enforces the repository workflow where `main` is no longer the day-to-day
   integration branch, `development` is the base branch for ongoing work, and
   every implementation starts from a dedicated worktree created off
-  `development`. Trigger: when creating branches, planning new work,
-  proposing a worktree, or deciding where code changes should start.
+  `development`. Trigger: when starting work from `development`, planning the
+  repository workflow, or deciding where code changes should start.
 license: Apache-2.0
 metadata:
   author: parada1104
   version: "1.0"
   scope: [root]
   auto_invoke:
-    - "Creating a branch or worktree"
     - "Starting work from development"
     - "Deciding where implementation should begin"
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash

@@ -11,6 +11,7 @@ All skills live in [`ai-specs/skills/`](ai-specs/skills/). Load explicitly with 
 | `ai-specs-development-worktrees` | Enforces the repository workflow where `main` is no longer the day-to-day integration branch, `development` is the base branch for ongoing work, and every implementation starts from a dedicated worktree created off `development` | [SKILL.md](ai-specs/skills/ai-specs-development-worktrees/SKILL.md) |
 | `skill-creator` | Creates new AI agent skills following the Agent Skills spec | [SKILL.md](ai-specs/skills/skill-creator/SKILL.md) |
 | `skill-sync` | Syncs skill metadata to AGENTS.md Auto-invoke sections for melon-alquimia | [SKILL.md](ai-specs/skills/skill-sync/SKILL.md) |
+| `using-git-worktrees` | Use when starting feature work that needs isolation from current workspace or before executing implementation plans - creates isolated git worktrees with smart directory selection and safety verification. Vendored from obra (see metadata.source) | [SKILL.md](ai-specs/skills/using-git-worktrees/SKILL.md) |
 
 > [SKILL.md](ai-specs/skills/ai-specs-development-worktrees/SKILL.md)
 
@@ -21,7 +22,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Action | Skill |
 |--------|-------|
 | After creating/modifying a skill | `skill-sync` |
-| Creating a branch or worktree | `ai-specs-development-worktrees` |
+| Creating a branch or worktree | `using-git-worktrees` |
 | Creating new skills | `skill-creator` |
 | Deciding where implementation should begin | `ai-specs-development-worktrees` |
 | Regenerate AGENTS.md Auto-invoke tables (sync.sh) | `skill-sync` |

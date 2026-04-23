@@ -58,3 +58,12 @@ enabled = ["claude", "cursor", "opencode"]
 # args = ["-y", "@example/mcp-server"]
 # env = { API_KEY = "$EXAMPLE_API_KEY" }
 # timeout = 30000
+
+[[deps]]
+id = "using-git-worktrees"
+source = "https://github.com/obra/superpowers"
+path = "skills/using-git-worktrees"
+scope = ["root"]
+auto_invoke = ["Creating a branch or worktree"]
+license = "MIT"
+vendor_attribution = "obra"
