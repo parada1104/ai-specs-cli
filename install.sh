@@ -16,10 +16,10 @@
 
 set -e
 
-AI_SPECS_HOME="${AI_SPECS_HOME:-${SPECS_AI_HOME:-$HOME/.ai-specs}}"
+AI_SPECS_HOME="${AI_SPECS_HOME:-$HOME/.ai-specs}"
 INSTALL_BIN="${INSTALL_BIN:-$HOME/.local/bin}"
-AI_SPECS_REPO="${AI_SPECS_REPO:-${SPECS_AI_REPO:-https://github.com/parada1104/ai-specs-cli.git}}"
-AI_SPECS_REF="${AI_SPECS_REF:-${SPECS_AI_REF:-main}}"
+AI_SPECS_REPO="${AI_SPECS_REPO:-https://github.com/parada1104/ai-specs-cli.git}"
+AI_SPECS_REF="${AI_SPECS_REF:-main}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'

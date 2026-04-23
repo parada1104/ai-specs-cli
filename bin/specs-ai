@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# specs-ai — compatibility shim. Canonical command: ai-specs.
-
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$SCRIPT_DIR/ai-specs" "$@"

@@ -26,7 +26,7 @@ bash ~/.ai-specs/install.sh
 ```
 
 This clones the repo to `~/.ai-specs` and symlinks `bin/ai-specs` into
-`~/.local/bin`. Override with `AI_SPECS_HOME` and `INSTALL_BIN`. (`SPECS_AI_HOME` sigue funcionando como compatibilidad temporal).
+`~/.local/bin`. Override with `AI_SPECS_HOME` and `INSTALL_BIN`.
 
 Requirements: `bash`, `git`, `python3` (3.11+ for `tomllib`).
 
@@ -158,6 +158,31 @@ The lock file records what the CLI shipped to your project last time. Commit
 it so teammates stay on the same baseline.
 
 ## Updating the CLI
+
+### Existing installation
+
+If you already installed `ai-specs`, the fastest update path is:
+
+```bash
+cd ~/.ai-specs && git pull
+```
+
+Then refresh any project that should receive the newest bundled skills,
+commands, and generated artifacts:
+
+```bash
+cd <your-project>
+ai-specs sync
+```
+
+### Safe re-install / upgrade
+
+Re-running the installer is also safe; it updates the existing clone and
+recreates the symlink:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/parada1104/ai-specs-cli/main/install.sh | bash
+```
 
 ```bash
 cd ~/.ai-specs && git pull       # one global install, one update
