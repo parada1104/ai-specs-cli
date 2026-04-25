@@ -8,7 +8,7 @@
 
 [skills."skill-sync"]
 "SKILL.md" = "cfcacdc65ec833a5743e1021517358e7d6b28b79bd03746ea741e97c094eb369"
-"assets/sync.sh" = "6052ca662eceb4b12c97127104fb76cfd861c5a8d87f006fd64e298ab89d1713"
+"assets/sync.sh" = "12646c204968cd87594cdf18b34be8b8add8ff306eb81df7171e3c558e6e30ea"
 
 [commands]
 "skills-as-rules.md" = "583bea80e5fb3e576e77887d7de27ba1d5ebbc912b4562b1a41835df107b18c9"

@@ -13,10 +13,10 @@ REPO_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")")"
 SKILLS_DIR="$REPO_ROOT/ai-specs/skills"
 
 # List every SKILL.md under .../skills/<name>/SKILL.md (monorepo root and each subrepo).
-# Prunes node_modules, .git, and .worktrees for speed and to avoid false matches.
+# Prunes generated dependency/agent directories for speed and to avoid false matches.
 list_all_skill_md() {
     find "$REPO_ROOT" \
-        \( -name node_modules -o -name .git -o -name .worktrees \) -prune -o \
+        \( -name node_modules -o -name .git -o -name .worktrees -o -name .opencode -o -name .claude -o -name .cursor -o -name .gemini -o -name .codex \) -prune -o \
         -type f -path "*/skills/*/SKILL.md" -print 2>/dev/null | LC_ALL=C sort
 }
 
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
             echo "Discovers SKILL.md under:"
             echo "  \$REPO_ROOT/skills/<name>/SKILL.md"
             echo "  \$REPO_ROOT/<subrepo>/skills/<name>/SKILL.md"
-            echo "(excludes node_modules, .git, .worktrees)"
+            echo "(excludes node_modules, .git, .worktrees, and generated agent dirs)"
             echo ""
             echo "If \$REPO_ROOT/.melon-monorepo exists: map each scope to that subfolder's AGENTS.md."
             echo "Otherwise (standalone repo): all scopes update \$REPO_ROOT/AGENTS.md only."

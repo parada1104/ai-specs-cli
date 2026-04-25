@@ -43,7 +43,7 @@ Flags:
   --all            All agents listed under [agents].enabled in ai-specs.toml
   --claude         Claude Code  (CLAUDE.md, .claude/skills, .mcp.json)
   --cursor         Cursor       (.cursor/mcp.json)
-  --opencode       OpenCode     (opencode.json)
+  --opencode       OpenCode     (opencode.json, .opencode/skills, .opencode/commands)
   --codex          Codex        (.codex/config.toml)
   --copilot        GitHub Copilot (.github/copilot-instructions.md)
   --gemini         Gemini CLI   (GEMINI.md, .gemini/skills, .gemini/settings.json)
@@ -267,7 +267,23 @@ for agent in "${TARGETS[@]}"; do
 
     skills="$(platform_get "$agent" skills_dir)"
     if [[ -n "$skills" ]]; then
-        make_relative_symlink "$TARGET_AI_SKILLS" "$TARGET_PATH/$skills"
+        if [[ "$agent" == "opencode" ]]; then
+            dest="$TARGET_PATH/$skills"
+            mkdir -p "$dest"
+            copied=0
+            for src in "$TARGET_AI_SKILLS"/*; do
+                [[ -d "$src" ]] || continue
+                base="$(basename "$src")"
+                rm -rf "$dest/$base"
+                cp -R "$src" "$dest/$base"
+                copied=$((copied + 1))
+            done
+            if [[ $copied -gt 0 ]]; then
+                echo "    ✓ skills       $skills/ ($copied dir(s))"
+            fi
+        else
+            make_relative_symlink "$TARGET_AI_SKILLS" "$TARGET_PATH/$skills"
+        fi
     fi
 
     mcp_path="$(platform_get "$agent" mcp_config_path)"

@@ -43,6 +43,8 @@ That's it — `.claude/`, `.cursor/`, `.opencode/`, `CLAUDE.md`, `.mcp.json`, et
 are now generated from your manifest. Re-run `ai-specs sync` whenever the
 manifest changes. If `project.subrepos` is declared, the root sync also mirrors
 local derived artifacts into each subrepo so agents work from either location.
+OpenCode receives project-local skills in `.opencode/skills/` and slash commands
+in `.opencode/commands/`.
 
 ## Manifest V1 contract (`ai-specs/ai-specs.toml`)
 
@@ -99,11 +101,13 @@ my-project/
 └── ai-specs/
     ├── ai-specs.toml               ← YOUR manifest (edit this)
     ├── .gitignore                  ← derived; lists vendored skill dirs
-    └── skills/
+    ├── skills/
         ├── skill-creator/          ← bundled (committable; customize freely)
         ├── skill-sync/             ← bundled (committable; customize freely)
         ├── <your-local-skill>/     ← creada con `/skills-as-rules` (committed)
         └── <vendored-skill>/       ← cloned from [[deps]] (gitignored)
+    └── commands/
+        └── <your-local-command>.md ← fanned out to native agent command dirs
 ```
 
 ### Three skill categories
