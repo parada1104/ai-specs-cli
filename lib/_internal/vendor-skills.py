@@ -25,6 +25,8 @@ import tempfile
 import importlib.util
 from pathlib import Path
 
+from skill_contract import from_dep, render_skill_markdown
+
 
 ANCILLARY_DIRS = ("assets", "references", "scripts")
 
@@ -32,75 +34,6 @@ ANCILLARY_DIRS = ("assets", "references", "scripts")
 def fail(msg: str) -> None:
     print(f"  ✗ {msg}", file=sys.stderr)
     sys.exit(1)
-
-
-def strip_frontmatter(text: str) -> tuple[str, str]:
-    if not text.startswith("---"):
-        return "", text
-    rest = text[3:]
-    end = rest.find("\n---")
-    if end < 0:
-        return "", text
-    fm = rest[:end].lstrip("\n")
-    after = rest[end + 4 :]
-    if after.startswith("\n"):
-        after = after[1:]
-    return fm, after
-
-
-def extract_description(fm: str) -> str:
-    lines = fm.splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if line.startswith("description:"):
-            rest = line[len("description:") :].strip()
-            if rest and rest not in (">", "|", ">-", "|-"):
-                return rest.strip("\"'")
-            buf: list[str] = []
-            j = i + 1
-            while j < len(lines):
-                nxt = lines[j]
-                if not nxt.strip():
-                    j += 1
-                    continue
-                if nxt and not nxt[0].isspace():
-                    break
-                buf.append(nxt.strip())
-                j += 1
-            return " ".join(buf)
-        i += 1
-    return ""
-
-
-def render_frontmatter(dep: dict, upstream_desc: str) -> str:
-    name = dep["id"]
-    attribution = dep.get("vendor_attribution", "")
-    license_id = dep.get("license", "Unknown")
-    scope = dep.get("scope") or ["root"]
-    auto_invoke = dep.get("auto_invoke") or []
-
-    desc_parts: list[str] = []
-    if upstream_desc:
-        desc_parts.append(upstream_desc.rstrip(". "))
-    if attribution:
-        desc_parts.append(f"Vendored from {attribution} (see metadata.source)")
-    description = ". ".join(desc_parts) or f"Vendored skill: {name}"
-
-    out = ["---", f"name: {name}", "description: >", f" {description}.", f"license: {license_id}", "metadata:"]
-    if "source" in dep:
-        out.append(f" source: {dep['source']}")
-    if attribution:
-        out.append(f" vendor_attribution: {attribution}")
-    out.append(f" scope: [{', '.join(scope)}]")
-    if auto_invoke:
-        out.append(" auto_invoke:")
-        for phrase in auto_invoke:
-            escaped = phrase.replace('"', '\\"')
-            out.append(f'   - "{escaped}"')
-    out.append("---")
-    return "\n".join(out) + "\n"
-
 
 def clone(source: str, dest: Path) -> None:
     subprocess.run(
@@ -150,15 +83,12 @@ def sync_dep_target(dep: dict, project_root: Path) -> None:
             fail(f"{dep_id}: SKILL.md not found at {skill_md.relative_to(tmp_path)}")
 
         upstream_text = skill_md.read_text()
-        upstream_fm, upstream_body = strip_frontmatter(upstream_text)
-        upstream_desc = extract_description(upstream_fm)
 
         if target_dir.exists():
             shutil.rmtree(target_dir)
         target_dir.mkdir(parents=True)
 
-        new_frontmatter = render_frontmatter(dep, upstream_desc)
-        (target_dir / "SKILL.md").write_text(new_frontmatter + upstream_body)
+        (target_dir / "SKILL.md").write_text(render_skill_markdown(from_dep(dep, upstream_text)))
 
         for ancillary in ANCILLARY_DIRS:
             a_src = src_dir / ancillary

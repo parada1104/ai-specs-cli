@@ -24,6 +24,11 @@ class TargetResolveTests(unittest.TestCase):
     def setUpClass(cls):
         cls.mod = load_module(TARGET_RESOLVE_PATH, "target_resolve_internal")
 
+    def test_multi_target_fixture_contains_declared_package_directories(self):
+        fixture = FIXTURES / "multi-target"
+        self.assertTrue((fixture / "packages" / "a").is_dir())
+        self.assertTrue((fixture / "packages" / "b").is_dir())
+
     def test_resolves_root_and_subrepos_in_manifest_order_with_dedup(self):
         plan = self.mod.resolve_target_plan(FIXTURES / "multi-target")
         self.assertEqual([t["rel"] for t in plan["targets"]], [".", "packages/a", "packages/b"])

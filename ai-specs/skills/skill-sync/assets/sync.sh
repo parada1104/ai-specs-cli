@@ -11,6 +11,13 @@ shopt -s nullglob
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")")"
 SKILLS_DIR="$REPO_ROOT/ai-specs/skills"
+SKILL_CONTRACT_HOME="${AI_SPECS_HOME:-$REPO_ROOT}"
+SKILL_CONTRACT_PY="$SKILL_CONTRACT_HOME/lib/_internal/skill_contract.py"
+
+if [ ! -f "$SKILL_CONTRACT_PY" ]; then
+    echo -e "${RED}Missing skill contract helper: $SKILL_CONTRACT_PY${NC}" >&2
+    exit 1
+fi
 
 # List every SKILL.md under .../skills/<name>/SKILL.md (monorepo root and each subrepo).
 # Prunes generated dependency/agent directories for speed and to avoid false matches.
@@ -87,104 +94,21 @@ get_agents_path() {
     fi
 }
 
-# Extract YAML frontmatter field using awk
-extract_field() {
+read_skill_sync_metadata() {
     local file="$1"
-    local field="$2"
-    awk -v field="$field" '
-        /^---$/ { in_frontmatter = !in_frontmatter; next }
-        in_frontmatter && $1 == field":" {
-            # Handle single line value
-            sub(/^[^:]+:[[:space:]]*/, "")
-            if ($0 != "" && $0 != ">") {
-                gsub(/^["'\'']|["'\'']$/, "")  # Remove quotes
-                print
-                exit
-            }
-            # Handle multi-line value
-            getline
-            while (/^[[:space:]]/ && !/^---$/) {
-                sub(/^[[:space:]]+/, "")
-                printf "%s ", $0
-                if (!getline) break
-            }
-            print ""
-            exit
-        }
-    ' "$file" | sed 's/[[:space:]]*$//'
+    python3 "$SKILL_CONTRACT_PY" sync-metadata "$file"
 }
 
-# Extract nested metadata field
-#
-# Supports either:
-#   auto_invoke: "Single Action"
-# or:
-#   auto_invoke:
-#     - "Action A"
-#     - "Action B"
-#
-# For list values, this returns a pipe-delimited string: "Action A|Action B"
-extract_metadata() {
-    local file="$1"
+json_field() {
+    local json="$1"
     local field="$2"
+    python3 -c 'import json,sys; data=json.loads(sys.argv[1]); value=data.get(sys.argv[2], ""); print(value if isinstance(value, str) else "")' "$json" "$field"
+}
 
-    awk -v field="$field" '
-        function trim(s) {
-            sub(/^[[:space:]]+/, "", s)
-            sub(/[[:space:]]+$/, "", s)
-            return s
-        }
-
-        /^---$/ { in_frontmatter = !in_frontmatter; next }
-
-        in_frontmatter && /^metadata:/ { in_metadata = 1; next }
-        in_frontmatter && in_metadata && /^[a-z]/ && !/^[[:space:]]/ { in_metadata = 0 }
-
-        in_frontmatter && in_metadata && $1 == field":" {
-            # Remove "field:" prefix
-            sub(/^[^:]+:[[:space:]]*/, "")
-
-            # Single-line scalar: auto_invoke: "Action"
-            if ($0 != "") {
-                v = $0
-                gsub(/^["'\'']|["'\'']$/, "", v)
-                gsub(/^\[|\]$/, "", v)  # legacy: allow inline [a, b]
-                print trim(v)
-                exit
-            }
-
-            # Multi-line list:
-            # auto_invoke:
-            #   - "Action A"
-            #   - "Action B"
-            out = ""
-            while (getline) {
-                # Stop when leaving metadata block
-                if (!in_frontmatter) break
-                if (!in_metadata) break
-                if ($0 ~ /^[a-z]/ && $0 !~ /^[[:space:]]/) break
-
-                # On multi-line list, only accept "- item" lines. Anything else ends the list.
-                line = $0
-                # Stop at frontmatter delimiter (getline bypasses pattern matching)
-                if (line ~ /^---$/) break
-                if (line ~ /^[[:space:]]*-[[:space:]]*/) {
-                    sub(/^[[:space:]]*-[[:space:]]*/, "", line)
-                    line = trim(line)
-                    gsub(/^["'\'']|["'\'']$/, "", line)
-                    if (line != "") {
-                        if (out == "") out = line
-                        else out = out "|" line
-                    }
-                } else {
-                    break
-                }
-            }
-
-            if (out != "") print out
-            exit
-        }
-    ' "$file"
+json_joined_list() {
+    local json="$1"
+    local field="$2"
+    python3 -c 'import json,sys; data=json.loads(sys.argv[1]); print("|".join(data.get(sys.argv[2], [])))' "$json" "$field"
 }
 
 echo -e "${BLUE}Skill Sync - Updating AGENTS.md Auto-invoke sections${NC}"
@@ -200,10 +124,17 @@ trap 'rm -rf "$SCOPE_TMPDIR"' EXIT
 while IFS= read -r skill_file; do
     [ -f "$skill_file" ] || continue
 
-    skill_name=$(extract_field "$skill_file" "name")
-    scope_raw=$(extract_metadata "$skill_file" "scope")
+    if ! metadata_json=$(read_skill_sync_metadata "$skill_file"); then
+        echo -e "${RED}Invalid skill metadata in $skill_file${NC}" >&2
+        exit 1
+    fi
 
-    auto_invoke_raw=$(extract_metadata "$skill_file" "auto_invoke")
+    skill_name=$(json_field "$metadata_json" "name")
+    enabled=$(python3 -c 'import json,sys; print("true" if json.loads(sys.argv[1]).get("enabled") else "false")' "$metadata_json")
+    [ "$enabled" = "true" ] || continue
+
+    scope_raw=$(json_joined_list "$metadata_json" "scope")
+    auto_invoke_raw=$(json_joined_list "$metadata_json" "auto_invoke")
     # extract_metadata() returns:
     # - single action: "Action"
     # - multiple actions: "Action A|Action B" (pipe-delimited)
@@ -213,9 +144,10 @@ while IFS= read -r skill_file; do
     # Skip if no scope or auto_invoke defined
     [ -z "$scope_raw" ] || [ -z "$auto_invoke" ] && continue
 
-    # Parse scope (can be comma-separated or space-separated)
+    # Parse scope (JSON helper joins lists with '|'; compatibility inputs may still
+    # show comma/space-separated values, so split all of them here).
     # Bash 3 compatible: use tr + read instead of read -ra with <<<
-    echo "$scope_raw" | tr ', ' '\n' | while read -r scope; do
+    echo "$scope_raw" | tr '|, ' '\n\n\n' | while read -r scope; do
         scope=$(echo "$scope" | tr -d '[:space:]')
         [ -z "$scope" ] && continue
 
@@ -354,9 +286,16 @@ echo -e "${BLUE}Skills missing sync metadata:${NC}"
 missing=0
 while IFS= read -r skill_file; do
     [ -f "$skill_file" ] || continue
-    skill_name=$(extract_field "$skill_file" "name")
-    scope_raw=$(extract_metadata "$skill_file" "scope")
-    auto_invoke_raw=$(extract_metadata "$skill_file" "auto_invoke")
+
+    if ! metadata_json=$(read_skill_sync_metadata "$skill_file"); then
+        echo -e "  ${RED}invalid${NC} - $skill_file"
+        missing=$((missing + 1))
+        continue
+    fi
+
+    skill_name=$(json_field "$metadata_json" "name")
+    scope_raw=$(json_joined_list "$metadata_json" "scope")
+    auto_invoke_raw=$(json_joined_list "$metadata_json" "auto_invoke")
     auto_invoke=$(echo "$auto_invoke_raw" | sed 's/|/;;/g')
 
     if [ -z "$scope_raw" ] || [ -z "$auto_invoke" ]; then
