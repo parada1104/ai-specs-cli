@@ -92,6 +92,11 @@ Out of scope for this V1 contract (explicitly deferred to future changes):
 - `[memory]`
 - introducing new manifest sections
 
+## Context precedence
+
+The canonical conflict-resolution rule lives in [`docs/ai/context-precedence.md`](docs/ai/context-precedence.md).
+README only points to that document so the precedence policy has one source of truth.
+
 ## What gets created in your project
 
 ```

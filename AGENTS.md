@@ -27,6 +27,14 @@ All skills live in [`ai-specs/skills/`](ai-specs/skills/). Load explicitly with 
 
 > [SKILL.md](ai-specs/skills/ai-specs-development-worktrees/SKILL.md)
 
+## Context Precedence
+
+When project context sources conflict, use this MVP order:
+
+`canonical docs > project skills > packs > handoffs > session memory > proposed context`
+
+Canonical rule: [`docs/ai/context-precedence.md`](docs/ai/context-precedence.md). Treat it as an auditable decision policy, not an automatic merge engine.
+
 ### Auto-invoke Skills
 
 When performing these actions, ALWAYS invoke the corresponding skill FIRST:
