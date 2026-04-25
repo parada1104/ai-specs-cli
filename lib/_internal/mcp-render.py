@@ -42,17 +42,41 @@ def load_mcp(toml_path: Path) -> dict:
 # translator here.
 
 _ENV_VAR_RE = re.compile(r"^\$([A-Z_][A-Z0-9_]*)$")
+# Cursor/Claude JSON use "${env:NAME}" in headers/url; OpenCode remote expects "{env:NAME}".
+_CURSOR_ENV_IN_HEADERS = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _headers_for_opencode(headers: dict) -> dict:
+    if not isinstance(headers, dict):
+        return headers
+    out: dict = {}
+    for k, v in headers.items():
+        if isinstance(v, str):
+            out[k] = _CURSOR_ENV_IN_HEADERS.sub(r"{env:\1}", v)
+        else:
+            out[k] = v
+    return out
 
 
 def _translate_opencode(servers: dict) -> dict:
     """OpenCode native schema:
-      type: "local"
-      command: [cmd, *args]                (no separate `args` key)
-      environment: {KEY: val}              (not `env`)
-      env-var refs as "{env:VAR}"          (not "$VAR")
+      - Local: type: "local", command: [cmd, *args], environment: {...}
+      - Remote: type: "remote", url: "https://..." (manifest HTTP MCP uses type: "http")
     """
     out = {}
     for name, cfg in servers.items():
+        mcp_type = cfg.get("type")
+        url = cfg.get("url")
+        if mcp_type in ("http", "remote", "sse") and isinstance(url, str) and url:
+            new: dict = {"type": "remote", "url": url}
+            for passthrough in ("timeout", "enabled", "oauth"):
+                if passthrough in cfg:
+                    new[passthrough] = cfg[passthrough]
+            if "headers" in cfg:
+                new["headers"] = _headers_for_opencode(cfg["headers"])
+            out[name] = new
+            continue
+
         cmd = cfg.get("command")
         args = cfg.get("args", []) or []
         if isinstance(cmd, str):
@@ -77,6 +101,19 @@ def _translate_opencode(servers: dict) -> dict:
 
         out[name] = new
     return out
+
+
+def _slim_mcp_config_for_write(cfg: dict) -> dict:
+    """Omit null command/args for HTTP MCP; otherwise drop only null values."""
+    mcp_type = cfg.get("type")
+    url = cfg.get("url")
+    if mcp_type in ("http", "remote", "sse") and isinstance(url, str) and url:
+        slim: dict = {"type": mcp_type, "url": url}
+        for k in ("timeout", "enabled", "headers"):
+            if k in cfg and cfg[k] is not None:
+                slim[k] = cfg[k]
+        return slim
+    return {k: v for k, v in cfg.items() if v is not None}
 
 
 _TRANSLATORS = {
@@ -193,6 +230,7 @@ def main() -> int:
         return 0
 
     servers = translate_servers(agent, servers)
+    servers = {n: _slim_mcp_config_for_write(c) for n, c in servers.items()}
 
     if target_path.suffix == ".toml":
         content = merge_into_toml(target_path, mcp_key, servers)

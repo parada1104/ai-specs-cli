@@ -66,12 +66,21 @@ enabled = ["claude", "cursor", "opencode"]
 # args = ["-y", "@example/mcp-server"]
 # env = { API_KEY="***" }
 # timeout = 30000
+#
+# MCP HTTP (p. ej. OpenMemory vía Docker en :8080). Si el contenedor exige API key,
+# descomentá `headers` y definí OM_API_KEY en el entorno desde el que abrís Cursor / OpenCode.
+# Embeddings locales con Ollama: plantilla de variables en ai-specs/openmemory-ollama.env.example
 
 [mcp.trello]
 command = "npx"
 args = ["-y", "@delorenj/mcp-server-trello"]
 env = { TRELLO_API_KEY="$TRELLO_API_KEY", TRELLO_TOKEN="$TRELLO_TOKEN" }
 timeout = 30000
+
+[mcp.openmemory]
+type = "http"
+url = "http://localhost:8080/mcp"
+# headers = { "x-api-key" = "${env:OM_API_KEY}" }
 
 [mcp.vault-ai-specs]
 command = "npx"
