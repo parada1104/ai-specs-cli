@@ -12,6 +12,7 @@ All skills live in [`ai-specs/skills/`](ai-specs/skills/). Load explicitly with 
 | `skill-creator` | Creates new AI agent skills following the Agent Skills spec | [SKILL.md](ai-specs/skills/skill-creator/SKILL.md) |
 | `skill-sync` | Syncs skill metadata to AGENTS.md Auto-invoke sections for melon-alquimia | [SKILL.md](ai-specs/skills/skill-sync/SKILL.md) |
 | `using-git-worktrees` | Use when starting feature work that needs isolation from current workspace or before executing implementation plans - creates isolated git worktrees with smart directory selection and safety verification. Vendored from obra (see metadata.source) | [SKILL.md](ai-specs/skills/using-git-worktrees/SKILL.md) |
+| `vault-context` | Project-scoped canonical context via Obsidian vault — the structured record of what matters | [SKILL.md](ai-specs/skills/vault-context/SKILL.md) |
 
 > [SKILL.md](ai-specs/skills/ai-specs-development-worktrees/SKILL.md)
 
@@ -22,10 +23,13 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Action | Skill |
 |--------|-------|
 | After creating/modifying a skill | `skill-sync` |
+| Closing or handing off a session | `vault-context` |
 | Creating a branch or worktree | `using-git-worktrees` |
 | Creating new skills | `skill-creator` |
 | Deciding where implementation should begin | `ai-specs-development-worktrees` |
+| Making an architecture or design decision | `vault-context` |
 | Regenerate AGENTS.md Auto-invoke tables (sync.sh) | `skill-sync` |
+| Starting a new session or conversation | `vault-context` |
 | Starting work from development | `ai-specs-development-worktrees` |
 | Troubleshoot why a skill is missing from AGENTS.md auto-invoke | `skill-sync` |
 

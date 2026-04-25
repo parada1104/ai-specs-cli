@@ -56,8 +56,23 @@ enabled = ["claude", "cursor", "opencode"]
 # [mcp.example]
 # command = "npx"
 # args = ["-y", "@example/mcp-server"]
-# env = { API_KEY = "$EXAMPLE_API_KEY" }
+# env = { API_KEY="***" }
 # timeout = 30000
+
+[mcp.trello]
+command = "npx"
+args = ["-y", "@delorenj/mcp-server-trello"]
+env = { TRELLO_API_KEY="$TRELLO_API_KEY", TRELLO_TOKEN="$TRELLO_TOKEN" }
+timeout = 30000
+
+[mcp.vault-ai-specs]
+command = "npx"
+args = [
+  "-y",
+  "@modelcontextprotocol/server-filesystem",
+  "/Users/robert/Library/Mobile Documents/iCloud~md~obsidian/Documents/hermes-vault/nnodes/proyectos/ai-specs",
+]
+timeout = 30000
 
 [[deps]]
 id = "using-git-worktrees"

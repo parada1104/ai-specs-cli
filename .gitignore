@@ -18,3 +18,5 @@ CLAUDE.md
 GEMINI.md
 .mcp.json
 # --- end ai-specs ---
+.env
+.envrc
