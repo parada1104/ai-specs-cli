@@ -24,4 +24,4 @@
 - [x] 4.1 Run targeted tests for skill contract, sync pipeline, and target resolution.
 - [x] 4.2 Run `./tests/run.sh` and `./tests/validate.sh`.
 - [x] 4.3 Create apply progress and verify report.
-- [ ] 4.4 Sync the main spec and archive the OpenSpec change.
+- [x] 4.4 Sync the main spec and archive the OpenSpec change.
