@@ -97,6 +97,11 @@ Out of scope for this V1 contract (explicitly deferred to future changes):
 The canonical conflict-resolution rule lives in [`docs/ai/context-precedence.md`](docs/ai/context-precedence.md).
 README only points to that document so the precedence policy has one source of truth.
 
+## Testing foundation
+
+The canonical MVP testing policy lives in [`docs/ai/testing-foundation.md`](docs/ai/testing-foundation.md).
+Use `./tests/validate.sh` as the default final verification command until stronger tooling is configured.
+
 ## What gets created in your project
 
 ```
