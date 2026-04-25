@@ -121,6 +121,9 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertTrue((subrepo / "CLAUDE.md").is_symlink())
             self.assertTrue((subrepo / ".claude" / "skills").is_symlink())
             self.assertTrue((subrepo / ".cursor" / "commands" / "skills-as-rules.md").is_file())
+            self.assertTrue((subrepo / ".opencode" / "skills" / "local-demo" / "SKILL.md").is_file())
+            self.assertTrue((subrepo / ".opencode" / "commands" / "skills-as-rules.md").is_file())
+            self.assertFalse((subrepo / ".opencode" / "command").exists())
             self.assertIn("fixture-sync", (subrepo / "AGENTS.md").read_text())
         finally:
             shutil.rmtree(workspace.parent)
@@ -147,6 +150,8 @@ class SyncPipelineTests(unittest.TestCase):
                         "assert 'fixture-sync' in claude.read_text(), 'missing AGENTS content'\n"
                         "assert (skills / 'local-demo' / 'SKILL.md').is_file(), 'missing local skill'\n"
                         "assert cursor_cmd.is_file(), 'missing cursor command'\n"
+                        "assert (cwd / '.opencode' / 'skills' / 'local-demo' / 'SKILL.md').is_file(), 'missing opencode skill'\n"
+                        "assert (cwd / '.opencode' / 'commands' / 'skills-as-rules.md').is_file(), 'missing opencode command'\n"
                         "print('ok')\n"
                     ),
                 ],

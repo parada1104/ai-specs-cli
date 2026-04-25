@@ -232,6 +232,7 @@ Next steps:
        - ai-specs/ai-specs.toml
        - ai-specs/skills/skill-creator/  ai-specs/skills/skill-sync/
        - ai-specs/skills/<your-local-skills>/
+       - ai-specs/commands/<your-local-commands>.md
        - AGENTS.md   .gitignore
 
 Generated agent files (.claude/, .cursor/, opencode.json, .mcp.json, CLAUDE.md, ...) are
