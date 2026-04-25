@@ -44,6 +44,52 @@ are now generated from your manifest. Re-run `ai-specs sync` whenever the
 manifest changes. If `project.subrepos` is declared, the root sync also mirrors
 local derived artifacts into each subrepo so agents work from either location.
 
+## Manifest V1 contract (`ai-specs/ai-specs.toml`)
+
+`ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.
+This change documents the runtime contract the CLI already consumes today — no
+new schema engine, no precedence rules, no `doctor` behavior, and no `[memory]`
+section are introduced here.
+
+Canonical V1 surface:
+
+- `[project]`
+- `[agents]`
+- `[[deps]]`
+- `[mcp.<name>]`
+
+No other manifest sections are part of the canonical V1 surface for this change.
+
+Conservative compatibility rules:
+
+- Missing `[agents]`, `[[deps]]`, and `[mcp]` remain valid and normalize to stable defaults.
+- `project.subrepos` remains validated by the existing root target resolver.
+- MCP `env` is the canonical field name.
+- MCP `environment` is still accepted as a tolerated input alias and normalizes to `env`.
+
+Field classification in V1:
+
+| Surface | Fields | Status |
+|---------|--------|--------|
+| `[project]` | `name` | optional, default `""` |
+| `[project]` | `subrepos` | optional, default `[]`, validated as root-relative target paths |
+| `[agents]` | `enabled` | optional, default `[]` |
+| `[[deps]]` | `id`, `source` | only required minimum fields |
+| `[[deps]]` | `path`, `scope`, `auto_invoke`, `license`, `vendor_attribution` | optional passthrough fields consumed by vendoring/rendering |
+| `[mcp.<name>]` | `command` | optional |
+| `[mcp.<name>]` | `args` | optional, default `[]` |
+| `[mcp.<name>]` | `env` | optional canonical field, default `{}` |
+| `[mcp.<name>]` | `environment` | tolerated input alias of `env` |
+| `[mcp.<name>]` | `timeout` | optional |
+| `[mcp.<name>]` | `enabled` | tolerated passthrough field |
+
+Out of scope for this V1 contract (explicitly deferred to future changes):
+
+- precedence / merge policy beyond the currently implemented runtime behavior
+- `ai-specs doctor`
+- `[memory]`
+- introducing new manifest sections
+
 ## What gets created in your project
 
 ```

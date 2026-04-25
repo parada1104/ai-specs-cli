@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
+import importlib.util
 from pathlib import Path
 
 
@@ -109,13 +109,24 @@ def clone(source: str, dest: Path) -> None:
     )
 
 
+def _load_toml_read_module():
+    module_path = Path(__file__).with_name("toml-read.py")
+    spec = importlib.util.spec_from_file_location("toml_read_internal", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load helper module at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_deps(project_root: Path) -> list[dict]:
     toml_path = project_root / "ai-specs" / "ai-specs.toml"
-    if not toml_path.is_file():
+    module = _load_toml_read_module()
+    try:
+        data = module.load_toml(toml_path)
+    except FileNotFoundError:
         fail(f"{toml_path} not found")
-    with toml_path.open("rb") as f:
-        data = tomllib.load(f)
-    return data.get("deps", []) or []
+    return module.read_deps(data)
 
 
 def sync_dep_target(dep: dict, project_root: Path) -> None:

@@ -38,6 +38,22 @@ class TargetResolveTests(unittest.TestCase):
         self.assertEqual(len(plan["targets"]), 1)
         self.assertEqual(plan["targets"][0]["kind"], "root")
 
+    def test_normalized_project_subrepos_preserve_existing_resolution_semantics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "packages" / "a").mkdir(parents=True)
+            (root / "packages" / "b").mkdir(parents=True)
+            (root / "ai-specs").mkdir()
+            (root / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name='fixture'\n"
+                "subrepos=['packages/a', ' packages/a ', '', 'packages//b', 7]\n"
+            )
+
+            plan = self.mod.resolve_target_plan(root)
+
+            self.assertEqual([t["rel"] for t in plan["targets"]], [".", "packages/a", "packages/b"])
+
     def test_rejects_escape_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
