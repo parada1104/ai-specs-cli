@@ -54,6 +54,12 @@ you through one skill at a time using `skill-creator` + `skill-sync`.
 """
 
 
+CONTEXT_PRECEDENCE_ORDER = (
+    "canonical docs > project skills > packs > handoffs > session memory > "
+    "proposed context"
+)
+
+
 def parse_skill(path: Path) -> dict:
     text = path.read_text()
     if not text.startswith("---"):
@@ -161,6 +167,21 @@ def render_auto_invoke_placeholder() -> str:
     )
 
 
+def render_context_precedence(manifest_root: Path) -> str:
+    doc_path = manifest_root / "docs" / "ai" / "context-precedence.md"
+    if not doc_path.is_file():
+        return ""
+
+    return (
+        "## Context Precedence\n\n"
+        "When project context sources conflict, use this MVP order:\n\n"
+        f"`{CONTEXT_PRECEDENCE_ORDER}`\n\n"
+        "Canonical rule: "
+        "[`docs/ai/context-precedence.md`](docs/ai/context-precedence.md). "
+        "Treat it as an auditable decision policy, not an automatic merge engine.\n"
+    )
+
+
 def parse_args(argv: list[str]) -> tuple[Path, Path, Path]:
     if len(argv) < 3:
         raise ValueError("Usage: agents-md-render.py <manifest_root> <output_path> [--skills-dir <path>]")
@@ -205,6 +226,7 @@ def main() -> int:
         HEADER_BANNER.rstrip(),
         "",
         render_skills_index(skills),
+        render_context_precedence(manifest_root),
         render_auto_invoke_placeholder(),
         "",
         FOOTER.rstrip(),
