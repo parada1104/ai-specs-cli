@@ -1,8 +1,15 @@
 # ai-specs.toml — manifiesto raíz del estándar ai-specs.
 #
-# Source of truth para: agentes habilitados, skills vendoreadas (deps),
-# servidores MCP. Skills locales viven en ai-specs/skills/<name>/ y se
-# autodescubren del filesystem (no se listan acá).
+# ONLY V1 source of truth del proyecto. La superficie canónica de este cambio es:
+#   [project]       optional section
+#   [agents]        optional section (default: enabled = [])
+#   [[deps]]        optional repeated section (ONLY required per entry: id, source)
+#   [mcp.<name>]    optional repeated section
+# Ninguna otra sección forma parte de la superficie canónica V1 en este cambio.
+#
+# Skills locales viven en ai-specs/skills/<name>/ y se autodescubren del
+# filesystem (no se listan acá).
+# V1 NO agrega precedence, doctor ni [memory]; quedan deferidos a cambios futuros.
 #
 # Comandos (CLI global, publicado hoy desde https://github.com/parada1104/ai-specs-cli):
 #   ai-specs init                # bootstrap el directorio ai-specs/ (idempotente)
@@ -12,14 +19,15 @@
 #   ai-specs add-dep <url>       # agregá una skill vendoreada a [[deps]]
 
 [project]
+# Optional section. `name` es opcional; default: "".
 name = "{{PROJECT_NAME}}"
-# Lista de subrepos relativos al root. Vacío = monorepo plano.
-# V1: se usan solo como targets derivados de sync; NO crean manifests locales.
+# Optional field. Default: []. Solo acepta paths relativos válidos al root.
+# V1: se usan como targets derivados de sync; NO crean manifests locales.
 subrepos = []
 
 [agents]
-# Agentes habilitados para sync-agent. Solo estos reciben configs.
-# Opciones: claude, cursor, opencode, codex, copilot, gemini
+# Optional section. `enabled` default: []. Solo estos reciben configs.
+# Opciones soportadas hoy: claude, cursor, opencode, codex, copilot, gemini.
 enabled = ["claude", "cursor", "opencode"]
 
 # -----------------------------------------------------------------------------
@@ -29,14 +37,14 @@ enabled = ["claude", "cursor", "opencode"]
 # (lib/_internal/vendor-skills.py). El frontmatter upstream se reemplaza por
 # uno estándar (name, description con atribución, license, metadata).
 #
-# Schema:
-#   id                  (req) carpeta destino bajo skills/
-#   source              (req) URL git (cualquier cosa que acepte `git clone`)
-#   path                (opt) subdir del repo donde vive SKILL.md (multi-skill repos)
-#   scope               (opt) lista — default ["root"]
-#   auto_invoke         (opt) lista de frases para la tabla Auto-invoke de AGENTS.md
-#   license             (opt) SPDX id
-#   vendor_attribution  (opt) autor/org upstream — citado en la description
+# V1 contract por entry:
+#   id                  required; carpeta destino bajo skills/
+#   source              required; URL git (cualquier cosa que acepte `git clone`)
+#   path                optional; subdir del repo donde vive SKILL.md
+#   scope               optional; default ["root"]
+#   auto_invoke         optional; frases para la tabla Auto-invoke de AGENTS.md
+#   license             optional; SPDX id
+#   vendor_attribution  optional; autor/org upstream citado en la description
 #
 # Ejemplo (skill puntual de un repo multi-skill):
 # [[deps]]
@@ -53,6 +61,14 @@ enabled = ["claude", "cursor", "opencode"]
 # -----------------------------------------------------------------------------
 # Variables de entorno se cargan vía .envrc; los agentes interpolan los valores
 # (p. ej. $TRELLO_API_KEY en runtime).
+#
+# V1 por servidor [mcp.<name>]:
+#   command      optional; string o list
+#   args         optional; default []
+#   env          optional campo canónico; default {}
+#   environment  tolerated input alias de `env`; no nombre canónico
+#   timeout      optional; default null
+#   enabled      tolerated passthrough; no amplía el contrato V1
 
 # [mcp.example]
 # command = "npx"

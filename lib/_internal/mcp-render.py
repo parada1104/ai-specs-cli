@@ -21,14 +21,19 @@ Format detection: by target file extension (.json vs .toml).
 import json
 import re
 import sys
-import tomllib
+import importlib.util
 from pathlib import Path
 
 
 def load_mcp(toml_path: Path) -> dict:
-    with toml_path.open("rb") as f:
-        data = tomllib.load(f)
-    return data.get("mcp", {})
+    module_path = Path(__file__).with_name("toml-read.py")
+    spec = importlib.util.spec_from_file_location("toml_read_internal", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load helper module at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    data = module.load_toml(toml_path)
+    return module.read_mcp(data)
 
 
 # --- Per-agent translators -------------------------------------------------
@@ -59,7 +64,7 @@ def _translate_opencode(servers: dict) -> dict:
 
         new = {"type": "local", "command": full_cmd}
 
-        env = cfg.get("env") or cfg.get("environment") or {}
+        env = cfg.get("env") or {}
         if env:
             new["environment"] = {
                 k: _ENV_VAR_RE.sub(r"{env:\1}", v) if isinstance(v, str) else v

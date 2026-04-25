@@ -6,9 +6,9 @@ Usage:
 
 Sections:
   project        → JSON object with project.name, project.subrepos
-  agents         → JSON array of enabled agents
-  deps           → JSON array of [[deps]] entries
-  mcp            → JSON object of MCP servers (key = server name)
+  agents         → JSON object with agents.enabled
+  deps           → JSON array of normalized [[deps]] entries
+  mcp            → JSON object of normalized MCP servers (key = server name)
 
 Output: JSON to stdout. Exit 1 on missing file or unknown section.
 """
@@ -44,26 +44,96 @@ def _normalize_subrepos(raw: Any) -> list[str]:
     return out
 
 
+def _normalize_string_list(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        value = item.strip()
+        if value:
+            out.append(value)
+    return out
+
+
+def _normalize_mapping(raw: Any) -> dict[str, Any]:
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
 def read_project(data: dict[str, Any]) -> dict[str, Any]:
     project = data.get("project", {}) or {}
     if not isinstance(project, dict):
         project = {}
     return {
-        **project,
         "name": str(project.get("name") or ""),
         "subrepos": _normalize_subrepos(project.get("subrepos", [])),
     }
+
+
+def read_agents(data: dict[str, Any]) -> dict[str, list[str]]:
+    agents = data.get("agents", {}) or {}
+    if not isinstance(agents, dict):
+        agents = {}
+    return {"enabled": _normalize_string_list(agents.get("enabled", []))}
+
+
+def read_deps(data: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_deps = data.get("deps", []) or []
+    if not isinstance(raw_deps, list):
+        return []
+    return [_normalize_mapping(dep) for dep in raw_deps if isinstance(dep, dict)]
+
+
+def _normalize_mcp_server(raw: Any) -> dict[str, Any]:
+    server = _normalize_mapping(raw)
+    normalized: dict[str, Any] = {}
+
+    command = server.get("command")
+    if isinstance(command, (str, list)) or command is None:
+        normalized["command"] = command
+    else:
+        normalized["command"] = None
+
+    normalized["args"] = server.get("args") if isinstance(server.get("args"), list) else []
+
+    env = server.get("env")
+    if not isinstance(env, dict):
+        env = server.get("environment")
+    normalized["env"] = dict(env) if isinstance(env, dict) else {}
+
+    timeout = server.get("timeout")
+    normalized["timeout"] = timeout if isinstance(timeout, int) and not isinstance(timeout, bool) else None
+
+    enabled = server.get("enabled")
+    if isinstance(enabled, bool):
+        normalized["enabled"] = enabled
+
+    for key, value in server.items():
+        if key in {"command", "args", "env", "environment", "timeout", "enabled"}:
+            continue
+        normalized[key] = value
+
+    return normalized
+
+
+def read_mcp(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw_mcp = data.get("mcp", {}) or {}
+    if not isinstance(raw_mcp, dict):
+        return {}
+    return {name: _normalize_mcp_server(cfg) for name, cfg in raw_mcp.items() if isinstance(name, str)}
 
 
 def read_section(data: dict[str, Any], section: str) -> Any:
     if section == "project":
         return read_project(data)
     if section == "agents":
-        return data.get("agents", {}).get("enabled", [])
+        return read_agents(data)
     if section == "deps":
-        return data.get("deps", [])
+        return read_deps(data)
     if section == "mcp":
-        return data.get("mcp", {})
+        return read_mcp(data)
     raise KeyError(section)
 
 

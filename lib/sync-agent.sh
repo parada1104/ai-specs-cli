@@ -210,7 +210,7 @@ ENABLED_JSON="$(python3 "$TOML_READ" "$TOML_PATH" agents)"
 ENABLED_AGENTS=()
 while IFS= read -r agent; do
     [[ -n "$agent" ]] && ENABLED_AGENTS+=("$agent")
-done < <(python3 -c "import json,sys; [print(a) for a in json.loads(sys.argv[1])]" "$ENABLED_JSON")
+done < <(python3 -c "import json,sys; [print(a) for a in json.loads(sys.argv[1]).get('enabled', [])]" "$ENABLED_JSON")
 
 # Pick targets
 declare -a TARGETS=()

@@ -40,6 +40,62 @@ class SyncPipelineTests(unittest.TestCase):
             "# Local Demo\n"
         )
 
+    def test_sync_accepts_minimal_manifest_with_omitted_sections(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text("[project]\nname = 'fixture-sync'\n")
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            self.assertTrue((workspace / "AGENTS.md").is_file())
+            self.assertFalse((workspace / "packages" / "a" / "AGENTS.md").exists())
+            self.assertFalse((workspace / ".mcp.json").exists())
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_sync_accepts_mcp_environment_alias_and_renders_canonical_output(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['opencode']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@demo/server']\n"
+                "environment = { API_KEY = '$DEMO_API_KEY' }\n"
+                "timeout = 30000\n"
+                "enabled = true\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            self.assertEqual(
+                (workspace / "opencode.json").read_text(),
+                '{\n'
+                '  "mcp": {\n'
+                '    "demo": {\n'
+                '      "type": "local",\n'
+                '      "command": [\n'
+                '        "npx",\n'
+                '        "-y",\n'
+                '        "@demo/server"\n'
+                '      ],\n'
+                '      "environment": {\n'
+                '        "API_KEY": "{env:DEMO_API_KEY}"\n'
+                '      },\n'
+                '      "timeout": 30000,\n'
+                '      "enabled": true\n'
+                '    }\n'
+                '  }\n'
+                '}\n',
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
     def test_sync_keeps_single_project_behavior_without_subrepos(self):
         workspace = self.make_workspace()
         try:

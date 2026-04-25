@@ -1,0 +1,75 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Bash CLI entrypoints with Python 3.11+ helpers and unittest-based tests.
+  Architecture: bin/ai-specs dispatches to lib/*.sh and lib/_internal/*.py; templates and bundled assets generate agent outputs.
+  Testing: ./tests/run.sh runs unittest discovery; ./tests/validate.sh adds py_compile and bash -n checks.
+  Style: Generated agent files are derived artifacts; AGENTS.md is auto-generated and ai-specs/ai-specs.toml is the source of truth.
+
+strict_tdd: true
+
+testing:
+  detected: 2026-04-24
+  test_runner:
+    available: true
+    framework: unittest
+    command: ./tests/run.sh
+  layers:
+    unit:
+      available: true
+      tool: unittest
+    integration:
+      available: false
+      tool: ""
+    e2e:
+      available: false
+      tool: ""
+  coverage:
+    available: false
+    command: ""
+  quality:
+    linter:
+      available: false
+      command: ""
+    type_checker:
+      available: false
+      command: ""
+    formatter:
+      available: false
+      command: ""
+  validation:
+    command: ./tests/validate.sh
+    notes:
+      - python3 -m py_compile lib/_internal/*.py tests/*.py
+      - bash -n lib/*.sh bin/ai-specs tests/*.sh
+      - Current worktree validation fails because fixture directories are missing under tests/fixtures.
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules/packages
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group tasks by phase (infrastructure, implementation, testing)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+  apply:
+    guidance:
+      - Follow existing code patterns and conventions
+      - Load relevant coding skills for the project stack
+    tdd: true
+    test_command: ./tests/run.sh
+  verify:
+    guidance:
+      - Run tests if test infrastructure exists
+      - Compare implementation against every spec scenario
+    test_command: ./tests/validate.sh
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas (large removals)

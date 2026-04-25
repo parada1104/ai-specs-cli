@@ -96,7 +96,7 @@ def resolve_target_plan(project_root: str | Path) -> dict[str, Any]:
     toml_path = root / "ai-specs" / "ai-specs.toml"
     data = module.load_toml(toml_path)
     project = module.read_project(data)
-    declared = project.get("subrepos", []) or []
+    declared = project["subrepos"]
 
     targets: list[dict[str, Any]] = []
     seen: set[str] = set()
