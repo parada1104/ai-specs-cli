@@ -135,6 +135,7 @@ my-project/
 | `ai-specs init [path] [--name N] [--force]` | Bootstrap `ai-specs/` (idempotent; never touches your `ai-specs.toml`). `--force` re-copies bundled skills/commands & regenerates AGENTS.md |
 | `ai-specs sync [path]` | Resolve `[root, ...project.subrepos]`, refresh bundled, vendor `[[deps]]` once, regen AGENTS.md auto-invoke, then fan out local derived artifacts per target + per agent |
 | `ai-specs sync-agent [path] [--all|--<agent>]` | Fan out per-agent only for the current target (no vendoring/regen) |
+| `ai-specs doctor [path]` | Read-only health check for manifest, bundled assets, enabled agents, symlinks, and MCP outputs (does not modify files) |
 | `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI — keeps your edits, drops `.new` sidecars for files you customized |
 | `ai-specs add-dep <git-url> [path]` | Register a vendored skill in `[[deps]]` and `sync` |
 | `ai-specs version` | Print CLI version |
