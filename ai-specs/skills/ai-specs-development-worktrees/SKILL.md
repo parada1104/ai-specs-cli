@@ -9,7 +9,7 @@ description: >
 license: Apache-2.0
 metadata:
   author: parada1104
-  version: "1.0"
+  version: "1.0.1"
   scope: [root]
   auto_invoke:
     - "Starting work from development"
@@ -29,6 +29,7 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 - **`main` is protected by convention**: treat it as the stable line. Do not start day-to-day feature work from `main`.
 - **`development` is the integration base**: create it if missing, keep it updated, and branch new work from there.
 - **Every implementation starts in a worktree**: one worktree per feature/fix/experiment.
+- **Worktrees live under `.worktrees/` at the repo root** (ignored by git): use that path—not a sibling directory like `../worktrees/`—so any agent or collaborator opening the project finds the same convention.
 - **Worktrees branch from `development`** unless the task is an explicit hotfix strategy agreed by the maintainer.
 - **Do not pile unrelated tasks into one worktree**. One branch, one intent.
 - Before creating a new worktree, ensure the base branch is clean and up to date.
@@ -41,6 +42,11 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 4. Create a feature branch from `development`.
 5. Create a dedicated worktree for that branch.
 6. Do all implementation work inside that worktree.
+
+## Related docs
+
+- OpenSpec apply commit grouping (phase-aligned commits, then archive):
+  [`docs/ai/openspec-apply-commits.md`](../../../docs/ai/openspec-apply-commits.md)
 
 ## Commands
 
@@ -55,21 +61,23 @@ git push -u origin development
 git checkout development
 git pull --ff-only origin development
 
-# create a feature worktree from development
+# create a feature worktree from development (run from repo root: git rev-parse --show-toplevel)
 git checkout development
 git pull --ff-only origin development
-git worktree add ../worktrees/<branch-name> -b <branch-name> development
+mkdir -p .worktrees
+git worktree add .worktrees/<branch-name> -b <branch-name> development
 
 # list active worktrees
 git worktree list
 
 # remove a finished worktree
-git worktree remove ../worktrees/<branch-name>
+git worktree remove .worktrees/<branch-name>
 git branch -d <branch-name>
 ```
 
 ## Anti-patterns
 
+- Putting worktrees outside the repo (e.g. `../worktrees/...`) when the project already standardizes on `.worktrees/`
 - Starting feature work directly on `main`
 - Creating a feature branch from stale local state
 - Reusing one worktree for multiple unrelated tasks
