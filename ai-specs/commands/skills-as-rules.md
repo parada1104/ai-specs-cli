@@ -78,7 +78,10 @@ agent might be about to take.
    description: >
      <one-paragraph: what this is + when to invoke it>.
      Trigger: <comma-separated list of situations that should auto-load this skill>.
+   license: Apache-2.0
    metadata:
+     author: <team-or-maintainer>
+     version: "1.0"
      scope: [root]
      auto_invoke:
        - "<trigger 1 from Step 3>"
@@ -99,12 +102,12 @@ agent might be about to take.
    Read ai-specs/skills/skill-sync/SKILL.md
    ```
 
-2. Run its `assets/sync.sh`. The auto-invoke table in `AGENTS.md` should
-   now include the new skill's triggers.
+2. Run `ai-specs sync`. The auto-invoke table in `AGENTS.md` should now
+   include the new skill's triggers through the root-supported workflow.
 
 3. Verify by grepping `AGENTS.md` for the new skill name. If it's missing,
    the frontmatter is wrong (most likely missing `metadata.scope` or
-   `metadata.auto_invoke`) — fix and re-run `sync.sh`.
+   `metadata.auto_invoke`) — fix and re-run `ai-specs sync`.
 
 ---
 

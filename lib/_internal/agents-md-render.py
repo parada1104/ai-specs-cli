@@ -11,10 +11,11 @@ project metadata still comes from the root manifest.
 
 from __future__ import annotations
 
-import re
 import sys
 import tomllib
 from pathlib import Path
+
+from skill_contract import from_local_skill
 
 
 HEADER_BANNER = """\
@@ -60,58 +61,6 @@ CONTEXT_PRECEDENCE_ORDER = (
 )
 
 
-def parse_skill(path: Path) -> dict:
-    text = path.read_text()
-    if not text.startswith("---"):
-        return {}
-
-    body = text[3:]
-    end = body.find("\n---")
-    if end < 0:
-        return {}
-    fm_lines = body[:end].splitlines()
-
-    name = ""
-    description = ""
-
-    i = 0
-    while i < len(fm_lines):
-        line = fm_lines[i]
-        m = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$", line)
-        if not m:
-            i += 1
-            continue
-        key, rest = m.group(1), m.group(2).strip()
-
-        if key == "name":
-            name = rest.strip().strip('"').strip("'")
-        elif key == "description":
-            if rest and rest not in (">", "|", ">-", "|-"):
-                description = rest
-            else:
-                buf = []
-                j = i + 1
-                while j < len(fm_lines):
-                    nxt = fm_lines[j]
-                    if not nxt.strip():
-                        buf.append("")
-                        j += 1
-                        continue
-                    if re.match(r"^[A-Za-z_][A-Za-z0-9_-]*:", nxt):
-                        break
-                    buf.append(nxt.strip())
-                    j += 1
-                description = " ".join(b for b in buf if b)
-
-        i += 1
-
-    if "Trigger:" in description:
-        description = description.split("Trigger:")[0].rstrip(". ")
-    description = description.strip().rstrip(".")
-
-    return {"name": name, "description": description}
-
-
 def collect_skills(skills_dir: Path) -> list[dict]:
     rows = []
     if not skills_dir.is_dir():
@@ -122,11 +71,7 @@ def collect_skills(skills_dir: Path) -> list[dict]:
         skill_md = child / "SKILL.md"
         if not skill_md.is_file():
             continue
-        info = parse_skill(skill_md)
-        if not info.get("name"):
-            info["name"] = child.name
-        if not info.get("description"):
-            info["description"] = "(no description)"
+        info = from_local_skill(skill_md, compatibility=True)
         info["rel_link"] = f"ai-specs/skills/{child.name}/SKILL.md"
         rows.append(info)
     return rows
@@ -147,7 +92,7 @@ def render_skills_index(skills: list[dict]) -> str:
     out.append("| Skill | Description | Link |")
     out.append("|-------|-------------|------|")
     for s in skills:
-        desc = s["description"].replace("|", "\\|")
+        desc = s["description_summary"].replace("|", "\\|")
         out.append(f"| `{s['name']}` | {desc} | [SKILL.md]({s['rel_link']}) |")
     out.append("")
 

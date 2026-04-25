@@ -21,7 +21,7 @@ All skills live in [`ai-specs/skills/`](ai-specs/skills/). Load explicitly with 
 | `openspec-sync-specs` | Sync delta specs from a change to main specs. Use when the user wants to update main specs with changes from a delta spec, without archiving the change | [SKILL.md](ai-specs/skills/openspec-sync-specs/SKILL.md) |
 | `openspec-verify-change` | Verify implementation matches change artifacts. Use when the user wants to validate that implementation is complete, correct, and coherent before archiving | [SKILL.md](ai-specs/skills/openspec-verify-change/SKILL.md) |
 | `skill-creator` | Creates new AI agent skills following the Agent Skills spec | [SKILL.md](ai-specs/skills/skill-creator/SKILL.md) |
-| `skill-sync` | Syncs skill metadata to AGENTS.md Auto-invoke sections for melon-alquimia | [SKILL.md](ai-specs/skills/skill-sync/SKILL.md) |
+| `skill-sync` | Syncs skill metadata to AGENTS.md Auto-invoke sections | [SKILL.md](ai-specs/skills/skill-sync/SKILL.md) |
 | `using-git-worktrees` | Use when starting feature work that needs isolation from current workspace or before executing implementation plans - creates isolated git worktrees with smart directory selection and safety verification. Vendored from obra (see metadata.source) | [SKILL.md](ai-specs/skills/using-git-worktrees/SKILL.md) |
 | `vault-context` | Project-scoped canonical context via Obsidian vault — the structured record of what matters | [SKILL.md](ai-specs/skills/vault-context/SKILL.md) |
 

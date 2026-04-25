@@ -8,7 +8,8 @@ metadata:
  author: prowler-cloud
  version: "1.0"
  scope: [root]
- auto_invoke: "Creating new skills"
+ auto_invoke:
+  - "Creating new skills"
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash, WebFetch, WebSearch, Task
 ---
 
@@ -63,13 +64,17 @@ Use `metadata.scope` values defined in [skill-sync/SKILL.md](../skill-sync/SKILL
 | `metadata.author` | Yes | Team or `prowler-cloud` for upstream-derived |
 | `metadata.version` | Yes | Semantic version string |
 | `metadata.scope` | For sync | Scopes whose `AGENTS.md` get Auto-invoke rows |
-| `metadata.auto_invoke` | For sync | Action phrases (string or list) |
+| `metadata.auto_invoke` | For sync | Action phrases as a YAML list |
+
+Canonical reference: [`../../contracts/skill-frontmatter.md`](../../contracts/skill-frontmatter.md).
 
 ---
 
 ## Registering the Skill
 
-Add a row to the **Skills locales** table in [AGENTS.md](../../AGENTS.md) (root). Then run `./skills/skill-sync/assets/sync.sh`.
+Do not hand-edit `AGENTS.md`. Run `ai-specs sync` after creating or changing
+skill metadata so the root-generated files are refreshed through the supported
+workflow.
 
 ---
 
@@ -77,10 +82,9 @@ Add a row to the **Skills locales** table in [AGENTS.md](../../AGENTS.md) (root)
 
 - [ ] Skill name not already in `skills/`
 - [ ] Pattern is reusable
-- [ ] Frontmatter complete; `scope` / `auto_invoke` if using sync
+- [ ] Frontmatter matches `ai-specs/contracts/skill-frontmatter.md`
 - [ ] Commands section with copy-paste commands
-- [ ] Entry in root `AGENTS.md` skills table
-- [ ] Run `sync.sh` after adding `scope` + `auto_invoke`
+- [ ] Run `ai-specs sync` after adding `scope` + `auto_invoke`
 
 ## Resources
 

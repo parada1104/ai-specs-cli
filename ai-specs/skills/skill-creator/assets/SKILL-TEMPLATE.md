@@ -5,11 +5,12 @@ description: >
  Trigger: {When the AI should load this skill - be specific}.
 license: Apache-2.0
 metadata:
- author: melon-alquimia
+ author: your-team
  version: "1.0"
  scope: [root]
  auto_invoke:
    - "{Primary action phrase for AGENTS.md sync}"
+allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---
 
 ## When to Use
@@ -38,3 +39,4 @@ Use this skill when:
 ## Resources
 
 - **Templates**: See [assets/](assets/) for optional files
+- **Contract**: [../../contracts/skill-frontmatter.md](../../contracts/skill-frontmatter.md)

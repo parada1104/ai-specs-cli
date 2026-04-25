@@ -24,18 +24,26 @@ enabled = ["claude", "cursor", "opencode"]
 # -----------------------------------------------------------------------------
 # Deps de skills externas
 # -----------------------------------------------------------------------------
-# Cada [[deps]] se clona a ai-specs/skills/<id>/ por `ai-specs sync`
-# (lib/_internal/vendor-skills.py). El frontmatter upstream se reemplaza por
-# uno estándar (name, description con atribución, license, metadata).
+# Cada [[deps]] es INPUT de vendoring para `ai-specs sync`
+# (lib/_internal/vendor-skills.py). El frontmatter resultante en
+# ai-specs/skills/<id>/SKILL.md es generado según
+# ai-specs/contracts/skill-frontmatter.md; no se edita a mano.
 #
-# Schema:
+# Mapping de manifest → frontmatter generado:
 #   id                  (req) carpeta destino bajo skills/
+#                       → name
 #   source              (req) URL git (cualquier cosa que acepte `git clone`)
+#                       → metadata.source
 #   path                (opt) subdir del repo donde vive SKILL.md (multi-skill repos)
 #   scope               (opt) lista — default ["root"]
+#                       → metadata.scope
 #   auto_invoke         (opt) lista de frases para la tabla Auto-invoke de AGENTS.md
+#                       → metadata.auto_invoke
 #   license             (opt) SPDX id
+#                       → license
 #   vendor_attribution  (opt) autor/org upstream — citado en la description
+#                       → metadata.author + metadata.vendor_attribution
+#   version             (opt) versión semántica para metadata.version del skill generado
 #
 # Ejemplo (skill puntual de un repo multi-skill):
 # [[deps]]
