@@ -3,18 +3,18 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC = ROOT / "docs" / "ai" / "testing-foundation.md"
+SKILL = ROOT / "catalog" / "skills" / "testing-foundation" / "SKILL.md"
 README = ROOT / "README.md"
 
 
-class TestingFoundationDocsTests(unittest.TestCase):
+class TestingFoundationSkillTests(unittest.TestCase):
     def assertContainsAll(self, haystack, needles):
         for needle in needles:
             with self.subTest(needle=needle):
                 self.assertIn(needle, haystack)
 
-    def test_testing_foundation_doc_defines_mvp_policy_commands_layers_and_deferred_tooling(self):
-        text = DOC.read_text()
+    def test_testing_foundation_skill_defines_mvp_policy_commands_layers_and_deferred_tooling(self):
+        text = SKILL.read_text()
 
         self.assertContainsAll(
             text,
@@ -32,14 +32,14 @@ class TestingFoundationDocsTests(unittest.TestCase):
             ],
         )
 
-    def test_readme_points_to_testing_foundation_doc(self):
+    def test_readme_points_to_testing_foundation_skill(self):
         readme = README.read_text()
 
         self.assertContainsAll(
             readme,
             [
                 "## Testing foundation",
-                "[`docs/ai/testing-foundation.md`](docs/ai/testing-foundation.md)",
+                "[`ai-specs/skills/testing-foundation/SKILL.md`](ai-specs/skills/testing-foundation/SKILL.md)",
                 "Use `./tests/validate.sh` as the default final verification command",
             ],
         )

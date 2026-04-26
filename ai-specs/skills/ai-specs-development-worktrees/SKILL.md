@@ -46,7 +46,7 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ## Related docs
 
 - OpenSpec apply commit grouping (phase-aligned commits, then archive):
-  [`docs/ai/openspec-apply-commits.md`](../../../docs/ai/openspec-apply-commits.md)
+  [`openspec-sdd-conventions`](../openspec-sdd-conventions/SKILL.md)
 
 ## Commands
 

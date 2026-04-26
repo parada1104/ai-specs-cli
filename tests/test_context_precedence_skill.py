@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 import tempfile
@@ -8,20 +9,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
-DOC = ROOT / "docs" / "ai" / "context-precedence.md"
+SKILL = ROOT / "catalog" / "skills" / "context-precedence" / "SKILL.md"
 README = ROOT / "README.md"
 
 ORDER = "canonical docs > project skills > packs > handoffs > session memory > proposed context"
 
 
-class ContextPrecedenceDocsTests(unittest.TestCase):
+class ContextPrecedenceSkillTests(unittest.TestCase):
     def assertContainsAll(self, haystack, needles):
         for needle in needles:
             with self.subTest(needle=needle):
                 self.assertIn(needle, haystack)
 
-    def test_context_precedence_doc_states_order_sources_examples_and_boundary(self):
-        text = DOC.read_text()
+    def test_context_precedence_skill_states_order_sources_examples_and_boundary(self):
+        text = SKILL.read_text()
 
         self.assertEqual(text.count(ORDER), 1)
         self.assertContainsAll(
@@ -47,33 +48,58 @@ class ContextPrecedenceDocsTests(unittest.TestCase):
             ],
         )
 
-    def test_readme_points_to_context_precedence_doc_without_duplicating_rule(self):
+    def test_readme_points_to_context_precedence_skill_without_duplicating_rule(self):
         readme = README.read_text()
 
         self.assertContainsAll(
             readme,
             [
                 "## Context precedence",
-                "The canonical conflict-resolution rule lives in [`docs/ai/context-precedence.md`](docs/ai/context-precedence.md).",
-                "README only points to that document so the precedence policy has one source of truth.",
+                "catalog/README.md",
+                "[`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md)",
             ],
         )
         self.assertEqual(readme.count(ORDER), 0)
 
-    def test_sync_renders_agents_reference_when_context_precedence_doc_exists(self):
+    def test_sync_renders_agents_reference_when_bundled_skill_present(self):
         tmp = Path(tempfile.mkdtemp(prefix="ai-specs-precedence-"))
         workspace = tmp / "workspace"
+        upstream = tmp / "upstream-catalog"
         try:
             shutil.copytree(FIXTURE_ROOT, workspace)
             subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
-            (workspace / "ai-specs" / "ai-specs.toml").write_text(
-                "[project]\n"
-                "name = 'fixture-precedence'\n"
+            # Local `git clone` only sees committed files — use a tiny upstream repo fixture.
+            skill_src = ROOT / "catalog" / "skills" / "context-precedence"
+            dst_skill = upstream / "catalog" / "skills" / "context-precedence"
+            dst_skill.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(skill_src, dst_skill)
+            subprocess.run(
+                ["git", "init", "-q", str(upstream)],
+                check=True,
+                text=True,
             )
-            doc = workspace / "docs" / "ai" / "context-precedence.md"
-            doc.parent.mkdir(parents=True)
-            doc.write_text("# Context Precedence\n")
-
+            subprocess.run(
+                ["git", "-C", str(upstream), "add", "catalog"],
+                check=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(upstream), "commit", "-q", "-m", "init"],
+                check=True,
+                text=True,
+            )
+            toml = (
+                "[project]\n"
+                "name = 'fixture-precedence'\n\n"
+                "[[deps]]\n"
+                'id = "context-precedence"\n'
+                f"source = {json.dumps(str(upstream))}\n"
+                'path = "catalog/skills/context-precedence"\n'
+                'scope = ["root"]\n'
+                'license = "MIT"\n'
+                'auto_invoke = ["Resolving conflicts between documentation, skills, memory, and proposed context"]\n'
+            )
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(toml)
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
             agents = (workspace / "AGENTS.md").read_text()
@@ -81,7 +107,7 @@ class ContextPrecedenceDocsTests(unittest.TestCase):
                 agents,
                 [
                     "## Context Precedence",
-                    "[`docs/ai/context-precedence.md`](docs/ai/context-precedence.md)",
+                    "[`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md)",
                     ORDER,
                     "decision policy, not an automatic merge engine",
                 ],

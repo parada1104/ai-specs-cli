@@ -27,18 +27,18 @@ The system MUST define a single MVP precedence order for resolving conflicts bet
 - **THEN** the proposed output MUST yield to the higher-precedence source
 
 ### Requirement: Context precedence documentation
-The system MUST publish the precedence rule in `docs/ai/context-precedence.md` with source definitions, conflict examples, and an audit-friendly decision process.
+The system MUST publish the precedence rule in the bundled skill `ai-specs/skills/context-precedence/SKILL.md` with source definitions, conflict examples, and an audit-friendly decision process.
 
 #### Scenario: Documentation states the full order
-- **GIVEN** `docs/ai/context-precedence.md`
-- **WHEN** a user or agent reads the document
+- **GIVEN** `ai-specs/skills/context-precedence/SKILL.md`
+- **WHEN** a user or agent reads the skill body
 - **THEN** it MUST state the full precedence order exactly once as the canonical rule
 - **AND** it MUST define each source class used by the order
 
 #### Scenario: Documentation gives conflict examples
-- **GIVEN** `docs/ai/context-precedence.md`
+- **GIVEN** `ai-specs/skills/context-precedence/SKILL.md`
 - **WHEN** a user or agent needs to resolve a context conflict
-- **THEN** the document MUST include examples covering docs vs memory, project skills vs packs, handoffs vs session memory, and proposed context vs existing sources
+- **THEN** the skill MUST include examples covering docs vs memory, project skills vs packs, handoffs vs session memory, and proposed context vs existing sources
 
 ### Requirement: Generated agent instructions reference precedence
 The system MUST make the context precedence rule discoverable from generated agent instructions without requiring manual edits to generated files.
@@ -46,7 +46,7 @@ The system MUST make the context precedence rule discoverable from generated age
 #### Scenario: AGENTS includes generated reference
 - **GIVEN** `ai-specs sync` regenerates `AGENTS.md`
 - **WHEN** an agent reads the generated instructions
-- **THEN** `AGENTS.md` MUST reference `docs/ai/context-precedence.md`
+- **THEN** `AGENTS.md` MUST reference `ai-specs/skills/context-precedence/SKILL.md`
 - **AND** it MUST include the MVP precedence order in compact form
 
 #### Scenario: Generated files are not hand-edited

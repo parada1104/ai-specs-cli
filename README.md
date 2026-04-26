@@ -36,6 +36,7 @@ Requirements: `bash`, `git`, `python3` (3.11+ for `tomllib`).
 cd my-project
 ai-specs init               # scaffolds ai-specs/ + AGENTS.md + .gitignore (idempotent)
 # edit ai-specs/ai-specs.toml — set [agents].enabled, add [[deps]], add [mcp.*]
+# optional policy skills: see catalog/README.md in this repo (vendor via [[deps]])
 ai-specs sync               # vendor deps + regen AGENTS.md + fan out root + declared subrepos
 ```
 
@@ -92,15 +93,25 @@ Out of scope for this V1 contract (explicitly deferred to future changes):
 - `[memory]`
 - introducing new manifest sections
 
+## Recommended skills (catalog)
+
+Optional policy skills ship in this repo under [`catalog/skills/`](catalog/skills/). Vendor them
+with `[[deps]]` and `path` (see [`catalog/README.md`](catalog/README.md)) — same flow as any
+external skill.
+
 ## Context precedence
 
-The canonical conflict-resolution rule lives in [`docs/ai/context-precedence.md`](docs/ai/context-precedence.md).
-README only points to that document so the precedence policy has one source of truth.
+After vendoring `context-precedence` from the catalog, the rule lives in
+[`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md).
+`AGENTS.md` links there once the skill exists and you run `ai-specs sync`.
 
 ## Testing foundation
 
-The canonical MVP testing policy lives in [`docs/ai/testing-foundation.md`](docs/ai/testing-foundation.md).
-Use `./tests/validate.sh` as the default final verification command until stronger tooling is configured.
+[`ai-specs/skills/testing-foundation/SKILL.md`](ai-specs/skills/testing-foundation/SKILL.md) is
+available from the catalog the same way. Use `./tests/validate.sh` as the default final verification command until stronger tooling is configured.
+
+OpenSpec `config.yaml` shape and apply-time commit conventions:
+[`ai-specs/skills/openspec-sdd-conventions/SKILL.md`](ai-specs/skills/openspec-sdd-conventions/SKILL.md).
 
 ## What gets created in your project
 
@@ -112,8 +123,9 @@ my-project/
     ├── ai-specs.toml               ← YOUR manifest (edit this)
     ├── .gitignore                  ← derived; lists vendored skill dirs
     ├── skills/
-        ├── skill-creator/          ← bundled (committable; customize freely)
-        ├── skill-sync/             ← bundled (committable; customize freely)
+        ├── skill-creator/          ← bundled on init (contract)
+        ├── skill-sync/             ← bundled on init (contract)
+        ├── …/                      ← optional: vendor from catalog (see catalog/README.md) + locals
         ├── <your-local-skill>/     ← creada con `/skills-as-rules` (committed)
         └── <vendored-skill>/       ← cloned from [[deps]] (gitignored)
     └── commands/
@@ -125,8 +137,8 @@ my-project/
 | Category   | Lives in            | Listed in toml? | Committed? | Created by             |
 |------------|---------------------|-----------------|------------|------------------------|
 | Local      | `ai-specs/skills/<name>/`   | No (autodiscovered) | Yes        | `/skills-as-rules` |
-| Bundled    | `ai-specs/skills/{skill-creator,skill-sync}/` | No | Yes (own-and-customize) | `ai-specs init` (one-time copy) |
-| Vendored   | `ai-specs/skills/<dep-id>/` | Yes (`[[deps]]`)    | No (gitignored) | `ai-specs add-dep <url>` → cloned by sync |
+| Bundled    | `ai-specs/skills/{skill-creator,skill-sync}/` | No | Yes (own-and-customize) | `ai-specs init` (from `bundled-skills/`) |
+| Vendored   | `ai-specs/skills/<dep-id>/` | Yes (`[[deps]]`)    | No (gitignored) | `ai-specs add-dep <url>` → cloned by sync (includes [catalog](catalog/README.md) skills) |
 
 ## CLI
 
@@ -223,7 +235,8 @@ clones the skill into `ai-specs/skills/<id>/`. Vendored skills are
 
 ## Updating bundled skills & commands
 
-You own `skill-creator`, `skill-sync`, and `skills-as-rules` — customize them
+You own **bundled** skills (`skill-creator`, `skill-sync`), **vendored** skills (from `[[deps]]`,
+including optional [catalog](catalog/README.md) entries), and `skills-as-rules` — customize them
 freely. When the CLI ships new versions, `ai-specs sync` (or the standalone
 `ai-specs refresh-bundled`) reconciles them against your edits using a
 SHA-256 baseline at `ai-specs/.ai-specs.lock` (committable).
@@ -271,8 +284,8 @@ cd ~/.ai-specs && git pull       # one global install, one update
 ```
 
 The CLI lives only at `~/.ai-specs`. Projects don't carry a copy of the CLI —
-they only carry their manifest, local skills, and the bundled `skill-creator` /
-`skill-sync` skills (which they own and may customize).
+they only carry their manifest, local skills, and the bundled skills shipped
+from `bundled-skills/` (which they own and may customize).
 
 ## Layout (this repo)
 
@@ -292,9 +305,10 @@ ai-specs-cli/
 │       ├── agents-md-render.py ← skills/ → AGENTS.md
 │       ├── mcp-render.py       ← [mcp.*] → per-agent format (merge-safe)
 │       └── platform.sh         ← per-agent paths/keys
-├── bundled-skills/             ← copied INTO each project on `init`
+├── bundled-skills/             ← copied on `init` (contracts only)
 │   ├── skill-creator/          ← scaffolds new skills (template-driven)
 │   └── skill-sync/             ← discovers SKILL.md, regenerates AGENTS.md table
+├── catalog/skills/             ← optional skills; vendor via [[deps]] (see catalog/README.md)
 ├── bundled-commands/           ← copied INTO ai-specs/commands/ on `init`
 │   └── skills-as-rules.md      ← interactive skill authoring slash command
 ├── templates/

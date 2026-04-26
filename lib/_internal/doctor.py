@@ -13,7 +13,15 @@ from enum import Enum
 from pathlib import Path
 
 AI_SPECS_HOME = Path(__file__).resolve().parents[2]
-BUNDLED_SKILLS = ["skill-creator", "skill-sync"]
+
+
+def bundled_skill_names(cli_home: Path | None = None) -> list[str]:
+    """Skill directory names shipped under bundled-skills/ (source of truth for init)."""
+    home = cli_home or AI_SPECS_HOME
+    root = home / "bundled-skills"
+    if not root.is_dir():
+        return ["skill-creator", "skill-sync"]
+    return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
 class Severity(Enum):
@@ -158,7 +166,7 @@ class Doctor:
     def _check_bundled_assets(self) -> None:
         skills_root = self.root / "ai-specs" / "skills"
         commands_root = self.root / "ai-specs" / "commands"
-        for skill in BUNDLED_SKILLS:
+        for skill in bundled_skill_names():
             skill_path = skills_root / skill
             if skill_path.is_dir():
                 self.checks.append(Check(

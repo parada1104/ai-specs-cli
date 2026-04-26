@@ -9,6 +9,7 @@ All skills live in [`ai-specs/skills/`](ai-specs/skills/). Load explicitly with 
 | Skill | Description | Link |
 |-------|-------------|------|
 | `ai-specs-development-worktrees` | Enforces the repository workflow where `main` is no longer the day-to-day integration branch, `development` is the base branch for ongoing work, and every implementation starts from a dedicated worktree created off `development` | [SKILL.md](ai-specs/skills/ai-specs-development-worktrees/SKILL.md) |
+| `context-precedence` | Canonical MVP order for resolving conflicts between project context sources (docs, skills, packs, handoffs, session memory, proposed output) | [SKILL.md](ai-specs/skills/context-precedence/SKILL.md) |
 | `openspec-apply-change` | Implement tasks from an OpenSpec change. Use when the user wants to start implementing, continue implementation, or work through tasks | [SKILL.md](ai-specs/skills/openspec-apply-change/SKILL.md) |
 | `openspec-archive-change` | Archive a completed change in the experimental workflow. Use when the user wants to finalize and archive a change after implementation is complete | [SKILL.md](ai-specs/skills/openspec-archive-change/SKILL.md) |
 | `openspec-bulk-archive-change` | Archive multiple completed changes at once. Use when archiving several parallel changes | [SKILL.md](ai-specs/skills/openspec-bulk-archive-change/SKILL.md) |
@@ -18,10 +19,12 @@ All skills live in [`ai-specs/skills/`](ai-specs/skills/). Load explicitly with 
 | `openspec-new-change` | Start a new OpenSpec change using the experimental artifact workflow. Use when the user wants to create a new feature, fix, or modification with a structured step-by-step approach | [SKILL.md](ai-specs/skills/openspec-new-change/SKILL.md) |
 | `openspec-onboard` | Guided onboarding for OpenSpec - walk through a complete workflow cycle with narration and real codebase work | [SKILL.md](ai-specs/skills/openspec-onboard/SKILL.md) |
 | `openspec-propose` | Propose a new change with all artifacts generated in one step. Use when the user wants to quickly describe what they want to build and get a complete proposal with design, specs, and tasks ready for implementation | [SKILL.md](ai-specs/skills/openspec-propose/SKILL.md) |
+| `openspec-sdd-conventions` | OpenSpec config shape for spec-driven SDD plus commit/archive conventions during apply | [SKILL.md](ai-specs/skills/openspec-sdd-conventions/SKILL.md) |
 | `openspec-sync-specs` | Sync delta specs from a change to main specs. Use when the user wants to update main specs with changes from a delta spec, without archiving the change | [SKILL.md](ai-specs/skills/openspec-sync-specs/SKILL.md) |
 | `openspec-verify-change` | Verify implementation matches change artifacts. Use when the user wants to validate that implementation is complete, correct, and coherent before archiving | [SKILL.md](ai-specs/skills/openspec-verify-change/SKILL.md) |
 | `skill-creator` | Creates new AI agent skills following the Agent Skills spec | [SKILL.md](ai-specs/skills/skill-creator/SKILL.md) |
 | `skill-sync` | Syncs skill metadata to AGENTS.md Auto-invoke sections | [SKILL.md](ai-specs/skills/skill-sync/SKILL.md) |
+| `testing-foundation` | Minimum testing commands and evidence layers for ai-specs shaped repos | [SKILL.md](ai-specs/skills/testing-foundation/SKILL.md) |
 | `using-git-worktrees` | Use when starting feature work that needs isolation from current workspace or before executing implementation plans - creates isolated git worktrees with smart directory selection and safety verification. Vendored from obra (see metadata.source) | [SKILL.md](ai-specs/skills/using-git-worktrees/SKILL.md) |
 | `vault-context` | Project-scoped canonical context via Obsidian vault — the structured record of what matters | [SKILL.md](ai-specs/skills/vault-context/SKILL.md) |
 
@@ -33,7 +36,7 @@ When project context sources conflict, use this MVP order:
 
 `canonical docs > project skills > packs > handoffs > session memory > proposed context`
 
-Canonical rule: [`docs/ai/context-precedence.md`](docs/ai/context-precedence.md). Treat it as an auditable decision policy, not an automatic merge engine.
+Canonical rule: [`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md). Treat it as an auditable decision policy, not an automatic merge engine.
 
 ### Auto-invoke Skills
 
@@ -44,17 +47,23 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | After creating/modifying a skill | `skill-sync` |
 | Archiving a completed OpenSpec change | `openspec-archive-change` |
 | Archiving several completed OpenSpec changes | `openspec-bulk-archive-change` |
+| Choosing default test commands before merge or PR | `testing-foundation` |
+| Choosing default test commands before merge or PR | `testing-foundation` |
 | Closing or handing off a session | `vault-context` |
 | Continuing an OpenSpec change | `openspec-continue-change` |
 | Creating a branch or worktree | `using-git-worktrees` |
 | Creating new skills | `skill-creator` |
 | Deciding where implementation should begin | `ai-specs-development-worktrees` |
+| Editing openspec/config.yaml for spec-driven workflow | `openspec-sdd-conventions` |
+| Editing openspec/config.yaml for spec-driven workflow | `openspec-sdd-conventions` |
 | Exploring an idea before or during an OpenSpec change | `openspec-explore` |
 | Fast-forwarding OpenSpec artifact creation | `openspec-ff-change` |
 | Implementing tasks from an OpenSpec change | `openspec-apply-change` |
 | Making an architecture or design decision | `vault-context` |
 | Proposing a new OpenSpec change | `openspec-propose` |
 | Regenerate AGENTS.md Auto-invoke tables (sync.sh) | `skill-sync` |
+| Resolving conflicts between documentation, skills, memory, and proposed context | `context-precedence` |
+| Resolving conflicts between documentation, skills, memory, and proposed context | `context-precedence` |
 | Running guided OpenSpec onboarding | `openspec-onboard` |
 | Starting a new OpenSpec change | `openspec-new-change` |
 | Starting a new session or conversation | `vault-context` |

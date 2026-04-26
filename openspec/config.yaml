@@ -63,7 +63,7 @@ rules:
     - Load relevant coding skills for the project stack
     - Use ./tests/run.sh for focused test feedback during implementation
     - Record RED/GREEN evidence when strict TDD applies
-    - Prefer git commits grouped by tasks.md phase (see docs/ai/openspec-apply-commits.md); avoid a single end-of-branch squash unless recovering history
+    - Prefer git commits grouped by tasks.md phase (see ai-specs/skills/openspec-sdd-conventions/SKILL.md); avoid a single end-of-branch squash unless recovering history
   verify:
     - Run ./tests/validate.sh before final verification
     - Compare implementation against every spec scenario

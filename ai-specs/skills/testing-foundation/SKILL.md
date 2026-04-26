@@ -1,3 +1,18 @@
+---
+name: testing-foundation
+description: >
+  Minimum testing commands and evidence layers for ai-specs shaped repos.
+  Trigger: before merge, when choosing how to verify a change, or when
+  recording apply/verify evidence.
+license: MIT
+metadata:
+  author: parada1104
+  version: "1.0"
+  scope: [root]
+  auto_invoke:
+    - "Choosing default test commands before merge or PR"
+---
+
 # Testing Foundation
 
 ## Purpose

@@ -5,10 +5,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "openspec" / "config.yaml"
-DOC = ROOT / "docs" / "ai" / "openspec-config.md"
+SKILL = ROOT / "catalog" / "skills" / "openspec-sdd-conventions" / "SKILL.md"
 
 
-class OpenSpecConfigDocsTests(unittest.TestCase):
+class OpenSpecSddConventionsSkillTests(unittest.TestCase):
     def assertContainsAll(self, haystack, needles):
         for needle in needles:
             with self.subTest(needle=needle):
@@ -35,13 +35,13 @@ class OpenSpecConfigDocsTests(unittest.TestCase):
             ],
         )
 
-    def test_doc_records_supported_config_shape_and_validation_commands(self):
-        text = DOC.read_text()
+    def test_skill_records_supported_config_shape_and_apply_conventions(self):
+        text = SKILL.read_text()
 
         self.assertContainsAll(
             text,
             [
-                "# OpenSpec Config",
+                "## OpenSpec config shape",
                 "valid for the installed `spec-driven` schema",
                 "each artifact value",
                 "should be a list of strings",
@@ -52,6 +52,9 @@ class OpenSpecConfigDocsTests(unittest.TestCase):
                 "`ai_specs_guidance`",
                 "`./tests/validate.sh`",
                 "`./tests/run.sh`",
+                "## Apply: commits and archive",
+                "commits aligned with task phases",
+                "openspec-archive-change",
             ],
         )
 

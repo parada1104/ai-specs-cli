@@ -112,9 +112,9 @@ def render_auto_invoke_placeholder() -> str:
     )
 
 
-def render_context_precedence(manifest_root: Path) -> str:
-    doc_path = manifest_root / "docs" / "ai" / "context-precedence.md"
-    if not doc_path.is_file():
+def render_context_precedence(skills_dir: Path) -> str:
+    skill_path = skills_dir / "context-precedence" / "SKILL.md"
+    if not skill_path.is_file():
         return ""
 
     return (
@@ -122,7 +122,7 @@ def render_context_precedence(manifest_root: Path) -> str:
         "When project context sources conflict, use this MVP order:\n\n"
         f"`{CONTEXT_PRECEDENCE_ORDER}`\n\n"
         "Canonical rule: "
-        "[`docs/ai/context-precedence.md`](docs/ai/context-precedence.md). "
+        "[`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md). "
         "Treat it as an auditable decision policy, not an automatic merge engine.\n"
     )
 
@@ -171,7 +171,7 @@ def main() -> int:
         HEADER_BANNER.rstrip(),
         "",
         render_skills_index(skills),
-        render_context_precedence(manifest_root),
+        render_context_precedence(skills_dir),
         render_auto_invoke_placeholder(),
         "",
         FOOTER.rstrip(),
