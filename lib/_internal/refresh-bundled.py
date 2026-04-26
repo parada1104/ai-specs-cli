@@ -298,7 +298,9 @@ def refresh(
             lock_del(lock, kind, owner, rel)
             touched.append(("-", display_name(kind, owner, rel), "untracked (removed upstream)"))
 
-        shipped_names = {display_name(k, o, r) for k, o, r in iter_bundled(cli_source)}
+        shipped_names = {
+            display_name(k, o, r) for k, o, r, _cli in iter_bundled(cli_source)
+        }
         opted_out &= shipped_names
     lock["opted_out"] = sorted(opted_out)
 

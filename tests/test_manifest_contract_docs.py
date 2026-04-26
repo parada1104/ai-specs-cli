@@ -23,11 +23,12 @@ class ManifestContractDocsTests(unittest.TestCase):
             self.readme,
             [
                 "`ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.",
-                "No other manifest sections are part of the canonical V1 surface for this change.",
+                "Omission of `[sdd]` remains valid for projects not using SDD.",
                 "- `[project]`",
                 "- `[agents]`",
                 "- `[[deps]]`",
                 "- `[mcp.<name>]`",
+                "- `[sdd]` (optional — SDD / OpenSpec; see section above)",
                 "- Missing `[agents]`, `[[deps]]`, and `[mcp]` remain valid and normalize to stable defaults.",
                 "- `project.subrepos` remains validated by the existing root target resolver.",
                 "- MCP `env` is the canonical field name.",
@@ -50,6 +51,7 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "| `[mcp.<name>]` | `environment` | tolerated input alias of `env` |",
                 "| `[mcp.<name>]` | `timeout` | optional |",
                 "| `[mcp.<name>]` | `enabled` | tolerated passthrough field |",
+                "| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |",
             ],
         )
 
@@ -59,9 +61,7 @@ class ManifestContractDocsTests(unittest.TestCase):
             [
                 "Out of scope for this V1 contract (explicitly deferred to future changes):",
                 "- precedence / merge policy beyond the currently implemented runtime behavior",
-                "- `ai-specs doctor`",
-                "- `[memory]`",
-                "- introducing new manifest sections",
+                "- `[memory]` (distinct from `[sdd].artifact_store = memory`)",
             ],
         )
 
@@ -74,7 +74,7 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "#   [agents]        optional section (default: enabled = [])",
                 "#   [[deps]]        optional repeated section (ONLY required per entry: id, source)",
                 "#   [mcp.<name>]    optional repeated section",
-                "# Ninguna otra sección forma parte de la superficie canónica V1 en este cambio.",
+                "#   [sdd]           optional — spec-driven / OpenSpec (ver README y `ai-specs sdd --help`)",
                 "# Optional section. `name` es opcional; default: \"\".",
                 "# Optional field. Default: []. Solo acepta paths relativos válidos al root.",
                 "# Optional section. `enabled` default: []. Solo estos reciben configs.",
