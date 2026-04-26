@@ -126,9 +126,13 @@ def translate_servers(agent: str, servers: dict) -> dict:
     return fn(servers) if fn else servers
 
 
-def merge_into_json(target: Path, mcp_key: str, servers: dict) -> str:
+def merge_into_json(target: Path, mcp_key: str, servers: dict, agent: str) -> str:
     """Return new JSON content with `servers` placed under `mcp_key`,
-    preserving every other top-level key in the existing file."""
+    preserving every other top-level key in the existing file.
+
+    For agent ``opencode``, ensure ``$schema`` is the first top-level key so
+    OpenCode recognizes the config file.
+    """
     if target.is_file():
         try:
             existing = json.loads(target.read_text())
@@ -138,6 +142,13 @@ def merge_into_json(target: Path, mcp_key: str, servers: dict) -> str:
             existing = {}
     else:
         existing = {}
+
+    if agent == "opencode":
+        schema = existing.get("$schema", "https://opencode.ai/config.json")
+        existing = {
+            "$schema": schema,
+            **{k: v for k, v in existing.items() if k != "$schema"},
+        }
 
     existing[mcp_key] = servers
     return json.dumps(existing, indent=2) + "\n"
@@ -235,7 +246,7 @@ def main() -> int:
     if target_path.suffix == ".toml":
         content = merge_into_toml(target_path, mcp_key, servers)
     else:
-        content = merge_into_json(target_path, mcp_key, servers)
+        content = merge_into_json(target_path, mcp_key, servers, agent)
 
     if dry_run:
         print(f"--- {target_path} (dry-run) ---")

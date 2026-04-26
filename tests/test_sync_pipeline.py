@@ -122,6 +122,7 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertEqual(
                 (workspace / "opencode.json").read_text(),
                 '{\n'
+                '  "$schema": "https://opencode.ai/config.json",\n'
                 '  "mcp": {\n'
                 '    "demo": {\n'
                 '      "type": "local",\n'
