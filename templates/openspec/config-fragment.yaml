@@ -1,0 +1,12 @@
+# Fragment merged by `ai-specs sdd enable` when missing from openspec/config.yaml.
+# Aligns with openspec-sdd-conventions / spec-driven testing hints.
+# Do not duplicate top-level keys already present in the project config.
+
+ai_specs_guidance:
+  apply:
+    tdd: true
+    test_command: ./tests/run.sh
+  verify:
+    test_command: ./tests/validate.sh
+    build_command: ""
+    coverage_threshold: 0

@@ -5,7 +5,7 @@
 #   [agents]        optional section (default: enabled = [])
 #   [[deps]]        optional repeated section (ONLY required per entry: id, source)
 #   [mcp.<name>]    optional repeated section
-# Ninguna otra sección forma parte de la superficie canónica V1 en este cambio.
+#   [sdd]           optional — spec-driven / OpenSpec (ver README y `ai-specs sdd --help`)
 #
 # Skills locales viven en ai-specs/skills/<name>/ y se autodescubren del
 # filesystem (no se listan acá).
@@ -29,6 +29,14 @@ subrepos = []
 # Optional section. `enabled` default: []. Solo estos reciben configs.
 # Opciones soportadas hoy: claude, cursor, opencode, codex, copilot, gemini.
 enabled = ["claude", "cursor", "opencode"]
+
+# -----------------------------------------------------------------------------
+# SDD / OpenSpec (opcional) — usar `ai-specs sdd enable` para rellenar y alinear openspec/
+# -----------------------------------------------------------------------------
+# [sdd]
+# enabled = true
+# provider = "openspec"
+# artifact_store = "hybrid"   # filesystem | hybrid | memory (memory = experimental con OpenSpec)
 
 # -----------------------------------------------------------------------------
 # Deps de skills externas

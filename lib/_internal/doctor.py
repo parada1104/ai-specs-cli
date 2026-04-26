@@ -7,6 +7,8 @@ Exit code is non-zero when one or more ERROR checks are present.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
@@ -102,6 +104,7 @@ class Doctor:
         self._check_agents_md()
         self._check_bundled_assets()
         self._check_enabled_agents()
+        self._check_sdd()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -370,6 +373,106 @@ class Doctor:
                     f"{mcp_path_str} missing",
                     guidance="ai-specs sync"
                 ))
+
+    # -------------------------------------------------------------------------
+    # SDD / OpenSpec (only when [sdd].enabled)
+    # -------------------------------------------------------------------------
+
+    def _check_sdd(self) -> None:
+        data = self._load_manifest()
+        sdd = data.get("sdd")
+        if not isinstance(sdd, dict) or not sdd.get("enabled"):
+            return
+        provider = sdd.get("provider", "openspec")
+        if provider != "openspec":
+            self.checks.append(Check(
+                Severity.ERROR, "sdd",
+                f"unsupported [sdd].provider: {provider!r}",
+                guidance='use provider = "openspec" in v1'
+            ))
+            return
+        store = str(sdd.get("artifact_store", "hybrid"))
+        if store not in ("filesystem", "hybrid", "memory"):
+            self.checks.append(Check(
+                Severity.ERROR, "sdd",
+                f"invalid [sdd].artifact_store: {store!r}",
+            ))
+            return
+
+        openspec_bin = shutil.which("openspec")
+        if not openspec_bin:
+            self.checks.append(Check(
+                Severity.ERROR, "sdd-openspec",
+                "openspec not on PATH",
+                guidance="npm install -g @fission-ai/openspec or ai-specs sdd enable --install-provider-cli",
+            ))
+        else:
+            self.checks.append(Check(
+                Severity.OK, "sdd-openspec",
+                f"openspec found ({openspec_bin})",
+            ))
+
+        odir = self.root / "openspec"
+        cfg = odir / "config.yaml"
+        disk_error = store in ("filesystem", "hybrid")
+        memory_mode = store == "memory"
+
+        if not odir.is_dir():
+            msg = "openspec/ directory missing"
+            if memory_mode:
+                self.checks.append(Check(
+                    Severity.WARN, "sdd-openspec-dir",
+                    msg,
+                    guidance="OpenSpec is file-based; run ai-specs sdd enable or openspec init",
+                ))
+            elif disk_error:
+                self.checks.append(Check(
+                    Severity.ERROR, "sdd-openspec-dir",
+                    msg,
+                    guidance="run ai-specs sdd enable or openspec init",
+                ))
+        else:
+            self.checks.append(Check(
+                Severity.OK, "sdd-openspec-dir",
+                "openspec/ present",
+            ))
+
+        if odir.is_dir() and not cfg.is_file() and disk_error:
+            self.checks.append(Check(
+                Severity.ERROR, "sdd-openspec-config",
+                "openspec/config.yaml missing",
+                guidance="run ai-specs sdd enable",
+            ))
+        elif cfg.is_file():
+            try:
+                txt = cfg.read_text(encoding="utf-8")
+                if not txt.strip():
+                    self.checks.append(Check(
+                        Severity.ERROR, "sdd-openspec-config",
+                        "openspec/config.yaml is empty",
+                    ))
+                elif "schema" not in txt:
+                    self.checks.append(Check(
+                        Severity.WARN, "sdd-openspec-config",
+                        "openspec/config.yaml has no schema key (minimal parse)",
+                    ))
+                else:
+                    self.checks.append(Check(
+                        Severity.OK, "sdd-openspec-config",
+                        "openspec/config.yaml readable",
+                    ))
+            except OSError as exc:
+                self.checks.append(Check(
+                    Severity.ERROR, "sdd-openspec-config",
+                    f"cannot read openspec/config.yaml: {exc}",
+                ))
+
+        if store == "hybrid" and not os.environ.get("AI_SPECS_SDD_MEMORY_HINT"):
+            self.checks.append(Check(
+                Severity.WARN, "sdd-hybrid",
+                "hybrid mode: no operative memory integration detected (heuristic)",
+                guidance="optional: set AI_SPECS_SDD_MEMORY_HINT when using external memory tools",
+            ))
 
 
 def main() -> int:
