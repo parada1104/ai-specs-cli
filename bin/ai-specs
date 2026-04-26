@@ -8,6 +8,8 @@
 # refresh-bundled [path] Refresh bundled skills/commands from CLI (lock-aware)
 # add-dep <url> [path] Register a vendored skill ([[deps]]) and sync
 # doctor [path] Diagnose project health (read-only)
+# recipe list [path] List available and installed recipes
+# recipe add <id> [path] Add a recipe to the manifest
 # sdd <enable|disable|status> … SDD / OpenSpec onboarding ([sdd] in manifest)
 # version Print CLI version
 # help Show this help
@@ -31,6 +33,7 @@ sync-agent) bash "$LIB_DIR/sync-agent.sh" "$@" ;;
 refresh-bundled) bash "$LIB_DIR/refresh-bundled.sh" "$@" ;;
 add-dep) bash "$LIB_DIR/add-dep.sh" "$@" ;;
 doctor) bash "$LIB_DIR/doctor.sh" "$@" ;;
+recipe) bash "$LIB_DIR/recipe.sh" "$@" ;;
 sdd) bash "$LIB_DIR/sdd.sh" "$@" ;;
 version|-v|--version) bash "$LIB_DIR/version.sh" ;;
 help|-h|--help) cat <<EOF
@@ -43,6 +46,8 @@ Commands:
   refresh-bundled [path] Update bundled skills/commands (keeps your edits, drops .new sidecars)
   add-dep <url> [path] Register a vendored skill (then sync)
   doctor [path] Diagnose project health (read-only)
+  recipe list [path]          List available and installed recipes
+  recipe add <id> [path]      Add a recipe to the manifest
   sdd <enable|disable|status> [path] SDD / OpenSpec (see ai-specs sdd --help)
   version Print CLI version
   help Show this help
