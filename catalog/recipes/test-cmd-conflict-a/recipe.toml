@@ -1,0 +1,10 @@
+[recipe]
+id = "test-cmd-conflict-a"
+name = "Test Cmd Conflict A"
+description = "Declares a conflicting command."
+version = "1.0.0"
+
+[provides]
+commands = [
+    { id = "shared-cmd", path = "commands/shared.md" },
+]

@@ -6,6 +6,7 @@
 #   [[deps]]        optional repeated section (ONLY required per entry: id, source)
 #   [mcp.<name>]    optional repeated section
 #   [sdd]           optional — spec-driven / OpenSpec (ver README y `ai-specs sdd --help`)
+#   [recipes.<id>]  optional — bundles de skills, comandos, templates y MCP presets
 #
 # Skills locales viven en ai-specs/skills/<name>/ y se autodescubren del
 # filesystem (no se listan acá).
@@ -37,6 +38,21 @@ enabled = ["claude", "cursor", "opencode"]
 # enabled = true
 # provider = "openspec"
 # artifact_store = "hybrid"   # filesystem | hybrid | memory (memory = experimental con OpenSpec)
+
+# -----------------------------------------------------------------------------
+# Recipes — bundles de skills, comandos, templates y MCP presets
+# -----------------------------------------------------------------------------
+# Las recetas declaran capacidades completas en un solo bloque.
+# Viven en catalog/recipes/<id>/recipe.toml y se materializan con `ai-specs sync`.
+#
+# V1 contract por recipe:
+#   enabled             required; boolean — true para materializar
+#   version             required; string exacto que debe coincidir con recipe.toml
+#
+# Ejemplo:
+# [recipes.runtime-memory-openmemory]
+# enabled = true
+# version = "1.0.0"
 
 # -----------------------------------------------------------------------------
 # Deps de skills externas

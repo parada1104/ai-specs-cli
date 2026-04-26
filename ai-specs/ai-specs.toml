@@ -1,7 +1,7 @@
 # ai-specs.toml — manifiesto raíz del estándar ai-specs.
 #
 # Source of truth para: agentes habilitados, skills vendoreadas (deps),
-# servidores MCP. Skills locales viven en ai-specs/skills/<name>/ y se
+# servidores MCP, y recetas. Skills locales viven en ai-specs/skills/<name>/ y se
 # autodescubren del filesystem (no se listan acá).
 #
 # Comandos (CLI global, publicado hoy desde https://github.com/parada1104/ai-specs-cli):
@@ -20,6 +20,16 @@ subrepos = []
 # Agentes habilitados para sync-agent. Solo estos reciben configs.
 # Opciones: claude, cursor, opencode, codex, copilot, gemini
 enabled = ["claude", "cursor", "opencode"]
+
+# -----------------------------------------------------------------------------
+# Recipes — bundles de skills, comandos, templates y MCP presets
+# -----------------------------------------------------------------------------
+# Las recetas declaran capacidades completas en un solo bloque.
+# Viven en catalog/recipes/<id>/recipe.toml y se materializan con `ai-specs sync`.
+#
+# V1 contract por recipe:
+#   enabled             required; boolean — true para materializar
+#   version             required; string exacto que debe coincidir con recipe.toml
 
 # -----------------------------------------------------------------------------
 # Deps de skills externas

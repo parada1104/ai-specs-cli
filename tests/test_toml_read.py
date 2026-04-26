@@ -65,6 +65,43 @@ class TomlReadTests(unittest.TestCase):
             },
         )
 
+    def test_recipes_absent_returns_empty_dict(self):
+        manifest = self.write_manifest("[project]\nname = 'fixture'\n")
+        data = self.mod.load_toml(manifest)
+        self.assertEqual(self.mod.read_recipes(data), {})
+
+    def test_recipes_present_normalizes_enabled_and_version(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[recipes.runtime-memory-openmemory]\n"
+            "enabled = true\n"
+            "version = \"1.0.0\"\n\n"
+            "[recipes.another-recipe]\n"
+            "enabled = false\n"
+            "version = \"2.0.0\"\n"
+        )
+        data = self.mod.load_toml(manifest)
+        self.assertEqual(
+            self.mod.read_recipes(data),
+            {
+                "runtime-memory-openmemory": {"enabled": True, "version": "1.0.0"},
+                "another-recipe": {"enabled": False, "version": "2.0.0"},
+            },
+        )
+
+    def test_recipes_ignores_invalid_entries(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[recipes.bad-recipe]\n"
+            "enabled = \"not-a-bool\"\n"
+            "version = 123\n"
+        )
+        data = self.mod.load_toml(manifest)
+        self.assertEqual(
+            self.mod.read_recipes(data),
+            {"bad-recipe": {"enabled": False, "version": "123"}},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,9 @@
+[recipe]
+id = "test-mcp-conflict-a"
+name = "Test MCP Conflict A"
+description = "Declares a conflicting MCP preset."
+version = "1.0.0"
+
+[[provides.mcp]]
+id = "shared-mcp"
+command = "npx"

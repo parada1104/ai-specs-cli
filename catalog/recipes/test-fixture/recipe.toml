@@ -1,0 +1,30 @@
+[recipe]
+id = "test-fixture"
+name = "Test Fixture Recipe"
+description = "A minimal recipe fixture for integration tests."
+version = "1.0.0"
+author = "ai-specs"
+license = "MIT"
+
+[provides]
+skills = [
+    { id = "test-skill", source = "bundled" },
+]
+
+commands = [
+    { id = "test-command", path = "commands/test-command.md" },
+]
+
+[[provides.mcp]]
+id = "test-mcp"
+command = "npx"
+args = ["-y", "@test/mcp-server"]
+
+[[provides.templates]]
+source = "templates/test-template.md"
+target = "docs/test-template-output.md"
+condition = "not_exists"
+
+[[provides.docs]]
+source = "docs/test-doc.md"
+target = "docs/test-doc-output.md"

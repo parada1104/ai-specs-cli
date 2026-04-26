@@ -29,6 +29,7 @@ committable and shareable with a team.
 | **Testing foundation** | ✅ | Default validation commands for SDD cycles |
 | **SDD integration** | ✅ | Optional OpenSpec onboarding via `ai-specs sdd` |
 | **Bundled skills** | ✅ | `skill-creator` + `skill-sync` + `skills-as-rules` command |
+| **Recipes** | ✅ | Named, versioned bundles of skills, commands, templates, and MCP presets |
 | **Lock-based updates** | ✅ | SHA-256 baseline tracking for safe skill updates |
 
 ## What's NOT included yet
@@ -40,7 +41,7 @@ These features are **explicitly deferred** to post-MVP (EPICs 2–7). They are
 |---------|-------------|------|
 | **Memory / persistence layer** | EPIC 2 | No `[memory]` manifest section yet; no opencode-mem adapter |
 | **Context Router** | EPIC 8 | No `ai-specs context plan` command; no deterministic scoring |
-| **Packs / recipes** | EPIC 5 | No `recipe.toml` schema; no `ai-specs recipe list` |
+| **Packs / recipes** | — | Now implemented as `[recipes.<id>]` in V1 manifest |
 | **Handoff automation** | EPIC 3 | No bundled `/handoff` command; no `docs/ai-memory/` structure |
 | **Multi-device sync** | EPIC 6 | No sync beyond git; no cloud persistence |
 | **Tracker adapters** | EPIC 7 | No Trello/Jira/GitHub Issues integration |
@@ -143,6 +144,7 @@ Canonical V1 surface:
 - `[agents]`
 - `[[deps]]`
 - `[mcp.<name>]`
+- `[recipes.<id>]` (optional — named bundles of skills, commands, templates, and MCP presets)
 - `[sdd]` (optional — SDD / OpenSpec; see section above)
 
 Omission of `[sdd]` remains valid for projects not using SDD.
@@ -169,12 +171,37 @@ Field classification in V1:
 | `[mcp.<name>]` | `environment` | tolerated input alias of `env` |
 | `[mcp.<name>]` | `timeout` | optional |
 | `[mcp.<name>]` | `enabled` | tolerated passthrough field |
+| `[recipes.<id>]` | `enabled` | required; boolean — must be `true` to materialize |
+| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
 | `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |
 
 Out of scope for this V1 contract (explicitly deferred to future changes):
 
 - precedence / merge policy beyond the currently implemented runtime behavior
 - `[memory]` (distinct from `[sdd].artifact_store = memory`)
+
+## Recipes
+
+Recipes are named, versioned bundles of skills, commands, templates, and MCP presets.
+They live in `catalog/recipes/<id>/recipe.toml` and are materialized by `ai-specs sync`.
+
+Declare a recipe in your manifest:
+
+```toml
+[recipes.runtime-memory-openmemory]
+enabled = true
+version = "1.0.0"
+```
+
+On `ai-specs sync`, the CLI:
+1. Validates the recipe exists in the catalog
+2. Checks the version pin matches `recipe.toml`
+3. Copies bundled skills, commands, templates, and docs into the project
+4. Vendors external skills declared with `source = "dep"`
+5. Merges MCP presets into derived agent configs (recipe values take precedence)
+6. Detects and fails on primitive ID collisions across recipes
+
+Recipe vs user-local skills produce a warning (recipe version wins), not a fatal error.
 
 ## Recommended skills (catalog)
 
