@@ -12,6 +12,44 @@ fan-out, merge-safe MCP) but **per-project** so different repos can have
 different agents, skills, and MCP servers — and the configuration is
 committable and shareable with a team.
 
+## What's included (MVP v1)
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Per-project manifest** | ✅ | `ai-specs/ai-specs.toml` as single source of truth |
+| **Multi-agent fan-out** | ✅ | Claude, Cursor, OpenCode, Codex, Copilot, Gemini |
+| **MCP server distribution** | ✅ | Merge-safe MCP config per agent (JSON, TOML) |
+| **Skill management** | ✅ | Local, bundled, and vendored skills with autodiscovery |
+| **AGENTS.md generation** | ✅ | Auto-invoke table synced from skill frontmatter |
+| **Project initialization** | ✅ | `ai-specs init` scaffolds structure idempotently |
+| **Dependency vendoring** | ✅ | `ai-specs add-dep` + `ai-specs sync` clones external skills |
+| **Subrepo sync** | ✅ | Mirror derived artifacts to `project.subrepos` |
+| **Read-only diagnostics** | ✅ | `ai-specs doctor` validates project health |
+| **Context precedence** | ✅ | Skill documenting canonical resolution order |
+| **Testing foundation** | ✅ | Default validation commands for SDD cycles |
+| **SDD integration** | ✅ | Optional OpenSpec onboarding via `ai-specs sdd` |
+| **Bundled skills** | ✅ | `skill-creator` + `skill-sync` + `skills-as-rules` command |
+| **Lock-based updates** | ✅ | SHA-256 baseline tracking for safe skill updates |
+
+## What's NOT included yet
+
+These features are **explicitly deferred** to post-MVP (EPICs 2–7). They are
+**not bugs** — they are roadmap items not yet implemented:
+
+| Feature | Planned EPIC | Note |
+|---------|-------------|------|
+| **Memory / persistence layer** | EPIC 2 | No `[memory]` manifest section yet; no opencode-mem adapter |
+| **Context Router** | EPIC 8 | No `ai-specs context plan` command; no deterministic scoring |
+| **Packs / recipes** | EPIC 5 | No `recipe.toml` schema; no `ai-specs recipe list` |
+| **Handoff automation** | EPIC 3 | No bundled `/handoff` command; no `docs/ai-memory/` structure |
+| **Multi-device sync** | EPIC 6 | No sync beyond git; no cloud persistence |
+| **Tracker adapters** | EPIC 7 | No Trello/Jira/GitHub Issues integration |
+| **Semantic search** | Post-MVP | No embeddings or local vector search for skills/docs |
+| **Coverage / linter / type-check** | Post-MVP | Testing foundation exists; stronger tooling not configured |
+
+> If you need any of these now, open an issue or vendor a skill via `[[deps]]`
+> that implements the desired behavior locally.
+
 ## Install
 
 ```bash
@@ -78,6 +116,20 @@ ai-specs sdd disable [path]
 | `filesystem` | Required | ERROR if missing / unreadable config |
 | `hybrid` | Required (same as filesystem) | May WARN about optional “memory” heuristics |
 | `memory` | Optional (experimental) | WARN if tree missing; OpenSpec stays file-first in v1 |
+
+### Minimal `[sdd]` example
+
+```toml
+[sdd]
+enabled = true
+provider = "openspec"
+artifact_store = "filesystem"
+```
+
+With this block present, `ai-specs doctor` will validate that `openspec/config.yaml`
+is readable, and `ai-specs sdd enable` will scaffold `openspec/` with a valid
+base configuration for the `spec-driven` schema. See [`docs/ai/sdd.md`](docs/ai/sdd.md)
+for the full SDD provider contract and generated command reference.
 
 ## Manifest V1 contract (`ai-specs/ai-specs.toml`)
 
