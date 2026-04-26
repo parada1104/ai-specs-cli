@@ -125,6 +125,24 @@ def read_mcp(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {name: _normalize_mcp_server(cfg) for name, cfg in raw_mcp.items() if isinstance(name, str)}
 
 
+def read_recipes(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Extract [recipes.<id>] tables. Returns {id: {enabled, version}}."""
+    out: dict[str, dict[str, Any]] = {}
+    recipes = data.get("recipes", {})
+    if not isinstance(recipes, dict):
+        return out
+    for recipe_id, value in recipes.items():
+        if not isinstance(value, dict):
+            continue
+        enabled = value.get("enabled")
+        version = value.get("version")
+        out[recipe_id] = {
+            "enabled": bool(enabled) if isinstance(enabled, bool) else False,
+            "version": str(version) if version is not None else "",
+        }
+    return out
+
+
 def read_section(data: dict[str, Any], section: str) -> Any:
     if section == "project":
         return read_project(data)
@@ -134,6 +152,8 @@ def read_section(data: dict[str, Any], section: str) -> Any:
         return read_deps(data)
     if section == "mcp":
         return read_mcp(data)
+    if section == "recipes":
+        return read_recipes(data)
     raise KeyError(section)
 
 

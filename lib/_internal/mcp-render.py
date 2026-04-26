@@ -33,7 +33,18 @@ def load_mcp(toml_path: Path) -> dict:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     data = module.load_toml(toml_path)
-    return module.read_mcp(data)
+    mcp = module.read_mcp(data)
+
+    # Merge recipe MCP presets if present (recipe values take precedence)
+    recipe_mcp_path = toml_path.parent / ".recipe-mcp.json"
+    if recipe_mcp_path.is_file():
+        try:
+            recipe_mcp = json.loads(recipe_mcp_path.read_text())
+            if isinstance(recipe_mcp, dict):
+                mcp = {**mcp, **recipe_mcp}
+        except json.JSONDecodeError:
+            pass
+    return mcp
 
 
 # --- Per-agent translators -------------------------------------------------

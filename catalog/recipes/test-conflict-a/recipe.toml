@@ -1,0 +1,10 @@
+[recipe]
+id = "test-conflict-a"
+name = "Test Conflict A"
+description = "Declares a conflicting primitive."
+version = "1.0.0"
+
+[provides]
+skills = [
+    { id = "shared-skill", source = "bundled" },
+]

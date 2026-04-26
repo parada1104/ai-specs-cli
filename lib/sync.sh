@@ -62,6 +62,7 @@ VENDOR_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/vendor-skills.py"
 GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 AGENTS_MD_RENDER="$AI_SPECS_HOME/lib/_internal/agents-md-render.py"
 REFRESH_BUNDLED_PY="$AI_SPECS_HOME/lib/_internal/refresh-bundled.py"
+RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 SYNC_AGENT_SH="$AI_SPECS_HOME/lib/sync-agent.sh"
 
 PLAN_JSON="$(python3 "$TARGET_RESOLVE_PY" "$TARGET_PATH")" || {
@@ -112,6 +113,9 @@ python3 "$REFRESH_BUNDLED_PY" "$ROOT_PATH" "$AI_SPECS_HOME"
 
 echo "▸ vendor-skills (root only)"
 python3 "$VENDOR_SKILLS_PY" "$ROOT_PATH"
+
+echo "▸ recipe-materialize (root)"
+python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME"
 
 echo "▸ agents-md-render (root)"
 python3 "$AGENTS_MD_RENDER" "$ROOT_PATH" "$ROOT_PATH/AGENTS.md"

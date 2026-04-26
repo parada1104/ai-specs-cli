@@ -8,7 +8,7 @@ Definir el contrato V1 canónico y validable de `ai-specs/ai-specs.toml` sin exi
 
 ### Requirement: Superficie canónica mínima del manifiesto
 
-El sistema MUST tratar `ai-specs/ai-specs.toml` del root como fuente de verdad V1 y reconocer `[project]`, `[agents]`, `[[deps]]` y `[mcp.<name>]` como superficie canónica base, y `[sdd]` como superficie canónica **opcional** cuando el proyecto declara integración SDD según el contrato `sdd-cli-integration`.
+El sistema MUST tratar `ai-specs/ai-specs.toml` del root como fuente de verdad V1 y reconocer `[project]`, `[agents]`, `[[deps]]`, `[mcp.<name>]` y opcionalmente `[recipes.<id>]` como superficie canónica base, y `[sdd]` como superficie canónica **opcional** cuando el proyecto declara integración SDD según el contrato `sdd-cli-integration`.
 
 #### Scenario: Manifest V1 mínimo válido
 - GIVEN un manifiesto con `[project]`, `[agents]`, `[[deps]]`, `[mcp.<name>]` y opcionalmente `[sdd]` presentes u omitidos
@@ -17,10 +17,22 @@ El sistema MUST tratar `ai-specs/ai-specs.toml` del root como fuente de verdad V
 - AND la omisión de `[sdd]` MUST NOT invalidar el manifiesto por sí sola
 
 #### Scenario: Campo mínimo por sección
-- GIVEN `project.name`, `agents.enabled`, `deps.id`, `deps.source`, `mcp.<name>.command`, `mcp.<name>.args`, `mcp.<name>.env` y `mcp.<name>.timeout`
+- GIVEN `project.name`, `agents.enabled`, `deps.id`, `deps.source`, `mcp.<name>.command`, `mcp.<name>.args`, `mcp.<name>.env`, `mcp.<name>.timeout`, y `recipes.<id>.enabled` / `recipes.<id>.version`
 - WHEN se publica el contrato V1
 - THEN `deps.id` y `deps.source` MUST quedar como mínimos requeridos para `[[deps]]`
 - AND los campos canónicos MCP MUST seguir alineados con el contrato de alias (`env` canónico, `environment` tolerado)
+- AND `recipes.<id>.enabled` y `recipes.<id>.version` MUST quedar como mínimos requeridos para `[recipes.<id>]`
+
+#### Scenario: Sección recipes declarada
+- GIVEN `[recipes.my-recipe]` está presente en el manifiesto
+- WHEN se valida el manifiesto
+- THEN `enabled` y `version` MUST estar presentes
+- AND la omisión de `[recipes.*]` MUST NOT invalidar el manifiesto
+
+#### Scenario: Campo faltante en recipe
+- GIVEN `[recipes.my-recipe]` omite `version`
+- WHEN se valida el manifiesto
+- THEN la validación MUST fallar con mensaje de error explícito
 
 #### Scenario: Sección SDD declarada
 - GIVEN `[sdd]` está presente en el manifiesto
@@ -65,6 +77,20 @@ El sistema MUST validar solo lo que hoy ya tiene semántica operativa explícita
 - WHEN se redacta el contrato V1
 - THEN esa regla MUST marcarse como diferida
 - AND MUST NOT convertirse en requisito validable de este cambio
+
+### Requirement: Campos mínimos de la tabla recipes
+
+El sistema SHALL reconocer en `[recipes.<id>]` al menos: `enabled` (booleano, requerido) y `version` (cadena exacta, requerida). La ausencia de toda sección `[recipes.*]` MUST NOT invalidar el manifiesto.
+
+#### Scenario: Recipes mínimo válido
+- GIVEN `[recipes.my-recipe]` declara `enabled = true` y `version = "1.0.0"`
+- WHEN se valida el manifiesto
+- THEN la validación MUST pasar
+
+#### Scenario: Campo faltante en recipe
+- GIVEN `[recipes.my-recipe]` omite `version`
+- WHEN se valida el manifiesto
+- THEN la validación MUST fallar con mensaje explícito
 
 ### Requirement: Campos mínimos de la tabla SDD
 
