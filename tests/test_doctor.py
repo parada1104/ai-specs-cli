@@ -1,4 +1,5 @@
 import importlib.util
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +17,8 @@ def load_module(path: Path, name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    # Pre-register so dataclasses (Python 3.12+) can resolve cls.__module__ during exec.
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
