@@ -1,9 +1,11 @@
 import importlib.util
+import sys
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
@@ -15,6 +17,8 @@ def load_module(path: Path, name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    # Pre-register so dataclasses (Python 3.12+) can resolve cls.__module__ during exec.
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -475,6 +479,59 @@ def _find_files(root: Path):
     for p in root.rglob("*"):
         if p.is_file():
             yield p
+
+
+def _append_sdd(toml: Path, *, enabled: bool, store: str) -> None:
+    extra = f"""
+
+[sdd]
+enabled = {str(enabled).lower()}
+provider = "openspec"
+artifact_store = "{store}"
+"""
+    toml.write_text(toml.read_text().rstrip() + extra + "\n")
+
+
+class SddDoctorChecksTests(unittest.TestCase):
+    def _run_doctor_module(self, target: Path):
+        doc = load_module(DOCTOR_PY, "doctor_sdd_probe")
+        d = doc.Doctor(target)
+        code = d.run()
+        return d, code
+
+    def test_sdd_disabled_emits_no_sdd_openspec_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            d, _ = self._run_doctor_module(target)
+            labels = " ".join(c.name for c in d.checks)
+            self.assertNotIn("sdd-openspec", labels)
+
+    @patch.object(shutil, "which", return_value="/fake/openspec")
+    def test_sdd_filesystem_missing_tree_errors(self, _mock_which):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            _append_sdd(target / "ai-specs" / "ai-specs.toml", enabled=True, store="filesystem")
+            d, code = self._run_doctor_module(target)
+            self.assertNotEqual(code, 0)
+            self.assertTrue(
+                any(c.name == "sdd-openspec-dir" and "ERROR" in c.severity.value for c in d.checks)
+            )
+
+    @patch.object(shutil, "which", return_value="/fake/openspec")
+    def test_sdd_memory_missing_tree_warns_not_errors(self, _mock_which):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            _append_sdd(target / "ai-specs" / "ai-specs.toml", enabled=True, store="memory")
+            d, code = self._run_doctor_module(target)
+            self.assertEqual(code, 0)
+            warns = [c for c in d.checks if c.name == "sdd-openspec-dir"]
+            self.assertTrue(warns and warns[0].severity.value == "WARN")
 
 
 if __name__ == "__main__":

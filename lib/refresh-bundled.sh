@@ -2,7 +2,7 @@
 # refresh-bundled.sh — refresh bundled skills & commands, respecting user edits.
 #
 # Usage:
-#   ai-specs refresh-bundled [path]
+#   ai-specs refresh-bundled [path] [--preset NAME]
 #
 # Behavior (per bundled file):
 #   - Untouched by user → auto-update to the latest CLI version
@@ -19,7 +19,7 @@ AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: ai-specs refresh-bundled [path]
+Usage: ai-specs refresh-bundled [path] [--preset NAME]
 
 Refresh bundled skills and commands from the CLI, preserving user edits.
 
@@ -28,19 +28,26 @@ Arguments:
 
 Flags:
   --init    (internal) First-time lock setup — do NOT write .new sidecars.
+  --preset  Subset refresh (e.g. openspec for SDD enable); see refresh-bundled.py.
   -h, --help
 
 Examples:
   ai-specs refresh-bundled
   ai-specs refresh-bundled ~/code/my-app
+  ai-specs refresh-bundled --preset openspec
 EOF
 }
 
 TARGET_PATH=""
 INIT_FLAG=""
+PRESET_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --init)     INIT_FLAG="--init"; shift ;;
+        --preset)
+            PRESET_ARGS=(--preset "$2")
+            shift 2
+            ;;
         -h|--help)  usage; exit 0 ;;
         --)         shift; break ;;
         -*)
@@ -73,4 +80,4 @@ echo ""
 echo "ai-specs refresh-bundled"
 echo "  target: $TARGET_PATH"
 echo ""
-python3 "$REFRESH_PY" "$TARGET_PATH" "$AI_SPECS_HOME" $INIT_FLAG
+python3 "$REFRESH_PY" "$TARGET_PATH" "$AI_SPECS_HOME" $INIT_FLAG "${PRESET_ARGS[@]}"

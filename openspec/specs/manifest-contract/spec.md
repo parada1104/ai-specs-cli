@@ -8,19 +8,25 @@ Definir el contrato V1 canónico y validable de `ai-specs/ai-specs.toml` sin exi
 
 ### Requirement: Superficie canónica mínima del manifiesto
 
-El sistema MUST tratar `ai-specs/ai-specs.toml` del root como fuente de verdad V1 y reconocer solo `[project]`, `[agents]`, `[[deps]]` y `[mcp.<name>]` como superficie canónica de este cambio.
+El sistema MUST tratar `ai-specs/ai-specs.toml` del root como fuente de verdad V1 y reconocer `[project]`, `[agents]`, `[[deps]]` y `[mcp.<name>]` como superficie canónica base, y `[sdd]` como superficie canónica **opcional** cuando el proyecto declara integración SDD según el contrato `sdd-cli-integration`.
 
 #### Scenario: Manifest V1 mínimo válido
-- GIVEN un manifiesto con `[project]`, `[agents]`, `[[deps]]` o `[mcp.<name>]` presentes u omitidos
+- GIVEN un manifiesto con `[project]`, `[agents]`, `[[deps]]`, `[mcp.<name>]` y opcionalmente `[sdd]` presentes u omitidos
 - WHEN el contrato V1 se documenta y valida
-- THEN cada sección y campo MUST quedar clasificado como requerido, opcional, defaulted o alias tolerado
-- AND no se MUST introducir secciones nuevas dentro de este cambio
+- THEN cada sección y campo MUST quedar clasificado como requerido u opcional según el contrato manifest-contract vigente
+- AND la omisión de `[sdd]` MUST NOT invalidar el manifiesto por sí sola
 
 #### Scenario: Campo mínimo por sección
 - GIVEN `project.name`, `agents.enabled`, `deps.id`, `deps.source`, `mcp.<name>.command`, `mcp.<name>.args`, `mcp.<name>.env` y `mcp.<name>.timeout`
 - WHEN se publica el contrato V1
 - THEN `deps.id` y `deps.source` MUST quedar como mínimos requeridos para `[[deps]]`
-- AND el resto MUST quedar explícitamente como opcional, defaulted o canónico por sección según el soporte real actual
+- AND los campos canónicos MCP MUST seguir alineados con el contrato de alias (`env` canónico, `environment` tolerado)
+
+#### Scenario: Sección SDD declarada
+- GIVEN `[sdd]` está presente en el manifiesto
+- WHEN se valida el manifiesto
+- THEN los campos declarados MUST cumplir el contrato `sdd-cli-integration` para valores, enums y dependencias de proveedor
+- AND los campos no reconocidos dentro de `[sdd]` MUST ser rechazados por el validador o MUST quedar explícitamente listados como tolerados en documentación y tests sin ambigüedad silenciosa
 
 ### Requirement: Compatibilidad conservadora hacia atrás
 
@@ -40,7 +46,7 @@ El sistema MUST preservar manifests que hoy funcionan por lectores tolerantes. L
 
 ### Requirement: Límite explícito de validación V1
 
-El sistema MUST validar solo lo que hoy ya tiene semántica operativa explícita y MUST dejar fuera de este cambio precedence, `doctor`, `[memory]` y reglas no consumidas por el runtime.
+El sistema MUST validar solo lo que hoy ya tiene semántica operativa explícita y MUST dejar fuera de este cambio precedence y reglas no consumidas por el runtime. La validación estructural de `[sdd]` MUST aplicarse solo cuando la tabla está presente y el comando declara soporte SDD (`sdd`, `doctor`, o `sync` si se extiende validación).
 
 #### Scenario: Validación de subrepos
 - GIVEN `project.subrepos` declarado
@@ -48,11 +54,33 @@ El sistema MUST validar solo lo que hoy ya tiene semántica operativa explícita
 - THEN el contrato MUST exigir coherencia con la resolución actual de targets del root
 - AND la semántica de paths inválidos MUST permanecer alineada con la validación existente
 
+#### Scenario: Sin SDD no se validan enums de artifact_store
+- GIVEN el manifiesto no contiene `[sdd]`
+- WHEN se ejecutan comandos que no mutan el slice SDD
+- THEN el parser MUST NOT exigir `artifact_store` ni `provider` por ausencia de `[sdd]`
+- AND `sync` MUST completar con éxito si ya era válido antes de introducir SDD
+
 #### Scenario: Campo fuera de alcance
-- GIVEN una regla propuesta sobre precedence o UX de `doctor`
+- GIVEN una regla propuesta sobre precedence no cubierta por el runtime V1
 - WHEN se redacta el contrato V1
 - THEN esa regla MUST marcarse como diferida
 - AND MUST NOT convertirse en requisito validable de este cambio
+
+### Requirement: Campos mínimos de la tabla SDD
+
+El sistema SHALL reconocer en `[sdd]` al menos: `enabled` (booleano), `provider` (cadena; en v1 el valor soportado MUST incluir `openspec`), y `artifact_store` (cadena con valores `filesystem`, `hybrid`, `memory`). El sistema MAY aceptar claves anidadas `openspec.*` o tabla `[sdd.openspec]` para opciones del proveedor siempre que estén documentadas en `sdd-cli-integration`.
+
+#### Scenario: Defaults cuando la tabla existe parcialmente
+- GIVEN `[sdd]` existe con solo `enabled = true`
+- WHEN un comando completa el manifiesto
+- THEN el comando MUST exigir o inferir `provider` y `artifact_store` según reglas documentadas sin escribir valores ilegales
+- AND si faltan campos obligatorios sin regla de inferencia, el comando MUST fallar antes de mutar otros datos
+
+#### Scenario: Con SDD se validan enums
+- GIVEN `[sdd].artifact_store` tiene un valor no permitido
+- WHEN el validador evalúa el manifiesto
+- THEN el validador MUST fallar con mensaje explícito
+- AND el mensaje MUST listar valores permitidos del contrato `sdd-artifact-store`
 
 ### Requirement: Alineación entre contrato, plantilla y README
 

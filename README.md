@@ -47,12 +47,43 @@ local derived artifacts into each subrepo so agents work from either location.
 OpenCode receives project-local skills in `.opencode/skills/` and slash commands
 in `.opencode/commands/`.
 
+## Spec-driven development (`ai-specs sdd`)
+
+Projects can declare optional **`[sdd]`** in `ai-specs/ai-specs.toml` and use **`ai-specs sdd`**
+to verify the OpenSpec CLI (**`@fission-ai/openspec`** on npm, command `openspec`), align
+`openspec/` (via `openspec init` when safe), merge non-destructive defaults into
+`openspec/config.yaml`, and run **`ai-specs refresh-bundled --preset openspec`** so catalog
+skills such as `openspec-sdd-conventions` and `testing-foundation` land under
+`ai-specs/skills/` with the usual `.ai-specs.lock` behavior. That preset **copies from this
+repo’s catalog and bundled commands**; it does **not** add `[[deps]]` rows — use
+[`catalog/README.md`](catalog/README.md) if you want vendored clones via `ai-specs sync`.
+
+Requirements when mutating (not for `sdd --dry-run`): **Node.js ≥ 20.19** and `openspec` on
+`PATH`, unless you pass **`--install-provider-cli`** (runs `npm install -g @fission-ai/openspec@latest`;
+requires `npm`).
+
+```bash
+ai-specs sdd --help
+ai-specs sdd enable [path]
+ai-specs sdd enable --artifact-store filesystem
+ai-specs sdd enable --install-provider-cli   # explicit opt-in global install
+ai-specs sdd status [path]
+ai-specs sdd disable [path]
+```
+
+### `artifact_store` values
+
+| Value | `openspec/` on disk | `doctor` when `[sdd].enabled` |
+|-------|---------------------|------------------------------|
+| `filesystem` | Required | ERROR if missing / unreadable config |
+| `hybrid` | Required (same as filesystem) | May WARN about optional “memory” heuristics |
+| `memory` | Optional (experimental) | WARN if tree missing; OpenSpec stays file-first in v1 |
+
 ## Manifest V1 contract (`ai-specs/ai-specs.toml`)
 
 `ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.
-This change documents the runtime contract the CLI already consumes today — no
-new schema engine, no precedence rules, no `doctor` behavior, and no `[memory]`
-section are introduced here.
+The runtime contract includes optional **`[sdd]`** for OpenSpec onboarding; there is
+still no separate `[memory]` manifest section (distinct from `[sdd].artifact_store`).
 
 Canonical V1 surface:
 
@@ -60,8 +91,9 @@ Canonical V1 surface:
 - `[agents]`
 - `[[deps]]`
 - `[mcp.<name>]`
+- `[sdd]` (optional — SDD / OpenSpec; see section above)
 
-No other manifest sections are part of the canonical V1 surface for this change.
+Omission of `[sdd]` remains valid for projects not using SDD.
 
 Conservative compatibility rules:
 
@@ -85,13 +117,12 @@ Field classification in V1:
 | `[mcp.<name>]` | `environment` | tolerated input alias of `env` |
 | `[mcp.<name>]` | `timeout` | optional |
 | `[mcp.<name>]` | `enabled` | tolerated passthrough field |
+| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |
 
 Out of scope for this V1 contract (explicitly deferred to future changes):
 
 - precedence / merge policy beyond the currently implemented runtime behavior
-- `ai-specs doctor`
-- `[memory]`
-- introducing new manifest sections
+- `[memory]` (distinct from `[sdd].artifact_store = memory`)
 
 ## Recommended skills (catalog)
 
