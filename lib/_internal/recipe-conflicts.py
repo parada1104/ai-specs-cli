@@ -51,6 +51,7 @@ class Conflict:
     primitive_type: str
     primitive_id: str
     recipes: set[str] = field(default_factory=set)
+    severity: str = "fatal"
 
 
 class ConflictRegistry:
@@ -98,6 +99,63 @@ def check_recipe_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Con
         except ConflictError as exc:
             all_conflicts.extend(exc.conflicts)
     return all_conflicts
+
+
+def check_capability_conflicts(
+    catalog_dir: Path, recipe_ids: list[str], explicit_bindings: list[dict[str, str]]
+) -> list[Conflict]:
+    """Detect capability ambiguity and duplicate explicit bindings.
+
+    Returns conflicts with severity:
+      - "warning" for auto-bind ambiguity (>1 provider, no explicit binding)
+      - "fatal" for duplicate explicit bindings
+    """
+    enabled_ids = set(recipe_ids)
+    # Load enabled recipes and their capabilities
+    cap_providers: dict[str, set[str]] = {}
+    for rid in recipe_ids:
+        recipe_dir = catalog_dir / rid
+        if not recipe_dir.is_dir():
+            continue
+        try:
+            recipe = load_recipe_toml(recipe_dir / "recipe.toml")
+        except RecipeValidationError:
+            continue
+        for cap in recipe.capabilities:
+            cap_providers.setdefault(cap.id, set()).add(rid)
+
+    # Track explicitly bound capabilities
+    bound_caps: set[str] = set()
+    bound_recipes: dict[str, str] = {}  # capability -> recipe
+    for binding in explicit_bindings:
+        cap = binding.get("capability", "")
+        rec = binding.get("recipe", "")
+        if cap in bound_caps:
+            return [
+                Conflict(
+                    primitive_type="capability",
+                    primitive_id=cap,
+                    recipes={bound_recipes[cap], rec},
+                    severity="fatal",
+                )
+            ]
+        bound_caps.add(cap)
+        bound_recipes[cap] = rec
+
+    conflicts: list[Conflict] = []
+    for cap_id, providers in cap_providers.items():
+        if cap_id in bound_caps:
+            continue
+        if len(providers) > 1:
+            conflicts.append(
+                Conflict(
+                    primitive_type="capability",
+                    primitive_id=cap_id,
+                    recipes=providers,
+                    severity="warning",
+                )
+            )
+    return conflicts
 
 
 def main() -> int:

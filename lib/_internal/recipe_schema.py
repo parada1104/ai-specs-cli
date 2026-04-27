@@ -50,6 +50,29 @@ class DocRef:
 
 
 @dataclass
+class Capability:
+    id: str
+
+
+@dataclass
+class Hook:
+    event: str
+    action: str
+
+
+@dataclass
+class ConfigField:
+    required: bool
+    type: str = ""
+    default: Any = None
+
+
+@dataclass
+class ConfigSchema:
+    fields: dict[str, ConfigField] = field(default_factory=dict)
+
+
+@dataclass
 class Recipe:
     id: str
     name: str
@@ -62,6 +85,9 @@ class Recipe:
     mcp: list[McpPreset] = field(default_factory=list)
     templates: list[TemplateRef] = field(default_factory=list)
     docs: list[DocRef] = field(default_factory=list)
+    capabilities: list[Capability] = field(default_factory=list)
+    hooks: list[Hook] = field(default_factory=list)
+    config_schema: ConfigSchema = field(default_factory=ConfigSchema)
 
 
 def _require_string(data: dict[str, Any], key: str, context: str) -> str:
@@ -141,6 +167,51 @@ def _parse_docs(raw: Any, context: str) -> list[DocRef]:
     return out
 
 
+def _parse_capabilities(raw: Any, context: str) -> list[Capability]:
+    if not isinstance(raw, list):
+        return []
+    out: list[Capability] = []
+    seen: set[str] = set()
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise RecipeValidationError(f"{context}.capabilities[{idx}]: expected object, got {type(item).__name__}")
+        cap_id = _require_string(item, "id", f"{context}.capabilities[{idx}]")
+        if cap_id in seen:
+            raise RecipeValidationError(f"{context}.capabilities[{idx}]: duplicate capability id '{cap_id}'")
+        seen.add(cap_id)
+        out.append(Capability(id=cap_id))
+    return out
+
+
+def _parse_hooks(raw: Any, context: str) -> list[Hook]:
+    if not isinstance(raw, list):
+        return []
+    out: list[Hook] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise RecipeValidationError(f"{context}.hooks[{idx}]: expected object, got {type(item).__name__}")
+        event = _require_string(item, "event", f"{context}.hooks[{idx}]")
+        action = _require_string(item, "action", f"{context}.hooks[{idx}]")
+        out.append(Hook(event=event, action=action))
+    return out
+
+
+def _parse_config(raw: Any, context: str) -> ConfigSchema:
+    if not isinstance(raw, dict):
+        return ConfigSchema()
+    fields: dict[str, ConfigField] = {}
+    for key, value in raw.items():
+        if not isinstance(value, dict):
+            raise RecipeValidationError(f"{context}.config.{key}: expected table, got {type(value).__name__}")
+        required = value.get("required")
+        if not isinstance(required, bool):
+            raise RecipeValidationError(f"{context}.config.{key}: missing or invalid 'required' (must be boolean)")
+        field_type = str(value.get("type", ""))
+        default = value.get("default")
+        fields[key] = ConfigField(required=required, type=field_type, default=default)
+    return ConfigSchema(fields=fields)
+
+
 def validate_recipe_toml(data: dict[str, Any]) -> Recipe:
     """Validate a raw dict loaded from recipe.toml and return a Recipe dataclass."""
     recipe_table = data.get("recipe", {})
@@ -172,6 +243,9 @@ def validate_recipe_toml(data: dict[str, Any]) -> Recipe:
         mcp=_parse_mcp(provides.get("mcp"), ctx_prov),
         templates=_parse_templates(provides.get("templates"), ctx_prov),
         docs=_parse_docs(provides.get("docs"), ctx_prov),
+        capabilities=_parse_capabilities(data.get("capabilities"), ""),
+        hooks=_parse_hooks(data.get("hooks"), ""),
+        config_schema=_parse_config(data.get("config"), ""),
     )
 
 

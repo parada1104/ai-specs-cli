@@ -126,7 +126,7 @@ def read_mcp(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def read_recipes(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Extract [recipes.<id>] tables. Returns {id: {enabled, version}}."""
+    """Extract [recipes.<id>] tables. Returns {id: {enabled, version, config}}."""
     out: dict[str, dict[str, Any]] = {}
     recipes = data.get("recipes", {})
     if not isinstance(recipes, dict):
@@ -136,10 +136,28 @@ def read_recipes(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             continue
         enabled = value.get("enabled")
         version = value.get("version")
+        config = value.get("config")
         out[recipe_id] = {
             "enabled": bool(enabled) if isinstance(enabled, bool) else False,
             "version": str(version) if version is not None else "",
+            "config": dict(config) if isinstance(config, dict) else {},
         }
+    return out
+
+
+def read_bindings(data: dict[str, Any]) -> list[dict[str, str]]:
+    """Parse top-level [[bindings]] tables. Returns list of {capability, recipe}."""
+    raw = data.get("bindings", [])
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        capability = item.get("capability")
+        recipe = item.get("recipe")
+        if isinstance(capability, str) and isinstance(recipe, str):
+            out.append({"capability": capability, "recipe": recipe})
     return out
 
 
@@ -154,6 +172,8 @@ def read_section(data: dict[str, Any], section: str) -> Any:
         return read_mcp(data)
     if section == "recipes":
         return read_recipes(data)
+    if section == "bindings":
+        return read_bindings(data)
     raise KeyError(section)
 
 

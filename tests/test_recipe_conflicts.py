@@ -70,6 +70,69 @@ class RecipeConflictTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("shared-skill", proc.stderr)
 
+    # --- V2 capability conflict tests ---------------------------------------
+
+    def _make_cap_recipe(self, tmp: str, rid: str, caps: list[str]):
+        recipe_dir = Path(tmp) / rid
+        recipe_dir.mkdir()
+        cap_lines = "".join(f'[[capabilities]]\nid = "{c}"\n' for c in caps)
+        (recipe_dir / "recipe.toml").write_text(
+            f'[recipe]\nid = "{rid}"\nname = "{rid.title()}"\ndescription = "D"\nversion = "1.0"\n'
+            + cap_lines
+        )
+
+    def test_capability_ambiguity_warning(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp)
+            self._make_cap_recipe(tmp, "recipe-a", ["tracker"])
+            self._make_cap_recipe(tmp, "recipe-b", ["tracker"])
+            conflicts = self.mod.check_capability_conflicts(catalog, ["recipe-a", "recipe-b"], [])
+            self.assertEqual(len(conflicts), 1)
+            self.assertEqual(conflicts[0].severity, "warning")
+            self.assertEqual(conflicts[0].primitive_id, "tracker")
+
+    def test_capability_explicit_binding_resolves_ambiguity(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp)
+            self._make_cap_recipe(tmp, "recipe-a", ["tracker"])
+            self._make_cap_recipe(tmp, "recipe-b", ["tracker"])
+            bindings = [{"capability": "tracker", "recipe": "recipe-a"}]
+            conflicts = self.mod.check_capability_conflicts(catalog, ["recipe-a", "recipe-b"], bindings)
+            self.assertEqual(conflicts, [])
+
+    def test_capability_duplicate_explicit_fatal(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp)
+            self._make_cap_recipe(tmp, "recipe-a", ["tracker"])
+            self._make_cap_recipe(tmp, "recipe-b", ["tracker"])
+            bindings = [
+                {"capability": "tracker", "recipe": "recipe-a"},
+                {"capability": "tracker", "recipe": "recipe-b"},
+            ]
+            conflicts = self.mod.check_capability_conflicts(catalog, ["recipe-a", "recipe-b"], bindings)
+            self.assertEqual(len(conflicts), 1)
+            self.assertEqual(conflicts[0].severity, "fatal")
+
+    def test_capability_single_provider_no_conflict(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp)
+            self._make_cap_recipe(tmp, "recipe-a", ["tracker"])
+            conflicts = self.mod.check_capability_conflicts(catalog, ["recipe-a"], [])
+            self.assertEqual(conflicts, [])
+
+    def test_capability_disabled_excluded(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp)
+            self._make_cap_recipe(tmp, "recipe-a", ["tracker"])
+            self._make_cap_recipe(tmp, "recipe-b", ["tracker"])
+            conflicts = self.mod.check_capability_conflicts(catalog, ["recipe-a"], [])
+            self.assertEqual(conflicts, [])
+
 
 if __name__ == "__main__":
     unittest.main()

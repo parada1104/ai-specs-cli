@@ -45,6 +45,13 @@ def load_recipes_from_manifest(project_root: Path) -> dict[str, dict[str, Any]]:
     return mod.read_recipes(data)
 
 
+def load_bindings_from_manifest(project_root: Path) -> list[dict[str, str]]:
+    mod = _load_toml_read()
+    toml_path = project_root / "ai-specs" / "ai-specs.toml"
+    data = mod.load_toml(toml_path)
+    return mod.read_bindings(data)
+
+
 def fail(msg: str) -> None:
     print(f"  ✗ {msg}", file=sys.stderr)
     sys.exit(1)
@@ -97,6 +104,13 @@ def _load_conflict() -> Any:
 def check_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
     mod = _load_conflict()
     return mod.check_recipe_conflicts(catalog_dir, recipe_ids)
+
+
+def check_capability_conflicts(
+    catalog_dir: Path, recipe_ids: list[str], manifest_bindings: list[dict[str, str]]
+) -> list[Any]:
+    mod = _load_conflict()
+    return mod.check_capability_conflicts(catalog_dir, recipe_ids, manifest_bindings)
 
 
 # --- Version pinning validation ----------------------------------------------
@@ -173,6 +187,86 @@ def materialize_doc(recipe_dir: Path, doc: Any, project_root: Path) -> None:
     print(f"    ✓ doc {doc.target}")
 
 
+# --- Binding resolution -------------------------------------------------------
+def resolve_bindings(
+    catalog_dir: Path, enabled_ids: list[str], manifest_bindings: list[dict[str, str]]
+) -> dict[str, str]:
+    """Resolve capability-to-recipe bindings.
+
+    Step 1: Validate explicit bindings (recipe enabled, recipe declares capability).
+    Step 2: Auto-bind capabilities declared by exactly one enabled recipe.
+    Returns map: capability_id -> recipe_id.
+    """
+    enabled_set = set(enabled_ids)
+    binding_map: dict[str, str] = {}
+
+    # Load enabled recipes and their capabilities
+    recipe_caps: dict[str, list[str]] = {}
+    cap_providers: dict[str, list[str]] = {}
+    for rid in enabled_ids:
+        try:
+            recipe = read_recipe(catalog_dir, rid)
+        except Exception:
+            continue
+        caps = [c.id for c in recipe.capabilities]
+        recipe_caps[rid] = caps
+        for cap in caps:
+            cap_providers.setdefault(cap, []).append(rid)
+
+    # Step 1: explicit bindings
+    seen_caps: set[str] = set()
+    for binding in manifest_bindings:
+        cap = binding.get("capability", "")
+        rec = binding.get("recipe", "")
+        if cap in seen_caps:
+            raise RuntimeError(f"duplicate explicit binding for capability '{cap}'")
+        seen_caps.add(cap)
+        if rec not in enabled_set:
+            raise RuntimeError(f"explicit binding for capability '{cap}' references disabled/unknown recipe '{rec}'")
+        if cap not in recipe_caps.get(rec, []):
+            raise RuntimeError(f"explicit binding for capability '{cap}' references recipe '{rec}' which does not declare that capability")
+        binding_map[cap] = rec
+
+    # Step 2: auto-bind
+    for cap, providers in cap_providers.items():
+        if cap in binding_map:
+            continue
+        if len(providers) == 1:
+            binding_map[cap] = providers[0]
+
+    return binding_map
+
+
+# --- Config merge -------------------------------------------------------------
+def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]:
+    """Merge recipe config schema defaults with manifest overrides.
+
+    Fails if any required=True field is missing in the final dict.
+    Warns if manifest provides keys not in the schema.
+    """
+    result: dict[str, Any] = {}
+    schema_fields = recipe.config_schema.fields if hasattr(recipe, "config_schema") else {}
+
+    # Start with defaults
+    for key, field in schema_fields.items():
+        if field.default is not None:
+            result[key] = field.default
+
+    # Overlay manifest values
+    for key, value in manifest_config.items():
+        if key not in schema_fields:
+            warn(f"recipe '{recipe.name}': unknown config key '{key}' in manifest (ignored)")
+            continue
+        result[key] = value
+
+    # Validate required
+    for key, field in schema_fields.items():
+        if field.required and key not in result:
+            raise RuntimeError(f"recipe '{recipe.name}': missing required config field '{key}'")
+
+    return result
+
+
 # --- Recipe vs user-local skill warning --------------------------------------
 def warn_user_local_conflicts(project_root: Path, recipe: Any) -> None:
     user_skills_dir = project_root / "ai-specs" / "skills"
@@ -183,6 +277,27 @@ def warn_user_local_conflicts(project_root: Path, recipe: Any) -> None:
                 f"recipe '{recipe.name}' provides skill '{skill.id}' which already exists "
                 f"in ai-specs/skills/. Recipe version takes precedence."
             )
+
+
+# --- Hook execution -----------------------------------------------------------
+def execute_hooks(recipe: Any, merged_config: dict[str, Any]) -> None:
+    """Execute recipe hooks in declaration order.
+
+    Unknown actions emit a warning and are skipped.
+    Any exception causes sync to fail.
+    """
+    for hook in recipe.hooks:
+        if hook.action == "validate-config":
+            # validate-config: ensure all required fields are present
+            schema_fields = recipe.config_schema.fields if hasattr(recipe, "config_schema") else {}
+            for key, field in schema_fields.items():
+                if field.required and key not in merged_config:
+                    raise RuntimeError(
+                        f"recipe '{recipe.name}': hook 'validate-config' failed: "
+                        f"missing required config field '{key}'"
+                    )
+        else:
+            warn(f"recipe '{recipe.name}': unknown hook action '{hook.action}' (skipped)")
 
 
 # --- MCP merge ---------------------------------------------------------------
@@ -211,7 +326,29 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
         print("  (no [recipes.*] enabled — skipping)")
         return 0
 
-    # Conflict detection across recipes
+    manifest_bindings = load_bindings_from_manifest(project_root)
+
+    # Binding resolution (NEW)
+    resolved_bindings = resolve_bindings(catalog_dir, list(enabled.keys()), manifest_bindings)
+
+    # Capability conflict check (NEW)
+    cap_conflicts = check_capability_conflicts(catalog_dir, list(enabled.keys()), manifest_bindings)
+    for c in cap_conflicts:
+        if getattr(c, "severity", "fatal") == "fatal":
+            fail(
+                f"capability conflict: {c.primitive_type}.id='{c.primitive_id}' "
+                f"claimed by {', '.join(sorted(c.recipes))}. "
+                f"Resolve manually in ai-specs.toml."
+            )
+            return 1
+        else:
+            warn(
+                f"capability ambiguity: {c.primitive_type}.id='{c.primitive_id}' "
+                f"declared by {', '.join(sorted(c.recipes))}. "
+                f"Add an explicit [[bindings]] entry to resolve."
+            )
+
+    # Primitive conflict detection across recipes
     conflicts = check_conflicts(catalog_dir, list(enabled.keys()))
     if conflicts:
         for c in conflicts:
@@ -234,6 +371,10 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
         recipe = read_recipe(catalog_dir, rid)
         validate_version_pin(rid, cfg.get("version", ""), recipe)
         warn_user_local_conflicts(project_root, recipe)
+
+        # Config merge (NEW)
+        manifest_config = cfg.get("config", {})
+        merged_cfg = merge_config(recipe, manifest_config)
 
         recipe_dir = catalog_dir / rid
 
@@ -265,6 +406,9 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
         # Docs
         for doc in recipe.docs:
             materialize_doc(recipe_dir, doc, project_root)
+
+        # Hook execution (NEW)
+        execute_hooks(recipe, merged_cfg)
 
     # Write merged MCP for downstream mcp-render.py
     recipe_mcp_path = project_root / "ai-specs" / ".recipe-mcp.json"
