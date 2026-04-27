@@ -23,6 +23,7 @@ All skills live in [`ai-specs/skills/`](ai-specs/skills/). Load explicitly with 
 | `openspec-sdd-workflow` | Unified SDD + worktree workflow for the ai-specs-cli repository. Covers: worktree creation from development, safety verification, SDD phase orchestration (explore → proposal → specs → design → tasks → apply → verify → archive), commit conventions, and archival rules | [SKILL.md](ai-specs/skills/openspec-sdd-workflow/SKILL.md) |
 | `openspec-sync-specs` | Sync delta specs from a change to main specs. Use when the user wants to update main specs with changes from a delta spec, without archiving the change | [SKILL.md](ai-specs/skills/openspec-sync-specs/SKILL.md) |
 | `openspec-verify-change` | Verify implementation matches change artifacts. Use when the user wants to validate that implementation is complete, correct, and coherent before archiving | [SKILL.md](ai-specs/skills/openspec-verify-change/SKILL.md) |
+| `session-bootstrap` | Session bootstrap protocol for ai-specs shaped projects | [SKILL.md](ai-specs/skills/session-bootstrap/SKILL.md) |
 | `skill-creator` | Creates new AI agent skills following the Agent Skills spec | [SKILL.md](ai-specs/skills/skill-creator/SKILL.md) |
 | `skill-sync` | Syncs skill metadata to AGENTS.md Auto-invoke sections | [SKILL.md](ai-specs/skills/skill-sync/SKILL.md) |
 | `testing-foundation` | Minimum testing commands and evidence layers for ai-specs shaped repos | [SKILL.md](ai-specs/skills/testing-foundation/SKILL.md) |
@@ -60,6 +61,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Creating new skills | `skill-creator` |
 | Deciding where implementation should begin | `openspec-sdd-workflow` |
 | Discovering a reusable pattern or convention | `openmemory-proactive` |
+| Editing openspec/config.yaml for spec-driven workflow | `openspec-sdd-conventions` |
 | Editing openspec/config.yaml for spec-driven workflow | `openspec-sdd-workflow` |
 | Exploring an idea before or during an OpenSpec change | `openspec-explore` |
 | Fast-forwarding OpenSpec artifact creation | `openspec-ff-change` |
@@ -78,7 +80,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Running guided OpenSpec onboarding | `openspec-onboard` |
 | Starting a new OpenSpec change | `openspec-new-change` |
 | Starting a new OpenSpec change | `openspec-sdd-workflow` |
-| Starting a new session or conversation | `vault-context` |
+| Starting a new session or conversation | `session-bootstrap` |
 | Starting work from development | `openspec-sdd-workflow` |
 | Syncing OpenSpec delta specs | `openspec-sync-specs` |
 | Testing fixtures | `test-skill` |

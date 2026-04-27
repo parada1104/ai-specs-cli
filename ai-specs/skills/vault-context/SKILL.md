@@ -10,7 +10,6 @@ metadata:
   version: "2.0"
   scope: [root]
   auto_invoke:
-    - "Starting a new session or conversation"
     - "Making an architecture or design decision"
     - "Closing or handing off a session"
 ---
