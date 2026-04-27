@@ -143,6 +143,47 @@ class SyncPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
+    def test_sync_renders_cursor_mcp_env_with_braced_variable_syntax(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['cursor']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@demo/server']\n"
+                "env = { API_KEY = '$DEMO_API_KEY' }\n"
+                "timeout = 30000\n"
+                "enabled = true\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            self.assertEqual(
+                (workspace / ".cursor" / "mcp.json").read_text(),
+                '{\n'
+                '  "mcpServers": {\n'
+                '    "demo": {\n'
+                '      "command": "npx",\n'
+                '      "args": [\n'
+                '        "-y",\n'
+                '        "@demo/server"\n'
+                '      ],\n'
+                '      "env": {\n'
+                '        "API_KEY": "${DEMO_API_KEY}"\n'
+                '      },\n'
+                '      "timeout": 30000,\n'
+                '      "enabled": true\n'
+                '    }\n'
+                '  }\n'
+                '}\n',
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
     def make_dep_repo(self, root: Path, *, broken_sync: bool = False) -> Path:
         repo = root / "dep-skill"
         repo.mkdir()
