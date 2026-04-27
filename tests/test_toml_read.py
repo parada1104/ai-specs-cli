@@ -84,8 +84,8 @@ class TomlReadTests(unittest.TestCase):
         self.assertEqual(
             self.mod.read_recipes(data),
             {
-                "runtime-memory-openmemory": {"enabled": True, "version": "1.0.0"},
-                "another-recipe": {"enabled": False, "version": "2.0.0"},
+                "runtime-memory-openmemory": {"enabled": True, "version": "1.0.0", "config": {}},
+                "another-recipe": {"enabled": False, "version": "2.0.0", "config": {}},
             },
         )
 
@@ -99,8 +99,70 @@ class TomlReadTests(unittest.TestCase):
         data = self.mod.load_toml(manifest)
         self.assertEqual(
             self.mod.read_recipes(data),
-            {"bad-recipe": {"enabled": False, "version": "123"}},
+            {"bad-recipe": {"enabled": False, "version": "123", "config": {}}},
         )
+
+
+    # --- V2 manifest parsing tests ------------------------------------------
+
+    def test_recipes_with_config(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[recipes.my-recipe]\n"
+            "enabled = true\n"
+            'version = "1.0.0"\n'
+            "[recipes.my-recipe.config]\n"
+            "timeout = 60\n"
+            "board_id = 'abc123'\n"
+        )
+        data = self.mod.load_toml(manifest)
+        recipes = self.mod.read_recipes(data)
+        self.assertEqual(recipes["my-recipe"]["config"], {"timeout": 60, "board_id": "abc123"})
+
+    def test_recipes_without_config_returns_empty_dict(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[recipes.my-recipe]\n"
+            "enabled = true\n"
+        )
+        data = self.mod.load_toml(manifest)
+        recipes = self.mod.read_recipes(data)
+        self.assertEqual(recipes["my-recipe"]["config"], {})
+
+    def test_bindings_present(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[[bindings]]\n"
+            'capability = "tracker"\n'
+            'recipe = "my-recipe"\n'
+        )
+        data = self.mod.load_toml(manifest)
+        bindings = self.mod.read_bindings(data)
+        self.assertEqual(bindings, [{"capability": "tracker", "recipe": "my-recipe"}])
+
+    def test_bindings_absent_returns_empty_list(self):
+        manifest = self.write_manifest("[project]\nname = 'fixture'\n")
+        data = self.mod.load_toml(manifest)
+        self.assertEqual(self.mod.read_bindings(data), [])
+
+    def test_bindings_not_list_returns_empty_list(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            'bindings = "not-a-list"\n'
+        )
+        data = self.mod.load_toml(manifest)
+        self.assertEqual(self.mod.read_bindings(data), [])
+
+    def test_read_section_bindings(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[[bindings]]\n"
+            'capability = "tracker"\n'
+            'recipe = "my-recipe"\n'
+        )
+        data = self.mod.load_toml(manifest)
+        bindings = self.mod.read_section(data, "bindings")
+        self.assertEqual(bindings, [{"capability": "tracker", "recipe": "my-recipe"}])
 
 
 if __name__ == "__main__":
