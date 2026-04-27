@@ -1,7 +1,4 @@
 # --- ai-specs: managed by `ai-specs init`/`sync` — do not edit ---
 
 
-# Vendored skill deps (restored via `ai-specs sync`)
-skills/using-git-worktrees/
-
 # --- end ai-specs ---
