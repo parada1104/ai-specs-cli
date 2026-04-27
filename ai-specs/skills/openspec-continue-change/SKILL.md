@@ -7,9 +7,6 @@ metadata:
   author: openspec
   version: "1.0"
   generatedBy: "1.3.1"
-  scope: [root]
-  auto_invoke:
-    - "Continuing an OpenSpec change"
 ---
 
 Continue working on a change by creating the next artifact.

@@ -70,6 +70,8 @@ rules:
     - State unavailable quality signals explicitly, including coverage, linter, type-checker, and formatter
 
 ai_specs_guidance:
+  sdd:
+    use_subagents: true
   apply:
     tdd: true
     test_command: ./tests/run.sh

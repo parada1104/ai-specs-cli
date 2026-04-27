@@ -7,9 +7,6 @@ metadata:
   author: openspec
   version: "1.0"
   generatedBy: "1.3.1"
-  scope: [root]
-  auto_invoke:
-    - "Verifying an OpenSpec change implementation"
 ---
 
 Verify that an implementation matches the change artifacts (specs, tasks, design).

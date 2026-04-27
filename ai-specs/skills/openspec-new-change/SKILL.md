@@ -7,9 +7,6 @@ metadata:
   author: openspec
   version: "1.0"
   generatedBy: "1.3.1"
-  scope: [root]
-  auto_invoke:
-    - "Starting a new OpenSpec change"
 ---
 
 Start a new change using the experimental artifact-driven approach.

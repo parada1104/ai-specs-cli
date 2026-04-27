@@ -7,9 +7,6 @@ metadata:
   author: openspec
   version: "1.0"
   generatedBy: "1.3.1"
-  scope: [root]
-  auto_invoke:
-    - "Implementing tasks from an OpenSpec change"
 ---
 
 Implement tasks from an OpenSpec change.

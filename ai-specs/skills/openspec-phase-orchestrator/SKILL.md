@@ -11,6 +11,12 @@ metadata:
   auto_invoke:
     - "Orchestrating an OpenSpec change phase by phase"
     - "Running a specific SDD phase in isolation"
+    - "Starting a new OpenSpec change"
+    - "Continuing an OpenSpec change"
+    - "Implementing tasks from an OpenSpec change"
+    - "Verifying an OpenSpec change implementation"
+    - "Exploring an idea before or during an OpenSpec change"
+    - "Archiving a completed OpenSpec change"
 ---
 
 Orchestrate OpenSpec changes using phase-specialized subagents (or inline fallback) to keep context windows focused and clean.
@@ -86,6 +92,19 @@ The `subagent` mode is preferred because it isolates the chain-of-thought, tool 
    - Minimal project context: `AGENTS.md` summary, tech stack from `openspec/config.yaml` context
    - Paths to dependency artifacts (already completed) — the executor will read them
    - The target output path(s)
+
+   **Worktree Context (CRITICAL)**
+   If working inside a git worktree, the payload MUST include:
+   - `worktree_path`: absolute path to the worktree directory
+   - `cwd`: the worktree path (subagent MUST cd here before any file operation)
+   
+   The subagent MUST validate it is operating in `cwd` before writing any artifacts.
+
+   **Skill Specialist Injection (subagent mode)**
+   When delegating to a subagent, the payload MUST include the full content
+   of the specialist skill (e.g., `openspec-apply-change/SKILL.md`) as the
+   system prompt, because the subagent is a fresh instance without access
+   to the parent agent's skill files.
 
    **DO NOT include** the full conversation history, previous phase chain-of-thought, or unrelated files.
 
@@ -278,6 +297,23 @@ Continue to <next-phase>? Or choose another action?
 - If a phase executor returns `status: error`, stop and present the error. Do not auto-advance.
 - If `apply` phase is selected and there are no pending tasks, suggest `verify` instead.
 - The orchestrator never writes code or artifacts directly in `subagent` mode — it only delegates and interprets handoffs.
+
+**Phase Event Emission (for recipe hooks)**
+
+After any phase transition completes successfully, emit a phase event:
+```yaml
+---
+event:
+  type: "sdd-phase-transition"
+  change: "<change-name>"
+  from_phase: "<previous-phase-or-null>"
+  to_phase: "<completed-phase>"
+  status: "complete"
+---
+```
+Recipes registered as handlers for `on-sdd-phase-change` can consume this event.
+The orchestrator does NOT execute handlers directly; it only emits the event
+into the conversation context for downstream recipes to observe.
 
 **Cross-Harness Replicability**
 

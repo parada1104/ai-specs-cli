@@ -49,13 +49,14 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | After creating/modifying a skill | `skill-sync` |
 | After solving a non-trivial bug or error | `openmemory-proactive` |
 | Archiving a completed OpenSpec change | `openspec-archive-change` |
+| Archiving a completed OpenSpec change | `openspec-phase-orchestrator` |
 | Archiving several completed OpenSpec changes | `openspec-bulk-archive-change` |
 | Before ending a session | `openmemory-proactive` |
 | Choosing default test commands before merge or PR | `testing-foundation` |
 | Choosing default test commands before merge or PR | `testing-foundation` |
 | Closing or handing off a session | `vault-context` |
 | Completing a significant implementation task | `openmemory-proactive` |
-| Continuing an OpenSpec change | `openspec-continue-change` |
+| Continuing an OpenSpec change | `openspec-phase-orchestrator` |
 | Creating a Trello card | `trello-pm-workflow` |
 | Creating a branch or worktree | `openspec-sdd-workflow` |
 | Creating new skills | `skill-creator` |
@@ -63,9 +64,9 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Discovering a reusable pattern or convention | `openmemory-proactive` |
 | Editing openspec/config.yaml for spec-driven workflow | `openspec-sdd-conventions` |
 | Editing openspec/config.yaml for spec-driven workflow | `openspec-sdd-workflow` |
-| Exploring an idea before or during an OpenSpec change | `openspec-explore` |
+| Exploring an idea before or during an OpenSpec change | `openspec-phase-orchestrator` |
 | Fast-forwarding OpenSpec artifact creation | `openspec-ff-change` |
-| Implementing tasks from an OpenSpec change | `openspec-apply-change` |
+| Implementing tasks from an OpenSpec change | `openspec-phase-orchestrator` |
 | Making a technical decision or tradeoff | `openmemory-proactive` |
 | Making an architecture or design decision | `vault-context` |
 | Orchestrating an OpenSpec change phase by phase | `openspec-phase-orchestrator` |
@@ -78,7 +79,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Running a specific SDD phase in isolation | `openspec-phase-orchestrator` |
 | Running a specific SDD phase in isolation | `openspec-sdd-workflow` |
 | Running guided OpenSpec onboarding | `openspec-onboard` |
-| Starting a new OpenSpec change | `openspec-new-change` |
+| Starting a new OpenSpec change | `openspec-phase-orchestrator` |
 | Starting a new OpenSpec change | `openspec-sdd-workflow` |
 | Starting a new session or conversation | `session-bootstrap` |
 | Starting work from development | `openspec-sdd-workflow` |
@@ -86,7 +87,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Testing fixtures | `test-skill` |
 | Troubleshoot why a skill is missing from AGENTS.md auto-invoke | `skill-sync` |
 | Updating a Trello card | `trello-pm-workflow` |
-| Verifying an OpenSpec change implementation | `openspec-verify-change` |
+| Verifying an OpenSpec change implementation | `openspec-phase-orchestrator` |
 | When encountering project-specific context that future sessions should know | `openmemory-proactive` |
 
 ## How AI tooling is wired
