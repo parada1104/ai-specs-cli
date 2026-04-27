@@ -25,5 +25,5 @@
 
 ## 4. Cierre
 
-- [ ] 4.1 Commit de los cambios con mensaje alineado a la convención del repo
-- [ ] 4.2 Generar `verify-report.md`
+- [x] 4.1 Commit de los cambios con mensaje alineado a la convención del repo
+- [x] 4.2 Generar `verify-report.md`
