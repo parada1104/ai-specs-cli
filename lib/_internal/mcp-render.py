@@ -69,6 +69,21 @@ def _headers_for_opencode(headers: dict) -> dict:
     return out
 
 
+def _translate_generic(servers: dict) -> dict:
+    """Generic translator: expand $VAR to ${VAR} in env values."""
+    out = {}
+    for name, cfg in servers.items():
+        new = dict(cfg)
+        env = new.get("env")
+        if env:
+            new["env"] = {
+                k: _ENV_VAR_RE.sub(r"${\1}", v) if isinstance(v, str) else v
+                for k, v in env.items()
+            }
+        out[name] = new
+    return out
+
+
 def _translate_opencode(servers: dict) -> dict:
     """OpenCode native schema:
       - Local: type: "local", command: [cmd, *args], environment: {...}
@@ -134,7 +149,9 @@ _TRANSLATORS = {
 
 def translate_servers(agent: str, servers: dict) -> dict:
     fn = _TRANSLATORS.get(agent)
-    return fn(servers) if fn else servers
+    if fn:
+        return fn(servers)
+    return _translate_generic(servers)
 
 
 def merge_into_json(target: Path, mcp_key: str, servers: dict, agent: str) -> str:
