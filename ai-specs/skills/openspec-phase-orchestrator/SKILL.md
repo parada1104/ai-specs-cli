@@ -17,6 +17,11 @@ metadata:
     - "Verifying an OpenSpec change implementation"
     - "Exploring an idea before or during an OpenSpec change"
     - "Archiving a completed OpenSpec change"
+    - "Merging a feature branch into development"
+    - "Creating a pull request from a worktree"
+    - "Cleaning up a worktree after merge"
+    - "Finishing work on a feature branch"
+    - "Syncing development after a merge"
 ---
 
 Orchestrate OpenSpec changes using phase-specialized subagents (or inline fallback) to keep context windows focused and clean.
@@ -46,6 +51,7 @@ The `subagent` mode is preferred because it isolates the chain-of-thought, tool 
 | `apply` | Code changes in repo + updated `tasks.md` checkboxes | `openspec-apply-change` |
 | `verify` | `openspec/changes/<name>/verify-report.md` | `openspec-verify-change` |
 | `archive` | Archived change in `openspec/changes/archive/` | `openspec-archive-change` |
+| `merge` | PR merged, worktree cleaned, development synced | `git-merge-workflow` |
 
 **Steps**
 
@@ -78,6 +84,9 @@ The `subagent` mode is preferred because it isolates the chain-of-thought, tool 
    - Else if design done but tasks missing → `tasks`
    - Else if tasks exist with pending checkboxes → `apply`
    - Else → `verify`
+   
+   Post-SDD (when change is archived or user says merge):
+   - If user says merge / finish branch / create PR → `merge`
 
 3. **Check for blockers**
 
@@ -257,6 +266,19 @@ Constraints:
 - Run openspec-archive-change or equivalent steps.
 - Ensure delta specs are synced to main specs if required.
 - Output: Archived change folder + handoff.
+```
+
+### merge
+```
+You are a MERGE specialist.
+Goal: Create PR, merge, clean up worktree, and sync development.
+Constraints:
+- Use gh CLI to create PR and merge (no local git merge).
+- Remove worktree only after PR is merged.
+- Delete local branch after successful merge.
+- Sync development with git pull --ff-only origin development.
+- If gh is not installed/auth'd, stop and instruct user.
+- Output: PR URL + handoff.
 ```
 
 **Output Format**

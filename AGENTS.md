@@ -55,12 +55,14 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Choosing default test commands before merge or PR | `testing-foundation` |
 | Choosing default test commands before merge or PR | `testing-foundation` |
 | Cleaning up a worktree after merge | `git-merge-workflow` |
+| Cleaning up a worktree after merge | `openspec-phase-orchestrator` |
 | Closing or handing off a session | `vault-context` |
 | Completing a significant implementation task | `openmemory-proactive` |
 | Continuing an OpenSpec change | `openspec-phase-orchestrator` |
 | Creating a Trello card | `trello-pm-workflow` |
 | Creating a branch or worktree | `openspec-sdd-workflow` |
 | Creating a pull request from a worktree | `git-merge-workflow` |
+| Creating a pull request from a worktree | `openspec-phase-orchestrator` |
 | Creating new skills | `skill-creator` |
 | Deciding where implementation should begin | `openspec-sdd-workflow` |
 | Discovering a reusable pattern or convention | `openmemory-proactive` |
@@ -69,10 +71,12 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Exploring an idea before or during an OpenSpec change | `openspec-phase-orchestrator` |
 | Fast-forwarding OpenSpec artifact creation | `openspec-ff-change` |
 | Finishing work on a feature branch | `git-merge-workflow` |
+| Finishing work on a feature branch | `openspec-phase-orchestrator` |
 | Implementing tasks from an OpenSpec change | `openspec-phase-orchestrator` |
 | Making a technical decision or tradeoff | `openmemory-proactive` |
 | Making an architecture or design decision | `vault-context` |
 | Merging a feature branch into development | `git-merge-workflow` |
+| Merging a feature branch into development | `openspec-phase-orchestrator` |
 | Orchestrating an OpenSpec change phase by phase | `openspec-phase-orchestrator` |
 | Orchestrating an OpenSpec change phase by phase | `openspec-sdd-workflow` |
 | Planning work with Trello | `trello-pm-workflow` |
@@ -89,6 +93,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Starting work from development | `openspec-sdd-workflow` |
 | Syncing OpenSpec delta specs | `openspec-sync-specs` |
 | Syncing development after a merge | `git-merge-workflow` |
+| Syncing development after a merge | `openspec-phase-orchestrator` |
 | Testing fixtures | `test-skill` |
 | Troubleshoot why a skill is missing from AGENTS.md auto-invoke | `skill-sync` |
 | Updating a Trello card | `trello-pm-workflow` |
