@@ -1,7 +1,7 @@
 # ai-specs.toml — manifiesto raíz del estándar ai-specs.
 #
 # Source of truth para: agentes habilitados, skills vendoreadas (deps),
-# servidores MCP. Skills locales viven en ai-specs/skills/<name>/ y se
+# servidores MCP, y recetas. Skills locales viven en ai-specs/skills/<name>/ y se
 # autodescubren del filesystem (no se listan acá).
 #
 # Comandos (CLI global, publicado hoy desde https://github.com/parada1104/ai-specs-cli):
@@ -22,20 +22,38 @@ subrepos = []
 enabled = ["claude", "cursor", "opencode"]
 
 # -----------------------------------------------------------------------------
+# Recipes — bundles de skills, comandos, templates y MCP presets
+# -----------------------------------------------------------------------------
+# Las recetas declaran capacidades completas en un solo bloque.
+# Viven en catalog/recipes/<id>/recipe.toml y se materializan con `ai-specs sync`.
+#
+# V1 contract por recipe:
+#   enabled             required; boolean — true para materializar
+#   version             required; string exacto que debe coincidir con recipe.toml
+
+# -----------------------------------------------------------------------------
 # Deps de skills externas
 # -----------------------------------------------------------------------------
-# Cada [[deps]] se clona a ai-specs/skills/<id>/ por `ai-specs sync`
-# (lib/_internal/vendor-skills.py). El frontmatter upstream se reemplaza por
-# uno estándar (name, description con atribución, license, metadata).
+# Cada [[deps]] es INPUT de vendoring para `ai-specs sync`
+# (lib/_internal/vendor-skills.py). El frontmatter resultante en
+# ai-specs/skills/<id>/SKILL.md es generado según
+# ai-specs/contracts/skill-frontmatter.md; no se edita a mano.
 #
-# Schema:
+# Mapping de manifest → frontmatter generado:
 #   id                  (req) carpeta destino bajo skills/
+#                       → name
 #   source              (req) URL git (cualquier cosa que acepte `git clone`)
+#                       → metadata.source
 #   path                (opt) subdir del repo donde vive SKILL.md (multi-skill repos)
 #   scope               (opt) lista — default ["root"]
+#                       → metadata.scope
 #   auto_invoke         (opt) lista de frases para la tabla Auto-invoke de AGENTS.md
+#                       → metadata.auto_invoke
 #   license             (opt) SPDX id
+#                       → license
 #   vendor_attribution  (opt) autor/org upstream — citado en la description
+#                       → metadata.author + metadata.vendor_attribution
+#   version             (opt) versión semántica para metadata.version del skill generado
 #
 # Ejemplo (skill puntual de un repo multi-skill):
 # [[deps]]
@@ -56,5 +74,31 @@ enabled = ["claude", "cursor", "opencode"]
 # [mcp.example]
 # command = "npx"
 # args = ["-y", "@example/mcp-server"]
-# env = { API_KEY = "$EXAMPLE_API_KEY" }
+# env = { API_KEY="***" }
 # timeout = 30000
+#
+# MCP HTTP (p. ej. OpenMemory vía Docker en :8080). Si el contenedor exige API key,
+# descomentá `headers` y definí OM_API_KEY en el entorno desde el que abrís Cursor / OpenCode.
+# Embeddings locales con Ollama: plantilla de variables en ai-specs/openmemory-ollama.env.example
+
+[mcp.trello]
+command = "npx"
+args = ["-y", "@delorenj/mcp-server-trello"]
+env = { TRELLO_API_KEY="$TRELLO_API_KEY", TRELLO_TOKEN="$TRELLO_TOKEN" }
+timeout = 30000
+
+[mcp.openmemory]
+type = "http"
+url = "http://localhost:8080/mcp"
+# headers = { "x-api-key" = "${env:OM_API_KEY}" }
+
+[mcp.vault-ai-specs]
+command = "npx"
+args = [
+  "-y",
+  "@modelcontextprotocol/server-filesystem",
+  "/Users/robert/Library/Mobile Documents/iCloud~md~obsidian/Documents/hermes-vault/nnodes/proyectos/ai-specs",
+]
+timeout = 30000
+
+

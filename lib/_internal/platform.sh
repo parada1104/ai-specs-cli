@@ -2,8 +2,8 @@
 # platform.sh — paths/keys por agente.
 # Source: source "ai-specs/cli/lib/platform.sh"
 #
-# Cada agente está descripto por 5 valores: instructions_path, skills_dir,
-# agents_dir, mcp_config_path, mcp_key. Acceso vía función `platform_get`.
+# Cada agente está descripto por sus paths/capacidades nativas. Acceso vía
+# función `platform_get`.
 #
 # Inspirado en charliesbot/chai internal/platform/platform.go pero adaptado
 # a per-project (paths relativos al REPO_ROOT, no a $HOME).
@@ -50,15 +50,16 @@ platform_get() {
             esac
             ;;
         opencode)
-            # OpenCode reads AGENTS.md natively at root; no native skill dir.
+            # OpenCode reads AGENTS.md natively and supports project-local
+            # skills/commands under .opencode/.
             case "$field" in
                 instructions_path) echo "" ;;
-                skills_dir)        echo "" ;;
+                skills_dir)        echo ".opencode/skills" ;;
                 agents_dir)        echo "" ;;
                 mcp_config_path)   echo "opencode.json" ;;
                 mcp_key)           echo "mcp" ;;
                 native)            echo "true" ;;
-                commands_dir)      echo ".opencode/command" ;;
+                commands_dir)      echo ".opencode/commands" ;;
                 *) return 1 ;;
             esac
             ;;

@@ -1,8 +1,12 @@
 .DS_Store
+__pycache__/
+*.pyc
 node_modules/
 *.log
 .idea/
 .vscode/
+.atl/
+.worktrees/
 # --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---
 .claude/
 .cursor/
@@ -16,3 +20,5 @@ CLAUDE.md
 GEMINI.md
 .mcp.json
 # --- end ai-specs ---
+.env
+.envrc

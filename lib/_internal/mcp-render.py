@@ -21,14 +21,30 @@ Format detection: by target file extension (.json vs .toml).
 import json
 import re
 import sys
-import tomllib
+import importlib.util
 from pathlib import Path
 
 
 def load_mcp(toml_path: Path) -> dict:
-    with toml_path.open("rb") as f:
-        data = tomllib.load(f)
-    return data.get("mcp", {})
+    module_path = Path(__file__).with_name("toml-read.py")
+    spec = importlib.util.spec_from_file_location("toml_read_internal", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load helper module at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    data = module.load_toml(toml_path)
+    mcp = module.read_mcp(data)
+
+    # Merge recipe MCP presets if present (recipe values take precedence)
+    recipe_mcp_path = toml_path.parent / ".recipe-mcp.json"
+    if recipe_mcp_path.is_file():
+        try:
+            recipe_mcp = json.loads(recipe_mcp_path.read_text())
+            if isinstance(recipe_mcp, dict):
+                mcp = {**mcp, **recipe_mcp}
+        except json.JSONDecodeError:
+            pass
+    return mcp
 
 
 # --- Per-agent translators -------------------------------------------------
@@ -37,17 +53,41 @@ def load_mcp(toml_path: Path) -> dict:
 # translator here.
 
 _ENV_VAR_RE = re.compile(r"^\$([A-Z_][A-Z0-9_]*)$")
+# Cursor/Claude JSON use "${env:NAME}" in headers/url; OpenCode remote expects "{env:NAME}".
+_CURSOR_ENV_IN_HEADERS = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _headers_for_opencode(headers: dict) -> dict:
+    if not isinstance(headers, dict):
+        return headers
+    out: dict = {}
+    for k, v in headers.items():
+        if isinstance(v, str):
+            out[k] = _CURSOR_ENV_IN_HEADERS.sub(r"{env:\1}", v)
+        else:
+            out[k] = v
+    return out
 
 
 def _translate_opencode(servers: dict) -> dict:
     """OpenCode native schema:
-      type: "local"
-      command: [cmd, *args]                (no separate `args` key)
-      environment: {KEY: val}              (not `env`)
-      env-var refs as "{env:VAR}"          (not "$VAR")
+      - Local: type: "local", command: [cmd, *args], environment: {...}
+      - Remote: type: "remote", url: "https://..." (manifest HTTP MCP uses type: "http")
     """
     out = {}
     for name, cfg in servers.items():
+        mcp_type = cfg.get("type")
+        url = cfg.get("url")
+        if mcp_type in ("http", "remote", "sse") and isinstance(url, str) and url:
+            new: dict = {"type": "remote", "url": url}
+            for passthrough in ("timeout", "enabled", "oauth"):
+                if passthrough in cfg:
+                    new[passthrough] = cfg[passthrough]
+            if "headers" in cfg:
+                new["headers"] = _headers_for_opencode(cfg["headers"])
+            out[name] = new
+            continue
+
         cmd = cfg.get("command")
         args = cfg.get("args", []) or []
         if isinstance(cmd, str):
@@ -59,7 +99,7 @@ def _translate_opencode(servers: dict) -> dict:
 
         new = {"type": "local", "command": full_cmd}
 
-        env = cfg.get("env") or cfg.get("environment") or {}
+        env = cfg.get("env") or {}
         if env:
             new["environment"] = {
                 k: _ENV_VAR_RE.sub(r"{env:\1}", v) if isinstance(v, str) else v
@@ -74,6 +114,19 @@ def _translate_opencode(servers: dict) -> dict:
     return out
 
 
+def _slim_mcp_config_for_write(cfg: dict) -> dict:
+    """Omit null command/args for HTTP MCP; otherwise drop only null values."""
+    mcp_type = cfg.get("type")
+    url = cfg.get("url")
+    if mcp_type in ("http", "remote", "sse") and isinstance(url, str) and url:
+        slim: dict = {"type": mcp_type, "url": url}
+        for k in ("timeout", "enabled", "headers"):
+            if k in cfg and cfg[k] is not None:
+                slim[k] = cfg[k]
+        return slim
+    return {k: v for k, v in cfg.items() if v is not None}
+
+
 _TRANSLATORS = {
     "opencode": _translate_opencode,
 }
@@ -84,9 +137,13 @@ def translate_servers(agent: str, servers: dict) -> dict:
     return fn(servers) if fn else servers
 
 
-def merge_into_json(target: Path, mcp_key: str, servers: dict) -> str:
+def merge_into_json(target: Path, mcp_key: str, servers: dict, agent: str) -> str:
     """Return new JSON content with `servers` placed under `mcp_key`,
-    preserving every other top-level key in the existing file."""
+    preserving every other top-level key in the existing file.
+
+    For agent ``opencode``, ensure ``$schema`` is the first top-level key so
+    OpenCode recognizes the config file.
+    """
     if target.is_file():
         try:
             existing = json.loads(target.read_text())
@@ -96,6 +153,13 @@ def merge_into_json(target: Path, mcp_key: str, servers: dict) -> str:
             existing = {}
     else:
         existing = {}
+
+    if agent == "opencode":
+        schema = existing.get("$schema", "https://opencode.ai/config.json")
+        existing = {
+            "$schema": schema,
+            **{k: v for k, v in existing.items() if k != "$schema"},
+        }
 
     existing[mcp_key] = servers
     return json.dumps(existing, indent=2) + "\n"
@@ -188,11 +252,12 @@ def main() -> int:
         return 0
 
     servers = translate_servers(agent, servers)
+    servers = {n: _slim_mcp_config_for_write(c) for n, c in servers.items()}
 
     if target_path.suffix == ".toml":
         content = merge_into_toml(target_path, mcp_key, servers)
     else:
-        content = merge_into_json(target_path, mcp_key, servers)
+        content = merge_into_json(target_path, mcp_key, servers, agent)
 
     if dry_run:
         print(f"--- {target_path} (dry-run) ---")

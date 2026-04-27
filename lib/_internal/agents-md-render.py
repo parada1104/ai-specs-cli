@@ -1,38 +1,21 @@
 #!/usr/bin/env python3
-"""Render <project>/AGENTS.md from ai-specs.toml + skills/.
-
-Inputs:
-  - ai-specs.toml                          → [project].name
-  - ai-specs/skills/*/SKILL.md frontmatter → skills index table
-
-Output (to <output_path>, typically <project>/AGENTS.md):
-  # {name} — Agent Instructions
-  > Auto-generated. Source of truth: ai-specs/. Run `/skills-as-rules` to
-  > formalize a new convention as a skill.
-
-  ## Skills
-  | Skill | Description | Link |
-
-  > [SKILL.md](ai-specs/skills/<first>/SKILL.md)   ← skill-sync insert anchor
-
-  ### Auto-invoke Skills
-  (placeholder — replaced on next `skill-sync` run)
-
-  ## How AI tooling is wired
-  (short boilerplate explaining the standard)
-
-There is NO escape hatch for human-authored prose: anything worth living
-inside AGENTS.md belongs in a skill. Use `/skills-as-rules` (interactive)
-to bootstrap one.
+"""Render AGENTS.md from a root manifest plus a target-local skills tree.
 
 Usage:
-  agents-md-render.py <project_root> <output_path>
+  agents-md-render.py <manifest_root> <output_path> [--skills-dir <path>]
+
+By default, skills are read from <manifest_root>/ai-specs/skills. For subrepo
+fan-out, pass --skills-dir <target>/ai-specs/skills so links stay local while
+project metadata still comes from the root manifest.
 """
 
-import re
+from __future__ import annotations
+
 import sys
 import tomllib
 from pathlib import Path
+
+from skill_contract import from_local_skill
 
 
 HEADER_BANNER = """\
@@ -57,85 +40,28 @@ gitignored.
 Common commands (run from project root):
 
 ```bash
-ai-specs sync                  # vendor deps + regenerate AGENTS.md + fan out per agent
+ai-specs sync                  # vendor deps + regenerate AGENTS.md + fan out per target + per agent
 ai-specs add-dep <git-url>     # vendored skill (external, gitignored)
-ai-specs sync-agent --claude   # re-render configs for a single agent
+ai-specs sync-agent --claude   # re-render configs for the current target from the root manifest
 ```
 
 Inside a configured agent, run **`/skills-as-rules`** whenever you want to
 formalize a convention as a local skill — the command is interactive and walks
 you through one skill at a time using `skill-creator` + `skill-sync`.
+
+> Subrepo note: local `ai-specs/` contents are derived artifacts from the root
+> sync run in multi-target mode. Treat them as generated outputs, not editable
+> manifest sources.
 """
 
 
-def parse_skill(path: Path) -> dict:
-    """Extract {name, description} from a SKILL.md YAML frontmatter.
-
-    Hand-rolled — we avoid a YAML dep. Handles:
-      - inline description:   `description: text`
-      - block scalar:         `description: >` followed by indented lines
-    """
-    text = path.read_text()
-    if not text.startswith("---"):
-        return {}
-
-    # Frontmatter is between the first two `---` lines.
-    body = text[3:]  # drop leading ---
-    end = body.find("\n---")
-    if end < 0:
-        return {}
-    fm_lines = body[:end].splitlines()
-    # Drop the leading newline from the split, normalize.
-    fm_lines = [ln for ln in fm_lines]
-
-    name = ""
-    description = ""
-
-    i = 0
-    while i < len(fm_lines):
-        line = fm_lines[i]
-        m = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$", line)
-        if not m:
-            i += 1
-            continue
-        key, rest = m.group(1), m.group(2).strip()
-
-        if key == "name":
-            name = rest.strip().strip('"').strip("'")
-
-        elif key == "description":
-            if rest and rest not in (">", "|", ">-", "|-"):
-                description = rest
-            else:
-                # Block scalar — collect indented continuation lines.
-                buf = []
-                j = i + 1
-                while j < len(fm_lines):
-                    nxt = fm_lines[j]
-                    if not nxt.strip():
-                        buf.append("")
-                        j += 1
-                        continue
-                    # Top-level key terminates the block.
-                    if re.match(r"^[A-Za-z_][A-Za-z0-9_-]*:", nxt):
-                        break
-                    buf.append(nxt.strip())
-                    j += 1
-                description = " ".join(b for b in buf if b)
-
-        i += 1
-
-    # Trim description to first useful sentence; drop the "Trigger: …" tail.
-    if "Trigger:" in description:
-        description = description.split("Trigger:")[0].rstrip(". ")
-    description = description.strip().rstrip(".")
-
-    return {"name": name, "description": description}
+CONTEXT_PRECEDENCE_ORDER = (
+    "canonical docs > project skills > packs > handoffs > session memory > "
+    "proposed context"
+)
 
 
 def collect_skills(skills_dir: Path) -> list[dict]:
-    """Return [{name, description, rel_link}] for every immediate subdir
-    of `skills_dir` that contains a SKILL.md."""
     rows = []
     if not skills_dir.is_dir():
         return rows
@@ -145,11 +71,7 @@ def collect_skills(skills_dir: Path) -> list[dict]:
         skill_md = child / "SKILL.md"
         if not skill_md.is_file():
             continue
-        info = parse_skill(skill_md)
-        if not info.get("name"):
-            info["name"] = child.name
-        if not info.get("description"):
-            info["description"] = "(no description)"
+        info = from_local_skill(skill_md, compatibility=True)
         info["rel_link"] = f"ai-specs/skills/{child.name}/SKILL.md"
         rows.append(info)
     return rows
@@ -170,13 +92,10 @@ def render_skills_index(skills: list[dict]) -> str:
     out.append("| Skill | Description | Link |")
     out.append("|-------|-------------|------|")
     for s in skills:
-        # Escape pipes inside description for table safety.
-        desc = s["description"].replace("|", "\\|")
+        desc = s["description_summary"].replace("|", "\\|")
         out.append(f"| `{s['name']}` | {desc} | [SKILL.md]({s['rel_link']}) |")
     out.append("")
 
-    # Bootstrap insert-anchor for skill-sync's first run on a new repo:
-    # skill-sync inserts the auto-invoke table AFTER a `> ... SKILL.md)` blockquote.
     first = skills[0]
     out.append(f"> [SKILL.md]({first['rel_link']})")
     out.append("")
@@ -193,20 +112,48 @@ def render_auto_invoke_placeholder() -> str:
     )
 
 
+def render_context_precedence(skills_dir: Path) -> str:
+    skill_path = skills_dir / "context-precedence" / "SKILL.md"
+    if not skill_path.is_file():
+        return ""
+
+    return (
+        "## Context Precedence\n\n"
+        "When project context sources conflict, use this MVP order:\n\n"
+        f"`{CONTEXT_PRECEDENCE_ORDER}`\n\n"
+        "Canonical rule: "
+        "[`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md). "
+        "Treat it as an auditable decision policy, not an automatic merge engine.\n"
+    )
+
+
+def parse_args(argv: list[str]) -> tuple[Path, Path, Path]:
+    if len(argv) < 3:
+        raise ValueError("Usage: agents-md-render.py <manifest_root> <output_path> [--skills-dir <path>]")
+
+    manifest_root = Path(argv[1])
+    output_path = Path(argv[2])
+    skills_dir = manifest_root / "ai-specs" / "skills"
+
+    i = 3
+    while i < len(argv):
+        if argv[i] == "--skills-dir":
+            skills_dir = Path(argv[i + 1])
+            i += 2
+            continue
+        raise ValueError(f"unknown argument: {argv[i]}")
+
+    return manifest_root, output_path, skills_dir
+
+
 def main() -> int:
-    if len(sys.argv) != 3:
-        print(
-            "Usage: agents-md-render.py <project_root> <output_path>",
-            file=sys.stderr,
-        )
+    try:
+        manifest_root, output_path, skills_dir = parse_args(sys.argv)
+    except (ValueError, IndexError) as exc:
+        print(str(exc), file=sys.stderr)
         return 2
 
-    project_root = Path(sys.argv[1])
-    output_path = Path(sys.argv[2])
-
-    toml_path = project_root / "ai-specs" / "ai-specs.toml"
-    skills_dir = project_root / "ai-specs" / "skills"
-
+    toml_path = manifest_root / "ai-specs" / "ai-specs.toml"
     if not toml_path.is_file():
         print(f"error: {toml_path} not found", file=sys.stderr)
         return 1
@@ -214,7 +161,7 @@ def main() -> int:
     with toml_path.open("rb") as f:
         data = tomllib.load(f)
     project = data.get("project", {}) or {}
-    name = project.get("name") or project_root.name
+    name = project.get("name") or manifest_root.name
 
     skills = collect_skills(skills_dir)
 
@@ -224,6 +171,7 @@ def main() -> int:
         HEADER_BANNER.rstrip(),
         "",
         render_skills_index(skills),
+        render_context_precedence(skills_dir),
         render_auto_invoke_placeholder(),
         "",
         FOOTER.rstrip(),

@@ -1,0 +1,312 @@
+import importlib.util
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
+CATALOG = ROOT / "catalog" / "recipes"
+
+
+def load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class RecipeMaterializeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal")
+
+    def _make_project(self, recipe_section: str) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        ai_specs = root / "ai-specs"
+        ai_specs.mkdir()
+        (ai_specs / "skills").mkdir()
+        (ai_specs / "commands").mkdir()
+        manifest = ai_specs / "ai-specs.toml"
+        manifest.write_text(
+            "[project]\nname = 'fixture'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            + recipe_section
+            + "\n"
+        )
+        return root
+
+    def test_materializes_bundled_skill(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        skill_dir = root / "ai-specs" / "skills" / "test-skill"
+        self.assertTrue(skill_dir.is_dir())
+        self.assertTrue((skill_dir / "SKILL.md").is_file())
+
+    def test_materializes_command(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        cmd = root / "ai-specs" / "commands" / "test-command.md"
+        self.assertTrue(cmd.is_file())
+
+    def test_materializes_doc(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        doc = root / "docs" / "test-doc-output.md"
+        self.assertTrue(doc.is_file())
+
+    def test_materializes_template_not_exists(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        tpl = root / "docs" / "test-template-output.md"
+        self.assertTrue(tpl.is_file())
+
+    def test_skips_template_when_target_exists(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        existing = root / "docs" / "test-template-output.md"
+        existing.parent.mkdir(parents=True, exist_ok=True)
+        existing.write_text("existing")
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(existing.read_text(), "existing")
+
+    def test_writes_recipe_mcp_json(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        mcp_path = root / "ai-specs" / ".recipe-mcp.json"
+        self.assertTrue(mcp_path.is_file())
+        data = json.loads(mcp_path.read_text())
+        self.assertIn("test-mcp", data)
+        self.assertEqual(data["test-mcp"]["command"], "npx")
+
+    def test_disabled_recipe_skips_materialization(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = false\nversion = "1.0.0"\n'
+        )
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertFalse((root / "ai-specs" / "skills" / "test-skill").exists())
+
+    def test_version_mismatch_fails(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "2.0.0"\n'
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.materialize_recipes(root, ROOT)
+        self.assertIn("version mismatch", str(ctx.exception))
+
+    def test_unknown_recipe_fails(self):
+        root = self._make_project(
+            '[recipes.nonexistent]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        with self.assertRaises(Exception):
+            self.mod.materialize_recipes(root, ROOT)
+
+    def test_no_recipes_section_succeeds(self):
+        root = self._make_project("")
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+
+    def test_recipe_overrides_user_local_skill_with_warning(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        # Pre-create a user-local skill with the same ID
+        user_skill = root / "ai-specs" / "skills" / "test-skill"
+        user_skill.mkdir(parents=True)
+        (user_skill / "SKILL.md").write_text("user local")
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        # Recipe version should have replaced the local one
+        self.assertNotEqual((user_skill / "SKILL.md").read_text(), "user local")
+
+    # --- V2 materialize tests -----------------------------------------------
+
+    def _make_v2_recipe(self, tmp: str, rid: str, caps: list[str] = None, hooks: list[dict] = None, config: dict = None, skills: list[str] = None):
+        recipe_dir = Path(tmp) / rid
+        recipe_dir.mkdir()
+        cap_lines = "".join(f'[[capabilities]]\nid = "{c}"\n' for c in (caps or []))
+        hook_lines = "".join(f'[[hooks]]\nevent = "{h["event"]}"\naction = "{h["action"]}"\n' for h in (hooks or []))
+        config_lines = ""
+        for key, field in (config or {}).items():
+            config_lines += f"[config.{key}]\n"
+            for fk, fv in field.items():
+                if isinstance(fv, bool):
+                    config_lines += f"{fk} = {str(fv).lower()}\n"
+                elif isinstance(fv, str):
+                    config_lines += f'{fk} = "{fv}"\n'
+                else:
+                    config_lines += f"{fk} = {fv}\n"
+        skill_lines = ""
+        for sid in (skills or []):
+            skill_lines += f'[[provides.skills]]\nid = "{sid}"\nsource = "bundled"\n'
+        (recipe_dir / "recipe.toml").write_text(
+            f'[recipe]\nid = "{rid}"\nname = "{rid.title()}"\ndescription = "D"\nversion = "1.0"\n'
+            + cap_lines + hook_lines + config_lines + skill_lines
+        )
+        # Create dummy skill dirs for bundled skills
+        for sid in (skills or []):
+            (recipe_dir / "skills" / sid).mkdir(parents=True)
+            (recipe_dir / "skills" / sid / "SKILL.md").write_text("skill")
+
+    def test_resolve_bindings_explicit(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp)
+            self._make_v2_recipe(tmp, "recipe-a", caps=["tracker"])
+            bindings = self.mod.resolve_bindings(catalog, ["recipe-a"], [{"capability": "tracker", "recipe": "recipe-a"}])
+            self.assertEqual(bindings, {"tracker": "recipe-a"})
+
+    def test_resolve_bindings_auto_bind_single_provider(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp)
+            self._make_v2_recipe(tmp, "recipe-a", caps=["tracker"])
+            bindings = self.mod.resolve_bindings(catalog, ["recipe-a"], [])
+            self.assertEqual(bindings, {"tracker": "recipe-a"})
+
+    def test_resolve_bindings_auto_bind_skips_ambiguity(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp)
+            self._make_v2_recipe(tmp, "recipe-a", caps=["tracker"])
+            self._make_v2_recipe(tmp, "recipe-b", caps=["tracker"])
+            bindings = self.mod.resolve_bindings(catalog, ["recipe-a", "recipe-b"], [])
+            self.assertNotIn("tracker", bindings)
+
+    def test_resolve_bindings_explicit_disabled_fails(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp)
+            self._make_v2_recipe(tmp, "recipe-a", caps=["tracker"])
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod.resolve_bindings(catalog, ["recipe-a"], [{"capability": "tracker", "recipe": "recipe-b"}])
+            self.assertIn("disabled/unknown", str(ctx.exception))
+
+    def test_resolve_bindings_duplicate_explicit_fails(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp)
+            self._make_v2_recipe(tmp, "recipe-a", caps=["tracker"])
+            self._make_v2_recipe(tmp, "recipe-b", caps=["tracker"])
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod.resolve_bindings(catalog, ["recipe-a", "recipe-b"], [
+                    {"capability": "tracker", "recipe": "recipe-a"},
+                    {"capability": "tracker", "recipe": "recipe-b"},
+                ])
+            self.assertIn("duplicate explicit binding", str(ctx.exception))
+
+    def test_merge_config_defaults_and_override(self):
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "timeout": ConfigField(required=False, type="integer", default=30),
+                "board_id": ConfigField(required=True, type="string"),
+            })
+        )
+        cfg = self.mod.merge_config(recipe, {"board_id": "abc"})
+        self.assertEqual(cfg["timeout"], 30)
+        self.assertEqual(cfg["board_id"], "abc")
+
+    def test_merge_config_missing_required_fails(self):
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "board_id": ConfigField(required=True, type="string"),
+            })
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.merge_config(recipe, {})
+        self.assertIn("missing required config field", str(ctx.exception))
+
+    def test_merge_config_warns_on_unknown_key(self):
+        from lib._internal.recipe_schema import Recipe, ConfigSchema
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={})
+        )
+        # Should warn but not fail
+        cfg = self.mod.merge_config(recipe, {"unknown": 1})
+        self.assertEqual(cfg, {})
+
+    def test_execute_hooks_validate_config_success(self):
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={"key": ConfigField(required=True)}),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        # Should not raise
+        self.mod.execute_hooks(recipe, {"key": "value"})
+
+    def test_execute_hooks_validate_config_fails(self):
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={"key": ConfigField(required=True)}),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.execute_hooks(recipe, {})
+        self.assertIn("validate-config", str(ctx.exception))
+
+    def test_execute_hooks_unknown_action_warns(self):
+        from lib._internal.recipe_schema import Recipe, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            hooks=[Hook(event="on-sync", action="unknown")]
+        )
+        # Should warn but not raise
+        self.mod.execute_hooks(recipe, {})
+
+    def test_end_to_end_v2_recipe_with_config_and_hooks(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            ai_specs_home = Path(tmp)
+            catalog = ai_specs_home / "catalog" / "recipes"
+            catalog.mkdir(parents=True)
+            self._make_v2_recipe(str(catalog), "v2-recipe", caps=["tracker"], hooks=[{"event": "on-sync", "action": "validate-config"}],
+                config={"board_id": {"required": True, "type": "string"}}, skills=["v2-skill"])
+            # Also create command
+            (catalog / "v2-recipe" / "commands").mkdir()
+            (catalog / "v2-recipe" / "commands" / "v2-cmd.md").write_text("cmd")
+            (catalog / "v2-recipe" / "templates").mkdir()
+            (catalog / "v2-recipe" / "templates" / "tpl.md").write_text("tpl")
+            (catalog / "v2-recipe" / "docs").mkdir()
+            (catalog / "v2-recipe" / "docs" / "doc.md").write_text("doc")
+
+            root = Path(tmp) / "project"
+            ai_specs = root / "ai-specs"
+            ai_specs.mkdir(parents=True)
+            (ai_specs / "skills").mkdir()
+            (ai_specs / "commands").mkdir()
+            manifest = ai_specs / "ai-specs.toml"
+            manifest.write_text(
+                "[project]\nname = 'fixture'\n\n"
+                "[agents]\nenabled = ['claude']\n\n"
+                "[recipes.v2-recipe]\nenabled = true\nversion = \"1.0\"\n"
+                "[recipes.v2-recipe.config]\nboard_id = 'abc123'\n"
+            )
+            self.assertEqual(self.mod.materialize_recipes(root, ai_specs_home), 0)
+            self.assertTrue((root / "ai-specs" / "skills" / "v2-skill").is_dir())
+
+    def test_v1_manifest_without_bindings_or_config_succeeds(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

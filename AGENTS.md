@@ -8,11 +8,38 @@ All skills live in [`ai-specs/skills/`](ai-specs/skills/). Load explicitly with 
 
 | Skill | Description | Link |
 |-------|-------------|------|
-| `ai-specs-development-worktrees` | Enforces the repository workflow where `main` is no longer the day-to-day integration branch, `development` is the base branch for ongoing work, and every implementation starts from a dedicated worktree created off `development` | [SKILL.md](ai-specs/skills/ai-specs-development-worktrees/SKILL.md) |
+| `context-precedence` | Canonical MVP order for resolving conflicts between project context sources (docs, skills, packs, handoffs, session memory, proposed output) | [SKILL.md](ai-specs/skills/context-precedence/SKILL.md) |
+| `git-merge-workflow` | Unified merge workflow for feature branches created in worktrees. Covers: creating a PR via gh CLI, merging, cleaning up the worktree and local branch, and syncing the local base branch (development) with the freshly merged remote | [SKILL.md](ai-specs/skills/git-merge-workflow/SKILL.md) |
+| `openmemory-proactive` | Proactive semantic memory capture for project context, patterns, and decisions | [SKILL.md](ai-specs/skills/openmemory-proactive/SKILL.md) |
+| `openspec-apply-change` | Implement tasks from an OpenSpec change. Use when the user wants to start implementing, continue implementation, or work through tasks | [SKILL.md](ai-specs/skills/openspec-apply-change/SKILL.md) |
+| `openspec-archive-change` | Archive a completed change in the experimental workflow. Use when the user wants to finalize and archive a change after implementation is complete | [SKILL.md](ai-specs/skills/openspec-archive-change/SKILL.md) |
+| `openspec-bulk-archive-change` | Archive multiple completed changes at once. Use when archiving several parallel changes | [SKILL.md](ai-specs/skills/openspec-bulk-archive-change/SKILL.md) |
+| `openspec-continue-change` | Continue working on an OpenSpec change by creating the next artifact. Use when the user wants to progress their change, create the next artifact, or continue their workflow | [SKILL.md](ai-specs/skills/openspec-continue-change/SKILL.md) |
+| `openspec-explore` | Enter explore mode - a thinking partner for exploring ideas, investigating problems, and clarifying requirements. Use when the user wants to think through something before or during a change | [SKILL.md](ai-specs/skills/openspec-explore/SKILL.md) |
+| `openspec-ff-change` | Fast-forward through OpenSpec artifact creation. Use when the user wants to quickly create all artifacts needed for implementation without stepping through each one individually | [SKILL.md](ai-specs/skills/openspec-ff-change/SKILL.md) |
+| `openspec-new-change` | Start a new OpenSpec change using the experimental artifact workflow. Use when the user wants to create a new feature, fix, or modification with a structured step-by-step approach | [SKILL.md](ai-specs/skills/openspec-new-change/SKILL.md) |
+| `openspec-onboard` | Guided onboarding for OpenSpec - walk through a complete workflow cycle with narration and real codebase work | [SKILL.md](ai-specs/skills/openspec-onboard/SKILL.md) |
+| `openspec-phase-orchestrator` | Orchestrate OpenSpec changes using phase-specialized subagents for cleaner context windows. Use when working through a change and you want each SDD phase executed in isolation | [SKILL.md](ai-specs/skills/openspec-phase-orchestrator/SKILL.md) |
+| `openspec-propose` | Propose a new change with all artifacts generated in one step. Use when the user wants to quickly describe what they want to build and get a complete proposal with design, specs, and tasks ready for implementation | [SKILL.md](ai-specs/skills/openspec-propose/SKILL.md) |
+| `openspec-sdd-workflow` | Unified SDD + worktree workflow for the ai-specs-cli repository. Covers: worktree creation from development, safety verification, SDD phase orchestration (explore → proposal → specs → design → tasks → apply → verify → archive), commit conventions, and archival rules | [SKILL.md](ai-specs/skills/openspec-sdd-workflow/SKILL.md) |
+| `openspec-sync-specs` | Sync delta specs from a change to main specs. Use when the user wants to update main specs with changes from a delta spec, without archiving the change | [SKILL.md](ai-specs/skills/openspec-sync-specs/SKILL.md) |
+| `openspec-verify-change` | Verify implementation matches change artifacts. Use when the user wants to validate that implementation is complete, correct, and coherent before archiving | [SKILL.md](ai-specs/skills/openspec-verify-change/SKILL.md) |
+| `session-bootstrap` | Session bootstrap protocol for ai-specs shaped projects | [SKILL.md](ai-specs/skills/session-bootstrap/SKILL.md) |
 | `skill-creator` | Creates new AI agent skills following the Agent Skills spec | [SKILL.md](ai-specs/skills/skill-creator/SKILL.md) |
-| `skill-sync` | Syncs skill metadata to AGENTS.md Auto-invoke sections for melon-alquimia | [SKILL.md](ai-specs/skills/skill-sync/SKILL.md) |
+| `skill-sync` | Syncs skill metadata to AGENTS.md Auto-invoke sections | [SKILL.md](ai-specs/skills/skill-sync/SKILL.md) |
+| `testing-foundation` | Minimum testing commands and evidence layers for ai-specs shaped repos | [SKILL.md](ai-specs/skills/testing-foundation/SKILL.md) |
+| `trello-pm-workflow` | Establece el contrato de cards de Trello para el proyecto ai-specs-cli | [SKILL.md](ai-specs/skills/trello-pm-workflow/SKILL.md) |
+| `vault-context` | Project-scoped canonical context via Obsidian vault — the structured record of what matters | [SKILL.md](ai-specs/skills/vault-context/SKILL.md) |
 
-> [SKILL.md](ai-specs/skills/ai-specs-development-worktrees/SKILL.md)
+> [SKILL.md](ai-specs/skills/context-precedence/SKILL.md)
+
+## Context Precedence
+
+When project context sources conflict, use this MVP order:
+
+`canonical docs > project skills > packs > handoffs > session memory > proposed context`
+
+Canonical rule: [`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md). Treat it as an auditable decision policy, not an automatic merge engine.
 
 ### Auto-invoke Skills
 
@@ -21,12 +48,58 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Action | Skill |
 |--------|-------|
 | After creating/modifying a skill | `skill-sync` |
-| Creating a branch or worktree | `ai-specs-development-worktrees` |
+| After solving a non-trivial bug or error | `openmemory-proactive` |
+| Archiving a completed OpenSpec change | `openspec-archive-change` |
+| Archiving a completed OpenSpec change | `openspec-phase-orchestrator` |
+| Archiving several completed OpenSpec changes | `openspec-bulk-archive-change` |
+| Before ending a session | `openmemory-proactive` |
+| Choosing default test commands before merge or PR | `testing-foundation` |
+| Choosing default test commands before merge or PR | `testing-foundation` |
+| Cleaning up a worktree after merge | `git-merge-workflow` |
+| Cleaning up a worktree after merge | `openspec-phase-orchestrator` |
+| Closing or handing off a session | `vault-context` |
+| Completing a significant implementation task | `openmemory-proactive` |
+| Continuing an OpenSpec change | `openspec-phase-orchestrator` |
+| Creating a Trello card | `trello-pm-workflow` |
+| Creating a branch or worktree | `openspec-sdd-workflow` |
+| Creating a pull request from a worktree | `git-merge-workflow` |
+| Creating a pull request from a worktree | `openspec-phase-orchestrator` |
 | Creating new skills | `skill-creator` |
-| Deciding where implementation should begin | `ai-specs-development-worktrees` |
+| Deciding where implementation should begin | `openspec-sdd-workflow` |
+| Discovering a reusable pattern or convention | `openmemory-proactive` |
+| Editing openspec/config.yaml for spec-driven workflow | `openspec-sdd-conventions` |
+| Editing openspec/config.yaml for spec-driven workflow | `openspec-sdd-workflow` |
+| Exploring an idea before or during an OpenSpec change | `openspec-phase-orchestrator` |
+| Fast-forwarding OpenSpec artifact creation | `openspec-ff-change` |
+| Finishing work on a feature branch | `git-merge-workflow` |
+| Finishing work on a feature branch | `openspec-phase-orchestrator` |
+| Implementing tasks from an OpenSpec change | `openspec-phase-orchestrator` |
+| Making a technical decision or tradeoff | `openmemory-proactive` |
+| Making an architecture or design decision | `vault-context` |
+| Merging a feature branch into development | `git-merge-workflow` |
+| Merging a feature branch into development | `openspec-phase-orchestrator` |
+| Orchestrating an OpenSpec change phase by phase | `openspec-phase-orchestrator` |
+| Orchestrating an OpenSpec change phase by phase | `openspec-sdd-workflow` |
+| Planning work with Trello | `trello-pm-workflow` |
+| Proposing a new OpenSpec change | `openspec-propose` |
 | Regenerate AGENTS.md Auto-invoke tables (sync.sh) | `skill-sync` |
-| Starting work from development | `ai-specs-development-worktrees` |
+| Resolving conflicts between documentation, skills, memory, and proposed context | `context-precedence` |
+| Resolving conflicts between documentation, skills, memory, and proposed context | `context-precedence` |
+| Running a specific SDD phase in isolation | `openspec-phase-orchestrator` |
+| Running a specific SDD phase in isolation | `openspec-sdd-workflow` |
+| Running guided OpenSpec onboarding | `openspec-onboard` |
+| Starting a new OpenSpec change | `openspec-phase-orchestrator` |
+| Starting a new OpenSpec change | `openspec-sdd-workflow` |
+| Starting a new session or conversation | `session-bootstrap` |
+| Starting work from development | `openspec-sdd-workflow` |
+| Syncing OpenSpec delta specs | `openspec-sync-specs` |
+| Syncing development after a merge | `git-merge-workflow` |
+| Syncing development after a merge | `openspec-phase-orchestrator` |
+| Testing fixtures | `test-skill` |
 | Troubleshoot why a skill is missing from AGENTS.md auto-invoke | `skill-sync` |
+| Updating a Trello card | `trello-pm-workflow` |
+| Verifying an OpenSpec change implementation | `openspec-phase-orchestrator` |
+| When encountering project-specific context that future sessions should know | `openmemory-proactive` |
 
 ## How AI tooling is wired
 
@@ -40,11 +113,15 @@ gitignored.
 Common commands (run from project root):
 
 ```bash
-ai-specs sync                  # vendor deps + regenerate AGENTS.md + fan out per agent
+ai-specs sync                  # vendor deps + regenerate AGENTS.md + fan out per target + per agent
 ai-specs add-dep <git-url>     # vendored skill (external, gitignored)
-ai-specs sync-agent --claude   # re-render configs for a single agent
+ai-specs sync-agent --claude   # re-render configs for the current target from the root manifest
 ```
 
 Inside a configured agent, run **`/skills-as-rules`** whenever you want to
 formalize a convention as a local skill — the command is interactive and walks
 you through one skill at a time using `skill-creator` + `skill-sync`.
+
+> Subrepo note: local `ai-specs/` contents are derived artifacts from the root
+> sync run in multi-target mode. Treat them as generated outputs, not editable
+> manifest sources.

@@ -3,12 +3,12 @@
 # Used by `ai-specs refresh-bundled` to detect user customizations.
 
 [skills."skill-creator"]
-"SKILL.md" = "545055365da4ed68a1b0abf664b4d9555321a6f09ef0f4269e9405f7e484f69e"
-"assets/SKILL-TEMPLATE.md" = "9c3203fada603c8189023f7e1556ed01781cc3438ce294cd26fc45812b6cbd15"
+"SKILL.md" = "cf23341f51199d3feb9c157ffe3e52d5e4b4f37b2e77863a8576b78b92b9cdc3"
+"assets/SKILL-TEMPLATE.md" = "468621e48b52a79e412b159ee6686dbb912b30890bc4814015b503478e09166a"
 
 [skills."skill-sync"]
-"SKILL.md" = "cfcacdc65ec833a5743e1021517358e7d6b28b79bd03746ea741e97c094eb369"
-"assets/sync.sh" = "6052ca662eceb4b12c97127104fb76cfd861c5a8d87f006fd64e298ab89d1713"
+"SKILL.md" = "ac95b2d041faadfea2425b7b1bd420c24246f62f0ba38877f07ca027b09fa5ed"
+"assets/sync.sh" = "f390a00b453cf23e45eb9c2bd8e44ad364dc1ca1d2a54ad4c858c8616a519407"
 
 [commands]
-"skills-as-rules.md" = "583bea80e5fb3e576e77887d7de27ba1d5ebbc912b4562b1a41835df107b18c9"
+"skills-as-rules.md" = "793c2d1de600693cfdd1dbbd93bea0c9af76d22838f5ecd4db678737157b0af8"
