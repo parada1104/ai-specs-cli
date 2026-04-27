@@ -9,6 +9,7 @@ All skills live in [`ai-specs/skills/`](ai-specs/skills/). Load explicitly with 
 | Skill | Description | Link |
 |-------|-------------|------|
 | `context-precedence` | Canonical MVP order for resolving conflicts between project context sources (docs, skills, packs, handoffs, session memory, proposed output) | [SKILL.md](ai-specs/skills/context-precedence/SKILL.md) |
+| `git-merge-workflow` | Unified merge workflow for feature branches created in worktrees. Covers: creating a PR via gh CLI, merging, cleaning up the worktree and local branch, and syncing the local base branch (development) with the freshly merged remote | [SKILL.md](ai-specs/skills/git-merge-workflow/SKILL.md) |
 | `openmemory-proactive` | Proactive semantic memory capture for project context, patterns, and decisions | [SKILL.md](ai-specs/skills/openmemory-proactive/SKILL.md) |
 | `openspec-apply-change` | Implement tasks from an OpenSpec change. Use when the user wants to start implementing, continue implementation, or work through tasks | [SKILL.md](ai-specs/skills/openspec-apply-change/SKILL.md) |
 | `openspec-archive-change` | Archive a completed change in the experimental workflow. Use when the user wants to finalize and archive a change after implementation is complete | [SKILL.md](ai-specs/skills/openspec-archive-change/SKILL.md) |
