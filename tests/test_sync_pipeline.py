@@ -1,4 +1,4 @@
-import os
+import json
 import os
 import shutil
 import subprocess
@@ -181,6 +181,136 @@ class SyncPipelineTests(unittest.TestCase):
                 '  }\n'
                 '}\n',
             )
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_sync_renders_claude_mcp_env_with_braced_variable_syntax(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@demo/server']\n"
+                "env = { API_KEY = '$DEMO_API_KEY' }\n"
+                "timeout = 30000\n"
+                "enabled = true\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            self.assertEqual(
+                (workspace / ".mcp.json").read_text(),
+                '{\n'
+                '  "mcpServers": {\n'
+                '    "demo": {\n'
+                '      "command": "npx",\n'
+                '      "args": [\n'
+                '        "-y",\n'
+                '        "@demo/server"\n'
+                '      ],\n'
+                '      "env": {\n'
+                '        "API_KEY": "${DEMO_API_KEY}"\n'
+                '      },\n'
+                '      "timeout": 30000,\n'
+                '      "enabled": true\n'
+                '    }\n'
+                '  }\n'
+                '}\n',
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_sync_renders_mcp_env_list_as_environment_references(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['cursor', 'opencode']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@demo/server']\n"
+                "env = ['VAR1', 'VAR2']\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            cursor = json.loads((workspace / ".cursor" / "mcp.json").read_text())
+            opencode = json.loads((workspace / "opencode.json").read_text())
+
+            self.assertEqual(
+                cursor["mcpServers"]["demo"]["env"],
+                {"VAR1": "${VAR1}", "VAR2": "${VAR2}"},
+            )
+            self.assertEqual(
+                opencode["mcp"]["demo"]["environment"],
+                {"VAR1": "{env:VAR1}", "VAR2": "{env:VAR2}"},
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_sync_preserves_static_mcp_env_values(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['cursor', 'opencode']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@demo/server']\n"
+                "env = { MODE = 'fixture' }\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            cursor = json.loads((workspace / ".cursor" / "mcp.json").read_text())
+            opencode = json.loads((workspace / "opencode.json").read_text())
+
+            self.assertEqual(cursor["mcpServers"]["demo"]["env"], {"MODE": "fixture"})
+            self.assertEqual(opencode["mcp"]["demo"]["environment"], {"MODE": "fixture"})
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_sync_keeps_opencode_schema_first_when_preserving_existing_config(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['opencode']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@demo/server']\n"
+                "env = { API_KEY = '$DEMO_API_KEY' }\n"
+            )
+            (workspace / "opencode.json").write_text(
+                '{\n'
+                '  "mcp": {"old": {"type": "local", "command": ["old"]}},\n'
+                '  "theme": "system",\n'
+                '  "$schema": "https://opencode.ai/config.json"\n'
+                '}\n'
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            text = (workspace / "opencode.json").read_text()
+            parsed = json.loads(text)
+            self.assertEqual(list(parsed.keys()), ["$schema", "mcp", "theme"])
+            self.assertEqual(parsed["theme"], "system")
+            self.assertEqual(parsed["mcp"]["demo"]["environment"]["API_KEY"], "{env:DEMO_API_KEY}")
+            self.assertNotIn("old", parsed["mcp"])
         finally:
             shutil.rmtree(workspace.parent)
 

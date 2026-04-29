@@ -62,6 +62,19 @@ def _normalize_mapping(raw: Any) -> dict[str, Any]:
     return dict(raw) if isinstance(raw, dict) else {}
 
 
+def _normalize_env(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, list):
+        out: dict[str, str] = {}
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                name = item.strip()
+                out[name] = f"${name}"
+        return out
+    return {}
+
+
 def read_project(data: dict[str, Any]) -> dict[str, Any]:
     project = data.get("project", {}) or {}
     if not isinstance(project, dict):
@@ -99,9 +112,9 @@ def _normalize_mcp_server(raw: Any) -> dict[str, Any]:
     normalized["args"] = server.get("args") if isinstance(server.get("args"), list) else []
 
     env = server.get("env")
-    if not isinstance(env, dict):
+    if not isinstance(env, (dict, list)):
         env = server.get("environment")
-    normalized["env"] = dict(env) if isinstance(env, dict) else {}
+    normalized["env"] = _normalize_env(env)
 
     timeout = server.get("timeout")
     normalized["timeout"] = timeout if isinstance(timeout, int) and not isinstance(timeout, bool) else None
