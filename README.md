@@ -135,6 +135,8 @@ for the full SDD provider contract and generated command reference.
 ## Manifest V1 contract (`ai-specs/ai-specs.toml`)
 
 `ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.
+See [`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) for the complete manifest reference,
+including supported sections, fields, examples, and MCP rendering by agent.
 The runtime contract includes optional **`[sdd]`** for OpenSpec onboarding; there is
 still no separate `[memory]` manifest section (distinct from `[sdd].artifact_store`).
 

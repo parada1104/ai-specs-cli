@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
 TEMPLATE = ROOT / "templates" / "ai-specs.toml.tmpl"
+REFERENCE = ROOT / "docs" / "ai-specs-toml.md"
 
 
 class ManifestContractDocsTests(unittest.TestCase):
@@ -12,6 +13,7 @@ class ManifestContractDocsTests(unittest.TestCase):
     def setUpClass(cls):
         cls.readme = README.read_text()
         cls.template = TEMPLATE.read_text()
+        cls.reference = REFERENCE.read_text()
 
     def assertContainsAll(self, haystack, needles):
         for needle in needles:
@@ -23,6 +25,7 @@ class ManifestContractDocsTests(unittest.TestCase):
             self.readme,
             [
                 "`ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.",
+                "See [`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) for the complete manifest reference",
                 "Omission of `[sdd]` remains valid for projects not using SDD.",
                 "- `[project]`",
                 "- `[agents]`",
@@ -96,6 +99,47 @@ class ManifestContractDocsTests(unittest.TestCase):
 
     def test_template_marks_out_of_scope_items_as_deferred(self):
         self.assertIn("# V1 NO agrega precedence, doctor ni [memory]; quedan deferidos a cambios futuros.", self.template)
+
+    def test_manifest_reference_documents_complete_surface_and_fields(self):
+        self.assertContainsAll(
+            self.reference,
+            [
+                "# ai-specs.toml Reference",
+                "`ai-specs/ai-specs.toml` in the project root is the only V1 source of truth.",
+                "| `[project]` | optional | Project identity and root sync targets. |",
+                "| `[agents]` | optional | Selects generated agent outputs. |",
+                "| `[[deps]]` | optional repeated table | Vendors external skills into `ai-specs/skills/<id>/`. |",
+                "| `[mcp.<name>]` | optional repeated table | Declares MCP servers rendered to enabled agents. |",
+                "| `[recipes.<id>]` | optional repeated table | Enables catalog recipes by exact version pin. |",
+                "| `[sdd]` | optional | Enables OpenSpec-oriented spec-driven development support. |",
+                "| `project.name` | string | optional | `\"\"` |",
+                "| `project.subrepos` | array of strings | optional | `[]` |",
+                "| `agents.enabled` | array of strings | optional | `[]` |",
+                "Supported values: `claude`, `cursor`, `opencode`, `codex`, `copilot`, `gemini`.",
+                "| `deps.id` | string | required | none |",
+                "| `deps.source` | string | required | none |",
+                "| `recipes.<id>.enabled` | boolean | required | none |",
+                "| `recipes.<id>.version` | string | required | none |",
+                "| `sdd.artifact_store` | string enum | optional when `[sdd]` is absent | none |",
+                "Allowed values: `filesystem`, `hybrid`, `memory`.",
+            ],
+        )
+
+    def test_manifest_reference_documents_mcp_env_and_agent_rendering(self):
+        self.assertContainsAll(
+            self.reference,
+            [
+                "`env = [\"VAR\"]` references variables from the process environment.",
+                "`env = { VAR = \"literal\" }` writes static literal values.",
+                "`environment` is accepted as a tolerated input alias for `env`; do not use it as the canonical name.",
+                "| Claude Code | `.mcp.json` | `mcpServers` | `env` | `$VAR` becomes `${VAR}` |",
+                "| Cursor | `.cursor/mcp.json` | `mcpServers` | `env` | `$VAR` becomes `${VAR}` |",
+                "| OpenCode | `opencode.json` | `mcp` | `environment` | `$VAR` becomes `{env:VAR}` |",
+                "| Codex | `.codex/config.toml` | `[mcp_servers.<name>]` | `env` | `$VAR` becomes `${VAR}` |",
+                "env = [\"TRELLO_API_KEY\", \"TRELLO_TOKEN\"]",
+                "env = { MODE = \"local\" }",
+            ],
+        )
 
 
 if __name__ == "__main__":
