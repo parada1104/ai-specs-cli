@@ -30,8 +30,9 @@ This skill defines the complete workflow for spec-driven development in the
 and commit/archive conventions into a single canonical flow.
 
 **Core principle:** Every implementation starts in an isolated worktree branched
-from `development`, progresses through structured SDD artifacts, and closes with
-an archived change.
+from `development`, progresses through structured SDD artifacts via
+phase-specialized subagents, and stops before implementation unless the selected
+SDD cycle mode explicitly allows apply/verify.
 
 ## When to Use
 
@@ -137,6 +138,37 @@ git branch -d <branch-name>
 
 ## Part 2: SDD Phase Orchestration
 
+### Agent Workflow Modes
+
+These modes describe how agents operate the SDD flow. They are not CLI flags.
+
+| Mode | Behavior | Stop Point |
+|---|---|---|
+| `interactive` | Run one phase, present handoff, ask before the next phase. | Every phase. |
+| `auto-artifacts` | Automatically run artifact phases (`explore`/`proposal` → `specs` → `design` → `tasks`). | Stop after `tasks.md`. |
+| `auto` | Automatically run artifacts, apply, and verify. | Stop after verification or on failure/blocker. |
+
+Default for this project: `auto-artifacts`.
+
+When a user says “execute the SDD cycle” for a card or change without specifying
+a mode, use `auto-artifacts`: create/link the change, run artifact phases, then
+stop before `apply`.
+
+After the final artifact (`tasks.md`) in `auto-artifacts`, provide an exhaustive
+handoff before asking whether to implement:
+- Summary of the card/change linkage and intended outcome.
+- Artifacts produced and status.
+- Technical analysis of proposal/spec/design/tasks.
+- Risks, tradeoffs, and recommended implementation strategy.
+- Open questions and suggested questions to ask the user.
+- Clear options: `interactive apply`, `auto apply`, or `apply only`.
+
+### Subagent Requirement
+
+When the harness supports subagents, every SDD phase MUST be executed by a
+phase-specialized subagent through `openspec-phase-orchestrator`. Inline phase
+execution is only a fallback when subagents are unavailable.
+
 ### Phase Definitions (spec-driven schema)
 
 | Phase | Artifact(s) Produced | Specialist Skill |
@@ -163,7 +195,7 @@ Map artifact statuses to current phase:
 - Else if proposal exists but specs incomplete → `specs`
 - Else if specs done but design missing → `design`
 - Else if design done but tasks missing → `tasks`
-- Else if tasks exist with pending checkboxes → `apply`
+- Else if tasks exist with pending checkboxes → `apply` only when mode is `auto` or the user explicitly requested apply; otherwise stop with the artifact-cycle review
 - Else → `verify`
 
 If the target phase is `blocked` (missing dependencies), show which artifacts
@@ -226,13 +258,15 @@ with **`openspec-verify-change`** / `verify-report.md` if the change required it
   cd .worktrees/my-feature
   ./tests/run.sh            # verify clean baseline
 
-[SDD cycle inside worktree]
-  openspec new change "my-feature"
-  openspec continue         # proposal → specs → design → tasks
+[SDD cycle inside worktree, default auto-artifacts]
+  # orchestrator uses subagents for proposal → specs → design → tasks
+  # stop after tasks.md with analysis, risks, recommendations, and questions
+
+[Only after explicit human confirmation]
   openspec apply            # implement tasks
   openspec verify           # validate against specs
-  openspec sync-specs       # delta → main specs
-  openspec archive-change   # move to archive/
+  openspec sync-specs       # delta → main specs, if appropriate
+  openspec archive-change   # move to archive, after merge/approval
 
 [Cleanup]
   cd ../..

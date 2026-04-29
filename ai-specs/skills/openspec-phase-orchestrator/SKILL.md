@@ -24,20 +24,54 @@ metadata:
     - "Syncing development after a merge"
 ---
 
-Orchestrate OpenSpec changes using phase-specialized subagents (or inline fallback) to keep context windows focused and clean.
+Orchestrate OpenSpec changes using phase-specialized subagents (or inline fallback only when subagents are unavailable) to keep context windows focused and clean.
 
 **Input**: Optionally specify a change name and/or target phase. If omitted, infer from context or auto-select.
 
-**Modes of Execution**
+**Mandatory Context Isolation**
+
+When the harness exposes a `task`/subagent capability, every SDD phase MUST run
+in a fresh phase-specialized subagent. This is not optional: context isolation is
+the primary mechanism for preserving the parent context window and for producing
+clean handoffs between phases.
+
+Inline execution is only a fallback for harnesses that do not support subagents.
+If inline fallback is used, announce that context isolation is unavailable.
+
+**Harness Execution Modes**
 
 This skill operates in two modes, auto-selected by harness capability:
 
 | Mode | Trigger | Behavior | Context Window |
 |---|---|---|---|
-| `subagent` | `task` tool is available | Delegates phase to a fresh subagent | **Reset per phase** |
+| `subagent` | `task` tool is available | Delegates each phase to a fresh subagent | **Reset per phase** |
 | `inline` | `task` tool is NOT available | Executes phase directly in current agent | Shared (no reset) |
 
-The `subagent` mode is preferred because it isolates the chain-of-thought, tool calls, and intermediate scratch work of each phase. The `inline` mode preserves the exact same flow and handoff contract, but without context isolation.
+The `subagent` mode is mandatory when available because it isolates the chain-of-thought, tool calls, and intermediate scratch work of each phase. The `inline` mode preserves the same flow and handoff contract, but without context isolation.
+
+**SDD Cycle Modes**
+
+These modes are agent workflow modes, not CLI flags:
+
+| Mode | Behavior | Stop Point |
+|---|---|---|
+| `interactive` | Execute one phase at a time and ask before advancing. | After every phase. |
+| `auto-artifacts` | Automatically run artifact phases through `tasks.md`. | Stop after `tasks.md`; do not apply or verify. |
+| `auto` | Automatically run artifacts, apply, and verify. | Stop after verification (or on error/blocker). |
+
+Default for this project: `auto-artifacts`.
+
+In `auto-artifacts`, after `tasks.md` is created or updated, stop and present an
+artifact-cycle review with:
+- Exhaustive summary of the change and card/context linkage.
+- Artifacts created/updated and their status.
+- Technical analysis of the proposal/spec/design/tasks.
+- Risks, tradeoffs, and implementation recommendations.
+- Open questions and recommended prompts for resolving them.
+- Recommended apply strategy (`interactive apply`, `auto apply`, or `apply only`).
+
+Never enter `apply`, `verify`, `archive`, `merge`, PR creation, or push/merge to
+`development` from `auto-artifacts` without explicit human instruction.
 
 **Phase Definitions (spec-driven schema)**
 
@@ -64,7 +98,17 @@ The `subagent` mode is preferred because it isolates the chain-of-thought, tool 
 
    Announce: "Using change: <name> (phase: <detected-or-requested>)"
 
-2. **Detect current phase**
+2. **Select SDD cycle mode**
+
+   Determine the mode before running phases:
+   - Use an explicit user mode if provided (`interactive`, `auto-artifacts`, `auto`).
+   - Else use the project default: `auto-artifacts`.
+   - If the user asks to "execute the SDD cycle" for a card/change, interpret that
+     as `auto-artifacts` unless they explicitly request `auto`.
+
+   Announce: "SDD cycle mode: <mode>".
+
+3. **Detect current phase**
 
    ```bash
    openspec status --change "<name>" --json
@@ -88,13 +132,13 @@ The `subagent` mode is preferred because it isolates the chain-of-thought, tool 
    Post-SDD (when change is archived or user says merge):
    - If user says merge / finish branch / create PR → `merge`
 
-3. **Check for blockers**
+4. **Check for blockers**
 
    If the target phase is `blocked` (missing dependencies):
    - Show which artifacts are blocking it
    - Ask the user whether to jump to the missing dependency phase first
 
-4. **Assemble phase payload**
+5. **Assemble phase payload**
 
    Build a self-contained prompt for the phase. Include ONLY:
    - The phase-specific system prompt (see templates below)
@@ -117,7 +161,7 @@ The `subagent` mode is preferred because it isolates the chain-of-thought, tool 
 
    **DO NOT include** the full conversation history, previous phase chain-of-thought, or unrelated files.
 
-5. **Execute the phase**
+6. **Execute the phase**
 
    **If in `subagent` mode:**
    ```
@@ -127,7 +171,7 @@ The `subagent` mode is preferred because it isolates the chain-of-thought, tool 
    **If in `inline` mode:**
    Load the relevant skill for this phase and execute it directly.
 
-6. **Receive and parse handoff**
+7. **Receive and parse handoff**
 
    The phase executor MUST return output starting with a structured YAML handoff block:
 
@@ -152,7 +196,18 @@ The `subagent` mode is preferred because it isolates the chain-of-thought, tool 
 
    Parse this block. If missing or malformed, attempt to extract information from the narrative text and warn.
 
-7. **Present results to user**
+8. **Advance or stop according to SDD cycle mode**
+
+   - `interactive`: stop after the phase handoff and ask whether to continue.
+   - `auto-artifacts`: continue automatically through `proposal`, `specs`,
+     `design`, and `tasks`; after `tasks`, stop with the artifact-cycle review.
+   - `auto`: continue through artifacts, `apply`, and `verify`; stop on any
+     blocker, error, failed verification, or after verification completes.
+
+   If the next inferred phase is `apply` or `verify` while mode is
+   `auto-artifacts`, do not execute it. Present the artifact-cycle review instead.
+
+9. **Present results to user**
 
    Display:
    - Phase completed (or blocked/partial)
@@ -161,7 +216,10 @@ The `subagent` mode is preferred because it isolates the chain-of-thought, tool 
    - Any blockers
    - Suggested next phase
 
-   Ask: "Continue to <next-phase-suggested>?" or "Choose a different phase?"
+   Ask according to mode:
+   - `interactive`: "Continue to <next-phase-suggested>? Or choose a different phase?"
+   - `auto-artifacts` after `tasks`: "Apply now? Choose `interactive apply`, `auto apply`, or `apply only`."
+   - `auto`: summarize final verification and ask for PR/push/merge only if the user explicitly requested that broader workflow.
 
 **Phase Prompt Templates**
 
@@ -314,11 +372,15 @@ Continue to <next-phase>? Or choose another action?
 **Guardrails**
 
 - Always announce the mode (`subagent` vs `inline`) so the user knows if context is isolated.
+- Always announce the SDD cycle mode (`interactive`, `auto-artifacts`, or `auto`).
+- When `task`/subagent capability is available, every SDD phase MUST be delegated to a phase-specialized subagent.
+- In `auto-artifacts`, NEVER advance from `tasks` into `apply` or `verify` without explicit user confirmation.
 - Never skip dependency detection. If a phase is blocked, do not blindly execute it.
 - Keep phase payloads minimal. The executor should read dependency files itself; do not inline their contents into the prompt unless they are very small (<500 tokens).
 - If a phase executor returns `status: error`, stop and present the error. Do not auto-advance.
 - If `apply` phase is selected and there are no pending tasks, suggest `verify` instead.
 - The orchestrator never writes code or artifacts directly in `subagent` mode — it only delegates and interprets handoffs.
+- Do not create PRs, push branches, merge, archive, or clean up worktrees unless the user explicitly asks for that action.
 
 **Phase Event Emission (for recipe hooks)**
 
