@@ -1,26 +1,24 @@
 # ai-specs.toml Reference
 
 `ai-specs/ai-specs.toml` in the project root is the only V1 source of truth.
-`ai-specs sync` reads this manifest, vendors configured dependencies, regenerates
-`AGENTS.md`, and fans out agent-specific files for the root project and declared
-subrepos.
+This reference documents the mature manifest surface supported today: project
+metadata, vendored skill dependencies, and MCP server distribution.
 
-This page documents the contract supported today. It does not describe future
-recipe v2 bindings, tracker adapters, or a standalone `[memory]` section.
+Agent selection is included only as context because MCP output depends on
+`[agents].enabled`. Broader workflow features are not part of this manifest
+reference yet.
 
 ## Supported Sections
 
 | Section | Required | Purpose |
 |---------|----------|---------|
 | `[project]` | optional | Project identity and root sync targets. |
-| `[agents]` | optional | Selects generated agent outputs. |
+| `[agents]` | optional context | Selects which agent outputs receive generated config. |
 | `[[deps]]` | optional repeated table | Vendors external skills into `ai-specs/skills/<id>/`. |
 | `[mcp.<name>]` | optional repeated table | Declares MCP servers rendered to enabled agents. |
-| `[recipes.<id>]` | optional repeated table | Enables catalog recipes by exact version pin. |
-| `[sdd]` | optional | Enables OpenSpec-oriented spec-driven development support. |
 
-Missing `[agents]`, `[[deps]]`, `[mcp.<name>]`, `[recipes.<id>]`, and `[sdd]`
-remain valid. The CLI normalizes missing optional sections to stable defaults.
+Missing `[agents]`, `[[deps]]`, and `[mcp.<name>]` remain valid. The CLI
+normalizes missing optional sections to stable defaults.
 
 ## `[project]`
 
@@ -41,9 +39,10 @@ name = "my-project"
 subrepos = ["packages/web", "packages/api"]
 ```
 
-## `[agents]`
+## `[agents]` Context
 
-`[agents]` controls which agent-specific files are generated.
+`[agents]` controls which agent-specific files are generated. It is documented
+here because MCP rendering depends on enabled agents.
 
 | Field | Type | Status | Default |
 |-------|------|--------|---------|
@@ -55,9 +54,6 @@ Supported values: `claude`, `cursor`, `opencode`, `codex`, `copilot`, `gemini`.
 [agents]
 enabled = ["claude", "cursor", "opencode", "codex"]
 ```
-
-Generated outputs include native MCP files where applicable, command folders, and
-agent instruction files such as `CLAUDE.md`, `AGENTS.md`, or `opencode.json`.
 
 ## `[[deps]]`
 
@@ -158,59 +154,7 @@ with `url` and optional headers. OpenCode remote headers use `{env:VAR}` syntax.
 Claude Code, Cursor, and Codex use the generic server shape after environment
 references are converted to their supported syntax.
 
-## `[recipes.<id>]`
-
-Recipes are named catalog bundles of skills, commands, templates, docs, and MCP
-presets. A recipe entry enables a catalog recipe by exact version pin.
-
-| Field | Type | Status | Default |
-|-------|------|--------|---------|
-| `recipes.<id>.enabled` | boolean | required | none |
-| `recipes.<id>.version` | string | required | none |
-
-```toml
-[recipes.runtime-memory-openmemory]
-enabled = true
-version = "1.0.0"
-```
-
-The version must match `catalog/recipes/<id>/recipe.toml`. `enabled = false` does
-not materialize the recipe.
-
-## `[sdd]`
-
-`[sdd]` enables OpenSpec-oriented spec-driven development support. Omit this
-section for projects that do not use SDD.
-
-| Field | Type | Status | Default |
-|-------|------|--------|---------|
-| `sdd.enabled` | boolean | optional when `[sdd]` is absent | none |
-| `sdd.provider` | string | optional when `[sdd]` is absent | none |
-| `sdd.artifact_store` | string enum | optional when `[sdd]` is absent | none |
-
-Allowed values: `filesystem`, `hybrid`, `memory`.
-
-```toml
-[sdd]
-enabled = true
-provider = "openspec"
-artifact_store = "filesystem"
-```
-
-In V1, `provider = "openspec"` is the supported provider. `artifact_store =
-"memory"` is experimental; OpenSpec remains file-first.
-
-## Complete Minimal Example
-
-```toml
-[project]
-name = "my-project"
-
-[agents]
-enabled = ["claude", "cursor", "opencode"]
-```
-
-## Complete Example With Deps, Recipes, MCP, And SDD
+## Complete Example
 
 ```toml
 [project]
@@ -226,10 +170,6 @@ source = "https://github.com/obra/superpowers"
 path = "skills/test-driven-development"
 scope = ["root"]
 
-[recipes.runtime-memory-openmemory]
-enabled = true
-version = "1.0.0"
-
 [mcp.trello]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-trello"]
@@ -240,18 +180,14 @@ timeout = 30000
 command = "npx"
 args = ["-y", "@example/mcp-server"]
 env = { MODE = "local" }
-
-[sdd]
-enabled = true
-provider = "openspec"
-artifact_store = "filesystem"
 ```
 
-## Explicitly Deferred
+## Not In This Reference
 
-The V1 manifest does not include:
+This page intentionally does not document experimental manifest surface. In
+particular, it does not recommend configuring:
 
 - A standalone `[memory]` section.
-- Recipe v2 capability bindings or hooks.
+- Bundle declarations or capability bindings.
+- SDD/OpenSpec settings as part of the stable TOML reference.
 - Tracker adapters such as Trello/Jira/GitHub Issues as manifest-native sections.
-- Precedence or merge policy beyond the currently implemented runtime behavior.

@@ -12,44 +12,20 @@ fan-out, merge-safe MCP) but **per-project** so different repos can have
 different agents, skills, and MCP servers — and the configuration is
 committable and shareable with a team.
 
-## What's included (MVP v1)
+## Current scope
 
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Per-project manifest** | ✅ | `ai-specs/ai-specs.toml` as single source of truth |
-| **Multi-agent fan-out** | ✅ | Claude, Cursor, OpenCode, Codex, Copilot, Gemini |
-| **MCP server distribution** | ✅ | Merge-safe MCP config per agent (JSON, TOML) |
-| **Skill management** | ✅ | Local, bundled, and vendored skills with autodiscovery |
-| **AGENTS.md generation** | ✅ | Auto-invoke table synced from skill frontmatter |
-| **Project initialization** | ✅ | `ai-specs init` scaffolds structure idempotently |
-| **Dependency vendoring** | ✅ | `ai-specs add-dep` + `ai-specs sync` clones external skills |
-| **Subrepo sync** | ✅ | Mirror derived artifacts to `project.subrepos` |
-| **Read-only diagnostics** | ✅ | `ai-specs doctor` validates project health |
-| **Context precedence** | ✅ | Skill documenting canonical resolution order |
-| **Testing foundation** | ✅ | Default validation commands for SDD cycles |
-| **SDD integration** | ✅ | Optional OpenSpec onboarding via `ai-specs sdd` |
-| **Bundled skills** | ✅ | `skill-creator` + `skill-sync` + `skills-as-rules` command |
-| **Recipes** | ✅ | Named, versioned bundles of skills, commands, templates, and MCP presets |
-| **Lock-based updates** | ✅ | SHA-256 baseline tracking for safe skill updates |
+`ai-specs` currently focuses on a small, stable core:
 
-## What's NOT included yet
+- A project-local manifest at `ai-specs/ai-specs.toml`.
+- Multi-agent fan-out for Claude, Cursor, OpenCode, Codex, Copilot, and Gemini.
+- MCP server distribution into each enabled agent's native config.
+- Local and vendored skill management through `ai-specs/skills/` and `[[deps]]`.
+- `AGENTS.md` generation from skill metadata.
+- Idempotent project initialization and sync.
+- Optional subrepo fan-out via `project.subrepos`.
 
-These features are **explicitly deferred** to post-MVP (EPICs 2–7). They are
-**not bugs** — they are roadmap items not yet implemented:
-
-| Feature | Planned EPIC | Note |
-|---------|-------------|------|
-| **Memory / persistence layer** | EPIC 2 | No `[memory]` manifest section yet; no opencode-mem adapter |
-| **Context Router** | EPIC 8 | No `ai-specs context plan` command; no deterministic scoring |
-| **Packs / recipes** | — | Now implemented as `[recipes.<id>]` in V1 manifest |
-| **Handoff automation** | EPIC 3 | No bundled `/handoff` command; no `docs/ai-memory/` structure |
-| **Multi-device sync** | EPIC 6 | No sync beyond git; no cloud persistence |
-| **Tracker adapters** | EPIC 7 | No Trello/Jira/GitHub Issues integration |
-| **Semantic search** | Post-MVP | No embeddings or local vector search for skills/docs |
-| **Coverage / linter / type-check** | Post-MVP | Testing foundation exists; stronger tooling not configured |
-
-> If you need any of these now, open an issue or vendor a skill via `[[deps]]`
-> that implements the desired behavior locally.
+Anything outside that core should be treated as evolving unless its behavior is
+documented in a dedicated command or spec page.
 
 ## Install
 
@@ -88,68 +64,29 @@ in `.opencode/commands/`.
 
 ## Spec-driven development (`ai-specs sdd`)
 
-Projects can declare optional **`[sdd]`** in `ai-specs/ai-specs.toml` and use **`ai-specs sdd`**
-to verify the OpenSpec CLI (**`@fission-ai/openspec`** on npm, command `openspec`), align
-`openspec/` (via `openspec init` when safe), merge non-destructive defaults into
-`openspec/config.yaml`, and run **`ai-specs refresh-bundled --preset openspec`** so catalog
-skills such as `openspec-sdd-conventions` and `testing-foundation` land under
-`ai-specs/skills/` with the usual `.ai-specs.lock` behavior. That preset **copies from this
-repo’s catalog and bundled commands**; it does **not** add `[[deps]]` rows — use
-[`catalog/README.md`](catalog/README.md) if you want vendored clones via `ai-specs sync`.
-
-Requirements when mutating (not for `sdd --dry-run`): **Node.js ≥ 20.19** and `openspec` on
-`PATH`, unless you pass **`--install-provider-cli`** (runs `npm install -g @fission-ai/openspec@latest`;
-requires `npm`).
+`ai-specs sdd` is an optional OpenSpec integration for projects that choose a
+spec-driven workflow. It is documented separately from the stable TOML reference
+because the workflow is still being refined.
 
 ```bash
 ai-specs sdd --help
-ai-specs sdd enable [path]
-ai-specs sdd enable --artifact-store filesystem
-ai-specs sdd enable --install-provider-cli   # explicit opt-in global install
-ai-specs sdd status [path]
-ai-specs sdd disable [path]
 ```
 
-### `artifact_store` values
-
-| Value | `openspec/` on disk | `doctor` when `[sdd].enabled` |
-|-------|---------------------|------------------------------|
-| `filesystem` | Required | ERROR if missing / unreadable config |
-| `hybrid` | Required (same as filesystem) | May WARN about optional “memory” heuristics |
-| `memory` | Optional (experimental) | WARN if tree missing; OpenSpec stays file-first in v1 |
-
-### Minimal `[sdd]` example
-
-```toml
-[sdd]
-enabled = true
-provider = "openspec"
-artifact_store = "filesystem"
-```
-
-With this block present, `ai-specs doctor` will validate that `openspec/config.yaml`
-is readable, and `ai-specs sdd enable` will scaffold `openspec/` with a valid
-base configuration for the `spec-driven` schema. See [`docs/ai/sdd.md`](docs/ai/sdd.md)
-for the full SDD provider contract and generated command reference.
+See [`docs/ai/sdd.md`](docs/ai/sdd.md) for the SDD provider contract and command reference.
 
 ## Manifest V1 contract (`ai-specs/ai-specs.toml`)
 
 `ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.
 See [`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) for the complete manifest reference,
 including supported sections, fields, examples, and MCP rendering by agent.
-The runtime contract includes optional **`[sdd]`** for OpenSpec onboarding; there is
-still no separate `[memory]` manifest section (distinct from `[sdd].artifact_store`).
 
-Canonical V1 surface:
+Stable reference surface:
 
 - `[project]`
-- `[agents]`
 - `[[deps]]`
 - `[mcp.<name>]`
-- `[recipes.<id>]` (optional — named bundles of skills, commands, templates, and MCP presets)
-- `[sdd]` (optional — SDD / OpenSpec; see section above)
 
-Omission of `[sdd]` remains valid for projects not using SDD.
+`[agents]` is still supported as the fan-out selector, but the stable reference focuses on the sections users configure most directly today.
 
 Conservative compatibility rules:
 
@@ -158,52 +95,12 @@ Conservative compatibility rules:
 - MCP `env` is the canonical field name.
 - MCP `environment` is still accepted as a tolerated input alias and normalizes to `env`.
 
-Field classification in V1:
-
-| Surface | Fields | Status |
-|---------|--------|--------|
-| `[project]` | `name` | optional, default `""` |
-| `[project]` | `subrepos` | optional, default `[]`, validated as root-relative target paths |
-| `[agents]` | `enabled` | optional, default `[]` |
-| `[[deps]]` | `id`, `source` | only required minimum fields |
-| `[[deps]]` | `path`, `scope`, `auto_invoke`, `license`, `vendor_attribution` | optional passthrough fields consumed by vendoring/rendering |
-| `[mcp.<name>]` | `command` | optional |
-| `[mcp.<name>]` | `args` | optional, default `[]` |
-| `[mcp.<name>]` | `env` | optional canonical field, default `{}` |
-| `[mcp.<name>]` | `environment` | tolerated input alias of `env` |
-| `[mcp.<name>]` | `timeout` | optional |
-| `[mcp.<name>]` | `enabled` | tolerated passthrough field |
-| `[recipes.<id>]` | `enabled` | required; boolean — must be `true` to materialize |
-| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
-| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |
-
 Out of scope for this V1 contract (explicitly deferred to future changes):
 
 - precedence / merge policy beyond the currently implemented runtime behavior
-- `[memory]` (distinct from `[sdd].artifact_store = memory`)
-
-## Recipes
-
-Recipes are named, versioned bundles of skills, commands, templates, and MCP presets.
-They live in `catalog/recipes/<id>/recipe.toml` and are materialized by `ai-specs sync`.
-
-Declare a recipe in your manifest:
-
-```toml
-[recipes.runtime-memory-openmemory]
-enabled = true
-version = "1.0.0"
-```
-
-On `ai-specs sync`, the CLI:
-1. Validates the recipe exists in the catalog
-2. Checks the version pin matches `recipe.toml`
-3. Copies bundled skills, commands, templates, and docs into the project
-4. Vendors external skills declared with `source = "dep"`
-5. Merges MCP presets into derived agent configs (recipe values take precedence)
-6. Detects and fails on primitive ID collisions across recipes
-
-Recipe vs user-local skills produce a warning (recipe version wins), not a fatal error.
+- standalone `[memory]` manifest configuration
+- bundle declarations and capability bindings
+- SDD/OpenSpec settings as part of the stable TOML reference
 
 ## Recommended skills (catalog)
 

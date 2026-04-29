@@ -20,41 +20,20 @@ class ManifestContractDocsTests(unittest.TestCase):
             with self.subTest(needle=needle):
                 self.assertIn(needle, haystack)
 
-    def test_readme_lists_entire_canonical_surface_and_compatibility_rules(self):
+    def test_readme_links_manifest_reference_and_states_stable_surface(self):
         self.assertContainsAll(
             self.readme,
             [
                 "`ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.",
                 "See [`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) for the complete manifest reference",
-                "Omission of `[sdd]` remains valid for projects not using SDD.",
                 "- `[project]`",
-                "- `[agents]`",
                 "- `[[deps]]`",
                 "- `[mcp.<name>]`",
-                "- `[sdd]` (optional — SDD / OpenSpec; see section above)",
+                "`[agents]` is still supported as the fan-out selector, but the stable reference focuses on the sections users configure most directly today.",
                 "- Missing `[agents]`, `[[deps]]`, and `[mcp]` remain valid and normalize to stable defaults.",
                 "- `project.subrepos` remains validated by the existing root target resolver.",
                 "- MCP `env` is the canonical field name.",
                 "- MCP `environment` is still accepted as a tolerated input alias and normalizes to `env`.",
-            ],
-        )
-
-    def test_readme_lists_every_v1_field_classification_row(self):
-        self.assertContainsAll(
-            self.readme,
-            [
-                "| `[project]` | `name` | optional, default `\"\"` |",
-                "| `[project]` | `subrepos` | optional, default `[]`, validated as root-relative target paths |",
-                "| `[agents]` | `enabled` | optional, default `[]` |",
-                "| `[[deps]]` | `id`, `source` | only required minimum fields |",
-                "| `[[deps]]` | `path`, `scope`, `auto_invoke`, `license`, `vendor_attribution` | optional passthrough fields consumed by vendoring/rendering |",
-                "| `[mcp.<name>]` | `command` | optional |",
-                "| `[mcp.<name>]` | `args` | optional, default `[]` |",
-                "| `[mcp.<name>]` | `env` | optional canonical field, default `{}` |",
-                "| `[mcp.<name>]` | `environment` | tolerated input alias of `env` |",
-                "| `[mcp.<name>]` | `timeout` | optional |",
-                "| `[mcp.<name>]` | `enabled` | tolerated passthrough field |",
-                "| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |",
             ],
         )
 
@@ -64,7 +43,9 @@ class ManifestContractDocsTests(unittest.TestCase):
             [
                 "Out of scope for this V1 contract (explicitly deferred to future changes):",
                 "- precedence / merge policy beyond the currently implemented runtime behavior",
-                "- `[memory]` (distinct from `[sdd].artifact_store = memory`)",
+                "- standalone `[memory]` manifest configuration",
+                "- bundle declarations and capability bindings",
+                "- SDD/OpenSpec settings as part of the stable TOML reference",
             ],
         )
 
@@ -100,30 +81,30 @@ class ManifestContractDocsTests(unittest.TestCase):
     def test_template_marks_out_of_scope_items_as_deferred(self):
         self.assertIn("# V1 NO agrega precedence, doctor ni [memory]; quedan deferidos a cambios futuros.", self.template)
 
-    def test_manifest_reference_documents_complete_surface_and_fields(self):
+    def test_manifest_reference_documents_stable_surface_and_fields(self):
         self.assertContainsAll(
             self.reference,
             [
                 "# ai-specs.toml Reference",
                 "`ai-specs/ai-specs.toml` in the project root is the only V1 source of truth.",
                 "| `[project]` | optional | Project identity and root sync targets. |",
-                "| `[agents]` | optional | Selects generated agent outputs. |",
+                "| `[agents]` | optional context | Selects which agent outputs receive generated config. |",
                 "| `[[deps]]` | optional repeated table | Vendors external skills into `ai-specs/skills/<id>/`. |",
                 "| `[mcp.<name>]` | optional repeated table | Declares MCP servers rendered to enabled agents. |",
-                "| `[recipes.<id>]` | optional repeated table | Enables catalog recipes by exact version pin. |",
-                "| `[sdd]` | optional | Enables OpenSpec-oriented spec-driven development support. |",
                 "| `project.name` | string | optional | `\"\"` |",
                 "| `project.subrepos` | array of strings | optional | `[]` |",
                 "| `agents.enabled` | array of strings | optional | `[]` |",
                 "Supported values: `claude`, `cursor`, `opencode`, `codex`, `copilot`, `gemini`.",
                 "| `deps.id` | string | required | none |",
                 "| `deps.source` | string | required | none |",
-                "| `recipes.<id>.enabled` | boolean | required | none |",
-                "| `recipes.<id>.version` | string | required | none |",
-                "| `sdd.artifact_store` | string enum | optional when `[sdd]` is absent | none |",
-                "Allowed values: `filesystem`, `hybrid`, `memory`.",
             ],
         )
+
+    def test_manifest_reference_does_not_document_unstable_manifest_surface(self):
+        self.assertNotIn("## `[recipes.<id>]`", self.reference)
+        self.assertNotIn("[recipes.runtime-memory-openmemory]", self.reference)
+        self.assertNotIn("## `[sdd]`", self.reference)
+        self.assertNotIn("artifact_store = \"filesystem\"", self.reference)
 
     def test_manifest_reference_documents_mcp_env_and_agent_rendering(self):
         self.assertContainsAll(
