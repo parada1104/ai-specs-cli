@@ -76,6 +76,14 @@ class ConfigSchema:
 
 
 @dataclass
+class InitWorkflow:
+    prompt: str
+    description: str = ""
+    needs_manifest: bool = False
+    needs_mcp: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SddConfig:
     threshold: str = ""
 
@@ -96,6 +104,7 @@ class Recipe:
     capabilities: list[Capability] = field(default_factory=list)
     hooks: list[Hook] = field(default_factory=list)
     config_schema: ConfigSchema = field(default_factory=ConfigSchema)
+    init: InitWorkflow | None = None
     sdd: SddConfig = field(default_factory=SddConfig)
 
 
@@ -232,7 +241,61 @@ def _parse_sdd(raw: Any, context: str) -> SddConfig:
     return SddConfig(threshold=threshold)
 
 
-def validate_recipe_toml(data: dict[str, Any]) -> Recipe:
+def _parse_init(raw: Any, context: str, recipe_dir: Path | None = None) -> InitWorkflow | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise RecipeValidationError(f"{context}: expected table, got {type(raw).__name__}")
+
+    allowed = {"prompt", "description", "needs_manifest", "needs_mcp"}
+    for key in raw:
+        if key not in allowed:
+            raise RecipeValidationError(f"{context}: unsupported init field '{key}'")
+
+    prompt = _require_string(raw, "prompt", f"{context}.prompt")
+
+    description_raw = raw.get("description", "")
+    if not isinstance(description_raw, str):
+        raise RecipeValidationError(f"{context}.description: expected string, got {type(description_raw).__name__}")
+    description = description_raw.strip()
+
+    needs_manifest_raw = raw.get("needs_manifest", False)
+    if not isinstance(needs_manifest_raw, bool):
+        raise RecipeValidationError(f"{context}.needs_manifest: expected boolean, got {type(needs_manifest_raw).__name__}")
+
+    needs_mcp_raw = raw.get("needs_mcp", [])
+    if not isinstance(needs_mcp_raw, list):
+        raise RecipeValidationError(f"{context}.needs_mcp: expected array of strings")
+    needs_mcp: list[str] = []
+    for idx, item in enumerate(needs_mcp_raw):
+        if not isinstance(item, str) or not item.strip():
+            raise RecipeValidationError(f"{context}.needs_mcp[{idx}]: expected non-empty string")
+        needs_mcp.append(item.strip())
+
+    if recipe_dir is not None:
+        prompt_path = Path(prompt)
+        if prompt_path.is_absolute():
+            raise RecipeValidationError(f"{context}.prompt: init prompt paths must be relative to the recipe directory")
+        root = recipe_dir.resolve()
+        target = (recipe_dir / prompt_path).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise RecipeValidationError(f"{context}.prompt: init prompt paths must stay inside the recipe directory") from exc
+        if not target.exists():
+            raise RecipeValidationError(f"{context}.prompt: init prompt file not found: {prompt}")
+        if not target.is_file():
+            raise RecipeValidationError(f"{context}.prompt: init prompt path must be a file: {prompt}")
+
+    return InitWorkflow(
+        prompt=prompt,
+        description=description,
+        needs_manifest=needs_manifest_raw,
+        needs_mcp=needs_mcp,
+    )
+
+
+def validate_recipe_toml(data: dict[str, Any], recipe_dir: Path | None = None) -> Recipe:
     """Validate a raw dict loaded from recipe.toml and return a Recipe dataclass."""
     recipe_table = data.get("recipe", {})
     if not isinstance(recipe_table, dict):
@@ -266,6 +329,7 @@ def validate_recipe_toml(data: dict[str, Any]) -> Recipe:
         capabilities=_parse_capabilities(data.get("capabilities"), ""),
         hooks=_parse_hooks(data.get("hooks"), ""),
         config_schema=_parse_config(data.get("config"), ""),
+        init=_parse_init(data.get("init"), "[init]", recipe_dir),
         sdd=_parse_sdd(data.get("sdd"), "[sdd]"),
     )
 
@@ -275,4 +339,4 @@ def load_recipe_toml(path: Path) -> Recipe:
         raise RecipeValidationError(f"recipe.toml not found: {path}")
     with path.open("rb") as f:
         data = tomllib.load(f)
-    return validate_recipe_toml(data)
+    return validate_recipe_toml(data, path.parent)

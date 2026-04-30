@@ -165,6 +165,61 @@ action = "validate-config"
 
 Unknown actions emit a warning and are skipped; sync continues.
 
+## `[init]` workflow declaration
+
+Declares an optional, agent-facing initialization workflow for project-specific setup. Init is **read-only and reviewable by default**: it prints a setup brief, proposed config targets, MCP guidance, and template/override preview, but it does not mutate files or run `sync`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `prompt` | string | yes | Relative path to an init prompt file inside the recipe directory |
+| `description` | string | no | Human-readable setup summary |
+| `needs_manifest` | boolean | no | Whether the workflow expects manifest context in the brief |
+| `needs_mcp` | array of strings | no | MCP server IDs relevant to setup/discovery |
+
+Example:
+
+```toml
+[init]
+prompt = "docs/init.md"
+description = "Configure tracker board and list mappings"
+needs_manifest = true
+needs_mcp = ["trello"]
+```
+
+Prompt path rules:
+
+- `prompt` must be relative to the recipe directory.
+- Absolute paths and parent traversal outside the recipe directory are invalid.
+- The prompt target must exist and must be a file.
+- Unknown `[init]` fields are rejected so the contract stays small and explicit.
+
+### `ai-specs recipe init <id> [path]`
+
+The command prints an agent-readable initialization brief for a recipe that declares `[init]`.
+
+The brief includes:
+
+- Recipe identity, install state, and init metadata.
+- Prompt content from the recipe.
+- Project manifest context when relevant.
+- Existing `[recipes.<id>.config]` keys and schema-aligned setup targets.
+- MCP discovery for configured servers and recipe-provided presets.
+- Template/override target preview with create/update/skip guidance.
+- Reviewable next actions for the human or agent.
+
+The command is intentionally separate from `ai-specs sync`:
+
+- It does not add recipe declarations to the manifest.
+- It does not write `[recipes.<id>.config]` values.
+- It does not copy bundled skills, commands, templates, or docs.
+- It does not generate `.recipe-mcp.json`, agent configs, or registries.
+
+Durable setup values that a human approves should be written under `[recipes.<id>.config]` unless another existing manifest section owns the value. For example, a Trello board ID belongs in recipe config, while MCP command/env declarations belong under `[mcp.<name>]`.
+
+MCP discovery output must redact secret-like literal values. Env references such as `$TOKEN` are displayed as references rather than resolved. Init guidance preserves the sync-time rule that project manifest MCP values take precedence over recipe defaults.
+
+Init is idempotent: rerunning it detects existing `[recipes.<id>]`, existing config keys, and existing template/override targets, then proposes updates or skips instead of duplicate declarations, duplicate keys, or silent overwrites.
+
 ---
 
 # Manifest V2 Additions

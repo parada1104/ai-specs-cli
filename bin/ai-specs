@@ -10,6 +10,7 @@
 # doctor [path] Diagnose project health (read-only)
 # recipe list [path] List available and installed recipes
 # recipe add <id> [path] Add a recipe to the manifest
+# recipe init <id> [path] Print a read-only recipe init brief
 # sdd <enable|disable|status> … SDD / OpenSpec onboarding ([sdd] in manifest)
 # version Print CLI version
 # help Show this help
@@ -48,6 +49,7 @@ Commands:
   doctor [path] Diagnose project health (read-only)
   recipe list [path]          List available and installed recipes
   recipe add <id> [path]      Add a recipe to the manifest
+  recipe init <id> [path]     Print a read-only recipe init brief
   sdd <enable|disable|status> [path] SDD / OpenSpec (see ai-specs sdd --help)
   version Print CLI version
   help Show this help
