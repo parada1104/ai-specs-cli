@@ -37,6 +37,7 @@ NC='\033[0m'
 # Options
 DRY_RUN=false
 FILTER_SCOPE=""
+RUNTIME_BRIEF_MARKER="<!-- ai-specs:runtime-brief -->"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -63,6 +64,9 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --dry-run    Show what would change without modifying files"
             echo "  --scope      Only sync specific scope"
+            echo ""
+            echo "If AGENTS.md contains '$RUNTIME_BRIEF_MARKER', this script validates"
+            echo "skill metadata but skips writing the Auto-invoke section."
             exit 0
             ;;
         *)
@@ -186,6 +190,11 @@ for scope_file in "$SCOPE_TMPDIR"/*; do
 
     if [ -z "$agents_path" ] || [ ! -f "$agents_path" ]; then
         echo -e "${YELLOW}Warning: No AGENTS.md found for scope '$scope'${NC}"
+        continue
+    fi
+
+    if grep -Fq "$RUNTIME_BRIEF_MARKER" "$agents_path"; then
+        echo -e "${YELLOW}Skipping Auto-invoke update for runtime brief: $agents_path${NC}"
         continue
     fi
 
