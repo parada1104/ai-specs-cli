@@ -1,7 +1,7 @@
 # ai-specs-cli Runtime Brief
 <!-- ai-specs:runtime-brief -->
 
-> Temporary runtime brief. Do not run `ai-specs sync` in this repo until Trello card #65 is implemented; the current CLI renderer regenerates the legacy skill registry.
+> Temporary runtime brief. Card #65 (runtime brief renderer) is implemented, but the auto-generated output is still thinner than this manual brief. Do not run `ai-specs sync` in this repo until the TOML schema supports richer runtime context (board IDs, dependency tracking, workflow rules, useful commands). The north star is Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing.
 
 ## Project
 
@@ -64,13 +64,13 @@
 
 ## Current Transitional State
 
-- `ai-specs/skills/skill-sync/assets/sync.sh` respects the `<!-- ai-specs:runtime-brief -->` marker and skips rewriting `AGENTS.md` as an Auto-invoke registry.
-- `lib/_internal/agents-md-render.py` still renders the old registry model until #65 is implemented.
-- This file is intentionally manual and non-idempotent until #65 lands.
+- `ai-specs/skills/skill-sync/assets/sync.sh` respects the `<!-- ai-specs:runtime-brief -->` marker and skips rewriting `AGENTS.md`.
+- `lib/_internal/agents-md-render.py` now generates a runtime brief from `ai-specs.toml`, but the output is thinner than this manual brief.
+- This file remains intentionally manual and non-idempotent until the TOML schema supports richer runtime context (Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing).
 
 ## Useful Commands
 
 - Focused tests: `./tests/run.sh`
 - Full validation: `./tests/validate.sh`
 - Inspect Trello card #62 before resuming recipe work.
-- Avoid `ai-specs sync` until #65 is complete.
+- Do not run `ai-specs sync` until the TOML schema supports richer runtime context (board IDs, dependency tracking, workflow rules, useful commands).
