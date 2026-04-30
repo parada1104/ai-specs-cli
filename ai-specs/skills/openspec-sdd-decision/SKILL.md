@@ -71,10 +71,26 @@ The system defines exactly four ceremony levels:
      - <path to code file expected to change>
    tests_touched:
      - <path to test file expected to change>
+   sdd_plan:
+     mode: <none | direct | auto-artifacts | interactive | auto>
+     phases:
+       - <phase names required by openspec/config.yaml>
+     subagents: <required | optional | not-applicable>
+     stop_point: <where execution must stop before further user approval>
+     spec_update: <expected delta specs, or why no spec update is required>
    ```
+
+   The `sdd_plan` MUST describe the workflow to execute, not the implementation
+   edits. For formal SDD (`domain_change`) the plan should emphasize artifact
+   phases, phase-specialized subagents, and stopping before `apply` in
+   `auto-artifacts`. For lightweight or no-SDD levels, include the shorter flow
+   and explicitly state whether specs are updated.
 
 6. **Confirm before proceeding**
    - Do NOT create artifacts or enter `openspec-new-change` until the user
      confirms or corrects the classification.
    - If the classification is below the `sdd.threshold` declared in the active
      recipe, emit a warning describing the mismatch and ask for direction.
+   - In plan mode, do NOT present a detailed code-change plan for a formal SDD
+     classification. Present the SDD flow first; code areas belong in impact,
+     risk, or later `tasks.md` context.

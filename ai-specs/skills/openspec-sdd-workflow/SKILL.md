@@ -65,6 +65,51 @@ cd .worktrees/<change-name>
 5. Verify the worktree baseline when feasible with the focused command from `AGENTS.md`.
 6. Run SDD phases through `openspec-phase-orchestrator` when subagents are available.
 
+## Plan Mode Contract
+
+When the user is in plan mode, asks for a plan, or is validating approach before
+implementation, describe the workflow that will be executed rather than a
+premature implementation plan.
+
+- If the session focus is a formal tracker card or durable design/implementation
+  request, perform explore/classification first, then present the SDD flow.
+- For SDD-required classifications, the plan MUST emphasize ceremony level,
+  cycle mode, subagent delegation, artifact phases, stop point, and review
+  output. Likely code areas may be listed only as impact/risk context.
+- For changes below the SDD threshold, the plan MAY describe direct code/test
+  changes, but it MUST still include whether spec updates are needed and why.
+- In build mode, execute the same flow that would have been described in plan
+  mode.
+
+Every plan response after classification MUST include:
+
+- Classification and reasoning.
+- SDD mode (`interactive`, `auto-artifacts`, or `auto`).
+- Subagent execution model for required phases.
+- Required phases and artifacts, according to `openspec/config.yaml`.
+- Explicit stop point, especially "stop before `apply`" for `auto-artifacts`.
+- Spec update statement: which specs/delta specs are expected, or why no spec
+  update is required.
+- Final handoff/review contents and options for next action.
+
+## Ceremony-Level Plan Mapping
+
+- `domain_change`: formal OpenSpec cycle. Create/enter a dedicated worktree,
+  run artifact phases through phase-specialized subagents, normally
+  `proposal`, `specs`, `design`, and `tasks`, then stop before `apply` in
+  `auto-artifacts`. The handoff must include technical analysis, risks,
+  recommendations, open questions, and apply options.
+- `behavior_change`: lightweight SDD cycle. Create/enter a dedicated worktree
+  and create the artifacts required by `openspec/config.yaml` (normally
+  `tasks.md`). Create delta specs only when the decision matrix requires them
+  or the observable contract/spec source of truth must change. Stop before
+  `apply` unless the user explicitly requested implementation.
+- `local_fix`: no formal OpenSpec artifacts by default. Describe or execute the
+  localized fix plus focused tests. If the fix reveals contract/spec drift,
+  escalate classification before proceeding.
+- `trivial`: no SDD artifacts. Apply directly when in build mode, with minimal
+  validation appropriate to the edit.
+
 ## SDD Cycle Modes
 
 - `interactive`: run one phase, present handoff, ask before continuing.
@@ -86,7 +131,8 @@ phase-specialized subagent through `openspec-phase-orchestrator`.
 
 - `explore`: thinking and scope discovery; no artifact required.
 - `proposal`: create `openspec/changes/<change>/proposal.md`.
-- `specs`: create/update delta specs under `openspec/changes/<change>/specs/`.
+- `specs`: create/update delta specs under `openspec/changes/<change>/specs/`
+  when required by the decision matrix or by a contract/source-of-truth change.
 - `design`: create/update `design.md`.
 - `tasks`: create/update `tasks.md`.
 - `apply`: implement tasks and update checkboxes.

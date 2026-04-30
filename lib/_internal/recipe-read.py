@@ -48,6 +48,15 @@ def read_recipe(catalog_dir: Path, recipe_id: str) -> Recipe:
 
 
 def recipe_to_dict(recipe: Recipe) -> dict:
+    init = None
+    if recipe.init is not None:
+        init = {
+            "prompt": recipe.init.prompt,
+            "description": recipe.init.description,
+            "needs_manifest": recipe.init.needs_manifest,
+            "needs_mcp": list(recipe.init.needs_mcp),
+        }
+
     return {
         "id": recipe.id,
         "name": recipe.name,
@@ -56,6 +65,7 @@ def recipe_to_dict(recipe: Recipe) -> dict:
         "author": recipe.author,
         "license": recipe.license,
         "sdd": {"threshold": recipe.sdd.threshold},
+        "init": init,
         "provides": {
             "skills": [
                 {"id": s.id, "source": s.source, "url": s.url, "path": s.path}
