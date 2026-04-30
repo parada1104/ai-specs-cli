@@ -139,9 +139,43 @@ The orchestrator emits the event into the conversation or handoff. It does not e
 - In `interactive`, stop after every phase.
 - In `auto-artifacts`, continue through `tasks` only, then present an artifact-cycle handoff.
 - In `auto`, continue through `verify` only if no blocker/error occurs.
-- In `auto-artifacts`, after `tasks.md` is created or updated, stop and present an artifact-cycle review with recommended apply strategy (`interactive apply`, `auto apply`, or `apply only`).
 - Never enter `apply`, `verify`, `archive`, `merge`, PR creation, or push/merge to `development` from `auto-artifacts` without explicit human instruction.
 - Never enter cleanup without explicit permission unless the user selected `auto` and the runtime brief allows it.
+
+## Artifact-Cycle Review (auto-artifacts)
+
+After `tasks.md` is created or updated in `auto-artifacts` mode, stop and present an exhaustive artifact-cycle review. Do not proceed to `apply` without explicit user confirmation. The review MUST include the following sections:
+
+### 1. Artifact Summary
+- List every artifact created or updated (`proposal.md`, delta specs, `design.md`, `tasks.md`).
+- State schema workflow and progress (`N/M` complete).
+- Note any artifacts that were skipped or blocked.
+
+### 2. Technical Analysis
+- Summarize the architecture and design decisions documented in `design.md`.
+- Highlight any new modules, files, or public APIs introduced.
+- Call out dependencies on other cards, changes, or external systems.
+- Identify performance, security, or scalability implications if relevant.
+
+### 3. Recommendations
+- Suggest the most appropriate apply strategy:
+  - `interactive apply` — recommended when the change is large, risky, or touches critical paths.
+  - `auto apply` — only when the change is small, well-understood, and tests are comprehensive.
+  - `apply only` — when the user wants to execute tasks manually without further agent assistance.
+- Note any tasks that should be grouped into coherent commits.
+- Advise on whether additional exploration or design refinement is needed before apply.
+
+### 4. Gaps, Warnings, and Open Questions
+- List any spec scenarios that lack test coverage or are marked as out of scope.
+- Flag any warnings from `verify-report.md` or from the design review (e.g., spec divergence, tech-debt, backward-compatibility concerns).
+- Pose explicit open questions that the user or reviewer should answer before apply.
+- Highlight any assumptions made during artifact creation that may need validation.
+
+### 5. Next Steps
+- Offer clear options: `interactive apply`, `auto apply`, or `apply only`.
+- Additional option: `refine artifacts` if the user wants to revisit specs, design, or tasks before applying.
+- If the user chooses to refine, return to the relevant artifact phase (`specs`, `design`, or `tasks`).
+- Always announce the SDD cycle mode (`interactive`, `auto-artifacts`, or `auto`) before presenting options.
 
 ## User-Facing Result
 
