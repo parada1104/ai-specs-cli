@@ -68,7 +68,16 @@ cd .worktrees/<change-name>
 - `auto-artifacts`: run artifact phases through `tasks.md`, then stop before `apply`.
 - `auto`: run artifacts, apply, and verify; stop on blocker or failed verification.
 
+Default for this project: `auto-artifacts`.
+
 Default for this project: `auto-artifacts` unless the user explicitly asks for implementation.
+
+When a user says “execute the SDD cycle” for a card or change without specifying
+a mode, use `auto-artifacts`: create/link the change, run artifact phases, then
+stop before `apply`.
+
+When the harness supports subagents, every SDD phase MUST be executed by a
+phase-specialized subagent through `openspec-phase-orchestrator`.
 
 ## Phase Map
 
@@ -94,11 +103,16 @@ Default for this project: `auto-artifacts` unless the user explicitly asks for i
 
 After `tasks.md` in `auto-artifacts`, stop and report:
 
+After the final artifact (`tasks.md`) in `auto-artifacts`, provide an exhaustive
+artifact-cycle review with:
+
 - Card/change linkage and intended outcome.
 - Artifacts created or updated.
 - Risks and open questions.
 - Recommended implementation strategy.
 - Clear options: `interactive apply`, `auto apply`, or `apply only`.
+
+Else if tasks exist with pending checkboxes → `apply` only when mode is `auto` or the user explicitly requested apply; otherwise stop with the artifact-cycle review.
 
 ## Related Skills
 

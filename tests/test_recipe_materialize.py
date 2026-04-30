@@ -48,7 +48,7 @@ class RecipeMaterializeTests(unittest.TestCase):
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        skill_dir = root / "ai-specs" / "skills" / "test-skill"
+        skill_dir = root / ".recipe" / "test-fixture" / "skills" / "test-skill"
         self.assertTrue(skill_dir.is_dir())
         self.assertTrue((skill_dir / "SKILL.md").is_file())
 
@@ -102,7 +102,7 @@ class RecipeMaterializeTests(unittest.TestCase):
             '[recipes.test-fixture]\nenabled = false\nversion = "1.0.0"\n'
         )
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        self.assertFalse((root / "ai-specs" / "skills" / "test-skill").exists())
+        self.assertFalse((root / ".recipe" / "test-fixture" / "skills" / "test-skill").exists())
 
     def test_version_mismatch_fails(self):
         root = self._make_project(
@@ -123,7 +123,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         root = self._make_project("")
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
 
-    def test_recipe_overrides_user_local_skill_with_warning(self):
+    def test_recipe_does_not_overwrite_user_local_skill(self):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
@@ -132,8 +132,10 @@ class RecipeMaterializeTests(unittest.TestCase):
         user_skill.mkdir(parents=True)
         (user_skill / "SKILL.md").write_text("user local")
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        # Recipe version should have replaced the local one
-        self.assertNotEqual((user_skill / "SKILL.md").read_text(), "user local")
+        # Recipe version goes to .recipe/ and local skill is preserved
+        self.assertEqual((user_skill / "SKILL.md").read_text(), "user local")
+        recipe_skill = root / ".recipe" / "test-fixture" / "skills" / "test-skill"
+        self.assertTrue(recipe_skill.is_dir())
 
     # --- V2 materialize tests -----------------------------------------------
 
@@ -299,7 +301,7 @@ class RecipeMaterializeTests(unittest.TestCase):
                 "[recipes.v2-recipe.config]\nboard_id = 'abc123'\n"
             )
             self.assertEqual(self.mod.materialize_recipes(root, ai_specs_home), 0)
-            self.assertTrue((root / "ai-specs" / "skills" / "v2-skill").is_dir())
+            self.assertTrue((root / ".recipe" / "v2-recipe" / "skills" / "v2-skill").is_dir())
 
     def test_v1_manifest_without_bindings_or_config_succeeds(self):
         root = self._make_project(

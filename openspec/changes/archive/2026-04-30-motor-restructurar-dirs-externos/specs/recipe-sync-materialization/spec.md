@@ -4,25 +4,7 @@
 
 Define how `ai-specs sync` resolves, validates, and materializes recipes into the project workspace, including the external directory layout for recipe-bundled and dependency skills.
 
-## Requirements
-
-### Requirement: Sync reads recipe declarations
-During sync, the system SHALL parse all `[recipes.*]` tables from `ai-specs.toml` and filter to those with `enabled = true`.
-
-#### Scenario: Multiple recipes enabled
-- **WHEN** three recipes are declared with `enabled = true`
-- **THEN** sync SHALL process all three in declaration order
-
-### Requirement: Recipe validation
-Before materialization, the system SHALL validate that: the recipe directory exists in `catalog/recipes/<id>/`, `recipe.toml` is parseable, all required fields are present, and all referenced local paths (`skills/`, `commands/`, `templates/`, `docs/`) exist.
-
-#### Scenario: Missing recipe.toml
-- **WHEN** `catalog/recipes/<id>/` exists but lacks `recipe.toml`
-- **THEN** sync SHALL fail with "recipe.toml not found"
-
-#### Scenario: Missing referenced skill directory
-- **WHEN** `recipe.toml` declares a bundled skill but `skills/<id>/` does not exist
-- **THEN** sync SHALL fail with "bundled skill not found"
+## MODIFIED Requirements
 
 ### Requirement: Materialization order
 The system SHALL materialize primitives in this order: skills (bundled then deps), commands, MCP presets, templates, docs. Bundled recipe skills SHALL be materialized into `.recipe/{recipe-id}/skills/{skill-id}/`. Dependency skills SHALL be materialized into `.deps/{dep-id}/skills/{skill-id}/`. Commands, MCP presets, templates, and docs SHALL continue to be materialized into `ai-specs/` as before.
@@ -39,22 +21,7 @@ The system SHALL materialize primitives in this order: skills (bundled then deps
 - **THEN** the second run SHALL not fail
 - **AND** no unintended modifications SHALL occur in `.recipe/`, `.deps/`, or `ai-specs/`
 
-### Requirement: MCP preset merge strategy
-When a recipe declares an MCP preset with the same `id` as an existing `[mcp.<id>]` in the project manifest, the system SHALL merge the recipe fields into the derived config with recipe values taking precedence. The system SHALL emit a warning naming the recipe and the MCP id.
-
-#### Scenario: Recipe MCP overrides manifest MCP
-- **WHEN** the project manifest declares `[mcp.openmemory]` and a recipe also declares `mcp.id = "openmemory"`
-- **THEN** sync SHALL merge the recipe fields into the derived MCP config
-- **AND** recipe fields SHALL take precedence on key overlap
-- **AND** sync SHALL emit a warning: "recipe <name> overrides mcp.id='openmemory' from project manifest"
-
-### Requirement: Idempotent sync
-Running sync multiple times with the same manifest SHALL produce the same result.
-
-#### Scenario: Re-sync unchanged recipe
-- **WHEN** sync runs twice with no changes
-- **THEN** the second run SHALL not fail
-- **AND** no unintended modifications SHALL occur
+## ADDED Requirements
 
 ### Requirement: Recipe skill materialization path
 Bundled skills from a recipe SHALL be materialized to `.recipe/{recipe-id}/skills/{skill-id}/`, preserving the directory structure from `catalog/recipes/<id>/skills/`.

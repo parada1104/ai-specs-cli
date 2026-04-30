@@ -229,26 +229,60 @@ OpenSpec `config.yaml` shape and apply-time commit conventions:
 my-project/
 ├── AGENTS.md                       ← generated artifact (do not edit; managed by skill-sync)
 ├── .gitignore                      ← appended with an ai-specs block (gitignores agent files)
+├── .recipe/                        ← recipe-bundled skills (gitignored; restored by sync)
+│   └── <recipe-id>/
+│       ├── skills/<skill-id>/
+│       └── overrides/              ← optional runtime overrides per recipe
+├── .deps/                          ← vendored dependency skills (gitignored; restored by sync)
+│   └── <dep-id>/
+│       └── skills/<skill-id>/
 └── ai-specs/
     ├── ai-specs.toml               ← YOUR manifest (edit this)
-    ├── .gitignore                  ← derived; lists vendored skill dirs
+    ├── .gitignore                  ← derived; ignores resolved-skills dir
+    ├── .resolved-skills/           ← flattened resolved skill tree (gitignored; used by agents)
     ├── skills/
-        ├── skill-creator/          ← bundled on init (contract)
-        ├── skill-sync/             ← bundled on init (contract)
-        ├── …/                      ← optional: vendor from catalog (see catalog/README.md) + locals
-        ├── <your-local-skill>/     ← creada con `/skills-as-rules` (committed)
-        └── <vendored-skill>/       ← cloned from [[deps]] (gitignored)
+    │   ├── skill-creator/          ← bundled on init (contract)
+    │   ├── skill-sync/             ← bundled on init (contract)
+    │   └── <your-local-skill>/     ← created with `/skills-as-rules` (committed)
     └── commands/
         └── <your-local-command>.md ← fanned out to native agent command dirs
 ```
 
-### Three skill categories
+### Three-tier skill layout
 
-| Category   | Lives in            | Listed in toml? | Committed? | Created by             |
-|------------|---------------------|-----------------|------------|------------------------|
-| Local      | `ai-specs/skills/<name>/`   | No (autodiscovered) | Yes        | `/skills-as-rules` |
-| Bundled    | `ai-specs/skills/{skill-creator,skill-sync}/` | No | Yes (own-and-customize) | `ai-specs init` (from `bundled-skills/`) |
-| Vendored   | `ai-specs/skills/<dep-id>/` | Yes (`[[deps]]`)    | No (gitignored) | `ai-specs add-dep <url>` → cloned by sync (includes [catalog](catalog/README.md) skills) |
+Skills are resolved from three isolated sources with deterministic precedence:
+
+1. **Local** (`ai-specs/skills/<id>/`) — highest precedence; committed project-owned skills
+2. **Recipe** (`.recipe/<recipe-id>/skills/<id>/`) — middle precedence; bundled by enabled recipes
+3. **Dependency** (`.deps/<dep-id>/skills/<id>/`) — lowest precedence; cloned from `[[deps]]`
+
+When the same skill ID exists in multiple sources, the higher-precedence source
+wins automatically. Local skills silently override recipe and dep versions
+without error or warning.
+
+| Category   | Lives in                                  | Listed in toml? | Committed? | Created by |
+|------------|-------------------------------------------|-----------------|------------|------------|
+| Local      | `ai-specs/skills/<name>/`                 | No (autodiscovered) | Yes | `/skills-as-rules` |
+| Recipe     | `.recipe/<recipe-id>/skills/<name>/`      | Yes (`[recipes.*]`) | No (gitignored) | `ai-specs sync` |
+| Dependency | `.deps/<dep-id>/skills/<name>/`           | Yes (`[[deps]]`)    | No (gitignored) | `ai-specs add-dep <url>` → cloned by sync |
+
+Recipe-bundled and vendored skills are kept outside `ai-specs/skills/` so your
+local skill directory stays clean and commit-ready. On every `ai-specs sync`,
+the CLI rebuilds `.recipe/` and `.deps/` from the manifest, removes orphaned
+directories for disabled recipes or deleted deps, and flattens the resolved
+skill tree into `ai-specs/.resolved-skills/` for agent consumption.
+
+### Runtime overrides for recipe skills
+
+Each recipe can provide optional overrides without forking the recipe code:
+
+- `.recipe/<recipe-id>/overrides/config.toml` — merged on top of bundled defaults
+- `.recipe/<recipe-id>/overrides/templates/<name>.md` — overrides identically-named bundled templates
+
+Overrides are scoped to their parent recipe and do not leak into other recipes
+or dependencies. Missing override files are handled gracefully (no error, no
+warning). The `overrides/` directory is gitignored so teams can share the base
+recipe while allowing individual customizations.
 
 ## CLI
 

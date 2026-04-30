@@ -466,7 +466,7 @@ class SyncPipelineTests(unittest.TestCase):
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            root_skill = workspace / "ai-specs" / "skills" / "vendored-demo" / "SKILL.md"
+            root_skill = workspace / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
             subrepo_skill = workspace / "packages" / "a" / "ai-specs" / "skills" / "vendored-demo" / "SKILL.md"
             content = root_skill.read_text()
 
@@ -499,7 +499,7 @@ class SyncPipelineTests(unittest.TestCase):
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            root_skill = workspace / "ai-specs" / "skills" / "vendored-demo" / "SKILL.md"
+            root_skill = workspace / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
             root_skill.write_text(
                 "---\n"
                 "name: vendored-demo\n"
