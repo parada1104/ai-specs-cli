@@ -1,12 +1,13 @@
 ---
 name: trello-pm-workflow
 description: >
-  Establece el contrato de cards de Trello para el proyecto ai-specs-cli.
-  Trigger: When creating, updating, or reviewing a Trello card for project work.
+  Contrato ligero de cards Trello para proyectos ai-specs. Trigger: crear,
+  actualizar o revisar cards de trabajo. Dogfooding local antes de convertirlo
+  en recipe configurable.
 license: MIT
 metadata:
   author: parada1104
-  version: "1.0"
+  version: "2.0"
   scope: [root]
   auto_invoke:
     - "Creating a Trello card"
@@ -14,326 +15,91 @@ metadata:
     - "Planning work with Trello"
 ---
 
-# trello-pm-workflow — Contrato de Cards Trello
+# trello-pm-workflow
 
-Este skill define cómo estructurar cards de Trello para el proyecto `ai-specs-cli`. 
-Es dogfooding: lo usamos nosotros primero, luego lo promovemos a recipe/capability.
+Trello es el tracker operativo. El runtime brief define el board, listas y MCP disponibles para el proyecto actual.
 
-**Separación de responsabilidades:**
-- **Trello** = estado, tracking, visibilidad PM/CTO
-- **Vault** (Obsidian) = memoria canónica, decisiones, contexto estructurado
-- **OpenMemory** = memoria operativa de sesión
-- **OpenSpec** = specs, changes, artifacts
+## Responsabilidades
 
----
+- Trello: estado, prioridad, dependencias, visibilidad PM/CTO.
+- OpenSpec: artifacts SDD cuando la card requiere cambio durable.
+- Vault: decisiones y handoffs canónicos.
+- OpenMemory: continuidad operativa buscable.
 
-## Tipos de Card
+## Regla De Flujo
 
-Cada card DEBE tener un tipo. El tipo determina template, checklist y flujo.
+- Una sesión trabaja una solicitud explícita, una card o un change.
+- Una card relevante debe mapear a un ciclo SDD cuando implica implementación, diseño durable o decisión técnica compleja.
+- Una card puede bloquear otra; las dependencias deben estar explícitas en Trello.
+- La card debe enlazar o nombrar su OpenSpec change cuando exista.
 
-| Tipo | Cuándo usar | Checklist base |
-|------|-------------|----------------|
-| `epic` | Grupo de cards relacionadas, milestone | Definir cards hijas, orden, criterio de cierre |
-| `feature` | Nueva capability, comando, skill | Tests, docs, validación, sync specs |
-| `bug` | Regresión, fix necesario | Reproducción, fix, test regresión, verify |
-| `spike` | Investigación, experimento | Hipótesis, experimento, conclusión, decisión go/no-go |
-| `decision` | ADR, decisión arquitectónica | Análisis, tradeoffs, doc en vault, consecuencias |
-| `handoff` | Cierre de sesión, contexto para siguiente | Resumen, archivos, próximos pasos, riesgos |
-
----
-
-## Template Base (todos los tipos)
+## Template Base
 
 ```markdown
 ## Contexto
-<!-- Por qué existe esta card. Problema u oportunidad. -->
+<por qué existe esta card>
 
 ## Objetivo
-<!-- Resultado esperado en una oración. -->
-
-## Alcance (In Scope)
-<!-- Lista de entregables concretos -->
-- [ ] Entregable 1
-- [ ] Entregable 2
-
-## Fuera de alcance (Out of Scope)
-<!-- Qué NO incluye esta card -->
-
-## Criterios de aceptación (Definition of Done)
-- [ ] Criterio 1
-- [ ] Criterio 2
-
-## Dependencias
-<!-- Cards o cambios bloqueantes -->
-
-## Notas
-<!-- Decisiones, links, contexto adicional -->
-```
-
----
-
-## Templates por Tipo
-
-### epic
-
-```markdown
-## Contexto
-Visión de alto nivel. Qué problema resuelve este EPIC.
-
-## Objetivo
-Resultado medible al cerrar el EPIC.
+<resultado esperado en una oración>
 
 ## Alcance
-- [ ] Card hija 1
-- [ ] Card hija 2
-
-## Criterios de cierre
-- [ ] Todas las cards hijas en Done
-- [ ] Documentación actualizada
-- [ ] Demo/validación realizada
-
-## Dependencias
-- EPIC previo / card bloqueante
-
-## Notas
-Roadmap, prioridad, stakeholders.
-```
-
-### feature
-
-```markdown
-## Contexto
-Qué falta en el producto. Por qué ahora.
-
-## Objetivo
-Qué capability se entrega.
-
-## Alcance
-- [ ] Implementación
-- [ ] Tests
-- [ ] Documentación
+- [ ] <entregable>
 
 ## Fuera de alcance
-Features futuras, optimizaciones.
+<lo que no incluye>
 
-## DoD
-- [ ] Tests pasan (`./tests/validate.sh`)
-- [ ] Docs actualizados (README, spec, design)
-- [ ] AGENTS.md sync si hay skills nuevos
-- [ ] Verificación completa
+## Criterios de aceptación
+- [ ] <criterio verificable>
 
-## OpenSpec / SDD (si aplica)
-- **Change**: `openspec/changes/<nombre>/`
-- **Artifacts**: [ ] proposal [ ] design [ ] specs [ ] tasks
+## OpenSpec / SDD
+- Change: `<nombre-o-pendiente>`
+- Artifacts: proposal / specs / design / tasks / apply / verify / archive
 
 ## Dependencias
-- Cards bloqueantes
+- <cards o cambios bloqueantes>
 
 ## Notas
-Decisiones técnicas, tradeoffs.
+<links, decisiones, contexto>
 ```
 
-### bug
+## Tipos Sugeridos
+
+- `epic`: agrupa cards; no implementa código directo.
+- `feature`: capability, comando, recipe, skill o comportamiento nuevo.
+- `bug`: regresión o fix con reproducción y prueba de regresión.
+- `spike`: investigación con conclusión go/no-go.
+- `decision`: tradeoff que debe registrarse en Vault.
+- `handoff`: continuidad entre sesiones cuando no basta con la card activa.
+
+## Checklist SDD Para Features
+
+Agregar cuando aplique:
 
 ```markdown
-## Contexto
-Cómo se reproduce. Impacto.
-
-## Objetivo
-Fix + prevención de regresión.
-
-## Alcance
-- [ ] Reproducir bug
-- [ ] Identificar causa raíz
-- [ ] Implementar fix
-- [ ] Test de regresión
-
-## DoD
-- [ ] Bug no se reproduce
-- [ ] Test de regresión pasa
-- [ ] No introduce nuevos bugs
-
-## Notas
-Logs, contexto, links relacionados.
-```
-
-### spike
-
-```markdown
-## Contexto
-Incertidumbre a resolver. Hipótesis.
-
-## Objetivo
-Conclusión go/no-go con evidencia.
-
-## Alcance
-- [ ] Definir hipótesis
-- [ ] Ejecutar experimento
-- [ ] Documentar hallazgos
-- [ ] Decisión: ¿proseguir?
-
-## DoD
-- [ ] Conclusión documentada (vault o card)
-- [ ] Próximos pasos claros (si aplica)
-
-## Notas
-Experimentos fallidos también son válidos.
-```
-
-### decision
-
-```markdown
-## Contexto
-Qué decisión se necesita. Por qué ahora.
-
-## Opciones consideradas
-1. Opción A — pros/cons
-2. Opción B — pros/cons
-
-## Decisión
-Qué se eligió.
-
-## Consecuencias
-Qué cambia. Riesgos.
-
-## DoD
-- [ ] ADR en vault (`decisiones/YYYY-MM-DD-{slug}.md`)
-- [ ] Stakeholders informados
-- [ ] Cards actualizadas si aplica
-
-## Notas
-Links a discusiones, docs.
-```
-
-### handoff
-
-```markdown
-## Contexto
-Sesión que termina. Estado actual.
-
-## Qué se hizo
-- [ ] Tarea completada 1
-- [ ] Tarea completada 2
-
-## Qué falta
-- [ ] Pendiente 1
-- [ ] Pendiente 2
-
-## Archivos relevantes
-- `path/to/file` — qué hace
-
-## Próximos pasos
-1. Próximo paso prioritario
-2. Segundo paso
-
-## Riesgos o bloqueos
-- Riesgo 1
-
-## Memoria canónica candidata
-- ¿Decisiones que van al vault?
-- ¿Observaciones para OpenMemory?
-```
-
----
-
-## Checklists Generativas
-
-### feature con SDD/OpenSpec
-
-Si la feature usa OpenSpec, AGREGAR a la checklist:
-
-```markdown
-## OpenSpec / SDD
-- [ ] Change creado: `openspec new change "<nombre>"`
-- [ ] Proposal redactado
-- [ ] Design redactado
-- [ ] Specs redactados
-- [ ] Tasks redactados
+- [ ] Change creado en worktree dedicado
+- [ ] Proposal completo
+- [ ] Specs completos
+- [ ] Design completo
+- [ ] Tasks completos
 - [ ] Apply ejecutado
 - [ ] Verify report generado
-- [ ] Specs sync a main
-- [ ] Change archivado
+- [ ] PR/merge realizado si corresponde
+- [ ] Change archivado si corresponde
 ```
 
-### feature sin SDD
+## Cierre De Card
 
-```markdown
-## DoD
-- [ ] Implementación completa
-- [ ] Tests pasan
-- [ ] Docs actualizados
-- [ ] Verificación manual
-```
+Antes de mover a Review/Done:
 
----
+- Verificar criterios de aceptación.
+- Confirmar estado de OpenSpec artifacts si hubo SDD.
+- Registrar decisión/handoff en Vault si cambia el canon del proyecto.
+- Guardar memoria operativa en OpenMemory solo si ayuda a próximas sesiones.
+- Dejar links a PR, change, verify report o handoff.
 
-## Flujo de Trabajo PM/CTO
+## Reglas
 
-### 1. Planificación
-1. Leer board (Backlog → Ready)
-2. Elegir card o crear nueva con template
-3. Definir dependencias
-
-### 2. Ejecución
-1. Mover card a In Progress
-2. Trabajar (código, tests, docs)
-3. Actualizar checklist en card
-
-### 3. Cierre
-1. Mover card a Review
-2. Verificar DoD
-3. Mover a Done
-4. Si hay memoria canónica: escribir en vault
-5. Si hay decisiones: ADR en vault
-
-### 4. Handoff (si aplica)
-1. Crear card tipo `handoff` o archivo en vault
-2. Documentar estado, próximos pasos, riesgos
-
----
-
-## Integración con Vault
-
-| Qué | Dónde va |
-|-----|----------|
-| Estado de card | Trello |
-| Resumen de sesión | Vault `sessions/` o card `handoff` |
-| Decisiones arquitectónicas | Vault `decisiones/` |
-| Specs técnicos | Vault `specs/` (o OpenSpec) |
-| Contexto de negocio | Vault `_context/README.md` |
-
-**Regla:** Trello es SOURCE OF TRUTH para estado. Vault es SOURCE OF TRUTH para contenido estructurado.
-
----
-
-## Comando Sugerido
-
-Cuando el usuario quiera crear una card, usar este flujo:
-
-```
-1. Preguntar tipo de card
-2. Preguntar título
-3. Generar descripción con template base + específico del tipo
-4. Crear card en Trello (lista "Backlog" o "To Do")
-5. Si es feature con SDD, ofrecer crear change de OpenSpec
-```
-
----
-
-## Critical Rules
-
-1. **SIEMPRE usar template** según tipo de card
-2. **SIEMPRE incluir DoD** en feature/bug/epic
-3. **Opcional SDD checklist** solo si aplica OpenSpec
-4. **NUNCA mezclar estado y memoria** — Trello para tracking, vault para contenido
-5. **ATOMICIDAD** — una card = un cambio atómico (feature, bug, spike)
-6. **EPICs agrupan cards** — un EPIC no tiene código directo, solo cards hijas
-
----
-
-## Dogfooding Notes
-
-Este skill es dogfooding para el proyecto `ai-specs-cli`. 
-Se prueba aquí primero. Si funciona, se empaqueta como recipe `trello-pm`.
-
-Board de dogfooding: https://trello.com/b/rqCk2b5M/ai-specs-dogfooding
+- No mezclar estado y memoria: Trello rastrea estado; Vault conserva decisiones; OpenSpec conserva specs/artifacts.
+- No mover una card bloqueada a apply si sus dependencias siguen abiertas.
+- No hardcodear board/listas en esta skill; leerlos del runtime brief o MCP.
+- Esta skill es dogfooding local. La parametrización reusable pertenece a la futura recipe configurable.
