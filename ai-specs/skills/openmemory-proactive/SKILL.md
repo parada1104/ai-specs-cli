@@ -64,6 +64,28 @@ Query OpenMemory when a task might have precedent:
 
 Use `project_id` for project work and prefer `type: "unified"` when both semantic memories and factual state may matter.
 
+## Session Close Pattern
+
+Before ending a session, store a `next_focus` memory so the next session can
+resume without ambiguity. This is the primary signal that `session-bootstrap`
+reads when a user gives a continuation instruction (e.g., "vamos con la
+siguiente card").
+
+Format:
+```text
+Session close <date>: next_focus=<card/change/request>, reason=<why>,
+blockers=<none|list>. Card status: <list name>.
+```
+
+Example:
+```text
+Session close 2026-04-30: next_focus=#65 'Motor: AGENTS.md runtime brief',
+reason='Card #64 merged, #65 is next in dependency chain.',
+blockers=none. Card status: Ready.
+```
+
+Tags: `handoff`, `next_focus`, `session-close`.
+
 ## Storage Shape
 
 Good memories are short and self-contained:

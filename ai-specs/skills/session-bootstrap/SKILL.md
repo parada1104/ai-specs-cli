@@ -20,14 +20,23 @@ Start every session from operational memory, then runtime brief, then tracker.
 
 ## Protocol
 
-1. **If the user gave an explicit task**, use that as the session focus. Do not
-   run a full consensus ritual unless the task conflicts with `AGENTS.md`,
-   Trello state, an OpenSpec artifact, or a safety rule.
+1. **If the user gave an explicit task:**
+   a. **Check for referential ambiguity.** If the instruction uses language
+      that refers to project state without naming it explicitly — e.g.,
+      "siguiente card", "continuar", "la otra", "avanzar", "apply" without a
+      change name, "verificar" or "archive" without context — treat the focus
+      as unclear and proceed to step 2a to resolve the reference from
+      OpenMemory before acting.
+   b. **If the task is unambiguous** (names a specific card, change, file, or
+      operation with no implicit state reference), use it as the session focus
+      directly.
 
-2. **If the focus is unclear (no explicit user task):**
+2. **If the focus is unclear (no explicit user task, or referential ambiguity
+   detected in step 1a):**
    a. **Query OpenMemory first.** Search for:
+      - `next_focus`, `next-card`, `active-card-id`, `active-change`,
+        `next-session-focus`.
       - Recent handoffs or session-close entries.
-      - `next-card`, `active-card-id`, `active-change`, `next-session-focus`.
       - Any project-scoped contextual memory from the last 48 h.
    b. **Read `AGENTS.md`** to extract runtime context: project id, integration
       branch, configured MCPs, current blockers, workflow rules, and conflict policy.
@@ -44,6 +53,24 @@ Start every session from operational memory, then runtime brief, then tracker.
    Backlog while #66 is in Ready. Which should I prioritize?"*).
 5. **If a configured MCP is unavailable**, continue with available sources and
    state the gap.
+
+## Referential Ambiguity Triggers
+
+Treat an explicit user request as having unclear focus when it contains any of
+these patterns (non-exhaustive):
+
+- **Continuation:** "siguiente", "continuar", "seguuir", "la otra card",
+  "avanzar", "proseguir", "vamos con la siguiente".
+- **Implicit operations:** "apply", "verificar", "archive" without naming the
+  target change.
+- **Vague references:** "eso", "lo otro", "la que falta", "la pendiente",
+  "la del backlog".
+- **Status-relative:** "mover a Ready", "pasar a In Progress" without naming
+  the card.
+
+When any trigger is detected, **query OpenMemory for `next_focus` before
+executing**. Do not assume the reference from Trello state or recent context
+without confirming via operational memory first.
 
 ## Memory-First Rule
 
