@@ -23,7 +23,8 @@
 - A session works on one explicit user request, Trello card, or OpenSpec change.
 - A relevant Trello card maps to one SDD cycle when implementation or durable design is needed.
 - This project uses OpenSpec as the SDD provider: proposal, specs, design, tasks, apply, verify, archive.
-- Use phase-specialized subagents for each SDD phase whenever the runtime supports them.
+- **Subagent execution model**: The current runtime delegates each SDD phase to a `general` subagent via the `task` tool. Phase specialization is achieved through detailed prompts (e.g., a "specs specialist" prompt for the specs phase), not through native agent types. The orchestrator (primary agent) must respect the workflow flow — for example, `auto-artifacts` runs proposal through tasks, then pauses for human direction before apply.
+- **Future**: Trello card #68 tracks professionalizing this with true phase-specialized subagents, enforcement hooks, and a dispatcher integrated with `openspec-phase-orchestrator`.
 - `explore` can run without a worktree when it only produces thinking. Create the worktree before `openspec-new-change` or any artifact-writing phase.
 - Artifact phases (`proposal`, `specs`, `design`, `tasks`) and implementation phases (`apply`, `verify`, `archive`) run inside the dedicated worktree.
 - VCS/PR provider: GitHub through `gh` CLI.
