@@ -252,7 +252,7 @@ class RecipeMaterializeTests(unittest.TestCase):
             hooks=[Hook(event="on-sync", action="validate-config")]
         )
         # Should not raise
-        self.mod.execute_hooks(recipe, {"key": "value"})
+        self.mod.execute_hooks(recipe, {"key": "value"}, Path(tempfile.gettempdir()))
 
     def test_execute_hooks_validate_config_fails(self):
         from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
@@ -261,7 +261,7 @@ class RecipeMaterializeTests(unittest.TestCase):
             hooks=[Hook(event="on-sync", action="validate-config")]
         )
         with self.assertRaises(RuntimeError) as ctx:
-            self.mod.execute_hooks(recipe, {})
+            self.mod.execute_hooks(recipe, {}, Path(tempfile.gettempdir()))
         self.assertIn("validate-config", str(ctx.exception))
 
     def test_execute_hooks_unknown_action_warns(self):
@@ -270,7 +270,7 @@ class RecipeMaterializeTests(unittest.TestCase):
             hooks=[Hook(event="on-sync", action="unknown")]
         )
         # Should warn but not raise
-        self.mod.execute_hooks(recipe, {})
+        self.mod.execute_hooks(recipe, {}, Path(tempfile.gettempdir()))
 
     def test_end_to_end_v2_recipe_with_config_and_hooks(self):
         import tempfile
@@ -373,6 +373,234 @@ class RecipeMaterializeTests(unittest.TestCase):
             sys.stderr = real_stderr
         stderr_output = captured.getvalue()
         self.assertIn("conflicts with project manifest", stderr_output)
+
+    # --- Hook execution: bootstrap-board --------------------------------------
+
+    def test_execute_hooks_bootstrap_board_creates_marker(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            hooks=[Hook(event="on-sync", action="bootstrap-board")]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            self.mod.execute_hooks(recipe, {"board_id": "test-board-123", "default_list": "In Progress", "epic_list": "Epic"}, project_root)
+            marker_dir = project_root / ".recipe" / "r"
+            self.assertTrue(marker_dir.is_dir())
+            marker_file = marker_dir / "bootstrap-ready"
+            self.assertTrue(marker_file.is_file())
+            content = marker_file.read_text()
+            self.assertIn("board_id=test-board-123", content)
+            self.assertIn("default_list=In Progress", content)
+            self.assertIn("epic_list=Epic", content)
+
+    def test_execute_hooks_bootstrap_board_marker_content(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, Hook
+        recipe = Recipe(id="myrecipe", name="MyRecipe", description="D", version="1.0",
+            hooks=[Hook(event="on-sync", action="bootstrap-board")]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            self.mod.execute_hooks(recipe, {"board_id": "b1", "default_list": "Todo", "epic_list": "Backlog"}, project_root)
+            marker_file = project_root / ".recipe" / "myrecipe" / "bootstrap-ready"
+            content = marker_file.read_text()
+            self.assertEqual(content, "board_id=b1\ndefault_list=Todo\nepic_list=Backlog\n")
+
+    def test_execute_hooks_bootstrap_board_missing_board_id(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={"board_id": ConfigField(required=True)}),
+            hooks=[
+                Hook(event="on-sync", action="validate-config"),
+                Hook(event="on-sync", action="bootstrap-board"),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod.execute_hooks(recipe, {}, project_root)
+            self.assertIn("validate-config", str(ctx.exception))
+
+    # --- Hook execution: deferred hooks --------------------------------------
+
+    def test_execute_hooks_deferred_link_trello_card(self):
+        import io
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            hooks=[Hook(event="on-sync", action="link-trello-card")]
+        )
+        captured = io.StringIO()
+        real_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            self.mod.execute_hooks(recipe, {}, Path(tempfile.gettempdir()))
+        finally:
+            sys.stdout = real_stdout
+        output = captured.getvalue()
+        self.assertIn("link-trello-card", output)
+        self.assertIn("deferred", output)
+
+    def test_execute_hooks_deferred_sync_card_state(self):
+        import io
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            hooks=[Hook(event="on-sync", action="sync-card-state")]
+        )
+        captured = io.StringIO()
+        real_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            self.mod.execute_hooks(recipe, {}, Path(tempfile.gettempdir()))
+        finally:
+            sys.stdout = real_stdout
+        output = captured.getvalue()
+        self.assertIn("sync-card-state", output)
+        self.assertIn("deferred", output)
+
+    def test_execute_hooks_deferred_comment_verification(self):
+        import io
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            hooks=[Hook(event="on-sync", action="comment-verification")]
+        )
+        captured = io.StringIO()
+        real_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            self.mod.execute_hooks(recipe, {}, Path(tempfile.gettempdir()))
+        finally:
+            sys.stdout = real_stdout
+        output = captured.getvalue()
+        self.assertIn("comment-verification", output)
+        self.assertIn("deferred", output)
+
+    # --- Hook execution: project_root parameter ------------------------------
+
+    def test_execute_hooks_project_root_used_by_bootstrap_board(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            hooks=[Hook(event="on-sync", action="bootstrap-board")]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            self.mod.execute_hooks(recipe, {"board_id": "b1"}, project_root)
+            marker = project_root / ".recipe" / "r" / "bootstrap-ready"
+            self.assertTrue(marker.is_file())
+            self.assertIn("board_id=b1", marker.read_text())
+
+    def test_execute_hooks_project_root_different_paths(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            hooks=[Hook(event="on-sync", action="bootstrap-board")]
+        )
+        with tempfile.TemporaryDirectory() as tmp1:
+            with tempfile.TemporaryDirectory() as tmp2:
+                root1 = Path(tmp1)
+                root2 = Path(tmp2)
+                cfg = {"board_id": "board-1", "default_list": "List1", "epic_list": "Epic1"}
+                self.mod.execute_hooks(recipe, cfg, root1)
+                cfg2 = {"board_id": "board-2", "default_list": "List2", "epic_list": "Epic2"}
+                self.mod.execute_hooks(recipe, cfg2, root2)
+                m1 = root1 / ".recipe" / "r" / "bootstrap-ready"
+                m2 = root2 / ".recipe" / "r" / "bootstrap-ready"
+                self.assertTrue(m1.is_file())
+                self.assertTrue(m2.is_file())
+                self.assertIn("board_id=board-1", m1.read_text())
+                self.assertIn("board_id=board-2", m2.read_text())
+
+    # --- Config validation: board_id / optional fields -----------------------
+
+    def test_config_validation_board_id_required(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={"board_id": ConfigField(required=True)}),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.execute_hooks(recipe, {}, Path(tempfile.gettempdir()))
+        self.assertIn("validate-config", str(ctx.exception))
+
+    def test_config_validation_default_list_optional(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "board_id": ConfigField(required=True),
+                "default_list": ConfigField(required=False, default="In Progress"),
+            }),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        self.mod.execute_hooks(recipe, {"board_id": "b1"}, Path(tempfile.gettempdir()))
+
+    def test_config_validation_epic_list_optional(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "board_id": ConfigField(required=True),
+                "epic_list": ConfigField(required=False, default="Epic"),
+            }),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        self.mod.execute_hooks(recipe, {"board_id": "b1"}, Path(tempfile.gettempdir()))
+
+    # --- Integration: trello-mcp-workflow recipe materialization ------------
+
+    def test_materialize_trello_mcp_workflow_recipe(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            ai_specs_home = Path(tmp)
+            catalog = ai_specs_home / "catalog" / "recipes"
+            catalog.mkdir(parents=True)
+            rid = "trello-mcp-workflow"
+            recipe_dir = catalog / rid
+            recipe_dir.mkdir()
+            (recipe_dir / "recipe.toml").write_text(
+                '[recipe]\n'
+                f'id = "{rid}"\n'
+                'name = "Trello MCP Workflow"\n'
+                'description = "Trello-based project tracking"\n'
+                'version = "1.0"\n'
+                '[[capabilities]]\nid = "tracker"\n'
+                '[[hooks]]\nevent = "on-sync"\naction = "validate-config"\n'
+                '[[hooks]]\nevent = "on-sync"\naction = "bootstrap-board"\n'
+                '[[hooks]]\nevent = "on-sync"\naction = "link-trello-card"\n'
+                '[[hooks]]\nevent = "on-sync"\naction = "sync-card-state"\n'
+                '[[hooks]]\nevent = "on-sync"\naction = "comment-verification"\n'
+                '[config.board_id]\nrequired = true\ntype = "string"\n'
+                '[config.default_list]\nrequired = false\ntype = "string"\ndefault = "In Progress"\n'
+                '[config.epic_list]\nrequired = false\ntype = "string"\ndefault = "Epic"\n'
+                '[[provides.skills]]\nid = "trello-pm-workflow"\nsource = "bundled"\n'
+            )
+            skill_dir = recipe_dir / "skills" / "trello-pm-workflow"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text("# Trello PM Workflow\n")
+            project_root = Path(tempfile.mkdtemp())
+            ai_specs = project_root / "ai-specs"
+            ai_specs.mkdir(parents=True)
+            (ai_specs / "ai-specs.toml").write_text(
+                "[project]\nname = 'test-project'\n\n"
+                "[agents]\nenabled = ['claude']\n\n"
+                f"[recipes.{rid}]\nenabled = true\nversion = '1.0'\n"
+                f"[recipes.{rid}.config]\nboard_id = 'abc123'\n"
+            )
+            result = self.mod.materialize_recipes(project_root, ai_specs_home)
+            self.assertEqual(result, 0)
+            skill_path = project_root / ".recipe" / rid / "skills" / "trello-pm-workflow"
+            self.assertTrue(skill_path.is_dir())
+            self.assertTrue((skill_path / "SKILL.md").is_file())
+            marker = project_root / ".recipe" / rid / "bootstrap-ready"
+            self.assertTrue(marker.is_file())
+            marker_content = marker.read_text()
+            self.assertIn("board_id=abc123", marker_content)
 
 
 if __name__ == "__main__":
