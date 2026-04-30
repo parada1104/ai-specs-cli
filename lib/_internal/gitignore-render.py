@@ -28,12 +28,7 @@ FOOTER = """\
 
 def render(deps: list[dict]) -> str:
     lines = [HEADER]
-    if deps:
-        lines.append("\n# Vendored skill deps (restored via `ai-specs sync`)")
-        for d in deps:
-            dep_id = d.get("id")
-            if dep_id:
-                lines.append(f"skills/{dep_id}/")
+    lines.append(".resolved-skills/")
     lines.append("")
     lines.append(FOOTER)
     return "\n".join(lines)

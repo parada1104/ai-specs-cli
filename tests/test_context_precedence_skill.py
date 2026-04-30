@@ -107,7 +107,7 @@ class ContextPrecedenceSkillTests(unittest.TestCase):
                 agents,
                 [
                     "## Context Precedence",
-                    "[`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md)",
+                    ".deps/context-precedence/skills/context-precedence/SKILL.md",
                     ORDER,
                     "decision policy, not an automatic merge engine",
                 ],

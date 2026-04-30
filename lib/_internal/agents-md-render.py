@@ -14,8 +14,25 @@ from __future__ import annotations
 import sys
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from skill_contract import from_local_skill
+
+# Import skill-resolution for multi-source scanning
+import importlib.util
+
+_skill_resolution_module = None
+
+def _load_skill_resolution() -> Any:
+    global _skill_resolution_module
+    if _skill_resolution_module is None:
+        module_path = Path(__file__).with_name("skill-resolution.py")
+        spec = importlib.util.spec_from_file_location("skill_resolution_internal", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load skill-resolution.py at {module_path}")
+        _skill_resolution_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_skill_resolution_module)
+    return _skill_resolution_module
 
 
 HEADER_BANNER = """\
@@ -61,7 +78,28 @@ CONTEXT_PRECEDENCE_ORDER = (
 )
 
 
+def collect_skills_from_resolution(project_root: Path) -> list[dict]:
+    """Collect skills using multi-source resolution."""
+    mod = _load_skill_resolution()
+    resolved = mod.collect_skills(project_root)
+    rows = []
+    for skill_id, (source_type, abs_path) in sorted(resolved.items()):
+        skill_md = abs_path / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+        info = from_local_skill(skill_md, compatibility=True)
+        # Compute relative link from project root
+        try:
+            rel = skill_md.relative_to(project_root)
+        except ValueError:
+            rel = skill_md
+        info["rel_link"] = str(rel)
+        rows.append(info)
+    return rows
+
+
 def collect_skills(skills_dir: Path) -> list[dict]:
+    """Legacy single-directory scan. Kept for backward compat in direct calls."""
     rows = []
     if not skills_dir.is_dir():
         return rows
@@ -112,7 +150,7 @@ def render_auto_invoke_placeholder() -> str:
     )
 
 
-def render_context_precedence(skills_dir: Path) -> str:
+def render_context_precedence_skills_dir(skills_dir: Path) -> str:
     skill_path = skills_dir / "context-precedence" / "SKILL.md"
     if not skill_path.is_file():
         return ""
@@ -123,6 +161,32 @@ def render_context_precedence(skills_dir: Path) -> str:
         f"`{CONTEXT_PRECEDENCE_ORDER}`\n\n"
         "Canonical rule: "
         "[`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md). "
+        "Treat it as an auditable decision policy, not an automatic merge engine.\n"
+    )
+
+
+def render_context_precedence(project_root: Path) -> str:
+    mod = _load_skill_resolution()
+    resolved = mod.collect_skills(project_root)
+    if "context-precedence" not in resolved:
+        return ""
+
+    _, skill_path = resolved["context-precedence"]
+    skill_md = skill_path / "SKILL.md"
+    if not skill_md.is_file():
+        return ""
+
+    try:
+        rel = skill_md.relative_to(project_root)
+    except ValueError:
+        rel = skill_md
+
+    return (
+        "## Context Precedence\n\n"
+        "When project context sources conflict, use this MVP order:\n\n"
+        f"`{CONTEXT_PRECEDENCE_ORDER}`\n\n"
+        "Canonical rule: "
+        f"[`{rel}`]({rel}). "
         "Treat it as an auditable decision policy, not an automatic merge engine.\n"
     )
 
@@ -163,7 +227,14 @@ def main() -> int:
     project = data.get("project", {}) or {}
     name = project.get("name") or manifest_root.name
 
-    skills = collect_skills(skills_dir)
+    # Use multi-source resolution for root workspace; legacy scan for subrepo fan-out
+    skills_dir_override = len(sys.argv) > 3 and "--skills-dir" in sys.argv
+    if skills_dir_override:
+        skills = collect_skills(skills_dir)
+        context_precedence = render_context_precedence_skills_dir(skills_dir)
+    else:
+        skills = collect_skills_from_resolution(manifest_root)
+        context_precedence = render_context_precedence(manifest_root)
 
     parts = [
         f"# {name} — Agent Instructions",
@@ -171,7 +242,7 @@ def main() -> int:
         HEADER_BANNER.rstrip(),
         "",
         render_skills_index(skills),
-        render_context_precedence(skills_dir),
+        context_precedence,
         render_auto_invoke_placeholder(),
         "",
         FOOTER.rstrip(),

@@ -311,10 +311,11 @@ class Doctor:
                 if skills_path.is_symlink():
                     target = skills_path.resolve()
                     ai_specs_skills = (self.root / "ai-specs" / "skills").resolve()
-                    if target == ai_specs_skills:
+                    resolved_skills = (self.root / "ai-specs" / ".resolved-skills").resolve()
+                    if target == ai_specs_skills or target == resolved_skills:
                         self.checks.append(Check(
                             Severity.OK, f"{skills}",
-                            f"symlink valid → ai-specs/skills"
+                            f"symlink valid → {target.relative_to(self.root) if target.is_relative_to(self.root) else target}"
                         ))
                     else:
                         self.checks.append(Check(

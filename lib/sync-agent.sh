@@ -26,6 +26,7 @@ MCP_RENDER="$AI_SPECS_HOME/lib/_internal/mcp-render.py"
 AGENTS_MD_RENDER="$AI_SPECS_HOME/lib/_internal/agents-md-render.py"
 GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
+FLATTEN_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/flatten-resolved-skills.py"
 
 usage() {
     cat <<'EOF'
@@ -139,6 +140,10 @@ TARGET_AI_SKILLS="$TARGET_AI_SPECS/skills"
 TARGET_AI_COMMANDS="$TARGET_AI_SPECS/commands"
 TARGET_AGENTS_MD="$TARGET_PATH/AGENTS.md"
 
+# Flatten resolved skills (multi-source) into a persistent dir for agent fan-out
+RESOLVED_SKILLS_DIR="$SOURCE_AI_SPECS/.resolved-skills"
+python3 "$FLATTEN_SKILLS_PY" "$SOURCE_ROOT" "$RESOLVED_SKILLS_DIR"
+
 if [[ ! -f "$TOML_PATH" ]]; then
     echo "ERROR: $TOML_PATH not found. Run 'ai-specs init $SOURCE_ROOT' first." >&2
     exit 1
@@ -194,7 +199,7 @@ ensure_target_workspace() {
 
     mkdir -p "$TARGET_AI_SPECS"
     python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
-    mirror_directory "$SOURCE_AI_SKILLS" "$TARGET_AI_SKILLS"
+    mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
 
     python3 "$AGENTS_MD_RENDER" "$SOURCE_ROOT" "$TARGET_AGENTS_MD" --skills-dir "$TARGET_AI_SKILLS"
@@ -244,6 +249,13 @@ echo ""
 echo "  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs"
 ensure_target_workspace
 
+# For root workspace, agents consume from resolved dir to avoid polluting ai-specs/skills/
+if [[ "$TARGET_PATH" == "$SOURCE_ROOT" ]]; then
+    SKILLS_SOURCE="$RESOLVED_SKILLS_DIR"
+else
+    SKILLS_SOURCE="$TARGET_AI_SKILLS"
+fi
+
 for agent in "${TARGETS[@]}"; do
     if ! platform_get "$agent" native >/dev/null 2>&1; then
         echo "  ✗ unknown agent: $agent" >&2
@@ -271,7 +283,7 @@ for agent in "${TARGETS[@]}"; do
             dest="$TARGET_PATH/$skills"
             mkdir -p "$dest"
             copied=0
-            for src in "$TARGET_AI_SKILLS"/*; do
+            for src in "$SKILLS_SOURCE"/*; do
                 [[ -d "$src" ]] || continue
                 base="$(basename "$src")"
                 rm -rf "$dest/$base"
@@ -282,7 +294,7 @@ for agent in "${TARGETS[@]}"; do
                 echo "    ✓ skills       $skills/ ($copied dir(s))"
             fi
         else
-            make_relative_symlink "$TARGET_AI_SKILLS" "$TARGET_PATH/$skills"
+            make_relative_symlink "$SKILLS_SOURCE" "$TARGET_PATH/$skills"
         fi
     fi
 
