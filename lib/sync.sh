@@ -120,7 +120,7 @@ python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME"
 echo "▸ agents-md-render (root)"
 python3 "$AGENTS_MD_RENDER" "$ROOT_PATH" "$ROOT_PATH/AGENTS.md"
 
-echo "▸ skill-sync (root AGENTS.md auto-invoke)"
+echo "▸ skill-sync (registry artifact)"
 (cd "$ROOT_PATH" && bash "$SYNC_SH")
 
 echo "▸ target fan-out"

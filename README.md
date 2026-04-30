@@ -20,7 +20,8 @@ committable and shareable with a team.
 | **Multi-agent fan-out** | ✅ | Claude, Cursor, OpenCode, Codex, Copilot, Gemini |
 | **MCP server distribution** | ✅ | Merge-safe MCP config per agent (JSON, TOML) |
 | **Skill management** | ✅ | Local, bundled, and vendored skills with autodiscovery |
-| **AGENTS.md generation** | ✅ | Auto-invoke table synced from skill frontmatter |
+| **AGENTS.md runtime brief** | ✅ | Concise operational context generated from `ai-specs.toml` |
+| **Skill registry artifact** | ✅ | Auto-generated `ai-specs/.skill-registry.md` with skill index and Auto-invoke mappings |
 | **Project initialization** | ✅ | `ai-specs init` scaffolds structure idempotently |
 | **Dependency vendoring** | ✅ | `ai-specs add-dep` + `ai-specs sync` clones external skills |
 | **Subrepo sync** | ✅ | Mirror derived artifacts to `project.subrepos` |
@@ -213,7 +214,7 @@ external skill.
 
 After vendoring `context-precedence` from the catalog, the rule lives in
 [`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md).
-`AGENTS.md` links there once the skill exists and you run `ai-specs sync`.
+The skill is listed in `ai-specs/.skill-registry.md` once the skill exists and you run `ai-specs sync`.
 
 ## Testing foundation
 
@@ -227,7 +228,7 @@ OpenSpec `config.yaml` shape and apply-time commit conventions:
 
 ```
 my-project/
-├── AGENTS.md                       ← generated artifact (do not edit; managed by skill-sync)
+├── AGENTS.md                       ← runtime brief generated from manifest (do not edit by hand)
 ├── .gitignore                      ← appended with an ai-specs block (gitignores agent files)
 ├── .recipe/                        ← recipe-bundled skills (gitignored; restored by sync)
 │   └── <recipe-id>/
@@ -239,6 +240,7 @@ my-project/
 └── ai-specs/
     ├── ai-specs.toml               ← YOUR manifest (edit this)
     ├── .gitignore                  ← derived; ignores resolved-skills dir
+    ├── .skill-registry.md          ← generated skill index + Auto-invoke mappings (do not edit by hand)
     ├── .resolved-skills/           ← flattened resolved skill tree (gitignored; used by agents)
     ├── skills/
     │   ├── skill-creator/          ← bundled on init (contract)
@@ -289,7 +291,7 @@ recipe while allowing individual customizations.
 | Command | Description |
 |---------|-------------|
 | `ai-specs init [path] [--name N] [--force]` | Bootstrap `ai-specs/` (idempotent; never touches your `ai-specs.toml`). `--force` re-copies bundled skills/commands & regenerates AGENTS.md |
-| `ai-specs sync [path]` | Resolve `[root, ...project.subrepos]`, refresh bundled, vendor `[[deps]]` once, regen AGENTS.md auto-invoke, then fan out local derived artifacts per target + per agent |
+| `ai-specs sync [path]` | Resolve `[root, ...project.subrepos]`, refresh bundled, vendor `[[deps]]` once, regen AGENTS.md runtime brief + `ai-specs/.skill-registry.md`, then fan out local derived artifacts per target + per agent |
 | `ai-specs sync-agent [path] [--all|--<agent>]` | Fan out per-agent only for the current target (no vendoring/regen) |
 | `ai-specs doctor [path]` | Read-only health check for manifest, bundled assets, enabled agents, symlinks, and MCP outputs (does not modify files) |
 | `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI — keeps your edits, drops `.new` sidecars for files you customized |
@@ -321,14 +323,15 @@ config via a **merge-safe** strategy: `ai-specs` owns the MCP key (e.g.
 | Agent    | Reads AGENTS.md natively? | Native skill auto-invoke? | What sync-agent generates |
 |----------|---------------------------|---------------------------|---------------------------|
 | Claude   | No (needs `CLAUDE.md`)    | Yes (`.claude/skills/<name>/SKILL.md`) | `CLAUDE.md` symlink + `.claude/skills` symlink → `ai-specs/skills` + `.mcp.json` |
-| Cursor   | Yes                       | No (skills via AGENTS.md text)         | `.cursor/mcp.json` |
+| Cursor   | Yes                       | No (skills via filesystem + registry)  | `.cursor/mcp.json` |
 | OpenCode | Yes                       | No                                     | `opencode.json` |
 | Codex    | Yes                       | No                                     | `.codex/config.toml` |
 | Copilot  | No (`.github/copilot-instructions.md`) | No                          | `.github/copilot-instructions.md` symlink |
 | Gemini   | No (needs `GEMINI.md`)    | Yes (`.gemini/skills/<name>/SKILL.md`) | `GEMINI.md` symlink + `.gemini/skills` symlink + `.gemini/settings.json` |
 
-The `Auto-invoke` table in `AGENTS.md` is regenerated automatically by
-`skill-sync` whenever you `ai-specs sync` or run `/skills-as-rules`.
+The canonical skill index and Auto-invoke mappings live in
+`ai-specs/.skill-registry.md` and are regenerated automatically by `skill-sync`
+whenever you `ai-specs sync` or run `/skills-as-rules`.
 
 ## Root + subrepo sync
 

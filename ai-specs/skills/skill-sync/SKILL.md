@@ -1,50 +1,54 @@
 ---
 name: skill-sync
 description: >
-  Validates skill frontmatter and prepares separated skill/capability registries.
-  In runtime-brief projects, AGENTS.md must remain project context and must not
-  be rewritten as an Auto-invoke registry.
+  Syncs skill metadata to the registry artifact ai-specs/.skill-registry.md.
+  Trigger: When updating skill metadata (metadata.scope/metadata.auto_invoke), regenerating the skill registry, or running ai-specs/skills/skill-sync/assets/sync.sh.
 license: Apache-2.0
 metadata:
   author: prowler-cloud
-  version: "2.0"
+  version: "1.0"
   scope: [root]
   auto_invoke:
     - "After creating/modifying a skill"
-    - "Validating skill metadata"
-    - "Preparing skill or capability registries"
+    - "Regenerate skill registry artifact (sync.sh)"
+    - "Troubleshoot why a skill is missing from the registry"
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---
 
-# skill-sync
+## Purpose
 
-This skill documents the current runtime contract for skill metadata. It does not authorize running `ai-specs sync` in repositories where `AGENTS.md` is still a manual runtime brief.
+Keeps `ai-specs/.skill-registry.md` in sync with the canonical skill
+frontmatter contract documented in
+[`../../contracts/skill-frontmatter.md`](../../contracts/skill-frontmatter.md).
 
-## Contract
+`sync.sh` discovers every `ai-specs/skills/<name>/SKILL.md` under the repo,
+validates metadata through `lib/_internal/skill_contract.py`, and generates
+the registry artifact at `ai-specs/.skill-registry.md`. It does not vendor
+external skills; root `ai-specs sync` does that first.
 
-- `AGENTS.md` is project runtime context, not a full skill registry.
-- Skills keep valid frontmatter: `name`, `description`, `metadata.scope`, and `metadata.auto_invoke` as YAML lists.
-- Empty `metadata.auto_invoke: []` is valid for optional/reference skills.
-- Skill and capability inventories belong in separate generated artifacts once the CLI renderer supports them.
+## Required skill metadata
 
-## Current Dogfooding Rule
+Each skill that should appear in the Auto-invoke mappings needs
+`metadata.scope` and `metadata.auto_invoke` as canonical YAML lists. Skills
+can live in `ai-specs/skills/<name>/SKILL.md`, `.recipe/<id>/skills/<name>/`,
+or `.deps/<id>/skills/<name>/`. See [skill-creator/SKILL.md](../skill-creator/SKILL.md).
 
-If `AGENTS.md` contains `<!-- ai-specs:runtime-brief -->`, direct `skill-sync` checks may validate metadata, but must not insert an Auto-invoke section into `AGENTS.md`.
+### Scope values
 
-Do not run root `ai-specs sync` in this repo until the runtime-brief renderer and registry split are implemented.
+Scopes are recorded in the registry artifact's Auto-invoke table. Skills may
+use multiple scopes: `scope: [root, docs]`.
 
-## After Modifying Skills
+## Usage
 
-- Keep canonical `ai-specs/skills/<name>/SKILL.md` and runtime copies aligned manually while the CLI renderer is transitional.
-- Verify no skill tells agents to regenerate `AGENTS.md` as an Auto-invoke registry.
-- Prefer concise skill bodies; project-specific details belong in `AGENTS.md` or manifest/config.
-- Preserve secret hygiene: generated docs or registries must not expose env-backed MCP values.
+```bash
+ai-specs/skills/skill-sync/assets/sync.sh
+ai-specs/skills/skill-sync/assets/sync.sh --dry-run
+ai-specs/skills/skill-sync/assets/sync.sh --scope root
+bin/ai-specs sync .
+```
 
-## Future CLI Behavior
+## Checklist after modifying skills
 
-Card #65 should productize this by making the CLI:
-
-- Generate a stable runtime brief from manifest/project config.
-- Generate skill/capability registries outside `AGENTS.md`.
-- Validate skill metadata without bloating startup context.
-- Keep direct registry generation idempotent.
+- [ ] `metadata.scope` and `metadata.auto_invoke` set on new or changed skills
+- [ ] Ran `ai-specs/skills/skill-sync/assets/sync.sh` or `bin/ai-specs sync .`
+- [ ] Verified `ai-specs/.skill-registry.md`
