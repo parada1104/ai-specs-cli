@@ -27,7 +27,7 @@ Hooks SHALL execute after all primitives (skills, commands, MCP presets, templat
 - **GIVEN** a recipe declares an `on-sync` hook with `action = "bootstrap-board"`
 - **AND** the `board_id` config value is present
 - **WHEN** sync executes the hook after materialization
-- **THEN** the hook SHALL create directory `.recipe/<recipe-id>/` if it does not exist
+- **THEN** the hook SHALL create directory `.recipe/<recipe-id>/` under the project root if it does not exist
 - **AND** write a file `.recipe/<recipe-id>/bootstrap-ready` containing the board_id, default_list, and epic_list config values
 
 #### Scenario: Bootstrap-board hook fails on missing board_id
@@ -36,10 +36,16 @@ Hooks SHALL execute after all primitives (skills, commands, MCP presets, templat
 - **WHEN** sync executes the hook
 - **THEN** the hook SHALL raise an error naming the missing required config field
 
-#### Scenario: Deferred hook action prints notice
+#### Scenario: Bootstrap-board hook receives project root
+- **GIVEN** a recipe declares an `on-sync` hook with `action = "bootstrap-board"`
+- **WHEN** sync executes the hook
+- **THEN** `execute_hooks()` SHALL receive the project root path as a parameter
+- **AND** the marker file SHALL be written at `<project_root>/.recipe/<recipe-id>/bootstrap-ready`
+
+#### Scenario: Deferred hook action prints informational notice
 - **GIVEN** a recipe declares an `on-sync` hook with `action = "link-trello-card"`, `action = "sync-card-state"`, or `action = "comment-verification"`
 - **WHEN** sync executes the hook after materialization
-- **THEN** the hook SHALL print an informational notice that the action is deferred to agent runtime
+- **THEN** the hook SHALL print an informational notice (not a warning) that the action is deferred to agent runtime
 - **AND** sync SHALL continue without failure
 
 #### Scenario: Unsupported hook event or action
