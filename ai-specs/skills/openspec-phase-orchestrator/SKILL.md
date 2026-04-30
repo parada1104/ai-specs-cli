@@ -63,7 +63,27 @@ memory providers, test commands, and safety rules for the current project.
 
 Default for this project: `auto-artifacts`.
 
-Default to the mode declared in `AGENTS.md`; for this project that is `auto-artifacts` unless the user explicitly requests apply.
+Default to the mode declared in `AGENTS.md`; for this project that is
+`auto-artifacts` unless the user explicitly requests apply.
+
+## Plan Mode Summary
+
+When asked for a plan before execution, summarize the orchestration plan instead
+of implementation details:
+
+- State the classification and the selected cycle mode.
+- State that each required SDD phase will run in a fresh phase-specialized
+  subagent when the harness supports subagents.
+- List the required phases and artifacts from `openspec/config.yaml`.
+- State the stop point, especially that `auto-artifacts` stops after `tasks.md`
+  and before `apply`.
+- Include a spec update statement: delta specs to create/update, or why specs
+  are not required for this ceremony level.
+- State that the final `auto-artifacts` output is an artifact-cycle review with
+  technical analysis, risks, recommendations, open questions, and apply options.
+
+Do not make detailed code-edit promises in this plan. Implementation details
+belong in `tasks.md` or the later `apply` phase.
 
 ## Runtime Context Pack
 
@@ -85,12 +105,13 @@ Send each phase executor only:
 - `proposal`: use `openspec-new-change`; creates `proposal.md` **only if**
   `proposal_required` is `true` for the classified ceremony level.
 - `specs`: use `openspec-continue-change`; creates delta specs when required by
-  the level (always for `behavior_change` and `domain_change`).
+  `openspec/config.yaml` or when the analyzed change modifies a spec-owned
+  contract. Do not force specs for `behavior_change` when the active decision
+  matrix only requires `tasks.md` and no source-of-truth spec needs updating.
 - `design`: use `openspec-continue-change`; creates `design.md` **only if**
   `design_required` is `true` for the classified ceremony level.
 - `tasks`: use `openspec-continue-change`; creates `tasks.md` when required by
-  the level (always for `behavior_change` and `domain_change`; minimal list for
-  `local_fix`).
+  the active decision matrix; keep it minimal for lightweight ceremonies.
 - `apply`: use `openspec-apply-change`; updates code and task checkboxes.
 - `verify`: use `openspec-verify-change`; creates/updates `verify-report.md`.
 - `archive`: use `openspec-archive-change`; only after merge/approval.
