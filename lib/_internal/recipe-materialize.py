@@ -293,16 +293,27 @@ def execute_hooks(recipe: Any, merged_config: dict[str, Any]) -> None:
 
 # --- MCP merge ---------------------------------------------------------------
 def build_recipe_mcp(catalog_dir: Path, recipe_ids: list[str], manifest_mcp: dict[str, Any]) -> dict[str, Any]:
-    """Merge recipe MCP presets. Recipe values take precedence over manifest."""
-    merged: dict[str, Any] = dict(manifest_mcp)
+    """Merge recipe MCP presets with manifest precedence (shallow merge).
+
+    Project manifest keys always win over recipe defaults. Conflicting keys
+    emit a warning and are skipped.
+    """
+    merged: dict[str, Any] = {sid: dict(cfg) for sid, cfg in manifest_mcp.items()}
     for rid in recipe_ids:
         recipe = read_recipe(catalog_dir, rid)
         for mcp in recipe.mcp:
-            if mcp.id in merged:
-                warn(
-                    f"recipe '{recipe.name}' overrides mcp.id='{mcp.id}' from project manifest"
-                )
-            merged[mcp.id] = mcp.config
+            if mcp.id not in merged:
+                merged[mcp.id] = dict(mcp.config)
+                continue
+            manifest_cfg = merged[mcp.id]
+            for key, value in mcp.config.items():
+                if key in manifest_cfg:
+                    warn(
+                        f"recipe '{recipe.name}' mcp.id='{mcp.id}' key '{key}' "
+                        f"conflicts with project manifest (manifest wins)"
+                    )
+                else:
+                    manifest_cfg[key] = value
     return merged
 
 
@@ -381,7 +392,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
     manifest_data = mod.load_toml(toml_path)
     manifest_mcp = mod.read_mcp(manifest_data)
 
-    recipe_mcp: dict[str, Any] = dict(manifest_mcp)
+    recipe_mcp: dict[str, Any] = {sid: dict(cfg) for sid, cfg in manifest_mcp.items()}
 
     # Collect dep IDs from enabled recipes' dep skills
     for rid, cfg in enabled.items():
@@ -416,13 +427,20 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
         for cmd in recipe.commands:
             materialize_command(recipe_dir, cmd, project_root)
 
-        # MCP presets (accumulate for merge)
+        # MCP presets (shallow merge with manifest precedence)
         for mcp in recipe.mcp:
-            if mcp.id in recipe_mcp:
-                warn(
-                    f"recipe '{recipe.name}' overrides mcp.id='{mcp.id}' from project manifest"
-                )
-            recipe_mcp[mcp.id] = mcp.config
+            if mcp.id not in recipe_mcp:
+                recipe_mcp[mcp.id] = dict(mcp.config)
+                continue
+            manifest_cfg = recipe_mcp[mcp.id]
+            for key, value in mcp.config.items():
+                if key in manifest_cfg:
+                    warn(
+                        f"recipe '{recipe.name}' mcp.id='{mcp.id}' key '{key}' "
+                        f"conflicts with project manifest (manifest wins)"
+                    )
+                else:
+                    manifest_cfg[key] = value
 
         # Templates
         for tpl in recipe.templates:

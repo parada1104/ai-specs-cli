@@ -309,6 +309,71 @@ class RecipeMaterializeTests(unittest.TestCase):
         )
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
 
+    # --- MCP preset merge safety tests --------------------------------------
+
+    def _make_project_with_mcp(self, recipe_section: str, mcp_section: str) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        ai_specs = root / "ai-specs"
+        ai_specs.mkdir()
+        (ai_specs / "skills").mkdir()
+        (ai_specs / "commands").mkdir()
+        manifest = ai_specs / "ai-specs.toml"
+        manifest.write_text(
+            "[project]\nname = 'fixture'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            + mcp_section + "\n"
+            + recipe_section
+            + "\n"
+        )
+        return root
+
+    def test_mcp_preset_manifest_precedence_on_conflict(self):
+        root = self._make_project_with_mcp(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n',
+            '[mcp.test-mcp]\ncommand = "custom-cmd"\nargs = ["--flag"]\n'
+        )
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        mcp_path = root / "ai-specs" / ".recipe-mcp.json"
+        self.assertTrue(mcp_path.is_file())
+        data = json.loads(mcp_path.read_text())
+        self.assertIn("test-mcp", data)
+        # Manifest value must win
+        self.assertEqual(data["test-mcp"]["command"], "custom-cmd")
+        self.assertEqual(data["test-mcp"]["args"], ["--flag"])
+        # Recipe value for key not in manifest is added
+        # (args is present in both, so manifest wins; but the recipe does not add new keys here)
+
+    def test_mcp_preset_recipe_creates_when_not_in_manifest(self):
+        root = self._make_project_with_mcp(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n',
+            ''  # no mcp section
+        )
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        mcp_path = root / "ai-specs" / ".recipe-mcp.json"
+        self.assertTrue(mcp_path.is_file())
+        data = json.loads(mcp_path.read_text())
+        self.assertIn("test-mcp", data)
+        self.assertEqual(data["test-mcp"]["command"], "npx")
+        self.assertEqual(data["test-mcp"]["args"], ["-y", "@test/mcp-server"])
+
+    def test_mcp_preset_merge_warns_on_conflict(self):
+        import io
+        root = self._make_project_with_mcp(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n',
+            '[mcp.test-mcp]\ncommand = "custom-cmd"\n'
+        )
+        captured = io.StringIO()
+        real_stderr = sys.stderr
+        sys.stderr = captured
+        try:
+            self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        finally:
+            sys.stderr = real_stderr
+        stderr_output = captured.getvalue()
+        self.assertIn("conflicts with project manifest", stderr_output)
+
 
 if __name__ == "__main__":
     unittest.main()
