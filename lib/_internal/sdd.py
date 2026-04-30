@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import re
 import shutil
@@ -29,6 +30,102 @@ AGENT_TO_OPENSPEC_TOOL = {
     "gemini": "gemini",
 }
 RUN_OPENSPEC_UPDATE_AFTER_INIT = True
+
+CEREMONY_LEVELS = frozenset({"trivial", "local_fix", "behavior_change", "domain_change"})
+
+
+def _parse_yaml_scalar(val: str) -> Any:
+    """Parse a minimal subset of YAML scalars."""
+    val = val.strip()
+    if val == "true":
+        return True
+    if val == "false":
+        return False
+    if val == "null" or val == "~":
+        return None
+    if val.startswith("[") and val.endswith("]"):
+        safe = val.replace("true", "True").replace("false", "False").replace("null", "None")
+        return ast.literal_eval(safe)
+    if val.startswith('"') and val.endswith('"'):
+        return val[1:-1]
+    if val.startswith("'") and val.endswith("'"):
+        return val[1:-1]
+    return val
+
+
+def _load_yaml_simple(text: str) -> dict[str, Any]:
+    """Parse a minimal subset of YAML: nested mappings and basic scalars."""
+    lines = text.splitlines()
+    root: dict[str, Any] = {}
+    # Stack of (indent, container_dict)
+    stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+
+    for line in lines:
+        if not line.strip() or line.strip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        stripped = line.lstrip()
+        if ":" not in stripped:
+            continue
+        key, _, rest = stripped.partition(":")
+        key = key.strip()
+        value = rest.strip()
+
+        # Pop to correct parent level
+        while len(stack) > 1 and stack[-1][0] >= indent:
+            stack.pop()
+
+        parent = stack[-1][1]
+        if value:
+            parent[key] = _parse_yaml_scalar(value)
+        else:
+            child: dict[str, Any] = {}
+            parent[key] = child
+            stack.append((indent, child))
+
+    return root
+
+
+def load_decision_matrix(config_path: Path) -> dict[str, Any] | None:
+    """Read openspec/config.yaml and return the decision matrix dict if adaptive mode is set."""
+    if not config_path.is_file():
+        return None
+    text = config_path.read_text(encoding="utf-8")
+    data = _load_yaml_simple(text)
+    sdd = data.get("sdd")
+    if not isinstance(sdd, dict):
+        return None
+    mode = str(sdd.get("mode", ""))
+    if mode != "adaptive":
+        return None
+    matrix = sdd.get("decision_matrix")
+    if not isinstance(matrix, dict):
+        return None
+    return matrix
+
+
+def validate_decision_matrix(matrix: dict[str, Any]) -> list[str]:
+    """Validate a decision matrix dict. Returns a list of error strings (empty if valid)."""
+    errs: list[str] = []
+    missing = CEREMONY_LEVELS - set(matrix.keys())
+    for level in sorted(missing):
+        errs.append(f"missing level: {level}")
+    extra = set(matrix.keys()) - CEREMONY_LEVELS
+    for level in sorted(extra):
+        errs.append(f"unknown level: {level}")
+    for level in sorted(CEREMONY_LEVELS & set(matrix.keys())):
+        entry = matrix[level]
+        if not isinstance(entry, dict):
+            errs.append(f"level {level}: expected mapping, got {type(entry).__name__}")
+            continue
+        artifacts = entry.get("artifacts")
+        if not isinstance(artifacts, list):
+            errs.append(f"level {level}: 'artifacts' must be a list, got {type(artifacts).__name__}")
+        for flag in ("worktree_required", "proposal_required", "design_required"):
+            val = entry.get(flag)
+            if not isinstance(val, bool):
+                errs.append(f"level {level}: '{flag}' must be a boolean, got {type(val).__name__}")
+    return errs
 
 
 def manifest_path(root: Path) -> Path:
