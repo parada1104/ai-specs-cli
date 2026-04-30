@@ -11,6 +11,7 @@
 ### Test Results
 
 - `python3 -m unittest tests.test_external_dirs`: **30/30 tests passing**, exit 0
+- `python3 -m unittest tests.test_openspec_sdd_workflow_skill`: **2/2 tests passing**, exit 0
 - `./tests/run.sh`: **183/183 tests passing**, exit 0
 - `./tests/validate.sh`: **183/183 tests passing**, exit 0
 
@@ -50,6 +51,10 @@ The prior verification warnings are resolved:
 1. `recipe-conflict-resolution` command overwrite divergence: resolved by warning in `materialize_command` plus `test_warns_when_recipe_command_overwrites_existing_command`.
 2. `recipe-sync-materialization` dep skill gap: resolved by `test_materializes_recipe_dep_skill_to_deps_dir`.
 3. `skill-source-precedence` no-backfill gap: resolved by `test_local_precedence_does_not_backfill_files_from_recipe`.
+
+### Post-Rebase Note
+
+After rebasing onto `origin/development`, the existing SDD workflow skill contract tests failed because the local skill docs no longer contained the required contract wording. The branch restores the tested wording in `ai-specs/skills/openspec-phase-orchestrator/SKILL.md` and `ai-specs/skills/openspec-sdd-workflow/SKILL.md` without running `ai-specs sync`.
 
 ### Issues by Priority
 

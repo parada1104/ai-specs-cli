@@ -25,6 +25,12 @@ This skill coordinates SDD phases. It delegates execution to phase-specialized
 subagents when the harness supports them and falls back to inline execution only
 when subagents are unavailable.
 
+When the harness exposes a `task`/subagent capability, every SDD phase MUST run
+through a fresh phase-specialized subagent. Inline execution is only a fallback
+for harnesses that do not support subagents.
+
+Inline execution is only a fallback for harnesses that do not support subagents.
+
 Read `AGENTS.md` first. It defines the SDD provider, integration branch, tracker,
 memory providers, test commands, and safety rules for the current project.
 
@@ -48,6 +54,14 @@ memory providers, test commands, and safety rules for the current project.
 - `interactive`: run one phase and ask before the next.
 - `auto-artifacts`: run `proposal`, `specs`, `design`, and `tasks`, then stop before `apply`.
 - `auto`: run artifacts, `apply`, and `verify`; stop on blocker, error, or failed verification.
+
+| Mode | Behavior | Stop Point |
+|------|----------|------------|
+| `interactive` | Execute one phase at a time and ask before advancing. | After every phase. |
+| `auto-artifacts` | Automatically run artifact phases through `tasks.md`. | Stop after `tasks.md`; do not apply or verify. |
+| `auto` | Automatically run artifacts, apply, and verify. | Stop after verification (or on error/blocker). |
+
+Default for this project: `auto-artifacts`.
 
 Default to the mode declared in `AGENTS.md`; for this project that is `auto-artifacts` unless the user explicitly requests apply.
 
@@ -125,7 +139,9 @@ The orchestrator emits the event into the conversation or handoff. It does not e
 - In `interactive`, stop after every phase.
 - In `auto-artifacts`, continue through `tasks` only, then present an artifact-cycle handoff.
 - In `auto`, continue through `verify` only if no blocker/error occurs.
-- Never enter `apply`, `verify`, `archive`, `merge`, PR creation, push, or cleanup without explicit permission unless the user selected `auto` and the runtime brief allows it.
+- In `auto-artifacts`, after `tasks.md` is created or updated, stop and present an artifact-cycle review with recommended apply strategy (`interactive apply`, `auto apply`, or `apply only`).
+- Never enter `apply`, `verify`, `archive`, `merge`, PR creation, or push/merge to `development` from `auto-artifacts` without explicit human instruction.
+- Never enter cleanup without explicit permission unless the user selected `auto` and the runtime brief allows it.
 
 ## User-Facing Result
 
