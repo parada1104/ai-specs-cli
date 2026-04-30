@@ -57,14 +57,24 @@ Current state:
 **Rationale**: Recipe convention is that a bundled skill shares the recipe's ID. The legacy `trello-pm-workflow` skill retains its name; both coexist without conflict since they have different IDs and purposes.
 
 ### 6. Template materialization strategy
-**Decision**: Templates use `condition = "not_exists"` and target `.recipe/trello-mcp-workflow/templates/` inside the project's ai-specs directory.
+**Decision**: Templates use `condition = "not_exists"` and target `ai-specs/recipes/trello-mcp-workflow/templates/` inside the project.
 
-**Rationale**: Templates are reference material for the agent to create cards from. They should not overwrite user-customized templates. The `not_exists` condition ensures idempotent re-sync.
+**Rationale**: Card templates are reference material for the agent to create Trello cards from. They are semantically templates (not documentation) because they represent reusable patterns for card creation. Using the `templates` primitive with `not_exists` condition ensures idempotent re-sync and prevents overwriting user-customized templates. The target path `ai-specs/recipes/trello-mcp-workflow/templates/` keeps them visible in the project — not hidden inside `.recipe/` (which is an internal materialization directory).
 
 ### 7. Error handling philosophy
 **Decision**: All runtime Trello failures emit warnings to stderr and optionally log to `.recipe/trello-mcp-workflow/warnings.log`, never blocking agent progress.
 
 **Rationale**: Trello is an operational convenience, not a gate. A network failure or API limit should not halt an SDD cycle. The agent continues its work regardless.
+
+### 8. execute_hooks signature extension
+**Decision**: Extend `execute_hooks()` signature from `(recipe, merged_config)` to `(recipe, merged_config, project_root)`. Update the single call site in `materialize_recipes()`.
+
+**Rationale**: The `bootstrap-board` hook action needs `project_root` to create the marker directory and write the file at `.recipe/<recipe-id>/bootstrap-ready`. The current signature only receives the recipe object and merged config dict, which do not carry the project root path. Adding `project_root` is a minimal, backward-compatible change — existing hook actions (`validate-config`) simply ignore it.
+
+### 9. Logging for deferred hooks
+**Decision**: Add an `info()` helper function to `recipe-materialize.py` matching the existing `fail()` and `warn()` patterns. Deferred hooks (`link-trello-card`, `sync-card-state`, `comment-verification`) use `info()`, not `warn()`.
+
+**Rationale**: Deferred hooks are expected behavior — they intentionally defer to agent runtime. Warnings imply something unexpected or wrong. Informational notices correctly signal that the hook was recognized and intentionally skipped at sync time.
 
 ## Architecture
 
@@ -143,27 +153,27 @@ commands = [{ id = "trello-workflow", path = "commands/trello-workflow.md" }]
 
 [[provides.templates]]
 source = "templates/card-feature.md"
-target = ".recipe/trello-mcp-workflow/templates/card-feature.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-feature.md"
 condition = "not_exists"
 
 [[provides.templates]]
 source = "templates/card-bug.md"
-target = ".recipe/trello-mcp-workflow/templates/card-bug.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-bug.md"
 condition = "not_exists"
 
 [[provides.templates]]
 source = "templates/card-spike.md"
-target = ".recipe/trello-mcp-workflow/templates/card-spike.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-spike.md"
 condition = "not_exists"
 
 [[provides.templates]]
 source = "templates/card-epic.md"
-target = ".recipe/trello-mcp-workflow/templates/card-epic.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-epic.md"
 condition = "not_exists"
 
 [[provides.templates]]
 source = "templates/card-handoff.md"
-target = ".recipe/trello-mcp-workflow/templates/card-handoff.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-handoff.md"
 condition = "not_exists"
 
 [[provides.docs]]
@@ -173,14 +183,21 @@ condition = "not_exists"
 ```
 
 ### Hook execution in recipe-materialize.py
+
+The `execute_hooks()` signature is extended to receive `project_root: Path` (Decision 8). An `info()` helper (Decision 9) is added for expected informational messages, distinct from `warn()` for unexpected conditions.
+
 ```python
-def execute_hooks(recipe: Any, merged_config: dict[str, Any]) -> None:
+def info(msg: str) -> None:
+    print(f"  ℹ {msg}")
+
+def execute_hooks(recipe: Any, merged_config: dict[str, Any], project_root: Path) -> None:
     for hook in recipe.hooks:
         if hook.action == "validate-config":
             # existing behavior: check required config fields
             ...
         elif hook.action == "bootstrap-board":
-            # NEW: validate board_id, write bootstrap-ready marker
+            # board_id already validated by validate-config hook or config merge;
+            # write marker file for agent runtime
             marker_dir = project_root / ".recipe" / recipe.id
             marker_dir.mkdir(parents=True, exist_ok=True)
             (marker_dir / "bootstrap-ready").write_text(
@@ -189,13 +206,10 @@ def execute_hooks(recipe: Any, merged_config: dict[str, Any]) -> None:
                 f"epic_list={merged_config.get('epic_list', 'Epic')}\n"
             )
         elif hook.action == "link-trello-card":
-            # DEFERRED: no-op at sync time, agent handles at runtime
             info(f"recipe '{recipe.name}': hook 'link-trello-card' deferred to agent runtime")
         elif hook.action == "sync-card-state":
-            # DEFERRED: no-op at sync time, agent handles at runtime
             info(f"recipe '{recipe.name}': hook 'sync-card-state' deferred to agent runtime")
         elif hook.action == "comment-verification":
-            # DEFERRED: no-op at sync time, agent handles at runtime
             info(f"recipe '{recipe.name}': hook 'comment-verification' deferred to agent runtime")
         else:
             warn(f"recipe '{recipe.name}': unknown hook action '{hook.action}' (skipped)")
