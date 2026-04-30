@@ -82,10 +82,15 @@ Send each phase executor only:
 ## Phase Map
 
 - `explore`: use `openspec-explore`; no artifact required.
-- `proposal`: use `openspec-new-change`; creates `proposal.md`.
-- `specs`: use `openspec-continue-change`; creates delta specs.
-- `design`: use `openspec-continue-change`; creates `design.md`.
-- `tasks`: use `openspec-continue-change`; creates `tasks.md`.
+- `proposal`: use `openspec-new-change`; creates `proposal.md` **only if**
+  `proposal_required` is `true` for the classified ceremony level.
+- `specs`: use `openspec-continue-change`; creates delta specs when required by
+  the level (always for `behavior_change` and `domain_change`).
+- `design`: use `openspec-continue-change`; creates `design.md` **only if**
+  `design_required` is `true` for the classified ceremony level.
+- `tasks`: use `openspec-continue-change`; creates `tasks.md` when required by
+  the level (always for `behavior_change` and `domain_change`; minimal list for
+  `local_fix`).
 - `apply`: use `openspec-apply-change`; updates code and task checkboxes.
 - `verify`: use `openspec-verify-change`; creates/updates `verify-report.md`.
 - `archive`: use `openspec-archive-change`; only after merge/approval.
@@ -141,6 +146,9 @@ The orchestrator emits the event into the conversation or handoff. It does not e
 - In `auto`, continue through `verify` only if no blocker/error occurs.
 - Never enter `apply`, `verify`, `archive`, `merge`, PR creation, or push/merge to `development` from `auto-artifacts` without explicit human instruction.
 - Never enter cleanup without explicit permission unless the user selected `auto` and the runtime brief allows it.
+- **If the ceremony level is `trivial`, the full SDD cycle may be omitted.**
+  The agent applies the change directly and documents the classification in the
+  commit message or an operational note.
 
 ## Artifact-Cycle Review (auto-artifacts)
 

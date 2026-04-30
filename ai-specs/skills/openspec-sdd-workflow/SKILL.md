@@ -49,7 +49,10 @@ For this project, the runtime brief currently says: tracker = Trello, SDD provid
 
 1. Resolve the session focus from the user request, tracker card, or existing change.
 2. If only exploring, explore in place and stop with findings unless the user asks to create the change.
-3. When creating the change, update the integration branch and create the worktree:
+3. **Before creating the change, invoke `openspec-sdd-decision`** to classify the
+   change and determine the ceremony level. Confirm the classification with the
+   user before proceeding.
+4. When creating the change, update the integration branch and create the worktree:
 
 ```bash
 git checkout <integration-branch>
@@ -59,8 +62,8 @@ git worktree add .worktrees/<change-name> -b <change-name> <integration-branch>
 cd .worktrees/<change-name>
 ```
 
-4. Verify the worktree baseline when feasible with the focused command from `AGENTS.md`.
-5. Run SDD phases through `openspec-phase-orchestrator` when subagents are available.
+5. Verify the worktree baseline when feasible with the focused command from `AGENTS.md`.
+6. Run SDD phases through `openspec-phase-orchestrator` when subagents are available.
 
 ## SDD Cycle Modes
 
@@ -90,6 +93,11 @@ phase-specialized subagent through `openspec-phase-orchestrator`.
 - `verify`: validate against specs and write `verify-report.md`.
 - `archive`: archive after merge/approval according to project rules.
 
+> **Adaptive note**: if the ceremony level is `trivial` or `local_fix`, omit
+> artifact phases that the decision matrix declares unnecessary. For `trivial`,
+> no SDD artifacts are required. For `local_fix`, only code changes and tests
+> are required.
+
 ## Guardrails
 
 - Use phase-specialized subagents whenever the runtime supports them.
@@ -98,6 +106,9 @@ phase-specialized subagent through `openspec-phase-orchestrator`.
 - If tracker state, OpenSpec state, and handoff disagree, present the conflict and ask.
 - Keep commits aligned with coherent task groups when implementation begins.
 - Before final verification, run the focused tests plus full validation when feasible.
+- **Respect the `sdd.threshold` of the active recipe**. If the classification of
+  the change falls below that threshold, emit a warning and consult the user
+  before proceeding.
 
 ## Artifact-Cycle Handoff
 

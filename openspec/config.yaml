@@ -69,6 +69,30 @@ rules:
     - Compare implementation against every spec scenario
     - State unavailable quality signals explicitly, including coverage, linter, type-checker, and formatter
 
+sdd:
+  mode: adaptive
+  decision_matrix:
+    trivial:
+      artifacts: []
+      worktree_required: false
+      proposal_required: false
+      design_required: false
+    local_fix:
+      artifacts: []
+      worktree_required: false
+      proposal_required: false
+      design_required: false
+    behavior_change:
+      artifacts: ["tasks.md"]
+      worktree_required: true
+      proposal_required: false
+      design_required: false
+    domain_change:
+      artifacts: ["proposal.md", "design.md", "tasks.md"]
+      worktree_required: true
+      proposal_required: true
+      design_required: true
+
 ai_specs_guidance:
   sdd:
     use_subagents: true
