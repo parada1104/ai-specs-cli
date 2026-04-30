@@ -1,7 +1,7 @@
 # ai-specs-cli Runtime Brief
 <!-- ai-specs:runtime-brief -->
 
-> Temporary runtime brief. Card #65 (runtime brief renderer) is implemented, but the auto-generated output is still thinner than this manual brief. Do not run `ai-specs sync` in this repo until the TOML schema supports richer runtime context (board IDs, dependency tracking, workflow rules, useful commands). The north star is Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing.
+> This is the project's director de orquesta: canonical runtime context for agents. It covers project identity, MCPs, context sources, safety rules, and workflow conventions. It does NOT track day-to-day work state — that lives in Trello and OpenMemory. The auto-generated runtime brief from `ai-specs sync` is thinner than this manual version because `ai-specs.toml` does not yet support richer runtime context (board IDs, dependency tracking, workflow rules, useful commands). The north star is Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing. Until then, this file remains manual.
 
 ## Project
 
@@ -32,10 +32,7 @@
 ## Trello Tracking
 
 - Board: `69ec0a2099ea20956e371d62` (`ai-specs-cli Roadmap`).
-- Active blocked feature: #62 `Formalizar recipe trello-mcp-workflow`.
-- #62 must not enter apply until #63, #64, #65, and #66 are complete and merged to `development`.
-- #65 covers this runtime brief migration: `AGENTS.md` becomes project runtime context, while skill/capability registries move to separate generated artifacts.
-- #66 covers configurable recipe init prompts and onboarding, needed before productizing this dogfooding flow.
+- Trello is the source of truth for work state and dependencies. Check OpenMemory for the current active card and next recommended focus.
 
 ## Context Sources
 
@@ -59,18 +56,17 @@
 - Preserve unrelated worktree changes; never revert changes you did not make.
 - For OpenSpec changes, use the project SDD workflow and subagent isolation when available.
 - Before final verification, run the relevant focused tests plus `./tests/validate.sh` when feasible.
-- Do not run `ai-specs sync` in this repo until #65 replaces the legacy `AGENTS.md` renderer.
+- Do not run `ai-specs sync` in this repo until the TOML schema supports richer runtime context (Option C).
 - Direct `skill-sync` runs are allowed only for metadata validation; this file's runtime marker makes `skill-sync` skip Auto-invoke insertion.
 
 ## Current Transitional State
 
 - `ai-specs/skills/skill-sync/assets/sync.sh` respects the `<!-- ai-specs:runtime-brief -->` marker and skips rewriting `AGENTS.md`.
-- `lib/_internal/agents-md-render.py` now generates a runtime brief from `ai-specs.toml`, but the output is thinner than this manual brief.
+- `lib/_internal/agents-md-render.py` generates a runtime brief from `ai-specs.toml`, but the output is thinner than this manual brief.
 - This file remains intentionally manual and non-idempotent until the TOML schema supports richer runtime context (Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing).
 
 ## Useful Commands
 
 - Focused tests: `./tests/run.sh`
 - Full validation: `./tests/validate.sh`
-- Inspect Trello card #62 before resuming recipe work.
-- Do not run `ai-specs sync` until the TOML schema supports richer runtime context (board IDs, dependency tracking, workflow rules, useful commands).
+- Inspect the active Trello card before resuming work.
