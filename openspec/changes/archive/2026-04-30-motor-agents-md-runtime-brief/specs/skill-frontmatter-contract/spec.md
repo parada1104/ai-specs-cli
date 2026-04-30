@@ -4,7 +4,7 @@
 
 Definir y hacer cumplir el contrato canonico de frontmatter para skills locales y vendored, manteniendo metadatos reproducibles para sync, fan-out y Auto-invoke.
 
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Canonical local skill frontmatter
 The system MUST define canonical frontmatter for local `SKILL.md` files, including required identity and provenance fields and optional sync metadata.

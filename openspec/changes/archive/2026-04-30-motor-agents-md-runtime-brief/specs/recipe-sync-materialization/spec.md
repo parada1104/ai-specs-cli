@@ -4,7 +4,7 @@
 
 Define how `ai-specs sync` resolves, validates, and materializes recipes into the project workspace, including the external directory layout for recipe-bundled and dependency skills.
 
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Sync reads recipe declarations
 During sync, the system SHALL parse all `[recipes.*]` tables from `ai-specs.toml` and filter to those with `enabled = true`.
