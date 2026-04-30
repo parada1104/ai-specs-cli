@@ -61,6 +61,10 @@ def warn(msg: str) -> None:
     print(f"  ! {msg}", file=sys.stderr)
 
 
+def info(msg: str) -> None:
+    print(f"  ℹ {msg}")
+
+
 # --- Load recipe schema helper ------------------------------------------------
 _recipe_schema_module = None
 
@@ -271,7 +275,7 @@ def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]
 
 
 # --- Hook execution -----------------------------------------------------------
-def execute_hooks(recipe: Any, merged_config: dict[str, Any]) -> None:
+def execute_hooks(recipe: Any, merged_config: dict[str, Any], project_root: Path) -> None:
     """Execute recipe hooks in declaration order.
 
     Unknown actions emit a warning and are skipped.
@@ -287,6 +291,20 @@ def execute_hooks(recipe: Any, merged_config: dict[str, Any]) -> None:
                         f"recipe '{recipe.name}': hook 'validate-config' failed: "
                         f"missing required config field '{key}'"
                     )
+        elif hook.action == "bootstrap-board":
+            marker_dir = project_root / ".recipe" / recipe.id
+            marker_dir.mkdir(parents=True, exist_ok=True)
+            (marker_dir / "bootstrap-ready").write_text(
+                f"board_id={merged_config.get('board_id', '')}\n"
+                f"default_list={merged_config.get('default_list', 'In Progress')}\n"
+                f"epic_list={merged_config.get('epic_list', 'Epic')}\n"
+            )
+        elif hook.action == "link-trello-card":
+            info(f"recipe '{recipe.name}': hook 'link-trello-card' deferred to agent runtime")
+        elif hook.action == "sync-card-state":
+            info(f"recipe '{recipe.name}': hook 'sync-card-state' deferred to agent runtime")
+        elif hook.action == "comment-verification":
+            info(f"recipe '{recipe.name}': hook 'comment-verification' deferred to agent runtime")
         else:
             warn(f"recipe '{recipe.name}': unknown hook action '{hook.action}' (skipped)")
 
@@ -451,7 +469,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
             materialize_doc(recipe_dir, doc, project_root)
 
         # Hook execution (NEW)
-        execute_hooks(recipe, merged_cfg)
+        execute_hooks(recipe, merged_cfg, project_root)
 
     # Write merged MCP for downstream mcp-render.py
     recipe_mcp_path = project_root / "ai-specs" / ".recipe-mcp.json"

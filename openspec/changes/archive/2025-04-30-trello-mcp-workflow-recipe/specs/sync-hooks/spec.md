@@ -1,36 +1,4 @@
-# sync-hooks Specification
-
-## Purpose
-
-Define how recipes declare sync-time lifecycle hooks and how the sync pipeline executes them.
-
-## Requirements
-
-### Requirement: Hook declaration in recipe.toml
-
-A recipe MAY declare sync-time hooks using `[[hooks]]` tables. Each hook SHALL contain an `event` field and an `action` field. Both SHALL be non-empty strings.
-
-#### Scenario: Valid hook declaration
-- **GIVEN** a `recipe.toml` with `[[hooks]]` where `event = "on-sync"` and `action = "validate-config"`
-- **WHEN** the recipe is parsed
-- **THEN** validation SHALL pass
-- **AND** the hook SHALL be registered for execution
-
-#### Scenario: Missing hook event
-- **GIVEN** a `recipe.toml` with `[[hooks]]` that omits the `event` field
-- **WHEN** the recipe is parsed
-- **THEN** validation SHALL fail with an explicit error naming the missing field
-
-#### Scenario: Missing hook action
-- **GIVEN** a `recipe.toml` with `[[hooks]]` that omits the `action` field
-- **WHEN** the recipe is parsed
-- **THEN** validation SHALL fail with an explicit error naming the missing field
-
-#### Scenario: Recipe with no hooks
-- **GIVEN** a `recipe.toml` that contains no `[[hooks]]` tables
-- **WHEN** the recipe is parsed
-- **THEN** validation SHALL pass
-- **AND** no hook execution SHALL be scheduled
+## MODIFIED Requirements
 
 ### Requirement: Hook execution during sync
 
