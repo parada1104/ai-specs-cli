@@ -215,8 +215,8 @@ class RecipeInitTests(unittest.TestCase):
         after = sorted(p.relative_to(root).as_posix() for p in root.rglob("*"))
         self.assertIn("No files were changed", brief)
         self.assertEqual(after, before)
-        self.assertFalse((root / ".recipe").exists())
-        self.assertFalse((root / "ai-specs" / ".recipe-mcp.json").exists())
+        self.assertFalse((root / "ai-specs" / ".recipe").exists())
+        self.assertFalse((root / "ai-specs" / ".tmp" / "recipe-mcp.json").exists())
 
     def test_trello_recipe_init_uses_cli_catalog_when_project_has_no_local_catalog(self):
         with tempfile.TemporaryDirectory() as tmp:

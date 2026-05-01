@@ -37,9 +37,9 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import shutil
 import sys
-import tomllib
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -47,12 +47,6 @@ LOCK_REL = "ai-specs/.ai-specs.lock"
 
 # Preset `openspec`: bundled skills named openspec-* plus catalog policy skills.
 PRESET_OPENSPEC_CATALOG_SKILLS = ("openspec-sdd-conventions", "testing-foundation")
-
-LOCK_HEADER = """\
-# Managed by ai-specs. Do not edit by hand.
-# Tracks SHA-256 of bundled files as last installed by the CLI.
-# Used by `ai-specs refresh-bundled` to detect user customizations.
-"""
 
 
 def sha256_of(path: Path) -> str:
@@ -129,47 +123,20 @@ def display_name(kind: str, owner: Optional[str], rel: str) -> str:
     return f"commands/{rel}"
 
 
-def load_lock(lock_path: Path) -> dict:
-    if not lock_path.is_file():
-        return {"skills": {}, "commands": {}, "opted_out": []}
-    with lock_path.open("rb") as f:
-        data = tomllib.load(f)
-    return {
-        "skills": {k: dict(v) for k, v in (data.get("skills") or {}).items()},
-        "commands": dict(data.get("commands") or {}),
-        "opted_out": list(data.get("opted-out", {}).get("files", []) or []),
-    }
 
+def _load_lock_module():
+    module_path = Path(__file__).with_name("lock.py")
+    spec = importlib.util.spec_from_file_location("lock_internal", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load lock.py at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
-def write_lock(lock_path: Path, lock: dict) -> None:
-    """Write lock file as TOML (handmade; stdlib tomllib is read-only)."""
-    out = [LOCK_HEADER]
-    skills = lock.get("skills") or {}
-    for skill in sorted(skills):
-        files = skills[skill]
-        if not files:
-            continue
-        out.append(f'[skills."{skill}"]')
-        for rel in sorted(files):
-            out.append(f'"{rel}" = "{files[rel]}"')
-        out.append("")
-    commands = lock.get("commands") or {}
-    if commands:
-        out.append("[commands]")
-        for rel in sorted(commands):
-            out.append(f'"{rel}" = "{commands[rel]}"')
-        out.append("")
-    opted = sorted(set(lock.get("opted_out") or []))
-    if opted:
-        out.append("[opted-out]")
-        out.append("# Bundled files the user deleted intentionally; the CLI will")
-        out.append("# not re-install them. Remove a line here to let the file be")
-        out.append("# restored on the next `ai-specs refresh-bundled`.")
-        formatted = ", ".join(f'"{name}"' for name in opted)
-        out.append(f"files = [{formatted}]")
-        out.append("")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path.write_text("\n".join(out).rstrip("\n") + "\n")
+_lock_mod = _load_lock_module()
+load_lock = _lock_mod.load_lock
+write_lock = _lock_mod.write_lock
 
 
 def lock_get(lock: dict, kind: str, owner: Optional[str], rel: str) -> Optional[str]:

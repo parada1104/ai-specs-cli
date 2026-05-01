@@ -466,7 +466,7 @@ class SyncPipelineTests(unittest.TestCase):
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            root_skill = workspace / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
+            root_skill = workspace / "ai-specs" / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
             subrepo_skill = workspace / "packages" / "a" / "ai-specs" / "skills" / "vendored-demo" / "SKILL.md"
             content = root_skill.read_text()
 
@@ -500,7 +500,7 @@ class SyncPipelineTests(unittest.TestCase):
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            root_skill = workspace / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
+            root_skill = workspace / "ai-specs" / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
             root_skill.write_text(
                 "---\n"
                 "name: vendored-demo\n"
@@ -718,7 +718,7 @@ class SyncPipelineTests(unittest.TestCase):
             )
 
             # Recipe skill
-            recipe_dir = workspace / ".recipe" / "test-recipe" / "skills" / "recipe-skill"
+            recipe_dir = workspace / "ai-specs" / ".recipe" / "test-recipe" / "skills" / "recipe-skill"
             recipe_dir.mkdir(parents=True)
             (recipe_dir / "SKILL.md").write_text(
                 "---\n"
@@ -737,7 +737,7 @@ class SyncPipelineTests(unittest.TestCase):
             )
 
             # Dep skill
-            dep_dir = workspace / ".deps" / "test-dep" / "skills" / "dep-skill"
+            dep_dir = workspace / "ai-specs" / ".deps" / "test-dep" / "skills" / "dep-skill"
             dep_dir.mkdir(parents=True)
             (dep_dir / "SKILL.md").write_text(
                 "---\n"

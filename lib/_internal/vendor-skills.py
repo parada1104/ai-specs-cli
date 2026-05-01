@@ -27,6 +27,23 @@ from pathlib import Path
 
 from skill_contract import from_dep, render_skill_markdown
 
+def _load_lock_module():
+    module_path = Path(__file__).with_name("lock.py")
+    spec = importlib.util.spec_from_file_location("lock_internal", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load lock.py at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+_lock_mod = _load_lock_module()
+load_lock = _lock_mod.load_lock
+write_lock = _lock_mod.write_lock
+set_recipe_skill_hashes = _lock_mod.set_recipe_skill_hashes
+set_dep_skill_hashes = _lock_mod.set_dep_skill_hashes
+sha256_of = _lock_mod.sha256_of
+
 
 ANCILLARY_DIRS = ("assets", "references", "scripts")
 
@@ -69,7 +86,7 @@ def sync_dep_target(dep: dict, project_root: Path) -> None:
         fail(f"dep missing id/source: {dep!r}")
 
     skill_subpath = dep.get("path", "").strip("/")
-    target_dir = project_root / ".deps" / dep_id / "skills" / dep_id
+    target_dir = project_root / "ai-specs" / ".deps" / dep_id / "skills" / dep_id
 
     print(f"  ▸ {dep_id}  ←  {source}" + (f"  (path: {skill_subpath})" if skill_subpath else ""))
 

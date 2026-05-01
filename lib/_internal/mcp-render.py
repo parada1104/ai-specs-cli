@@ -25,7 +25,7 @@ import importlib.util
 from pathlib import Path
 
 
-def load_mcp(toml_path: Path) -> dict:
+def load_mcp(toml_path: Path, recipe_mcp_path: Path | None = None) -> dict:
     module_path = Path(__file__).with_name("toml-read.py")
     spec = importlib.util.spec_from_file_location("toml_read_internal", module_path)
     if spec is None or spec.loader is None:
@@ -36,7 +36,8 @@ def load_mcp(toml_path: Path) -> dict:
     mcp = module.read_mcp(data)
 
     # Merge recipe MCP presets if present (recipe values take precedence)
-    recipe_mcp_path = toml_path.parent / ".recipe-mcp.json"
+    if recipe_mcp_path is None:
+        recipe_mcp_path = toml_path.parent / ".recipe-mcp.json"
     if recipe_mcp_path.is_file():
         try:
             recipe_mcp = json.loads(recipe_mcp_path.read_text())
