@@ -1,5 +1,9 @@
 # recipe.toml Schema
 
+This document is the canonical reference for `recipe.toml` and related recipe
+manifest extensions. For the root manifest contract, see
+[`docs/ai-specs-toml.md`](ai-specs-toml.md).
+
 A recipe is a named, versioned bundle of AI agent primitives that `ai-specs sync` can materialize into a project.
 
 ## Directory layout
@@ -74,6 +78,10 @@ Array of tables:
 | `source` | string | yes | Relative path inside recipe directory |
 | `target` | string | yes | Relative path inside project root |
 
+Only `source` and `target` are part of the supported docs contract. Extra keys
+may be tolerated by parsing, but doc materialization currently copies declared
+files unconditionally and does not apply template-style conditions.
+
 ## Manifest declaration
 
 In `ai-specs/ai-specs.toml`:
@@ -128,7 +136,7 @@ Defines configuration fields that the recipe expects. Values can be overridden p
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `required` | boolean | yes | Whether the field must be provided |
-| `type` | string | no | Hint for the expected type (`string`, `integer`, `boolean`) |
+| `type` | string | no | Optional hint for the expected type (`string`, `integer`, `boolean` by convention) |
 | `default` | any | no | Default value when not overridden |
 
 Example:
@@ -144,7 +152,8 @@ required = true
 type = "string"
 ```
 
-Missing `required` or invalid types cause a validation error.
+Missing `required` causes a validation error. The current validator treats
+`type` as descriptive metadata and does not enforce a closed enum of values.
 
 ## `[[hooks]]` lifecycle events
 
@@ -220,6 +229,28 @@ MCP discovery output must redact secret-like literal values. Env references such
 
 Init is idempotent: rerunning it detects existing `[recipes.<id>]`, existing config keys, and existing template/override targets, then proposes updates or skips instead of duplicate declarations, duplicate keys, or silent overwrites.
 
+## `[sdd]` recipe metadata
+
+Recipes may declare optional SDD metadata used by the adaptive SDD contract.
+
+### `threshold`
+
+`[sdd].threshold` is an optional ceremony hint that tells agents the minimum
+SDD level expected for work involving the recipe.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `threshold` | string | no | Optional ceremony level: `trivial`, `local_fix`, `behavior_change`, or `domain_change` |
+
+Example:
+
+```toml
+[sdd]
+threshold = "behavior_change"
+```
+
+Invalid threshold values are rejected when the recipe is parsed.
+
 ---
 
 # Manifest V2 Additions
@@ -282,3 +313,17 @@ V2 tables (`[[capabilities]]`, `[[hooks]]`, `[config]`, `[[bindings]]`, `[recipe
 - A V1 `recipe.toml` without V2 tables parses and materializes exactly as before.
 - A V1 `ai-specs.toml` without `[[bindings]]` or recipe `config` proceeds normally.
 - Existing primitive conflict detection (skills, commands, MCP) is unchanged.
+
+## Reference recipe: `trello-mcp-workflow`
+
+`catalog/recipes/trello-mcp-workflow/recipe.toml` is the most complete current
+example in this repo. It demonstrates:
+
+- `[recipe]` metadata and version pinning
+- `[[capabilities]]` declarations
+- `[[hooks]]` declarations for sync-time and runtime-deferred actions
+- `[config.<field>]` schema entries
+- `[provides]` primitives for bundled skills, commands, templates, and docs
+
+Use it as a reference recipe for V2 structure, but treat this document as the
+canonical contract when example details and implementation ergonomics diverge.
