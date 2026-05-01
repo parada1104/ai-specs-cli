@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -79,9 +80,30 @@ class RecipeListTests(unittest.TestCase):
     def test_empty_catalog(self):
         manifest = '[project]\nname = "test"\n'
         project = self._make_project(manifest)
-        # catalog dir doesn't exist
-        results = self.mod.list_recipes(project)
-        self.assertEqual(len(results), 0)
+        old_home = os.environ.get("AI_SPECS_HOME")
+        os.environ["AI_SPECS_HOME"] = str(project / "missing-home")
+        try:
+            results = self.mod.list_recipes(project)
+        finally:
+            if old_home is None:
+                os.environ.pop("AI_SPECS_HOME", None)
+            else:
+                os.environ["AI_SPECS_HOME"] = old_home
+        self.assertTrue(any(r["id"] == "trello-mcp-workflow" for r in results))
+
+    def test_list_uses_cli_catalog_when_project_has_no_local_catalog(self):
+        manifest = '[project]\nname = "test"\n'
+        project = self._make_project(manifest)
+        old_home = os.environ.get("AI_SPECS_HOME")
+        os.environ["AI_SPECS_HOME"] = str(ROOT)
+        try:
+            results = self.mod.list_recipes(project)
+        finally:
+            if old_home is None:
+                os.environ.pop("AI_SPECS_HOME", None)
+            else:
+                os.environ["AI_SPECS_HOME"] = old_home
+        self.assertTrue(any(r["id"] == "trello-mcp-workflow" for r in results))
 
     def test_invalid_recipe_toml_shows_error(self):
         manifest = '[project]\nname = "test"\n'

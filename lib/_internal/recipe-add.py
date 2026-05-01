@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -31,10 +32,24 @@ def _load_recipe_read():
     return module
 
 
+def _resolve_catalog_dir(project_root: Path) -> Path:
+    local_catalog = project_root / "catalog" / "recipes"
+    if local_catalog.is_dir():
+        return local_catalog
+
+    ai_specs_home = os.environ.get("AI_SPECS_HOME")
+    if ai_specs_home:
+        home_catalog = Path(ai_specs_home) / "catalog" / "recipes"
+        if home_catalog.is_dir():
+            return home_catalog
+
+    return Path(__file__).resolve().parents[2] / "catalog" / "recipes"
+
+
 def add_recipe(project_root: Path, recipe_id: str) -> int:
     """Validate recipe exists and append [recipes.<id>] to ai-specs.toml."""
     manifest_path = project_root / "ai-specs" / "ai-specs.toml"
-    catalog_dir = project_root / "catalog" / "recipes"
+    catalog_dir = _resolve_catalog_dir(project_root)
 
     if not manifest_path.is_file():
         print("Proyecto no inicializado. Ejecuta: ai-specs init", file=sys.stderr)

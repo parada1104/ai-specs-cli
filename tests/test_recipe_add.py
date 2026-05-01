@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -138,6 +139,22 @@ commands = [
             )
             self.assertEqual(proc.returncode, 1)
             self.assertIn("Proyecto no inicializado", proc.stderr)
+
+    def test_add_uses_cli_catalog_when_project_has_no_local_catalog(self):
+        manifest = '[project]\nname = "test"\n'
+        project = self._make_project(manifest)
+        old_home = os.environ.get("AI_SPECS_HOME")
+        os.environ["AI_SPECS_HOME"] = str(ROOT)
+        try:
+            rc = self.mod.add_recipe(project, "trello-mcp-workflow")
+        finally:
+            if old_home is None:
+                os.environ.pop("AI_SPECS_HOME", None)
+            else:
+                os.environ["AI_SPECS_HOME"] = old_home
+        self.assertEqual(rc, 0)
+        manifest_text = (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
+        self.assertIn("[recipes.trello-mcp-workflow]", manifest_text)
 
 
 if __name__ == "__main__":
