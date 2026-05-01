@@ -6,6 +6,7 @@ Automated Trello board integration for ai-specs SDD workflows.
 
 ```bash
 ai-specs recipe add trello-mcp-workflow
+ai-specs recipe init trello-mcp-workflow
 ```
 
 This installs:
@@ -15,6 +16,8 @@ This installs:
 - **Command**: `trello-workflow` — quick-reference command file for agents.
 
 `ai-specs recipe add` only declares the recipe in `ai-specs/ai-specs.toml`. `ai-specs sync` materializes the bundled assets.
+`ai-specs recipe init trello-mcp-workflow` prints a read-only setup brief so the
+project can confirm `board_id`, list mappings, and MCP readiness before sync.
 
 ## Configuration
 

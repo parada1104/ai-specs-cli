@@ -50,6 +50,12 @@ required = false
 type = "string"
 default = "Epic"
 
+[init]
+prompt = "docs/init.md"
+description = "Configure Trello board and list mappings before sync"
+needs_manifest = true
+needs_mcp = ["trello"]
+
 [provides]
 skills = [{ id = "trello-mcp-workflow", source = "bundled" }]
 commands = [{ id = "trello-workflow", path = "commands/trello-workflow.md" }]
