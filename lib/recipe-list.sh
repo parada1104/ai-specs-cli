@@ -5,7 +5,7 @@
 #   ai-specs recipe list [path] [--help]
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 RECIPE_LIST_PY="$AI_SPECS_HOME/lib/_internal/recipe-list.py"
 
 usage() {

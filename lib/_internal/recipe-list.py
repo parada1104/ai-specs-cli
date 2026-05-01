@@ -8,7 +8,7 @@ Usage:
 from __future__ import annotations
 
 import importlib.util
-import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,9 +32,20 @@ def _load_recipe_read():
     return module
 
 
+def _resolve_catalog_dir(project_root: Path) -> Path:
+    ai_specs_home = os.environ.get("AI_SPECS_HOME")
+    if ai_specs_home:
+        home_catalog = Path(ai_specs_home) / "catalog" / "recipes"
+        if home_catalog.is_dir():
+            return home_catalog
+
+    # Consumer projects declare recipes in ai-specs.toml; the recipe catalog is owned by the CLI.
+    return Path(__file__).resolve().parents[2] / "catalog" / "recipes"
+
+
 def list_recipes(project_root: Path) -> list[dict[str, str]]:
     """Scan catalog/recipes/ and compare against manifest [recipes.*]."""
-    catalog_dir = project_root / "catalog" / "recipes"
+    catalog_dir = _resolve_catalog_dir(project_root)
     manifest_path = project_root / "ai-specs" / "ai-specs.toml"
 
     toml_read = _load_toml_read()

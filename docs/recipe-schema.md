@@ -6,6 +6,8 @@ manifest extensions. For the root manifest contract, see
 
 A recipe is a named, versioned bundle of AI agent primitives that `ai-specs sync` can materialize into a project.
 
+For normal consumer projects, `catalog/recipes/` is not part of the project workspace. The directory layout below describes recipe authoring inside the CLI's bundled catalog. Consumer projects declare recipes in `ai-specs/ai-specs.toml`, and the CLI resolves them from its own catalog during `recipe add`, `recipe init`, `recipe list`, and `sync`.
+
 ## Directory layout
 
 ```
