@@ -7,7 +7,7 @@
 #   ai-specs recipe init <id> [path]
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 LIB_DIR="$AI_SPECS_HOME/lib"
 
 usage() {

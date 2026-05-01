@@ -2,12 +2,12 @@
 
 ## Purpose
 
-Definir los comandos CLI `ai-specs recipe list` y `ai-specs recipe add <id>` para descubrir e instalar recipes del catálogo.
+Definir los comandos CLI `ai-specs recipe list` y `ai-specs recipe add <id>` para descubrir e instalar recipes del catálogo del CLI en proyectos consumidores.
 
 ## Requirements
 
 ### Requirement: Comando recipe list
-El sistema SHALL proveer `ai-specs recipe list [path]` que escanee `catalog/recipes/`, lea cada `recipe.toml`, determine el estado de instalación desde el manifest local, y muestre una tabla legible.
+El sistema SHALL proveer `ai-specs recipe list [path]` que escanee el catálogo de recipes del CLI, lea cada `recipe.toml`, determine el estado de instalación desde el manifest local, y muestre una tabla legible.
 
 #### Scenario: Lista con recipes disponibles e instaladas
 - **WHEN** el catálogo contiene recipes y el manifest declara `[recipes.test-fixture]` con `enabled = true`
@@ -15,7 +15,7 @@ El sistema SHALL proveer `ai-specs recipe list [path]` que escanee `catalog/reci
 - **AND** cada recipe del catálogo SHALL aparecer exactamente una vez
 
 #### Scenario: Catálogo vacío
-- **WHEN** `catalog/recipes/` solo contiene `.gitkeep`
+- **WHEN** el catálogo de recipes del CLI no contiene recipes válidas
 - **THEN** `recipe list` SHALL mostrar mensaje "No hay recipes disponibles"
 - **AND** exit code SHALL ser 0
 
@@ -43,6 +43,23 @@ El sistema SHALL proveer `ai-specs recipe add <id> [path]` que valide la recipe 
 - **WHEN** se ejecuta `recipe add nonexistent`
 - **THEN** SHALL fallar con "Recipe 'nonexistent' no encontrada en catalog/recipes/"
 - **AND** exit code SHALL ser 1
+
+### Requirement: Catálogo resuelto desde el CLI
+Los comandos `recipe list`, `recipe add`, y `recipe init` SHALL resolver recipes desde el catálogo distribuido por el CLI. Un proyecto consumidor SHALL NOT necesitar ni poseer `catalog/recipes/` para usar esos comandos.
+
+#### Scenario: Proyecto consumidor sin catálogo local
+- **GIVEN** un proyecto inicializado sin `catalog/recipes/`
+- **AND** el catálogo del CLI contiene la recipe `tracker`
+- **WHEN** se ejecuta `ai-specs recipe list`, `ai-specs recipe add tracker`, o `ai-specs recipe init tracker`
+- **THEN** el comando correspondiente SHALL resolver `tracker` desde el catálogo del CLI
+- **AND** SHALL NOT requerir un `catalog/recipes/` dentro del proyecto consumidor
+
+#### Scenario: Catálogo local del proyecto no define el contrato
+- **GIVEN** un proyecto inicializado que contiene un directorio `catalog/recipes/` por razones de desarrollo o dogfooding
+- **AND** el catálogo del CLI contiene la recipe `tracker`
+- **WHEN** se ejecuta `ai-specs recipe list`, `ai-specs recipe add tracker`, o `ai-specs recipe init tracker`
+- **THEN** el contrato SHALL seguir resolviendo recipes desde el catálogo del CLI
+- **AND** la presencia de `project_root/catalog/recipes/` SHALL NOT convertirse en requisito para proyectos consumidores normales
 
 #### Scenario: Proyecto no inicializado
 - **WHEN** se ejecuta `recipe add` en directorio sin `ai-specs.toml`
@@ -75,7 +92,7 @@ Ejecutar `recipe add` dos veces para el mismo ID SHALL producir el mismo manifes
 
 ### Requirement: Command recipe init
 
-The system SHALL provide `ai-specs recipe init <id> [path]` to produce an agent-readable initialization brief for a catalog recipe. The optional `path` argument SHALL select the project root using the same path semantics as existing recipe commands.
+The system SHALL provide `ai-specs recipe init <id> [path]` to produce an agent-readable initialization brief for a recipe from the CLI catalog. The optional `path` argument SHALL select the project root using the same path semantics as existing recipe commands.
 
 #### Scenario: Init command for installed recipe with init workflow
 
