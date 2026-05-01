@@ -1,15 +1,13 @@
 ---
 name: openspec-sdd-workflow
 description: >
-  Unified SDD + worktree workflow for the ai-specs-cli repository.
-  Covers: worktree creation from development, safety verification, SDD phase
-  orchestration (explore → proposal → specs → design → tasks → apply → verify →
-  archive), commit conventions, and archival rules. Trigger: when starting any
-  OpenSpec change, creating a worktree, or deciding where implementation begins.
+  Config-driven SDD + worktree workflow for ai-specs shaped projects. Covers
+  card/change linkage, worktree creation before artifact-writing phases,
+  phase-specialized subagents, verification, and archive/merge handoff.
 license: MIT
 metadata:
   author: parada1104
-  version: "2.0.0"
+  version: "3.0"
   scope: [root]
   auto_invoke:
     - "Starting a new OpenSpec change"
@@ -23,231 +21,159 @@ metadata:
 
 # OpenSpec SDD Workflow
 
-## Overview
+Use this skill when a user request or tracker card becomes a durable SDD cycle.
+Read `AGENTS.md` first; it defines the project-specific provider choices, base
+branch, MCPs, safety rules, and test commands.
 
-This skill defines the complete workflow for spec-driven development in the
-`ai-specs-cli` repository. It unifies worktree isolation, SDD phase progression,
-and commit/archive conventions into a single canonical flow.
+For this project, the runtime brief currently says: tracker = Trello, SDD provider = OpenSpec, integration branch = `development`, PR/VCS provider = GitHub via `gh`.
 
-**Core principle:** Every implementation starts in an isolated worktree branched
-from `development`, progresses through structured SDD artifacts, and closes with
-an archived change.
+## Operating Model
 
-## When to Use
+- One explicit session focus maps to one user request, tracker card, or SDD change.
+- One implementation/design card maps to one SDD cycle.
+- SDD artifacts are authoritative in OpenSpec.
+- Trello owns work state and dependencies.
+- Vault owns canonical handoffs and decisions.
+- OpenMemory owns operational continuity.
 
-- Starting any new feature, fix, or standardization task
-- Creating a worktree or branch
-- Orchestrating or continuing an OpenSpec change
-- Deciding whether to use `main`, `development`, or a feature branch
-- Editing `openspec/config.yaml`
+## Worktree Boundary
 
----
+- Pure `explore` may run without a worktree when it only produces conversation-level thinking.
+- Before `openspec-new-change` or any artifact-writing phase, create or enter a dedicated worktree from the integration branch.
+- Artifact phases (`proposal`, `specs`, `design`, `tasks`) run inside that worktree.
+- Implementation phases (`apply`, `verify`, `archive`) also run inside that worktree unless the user explicitly directs otherwise.
+- Do not write OpenSpec artifacts on the integration branch.
+- One change should have one branch/worktree. Reuse an existing matching worktree when present; do not create a second one silently.
 
-## Part 1: Worktree Isolation
+## Standard Start
 
-### Critical Patterns
-
-- **`main` is protected by convention**: treat it as the stable line. Do not start
-day-to-day feature work from `main`.
-- **`development` is the integration base**: create it if missing, keep it updated,
-and branch new work from there.
-- **Every implementation starts in a worktree**: one worktree per feature/fix/experiment.
-- **Worktrees live under `.worktrees/` at the repo root** (ignored by git).
-- **Worktrees branch from `development`** unless the task is an explicit hotfix
-strategy agreed by the maintainer.
-- **Do not pile unrelated tasks into one worktree**. One branch, one intent.
-
-### Directory Selection
-
-Follow this priority order:
-
-1. **Check existing directories:**
-   ```bash
-   ls -d .worktrees 2>/dev/null     # Preferred (hidden)
-   ls -d worktrees 2>/dev/null      # Alternative
-   ```
-   If found, use that directory. If both exist, `.worktrees` wins.
-
-2. **Check `CLAUDE.md` or similar agent config** for a worktree directory preference.
-
-3. **Ask user** only if no directory exists and no preference is specified.
-
-### Safety Verification
-
-**MUST verify directory is ignored before creating worktree:**
-```bash
-git check-ignore -q .worktrees 2>/dev/null || git check-ignore -q worktrees 2>/dev/null
-```
-
-If NOT ignored:
-1. Add the directory to `.gitignore`
-2. Commit the change
-3. Proceed with worktree creation
-
-### Standard Flow
-
-1. Ensure `main` is clean and pushed.
-2. Ensure `development` exists and is pushed.
-3. Update `development` locally:
-   ```bash
-   git checkout development
-   git pull --ff-only origin development
-   ```
-4. Create a feature branch and dedicated worktree:
-   ```bash
-   mkdir -p .worktrees
-   git worktree add .worktrees/<branch-name> -b <branch-name> development
-   cd .worktrees/<branch-name>
-   ```
-5. Run project setup (auto-detect from project files):
-   ```bash
-   if [ -f package.json ]; then npm install; fi
-   if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-   if [ -f pyproject.toml ]; then poetry install; fi
-   if [ -f Cargo.toml ]; then cargo build; fi
-   if [ -f go.mod ]; then go mod download; fi
-   ```
-6. Verify clean baseline:
-   ```bash
-   ./tests/run.sh        # or project-appropriate test command
-   ```
-   If tests fail, report failures and ask whether to proceed.
-7. Do all implementation work inside that worktree.
-
-### Anti-patterns
-
-- Putting worktrees outside the repo (e.g. `../worktrees/...`)
-- Starting feature work directly on `main`
-- Creating a feature branch from stale local state
-- Reusing one worktree for multiple unrelated tasks
-- Forgetting that the branch base must be `development`
-- Skipping `git check-ignore` verification
-- Proceeding with failing baseline tests without asking
-- Deleting a worktree without verifying whether the branch is still needed
-
-### Cleanup
+1. Resolve the session focus from the user request, tracker card, or existing change.
+2. If only exploring, explore in place and stop with findings unless the user asks to create the change.
+3. **Before creating the change, invoke `openspec-sdd-decision`** to classify the
+   change and determine the ceremony level. Confirm the classification with the
+   user before proceeding.
+4. When creating the change, update the integration branch and create the worktree:
 
 ```bash
-# remove a finished worktree
-git worktree remove .worktrees/<branch-name>
-git branch -d <branch-name>
+git checkout <integration-branch>
+git pull --ff-only origin <integration-branch>
+mkdir -p .worktrees
+git worktree add .worktrees/<change-name> -b <change-name> <integration-branch>
+cd .worktrees/<change-name>
 ```
 
----
+5. Verify the worktree baseline when feasible with the focused command from `AGENTS.md`.
+6. Run SDD phases through `openspec-phase-orchestrator` when subagents are available.
 
-## Part 2: SDD Phase Orchestration
+## Plan Mode Contract
 
-### Phase Definitions (spec-driven schema)
+When the user is in plan mode, asks for a plan, or is validating approach before
+implementation, describe the workflow that will be executed rather than a
+premature implementation plan.
 
-| Phase | Artifact(s) Produced | Specialist Skill |
-|---|---|---|
-| `explore` | Thinking captured in conversation or proposal | `openspec-explore` |
-| `proposal` | `openspec/changes/<name>/proposal.md` | `openspec-new-change` |
-| `specs` | `openspec/changes/<name>/specs/<capability>/spec.md` | `openspec-continue-change` |
-| `design` | `openspec/changes/<name>/design.md` | `openspec-continue-change` |
-| `tasks` | `openspec/changes/<name>/tasks.md` | `openspec-continue-change` |
-| `apply` | Code changes + updated `tasks.md` checkboxes | `openspec-apply-change` |
-| `verify` | `openspec/changes/<name>/verify-report.md` | `openspec-verify-change` |
-| `archive` | Archived change in `openspec/changes/archive/` | `openspec-archive-change` |
+- If the session focus is a formal tracker card or durable design/implementation
+  request, perform explore/classification first, then present the SDD flow.
+- For SDD-required classifications, the plan MUST emphasize ceremony level,
+  cycle mode, subagent delegation, artifact phases, stop point, and review
+  output. Likely code areas may be listed only as impact/risk context.
+- For changes below the SDD threshold, the plan MAY describe direct code/test
+  changes, but it MUST still include whether spec updates are needed and why.
+- In build mode, execute the same flow that would have been described in plan
+  mode.
 
-### Phase Detection
+Every plan response after classification MUST include:
 
-```bash
-openspec status --change "<name>" --json
-```
+- Classification and reasoning.
+- SDD mode (`interactive`, `auto-artifacts`, or `auto`).
+- Subagent execution model for required phases.
+- Required phases and artifacts, according to `openspec/config.yaml`.
+- Explicit stop point, especially "stop before `apply`" for `auto-artifacts`.
+- Spec update statement: which specs/delta specs are expected, or why no spec
+  update is required.
+- Final handoff/review contents and options for next action.
 
-Map artifact statuses to current phase:
-- If user requested a specific phase → use that phase
-- Else if `isComplete: true` → suggest `verify` or `archive`
-- Else if no `proposal.md` → `explore` or `proposal`
-- Else if proposal exists but specs incomplete → `specs`
-- Else if specs done but design missing → `design`
-- Else if design done but tasks missing → `tasks`
-- Else if tasks exist with pending checkboxes → `apply`
-- Else → `verify`
+## Ceremony-Level Plan Mapping
 
-If the target phase is `blocked` (missing dependencies), show which artifacts
-are blocking it and ask whether to jump to the missing dependency phase first.
+- `domain_change`: formal OpenSpec cycle. Create/enter a dedicated worktree,
+  run artifact phases through phase-specialized subagents, normally
+  `proposal`, `specs`, `design`, and `tasks`, then stop before `apply` in
+  `auto-artifacts`. The handoff must include technical analysis, risks,
+  recommendations, open questions, and apply options.
+- `behavior_change`: lightweight SDD cycle. Create/enter a dedicated worktree
+  and create the artifacts required by `openspec/config.yaml` (normally
+  `tasks.md`). Create delta specs only when the decision matrix requires them
+  or the observable contract/spec source of truth must change. Stop before
+  `apply` unless the user explicitly requested implementation.
+- `local_fix`: no formal OpenSpec artifacts by default. Describe or execute the
+  localized fix plus focused tests. If the fix reveals contract/spec drift,
+  escalate classification before proceeding.
+- `trivial`: no SDD artifacts. Apply directly when in build mode, with minimal
+  validation appropriate to the edit.
 
----
+## SDD Cycle Modes
 
-## Part 3: Commit & Archive Conventions
+- `interactive`: run one phase, present handoff, ask before continuing.
+- `auto-artifacts`: run artifact phases through `tasks.md`, then stop before `apply`.
+- `auto`: run artifacts, apply, and verify; stop on blocker or failed verification.
 
-### OpenSpec config shape
+Default for this project: `auto-artifacts`.
 
-`openspec/config.yaml` should be valid for the installed `spec-driven` schema.
-The `rules` map should only contain schema artifacts as lists of strings:
+Default for this project: `auto-artifacts` unless the user explicitly asks for implementation.
 
-- `rules.proposal`
-- `rules.specs`
-- `rules.design`
-- `rules.tasks`
-- `rules.apply`
-- `rules.verify`
+When a user says “execute the SDD cycle” for a card or change without specifying
+a mode, use `auto-artifacts`: create/link the change, run artifact phases, then
+stop before `apply`.
 
-Do not put nested objects under `rules.apply` or `rules.verify`.
-Do not add `rules.archive` while `archive` is not an artifact in the installed schema.
+When the harness supports subagents, every SDD phase MUST be executed by a
+phase-specialized subagent through `openspec-phase-orchestrator`.
 
-Project-specific metadata that does not fit the `rules` shape lives under
-`ai_specs_guidance` (for humans and local tooling, not part of the artifact
-contract).
+## Phase Map
 
-### Commits during apply
+- `explore`: thinking and scope discovery; no artifact required.
+- `proposal`: create `openspec/changes/<change>/proposal.md`.
+- `specs`: create/update delta specs under `openspec/changes/<change>/specs/`
+  when required by the decision matrix or by a contract/source-of-truth change.
+- `design`: create/update `design.md`.
+- `tasks`: create/update `tasks.md`.
+- `apply`: implement tasks and update checkboxes.
+- `verify`: validate against specs and write `verify-report.md`.
+- `archive`: archive after merge/approval according to project rules.
 
-1. **Prefer one commit per top-level block** in `openspec/changes/<change>/tasks.md`
-   (sections `## 1`, `## 2`, …) when that block is a coherent unit of work.
+> **Adaptive note**: if the ceremony level is `trivial` or `local_fix`, omit
+> artifact phases that the decision matrix declares unnecessary. For `trivial`,
+> no SDD artifacts are required. For `local_fix`, only code changes and tests
+> are required.
 
-2. **Within a long phase**, split by sub-phase if the diff would otherwise be
-   hard to review, but keep each commit **green** (`./tests/run.sh` or the
-   narrowest test slice you are using for TDD).
+## Guardrails
 
-3. **Update `tasks.md` checkboxes** as each task completes; commits and checkboxes
-   advance together so progress stays auditable.
+- Use phase-specialized subagents whenever the runtime supports them.
+- Do not enter `apply`, push, merge, archive, or clean up worktrees without explicit human instruction.
+- Preserve unrelated changes in any workspace or worktree.
+- If tracker state, OpenSpec state, and handoff disagree, present the conflict and ask.
+- Keep commits aligned with coherent task groups when implementation begins.
+- Before final verification, run the focused tests plus full validation when feasible.
+- **Respect the `sdd.threshold` of the active recipe**. If the classification of
+  the change falls below that threshold, emit a warning and consult the user
+  before proceeding.
 
-4. **End of apply** (before PR): run `./tests/validate.sh`, refresh
-   `apply-progress.md` / `verify-report.md` as required by the change, then push.
+## Artifact-Cycle Handoff
 
-### Archive after merge
+After `tasks.md` in `auto-artifacts`, stop and report:
 
-When the implementation is merged into **`development`** (or the integration
-branch your team uses), close the change with **`openspec-archive-change`** so
-delta specs and the change folder follow the project archive rules. Verify first
-with **`openspec-verify-change`** / `verify-report.md` if the change required it.
+After the final artifact (`tasks.md`) in `auto-artifacts`, provide an exhaustive
+artifact-cycle review with:
 
----
+- Card/change linkage and intended outcome.
+- Artifacts created or updated.
+- Risks and open questions.
+- Recommended implementation strategy.
+- Clear options: `interactive apply`, `auto apply`, or `apply only`.
 
-## Part 4: Complete Workflow Example
-
-```
-[Worktree setup]
-  git checkout development
-  git pull --ff-only origin development
-  git worktree add .worktrees/my-feature -b my-feature development
-  cd .worktrees/my-feature
-  ./tests/run.sh            # verify clean baseline
-
-[SDD cycle inside worktree]
-  openspec new change "my-feature"
-  openspec continue         # proposal → specs → design → tasks
-  openspec apply            # implement tasks
-  openspec verify           # validate against specs
-  openspec sync-specs       # delta → main specs
-  openspec archive-change   # move to archive/
-
-[Cleanup]
-  cd ../..
-  git worktree remove .worktrees/my-feature
-  git branch -d my-feature
-```
-
----
+Else if tasks exist with pending checkboxes → `apply` only when mode is `auto` or the user explicitly requested apply; otherwise stop with the artifact-cycle review.
 
 ## Related Skills
 
-- `openspec-explore` — exploration stance
-- `openspec-new-change` — change creation
-- `openspec-continue-change` — artifact creation
-- `openspec-apply-change` — implementation
-- `openspec-verify-change` — verification
-- `openspec-archive-change` — archival
-- `testing-foundation` — default test commands and evidence
+- `openspec-phase-orchestrator` for subagent phase execution.
+- `openspec-new-change` and `openspec-continue-change` for artifact creation.
+- `openspec-apply-change`, `openspec-verify-change`, and `openspec-archive-change` for later phases.
+- `git-merge-workflow` for PR, merge, cleanup, and sync.

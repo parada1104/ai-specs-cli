@@ -55,10 +55,11 @@ The system MUST validate that skills intended for Auto-invoke have complete sync
 - **WHEN** sync attempts to build Auto-invoke rows
 - **THEN** sync MUST fail with an actionable error naming the missing field and skill path
 
-#### Scenario: Complete sync metadata generates AGENTS rows
+#### Scenario: Complete sync metadata generates registry artifact rows
 - **GIVEN** a local or vendored skill with complete `metadata.scope` and `metadata.auto_invoke`
 - **WHEN** `ai-specs sync` runs
-- **THEN** generated `AGENTS.md` MUST include one Auto-invoke row per trigger for matching scopes
+- **THEN** the generated registry artifact MUST include one Auto-invoke row per trigger for matching scopes
+- **AND** `AGENTS.md` MUST NOT contain Auto-invoke rows
 
 ### Requirement: Contract documentation and ownership boundaries
 The system MUST publish a human-owned contract document for skill frontmatter and define ownership boundaries for local, vendored, and fan-out skill files.

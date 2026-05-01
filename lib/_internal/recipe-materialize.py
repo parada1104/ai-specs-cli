@@ -61,6 +61,10 @@ def warn(msg: str) -> None:
     print(f"  ! {msg}", file=sys.stderr)
 
 
+def info(msg: str) -> None:
+    print(f"  ℹ {msg}")
+
+
 # --- Load recipe schema helper ------------------------------------------------
 _recipe_schema_module = None
 
@@ -123,13 +127,14 @@ def validate_version_pin(recipe_id: str, manifest_version: str, recipe: Any) -> 
 
 
 # --- Materialize helpers ------------------------------------------------------
-def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Path) -> None:
+def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Path, recipe_id: str) -> None:
     src = recipe_dir / "skills" / skill_id
-    dest = project_root / "ai-specs" / "skills" / skill_id
+    dest = project_root / ".recipe" / recipe_id / "skills" / skill_id
     if not src.is_dir():
         raise RuntimeError(f"bundled skill not found: {src}")
     if dest.exists():
         shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dest)
     print(f"    ✓ bundled skill {skill_id}")
 
@@ -158,6 +163,8 @@ def materialize_command(recipe_dir: Path, cmd: Any, project_root: Path) -> None:
     dest = project_root / "ai-specs" / "commands" / f"{cmd.id}.md"
     if not src.is_file():
         raise RuntimeError(f"command source not found: {src}")
+    if dest.exists() and (not dest.is_file() or dest.read_bytes() != src.read_bytes()):
+        warn(f"recipe command '{cmd.id}' overwrites existing command at {dest.relative_to(project_root)}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dest)
     print(f"    ✓ command {cmd.id}")
@@ -267,20 +274,8 @@ def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]
     return result
 
 
-# --- Recipe vs user-local skill warning --------------------------------------
-def warn_user_local_conflicts(project_root: Path, recipe: Any) -> None:
-    user_skills_dir = project_root / "ai-specs" / "skills"
-    for skill in recipe.skills:
-        user_skill = user_skills_dir / skill.id
-        if user_skill.is_dir():
-            warn(
-                f"recipe '{recipe.name}' provides skill '{skill.id}' which already exists "
-                f"in ai-specs/skills/. Recipe version takes precedence."
-            )
-
-
 # --- Hook execution -----------------------------------------------------------
-def execute_hooks(recipe: Any, merged_config: dict[str, Any]) -> None:
+def execute_hooks(recipe: Any, merged_config: dict[str, Any], project_root: Path) -> None:
     """Execute recipe hooks in declaration order.
 
     Unknown actions emit a warning and are skipped.
@@ -296,23 +291,65 @@ def execute_hooks(recipe: Any, merged_config: dict[str, Any]) -> None:
                         f"recipe '{recipe.name}': hook 'validate-config' failed: "
                         f"missing required config field '{key}'"
                     )
+        elif hook.action == "bootstrap-board":
+            marker_dir = project_root / ".recipe" / recipe.id
+            marker_dir.mkdir(parents=True, exist_ok=True)
+            (marker_dir / "bootstrap-ready").write_text(
+                f"board_id={merged_config.get('board_id', '')}\n"
+                f"default_list={merged_config.get('default_list', 'In Progress')}\n"
+                f"epic_list={merged_config.get('epic_list', 'Epic')}\n"
+            )
+        elif hook.action == "link-trello-card":
+            info(f"recipe '{recipe.name}': hook 'link-trello-card' deferred to agent runtime")
+        elif hook.action == "sync-card-state":
+            info(f"recipe '{recipe.name}': hook 'sync-card-state' deferred to agent runtime")
+        elif hook.action == "comment-verification":
+            info(f"recipe '{recipe.name}': hook 'comment-verification' deferred to agent runtime")
         else:
             warn(f"recipe '{recipe.name}': unknown hook action '{hook.action}' (skipped)")
 
 
 # --- MCP merge ---------------------------------------------------------------
 def build_recipe_mcp(catalog_dir: Path, recipe_ids: list[str], manifest_mcp: dict[str, Any]) -> dict[str, Any]:
-    """Merge recipe MCP presets. Recipe values take precedence over manifest."""
-    merged: dict[str, Any] = dict(manifest_mcp)
+    """Merge recipe MCP presets with manifest precedence (shallow merge).
+
+    Project manifest keys always win over recipe defaults. Conflicting keys
+    emit a warning and are skipped.
+    """
+    merged: dict[str, Any] = {sid: dict(cfg) for sid, cfg in manifest_mcp.items()}
     for rid in recipe_ids:
         recipe = read_recipe(catalog_dir, rid)
         for mcp in recipe.mcp:
-            if mcp.id in merged:
-                warn(
-                    f"recipe '{recipe.name}' overrides mcp.id='{mcp.id}' from project manifest"
-                )
-            merged[mcp.id] = mcp.config
+            if mcp.id not in merged:
+                merged[mcp.id] = dict(mcp.config)
+                continue
+            manifest_cfg = merged[mcp.id]
+            for key, value in mcp.config.items():
+                if key in manifest_cfg:
+                    warn(
+                        f"recipe '{recipe.name}' mcp.id='{mcp.id}' key '{key}' "
+                        f"conflicts with project manifest (manifest wins)"
+                    )
+                else:
+                    manifest_cfg[key] = value
     return merged
+
+
+# --- Orphan cleanup -----------------------------------------------------------
+def clean_orphans(project_root: Path, enabled_recipe_ids: set[str], expected_dep_ids: set[str]) -> None:
+    recipe_dir = project_root / ".recipe"
+    if recipe_dir.is_dir():
+        for child in recipe_dir.iterdir():
+            if child.is_dir() and child.name not in enabled_recipe_ids:
+                shutil.rmtree(child)
+                print(f"  ✓ removed orphaned .recipe/{child.name}")
+
+    deps_dir = project_root / ".deps"
+    if deps_dir.is_dir():
+        for child in deps_dir.iterdir():
+            if child.is_dir() and child.name not in expected_dep_ids:
+                shutil.rmtree(child)
+                print(f"  ✓ removed orphaned .deps/{child.name}")
 
 
 # --- Main ---------------------------------------------------------------------
@@ -322,7 +359,16 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
 
     recipes = load_recipes_from_manifest(project_root)
     enabled = {rid: cfg for rid, cfg in recipes.items() if cfg.get("enabled")}
+
+    # Collect expected dep IDs from manifest [[deps]]
+    mod = _load_toml_read()
+    manifest_data = mod.load_toml(project_root / "ai-specs" / "ai-specs.toml")
+    manifest_deps = mod.read_deps(manifest_data)
+    expected_dep_ids: set[str] = {d.get("id", "") for d in manifest_deps if d.get("id")}
+
     if not enabled:
+        # Still clean up orphaned recipes (none expected) and deps not in manifest
+        clean_orphans(project_root, set(), expected_dep_ids)
         print("  (no [recipes.*] enabled — skipping)")
         return 0
 
@@ -364,13 +410,21 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
     manifest_data = mod.load_toml(toml_path)
     manifest_mcp = mod.read_mcp(manifest_data)
 
-    recipe_mcp: dict[str, Any] = dict(manifest_mcp)
+    recipe_mcp: dict[str, Any] = {sid: dict(cfg) for sid, cfg in manifest_mcp.items()}
+
+    # Collect dep IDs from enabled recipes' dep skills
+    for rid, cfg in enabled.items():
+        recipe = read_recipe(catalog_dir, rid)
+        for skill in recipe.skills:
+            if skill.source == "dep":
+                expected_dep_ids.add(skill.id)
+
+    clean_orphans(project_root, set(enabled.keys()), expected_dep_ids)
 
     for rid, cfg in enabled.items():
         print(f"  ▸ recipe {rid}")
         recipe = read_recipe(catalog_dir, rid)
         validate_version_pin(rid, cfg.get("version", ""), recipe)
-        warn_user_local_conflicts(project_root, recipe)
 
         # Config merge (NEW)
         manifest_config = cfg.get("config", {})
@@ -381,7 +435,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
         # Skills (bundled then deps)
         for skill in recipe.skills:
             if skill.source == "bundled":
-                materialize_bundled_skill(recipe_dir, skill.id, project_root)
+                materialize_bundled_skill(recipe_dir, skill.id, project_root, rid)
             elif skill.source == "dep":
                 materialize_dep_skill(skill, project_root)
             else:
@@ -391,13 +445,20 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
         for cmd in recipe.commands:
             materialize_command(recipe_dir, cmd, project_root)
 
-        # MCP presets (accumulate for merge)
+        # MCP presets (shallow merge with manifest precedence)
         for mcp in recipe.mcp:
-            if mcp.id in recipe_mcp:
-                warn(
-                    f"recipe '{recipe.name}' overrides mcp.id='{mcp.id}' from project manifest"
-                )
-            recipe_mcp[mcp.id] = mcp.config
+            if mcp.id not in recipe_mcp:
+                recipe_mcp[mcp.id] = dict(mcp.config)
+                continue
+            manifest_cfg = recipe_mcp[mcp.id]
+            for key, value in mcp.config.items():
+                if key in manifest_cfg:
+                    warn(
+                        f"recipe '{recipe.name}' mcp.id='{mcp.id}' key '{key}' "
+                        f"conflicts with project manifest (manifest wins)"
+                    )
+                else:
+                    manifest_cfg[key] = value
 
         # Templates
         for tpl in recipe.templates:
@@ -408,7 +469,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
             materialize_doc(recipe_dir, doc, project_root)
 
         # Hook execution (NEW)
-        execute_hooks(recipe, merged_cfg)
+        execute_hooks(recipe, merged_cfg, project_root)
 
     # Write merged MCP for downstream mcp-render.py
     recipe_mcp_path = project_root / "ai-specs" / ".recipe-mcp.json"

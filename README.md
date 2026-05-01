@@ -1,16 +1,30 @@
 # ai-specs
 
-One declarative manifest per project — fan out to Claude, Cursor, OpenCode, Codex, Copilot, and Gemini.
+Per-project harness engineering for existing coding-agent tools.
 
-`ai-specs` is a per-project standard for managing AI agent configuration: skills,
-MCP servers, and per-agent instruction files. Each project owns its manifest at
-`ai-specs/ai-specs.toml`; the global `ai-specs` CLI distributes that manifest
-into every enabled agent's native format.
+`ai-specs` is a per-project standard for managing coding-agent configuration:
+skills, MCP servers, derived instructions, and workflow artifacts for tools
+such as Claude, Cursor, OpenCode, Codex, Copilot, and Gemini. Each project owns
+its manifest at `ai-specs/ai-specs.toml`; the global `ai-specs` CLI distributes
+that manifest into every enabled tool's native format.
+
+The goal is to give a repo its own operational harness: project-local agent
+rules, vendored skills, MCP presets, recipes, and SDD workflow wiring that can
+be committed, reviewed, and reproduced by a team.
+
+`ai-specs` is **not** a general framework for building arbitrary agents or
+custom runtimes from scratch. It does not currently provision a new agent
+runtime over frameworks like LangChain, nor does it define a universal agent
+execution model. It assumes an existing coding tool/runtime and focuses on the
+per-project harness around it.
 
 Inspired by [`charliesbot/chai`](https://github.com/charliesbot/chai) (global
 fan-out, merge-safe MCP) but **per-project** so different repos can have
 different agents, skills, and MCP servers — and the configuration is
 committable and shareable with a team.
+
+In short: `ai-specs` is closer to a per-project operating layer for supported
+coding tools than to an agent-building SDK.
 
 ## What's included (MVP v1)
 
@@ -20,7 +34,8 @@ committable and shareable with a team.
 | **Multi-agent fan-out** | ✅ | Claude, Cursor, OpenCode, Codex, Copilot, Gemini |
 | **MCP server distribution** | ✅ | Merge-safe MCP config per agent (JSON, TOML) |
 | **Skill management** | ✅ | Local, bundled, and vendored skills with autodiscovery |
-| **AGENTS.md generation** | ✅ | Auto-invoke table synced from skill frontmatter |
+| **AGENTS.md runtime brief** | ✅ | Concise operational context generated from `ai-specs.toml` |
+| **Skill registry artifact** | ✅ | Auto-generated `ai-specs/.skill-registry.md` with skill index and Auto-invoke mappings |
 | **Project initialization** | ✅ | `ai-specs init` scaffolds structure idempotently |
 | **Dependency vendoring** | ✅ | `ai-specs add-dep` + `ai-specs sync` clones external skills |
 | **Subrepo sync** | ✅ | Mirror derived artifacts to `project.subrepos` |
@@ -47,6 +62,7 @@ These features are **explicitly deferred** to post-MVP (EPICs 2–7). They are
 | **Tracker adapters** | EPIC 7 | No Trello/Jira/GitHub Issues integration |
 | **Semantic search** | Post-MVP | No embeddings or local vector search for skills/docs |
 | **Coverage / linter / type-check** | Post-MVP | Testing foundation exists; stronger tooling not configured |
+| **Build arbitrary agent runtimes** | Out of scope today | No LangChain-style "create a new agent from zero" harness generation |
 
 > If you need any of these now, open an issue or vendor a skill via `[[deps]]`
 > that implements the desired behavior locally.
@@ -132,76 +148,27 @@ is readable, and `ai-specs sdd enable` will scaffold `openspec/` with a valid
 base configuration for the `spec-driven` schema. See [`docs/ai/sdd.md`](docs/ai/sdd.md)
 for the full SDD provider contract and generated command reference.
 
-## Manifest V1 contract (`ai-specs/ai-specs.toml`)
+## Manifest and recipe references
 
-`ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.
-The runtime contract includes optional **`[sdd]`** for OpenSpec onboarding; there is
-still no separate `[memory]` manifest section (distinct from `[sdd].artifact_store`).
+`ai-specs/ai-specs.toml` remains the root source of truth, but the detailed
+contract now lives in dedicated references:
 
-Canonical V1 surface:
+- [`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) — canonical manifest reference
+- [`docs/recipe-schema.md`](docs/recipe-schema.md) — canonical recipe and recipe V2 reference
+- [`docs/ai/sdd.md`](docs/ai/sdd.md) — SDD provider contract and OpenSpec workflow
 
-- `[project]`
-- `[agents]`
-- `[[deps]]`
-- `[mcp.<name>]`
-- `[recipes.<id>]` (optional — named bundles of skills, commands, templates, and MCP presets)
-- `[sdd]` (optional — SDD / OpenSpec; see section above)
+Use the README for overview and navigation. Use the dedicated references for:
 
-Omission of `[sdd]` remains valid for projects not using SDD.
+- supported manifest sections and defaults
+- `[[bindings]]` and `[recipes.<id>.config]`
+- recipe schema details such as `[[capabilities]]`, `[[hooks]]`, `[init]`, and recipe `[sdd]`
+- explicit compatibility boundaries and deferred items
 
-Conservative compatibility rules:
-
-- Missing `[agents]`, `[[deps]]`, and `[mcp]` remain valid and normalize to stable defaults.
-- `project.subrepos` remains validated by the existing root target resolver.
-- MCP `env` is the canonical field name.
-- MCP `environment` is still accepted as a tolerated input alias and normalizes to `env`.
-
-Field classification in V1:
-
-| Surface | Fields | Status |
-|---------|--------|--------|
-| `[project]` | `name` | optional, default `""` |
-| `[project]` | `subrepos` | optional, default `[]`, validated as root-relative target paths |
-| `[agents]` | `enabled` | optional, default `[]` |
-| `[[deps]]` | `id`, `source` | only required minimum fields |
-| `[[deps]]` | `path`, `scope`, `auto_invoke`, `license`, `vendor_attribution` | optional passthrough fields consumed by vendoring/rendering |
-| `[mcp.<name>]` | `command` | optional |
-| `[mcp.<name>]` | `args` | optional, default `[]` |
-| `[mcp.<name>]` | `env` | optional canonical field, default `{}` |
-| `[mcp.<name>]` | `environment` | tolerated input alias of `env` |
-| `[mcp.<name>]` | `timeout` | optional |
-| `[mcp.<name>]` | `enabled` | tolerated passthrough field |
-| `[recipes.<id>]` | `enabled` | required; boolean — must be `true` to materialize |
-| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
-| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |
-
-Out of scope for this V1 contract (explicitly deferred to future changes):
-
-- precedence / merge policy beyond the currently implemented runtime behavior
-- `[memory]` (distinct from `[sdd].artifact_store = memory`)
-
-## Recipes
-
-Recipes are named, versioned bundles of skills, commands, templates, and MCP presets.
-They live in `catalog/recipes/<id>/recipe.toml` and are materialized by `ai-specs sync`.
-
-Declare a recipe in your manifest:
-
-```toml
-[recipes.runtime-memory-openmemory]
-enabled = true
-version = "1.0.0"
-```
-
-On `ai-specs sync`, the CLI:
-1. Validates the recipe exists in the catalog
-2. Checks the version pin matches `recipe.toml`
-3. Copies bundled skills, commands, templates, and docs into the project
-4. Vendors external skills declared with `source = "dep"`
-5. Merges MCP presets into derived agent configs (recipe values take precedence)
-6. Detects and fails on primitive ID collisions across recipes
-
-Recipe vs user-local skills produce a warning (recipe version wins), not a fatal error.
+At a high level, recipes are named, versioned bundles of skills, commands,
+templates, docs, and MCP presets materialized by `ai-specs sync`. The sync
+pipeline validates version pins, copies declared primitives, resolves
+capability bindings, and merges recipe MCP defaults with project manifest
+precedence.
 
 ## Recommended skills (catalog)
 
@@ -213,7 +180,7 @@ external skill.
 
 After vendoring `context-precedence` from the catalog, the rule lives in
 [`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md).
-`AGENTS.md` links there once the skill exists and you run `ai-specs sync`.
+The skill is listed in `ai-specs/.skill-registry.md` once the skill exists and you run `ai-specs sync`.
 
 ## Testing foundation
 
@@ -227,35 +194,70 @@ OpenSpec `config.yaml` shape and apply-time commit conventions:
 
 ```
 my-project/
-├── AGENTS.md                       ← generated artifact (do not edit; managed by skill-sync)
+├── AGENTS.md                       ← runtime brief generated from manifest (do not edit by hand)
 ├── .gitignore                      ← appended with an ai-specs block (gitignores agent files)
+├── .recipe/                        ← recipe-bundled skills (gitignored; restored by sync)
+│   └── <recipe-id>/
+│       ├── skills/<skill-id>/
+│       └── overrides/              ← optional runtime overrides per recipe
+├── .deps/                          ← vendored dependency skills (gitignored; restored by sync)
+│   └── <dep-id>/
+│       └── skills/<skill-id>/
 └── ai-specs/
     ├── ai-specs.toml               ← YOUR manifest (edit this)
-    ├── .gitignore                  ← derived; lists vendored skill dirs
+    ├── .gitignore                  ← derived; ignores resolved-skills dir
+    ├── .skill-registry.md          ← generated skill index + Auto-invoke mappings (do not edit by hand)
+    ├── .resolved-skills/           ← flattened resolved skill tree (gitignored; used by agents)
     ├── skills/
-        ├── skill-creator/          ← bundled on init (contract)
-        ├── skill-sync/             ← bundled on init (contract)
-        ├── …/                      ← optional: vendor from catalog (see catalog/README.md) + locals
-        ├── <your-local-skill>/     ← creada con `/skills-as-rules` (committed)
-        └── <vendored-skill>/       ← cloned from [[deps]] (gitignored)
+    │   ├── skill-creator/          ← bundled on init (contract)
+    │   ├── skill-sync/             ← bundled on init (contract)
+    │   └── <your-local-skill>/     ← created with `/skills-as-rules` (committed)
     └── commands/
         └── <your-local-command>.md ← fanned out to native agent command dirs
 ```
 
-### Three skill categories
+### Three-tier skill layout
 
-| Category   | Lives in            | Listed in toml? | Committed? | Created by             |
-|------------|---------------------|-----------------|------------|------------------------|
-| Local      | `ai-specs/skills/<name>/`   | No (autodiscovered) | Yes        | `/skills-as-rules` |
-| Bundled    | `ai-specs/skills/{skill-creator,skill-sync}/` | No | Yes (own-and-customize) | `ai-specs init` (from `bundled-skills/`) |
-| Vendored   | `ai-specs/skills/<dep-id>/` | Yes (`[[deps]]`)    | No (gitignored) | `ai-specs add-dep <url>` → cloned by sync (includes [catalog](catalog/README.md) skills) |
+Skills are resolved from three isolated sources with deterministic precedence:
+
+1. **Local** (`ai-specs/skills/<id>/`) — highest precedence; committed project-owned skills
+2. **Recipe** (`.recipe/<recipe-id>/skills/<id>/`) — middle precedence; bundled by enabled recipes
+3. **Dependency** (`.deps/<dep-id>/skills/<id>/`) — lowest precedence; cloned from `[[deps]]`
+
+When the same skill ID exists in multiple sources, the higher-precedence source
+wins automatically. Local skills silently override recipe and dep versions
+without error or warning.
+
+| Category   | Lives in                                  | Listed in toml? | Committed? | Created by |
+|------------|-------------------------------------------|-----------------|------------|------------|
+| Local      | `ai-specs/skills/<name>/`                 | No (autodiscovered) | Yes | `/skills-as-rules` |
+| Recipe     | `.recipe/<recipe-id>/skills/<name>/`      | Yes (`[recipes.*]`) | No (gitignored) | `ai-specs sync` |
+| Dependency | `.deps/<dep-id>/skills/<name>/`           | Yes (`[[deps]]`)    | No (gitignored) | `ai-specs add-dep <url>` → cloned by sync |
+
+Recipe-bundled and vendored skills are kept outside `ai-specs/skills/` so your
+local skill directory stays clean and commit-ready. On every `ai-specs sync`,
+the CLI rebuilds `.recipe/` and `.deps/` from the manifest, removes orphaned
+directories for disabled recipes or deleted deps, and flattens the resolved
+skill tree into `ai-specs/.resolved-skills/` for agent consumption.
+
+### Runtime overrides for recipe skills
+
+Each recipe can provide optional overrides without forking the recipe code:
+
+- `.recipe/<recipe-id>/overrides/config.toml` — merged on top of bundled defaults
+- `.recipe/<recipe-id>/overrides/templates/<name>.md` — overrides identically-named bundled templates
+
+Overrides are scoped to their parent recipe and do not leak into other recipes
+or dependencies. Missing override files are handled gracefully (no error, no
+warning). The `overrides/` directory is gitignored so teams can share the base
+recipe while allowing individual customizations.
 
 ## CLI
 
 | Command | Description |
 |---------|-------------|
 | `ai-specs init [path] [--name N] [--force]` | Bootstrap `ai-specs/` (idempotent; never touches your `ai-specs.toml`). `--force` re-copies bundled skills/commands & regenerates AGENTS.md |
-| `ai-specs sync [path]` | Resolve `[root, ...project.subrepos]`, refresh bundled, vendor `[[deps]]` once, regen AGENTS.md auto-invoke, then fan out local derived artifacts per target + per agent |
+| `ai-specs sync [path]` | Resolve `[root, ...project.subrepos]`, refresh bundled, vendor `[[deps]]` once, regen AGENTS.md runtime brief + `ai-specs/.skill-registry.md`, then fan out local derived artifacts per target + per agent |
 | `ai-specs sync-agent [path] [--all|--<agent>]` | Fan out per-agent only for the current target (no vendoring/regen) |
 | `ai-specs doctor [path]` | Read-only health check for manifest, bundled assets, enabled agents, symlinks, and MCP outputs (does not modify files) |
 | `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI — keeps your edits, drops `.new` sidecars for files you customized |
@@ -287,14 +289,15 @@ config via a **merge-safe** strategy: `ai-specs` owns the MCP key (e.g.
 | Agent    | Reads AGENTS.md natively? | Native skill auto-invoke? | What sync-agent generates |
 |----------|---------------------------|---------------------------|---------------------------|
 | Claude   | No (needs `CLAUDE.md`)    | Yes (`.claude/skills/<name>/SKILL.md`) | `CLAUDE.md` symlink + `.claude/skills` symlink → `ai-specs/skills` + `.mcp.json` |
-| Cursor   | Yes                       | No (skills via AGENTS.md text)         | `.cursor/mcp.json` |
+| Cursor   | Yes                       | No (skills via filesystem + registry)  | `.cursor/mcp.json` |
 | OpenCode | Yes                       | No                                     | `opencode.json` |
 | Codex    | Yes                       | No                                     | `.codex/config.toml` |
 | Copilot  | No (`.github/copilot-instructions.md`) | No                          | `.github/copilot-instructions.md` symlink |
 | Gemini   | No (needs `GEMINI.md`)    | Yes (`.gemini/skills/<name>/SKILL.md`) | `GEMINI.md` symlink + `.gemini/skills` symlink + `.gemini/settings.json` |
 
-The `Auto-invoke` table in `AGENTS.md` is regenerated automatically by
-`skill-sync` whenever you `ai-specs sync` or run `/skills-as-rules`.
+The canonical skill index and Auto-invoke mappings live in
+`ai-specs/.skill-registry.md` and are regenerated automatically by `skill-sync`
+whenever you `ai-specs sync` or run `/skills-as-rules`.
 
 ## Root + subrepo sync
 

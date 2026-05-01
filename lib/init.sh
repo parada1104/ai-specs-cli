@@ -126,8 +126,11 @@ echo ""
 
 # 1. Create directories
 mkdir -p "$SKILLS_DIR" "$COMMANDS_DIR"
+mkdir -p "$TARGET_PATH/.recipe" "$TARGET_PATH/.deps"
 echo "  ✓ ensure $AI_SPECS_DIR/skills/"
 echo "  ✓ ensure $AI_SPECS_DIR/commands/"
+echo "  ✓ ensure $TARGET_PATH/.recipe/"
+echo "  ✓ ensure $TARGET_PATH/.deps/"
 
 # 2. Copy bundled skills (contracts only: skill-creator + skill-sync).
 #    Optional policy skills → [[deps]] from ai-specs-cli catalog/ (see catalog/README.md).

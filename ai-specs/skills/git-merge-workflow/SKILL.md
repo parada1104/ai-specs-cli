@@ -1,15 +1,14 @@
 ---
 name: git-merge-workflow
 description: >
-  Unified merge workflow for feature branches created in worktrees.
-  Covers: creating a PR via gh CLI, merging, cleaning up the worktree and local branch,
-  and syncing the local base branch (development) with the freshly merged remote.
-  Trigger: when finishing work on a feature branch or worktree, or when the user says merge.
+  Provider-oriented merge workflow for feature branches created in worktrees.
+  Uses the VCS/PR provider and base branch declared in the runtime brief; this
+  project uses GitHub through gh CLI and development as integration branch.
 license: MIT
 metadata:
   author: ai-specs
-  version: "1.0"
-  generatedBy: "1.0.0"
+  version: "2.0"
+  generatedBy: "manual-runtime"
   scope: [root]
   auto_invoke:
     - "Merging a feature branch into development"
@@ -21,147 +20,63 @@ metadata:
 
 # Git Merge Workflow
 
-## Overview
+Use this skill only when the user explicitly asks to create a PR, merge, finish a branch, or clean up after merge.
 
-This skill defines the complete merge-and-cleanup workflow for feature work in the
-`ai-specs-cli` repository. It is **independent of SDD** — it works for any change
-created in a worktree, whether it followed OpenSpec phases or not.
+Read `AGENTS.md` first for the configured base branch, VCS provider, and no-push/no-merge rules.
 
-**Core principle:** Every feature branch ends with a PR via `gh CLI`, a clean merge,
-worktree removal, and a synced local `development` branch.
+## Preconditions
 
-## When to Use
+- User explicitly requested PR/merge/cleanup.
+- Working branch belongs to one focused change.
+- Worktree has no unrelated uncommitted changes.
+- Required verification evidence is complete or the user accepts the gap.
+- `gh` is installed and authenticated when GitHub is the provider.
 
-- The user says "merge" or "finish this branch"
-- A feature is complete and needs a PR
-- After a PR is merged and cleanup is needed
-- Before starting new work to ensure `development` is up to date
+## Workflow
 
-## Prerequisites
+1. Inspect current branch, worktree path, and `git status`.
+2. Run or confirm verification required by the runtime brief/change.
+3. Push the feature branch:
 
-- `gh` CLI installed and authenticated (`gh auth status`)
-- Remote `origin` points to GitHub
-- Worktree exists under `.worktrees/` (or was used for the branch)
-- Base branch is `development` (configurable)
-
-## Workflow Steps
-
-### 1. Push the feature branch
-
-From inside the worktree or with the branch checked out:
-
-```bash
-git push origin <branch-name>
-```
-
-If the branch does not exist on remote, create it:
 ```bash
 git push -u origin <branch-name>
 ```
 
-### 2. Create Pull Request via gh CLI
+4. Create a PR with the configured base branch:
 
 ```bash
-gh pr create \
-  --base development \
-  --title "<type>(<scope>): <short description>" \
-  --body "$(cat .github/pull_request_template.md 2>/dev/null || echo 'See commit messages for details.')"
+gh pr create --base <integration-branch> --title "<title>" --body "<summary and verification>"
 ```
 
-**Title conventions** (same as commits):
-- `feat(recipe): add capability binding`
-- `fix(schema): resolve backward compat edge case`
-- `docs(readme): update recipe examples`
+5. Merge only after explicit user approval and required checks/review:
 
-If the repo uses a PR template, use it. Otherwise provide a minimal body with:
-- What changed
-- Why
-- How to test / verify
-
-### 3. (Optional) Enable auto-merge
-
-If CI passes and no review is required:
-
-```bash
-gh pr merge --auto --squash
-```
-
-Or wait for review, then merge manually:
 ```bash
 gh pr merge --squash
 ```
 
-### 4. Cleanup after merge
+6. After the PR is merged, remove the worktree and delete the local branch:
 
-**Remove the worktree:**
 ```bash
 git worktree remove .worktrees/<branch-name>
-```
-
-If the worktree is already gone (e.g. was removed manually), verify:
-```bash
-git worktree list
-```
-
-**Delete the local branch:**
-```bash
 git branch -d <branch-name>
 ```
 
-If the branch was not fully merged (should not happen after a successful PR merge),
-use `-D` instead, but warn the user.
+7. Sync the integration branch:
 
-### 5. Sync local development
-
-**Checkout development and fast-forward from origin:**
 ```bash
-git checkout development
-git pull --ff-only origin development
-```
-
-If fast-forward is not possible, report the divergence and stop:
-```bash
-git pull --ff-only origin development || echo "Divergence detected — manual merge required"
+git checkout <integration-branch>
+git pull --ff-only origin <integration-branch>
 ```
 
 ## Guardrails
 
-- **Never merge locally with `git merge`** — always go through `gh pr create` + `gh pr merge`.
-- **Never delete a worktree without verifying the PR is merged** — check `gh pr view --json state`.
-- **Never skip `git pull --ff-only`** — the local `development` must reflect the freshly merged remote.
-- **If `gh` is not installed or not authenticated**, stop and ask the user to run `gh auth login`.
+- Never merge locally with `git merge` for feature work that should go through PR.
+- Never push, merge, delete branches, or remove worktrees without explicit user instruction.
+- Never remove a worktree before confirming the PR is merged and no uncommitted work remains.
+- Preserve unrelated changes; stop and ask if cleanup would touch them.
+- If `gh` is unavailable or unauthenticated, stop with the exact blocker.
 
-## Anti-patterns
+## Related
 
-- Running `git merge --no-ff` locally (bypasses PR/review/CI)
-- Deleting the worktree before the PR is merged (loses uncommitted work)
-- Leaving stale branches or worktrees after merge (repo clutter)
-- Forgetting to pull `development` after merge (next worktree starts from stale base)
-
-## Complete Workflow Example
-
-```bash
-# Inside the worktree, feature is done
-git push origin feat/my-feature
-
-# Create PR
-gh pr create --base development --title "feat(module): description"
-
-# Merge (after CI/review)
-gh pr merge --squash
-
-# Cleanup
-cd ../..
-git worktree remove .worktrees/feat/my-feature
-git branch -d feat/my-feature
-
-# Sync development
-git checkout development
-git pull --ff-only origin development
-```
-
-## Related Skills
-
-- `openspec-sdd-workflow` — SDD phase orchestration (creates worktrees)
-- `openspec-phase-orchestrator` — phase-by-phase SDD execution
-- `using-git-worktrees` — worktree creation and isolation
+- `openspec-sdd-workflow` creates/uses the change worktree.
+- `openspec-verify-change` records verification evidence before merge.

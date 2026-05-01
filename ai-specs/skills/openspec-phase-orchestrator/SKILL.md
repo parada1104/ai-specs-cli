@@ -1,12 +1,14 @@
 ---
 name: openspec-phase-orchestrator
-description: Orchestrate OpenSpec changes using phase-specialized subagents for cleaner context windows. Use when working through a change and you want each SDD phase executed in isolation.
+description: >
+  Orchestrate SDD/OpenSpec changes using phase-specialized subagents, minimal
+  context packets, structured handoffs, and phase events consumable by recipes.
 license: MIT
-compatibility: Requires openspec CLI.
+compatibility: Requires openspec CLI when OpenSpec is the configured SDD provider.
 metadata:
   author: ai-specs
-  version: "1.0"
-  generatedBy: "1.0.0"
+  version: "2.0"
+  generatedBy: "manual-runtime"
   scope: [root]
   auto_invoke:
     - "Orchestrating an OpenSpec change phase by phase"
@@ -15,354 +17,195 @@ metadata:
     - "Continuing an OpenSpec change"
     - "Implementing tasks from an OpenSpec change"
     - "Verifying an OpenSpec change implementation"
-    - "Exploring an idea before or during an OpenSpec change"
-    - "Archiving a completed OpenSpec change"
-    - "Merging a feature branch into development"
-    - "Creating a pull request from a worktree"
-    - "Cleaning up a worktree after merge"
-    - "Finishing work on a feature branch"
-    - "Syncing development after a merge"
 ---
 
-Orchestrate OpenSpec changes using phase-specialized subagents (or inline fallback) to keep context windows focused and clean.
+# openspec-phase-orchestrator
 
-**Input**: Optionally specify a change name and/or target phase. If omitted, infer from context or auto-select.
+This skill coordinates SDD phases. It delegates execution to phase-specialized
+subagents when the harness supports them and falls back to inline execution only
+when subagents are unavailable.
 
-**Modes of Execution**
+When the harness exposes a `task`/subagent capability, every SDD phase MUST run
+through a fresh phase-specialized subagent. Inline execution is only a fallback
+for harnesses that do not support subagents.
 
-This skill operates in two modes, auto-selected by harness capability:
+Inline execution is only a fallback for harnesses that do not support subagents.
 
-| Mode | Trigger | Behavior | Context Window |
-|---|---|---|---|
-| `subagent` | `task` tool is available | Delegates phase to a fresh subagent | **Reset per phase** |
-| `inline` | `task` tool is NOT available | Executes phase directly in current agent | Shared (no reset) |
+Read `AGENTS.md` first. It defines the SDD provider, integration branch, tracker,
+memory providers, test commands, and safety rules for the current project.
 
-The `subagent` mode is preferred because it isolates the chain-of-thought, tool calls, and intermediate scratch work of each phase. The `inline` mode preserves the exact same flow and handoff contract, but without context isolation.
+## Core Rules
 
-**Phase Definitions (spec-driven schema)**
+- Use a fresh subagent for each phase whenever available.
+- Keep each phase payload minimal; include paths and decisions, not full history.
+- The executor reads dependency artifacts itself.
+- The orchestrator delegates, parses handoffs, emits events, and decides whether to advance.
+- It does not write artifacts directly in subagent mode.
 
-| Phase | Artifact(s) Produced | Specialist Skill Loaded |
-|---|---|---|
-| `explore` | Thinking captured in conversation or `proposal.md` if crystallized | `openspec-explore` |
-| `proposal` | `openspec/changes/<name>/proposal.md` | `openspec-new-change` (artifact creation) |
-| `specs` | `openspec/changes/<name>/specs/<capability>/spec.md` | `openspec-continue-change` |
-| `design` | `openspec/changes/<name>/design.md` | `openspec-continue-change` |
-| `tasks` | `openspec/changes/<name>/tasks.md` | `openspec-continue-change` |
-| `apply` | Code changes in repo + updated `tasks.md` checkboxes | `openspec-apply-change` |
-| `verify` | `openspec/changes/<name>/verify-report.md` | `openspec-verify-change` |
-| `archive` | Archived change in `openspec/changes/archive/` | `openspec-archive-change` |
-| `merge` | PR merged, worktree cleaned, development synced | `git-merge-workflow` |
+## Worktree Requirement
 
-**Steps**
+- `explore` may run outside a worktree if it produces no artifact.
+- Before `proposal`/`openspec-new-change` or any later artifact-writing phase, create or enter the dedicated change worktree.
+- Payloads for artifact-writing phases must include `cwd` and `worktree_path`.
+- Subagents must verify `cwd` before writing.
 
-1. **Select the change**
+## Cycle Modes
 
-   If a name is provided, use it. Otherwise:
-   - Infer from conversation context
-   - Auto-select if only one active change exists
-   - If ambiguous, run `openspec list --json` and prompt the user
+- `interactive`: run one phase and ask before the next.
+- `auto-artifacts`: run `proposal`, `specs`, `design`, and `tasks`, then stop before `apply`.
+- `auto`: run artifacts, `apply`, and `verify`; stop on blocker, error, or failed verification.
 
-   Announce: "Using change: <name> (phase: <detected-or-requested>)"
+| Mode | Behavior | Stop Point |
+|------|----------|------------|
+| `interactive` | Execute one phase at a time and ask before advancing. | After every phase. |
+| `auto-artifacts` | Automatically run artifact phases through `tasks.md`. | Stop after `tasks.md`; do not apply or verify. |
+| `auto` | Automatically run artifacts, apply, and verify. | Stop after verification (or on error/blocker). |
 
-2. **Detect current phase**
+Default for this project: `auto-artifacts`.
 
-   ```bash
-   openspec status --change "<name>" --json
-   ```
+Default to the mode declared in `AGENTS.md`; for this project that is
+`auto-artifacts` unless the user explicitly requests apply.
 
-   Parse the JSON to determine:
-   - `schemaName` (e.g., "spec-driven")
-   - `artifacts` array with statuses: `done`, `ready`, `blocked`
-   - `isComplete` boolean
+## Plan Mode Summary
 
-   Map artifact statuses to phase:
-   - If user requested a specific phase → use that phase
-   - Else if `isComplete: true` → suggest `verify` or `archive`
-   - Else if no `proposal.md` → `explore` or `proposal`
-   - Else if proposal exists but specs incomplete → `specs`
-   - Else if specs done but design missing → `design`
-   - Else if design done but tasks missing → `tasks`
-   - Else if tasks exist with pending checkboxes → `apply`
-   - Else → `verify`
-   
-   Post-SDD (when change is archived or user says merge):
-   - If user says merge / finish branch / create PR → `merge`
+When asked for a plan before execution, summarize the orchestration plan instead
+of implementation details:
 
-3. **Check for blockers**
+- State the classification and the selected cycle mode.
+- State that each required SDD phase will run in a fresh phase-specialized
+  subagent when the harness supports subagents.
+- List the required phases and artifacts from `openspec/config.yaml`.
+- State the stop point, especially that `auto-artifacts` stops after `tasks.md`
+  and before `apply`.
+- Include a spec update statement: delta specs to create/update, or why specs
+  are not required for this ceremony level.
+- State that the final `auto-artifacts` output is an artifact-cycle review with
+  technical analysis, risks, recommendations, open questions, and apply options.
 
-   If the target phase is `blocked` (missing dependencies):
-   - Show which artifacts are blocking it
-   - Ask the user whether to jump to the missing dependency phase first
+Do not make detailed code-edit promises in this plan. Implementation details
+belong in `tasks.md` or the later `apply` phase.
 
-4. **Assemble phase payload**
+## Runtime Context Pack
 
-   Build a self-contained prompt for the phase. Include ONLY:
-   - The phase-specific system prompt (see templates below)
-   - Minimal project context: `AGENTS.md` summary, tech stack from `openspec/config.yaml` context
-   - Paths to dependency artifacts (already completed) — the executor will read them
-   - The target output path(s)
+Send each phase executor only:
 
-   **Worktree Context (CRITICAL)**
-   If working inside a git worktree, the payload MUST include:
-   - `worktree_path`: absolute path to the worktree directory
-   - `cwd`: the worktree path (subagent MUST cd here before any file operation)
-   
-   The subagent MUST validate it is operating in `cwd` before writing any artifacts.
+- `project`: project id/name from `AGENTS.md`.
+- `card`: tracker card id/title/list when relevant.
+- `change`: OpenSpec change name/path.
+- `phase`: target phase and requested cycle mode.
+- `providers`: SDD, tracker, VCS, memory providers from `AGENTS.md`.
+- `cwd`: worktree path for artifact-writing phases.
+- `constraints`: safety rules, no-push/no-merge rules, test commands.
+- `inputs`: paths to prerequisite artifacts.
+- `outputs`: paths the phase may create/update.
 
-   **Skill Specialist Injection (subagent mode)**
-   When delegating to a subagent, the payload MUST include the full content
-   of the specialist skill (e.g., `openspec-apply-change/SKILL.md`) as the
-   system prompt, because the subagent is a fresh instance without access
-   to the parent agent's skill files.
+## Phase Map
 
-   **DO NOT include** the full conversation history, previous phase chain-of-thought, or unrelated files.
+- `explore`: use `openspec-explore`; no artifact required.
+- `proposal`: use `openspec-new-change`; creates `proposal.md` **only if**
+  `proposal_required` is `true` for the classified ceremony level.
+- `specs`: use `openspec-continue-change`; creates delta specs when required by
+  `openspec/config.yaml` or when the analyzed change modifies a spec-owned
+  contract. Do not force specs for `behavior_change` when the active decision
+  matrix only requires `tasks.md` and no source-of-truth spec needs updating.
+- `design`: use `openspec-continue-change`; creates `design.md` **only if**
+  `design_required` is `true` for the classified ceremony level.
+- `tasks`: use `openspec-continue-change`; creates `tasks.md` when required by
+  the active decision matrix; keep it minimal for lightweight ceremonies.
+- `apply`: use `openspec-apply-change`; updates code and task checkboxes.
+- `verify`: use `openspec-verify-change`; creates/updates `verify-report.md`.
+- `archive`: use `openspec-archive-change`; only after merge/approval.
+- `merge`: use `git-merge-workflow`; only on explicit user request.
 
-5. **Execute the phase**
+## Handoff Contract
 
-   **If in `subagent` mode:**
-   ```
-   Launch task(subagent_type="general", prompt=assembled_payload)
-   ```
+Every phase executor returns this YAML block first:
 
-   **If in `inline` mode:**
-   Load the relevant skill for this phase and execute it directly.
-
-6. **Receive and parse handoff**
-
-   The phase executor MUST return output starting with a structured YAML handoff block:
-
-   ```yaml
-   ---
-   handoff:
-     phase: "<phase-name>"
-     status: "complete"      # complete | blocked | partial | error
-     artifacts:
-       - path: "openspec/changes/<name>/proposal.md"
-         status: "created"   # created | updated | unchanged
-     findings:
-       - "Key finding 1"
-       - "Key finding 2"
-     blockers: null          # null or list of strings
-     decisions:
-       - "Decision made during this phase"
-     next_phase_suggested: "<next-phase>"
-     notes: "Optional narrative summary"
-   ---
-   ```
-
-   Parse this block. If missing or malformed, attempt to extract information from the narrative text and warn.
-
-7. **Present results to user**
-
-   Display:
-   - Phase completed (or blocked/partial)
-   - Artifacts created/updated
-   - Key findings and decisions
-   - Any blockers
-   - Suggested next phase
-
-   Ask: "Continue to <next-phase-suggested>?" or "Choose a different phase?"
-
-**Phase Prompt Templates**
-
-These are injected as the system context for the phase executor (subagent or inline).
-
-### explore
-```
-You are an EXPLORATION specialist.
-Goal: Understand the problem space deeply before formalizing anything.
-Constraints:
-- Do NOT write code or implementation.
-- Do NOT create final artifacts unless the user explicitly asks to capture findings.
-- Read relevant codebase areas to ground your thinking.
-- Surface risks, tradeoffs, and hidden complexity.
-- If insights crystallize into requirements, summarize them for a future proposal.
-Output: Structured handoff with findings and suggested proposal scope.
+```yaml
+---
+handoff:
+  phase: "<phase>"
+  status: "complete" # complete | blocked | partial | error
+  artifacts:
+    - path: "<path>"
+      status: "created" # created | updated | unchanged
+  findings:
+    - "<finding>"
+  blockers: null
+  decisions:
+    - "<decision>"
+  next_phase_suggested: "<phase-or-null>"
+  notes: "<brief notes>"
+---
 ```
 
-### proposal
-```
-You are a PROPOSAL specialist.
-Goal: Create a clear, scoped proposal artifact.
-Constraints:
-- Read the exploration context (if exists) and AGENTS.md.
-- Include: Why, What Changes, Capabilities, Impact, Rollback plan.
-- Capabilities must be kebab-case; each will need a spec file.
-- Output path: openspec/changes/<name>/proposal.md
-Output: Complete proposal.md + handoff.
-```
+If the block is missing, extract what you can, warn once, and stop before auto-advancing.
 
-### specs
-```
-You are a SPECIFICATION specialist.
-Goal: Write Given/When/Then specs for each capability in the proposal.
-Constraints:
-- Read proposal.md for capabilities list.
-- Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
-- Create one spec per capability at openspec/changes/<name>/specs/<capability>/spec.md
-- Include acceptance criteria as scenarios.
-Output: All spec files + handoff.
-```
+## Phase Events
 
-### design
-```
-You are a DESIGN specialist.
-Goal: Document technical decisions and architecture.
-Constraints:
-- Read proposal and specs for constraints.
-- Include sequence diagrams for complex flows (ASCII is fine).
-- Document architecture decisions with rationale.
-- Output path: openspec/changes/<name>/design.md
-Output: Complete design.md + handoff.
-```
+Emit an event after each attempted phase so recipes/hooks can observe progress:
 
-### tasks
-```
-You are a TASK-PLANNING specialist.
-Goal: Break implementation into small, checkboxed tasks.
-Constraints:
-- Read design.md for implementation approach.
-- Group by phase (infrastructure, implementation, testing).
-- Use hierarchical numbering (1.1, 1.2, etc.).
-- Keep tasks small enough for one session.
-- Output path: openspec/changes/<name>/tasks.md
-Output: Complete tasks.md + handoff.
-```
-
-### apply
-```
-You are an IMPLEMENTATION specialist.
-Goal: Execute pending tasks from tasks.md.
-Constraints:
-- Read tasks.md, design.md, and relevant specs.
-- Follow existing code patterns and conventions.
-- Use ./tests/run.sh for focused TDD feedback.
-- Update task checkboxes as you complete them.
-- Prefer commits grouped by task phase.
-- Keep changes minimal and focused per task.
-- If a task is unclear, stop and ask.
-Output: Code changes + updated tasks.md + handoff with RED/GREEN evidence if TDD applies.
-```
-
-### verify
-```
-You are a VERIFICATION specialist.
-Goal: Validate implementation against specs and record evidence.
-Constraints:
-- Read all spec scenarios and compare against implementation.
-- Run ./tests/validate.sh.
-- State unavailable quality signals explicitly (coverage, linter, type-checker, formatter).
-- Update or create verify-report.md.
-- Output path: openspec/changes/<name>/verify-report.md
-Output: verify-report.md + handoff with PASS/FAIL verdict.
-```
-
-### archive
-```
-You are an ARCHIVE specialist.
-Goal: Close the change and move it to the archive.
-Constraints:
-- Verify implementation is merged or ready for merge.
-- Run openspec-archive-change or equivalent steps.
-- Ensure delta specs are synced to main specs if required.
-- Output: Archived change folder + handoff.
-```
-
-### merge
-```
-You are a MERGE specialist.
-Goal: Create PR, merge, clean up worktree, and sync development.
-Constraints:
-- Use gh CLI to create PR and merge (no local git merge).
-- Remove worktree only after PR is merged.
-- Delete local branch after successful merge.
-- Sync development with git pull --ff-only origin development.
-- If gh is not installed/auth'd, stop and instruct user.
-- Output: PR URL + handoff.
-```
-
-**Output Format**
-
-When orchestrating:
-
-```
-## Phase Orchestrator: <change-name>
-
-Schema: <schema-name>
-Mode: <subagent|inline>
-Phase: <phase-name>
-
-### Context Injected
-- AGENTS.md (summary)
-- Dependency artifacts: <list>
-- Target outputs: <list>
-
-### Executing...
-[subagent runs or inline execution]
-
-### Handoff Received
-Status: <status>
-Artifacts:
-- <path> (<status>)
-Findings:
-- <finding 1>
-Next suggested: <next-phase>
-
-Continue to <next-phase>? Or choose another action?
-```
-
-**Guardrails**
-
-- Always announce the mode (`subagent` vs `inline`) so the user knows if context is isolated.
-- Never skip dependency detection. If a phase is blocked, do not blindly execute it.
-- Keep phase payloads minimal. The executor should read dependency files itself; do not inline their contents into the prompt unless they are very small (<500 tokens).
-- If a phase executor returns `status: error`, stop and present the error. Do not auto-advance.
-- If `apply` phase is selected and there are no pending tasks, suggest `verify` instead.
-- The orchestrator never writes code or artifacts directly in `subagent` mode — it only delegates and interprets handoffs.
-
-**Phase Event Emission (for recipe hooks)**
-
-After any phase transition completes successfully, emit a phase event:
 ```yaml
 ---
 event:
-  type: "sdd-phase-transition"
+  type: "sdd.phase.completed" # or sdd.phase.started | sdd.phase.blocked | sdd.phase.failed
+  provider: "openspec"
   change: "<change-name>"
-  from_phase: "<previous-phase-or-null>"
-  to_phase: "<completed-phase>"
-  status: "complete"
+  phase: "<phase>"
+  status: "<status>"
+  artifacts:
+    - "<path>"
 ---
 ```
-Recipes registered as handlers for `on-sdd-phase-change` can consume this event.
-The orchestrator does NOT execute handlers directly; it only emits the event
-into the conversation context for downstream recipes to observe.
 
-**Cross-Harness Replicability**
+The orchestrator emits the event into the conversation or handoff. It does not execute recipe handlers directly unless a separate recipe contract says to do so.
 
-This skill is designed to be harness-agnostic:
+## Advancement Rules
 
-- The flow (detect → assemble → execute → handoff → transition) is identical in any harness.
-- The `inline` mode works in **every** harness because it uses the same skills already distributed by `ai-specs sync-agent`.
-- The `subagent` mode requires the harness to support subagent/task delegation. If unavailable, the skill degrades gracefully to `inline` with zero behavioral change in the flow.
+- In `interactive`, stop after every phase.
+- In `auto-artifacts`, continue through `tasks` only, then present an artifact-cycle handoff.
+- In `auto`, continue through `verify` only if no blocker/error occurs.
+- Never enter `apply`, `verify`, `archive`, `merge`, PR creation, or push/merge to `development` from `auto-artifacts` without explicit human instruction.
+- Never enter cleanup without explicit permission unless the user selected `auto` and the runtime brief allows it.
+- **If the ceremony level is `trivial`, the full SDD cycle may be omitted.**
+  The agent applies the change directly and documents the classification in the
+  commit message or an operational note.
 
-| Harness | Subagent Support | Notes |
-|---|---|---|
-| OpenCode | Yes (`task` tool) | Full context isolation per phase |
-| Claude Code | Partial (`//` subagent mode) | May need adapter; inline fallback always works |
-| Cursor | No native subagent | Always uses `inline` mode |
-| GitHub Copilot / Codex | No native subagent | Always uses `inline` mode |
+## Artifact-Cycle Review (auto-artifacts)
 
-To replicate this flow in a new harness:
-1. Ensure `openspec` CLI is available.
-2. Ensure the phase skills (`openspec-explore`, `openspec-apply-change`, etc.) are present (via `ai-specs sync-agent`).
-3. Implement the orchestrator skill using the exact same handoff schema and prompt templates above.
-4. If the harness supports subagents, map the `task` launch to the native equivalent; otherwise, use `inline`.
+After `tasks.md` is created or updated in `auto-artifacts` mode, stop and present an exhaustive artifact-cycle review. Do not proceed to `apply` without explicit user confirmation. The review MUST include the following sections:
 
-**Related**
+### 1. Artifact Summary
+- List every artifact created or updated (`proposal.md`, delta specs, `design.md`, `tasks.md`).
+- State schema workflow and progress (`N/M` complete).
+- Note any artifacts that were skipped or blocked.
 
-- `openspec-explore` — exploration stance
-- `openspec-new-change` — change creation
-- `openspec-continue-change` — artifact creation
-- `openspec-apply-change` — implementation
-- `openspec-verify-change` — verification
-- `openspec-archive-change` — archival
+### 2. Technical Analysis
+- Summarize the architecture and design decisions documented in `design.md`.
+- Highlight any new modules, files, or public APIs introduced.
+- Call out dependencies on other cards, changes, or external systems.
+- Identify performance, security, or scalability implications if relevant.
+
+### 3. Recommendations
+- Suggest the most appropriate apply strategy:
+  - `interactive apply` — recommended when the change is large, risky, or touches critical paths.
+  - `auto apply` — only when the change is small, well-understood, and tests are comprehensive.
+  - `apply only` — when the user wants to execute tasks manually without further agent assistance.
+- Note any tasks that should be grouped into coherent commits.
+- Advise on whether additional exploration or design refinement is needed before apply.
+
+### 4. Gaps, Warnings, and Open Questions
+- List any spec scenarios that lack test coverage or are marked as out of scope.
+- Flag any warnings from `verify-report.md` or from the design review (e.g., spec divergence, tech-debt, backward-compatibility concerns).
+- Pose explicit open questions that the user or reviewer should answer before apply.
+- Highlight any assumptions made during artifact creation that may need validation.
+
+### 5. Next Steps
+- Offer clear options: `interactive apply`, `auto apply`, or `apply only`.
+- Additional option: `refine artifacts` if the user wants to revisit specs, design, or tasks before applying.
+- If the user chooses to refine, return to the relevant artifact phase (`specs`, `design`, or `tasks`).
+- Always announce the SDD cycle mode (`interactive`, `auto-artifacts`, or `auto`) before presenting options.
+
+## User-Facing Result
+
+Report phase, status, artifacts, key findings, blockers, and next suggested action. Keep routine phase chatter short; details belong in the artifact or handoff.

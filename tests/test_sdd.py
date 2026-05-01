@@ -77,6 +77,128 @@ class SddPythonUnitTests(unittest.TestCase):
         self.assertEqual(again.count("[sdd]"), 1)
 
 
+class DecisionMatrixTests(unittest.TestCase):
+    def setUp(self):
+        self.sdd = load_module(SDD_PY, "sdd_dm")
+
+    def test_load_decision_matrix_returns_none_when_missing(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "config.yaml"
+            cfg.write_text("schema: spec-driven\n")
+            result = self.sdd.load_decision_matrix(cfg)
+            self.assertIsNone(result)
+
+    def test_load_decision_matrix_returns_none_when_mode_formal(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "config.yaml"
+            cfg.write_text(
+                "schema: spec-driven\n"
+                "sdd:\n"
+                "  mode: formal\n"
+                "  decision_matrix:\n"
+                "    trivial:\n"
+                "      artifacts: []\n"
+                "      worktree_required: false\n"
+                "      proposal_required: false\n"
+                "      design_required: false\n"
+            )
+            result = self.sdd.load_decision_matrix(cfg)
+            self.assertIsNone(result)
+
+    def test_load_decision_matrix_returns_dict_when_present(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "config.yaml"
+            cfg.write_text(
+                "schema: spec-driven\n"
+                "sdd:\n"
+                "  mode: adaptive\n"
+                "  decision_matrix:\n"
+                "    trivial:\n"
+                "      artifacts: []\n"
+                "      worktree_required: false\n"
+                "      proposal_required: false\n"
+                "      design_required: false\n"
+                "    local_fix:\n"
+                "      artifacts: []\n"
+                "      worktree_required: false\n"
+                "      proposal_required: false\n"
+                "      design_required: false\n"
+                "    behavior_change:\n"
+                "      artifacts: [\"tasks.md\"]\n"
+                "      worktree_required: true\n"
+                "      proposal_required: false\n"
+                "      design_required: false\n"
+                "    domain_change:\n"
+                "      artifacts: [\"proposal.md\", \"design.md\", \"tasks.md\"]\n"
+                "      worktree_required: true\n"
+                "      proposal_required: true\n"
+                "      design_required: true\n"
+            )
+            result = self.sdd.load_decision_matrix(cfg)
+            self.assertIsInstance(result, dict)
+            self.assertIn("trivial", result)
+            self.assertIn("domain_change", result)
+            self.assertEqual(result["behavior_change"]["artifacts"], ["tasks.md"])
+            self.assertTrue(result["domain_change"]["worktree_required"])
+
+    def test_validate_decision_matrix_missing_level(self):
+        matrix = {
+            "trivial": {"artifacts": [], "worktree_required": False, "proposal_required": False, "design_required": False},
+            "local_fix": {"artifacts": [], "worktree_required": False, "proposal_required": False, "design_required": False},
+            "behavior_change": {"artifacts": ["tasks.md"], "worktree_required": True, "proposal_required": False, "design_required": False},
+            # missing domain_change
+        }
+        errs = self.sdd.validate_decision_matrix(matrix)
+        self.assertTrue(any("missing level: domain_change" in e for e in errs))
+
+    def test_validate_decision_matrix_extra_level(self):
+        matrix = {
+            "trivial": {"artifacts": [], "worktree_required": False, "proposal_required": False, "design_required": False},
+            "local_fix": {"artifacts": [], "worktree_required": False, "proposal_required": False, "design_required": False},
+            "behavior_change": {"artifacts": ["tasks.md"], "worktree_required": True, "proposal_required": False, "design_required": False},
+            "domain_change": {"artifacts": ["proposal.md", "design.md", "tasks.md"], "worktree_required": True, "proposal_required": True, "design_required": True},
+            "extra_level": {"artifacts": [], "worktree_required": False, "proposal_required": False, "design_required": False},
+        }
+        errs = self.sdd.validate_decision_matrix(matrix)
+        self.assertTrue(any("unknown level: extra_level" in e for e in errs))
+
+    def test_validate_decision_matrix_wrong_type_artifacts(self):
+        matrix = {
+            "trivial": {"artifacts": "not-a-list", "worktree_required": False, "proposal_required": False, "design_required": False},
+            "local_fix": {"artifacts": [], "worktree_required": False, "proposal_required": False, "design_required": False},
+            "behavior_change": {"artifacts": ["tasks.md"], "worktree_required": True, "proposal_required": False, "design_required": False},
+            "domain_change": {"artifacts": ["proposal.md", "design.md", "tasks.md"], "worktree_required": True, "proposal_required": True, "design_required": True},
+        }
+        errs = self.sdd.validate_decision_matrix(matrix)
+        self.assertTrue(any("'artifacts' must be a list" in e for e in errs))
+
+    def test_validate_decision_matrix_wrong_type_flags(self):
+        matrix = {
+            "trivial": {"artifacts": [], "worktree_required": "false", "proposal_required": False, "design_required": False},
+            "local_fix": {"artifacts": [], "worktree_required": False, "proposal_required": False, "design_required": False},
+            "behavior_change": {"artifacts": ["tasks.md"], "worktree_required": True, "proposal_required": False, "design_required": False},
+            "domain_change": {"artifacts": ["proposal.md", "design.md", "tasks.md"], "worktree_required": True, "proposal_required": True, "design_required": True},
+        }
+        errs = self.sdd.validate_decision_matrix(matrix)
+        self.assertTrue(any("'worktree_required' must be a boolean" in e for e in errs))
+
+    def test_validate_decision_matrix_valid(self):
+        matrix = {
+            "trivial": {"artifacts": [], "worktree_required": False, "proposal_required": False, "design_required": False},
+            "local_fix": {"artifacts": [], "worktree_required": False, "proposal_required": False, "design_required": False},
+            "behavior_change": {"artifacts": ["tasks.md"], "worktree_required": True, "proposal_required": False, "design_required": False},
+            "domain_change": {"artifacts": ["proposal.md", "design.md", "tasks.md"], "worktree_required": True, "proposal_required": True, "design_required": True},
+        }
+        errs = self.sdd.validate_decision_matrix(matrix)
+        self.assertEqual(errs, [])
+
+
 class RefreshBundledPresetTests(unittest.TestCase):
     def test_preset_openspec_installs_catalog_skills(self):
         import tempfile

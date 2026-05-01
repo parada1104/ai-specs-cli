@@ -103,13 +103,14 @@ class ContextPrecedenceSkillTests(unittest.TestCase):
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
             agents = (workspace / "AGENTS.md").read_text()
+            registry = (workspace / "ai-specs" / ".skill-registry.md").read_text()
+            self.assertNotIn("## Context Precedence", agents)
             self.assertContainsAll(
-                agents,
+                registry,
                 [
-                    "## Context Precedence",
-                    "[`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md)",
-                    ORDER,
-                    "decision policy, not an automatic merge engine",
+                    "| `context-precedence` | dep |",
+                    ".deps/context-precedence/skills/context-precedence/SKILL.md",
+                    "| Resolving conflicts between documentation, skills, memory, and proposed context | `context-precedence` | `root` |",
                 ],
             )
         finally:

@@ -69,7 +69,7 @@ def sync_dep_target(dep: dict, project_root: Path) -> None:
         fail(f"dep missing id/source: {dep!r}")
 
     skill_subpath = dep.get("path", "").strip("/")
-    target_dir = project_root / "ai-specs" / "skills" / dep_id
+    target_dir = project_root / ".deps" / dep_id / "skills" / dep_id
 
     print(f"  ▸ {dep_id}  ←  {source}" + (f"  (path: {skill_subpath})" if skill_subpath else ""))
 

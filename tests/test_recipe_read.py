@@ -69,6 +69,7 @@ class RecipeReadTests(unittest.TestCase):
         self.assertEqual(data.capabilities, [])
         self.assertEqual(data.hooks, [])
         self.assertEqual(data.config_schema.fields, {})
+        self.assertIsNone(data.init)
 
     def test_v2_capability_parsing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -173,6 +174,110 @@ class RecipeReadTests(unittest.TestCase):
             with self.assertRaises(self.mod.RecipeValidationError) as ctx:
                 self.mod.read_recipe(Path(tmp), "bad-cfg")
             self.assertIn("missing or invalid 'required'", str(ctx.exception))
+
+    # --- Init workflow tests -------------------------------------------------
+
+    def _write_init_recipe(self, root: Path, recipe_id: str, init_body: str, prompt_name: str = "init.md") -> Path:
+        recipe_dir = root / recipe_id
+        recipe_dir.mkdir()
+        prompt_dir = recipe_dir / "docs"
+        prompt_dir.mkdir()
+        (prompt_dir / prompt_name).write_text("# Init prompt\nConfigure this recipe.\n", encoding="utf-8")
+        (recipe_dir / "recipe.toml").write_text(
+            f'[recipe]\nid = "{recipe_id}"\nname = "Init Recipe"\ndescription = "D"\nversion = "1.0"\n'
+            + init_body,
+            encoding="utf-8",
+        )
+        return recipe_dir
+
+    def test_init_workflow_parsing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_init_recipe(
+                Path(tmp),
+                "init-recipe",
+                '[init]\nprompt = "docs/init.md"\ndescription = "Configure"\nneeds_manifest = true\nneeds_mcp = ["trello", "openmemory"]\n',
+            )
+            data = self.mod.read_recipe(Path(tmp), "init-recipe")
+            self.assertIsNotNone(data.init)
+            self.assertEqual(data.init.prompt, "docs/init.md")
+            self.assertEqual(data.init.description, "Configure")
+            self.assertEqual(data.init.needs_manifest, True)
+            self.assertEqual(data.init.needs_mcp, ["trello", "openmemory"])
+
+    def test_init_metadata_in_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_init_recipe(Path(tmp), "init-recipe", '[init]\nprompt = "docs/init.md"\nneeds_mcp = ["trello"]\n')
+            data = self.mod.read_recipe(Path(tmp), "init-recipe")
+            payload = self.mod.recipe_to_dict(data)
+            self.assertEqual(
+                payload["init"],
+                {
+                    "prompt": "docs/init.md",
+                    "description": "",
+                    "needs_manifest": False,
+                    "needs_mcp": ["trello"],
+                },
+            )
+
+    def test_recipe_without_init_has_null_json_init(self):
+        data = self.mod.read_recipe(CATALOG, "test-fixture")
+        payload = self.mod.recipe_to_dict(data)
+        self.assertIn("init", payload)
+        self.assertIsNone(payload["init"])
+
+    def test_init_missing_prompt_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = Path(tmp) / "bad-init"
+            recipe_dir.mkdir()
+            (recipe_dir / "recipe.toml").write_text(
+                '[recipe]\nid = "bad-init"\nname = "Bad"\ndescription = "D"\nversion = "1.0"\n[init]\ndescription = "Missing prompt"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaises(self.mod.RecipeValidationError) as ctx:
+                self.mod.read_recipe(Path(tmp), "bad-init")
+            self.assertIn("[init].prompt", str(ctx.exception))
+
+    def test_init_unknown_field_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "docs/init.md"\nextra = "nope"\n')
+            with self.assertRaises(self.mod.RecipeValidationError) as ctx:
+                self.mod.read_recipe(Path(tmp), "bad-init")
+            self.assertIn("unsupported init field 'extra'", str(ctx.exception))
+
+    def test_init_invalid_needs_mcp_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "docs/init.md"\nneeds_mcp = ["trello", ""]\n')
+            with self.assertRaises(self.mod.RecipeValidationError) as ctx:
+                self.mod.read_recipe(Path(tmp), "bad-init")
+            self.assertIn("needs_mcp", str(ctx.exception))
+
+    def test_init_absolute_prompt_path_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "/tmp/init.md"\n')
+            with self.assertRaises(self.mod.RecipeValidationError) as ctx:
+                self.mod.read_recipe(Path(tmp), "bad-init")
+            self.assertIn("relative", str(ctx.exception))
+
+    def test_init_parent_traversal_prompt_path_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "../init.md"\n')
+            with self.assertRaises(self.mod.RecipeValidationError) as ctx:
+                self.mod.read_recipe(Path(tmp), "bad-init")
+            self.assertIn("inside the recipe directory", str(ctx.exception))
+
+    def test_init_directory_prompt_path_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "docs"\n')
+            with self.assertRaises(self.mod.RecipeValidationError) as ctx:
+                self.mod.read_recipe(Path(tmp), "bad-init")
+            self.assertIn("must be a file", str(ctx.exception))
+
+    def test_init_missing_prompt_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "docs/missing.md"\n')
+            with self.assertRaises(self.mod.RecipeValidationError) as ctx:
+                self.mod.read_recipe(Path(tmp), "bad-init")
+            self.assertIn("init prompt file not found", str(ctx.exception))
 
 
 if __name__ == "__main__":

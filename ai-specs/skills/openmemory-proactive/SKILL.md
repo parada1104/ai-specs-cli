@@ -1,14 +1,14 @@
 ---
 name: openmemory-proactive
 description: >
-  Proactive semantic memory capture for project context, patterns, and decisions.
-  Trigger: After solving non-trivial problems, discovering reusable patterns, making technical decisions,
-  or encountering project-specific context that future sessions should remember.
-  Complements vault-context by storing searchable facts during the session, not just at close.
+  Selective operational memory capture for project context, patterns, decisions,
+  and handoff continuity. Trigger after non-trivial discoveries, decisions,
+  resolved blockers, significant progress, or session close. Complements Vault;
+  it does not replace canonical notes.
 license: MIT
 metadata:
   author: parada1104
-  version: "1.0"
+  version: "2.0"
   scope: [root]
   auto_invoke:
     - "After solving a non-trivial bug or error"
@@ -19,169 +19,89 @@ metadata:
     - "Before ending a session"
 ---
 
-# openmemory-proactive — Proactive Semantic Memory
+# openmemory-proactive
 
-This skill governs **when and how** to persist knowledge to OpenMemory during active sessions, making the agent behave more like `opencode-mem` — capturing context as it happens, not only at session boundaries.
+OpenMemory is the operational memory layer: fast, searchable, and useful during future sessions. Vault remains the canonical record for decisions and handoffs.
 
-## Two systems, two speeds
+## Store When It Will Help Future Work
 
-| | vault-context | openmemory-proactive (this skill) |
-|---|---|---|
-| **Role** | Canonical notetaker | Real-time memory sensor |
-| **What** | Structured markdown files in Obsidian vault | Semantic / factual entries in vector+graph store |
-| **When** | Session start, architecture decisions, session close | During the session, immediately after value is created |
-| **Format** | Markdown with frontmatter | Plain text memory + optional temporal facts |
-| **Search** | Filesystem MCP (scoped) | OpenMemory query (semantic + factual) |
-| **Who writes** | Skill (on close/decision) | This skill (proactively during work) |
+Store a memory when it is reusable, non-obvious, and likely to be searched later:
 
-**Rule of thumb:** If it's a formal decision or handoff artifact, use `vault-context`. If it's a discovered pattern, solved bug, or piece of context that future sessions will need to search for, use OpenMemory **immediately**.
+- Card/change status that affects the next session.
+- A resolved blocker with symptom, cause, and fix.
+- A project-specific pattern or convention discovered in code or workflow.
+- A technical tradeoff that influenced implementation or planning.
+- A tooling gotcha, environment constraint, or dependency behavior.
+- A compact session milestone when it improves continuity.
 
----
+Do not store raw logs, command transcripts, trivial observations, secrets, obvious file listings, or content already captured canonically in OpenSpec/Vault/docs unless storing a short searchable pointer.
 
-## What to Store
+## Project vs Global
 
-Store memories that are **searchable, reusable, and non-obvious**:
+- Use project-scoped storage for project-specific knowledge.
+- Use global storage only for general knowledge that applies across projects.
+- If unsure whether a memory is project-specific or global, ask the user before storing globally.
 
-1. **Bug + Fix pairs** — Non-trivial errors and their resolution
-2. **Discovered patterns** — Code conventions, architectural patterns, or workflows specific to this project
-3. **Technical decisions** — Tradeoffs made and why (lightweight; formal ADRs still go to vault)
-4. **Project context** — Business rules, constraints, or environment quirks that affect implementation
-5. **Tooling gotchas** — Build issues, test quirks, dependency behavior
-6. **Completed milestones** — What was done and how, for continuity across sessions
+## Relationship To Vault
 
-**Do NOT store:**
-- Transient or trivial observations ("I ran `ls`")
-- Information already well-documented in READMEs or specs
-- Raw code snippets without context (link to files instead)
-- Duplicate of vault-context decisions (cross-reference instead)
+Promote to Vault when the information is canonical:
 
----
+- Architecture or workflow decision.
+- Handoff or session close-out.
+- Convention that future agents must follow.
+- Structured project context that should be human-auditable.
 
-## When to Store — Proactive Triggers
+When both are useful, write the canonical note to Vault and store a short OpenMemory pointer with tags like `decision`, `handoff`, or `workflow`.
 
-Capture **immediately** after any of these moments:
+## Query Before Acting
 
-### 1. Bug Resolution
-After fixing a non-trivial bug, store:
-- Symptom description
-- Root cause
-- Fix applied
-- Files involved
+Query OpenMemory when a task might have precedent:
 
-### 2. Pattern Discovery
-After identifying a reusable pattern:
-- What the pattern is
-- Where it applies
-- Example location in codebase
+- Starting or resuming a card/change.
+- Seeing a familiar error.
+- Making a workflow or architecture decision.
+- Reconstructing what happened last session.
 
-### 3. Technical Decision
-After making a tradeoff or choosing an approach:
-- Options considered
-- Decision made
-- Rationale (brief)
+Use `project_id` for project work and prefer `type: "unified"` when both semantic memories and factual state may matter.
 
-### 4. Project Context Encountered
-When you learn something about the project that future you will need:
-- Business rule
-- Environment constraint
-- Integration quirk
+## Session Close Pattern
 
-### 5. Significant Task Completion
-After finishing a substantial task:
-- What was done
-- Key files changed
-- Approach taken
+Before ending a session, store a `next_focus` memory so the next session can
+resume without ambiguity. This is the primary signal that `session-bootstrap`
+reads when a user gives a continuation instruction (e.g., "vamos con la
+siguiente card").
 
-### 6. Session End
-Before closing, do a quick sweep — anything important not yet captured? This complements `vault-context` session summary.
-
----
-
-## How to Store
-
-Use the OpenMemory MCP tools. Choose the right storage type:
-
-### Contextual Memory (HSG semantic search)
-For knowledge, patterns, and context:
-
-```
-openmemory_openmemory_store
-  content: "Plain text description of the knowledge"
-  tags: ["pattern", "bugfix", "decision", "context", "tooling"]
-  type: "contextual"
+Format:
+```text
+Session close <date>: next_focus=<card/change/request>, reason=<why>,
+blockers=<none|list>. Card status: <list name>.
 ```
 
-### Factual Memory (Temporal graph)
-For facts with subject-predicate-object structure:
-
-```
-openmemory_openmemory_store
-  content: "Description"
-  type: "factual" | "both"
-  facts:
-    - subject: "Module X"
-      predicate: "depends_on"
-      object: "Module Y"
+Example:
+```text
+Session close 2026-04-30: next_focus=#65 'Motor: AGENTS.md runtime brief',
+reason='Card #64 merged, #65 is next in dependency chain.',
+blockers=none. Card status: Ready.
 ```
 
-### Project-Scoped Memory
-Always scope project-specific memories:
+Tags: `handoff`, `next_focus`, `session-close`.
 
-```
-openmemory_openmemory_store_project
-  content: "..."
-  project_id: "ai-specs-cli"
-  tags: ["..."]
-```
+## Storage Shape
 
-### Sector Tags
-Use semantic sectors when relevant:
-- `episodic` — Session events, what happened
-- `semantic` — Knowledge, facts, patterns
-- `procedural` — How-to, steps, workflows
-- `reflective` — Decisions, tradeoffs, lessons learned
+Good memories are short and self-contained:
 
----
-
-## Querying Before Acting
-
-**Always query OpenMemory first** when:
-- Starting work on a new task
-- Encountering an error that feels familiar
-- Making a decision that might have precedent
-
-```
-openmemory_openmemory_query
-  query: "How do we handle X in this project?"
-  type: "contextual" | "factual" | "unified"
-  project_id: "ai-specs-cli"
+```text
+<date/context>: <what changed or was learned>. <why it matters>. Relevant refs: <card/change/path>.
 ```
 
----
+Recommended tags: `card`, `change`, `decision`, `handoff`, `pattern`, `bugfix`, `tooling`, `workflow`, `risk`, `tests`.
 
-## Critical Rules
+Use factual memory sparingly for durable relationships such as `card-62 depends_on card-65` or `project uses sdd_provider OpenSpec`.
 
-1. **Capture during the session, not after.** The value of proactive memory is immediacy.
-2. **Use plain text, not markdown.** OpenMemory stores semantic text, not structured files.
-3. **Tag consistently.** Use tags like `pattern`, `bugfix`, `decision`, `context`, `tooling`.
-4. **Scope to project.** Always use `project_id` when storing project-specific knowledge.
-5. **Don't duplicate vault-context.** If it's a formal architecture decision, write to vault AND store a lightweight reference in OpenMemory for searchability.
-6. **Query before deciding.** Search OpenMemory before making decisions that might have precedent.
-7. **Reinforce important memories.** If a memory proved valuable, boost its salience with `openmemory_openmemory_reinforce`.
+## Rules
 
----
-
-## MCP Access
-
-The OpenMemory MCP is configured in `ai-specs.toml` under `[mcp.openmemory]`:
-- Type: HTTP
-- URL: `http://localhost:8080/mcp`
-
-Tools available:
-- `openmemory_openmemory_query` — Search memories
-- `openmemory_openmemory_store` — Store global knowledge
-- `openmemory_openmemory_store_project` — Store project-scoped knowledge
-- `openmemory_openmemory_reinforce` — Boost salience
-- `openmemory_openmemory_list` — Recent memories
-- `openmemory_openmemory_get` — Single memory by ID
-- `openmemory_openmemory_delete` — Remove memory
+- Store after value is created, not at random checkpoints.
+- Prefer one useful memory over many noisy memories.
+- Never store secrets or env-backed values.
+- Do not use OpenMemory to override Trello state, OpenSpec artifacts, Vault decisions, or the runtime brief.
+- Reinforce memories that proved useful; avoid duplicating them.

@@ -1,0 +1,85 @@
+[recipe]
+id = "trello-mcp-workflow"
+name = "Trello MCP Workflow"
+description = "Automated Trello board integration for ai-specs SDD workflows"
+version = "1.0.0"
+
+[[capabilities]]
+id = "trello-session-bootstrap"
+
+[[capabilities]]
+id = "trello-card-linking"
+
+[[capabilities]]
+id = "trello-state-sync"
+
+[[capabilities]]
+id = "trello-progress-comment"
+
+[[hooks]]
+event = "on-sync"
+action = "validate-config"
+
+[[hooks]]
+event = "on-sync"
+action = "bootstrap-board"
+
+[[hooks]]
+event = "on-sync"
+action = "link-trello-card"
+
+[[hooks]]
+event = "on-sync"
+action = "sync-card-state"
+
+[[hooks]]
+event = "on-sync"
+action = "comment-verification"
+
+[config.board_id]
+required = true
+type = "string"
+
+[config.default_list]
+required = false
+type = "string"
+default = "In Progress"
+
+[config.epic_list]
+required = false
+type = "string"
+default = "Epic"
+
+[provides]
+skills = [{ id = "trello-mcp-workflow", source = "bundled" }]
+commands = [{ id = "trello-workflow", path = "commands/trello-workflow.md" }]
+
+[[provides.templates]]
+source = "templates/card-feature.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-feature.md"
+condition = "not_exists"
+
+[[provides.templates]]
+source = "templates/card-bug.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-bug.md"
+condition = "not_exists"
+
+[[provides.templates]]
+source = "templates/card-spike.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-spike.md"
+condition = "not_exists"
+
+[[provides.templates]]
+source = "templates/card-epic.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-epic.md"
+condition = "not_exists"
+
+[[provides.templates]]
+source = "templates/card-handoff.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-handoff.md"
+condition = "not_exists"
+
+[[provides.docs]]
+source = "docs/README.md"
+target = "docs/trello-mcp-workflow.md"
+condition = "not_exists"

@@ -7,8 +7,8 @@
 "assets/SKILL-TEMPLATE.md" = "468621e48b52a79e412b159ee6686dbb912b30890bc4814015b503478e09166a"
 
 [skills."skill-sync"]
-"SKILL.md" = "ac95b2d041faadfea2425b7b1bd420c24246f62f0ba38877f07ca027b09fa5ed"
-"assets/sync.sh" = "f390a00b453cf23e45eb9c2bd8e44ad364dc1ca1d2a54ad4c858c8616a519407"
+"SKILL.md" = "b6bb4b14a0efb259f828a91efcecc672f14083a6a647301ae7ba6c846a2cea04"
+"assets/sync.sh" = "7761ced966edca7e982d50d9a6c064190deb28036ea51435feb6fc8802319c77"
 
 [commands]
 "skills-as-rules.md" = "793c2d1de600693cfdd1dbbd93bea0c9af76d22838f5ecd4db678737157b0af8"
