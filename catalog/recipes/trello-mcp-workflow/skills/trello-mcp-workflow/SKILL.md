@@ -23,7 +23,7 @@ Automated Trello board integration for ai-specs SDD (Spec-Driven Development) wo
 | `default_list` | No | `In Progress` | List name where new cards are created when no phase-specific list applies. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
 
-Configuration is read from `ai-specs/recipes/trello-mcp-workflow/config.json` or from the recipe section in `ai-specs.toml`.
+Configuration is read from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`.
 
 ---
 

@@ -218,19 +218,23 @@ class RecipeInitTests(unittest.TestCase):
         self.assertFalse((root / ".recipe").exists())
         self.assertFalse((root / "ai-specs" / ".recipe-mcp.json").exists())
 
-    def test_init_uses_cli_catalog_when_project_has_no_local_catalog(self):
+    def test_trello_recipe_init_uses_cli_catalog_when_project_has_no_local_catalog(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ai_specs = root / "ai-specs"
             ai_specs.mkdir()
             (ai_specs / "ai-specs.toml").write_text(
-                '[project]\nname = "fixture"\n\n[agents]\nenabled = ["claude"]\n',
+                '[project]\nname = "fixture"\n\n[agents]\nenabled = ["claude"]\n\n[mcp.trello]\ncommand = "npx"\nargs = ["-y", "@trello/mcp"]\n',
                 encoding="utf-8",
             )
             self._set_ai_specs_home(ROOT)
-            with self.assertRaises(self.mod.RecipeInitError) as ctx:
-                self.mod.build_init_brief(root, "trello-mcp-workflow")
-            self.assertIn("has no init workflow", str(ctx.exception))
+            brief = self.mod.build_init_brief(root, "trello-mcp-workflow")
+            self.assertIn("- ID: trello-mcp-workflow", brief)
+            self.assertIn("- Install state: available (not installed)", brief)
+            self.assertIn("Configure Trello board and list mappings before sync", brief)
+            self.assertIn("board_id", brief)
+            self.assertIn("trello: configured", brief)
+            self.assertIn("# Trello Recipe Init", brief)
 
     def test_init_ignores_project_local_catalog_in_favor_of_cli_catalog(self):
         root = self._make_project(config='board_id = "abc123"\n')
