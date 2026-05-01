@@ -12,6 +12,7 @@ guidance for an agent or human.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
@@ -39,6 +40,20 @@ def _load_toml_read() -> Any:
 
 def _load_recipe_read() -> Any:
     return _load_module("recipe-read.py", "recipe_read_internal")
+
+
+def _resolve_catalog_dir(project_root: Path) -> Path:
+    local_catalog = project_root / "catalog" / "recipes"
+    if local_catalog.is_dir():
+        return local_catalog
+
+    ai_specs_home = os.environ.get("AI_SPECS_HOME")
+    if ai_specs_home:
+        home_catalog = Path(ai_specs_home) / "catalog" / "recipes"
+        if home_catalog.is_dir():
+            return home_catalog
+
+    return Path(__file__).resolve().parents[2] / "catalog" / "recipes"
 
 
 ENV_REFERENCE_RE = re.compile(r"^\$(?:\{env:)?([A-Za-z_][A-Za-z0-9_]*)\}?$")
@@ -81,7 +96,7 @@ def _load_manifest(project_root: Path) -> tuple[Any, dict[str, Any]]:
 
 
 def _load_recipe(project_root: Path, recipe_id: str) -> tuple[Any, Any, Path]:
-    catalog_dir = project_root / "catalog" / "recipes"
+    catalog_dir = _resolve_catalog_dir(project_root)
     recipe_dir = catalog_dir / recipe_id
     if not recipe_dir.is_dir():
         raise RecipeInitError(f"Recipe '{recipe_id}' no encontrada en catalog/recipes/")

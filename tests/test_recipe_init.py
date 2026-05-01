@@ -1,6 +1,7 @@
 import importlib.util
 import contextlib
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -166,6 +167,27 @@ class RecipeInitTests(unittest.TestCase):
         self.assertEqual(after, before)
         self.assertFalse((root / ".recipe").exists())
         self.assertFalse((root / "ai-specs" / ".recipe-mcp.json").exists())
+
+    def test_init_uses_cli_catalog_when_project_has_no_local_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ai_specs = root / "ai-specs"
+            ai_specs.mkdir()
+            (ai_specs / "ai-specs.toml").write_text(
+                '[project]\nname = "fixture"\n\n[agents]\nenabled = ["claude"]\n',
+                encoding="utf-8",
+            )
+            old_home = os.environ.get("AI_SPECS_HOME")
+            os.environ["AI_SPECS_HOME"] = str(ROOT)
+            try:
+                with self.assertRaises(self.mod.RecipeInitError) as ctx:
+                    self.mod.build_init_brief(root, "trello-mcp-workflow")
+            finally:
+                if old_home is None:
+                    os.environ.pop("AI_SPECS_HOME", None)
+                else:
+                    os.environ["AI_SPECS_HOME"] = old_home
+            self.assertIn("has no init workflow", str(ctx.exception))
 
 
 if __name__ == "__main__":
