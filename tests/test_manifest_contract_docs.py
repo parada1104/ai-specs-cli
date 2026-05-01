@@ -5,6 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
 TEMPLATE = ROOT / "templates" / "ai-specs.toml.tmpl"
+MANIFEST_DOC = ROOT / "docs" / "ai-specs-toml.md"
+RECIPE_DOC = ROOT / "docs" / "recipe-schema.md"
 
 
 class ManifestContractDocsTests(unittest.TestCase):
@@ -12,15 +14,17 @@ class ManifestContractDocsTests(unittest.TestCase):
     def setUpClass(cls):
         cls.readme = README.read_text()
         cls.template = TEMPLATE.read_text()
+        cls.manifest_doc = MANIFEST_DOC.read_text()
+        cls.recipe_doc = RECIPE_DOC.read_text()
 
     def assertContainsAll(self, haystack, needles):
         for needle in needles:
             with self.subTest(needle=needle):
                 self.assertIn(needle, haystack)
 
-    def test_readme_lists_entire_canonical_surface_and_compatibility_rules(self):
+    def test_manifest_reference_lists_canonical_surface_and_compatibility_rules(self):
         self.assertContainsAll(
-            self.readme,
+            self.manifest_doc,
             [
                 "`ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.",
                 "Omission of `[sdd]` remains valid for projects not using SDD.",
@@ -28,7 +32,10 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "- `[agents]`",
                 "- `[[deps]]`",
                 "- `[mcp.<name>]`",
-                "- `[sdd]` (optional — SDD / OpenSpec; see section above)",
+                "- `[recipes.<id>]`",
+                "- `[recipes.<id>.config]`",
+                "- `[[bindings]]`",
+                "- `[sdd]` (optional)",
                 "- Missing `[agents]`, `[[deps]]`, and `[mcp]` remain valid and normalize to stable defaults.",
                 "- `project.subrepos` remains validated by the existing root target resolver.",
                 "- MCP `env` is the canonical field name.",
@@ -36,9 +43,9 @@ class ManifestContractDocsTests(unittest.TestCase):
             ],
         )
 
-    def test_readme_lists_every_v1_field_classification_row(self):
+    def test_manifest_reference_lists_every_v1_field_classification_row(self):
         self.assertContainsAll(
-            self.readme,
+            self.manifest_doc,
             [
                 "| `[project]` | `name` | optional, default `\"\"` |",
                 "| `[project]` | `subrepos` | optional, default `[]`, validated as root-relative target paths |",
@@ -51,17 +58,47 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "| `[mcp.<name>]` | `environment` | tolerated input alias of `env` |",
                 "| `[mcp.<name>]` | `timeout` | optional |",
                 "| `[mcp.<name>]` | `enabled` | tolerated passthrough field |",
+                "| `[recipes.<id>]` | `enabled` | required; boolean - must be `true` to materialize |",
+                "| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |",
+                "| `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |",
+                "| `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |",
                 "| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |",
             ],
         )
 
-    def test_readme_marks_out_of_scope_items_as_deferred(self):
+    def test_manifest_reference_marks_out_of_scope_items_as_deferred(self):
         self.assertContainsAll(
-            self.readme,
+            self.manifest_doc,
             [
                 "Out of scope for this V1 contract (explicitly deferred to future changes):",
                 "- precedence / merge policy beyond the currently implemented runtime behavior",
                 "- `[memory]` (distinct from `[sdd].artifact_store = memory`)",
+            ],
+        )
+
+    def test_readme_links_to_dedicated_manifest_and_recipe_references(self):
+        self.assertContainsAll(
+            self.readme,
+            [
+                "[`docs/ai-specs-toml.md`](docs/ai-specs-toml.md)",
+                "[`docs/recipe-schema.md`](docs/recipe-schema.md)",
+                "[`docs/ai/sdd.md`](docs/ai/sdd.md)",
+                "Use the README for overview and navigation.",
+            ],
+        )
+
+    def test_recipe_reference_covers_current_v2_contract_and_boundaries(self):
+        self.assertContainsAll(
+            self.recipe_doc,
+            [
+                "[`docs/ai-specs-toml.md`](ai-specs-toml.md)",
+                "## `[sdd]` recipe metadata",
+                "| `threshold` | string | no | Optional ceremony level: `trivial`, `local_fix`, `behavior_change`, or `domain_change` |",
+                "Missing `required` causes a validation error.",
+                "The current validator treats\n`type` as descriptive metadata",
+                "| `condition` | string | no | `\"not_exists\"` (default) — skip if target already exists |",
+                "Only `source` and `target` are part of the supported docs contract.",
+                "## Reference recipe: `trello-mcp-workflow`",
             ],
         )
 

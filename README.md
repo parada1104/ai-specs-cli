@@ -1,16 +1,30 @@
 # ai-specs
 
-One declarative manifest per project — fan out to Claude, Cursor, OpenCode, Codex, Copilot, and Gemini.
+Per-project harness engineering for existing coding-agent tools.
 
-`ai-specs` is a per-project standard for managing AI agent configuration: skills,
-MCP servers, and per-agent instruction files. Each project owns its manifest at
-`ai-specs/ai-specs.toml`; the global `ai-specs` CLI distributes that manifest
-into every enabled agent's native format.
+`ai-specs` is a per-project standard for managing coding-agent configuration:
+skills, MCP servers, derived instructions, and workflow artifacts for tools
+such as Claude, Cursor, OpenCode, Codex, Copilot, and Gemini. Each project owns
+its manifest at `ai-specs/ai-specs.toml`; the global `ai-specs` CLI distributes
+that manifest into every enabled tool's native format.
+
+The goal is to give a repo its own operational harness: project-local agent
+rules, vendored skills, MCP presets, recipes, and SDD workflow wiring that can
+be committed, reviewed, and reproduced by a team.
+
+`ai-specs` is **not** a general framework for building arbitrary agents or
+custom runtimes from scratch. It does not currently provision a new agent
+runtime over frameworks like LangChain, nor does it define a universal agent
+execution model. It assumes an existing coding tool/runtime and focuses on the
+per-project harness around it.
 
 Inspired by [`charliesbot/chai`](https://github.com/charliesbot/chai) (global
 fan-out, merge-safe MCP) but **per-project** so different repos can have
 different agents, skills, and MCP servers — and the configuration is
 committable and shareable with a team.
+
+In short: `ai-specs` is closer to a per-project operating layer for supported
+coding tools than to an agent-building SDK.
 
 ## What's included (MVP v1)
 
@@ -48,6 +62,7 @@ These features are **explicitly deferred** to post-MVP (EPICs 2–7). They are
 | **Tracker adapters** | EPIC 7 | No Trello/Jira/GitHub Issues integration |
 | **Semantic search** | Post-MVP | No embeddings or local vector search for skills/docs |
 | **Coverage / linter / type-check** | Post-MVP | Testing foundation exists; stronger tooling not configured |
+| **Build arbitrary agent runtimes** | Out of scope today | No LangChain-style "create a new agent from zero" harness generation |
 
 > If you need any of these now, open an issue or vendor a skill via `[[deps]]`
 > that implements the desired behavior locally.
@@ -133,76 +148,27 @@ is readable, and `ai-specs sdd enable` will scaffold `openspec/` with a valid
 base configuration for the `spec-driven` schema. See [`docs/ai/sdd.md`](docs/ai/sdd.md)
 for the full SDD provider contract and generated command reference.
 
-## Manifest V1 contract (`ai-specs/ai-specs.toml`)
+## Manifest and recipe references
 
-`ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.
-The runtime contract includes optional **`[sdd]`** for OpenSpec onboarding; there is
-still no separate `[memory]` manifest section (distinct from `[sdd].artifact_store`).
+`ai-specs/ai-specs.toml` remains the root source of truth, but the detailed
+contract now lives in dedicated references:
 
-Canonical V1 surface:
+- [`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) — canonical manifest reference
+- [`docs/recipe-schema.md`](docs/recipe-schema.md) — canonical recipe and recipe V2 reference
+- [`docs/ai/sdd.md`](docs/ai/sdd.md) — SDD provider contract and OpenSpec workflow
 
-- `[project]`
-- `[agents]`
-- `[[deps]]`
-- `[mcp.<name>]`
-- `[recipes.<id>]` (optional — named bundles of skills, commands, templates, and MCP presets)
-- `[sdd]` (optional — SDD / OpenSpec; see section above)
+Use the README for overview and navigation. Use the dedicated references for:
 
-Omission of `[sdd]` remains valid for projects not using SDD.
+- supported manifest sections and defaults
+- `[[bindings]]` and `[recipes.<id>.config]`
+- recipe schema details such as `[[capabilities]]`, `[[hooks]]`, `[init]`, and recipe `[sdd]`
+- explicit compatibility boundaries and deferred items
 
-Conservative compatibility rules:
-
-- Missing `[agents]`, `[[deps]]`, and `[mcp]` remain valid and normalize to stable defaults.
-- `project.subrepos` remains validated by the existing root target resolver.
-- MCP `env` is the canonical field name.
-- MCP `environment` is still accepted as a tolerated input alias and normalizes to `env`.
-
-Field classification in V1:
-
-| Surface | Fields | Status |
-|---------|--------|--------|
-| `[project]` | `name` | optional, default `""` |
-| `[project]` | `subrepos` | optional, default `[]`, validated as root-relative target paths |
-| `[agents]` | `enabled` | optional, default `[]` |
-| `[[deps]]` | `id`, `source` | only required minimum fields |
-| `[[deps]]` | `path`, `scope`, `auto_invoke`, `license`, `vendor_attribution` | optional passthrough fields consumed by vendoring/rendering |
-| `[mcp.<name>]` | `command` | optional |
-| `[mcp.<name>]` | `args` | optional, default `[]` |
-| `[mcp.<name>]` | `env` | optional canonical field, default `{}` |
-| `[mcp.<name>]` | `environment` | tolerated input alias of `env` |
-| `[mcp.<name>]` | `timeout` | optional |
-| `[mcp.<name>]` | `enabled` | tolerated passthrough field |
-| `[recipes.<id>]` | `enabled` | required; boolean — must be `true` to materialize |
-| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
-| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |
-
-Out of scope for this V1 contract (explicitly deferred to future changes):
-
-- precedence / merge policy beyond the currently implemented runtime behavior
-- `[memory]` (distinct from `[sdd].artifact_store = memory`)
-
-## Recipes
-
-Recipes are named, versioned bundles of skills, commands, templates, and MCP presets.
-They live in `catalog/recipes/<id>/recipe.toml` and are materialized by `ai-specs sync`.
-
-Declare a recipe in your manifest:
-
-```toml
-[recipes.runtime-memory-openmemory]
-enabled = true
-version = "1.0.0"
-```
-
-On `ai-specs sync`, the CLI:
-1. Validates the recipe exists in the catalog
-2. Checks the version pin matches `recipe.toml`
-3. Copies bundled skills, commands, templates, and docs into the project
-4. Vendors external skills declared with `source = "dep"`
-5. Merges MCP presets into derived agent configs (recipe values take precedence)
-6. Detects and fails on primitive ID collisions across recipes
-
-Recipe vs user-local skills produce a warning (recipe version wins), not a fatal error.
+At a high level, recipes are named, versioned bundles of skills, commands,
+templates, docs, and MCP presets materialized by `ai-specs sync`. The sync
+pipeline validates version pins, copies declared primitives, resolves
+capability bindings, and merges recipe MCP defaults with project manifest
+precedence.
 
 ## Recommended skills (catalog)
 
