@@ -7,7 +7,7 @@ Define how recipes are declared in a project's `ai-specs.toml` manifest.
 ## ADDED Requirements
 
 ### Requirement: Recipe instance declaration
-A project MAY declare an installed recipe using a top-level `[recipes.<id>]` table. The table SHALL contain `enabled` (boolean, required) and `version` (string, required). The `id` MUST match a recipe in `catalog/recipes/`.
+A project MAY declare an installed recipe using a top-level `[recipes.<id>]` table. The table SHALL contain `enabled` (boolean, required) and `version` (string, required). The `id` MUST match a recipe in the CLI recipe catalog.
 
 #### Scenario: Recipe enabled and pinned
 - **WHEN** `[recipes.runtime-memory-openmemory]` declares `enabled = true` and `version = "1.0.0"`

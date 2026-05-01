@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define how `ai-specs sync` resolves, validates, and materializes recipes into the project workspace, including the external directory layout for recipe-bundled and dependency skills.
+Define how `ai-specs sync` resolves recipes from the CLI catalog, validates them, and materializes them into the project workspace, including the external directory layout for recipe-bundled and dependency skills.
 
 ## Requirements
 
@@ -14,10 +14,10 @@ During sync, the system SHALL parse all `[recipes.*]` tables from `ai-specs.toml
 - **THEN** sync SHALL process all three in declaration order
 
 ### Requirement: Recipe validation
-Before materialization, the system SHALL validate that: the recipe directory exists in `catalog/recipes/<id>/`, `recipe.toml` is parseable, all required fields are present, and all referenced local paths (`skills/`, `commands/`, `templates/`, `docs/`) exist.
+Before materialization, the system SHALL validate that: the recipe directory exists in the CLI recipe catalog at `catalog/recipes/<id>/`, `recipe.toml` is parseable, all required fields are present, and all referenced local paths (`skills/`, `commands/`, `templates/`, `docs/`) exist.
 
 #### Scenario: Missing recipe.toml
-- **WHEN** `catalog/recipes/<id>/` exists but lacks `recipe.toml`
+- **WHEN** the CLI catalog directory `catalog/recipes/<id>/` exists but lacks `recipe.toml`
 - **THEN** sync SHALL fail with "recipe.toml not found"
 
 #### Scenario: Missing referenced skill directory
@@ -40,13 +40,23 @@ The system SHALL materialize primitives in this order: skills (bundled then deps
 - **AND** no unintended modifications SHALL occur in `.recipe/`, `.deps/`, or `ai-specs/`
 
 ### Requirement: MCP preset merge strategy
-When a recipe declares an MCP preset with the same `id` as an existing `[mcp.<id>]` in the project manifest, the system SHALL merge the recipe fields into the derived config with recipe values taking precedence. The system SHALL emit a warning naming the recipe and the MCP id.
+When a recipe declares an MCP preset with the same `id` as an existing `[mcp.<id>]` in the project manifest, the system SHALL merge the recipe fields into the derived config with project manifest values taking precedence over recipe defaults. The system SHALL emit a warning naming the recipe and the MCP id.
 
-#### Scenario: Recipe MCP overrides manifest MCP
+#### Scenario: Project manifest MCP overrides recipe preset
 - **WHEN** the project manifest declares `[mcp.openmemory]` and a recipe also declares `mcp.id = "openmemory"`
 - **THEN** sync SHALL merge the recipe fields into the derived MCP config
-- **AND** recipe fields SHALL take precedence on key overlap
-- **AND** sync SHALL emit a warning: "recipe <name> overrides mcp.id='openmemory' from project manifest"
+- **AND** project manifest fields SHALL take precedence on key overlap
+- **AND** sync SHALL emit a warning describing the overlap for `mcp.id='openmemory'`
+
+### Requirement: Sync resolves recipes from the CLI catalog
+Sync SHALL resolve enabled recipes from the CLI recipe catalog. A consumer project SHALL NOT be required to host `catalog/recipes/` in its own workspace for recipe validation or materialization.
+
+#### Scenario: Consumer project without local catalog
+- **GIVEN** a project with `ai-specs/ai-specs.toml` and enabled recipe `tracker`
+- **AND** the CLI catalog contains `tracker`
+- **WHEN** `ai-specs sync` runs
+- **THEN** sync SHALL validate and materialize `tracker` from the CLI catalog
+- **AND** it SHALL NOT require `project_root/catalog/recipes/tracker/`
 
 ### Requirement: Idempotent sync
 Running sync multiple times with the same manifest SHALL produce the same result.

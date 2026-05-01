@@ -22,7 +22,7 @@ while [[ -L "$SOURCE" ]]; do
     [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
 done
 BIN_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
-AI_SPECS_HOME="$(cd "$BIN_DIR/.." && pwd)"
+AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$BIN_DIR/.." && pwd)}"
 export AI_SPECS_HOME
 LIB_DIR="$AI_SPECS_HOME/lib"
 cmd="${1:-help}"

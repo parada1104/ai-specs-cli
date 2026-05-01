@@ -33,16 +33,13 @@ def _load_recipe_read():
 
 
 def _resolve_catalog_dir(project_root: Path) -> Path:
-    local_catalog = project_root / "catalog" / "recipes"
-    if local_catalog.is_dir():
-        return local_catalog
-
     ai_specs_home = os.environ.get("AI_SPECS_HOME")
     if ai_specs_home:
         home_catalog = Path(ai_specs_home) / "catalog" / "recipes"
         if home_catalog.is_dir():
             return home_catalog
 
+    # Consumer projects declare recipes in ai-specs.toml; the recipe catalog is owned by the CLI.
     return Path(__file__).resolve().parents[2] / "catalog" / "recipes"
 
 

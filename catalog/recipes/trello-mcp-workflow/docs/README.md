@@ -14,9 +14,11 @@ This installs:
 - **Templates**: `card-feature.md`, `card-bug.md`, `card-spike.md`, `card-epic.md`, `card-handoff.md` — Trello card description templates.
 - **Command**: `trello-workflow` — quick-reference command file for agents.
 
+`ai-specs recipe add` only declares the recipe in `ai-specs/ai-specs.toml`. `ai-specs sync` materializes the bundled assets.
+
 ## Configuration
 
-Add to `ai-specs/recipes/trello-mcp-workflow/config.json` or the recipe section in `ai-specs.toml`:
+Add configuration under `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`:
 
 | Field | Required | Default | Description |
 |---|---|---|---|
@@ -26,19 +28,22 @@ Add to `ai-specs/recipes/trello-mcp-workflow/config.json` or the recipe section 
 
 ### Example
 
-```json
-{
-  "board_id": "69ec0a2099ea20956e371d62",
-  "default_list": "In Progress",
-  "epic_list": "Epic"
-}
+```toml
+[recipes.trello-mcp-workflow]
+enabled = true
+version = "1.0.0"
+
+[recipes.trello-mcp-workflow.config]
+board_id = "69ec0a2099ea20956e371d62"
+default_list = "In Progress"
+epic_list = "Epic"
 ```
 
 ## What Gets Installed
 
 | Asset | Target Location |
 |---|---|
-| Skill | `ai-specs/skills/trello-mcp-workflow/SKILL.md` |
+| Skill | `.recipe/trello-mcp-workflow/skills/trello-mcp-workflow/SKILL.md` |
 | Feature template | `ai-specs/recipes/trello-mcp-workflow/templates/card-feature.md` |
 | Bug template | `ai-specs/recipes/trello-mcp-workflow/templates/card-bug.md` |
 | Spike template | `ai-specs/recipes/trello-mcp-workflow/templates/card-spike.md` |
