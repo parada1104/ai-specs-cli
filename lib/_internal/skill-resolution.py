@@ -42,7 +42,7 @@ def _scan_local_skills(project_root: Path) -> dict[str, Path]:
 
 
 def _scan_recipe_skills(project_root: Path) -> dict[str, Path]:
-    recipe_dir = project_root / ".recipe"
+    recipe_dir = project_root / "ai-specs" / ".recipe"
     result: dict[str, Path] = {}
     if not recipe_dir.is_dir():
         return result
@@ -66,7 +66,7 @@ def _scan_recipe_skills(project_root: Path) -> dict[str, Path]:
 
 
 def _scan_dep_skills(project_root: Path) -> dict[str, Path]:
-    deps_dir = project_root / ".deps"
+    deps_dir = project_root / "ai-specs" / ".deps"
     result: dict[str, Path] = {}
     if not deps_dir.is_dir():
         return result
@@ -92,7 +92,7 @@ def _scan_dep_skills(project_root: Path) -> dict[str, Path]:
 def _get_recipe_id_for_skill(skill_path: Path, project_root: Path) -> str | None:
     """Infer recipe-id from a recipe skill path like .recipe/{id}/skills/{skill}/"""
     try:
-        rel = skill_path.relative_to(project_root / ".recipe")
+        rel = skill_path.relative_to(project_root / "ai-specs" / ".recipe")
         parts = rel.parts
         if len(parts) >= 3 and parts[1] == "skills":
             return parts[0]
@@ -117,7 +117,7 @@ def load_skill_config(project_root: Path, skill_id: str, bundled_config: dict | 
     if source_type == "recipe":
         recipe_id = _get_recipe_id_for_skill(skill_path, project_root)
         if recipe_id:
-            override_path = project_root / ".recipe" / recipe_id / "overrides" / "config.toml"
+            override_path = project_root / "ai-specs" / ".recipe" / recipe_id / "overrides" / "config.toml"
             if override_path.is_file():
                 with override_path.open("rb") as f:
                     overrides = tomllib.load(f)
@@ -144,7 +144,7 @@ def resolve_skill_template(project_root: Path, skill_id: str, template_name: str
     if source_type == "recipe":
         recipe_id = _get_recipe_id_for_skill(skill_path, project_root)
         if recipe_id:
-            override_template = project_root / ".recipe" / recipe_id / "overrides" / "templates" / template_name
+            override_template = project_root / "ai-specs" / ".recipe" / recipe_id / "overrides" / "templates" / template_name
             if override_template.is_file():
                 return override_template
 

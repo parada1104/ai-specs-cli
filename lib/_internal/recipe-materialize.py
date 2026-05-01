@@ -14,6 +14,7 @@ Exit 0 on success, 1 on validation/conflict error.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,24 @@ from pathlib import Path
 from typing import Any
 
 import importlib.util
+
+
+def _load_lock_module():
+    module_path = Path(__file__).with_name("lock.py")
+    spec = importlib.util.spec_from_file_location("lock_internal", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load lock.py at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+_lock_mod = _load_lock_module()
+load_lock = _lock_mod.load_lock
+write_lock = _lock_mod.write_lock
+set_recipe_skill_hashes = _lock_mod.set_recipe_skill_hashes
+set_dep_skill_hashes = _lock_mod.set_dep_skill_hashes
+sha256_of = _lock_mod.sha256_of
 
 # Load toml-read helper
 _toml_read_module = None
@@ -129,7 +148,7 @@ def validate_version_pin(recipe_id: str, manifest_version: str, recipe: Any) -> 
 # --- Materialize helpers ------------------------------------------------------
 def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Path, recipe_id: str) -> None:
     src = recipe_dir / "skills" / skill_id
-    dest = project_root / ".recipe" / recipe_id / "skills" / skill_id
+    dest = project_root / "ai-specs" / ".recipe" / recipe_id / "skills" / skill_id
     if not src.is_dir():
         raise RuntimeError(f"bundled skill not found: {src}")
     if dest.exists():
@@ -137,6 +156,12 @@ def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Pat
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dest)
     print(f"    ✓ bundled skill {skill_id}")
+    # Track hashes in lock
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
+    hashes = {str(p.relative_to(dest)): sha256_of(p) for p in dest.rglob("*") if p.is_file()}
+    set_recipe_skill_hashes(lock, recipe_id, skill_id, hashes)
+    write_lock(lock_path, lock)
 
 
 def materialize_dep_skill(skill: Any, project_root: Path) -> None:
@@ -292,7 +317,7 @@ def execute_hooks(recipe: Any, merged_config: dict[str, Any], project_root: Path
                         f"missing required config field '{key}'"
                     )
         elif hook.action == "bootstrap-board":
-            marker_dir = project_root / ".recipe" / recipe.id
+            marker_dir = project_root / "ai-specs" / ".recipe" / recipe.id
             marker_dir.mkdir(parents=True, exist_ok=True)
             (marker_dir / "bootstrap-ready").write_text(
                 f"board_id={merged_config.get('board_id', '')}\n"
@@ -337,14 +362,14 @@ def build_recipe_mcp(catalog_dir: Path, recipe_ids: list[str], manifest_mcp: dic
 
 # --- Orphan cleanup -----------------------------------------------------------
 def clean_orphans(project_root: Path, enabled_recipe_ids: set[str], expected_dep_ids: set[str]) -> None:
-    recipe_dir = project_root / ".recipe"
+    recipe_dir = project_root / "ai-specs" / ".recipe"
     if recipe_dir.is_dir():
         for child in recipe_dir.iterdir():
             if child.is_dir() and child.name not in enabled_recipe_ids:
                 shutil.rmtree(child)
                 print(f"  ✓ removed orphaned .recipe/{child.name}")
 
-    deps_dir = project_root / ".deps"
+    deps_dir = project_root / "ai-specs" / ".deps"
     if deps_dir.is_dir():
         for child in deps_dir.iterdir():
             if child.is_dir() and child.name not in expected_dep_ids:
@@ -353,7 +378,7 @@ def clean_orphans(project_root: Path, enabled_recipe_ids: set[str], expected_dep
 
 
 # --- Main ---------------------------------------------------------------------
-def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
+def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None) -> int:
     catalog_dir = ai_specs_home / "catalog" / "recipes"
     toml_path = project_root / "ai-specs" / "ai-specs.toml"
 
@@ -471,24 +496,40 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path) -> int:
         # Hook execution (NEW)
         execute_hooks(recipe, merged_cfg, project_root)
 
-    # Write merged MCP for downstream mcp-render.py
-    recipe_mcp_path = project_root / "ai-specs" / ".recipe-mcp.json"
-    recipe_mcp_path.write_text(json.dumps(recipe_mcp, indent=2) + "\n")
-    print(f"  ✓ wrote {recipe_mcp_path} ({len(recipe_mcp)} server(s))")
+    # Write merged MCP to a temp file for downstream mcp-render.py
+    if recipe_mcp_out is not None:
+        temp_path = recipe_mcp_out
+    else:
+        import tempfile as _tempfile
+        fd, temp_path = _tempfile.mkstemp(prefix="ai-specs-recipe-mcp-", suffix=".json")
+        os.close(fd)
+    with open(temp_path, "w") as f:
+        json.dump(recipe_mcp, f, indent=2)
+        f.write("\n")
+    print(f"  ✓ wrote recipe MCP temp ({len(recipe_mcp)} server(s))")
+    if recipe_mcp_out is None:
+        print(f"RECIPE_MCP_TEMP:{temp_path}")
 
     return 0
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <project_root> <ai_specs_home>", file=sys.stderr)
+    args = sys.argv[1:]
+    recipe_mcp_out = None
+    if "--recipe-mcp-out" in args:
+        idx = args.index("--recipe-mcp-out")
+        if idx + 1 < len(args):
+            recipe_mcp_out = Path(args[idx + 1])
+            args = args[:idx] + args[idx + 2:]
+    if len(args) != 2:
+        print(f"Usage: {sys.argv[0]} <project_root> <ai_specs_home> [--recipe-mcp-out <path>]", file=sys.stderr)
         return 2
 
-    project_root = Path(sys.argv[1]).resolve()
-    ai_specs_home = Path(sys.argv[2]).resolve()
+    project_root = Path(args[0]).resolve()
+    ai_specs_home = Path(args[1]).resolve()
 
     try:
-        return materialize_recipes(project_root, ai_specs_home)
+        return materialize_recipes(project_root, ai_specs_home, recipe_mcp_out)
     except Exception as exc:
         fail(str(exc))
         return 1

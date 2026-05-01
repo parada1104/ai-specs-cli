@@ -115,7 +115,8 @@ echo "▸ vendor-skills (root only)"
 python3 "$VENDOR_SKILLS_PY" "$ROOT_PATH"
 
 echo "▸ recipe-materialize (root)"
-python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME"
+RECIPE_MCP_TEMP="$(python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" | grep '^RECIPE_MCP_TEMP:' | cut -d: -f2- || true)"
+export AI_SPECS_RECIPE_MCP_PATH="$RECIPE_MCP_TEMP"
 
 echo "▸ agents-md-render (root)"
 python3 "$AGENTS_MD_RENDER" "$ROOT_PATH" "$ROOT_PATH/AGENTS.md"
@@ -133,6 +134,11 @@ for idx in "${!RESOLVED_TARGETS[@]}"; do
         exit 1
     fi
 done
+
+# Cleanup recipe MCP temp file if present
+if [[ -n "${AI_SPECS_RECIPE_MCP_PATH:-}" && -f "$AI_SPECS_RECIPE_MCP_PATH" ]]; then
+    rm -f "$AI_SPECS_RECIPE_MCP_PATH"
+fi
 
 echo ""
 echo "✓ ai-specs sync complete"
