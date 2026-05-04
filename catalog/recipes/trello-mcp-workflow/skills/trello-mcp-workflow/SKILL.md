@@ -1,13 +1,18 @@
 ---
+name: trello-mcp-workflow
+description: >
+  Automated Trello board integration for ai-specs SDD (Spec-Driven Development)
+  workflows. Provides session bootstrapping, card linking, state
+  synchronization, and progress reporting through Trello MCP tool calls.
+license: MIT
 metadata:
-  name: trello-mcp-workflow
+  author: ai-specs
+  version: "1.0"
   scope: runtime
   auto_invoke: false
 ---
 
 # Trello MCP Workflow
-
-Automated Trello board integration for ai-specs SDD (Spec-Driven Development) workflows. Provides session bootstrapping, card linking, state synchronization, and progress reporting through Trello MCP tool calls.
 
 ## Prerequisites
 
