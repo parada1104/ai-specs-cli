@@ -94,5 +94,5 @@ condition = "not_exists"
 
 [[provides.docs]]
 source = "README.md"
-target = "docs/trello-mcp-workflow.md"
+target = "ai-specs/recipes/trello-mcp-workflow/README.md"
 condition = "not_exists"
