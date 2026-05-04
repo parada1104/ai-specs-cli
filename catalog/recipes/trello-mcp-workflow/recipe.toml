@@ -60,6 +60,13 @@ needs_mcp = ["trello"]
 skills = [{ id = "trello-mcp-workflow", source = "bundled" }]
 commands = [{ id = "trello-workflow", path = "commands/trello-workflow.md" }]
 
+[[provides.mcp]]
+id = "trello"
+command = "npx"
+args = ["-y", "@delorenj/mcp-server-trello"]
+env = { TRELLO_API_KEY = "$TRELLO_API_KEY", TRELLO_TOKEN = "$TRELLO_TOKEN" }
+timeout = 30000
+
 [[provides.templates]]
 source = "templates/card-feature.md"
 target = "ai-specs/recipes/trello-mcp-workflow/templates/card-feature.md"
