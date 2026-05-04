@@ -180,9 +180,7 @@ class RecipeReadTests(unittest.TestCase):
     def _write_init_recipe(self, root: Path, recipe_id: str, init_body: str, prompt_name: str = "init.md") -> Path:
         recipe_dir = root / recipe_id
         recipe_dir.mkdir()
-        prompt_dir = recipe_dir / "docs"
-        prompt_dir.mkdir()
-        (prompt_dir / prompt_name).write_text("# Init prompt\nConfigure this recipe.\n", encoding="utf-8")
+        (recipe_dir / prompt_name).write_text("# Init prompt\nConfigure this recipe.\n", encoding="utf-8")
         (recipe_dir / "recipe.toml").write_text(
             f'[recipe]\nid = "{recipe_id}"\nname = "Init Recipe"\ndescription = "D"\nversion = "1.0"\n'
             + init_body,
@@ -195,24 +193,24 @@ class RecipeReadTests(unittest.TestCase):
             self._write_init_recipe(
                 Path(tmp),
                 "init-recipe",
-                '[init]\nprompt = "docs/init.md"\ndescription = "Configure"\nneeds_manifest = true\nneeds_mcp = ["trello", "openmemory"]\n',
+                '[init]\nprompt = "init.md"\ndescription = "Configure"\nneeds_manifest = true\nneeds_mcp = ["trello", "openmemory"]\n',
             )
             data = self.mod.read_recipe(Path(tmp), "init-recipe")
             self.assertIsNotNone(data.init)
-            self.assertEqual(data.init.prompt, "docs/init.md")
+            self.assertEqual(data.init.prompt, "init.md")
             self.assertEqual(data.init.description, "Configure")
             self.assertEqual(data.init.needs_manifest, True)
             self.assertEqual(data.init.needs_mcp, ["trello", "openmemory"])
 
     def test_init_metadata_in_json(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self._write_init_recipe(Path(tmp), "init-recipe", '[init]\nprompt = "docs/init.md"\nneeds_mcp = ["trello"]\n')
+            self._write_init_recipe(Path(tmp), "init-recipe", '[init]\nprompt = "init.md"\nneeds_mcp = ["trello"]\n')
             data = self.mod.read_recipe(Path(tmp), "init-recipe")
             payload = self.mod.recipe_to_dict(data)
             self.assertEqual(
                 payload["init"],
                 {
-                    "prompt": "docs/init.md",
+                    "prompt": "init.md",
                     "description": "",
                     "needs_manifest": False,
                     "needs_mcp": ["trello"],
@@ -239,14 +237,14 @@ class RecipeReadTests(unittest.TestCase):
 
     def test_init_unknown_field_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "docs/init.md"\nextra = "nope"\n')
+            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "init.md"\nextra = "nope"\n')
             with self.assertRaises(self.mod.RecipeValidationError) as ctx:
                 self.mod.read_recipe(Path(tmp), "bad-init")
             self.assertIn("unsupported init field 'extra'", str(ctx.exception))
 
     def test_init_invalid_needs_mcp_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "docs/init.md"\nneeds_mcp = ["trello", ""]\n')
+            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "init.md"\nneeds_mcp = ["trello", ""]\n')
             with self.assertRaises(self.mod.RecipeValidationError) as ctx:
                 self.mod.read_recipe(Path(tmp), "bad-init")
             self.assertIn("needs_mcp", str(ctx.exception))
@@ -267,7 +265,14 @@ class RecipeReadTests(unittest.TestCase):
 
     def test_init_directory_prompt_path_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self._write_init_recipe(Path(tmp), "bad-init", '[init]\nprompt = "docs"\n')
+            recipe_dir = Path(tmp) / "bad-init"
+            recipe_dir.mkdir()
+            (recipe_dir / "docs").mkdir()
+            (recipe_dir / "recipe.toml").write_text(
+                '[recipe]\nid = "bad-init"\nname = "Bad"\ndescription = "D"\nversion = "1.0"\n'
+                '[init]\nprompt = "docs"\n',
+                encoding="utf-8",
+            )
             with self.assertRaises(self.mod.RecipeValidationError) as ctx:
                 self.mod.read_recipe(Path(tmp), "bad-init")
             self.assertIn("must be a file", str(ctx.exception))

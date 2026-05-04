@@ -81,6 +81,21 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
 
     section = f"\n[recipes.{recipe_id}]\nenabled = true\nversion = \"{version}\"\n"
 
+    # Append config placeholders so the user knows what needs configuration
+    if recipe.config_schema.fields:
+        section += f"\n[recipes.{recipe_id}.config]\n"
+        for key in sorted(recipe.config_schema.fields):
+            field = recipe.config_schema.fields[key]
+            if field.required:
+                section += f'{key} = ""  # REQUIRED\n'
+            elif field.default is not None:
+                if isinstance(field.default, str):
+                    section += f'{key} = "{field.default}"\n'
+                else:
+                    section += f"{key} = {field.default}\n"
+            else:
+                section += f'# {key} = ""  # optional\n'
+
     manifest_text = manifest_path.read_text(encoding="utf-8")
     if not manifest_text.endswith("\n"):
         manifest_text += "\n"

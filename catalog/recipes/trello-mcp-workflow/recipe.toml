@@ -51,7 +51,7 @@ type = "string"
 default = "Epic"
 
 [init]
-prompt = "docs/init.md"
+prompt = "init.md"
 description = "Configure Trello board and list mappings before sync"
 needs_manifest = true
 needs_mcp = ["trello"]
@@ -86,6 +86,6 @@ target = "ai-specs/recipes/trello-mcp-workflow/templates/card-handoff.md"
 condition = "not_exists"
 
 [[provides.docs]]
-source = "docs/README.md"
+source = "README.md"
 target = "docs/trello-mcp-workflow.md"
 condition = "not_exists"
