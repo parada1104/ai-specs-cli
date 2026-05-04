@@ -141,6 +141,38 @@ commands = [
         rc = self.mod.add_recipe(project, "my-recipe")
         self.assertEqual(rc, 0)
 
+    def test_add_writes_config_placeholders(self):
+        manifest = '[project]\nname = "test"\n'
+        recipe_toml = """[recipe]
+id = "my-recipe"
+name = "My Recipe"
+description = "Desc"
+version = "1.0.0"
+
+[config.board_id]
+required = true
+type = "string"
+
+[config.default_list]
+required = false
+type = "string"
+default = "In Progress"
+
+[config.epic_list]
+required = false
+type = "string"
+"""
+        project = self._make_project(manifest)
+        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
+        rc = self.mod.add_recipe(project, "my-recipe")
+        self.assertEqual(rc, 0)
+
+        manifest_text = (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
+        self.assertIn("[recipes.my-recipe.config]", manifest_text)
+        self.assertIn('board_id = ""  # REQUIRED', manifest_text)
+        self.assertIn('default_list = "In Progress"', manifest_text)
+        self.assertIn('# epic_list = ""  # optional', manifest_text)
+
     def test_double_add_is_idempotent(self):
         manifest = '[project]\nname = "test"\n'
         recipe_toml = (

@@ -47,13 +47,12 @@ class RecipeInitTests(unittest.TestCase):
         (ai_specs / "ai-specs.toml").write_text(manifest, encoding="utf-8")
         recipe_dir = root / "catalog" / "recipes" / "tracker"
         recipe_dir.mkdir(parents=True)
-        (recipe_dir / "docs").mkdir()
         (recipe_dir / "templates").mkdir()
-        (recipe_dir / "docs" / "init.md").write_text("# Tracker init\nChoose a board and list mapping.\n", encoding="utf-8")
+        (recipe_dir / "init.md").write_text("# Tracker init\nChoose a board and list mapping.\n", encoding="utf-8")
         (recipe_dir / "templates" / "mapping.toml").write_text("[mapping]\n", encoding="utf-8")
         (recipe_dir / "recipe.toml").write_text(
             '[recipe]\nid = "tracker"\nname = "Tracker"\ndescription = "Tracker setup"\nversion = "1.0"\n\n'
-            '[init]\nprompt = "docs/init.md"\ndescription = "Configure tracker"\nneeds_manifest = true\nneeds_mcp = ["trello", "missing-mcp"]\n\n'
+            '[init]\nprompt = "init.md"\ndescription = "Configure tracker"\nneeds_manifest = true\nneeds_mcp = ["trello", "missing-mcp"]\n\n'
             '[config.board_id]\nrequired = true\ntype = "string"\n\n'
             '[config.timeout]\nrequired = false\ntype = "integer"\ndefault = 30\n\n'
             '[[provides.mcp]]\nid = "trello"\ncommand = "npx"\nargs = ["-y", "@recipe/trello"]\nenv = { API_TOKEN = "recipe-secret" }\n\n'
@@ -71,13 +70,12 @@ class RecipeInitTests(unittest.TestCase):
             shutil.copytree(ROOT / "lib", home / "lib")
         recipe_dir = home / "catalog" / "recipes" / recipe_id
         recipe_dir.mkdir(parents=True)
-        (recipe_dir / "docs").mkdir()
         (recipe_dir / "templates").mkdir()
-        (recipe_dir / "docs" / "init.md").write_text("# Tracker init\nChoose a board and list mapping.\n", encoding="utf-8")
+        (recipe_dir / "init.md").write_text("# Tracker init\nChoose a board and list mapping.\n", encoding="utf-8")
         (recipe_dir / "templates" / "mapping.toml").write_text("[mapping]\n", encoding="utf-8")
         (recipe_dir / "recipe.toml").write_text(
             '[recipe]\nid = "tracker"\nname = "Tracker"\ndescription = "Tracker setup"\nversion = "1.0"\n\n'
-            '[init]\nprompt = "docs/init.md"\ndescription = "Configure tracker"\nneeds_manifest = true\nneeds_mcp = ["trello", "missing-mcp"]\n\n'
+            '[init]\nprompt = "init.md"\ndescription = "Configure tracker"\nneeds_manifest = true\nneeds_mcp = ["trello", "missing-mcp"]\n\n'
             '[config.board_id]\nrequired = true\ntype = "string"\n\n'
             '[config.timeout]\nrequired = false\ntype = "integer"\ndefault = 30\n\n'
             '[[provides.mcp]]\nid = "trello"\ncommand = "npx"\nargs = ["-y", "@recipe/trello"]\nenv = { API_TOKEN = "recipe-secret" }\n\n'
@@ -145,7 +143,7 @@ class RecipeInitTests(unittest.TestCase):
         self._set_ai_specs_home(home)
         recipe_toml = home / "catalog" / "recipes" / "tracker" / "recipe.toml"
         text = recipe_toml.read_text(encoding="utf-8")
-        recipe_toml.write_text(text.replace('[init]\nprompt = "docs/init.md"\ndescription = "Configure tracker"\nneeds_manifest = true\nneeds_mcp = ["trello", "missing-mcp"]\n\n', ""), encoding="utf-8")
+        recipe_toml.write_text(text.replace('[init]\nprompt = "init.md"\ndescription = "Configure tracker"\nneeds_manifest = true\nneeds_mcp = ["trello", "missing-mcp"]\n\n', ""), encoding="utf-8")
         with self.assertRaises(self.mod.RecipeInitError) as ctx:
             self.mod.build_init_brief(root, "tracker")
         self.assertIn("has no init workflow", str(ctx.exception))
@@ -234,7 +232,7 @@ class RecipeInitTests(unittest.TestCase):
             self.assertIn("Configure Trello board and list mappings before sync", brief)
             self.assertIn("board_id", brief)
             self.assertIn("trello: configured", brief)
-            self.assertIn("# Trello Recipe Init", brief)
+            self.assertIn("# Recipe Init Contract", brief)
 
     def test_init_ignores_project_local_catalog_in_favor_of_cli_catalog(self):
         root = self._make_project(config='board_id = "abc123"\n')
