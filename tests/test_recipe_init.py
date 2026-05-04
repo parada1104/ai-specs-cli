@@ -246,7 +246,7 @@ class RecipeInitTests(unittest.TestCase):
         self.assertNotIn("Local Tracker", brief)
         self.assertNotIn("9.9", brief)
 
-    def test_trello_recipe_init_uses_cli_catalog_when_project_has_no_local_catalog(self):
+    def test_trello_recipe_init_uses_cli_catalog_when_project_has_no_local_catalog_v2(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ai_specs = root / "ai-specs"
@@ -262,7 +262,7 @@ class RecipeInitTests(unittest.TestCase):
             self.assertIn("Configure Trello board and list mappings before sync", brief)
             self.assertIn("board_id", brief)
             self.assertIn("trello: configured", brief)
-            self.assertIn("# Trello Recipe Init", brief)
+            self.assertIn("# Recipe Init Contract", brief)
 
     def test_init_ignores_project_local_catalog_in_favor_of_cli_catalog(self):
         root = self._make_project(config='board_id = "abc123"\n')

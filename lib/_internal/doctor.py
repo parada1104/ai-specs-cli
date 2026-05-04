@@ -311,7 +311,7 @@ class Doctor:
                 if skills_path.is_symlink():
                     target = skills_path.resolve()
                     ai_specs_skills = (self.root / "ai-specs" / "skills").resolve()
-                    resolved_skills = (self.root / "ai-specs" / ".resolved-skills").resolve()
+                    resolved_skills = (self.root / "ai-specs" / ".internal" / "resolved-skills").resolve()
                     if target == ai_specs_skills or target == resolved_skills:
                         self.checks.append(Check(
                             Severity.OK, f"{skills}",

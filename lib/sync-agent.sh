@@ -27,6 +27,7 @@ AGENTS_MD_RENDER="$AI_SPECS_HOME/lib/_internal/agents-md-render.py"
 GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 FLATTEN_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/flatten-resolved-skills.py"
+RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 
 usage() {
     cat <<'EOF'
@@ -58,12 +59,14 @@ SOURCE_ROOT=""
 SELECT_ALL=0
 EXPLICIT_SOURCE_ROOT=0
 EXPLICIT_TARGET=0
+RECIPE_MCP_JSON=""
 declare -a SELECTED_AGENTS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --source-root) SOURCE_ROOT="${2:-}"; EXPLICIT_SOURCE_ROOT=1; shift 2 ;;
         --target)      TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
+        --recipe-mcp)  RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
         --all)         SELECT_ALL=1; shift ;;
         --claude|--cursor|--opencode|--codex|--copilot|--gemini)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
@@ -140,8 +143,8 @@ TARGET_AI_SKILLS="$TARGET_AI_SPECS/skills"
 TARGET_AI_COMMANDS="$TARGET_AI_SPECS/commands"
 TARGET_AGENTS_MD="$TARGET_PATH/AGENTS.md"
 
-# Flatten resolved skills (multi-source) into a persistent dir for agent fan-out
-RESOLVED_SKILLS_DIR="$SOURCE_AI_SPECS/.resolved-skills"
+# Flatten resolved skills (multi-source) into an internal dir for agent fan-out
+RESOLVED_SKILLS_DIR="$SOURCE_AI_SPECS/.internal/resolved-skills"
 python3 "$FLATTEN_SKILLS_PY" "$SOURCE_ROOT" "$RESOLVED_SKILLS_DIR"
 
 if [[ ! -f "$TOML_PATH" ]]; then
@@ -230,7 +233,10 @@ if [[ ${#TARGETS[@]} -eq 0 ]]; then
     exit 0
 fi
 
-RECIPE_MCP_JSON="$SOURCE_AI_SPECS/.recipe-mcp.json"
+# Recipe MCP presets: use --recipe-mcp if passed, otherwise generate temp
+if [[ -z "$RECIPE_MCP_JSON" ]]; then
+    RECIPE_MCP_JSON="$(python3 "$RECIPE_MATERIALIZE_PY" "$SOURCE_ROOT" "$AI_SPECS_HOME" | grep '^RECIPE_MCP_TEMP:' | cut -d: -f2- || true)"
+fi
 MCP_COUNT="$(python3 - "$TOML_PATH" "$RECIPE_MCP_JSON" <<'PY'
 import sys, tomllib, json
 with open(sys.argv[1], "rb") as f:
@@ -311,7 +317,8 @@ for agent in "${TARGETS[@]}"; do
     if [[ -n "$mcp_path" && -n "$mcp_key" ]]; then
         if [[ "$MCP_COUNT" -gt 0 ]]; then
             python3 "$MCP_RENDER" "$TOML_PATH" "$agent" \
-                "$TARGET_PATH/$mcp_path" "$mcp_key"
+                "$TARGET_PATH/$mcp_path" "$mcp_key" \
+                --recipe-mcp "$RECIPE_MCP_JSON"
         else
             echo "    · mcp skipped (no [mcp.*] in manifest)"
         fi
