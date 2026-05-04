@@ -36,9 +36,7 @@ def load_mcp(toml_path: Path, recipe_mcp_path: Path | None = None) -> dict:
     mcp = module.read_mcp(data)
 
     # Merge recipe MCP presets if present (recipe values take precedence)
-    if recipe_mcp_path is None:
-        recipe_mcp_path = toml_path.parent / ".recipe-mcp.json"
-    if recipe_mcp_path.is_file():
+    if recipe_mcp_path is not None and recipe_mcp_path.is_file():
         try:
             recipe_mcp = json.loads(recipe_mcp_path.read_text())
             if isinstance(recipe_mcp, dict):
@@ -244,27 +242,36 @@ def _toml_value(v) -> str:
 def main() -> int:
     args = sys.argv[1:]
     dry_run = False
-    if "--dry-run" in args:
-        dry_run = True
-        args = [a for a in args if a != "--dry-run"]
+    recipe_mcp_path: Path | None = None
+    filtered: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--dry-run":
+            dry_run = True
+        elif args[i] == "--recipe-mcp" and i + 1 < len(args):
+            recipe_mcp_path = Path(args[i + 1])
+            i += 1
+        else:
+            filtered.append(args[i])
+        i += 1
 
-    if len(args) != 4:
+    if len(filtered) != 4:
         print(
-            "Usage: mcp-render.py <toml_path> <agent> <target_path> <mcp_key> [--dry-run]",
+            "Usage: mcp-render.py <toml_path> <agent> <target_path> <mcp_key> [--recipe-mcp <path>] [--dry-run]",
             file=sys.stderr,
         )
         return 2
 
-    toml_path = Path(args[0])
-    agent = args[1]
-    target_path = Path(args[2])
-    mcp_key = args[3]
+    toml_path = Path(filtered[0])
+    agent = filtered[1]
+    target_path = Path(filtered[2])
+    mcp_key = filtered[3]
 
     if not toml_path.is_file():
         print(f"error: {toml_path} not found", file=sys.stderr)
         return 1
 
-    servers = load_mcp(toml_path)
+    servers = load_mcp(toml_path, recipe_mcp_path)
     if not servers:
         print(f"info: no [mcp.*] entries — skipping {agent}", file=sys.stderr)
         return 0

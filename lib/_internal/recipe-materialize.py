@@ -6,7 +6,7 @@ Usage:
 
 Reads [recipes.*] from ai-specs.toml, validates, detects conflicts,
 materializes bundled assets, vendors dep skills, applies templates,
-and writes ai-specs/.recipe-mcp.json for downstream mcp-render.py.
+and writes recipe MCP presets to a temp file for downstream mcp-render.py.
 
 Exit 0 on success, 1 on validation/conflict error.
 """

@@ -28,7 +28,7 @@ FOOTER = """\
 
 def render(deps: list[dict]) -> str:
     lines = [HEADER]
-    lines.append(".resolved-skills/")
+    lines.append(".internal/")
     lines.append("")
     lines.append(FOOTER)
     return "\n".join(lines)
