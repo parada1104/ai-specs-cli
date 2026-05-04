@@ -230,10 +230,18 @@ if [[ ${#TARGETS[@]} -eq 0 ]]; then
     exit 0
 fi
 
-MCP_COUNT="$(python3 - "$TOML_PATH" <<'PY'
-import sys, tomllib
+RECIPE_MCP_JSON="$SOURCE_AI_SPECS/.recipe-mcp.json"
+MCP_COUNT="$(python3 - "$TOML_PATH" "$RECIPE_MCP_JSON" <<'PY'
+import sys, tomllib, json
 with open(sys.argv[1], "rb") as f:
-    print(len(tomllib.load(f).get("mcp", {}) or {}))
+    manifest_mcp = tomllib.load(f).get("mcp", {}) or {}
+recipe_mcp = {}
+try:
+    with open(sys.argv[2]) as f:
+        recipe_mcp = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    pass
+print(len(manifest_mcp) + len(recipe_mcp))
 PY
 )"
 
