@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -316,6 +317,27 @@ def execute_hooks(recipe: Any, merged_config: dict[str, Any], project_root: Path
                         f"recipe '{recipe.name}': hook 'validate-config' failed: "
                         f"missing required config field '{key}'"
                     )
+                # Skip regex validation if the field is not in the merged config
+                if key not in merged_config:
+                    continue
+                value = merged_config[key]
+                value_str = str(value)
+                # Check for Trello shortLink on board_id fields
+                if key == "board_id" and len(value_str) == 8 and value_str.isalnum():
+                    raise RuntimeError(
+                        f"recipe '{recipe.name}': hook 'validate-config' failed: "
+                        f"field 'board_id' value '{value_str}' looks like a Trello shortLink; "
+                        f"the real board ID is 24 hex characters (e.g., '69ec0a2099ea20956e371d62')"
+                    )
+                # Regex validation from field.validation.regex
+                validation = getattr(field, "validation", {}) or {}
+                pattern = validation.get("regex", "")
+                if pattern:
+                    if not re.fullmatch(pattern, value_str):
+                        raise RuntimeError(
+                            f"recipe '{recipe.name}': hook 'validate-config' failed: "
+                            f"field '{key}' value '{value_str}' does not match required pattern '{pattern}'"
+                        )
         elif hook.action == "bootstrap-board":
             marker_dir = project_root / "ai-specs" / ".recipe" / recipe.id
             marker_dir.mkdir(parents=True, exist_ok=True)
