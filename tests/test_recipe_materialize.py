@@ -555,6 +555,98 @@ class RecipeMaterializeTests(unittest.TestCase):
         )
         self.mod.execute_hooks(recipe, {"board_id": "b1"}, Path(tempfile.gettempdir()))
 
+    # --- Regex validation in validate-config hook ----------------------------
+
+    def test_regex_validation_pass(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "board_id": ConfigField(required=True, validation={"regex": "^[a-f0-9]{24}$"}),
+            }),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        # Valid 24-char hex string
+        self.mod.execute_hooks(recipe, {"board_id": "69ec0a2099ea20956e371d62"}, Path(tempfile.gettempdir()))
+
+    def test_regex_validation_fail(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "board_id": ConfigField(required=True, validation={"regex": "^[a-f0-9]{24}$"}),
+            }),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.execute_hooks(recipe, {"board_id": "not-a-valid-board-id"}, Path(tempfile.gettempdir()))
+        self.assertIn("does not match required pattern", str(ctx.exception))
+        self.assertIn("board_id", str(ctx.exception))
+        self.assertIn("not-a-valid-board-id", str(ctx.exception))
+
+    def test_regex_validation_missing_validation_dict(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "board_id": ConfigField(required=True),  # no validation dict
+            }),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        # Should not raise even though board_id has no regex
+        self.mod.execute_hooks(recipe, {"board_id": "valid-board-id-123"}, Path(tempfile.gettempdir()))
+
+    def test_regex_validation_empty_pattern(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "board_id": ConfigField(required=True, validation={"regex": ""}),
+            }),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        # Pattern is empty string — regex should be skipped
+        self.mod.execute_hooks(recipe, {"board_id": "valid-board-id-123"}, Path(tempfile.gettempdir()))
+
+    def test_shortlink_detection_on_board_id(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "board_id": ConfigField(required=True),
+            }),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            # 8 alphanumeric chars looks like a Trello shortLink
+            self.mod.execute_hooks(recipe, {"board_id": "AbCd1234"}, Path(tempfile.gettempdir()))
+        self.assertIn("shortLink", str(ctx.exception))
+        self.assertIn("24 hex characters", str(ctx.exception))
+
+    def test_shortlink_allows_24_hex_board_id(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "board_id": ConfigField(required=True),
+            }),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        # Full 24 hex char board ID should pass shortLink detection
+        self.mod.execute_hooks(recipe, {"board_id": "69ec0a2099ea20956e371d62"}, Path(tempfile.gettempdir()))
+
+    def test_shortlink_non_board_id_field_ignored(self):
+        import tempfile
+        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
+        recipe = Recipe(id="r", name="R", description="D", version="1.0",
+            config_schema=ConfigSchema(fields={
+                "other_field": ConfigField(required=True),
+            }),
+            hooks=[Hook(event="on-sync", action="validate-config")]
+        )
+        # 8 chars on a non-board_id field should not trigger shortLink error
+        self.mod.execute_hooks(recipe, {"other_field": "AbCd1234"}, Path(tempfile.gettempdir()))
+
     # --- Integration: trello-mcp-workflow recipe materialization ------------
 
     def test_materialize_trello_mcp_workflow_recipe(self):

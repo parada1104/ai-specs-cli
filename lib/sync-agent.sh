@@ -215,7 +215,7 @@ ensure_target_workspace() {
 
 # Resolve enabled agents from ai-specs.toml
 ENABLED_JSON="$(python3 "$TOML_READ" "$TOML_PATH" agents)"
-ENABLED_AGENTS=()
+declare -a ENABLED_AGENTS=()
 while IFS= read -r agent; do
     [[ -n "$agent" ]] && ENABLED_AGENTS+=("$agent")
 done < <(python3 -c "import json,sys; [print(a) for a in json.loads(sys.argv[1]).get('enabled', [])]" "$ENABLED_JSON")
@@ -223,7 +223,7 @@ done < <(python3 -c "import json,sys; [print(a) for a in json.loads(sys.argv[1])
 # Pick targets
 declare -a TARGETS=()
 if [[ $SELECT_ALL -eq 1 || ${#SELECTED_AGENTS[@]} -eq 0 ]]; then
-    TARGETS=("${ENABLED_AGENTS[@]}")
+    TARGETS=(${ENABLED_AGENTS[@]+"${ENABLED_AGENTS[@]}"})
 else
     TARGETS=("${SELECTED_AGENTS[@]}")
 fi
