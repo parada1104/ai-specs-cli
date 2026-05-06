@@ -68,6 +68,7 @@ class ConfigField:
     required: bool
     type: str = ""
     default: Any = None
+    validation: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -226,7 +227,25 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
             raise RecipeValidationError(f"{context}.config.{key}: missing or invalid 'required' (must be boolean)")
         field_type = str(value.get("type", ""))
         default = value.get("default")
-        fields[key] = ConfigField(required=required, type=field_type, default=default)
+
+        validation_raw = value.get("validation")
+        validation: dict[str, Any] = {}
+        if isinstance(validation_raw, dict):
+            allowed_validation_keys = {"regex"}
+            for vk in validation_raw:
+                if vk not in allowed_validation_keys:
+                    raise RecipeValidationError(
+                        f"{context}.config.{key}.validation: unknown key '{vk}'"
+                    )
+            validation = dict(validation_raw)
+        elif validation_raw is not None:
+            raise RecipeValidationError(
+                f"{context}.config.{key}.validation: expected table, got {type(validation_raw).__name__}"
+            )
+
+        fields[key] = ConfigField(
+            required=required, type=field_type, default=default, validation=validation
+        )
     return ConfigSchema(fields=fields)
 
 
