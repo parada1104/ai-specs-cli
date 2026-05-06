@@ -262,6 +262,7 @@ recipe while allowing individual customizations.
 | `ai-specs doctor [path]` | Read-only health check for manifest, bundled assets, enabled agents, symlinks, and MCP outputs (does not modify files) |
 | `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI — keeps your edits, drops `.new` sidecars for files you customized |
 | `ai-specs add-dep <git-url> [path]` | Register a vendored skill in `[[deps]]` and `sync` |
+| `ai-specs upgrade [--dry-run] [--force]` | Safely upgrade the global installation to the latest `origin/main` |
 | `ai-specs version` | Print CLI version |
 | `ai-specs help` | Show help |
 
@@ -367,16 +368,33 @@ it so teammates stay on the same baseline.
 
 ## Updating the CLI
 
-### Existing installation
+### Day-to-day upgrade
 
-If you already installed `ai-specs`, the fastest update path is:
+Use the built-in upgrade command to safely fast-forward your global
+installation to the latest `origin/main`:
 
 ```bash
-cd ~/.ai-specs && git pull
+ai-specs upgrade
 ```
 
-Then refresh any project that should receive the newest bundled skills,
-commands, and generated artifacts:
+This detects the install channel, verifies pre-flight conditions (clean
+working tree, fast-forwardable branch), pulls the latest changes, and
+confirms the version diff and symlink integrity.
+
+Preview what would change without modifying anything:
+
+```bash
+ai-specs upgrade --dry-run
+```
+
+If you have uncommitted changes in `~/.ai-specs` and want to proceed anyway:
+
+```bash
+ai-specs upgrade --force
+```
+
+After upgrading, refresh any project that should receive the newest bundled
+skills, commands, and generated artifacts:
 
 ```bash
 cd <your-project>
@@ -385,16 +403,21 @@ ai-specs sync
 
 ### Safe re-install / upgrade
 
-Re-running the installer is also safe; it updates the existing clone and
-recreates the symlink:
+Re-running the installer is safe; it updates the existing clone and recreates
+the symlink:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/parada1104/ai-specs-cli/main/install.sh | bash
 ```
 
-```bash
-cd ~/.ai-specs && git pull       # one global install, one update
-```
+Use `ai-specs upgrade` for routine updates and `install.sh` only for first-time
+installs or recovery from a broken installation.
+
+### Local development checkouts
+
+The `upgrade` command refuses to run outside the standard global path
+(`~/.ai-specs`). If you are working from a local clone or `ai-specs-dev`, use
+`git pull` manually in that directory instead.
 
 The CLI lives only at `~/.ai-specs`. Projects don't carry a copy of the CLI —
 they only carry their manifest, local skills, and the bundled skills shipped
