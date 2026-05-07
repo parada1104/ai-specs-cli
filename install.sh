@@ -39,10 +39,36 @@ command -v python3 >/dev/null 2>&1 || { echo -e "${RED}error: python3 is require
 
 # 1. Clone or update the repo
 if [ -d "$AI_SPECS_HOME/.git" ]; then
-    echo -e "${YELLOW}[1/2]${NC} Updating existing install"
+    echo -e "${YELLOW}[1/2]${NC} Updating existing install at $AI_SPECS_HOME"
+
+    # Detect dirty working tree before attempting any update
+    if [ -n "$(git -C "$AI_SPECS_HOME" status --porcelain 2>/dev/null)" ]; then
+        echo -e "${RED}error: working tree at $AI_SPECS_HOME has uncommitted changes${NC}" >&2
+        echo ""
+        echo -e "  ${BOLD}git -C $AI_SPECS_HOME status${NC}"
+        echo ""
+        echo "Resolve any modified, added, or deleted files before updating."
+        echo "You can stash changes with: git -C $AI_SPECS_HOME stash"
+        exit 1
+    fi
+
     git -C "$AI_SPECS_HOME" fetch --tags origin
     git -C "$AI_SPECS_HOME" checkout "$AI_SPECS_REF"
-    git -C "$AI_SPECS_HOME" pull --ff-only origin "$AI_SPECS_REF" 2>/dev/null || true
+
+    if ! git -C "$AI_SPECS_HOME" pull --ff-only origin "$AI_SPECS_REF"; then
+        echo -e "${RED}error: git pull failed for $AI_SPECS_HOME (ref: $AI_SPECS_REF)${NC}" >&2
+        exit 1
+    fi
+
+    # Post-pull verification: HEAD must match origin/<ref>
+    LOCAL_HEAD="$(git -C "$AI_SPECS_HOME" rev-parse HEAD)"
+    REMOTE_HEAD="$(git -C "$AI_SPECS_HOME" rev-parse "origin/$AI_SPECS_REF")"
+    if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
+        echo -e "${RED}error: after pull, HEAD ($(echo "$LOCAL_HEAD" | head -c 8)) does not match origin/$AI_SPECS_REF ($(echo "$REMOTE_HEAD" | head -c 8))${NC}" >&2
+        echo "The repository may be in an unexpected state. Try removing and re-cloning:"
+        echo -e "  ${BOLD}rm -rf $AI_SPECS_HOME && curl -fsSL https://raw.githubusercontent.com/parada1104/ai-specs-cli/main/install.sh | bash${NC}"
+        exit 1
+    fi
 elif [ -e "$AI_SPECS_HOME" ]; then
     echo -e "${RED}error: $AI_SPECS_HOME exists but is not a git repo${NC}" >&2
     exit 1
