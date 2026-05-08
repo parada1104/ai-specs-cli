@@ -34,7 +34,7 @@ For this project, the runtime brief currently says: tracker = Trello, SDD provid
 - SDD artifacts are authoritative in OpenSpec.
 - Trello owns work state and dependencies.
 - Vault owns canonical handoffs and decisions.
-- OpenMemory owns operational continuity.
+- Engram owns operational continuity.
 
 ## Worktree Boundary
 

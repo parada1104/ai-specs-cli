@@ -27,7 +27,7 @@ project runtime brief in `AGENTS.md`.
 5. SDD artifacts for proposal/spec/design/tasks/apply/verify truth.
 6. Vault decisions and handoffs for canonical project memory.
 7. Project-local skills for reusable procedures.
-8. OpenMemory for operational context and searchable session facts.
+8. Engram for operational context and searchable session facts.
 9. Agent plans or proposed context not yet accepted.
 
 ## Resolution Rules

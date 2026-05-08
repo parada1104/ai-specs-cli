@@ -35,7 +35,7 @@ coding tools than to an agent-building SDK.
 | **MCP server distribution** | ✅ | Merge-safe MCP config per agent (JSON, TOML) |
 | **Skill management** | ✅ | Local, bundled, and vendored skills with autodiscovery |
 | **AGENTS.md runtime brief** | ✅ | Concise operational context generated from `ai-specs.toml` |
-| **Skill registry artifact** | ✅ | Auto-generated `ai-specs/.skill-registry.md` with skill index and Auto-invoke mappings |
+| **Skill metadata validation** | ✅ | `skill-sync` validates `metadata.scope` and `metadata.auto_invoke` across all skill sources |
 | **Project initialization** | ✅ | `ai-specs init` scaffolds structure idempotently |
 | **Dependency vendoring** | ✅ | `ai-specs add-dep` + `ai-specs sync` clones external skills |
 | **Subrepo sync** | ✅ | Mirror derived artifacts to `project.subrepos` |
@@ -180,7 +180,7 @@ external skill.
 
 After vendoring `context-precedence` from the catalog, the rule lives in
 [`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md).
-The skill is listed in `ai-specs/.skill-registry.md` once the skill exists and you run `ai-specs sync`.
+The skill is discoverable via `ai-specs sync` fan-out once the skill exists.
 
 ## Testing foundation
 
@@ -205,9 +205,8 @@ my-project/
 │       └── skills/<skill-id>/
 └── ai-specs/
     ├── ai-specs.toml               ← YOUR manifest (edit this)
-    ├── .gitignore                  ← derived; ignores resolved-skills dir
-    ├── .skill-registry.md          ← generated skill index + Auto-invoke mappings (do not edit by hand)
-    ├── .resolved-skills/           ← flattened resolved skill tree (gitignored; used by agents)
+    ├── .gitignore                  ← derived; ignores .internal/ and .resolved-skills/
+    ├── .internal/resolved-skills/  ← flattened resolved skill tree (gitignored; symlinks point here)
     ├── skills/
     │   ├── skill-creator/          ← bundled on init (contract)
     │   ├── skill-sync/             ← bundled on init (contract)
@@ -238,7 +237,7 @@ Recipe-bundled and vendored skills are kept outside `ai-specs/skills/` so your
 local skill directory stays clean and commit-ready. On every `ai-specs sync`,
 the CLI rebuilds `.recipe/` and `.deps/` from the manifest, removes orphaned
 directories for disabled recipes or deleted deps, and flattens the resolved
-skill tree into `ai-specs/.resolved-skills/` for agent consumption.
+skill tree into `ai-specs/.internal/resolved-skills/` for agent consumption (symlinks point here).
 
 ### Runtime overrides for recipe skills
 
@@ -257,7 +256,7 @@ recipe while allowing individual customizations.
 | Command | Description |
 |---------|-------------|
 | `ai-specs init [path] [--name N] [--force]` | Bootstrap `ai-specs/` (idempotent; never touches your `ai-specs.toml`). `--force` re-copies bundled skills/commands & regenerates AGENTS.md |
-| `ai-specs sync [path]` | Resolve `[root, ...project.subrepos]`, refresh bundled, vendor `[[deps]]` once, regen AGENTS.md runtime brief + `ai-specs/.skill-registry.md`, then fan out local derived artifacts per target + per agent |
+| `ai-specs sync [path]` | Resolve `[root, ...project.subrepos]`, refresh bundled, vendor `[[deps]]` once, regen AGENTS.md runtime brief, validate skill metadata, then fan out local derived artifacts per target + per agent |
 | `ai-specs sync-agent [path] [--all|--<agent>]` | Fan out per-agent only for the current target (no vendoring/regen) |
 | `ai-specs doctor [path]` | Read-only health check for manifest, bundled assets, enabled agents, symlinks, and MCP outputs (does not modify files) |
 | `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI — keeps your edits, drops `.new` sidecars for files you customized |
@@ -296,9 +295,10 @@ config via a **merge-safe** strategy: `ai-specs` owns the MCP key (e.g.
 | Copilot  | No (`.github/copilot-instructions.md`) | No                          | `.github/copilot-instructions.md` symlink |
 | Gemini   | No (needs `GEMINI.md`)    | Yes (`.gemini/skills/<name>/SKILL.md`) | `GEMINI.md` symlink + `.gemini/skills` symlink + `.gemini/settings.json` |
 
-The canonical skill index and Auto-invoke mappings live in
-`ai-specs/.skill-registry.md` and are regenerated automatically by `skill-sync`
-whenever you `ai-specs sync` or run `/skills-as-rules`.
+The canonical skill index lives in each `SKILL.md` frontmatter (`metadata.scope`, `metadata.auto_invoke`).
+`ai-specs sync` validates this metadata through `skill-sync` whenever you run
+
+`ai-specs sync`.
 
 ## Root + subrepo sync
 

@@ -22,7 +22,7 @@ Vault is the canonical notetaker. Use the vault MCP declared in the project runt
 
 - Store decisions, conventions, and handoffs that future humans or agents must trust.
 - Keep notes structured, dated, and human-auditable.
-- Avoid duplicating transient runtime observations already captured by OpenMemory.
+- Avoid duplicating transient runtime observations already captured by Engram.
 
 ## Read Moments
 
@@ -103,4 +103,4 @@ sesion_id: <short-id>
 - Never store secrets or env-backed values.
 - Do not edit `_context/` or `specs/` unless the user explicitly asks or the active SDD workflow owns that path.
 - Use ISO dates in filenames and frontmatter.
-- If it changes how future sessions should work, put it in Vault; if it is only searchable operational continuity, put it in OpenMemory.
+- If it changes how future sessions should work, put it in Vault; if it is only searchable operational continuity, put it in Engram.

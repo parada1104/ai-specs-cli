@@ -31,7 +31,7 @@ Define the content contract for `AGENTS.md` as a runtime operational brief deriv
 - **THEN** the generated `AGENTS.md` SHALL document the precedence order and conflict policy
 
 ### Requirement: AGENTS.md does not contain skill catalogs
-The generated `AGENTS.md` SHALL NOT contain an exhaustive skills table, skill directory listing, or Auto-invoke mappings. Skills SHALL remain discoverable through the filesystem and the separate registry artifact.
+The generated `AGENTS.md` SHALL NOT contain an exhaustive skills table, skill directory listing, or Auto-invoke mappings. Skills SHALL remain discoverable through the filesystem and their `SKILL.md` frontmatter.
 
 #### Scenario: Sync does not emit skills table into AGENTS.md
 - **WHEN** `ai-specs sync` runs against a project with multiple skills
@@ -57,7 +57,7 @@ If `AGENTS.md` contains a runtime-brief marker (e.g., `<!-- ai-specs:runtime-bri
 - **GIVEN** an existing `AGENTS.md` contains a runtime-brief marker
 - **WHEN** `ai-specs sync` runs
 - **THEN** the sync tool SHALL NOT overwrite `AGENTS.md`
-- **AND** it SHALL generate the registry artifact normally
+- **AND** it SHALL proceed with remaining sync steps normally
 
 ### Requirement: Secrets redaction in MCP listings
 When rendering MCP server configuration into the runtime brief, the system SHALL redact secret values and show only env variable references or placeholder text.

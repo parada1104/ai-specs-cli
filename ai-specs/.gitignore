@@ -1,5 +1,6 @@
 # --- ai-specs: managed by `ai-specs init`/`sync` — do not edit ---
 
+.internal/
 .resolved-skills/
 
 # --- end ai-specs ---

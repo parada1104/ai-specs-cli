@@ -87,11 +87,6 @@ args = ["-y", "@delorenj/mcp-server-trello"]
 env = { TRELLO_API_KEY="$TRELLO_API_KEY", TRELLO_TOKEN="$TRELLO_TOKEN" }
 timeout = 30000
 
-[mcp.openmemory]
-type = "http"
-url = "http://localhost:8080/mcp"
-# headers = { "x-api-key" = "${env:OM_API_KEY}" }
-
 [mcp.vault-ai-specs]
 command = "npx"
 args = [

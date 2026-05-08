@@ -1,49 +1,46 @@
 ---
 name: skill-sync
 description: >
-  Syncs skill metadata to the registry artifact ai-specs/.skill-registry.md.
-  Trigger: When updating skill metadata (metadata.scope/metadata.auto_invoke), regenerating the skill registry, or running ai-specs/skills/skill-sync/assets/sync.sh.
+  Validates skill metadata (scope, auto_invoke) across all skill sources.
+  Trigger: When adding or modifying skills, or to troubleshoot missing metadata.
 license: Apache-2.0
 metadata:
   author: prowler-cloud
-  version: "1.0"
+  version: "2.0"
   scope: [root]
   auto_invoke:
     - "After creating/modifying a skill"
-    - "Regenerate skill registry artifact (sync.sh)"
-    - "Troubleshoot why a skill is missing from the registry"
-allowed-tools: Read, Edit, Write, Glob, Grep, Bash
+    - "Troubleshoot why a skill has missing or invalid metadata"
+allowed-tools: Read, Glob, Bash
 ---
 
 ## Purpose
 
-Keeps `ai-specs/.skill-registry.md` in sync with the canonical skill
-frontmatter contract documented in
-[`../../contracts/skill-frontmatter.md`](../../contracts/skill-frontmatter.md).
+Validates that every skill in the project has complete sync metadata
+(`metadata.scope` and `metadata.auto_invoke`) required by the CLI sync pipeline.
 
-`sync.sh` discovers every `ai-specs/skills/<name>/SKILL.md` under the repo,
-validates metadata through `lib/_internal/skill_contract.py`, and generates
-the registry artifact at `ai-specs/.skill-registry.md`. It does not vendor
-external skills; root `ai-specs sync` does that first.
+`sync.sh` discovers every `SKILL.md` under the repo (across local, recipe, and
+dep sources), validates metadata through `lib/_internal/skill_contract.py`, and
+reports skills with missing or invalid fields. It does **not** generate any
+registry artifact — that was removed in v2.0.
 
 ## Required skill metadata
 
-Each skill that should appear in the Auto-invoke mappings needs
-`metadata.scope` and `metadata.auto_invoke` as canonical YAML lists. Skills
-can live in `ai-specs/skills/<name>/SKILL.md`, `.recipe/<id>/skills/<name>/`,
-or `.deps/<id>/skills/<name>/`. See [skill-creator/SKILL.md](../skill-creator/SKILL.md).
+Each skill that should participate in auto-invoke needs `metadata.scope` and
+`metadata.auto_invoke` as canonical YAML lists. Skills can live in
+`ai-specs/skills/<name>/SKILL.md`, `.recipe/<id>/skills/<name>/`, or
+`.deps/<id>/skills/<name>/`. See [skill-creator/SKILL.md](../skill-creator/SKILL.md).
 
 ### Scope values
 
-Scopes are recorded in the registry artifact's Auto-invoke table. Skills may
-use multiple scopes: `scope: [root, docs]`.
+Scopes control which agent targets receive a skill. Skills may use multiple
+scopes: `scope: [root, docs]`.
 
 ## Usage
 
 ```bash
 ai-specs/skills/skill-sync/assets/sync.sh
 ai-specs/skills/skill-sync/assets/sync.sh --dry-run
-ai-specs/skills/skill-sync/assets/sync.sh --scope root
 bin/ai-specs sync .
 ```
 
@@ -51,4 +48,4 @@ bin/ai-specs sync .
 
 - [ ] `metadata.scope` and `metadata.auto_invoke` set on new or changed skills
 - [ ] Ran `ai-specs/skills/skill-sync/assets/sync.sh` or `bin/ai-specs sync .`
-- [ ] Verified `ai-specs/.skill-registry.md`
+- [ ] No skills reported with missing metadata

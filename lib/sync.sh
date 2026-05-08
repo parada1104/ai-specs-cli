@@ -72,19 +72,10 @@ PLAN_JSON="$(python3 "$TARGET_RESOLVE_PY" "$TARGET_PATH")" || {
 
 ROOT_PATH="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["root"])' <<<"$PLAN_JSON")"
 TOML_PATH="$ROOT_PATH/ai-specs/ai-specs.toml"
-AI_SPECS_DIR="$ROOT_PATH/ai-specs"
-AI_GITIGNORE="$AI_SPECS_DIR/.gitignore"
-SKILL_SYNC_DIR="$AI_SPECS_DIR/skills/skill-sync/assets"
-SYNC_SH="$SKILL_SYNC_DIR/sync.sh"
-
+AI_GITIGNORE="$ROOT_PATH/ai-specs/.gitignore"
 if [[ ! -f "$TOML_PATH" ]]; then
     echo "ERROR: $TOML_PATH not found." >&2
     echo "       Run 'ai-specs init $ROOT_PATH' first." >&2
-    exit 1
-fi
-if [[ ! -d "$SKILL_SYNC_DIR" ]]; then
-    echo "ERROR: $SKILL_SYNC_DIR not found." >&2
-    echo "       Run 'ai-specs init --force $ROOT_PATH' to restore bundled skills." >&2
     exit 1
 fi
 
@@ -120,9 +111,6 @@ python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out 
 
 echo "▸ agents-md-render (root)"
 python3 "$AGENTS_MD_RENDER" "$ROOT_PATH" "$ROOT_PATH/AGENTS.md"
-
-echo "▸ skill-sync (registry artifact)"
-(cd "$ROOT_PATH" && bash "$SYNC_SH")
 
 echo "▸ target fan-out"
 for idx in "${!RESOLVED_TARGETS[@]}"; do

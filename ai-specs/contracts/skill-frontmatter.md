@@ -37,8 +37,8 @@ metadata:
 - `metadata.auto_invoke`
 
 `metadata.scope` and `metadata.auto_invoke` are optional for the skill itself,
-but they are required together if the skill must appear in the Auto-invoke
-mappings in `ai-specs/.skill-registry.md`.
+but they are required together if the skill must participate in auto-invoke
+validation during `ai-specs sync`.
 
 ## Generated vendored contract
 
@@ -63,7 +63,6 @@ Canonical generated fields:
 - Local skills are authored in `ai-specs/skills/**/SKILL.md`.
 - Vendored skills are generated only by root `ai-specs sync`.
 - `AGENTS.md` is a generated runtime brief; never hand-edit it.
-- `ai-specs/.skill-registry.md` is the generated skill registry artifact; never hand-edit it.
 - Subrepo `ai-specs/skills/**` copies are fan-out artifacts from the root run and
   must stay byte-consistent with root-generated output.
 
@@ -75,7 +74,7 @@ Canonical generated fields:
 - `agents-md-render.py` must generate the runtime brief from `ai-specs.toml`
   and must not include skill catalogs or Auto-invoke tables.
 - `skill-sync` must validate sync metadata through the shared contract parser,
-  not bespoke shell parsing, and must generate `ai-specs/.skill-registry.md`.
+  not bespoke shell parsing.
 
 ## Compatibility window
 

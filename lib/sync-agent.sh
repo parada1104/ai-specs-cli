@@ -206,11 +206,6 @@ ensure_target_workspace() {
     mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
 
     python3 "$AGENTS_MD_RENDER" "$SOURCE_ROOT" "$TARGET_AGENTS_MD" --skills-dir "$TARGET_AI_SKILLS"
-
-    local target_skill_sync="$TARGET_AI_SKILLS/skill-sync/assets/sync.sh"
-    if [[ -f "$target_skill_sync" ]]; then
-        (cd "$TARGET_PATH" && bash "$target_skill_sync")
-    fi
 }
 
 # Resolve enabled agents from ai-specs.toml
@@ -293,23 +288,7 @@ for agent in "${TARGETS[@]}"; do
 
     skills="$(platform_get "$agent" skills_dir)"
     if [[ -n "$skills" ]]; then
-        if [[ "$agent" == "opencode" ]]; then
-            dest="$TARGET_PATH/$skills"
-            mkdir -p "$dest"
-            copied=0
-            for src in "$SKILLS_SOURCE"/*; do
-                [[ -d "$src" ]] || continue
-                base="$(basename "$src")"
-                rm -rf "$dest/$base"
-                cp -R "$src" "$dest/$base"
-                copied=$((copied + 1))
-            done
-            if [[ $copied -gt 0 ]]; then
-                echo "    ✓ skills       $skills/ ($copied dir(s))"
-            fi
-        else
-            make_relative_symlink "$SKILLS_SOURCE" "$TARGET_PATH/$skills"
-        fi
+        make_relative_symlink "$SKILLS_SOURCE" "$TARGET_PATH/$skills"
     fi
 
     mcp_path="$(platform_get "$agent" mcp_config_path)"

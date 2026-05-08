@@ -477,7 +477,7 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertIn(f'source: "{dep_repo}"', content)
             self.assertIn('vendor_attribution: "fixture-org"', content)
             self.assertIn('auto_invoke:', content)
-            self.assertIn("`vendored-demo`", (workspace / "ai-specs" / ".skill-registry.md").read_text())
+            self.assertFalse((workspace / "ai-specs" / ".skill-registry.md").exists())
             self.assertNotIn("`vendored-demo`", (workspace / "AGENTS.md").read_text())
         finally:
             shutil.rmtree(workspace.parent)
@@ -537,7 +537,6 @@ class SyncPipelineTests(unittest.TestCase):
 
             skill_path = workspace / "ai-specs" / "skills" / "local-demo" / "SKILL.md"
             content = skill_path.read_text()
-            registry = (workspace / "ai-specs" / ".skill-registry.md").read_text()
 
             self.assertIn("name: local-demo", content)
             self.assertIn("license: Apache-2.0", content)
@@ -545,7 +544,7 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertIn('version: "1.0"', content)
             self.assertIn('scope:\n    - "root"', content)
             self.assertIn('auto_invoke:\n    - "Syncing root workspace"', content)
-            self.assertIn("| Syncing root workspace | `local-demo` | `root` |", registry)
+            self.assertFalse((workspace / "ai-specs" / ".skill-registry.md").exists())
         finally:
             shutil.rmtree(workspace.parent)
 
@@ -563,8 +562,6 @@ class SyncPipelineTests(unittest.TestCase):
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
             content = (workspace / "ai-specs" / "skills" / "local-docs" / "SKILL.md").read_text()
-            agents = (workspace / "AGENTS.md").read_text()
-            registry = (workspace / "ai-specs" / ".skill-registry.md").read_text()
 
             self.assertIn("name: local-docs", content)
             self.assertIn("license: Apache-2.0", content)
@@ -572,14 +569,11 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertIn('version: "1.0"', content)
             self.assertNotIn("scope:", content)
             self.assertNotIn("auto_invoke:", content)
-            self.assertNotIn("`local-docs`", agents)
-            self.assertIn("`local-docs`", registry)
-            auto_invoke_section = registry.split("## Auto-invoke Mappings", 1)[1]
-            self.assertNotIn("`local-docs`", auto_invoke_section)
+            self.assertFalse((workspace / "ai-specs" / ".skill-registry.md").exists())
         finally:
             shutil.rmtree(workspace.parent)
 
-    def test_sync_fails_with_actionable_contract_error_for_invalid_skill_metadata(self):
+    def test_sync_warns_on_invalid_skill_metadata(self):
         workspace = self.make_workspace()
         try:
             self.init_workspace(workspace)
@@ -605,13 +599,12 @@ class SyncPipelineTests(unittest.TestCase):
                 check=False,
             )
 
-            self.assertNotEqual(proc.returncode, 0)
-            self.assertIn("metadata.auto_invoke", proc.stderr)
-            self.assertIn("bad-sync", proc.stderr)
+            # Sync succeeds but skill-sync reports missing auto_invoke
+            self.assertEqual(proc.returncode, 0)
         finally:
             shutil.rmtree(workspace.parent)
 
-    def test_sync_fails_on_auto_invoke_without_scope(self):
+    def test_sync_warns_on_auto_invoke_without_scope(self):
         workspace = self.make_workspace()
         try:
             self.init_workspace(workspace)
@@ -629,9 +622,8 @@ class SyncPipelineTests(unittest.TestCase):
                 check=False,
             )
 
-            self.assertNotEqual(proc.returncode, 0)
-            self.assertIn("metadata.scope", proc.stderr)
-            self.assertIn("bad-scope", proc.stderr)
+            # Sync succeeds but skill-sync reports incomplete metadata
+            self.assertEqual(proc.returncode, 0)
         finally:
             shutil.rmtree(workspace.parent)
 
@@ -647,14 +639,14 @@ class SyncPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
-    def test_sync_produces_identical_registry_on_second_run(self):
+    def test_sync_produces_identical_agents_md_on_second_run(self):
         workspace = self.make_workspace()
         try:
             self.init_workspace(workspace)
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            first = (workspace / "ai-specs" / ".skill-registry.md").read_bytes()
+            first = (workspace / "AGENTS.md").read_bytes()
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            second = (workspace / "ai-specs" / ".skill-registry.md").read_bytes()
+            second = (workspace / "AGENTS.md").read_bytes()
             self.assertEqual(first, second)
         finally:
             shutil.rmtree(workspace.parent)
@@ -671,7 +663,6 @@ class SyncPipelineTests(unittest.TestCase):
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
             self.assertEqual(agents_md.read_text(), original)
-            self.assertTrue((workspace / "ai-specs" / ".skill-registry.md").is_file())
         finally:
             shutil.rmtree(workspace.parent)
 
@@ -699,7 +690,7 @@ class SyncPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
-    def test_registry_artifact_indexes_all_skill_sources(self):
+    def test_sync_resolves_all_skill_sources(self):
         workspace = self.make_workspace()
         try:
             subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
@@ -717,63 +708,13 @@ class SyncPipelineTests(unittest.TestCase):
                 auto_invoke=["Do local thing"],
             )
 
-            # Recipe skill
-            recipe_dir = workspace / "ai-specs" / ".recipe" / "test-recipe" / "skills" / "recipe-skill"
-            recipe_dir.mkdir(parents=True)
-            (recipe_dir / "SKILL.md").write_text(
-                "---\n"
-                "name: recipe-skill\n"
-                "description: A recipe skill.\n"
-                "license: MIT\n"
-                "metadata:\n"
-                "  author: recipe-author\n"
-                "  version: \"1.0\"\n"
-                "  scope:\n"
-                "    - \"root\"\n"
-                "  auto_invoke:\n"
-                "    - \"Do recipe thing\"\n"
-                "---\n\n"
-                "# Recipe Skill\n"
-            )
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            # Dep skill
-            dep_dir = workspace / "ai-specs" / ".deps" / "test-dep" / "skills" / "dep-skill"
-            dep_dir.mkdir(parents=True)
-            (dep_dir / "SKILL.md").write_text(
-                "---\n"
-                "name: dep-skill\n"
-                "description: A dep skill.\n"
-                "license: MIT\n"
-                "metadata:\n"
-                "  author: dep-author\n"
-                "  version: \"1.0\"\n"
-                "  scope:\n"
-                "    - \"root\"\n"
-                "  auto_invoke:\n"
-                "    - \"Do dep thing\"\n"
-                "---\n\n"
-                "# Dep Skill\n"
-            )
-
-            subprocess.run(
-                [
-                    "python3",
-                    str(ROOT / "lib" / "_internal" / "registry-render.py"),
-                    str(workspace),
-                ],
-                check=True,
-                text=True,
-            )
-
-            registry = (workspace / "ai-specs" / ".skill-registry.md").read_text()
-
-            self.assertIn("| `local-skill` | local |", registry)
-            self.assertIn("| `recipe-skill` | recipe |", registry)
-            self.assertIn("| `dep-skill` | dep |", registry)
-
-            self.assertIn("| Do local thing | `local-skill` | `root` |", registry)
-            self.assertIn("| Do recipe thing | `recipe-skill` | `root` |", registry)
-            self.assertIn("| Do dep thing | `dep-skill` | `root` |", registry)
+            # Verify local skills are resolved in .internal/resolved-skills
+            resolved = workspace / "ai-specs" / ".internal" / "resolved-skills"
+            self.assertTrue((resolved / "local-skill" / "SKILL.md").is_file())
+            # No registry artifact should exist
+            self.assertFalse((workspace / "ai-specs" / ".skill-registry.md").exists())
         finally:
             shutil.rmtree(workspace.parent)
 
@@ -781,7 +722,7 @@ class SyncPipelineTests(unittest.TestCase):
 class SkillSyncScriptTests(unittest.TestCase):
     SCRIPT = ROOT / "ai-specs" / "skills" / "skill-sync" / "assets" / "sync.sh"
 
-    def test_skill_sync_filters_scopes_and_derives_one_agents_row_per_trigger(self):
+    def test_skill_sync_validates_metadata_and_reports_missing(self):
         repo_root = Path(tempfile.mkdtemp(prefix="ai-specs-skill-sync-"))
         try:
             script_path = repo_root / "ai-specs" / "skills" / "skill-sync" / "assets" / "sync.sh"
@@ -789,22 +730,6 @@ class SkillSyncScriptTests(unittest.TestCase):
             shutil.copy2(self.SCRIPT, script_path)
             (repo_root / ".melon-monorepo").write_text("1\n")
             (repo_root / "ai-specs" / "ai-specs.toml").write_text("[project]\nname = 'test'\n")
-
-            for agents_path in [
-                repo_root / "AGENTS.md",
-                repo_root / "alquimia-front-web" / "AGENTS.md",
-                repo_root / "alquimia-back-web" / "AGENTS.md",
-            ]:
-                agents_path.parent.mkdir(parents=True, exist_ok=True)
-                agents_path.write_text(
-                    "# Test Agents\n\n"
-                    "> [SKILL.md](ai-specs/skills/demo/SKILL.md)\n\n"
-                    "### Auto-invoke Skills\n\n"
-                    "When performing these actions, ALWAYS invoke the corresponding skill FIRST:\n\n"
-                    "| Action | Skill |\n"
-                    "|--------|-------|\n\n"
-                    "## Footer\n"
-                )
 
             skills_dir = repo_root / "ai-specs" / "skills"
             skills_dir.mkdir(parents=True, exist_ok=True)
@@ -820,10 +745,8 @@ class SkillSyncScriptTests(unittest.TestCase):
                 "  version: \"1.0\"\n"
                 "  scope:\n"
                 "    - \"root\"\n"
-                "    - \"front_web\"\n"
                 "  auto_invoke:\n"
                 "    - \"Do root thing\"\n"
-                "    - \"Do shared thing\"\n"
                 "---\n\n"
                 "# Root Auto\n"
             )
@@ -867,22 +790,12 @@ class SkillSyncScriptTests(unittest.TestCase):
 
             self.assertEqual(proc.returncode, 0, proc.stderr)
 
-            registry = (repo_root / "ai-specs" / ".skill-registry.md").read_text()
+            # skill-sync validates metadata; it no longer generates a registry file
+            self.assertFalse((repo_root / "ai-specs" / ".skill-registry.md").exists())
 
-            # Skill Index
-            self.assertIn("| `root-auto` | local |", registry)
-            self.assertIn("| `back-auto` | local |", registry)
-            self.assertIn("| `manual-only` | local |", registry)
-
-            # Auto-invoke Mappings
-            self.assertIn("| Do root thing | `root-auto` | `root` |", registry)
-            self.assertIn("| Do shared thing | `root-auto` | `root` |", registry)
-            self.assertIn("| Do root thing | `root-auto` | `front_web` |", registry)
-            self.assertIn("| Do shared thing | `root-auto` | `front_web` |", registry)
-            self.assertIn("| Do back thing | `back-auto` | `back_web` |", registry)
-
-            auto_invoke_section = registry.split("## Auto-invoke Mappings", 1)[1]
-            self.assertNotIn("manual-only", auto_invoke_section)
+            # Output reports skills with incomplete metadata
+            output = proc.stdout
+            self.assertIn("manual-only", output)
         finally:
             shutil.rmtree(repo_root)
 
