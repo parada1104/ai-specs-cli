@@ -1,0 +1,15 @@
+# Minimal valid ai-specs.toml
+#
+# This is the smallest manifest that passes validation and enables the
+# full sync pipeline. Use `ai-specs init` to scaffold a richer version.
+
+[project]
+name = "my-project"
+
+[agents]
+enabled = ["claude", "cursor", "opencode"]
+
+[sdd]
+enabled = true
+provider = "openspec"
+artifact_store = "filesystem"

@@ -4,10 +4,7 @@ These directories are **vendored** into your project via `[[deps]]` in `ai-specs
 Each row is a normal dependency: `ai-specs sync` shallow-clones `source` and copies the skill
 from `path` into `ai-specs/skills/<id>/` (gitignored by default).
 
-Upstream repo: `https://github.com/parada1104/ai-specs-cli`
-
-Replace `SOURCE` below with that URL, **or** with an absolute path to a local clone of this repo
-(useful in CI or air-gapped workflows — `git clone <local-path>` is supported).
+Upstream repo: `https://github.com/parada1104/ai-specs-cli.git`
 
 ## context-precedence
 
@@ -16,7 +13,7 @@ MVP order for conflicting context sources (docs, skills, memory, proposed output
 ```toml
 [[deps]]
 id = "context-precedence"
-source = "SOURCE"
+source = "https://github.com/parada1104/ai-specs-cli.git"
 path = "catalog/skills/context-precedence"
 scope = ["root"]
 license = "MIT"
@@ -30,7 +27,7 @@ Default test commands and evidence expectations for ai-specs-shaped repos.
 ```toml
 [[deps]]
 id = "testing-foundation"
-source = "SOURCE"
+source = "https://github.com/parada1104/ai-specs-cli.git"
 path = "catalog/skills/testing-foundation"
 scope = ["root"]
 license = "MIT"
@@ -44,7 +41,7 @@ OpenSpec `config.yaml` shape (spec-driven) plus apply-time commit and archive no
 ```toml
 [[deps]]
 id = "openspec-sdd-conventions"
-source = "SOURCE"
+source = "https://github.com/parada1104/ai-specs-cli.git"
 path = "catalog/skills/openspec-sdd-conventions"
 scope = ["root"]
 license = "MIT"

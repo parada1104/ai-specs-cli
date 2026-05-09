@@ -1,0 +1,77 @@
+# Troubleshooting
+
+Common issues and fixes for the ai-specs SDD integration and manifest pipeline.
+
+## SDD failures
+
+### `openspec: command not found`
+
+OpenSpec is not installed or not on `PATH`.
+
+**Fix:** Install globally with `npm install -g @fission-ai/openspec@latest`,
+or run `ai-specs sdd enable --install-provider-cli`.
+
+### `openspec init` fails with "already initialized"
+
+An existing `openspec/` directory conflicts with the init step.
+
+**Fix:** Run `openspec update` to refresh in place, or `ai-specs sdd enable --force`
+to reinitialize (destroys prior `openspec/` state).
+
+### `artifact_store = "memory"` but `openspec/` is missing
+
+The memory store is experimental; OpenSpec remains file-first in v1 and
+expects the workspace directory.
+
+**Fix:** Switch to `artifact_store = "filesystem"` or `"hybrid"`, or
+create the `openspec/` scaffold with `ai-specs sdd enable`.
+
+## Manifest validation errors
+
+### `Unknown field in manifest`
+
+A key in `ai-specs.toml` is not recognized by the current validator.
+
+**Fix:** Check [`docs/ai-specs-toml.md`](../ai-specs-toml.md) for the canonical
+V1 surface. Remove unrecognized sections or move them to a comment.
+
+### `version` mismatch in `[recipes.<id>]`
+
+The version pin in your manifest does not match the recipe's catalog version.
+
+**Fix:** Update the manifest version to match the catalog, or use
+`ai-specs recipe list` to check available versions.
+
+### `subrepos` path resolution failed
+
+A path listed in `project.subrepos` does not exist relative to the project root.
+
+**Fix:** Remove the invalid entry or create the target directory.
+
+## Sync warnings
+
+### `Multiple recipes provide the same capability`
+
+Two or more enabled recipes declare the same capability ID without an
+explicit `[[bindings]]` entry.
+
+**Fix:** Add a `[[bindings]]` block in your manifest to choose which recipe
+owns the capability. See [`docs/ai-specs-toml.md`](../ai-specs-toml.md).
+
+### `Unknown config key in [recipes.<id>.config]`
+
+A config override key does not match any field in the recipe's `[config]` schema.
+
+**Fix:** Remove the unknown key or verify the recipe's schema in
+[`docs/recipe-schema.md`](../recipe-schema.md).
+
+### `env = ["VAR"]` normalized to `{ VAR = "$VAR" }`
+
+This is informational — the array form is a supported shorthand. The
+normalization is correct and does not need a fix.
+
+## See also
+
+- [`docs/ai-specs-toml.md`](../ai-specs-toml.md) — Canonical manifest reference
+- [`docs/ai/sdd.md`](sdd.md) — SDD provider contract
+- [`docs/recipe-schema.md`](../recipe-schema.md) — Recipe schema reference

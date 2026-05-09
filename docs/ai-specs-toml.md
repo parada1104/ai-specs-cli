@@ -44,14 +44,14 @@ Conservative compatibility rules in V1:
 | `[project]` | `subrepos` | optional, default `[]`, validated as root-relative target paths |
 | `[agents]` | `enabled` | optional, default `[]` |
 | `[[deps]]` | `id`, `source` | only required minimum fields |
-| `[[deps]]` | `path`, `scope`, `auto_invoke`, `license`, `vendor_attribution` | optional passthrough fields consumed by vendoring/rendering |
+| `[[deps]]` | `path`, `scope`, `auto_invoke`, `license`, `vendor_attribution`, `version` | optional passthrough fields consumed by vendoring/rendering |
 | `[mcp.<name>]` | `command` | optional |
 | `[mcp.<name>]` | `args` | optional, default `[]` |
 | `[mcp.<name>]` | `env` | optional canonical field, default `{}` |
 | `[mcp.<name>]` | `environment` | tolerated input alias of `env` |
 | `[mcp.<name>]` | `timeout` | optional |
 | `[mcp.<name>]` | `enabled` | tolerated passthrough field |
-| `[recipes.<id>]` | `enabled` | required; boolean - must be `true` to materialize |
+| `[recipes.<id>]` | `enabled` | required; boolean — must be `true` to materialize |
 | `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
 | `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |
 | `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |
@@ -88,6 +88,7 @@ id = "context-precedence"
 source = "https://github.com/example/skills"
 path = "skills/context-precedence"
 scope = ["root"]
+version = "1.0.0"
 ```
 
 ### `[mcp.<name>]`
@@ -114,7 +115,8 @@ version = "1.0.0"
 
 ### `[recipes.<id>.config]`
 
-Overrides defaults from the recipe's `[config]` schema.
+Overrides defaults from the recipe's `[config]` schema. See
+[`docs/recipe-schema.md`](recipe-schema.md) for the recipe-level `[config]` contract.
 
 ```toml
 [recipes.trello-mcp-workflow.config]
@@ -163,6 +165,7 @@ enabled = ["claude", "cursor", "opencode"]
 [[deps]]
 id = "context-precedence"
 source = "https://github.com/example/skills"
+version = "1.0.0"
 
 [mcp.openmemory]
 command = "npx"
