@@ -1,90 +1,61 @@
-# ai-specs.toml — manifiesto raíz del estándar ai-specs.
+# ai-specs.toml — root manifest for the ai-specs standard.
 #
-# Source of truth para: agentes habilitados, skills vendoreadas (deps),
-# servidores MCP, y recetas. Skills locales viven en ai-specs/skills/<name>/ y se
-# autodescubren del filesystem (no se listan acá).
-#
-# Comandos (CLI global, publicado hoy desde https://github.com/parada1104/ai-specs-cli):
-#   ai-specs init                # bootstrap el directorio ai-specs/ (idempotente)
-#   ai-specs sync                # vendoreá deps + regenerá AGENTS.md + sync-agent --all
-#   ai-specs sync-agent --all    # distribuí skills + MCP a cada agente habilitado
-#   /skills-as-rules             # desde tu agente: formalizá una convención como skill local
-#   ai-specs add-dep <url>       # agregá una skill vendoreada a [[deps]]
+# Single source of truth for: enabled agents, vendored skills (deps),
+# MCP servers, and recipes. Local skills live under ai-specs/skills/<name>/
+# and are autodiscovered — they are not listed here.
 
 [project]
 name = "ai-specs"
-# Lista de subrepos relativos al root. Vacío = monorepo plano.
 subrepos = []
 
 [agents]
-# Agentes habilitados para sync-agent. Solo estos reciben configs.
-# Opciones: claude, cursor, opencode, codex, copilot, gemini
+# Supported agents: claude, cursor, opencode, codex, copilot, gemini
 enabled = ["claude", "cursor", "opencode"]
 
 # -----------------------------------------------------------------------------
-# Recipes — bundles de skills, comandos, templates y MCP presets
-# -----------------------------------------------------------------------------
-# Las recetas declaran capacidades completas en un solo bloque.
-# Viven en catalog/recipes/<id>/recipe.toml y se materializan con `ai-specs sync`.
+# Recipes — named, versioned bundles of skills, commands, templates, and MCP
+# presets. Declared in catalog/recipes/<id>/recipe.toml.
 #
-# V1 contract por recipe:
-#   enabled             required; boolean — true para materializar
-#   version             required; string exacto que debe coincidir con recipe.toml
+# [recipes.<id>]
+# enabled = true
+# version = "1.0.0"
 
 # -----------------------------------------------------------------------------
-# Deps de skills externas
-# -----------------------------------------------------------------------------
-# Cada [[deps]] es INPUT de vendoring para `ai-specs sync`
-# (lib/_internal/vendor-skills.py). El frontmatter resultante en
-# ai-specs/skills/<id>/SKILL.md es generado según
-# ai-specs/contracts/skill-frontmatter.md; no se edita a mano.
+# Vendored skill dependencies — each [[deps]] entry is cloned by
+# `ai-specs sync` into ai-specs/skills/<id>/ (gitignored).
 #
-# Mapping de manifest → frontmatter generado:
-#   id                  (req) carpeta destino bajo skills/
-#                       → name
-#   source              (req) URL git (cualquier cosa que acepte `git clone`)
-#                       → metadata.source
-#   path                (opt) subdir del repo donde vive SKILL.md (multi-skill repos)
-#   scope               (opt) lista — default ["root"]
-#                       → metadata.scope
-#   auto_invoke         (opt) lista de frases para la tabla Auto-invoke de AGENTS.md
-#                       → metadata.auto_invoke
-#   license             (opt) SPDX id
-#                       → license
-#   vendor_attribution  (opt) autor/org upstream — citado en la description
-#                       → metadata.author + metadata.vendor_attribution
-#   version             (opt) versión semántica para metadata.version del skill generado
+# id                  (req) target directory under skills/
+# source              (req) git URL (anything `git clone` accepts)
+# path                (opt) subdirectory inside the repo where SKILL.md lives
+# scope               (opt) default ["root"]
+# auto_invoke         (opt) trigger phrases for the AGENTS.md Auto-invoke table
+# license             (opt) SPDX identifier
+# vendor_attribution  (opt) upstream author/org, cited in the skill description
+# version             (opt) semantic version for metadata.version
 #
-# Ejemplo (skill puntual de un repo multi-skill):
 # [[deps]]
 # id = "tdd"
 # source = "https://github.com/obra/superpowers"
 # path = "skills/test-driven-development"
-# scope = ["root"]
-# auto_invoke = ["Writing or modifying tests"]
 # license = "MIT"
-# vendor_attribution = "obra"
 
 # -----------------------------------------------------------------------------
-# MCP servers — distribuidos por sync-agent al formato de cada plataforma
-# -----------------------------------------------------------------------------
-# Variables de entorno se cargan vía .envrc; los agentes interpolan los valores
-# (p. ej. $TRELLO_API_KEY en runtime).
-
-# [mcp.example]
-# command = "npx"
-# args = ["-y", "@example/mcp-server"]
-# env = { API_KEY="***" }
-# timeout = 30000
+# Explicit capability bindings — resolves ambiguity when multiple enabled
+# recipes declare the same capability.
 #
-# MCP HTTP (p. ej. OpenMemory vía Docker en :8080). Si el contenedor exige API key,
-# descomentá `headers` y definí OM_API_KEY en el entorno desde el que abrís Cursor / OpenCode.
-# Embeddings locales con Ollama: plantilla de variables en ai-specs/openmemory-ollama.env.example
+# [[bindings]]
+# capability = "tracker"
+# recipe = "trello-mcp-workflow"
+
+# -----------------------------------------------------------------------------
+# MCP servers — distributed by sync-agent to each platform's native format.
+# Environment variables are loaded from .envrc; agents interpolate at runtime
+# (e.g. $TRELLO_API_KEY).
 
 [mcp.trello]
 command = "npx"
 args = ["-y", "@delorenj/mcp-server-trello"]
-env = { TRELLO_API_KEY="$TRELLO_API_KEY", TRELLO_TOKEN="$TRELLO_TOKEN" }
+env = { TRELLO_API_KEY = "$TRELLO_API_KEY", TRELLO_TOKEN = "$TRELLO_TOKEN" }
 timeout = 30000
 
 [mcp.vault-ai-specs]
@@ -92,8 +63,6 @@ command = "npx"
 args = [
   "-y",
   "@modelcontextprotocol/server-filesystem",
-  "/Users/robert/Library/Mobile Documents/iCloud~md~obsidian/Documents/hermes-vault/nnodes/proyectos/ai-specs",
+  "$OBSIDIAN_VAULT_PATH/nnodes/proyectos/ai-specs",
 ]
 timeout = 30000
-
-

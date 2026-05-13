@@ -1,99 +1,84 @@
-# ai-specs.toml — manifiesto raíz del estándar ai-specs.
+# ai-specs.toml — project root manifest.
 #
-# ONLY V1 source of truth del proyecto. La superficie canónica de este cambio es:
+# This is the ONLY V1 source of truth for the project. The canonical surface is:
 #   [project]       optional section
 #   [agents]        optional section (default: enabled = [])
-#   [[deps]]        optional repeated section (ONLY required per entry: id, source)
+#   [recipes.<id>]  optional — named bundles of skills, commands, templates,
+#                   and MCP presets
+#   [[deps]]        optional repeated section (required per entry: id, source)
+#   [[bindings]]    optional repeated section (per entry: capability, recipe)
 #   [mcp.<name>]    optional repeated section
-#   [sdd]           optional — spec-driven / OpenSpec (ver README y `ai-specs sdd --help`)
-#   [recipes.<id>]  optional — bundles de skills, comandos, templates y MCP presets
 #
-# Skills locales viven en ai-specs/skills/<name>/ y se autodescubren del
-# filesystem (no se listan acá).
-# V1 NO agrega precedence, doctor ni [memory]; quedan deferidos a cambios futuros.
+# Local skills live under ai-specs/skills/<name>/ and are autodiscovered —
+# they are not listed here.
 #
-# Comandos (CLI global, publicado hoy desde https://github.com/parada1104/ai-specs-cli):
-#   ai-specs init                # bootstrap el directorio ai-specs/ (idempotente)
-#   ai-specs sync                # vendoreá deps + regenerá AGENTS.md + fan-out root + subrepos
-#   ai-specs sync-agent --all    # distribuí skills + MCP a cada agente habilitado
-#   /skills-as-rules             # desde tu agente: formalizá una convención como skill local
-#   ai-specs add-dep <url>       # agregá una skill vendoreada a [[deps]]
+# Commands (global CLI, published at https://github.com/parada1104/ai-specs-cli):
+#   ai-specs init                # bootstrap ai-specs/ directory (idempotent)
+#   ai-specs sync                # vendor deps + regenerate AGENTS.md + fan-out
+#   ai-specs sync-agent --all    # distribute skills + MCP to every enabled agent
+#   /skills-as-rules             # formalize a convention as a local skill
+#   ai-specs add-dep <url>       # register a vendored skill in [[deps]]
 
 [project]
-# Optional section. `name` es opcional; default: "".
+# name is optional; default: ""
 name = "{{PROJECT_NAME}}"
-# Optional field. Default: []. Solo acepta paths relativos válidos al root.
-# V1: se usan como targets derivados de sync; NO crean manifests locales.
+# subrepos is optional; default: []. Accepts root-relative paths only.
+# V1: used as derived sync targets; they do not create local manifests.
 subrepos = []
 
 [agents]
-# Optional section. `enabled` default: []. Solo estos reciben configs.
-# Opciones soportadas hoy: claude, cursor, opencode, codex, copilot, gemini.
+# enabled is optional; default: []. Only these agents receive configs.
 enabled = ["claude", "cursor", "opencode"]
 
 # -----------------------------------------------------------------------------
-# SDD / OpenSpec (opcional) — usar `ai-specs sdd enable` para rellenar y alinear openspec/
-# -----------------------------------------------------------------------------
-# [sdd]
-# enabled = true
-# provider = "openspec"
-# artifact_store = "hybrid"   # filesystem | hybrid | memory (memory = experimental con OpenSpec)
-
-# -----------------------------------------------------------------------------
-# Recipes — bundles de skills, comandos, templates y MCP presets
-# -----------------------------------------------------------------------------
-# Las recetas declaran capacidades completas en un solo bloque.
-# Viven en catalog/recipes/<id>/recipe.toml y se materializan con `ai-specs sync`.
+# Recipes — named, versioned bundles of skills, commands, templates, and MCP
+# presets. Declared in catalog/recipes/<id>/recipe.toml.
 #
-# V1 contract por recipe:
-#   enabled             required; boolean — true para materializar
-#   version             required; string exacto que debe coincidir con recipe.toml
-#
-# Ejemplo:
-# [recipes.runtime-memory-openmemory]
+# [recipes.<id>]
 # enabled = true
 # version = "1.0.0"
 
 # -----------------------------------------------------------------------------
-# Deps de skills externas
-# -----------------------------------------------------------------------------
-# Cada [[deps]] se clona a ai-specs/skills/<id>/ por `ai-specs sync`
-# (lib/_internal/vendor-skills.py). El frontmatter upstream se reemplaza por
-# uno estándar (name, description con atribución, license, metadata).
+# Vendored skill dependencies — each [[deps]] entry is cloned by
+# `ai-specs sync` into ai-specs/skills/<id>/ (gitignored).
 #
-# V1 contract por entry:
-#   id                  required; carpeta destino bajo skills/
-#   source              required; URL git (cualquier cosa que acepte `git clone`)
-#   path                optional; subdir del repo donde vive SKILL.md
-#   scope               optional; default ["root"]
-#   auto_invoke         optional; frases para la tabla Auto-invoke de AGENTS.md
-#   license             optional; SPDX id
-#   vendor_attribution  optional; autor/org upstream citado en la description
+#   id                  (req) target directory under skills/
+#   source              (req) git URL (anything `git clone` accepts)
+#   path                (opt) subdirectory inside the repo where SKILL.md lives
+#   scope               (opt) default ["root"]
+#   auto_invoke         (opt) trigger phrases for the AGENTS.md Auto-invoke table
+#   license             (opt) SPDX identifier
+#   vendor_attribution  (opt) upstream author/org, cited in skill description
+#   version             (opt) semantic version for metadata.version
 #
-# Ejemplo (skill puntual de un repo multi-skill):
 # [[deps]]
 # id = "tdd"
 # source = "https://github.com/obra/superpowers"
 # path = "skills/test-driven-development"
-# scope = ["root"]
-# auto_invoke = ["Writing or modifying tests"]
-# license = "MIT"
-# vendor_attribution = "obra"
+# version = "1.0.0"
 
 # -----------------------------------------------------------------------------
-# MCP servers — distribuidos por sync-agent al formato de cada plataforma
-# -----------------------------------------------------------------------------
-# Variables de entorno se cargan vía .envrc; los agentes interpolan los valores
-# (p. ej. $TRELLO_API_KEY en runtime).
+# Explicit capability bindings — resolves ambiguity when multiple enabled
+# recipes declare the same capability.
 #
-# V1 por servidor [mcp.<name>]:
-#   command      optional; string o list
-#   args         optional; default []
-#   env          optional campo canónico; default {}
-#   environment  tolerated input alias de `env`; no nombre canónico
-#   timeout      optional; default null
-#   enabled      tolerated passthrough; no amplía el contrato V1
+#   capability         (req) capability ID to bind
+#   recipe             (req) recipe ID that provides the capability
+#
+# [[bindings]]
+# capability = "tracker"
+# recipe = "trello-mcp-workflow"
 
+# -----------------------------------------------------------------------------
+# MCP servers — distributed by sync-agent to each platform's native format.
+# Environment variables are loaded from .envrc; agents interpolate at runtime.
+#
+#   command      optional; string or list
+#   args         optional; default []
+#   env          optional canonical field; default {}
+#   environment  tolerated input alias of `env`; not the canonical name
+#   timeout      optional; default null
+#   enabled      tolerated passthrough; does not extend the V1 contract
+#
 # [mcp.example]
 # command = "npx"
 # args = ["-y", "@example/mcp-server"]

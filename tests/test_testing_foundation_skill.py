@@ -32,17 +32,17 @@ class TestingFoundationSkillTests(unittest.TestCase):
             ],
         )
 
-    def test_readme_points_to_testing_foundation_skill(self):
+    def test_readme_references_testing_and_validate(self):
         readme = README.read_text()
 
         self.assertContainsAll(
             readme,
             [
-                "## Testing foundation",
-                "[`ai-specs/skills/testing-foundation/SKILL.md`](ai-specs/skills/testing-foundation/SKILL.md)",
-                "Use `./tests/validate.sh` as the default final verification command",
+                "Testing foundation exists",
+                "skill-sync",
             ],
         )
+        self.assertNotIn("## Testing foundation", readme)
 
 
 if __name__ == "__main__":

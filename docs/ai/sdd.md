@@ -143,50 +143,17 @@ These are **generated commands** — they live in `.cursor/commands/`,
 `.opencode/commands/`, `.claude/commands/`, etc., and are recreated on every
 `ai-specs sync`.
 
-## Provider contract (for future providers)
+## Provider contract (forward-looking)
 
-A future alternative to OpenSpec must satisfy this minimal contract to be
-compatible with `ai-specs sdd`:
+Future providers would need to satisfy a minimal toolchain/directory/config/integration
+contract modeled on the OpenSpec integration above: an executable on `PATH` with
+`init` and `update` commands, an `openspec/`-style workspace directory with
+`changes/` and `specs/`, and a config file at `openspec/config.yaml`. The current
+v1 only supports `provider = "openspec"`.
 
-### 1. Toolchain contract
-
-| Requirement | Detail |
-|-------------|--------|
-| Executable name | Must be on `PATH` as `{provider}` (e.g., `openspec`) |
-| Version command | `{provider} --version` must exit 0 |
-| Init command | `{provider} init --tools <csv> --profile <name> [path]` |
-| Update command | `{provider} update [path]` (optional but recommended) |
-
-### 2. Directory contract
-
-| Path | Purpose |
-|------|---------|
-| `{root}/openspec/` | Provider workspace |
-| `{root}/openspec/config.yaml` | Provider configuration (schema, rules, guidance) |
-| `{root}/openspec/changes/` | Active changes |
-| `{root}/openspec/changes/archive/` | Completed changes |
-| `{root}/openspec/specs/` | Canonical specs synced from changes |
-
-### 3. Config contract
-
-The provider config at `openspec/config.yaml` must declare:
-
-```yaml
-schema: <schema-name>   # e.g., spec-driven
-```
-
-And may include provider-specific keys under a documented namespace.
-
-### 4. ai-specs integration contract
-
-| Action | How ai-specs invokes the provider |
-|--------|-----------------------------------|
-| Init workspace | `{provider} init --tools <agents> --profile custom .` |
-| Update workspace | `{provider} update .` |
-| Refresh skills | `ai-specs refresh-bundled --preset {provider}` |
-
-The provider must ship its agent skills/commands under a discoverable path
-so `refresh-bundled --preset <provider>` can copy them into `ai-specs/skills/`.
+For a complete OpenSpec `config.yaml` example see
+[`docs/ai/examples/config.yaml`](examples/config.yaml). For common SDD failure
+scenarios and fixes see [`docs/ai/troubleshooting.md`](troubleshooting.md).
 
 ## Limitations in v1
 
@@ -205,7 +172,9 @@ so `refresh-bundled --preset <provider>` can copy them into `ai-specs/skills/`.
 
 ## See also
 
-- [README.md](../../README.md) — Quick start and manifest contract
-- [`ai-specs/skills/openspec-sdd-conventions/SKILL.md`](../../ai-specs/skills/openspec-sdd-conventions/SKILL.md) — Commit conventions during SDD apply
-- [`ai-specs/skills/testing-foundation/SKILL.md`](../../ai-specs/skills/testing-foundation/SKILL.md) — Default testing commands
+- [`README.md`](../../README.md) — Quick start and manifest contract
+- [`docs/ai/examples/config.yaml`](examples/config.yaml) — Full OpenSpec config example
+- [`docs/ai/troubleshooting.md`](troubleshooting.md) — SDD failure scenarios and fixes
+- [`catalog/skills/openspec-sdd-conventions/SKILL.md`](../../catalog/skills/openspec-sdd-conventions/SKILL.md) — Commit conventions during SDD apply
+- [`catalog/skills/testing-foundation/SKILL.md`](../../catalog/skills/testing-foundation/SKILL.md) — Default testing commands
 - [OpenSpec npm package](https://www.npmjs.com/package/@fission-ai/openspec) — Provider CLI documentation

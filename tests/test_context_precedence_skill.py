@@ -48,18 +48,11 @@ class ContextPrecedenceSkillTests(unittest.TestCase):
             ],
         )
 
-    def test_readme_points_to_context_precedence_skill_without_duplicating_rule(self):
+    def test_readme_points_to_catalog_and_does_not_duplicate_precedence_rule(self):
         readme = README.read_text()
 
-        self.assertContainsAll(
-            readme,
-            [
-                "## Context precedence",
-                "catalog/README.md",
-                "[`ai-specs/skills/context-precedence/SKILL.md`](ai-specs/skills/context-precedence/SKILL.md)",
-            ],
-        )
         self.assertEqual(readme.count(ORDER), 0)
+        self.assertNotIn("## Context precedence", readme)
 
     def test_sync_renders_agents_reference_when_bundled_skill_present(self):
         tmp = Path(tempfile.mkdtemp(prefix="ai-specs-precedence-"))
