@@ -1,7 +1,7 @@
 # recipe.toml Schema
 
-This document is the canonical reference for `recipe.toml` and related recipe
-manifest extensions. For the root manifest contract, see
+This document is the canonical reference for `recipe.toml` and recipe-level
+concepts. For manifest-level bindings and config overrides, see
 [`docs/ai-specs-toml.md`](ai-specs-toml.md).
 
 A recipe is a named, versioned bundle of AI agent primitives that `ai-specs sync` can materialize into a project.
@@ -107,7 +107,7 @@ If two enabled recipes declare the same primitive ID (skill, command, or MCP), s
 
 ---
 
-# recipe.toml V2 Additions
+# Recipe V2 Additions
 
 V2 tables are **strictly optional**. A V1 recipe requires zero changes to continue working.
 
@@ -133,7 +133,7 @@ Duplicate capability IDs within the same recipe cause a validation error.
 
 ## `[config]` schema declaration
 
-Defines configuration fields that the recipe expects. Values can be overridden per-project in the manifest.
+Defines configuration fields that the recipe expects. Values can be overridden per-project in the manifest under `[recipes.<id>.config]` (see [`docs/ai-specs-toml.md`](ai-specs-toml.md)).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -254,67 +254,6 @@ threshold = "behavior_change"
 Invalid threshold values are rejected when the recipe is parsed.
 
 ---
-
-# Manifest V2 Additions
-
-## `[[bindings]]` table
-
-Explicitly binds a capability to a recipe. Resolves ambiguity when multiple enabled recipes declare the same capability.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `capability` | string | yes | Capability ID to bind |
-| `recipe` | string | yes | Recipe ID that provides the capability |
-
-Example:
-
-```toml
-[[bindings]]
-capability = "tracker"
-recipe = "recipe-a"
-```
-
-Duplicate explicit bindings for the same capability cause sync to fail.
-
-## `[recipes.<id>.config]` override syntax
-
-Overrides recipe config defaults per-project.
-
-Example:
-
-```toml
-[recipes.my-recipe]
-enabled = true
-version = "1.0.0"
-
-[recipes.my-recipe.config]
-timeout = 60
-board_id = "abc123"
-```
-
-## Auto-binding behavior
-
-If a capability is declared by **exactly one** enabled recipe and has no explicit binding, it is automatically bound to that recipe.
-
-If **multiple** enabled recipes declare the same capability and there is no explicit binding, sync emits a **warning** and the capability remains unbound. Sync does **not** fail solely due to ambiguity.
-
-## Config merge rules
-
-During sync, the final config for each recipe is computed as:
-
-1. Start with defaults from `recipe.toml` `[config]` schema (`default` values).
-2. Overlay values from `ai-specs.toml` `[recipes.<id>.config]`.
-3. If any field with `required = true` is still missing, sync fails with an explicit error naming the field.
-
-Unknown config keys in the manifest emit a warning and are ignored.
-
-## Backward compatibility
-
-V2 tables (`[[capabilities]]`, `[[hooks]]`, `[config]`, `[[bindings]]`, `[recipes.<id>.config]`) are all optional:
-
-- A V1 `recipe.toml` without V2 tables parses and materializes exactly as before.
-- A V1 `ai-specs.toml` without `[[bindings]]` or recipe `config` proceeds normally.
-- Existing primitive conflict detection (skills, commands, MCP) is unchanged.
 
 ## Reference recipe: `trello-mcp-workflow`
 

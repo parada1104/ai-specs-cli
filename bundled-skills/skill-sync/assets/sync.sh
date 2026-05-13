@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Sync skill metadata to the registry artifact ai-specs/.skill-registry.md.
+# Validate skill metadata (scope, auto_invoke) across all skill sources.
+# This is a lint/check step — it does not generate any registry artifact.
 # Vendoring of external skills is NOT done here — that lives in the CLI
 # (ai-specs sync → lib/_internal/vendor-skills.py).
 #
-# Usage: ./sync.sh [--dry-run] [--scope <scope>]
+# Usage: ./sync.sh [--dry-run]
 
 set -e
 shopt -s nullglob
@@ -12,15 +13,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")")"
 SKILL_CONTRACT_HOME="${AI_SPECS_HOME:-$REPO_ROOT}"
 SKILL_CONTRACT_PY="$SKILL_CONTRACT_HOME/lib/_internal/skill_contract.py"
-REGISTRY_RENDER_PY="$SKILL_CONTRACT_HOME/lib/_internal/registry-render.py"
 
 if [ ! -f "$SKILL_CONTRACT_PY" ]; then
     echo -e "${RED}Missing skill contract helper: $SKILL_CONTRACT_PY${NC}" >&2
-    exit 1
-fi
-
-if [ ! -f "$REGISTRY_RENDER_PY" ]; then
-    echo -e "${RED}Missing registry render helper: $REGISTRY_RENDER_PY${NC}" >&2
     exit 1
 fi
 
@@ -33,8 +28,6 @@ NC='\033[0m'
 
 # Options
 DRY_RUN=false
-FILTER_SCOPE=""
-RUNTIME_BRIEF_MARKER="<!-- ai-specs:runtime-brief -->"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -43,18 +36,14 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
-        --scope)
-            FILTER_SCOPE="$2"
-            shift 2
-            ;;
         --help|-h)
-            echo "Usage: $0 [--dry-run] [--scope <scope>]"
+            echo "Usage: $0 [--dry-run]"
             echo ""
-            echo "Generates ai-specs/.skill-registry.md with Skill Index and Auto-invoke Mappings."
+            echo "Validate skill metadata (scope, auto_invoke) across all sources."
+            echo "Reports skills with missing or invalid sync metadata."
             echo ""
             echo "Options:"
-            echo "  --dry-run    Show what would change without modifying files"
-            echo "  --scope      Filter Auto-invoke rows to the given scope (preserved for compatibility)"
+            echo "  --dry-run    Show what would be checked without side effects"
             exit 0
             ;;
         *)
@@ -64,34 +53,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# If AGENTS.md contains the runtime-brief marker, print an informative message.
-# We no longer modify AGENTS.md, but the marker still signals a hand-maintained brief.
-AGENTS_MD="$REPO_ROOT/AGENTS.md"
-if [ -f "$AGENTS_MD" ] && grep -Fq "$RUNTIME_BRIEF_MARKER" "$AGENTS_MD"; then
-    echo -e "${YELLOW}Skipping AGENTS.md — runtime-brief marker detected${NC}"
-fi
-
-echo -e "${BLUE}Skill Sync - Generating registry artifact${NC}"
+echo -e "${BLUE}Skill Sync — Validating metadata${NC}"
 echo "========================================================"
 echo ""
 
-# Skip registry generation when there is no manifest (e.g. subrepo fan-out).
+# Skip when there is no manifest (e.g. subrepo fan-out).
 if [ ! -f "$REPO_ROOT/ai-specs/ai-specs.toml" ]; then
-    echo "Skipping registry generation — no manifest found at $REPO_ROOT/ai-specs/ai-specs.toml"
+    echo "Skipping skill validation — no manifest found at $REPO_ROOT/ai-specs/ai-specs.toml"
     exit 0
 fi
 
-if $DRY_RUN; then
-    python3 "$REGISTRY_RENDER_PY" "$REPO_ROOT" --dry-run ${FILTER_SCOPE:+--scope "$FILTER_SCOPE"}
-else
-    python3 "$REGISTRY_RENDER_PY" "$REPO_ROOT" ${FILTER_SCOPE:+--scope "$FILTER_SCOPE"}
-fi
-
-echo ""
-echo -e "${GREEN}Done!${NC}"
-
-# Show skills without complete sync metadata (preserves existing UX)
-echo ""
+# Show skills without complete sync metadata
 echo -e "${BLUE}Skills missing sync metadata:${NC}"
 missing=0
 while IFS= read -r skill_file; do
@@ -124,3 +96,6 @@ done < <(find "$REPO_ROOT" \
 if [ $missing -eq 0 ]; then
     echo -e "  ${GREEN}All skills have sync metadata${NC}"
 fi
+
+echo ""
+echo -e "${GREEN}Done!${NC}"

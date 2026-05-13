@@ -3,9 +3,7 @@
 ## Purpose
 
 Define the content contract for `AGENTS.md` as a runtime operational brief derived from `ai-specs.toml`. The brief includes project identity, enabled runtimes, MCP servers, active recipes/bindings/capabilities, safety rules, context sources, and workflow rules. It does NOT include skill catalogs or Auto-invoke tables.
-
-## ADDED Requirements
-
+## Requirements
 ### Requirement: AGENTS.md is a runtime brief
 `AGENTS.md` SHALL be a concise, human-meaningful runtime context document generated from `ai-specs.toml`. It SHALL communicate project identity, enabled agents, MCPs, active recipes/bindings, safety rules, context sources, and workflow rules.
 
@@ -33,7 +31,7 @@ Define the content contract for `AGENTS.md` as a runtime operational brief deriv
 - **THEN** the generated `AGENTS.md` SHALL document the precedence order and conflict policy
 
 ### Requirement: AGENTS.md does not contain skill catalogs
-The generated `AGENTS.md` SHALL NOT contain an exhaustive skills table, skill directory listing, or Auto-invoke mappings. Skills SHALL remain discoverable through the filesystem and the separate registry artifact.
+The generated `AGENTS.md` SHALL NOT contain an exhaustive skills table, skill directory listing, or Auto-invoke mappings. Skills SHALL remain discoverable through the filesystem and their `SKILL.md` frontmatter.
 
 #### Scenario: Sync does not emit skills table into AGENTS.md
 - **WHEN** `ai-specs sync` runs against a project with multiple skills
@@ -59,7 +57,7 @@ If `AGENTS.md` contains a runtime-brief marker (e.g., `<!-- ai-specs:runtime-bri
 - **GIVEN** an existing `AGENTS.md` contains a runtime-brief marker
 - **WHEN** `ai-specs sync` runs
 - **THEN** the sync tool SHALL NOT overwrite `AGENTS.md`
-- **AND** it SHALL generate the registry artifact normally
+- **AND** it SHALL proceed with remaining sync steps normally
 
 ### Requirement: Secrets redaction in MCP listings
 When rendering MCP server configuration into the runtime brief, the system SHALL redact secret values and show only env variable references or placeholder text.
@@ -70,3 +68,25 @@ When rendering MCP server configuration into the runtime brief, the system SHALL
 - **THEN** the MCP listing SHALL show the URL and description
 - **AND** it SHALL show a placeholder or env variable name for the secret
 - **AND** it SHALL NOT emit the literal secret value
+
+### Requirement: Recipe config fields rendered in runtime brief
+When `ai-specs.toml` declares enabled recipes with non-empty config schemas, the generated `AGENTS.md` SHALL include a per-recipe subsection listing each config field with its `required`, `type`, `default`, and `validation` attributes.
+
+#### Scenario: Enabled recipe with config fields
+- **GIVEN** an enabled recipe with `[config.board_id]` where `required = true`, `type = "string"`, and `validation.regex = "^[0-9a-fA-F]{24}$"`
+- **AND** `[config.default_list]` where `required = false`, `type = "string"`, `default = "In Progress"`
+- **WHEN** `ai-specs sync` generates `AGENTS.md`
+- **THEN** the runtime brief SHALL contain a config fields table for that recipe
+- **AND** the table SHALL list `board_id` with `required`, `type`, and `validation`
+- **AND** the table SHALL list `default_list` with `required`, `type`, and `default`
+
+#### Scenario: Recipe without config schema omits subsection
+- **GIVEN** an enabled recipe with no `[config]` table
+- **WHEN** `ai-specs sync` generates `AGENTS.md`
+- **THEN** the runtime brief SHALL NOT contain a config fields subsection for that recipe
+
+#### Scenario: Config field with regex validation shows pattern
+- **GIVEN** an enabled recipe with `[config.board_id]` where `validation.regex = "^[0-9a-fA-F]{24}$"`
+- **WHEN** `ai-specs sync` generates `AGENTS.md`
+- **THEN** the runtime brief SHALL display the regex pattern next to the field name
+

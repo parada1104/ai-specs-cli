@@ -32,7 +32,7 @@ The system SHALL materialize primitives in this order: skills (bundled then deps
 - **THEN** bundled skills SHALL be created under `.recipe/{recipe-id}/skills/`
 - **AND** dep skills SHALL be created under `.deps/{dep-id}/skills/`
 - **AND** commands, templates, docs, and MCP presets SHALL be created in `ai-specs/`
-- **AND** derived artifacts (registry artifact, agent configs) SHALL reflect new skills and commands
+- **AND** derived artifacts (agent configs) SHALL reflect new skills and commands
 
 #### Scenario: Re-sync idempotency with external directories
 - **WHEN** sync runs twice with no changes

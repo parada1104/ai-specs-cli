@@ -24,7 +24,7 @@ Trello es el tracker operativo. El runtime brief define el board, listas y MCP d
 - Trello: estado, prioridad, dependencias, visibilidad PM/CTO.
 - OpenSpec: artifacts SDD cuando la card requiere cambio durable.
 - Vault: decisiones y handoffs canónicos.
-- OpenMemory: continuidad operativa buscable.
+- Engram: continuidad operativa buscable.
 
 ## Regla De Flujo
 
@@ -94,7 +94,7 @@ Antes de mover a Review/Done:
 - Verificar criterios de aceptación.
 - Confirmar estado de OpenSpec artifacts si hubo SDD.
 - Registrar decisión/handoff en Vault si cambia el canon del proyecto.
-- Guardar memoria operativa en OpenMemory solo si ayuda a próximas sesiones.
+- Guardar memoria operativa en Engram solo si ayuda a próximas sesiones.
 - Dejar links a PR, change, verify report o handoff.
 
 ## Reglas

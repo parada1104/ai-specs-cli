@@ -39,6 +39,7 @@ action = "comment-verification"
 [config.board_id]
 required = true
 type = "string"
+validation.regex = '^[0-9a-fA-F]{24}$'
 
 [config.default_list]
 required = false

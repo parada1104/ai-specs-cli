@@ -55,10 +55,10 @@ The system MUST validate that skills intended for Auto-invoke have complete sync
 - **WHEN** sync attempts to build Auto-invoke rows
 - **THEN** sync MUST fail with an actionable error naming the missing field and skill path
 
-#### Scenario: Complete sync metadata generates registry artifact rows
+#### Scenario: Complete sync metadata is validated by sync
 - **GIVEN** a local or vendored skill with complete `metadata.scope` and `metadata.auto_invoke`
 - **WHEN** `ai-specs sync` runs
-- **THEN** the generated registry artifact MUST include one Auto-invoke row per trigger for matching scopes
+- **THEN** sync MUST validate that auto-invoke metadata is well-formed
 - **AND** `AGENTS.md` MUST NOT contain Auto-invoke rows
 
 ### Requirement: Contract documentation and ownership boundaries

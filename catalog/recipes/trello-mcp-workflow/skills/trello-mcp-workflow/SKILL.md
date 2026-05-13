@@ -17,6 +17,7 @@ metadata:
 ## Prerequisites
 
 - Trello MCP server configured and reachable in the runtime environment.
+- On session start, read `board_id` from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`. The board ID is a 24-hex-character string (not the 8-character shortLink from the Trello URL).
 - Board ID available either in recipe config (`board_id`) or bootstrap marker file (`.recipe/trello-mcp-workflow/bootstrap-ready`).
 - Agent has access to Trello MCP tools: `trello_get_active_board_info`, `trello_get_lists`, `trello_get_cards_by_list_id`, `trello_add_card_to_list`, `trello_add_comment`, `trello_move_card`, `trello_update_card_details`, `trello_get_card`.
 
@@ -43,16 +44,17 @@ Session start when the marker file `.recipe/trello-mcp-workflow/bootstrap-ready`
 ### Steps
 
 1. Read the marker file at `.recipe/trello-mcp-workflow/bootstrap-ready`. If absent, skip bootstrap (not an error).
-2. Query the board using `trello_get_active_board_info` or `trello_get_lists` to retrieve structural context.
-3. Detect the active card:
+2. Read `board_id` from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml` (or from the marker file context). Call `trello_set_active_board(board_id)` to set the board as active for subsequent operations.
+3. Query the board using `trello_get_active_board_info` or `trello_get_lists` to retrieve structural context.
+4. Detect the active card:
    - Fetch cards in **In Progress** and **In Review** lists using `trello_get_cards_by_list_id`.
    - Match on labels (e.g., `sdd:apply`, `sdd:verify`) or on OpenSpec change references found in card comments/descriptions.
    - If multiple candidates exist, prefer the card with the most recent activity.
-4. Present the recommended next task to the agent, including:
+5. Present the recommended next task to the agent, including:
    - Card name, current list, current phase label.
    - Suggested action (continue phase, start next phase, review, etc.).
-5. Feed structured primitives (card ID, list ID, label IDs) into the session's consensus check so subsequent capabilities can reference them without re-querying.
-6. **Graceful degradation**: If any Trello MCP call fails, emit a warning to stderr and continue the session without Trello context. Log the failure to `.recipe/trello-mcp-workflow/warnings.log`.
+6. Feed structured primitives (card ID, list ID, label IDs) into the session's consensus check so subsequent capabilities can reference them without re-querying.
+7. **Graceful degradation**: If any Trello MCP call fails, emit a warning to stderr and continue the session without Trello context. Log the failure to `.recipe/trello-mcp-workflow/warnings.log`.
 
 ---
 

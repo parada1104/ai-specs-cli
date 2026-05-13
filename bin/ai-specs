@@ -12,6 +12,7 @@
 # recipe add <id> [path] Add a recipe to the manifest
 # recipe init <id> [path] Print a read-only recipe init brief
 # sdd <enable|disable|status> … SDD / OpenSpec onboarding ([sdd] in manifest)
+# upgrade [--dry-run] [--force] Upgrade the global installation safely
 # version Print CLI version
 # help Show this help
 set -e
@@ -36,6 +37,7 @@ add-dep) bash "$LIB_DIR/add-dep.sh" "$@" ;;
 doctor) bash "$LIB_DIR/doctor.sh" "$@" ;;
 recipe) bash "$LIB_DIR/recipe.sh" "$@" ;;
 sdd) bash "$LIB_DIR/sdd.sh" "$@" ;;
+upgrade) bash "$LIB_DIR/upgrade.sh" "$@" ;;
 version|-v|--version) bash "$LIB_DIR/version.sh" ;;
 help|-h|--help) cat <<EOF
 ai-specs — declarative per-project AI agent config
@@ -51,6 +53,7 @@ Commands:
   recipe add <id> [path]      Add a recipe to the manifest
   recipe init <id> [path]     Print a read-only recipe init brief
   sdd <enable|disable|status> [path] SDD / OpenSpec (see ai-specs sdd --help)
+  upgrade [--dry-run] [--force] Upgrade the global installation safely
   version Print CLI version
   help Show this help
 Path defaults to current directory. Run any subcommand with --help for details.

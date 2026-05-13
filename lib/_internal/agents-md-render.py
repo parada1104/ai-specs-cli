@@ -124,7 +124,78 @@ def render_project_section(project: dict, agents: dict) -> str:
     return "\n".join(lines)
 
 
-def render_recipes_section(recipes: dict) -> str:
+def _get_ai_specs_home() -> Path | None:
+    """Return the ai-specs-cli root directory, or None if undetectable.
+
+    Derives the root from the location of this script:
+    ``lib/_internal/agents-md-render.py`` → ai-specs-cli root.
+    """
+    candidate = Path(__file__).resolve().parent.parent.parent
+    if (candidate / "ai-specs").is_dir() or (candidate / "catalog").is_dir():
+        return candidate
+    return None
+
+
+def _load_recipe_config_schema(catalog_path: Path, recipe_id: str) -> dict | None:
+    """Load config schema fields from a catalog recipe's ``recipe.toml``.
+
+    Returns ``{field_name: {required, type, default, ...}}`` or ``None``
+    when the recipe is not found or has no ``[config]`` section.
+    """
+    recipe_toml = catalog_path / recipe_id / "recipe.toml"
+    if not recipe_toml.is_file():
+        return None
+    with recipe_toml.open("rb") as f:
+        data = tomllib.load(f)
+    config_raw = data.get("config")
+    if not isinstance(config_raw, dict):
+        return None
+    fields: dict[str, dict] = {}
+    for key, value in config_raw.items():
+        if isinstance(value, dict):
+            fields[key] = value
+    return fields if fields else None
+
+
+def render_recipe_config_table(fields: dict | None) -> str:
+    """Format recipe config schema fields as a markdown table.
+
+    Args:
+        fields: Mapping of field-name → attributes dict (required, type,
+            default, validation).  May be ``None`` or empty.
+
+    Returns:
+        Markdown table string (including leading/trailing newlines), or
+        an empty string when *fields* is empty.
+    """
+    if not fields:
+        return ""
+
+    lines = [
+        "",
+        "  | Field | Required | Type | Default |",
+        "  |-------|----------|------|---------|",
+    ]
+    for field_name in sorted(fields.keys()):
+        f = fields[field_name]
+        required = "yes" if f.get("required") else "no"
+        field_type = f.get("type", "") or ""
+        default = f.get("default")
+        if default is None:
+            default_str = "—"
+        elif isinstance(default, bool):
+            default_str = str(default).lower()
+        else:
+            default_str = str(default)
+        lines.append(f"  | `{field_name}` | {required} | {field_type} | {default_str} |")
+
+    return "\n".join(lines)
+
+
+def render_recipes_section(
+    recipes: dict,
+    recipe_schemas: dict[str, dict] | None = None,
+) -> str:
     if not recipes:
         return ""
 
@@ -133,6 +204,10 @@ def render_recipes_section(recipes: dict) -> str:
         config = recipes[recipe_id]
         if config.get("enabled"):
             lines.append(f"- `{recipe_id}`: enabled")
+            if recipe_schemas and recipe_id in recipe_schemas:
+                table = render_recipe_config_table(recipe_schemas[recipe_id])
+                if table:
+                    lines.append(table)
     lines.append("")
     return "\n".join(lines)
 
@@ -182,6 +257,18 @@ def main() -> int:
     mcp = data.get("mcp", {}) or {}
     recipes = data.get("recipes", {}) or {}
 
+    # Load recipe config schemas from the catalog for enabled recipes
+    recipe_schemas: dict[str, dict] = {}
+    ai_specs_home = _get_ai_specs_home()
+    if ai_specs_home:
+        catalog_path = ai_specs_home / "catalog" / "recipes"
+        if catalog_path.is_dir():
+            for recipe_id, cfg in recipes.items():
+                if cfg.get("enabled"):
+                    schema = _load_recipe_config_schema(catalog_path, recipe_id)
+                    if schema:
+                        recipe_schemas[recipe_id] = schema
+
     name = project.get("name") or manifest_root.name
 
     parts = [
@@ -193,7 +280,7 @@ def main() -> int:
         "",
         render_project_section(project, agents),
         render_mcp_section(mcp),
-        render_recipes_section(recipes),
+        render_recipes_section(recipes, recipe_schemas),
         render_optional_section(data, "Safety Rules", "safety"),
         render_optional_section(data, "Context Sources", "context_sources"),
         render_optional_section(data, "Conflict Policy", "conflict_policy"),

@@ -1,7 +1,7 @@
 # ai-specs-cli Runtime Brief
 <!-- ai-specs:runtime-brief -->
 
-> This is the project's director de orquesta: canonical runtime context for agents. It covers project identity, MCPs, context sources, safety rules, and workflow conventions. It does NOT track day-to-day work state — that lives in Trello and OpenMemory. The auto-generated runtime brief from `ai-specs sync` is thinner than this manual version because `ai-specs.toml` does not yet support richer runtime context (board IDs, dependency tracking, workflow rules, useful commands). The north star is Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing. Until then, this file remains manual.
+> This is the project's director de orquesta: canonical runtime context for agents. It covers project identity, MCPs, context sources, safety rules, and workflow conventions. It does NOT track day-to-day work state — that lives in Trello and Engram. The auto-generated runtime brief from `ai-specs sync` is thinner than this manual version because `ai-specs.toml` does not yet support richer runtime context (board IDs, dependency tracking, workflow rules, useful commands). The north star is Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing. Until then, this file remains manual.
 
 ## Project
 
@@ -14,7 +14,7 @@
 ## Runtime MCPs
 
 - `trello`: project tracking through the ai-specs-cli Roadmap board.
-- `openmemory`: operational/session memory at `http://localhost:8080/mcp`.
+- `engram`: operational/session memory (global MCP).
 - `vault-ai-specs`: canonical project notes in the Obsidian vault scoped to `nnodes/proyectos/ai-specs`.
 - Never expose env-backed secrets from MCP config in generated docs or comments.
 
@@ -32,21 +32,21 @@
 ## Trello Tracking
 
 - Board: `69ec0a2099ea20956e371d62` (`ai-specs-cli Roadmap`).
-- Trello is the source of truth for work state and dependencies. Check OpenMemory for the current active card and next recommended focus.
+- Trello is the source of truth for work state and dependencies. Check Engram for the current active card and next recommended focus.
 
 ## Context Sources
 
 - Trello is the source of truth for work state and dependencies.
 - OpenSpec is the source of truth for specs, changes, tasks, apply evidence, verify reports, and archives.
 - Vault is the canonical note-taker for decisions, handoffs, and structured project context.
-- OpenMemory is the operational memory layer for session facts, patterns, and short-lived continuity.
+- Engram is the operational memory layer for session facts, patterns, and short-lived continuity.
 - Skills are executable guidance, not the primary contents of this runtime brief. Load specific skills from `ai-specs/skills/<name>/SKILL.md` only when relevant.
 
 ## Conflict Policy
 
 - Current explicit human instruction controls the immediate scope unless it conflicts with safety, secrets, or a higher-authority project rule.
 - Trello controls work state; OpenSpec controls SDD artifacts; Vault controls canonical decisions and handoffs; repo docs and manifests control versioned project contracts.
-- Skills define reusable procedures. OpenMemory provides searchable operational context, not final authority.
+- Skills define reusable procedures. Engram provides searchable operational context, not final authority.
 - Proposed agent plans are lowest authority until accepted and recorded in Trello, OpenSpec, Vault, docs, or code.
 
 ## Workflow Rules

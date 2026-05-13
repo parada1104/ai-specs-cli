@@ -10,7 +10,10 @@
 - **Type**: string
 - **Pregunta**: "¿Cuál es el ID del board de Trello para este proyecto?"
 - **Validación**: 24 caracteres hex (formato Trello).
-- **Hint**: el board ID está en la URL: `https://trello.com/b/<board_id>/...`
+- **Hint**: El board ID real son 24 caracteres hex (ej: `69ec0a2099ea20956e371d62`). **No** es el shortLink de 8 caracteres que aparece en la URL del board (`https://trello.com/b/<shortLink>/...`).
+  - **Opción 1 (MCP Tool)**: Ejecuta `trello_get_active_board_info` — el campo `id` devuelve el board ID real.
+  - **Opción 2 (UI de Trello)**: Board menu → More → Close board... — la URL de la página de cierre contiene el ID real.
+  - **Opción 3 (API directa)**: `curl -s "https://api.trello.com/1/boards/<shortLink>?key=<key>&token=<token>"` — el campo `id` del JSON es el board ID real.
 
 ### default_list
 - **Required**: no

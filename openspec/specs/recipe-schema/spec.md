@@ -3,9 +3,7 @@
 ## Purpose
 
 Define the canonical file format and directory layout for a recipe package.
-
-## ADDED Requirements
-
+## Requirements
 ### Requirement: Recipe package layout
 A recipe SHALL be declared in a directory `catalog/recipes/<id>/` containing at minimum a `recipe.toml` file. The directory MAY contain `skills/`, `commands/`, `templates/`, and `docs/` subdirectories.
 
@@ -124,3 +122,22 @@ The init `prompt` value SHALL be a relative path inside the recipe directory. Th
 - **AND** the file does not exist under the recipe directory
 - **WHEN** the recipe is parsed
 - **THEN** validation SHALL fail with an explicit error naming the missing init prompt file
+
+### Requirement: ConfigField supports optional validation attribute
+The `ConfigField` dataclass SHALL support an optional `validation` attribute. When present, it SHALL contain a `regex` string representing a format constraint.
+
+#### Scenario: ConfigField parsed with validation
+- **GIVEN** a `recipe.toml` with `[config.board_id]` where `required = true`, `type = "string"`, and `validation.regex = "^[0-9a-fA-F]{24}$"`
+- **WHEN** `recipe_schema.py` parses the recipe
+- **THEN** the resulting `ConfigField` SHALL have `validation` set to a dict containing `{"regex": "^[0-9a-fA-F]{24}$"}`
+
+#### Scenario: ConfigField parsed without validation
+- **GIVEN** a `recipe.toml` with `[config.timeout]` where `required = false`, `type = "integer"`, and no `validation` table
+- **WHEN** `recipe_schema.py` parses the recipe
+- **THEN** the resulting `ConfigField` SHALL have `validation` set to `None`
+
+#### Scenario: ConfigField rejects malformed validation table
+- **GIVEN** a `recipe.toml` with `[config.board_id]` where `validation` is a table but contains an unknown key (e.g., `validation.min = 5`)
+- **WHEN** `recipe_schema.py` parses the recipe
+- **THEN** validation SHALL fail with an explicit error naming the unsupported validation key
+
