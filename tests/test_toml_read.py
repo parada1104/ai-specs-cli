@@ -164,6 +164,75 @@ class TomlReadTests(unittest.TestCase):
         bindings = self.mod.read_section(data, "bindings")
         self.assertEqual(bindings, [{"capability": "tracker", "recipe": "my-recipe"}])
 
+    # --- [sdd].sub_agents parsing ------------------------------------------
+
+    def test_sdd_absent_defaults_sub_agents_false(self):
+        manifest = self.write_manifest("[project]\nname = 'fixture'\n")
+        data = self.mod.load_toml(manifest)
+        result = self.mod.read_sdd(data)
+        self.assertEqual(result["sub_agents"], False)
+
+    def test_sdd_present_without_sub_agents_defaults_false(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[sdd]\n"
+            "enabled = true\n"
+        )
+        data = self.mod.load_toml(manifest)
+        result = self.mod.read_sdd(data)
+        self.assertEqual(result["sub_agents"], False)
+        self.assertEqual(result["enabled"], True)
+
+    def test_sdd_sub_agents_true(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[sdd]\n"
+            "sub_agents = true\n"
+        )
+        data = self.mod.load_toml(manifest)
+        self.assertEqual(self.mod.read_sdd(data)["sub_agents"], True)
+
+    def test_sdd_sub_agents_false(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[sdd]\n"
+            "sub_agents = false\n"
+        )
+        data = self.mod.load_toml(manifest)
+        self.assertEqual(self.mod.read_sdd(data)["sub_agents"], False)
+
+    def test_sdd_sub_agents_non_boolean_raises(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[sdd]\n"
+            "sub_agents = \"true\"\n"
+        )
+        data = self.mod.load_toml(manifest)
+        with self.assertRaises(ValueError) as ctx:
+            self.mod.read_sdd(data)
+        self.assertIn("[sdd].sub_agents", str(ctx.exception))
+        self.assertIn("boolean", str(ctx.exception))
+
+    def test_sdd_sub_agents_integer_raises(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[sdd]\n"
+            "sub_agents = 1\n"
+        )
+        data = self.mod.load_toml(manifest)
+        with self.assertRaises(ValueError):
+            self.mod.read_sdd(data)
+
+    def test_read_section_sdd(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[sdd]\n"
+            "sub_agents = true\n"
+        )
+        data = self.mod.load_toml(manifest)
+        result = self.mod.read_section(data, "sdd")
+        self.assertEqual(result["sub_agents"], True)
+
 
 if __name__ == "__main__":
     unittest.main()
