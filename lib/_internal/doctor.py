@@ -99,12 +99,23 @@ class Doctor:
         },
     }
 
+    # Phase-specialized SDD subagent slugs (mirrors agents-render.py).
+    SDD_SUBAGENT_NAMES = (
+        "sdd-explore",
+        "sdd-proposal",
+        "sdd-artifacts",
+        "sdd-apply",
+        "sdd-verify",
+        "sdd-archive",
+    )
+
     def run(self) -> int:
         self._check_manifest()
         self._check_agents_md()
         self._check_bundled_assets()
         self._check_enabled_agents()
         self._check_sdd()
+        self._check_sdd_subagents()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -473,6 +484,67 @@ class Doctor:
                 Severity.WARN, "sdd-hybrid",
                 "hybrid mode: no operative memory integration detected (heuristic)",
                 guidance="optional: set AI_SPECS_SDD_MEMORY_HINT when using external memory tools",
+            ))
+
+    # -------------------------------------------------------------------------
+    # SDD subagents (only when [sdd].sub_agents = true)
+    # -------------------------------------------------------------------------
+
+    def _check_sdd_subagents(self) -> None:
+        """Verify that materialized SDD subagent files exist when opted in.
+
+        Emits checks only when ``[sdd].sub_agents = true``. Silent otherwise so
+        projects that have not opted in keep their existing doctor output.
+        """
+        data = self._load_manifest()
+        sdd = data.get("sdd")
+        if not isinstance(sdd, dict):
+            return
+        flag = sdd.get("sub_agents", False)
+        if not isinstance(flag, bool):
+            self.checks.append(Check(
+                Severity.ERROR, "sdd-subagents",
+                f"[sdd].sub_agents must be a boolean (got {type(flag).__name__})",
+                guidance="set sub_agents to true or false in ai-specs.toml",
+            ))
+            return
+        if not flag:
+            return
+
+        agents_section = data.get("agents", {}) or {}
+        if not isinstance(agents_section, dict):
+            agents_section = {}
+        enabled = agents_section.get("enabled", [])
+        if not isinstance(enabled, list):
+            enabled = []
+
+        if "claude" not in enabled:
+            return
+
+        claude_agents_dir = self.root / ".claude" / "agents"
+        missing: list[str] = []
+        for name in self.SDD_SUBAGENT_NAMES:
+            if not (claude_agents_dir / f"{name}.md").is_file():
+                missing.append(name)
+
+        if not missing:
+            self.checks.append(Check(
+                Severity.OK, "sdd-subagents",
+                "six subagent files present in .claude/agents/",
+            ))
+            return
+
+        if len(missing) == len(self.SDD_SUBAGENT_NAMES):
+            self.checks.append(Check(
+                Severity.ERROR, "sdd-subagents",
+                "no SDD subagent files in .claude/agents/",
+                guidance="run ai-specs sync",
+            ))
+        else:
+            self.checks.append(Check(
+                Severity.WARN, "sdd-subagents",
+                f"missing subagent files: {', '.join(missing)}",
+                guidance="run ai-specs sync",
             ))
 
 

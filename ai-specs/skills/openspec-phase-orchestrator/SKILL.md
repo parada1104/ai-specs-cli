@@ -117,6 +117,45 @@ Send each phase executor only:
 - `archive`: use `openspec-archive-change`; only after merge/approval.
 - `merge`: use `git-merge-workflow`; only on explicit user request.
 
+## Phase-Specialized Subagents
+
+When `[sdd].sub_agents = true` in `ai-specs/ai-specs.toml` and the harness
+supports native subagents (Claude Code in v1), the orchestrator MUST delegate
+each phase to its dedicated subagent by `subagent_type`. The bundled catalog
+is closed and stable:
+
+| Phase | `subagent_type` | Source | Materialized to |
+|-------|-----------------|--------|-----------------|
+| `explore` | `sdd-explore` | `bundled-agents/claude/sdd-explore.md` | `.claude/agents/sdd-explore.md` |
+| `proposal` | `sdd-proposal` | `bundled-agents/claude/sdd-proposal.md` | `.claude/agents/sdd-proposal.md` |
+| `specs`, `design`, `tasks` | `sdd-artifacts` | `bundled-agents/claude/sdd-artifacts.md` | `.claude/agents/sdd-artifacts.md` |
+| `apply` | `sdd-apply` | `bundled-agents/claude/sdd-apply.md` | `.claude/agents/sdd-apply.md` |
+| `verify` | `sdd-verify` | `bundled-agents/claude/sdd-verify.md` | `.claude/agents/sdd-verify.md` |
+| `archive` | `sdd-archive` | `bundled-agents/claude/sdd-archive.md` | `.claude/agents/sdd-archive.md` |
+
+Each subagent has its own allowed/blocked tools and turn budget. The
+orchestrator MUST:
+
+- Spawn the matching subagent via the harness `task` capability with
+  `subagent_type` set to the slug above.
+- Send only the minimal context packet defined in `Runtime Context Pack`.
+- Wait for the YAML handoff block defined in `Handoff Contract` and refuse to
+  advance when fields are missing.
+
+Fallback rules:
+
+- When `sub_agents = false` or absent, every phase runs **inline** in the
+  orchestrator. Behavior is the same as before this feature shipped.
+- When `sub_agents = true` but the active harness has no native subagent
+  support (OpenCode, Cursor in v1), every phase runs **inline** in the
+  orchestrator and the runtime brief documents the fallback. The orchestrator
+  MUST NOT attempt to spawn the subagent slugs in that mode.
+
+If the materialized `.claude/agents/sdd-*.md` files are missing while
+`sub_agents = true` and `claude` is enabled, treat the missing files as a
+configuration error: surface the gap and recommend `ai-specs sync` before
+running the phase.
+
 ## Handoff Contract
 
 Every phase executor returns this YAML block first:

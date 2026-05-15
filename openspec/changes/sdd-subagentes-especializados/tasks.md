@@ -16,8 +16,8 @@
 
 ## 3. Implementation — Doctor y skill orchestrator
 
-- [ ] 3.1 Extender `lib/_internal/doctor.py` para comprobar coherencia entre `[sdd].sub_agents = true` y presencia de `.claude/agents/sdd-*.md` cuando `claude` está en `[agents].enabled`; emitir severidades `OK`/`WARN`/`ERROR` según contrato existente
-- [ ] 3.2 Actualizar la skill `ai-specs/skills/openspec-phase-orchestrator/SKILL.md` para referenciar los IDs `sdd-explore`, `sdd-proposal`, `sdd-artifacts`, `sdd-apply`, `sdd-verify`, `sdd-archive` como subagent_type cuando el feature está activo; documentar contrato de handoff por fase y fallback inline
+- [x] 3.1 Extender `lib/_internal/doctor.py` para comprobar coherencia entre `[sdd].sub_agents = true` y presencia de `.claude/agents/sdd-*.md` cuando `claude` está en `[agents].enabled`; emitir severidades `OK`/`WARN`/`ERROR` según contrato existente
+- [x] 3.2 Actualizar la skill `ai-specs/skills/openspec-phase-orchestrator/SKILL.md` para referenciar los IDs `sdd-explore`, `sdd-proposal`, `sdd-artifacts`, `sdd-apply`, `sdd-verify`, `sdd-archive` como subagent_type cuando el feature está activo; documentar contrato de handoff por fase y fallback inline
 
 ## 4. Testing — Regresión y nueva cobertura
 
