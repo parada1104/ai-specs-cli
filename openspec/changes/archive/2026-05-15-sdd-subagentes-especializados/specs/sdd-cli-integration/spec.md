@@ -16,9 +16,9 @@ Cuando `[sdd].sub_agents = true` en `ai-specs.toml`, el sistema SHALL coordinar 
 - **THEN** el sistema MUST emitir un error explícito o aviso documentado que indique que solo `openspec` soporta el catálogo canónico de subagentes en v1
 - **AND** el comando MUST NOT desplegar archivos parciales
 
-### Requirement: Integración con doctor
+### Requirement: Integración con doctor para subagentes SDD
 
-Cuando `[sdd].enabled = true` y `[sdd].sub_agents = true`, `ai-specs doctor` SHALL comprobar de manera no destructiva que los subagent files esperados existen en cada harness soportado habilitado y emitir severidades `OK`/`WARN`/`ERROR` alineadas al contrato existente de doctor.
+Cuando `[sdd].enabled = true` y `[sdd].sub_agents = true`, `ai-specs doctor` SHALL comprobar de manera no destructiva que los subagent files esperados existen en cada harness soportado habilitado y emitir severidades `OK`/`WARN`/`ERROR` alineadas al contrato existente de doctor. Esta comprobación es aditiva al `Requirement: Integración con doctor` existente.
 
 #### Scenario: Doctor reporta archivos presentes
 - **GIVEN** `sub_agents = true`, `claude` habilitado y los seis archivos en `.claude/agents/sdd-*.md`
