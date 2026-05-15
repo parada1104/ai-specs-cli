@@ -25,7 +25,14 @@ def sha256_of(path: Path) -> str:
 
 def load_lock(lock_path: Path) -> dict:
     if not lock_path.is_file():
-        return {"skills": {}, "commands": {}, "opted_out": [], "recipes": {}, "deps": {}}
+        return {
+            "skills": {},
+            "commands": {},
+            "opted_out": [],
+            "recipes": {},
+            "deps": {},
+            "agents": {},
+        }
     with lock_path.open("rb") as f:
         data = tomllib.load(f)
     return {
@@ -34,6 +41,7 @@ def load_lock(lock_path: Path) -> dict:
         "opted_out": list(data.get("opted-out", {}).get("files", []) or []),
         "recipes": {k: dict(v) for k, v in (data.get("recipes") or {}).items()},
         "deps": {k: dict(v) for k, v in (data.get("deps") or {}).items()},
+        "agents": {k: dict(v) for k, v in (data.get("agents") or {}).items()},
     }
 
 
@@ -80,6 +88,16 @@ def write_lock(lock_path: Path, lock: dict) -> None:
             for rel in sorted(files):
                 out.append(f'"{rel}" = "{files[rel]}"')
             out.append("")
+
+    agents = lock.get("agents") or {}
+    for harness in sorted(agents):
+        files = agents[harness]
+        if not files:
+            continue
+        out.append(f'[agents."{harness}"]')
+        for name in sorted(files):
+            out.append(f'"{name}" = "{files[name]}"')
+        out.append("")
 
     opted = sorted(set(lock.get("opted_out") or []))
     if opted:

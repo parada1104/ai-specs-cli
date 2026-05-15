@@ -18,6 +18,21 @@ from pathlib import Path
 RUNTIME_BRIEF_MARKER = "<!-- ai-specs:runtime-brief -->"
 GENERATED_MARKER = "<!-- ai-specs:generated-runtime-brief -->"
 
+# Harnesses that materialize subagent files natively.
+# Must stay in sync with SUPPORTED_HARNESSES in agents-render.py.
+SUBAGENT_NATIVE_HARNESSES = {"claude": ".claude/agents"}
+
+# Closed catalog of SDD subagents shipped under bundled-agents/<harness>/.
+# (name, description) pairs used by the runtime brief listing.
+SDD_SUBAGENTS: tuple[tuple[str, str], ...] = (
+    ("sdd-explore", "Read-only investigation; gathers context, surfaces risks"),
+    ("sdd-proposal", "Bootstraps the change directory and writes proposal.md"),
+    ("sdd-artifacts", "Produces specs, design, tasks via openspec instructions"),
+    ("sdd-apply", "Implements tasks one at a time with focused test feedback"),
+    ("sdd-verify", "Validates implementation against every spec scenario"),
+    ("sdd-archive", "Archives the change, opens PR, moves tracker card to Review"),
+)
+
 ENV_REFERENCE_RE = re.compile(
     r"^\$(?:\{env:)?([A-Za-z_][A-Za-z0-9_]*)\}?$"
 )
@@ -212,6 +227,50 @@ def render_recipes_section(
     return "\n".join(lines)
 
 
+def render_sdd_subagents_section(sdd: dict, agents: dict) -> str:
+    """Render the SDD subagents section when ``[sdd].sub_agents`` is on.
+
+    Lists each subagent and the destination directory for each enabled
+    supported harness. For enabled harnesses without native support, declares
+    the inline fallback so the orchestrator knows to run phases itself.
+    Returns an empty string when the feature is off or no harnesses are
+    enabled.
+    """
+    if not isinstance(sdd, dict):
+        return ""
+    if sdd.get("sub_agents") is not True:
+        return ""
+
+    if not isinstance(agents, dict):
+        agents = {}
+    enabled = agents.get("enabled", []) or []
+    if not isinstance(enabled, list):
+        enabled = []
+    enabled = [a for a in enabled if isinstance(a, str)]
+
+    supported = [a for a in enabled if a in SUBAGENT_NATIVE_HARNESSES]
+    fallback = [a for a in enabled if a not in SUBAGENT_NATIVE_HARNESSES]
+
+    if not supported and not fallback:
+        return ""
+
+    lines = ["## SDD Subagents", ""]
+    if supported:
+        for harness in supported:
+            dest = SUBAGENT_NATIVE_HARNESSES[harness]
+            lines.append(f"- `{harness}` → `{dest}/sdd-*.md`")
+            for name, description in SDD_SUBAGENTS:
+                lines.append(f"  - `{name}`: {description}")
+    if fallback:
+        for harness in fallback:
+            lines.append(
+                f"- `{harness}`: native subagents unsupported — "
+                "SDD phases run inline via the orchestrator"
+            )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_optional_section(data: dict, title: str, key: str) -> str:
     value = data.get(key)
     if not value:
@@ -256,6 +315,19 @@ def main() -> int:
     agents = data.get("agents", {}) or {}
     mcp = data.get("mcp", {}) or {}
     recipes = data.get("recipes", {}) or {}
+    sdd = data.get("sdd", {}) or {}
+
+    # Load recipe config schemas from the catalog for enabled recipes
+    recipe_schemas: dict[str, dict] = {}
+    ai_specs_home = _get_ai_specs_home()
+    if ai_specs_home:
+        catalog_path = ai_specs_home / "catalog" / "recipes"
+        if catalog_path.is_dir():
+            for recipe_id, cfg in recipes.items():
+                if cfg.get("enabled"):
+                    schema = _load_recipe_config_schema(catalog_path, recipe_id)
+                    if schema:
+                        recipe_schemas[recipe_id] = schema
 
     # Load recipe config schemas from the catalog for enabled recipes
     recipe_schemas: dict[str, dict] = {}
@@ -281,6 +353,7 @@ def main() -> int:
         render_project_section(project, agents),
         render_mcp_section(mcp),
         render_recipes_section(recipes, recipe_schemas),
+        render_sdd_subagents_section(sdd, agents),
         render_optional_section(data, "Safety Rules", "safety"),
         render_optional_section(data, "Context Sources", "context_sources"),
         render_optional_section(data, "Conflict Policy", "conflict_policy"),
