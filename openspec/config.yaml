@@ -58,11 +58,13 @@ rules:
     - Group tasks by phase (infrastructure, implementation, testing)
     - Use hierarchical numbering (1.1, 1.2, etc.)
     - Keep tasks small enough to complete in one session
+    - Include README update task when the change affects CLI commands, manifest schema, or user-facing behavior
   apply:
     - Follow existing code patterns and conventions
     - Load relevant coding skills for the project stack
     - Use ./tests/run.sh for focused test feedback during implementation
     - Record RED/GREEN evidence when strict TDD applies
+    - Update README when the change touches CLI commands, manifest schema, or user-facing docs
     - Prefer git commits grouped by tasks.md phase (see ai-specs/skills/openspec-sdd-conventions/SKILL.md); avoid a single end-of-branch squash unless recovering history
   verify:
     - Run ./tests/validate.sh before final verification
