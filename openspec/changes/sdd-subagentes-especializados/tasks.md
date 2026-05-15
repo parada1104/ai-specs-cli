@@ -21,11 +21,11 @@
 
 ## 4. Testing — Regresión y nueva cobertura
 
-- [ ] 4.1 Añadir tests en `tests/test_toml_read.py` (o módulo equivalente) para parser de `[sdd].sub_agents`: ausente, `true`, `false`, valor no booleano
-- [ ] 4.2 Crear `tests/test_agents_render.py` con cobertura: rama OFF idempotente, rama ON con `claude` único harness, rama ON con harnesses mixtos (`claude` + `opencode`), rama ON con solo `opencode`, transición ON→OFF (huérfanos detectados, aviso emitido, archivos no eliminados), idempotencia (dos corridas producen mismo lock y mismos archivos), archivo editado a mano genera sidecar `.new`
-- [ ] 4.3 Añadir test de regresión en `tests/test_sync_pipeline.py` que verifique `AGENTS.md` byte-idéntico antes y después de este cambio cuando `sub_agents` está ausente
-- [ ] 4.4 Añadir test en `tests/test_sync_pipeline.py` para la rama ON: `AGENTS.md` incluye la sección de subagentes con los seis nombres y declaración de fallback cuando aplica
-- [ ] 4.5 Añadir test para doctor que cubra: `sub_agents` ausente no emite chequeo; `sub_agents = true` con archivos presentes reporta `OK`; archivos faltantes reportan `WARN` o `ERROR`
+- [x] 4.1 Añadir tests en `tests/test_toml_read.py` (o módulo equivalente) para parser de `[sdd].sub_agents`: ausente, `true`, `false`, valor no booleano
+- [x] 4.2 Crear `tests/test_agents_render.py` con cobertura: rama OFF idempotente, rama ON con `claude` único harness, rama ON con harnesses mixtos (`claude` + `opencode`), rama ON con solo `opencode`, transición ON→OFF (huérfanos detectados, aviso emitido, archivos no eliminados), idempotencia (dos corridas producen mismo lock y mismos archivos), archivo editado a mano genera sidecar `.new`
+- [x] 4.3 Añadir test de regresión en `tests/test_sync_pipeline.py` que verifique `AGENTS.md` byte-idéntico antes y después de este cambio cuando `sub_agents` está ausente
+- [x] 4.4 Añadir test en `tests/test_sync_pipeline.py` para la rama ON: `AGENTS.md` incluye la sección de subagentes con los seis nombres y declaración de fallback cuando aplica
+- [x] 4.5 Añadir test para doctor que cubra: `sub_agents` ausente no emite chequeo; `sub_agents = true` con archivos presentes reporta `OK`; archivos faltantes reportan `WARN` o `ERROR`
 
 ## 5. Validation — Cierre del ciclo
 
