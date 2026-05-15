@@ -56,6 +56,7 @@ Conservative compatibility rules in V1:
 | `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |
 | `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |
 | `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |
+| `[sdd]` | `sub_agents` | optional boolean, default `false`; when `true`, sync materializes phase-specialized subagent files for harnesses that support them (Claude Code in v1) |
 
 ## Manifest sections
 
@@ -148,10 +149,30 @@ Optional OpenSpec onboarding block.
 enabled = true
 provider = "openspec"
 artifact_store = "filesystem"
+sub_agents = false
 ```
 
 Use [`docs/ai/sdd.md`](ai/sdd.md) for provider workflow, generated commands,
 and `artifact_store` semantics.
+
+#### `sub_agents`
+
+- **Type**: boolean. **Default**: `false`. **Optional**.
+- When `true` and the harness supports it (Claude Code in v1), `ai-specs sync`
+  materializes the six phase-specialized subagent files under
+  `.claude/agents/sdd-*.md`. The catalog is closed: `sdd-explore`,
+  `sdd-proposal`, `sdd-artifacts`, `sdd-apply`, `sdd-verify`, `sdd-archive`.
+- When `false` or absent, sync MUST NOT create or modify
+  `.claude/agents/sdd-*.md`. The runtime brief stays byte-identical to the
+  pre-feature output. This is the backward-compatible path.
+- This is a **product feature**: any project that runs `ai-specs init` +
+  `ai-specs sync` and opts in receives it. Harnesses without native subagent
+  support (OpenCode, Cursor in v1) silently fall back to inline phase execution
+  by the primary orchestrator; the runtime brief documents the fallback.
+- See the dedicated contracts:
+  [`ai-specs/contracts/subagent-frontmatter.md`](../ai-specs/contracts/subagent-frontmatter.md)
+  for the file format and
+  `openspec/specs/sdd-subagent-deployment/spec.md` for deployment semantics.
 
 ## Example manifest
 
@@ -187,6 +208,7 @@ recipe = "trello-mcp-workflow"
 enabled = true
 provider = "openspec"
 artifact_store = "filesystem"
+sub_agents = false
 ```
 
 ## Out of scope
