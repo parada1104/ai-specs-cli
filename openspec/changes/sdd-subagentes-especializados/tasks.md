@@ -29,8 +29,8 @@
 
 ## 5. Validation — Cierre del ciclo
 
-- [ ] 5.1 Ejecutar `./tests/run.sh` y dejar evidencia (logs o resumen) de paso de todos los tests focalizados
-- [ ] 5.2 Ejecutar `./tests/validate.sh` y confirmar `py_compile` + `bash -n` + tests completos
-- [ ] 5.3 Correr `openspec validate sdd-subagentes-especializados` y dejar evidencia del resultado
-- [ ] 5.4 Verificar manualmente el flujo end-to-end: en un proyecto consumidor (puede ser este mismo repo en un worktree temporal), activar `sub_agents = true`, correr sync, confirmar `.claude/agents/sdd-*.md` presentes con frontmatter válido, confirmar runtime brief actualizado, después desactivar, confirmar aviso de huérfanos
-- [ ] 5.5 Producir `verify-report.md` resumiendo: evidencia de cada escenario de specs, lista de archivos modificados, comandos ejecutados, decisiones finales sobre open questions del design.md
+- [x] 5.1 Ejecutar `./tests/run.sh` y dejar evidencia (logs o resumen) de paso de todos los tests focalizados
+- [x] 5.2 Ejecutar `./tests/validate.sh` y confirmar `py_compile` + `bash -n` + tests completos
+- [x] 5.3 Correr `openspec validate sdd-subagentes-especializados` y dejar evidencia del resultado
+- [x] 5.4 Verificar manualmente el flujo end-to-end: en un proyecto consumidor (puede ser este mismo repo en un worktree temporal), activar `sub_agents = true`, correr sync, confirmar `.claude/agents/sdd-*.md` presentes con frontmatter válido, confirmar runtime brief actualizado, después desactivar, confirmar aviso de huérfanos
+- [x] 5.5 Producir `verify-report.md` resumiendo: evidencia de cada escenario de specs, lista de archivos modificados, comandos ejecutados, decisiones finales sobre open questions del design.md
