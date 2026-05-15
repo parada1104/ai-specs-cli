@@ -7,12 +7,12 @@
 
 ## 2. Implementation — Manifest parser y renderer
 
-- [ ] 2.1 Extender `lib/_internal/toml-read.py` para reconocer `[sdd].sub_agents` como booleano opcional con default `false`; validar tipo y emitir error explícito si el valor no es booleano
-- [ ] 2.2 Crear `lib/_internal/agents-render.py` con: lectura de manifiesto, evaluación de `sub_agents` + `[agents].enabled`, materialización a `.claude/agents/sdd-*.md` para Claude Code, registro de fallback inline para harnesses no soportados, e integración con `.ai-specs.lock` y sidecars `.new`
-- [ ] 2.3 Implementar en `agents-render.py` la detección de archivos huérfanos cuando `sub_agents` está apagado pero existen `.claude/agents/sdd-*.md` previos, y emitir aviso sin eliminar
-- [ ] 2.4 Reutilizar utilidades de hashing/normalización de `refresh-bundled.py` desde `agents-render.py` vía import; documentar la dependencia en el módulo nuevo
-- [ ] 2.5 Modificar `lib/sync.sh` para invocar `agents-render.py` después de `refresh-bundled` y antes de la generación de `AGENTS.md`; capturar exit codes y errores
-- [ ] 2.6 Extender `lib/_internal/agents-md-render.py` para añadir, cuando `sub_agents = true` y al menos un harness soportado está habilitado, una sección que liste subagentes activos por `name` y `description` con referencia a la ubicación canónica; preservar marker manual y idempotencia byte-identical
+- [x] 2.1 Extender `lib/_internal/toml-read.py` para reconocer `[sdd].sub_agents` como booleano opcional con default `false`; validar tipo y emitir error explícito si el valor no es booleano
+- [x] 2.2 Crear `lib/_internal/agents-render.py` con: lectura de manifiesto, evaluación de `sub_agents` + `[agents].enabled`, materialización a `.claude/agents/sdd-*.md` para Claude Code, registro de fallback inline para harnesses no soportados, e integración con `.ai-specs.lock` y sidecars `.new`
+- [x] 2.3 Implementar en `agents-render.py` la detección de archivos huérfanos cuando `sub_agents` está apagado pero existen `.claude/agents/sdd-*.md` previos, y emitir aviso sin eliminar
+- [x] 2.4 Reutilizar utilidades de hashing/normalización de `refresh-bundled.py` desde `agents-render.py` vía import; documentar la dependencia en el módulo nuevo
+- [x] 2.5 Modificar `lib/sync.sh` para invocar `agents-render.py` después de `refresh-bundled` y antes de la generación de `AGENTS.md`; capturar exit codes y errores
+- [x] 2.6 Extender `lib/_internal/agents-md-render.py` para añadir, cuando `sub_agents = true` y al menos un harness soportado está habilitado, una sección que liste subagentes activos por `name` y `description` con referencia a la ubicación canónica; preservar marker manual y idempotencia byte-identical
 
 ## 3. Implementation — Doctor y skill orchestrator
 
