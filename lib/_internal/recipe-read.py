@@ -31,7 +31,6 @@ _recipe_schema = _load_recipe_schema()
 Recipe = _recipe_schema.Recipe
 RecipeValidationError = _recipe_schema.RecipeValidationError
 load_recipe_toml = _recipe_schema.load_recipe_toml
-CEREMONY_LEVELS = frozenset({"trivial", "local_fix", "behavior_change", "domain_change"})
 
 
 def read_recipe(catalog_dir: Path, recipe_id: str) -> Recipe:
@@ -39,11 +38,6 @@ def read_recipe(catalog_dir: Path, recipe_id: str) -> Recipe:
     if not recipe_dir.is_dir():
         raise RecipeValidationError(f"recipe directory not found: {recipe_dir}")
     recipe = load_recipe_toml(recipe_dir / "recipe.toml")
-    threshold = recipe.sdd.threshold
-    if threshold and threshold not in CEREMONY_LEVELS:
-        raise RecipeValidationError(
-            f"recipe {recipe_id}: invalid sdd.threshold '{threshold}' (allowed: {', '.join(sorted(CEREMONY_LEVELS))})"
-        )
     return recipe
 
 
@@ -64,7 +58,6 @@ def recipe_to_dict(recipe: Recipe) -> dict:
         "version": recipe.version,
         "author": recipe.author,
         "license": recipe.license,
-        "sdd": {"threshold": recipe.sdd.threshold},
         "init": init,
         "provides": {
             "skills": [

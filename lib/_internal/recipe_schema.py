@@ -85,11 +85,6 @@ class InitWorkflow:
 
 
 @dataclass
-class SddConfig:
-    threshold: str = ""
-
-
-@dataclass
 class Recipe:
     id: str
     name: str
@@ -106,7 +101,6 @@ class Recipe:
     hooks: list[Hook] = field(default_factory=list)
     config_schema: ConfigSchema = field(default_factory=ConfigSchema)
     init: InitWorkflow | None = None
-    sdd: SddConfig = field(default_factory=SddConfig)
 
 
 def _require_string(data: dict[str, Any], key: str, context: str) -> str:
@@ -249,17 +243,6 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
     return ConfigSchema(fields=fields)
 
 
-def _parse_sdd(raw: Any, context: str) -> SddConfig:
-    if not isinstance(raw, dict):
-        return SddConfig()
-    threshold = str(raw.get("threshold", "")).strip()
-    if threshold and threshold not in CEREMONY_LEVELS:
-        raise RecipeValidationError(
-            f"{context}.sdd.threshold: invalid value '{threshold}' (allowed: {', '.join(sorted(CEREMONY_LEVELS))})"
-        )
-    return SddConfig(threshold=threshold)
-
-
 def _parse_init(raw: Any, context: str, recipe_dir: Path | None = None) -> InitWorkflow | None:
     if raw is None:
         return None
@@ -349,7 +332,6 @@ def validate_recipe_toml(data: dict[str, Any], recipe_dir: Path | None = None) -
         hooks=_parse_hooks(data.get("hooks"), ""),
         config_schema=_parse_config(data.get("config"), ""),
         init=_parse_init(data.get("init"), "[init]", recipe_dir),
-        sdd=_parse_sdd(data.get("sdd"), "[sdd]"),
     )
 
 

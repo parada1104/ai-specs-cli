@@ -31,24 +31,8 @@ subrepos = []
 enabled = ["claude", "cursor", "opencode"]
 
 # -----------------------------------------------------------------------------
-# Spec-driven development — optional [sdd] section. Omit the whole table to
-# keep V1 behavior; declare it to opt into provider-specific integration.
-#
-#   enabled         optional; default false. Enables doctor checks and SDD
-#                   integration for the provider declared below.
-#   provider        optional; v1 supports "openspec".
-#   artifact_store  optional; one of "filesystem", "hybrid", "memory".
-#   sub_agents      optional; default false. When true and the harness
-#                   supports it (Claude Code in v1), `ai-specs sync`
-#                   materializes phase-specialized subagent files under
-#                   `.claude/agents/sdd-*.md`. Backward-compatible: omitting
-#                   or setting false preserves the current SDD flow.
-#
-# [sdd]
-# enabled = true
-# provider = "openspec"
-# artifact_store = "hybrid"
-# sub_agents = false
+# Spec-driven development — NOT supported in this version.
+# Use gentle-ai for SDD workflows.
 
 # -----------------------------------------------------------------------------
 # Recipes — named, versioned bundles of skills, commands, templates, and MCP

@@ -28,26 +28,19 @@ Arguments:
 
 Flags:
   --init    (internal) First-time lock setup — do NOT write .new sidecars.
-  --preset  Subset refresh (e.g. openspec for SDD enable); see refresh-bundled.py.
   -h, --help
 
 Examples:
   ai-specs refresh-bundled
   ai-specs refresh-bundled ~/code/my-app
-  ai-specs refresh-bundled --preset openspec
 EOF
 }
 
 TARGET_PATH=""
 INIT_FLAG=""
-PRESET_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --init)     INIT_FLAG="--init"; shift ;;
-        --preset)
-            PRESET_ARGS=(--preset "$2")
-            shift 2
-            ;;
         -h|--help)  usage; exit 0 ;;
         --)         shift; break ;;
         -*)
@@ -80,4 +73,4 @@ echo ""
 echo "ai-specs refresh-bundled"
 echo "  target: $TARGET_PATH"
 echo ""
-python3 "$REFRESH_PY" "$TARGET_PATH" "$AI_SPECS_HOME" $INIT_FLAG "${PRESET_ARGS[@]}"
+python3 "$REFRESH_PY" "$TARGET_PATH" "$AI_SPECS_HOME" $INIT_FLAG

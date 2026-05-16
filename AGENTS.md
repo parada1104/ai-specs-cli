@@ -1,13 +1,13 @@
 # ai-specs-cli Runtime Brief
 <!-- ai-specs:runtime-brief -->
 
-> This is the project's director de orquesta: canonical runtime context for agents. It covers project identity, MCPs, context sources, safety rules, and workflow conventions. It does NOT track day-to-day work state — that lives in Trello and Engram. The auto-generated runtime brief from `ai-specs sync` is thinner than this manual version because `ai-specs.toml` does not yet support richer runtime context (board IDs, dependency tracking, workflow rules, useful commands). The north star is Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing. Until then, this file remains manual.
+> Canonical runtime context for agents. Covers project identity, MCPs, context sources, safety rules, and workflow conventions. Does NOT track day-to-day work state — that lives in Trello and Engram.
 
 ## Project
 
 - Project: `ai-specs-cli`
 - Manifest: `ai-specs/ai-specs.toml`
-- Purpose: per-project AI harness for agent configuration, MCPs, recipes, memory, tracker integration, and OpenSpec/SDD workflows.
+- Purpose: per-project AI harness for agent configuration, MCPs, recipes, memory, and tracker integration.
 - Enabled runtimes: `claude`, `cursor`, `opencode`
 - Integration branch: `development`
 
@@ -20,23 +20,16 @@
 
 ## Runtime Flow
 
-- A session works on one explicit user request, Trello card, or OpenSpec change.
-- A relevant Trello card maps to one SDD cycle when implementation or durable design is needed.
-- This project uses OpenSpec as the SDD provider: proposal, specs, design, tasks, apply, verify, archive.
-- The orchestrator runs each SDD phase inline, using detailed prompts for phase specialization.
-- `explore` can run without a worktree when it only produces thinking. Create the worktree before `openspec-new-change` or any artifact-writing phase.
-- Artifact phases (`proposal`, `specs`, `design`, `tasks`) and implementation phases (`apply`, `verify`, `archive`) run inside the dedicated worktree.
+- A session works on one explicit user request or Trello card.
 - VCS/PR provider: GitHub through `gh` CLI.
 
 ## Trello Tracking
 
-- Board: `69ec0a2099ea20956e371d62` (`ai-specs-cli Roadmap`).
 - Trello is the source of truth for work state and dependencies. Check Engram for the current active card and next recommended focus.
 
 ## Context Sources
 
 - Trello is the source of truth for work state and dependencies.
-- OpenSpec is the source of truth for specs, changes, tasks, apply evidence, verify reports, and archives.
 - Vault is the canonical note-taker for decisions, handoffs, and structured project context.
 - Engram is the operational memory layer for session facts, patterns, and short-lived continuity.
 - Skills are executable guidance, not the primary contents of this runtime brief. Load specific skills from `ai-specs/skills/<name>/SKILL.md` only when relevant.
@@ -44,16 +37,14 @@
 ## Conflict Policy
 
 - Current explicit human instruction controls the immediate scope unless it conflicts with safety, secrets, or a higher-authority project rule.
-- Trello controls work state; OpenSpec controls SDD artifacts; Vault controls canonical decisions and handoffs; repo docs and manifests control versioned project contracts.
+- Trello controls work state; Vault controls canonical decisions and handoffs; repo docs and manifests control versioned project contracts.
 - Skills define reusable procedures. Engram provides searchable operational context, not final authority.
-- Proposed agent plans are lowest authority until accepted and recorded in Trello, OpenSpec, Vault, docs, or code.
+- Proposed agent plans are lowest authority until accepted and recorded in Trello, Vault, docs, or code.
 
 ## Workflow Rules
 
 - Do not merge or push to `development` without explicit human instruction.
-- Start change artifact work from `development` in a dedicated worktree unless the user explicitly directs otherwise. Pure exploration can happen before a worktree if it writes no artifacts.
 - Preserve unrelated worktree changes; never revert changes you did not make.
-- For OpenSpec changes, use the project SDD workflow.
 - Before final verification, run the relevant focused tests plus `./tests/validate.sh` when feasible.
 - Do not run `ai-specs sync` in this repo until the TOML schema supports richer runtime context (Option C).
 - Direct `skill-sync` runs are allowed only for metadata validation; this file's runtime marker makes `skill-sync` skip Auto-invoke insertion.
@@ -61,7 +52,6 @@
 ## Current Transitional State
 
 - `ai-specs/skills/skill-sync/assets/sync.sh` respects the `<!-- ai-specs:runtime-brief -->` marker and skips rewriting `AGENTS.md`.
-- This file remains intentionally manual and non-idempotent until the TOML schema supports richer runtime context (Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing).
 
 ## Useful Commands
 

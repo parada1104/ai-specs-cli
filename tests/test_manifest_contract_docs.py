@@ -55,7 +55,6 @@ class ManifestContractDocsTests(unittest.TestCase):
             self.manifest_doc,
             [
                 "`ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.",
-                "Omission of `[sdd]` remains valid for projects not using SDD.",
                 "- `[project]`",
                 "- `[agents]`",
                 "- `[[deps]]`",
@@ -63,7 +62,6 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "- `[recipes.<id>]`",
                 "- `[recipes.<id>.config]`",
                 "- `[[bindings]]`",
-                "- `[sdd]` (optional)",
                 "- Missing `[agents]`, `[[deps]]`, and `[mcp]` remain valid and normalize to stable defaults.",
                 "- `project.subrepos` remains validated by the existing root target resolver.",
                 "- MCP `env` is the canonical field name.",
@@ -90,7 +88,6 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |",
                 "| `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |",
                 "| `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |",
-                "| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |",
             ],
         )
 
@@ -100,7 +97,6 @@ class ManifestContractDocsTests(unittest.TestCase):
             [
                 "Out of scope for this V1 contract (explicitly deferred to future changes):",
                 "- precedence / merge policy beyond the currently implemented runtime behavior",
-                "- `[memory]` (distinct from `[sdd].artifact_store = memory`)",
             ],
         )
 
@@ -110,10 +106,7 @@ class ManifestContractDocsTests(unittest.TestCase):
             [
                 "[`docs/ai-specs-toml.md`](docs/ai-specs-toml.md)",
                 "[`docs/recipe-schema.md`](docs/recipe-schema.md)",
-                "[`docs/ai/sdd.md`](docs/ai/sdd.md)",
                 "[`docs/mcp-distribution.md`](docs/mcp-distribution.md)",
-                "[`docs/skills-by-agent.md`](docs/skills-by-agent.md)",
-                "[`docs/bundled-merge-rules.md`](docs/bundled-merge-rules.md)",
             ],
         )
 
@@ -122,8 +115,6 @@ class ManifestContractDocsTests(unittest.TestCase):
             self.recipe_doc,
             [
                 "[`docs/ai-specs-toml.md`](ai-specs-toml.md)",
-                "## `[sdd]` recipe metadata",
-                "| `threshold` | string | no | Optional ceremony level: `trivial`, `local_fix`, `behavior_change`, or `domain_change` |",
                 "Missing `required` causes a validation error.",
                 "The current validator treats\n`type` as descriptive metadata",
                 "| `condition` | string | no | `\"not_exists\"` (default) — skip if target already exists |",

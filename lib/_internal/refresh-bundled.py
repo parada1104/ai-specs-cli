@@ -45,9 +45,6 @@ from typing import Iterator, Optional
 
 LOCK_REL = "ai-specs/.ai-specs.lock"
 
-# Preset `openspec`: bundled skills named openspec-* plus catalog policy skills.
-PRESET_OPENSPEC_CATALOG_SKILLS = ("openspec-sdd-conventions", "testing-foundation")
-
 
 def sha256_of(path: Path) -> str:
     """Hash file content with CRLF → LF normalization."""
@@ -73,39 +70,6 @@ def iter_bundled(cli_source: Path) -> Iterator[tuple[str, Optional[str], str, Pa
         for p in sorted(commands_dir.rglob("*")):
             if p.is_file():
                 yield "command", None, str(p.relative_to(commands_dir)), p
-
-
-def iter_catalog_skill(cli_source: Path, skill_name: str) -> Iterator[tuple[str, str, str, Path]]:
-    base = cli_source / "catalog" / "skills" / skill_name
-    if not base.is_dir():
-        return
-    for p in sorted(base.rglob("*")):
-        if p.is_file():
-            yield "skill", skill_name, str(p.relative_to(base)), p
-
-
-def preset_match(preset: Optional[str], kind: str, owner: Optional[str], rel: str) -> bool:
-    if preset is None:
-        return True
-    if preset != "openspec":
-        raise ValueError(f"unknown preset: {preset!r}")
-    if kind == "command":
-        return True
-    assert owner is not None
-    if owner.startswith("openspec-"):
-        return True
-    if owner in PRESET_OPENSPEC_CATALOG_SKILLS:
-        return True
-    return False
-
-
-def iter_preset_sources(cli_source: Path, preset: Optional[str]) -> Iterator[tuple[str, Optional[str], str, Path]]:
-    for kind, owner, rel, cli_path in iter_bundled(cli_source):
-        if preset_match(preset, kind, owner, rel):
-            yield kind, owner, rel, cli_path
-    if preset == "openspec":
-        for name in PRESET_OPENSPEC_CATALOG_SKILLS:
-            yield from iter_catalog_skill(cli_source, name)
 
 
 def project_path_for(project: Path, kind: str, owner: Optional[str], rel: str) -> Path:
@@ -169,7 +133,7 @@ def save_new_sidecar(cli_path: Path, proj_path: Path) -> Path:
 
 
 def refresh(
-    project: Path, cli_source: Path, init_mode: bool = False, preset: Optional[str] = None
+    project: Path, cli_source: Path, init_mode: bool = False
 ) -> int:
     lock_path = project / LOCK_REL
     lock = load_lock(lock_path)
@@ -178,7 +142,7 @@ def refresh(
     seen: set[tuple[str, Optional[str], str]] = set()
     opted_out: set[str] = set(lock.get("opted_out") or [])
 
-    for kind, owner, rel, cli_path in iter_preset_sources(cli_source, preset):
+    for kind, owner, rel, cli_path in iter_bundled(cli_source):
         key = (kind, owner, rel)
         seen.add(key)
 
@@ -251,24 +215,23 @@ def refresh(
             touched.append(("~", name, f"customized → saved {sidecar.name}"))
         # else: user customized, CLI unchanged → nothing to do.
 
-    # Purge lock entries for files the CLI no longer ships (full refresh only).
-    if preset is None:
-        stale: list[tuple[str, Optional[str], str]] = []
-        for skill, files in lock["skills"].items():
-            for rel in files:
-                if ("skill", skill, rel) not in seen:
-                    stale.append(("skill", skill, rel))
-        for rel in lock["commands"]:
-            if ("command", None, rel) not in seen:
-                stale.append(("command", None, rel))
-        for kind, owner, rel in stale:
-            lock_del(lock, kind, owner, rel)
-            touched.append(("-", display_name(kind, owner, rel), "untracked (removed upstream)"))
+    # Purge lock entries for files the CLI no longer ships.
+    stale: list[tuple[str, Optional[str], str]] = []
+    for skill, files in lock["skills"].items():
+        for rel in files:
+            if ("skill", skill, rel) not in seen:
+                stale.append(("skill", skill, rel))
+    for rel in lock["commands"]:
+        if ("command", None, rel) not in seen:
+            stale.append(("command", None, rel))
+    for kind, owner, rel in stale:
+        lock_del(lock, kind, owner, rel)
+        touched.append(("-", display_name(kind, owner, rel), "untracked (removed upstream)"))
 
-        shipped_names = {
-            display_name(k, o, r) for k, o, r, _cli in iter_bundled(cli_source)
-        }
-        opted_out &= shipped_names
+    shipped_names = {
+        display_name(k, o, r) for k, o, r, _cli in iter_bundled(cli_source)
+    }
+    opted_out &= shipped_names
     lock["opted_out"] = sorted(opted_out)
 
     write_lock(lock_path, lock)
@@ -287,18 +250,9 @@ def main() -> int:
     if "--init" in args:
         args.remove("--init")
         init_mode = True
-    preset: Optional[str] = None
-    if "--preset" in args:
-        i = args.index("--preset")
-        try:
-            preset = args[i + 1]
-        except IndexError:
-            print("ERROR: --preset requires a value", file=sys.stderr)
-            return 2
-        args = args[:i] + args[i + 2 :]
     if len(args) != 2:
         print(
-            "Usage: refresh-bundled.py <project_root> <ai_specs_home> [--init] [--preset NAME]",
+            "Usage: refresh-bundled.py <project_root> <ai_specs_home> [--init]",
             file=sys.stderr,
         )
         return 2
@@ -313,7 +267,7 @@ def main() -> int:
         )
         return 1
 
-    return refresh(project, cli_source, init_mode=init_mode, preset=preset)
+    return refresh(project, cli_source, init_mode=init_mode)
 
 
 if __name__ == "__main__":
