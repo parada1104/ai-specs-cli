@@ -1,8 +1,8 @@
 ---
 name: openspec-phase-orchestrator
 description: >
-  Orchestrate SDD/OpenSpec changes using phase-specialized subagents, minimal
-  context packets, structured handoffs, and phase events consumable by recipes.
+  Orchestrate SDD/OpenSpec changes, minimal context packets, structured handoffs,
+  and phase events consumable by recipes.
 license: MIT
 compatibility: Requires openspec CLI when OpenSpec is the configured SDD provider.
 metadata:
@@ -21,33 +21,22 @@ metadata:
 
 # openspec-phase-orchestrator
 
-This skill coordinates SDD phases. It delegates execution to phase-specialized
-subagents when the harness supports them and falls back to inline execution only
-when subagents are unavailable.
-
-When the harness exposes a `task`/subagent capability, every SDD phase MUST run
-through a fresh phase-specialized subagent. Inline execution is only a fallback
-for harnesses that do not support subagents.
-
-Inline execution is only a fallback for harnesses that do not support subagents.
+This skill coordinates SDD phases.
 
 Read `AGENTS.md` first. It defines the SDD provider, integration branch, tracker,
 memory providers, test commands, and safety rules for the current project.
 
 ## Core Rules
 
-- Use a fresh subagent for each phase whenever available.
 - Keep each phase payload minimal; include paths and decisions, not full history.
 - The executor reads dependency artifacts itself.
 - The orchestrator delegates, parses handoffs, emits events, and decides whether to advance.
-- It does not write artifacts directly in subagent mode.
 
 ## Worktree Requirement
 
 - `explore` may run outside a worktree if it produces no artifact.
 - Before `proposal`/`openspec-new-change` or any later artifact-writing phase, create or enter the dedicated change worktree.
 - Payloads for artifact-writing phases must include `cwd` and `worktree_path`.
-- Subagents must verify `cwd` before writing.
 
 ## Cycle Modes
 
@@ -72,8 +61,7 @@ When asked for a plan before execution, summarize the orchestration plan instead
 of implementation details:
 
 - State the classification and the selected cycle mode.
-- State that each required SDD phase will run in a fresh phase-specialized
-  subagent when the harness supports subagents.
+- State that each required SDD phase runs inline in the orchestrator.
 - List the required phases and artifacts from `openspec/config.yaml`.
 - State the stop point, especially that `auto-artifacts` stops after `tasks.md`
   and before `apply`.
@@ -116,45 +104,6 @@ Send each phase executor only:
 - `verify`: use `openspec-verify-change`; creates/updates `verify-report.md`.
 - `archive`: use `openspec-archive-change`; only after merge/approval.
 - `merge`: use `git-merge-workflow`; only on explicit user request.
-
-## Phase-Specialized Subagents
-
-When `[sdd].sub_agents = true` in `ai-specs/ai-specs.toml` and the harness
-supports native subagents (Claude Code in v1), the orchestrator MUST delegate
-each phase to its dedicated subagent by `subagent_type`. The bundled catalog
-is closed and stable:
-
-| Phase | `subagent_type` | Source | Materialized to |
-|-------|-----------------|--------|-----------------|
-| `explore` | `sdd-explore` | `bundled-agents/claude/sdd-explore.md` | `.claude/agents/sdd-explore.md` |
-| `proposal` | `sdd-proposal` | `bundled-agents/claude/sdd-proposal.md` | `.claude/agents/sdd-proposal.md` |
-| `specs`, `design`, `tasks` | `sdd-artifacts` | `bundled-agents/claude/sdd-artifacts.md` | `.claude/agents/sdd-artifacts.md` |
-| `apply` | `sdd-apply` | `bundled-agents/claude/sdd-apply.md` | `.claude/agents/sdd-apply.md` |
-| `verify` | `sdd-verify` | `bundled-agents/claude/sdd-verify.md` | `.claude/agents/sdd-verify.md` |
-| `archive` | `sdd-archive` | `bundled-agents/claude/sdd-archive.md` | `.claude/agents/sdd-archive.md` |
-
-Each subagent has its own allowed/blocked tools and turn budget. The
-orchestrator MUST:
-
-- Spawn the matching subagent via the harness `task` capability with
-  `subagent_type` set to the slug above.
-- Send only the minimal context packet defined in `Runtime Context Pack`.
-- Wait for the YAML handoff block defined in `Handoff Contract` and refuse to
-  advance when fields are missing.
-
-Fallback rules:
-
-- When `sub_agents = false` or absent, every phase runs **inline** in the
-  orchestrator. Behavior is the same as before this feature shipped.
-- When `sub_agents = true` but the active harness has no native subagent
-  support (OpenCode, Cursor in v1), every phase runs **inline** in the
-  orchestrator and the runtime brief documents the fallback. The orchestrator
-  MUST NOT attempt to spawn the subagent slugs in that mode.
-
-If the materialized `.claude/agents/sdd-*.md` files are missing while
-`sub_agents = true` and `claude` is enabled, treat the missing files as a
-configuration error: surface the gap and recommend `ai-specs sync` before
-running the phase.
 
 ## Handoff Contract
 

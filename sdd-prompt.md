@@ -27,4 +27,4 @@ Problema: La recipe `trello-mcp-workflow` acepta un shortLink de 8 caracteres co
 
 - Worktree root: `/Users/robert/proyectos/nnodes/ai-specs-cli/.worktrees/card78-boardid-validation/`
 - Repo root: `/Users/robert/proyectos/nnodes/ai-specs-cli/`
-- Card context: validate-config hook (recipe-materialize.py line 310), ConfigField (recipe_schema.py line 67), init.md, agents-md-render.py, SKILL.md
+|- Card context: validate-config hook (recipe-materialize.py line 310), ConfigField (recipe_schema.py line 67), init.md, SKILL.md

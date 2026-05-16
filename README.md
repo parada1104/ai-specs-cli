@@ -3,10 +3,15 @@
 Per-project harness engineering for existing coding-agent tools.
 
 `ai-specs` manages coding-agent configuration — skills, MCP servers, derived
-instructions, and workflow artifacts — for tools like Claude, Cursor, OpenCode,
+instructions, recipes, and workflow artifacts — for tools like Claude, Cursor, OpenCode,
 Codex, Copilot, and Gemini. Each project owns a manifest at
 `ai-specs/ai-specs.toml`; the `ai-specs` CLI distributes it into every enabled
 tool's native format.
+
+**Agent orchestration** (multi-phase SDD, multi-model sub-agents, profiles) is handled
+by [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai). `ai-specs` focuses
+on the **spec layer** and **tool integrations** (recipes) — the fan-out across repos and
+harnesses.
 
 ## Install
 
@@ -96,9 +101,9 @@ enabled = true
 provider = "openspec"
 ```
 
-When `sub_agents = true`, Claude Code receives phase-specialized agents
-(explore, proposal, artifacts, apply, verify, archive) in
-`.claude/agents/sdd-*.md`. See [`docs/ai/sdd.md`](docs/ai/sdd.md).
+`ai-specs` handles the **spec layer** (proposal, specs, design, tasks, verify, archive).
+Agent-level orchestration (multi-model sub-agents, phase specialization) is handled by
+[gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) via its SDD profiles.
 
 ### Updating
 
@@ -117,7 +122,6 @@ bin/ai-specs        ← global entrypoint
 lib/                ← sync, init, agent config, renderers
 bundled-skills/     ← skills shipped with the CLI
 bundled-commands/   ← slash commands shipped with the CLI
-bundled-agents/     ← pre-built agent definitions per harness
 catalog/recipes/    ← recipe definitions
 templates/          ← scaffolding templates
 docs/               ← reference documentation

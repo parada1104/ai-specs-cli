@@ -177,22 +177,14 @@ def read_bindings(data: dict[str, Any]) -> list[dict[str, str]]:
 def read_sdd(data: dict[str, Any]) -> dict[str, Any]:
     """Parse the optional `[sdd]` table.
 
-    Returns a dict with normalized keys: enabled, provider, artifact_store,
-    sub_agents. Missing `[sdd]` returns all defaults. Tolerant on legacy fields
+    Returns a dict with normalized keys: enabled, provider, artifact_store.
+    Missing `[sdd]` returns all defaults. Tolerant on legacy fields
     (enabled/provider/artifact_store) for backward compatibility with the
-    existing pattern. Strict on `sub_agents`: a non-boolean value raises
-    ``ValueError`` with an explicit message identifying the field.
+    existing pattern.
     """
     sdd = data.get("sdd", {}) or {}
     if not isinstance(sdd, dict):
         sdd = {}
-
-    sub_agents = sdd.get("sub_agents", False)
-    if not isinstance(sub_agents, bool):
-        raise ValueError(
-            "[sdd].sub_agents must be a boolean "
-            f"(got {type(sub_agents).__name__}: {sub_agents!r})"
-        )
 
     enabled = sdd.get("enabled", False)
     provider = sdd.get("provider", "")
@@ -202,7 +194,6 @@ def read_sdd(data: dict[str, Any]) -> dict[str, Any]:
         "enabled": enabled if isinstance(enabled, bool) else False,
         "provider": provider if isinstance(provider, str) else "",
         "artifact_store": artifact_store if isinstance(artifact_store, str) else "",
-        "sub_agents": sub_agents,
     }
 
 

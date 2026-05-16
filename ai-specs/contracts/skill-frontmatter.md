@@ -71,7 +71,7 @@ Canonical generated fields:
 - `skill-creator` and `/skills-as-rules` must scaffold the canonical local schema.
 - `vendor-skills.py` must render vendored skills through
   `lib/_internal/skill_contract.py`.
-- `agents-md-render.py` must generate the runtime brief from `ai-specs.toml`
+| The sync agent generates the runtime brief from `ai-specs.toml`
   and must not include skill catalogs or Auto-invoke tables.
 - `skill-sync` must validate sync metadata through the shared contract parser,
   not bespoke shell parsing.

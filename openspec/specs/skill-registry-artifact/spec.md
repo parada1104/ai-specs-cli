@@ -2,7 +2,7 @@
 
 > **RETIRED** — The skill registry artifact (`ai-specs/.skill-registry.md`) was removed.
 > Skill metadata validation is now performed by `skill-sync` without generating a registry file.
-> The `<available_skills>` block in `AGENTS.md` (rendered by `agents-md-render.py`) is the
+> The `<available_skills>` block in `AGENTS.md` is the
 > canonical agent-facing skill index. Individual `SKILL.md` frontmatter remains the source of
 > truth for auto-invoke triggers.
 
