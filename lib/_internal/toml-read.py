@@ -174,29 +174,6 @@ def read_bindings(data: dict[str, Any]) -> list[dict[str, str]]:
     return out
 
 
-def read_sdd(data: dict[str, Any]) -> dict[str, Any]:
-    """Parse the optional `[sdd]` table.
-
-    Returns a dict with normalized keys: enabled, provider, artifact_store.
-    Missing `[sdd]` returns all defaults. Tolerant on legacy fields
-    (enabled/provider/artifact_store) for backward compatibility with the
-    existing pattern.
-    """
-    sdd = data.get("sdd", {}) or {}
-    if not isinstance(sdd, dict):
-        sdd = {}
-
-    enabled = sdd.get("enabled", False)
-    provider = sdd.get("provider", "")
-    artifact_store = sdd.get("artifact_store", "")
-
-    return {
-        "enabled": enabled if isinstance(enabled, bool) else False,
-        "provider": provider if isinstance(provider, str) else "",
-        "artifact_store": artifact_store if isinstance(artifact_store, str) else "",
-    }
-
-
 def read_section(data: dict[str, Any], section: str) -> Any:
     if section == "project":
         return read_project(data)
@@ -210,8 +187,6 @@ def read_section(data: dict[str, Any], section: str) -> Any:
         return read_recipes(data)
     if section == "bindings":
         return read_bindings(data)
-    if section == "sdd":
-        return read_sdd(data)
     raise KeyError(section)
 
 

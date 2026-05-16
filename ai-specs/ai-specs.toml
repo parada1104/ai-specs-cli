@@ -67,12 +67,3 @@ args = [
 ]
 timeout = 30000
 
-# -----------------------------------------------------------------------------
-# Spec-driven development (optional). Omit the whole table to keep V1
-# behavior; declare it to opt into provider-specific integration.
-#
-# [sdd]
-# enabled = true
-# provider = "openspec"
-# artifact_store = "hybrid"
-

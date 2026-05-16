@@ -63,13 +63,18 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "- `[recipes.<id>]`",
                 "- `[recipes.<id>.config]`",
                 "- `[[bindings]]`",
-                "- `[sdd]` (optional)",
                 "- Missing `[agents]`, `[[deps]]`, and `[mcp]` remain valid and normalize to stable defaults.",
                 "- `project.subrepos` remains validated by the existing root target resolver.",
                 "- MCP `env` is the canonical field name.",
                 "- MCP `environment` is still accepted as a tolerated input alias and normalizes to `env`.",
             ],
         )
+        # The manifest doc still references [sdd] as an optional section
+        # since docs/ is not in scope for removal. The product code no
+        # longer implements it — documentation updates are separate.
+        # Check templates and generated TOML, not docs.
+        self.assertNotIn("[sdd]", self.generated_toml)
+        self.assertNotIn("[sdd]", self.template)
 
     def test_manifest_reference_lists_every_v1_field_classification_row(self):
         self.assertContainsAll(
@@ -90,7 +95,6 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |",
                 "| `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |",
                 "| `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |",
-                "| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |",
             ],
         )
 
