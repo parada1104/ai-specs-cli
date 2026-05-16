@@ -23,8 +23,7 @@
 - A session works on one explicit user request, Trello card, or OpenSpec change.
 - A relevant Trello card maps to one SDD cycle when implementation or durable design is needed.
 - This project uses OpenSpec as the SDD provider: proposal, specs, design, tasks, apply, verify, archive.
-- **Subagent execution model**: The current runtime delegates each SDD phase to a `general` subagent via the `task` tool. Phase specialization is achieved through detailed prompts (e.g., a "specs specialist" prompt for the specs phase), not through native agent types. The orchestrator (primary agent) must respect the workflow flow — for example, `auto-artifacts` runs proposal through tasks, then pauses for human direction before apply.
-- **Future**: Trello card #68 tracks professionalizing this with true phase-specialized subagents, enforcement hooks, and a dispatcher integrated with `openspec-phase-orchestrator`.
+- The orchestrator runs each SDD phase inline, using detailed prompts for phase specialization.
 - `explore` can run without a worktree when it only produces thinking. Create the worktree before `openspec-new-change` or any artifact-writing phase.
 - Artifact phases (`proposal`, `specs`, `design`, `tasks`) and implementation phases (`apply`, `verify`, `archive`) run inside the dedicated worktree.
 - VCS/PR provider: GitHub through `gh` CLI.
@@ -54,7 +53,7 @@
 - Do not merge or push to `development` without explicit human instruction.
 - Start change artifact work from `development` in a dedicated worktree unless the user explicitly directs otherwise. Pure exploration can happen before a worktree if it writes no artifacts.
 - Preserve unrelated worktree changes; never revert changes you did not make.
-- For OpenSpec changes, use the project SDD workflow and subagent isolation when available.
+- For OpenSpec changes, use the project SDD workflow.
 - Before final verification, run the relevant focused tests plus `./tests/validate.sh` when feasible.
 - Do not run `ai-specs sync` in this repo until the TOML schema supports richer runtime context (Option C).
 - Direct `skill-sync` runs are allowed only for metadata validation; this file's runtime marker makes `skill-sync` skip Auto-invoke insertion.
@@ -62,7 +61,6 @@
 ## Current Transitional State
 
 - `ai-specs/skills/skill-sync/assets/sync.sh` respects the `<!-- ai-specs:runtime-brief -->` marker and skips rewriting `AGENTS.md`.
-- `lib/_internal/agents-md-render.py` generates a runtime brief from `ai-specs.toml`, but the output is thinner than this manual brief.
 - This file remains intentionally manual and non-idempotent until the TOML schema supports richer runtime context (Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing).
 
 ## Useful Commands

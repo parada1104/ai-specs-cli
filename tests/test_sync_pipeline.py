@@ -50,10 +50,10 @@ class SyncPipelineTests(unittest.TestCase):
         ]
         if scope:
             lines.append("  scope:")
-            lines.extend(f"    - \"{entry}\"" for entry in scope)
+            lines.extend(f'    - "{entry}"' for entry in scope)
         if auto_invoke:
             lines.append("  auto_invoke:")
-            lines.extend(f"    - \"{entry}\"" for entry in auto_invoke)
+            lines.extend(f'    - "{entry}"' for entry in auto_invoke)
         lines.extend(["---", "", body or f"# {name}", ""])
         path = skill_dir / "SKILL.md"
         path.write_text("\n".join(lines))
@@ -333,7 +333,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "license: Apache-2.0\n"
                 "metadata:\n"
                 "  author: fixture-suite\n"
-                "  version: \"1.0\"\n"
+                '  version: "1.0"\n'
                 "  scope: [root]\n"
                 "---\n\n"
                 "# Broken Demo\n"
@@ -476,7 +476,7 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertIn('version: "1.0"', content)
             self.assertIn(f'source: "{dep_repo}"', content)
             self.assertIn('vendor_attribution: "fixture-org"', content)
-            self.assertIn('auto_invoke:', content)
+            self.assertIn("auto_invoke:", content)
             self.assertFalse((workspace / "ai-specs" / ".skill-registry.md").exists())
             self.assertNotIn("`vendored-demo`", (workspace / "AGENTS.md").read_text())
         finally:
@@ -508,10 +508,10 @@ class SyncPipelineTests(unittest.TestCase):
                 "license: GPL-3.0\n"
                 "metadata:\n"
                 "  author: manual-edit\n"
-                "  version: \"9.9\"\n"
+                '  version: "9.9"\n'
                 "  scope: [root]\n"
                 "  auto_invoke:\n"
-                "    - \"Manual trigger\"\n"
+                '    - "Manual trigger"\n'
                 "---\n\n"
                 "# Tampered\n"
             )
@@ -586,7 +586,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "license: Apache-2.0\n"
                 "metadata:\n"
                 "  author: fixture-suite\n"
-                "  version: \"1.0\"\n"
+                '  version: "1.0"\n'
                 "  scope: [root]\n"
                 "---\n\n"
                 "# Broken\n"
@@ -742,11 +742,11 @@ class SkillSyncScriptTests(unittest.TestCase):
                 "license: Apache-2.0\n"
                 "metadata:\n"
                 "  author: fixture-suite\n"
-                "  version: \"1.0\"\n"
+                '  version: "1.0"\n'
                 "  scope:\n"
-                "    - \"root\"\n"
+                '    - "root"\n'
                 "  auto_invoke:\n"
-                "    - \"Do root thing\"\n"
+                '    - "Do root thing"\n'
                 "---\n\n"
                 "# Root Auto\n"
             )
@@ -758,11 +758,11 @@ class SkillSyncScriptTests(unittest.TestCase):
                 "license: Apache-2.0\n"
                 "metadata:\n"
                 "  author: fixture-suite\n"
-                "  version: \"1.0\"\n"
+                '  version: "1.0"\n'
                 "  scope:\n"
-                "    - \"back_web\"\n"
+                '    - "back_web"\n'
                 "  auto_invoke:\n"
-                "    - \"Do back thing\"\n"
+                '    - "Do back thing"\n'
                 "---\n\n"
                 "# Back Auto\n"
             )
@@ -774,7 +774,7 @@ class SkillSyncScriptTests(unittest.TestCase):
                 "license: Apache-2.0\n"
                 "metadata:\n"
                 "  author: fixture-suite\n"
-                "  version: \"1.0\"\n"
+                '  version: "1.0"\n'
                 "---\n\n"
                 "# Manual Only\n"
             )
@@ -798,134 +798,6 @@ class SkillSyncScriptTests(unittest.TestCase):
             self.assertIn("manual-only", output)
         finally:
             shutil.rmtree(repo_root)
-
-
-class SyncSubAgentsTests(unittest.TestCase):
-    """End-to-end coverage for [sdd].sub_agents through `ai-specs sync`.
-
-    OFF branch must not write .claude/agents/sdd-*.md and must keep the
-    `## SDD Subagents` section out of AGENTS.md. ON branch must materialize
-    the six files and surface the section.
-    """
-
-    def make_workspace(self) -> Path:
-        tmp = Path(tempfile.mkdtemp(prefix="ai-specs-sync-sub-"))
-        shutil.copytree(FIXTURE_ROOT, tmp / "workspace")
-        return tmp / "workspace"
-
-    def _init(self, workspace: Path, *, agents: list[str], sub_agents: str | None) -> None:
-        subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
-        toml_text = (
-            "[project]\n"
-            "name = 'fixture-sync-sub-agents'\n\n"
-            "[agents]\n"
-            f"enabled = {json.dumps(agents)}\n"
-        )
-        if sub_agents is not None:
-            toml_text += f"\n[sdd]\nsub_agents = {sub_agents}\n"
-        (workspace / "ai-specs" / "ai-specs.toml").write_text(toml_text)
-
-    def test_sub_agents_absent_does_not_create_claude_agents(self):
-        workspace = self.make_workspace()
-        try:
-            self._init(workspace, agents=["claude"], sub_agents=None)
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            self.assertFalse((workspace / ".claude" / "agents").is_dir())
-            brief = (workspace / "AGENTS.md").read_text()
-            self.assertNotIn("## SDD Subagents", brief)
-        finally:
-            shutil.rmtree(workspace.parent)
-
-    def test_sub_agents_false_does_not_create_claude_agents(self):
-        workspace = self.make_workspace()
-        try:
-            self._init(workspace, agents=["claude"], sub_agents="false")
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            self.assertFalse((workspace / ".claude" / "agents").is_dir())
-            brief = (workspace / "AGENTS.md").read_text()
-            self.assertNotIn("## SDD Subagents", brief)
-        finally:
-            shutil.rmtree(workspace.parent)
-
-    def test_sub_agents_off_runtime_brief_is_byte_identical_across_runs(self):
-        """Regression: with sub_agents off, two consecutive syncs yield the same brief."""
-        workspace = self.make_workspace()
-        try:
-            self._init(workspace, agents=["claude"], sub_agents="false")
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            first = (workspace / "AGENTS.md").read_bytes()
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            second = (workspace / "AGENTS.md").read_bytes()
-            self.assertEqual(first, second)
-        finally:
-            shutil.rmtree(workspace.parent)
-
-    def test_sub_agents_true_materializes_six_claude_agents(self):
-        workspace = self.make_workspace()
-        try:
-            self._init(workspace, agents=["claude"], sub_agents="true")
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            claude_agents = workspace / ".claude" / "agents"
-            self.assertTrue(claude_agents.is_dir())
-            for name in (
-                "sdd-explore", "sdd-proposal", "sdd-artifacts",
-                "sdd-apply", "sdd-verify", "sdd-archive",
-            ):
-                self.assertTrue(
-                    (claude_agents / f"{name}.md").is_file(),
-                    f"missing materialized {name}.md",
-                )
-        finally:
-            shutil.rmtree(workspace.parent)
-
-    def test_sub_agents_true_runtime_brief_lists_subagents(self):
-        workspace = self.make_workspace()
-        try:
-            self._init(workspace, agents=["claude"], sub_agents="true")
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            brief = (workspace / "AGENTS.md").read_text()
-            self.assertIn("## SDD Subagents", brief)
-            for name in (
-                "sdd-explore", "sdd-proposal", "sdd-artifacts",
-                "sdd-apply", "sdd-verify", "sdd-archive",
-            ):
-                self.assertIn(name, brief)
-            self.assertIn(".claude/agents/sdd-*.md", brief)
-        finally:
-            shutil.rmtree(workspace.parent)
-
-    def test_sub_agents_true_with_unsupported_harness_declares_inline_fallback(self):
-        workspace = self.make_workspace()
-        try:
-            self._init(
-                workspace,
-                agents=["claude", "opencode"],
-                sub_agents="true",
-            )
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            brief = (workspace / "AGENTS.md").read_text()
-            self.assertIn("## SDD Subagents", brief)
-            self.assertIn("opencode", brief)
-            self.assertIn("inline", brief)
-            # opencode does not get a subagent dir, claude does.
-            self.assertFalse((workspace / ".opencode" / "agents").is_dir())
-            self.assertTrue((workspace / ".claude" / "agents").is_dir())
-        finally:
-            shutil.rmtree(workspace.parent)
-
-    def test_sub_agents_non_boolean_fails_sync_with_actionable_error(self):
-        workspace = self.make_workspace()
-        try:
-            self._init(workspace, agents=["claude"], sub_agents='"yes"')
-            proc = subprocess.run(
-                [str(CLI), "sync", str(workspace)],
-                capture_output=True, text=True, check=False,
-            )
-            self.assertNotEqual(proc.returncode, 0)
-            self.assertIn("[sdd].sub_agents", proc.stderr)
-            self.assertIn("boolean", proc.stderr)
-        finally:
-            shutil.rmtree(workspace.parent)
 
 
 if __name__ == "__main__":

@@ -112,7 +112,6 @@ BUNDLED_SKILLS_DIR="$AI_SPECS_HOME/bundled-skills"
 BUNDLED_COMMANDS_DIR="$AI_SPECS_HOME/bundled-commands"
 TEMPLATES_DIR="$AI_SPECS_HOME/templates"
 GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
-AGENTS_MD_RENDER="$AI_SPECS_HOME/lib/_internal/agents-md-render.py"
 
 GITIGNORE_MARKER_BEGIN="# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---"
 GITIGNORE_MARKER_END="# --- end ai-specs ---"
@@ -177,8 +176,9 @@ else
     echo "  ✓ wrote  ai-specs/ai-specs.toml"
 fi
 
-# 4. AGENTS.md is fully generated from ai-specs/* — render it now.
-python3 "$AGENTS_MD_RENDER" "$TARGET_PATH" "$AGENTS_PATH"
+# 4. AGENTS.md is a manual runtime context file, not auto-generated.
+#    If missing, create a placeholder so the agent-block logic works.
+[[ -f "$AGENTS_PATH" ]] || echo "# AGENTS.md - Runtime context" > "$AGENTS_PATH"
 
 # 5. Append agent-block to root .gitignore (idempotent via marker)
 append_block() {

@@ -75,4 +75,4 @@ timeout = 30000
 # enabled = true
 # provider = "openspec"
 # artifact_store = "hybrid"
-# sub_agents = false
+
