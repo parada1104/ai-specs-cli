@@ -34,20 +34,6 @@ license = "MIT"
 auto_invoke = ["Choosing default test commands before merge or PR"]
 ```
 
-## openspec-sdd-conventions
-
-OpenSpec `config.yaml` shape (spec-driven) plus apply-time commit and archive norms.
-
-```toml
-[[deps]]
-id = "openspec-sdd-conventions"
-source = "https://github.com/parada1104/ai-specs-cli.git"
-path = "catalog/skills/openspec-sdd-conventions"
-scope = ["root"]
-license = "MIT"
-auto_invoke = ["Editing openspec/config.yaml for spec-driven workflow"]
-```
-
 ## Example: GitHub source
 
 ```toml
@@ -59,7 +45,7 @@ scope = ["root"]
 license = "MIT"
 ```
 
-Repeat with `testing-foundation` / `openspec-sdd-conventions` paths as needed, or use
+Repeat with `testing-foundation` paths as needed, or use
 `ai-specs add-dep` with `--subdir` pointing at `catalog/skills/<name>` (same effect).
 
 ## Notes
