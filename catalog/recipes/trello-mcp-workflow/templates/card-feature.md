@@ -10,15 +10,9 @@
 - [ ] Edge cases handled per specs
 - [ ] Tests pass: unit + integration
 
-## SDD Checklist
+## SDD Tracking
 
-- [ ] Proposal complete
-- [ ] Specs complete
-- [ ] Design complete
-- [ ] Tasks complete
-- [ ] Apply executed
-- [ ] Verify report generated
-- [ ] Archived
+Refer to the `trello-pm-workflow` skill for SDD checklist tracking. The canonical checklist lives in `ai-specs/skills/trello-pm-workflow/SKILL.md`.
 
 ## Notes
 
