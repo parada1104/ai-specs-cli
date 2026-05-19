@@ -123,5 +123,38 @@ class RecipeSchemaTests(unittest.TestCase):
             self.assertIn("validation", str(ctx.exception))
 
 
+    def test_nonstandard_config_section_parses(self):
+        """Non-standard config sections (without 'required' key) parse as extra data."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = Path(tmp) / "ns-cfg"
+            recipe_dir.mkdir()
+            (recipe_dir / "recipe.toml").write_text(
+                '[recipe]\n'
+                'id = "ns-cfg"\n'
+                'name = "NS Cfg"\n'
+                'description = "D"\n'
+                'version = "1.0"\n'
+                '\n'
+                '[config.board_id]\n'
+                'required = true\n'
+                'type = "string"\n'
+                '\n'
+                '[config.board_isolation]\n'
+                'forbidden_tools = ["trello_get_my_cards", "trello_list_boards"]\n'
+                'restricted_tools = ["trello_set_active_board"]\n'
+                'card_validation_required = true\n'
+            )
+            data = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            # Standard field still works
+            self.assertIn("board_id", data.config_schema.fields)
+            self.assertEqual(data.config_schema.fields["board_id"].required, True)
+            # Non-standard section stored in extra
+            self.assertIn("board_isolation", data.config_schema.extra)
+            isolation = data.config_schema.extra["board_isolation"]
+            self.assertEqual(isolation["forbidden_tools"], ["trello_get_my_cards", "trello_list_boards"])
+            self.assertEqual(isolation["restricted_tools"], ["trello_set_active_board"])
+            self.assertEqual(isolation["card_validation_required"], True)
+
+
 if __name__ == "__main__":
     unittest.main()

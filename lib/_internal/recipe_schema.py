@@ -74,6 +74,7 @@ class ConfigField:
 @dataclass
 class ConfigSchema:
     fields: dict[str, ConfigField] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -213,9 +214,15 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
     if not isinstance(raw, dict):
         return ConfigSchema()
     fields: dict[str, ConfigField] = {}
+    extra: dict[str, Any] = {}
     for key, value in raw.items():
         if not isinstance(value, dict):
             raise RecipeValidationError(f"{context}.config.{key}: expected table, got {type(value).__name__}")
+        # Detect standard ConfigField entries by the presence of 'required' key.
+        # Non-standard config sections (e.g., board_isolation) are stored in extra.
+        if "required" not in value:
+            extra[key] = dict(value)
+            continue
         required = value.get("required")
         if not isinstance(required, bool):
             raise RecipeValidationError(f"{context}.config.{key}: missing or invalid 'required' (must be boolean)")
@@ -240,7 +247,7 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
         fields[key] = ConfigField(
             required=required, type=field_type, default=default, validation=validation
         )
-    return ConfigSchema(fields=fields)
+    return ConfigSchema(fields=fields, extra=extra)
 
 
 def _parse_init(raw: Any, context: str, recipe_dir: Path | None = None) -> InitWorkflow | None:
