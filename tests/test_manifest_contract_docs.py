@@ -55,7 +55,6 @@ class ManifestContractDocsTests(unittest.TestCase):
             self.manifest_doc,
             [
                 "`ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.",
-                "Omission of `[sdd]` remains valid for projects not using SDD.",
                 "- `[project]`",
                 "- `[agents]`",
                 "- `[[deps]]`",
@@ -69,10 +68,6 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "- MCP `environment` is still accepted as a tolerated input alias and normalizes to `env`.",
             ],
         )
-        # The manifest doc still references [sdd] as an optional section
-        # since docs/ is not in scope for removal. The product code no
-        # longer implements it — documentation updates are separate.
-        # Check templates and generated TOML, not docs.
         self.assertNotIn("[sdd]", self.generated_toml)
         self.assertNotIn("[sdd]", self.template)
 
@@ -104,7 +99,6 @@ class ManifestContractDocsTests(unittest.TestCase):
             [
                 "Out of scope for this V1 contract (explicitly deferred to future changes):",
                 "- precedence / merge policy beyond the currently implemented runtime behavior",
-                "- `[memory]` (distinct from `[sdd].artifact_store = memory`)",
             ],
         )
 
@@ -114,10 +108,7 @@ class ManifestContractDocsTests(unittest.TestCase):
             [
                 "[`docs/ai-specs-toml.md`](docs/ai-specs-toml.md)",
                 "[`docs/recipe-schema.md`](docs/recipe-schema.md)",
-                "[`docs/ai/sdd.md`](docs/ai/sdd.md)",
                 "[`docs/mcp-distribution.md`](docs/mcp-distribution.md)",
-                "[`docs/skills-by-agent.md`](docs/skills-by-agent.md)",
-                "[`docs/bundled-merge-rules.md`](docs/bundled-merge-rules.md)",
             ],
         )
 
