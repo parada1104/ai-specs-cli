@@ -1,8 +1,8 @@
 ---
 name: trello-mcp-workflow
 description: >
-  Automated Trello board integration for ai-specs SDD (Spec-Driven Development)
-  workflows. Provides session bootstrapping, card linking, state
+  Automated Trello board integration for ai-specs
+  projects. Provides session bootstrapping, card linking, state
   synchronization, and progress reporting through Trello MCP tool calls.
 license: MIT
 metadata:
@@ -48,7 +48,7 @@ Session start when the marker file `.recipe/trello-mcp-workflow/bootstrap-ready`
 3. Query the board using `trello_get_active_board_info` or `trello_get_lists` to retrieve structural context.
 4. Detect the active card:
    - Fetch cards in **In Progress** and **In Review** lists using `trello_get_cards_by_list_id`.
-   - Match on labels (e.g., `sdd:apply`, `sdd:verify`) or on OpenSpec change references found in card comments/descriptions.
+   - Match on labels, keywords in card names, or change references found in card comments/descriptions.
    - If multiple candidates exist, prefer the card with the most recent activity.
 5. Present the recommended next task to the agent, including:
    - Card name, current list, current phase label.
@@ -60,11 +60,11 @@ Session start when the marker file `.recipe/trello-mcp-workflow/bootstrap-ready`
 
 ## Capability: trello-card-linking
 
-Link an OpenSpec change to a Trello card. Create a card from a template when no existing card matches.
+Link a structured change to a Trello card. Create a card from a template when no existing card matches.
 
 ### Trigger
 
-OpenSpec change creation (`openspec-new-change` or `openspec-propose`).
+New structured change or feature request.
 
 ### Steps
 
@@ -73,8 +73,8 @@ OpenSpec change creation (`openspec-new-change` or `openspec-propose`).
    - Search recent comments on candidate cards for references to the change folder path.
 2. **If a card exists**: Post a structured linking comment using `trello_add_comment` with:
    - Change name.
-   - Change folder path (relative to project root, e.g., `openspec/changes/my-feature`).
-   - List of expected artifacts: proposal, specs, design, tasks, apply, verify, archive.
+   - Change folder path (relative to project root).
+   - List of expected artifacts.
 3. **If no card exists**: Prompt the agent to create one from a bundled template:
    - Select template type: `feature`, `bug`, `spike`, `epic`, or `handoff`.
    - Create the card in `default_list` using `trello_add_card_to_list`.
@@ -98,49 +98,21 @@ Templates are located at `ai-specs/recipes/trello-mcp-workflow/templates/` and a
 
 ## Capability: trello-state-sync
 
-Synchronize SDD phase transitions with Trello card position and labels.
+Synchronize project phase transitions with Trello card position and labels.
 
 ### Trigger
 
-SDD phase transitions: proposal→specs, specs→design, design→tasks, tasks→apply, apply→verify, verify→archive.
-
-### Phase-to-List Mapping
-
-| SDD Phase | Trello List |
-|---|---|
-| proposal | Backlog |
-| specs | Design |
-| design | Design |
-| tasks | Ready |
-| apply | In Progress |
-| verify | In Review |
-| archive | Done |
-
-### Phase-to-Label Mapping
-
-Each phase maps to a single label. On transition, the previous phase label is removed and the new one is applied:
-
-| SDD Phase | Label |
-|---|---|
-| proposal | `sdd:proposal` |
-| specs | `sdd:specs` |
-| design | `sdd:design` |
-| tasks | `sdd:tasks` |
-| apply | `sdd:apply` |
-| verify | `sdd:verify` |
-| archive | `sdd:archive` |
+Phase transitions defined by the project's workflow (e.g., design → implementation → review → done).
 
 ### Steps
 
 1. Identify the linked card (from session context or change metadata).
 2. Resolve the target list ID by name using board lists (query with `trello_get_lists`).
 3. Move the card to the target list using `trello_move_card`.
-4. Replace the phase label on the card: remove the previous `sdd:*` label, add the new one using `trello_update_card_details`.
-5. Post a phase-transition comment using `trello_add_comment`:
-   ```
-   Phase transition: {old_phase} → {new_phase}
-   Timestamp: {ISO-8601 timestamp}
-   ```
+4. Update labels on the card using `trello_update_card_details`.
+5. Post a phase-transition comment using `trello_add_comment`.
+
+Phase-to-list and phase-to-label mappings are project-specific and configured in the recipe config or project conventions.
 
 ### Graceful Degradation
 
@@ -150,31 +122,28 @@ If the target list does not exist on the board, emit a warning, skip the move, a
 
 ## Capability: trello-progress-comment
 
-Post a structured progress comment on the linked card after apply and verify phases.
+Post a structured progress comment on the linked card after significant implementation milestones.
 
 ### Trigger
 
-After successful completion of `apply` and `verify` SDD phases.
+After significant implementation milestones or at project-defined review points.
 
 ### Steps
 
 1. Identify the linked card (from session context or change metadata).
-2. Collect changed files from `apply-progress.md` in the change folder.
-3. Read test results from `verify-report.md` in the change folder.
-4. Assemble a structured comment:
+2. Collect available progress data (changed files, test results, review notes) from the project workspace.
+3. Assemble a structured comment:
    ```markdown
-   ## SDD Progress: {phase}
+   ## Progress: {phase}
 
-   **Verdict**: {pass|fail}
-   **Test Results**: {X/Y tests passing}
+   **Status**: {description of current state}
    **Files Changed**: {count} files — added: {list}, modified: {list}, removed: {list}
-   **Archive**: {link to archive folder if archive phase, otherwise N/A}
    ```
-5. Post the comment using `trello_add_comment`.
+4. Post the comment using `trello_add_comment`.
 
 ### Graceful Degradation
 
-If `apply-progress.md` or `verify-report.md` are missing, post the comment with available data and mark missing sections as `unavailable`.
+If progress data files are unavailable, post the comment with available data and mark missing sections as `unavailable`.
 
 ---
 
@@ -182,7 +151,7 @@ If `apply-progress.md` or `verify-report.md` are missing, post the comment with 
 
 - All runtime Trello failures emit warnings to stderr.
 - Optionally log warnings to `.recipe/trello-mcp-workflow/warnings.log` with timestamp, capability, and error detail.
-- Trello failures **never block agent progress**. The agent continues its SDD workflow regardless of Trello availability.
+- Trello failures **never block agent progress**. The agent continues its work regardless of Trello availability.
 - If the Trello MCP server is unreachable, skip all Trello capabilities for the remainder of the session and log a single warning.
 
 ---

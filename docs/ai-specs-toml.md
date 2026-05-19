@@ -17,12 +17,7 @@ The manifest surface supported today is:
 - `[recipes.<id>]`
 - `[recipes.<id>.config]`
 - `[[bindings]]`
-- `[sdd]` (optional)
-
 Recipe-specific schema details live in [`docs/recipe-schema.md`](recipe-schema.md).
-SDD provider behavior lives in [`docs/ai/sdd.md`](ai/sdd.md).
-
-Omission of `[sdd]` remains valid for projects not using SDD.
 
 ## Compatibility rules
 
@@ -55,7 +50,6 @@ Conservative compatibility rules in V1:
 | `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
 | `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |
 | `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |
-| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |
 
 ## Manifest sections
 
@@ -139,20 +133,6 @@ If exactly one enabled recipe declares a capability and no explicit binding is
 present, sync auto-binds it. If multiple enabled recipes declare the same
 capability and no binding is present, sync warns and leaves it unbound.
 
-### `[sdd]`
-
-Optional OpenSpec onboarding block.
-
-```toml
-[sdd]
-enabled = true
-provider = "openspec"
-artifact_store = "filesystem"
-```
-
-Use [`docs/ai/sdd.md`](ai/sdd.md) for provider workflow, generated commands,
-and `artifact_store` semantics.
-
 ## Example manifest
 
 ```toml
@@ -182,11 +162,6 @@ board_id = "abc123"
 [[bindings]]
 capability = "trello-card-linking"
 recipe = "trello-mcp-workflow"
-
-[sdd]
-enabled = true
-provider = "openspec"
-artifact_store = "filesystem"
 ```
 
 ## Out of scope
@@ -194,10 +169,8 @@ artifact_store = "filesystem"
 Out of scope for this V1 contract (explicitly deferred to future changes):
 
 - precedence / merge policy beyond the currently implemented runtime behavior
-- `[memory]` (distinct from `[sdd].artifact_store = memory`)
 
 ## See also
 
 - [`templates/ai-specs.toml.tmpl`](../templates/ai-specs.toml.tmpl)
 - [`docs/recipe-schema.md`](recipe-schema.md)
-- [`docs/ai/sdd.md`](ai/sdd.md)

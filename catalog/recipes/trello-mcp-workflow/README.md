@@ -1,6 +1,6 @@
 # Trello MCP Workflow
 
-Automated Trello board integration for ai-specs SDD workflows.
+Automated Trello board integration for ai-specs projects.
 
 ## Installation
 
