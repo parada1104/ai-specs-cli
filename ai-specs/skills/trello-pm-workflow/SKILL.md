@@ -19,6 +19,10 @@ metadata:
 
 Trello es el tracker operativo. El runtime brief define el board, listas y MCP disponibles para el proyecto actual.
 
+**Board isolation**: Este skill opera dentro del board configurado. Las reglas de board isolation (forbidden tools, board guard, card validation) se definen en el recipe `trello-mcp-workflow` y su SKILL.md asociado. No duplicar reglas de isolation aquí.
+
+**Configuración**: El board ID y listas se leen del runtime brief o del recipe config (`ai-specs/ai-specs.toml` → `[recipes.trello-mcp-workflow.config]`). No hardcodear board IDs ni nombres de lista aquí.
+
 ## Responsabilidades
 
 - Trello: estado, prioridad, dependencias, visibilidad PM/CTO.
