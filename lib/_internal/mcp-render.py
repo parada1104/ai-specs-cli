@@ -51,7 +51,7 @@ def load_mcp(toml_path: Path, recipe_mcp_path: Path | None = None) -> dict:
 # env:dict, $VAR env vars). Agents with native non-generic schemas register a
 # translator here.
 
-_ENV_VAR_RE = re.compile(r"^\$([A-Z_][A-Z0-9_]*)$")
+_ENV_VAR_RE = re.compile(r"^\$\{?([A-Z_][A-Z0-9_]*)\}?$")
 # Cursor/Claude JSON use "${env:NAME}" in headers/url; OpenCode remote expects "{env:NAME}".
 _CURSOR_ENV_IN_HEADERS = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
 
