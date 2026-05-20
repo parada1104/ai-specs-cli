@@ -13,16 +13,28 @@ Quick reference for the Trello MCP Workflow skill capabilities.
 
 ## MCP Tools
 
-| Tool | Purpose |
-|---|---|
-| `trello_get_active_board_info` | Retrieve board structure. |
-| `trello_get_lists` | Resolve list names to IDs. |
-| `trello_get_cards_by_list_id` | Fetch cards in a list. |
-| `trello_get_card` | Get card details. |
-| `trello_add_card_to_list` | Create a new card. |
-| `trello_add_comment` | Post a comment. |
-| `trello_move_card` | Move card to another list. |
-| `trello_update_card_details` | Update labels and card fields. |
+| Tool | Purpose | Board Isolation |
+|---|---|---|
+| `trello_get_active_board_info` | Retrieve board structure. | Board guard verification. |
+| `trello_get_lists` | Resolve list names to IDs. | Pass `boardId`. |
+| `trello_get_cards_by_list_id` | Fetch cards in a list. | Pass `boardId`. |
+| `trello_get_card` | Get card details. | Validate `idBoard` first. |
+| `trello_add_card_to_list` | Create a new card. | Pass `boardId`. |
+| `trello_add_comment` | Post a comment. | Validate `idBoard` first. |
+| `trello_move_card` | Move card to another list. | Pass `boardId`. |
+| `trello_update_card_details` | Update labels and card fields. | Pass `boardId`. |
+
+## Forbidden and Restricted Tools
+
+The following tools have board isolation restrictions enforced at the skill level:
+
+| Tool | Restriction | Rationale |
+|---|---|---|
+| `trello_get_my_cards` | **Forbidden** | Returns cards across all boards; leaks scope. |
+| `trello_list_boards` | **Forbidden** | Enumerates all accessible boards; leaks scope. |
+| `trello_set_active_board` | **Restricted** — bootstrap only | Required once per session; later calls bypass guard. |
+
+See the Board Isolation section in `skills/trello-mcp-workflow/SKILL.md` for full details.
 
 ## Phase Mappings
 

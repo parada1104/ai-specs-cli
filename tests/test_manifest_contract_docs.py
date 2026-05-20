@@ -55,7 +55,6 @@ class ManifestContractDocsTests(unittest.TestCase):
             self.manifest_doc,
             [
                 "`ai-specs/ai-specs.toml` in the project root is the ONLY V1 source of truth.",
-                "Omission of `[sdd]` remains valid for projects not using SDD.",
                 "- `[project]`",
                 "- `[agents]`",
                 "- `[[deps]]`",
@@ -63,13 +62,14 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "- `[recipes.<id>]`",
                 "- `[recipes.<id>.config]`",
                 "- `[[bindings]]`",
-                "- `[sdd]` (optional)",
                 "- Missing `[agents]`, `[[deps]]`, and `[mcp]` remain valid and normalize to stable defaults.",
                 "- `project.subrepos` remains validated by the existing root target resolver.",
                 "- MCP `env` is the canonical field name.",
                 "- MCP `environment` is still accepted as a tolerated input alias and normalizes to `env`.",
             ],
         )
+        self.assertNotIn("[sdd]", self.generated_toml)
+        self.assertNotIn("[sdd]", self.template)
 
     def test_manifest_reference_lists_every_v1_field_classification_row(self):
         self.assertContainsAll(
@@ -90,7 +90,6 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |",
                 "| `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |",
                 "| `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |",
-                "| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |",
             ],
         )
 
@@ -100,7 +99,6 @@ class ManifestContractDocsTests(unittest.TestCase):
             [
                 "Out of scope for this V1 contract (explicitly deferred to future changes):",
                 "- precedence / merge policy beyond the currently implemented runtime behavior",
-                "- `[memory]` (distinct from `[sdd].artifact_store = memory`)",
             ],
         )
 
@@ -110,10 +108,7 @@ class ManifestContractDocsTests(unittest.TestCase):
             [
                 "[`docs/ai-specs-toml.md`](docs/ai-specs-toml.md)",
                 "[`docs/recipe-schema.md`](docs/recipe-schema.md)",
-                "[`docs/ai/sdd.md`](docs/ai/sdd.md)",
                 "[`docs/mcp-distribution.md`](docs/mcp-distribution.md)",
-                "[`docs/skills-by-agent.md`](docs/skills-by-agent.md)",
-                "[`docs/bundled-merge-rules.md`](docs/bundled-merge-rules.md)",
             ],
         )
 

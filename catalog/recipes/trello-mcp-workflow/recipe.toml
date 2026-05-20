@@ -51,6 +51,11 @@ required = false
 type = "string"
 default = "Epic"
 
+[config.board_isolation]
+forbidden_tools = ["trello_get_my_cards", "trello_list_boards"]
+restricted_tools = ["trello_set_active_board"]
+card_validation_required = true
+
 [init]
 prompt = "init.md"
 description = "Configure Trello board and list mappings before sync"

@@ -16,7 +16,7 @@ class RecipeValidationError(Exception):
     pass
 
 
-CEREMONY_LEVELS = frozenset({"trivial", "local_fix", "behavior_change", "domain_change"})
+
 
 
 @dataclass
@@ -74,6 +74,7 @@ class ConfigField:
 @dataclass
 class ConfigSchema:
     fields: dict[str, ConfigField] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -82,11 +83,6 @@ class InitWorkflow:
     description: str = ""
     needs_manifest: bool = False
     needs_mcp: list[str] = field(default_factory=list)
-
-
-@dataclass
-class SddConfig:
-    threshold: str = ""
 
 
 @dataclass
@@ -106,7 +102,6 @@ class Recipe:
     hooks: list[Hook] = field(default_factory=list)
     config_schema: ConfigSchema = field(default_factory=ConfigSchema)
     init: InitWorkflow | None = None
-    sdd: SddConfig = field(default_factory=SddConfig)
 
 
 def _require_string(data: dict[str, Any], key: str, context: str) -> str:
@@ -219,9 +214,15 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
     if not isinstance(raw, dict):
         return ConfigSchema()
     fields: dict[str, ConfigField] = {}
+    extra: dict[str, Any] = {}
     for key, value in raw.items():
         if not isinstance(value, dict):
             raise RecipeValidationError(f"{context}.config.{key}: expected table, got {type(value).__name__}")
+        # Detect standard ConfigField entries by the presence of 'required' key.
+        # Non-standard config sections (e.g., board_isolation) are stored in extra.
+        if "required" not in value:
+            extra[key] = dict(value)
+            continue
         required = value.get("required")
         if not isinstance(required, bool):
             raise RecipeValidationError(f"{context}.config.{key}: missing or invalid 'required' (must be boolean)")
@@ -246,18 +247,7 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
         fields[key] = ConfigField(
             required=required, type=field_type, default=default, validation=validation
         )
-    return ConfigSchema(fields=fields)
-
-
-def _parse_sdd(raw: Any, context: str) -> SddConfig:
-    if not isinstance(raw, dict):
-        return SddConfig()
-    threshold = str(raw.get("threshold", "")).strip()
-    if threshold and threshold not in CEREMONY_LEVELS:
-        raise RecipeValidationError(
-            f"{context}.sdd.threshold: invalid value '{threshold}' (allowed: {', '.join(sorted(CEREMONY_LEVELS))})"
-        )
-    return SddConfig(threshold=threshold)
+    return ConfigSchema(fields=fields, extra=extra)
 
 
 def _parse_init(raw: Any, context: str, recipe_dir: Path | None = None) -> InitWorkflow | None:
@@ -349,7 +339,6 @@ def validate_recipe_toml(data: dict[str, Any], recipe_dir: Path | None = None) -
         hooks=_parse_hooks(data.get("hooks"), ""),
         config_schema=_parse_config(data.get("config"), ""),
         init=_parse_init(data.get("init"), "[init]", recipe_dir),
-        sdd=_parse_sdd(data.get("sdd"), "[sdd]"),
     )
 
 

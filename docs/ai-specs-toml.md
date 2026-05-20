@@ -17,12 +17,7 @@ The manifest surface supported today is:
 - `[recipes.<id>]`
 - `[recipes.<id>.config]`
 - `[[bindings]]`
-- `[sdd]` (optional)
-
 Recipe-specific schema details live in [`docs/recipe-schema.md`](recipe-schema.md).
-SDD provider behavior lives in [`docs/ai/sdd.md`](ai/sdd.md).
-
-Omission of `[sdd]` remains valid for projects not using SDD.
 
 ## Compatibility rules
 
@@ -34,6 +29,7 @@ Conservative compatibility rules in V1:
 - MCP `environment` is still accepted as a tolerated input alias and normalizes to `env`.
 - `env = ["VAR"]` is treated as an env-reference form and normalizes to `{ VAR = "$VAR" }`.
 - `env = { VAR = "literal" }` is preserved as a literal mapping.
+- Env reference values accept both `$VARIABLE_NAME` (canonical) and `${VARIABLE_NAME}` (tolerated fallback). Both produce the same rendered output per agent: `{env:VAR}` for OpenCode and `${VAR}` for Claude/Cursor. Variable names must follow shell convention (`[A-Z_][A-Z0-9_]*`); other strings pass through as literals.
 - A manifest without `[recipes.*]`, `[recipes.<id>.config]`, or `[[bindings]]` remains valid.
 
 ## Field classification
@@ -55,8 +51,6 @@ Conservative compatibility rules in V1:
 | `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
 | `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |
 | `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |
-| `[sdd]` | `enabled`, `provider`, `artifact_store` | optional; `provider` = `openspec` in v1 |
-| `[sdd]` | `sub_agents` | optional boolean, default `false`; when `true`, sync materializes phase-specialized subagent files for harnesses that support them (Claude Code in v1) |
 
 ## Manifest sections
 
@@ -140,40 +134,6 @@ If exactly one enabled recipe declares a capability and no explicit binding is
 present, sync auto-binds it. If multiple enabled recipes declare the same
 capability and no binding is present, sync warns and leaves it unbound.
 
-### `[sdd]`
-
-Optional OpenSpec onboarding block.
-
-```toml
-[sdd]
-enabled = true
-provider = "openspec"
-artifact_store = "filesystem"
-sub_agents = false
-```
-
-Use [`docs/ai/sdd.md`](ai/sdd.md) for provider workflow, generated commands,
-and `artifact_store` semantics.
-
-#### `sub_agents`
-
-- **Type**: boolean. **Default**: `false`. **Optional**.
-- When `true` and the harness supports it (Claude Code in v1), `ai-specs sync`
-  materializes the six phase-specialized subagent files under
-  `.claude/agents/sdd-*.md`. The catalog is closed: `sdd-explore`,
-  `sdd-proposal`, `sdd-artifacts`, `sdd-apply`, `sdd-verify`, `sdd-archive`.
-- When `false` or absent, sync MUST NOT create or modify
-  `.claude/agents/sdd-*.md`. The runtime brief stays byte-identical to the
-  pre-feature output. This is the backward-compatible path.
-- This is a **product feature**: any project that runs `ai-specs init` +
-  `ai-specs sync` and opts in receives it. Harnesses without native subagent
-  support (OpenCode, Cursor in v1) silently fall back to inline phase execution
-  by the primary orchestrator; the runtime brief documents the fallback.
-- See the dedicated contracts:
-  [`ai-specs/contracts/subagent-frontmatter.md`](../ai-specs/contracts/subagent-frontmatter.md)
-  for the file format and
-  `openspec/specs/sdd-subagent-deployment/spec.md` for deployment semantics.
-
 ## Example manifest
 
 ```toml
@@ -203,12 +163,6 @@ board_id = "abc123"
 [[bindings]]
 capability = "trello-card-linking"
 recipe = "trello-mcp-workflow"
-
-[sdd]
-enabled = true
-provider = "openspec"
-artifact_store = "filesystem"
-sub_agents = false
 ```
 
 ## Out of scope
@@ -216,10 +170,8 @@ sub_agents = false
 Out of scope for this V1 contract (explicitly deferred to future changes):
 
 - precedence / merge policy beyond the currently implemented runtime behavior
-- `[memory]` (distinct from `[sdd].artifact_store = memory`)
 
 ## See also
 
 - [`templates/ai-specs.toml.tmpl`](../templates/ai-specs.toml.tmpl)
 - [`docs/recipe-schema.md`](recipe-schema.md)
-- [`docs/ai/sdd.md`](ai/sdd.md)

@@ -27,93 +27,6 @@ class RecipeSchemaTests(unittest.TestCase):
         cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_internal")
         cls.read_mod = load_module(RECIPE_READ_PATH, "recipe_read_internal")
 
-    def test_recipe_without_sdd_section_parses(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            recipe_dir = Path(tmp) / "no-sdd"
-            recipe_dir.mkdir()
-            (recipe_dir / "recipe.toml").write_text(
-                '[recipe]\n'
-                'id = "no-sdd"\n'
-                'name = "No Sdd"\n'
-                'description = "D"\n'
-                'version = "1.0"\n'
-            )
-            data = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-            self.assertEqual(data.sdd.threshold, "")
-
-    def test_recipe_with_valid_threshold_parses(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            recipe_dir = Path(tmp) / "valid-th"
-            recipe_dir.mkdir()
-            (recipe_dir / "recipe.toml").write_text(
-                '[recipe]\n'
-                'id = "valid-th"\n'
-                'name = "Valid Threshold"\n'
-                'description = "D"\n'
-                'version = "1.0"\n'
-                '\n'
-                '[sdd]\n'
-                'threshold = "behavior_change"\n'
-            )
-            data = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-            self.assertEqual(data.sdd.threshold, "behavior_change")
-
-    def test_recipe_with_invalid_threshold_fails(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            recipe_dir = Path(tmp) / "invalid-th"
-            recipe_dir.mkdir()
-            (recipe_dir / "recipe.toml").write_text(
-                '[recipe]\n'
-                'id = "invalid-th"\n'
-                'name = "Invalid Threshold"\n'
-                'description = "D"\n'
-                'version = "1.0"\n'
-                '\n'
-                '[sdd]\n'
-                'threshold = "major_change"\n'
-            )
-            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
-                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-            self.assertIn("invalid value 'major_change'", str(ctx.exception))
-
-    def test_recipe_to_dict_includes_sdd(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            recipe_dir = Path(tmp) / "dict-sdd"
-            recipe_dir.mkdir()
-            (recipe_dir / "recipe.toml").write_text(
-                '[recipe]\n'
-                'id = "dict-sdd"\n'
-                'name = "Dict Sdd"\n'
-                'description = "D"\n'
-                'version = "1.0"\n'
-                '\n'
-                '[sdd]\n'
-                'threshold = "local_fix"\n'
-            )
-            data = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-            d = self.read_mod.recipe_to_dict(data)
-            self.assertIn("sdd", d)
-            self.assertEqual(d["sdd"], {"threshold": "local_fix"})
-
-    def test_recipe_read_defensively_rejects_invalid_threshold(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            recipe_dir = Path(tmp) / "defensive-th"
-            recipe_dir.mkdir()
-            (recipe_dir / "recipe.toml").write_text(
-                '[recipe]\n'
-                'id = "defensive-th"\n'
-                'name = "Defensive"\n'
-                'description = "D"\n'
-                'version = "1.0"\n'
-                '\n'
-                '[sdd]\n'
-                'threshold = "unknown_level"\n'
-            )
-            catalog = Path(tmp)
-            with self.assertRaises(self.read_mod.RecipeValidationError) as ctx:
-                self.read_mod.read_recipe(catalog, "defensive-th")
-            self.assertIn("invalid value 'unknown_level'", str(ctx.exception))
-
     def test_config_field_without_validation_parses(self):
         """Config field without 'validation' sub-table parses successfully."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -208,6 +121,39 @@ class RecipeSchemaTests(unittest.TestCase):
                 self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
             self.assertIn("expected table", str(ctx.exception))
             self.assertIn("validation", str(ctx.exception))
+
+
+    def test_nonstandard_config_section_parses(self):
+        """Non-standard config sections (without 'required' key) parse as extra data."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = Path(tmp) / "ns-cfg"
+            recipe_dir.mkdir()
+            (recipe_dir / "recipe.toml").write_text(
+                '[recipe]\n'
+                'id = "ns-cfg"\n'
+                'name = "NS Cfg"\n'
+                'description = "D"\n'
+                'version = "1.0"\n'
+                '\n'
+                '[config.board_id]\n'
+                'required = true\n'
+                'type = "string"\n'
+                '\n'
+                '[config.board_isolation]\n'
+                'forbidden_tools = ["trello_get_my_cards", "trello_list_boards"]\n'
+                'restricted_tools = ["trello_set_active_board"]\n'
+                'card_validation_required = true\n'
+            )
+            data = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            # Standard field still works
+            self.assertIn("board_id", data.config_schema.fields)
+            self.assertEqual(data.config_schema.fields["board_id"].required, True)
+            # Non-standard section stored in extra
+            self.assertIn("board_isolation", data.config_schema.extra)
+            isolation = data.config_schema.extra["board_isolation"]
+            self.assertEqual(isolation["forbidden_tools"], ["trello_get_my_cards", "trello_list_boards"])
+            self.assertEqual(isolation["restricted_tools"], ["trello_set_active_board"])
+            self.assertEqual(isolation["card_validation_required"], True)
 
 
 if __name__ == "__main__":

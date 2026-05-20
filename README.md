@@ -3,10 +3,15 @@
 Per-project harness engineering for existing coding-agent tools.
 
 `ai-specs` manages coding-agent configuration — skills, MCP servers, derived
-instructions, and workflow artifacts — for tools like Claude, Cursor, OpenCode,
+instructions, recipes, and workflow artifacts — for tools like Claude, Cursor, OpenCode,
 Codex, Copilot, and Gemini. Each project owns a manifest at
 `ai-specs/ai-specs.toml`; the `ai-specs` CLI distributes it into every enabled
 tool's native format.
+
+**Agent orchestration** (multi-phase planning, multi-model sub-agents, profiles) is handled
+by [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai). `ai-specs` focuses
+on the **spec layer** and **tool integrations** (recipes) — the fan-out across repos and
+harnesses.
 
 ## Install
 
@@ -41,7 +46,6 @@ whenever the manifest changes.
 | `ai-specs recipe list [path]` | List available recipes |
 | `ai-specs recipe add <id> [path]` | Add a recipe declaration |
 | `ai-specs recipe init <id> [path]` | View recipe initialization brief |
-| `ai-specs sdd enable/disable/status [path]` | SDD lifecycle management |
 | `ai-specs upgrade [--dry-run] [--force]` | Upgrade global installation |
 | `ai-specs version` | Print version |
 
@@ -52,7 +56,7 @@ Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
 ### Manifest (`ai-specs/ai-specs.toml`)
 
 Single source of truth for the project's AI harness. Declares enabled agents,
-MCP servers, skill dependencies, recipes, and SDD configuration. See
+MCP servers, skill dependencies, and recipes. See
 [`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) for the full reference.
 
 ### Agents
@@ -86,19 +90,11 @@ Named, versioned bundles of skills, commands, templates, and MCP presets.
 Declared in `[recipes.<id>]` and materialized by `ai-specs sync`. See
 [`docs/recipe-schema.md`](docs/recipe-schema.md).
 
-### SDD (Spec-Driven Development)
+### Harness engineering
 
-Optional OpenSpec integration for structured change workflows. Enable with:
-
-```toml
-[sdd]
-enabled = true
-provider = "openspec"
-```
-
-When `sub_agents = true`, Claude Code receives phase-specialized agents
-(explore, proposal, artifacts, apply, verify, archive) in
-`.claude/agents/sdd-*.md`. See [`docs/ai/sdd.md`](docs/ai/sdd.md).
+`ai-specs` treats agent configuration as infrastructure: a single manifest fans out
+to every enabled tool. The primitives are skills, MCP servers, recipes, and
+derived instructions — versioned, vendored, and reproducible.
 
 ### Updating
 
@@ -117,7 +113,6 @@ bin/ai-specs        ← global entrypoint
 lib/                ← sync, init, agent config, renderers
 bundled-skills/     ← skills shipped with the CLI
 bundled-commands/   ← slash commands shipped with the CLI
-bundled-agents/     ← pre-built agent definitions per harness
 catalog/recipes/    ← recipe definitions
 templates/          ← scaffolding templates
 docs/               ← reference documentation

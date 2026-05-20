@@ -23,7 +23,6 @@ source "$AI_SPECS_HOME/lib/_internal/platform.sh"
 
 TOML_READ="$AI_SPECS_HOME/lib/_internal/toml-read.py"
 MCP_RENDER="$AI_SPECS_HOME/lib/_internal/mcp-render.py"
-AGENTS_MD_RENDER="$AI_SPECS_HOME/lib/_internal/agents-md-render.py"
 GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 FLATTEN_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/flatten-resolved-skills.py"
@@ -204,8 +203,6 @@ ensure_target_workspace() {
     python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
-
-    python3 "$AGENTS_MD_RENDER" "$SOURCE_ROOT" "$TARGET_AGENTS_MD" --skills-dir "$TARGET_AI_SKILLS"
 }
 
 # Resolve enabled agents from ai-specs.toml

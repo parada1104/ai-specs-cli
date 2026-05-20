@@ -1,30 +1,6 @@
 # Troubleshooting
 
-Common issues and fixes for the ai-specs SDD integration and manifest pipeline.
-
-## SDD failures
-
-### `openspec: command not found`
-
-OpenSpec is not installed or not on `PATH`.
-
-**Fix:** Install globally with `npm install -g @fission-ai/openspec@latest`,
-or run `ai-specs sdd enable --install-provider-cli`.
-
-### `openspec init` fails with "already initialized"
-
-An existing `openspec/` directory conflicts with the init step.
-
-**Fix:** Run `openspec update` to refresh in place, or `ai-specs sdd enable --force`
-to reinitialize (destroys prior `openspec/` state).
-
-### `artifact_store = "memory"` but `openspec/` is missing
-
-The memory store is experimental; OpenSpec remains file-first in v1 and
-expects the workspace directory.
-
-**Fix:** Switch to `artifact_store = "filesystem"` or `"hybrid"`, or
-create the `openspec/` scaffold with `ai-specs sdd enable`.
+Common issues and fixes for the ai-specs manifest pipeline.
 
 ## Manifest validation errors
 
@@ -73,5 +49,4 @@ normalization is correct and does not need a fix.
 ## See also
 
 - [`docs/ai-specs-toml.md`](../ai-specs-toml.md) — Canonical manifest reference
-- [`docs/ai/sdd.md`](sdd.md) — SDD provider contract
 - [`docs/recipe-schema.md`](../recipe-schema.md) — Recipe schema reference

@@ -8,8 +8,3 @@ name = "my-project"
 
 [agents]
 enabled = ["claude", "cursor", "opencode"]
-
-[sdd]
-enabled = true
-provider = "openspec"
-artifact_store = "filesystem"
