@@ -143,6 +143,131 @@ class SyncPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
+    def test_sync_renders_opencode_mcp_env_with_braced_dollar_syntax_input(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['opencode']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@demo/server']\n"
+                "environment = { API_KEY = '${DEMO_API_KEY}' }\n"
+                "timeout = 30000\n"
+                "enabled = true\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            self.assertEqual(
+                (workspace / "opencode.json").read_text(),
+                '{\n'
+                '  "$schema": "https://opencode.ai/config.json",\n'
+                '  "mcp": {\n'
+                '    "demo": {\n'
+                '      "type": "local",\n'
+                '      "command": [\n'
+                '        "npx",\n'
+                '        "-y",\n'
+                '        "@demo/server"\n'
+                '      ],\n'
+                '      "environment": {\n'
+                '        "API_KEY": "{env:DEMO_API_KEY}"\n'
+                '      },\n'
+                '      "timeout": 30000,\n'
+                '      "enabled": true\n'
+                '    }\n'
+                '  }\n'
+                '}\n',
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_sync_renders_cursor_mcp_env_with_braced_dollar_syntax_input(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['cursor']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@demo/server']\n"
+                "env = { API_KEY = '${DEMO_API_KEY}' }\n"
+                "timeout = 30000\n"
+                "enabled = true\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            self.assertEqual(
+                (workspace / ".cursor" / "mcp.json").read_text(),
+                '{\n'
+                '  "mcpServers": {\n'
+                '    "demo": {\n'
+                '      "command": "npx",\n'
+                '      "args": [\n'
+                '        "-y",\n'
+                '        "@demo/server"\n'
+                '      ],\n'
+                '      "env": {\n'
+                '        "API_KEY": "${DEMO_API_KEY}"\n'
+                '      },\n'
+                '      "timeout": 30000,\n'
+                '      "enabled": true\n'
+                '    }\n'
+                '  }\n'
+                '}\n',
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_sync_renders_claude_mcp_env_with_braced_dollar_syntax_input(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@demo/server']\n"
+                "env = { API_KEY = '${DEMO_API_KEY}' }\n"
+                "timeout = 30000\n"
+                "enabled = true\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            self.assertEqual(
+                (workspace / ".mcp.json").read_text(),
+                '{\n'
+                '  "mcpServers": {\n'
+                '    "demo": {\n'
+                '      "command": "npx",\n'
+                '      "args": [\n'
+                '        "-y",\n'
+                '        "@demo/server"\n'
+                '      ],\n'
+                '      "env": {\n'
+                '        "API_KEY": "${DEMO_API_KEY}"\n'
+                '      },\n'
+                '      "timeout": 30000,\n'
+                '      "enabled": true\n'
+                '    }\n'
+                '  }\n'
+                '}\n',
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
     def test_sync_renders_cursor_mcp_env_with_braced_variable_syntax(self):
         workspace = self.make_workspace()
         try:
