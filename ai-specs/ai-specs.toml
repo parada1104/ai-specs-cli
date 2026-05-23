@@ -9,8 +9,8 @@ name = "ai-specs"
 subrepos = []
 
 [agents]
-# Supported agents: claude, cursor, opencode, codex, copilot, gemini
-enabled = ["claude", "cursor", "opencode"]
+# Supported agents: claude, cursor, opencode, codex, copilot, gemini, pi
+enabled = ["claude", "cursor", "opencode", "pi"]
 
 # -----------------------------------------------------------------------------
 # Recipes — named, versioned bundles of skills, commands, templates, and MCP

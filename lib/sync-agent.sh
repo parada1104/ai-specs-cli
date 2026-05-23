@@ -48,6 +48,7 @@ Flags:
   --codex          Codex        (.codex/config.toml)
   --copilot        GitHub Copilot (.github/copilot-instructions.md)
   --gemini         Gemini CLI   (GEMINI.md, .gemini/skills, .gemini/settings.json)
+  --pi             Pi (pi.dev)  (.pi/skills, .mcp.json)
 
 If no selector is given, defaults to --all.
 EOF
@@ -67,7 +68,7 @@ while [[ $# -gt 0 ]]; do
         --target)      TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
         --recipe-mcp)  RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
         --all)         SELECT_ALL=1; shift ;;
-        --claude|--cursor|--opencode|--codex|--copilot|--gemini)
+        --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
         -h|--help)     usage; exit 0 ;;
         --)            shift; break ;;

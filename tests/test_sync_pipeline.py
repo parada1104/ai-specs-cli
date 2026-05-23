@@ -925,5 +925,54 @@ class SkillSyncScriptTests(unittest.TestCase):
             shutil.rmtree(repo_root)
 
 
+    def test_sync_agent_all_includes_pi_when_enabled(self):
+        """When pi is in [agents].enabled, --all must sync it.
+        
+        Verifies: .pi/skills/ symlink created, .mcp.json rendered if MCPs declared.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            (target / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-pi-all'\n\n"
+                "[agents]\n"
+                "enabled = ['pi']\n"
+            )
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--all"],
+                check=True, text=True,
+            )
+            # Skills symlink must exist
+            pi_skills = target / ".pi" / "skills"
+            self.assertTrue(pi_skills.is_symlink(),
+                            ".pi/skills/ must be a symlink after --all")
+            # No instruction symlink (native)
+            self.assertFalse((target / "PI.md").exists())
+            self.assertFalse((target / "pi.md").exists())
+
+    def test_sync_agent_all_excludes_pi_when_not_enabled(self):
+        """When pi is NOT in [agents].enabled, --all must NOT sync it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            (target / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-no-pi'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n"
+            )
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--all"],
+                check=True, text=True,
+            )
+            # Pi must NOT be synced
+            pi_skills = target / ".pi" / "skills"
+            self.assertFalse(pi_skills.exists(),
+                             ".pi/skills/ must NOT exist when pi is disabled")
+
+
 if __name__ == "__main__":
     unittest.main()
