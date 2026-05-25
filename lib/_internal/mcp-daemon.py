@@ -285,8 +285,22 @@ def status_daemon(git_root: Path):
 
 
 def restart_daemon(git_root: Path, named_config_path: Path) -> int:
-    """``stop_daemon`` followed by ``ensure_daemon``. Returns the new port."""
-    stop_daemon(git_root)
+    """SIGTERM the running daemon (if any) and re-spawn with the current config.
+
+    Does NOT delegate to ``stop_daemon`` because that helper also deletes
+    ``proxy.named-config.json``, which is owned by ``materialize_recipes``
+    (Group 2) and is required by the subsequent ``ensure_daemon`` call to
+    hash and feed to ``uvx mcp-proxy``. Only daemon-owned state files
+    (pid/port/config-hash) are cleared here.
+    """
+    git_root = Path(git_root)
+    state_dir = git_root / STATE_SUBDIR
+    if state_dir.exists():
+        with _acquire_lock(state_dir):
+            pid = _read_pid(state_dir)
+            if pid is not None and _is_pid_alive(pid):
+                _sigterm_and_wait(pid)
+            _cleanup_state(state_dir, (PID_FILE, PORT_FILE, HASH_FILE))
     return ensure_daemon(git_root, named_config_path)
 
 
