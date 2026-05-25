@@ -143,50 +143,50 @@
 
 ### 4.1 _resolve_proxy_port y _render_url_entry
 
-- [ ] [red] Escribir test: `_resolve_proxy_port` lee el int desde `proxy.port` cuando el archivo existe (`tests/unit/test_mcp_render_url.py`)
-- [ ] [red] Escribir test: `_resolve_proxy_port` falla con error explícito cuando `proxy.port` no existe y hay MCPs shared
-- [ ] [red] Escribir test: `_render_url_entry("trello", 54321)` retorna dict con `"url": "http://localhost:54321/servers/trello/mcp"`
-- [ ] [green] Implementar `_resolve_proxy_port(project_root: Path) -> int` y `_render_url_entry(mcp_id: str, port: int) -> dict` en `lib/_internal/mcp-render.py`
+- [x] [red] Escribir test: `_resolve_proxy_port` lee el int desde `proxy.port` cuando el archivo existe (`tests/unit/test_mcp_render_url.py`)
+- [x] [red] Escribir test: `_resolve_proxy_port` falla con error explícito cuando `proxy.port` no existe y hay MCPs shared
+- [x] [red] Escribir test: `_render_url_entry("trello", 54321)` retorna dict con `"url": "http://localhost:54321/servers/trello/mcp"`
+- [x] [green] Implementar `_resolve_proxy_port(project_root: Path) -> int` y `_render_url_entry(mcp_id: str, port: int) -> dict` en `lib/_internal/mcp-render.py`
 
 ### 4.2 Render Claude — shared emite url
 
-- [ ] [red] Escribir test: MCP `trello` con `mode = "shared"`, agente `claude`, port 54321 → entrada en `.mcp.json` contiene `"url": "http://localhost:54321/servers/trello/mcp"` y NO contiene `command`/`args`/`env`
-- [ ] [green] Modificar `_translate_generic` en `lib/_internal/mcp-render.py`: rama `mode == "shared"` AND `agent == "claude"` emite `_render_url_entry`
+- [x] [red] Escribir test: MCP `trello` con `mode = "shared"`, agente `claude`, port 54321 → entrada en `.mcp.json` contiene `"url": "http://localhost:54321/servers/trello/mcp"` y NO contiene `command`/`args`/`env`
+- [x] [green] Modificar `_translate_generic` en `lib/_internal/mcp-render.py`: rama `mode == "shared"` AND `agent == "claude"` emite `_render_url_entry`
 
 ### 4.3 Render Cursor — shared emite url
 
-- [ ] [red] Escribir test: MCP `trello` con `mode = "shared"`, agente `cursor`, port 54321 → entrada en `.cursor/mcp.json` contiene la URL correcta
-- [ ] [green] Modificar `_translate_generic`: rama `mode == "shared"` AND `agent == "cursor"` emite `_render_url_entry`
+- [x] [red] Escribir test: MCP `trello` con `mode = "shared"`, agente `cursor`, port 54321 → entrada en `.cursor/mcp.json` contiene la URL correcta
+- [x] [green] Modificar `_translate_generic`: rama `mode == "shared"` AND `agent == "cursor"` emite `_render_url_entry`
 
 ### 4.4 Render OpenCode — shared emite url con type remote
 
-- [ ] [red] Escribir test: MCP `trello` con `mode = "shared"`, agente `opencode`, port 54321 → entrada en `opencode.json` contiene `"type": "remote"` y la URL correcta
-- [ ] [green] Modificar `_translate_opencode` en `lib/_internal/mcp-render.py`: rama shared emite shape nativo de OpenCode
+- [x] [red] Escribir test: MCP `trello` con `mode = "shared"`, agente `opencode`, port 54321 → entrada en `opencode.json` contiene `"type": "remote"` y la URL correcta
+- [x] [green] Modificar `_translate_opencode` en `lib/_internal/mcp-render.py`: rama shared emite shape nativo de OpenCode
 
 ### 4.5 Render Codex — shared SIEMPRE emite stdio (fallback explícito)
 
-- [ ] [red] Escribir test: MCP `trello` con `mode = "shared"`, agente `codex` → entrada contiene `command`/`args`/`env` y NO contiene `url`
-- [ ] [green] Confirmar/implementar fallback explícito en render Codex: ignorar `mode`, emitir stdio siempre
+- [x] [red] Escribir test: MCP `trello` con `mode = "shared"`, agente `codex` → entrada contiene `command`/`args`/`env` y NO contiene `url`
+- [x] [green] Confirmar/implementar fallback explícito en render Codex: ignorar `mode`, emitir stdio siempre
 
 ### 4.6 Render Gemini — shared SIEMPRE emite stdio (fallback explícito)
 
-- [ ] [red] Escribir test: MCP `trello` con `mode = "shared"`, agente `gemini` → entrada contiene `command`/`args`/`env` y NO contiene `url`
-- [ ] [green] Confirmar/implementar fallback explícito en render Gemini: ignorar `mode`, emitir stdio siempre
+- [x] [red] Escribir test: MCP `trello` con `mode = "shared"`, agente `gemini` → entrada contiene `command`/`args`/`env` y NO contiene `url`
+- [x] [green] Confirmar/implementar fallback explícito en render Gemini: ignorar `mode`, emitir stdio siempre
 
 ### 4.7 Render — MCPs stdio sin cambios para todos los agentes
 
-- [ ] [red] Escribir test: MCP `github` sin `mode` (o con `mode = "stdio"`), agente `claude` → comportamiento idéntico al actual (sin breaking change)
-- [ ] [green] Verificar que el render path para stdio no fue alterado por los cambios de la rama shared
+- [x] [red] Escribir test: MCP `github` sin `mode` (o con `mode = "stdio"`), agente `claude` → comportamiento idéntico al actual (sin breaking change)
+- [x] [green] Verificar que el render path para stdio no fue alterado por los cambios de la rama shared
 
 ### 4.8 Integración del port resolver en main()
 
-- [ ] [red] Escribir test: `translate_servers` resuelve el puerto desde `proxy.port` solo si algún server tiene `mode = "shared"` (no lo lee si todo es stdio)
-- [ ] [green] Modificar `main()` o `translate_servers()` en `mcp-render.py` para resolver el puerto una vez antes del loop de servers y pasarlo como contexto
+- [x] [red] Escribir test: `translate_servers` resuelve el puerto desde `proxy.port` solo si algún server tiene `mode = "shared"` (no lo lee si todo es stdio)
+- [x] [green] Modificar `main()` o `translate_servers()` en `mcp-render.py` para resolver el puerto una vez antes del loop de servers y pasarlo como contexto
 
 ### 4.9 Limpieza del campo mode antes de serializar
 
-- [ ] [red] Escribir test: ningún config file de agente contiene la key `mode` en el output final (el campo no es nativo de los schemas de los agentes)
-- [ ] [green] Asegurar que `mode` se elimina del dict antes de serializar en todos los paths de render
+- [x] [red] Escribir test: ningún config file de agente contiene la key `mode` en el output final (el campo no es nativo de los schemas de los agentes)
+- [x] [green] Asegurar que `mode` se elimina del dict antes de serializar en todos los paths de render
 
 ---
 
@@ -194,27 +194,27 @@
 
 ### 5.1 Paso "ensure mcp-proxy daemon" en sync.sh
 
-- [ ] [red] Escribir test de integración: sync con al menos un MCP shared → `sync.sh` invoca `mcp-daemon.py ensure` antes del fan-out (`tests/integration/test_sync_daemon_step.sh`)
-- [ ] [red] Escribir test de integración: sync sin MCPs shared → `sync.sh` NO invoca `mcp-daemon.py ensure` (el paso se omite)
-- [ ] [red] Escribir test de integración: fallo de `mcp-daemon.py ensure` → sync termina con error, fan-out NO se ejecuta
-- [ ] [green] Modificar `lib/sync.sh`: añadir bloque condicional post-materialización que detecta presencia de `proxy.named-config.json` e invoca `python3 -m lib._internal.mcp-daemon ensure`
+- [x] [red] Escribir test de integración: sync con al menos un MCP shared → `sync.sh` invoca `mcp-daemon.py ensure` antes del fan-out (`tests/integration/test_sync_daemon_step.sh`)
+- [x] [red] Escribir test de integración: sync sin MCPs shared → `sync.sh` NO invoca `mcp-daemon.py ensure` (el paso se omite)
+- [x] [red] Escribir test de integración: fallo de `mcp-daemon.py ensure` → sync termina con error, fan-out NO se ejecuta
+- [x] [green] Modificar `lib/sync.sh`: añadir bloque condicional post-materialización que detecta presencia de `proxy.named-config.json` e invoca `python3 -m lib._internal.mcp-daemon ensure`
 
 ### 5.2 lib/daemon.sh — wrapper bash
 
-- [ ] [red] Escribir test: `lib/daemon.sh stop` delega a `python3 -m lib._internal.mcp-daemon stop <git_root>` (`tests/unit/test_daemon_sh.sh`)
-- [ ] [red] Escribir test: `lib/daemon.sh status` delega a `python3 -m lib._internal.mcp-daemon status <git_root>`
-- [ ] [red] Escribir test: `lib/daemon.sh restart` delega a `python3 -m lib._internal.mcp-daemon restart <git_root> --named-config <path>`
-- [ ] [red] Escribir test: subcomando desconocido imprime usage y sale con error
-- [ ] [green] Crear `lib/daemon.sh` con parseo de `{stop|status|restart}`, resolución de `git_root` vía `git rev-parse --show-toplevel`, delegación al entrypoint Python
+- [x] [red] Escribir test: `lib/daemon.sh stop` delega a `python3 -m lib._internal.mcp-daemon stop <git_root>` (`tests/unit/test_daemon_sh.sh`)
+- [x] [red] Escribir test: `lib/daemon.sh status` delega a `python3 -m lib._internal.mcp-daemon status <git_root>`
+- [x] [red] Escribir test: `lib/daemon.sh restart` delega a `python3 -m lib._internal.mcp-daemon restart <git_root> --named-config <path>`
+- [x] [red] Escribir test: subcomando desconocido imprime usage y sale con error
+- [x] [green] Crear `lib/daemon.sh` con parseo de `{stop|status|restart}`, resolución de `git_root` vía `git rev-parse --show-toplevel`, delegación al entrypoint Python
 
 ### 5.3 bin/ai-specs — dispatch daemon
 
-- [ ] [red] Escribir test: `ai-specs daemon stop` invoca `lib/daemon.sh stop` (`tests/integration/test_ai_specs_daemon_dispatch.sh`)
-- [ ] [red] Escribir test: `ai-specs daemon status` invoca `lib/daemon.sh status`
-- [ ] [red] Escribir test: `ai-specs daemon restart` invoca `lib/daemon.sh restart`
-- [ ] [red] Escribir test: `ai-specs help` incluye `daemon` en el listado de subcomandos
-- [ ] [green] Modificar `bin/ai-specs`: añadir `daemon) bash "$LIB_DIR/daemon.sh" "$@" ;;` al case, actualizar help text
-- [ ] [green] Añadir `lib/daemon.sh` al path cubierto por `tests/validate.sh` (`bash -n lib/*.sh`)
+- [x] [red] Escribir test: `ai-specs daemon stop` invoca `lib/daemon.sh stop` (`tests/integration/test_ai_specs_daemon_dispatch.sh`)
+- [x] [red] Escribir test: `ai-specs daemon status` invoca `lib/daemon.sh status`
+- [x] [red] Escribir test: `ai-specs daemon restart` invoca `lib/daemon.sh restart`
+- [x] [red] Escribir test: `ai-specs help` incluye `daemon` en el listado de subcomandos
+- [x] [green] Modificar `bin/ai-specs`: añadir `daemon) bash "$LIB_DIR/daemon.sh" "$@" ;;` al case, actualizar help text
+- [x] [green] Añadir `lib/daemon.sh` al path cubierto por `tests/validate.sh` (`bash -n lib/*.sh`)
 
 ---
 

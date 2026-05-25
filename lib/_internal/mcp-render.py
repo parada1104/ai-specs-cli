@@ -20,6 +20,7 @@ Format detection: by target file extension (.json vs .toml).
 
 import json
 import re
+import subprocess
 import sys
 import importlib.util
 from pathlib import Path
@@ -55,6 +56,57 @@ _ENV_VAR_RE = re.compile(r"^\$\{?([A-Z_][A-Z0-9_]*)\}?$")
 # Cursor/Claude JSON use "${env:NAME}" in headers/url; OpenCode remote expects "{env:NAME}".
 _CURSOR_ENV_IN_HEADERS = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
 
+# Agents that can connect to the local mcp-proxy daemon over HTTP and therefore
+# emit URL entries for ``mode == "shared"`` MCPs. OpenCode supports it too but
+# uses its own native schema (`type: "remote"`) — handled in _translate_opencode.
+# Codex and Gemini lack HTTP MCP support and always fall back to stdio.
+_HTTP_URL_AGENTS = {"claude", "cursor"}
+
+
+def _resolve_proxy_port(project_root: Path) -> int:
+    """Read the mcp-proxy port from ``<git_root>/.ai-specs/run/proxy.port``.
+
+    The git root is resolved via ``git rev-parse --show-toplevel`` so that the
+    helper works whether ``project_root`` is the repo root or a nested subdir
+    (sync renderers pass ``ai-specs/`` as the project root, for example).
+
+    Raises:
+        RuntimeError: when the port file is missing or unreadable. The message
+            is explicit so the surrounding CLI can surface it verbatim.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        git_root = Path(result.stdout.strip())
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        git_root = project_root
+
+    port_file = git_root / ".ai-specs" / "run" / "proxy.port"
+    if not port_file.is_file():
+        raise RuntimeError(
+            f"proxy.port not found at {port_file}: the shared MCP daemon "
+            f"has not been started. Run `ai-specs daemon ensure` first."
+        )
+    try:
+        return int(port_file.read_text().strip())
+    except ValueError as exc:
+        raise RuntimeError(
+            f"proxy.port at {port_file} is not a valid integer: {exc}"
+        ) from exc
+
+
+def _render_url_entry(mcp_id: str, port: int) -> dict:
+    """Return the HTTP-agent URL entry shape for a shared MCP.
+
+    Claude/Cursor consume ``{"url": "..."}``; OpenCode wraps this with
+    ``{"type": "remote", **entry}`` to match its native schema.
+    """
+    return {"url": f"http://localhost:{port}/servers/{mcp_id}/mcp"}
+
 
 def _headers_for_opencode(headers: dict) -> dict:
     if not isinstance(headers, dict):
@@ -68,11 +120,26 @@ def _headers_for_opencode(headers: dict) -> dict:
     return out
 
 
-def _translate_generic(servers: dict) -> dict:
-    """Generic translator: expand $VAR to ${VAR} in env values."""
+def _translate_generic(servers: dict, *, agent: str = "", port: int | None = None) -> dict:
+    """Generic translator: expand $VAR to ${VAR} in env values.
+
+    For agents in ``_HTTP_URL_AGENTS`` (claude, cursor), MCPs with
+    ``mode == "shared"`` are emitted as bare URL entries pointing at the local
+    mcp-proxy daemon — ``command``/``args``/``env`` are dropped. For every
+    other case (including codex/gemini, which lack HTTP MCP support and fall
+    back to stdio explicitly) the ``mode`` key is stripped and the entry is
+    rendered as before.
+    """
     out = {}
     for name, cfg in servers.items():
-        new = dict(cfg)
+        if cfg.get("mode") == "shared" and agent in _HTTP_URL_AGENTS:
+            assert port is not None, (
+                "shared MCP requires a resolved proxy port; "
+                "translate_servers must pass port= for HTTP agents"
+            )
+            out[name] = _render_url_entry(name, port)
+            continue
+        new = {k: v for k, v in cfg.items() if k != "mode"}
         env = new.get("env")
         if env:
             new["env"] = {
@@ -83,13 +150,23 @@ def _translate_generic(servers: dict) -> dict:
     return out
 
 
-def _translate_opencode(servers: dict) -> dict:
+def _translate_opencode(servers: dict, *, port: int | None = None) -> dict:
     """OpenCode native schema:
+      - Shared (mcp-proxy): type: "remote", url: "http://localhost:{port}/..."
       - Local: type: "local", command: [cmd, *args], environment: {...}
       - Remote: type: "remote", url: "https://..." (manifest HTTP MCP uses type: "http")
     """
     out = {}
     for name, cfg in servers.items():
+        if cfg.get("mode") == "shared":
+            assert port is not None, (
+                "shared MCP requires a resolved proxy port; "
+                "translate_servers must pass port= for opencode"
+            )
+            out[name] = {"type": "remote", **_render_url_entry(name, port)}
+            continue
+
+        cfg = {k: v for k, v in cfg.items() if k != "mode"}
         mcp_type = cfg.get("type")
         url = cfg.get("url")
         if mcp_type in ("http", "remote", "sse") and isinstance(url, str) and url:
@@ -146,11 +223,11 @@ _TRANSLATORS = {
 }
 
 
-def translate_servers(agent: str, servers: dict) -> dict:
+def translate_servers(agent: str, servers: dict, port: int | None = None) -> dict:
     fn = _TRANSLATORS.get(agent)
     if fn:
-        return fn(servers)
-    return _translate_generic(servers)
+        return fn(servers, port=port)
+    return _translate_generic(servers, agent=agent, port=port)
 
 
 def merge_into_json(target: Path, mcp_key: str, servers: dict, agent: str) -> str:
@@ -276,7 +353,22 @@ def main() -> int:
         print(f"info: no [mcp.*] entries — skipping {agent}", file=sys.stderr)
         return 0
 
-    servers = translate_servers(agent, servers)
+    # Resolve the mcp-proxy port only when this agent will actually emit URL
+    # entries for a shared MCP. Codex/Gemini fall back to stdio for shared
+    # MCPs and never need the port — so we don't read proxy.port for them.
+    needs_port = agent in _HTTP_URL_AGENTS | {"opencode"} and any(
+        isinstance(s, dict) and s.get("mode") == "shared"
+        for s in servers.values()
+    )
+    port: int | None = None
+    if needs_port:
+        try:
+            port = _resolve_proxy_port(toml_path.resolve().parent)
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    servers = translate_servers(agent, servers, port=port)
     servers = {n: _slim_mcp_config_for_write(c) for n, c in servers.items()}
 
     if target_path.suffix == ".toml":
