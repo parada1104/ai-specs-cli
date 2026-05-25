@@ -38,5 +38,5 @@ enabled = true
 version = "1.0.0"
 
 [recipes.trello-mcp-workflow.config]
-board_id = "69ec0a2099ea20956e371d62"
+board_id = "69ec097f13e2d38ecd89a557"
 ```

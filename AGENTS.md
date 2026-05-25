@@ -28,7 +28,7 @@
 
 ## Trello Tracking
 
-- Board: `69ec0a2099ea20956e371d62` (`ai-specs-cli Roadmap`).
+- Board: `69ec097f13e2d38ecd89a557` (`ai-specs-cli`).
 - Trello is the source of truth for work state and dependencies. Check Engram for the current active card and next recommended focus.
 
 ## Context Sources
