@@ -238,11 +238,11 @@
 
 ## Group 7: Sync degradation — uvx ausente
 
-- [ ] [red] Escribir test de integración: sync con MCP shared y `uvx` ausente → exit 0, output contiene `WARN`, configs de agente quedan con `command`/`args`/`env` (stdio) (`tests/integration/test_sync_uvx_missing_degrades.sh`)
-- [ ] [red] Escribir test: el daemon NO es invocado cuando `uvx` está ausente
-- [ ] [red] Escribir test: la degradación es local y no modifica el manifest (no persiste `mode = "stdio"` en `ai-specs.toml`)
-- [ ] [green] Implementar en `lib/sync.sh` (o en `mcp-daemon.py ensure` que delega al shell): si `uvx` no en PATH y hay MCPs shared → emitir `WARN`, sobrescribir mode a stdio para la render de esta sync, continuar sin invocar daemon
-- [ ] [refactor] Extraer la detección de `uvx` en función reutilizable entre doctor y sync
+- [x] [red] Escribir test de integración: sync con MCP shared y `uvx` ausente → exit 0, output contiene `WARN`, configs de agente quedan con `command`/`args`/`env` (stdio) (`tests/integration/test_sync_uvx_missing_degrades.sh`)
+- [x] [red] Escribir test: el daemon NO es invocado cuando `uvx` está ausente
+- [x] [red] Escribir test: la degradación es local y no modifica el manifest (no persiste `mode = "stdio"` en `ai-specs.toml`)
+- [x] [green] Implementar en `lib/sync.sh` (o en `mcp-daemon.py ensure` que delega al shell): si `uvx` no en PATH y hay MCPs shared → emitir `WARN`, sobrescribir mode a stdio para la render de esta sync, continuar sin invocar daemon
+- [x] [refactor] Extraer la detección de `uvx` en función reutilizable entre doctor y sync
 
 ---
 

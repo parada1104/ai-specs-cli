@@ -110,12 +110,59 @@ python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out 
 
 PROXY_NAMED_CONFIG="$ROOT_PATH/.ai-specs/run/proxy.named-config.json"
 if [[ -f "$PROXY_NAMED_CONFIG" ]]; then
-    echo "▸ ensure mcp-proxy daemon"
-    if ! python3 "$AI_SPECS_HOME/lib/_internal/mcp-daemon.py" ensure "$ROOT_PATH" \
-            --named-config "$PROXY_NAMED_CONFIG"; then
-        echo "ERROR: daemon ensure failed; aborting before fan-out step." >&2
-        rm -f "$RECIPE_MCP_TEMP"
-        exit 1
+    if command -v uvx >/dev/null 2>&1; then
+        echo "▸ ensure mcp-proxy daemon"
+        if ! python3 "$AI_SPECS_HOME/lib/_internal/mcp-daemon.py" ensure "$ROOT_PATH" \
+                --named-config "$PROXY_NAMED_CONFIG"; then
+            echo "ERROR: daemon ensure failed; aborting before fan-out step." >&2
+            rm -f "$RECIPE_MCP_TEMP"
+            exit 1
+        fi
+    else
+        echo "WARN: uvx not in PATH — shared MCPs will render as stdio for this sync." >&2
+        echo "      Install uv from https://docs.astral.sh/uv/ to enable the shared daemon." >&2
+        # Local degradation: rewrite the per-render recipe-mcp temp so the
+        # downstream mcp-render path treats every shared MCP as stdio. The
+        # manifest on disk is NOT modified; degradation lasts only for this
+        # invocation of sync. Strip `mode` from the merged (manifest +
+        # recipe) MCP map — `mcp-render` does `{**manifest, **recipe_mcp}`,
+        # so a mode-less entry in recipe_mcp wins over the manifest's
+        # `mode = "shared"` and yields a stdio render.
+        python3 - "$TOML_PATH" "$RECIPE_MCP_TEMP" <<'PY'
+import json
+import sys
+import tomllib
+from pathlib import Path
+
+toml_path = Path(sys.argv[1])
+temp_path = Path(sys.argv[2])
+
+with toml_path.open("rb") as f:
+    manifest_mcp = tomllib.load(f).get("mcp", {}) or {}
+
+merged: dict = {sid: dict(cfg) for sid, cfg in manifest_mcp.items() if isinstance(cfg, dict)}
+try:
+    existing = json.loads(temp_path.read_text())
+    if isinstance(existing, dict):
+        for sid, cfg in existing.items():
+            if isinstance(cfg, dict):
+                merged[sid] = dict(cfg)
+except (FileNotFoundError, json.JSONDecodeError):
+    pass
+
+stripped = 0
+for sid, cfg in merged.items():
+    if cfg.pop("mode", None) is not None:
+        stripped += 1
+
+temp_path.write_text(json.dumps(merged, indent=2) + "\n")
+if stripped:
+    print(f"  ⚠  stripped mode from {stripped} shared MCP(s) for stdio fallback render", file=sys.stderr)
+PY
+        # Remove the named-config so a future sync (with uvx restored)
+        # re-triggers ensure_daemon afresh, and the daemon-running doctor
+        # check does not confuse a degraded sync with a real daemon.
+        rm -f "$PROXY_NAMED_CONFIG"
     fi
 fi
 
