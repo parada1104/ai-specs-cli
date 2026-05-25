@@ -22,6 +22,11 @@ from pathlib import Path
 from typing import Any
 
 
+# Enum of valid values for the optional `mode` field on MCP declarations.
+# Must match recipe_schema.VALID_MCP_MODES; see specs/mcp-mode-shared/spec.md.
+VALID_MCP_MODES = ("shared", "stdio")
+
+
 def load_toml(toml_path: str | Path) -> dict[str, Any]:
     path = Path(toml_path)
     if not path.is_file():
@@ -127,6 +132,15 @@ def _normalize_mcp_server(raw: Any) -> dict[str, Any]:
         if key in {"command", "args", "env", "environment", "timeout", "enabled"}:
             continue
         normalized[key] = value
+
+    if "mode" in normalized:
+        mode = normalized["mode"]
+        if not isinstance(mode, str) or mode not in VALID_MCP_MODES:
+            valid = ", ".join(f'"{m}"' for m in VALID_MCP_MODES)
+            raise ValueError(
+                f"[mcp.*]: invalid mode {mode!r} "
+                f"(valid values: {valid})"
+            )
 
     return normalized
 

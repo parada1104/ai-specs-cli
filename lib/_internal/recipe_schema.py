@@ -16,6 +16,12 @@ class RecipeValidationError(Exception):
     pass
 
 
+# Enum of valid values for the optional `mode` field on MCP declarations.
+# Mirrored in lib/_internal/toml-read.py (_normalize_mcp_server) — keep both
+# in sync; see specs/mcp-mode-shared/spec.md.
+VALID_MCP_MODES = ("shared", "stdio")
+
+
 
 
 
@@ -150,6 +156,14 @@ def _parse_mcp(raw: Any, context: str) -> list[McpPreset]:
             raise RecipeValidationError(f"{context}.mcp[{idx}]: expected object, got {type(item).__name__}")
         mcp_id = _require_string(item, "id", f"{context}.mcp[{idx}]")
         config = {k: v for k, v in item.items() if k != "id"}
+        if "mode" in config:
+            mode = config["mode"]
+            if not isinstance(mode, str) or mode not in VALID_MCP_MODES:
+                valid = ", ".join(f'"{m}"' for m in VALID_MCP_MODES)
+                raise RecipeValidationError(
+                    f"{context}.mcp[{idx}]: invalid mode {mode!r} "
+                    f"(valid values: {valid})"
+                )
         out.append(McpPreset(id=mcp_id, config=config))
     return out
 

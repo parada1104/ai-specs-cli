@@ -2,29 +2,29 @@
 
 ### 1.1 recipe_schema.py — validación de mode en [[provides.mcp]]
 
-- [ ] [red] Escribir test: recipe con `mode = "shared"` en `[[provides.mcp]]` pasa validación (`tests/unit/test_recipe_schema_mode.py`)
-- [ ] [red] Escribir test: recipe con `mode = "stdio"` explícito en `[[provides.mcp]]` pasa validación
-- [ ] [red] Escribir test: recipe sin campo `mode` en `[[provides.mcp]]` pasa validación (sin breaking change)
-- [ ] [red] Escribir test: recipe con `mode = "proxy"` (valor fuera del enum) falla con `RecipeValidationError` mencionando los valores válidos
-- [ ] [green] Implementar: aceptar campo opcional `mode` con enum `["shared", "stdio"]` en `lib/_internal/recipe_schema.py`
-- [ ] [refactor] Revisar mensajes de error del validator para coherencia con el resto del schema
+- [x] [red] Escribir test: recipe con `mode = "shared"` en `[[provides.mcp]]` pasa validación (`tests/unit/test_recipe_schema_mode.py`)
+- [x] [red] Escribir test: recipe con `mode = "stdio"` explícito en `[[provides.mcp]]` pasa validación
+- [x] [red] Escribir test: recipe sin campo `mode` en `[[provides.mcp]]` pasa validación (sin breaking change)
+- [x] [red] Escribir test: recipe con `mode = "proxy"` (valor fuera del enum) falla con `RecipeValidationError` mencionando los valores válidos
+- [x] [green] Implementar: aceptar campo opcional `mode` con enum `["shared", "stdio"]` en `lib/_internal/recipe_schema.py`
+- [x] [refactor] Revisar mensajes de error del validator para coherencia con el resto del schema
 
 ### 1.2 toml-read.py — validación de mode en [mcp.<name>]
 
-- [ ] [red] Escribir test: manifest con `mode = "shared"` en `[mcp.trello]` pasa validación (`tests/unit/test_toml_read_mode.py`)
-- [ ] [red] Escribir test: manifest con `mode = "stdio"` explícito en `[mcp.trello]` pasa validación
-- [ ] [red] Escribir test: manifest sin campo `mode` en `[mcp.example]` pasa validación (sin breaking change)
-- [ ] [red] Escribir test: manifest con `mode = "foo"` falla con error indicando valores válidos
-- [ ] [green] Implementar: preservar y validar campo `mode` en `read_mcp()` en `lib/_internal/toml-read.py`
+- [x] [red] Escribir test: manifest con `mode = "shared"` en `[mcp.trello]` pasa validación (`tests/unit/test_toml_read_mode.py`)
+- [x] [red] Escribir test: manifest con `mode = "stdio"` explícito en `[mcp.trello]` pasa validación
+- [x] [red] Escribir test: manifest sin campo `mode` en `[mcp.example]` pasa validación (sin breaking change)
+- [x] [red] Escribir test: manifest con `mode = "foo"` falla con error indicando valores válidos
+- [x] [green] Implementar: preservar y validar campo `mode` en `read_mcp()` en `lib/_internal/toml-read.py`
 
 ### 1.3 mcp-preset-merge — preservación de mode en el merge
 
-- [ ] [red] Escribir test: recipe `mode = "shared"` + manifest `mode = "stdio"` → merged tiene `mode = "stdio"` (manifest gana) (`tests/unit/test_mcp_preset_merge_mode.py`)
-- [ ] [red] Escribir test: recipe `mode = "shared"` + manifest sin `mode` → merged tiene `mode = "shared"` (heredado del preset)
-- [ ] [red] Escribir test: recipe `mode = "shared"` + MCP ID no existe en manifest → merged incluye `mode = "shared"` sin modificación
-- [ ] [red] Escribir test: conflicto de `mode` emite warning consistente con el comportamiento de merge existente
-- [ ] [green] Verificar que el shallow merge existente en `lib/_internal/recipe-materialize.py` ya preserva `mode` como cualquier otra clave (puede no requerir cambios si el merge es genérico)
-- [ ] [refactor] Extraer constante `VALID_MCP_MODES = ("shared", "stdio")` si queda duplicada entre schema y toml-read
+- [x] [red] Escribir test: recipe `mode = "shared"` + manifest `mode = "stdio"` → merged tiene `mode = "stdio"` (manifest gana) (`tests/unit/test_mcp_preset_merge_mode.py`)
+- [x] [red] Escribir test: recipe `mode = "shared"` + manifest sin `mode` → merged tiene `mode = "shared"` (heredado del preset)
+- [x] [red] Escribir test: recipe `mode = "shared"` + MCP ID no existe en manifest → merged incluye `mode = "shared"` sin modificación
+- [x] [red] Escribir test: conflicto de `mode` emite warning consistente con el comportamiento de merge existente
+- [x] [green] Verificar que el shallow merge existente en `lib/_internal/recipe-materialize.py` ya preserva `mode` como cualquier otra clave (puede no requerir cambios si el merge es genérico)
+- [x] [refactor] Extraer constante `VALID_MCP_MODES = ("shared", "stdio")` si queda duplicada entre schema y toml-read
 
 ---
 
