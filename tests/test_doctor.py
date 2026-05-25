@@ -1,4 +1,5 @@
 import importlib.util
+import importlib.util
 import sys
 import shutil
 import subprocess
@@ -216,6 +217,49 @@ class AgentDiagnosticsTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0)
             self.assertIn("OK", result.stdout)
+
+    def test_pi_is_in_platform_dict(self):
+        """Pi agent must be registered in the PLATFORM dict."""
+        doctor = load_module(DOCTOR_PY, "doctor_module_pi_in_dict")
+        self.assertIn("pi", doctor.Doctor.PLATFORM)
+        plat = doctor.Doctor.PLATFORM["pi"]
+        self.assertEqual(plat["skills_dir"], ".pi/skills")
+        self.assertEqual(plat["mcp_config_path"], ".mcp.json")
+        self.assertEqual(plat["mcp_key"], "mcpServers")
+        self.assertEqual(plat["commands_dir"], "")
+
+    def test_pi_not_rejected_as_unknown_agent(self):
+        """Pi in enabled agents must not produce 'unsupported agent' ERROR."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target, agents=["pi"])
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False
+            )
+            # Before sync, pi should NOT be flagged as unsupported agent
+            self.assertNotIn("unsupported agent", result.stdout.lower())
+            self.assertIn("pi", result.stdout)
+
+    def test_pi_output_present_reports_ok(self):
+        """Pi with valid .pi/skills symlink reports OK."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target, agents=["pi"])
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target)],
+                check=True,
+                text=True,
+            )
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("OK", result.stdout)
+            self.assertIn(".pi/skills", result.stdout)
 
     def test_enabled_agent_output_missing_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -473,6 +517,75 @@ class ReportAndExitCodeTests(unittest.TestCase):
                 self.assertTrue(
                     "init" in words or "sync" in words or "missing" in words
                 )
+
+
+class PlatformGetTests(unittest.TestCase):
+    """Unit tests for platform_get shell function (all agent fields)."""
+
+    PLATFORM_SH = ROOT / "lib" / "_internal" / "platform.sh"
+
+    def _platform_get(self, agent: str, field: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", "-c", f'source "{self.PLATFORM_SH}" && platform_get {agent} {field}'],
+            capture_output=True, text=True, check=False,
+        )
+
+    # --- Pi agent field tests ---
+
+    def test_pi_skills_dir(self):
+        result = self._platform_get("pi", "skills_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".pi/skills")
+
+    def test_pi_mcp_config_path(self):
+        result = self._platform_get("pi", "mcp_config_path")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".mcp.json")
+
+    def test_pi_mcp_key(self):
+        result = self._platform_get("pi", "mcp_key")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "mcpServers")
+
+    def test_pi_native_true(self):
+        result = self._platform_get("pi", "native")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "true")
+
+    def test_pi_instructions_path_empty(self):
+        result = self._platform_get("pi", "instructions_path")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
+
+    def test_pi_commands_dir_empty(self):
+        result = self._platform_get("pi", "commands_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
+
+    def test_pi_agents_dir_empty(self):
+        result = self._platform_get("pi", "agents_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
+
+    def test_pi_invalid_field_exits_nonzero(self):
+        result = self._platform_get("pi", "nonexistent_field")
+        self.assertNotEqual(result.returncode, 0)
+
+    # --- Regression: existing agents still work ---
+
+    def test_claude_skills_dir_unchanged(self):
+        result = self._platform_get("claude", "skills_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".claude/skills")
+
+    def test_opencode_mcp_key_unchanged(self):
+        result = self._platform_get("opencode", "mcp_key")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "mcp")
+
+    def test_invalid_agent_exits_nonzero(self):
+        result = self._platform_get("nonexistent_agent", "skills_dir")
+        self.assertNotEqual(result.returncode, 0)
 
 
 def _find_files(root: Path):

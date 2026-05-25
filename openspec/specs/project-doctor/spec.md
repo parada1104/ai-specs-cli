@@ -168,3 +168,49 @@ The system MUST produce a clear report with deterministic severities and an exit
 - **WHEN** output is printed
 - **THEN** each check line MUST include exactly one of `OK`, `WARN`, or `ERROR`
 - **AND** each non-OK check MUST include actionable guidance or identify the missing/invalid artifact
+
+### Requirement: Pi agent diagnostics
+
+The system MUST validate Pi-specific outputs when `pi` is enabled.
+
+#### Scenario: Pi recognized as valid
+
+- GIVEN `[agents].enabled` contains `pi`
+- WHEN `ai-specs doctor` runs
+- THEN `pi` MUST NOT be flagged as an unknown agent
+
+#### Scenario: Pi skills symlink valid
+
+- GIVEN `pi` is enabled
+- AND `.pi/skills/` is a valid symlink
+- WHEN `ai-specs doctor` runs
+- THEN the report MUST include `OK` for Pi skills
+
+#### Scenario: Pi skills symlink invalid
+
+- GIVEN `pi` is enabled
+- AND `.pi/skills/` is missing or broken
+- WHEN `ai-specs doctor` runs
+- THEN the report MUST include `ERROR` for Pi skills
+
+#### Scenario: Pi MCP config present
+
+- GIVEN `pi` is enabled
+- AND `[mcp.*]` entries exist
+- AND `.mcp.json` exists
+- WHEN `ai-specs doctor` runs
+- THEN the report MUST include `OK` for Pi MCP
+
+#### Scenario: Pi MCP config missing
+
+- GIVEN `pi` is enabled
+- AND `[mcp.*]` entries exist
+- AND `.mcp.json` is missing
+- WHEN `ai-specs doctor` runs
+- THEN the report MUST include `ERROR` for Pi MCP
+
+#### Scenario: Pi instruction not expected
+
+- GIVEN `pi` is enabled
+- WHEN `ai-specs doctor` runs
+- THEN the report MUST NOT flag a missing Pi instruction symlink
