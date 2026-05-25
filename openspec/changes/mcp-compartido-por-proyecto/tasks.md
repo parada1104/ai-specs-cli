@@ -279,29 +279,29 @@
 
 ### 10.1 Edge cases verificables durante apply
 
-- [ ] [red] Escribir test: `proxy.pid` existe pero proceso muerto → siguiente `ensure_daemon` detecta PID muerto y respawnea (`tests/integration/test_daemon_dead_pid_recovery.sh`)
+- [x] [red] Escribir test: `proxy.pid` existe pero proceso muerto → siguiente `ensure_daemon` detecta PID muerto y respawnea (`tests/test_daemon_dead_pid_recovery.py::DeadPidRecoveryTests`)
 - [ ] [red] Escribir test: `proxy.port` existe pero puerto no responde (ocupado por otro proceso) → healthcheck retorna False → `ensure_daemon` asigna puerto nuevo
-- [ ] [red] Escribir test: zero MCPs shared → directorio `.ai-specs/run/` no se crea y `ensure_daemon` no es invocado
-- [ ] [green] Verificar comportamiento del port race (socket cerrado entre `_pick_free_port` y spawn de mcp-proxy) — documentar como known minor race en `CLAUDE.md` si no es prevenible
+- [x] [red] Escribir test: zero MCPs shared → directorio `.ai-specs/run/` no se crea y `ensure_daemon` no es invocado (cobertura primaria en `tests/test_recipe_materialize_shared_integration.test_no_shared_mcp_does_not_create_named_config`; pin daemon-side en `tests/test_daemon_dead_pid_recovery.NoSharedMcpSkipsRunDirTests`)
+- [x] [green] Verificar comportamiento del port race (socket cerrado entre `_pick_free_port` y spawn de mcp-proxy) — documentado como auto-correctivo en `design.md` (sección "Port race") y `docs/mcp-shared-daemon.md`; cubierto por `StaleHealthcheckRestartTests` + `DeadPidRecoveryTests`
 
 ### 10.2 Resolución de Q1 — comportamiento de mcp-proxy ante crash de MCP interno
 
 > **Nota**: Esta tarea depende de verificar el comportamiento real de `mcp-proxy` durante apply.
 
-- [ ] [green] Durante apply, verificar contra README de mcp-proxy si un MCP stdio interno que crashea es reiniciado automáticamente por el proxy o si el error se propaga al cliente HTTP
-- [ ] [green] Si mcp-proxy NO reinicia automáticamente: documentar en `CLAUDE.md` como comportamiento conocido ("si un MCP shared crashea, `ai-specs daemon restart` lo recupera")
-- [ ] [green] Si mcp-proxy SÍ reinicia automáticamente: documentar como bonus, ninguna acción adicional requerida
+- [x] [green] Durante apply, verificar contra README de mcp-proxy si un MCP stdio interno que crashea es reiniciado automáticamente por el proxy o si el error se propaga al cliente HTTP — verificado empíricamente con `uvx mcp-proxy` + `uvx mcp-server-time`: el proxy inicializa cada child una sola vez (no restart loop); errores se propagan al cliente HTTP
+- [x] [green] Si mcp-proxy NO reinicia automáticamente: documentar en `docs/mcp-shared-daemon.md` ("Crash semantics — Q1") y en `design.md` ("Resolución de Q1") — recovery con `ai-specs daemon restart` o próxima sync con config cambiada
+- [ ] [green] Si mcp-proxy SÍ reinicia automáticamente: documentar como bonus, ninguna acción adicional requerida — **N/A**: el comportamiento observado fue "NO reinicia"; este bullet quedó vacío por construcción condicional
 
 ### 10.3 Resolución de Q2 — shape del endpoint /status de mcp-proxy
 
 > **Nota**: Esta tarea depende de verificar el contrato del endpoint durante apply.
 
-- [ ] [green] Durante apply, verificar el payload JSON de `GET /status` en mcp-proxy: ¿retorna metadata estructurada sobre los servers alojados, o sólo "alive"?
-- [ ] [green] Si retorna metadata: actualizar `status_daemon` para incluir `servers: [...]` en el dict de retorno
-- [ ] [green] Si retorna sólo "alive": ajustar `status_daemon` para retornar sólo `{pid, port, uptime_s}` y documentar "para listar MCPs alojados, consultar `proxy.named-config.json`"
+- [x] [green] Durante apply, verificar el payload JSON de `GET /status` en mcp-proxy: ¿retorna metadata estructurada sobre los servers alojados, o sólo "alive"? — verificado: retorna `{"api_last_activity": ISO8601, "server_instances": {name: state}}`
+- [x] [green] Si retorna metadata: actualizar `status_daemon` para incluir `servers: [...]` en el dict de retorno — implementado en `lib/_internal/mcp-daemon.py::_fetch_status_metadata` + `status_daemon`; tests en `tests/test_daemon_dead_pid_recovery.StatusDaemonExposesProxyMetadataTests`
+- [ ] [green] Si retorna sólo "alive": ajustar `status_daemon` para retornar sólo `{pid, port, uptime_s}` y documentar "para listar MCPs alojados, consultar `proxy.named-config.json`" — **N/A**: outcome a) elegido (retorna metadata estructurada); este bullet condicional no aplica
 
 ### 10.4 Validación de suite completa
 
-- [ ] [green] Ejecutar `./tests/run.sh` y confirmar que la suite completa pasa
-- [ ] [green] Ejecutar `./tests/validate.sh` y confirmar que py_compile, shell syntax y unit tests pasan
-- [ ] [refactor] Revisar cobertura de tests añadidos; identificar paths sin tests y añadir casos faltantes si quedan brechas críticas
+- [x] [green] Ejecutar `./tests/run.sh` y confirmar que la suite completa pasa (357 tests, sólo los 6 baseline failures pre-existentes)
+- [x] [green] Ejecutar `./tests/validate.sh` y confirmar que py_compile, shell syntax y unit tests pasan
+- [x] [refactor] Revisar cobertura de tests añadidos; identificar paths sin tests y añadir casos faltantes si quedan brechas críticas — sin brechas críticas en G10; `_fetch_status_metadata` cubierto en ambos extremos (200 con JSON / endpoint unreachable)

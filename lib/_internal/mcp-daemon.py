@@ -266,8 +266,38 @@ def stop_daemon(git_root: Path) -> bool:
         return was_alive
 
 
+def _fetch_status_metadata(port: int, timeout: float = HEALTHCHECK_TIMEOUT):
+    """Return parsed JSON body of ``GET /status`` or ``None`` on any failure.
+
+    Closes Q2 (post-design open question): the real ``mcp-proxy`` endpoint
+    returns ``{"api_last_activity": ISO8601, "server_instances": {name: state}}``
+    (verified empirically against ``uvx mcp-proxy`` with a real MCP child).
+    """
+    try:
+        with urllib.request.urlopen(  # noqa: S310 — localhost only
+            f"http://localhost:{port}/status", timeout=timeout
+        ) as resp:
+            if resp.status != 200:
+                return None
+            body = resp.read()
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    try:
+        return json.loads(body)
+    except (ValueError, json.JSONDecodeError):
+        return None
+
+
 def status_daemon(git_root: Path):
-    """Return ``{pid, port, uptime_s}`` if the daemon is alive, else ``None``."""
+    """Return daemon liveness info if alive, else ``None``.
+
+    Base shape ``{pid, port, uptime_s}`` is always populated when the PID is
+    alive. When the proxy's ``/status`` endpoint is reachable, the dict is
+    enriched with ``api_last_activity`` and ``servers`` (the proxy's
+    ``server_instances`` field). When the endpoint is unreachable (daemon
+    starting up, hung, port stolen, …) the base shape is returned unchanged
+    — callers must treat the metadata keys as optional.
+    """
     git_root = Path(git_root)
     state_dir = git_root / STATE_SUBDIR
     if not state_dir.exists():
@@ -281,7 +311,14 @@ def status_daemon(git_root: Path):
         uptime_s = max(0, int(time.time() - pid_file.stat().st_mtime))
     except FileNotFoundError:
         uptime_s = 0
-    return {"pid": pid, "port": port, "uptime_s": uptime_s}
+    info = {"pid": pid, "port": port, "uptime_s": uptime_s}
+    meta = _fetch_status_metadata(port)
+    if isinstance(meta, dict):
+        if "api_last_activity" in meta:
+            info["api_last_activity"] = meta["api_last_activity"]
+        if "server_instances" in meta:
+            info["servers"] = meta["server_instances"]
+    return info
 
 
 def restart_daemon(git_root: Path, named_config_path: Path) -> int:

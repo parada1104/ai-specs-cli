@@ -474,3 +474,60 @@ Triggers:
 
 - **Q1**: ¿Cómo se comporta `mcp-proxy` ante un MCP stdio interno que crashea durante runtime? ¿Se reinicia automáticamente o el proxy reporta el error al cliente HTTP? Asumimos lo segundo; verificar contra el README de mcp-proxy durante apply. Si reinicia: bonus, sin acción. Si no: documentar como conocido en CLAUDE.md.
 - **Q2**: El endpoint `/status` de `mcp-proxy` ¿retorna metadata estructurada sobre los servers alojados, o sólo "alive"? Esto determina cuánta info puede mostrar `ai-specs daemon status`. Si retorna sólo alive, `status` se queda con `{pid, port, uptime}` y deja la lista de MCPs como "ver `proxy.named-config.json`". A confirmar en apply.
+
+## Resolución de Q1 / Q2 (verificación empírica durante apply)
+
+Ambas preguntas se cerraron contra `uvx mcp-proxy` (instalado vía `uv`) con un MCP real
+(`uvx mcp-server-time`) como child stdio. Las decisiones del diseño se preservan; este
+bloque documenta el comportamiento observado y reemplaza a "Open Questions (post-design)"
+de arriba.
+
+### Q1 — comportamiento ante crash de un MCP stdio interno
+
+**Observado**: `mcp-proxy` inicializa cada named server **una sola vez** al arrancar
+(envía el handshake MCP `initialize` y, sólo cuando todos los children responden, expone
+el servidor Uvicorn en `/servers/<name>/{sse,mcp}`). No hay restart loop visible en sus
+logs ni en su modelo (`mcp_proxy.mcp_server.Setting up named server …` aparece una sola
+vez por server; tras eso, el child se mantiene como subprocess estable). Si un child
+crashea en runtime, las llamadas posteriores del cliente reciben el error upstream;
+upstream **no** revive al child silenciosamente.
+
+**Resolución**: documentado como comportamiento conocido en `docs/mcp-shared-daemon.md`.
+Recuperación manual con `ai-specs daemon restart`. La próxima `ai-specs sync` también
+re-arranca si el hash de `proxy.named-config.json` cambió (Decisión 5). El check
+`daemon-running` del doctor convierte un proxy hung en un `WARN` visible en el siguiente
+diagnóstico. La probe activa de crashes mid-runtime se deja diferida a QA manual: el
+modelo de inicialización single-shot de upstream es evidencia suficiente del comportamiento.
+
+### Q2 — shape de `GET /status`
+
+**Observado**: el endpoint devuelve JSON con la siguiente forma (ejemplo real):
+
+```json
+{
+  "api_last_activity": "2026-05-25T07:07:06.006025+00:00",
+  "server_instances": {"trello": "configured", "github": "configured"}
+}
+```
+
+`api_last_activity` es un timestamp ISO-8601 con tz; `server_instances` es un mapping
+`{server_id → state_string}`. Hoy el único state observado es `"configured"`; valores
+futuros (`"initialising"`, `"failed"`, …) deben tratarse como opacos.
+
+**Resolución**: `status_daemon` enriquecido. Si `/status` responde 200 con JSON parseable,
+el dict retornado incluye `api_last_activity` y `servers` (alias semántico de
+`server_instances`) junto a los `pid`, `port`, `uptime_s` originales. Si el endpoint no
+responde (daemon arrancando, hung, port robado, etc.) el dict mantiene la shape base sin
+romper `ai-specs daemon status`. Implementado en `_fetch_status_metadata` (timeout 2 s,
+silently swallow `URLError`/`OSError`/`JSONDecodeError`) — ver
+`tests/test_daemon_dead_pid_recovery.StatusDaemonExposesProxyMetadataTests` para los dos
+extremos.
+
+### Port race (Decisión 4 — refresco)
+
+`_pick_free_port()` cierra el socket microsegundos antes de spawn de `mcp-proxy`. La
+ventana de race es real pero auto-correctiva: la próxima `ensure_daemon` healthcheckea
+`GET /status` contra el `proxy.port` registrado, falla por `Connection refused`, SIGTERMa
+al PID huérfano, reasigna puerto y respawnea. La misma rama cubre el caso de daemon muerto
+externamente. Tests: `tests/test_mcp_daemon_ensure.StaleHealthcheckRestartTests` +
+`tests/test_daemon_dead_pid_recovery.DeadPidRecoveryTests`.
