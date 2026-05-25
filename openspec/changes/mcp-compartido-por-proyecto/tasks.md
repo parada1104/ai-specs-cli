@@ -137,6 +137,8 @@
 
 ---
 
+> **Depende de Group 3**: los tests de `_resolve_proxy_port` requieren un `.ai-specs/run/proxy.port` válido. Para los unit tests use fixtures que escriban el archivo directamente; para los integration tests use la API real de `mcp-daemon.ensure_daemon`. NO empiece Group 4 sin haber implementado al menos `_state_dir`, `_pick_free_port` y la escritura atómica de `proxy.port` (tasks 3.1).
+
 ## Group 4: Renderizado por agente (url para shared)
 
 ### 4.1 _resolve_proxy_port y _render_url_entry

@@ -212,13 +212,27 @@ El estado runtime del daemon SHALL persistirse en los archivos `.ai-specs/run/pr
 
 ---
 
-### Requirement: TBD — comportamiento cuando uvx no está en PATH
+### Requirement: Comportamiento cuando uvx no está en PATH
 
-> **Estado**: ABIERTO — pendiente de resolución en fase de diseño.
->
-> Cuando se detecta al menos un MCP `shared` pero `uvx` no está disponible en `PATH`, existen tres comportamientos candidatos:
-> 1. **fail-fast**: sync falla con error explícito.
-> 2. **warn+degrade-to-stdio**: se emite advertencia y los MCPs `shared` se tratan como `stdio`.
-> 3. **require doctor pass**: se exige que `ai-specs doctor` pase antes de permitir sync con MCPs shared.
->
-> El comportamiento definitivo se resolverá en fase de diseño.
+Cuando se detecta al menos un MCP `shared` pero `uvx` no está disponible en `PATH`, el sistema SHALL adoptar una estrategia híbrida: `ai-specs doctor` falla preventivamente (fail-fast) y `ai-specs sync` degrada de forma local sin romper el pipeline.
+
+- `ai-specs doctor` SHALL emitir un check `daemon-uvx` con severidad `ERROR` y guidance para instalar `uv`, y SHALL terminar con exit code distinto de cero.
+- `ai-specs sync` SHALL emitir un `WARN`, omitir el paso `ensure_daemon`, tratar los MCPs `shared` como `stdio` únicamente para esa invocación de render (degradación local, no persistente al manifest) y completar el resto del pipeline con exit code cero.
+
+#### Scenario: Doctor falla cuando hay MCPs shared y falta uvx
+
+- **WHEN** el manifest o la materialización resuelven al menos un MCP con `mode = "shared"`
+- **AND** `shutil.which("uvx")` retorna `None`
+- **THEN** `ai-specs doctor` SHALL emitir un check `daemon-uvx` con severidad `ERROR`
+- **AND** SHALL terminar con exit code distinto de cero
+- **AND** el output SHALL incluir guidance para instalar `uv`
+
+#### Scenario: Sync degrada a stdio cuando falta uvx
+
+- **WHEN** `ai-specs sync` detecta al menos un MCP con `mode = "shared"`
+- **AND** `shutil.which("uvx")` retorna `None`
+- **THEN** el sistema SHALL emitir un mensaje `WARN`
+- **AND** SHALL omitir el paso `ensure_daemon`
+- **AND** los MCPs shared SHALL renderizarse como `command`/`args`/`env` (equivalente a `mode = "stdio"`) sólo para esta invocación
+- **AND** el manifest SHALL NOT ser modificado
+- **AND** el pipeline SHALL completar con exit code cero

@@ -71,18 +71,21 @@ Las referencias a variables de entorno en la forma `$VAR` o `${VAR}` SHALL prese
 
 ---
 
-### Requirement: Cambios en la config disparan reload del daemon
+### Requirement: Cambios en la config disparan restart del daemon
 
-Cuando el archivo `proxy.named-config.json` cambia y el daemon está corriendo, el sistema SHALL señalizar al daemon para recargar su configuración (señal o restart controlado).
+Cuando el archivo `proxy.named-config.json` cambia y el daemon está corriendo, el sistema SHALL ejecutar un restart controlado (SIGTERM al proceso actual + spawn de un proceso nuevo con la config actualizada). El sistema SHALL NOT depender de señales de reload (mcp-proxy no documenta SIGHUP reload). La detección del cambio SHALL basarse en el hash SHA-256 del JSON canónico antes y después de escribir.
 
-#### Scenario: Config cambiada en sync subsiguiente dispara reload
+#### Scenario: Config cambiada en sync subsiguiente dispara restart controlado
 
-- **WHEN** un segundo `ai-specs sync` produce un `proxy.named-config.json` diferente al anterior
+- **WHEN** un segundo `ai-specs sync` produce un `proxy.named-config.json` cuyo SHA-256 difiere del anterior
 - **AND** el daemon está corriendo y sano
-- **THEN** el sistema SHALL notificar al daemon del cambio (señal o restart)
-- **AND** el daemon SHALL servir la configuración actualizada
+- **THEN** el sistema SHALL enviar SIGTERM al proceso actual
+- **AND** SHALL esperar a que el proceso termine
+- **AND** SHALL spawnear un proceso nuevo con la config actualizada
+- **AND** el daemon SHALL servir la configuración actualizada al completar el restart
 
-#### Scenario: Config sin cambios no dispara reload
+#### Scenario: Config sin cambios no dispara restart
 
-- **WHEN** un segundo `ai-specs sync` produce un `proxy.named-config.json` byte-idéntico al anterior
-- **THEN** el sistema SHALL NOT enviar señal de reload al daemon
+- **WHEN** un segundo `ai-specs sync` produce un `proxy.named-config.json` byte-idéntico al anterior (mismo SHA-256)
+- **THEN** el sistema SHALL NOT enviar SIGTERM al daemon
+- **AND** el PID del daemon SHALL permanecer invariante
