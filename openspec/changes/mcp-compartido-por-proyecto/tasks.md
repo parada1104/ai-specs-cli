@@ -32,29 +32,29 @@
 
 ### 2.1 split_mcps_by_mode
 
-- [ ] [red] Escribir test: input mixto `{"trello": {..., "mode": "shared"}, "github": {...}}` → `split_mcps_by_mode` retorna `({"trello": ...}, {"github": ...})` (`tests/unit/test_recipe_materialize_split.py`)
-- [ ] [red] Escribir test: input vacío → `({}, {})`
-- [ ] [red] Escribir test: solo stdio → `({}, {...})`
-- [ ] [red] Escribir test: solo shared → `({...}, {})`
-- [ ] [red] Escribir test: MCP sin campo `mode` cae en el grupo stdio
-- [ ] [green] Implementar `split_mcps_by_mode(merged_mcp: dict) -> tuple[dict, dict]` en `lib/_internal/recipe-materialize.py`
+- [x] [red] Escribir test: input mixto `{"trello": {..., "mode": "shared"}, "github": {...}}` → `split_mcps_by_mode` retorna `({"trello": ...}, {"github": ...})` (`tests/unit/test_recipe_materialize_split.py`)
+- [x] [red] Escribir test: input vacío → `({}, {})`
+- [x] [red] Escribir test: solo stdio → `({}, {...})`
+- [x] [red] Escribir test: solo shared → `({...}, {})`
+- [x] [red] Escribir test: MCP sin campo `mode` cae en el grupo stdio
+- [x] [green] Implementar `split_mcps_by_mode(merged_mcp: dict) -> tuple[dict, dict]` en `lib/_internal/recipe-materialize.py`
 
 ### 2.2 write_named_server_config
 
-- [ ] [red] Escribir test: output JSON tiene shape `{"mcpServers": {...}}` (`tests/unit/test_recipe_materialize_named_config.py`)
-- [ ] [red] Escribir test: la key `mode` NO aparece en ningún server del output (mcp-proxy no la reconoce)
-- [ ] [red] Escribir test: referencias `$VAR` y `${VAR}` en `env` se preservan literalmente (sin expansión)
-- [ ] [red] Escribir test: múltiples MCPs shared aparecen como entradas separadas bajo `mcpServers`
-- [ ] [red] Escribir test: el archivo se escribe con permisos `0o600`
-- [ ] [green] Implementar `write_named_server_config(shared: dict, output_path: Path) -> None` en `lib/_internal/recipe-materialize.py`
+- [x] [red] Escribir test: output JSON tiene shape `{"mcpServers": {...}}` (`tests/unit/test_recipe_materialize_named_config.py`)
+- [x] [red] Escribir test: la key `mode` NO aparece en ningún server del output (mcp-proxy no la reconoce)
+- [x] [red] Escribir test: referencias `$VAR` y `${VAR}` en `env` se preservan literalmente (sin expansión)
+- [x] [red] Escribir test: múltiples MCPs shared aparecen como entradas separadas bajo `mcpServers`
+- [x] [red] Escribir test: el archivo se escribe con permisos `0o600`
+- [x] [green] Implementar `write_named_server_config(shared: dict, output_path: Path) -> None` en `lib/_internal/recipe-materialize.py`
 
 ### 2.3 Integración en materialize_recipes()
 
-- [ ] [red] Escribir test: `materialize_recipes()` con MCP shared crea `.ai-specs/run/proxy.named-config.json` (`tests/integration/test_materialize_shared_mcp.sh`)
-- [ ] [red] Escribir test: `materialize_recipes()` sin MCPs shared NO crea `.ai-specs/run/proxy.named-config.json`
-- [ ] [red] Escribir test: hash SHA-256 del named-config cambia entre syncs si el MCP cambia (base para detección de cambio en Group 3)
-- [ ] [green] Modificar `materialize_recipes()` en `lib/_internal/recipe-materialize.py`: llamar `split_mcps_by_mode`, si `shared` no vacío llamar `write_named_server_config`, obtener `git_root` vía `subprocess(['git', 'rev-parse', '--show-toplevel'])`
-- [ ] [refactor] Asegurar que `recipe_mcp_out` temp sigue incluyendo `mode` para el downstream (`mcp-render.py`)
+- [x] [red] Escribir test: `materialize_recipes()` con MCP shared crea `.ai-specs/run/proxy.named-config.json` (`tests/integration/test_materialize_shared_mcp.sh`)
+- [x] [red] Escribir test: `materialize_recipes()` sin MCPs shared NO crea `.ai-specs/run/proxy.named-config.json`
+- [x] [red] Escribir test: hash SHA-256 del named-config cambia entre syncs si el MCP cambia (base para detección de cambio en Group 3)
+- [x] [green] Modificar `materialize_recipes()` en `lib/_internal/recipe-materialize.py`: llamar `split_mcps_by_mode`, si `shared` no vacío llamar `write_named_server_config`, obtener `git_root` vía `subprocess(['git', 'rev-parse', '--show-toplevel'])`
+- [x] [refactor] Asegurar que `recipe_mcp_out` temp sigue incluyendo `mode` para el downstream (`mcp-render.py`)
 
 ---
 
