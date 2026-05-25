@@ -108,6 +108,17 @@ echo "▸ recipe-materialize (root)"
 RECIPE_MCP_TEMP="$(mktemp -t ai-specs-recipe-mcp-XXXXXX.json)"
 python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP"
 
+PROXY_NAMED_CONFIG="$ROOT_PATH/.ai-specs/run/proxy.named-config.json"
+if [[ -f "$PROXY_NAMED_CONFIG" ]]; then
+    echo "▸ ensure mcp-proxy daemon"
+    if ! python3 "$AI_SPECS_HOME/lib/_internal/mcp-daemon.py" ensure "$ROOT_PATH" \
+            --named-config "$PROXY_NAMED_CONFIG"; then
+        echo "ERROR: daemon ensure failed; aborting before fan-out step." >&2
+        rm -f "$RECIPE_MCP_TEMP"
+        exit 1
+    fi
+fi
+
 echo "▸ target fan-out"
 for idx in "${!RESOLVED_TARGETS[@]}"; do
     target="${RESOLVED_TARGETS[$idx]}"

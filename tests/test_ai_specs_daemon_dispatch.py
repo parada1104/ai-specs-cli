@@ -97,8 +97,8 @@ class AiSpecsDaemonDispatchTests(unittest.TestCase):
             _stage_named_config(git_root)
             self.addCleanup(_reap_pid_from, git_root)
             proc = _run_cli("daemon", "restart", cwd=git_root, fake=True)
-        self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
-        self.assertTrue((git_root / ".ai-specs" / "run" / "proxy.pid").is_file())
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+            self.assertTrue((git_root / ".ai-specs" / "run" / "proxy.pid").is_file())
 
 
 if __name__ == "__main__":

@@ -131,7 +131,7 @@ class SyncEnsureDaemonStepTests(unittest.TestCase):
         self.assertIn("daemon ensure failed", proc.stdout + proc.stderr)
         # Fan-out must NOT have executed — sync-agent would emit "▸ root:."
         # ahead of any agent work; assert it never reached that step.
-        self.assertNotIn("target fan-out", proc.stdout + proc.stderr)
+        self.assertNotIn("▸ target fan-out", proc.stdout + proc.stderr)
 
 
 if __name__ == "__main__":
