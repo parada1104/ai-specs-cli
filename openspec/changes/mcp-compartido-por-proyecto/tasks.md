@@ -250,14 +250,14 @@
 
 ### 8.1 catalog/recipes/trello-mcp-workflow/recipe.toml
 
-- [ ] [red] Escribir test: fixture que materialize la recipe trello → produce `proxy.named-config.json` con server `trello` (valida que el campo `mode = "shared"` está activo) (`tests/integration/test_trello_recipe_shared.sh`)
-- [ ] [green] Modificar `catalog/recipes/trello-mcp-workflow/recipe.toml`: añadir `mode = "shared"` al bloque `[[provides.mcp]]` del preset trello
+- [x] [red] Escribir test: fixture que materialize la recipe trello → produce `proxy.named-config.json` con server `trello` (valida que el campo `mode = "shared"` está activo) (`tests/test_trello_recipe_shared.py`)
+- [x] [green] Modificar `catalog/recipes/trello-mcp-workflow/recipe.toml`: añadir `mode = "shared"` al bloque `[[provides.mcp]]` del preset trello
 
 ### 8.2 .gitignore — patrón .ai-specs/run/
 
-- [ ] [red] Escribir test: después de sync, ningún archivo bajo `.ai-specs/run/` aparece en `git status` (verifica que el patrón gitignore funciona) (`tests/integration/test_gitignore_run_dir.sh`)
-- [ ] [green] Añadir patrón `.ai-specs/run/` al template de gitignore que `ai-specs init` materializa (identificar la fuente correcta: `bundled-skills/.../template-gitignore` o equivalente)
-- [ ] [green] Verificar que proyectos ya inicializados pueden actualizar su `.gitignore` manualmente o documentar como nota de upgrade
+- [x] [red] Escribir test: el template `templates/gitignore-root.tmpl` (y `ai-specs init` end-to-end) incluye el patrón `.ai-specs/run/` dentro del bloque gestionado (`tests/test_gitignore_run_dir.py`)
+- [x] [green] Añadir patrón `.ai-specs/run/` al template `templates/gitignore-root.tmpl` (fuente que `ai-specs init` appendea a `.gitignore` del root)
+- [x] [green] Proyectos ya inicializados pueden actualizar su `.gitignore` corriendo `ai-specs init --force` (regenera el bloque gestionado desde el template)
 
 ---
 

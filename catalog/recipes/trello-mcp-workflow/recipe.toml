@@ -72,6 +72,7 @@ command = "npx"
 args = ["-y", "@delorenj/mcp-server-trello"]
 env = { TRELLO_API_KEY = "$TRELLO_API_KEY", TRELLO_TOKEN = "$TRELLO_TOKEN" }
 timeout = 30000
+mode = "shared"
 
 [[provides.templates]]
 source = "templates/card-feature.md"
