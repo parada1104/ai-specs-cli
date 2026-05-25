@@ -17,7 +17,7 @@
 
 ## Phase 4: Testing & Verification
 
-- [x] 4.1 Unit: `platform_get pi skills_dir` returns `.pi/skills`, `platform_get pi commands_dir` exits 1
+- [x] 4.1 Unit: `platform_get pi skills_dir` returns `.pi/skills`, `platform_get pi commands_dir` returns empty string (exit 0 — defined-but-empty field), `platform_get pi nonexistent_field` exits 1 via the `*)` fallback
 - [x] 4.2 Integration: `sync-agent --pi` creates `.pi/skills/` symlink and `.mcp.json` with `mcpServers`
 - [x] 4.3 Regression: `sync-agent --all` produces identical existing-agent configs before and after adding Pi
 - [x] 4.4 Doctor: `ai-specs doctor` accepts `pi` as valid agent (not flagged unknown), reports OK for valid symlink/MCP, ERROR for broken symlink

@@ -40,11 +40,17 @@ The system MUST accept `--pi` in `lib/sync-agent.sh` argument parsing and usage.
 
 The system MUST symlink resolved skills to `.pi/skills/` when syncing to Pi.
 
-#### Scenario: Symlink created
+#### Scenario: Symlink created in root target
 
-- GIVEN `ai-specs sync-agent --pi` runs
+- GIVEN `ai-specs sync-agent --pi` runs with `TARGET_PATH == SOURCE_ROOT`
 - WHEN sync completes
 - THEN `.pi/skills/` MUST be a symlink to `ai-specs/.internal/resolved-skills/`
+
+#### Scenario: Symlink created in sub-target fan-out
+
+- GIVEN `ai-specs sync-agent --pi` runs with a sub-target (`TARGET_PATH != SOURCE_ROOT`)
+- WHEN sync completes
+- THEN `.pi/skills/` under the sub-target MUST be a symlink to that sub-target's `ai-specs/skills/` (mirrored from resolved skills)
 
 ### Requirement: MCP fan-out
 

@@ -8,7 +8,7 @@
 - Project: `ai-specs-cli`
 - Manifest: `ai-specs/ai-specs.toml`
 - Purpose: per-project AI harness for agent configuration, MCPs, recipes, memory, and tracker integration.
-- Enabled runtimes: `claude`, `cursor`, `opencode`
+- Enabled runtimes: `claude`, `cursor`, `opencode`, `pi`
 - Integration branch: `development`
 
 ## Runtime MCPs
