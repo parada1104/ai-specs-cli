@@ -7,14 +7,29 @@ Exit code is non-zero when one or more ERROR checks are present.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 AI_SPECS_HOME = Path(__file__).resolve().parents[2]
+
+
+def _load_internal_module(filename: str, module_name: str) -> Any:
+    """Load a sibling lib/_internal/<filename> via importlib (used for dashed names)."""
+    path = Path(__file__).with_name(filename)
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def bundled_skill_names(cli_home: Path | None = None) -> list[str]:
@@ -104,6 +119,8 @@ class Doctor:
         self._check_agents_md()
         self._check_bundled_assets()
         self._check_enabled_agents()
+        self._check_daemon_uvx()
+        self._check_daemon_running()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -374,6 +391,98 @@ class Doctor:
                     guidance="ai-specs sync"
                 ))
 
+
+
+    # -------------------------------------------------------------------------
+    # Shared mcp-proxy daemon checks (mcp-compartido-por-proyecto)
+    # -------------------------------------------------------------------------
+
+    def _resolve_shared_mcps(self) -> dict:
+        """Return the merged {id: cfg} of MCPs with mode == "shared" (manifest+recipes).
+
+        Uses manifest precedence: if the same id is declared in both manifest
+        and a recipe preset, the manifest's `mode` wins (per build_recipe_mcp).
+        Falls back to manifest-only when recipe materialize cannot be loaded
+        (e.g. catalog missing on the host).
+        """
+        manifest = self._load_manifest()
+        try:
+            toml_read = _load_internal_module("toml-read.py", "_doctor_toml_read")
+        except Exception:
+            return {}
+        manifest_mcp = toml_read.read_mcp(manifest) if manifest else {}
+        recipes_dict = toml_read.read_recipes(manifest) if manifest else {}
+        enabled_ids = [rid for rid, cfg in recipes_dict.items() if cfg.get("enabled")]
+        if enabled_ids:
+            try:
+                mat = _load_internal_module("recipe-materialize.py", "_doctor_recipe_materialize")
+                catalog = AI_SPECS_HOME / "catalog" / "recipes"
+                merged = mat.build_recipe_mcp(catalog, enabled_ids, manifest_mcp)
+                shared, _stdio = mat.split_mcps_by_mode(merged)
+                return shared
+            except Exception:
+                pass
+        return {sid: cfg for sid, cfg in manifest_mcp.items()
+                if isinstance(cfg, dict) and cfg.get("mode") == "shared"}
+
+    def _check_daemon_uvx(self) -> None:
+        shared = self._resolve_shared_mcps()
+        if not shared:
+            return
+        if shutil.which("uvx") is None:
+            self.checks.append(Check(
+                Severity.ERROR, "daemon-uvx",
+                "uvx not found in PATH but shared MCPs are declared",
+                guidance="Install uv from https://docs.astral.sh/uv/",
+            ))
+        else:
+            self.checks.append(Check(
+                Severity.OK, "daemon-uvx",
+                "uvx available for shared mcp-proxy daemon",
+            ))
+
+    def _check_daemon_running(self) -> None:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=str(self.root),
+                capture_output=True, text=True, check=True,
+            )
+            git_root = Path(result.stdout.strip())
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            return
+        state_dir = git_root / ".ai-specs" / "run"
+        pid_file = state_dir / "proxy.pid"
+        port_file = state_dir / "proxy.port"
+        if not pid_file.is_file() and not port_file.is_file():
+            return
+        guidance = ("Run `ai-specs sync` to restart the daemon or "
+                    "`ai-specs daemon restart` directly")
+        try:
+            port = int(port_file.read_text().strip())
+        except (OSError, ValueError):
+            self.checks.append(Check(
+                Severity.WARN, "daemon-running",
+                "proxy.port missing or unreadable",
+                guidance=guidance,
+            ))
+            return
+        try:
+            daemon = _load_internal_module("mcp-daemon.py", "_doctor_mcp_daemon")
+            healthy = bool(daemon.healthcheck(port))
+        except Exception:
+            healthy = False
+        if healthy:
+            self.checks.append(Check(
+                Severity.OK, "daemon-running",
+                f"mcp-proxy responding on port {port}",
+            ))
+        else:
+            self.checks.append(Check(
+                Severity.WARN, "daemon-running",
+                f"mcp-proxy not responding on port {port}",
+                guidance=guidance,
+            ))
 
 
 def main() -> int:

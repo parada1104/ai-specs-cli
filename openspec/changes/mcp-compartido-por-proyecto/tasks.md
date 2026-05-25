@@ -222,17 +222,17 @@
 
 ### 6.1 Check daemon-uvx cuando hay MCPs shared
 
-- [ ] [red] Escribir test: doctor con manifest que tiene MCP `mode = "shared"` + `uvx` ausente en PATH → exit code != 0, output contiene `ERROR  daemon-uvx` (`tests/integration/test_doctor_uvx_missing.sh`)
-- [ ] [red] Escribir test: doctor con MCP shared + `uvx` presente en PATH → check `daemon-uvx` aparece como `OK`
-- [ ] [red] Escribir test: doctor sin MCPs shared → check `daemon-uvx` NO aparece en el output (no aplica)
-- [ ] [green] Implementar check `daemon-uvx` en `lib/_internal/doctor.py`: resolver MCPs shared del manifest + presets; si hay al menos uno y `shutil.which("uvx") is None` → `ERROR` con guidance de install; si presente → `OK`
+- [x] [red] Escribir test: doctor con manifest que tiene MCP `mode = "shared"` + `uvx` ausente en PATH → exit code != 0, output contiene `ERROR  daemon-uvx` (`tests/integration/test_doctor_uvx_missing.sh`)
+- [x] [red] Escribir test: doctor con MCP shared + `uvx` presente en PATH → check `daemon-uvx` aparece como `OK`
+- [x] [red] Escribir test: doctor sin MCPs shared → check `daemon-uvx` NO aparece en el output (no aplica)
+- [x] [green] Implementar check `daemon-uvx` en `lib/_internal/doctor.py`: resolver MCPs shared del manifest + presets; si hay al menos uno y `shutil.which("uvx") is None` → `ERROR` con guidance de install; si presente → `OK`
 
 ### 6.2 Check daemon-running (opcional pero en scope)
 
-- [ ] [red] Escribir test: doctor con state files presentes y daemon vivo → `daemon-running` aparece como `OK`
-- [ ] [red] Escribir test: doctor con state files presentes pero daemon caído → `daemon-running` aparece como `WARN` con guidance para ejecutar `ai-specs sync`
-- [ ] [red] Escribir test: doctor sin state files → check `daemon-running` no se evalúa
-- [ ] [green] Implementar check `daemon-running` en `lib/_internal/doctor.py`: si existen state files, hacer healthcheck; emitir OK/WARN según resultado
+- [x] [red] Escribir test: doctor con state files presentes y daemon vivo → `daemon-running` aparece como `OK`
+- [x] [red] Escribir test: doctor con state files presentes pero daemon caído → `daemon-running` aparece como `WARN` con guidance para ejecutar `ai-specs sync`
+- [x] [red] Escribir test: doctor sin state files → check `daemon-running` no se evalúa
+- [x] [green] Implementar check `daemon-running` en `lib/_internal/doctor.py`: si existen state files, hacer healthcheck; emitir OK/WARN según resultado
 
 ---
 
