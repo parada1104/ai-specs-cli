@@ -263,15 +263,15 @@
 
 ## Group 9: Integration test — happy path completo
 
-- [ ] [red] Escribir test de integración end-to-end: declarar MCP shared en fixture, ejecutar `ai-specs sync`, verificar que `proxy.pid` existe y `kill -0 $(cat proxy.pid)` succeed (`tests/integration/test_daemon_end_to_end.sh`)
-- [ ] [red] Escribir test: `GET http://localhost:$(cat proxy.port)/status` retorna 200
-- [ ] [red] Escribir test: `.mcp.json` (claude) contiene `"url": "http://localhost:.../servers/trello/mcp"`
-- [ ] [red] Escribir test de idempotencia: segunda sync sin cambios → PID idéntico, un solo proceso `mcp-proxy` activo (`tests/integration/test_daemon_idempotency.sh`)
-- [ ] [red] Escribir test de worktrees concurrentes: dos `ai-specs sync` en paralelo desde worktrees distintos → exactamente 1 proceso `mcp-proxy` al final (`tests/integration/test_daemon_concurrent_syncs.sh`)
-- [ ] [red] Escribir test: manifest con `mode = "stdio"` anula recipe `mode = "shared"` → daemon no arranca, render emite stdio (`tests/integration/test_manifest_precedence_over_recipe.sh`)
-- [ ] [red] Escribir test: `ai-specs daemon stop` termina el proceso y elimina state files
-- [ ] [green] Asegurar que todos los fixtures necesarios para los tests de integración existen y son autocontenidos
-- [ ] [refactor] Crear helper compartido de fixtures de integración si los tests repiten patrones de setup similares
+- [x] [red] Escribir test de integración end-to-end: declarar MCP shared en fixture, ejecutar `ai-specs sync`, verificar que `proxy.pid` existe y `kill -0 $(cat proxy.pid)` succeed (`tests/test_daemon_end_to_end.py`)
+- [x] [red] Escribir test: `GET http://localhost:$(cat proxy.port)/status` retorna 200 (`tests/test_daemon_end_to_end.py`)
+- [x] [red] Escribir test: `.mcp.json` (claude) contiene `"url": "http://localhost:.../servers/{name}/mcp"` (`tests/test_daemon_end_to_end.py`)
+- [x] [red] Escribir test de idempotencia: segunda sync sin cambios → PID idéntico, un solo proceso `mcp-proxy` activo (`tests/test_daemon_idempotency.py`)
+- [x] [red] Escribir test de syncs concurrentes contra el mismo state dir → exactamente 1 proceso `mcp-proxy` al final, file lock serializa correctamente (`tests/test_daemon_concurrent_syncs.py`)
+- [x] [red] Escribir test: manifest con `mode = "stdio"` anula recipe `mode = "shared"` → daemon no arranca, render emite stdio (`tests/test_manifest_precedence_over_recipe.py`)
+- [x] [red] Escribir test: `ai-specs daemon stop` termina el proceso y elimina state files (`tests/test_daemon_end_to_end.py::test_daemon_stop_terminates_proxy_and_cleans_state_files`)
+- [x] [green] Fixtures de integración autocontenidos: `_ai_specs_init` + git init + manifest reescrito + pre-stage `proxy.named-config.json` + reap-on-cleanup (`tests/_daemon_fixtures.py`)
+- [x] [refactor] Helper compartido `tests/_daemon_fixtures.py` reutilizado por los 4 test files (init_workspace, write_manifest_toml, stage_named_config, run_sync, run_daemon_stop, reap_proxy, wait_for_status, read_pid/read_port, uvx_available)
 
 ---
 
