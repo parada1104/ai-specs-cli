@@ -41,11 +41,13 @@ case "$subcmd" in
        exit 2 ;;
 esac
 
-if ! GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+if ! GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
     echo "ERROR: ai-specs daemon must run inside a git repository." >&2
     echo "       Run 'git init' in the project root first." >&2
     exit 1
 fi
+# Parent of --git-common-dir = canonical repo root (shared across worktrees).
+GIT_ROOT="$(dirname "$GIT_COMMON_DIR")"
 
 case "$subcmd" in
     stop)

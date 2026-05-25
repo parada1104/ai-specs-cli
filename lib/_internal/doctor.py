@@ -443,12 +443,14 @@ class Doctor:
 
     def _check_daemon_running(self) -> None:
         try:
+            # Canonical repo root: parent of `--git-common-dir`. Same value
+            # from every worktree of the same repository — daemon is shared.
             result = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
+                ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
                 cwd=str(self.root),
                 capture_output=True, text=True, check=True,
             )
-            git_root = Path(result.stdout.strip())
+            git_root = Path(result.stdout.strip()).parent
         except (subprocess.CalledProcessError, FileNotFoundError, OSError):
             return
         state_dir = git_root / ".ai-specs" / "run"

@@ -590,14 +590,17 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     print(f"  ✓ wrote recipe MCP temp ({len(recipe_mcp)} server(s))")
     # Split into shared/stdio. Shared MCPs are also written to
     # `<git_root>/.ai-specs/run/proxy.named-config.json` for the
-    # mcp-proxy daemon (Group 3). The `recipe_mcp` temp keeps `mode`
-    # so the downstream mcp-render.py picks the right per-agent rendering
-    # in Group 4.
+    # mcp-proxy daemon (Group 3). `git_root` here is the *canonical*
+    # repo root — `dirname` of `git rev-parse --git-common-dir` — so
+    # every worktree of the same repository points at the same daemon
+    # (spec `mcp-shared-daemon`: "Worktrees comparten daemon"). The
+    # `recipe_mcp` temp keeps `mode` so the downstream mcp-render.py
+    # picks the right per-agent rendering in Group 4.
     shared_mcp, _stdio_mcp = split_mcps_by_mode(recipe_mcp)
     if shared_mcp:
         try:
-            git_root_str = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
+            git_common_dir = subprocess.run(
+                ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
                 cwd=str(project_root),
                 check=True,
                 capture_output=True,
@@ -605,11 +608,11 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
             ).stdout.strip()
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
             fail(
-                f"shared MCPs declared but `git rev-parse --show-toplevel` failed "
+                f"shared MCPs declared but `git rev-parse --git-common-dir` failed "
                 f"from {project_root}: {exc}"
             )
             return 1
-        git_root = Path(git_root_str)
+        git_root = Path(git_common_dir).parent
         named_config_path = git_root / ".ai-specs" / "run" / "proxy.named-config.json"
         write_named_server_config(shared_mcp, named_config_path)
         print(f"  ✓ wrote {named_config_path.relative_to(git_root)} ({len(shared_mcp)} shared server(s))")

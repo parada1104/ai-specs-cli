@@ -18,6 +18,6 @@ El pipeline `on-sync` SHALL incluir un nuevo paso "ensure mcp-proxy daemon" que 
 
 #### Scenario: Fallo del paso daemon detiene el sync
 
-- **WHEN** el paso "ensure mcp-proxy daemon" falla (por ejemplo, `uvx` ausente o puerto no asignable)
+- **WHEN** el paso "ensure mcp-proxy daemon" falla por una razón irrecuperable (por ejemplo, puerto no asignable o `mcp-proxy` crashea al spawnear) — nótese que `uvx` ausente NO entra en este escenario; lo cubre la degradación de `mcp-shared-daemon` (WARN + render stdio + exit 0)
 - **THEN** `sync.sh` SHALL detenerse con un error explícito
 - **AND** el fan-out de configs por agente SHALL NOT ejecutarse

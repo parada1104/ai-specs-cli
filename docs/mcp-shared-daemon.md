@@ -6,6 +6,13 @@
 speak HTTP connect to `http://localhost:<port>/servers/<name>/mcp`; agents without HTTP
 (Codex, Gemini) keep the stdio fallback.
 
+The "git root" identity is the **canonical repository root** — the `dirname` of
+`git rev-parse --path-format=absolute --git-common-dir`. That value is the same from any
+linked `git worktree` of the repo, so every worktree of the same project shares one daemon
+process and one state directory at `<canonical-repo>/.ai-specs/run/` (not under each
+worktree). `ai-specs init` adds `.ai-specs/run/` to the project's `.gitignore` so the
+state files do not leak into commits.
+
 ## When does the daemon start?
 
 `ai-specs sync` writes `<git-root>/.ai-specs/run/proxy.named-config.json` whenever

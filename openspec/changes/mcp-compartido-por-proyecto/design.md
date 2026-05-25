@@ -4,7 +4,7 @@
 
 Hoy el pipeline de `ai-specs sync` materializa MCPs declarados en `[mcp.*]` y `[[provides.mcp]]` como configs stdio independientes por agente: `mcp-render.py` recorre los servidores merged y emite, para cada agente habilitado, una entrada `command`/`args`/`env` en el formato nativo (`.mcp.json`, `opencode.json`, `.codex/config.toml`, etc.). El runtime de cada agente lanza su propio subprocess stdio cada vez que invoca un tool del MCP. Esto se multiplica por N agentes y por M worktrees del mismo repositorio.
 
-Este cambio introduce una capa de daemon HTTP multiplexante (`mcp-proxy`) que vive una sola vez por raíz git y aloja todos los MCPs marcados como `shared`. Los agentes con capacidad HTTP (Claude, Cursor, OpenCode) reciben una entrada `url` apuntando a `http://localhost:{port}/servers/{name}/mcp`; los agentes sin HTTP (Codex, Gemini) siguen recibiendo stdio. La identidad del daemon es la raíz git (`git rev-parse --show-toplevel`), por lo que distintos worktrees comparten un único proceso.
+Este cambio introduce una capa de daemon HTTP multiplexante (`mcp-proxy`) que vive una sola vez por raíz git y aloja todos los MCPs marcados como `shared`. Los agentes con capacidad HTTP (Claude, Cursor, OpenCode) reciben una entrada `url` apuntando a `http://localhost:{port}/servers/{name}/mcp`; los agentes sin HTTP (Codex, Gemini) siguen recibiendo stdio. La identidad del daemon es la raíz git canónica (`dirname` del `git rev-parse --path-format=absolute --git-common-dir`), por lo que distintos worktrees del mismo repo comparten un único proceso.
 
 Los módulos que crecen son `recipe-materialize.py` (split shared/stdio + escritura del `named-server-config.json`), `mcp-render.py` (rama `url` para shared en los 3 agentes HTTP) y `sync.sh` (paso "ensure mcp-proxy daemon" antes del fan-out + subcomando `ai-specs daemon ...`). El módulo nuevo `lib/_internal/mcp-daemon.py` concentra todo el ciclo de vida del proceso `mcp-proxy` (start, healthcheck, stop, status, restart, asignación de puerto, file locking). `doctor.py` recibe un check preventivo nuevo (verificar `uvx` en PATH cuando hay MCPs `shared`). Los validators de schema (recipe y manifest) aceptan el campo opcional `mode`.
 
@@ -30,7 +30,7 @@ worktree-A/$ ai-specs sync
         ├─► if shared not empty:
         │      mcp-daemon.py ensure  <git-root>  --named-config <path>
         │           │
-        │           ├─► git_root = rev-parse --show-toplevel
+        │           ├─► git_root = dirname(rev-parse --git-common-dir)   # canonical repo root, shared across worktrees
         │           ├─► state_dir = <git-root>/.ai-specs/run/
         │           ├─► acquire lock state_dir/proxy.lock   (fcntl LOCK_EX)
         │           ├─► if proxy.pid && proxy.port exist:
@@ -144,7 +144,7 @@ Archivos en `<git-root>/.ai-specs/run/`:
 - `proxy.lock` — flock para serializar `ensure_daemon` entre procesos
 - `proxy.log` — stdout/stderr del daemon
 
-- **Rationale**: la raíz git es única por repositorio, sin importar cuántos worktrees existan. `git worktree list` resuelve todos al mismo `--show-toplevel` del repo principal. Todos los worktrees inspeccionan/escriben en la misma ruta absoluta.
+- **Rationale**: la raíz git canónica es única por repositorio, sin importar cuántos worktrees existan. `git rev-parse --path-format=absolute --git-common-dir` apunta al `.git` real (no al gitdir-link de un worktree); su `dirname` es el working tree del repo principal y todos los worktrees lo resuelven al mismo valor. Todos los worktrees inspeccionan/escriben en la misma ruta absoluta.
 - **Trade-off**: en un worktree sin la carpeta `.ai-specs/run/` la primera sync debe crearla. Aceptable; mkdir parents=True.
 
 ### Decisión 7: Concurrencia entre syncs simultáneos
@@ -213,7 +213,7 @@ ai-specs daemon restart   # stop seguido de ensure
   - Setea permisos `0o600` (touchea secrets resueltos del shell env).
 - **Modificar** `materialize_recipes()`:
   - Tras el merge final, llama `split_mcps_by_mode(recipe_mcp)`.
-  - Si `shared` no vacío: `write_named_server_config(shared, <git_root>/.ai-specs/run/proxy.named-config.json)`. El `git_root` se obtiene de `subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd=project_root)`.
+  - Si `shared` no vacío: `write_named_server_config(shared, <git_root>/.ai-specs/run/proxy.named-config.json)`. El `git_root` se obtiene resolviendo `subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], cwd=project_root)` y tomando su `Path(...).parent`.
   - Continúa escribiendo el `recipe_mcp_out` temp con los servers completos (incluyendo `mode`) para que `mcp-render.py` decida.
 
 #### `lib/_internal/mcp-render.py`
@@ -235,14 +235,14 @@ ai-specs daemon restart   # stop seguido de ensure
   ```bash
   if [[ -f "$ROOT_PATH/.ai-specs/run/proxy.named-config.json" ]]; then
       echo "▸ ensure mcp-proxy daemon"
-      python3 -m lib._internal.mcp-daemon ensure "$ROOT_PATH" \
-        --named-config "$ROOT_PATH/.ai-specs/run/proxy.named-config.json" \
+      python3 lib/_internal/mcp-daemon.py ensure "$GIT_ROOT" \
+        --named-config "$GIT_ROOT/.ai-specs/run/proxy.named-config.json" \
         || { echo "ERROR: daemon ensure failed"; exit 1; }
   fi
   ```
   - El `named-config.json` se escribe sólo si hay MCPs shared → su presencia es el switch.
 - **Nuevo subcomando** `ai-specs daemon {stop|status|restart}` vía `bin/ai-specs` + `lib/daemon.sh`:
-  - `lib/daemon.sh` parsea el subcomando, resuelve `git_root` y delega a `python3 -m lib._internal.mcp-daemon {stop|status|restart} "$GIT_ROOT" [--named-config ...]`.
+  - `lib/daemon.sh` parsea el subcomando, resuelve `git_root` y delega a `python3 lib/_internal/mcp-daemon.py {stop|status|restart} "$GIT_ROOT" [--named-config ...]` (invocación por ruta directa porque el nombre del archivo contiene un guion).
 
 #### `lib/doctor.sh` y `lib/_internal/doctor.py`
 
@@ -313,15 +313,15 @@ def _hash_config(path: Path) -> str:
 CLI entrypoint (cuando se invoca como módulo):
 
 ```text
-python3 -m lib._internal.mcp-daemon ensure  <git_root> --named-config <path>
-python3 -m lib._internal.mcp-daemon stop    <git_root>
-python3 -m lib._internal.mcp-daemon status  <git_root>
-python3 -m lib._internal.mcp-daemon restart <git_root> --named-config <path>
+python3 lib/_internal/mcp-daemon.py ensure  <git_root> --named-config <path>
+python3 lib/_internal/mcp-daemon.py stop    <git_root>
+python3 lib/_internal/mcp-daemon.py status  <git_root>
+python3 lib/_internal/mcp-daemon.py restart <git_root> --named-config <path>
 ```
 
 #### `lib/daemon.sh`
 
-Bash wrapper que parsea `ai-specs daemon {stop|status|restart}`, resuelve `git_root` vía `git rev-parse --show-toplevel`, y delega al CLI entrypoint de `mcp-daemon.py`. Reporta errores con el formato estándar del resto de comandos.
+Bash wrapper que parsea `ai-specs daemon {stop|status|restart}`, resuelve `git_root` vía `git rev-parse --path-format=absolute --git-common-dir` (parent) y delega al CLI entrypoint de `mcp-daemon.py` por ruta directa (el nombre del archivo contiene un guion, así que `python3 -m` no es viable). Reporta errores con el formato estándar del resto de comandos.
 
 #### `bin/ai-specs`
 

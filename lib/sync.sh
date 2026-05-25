@@ -108,11 +108,21 @@ echo "▸ recipe-materialize (root)"
 RECIPE_MCP_TEMP="$(mktemp -t ai-specs-recipe-mcp-XXXXXX.json)"
 python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP"
 
-PROXY_NAMED_CONFIG="$ROOT_PATH/.ai-specs/run/proxy.named-config.json"
+# Daemon identity is the canonical git root (parent of --git-common-dir), so
+# every worktree of the same repo shares one mcp-proxy daemon. Non-git roots
+# fall back to ROOT_PATH; the daemon spawn downstream will fail loudly because
+# shared MCPs require a git repository.
+if GIT_COMMON_DIR="$(git -C "$ROOT_PATH" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+    GIT_ROOT="$(dirname "$GIT_COMMON_DIR")"
+else
+    GIT_ROOT="$ROOT_PATH"
+fi
+
+PROXY_NAMED_CONFIG="$GIT_ROOT/.ai-specs/run/proxy.named-config.json"
 if [[ -f "$PROXY_NAMED_CONFIG" ]]; then
     if command -v uvx >/dev/null 2>&1; then
         echo "▸ ensure mcp-proxy daemon"
-        if ! python3 "$AI_SPECS_HOME/lib/_internal/mcp-daemon.py" ensure "$ROOT_PATH" \
+        if ! python3 "$AI_SPECS_HOME/lib/_internal/mcp-daemon.py" ensure "$GIT_ROOT" \
                 --named-config "$PROXY_NAMED_CONFIG"; then
             echo "ERROR: daemon ensure failed; aborting before fan-out step." >&2
             rm -f "$RECIPE_MCP_TEMP"

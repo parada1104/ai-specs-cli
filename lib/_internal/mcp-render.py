@@ -66,8 +66,12 @@ _HTTP_URL_AGENTS = {"claude", "cursor"}
 def _resolve_proxy_port(project_root: Path) -> int:
     """Read the mcp-proxy port from ``<git_root>/.ai-specs/run/proxy.port``.
 
-    The git root is resolved via ``git rev-parse --show-toplevel`` so that the
-    helper works whether ``project_root`` is the repo root or a nested subdir
+    The git root is the *canonical* repository root, resolved as the parent
+    of ``git rev-parse --path-format=absolute --git-common-dir``. Every
+    worktree of the same repository therefore resolves to the same state
+    directory and shares one daemon (spec ``mcp-shared-daemon``:
+    "Worktrees comparten daemon"). The helper works whether
+    ``project_root`` is the repo root, a subdir, or a linked worktree
     (sync renderers pass ``ai-specs/`` as the project root, for example).
 
     Raises:
@@ -76,12 +80,13 @@ def _resolve_proxy_port(project_root: Path) -> int:
     """
     try:
         result = subprocess.run(
-            ["git", "-C", str(project_root), "rev-parse", "--show-toplevel"],
+            ["git", "-C", str(project_root), "rev-parse",
+             "--path-format=absolute", "--git-common-dir"],
             capture_output=True,
             text=True,
             check=True,
         )
-        git_root = Path(result.stdout.strip())
+        git_root = Path(result.stdout.strip()).parent
     except (subprocess.CalledProcessError, FileNotFoundError):
         git_root = project_root
 

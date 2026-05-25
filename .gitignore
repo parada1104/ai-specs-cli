@@ -7,6 +7,7 @@ node_modules/
 .vscode/
 .atl/
 .worktrees/
+.ai-specs/run/
 # --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---
 .claude/
 .cursor/
