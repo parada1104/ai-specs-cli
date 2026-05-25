@@ -475,6 +475,163 @@ class ReportAndExitCodeTests(unittest.TestCase):
                 )
 
 
+class DaemonUvxCheckTests(unittest.TestCase):
+    def _make_uvx_stub(self, dir_: Path) -> None:
+        stub = dir_ / "uvx"
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
+
+    def _run_doctor(self, target: Path, path: str):
+        import os as _os
+        env = {**_os.environ, "PATH": path}
+        return subprocess.run(
+            [sys.executable, str(DOCTOR_PY), str(target)],
+            capture_output=True, text=True, env=env, check=False,
+        )
+
+    def test_daemon_uvx_shared_with_uvx_missing_reports_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            update_toml_field(
+                target / "ai-specs" / "ai-specs.toml",
+                "mcp", "trello",
+                {"command": "npx", "mode": "shared"},
+            )
+            empty = Path(tmp) / "empty-path"
+            empty.mkdir()
+            path = f"{empty}:/usr/bin:/bin"
+            result = self._run_doctor(target, path)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            uvx_lines = [l for l in result.stdout.splitlines() if "daemon-uvx" in l]
+            self.assertTrue(uvx_lines, result.stdout)
+            self.assertTrue(any("ERROR" in l for l in uvx_lines), result.stdout)
+            self.assertIn("uv", result.stdout)
+
+    def test_daemon_uvx_shared_with_uvx_present_reports_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            update_toml_field(
+                target / "ai-specs" / "ai-specs.toml",
+                "mcp", "trello",
+                {"command": "npx", "mode": "shared"},
+            )
+            stub_dir = Path(tmp) / "fakebin"
+            stub_dir.mkdir()
+            self._make_uvx_stub(stub_dir)
+            path = f"{stub_dir}:/usr/bin:/bin"
+            result = self._run_doctor(target, path)
+            uvx_lines = [l for l in result.stdout.splitlines() if "daemon-uvx" in l]
+            self.assertTrue(uvx_lines, result.stdout)
+            self.assertTrue(any("OK" in l for l in uvx_lines), result.stdout)
+
+    def test_daemon_uvx_no_shared_check_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            update_toml_field(
+                target / "ai-specs" / "ai-specs.toml",
+                "mcp", "demo",
+                {"command": "npx"},
+            )
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertNotIn("daemon-uvx", result.stdout)
+
+
+class DaemonRunningCheckTests(unittest.TestCase):
+    def _git_init(self, path: Path) -> None:
+        subprocess.run(
+            ["git", "-c", "init.defaultBranch=main", "init", "-q", str(path)],
+            check=True,
+        )
+
+    def test_daemon_running_no_state_files_check_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._git_init(target)
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertNotIn("daemon-running", result.stdout)
+
+    def test_daemon_running_state_present_unhealthy_reports_warn(self):
+        import socket as _socket
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._git_init(target)
+            run_dir = target / ".ai-specs" / "run"
+            run_dir.mkdir(parents=True)
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+                s.bind(("", 0))
+                free_port = s.getsockname()[1]
+            (run_dir / "proxy.port").write_text(str(free_port))
+            (run_dir / "proxy.pid").write_text("999999")
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False,
+            )
+            running_lines = [l for l in result.stdout.splitlines() if "daemon-running" in l]
+            self.assertTrue(running_lines, result.stdout)
+            self.assertTrue(any("WARN" in l for l in running_lines), result.stdout)
+            self.assertIn("ai-specs sync", result.stdout)
+
+    def test_daemon_running_state_present_healthy_reports_ok(self):
+        import threading as _threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/status":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b"{}")
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def log_message(self, *a, **k):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._git_init(target)
+            server = HTTPServer(("127.0.0.1", 0), _Handler)
+            port = server.server_address[1]
+            t = _threading.Thread(target=server.serve_forever, daemon=True)
+            t.start()
+            try:
+                run_dir = target / ".ai-specs" / "run"
+                run_dir.mkdir(parents=True)
+                (run_dir / "proxy.port").write_text(str(port))
+                import os as _os
+                (run_dir / "proxy.pid").write_text(str(_os.getpid()))
+                result = subprocess.run(
+                    [str(CLI), "doctor", str(target)],
+                    capture_output=True, text=True, check=False,
+                )
+                running_lines = [l for l in result.stdout.splitlines() if "daemon-running" in l]
+                self.assertTrue(running_lines, result.stdout)
+                self.assertTrue(any("OK" in l for l in running_lines), result.stdout)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+
 def _find_files(root: Path):
     for p in root.rglob("*"):
         if p.is_file():
