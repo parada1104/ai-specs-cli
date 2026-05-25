@@ -62,78 +62,78 @@
 
 ### 3.1 Utilidades internas
 
-- [ ] [red] Escribir test: `_pick_free_port()` retorna un int en `(1024, 65536)` (`tests/unit/test_mcp_daemon_pick_free_port.py`)
-- [ ] [red] Escribir test: dos invocaciones consecutivas de `_pick_free_port()` retornan valores distintos con alta probabilidad
-- [ ] [green] Implementar `_pick_free_port()` usando `socket.socket().bind(('', 0))`
-- [ ] [red] Escribir test: `_state_dir(git_root)` retorna `<git_root>/.ai-specs/run/` y crea el directorio si no existe (`tests/unit/test_mcp_daemon_state_dir.py`)
-- [ ] [green] Implementar `_state_dir(git_root: Path) -> Path`
-- [ ] [red] Escribir test: `_is_pid_alive(pid)` retorna `False` para PID inexistente, `True` para PID propio (`tests/unit/test_mcp_daemon_pid_alive.py`)
-- [ ] [green] Implementar `_is_pid_alive(pid: int) -> bool` con `os.kill(pid, 0)` envuelto en try/except
-- [ ] [red] Escribir test: `_hash_config(path)` retorna strings distintos para contenidos distintos, idénticos para contenidos iguales (`tests/unit/test_mcp_daemon_hash_config.py`)
-- [ ] [green] Implementar `_hash_config(path: Path) -> str` con SHA-256 del JSON canónico
+- [x] [red] Escribir test: `_pick_free_port()` retorna un int en `(1024, 65536)` (`tests/unit/test_mcp_daemon_pick_free_port.py`)
+- [x] [red] Escribir test: dos invocaciones consecutivas de `_pick_free_port()` retornan valores distintos con alta probabilidad
+- [x] [green] Implementar `_pick_free_port()` usando `socket.socket().bind(('', 0))`
+- [x] [red] Escribir test: `_state_dir(git_root)` retorna `<git_root>/.ai-specs/run/` y crea el directorio si no existe (`tests/unit/test_mcp_daemon_state_dir.py`)
+- [x] [green] Implementar `_state_dir(git_root: Path) -> Path`
+- [x] [red] Escribir test: `_is_pid_alive(pid)` retorna `False` para PID inexistente, `True` para PID propio (`tests/unit/test_mcp_daemon_pid_alive.py`)
+- [x] [green] Implementar `_is_pid_alive(pid: int) -> bool` con `os.kill(pid, 0)` envuelto en try/except
+- [x] [red] Escribir test: `_hash_config(path)` retorna strings distintos para contenidos distintos, idénticos para contenidos iguales (`tests/unit/test_mcp_daemon_hash_config.py`)
+- [x] [green] Implementar `_hash_config(path: Path) -> str` con SHA-256 del JSON canónico
 
 ### 3.2 healthcheck
 
-- [ ] [red] Escribir test: servidor HTTP fake en hilo que responde 200 → `healthcheck(port) == True` (`tests/unit/test_mcp_daemon_healthcheck.py`)
-- [ ] [red] Escribir test: puerto sin nada escuchando → `healthcheck(port) == False` (timeout o connection refused)
-- [ ] [red] Escribir test: servidor que responde 500 → `healthcheck(port) == False`
-- [ ] [green] Implementar `healthcheck(port: int, timeout: float = 2.0) -> bool` con `urllib.request.urlopen`
+- [x] [red] Escribir test: servidor HTTP fake en hilo que responde 200 → `healthcheck(port) == True` (`tests/unit/test_mcp_daemon_healthcheck.py`)
+- [x] [red] Escribir test: puerto sin nada escuchando → `healthcheck(port) == False` (timeout o connection refused)
+- [x] [red] Escribir test: servidor que responde 500 → `healthcheck(port) == False`
+- [x] [green] Implementar `healthcheck(port: int, timeout: float = 2.0) -> bool` con `urllib.request.urlopen`
 
 ### 3.3 ensure_daemon — path de arranque nuevo
 
-- [ ] [red] Escribir test: sin state files → `ensure_daemon` spawna proceso y escribe `proxy.pid` y `proxy.port` (`tests/unit/test_mcp_daemon_ensure.py`)
-- [ ] [green] Implementar path de spawn en `ensure_daemon(git_root, named_config_path)`: `subprocess.Popen` con `start_new_session=True`, stdout/stderr a `proxy.log`, escribir state files al final
+- [x] [red] Escribir test: sin state files → `ensure_daemon` spawna proceso y escribe `proxy.pid` y `proxy.port` (`tests/unit/test_mcp_daemon_ensure.py`)
+- [x] [green] Implementar path de spawn en `ensure_daemon(git_root, named_config_path)`: `subprocess.Popen` con `start_new_session=True`, stdout/stderr a `proxy.log`, escribir state files al final
 
 ### 3.4 ensure_daemon — idempotencia
 
-- [ ] [red] Escribir test: daemon sano (mock healthcheck=True + PID vivo) → `ensure_daemon` retorna el puerto existente sin spawnear nuevo proceso
-- [ ] [green] Implementar rama idempotente: leer `proxy.pid` + `proxy.port`, invocar `_is_pid_alive` + `healthcheck`; si ambos OK, retornar puerto
+- [x] [red] Escribir test: daemon sano (mock healthcheck=True + PID vivo) → `ensure_daemon` retorna el puerto existente sin spawnear nuevo proceso
+- [x] [green] Implementar rama idempotente: leer `proxy.pid` + `proxy.port`, invocar `_is_pid_alive` + `healthcheck`; si ambos OK, retornar puerto
 
 ### 3.5 ensure_daemon — restart por PID muerto
 
-- [ ] [red] Escribir test: `proxy.pid` existe pero PID muerto → `ensure_daemon` limpia state files, asigna nuevo puerto, spawna nuevo proceso
-- [ ] [green] Implementar rama de PID muerto: remover state files stale, continuar con spawn
+- [x] [red] Escribir test: `proxy.pid` existe pero PID muerto → `ensure_daemon` limpia state files, asigna nuevo puerto, spawna nuevo proceso
+- [x] [green] Implementar rama de PID muerto: remover state files stale, continuar con spawn
 
 ### 3.6 ensure_daemon — restart por puerto no responde
 
-- [ ] [red] Escribir test: PID vivo pero `healthcheck == False` → `ensure_daemon` envía SIGTERM, asigna nuevo puerto, spawna proceso nuevo
-- [ ] [green] Implementar rama de puerto stale: `os.kill(pid, signal.SIGTERM)`, esperar exit, continuar con spawn
+- [x] [red] Escribir test: PID vivo pero `healthcheck == False` → `ensure_daemon` envía SIGTERM, asigna nuevo puerto, spawna proceso nuevo
+- [x] [green] Implementar rama de puerto stale: `os.kill(pid, signal.SIGTERM)`, esperar exit, continuar con spawn
 
 ### 3.7 ensure_daemon — detección de cambio de config
 
-- [ ] [red] Escribir test: hash del named-config difiere entre syncs y daemon sano → `ensure_daemon` hace restart (no retorna idempotente)
-- [ ] [green] Implementar detección de hash: comparar `_hash_config` del config actual vs contenido previo en state; si difiere, forzar restart
+- [x] [red] Escribir test: hash del named-config difiere entre syncs y daemon sano → `ensure_daemon` hace restart (no retorna idempotente)
+- [x] [green] Implementar detección de hash: comparar `_hash_config` del config actual vs contenido previo en state; si difiere, forzar restart
 
 ### 3.8 Concurrencia — file lock
 
-- [ ] [red] Escribir test: dos llamadas concurrentes a `ensure_daemon` resultan en exactamente 1 proceso spawneado (simular con threads o dos procesos) (`tests/unit/test_mcp_daemon_lock.py`)
-- [ ] [green] Implementar `_acquire_lock(state_dir)` como context manager con `fcntl.flock(LOCK_EX)` y envolver la sección crítica de `ensure_daemon`
+- [x] [red] Escribir test: dos llamadas concurrentes a `ensure_daemon` resultan en exactamente 1 proceso spawneado (simular con threads o dos procesos) (`tests/unit/test_mcp_daemon_lock.py`)
+- [x] [green] Implementar `_acquire_lock(state_dir)` como context manager con `fcntl.flock(LOCK_EX)` y envolver la sección crítica de `ensure_daemon`
 
 ### 3.9 stop_daemon
 
-- [ ] [red] Escribir test: daemon activo → `stop_daemon` envía SIGTERM, espera exit, elimina `proxy.pid`, `proxy.port`, `proxy.named-config.json` (`tests/unit/test_mcp_daemon_stop.py`)
-- [ ] [red] Escribir test: no hay daemon activo (sin state files) → `stop_daemon` retorna `False` sin error
-- [ ] [red] Escribir test: state files presentes pero PID muerto → `stop_daemon` limpia los archivos y retorna `False`
-- [ ] [green] Implementar `stop_daemon(git_root: Path) -> bool`
+- [x] [red] Escribir test: daemon activo → `stop_daemon` envía SIGTERM, espera exit, elimina `proxy.pid`, `proxy.port`, `proxy.named-config.json` (`tests/unit/test_mcp_daemon_stop.py`)
+- [x] [red] Escribir test: no hay daemon activo (sin state files) → `stop_daemon` retorna `False` sin error
+- [x] [red] Escribir test: state files presentes pero PID muerto → `stop_daemon` limpia los archivos y retorna `False`
+- [x] [green] Implementar `stop_daemon(git_root: Path) -> bool`
 
 ### 3.10 status_daemon
 
-- [ ] [red] Escribir test: daemon vivo → `status_daemon` retorna dict con al menos `{pid, port}` (`tests/unit/test_mcp_daemon_status.py`)
-- [ ] [red] Escribir test: daemon muerto o sin state files → `status_daemon` retorna `None`
-- [ ] [green] Implementar `status_daemon(git_root: Path) -> dict | None`; incluir `uptime_s` si se puede calcular desde mtime de `proxy.pid`
+- [x] [red] Escribir test: daemon vivo → `status_daemon` retorna dict con al menos `{pid, port}` (`tests/unit/test_mcp_daemon_status.py`)
+- [x] [red] Escribir test: daemon muerto o sin state files → `status_daemon` retorna `None`
+- [x] [green] Implementar `status_daemon(git_root: Path) -> dict | None`; incluir `uptime_s` si se puede calcular desde mtime de `proxy.pid`
 
 ### 3.11 restart_daemon
 
-- [ ] [red] Escribir test: `restart_daemon` = `stop_daemon` seguido de `ensure_daemon`; daemon queda vivo con nuevo puerto (`tests/unit/test_mcp_daemon_restart.py`)
-- [ ] [green] Implementar `restart_daemon(git_root: Path, named_config_path: Path) -> int` como composición de stop + ensure
+- [x] [red] Escribir test: `restart_daemon` = `stop_daemon` seguido de `ensure_daemon`; daemon queda vivo con nuevo puerto (`tests/unit/test_mcp_daemon_restart.py`)
+- [x] [green] Implementar `restart_daemon(git_root: Path, named_config_path: Path) -> int` como composición de stop + ensure
 
 ### 3.12 CLI entrypoint del módulo
 
-- [ ] [red] Escribir test: invocar `python3 -m lib._internal.mcp-daemon ensure <git_root> --named-config <path>` retorna exit 0 y escribe state files (`tests/unit/test_mcp_daemon_cli.py`)
-- [ ] [red] Escribir test: invocar con subcomando `stop` llama `stop_daemon`
-- [ ] [red] Escribir test: invocar con subcomando `status` imprime info y retorna exit 0 si vivo, exit 1 si muerto
-- [ ] [red] Escribir test: invocar con subcomando `restart` llama `restart_daemon`
-- [ ] [green] Implementar bloque `if __name__ == "__main__"` con argparse para `{ensure, stop, status, restart}`
+- [x] [red] Escribir test: invocar `python3 -m lib._internal.mcp-daemon ensure <git_root> --named-config <path>` retorna exit 0 y escribe state files (`tests/unit/test_mcp_daemon_cli.py`)
+- [x] [red] Escribir test: invocar con subcomando `stop` llama `stop_daemon`
+- [x] [red] Escribir test: invocar con subcomando `status` imprime info y retorna exit 0 si vivo, exit 1 si muerto
+- [x] [red] Escribir test: invocar con subcomando `restart` llama `restart_daemon`
+- [x] [green] Implementar bloque `if __name__ == "__main__"` con argparse para `{ensure, stop, status, restart}`
 
 ---
 

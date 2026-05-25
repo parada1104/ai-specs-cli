@@ -90,9 +90,10 @@ class StopDaemonTests(_DaemonTestBase):
         self.assertTrue(self.mod._is_pid_alive(pid))
         stopped = self.mod.stop_daemon(self.root)
         self.assertTrue(stopped)
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline and self.mod._is_pid_alive(pid):
-            time.sleep(0.05)
+        try:
+            self.recorder.children[0].wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.fail("sleeper did not exit after SIGTERM")
         self.assertFalse(self.mod._is_pid_alive(pid))
         for name in ("proxy.pid", "proxy.port", "proxy.named-config.json", "proxy.config-hash"):
             self.assertFalse((sd / name).exists(), f"{name} must be cleaned")
@@ -141,10 +142,11 @@ class RestartDaemonTests(_DaemonTestBase):
         self.assertEqual(len(self.recorder.children), 2)
         new_pid = self.recorder.children[1].pid
         self.assertNotEqual(first_pid, new_pid)
-        # First child should be gone after SIGTERM in stop_daemon.
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline and self.mod._is_pid_alive(first_pid):
-            time.sleep(0.05)
+        # First child should be gone after SIGTERM in stop_daemon; reap the zombie.
+        try:
+            self.recorder.children[0].wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.fail("first sleeper did not exit after SIGTERM")
         self.assertFalse(self.mod._is_pid_alive(first_pid))
         self.assertTrue(self.mod._is_pid_alive(new_pid))
         sd = self._state_dir()

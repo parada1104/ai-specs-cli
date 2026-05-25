@@ -150,10 +150,11 @@ class StaleHealthcheckRestartTests(EnsureDaemonBase):
         self.mod.healthcheck = lambda port, timeout=2.0: False
         second_port = self.mod.ensure_daemon(self.root, self.named_config)
         self.assertEqual(len(self.recorder.calls), 2, "stale port must trigger respawn")
-        # Old process received SIGTERM and exited.
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline and self.mod._is_pid_alive(first_pid):
-            time.sleep(0.05)
+        # Reap the SIGTERMed child (zombie) before asserting it is gone.
+        try:
+            self.recorder.children[0].wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.fail("first sleeper did not exit after SIGTERM")
         self.assertFalse(self.mod._is_pid_alive(first_pid), "old pid must be reaped after SIGTERM")
         self.assertNotEqual(first_port, second_port)
 
@@ -169,10 +170,11 @@ class ConfigChangeRestartTests(EnsureDaemonBase):
         # healthcheck stays True (daemon is "alive") yet ensure must restart.
         second_port = self.mod.ensure_daemon(self.root, self.named_config)
         self.assertEqual(len(self.recorder.calls), 2, "config change must trigger respawn")
-        # First child should have been SIGTERMed.
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline and self.mod._is_pid_alive(first_pid):
-            time.sleep(0.05)
+        # First child should have been SIGTERMed; reap to clear the zombie.
+        try:
+            self.recorder.children[0].wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.fail("first sleeper did not exit after SIGTERM")
         self.assertFalse(self.mod._is_pid_alive(first_pid))
         self.assertNotEqual(first_port, second_port)
 
