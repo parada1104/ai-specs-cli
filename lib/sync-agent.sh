@@ -27,7 +27,7 @@ GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 FLATTEN_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/flatten-resolved-skills.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
-
+AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
 usage() {
     cat <<'EOF'
 Usage: ai-specs sync-agent [path] [--all | --<agent>...]
@@ -204,6 +204,7 @@ ensure_target_workspace() {
     python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
+    python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$TARGET_AGENTS_MD"
 }
 
 # Resolve enabled agents from ai-specs.toml
