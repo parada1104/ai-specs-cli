@@ -27,7 +27,7 @@ GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 FLATTEN_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/flatten-resolved-skills.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
-
+AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
 usage() {
     cat <<'EOF'
 Usage: ai-specs sync-agent [path] [--all | --<agent>...]
@@ -48,6 +48,7 @@ Flags:
   --codex          Codex        (.codex/config.toml)
   --copilot        GitHub Copilot (.github/copilot-instructions.md)
   --gemini         Gemini CLI   (GEMINI.md, .gemini/skills, .gemini/settings.json)
+  --pi             Pi (pi.dev)  (.pi/skills, .mcp.json)
 
 If no selector is given, defaults to --all.
 EOF
@@ -67,7 +68,7 @@ while [[ $# -gt 0 ]]; do
         --target)      TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
         --recipe-mcp)  RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
         --all)         SELECT_ALL=1; shift ;;
-        --claude|--cursor|--opencode|--codex|--copilot|--gemini)
+        --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
         -h|--help)     usage; exit 0 ;;
         --)            shift; break ;;
@@ -203,6 +204,7 @@ ensure_target_workspace() {
     python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
+    python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$TARGET_AGENTS_MD"
 }
 
 # Resolve enabled agents from ai-specs.toml

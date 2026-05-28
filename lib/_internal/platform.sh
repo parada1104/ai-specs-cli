@@ -9,7 +9,7 @@
 # a per-project (paths relativos al REPO_ROOT, no a $HOME).
 
 # platform_get <agent> <field>
-#   agent ∈ claude|cursor|opencode|codex|copilot|gemini
+#   agent ∈ claude|cursor|opencode|codex|copilot|gemini|pi
 #   field ∈ instructions_path|skills_dir|agents_dir|mcp_config_path|mcp_key|native
 #         | commands_dir
 #
@@ -97,6 +97,19 @@ platform_get() {
                 mcp_key)           echo "mcpServers" ;;
                 native)            echo "false" ;;
                 commands_dir)      echo "" ;;  # gemini has no slash commands
+                *) return 1 ;;
+            esac
+            ;;
+        pi)
+            # Pi (pi.dev) — reads AGENTS.md natively, uses .mcp.json with mcpServers.
+            case "$field" in
+                instructions_path) echo "" ;;
+                skills_dir)        echo ".pi/skills" ;;
+                agents_dir)        echo "" ;;
+                mcp_config_path)   echo ".mcp.json" ;;
+                mcp_key)           echo "mcpServers" ;;
+                native)            echo "true" ;;
+                commands_dir)      echo "" ;;  # pi has no slash commands
                 *) return 1 ;;
             esac
             ;;

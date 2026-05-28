@@ -26,7 +26,7 @@ metadata:
 
 | Field | Required | Default | Description |
 |---|---|---|---|
-| `board_id` | Yes | — | Trello board ID for the project. Example: `69ec0a2099ea20956e371d62`. |
+| `board_id` | Yes | — | Trello board ID for the project. Example: `69ec097f13e2d38ecd89a557`. |
 | `default_list` | No | `In Progress` | List name where new cards are created when no phase-specific list applies. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
 

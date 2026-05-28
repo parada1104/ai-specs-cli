@@ -76,6 +76,13 @@ class Doctor:
             "commands_dir": ".opencode/commands",
             "skills_copy": True,
         },
+        "pi": {
+            "instructions_path": "",
+            "skills_dir": ".pi/skills",
+            "mcp_config_path": ".mcp.json",
+            "mcp_key": "mcpServers",
+            "commands_dir": "",
+        },
         "codex": {
             "instructions_path": "",
             "skills_dir": "",

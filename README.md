@@ -119,6 +119,13 @@ docs/               ← reference documentation
 tests/              ← test suite
 ```
 
+## Development
+
+Testing foundation exists at `tests/`. Run `./tests/run.sh` to execute the full
+Python test suite, or `./tests/validate.sh` for syntax checks followed by the
+test suite. The `skill-sync` bundled skill validates and normalises SKILL.md
+frontmatter across all project skills.
+
 ## License
 
 MIT
