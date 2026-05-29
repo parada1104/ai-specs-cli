@@ -20,6 +20,35 @@ enabled = ["claude", "cursor", "opencode", "pi"]
 # enabled = true
 # version = "1.0.0"
 
+# Flow primitives for this project come from these catalog recipes. Local
+# skills under ai-specs/skills/ are limited to ai-specs' own bundled tooling
+# (skill-creator, skill-sync); everything else of the flow is provided here
+# plus the gentle-ai stack (SDD, memory).
+
+[recipes.worktree-flow]
+enabled = true
+version = "1.1.0"
+[recipes.worktree-flow.config]
+worktrees_dir = ".worktrees"
+integration_branch = "development"
+
+[recipes.git-pr-flow]
+enabled = true
+version = "1.0.0"
+[recipes.git-pr-flow.config]
+provider = "github"
+base_branch = "development"
+
+[recipes.session-context]
+enabled = true
+version = "1.0.0"
+
+[recipes.trello-mcp-workflow]
+enabled = true
+version = "1.1.0"
+[recipes.trello-mcp-workflow.config]
+board_id = "69ec097f13e2d38ecd89a557"
+
 # -----------------------------------------------------------------------------
 # Vendored skill dependencies — each [[deps]] entry is cloned by
 # `ai-specs sync` into ai-specs/skills/<id>/ (gitignored).
