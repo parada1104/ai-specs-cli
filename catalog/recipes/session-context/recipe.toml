@@ -1,0 +1,35 @@
+[recipe]
+id = "session-context"
+name = "Session Context"
+description = "Session-start context discipline: bootstrap from memory, resolve source conflicts, and record canonical decisions"
+version = "1.0.0"
+author = "ai-specs"
+license = "MIT"
+
+[[capabilities]]
+id = "session-bootstrap"
+
+[[capabilities]]
+id = "canonical-memory"
+
+[[capabilities]]
+id = "conflict-policy"
+
+[[hooks]]
+event = "on-sync"
+action = "validate-config"
+
+[config.vault_scope]
+required = false
+type = "string"
+
+[provides]
+skills = [
+  { id = "session-bootstrap", source = "bundled" },
+  { id = "vault-context", source = "bundled" },
+  { id = "context-precedence", source = "bundled" },
+]
+
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/session-context/README.md"
