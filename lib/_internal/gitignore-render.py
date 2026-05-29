@@ -30,6 +30,10 @@ def render(deps: list[dict]) -> str:
     lines = [HEADER]
     lines.append(".internal/")
     lines.append(".resolved-skills/")
+    lines.append("# Recipe materialization output (restored by ai-specs sync)")
+    lines.append(".recipe/")
+    lines.append(".deps/")
+    lines.append("recipes/")
     lines.append("")
     lines.append(FOOTER)
     return "\n".join(lines)
