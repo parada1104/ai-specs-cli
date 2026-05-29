@@ -2,12 +2,12 @@
 id = "git-pr-flow"
 name = "Git PR Flow"
 description = "Provider-oriented PR and merge flow for feature branches (GitHub via gh CLI by default)"
-version = "1.0.0"
+version = "1.1.0"
 author = "ai-specs"
 license = "MIT"
 
 [[capabilities]]
-id = "vcs-merge-flow"
+id = "vcs-pr-flow"
 
 [[hooks]]
 event = "on-sync"

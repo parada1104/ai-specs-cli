@@ -13,15 +13,23 @@ Provider-oriented PR and merge flow for feature branches. Defaults to GitHub via
 
 ## Capability
 
-Declares the `vcs-merge-flow` capability so it can be bound as the project's
-VCS/PR merge flow provider.
+Declares the `vcs-pr-flow` capability so it can be bound as the project's
+VCS/PR flow provider.
+
+## Providers
+
+Today, `provider = "github"` (via the `gh` CLI) is the **only implemented provider**.
+Other providers (e.g. `gitlab`) are intended as future **sibling recipes** that also
+provide the `vcs-pr-flow` capability. A project selects exactly one provider recipe for
+that capability through a manifest `[[bindings]]` entry, so swapping providers is a
+binding change — not a rewrite of this recipe.
 
 ## Enable in `ai-specs.toml`
 
 ```toml
 [recipes.git-pr-flow]
 enabled = true
-version = "1.0.0"
+version = "1.1.0"
 
 [recipes.git-pr-flow.config]
 provider = "github"
@@ -35,7 +43,7 @@ this doc into the project.
 
 | Key           | Required | Type   | Default    | Description                                          |
 | ------------- | -------- | ------ | ---------- | ---------------------------------------------------- |
-| `provider`    | no       | string | `github`   | VCS/PR provider. `github` uses the `gh` CLI.         |
+| `provider`    | no       | string | `github`   | VCS/PR provider. `github` (via `gh` CLI) is the only implemented provider. |
 | `base_branch` | no       | string | `main`     | Base branch the PR targets (e.g. `main`, `develop`). |
 
 ## Safety note
