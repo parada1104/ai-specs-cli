@@ -2,8 +2,8 @@
 name: git-merge-workflow
 description: >
   Provider-oriented merge workflow for feature branches created in worktrees.
-  Uses the VCS/PR provider and base branch declared in the runtime brief; this
-  project uses GitHub through gh CLI and development as integration branch.
+  Uses the configured PR provider and base branch from
+  [recipes.git-pr-flow.config] (provider and base_branch).
 license: MIT
 metadata:
   author: ai-specs
@@ -22,7 +22,9 @@ metadata:
 
 Use this skill only when the user explicitly asks to create a PR, merge, finish a branch, or clean up after merge.
 
-Read `AGENTS.md` first for the configured base branch, VCS provider, and no-push/no-merge rules.
+Use the configured PR provider and base branch from `[recipes.git-pr-flow.config]`
+(`provider` and `base_branch`). GitHub through the `gh` CLI is the implemented provider.
+Honor any no-push/no-merge rules declared for the project.
 
 ## Preconditions
 
@@ -35,7 +37,7 @@ Read `AGENTS.md` first for the configured base branch, VCS provider, and no-push
 ## Workflow
 
 1. Inspect current branch, worktree path, and `git status`.
-2. Run or confirm verification required by the runtime brief/change.
+2. Run or confirm any verification required before merge.
 3. Push the feature branch:
 
 ```bash
@@ -75,8 +77,3 @@ git pull --ff-only origin <integration-branch>
 - Never remove a worktree before confirming the PR is merged and no uncommitted work remains.
 - Preserve unrelated changes; stop and ask if cleanup would touch them.
 - If `gh` is unavailable or unauthenticated, stop with the exact blocker.
-
-## Related
-
-- `openspec-sdd-workflow` creates/uses the change worktree.
-- `openspec-verify-change` records verification evidence before merge.

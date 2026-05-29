@@ -1,0 +1,51 @@
+[recipe]
+id = "worktree-flow"
+name = "Worktree Flow"
+description = "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work"
+version = "1.1.0"
+author = "ai-specs"
+license = "MIT"
+
+[[capabilities]]
+id = "worktree-isolation"
+
+[[capabilities]]
+id = "worktree-cleanup"
+
+[[hooks]]
+event = "on-sync"
+action = "validate-config"
+
+[config.worktrees_dir]
+required = false
+type = "string"
+default = ".worktrees"
+
+[config.integration_branch]
+required = false
+type = "string"
+default = "main"
+
+[config.auto_remove_merged]
+required = false
+type = "boolean"
+default = true
+
+[sdd]
+threshold = "behavior_change"
+
+[provides]
+skills = [{ id = "worktree-flow", source = "bundled" }]
+commands = [
+    { id = "worktree-new", path = "commands/worktree-new.md" },
+    { id = "worktree-clean", path = "commands/worktree-clean.md" },
+]
+
+[[provides.templates]]
+source = "templates/worktree-cleanup.sh"
+target = "ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh"
+condition = "not_exists"
+
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/worktree-flow/README.md"

@@ -20,6 +20,60 @@ enabled = ["claude", "cursor", "opencode", "pi"]
 # enabled = true
 # version = "1.0.0"
 
+# Flow primitives for this project come from these catalog recipes. Local
+# skills under ai-specs/skills/ are limited to ai-specs' own bundled tooling
+# (skill-creator, skill-sync); everything else of the flow is provided here
+# plus the gentle-ai stack (SDD, memory).
+#
+# Recipes follow the capability model (see docs/capabilities.md):
+#   foundational (consume capabilities): worktree-flow, git-pr-flow,
+#     session-context, tdd-flow
+#   specific (provide a capability): trello-mcp-workflow (tracker),
+#     vault-canonical-store (canonical-store)
+# Each capability has exactly one provider here, so sync auto-binds them; no
+# explicit [[bindings]] are needed until a second provider is added (e.g. a
+# jira recipe alongside trello — then bind `tracker` to one of them).
+
+# --- Foundational ---
+
+[recipes.worktree-flow]
+enabled = true
+version = "1.1.0"
+[recipes.worktree-flow.config]
+worktrees_dir = ".worktrees"
+integration_branch = "development"
+
+[recipes.git-pr-flow]
+enabled = true
+version = "1.1.0"
+[recipes.git-pr-flow.config]
+provider = "github"
+base_branch = "development"
+
+[recipes.session-context]
+enabled = true
+version = "2.0.0"
+
+[recipes.tdd-flow]
+enabled = true
+version = "1.0.0"
+[recipes.tdd-flow.config]
+test_command = "./tests/validate.sh"
+
+# --- Specific (capability providers) ---
+
+[recipes.trello-mcp-workflow]
+enabled = true
+version = "1.2.0"
+[recipes.trello-mcp-workflow.config]
+board_id = "69ec097f13e2d38ecd89a557"
+
+[recipes.vault-canonical-store]
+enabled = true
+version = "1.0.0"
+[recipes.vault-canonical-store.config]
+vault_scope = "nnodes/proyectos/ai-specs"
+
 # -----------------------------------------------------------------------------
 # Vendored skill dependencies — each [[deps]] entry is cloned by
 # `ai-specs sync` into ai-specs/skills/<id>/ (gitignored).

@@ -1,0 +1,32 @@
+[recipe]
+id = "session-context"
+name = "Session Context"
+description = "Foundational session-start discipline: bootstrap focus from the memory/tracker capabilities and resolve source conflicts (tool-agnostic)"
+version = "2.0.0"
+author = "ai-specs"
+license = "MIT"
+
+# Foundational recipe. Provides the bootstrap + conflict patterns; CONSUMES (by
+# convention, see docs/capabilities.md) the `memory`, `tracker`, and
+# `canonical-store` capabilities — bind concrete providers in the manifest
+# (e.g. trello-mcp-workflow for `tracker`, vault-canonical-store for
+# `canonical-store`).
+[[capabilities]]
+id = "session-bootstrap"
+
+[[capabilities]]
+id = "conflict-policy"
+
+[[hooks]]
+event = "on-sync"
+action = "validate-config"
+
+[provides]
+skills = [
+  { id = "session-bootstrap", source = "bundled" },
+  { id = "context-precedence", source = "bundled" },
+]
+
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/session-context/README.md"
