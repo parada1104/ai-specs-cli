@@ -29,7 +29,7 @@ This MVP is a decision policy, not a runtime merge engine.
 
 ## Source Classes
 
-- **canonical docs**: versioned project documentation that defines durable product, architecture, process, or operating rules. Examples: `README.md`, bundled policy skills under `ai-specs/skills/`, OpenSpec main specs, and recorded project decisions.
+- **canonical docs**: versioned project documentation that defines durable product, architecture, process, or operating rules. Examples: `README.md`, bundled policy skills under `ai-specs/skills/`, SDD/spec artifacts, and recorded project decisions.
 - **project skills**: project-local agent skills under `ai-specs/skills/` that encode repeatable workflows or conventions for this repository.
 - **packs**: reusable imported or bundled context packages, including vendored skills, bundled commands, or future installable packs.
 - **handoffs**: structured summaries from prior sessions that describe current state, next steps, blockers, or recent decisions.
@@ -38,7 +38,7 @@ This MVP is a decision policy, not a runtime merge engine.
 
 ## Adapting the stack
 
-The order above is the default MVP. Some teams treat an **Obsidian vault** (or similar) as the highest-authority canonical layer for decisions and history; if your project adopted `vault-context` for that role, follow the vault when it explicitly defines durable rules—even when generic “canonical docs” in the repo are silent. Do not silently demote skills: resolve conflicts using the published order **plus** any project skill that defines an override.
+The order above is the default MVP. Some teams treat the **canonical-store** capability (e.g. a vault) as the highest-authority layer for decisions and history; if your project bound a canonical-store provider for that role, follow it when it explicitly defines durable rules—even when generic “canonical docs” in the repo are silent. Do not silently demote skills: resolve conflicts using the published order **plus** any project skill that defines an override.
 
 ## Conflict Examples
 

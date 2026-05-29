@@ -1,16 +1,18 @@
 [recipe]
 id = "session-context"
 name = "Session Context"
-description = "Session-start context discipline: bootstrap from memory, resolve source conflicts, and record canonical decisions"
-version = "1.0.0"
+description = "Foundational session-start discipline: bootstrap focus from the memory/tracker capabilities and resolve source conflicts (tool-agnostic)"
+version = "2.0.0"
 author = "ai-specs"
 license = "MIT"
 
+# Foundational recipe. Provides the bootstrap + conflict patterns; CONSUMES (by
+# convention, see docs/capabilities.md) the `memory`, `tracker`, and
+# `canonical-store` capabilities — bind concrete providers in the manifest
+# (e.g. trello-mcp-workflow for `tracker`, vault-canonical-store for
+# `canonical-store`).
 [[capabilities]]
 id = "session-bootstrap"
-
-[[capabilities]]
-id = "canonical-memory"
 
 [[capabilities]]
 id = "conflict-policy"
@@ -19,14 +21,9 @@ id = "conflict-policy"
 event = "on-sync"
 action = "validate-config"
 
-[config.vault_scope]
-required = false
-type = "string"
-
 [provides]
 skills = [
   { id = "session-bootstrap", source = "bundled" },
-  { id = "vault-context", source = "bundled" },
   { id = "context-precedence", source = "bundled" },
 ]
 
