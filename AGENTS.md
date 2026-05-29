@@ -68,6 +68,6 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 
 ## Useful Commands
 
-- Focused tests: `./tests/run.sh`
 - Full validation: `./tests/validate.sh`
+- Focused tests (unit-only): `./tests/run.sh`
 - Inspect the active Trello card before resuming work.

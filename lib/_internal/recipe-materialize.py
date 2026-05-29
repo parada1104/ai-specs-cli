@@ -592,8 +592,13 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         print(f"RECIPE_MCP_TEMP:{temp_path}")
 
     # Write resolved-config JSON for downstream agents-render.py
+    # IMPORTANT: use the catalog-aware resolved_bindings (auto-bind included) computed
+    # above by resolve_bindings(), rather than re-deriving from explicit [[bindings]] only.
+    # build_resolved_config() provides the recipes/enabled structure; we override the
+    # bindings key with the full auto-bound map so downstream renderers see auto-bindings.
     if resolved_config_out is not None:
         resolved = build_resolved_config(project_root)
+        resolved["bindings"] = resolved_bindings  # replace explicit-only with auto-bound
         with open(resolved_config_out, "w") as f:
             json.dump(resolved, f, indent=2, sort_keys=True)
             f.write("\n")

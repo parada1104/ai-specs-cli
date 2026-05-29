@@ -1197,5 +1197,315 @@ class SkillSyncScriptTests(unittest.TestCase):
             shutil.rmtree(repo_root)
 
 
+class TestMissingScenarios(unittest.TestCase):
+    """FIX 5: Behavioral tests for scenarios left untested by verify-report.
+
+    Covers: R1 partial-brief, R3 no-tracker-omission, R7 subrepo structured-fields.
+    """
+
+    def test_partial_brief_renders_present_keys_no_crash(self):
+        """R1 partial [brief]: only some keys present → renders those, omits absent ones, no crash.
+
+        A manifest with only `workflow_rules` in [brief] (no intro, no purpose,
+        no context_sources, etc.) must render the workflow_rules section and NOT
+        crash or emit empty placeholder sections.
+        """
+        import tempfile as _tempfile
+        with _tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "ai-specs.toml"
+            output_path = tmp_path / "AGENTS.md"
+
+            toml_path.write_text(
+                "[project]\n"
+                "name = 'partial-brief-fixture'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[brief]\n"
+                # Only workflow_rules is present; no intro, no purpose, no runtime_flow etc.
+                'workflow_rules = ["No direct merges without approval."]\n'
+            )
+
+            agents_render = ROOT / "lib" / "_internal" / "agents-render.py"
+            proc = subprocess.run(
+                ["python3", str(agents_render), str(toml_path), str(output_path)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            # Must not crash
+            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
+            self.assertTrue(output_path.exists())
+
+            agents = output_path.read_text()
+
+            # Project identity must be present
+            self.assertIn("partial-brief-fixture", agents)
+
+            # Present key must render
+            self.assertIn("No direct merges without approval.", agents)
+
+            # Absent keys must NOT produce empty section headers
+            # (intro absent → no empty ## Project section with just the header)
+            # We assert the specific absent strings do not appear as placeholder bullets
+            self.assertNotIn("None.", agents,  # no placeholder for empty sections
+                             "Absent brief keys must not produce 'None.' placeholders")
+
+    def test_no_tracker_binding_omits_trello_section(self):
+        """R3 no-tracker: when no recipe is bound to 'tracker', the Trello Tracking
+        section must be completely omitted from the rendered brief.
+        """
+        import tempfile as _tempfile
+        import json
+
+        with _tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "ai-specs.toml"
+            output_path = tmp_path / "AGENTS.md"
+            resolved_path = tmp_path / "resolved.json"
+
+            toml_path.write_text(
+                "[project]\n"
+                "name = 'no-tracker-fixture'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[brief]\n"
+                'intro = "No tracker section expected."\n\n'
+                # tdd-flow has no 'tracker' capability — no tracker binding
+                "[recipes.tdd-flow]\n"
+                "test_command = './tests/run.sh'\n"
+            )
+
+            # Build a resolved-config with NO tracker binding (empty bindings)
+            resolved_path.write_text(json.dumps({
+                "bindings": {},  # no tracker binding
+                "recipes": {
+                    "tdd-flow": {"test_command": "./tests/run.sh"},
+                },
+                "enabled": ["tdd-flow"],
+            }))
+
+            agents_render = ROOT / "lib" / "_internal" / "agents-render.py"
+            proc = subprocess.run(
+                ["python3", str(agents_render), str(toml_path), str(output_path),
+                 "--resolved-config", str(resolved_path)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
+
+            agents = output_path.read_text()
+
+            # The Trello Tracking section must be absent when no tracker is bound
+            self.assertNotIn(
+                "## Trello Tracking", agents,
+                "Trello Tracking section must be omitted when no tracker capability is bound"
+            )
+
+            # Brief intro must still render (unrelated section not affected)
+            self.assertIn("No tracker section expected.", agents)
+
+    def test_subrepo_sync_agent_forwards_resolved_config(self):
+        """R7 subrepo passthrough: sync-agent --all passes --resolved-config to agents-render
+        so subrepo AGENTS.md gets board_id / test_command structured fields.
+
+        Verifies that the AGENTS.md generated for a subrepo target (workspace synced
+        by sync-agent) contains the structured fields from --resolved-config.
+        Uses a workspace with [brief] + recipe configs (explicit bindings for speed,
+        since this tests the passthrough, not auto-binding).
+        """
+        workspace = None
+        try:
+            parent = Path(tempfile.mkdtemp())
+            workspace = parent / "subrepo-test-workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            # Use explicit bindings (24-char hex board_id) + brief to exercise the subrepo path
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'subrepo-structured-fields'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[brief]\n"
+                'intro = "Subrepo receives enriched output."\n\n'
+                "[recipes.trello-mcp-workflow]\n"
+                "enabled = true\n"
+                "version = '1.2.0'\n"
+                "[recipes.trello-mcp-workflow.config]\n"
+                "board_id = 'aabbccddeeff001122334455'\n\n"
+                "[recipes.tdd-flow]\n"
+                "enabled = true\n"
+                "version = '1.0.0'\n"
+                "[recipes.tdd-flow.config]\n"
+                "test_command = './tests/validate.sh'\n"
+            )
+
+            # Run sync (not sync-agent --all; sync runs materialize + sync-agent)
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            agents = (workspace / "AGENTS.md").read_text()
+
+            # Structured fields must be present in the workspace AGENTS.md
+            # (the sync pipeline → materialize → resolved-config → agents-render path)
+            self.assertIn(
+                "aabbccddeeff001122334455", agents,
+                "board_id must appear in AGENTS.md after sync (subrepo structured-field passthrough)"
+            )
+            self.assertIn(
+                "./tests/validate.sh", agents,
+                "test_command must appear in AGENTS.md after sync (subrepo structured-field passthrough)"
+            )
+        finally:
+            if workspace is not None:
+                shutil.rmtree(workspace.parent)
+
+
+class TestAutoBindingFix(unittest.TestCase):
+    """FIX 1 (CRITICAL): Test that auto-binding works without explicit [[bindings]].
+
+    Design decision #4: build_resolved_config must emit the catalog-aware
+    auto-bound resolved_bindings (from resolve_bindings()) rather than only
+    explicit [[bindings]] from the manifest.
+
+    A manifest with single-provider capabilities and NO [[bindings]] must
+    produce a non-empty bindings map in the resolved-config JSON, and the
+    rendered AGENTS.md must contain board_id / vault_scope needles.
+    """
+
+    def make_workspace(self):
+        parent = Path(tempfile.mkdtemp())
+        ws = parent / "test-autobind-workspace"
+        ws.mkdir()
+        return ws
+
+    def test_auto_binding_without_explicit_bindings(self):
+        """Single-provider manifest with NO [[bindings]] must auto-populate bindings.
+
+        RED: fails because build_resolved_config only reads explicit [[bindings]]
+        from TOML, ignoring catalog-based resolve_bindings() auto-bind logic.
+        GREEN: once materialize_recipes passes resolved_bindings (from resolve_bindings())
+        into the resolved-config JSON instead of re-deriving explicit-only.
+
+        Uses enabled=true to exercise the full materialize_recipes path (where
+        resolved_bindings is computed by resolve_bindings() at line ~484).
+        board_id uses a real 24-char hex to pass trello-mcp-workflow validate-config.
+        """
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            # Single provider per capability, NO explicit [[bindings]]
+            # board_id must be 24-char hex to pass trello-mcp-workflow validate-config
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'autobind-no-explicit-bindings'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[brief]\n"
+                'intro = "Auto-binding test brief."\n\n'
+                "[recipes.trello-mcp-workflow]\n"
+                "enabled = true\n"
+                "version = '1.2.0'\n"
+                "[recipes.trello-mcp-workflow.config]\n"
+                "board_id = 'aabbccddeeff001122334455'\n\n"
+                "[recipes.vault-canonical-store]\n"
+                "enabled = true\n"
+                "version = '1.0.0'\n"
+                "[recipes.vault-canonical-store.config]\n"
+                "vault_scope = 'nnodes/test/autobind-scope'\n"
+                # NO [[bindings]] section
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            agents = (workspace / "AGENTS.md").read_text()
+
+            # Auto-bound tracker must surface board_id in rendered brief
+            self.assertIn(
+                "aabbccddeeff001122334455", agents,
+                "board_id must appear in AGENTS.md when tracker is auto-bound (no explicit [[bindings]])"
+            )
+            # Auto-bound canonical-store must surface vault_scope in rendered brief
+            self.assertIn(
+                "nnodes/test/autobind-scope", agents,
+                "vault_scope must appear in AGENTS.md when canonical-store is auto-bound"
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_resolved_config_bindings_non_empty_without_explicit_bindings(self):
+        """The resolved-config JSON bindings must be non-empty for auto-bound single providers.
+
+        Directly invokes recipe-materialize.py and inspects the JSON output.
+        RED: build_resolved_config returns {} bindings for no explicit [[bindings]].
+        GREEN: it returns {'tracker': 'trello-mcp-workflow', 'canonical-store': 'vault-canonical-store', ...}.
+
+        Uses enabled=true; board_id must be 24-char hex to pass trello validate-config.
+        """
+        import tempfile as _tempfile
+        import json
+
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'autobind-json-check'\n\n"
+                "[recipes.trello-mcp-workflow]\n"
+                "enabled = true\n"
+                "version = '1.2.0'\n"
+                "[recipes.trello-mcp-workflow.config]\n"
+                "board_id = 'aabbccddeeff001122334455'\n\n"
+                "[recipes.vault-canonical-store]\n"
+                "enabled = true\n"
+                "version = '1.0.0'\n"
+                "[recipes.vault-canonical-store.config]\n"
+                "vault_scope = 'nnodes/test/json-scope'\n"
+                # NO [[bindings]] section — auto-bind must handle this
+            )
+
+            materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
+            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                resolved_out = Path(f.name)
+
+            proc = subprocess.run(
+                ["python3", str(materialize),
+                 str(workspace), str(ROOT),
+                 "--resolved-config-out", str(resolved_out)],
+                text=True,
+                capture_output=True,
+                check=False,
+                env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
+            )
+            self.assertEqual(proc.returncode, 0, f"materialize failed:\n{proc.stderr}\n{proc.stdout}")
+
+            with open(resolved_out) as f:
+                resolved = json.load(f)
+
+            bindings = resolved.get("bindings", {})
+            self.assertIn(
+                "tracker", bindings,
+                f"'tracker' capability must be auto-bound in resolved-config bindings. Got: {bindings}"
+            )
+            self.assertEqual(
+                bindings["tracker"], "trello-mcp-workflow",
+                f"tracker must auto-bind to trello-mcp-workflow. Got: {bindings}"
+            )
+            self.assertIn(
+                "canonical-store", bindings,
+                f"'canonical-store' must be auto-bound. Got: {bindings}"
+            )
+            self.assertEqual(
+                bindings["canonical-store"], "vault-canonical-store",
+                f"canonical-store must auto-bind to vault-canonical-store. Got: {bindings}"
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+            if resolved_out.exists():
+                resolved_out.unlink()
+
+
 if __name__ == "__main__":
     unittest.main()

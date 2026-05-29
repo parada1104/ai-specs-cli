@@ -245,11 +245,15 @@ def _section_useful_commands(brief: dict, resolved: dict) -> list[str]:
 
     lines: list[str] = ["## Useful Commands", ""]
     if test_command:
-        lines.append(f"- Focused tests: `{test_command}`")
-        # Derive validate command heuristic: replace 'run.sh' → 'validate.sh'
-        validate_command = test_command.replace("run.sh", "validate.sh")
-        if validate_command != test_command:
-            lines.append(f"- Full validation: `{validate_command}`")
+        # Label heuristic: validate.sh = full suite; run.sh = focused/unit-only
+        if "validate.sh" in test_command:
+            lines.append(f"- Full validation: `{test_command}`")
+        else:
+            lines.append(f"- Focused tests: `{test_command}`")
+            # Derive validate command: replace 'run.sh' → 'validate.sh'
+            validate_command = test_command.replace("run.sh", "validate.sh")
+            if validate_command != test_command:
+                lines.append(f"- Full validation: `{validate_command}`")
     for cmd in extra_commands:
         if cmd:
             lines.append(f"- {cmd}")

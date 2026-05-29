@@ -58,7 +58,7 @@ version = "2.0.0"
 enabled = true
 version = "1.0.0"
 [recipes.tdd-flow.config]
-test_command = "./tests/run.sh"
+test_command = "./tests/validate.sh"
 
 # --- Specific (capability providers) ---
 
@@ -94,22 +94,14 @@ vault_scope = "nnodes/proyectos/ai-specs"
 # license = "MIT"
 
 # -----------------------------------------------------------------------------
-# Explicit capability bindings — resolves ambiguity when multiple enabled
-# recipes declare the same capability.
-# Also required so build_resolved_config (no-catalog path) can populate the
-# bindings map in the resolved-config JSON used by agents-render.
-
-[[bindings]]
-capability = "tracker"
-recipe = "trello-mcp-workflow"
-
-[[bindings]]
-capability = "vcs-pr-flow"
-recipe = "git-pr-flow"
-
-[[bindings]]
-capability = "canonical-store"
-recipe = "vault-canonical-store"
+# Explicit capability bindings — only needed when multiple enabled recipes
+# declare the same capability (to resolve ambiguity). With a single provider
+# per capability, sync auto-binds them; no explicit [[bindings]] are needed.
+#
+# Example (uncomment to override auto-bind):
+# [[bindings]]
+# capability = "tracker"
+# recipe = "trello-mcp-workflow"
 
 # -----------------------------------------------------------------------------
 # MCP servers — distributed by sync-agent to each platform's native format.
@@ -172,6 +164,7 @@ workflow_rules = [
   "Direct `skill-sync` runs are allowed only for metadata validation.",
 ]
 useful_commands = [
+  "Focused tests (unit-only): `./tests/run.sh`",
   "Inspect the active Trello card before resuming work.",
 ]
 
