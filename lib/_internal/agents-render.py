@@ -78,13 +78,19 @@ def _section_project(manifest: dict, resolved: dict) -> list[str]:
         runtimes_str = ", ".join(f"`{r}`" for r in enabled_runtimes)
         lines.append(f"- **Enabled runtimes**: {runtimes_str}")
 
-    # integration_branch from resolved config (worktree-flow recipe)
+    # integration_branch from resolved config via worktree-isolation capability binding
     integration_branch = ""
     recipes = resolved.get("recipes", {}) or {}
-    wf_cfg = recipes.get("worktree-flow", {}) or {}
-    integration_branch = wf_cfg.get("integration_branch", "")
+    bindings = resolved.get("bindings", {}) or {}
+    worktree_recipe_id = bindings.get("worktree-isolation", "")
+    if worktree_recipe_id:
+        wf_cfg = recipes.get(worktree_recipe_id, {}) or {}
+        integration_branch = wf_cfg.get("integration_branch", "")
     if not integration_branch:
-        # Also try git-pr-flow base_branch as fallback
+        # Fallback: try well-known recipe ids directly
+        wf_cfg = recipes.get("worktree-flow", {}) or {}
+        integration_branch = wf_cfg.get("integration_branch", "")
+    if not integration_branch:
         gp_cfg = recipes.get("git-pr-flow", {}) or {}
         integration_branch = gp_cfg.get("base_branch", "")
 
@@ -92,7 +98,6 @@ def _section_project(manifest: dict, resolved: dict) -> list[str]:
         lines.append(f"- **Integration branch**: `{integration_branch}`")
 
     # vault_scope from canonical-store binding
-    bindings = resolved.get("bindings", {}) or {}
     canonical_store_id = bindings.get("canonical-store", "")
     if canonical_store_id:
         cs_cfg = recipes.get(canonical_store_id, {}) or {}
@@ -105,12 +110,16 @@ def _section_project(manifest: dict, resolved: dict) -> list[str]:
 
 
 def _section_mcp(manifest: dict, brief: dict) -> list[str]:
-    """Emit ## Runtime MCPs section: table + per-server description + secrets rule."""
-    mcp: dict = manifest.get("mcp", {}) or {}
-    if not mcp:
-        return []
+    """Emit ## Runtime MCPs section: table + per-server description + secrets rule.
 
+    Also renders description-only entries from [brief].mcp_descriptions that
+    have no matching [mcp.*] block (e.g. global MCPs like engram).
+    """
+    mcp: dict = manifest.get("mcp", {}) or {}
     mcp_descriptions = brief.get("mcp_descriptions", {}) or {}
+
+    if not mcp and not mcp_descriptions:
+        return []
 
     lines: list[str] = ["## Runtime MCPs", ""]
     for server_name, cfg in mcp.items():
@@ -133,6 +142,16 @@ def _section_mcp(manifest: dict, brief: dict) -> list[str]:
         desc = mcp_descriptions.get(server_name, "")
         if desc:
             lines.append(f"- description: {desc}")
+        lines.append("")
+
+    # Render description-only entries (present in mcp_descriptions but absent from [mcp.*])
+    for server_name, desc in mcp_descriptions.items():
+        if server_name in mcp:
+            continue  # already rendered above
+        if not desc:
+            continue
+        lines.append(f"**{server_name}** *(global)*")
+        lines.append(f"- description: {desc}")
         lines.append("")
 
     lines.append("Never expose env-backed secrets from MCP config in generated docs or comments.")
@@ -164,8 +183,10 @@ def _section_runtime_flow(brief: dict, resolved: dict) -> list[str]:
             lines.append(f"- {item}")
     if provider:
         vcs_note = f"VCS/PR provider: {provider}"
+        if provider == "github":
+            vcs_note += " (`gh` CLI)"
         if base_branch:
-            vcs_note += f" (`gh` CLI); base branch: `{base_branch}`"
+            vcs_note += f"; base branch: `{base_branch}`"
         lines.append(f"- {vcs_note}")
     lines.append("")
     return lines
@@ -188,7 +209,7 @@ def _section_trello(resolved: dict) -> list[str]:
     lines: list[str] = [
         "## Trello Tracking",
         "",
-        f"- **Board**: `{board_id}` (`{tracker_recipe_id}`).",
+        f"- **Board**: `{board_id}`",
         "",
     ]
     return lines
@@ -234,10 +255,25 @@ def _section_workflow_rules(brief: dict) -> list[str]:
 
 
 def _section_useful_commands(brief: dict, resolved: dict) -> list[str]:
-    """Emit ## Useful Commands from tdd-flow test_command + [brief].useful_commands. Omit if absent."""
+    """Emit ## Useful Commands from test-runner binding test_command + [brief].useful_commands.
+
+    Only emits commands that are explicitly provided (from test-runner binding or
+    [brief].useful_commands). Never fabricates commands via string replacement.
+    """
     recipes = resolved.get("recipes", {}) or {}
-    tdd_cfg = recipes.get("tdd-flow", {}) or {}
-    test_command = tdd_cfg.get("test_command", "")
+    bindings = resolved.get("bindings", {}) or {}
+
+    # Resolve test_command via test-runner capability binding (FIX 10)
+    test_command = ""
+    test_runner_id = bindings.get("test-runner", "")
+    if test_runner_id:
+        tdd_cfg = recipes.get(test_runner_id, {}) or {}
+        test_command = tdd_cfg.get("test_command", "")
+    if not test_command:
+        # Fallback: try well-known recipe id directly
+        tdd_cfg = recipes.get("tdd-flow", {}) or {}
+        test_command = tdd_cfg.get("test_command", "")
+
     extra_commands = brief.get("useful_commands", []) or []
 
     if not test_command and not extra_commands:
@@ -250,10 +286,6 @@ def _section_useful_commands(brief: dict, resolved: dict) -> list[str]:
             lines.append(f"- Full validation: `{test_command}`")
         else:
             lines.append(f"- Focused tests: `{test_command}`")
-            # Derive validate command: replace 'run.sh' → 'validate.sh'
-            validate_command = test_command.replace("run.sh", "validate.sh")
-            if validate_command != test_command:
-                lines.append(f"- Full validation: `{validate_command}`")
     for cmd in extra_commands:
         if cmd:
             lines.append(f"- {cmd}")
@@ -332,8 +364,14 @@ def render(toml_path: Path, output_path: Path, *, preserve_if_marker: bool, reso
 
     resolved: dict[str, Any] = {}
     if resolved_config_path is not None and resolved_config_path.is_file():
-        with open(resolved_config_path) as fh:
-            resolved = json.load(fh)
+        try:
+            with open(resolved_config_path) as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                data = {}
+            resolved = data
+        except (json.JSONDecodeError, ValueError, OSError):
+            resolved = {}  # degrade gracefully — render without structured fields
 
     content = "\n".join(_render_lines(manifest, resolved))
     output_path.parent.mkdir(parents=True, exist_ok=True)
