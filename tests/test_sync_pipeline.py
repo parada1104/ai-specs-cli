@@ -815,6 +815,195 @@ class SyncPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
+    # -----------------------------------------------------------------------
+    # Batch 1 RED tests — option-c-runtime-brief
+    # These tests MUST FAIL until Batch 2/3 implement the feature.
+    # -----------------------------------------------------------------------
+
+    def test_sync_renders_rich_brief_from_manifest(self):
+        """Needle test: [brief] + recipe configs produce structured needles in AGENTS.md.
+
+        Fails (RED) because agents-render.py does not yet accept --resolved-config
+        and does not render [brief] sections.  Batch 2 wires --resolved-config;
+        Batch 3 implements the section helpers.
+        """
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'brief-needle-fixture'\n\n"
+                "[agents]\n"
+                "enabled = ['claude', 'cursor']\n\n"
+                "[brief]\n"
+                'intro = "Canonical runtime context for agents."\n'
+                'purpose = "per-project AI harness for configuration and tracking."\n'
+                'runtime_flow = [\n'
+                '  "A session works on one explicit user request or Trello card.",\n'
+                '  "Artifact phases run in a dedicated worktree.",\n'
+                ']\n'
+                'context_sources = ["Trello is the source of truth for work state."]\n'
+                'conflict_policy = ["Explicit human instruction controls immediate scope."]\n'
+                'workflow_rules = ["Do not merge without explicit human instruction."]\n\n'
+                "[brief.mcp_descriptions]\n"
+                'trello = "project tracking through the Roadmap board."\n\n'
+                "[mcp.trello]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@trello/mcp']\n\n"
+                "[[recipes]]\n"
+                "id = 'trello-mcp-workflow'\n\n"
+                "[recipes.trello-mcp-workflow]\n"
+                "board_id = 'abc123testboard'\n\n"
+                "[[recipes]]\n"
+                "id = 'worktree-flow'\n\n"
+                "[recipes.worktree-flow]\n"
+                "integration_branch = 'development'\n\n"
+                "[[recipes]]\n"
+                "id = 'tdd-flow'\n\n"
+                "[recipes.tdd-flow]\n"
+                "test_command = './tests/run.sh'\n\n"
+                "[[recipes]]\n"
+                "id = 'vault-canonical-store'\n\n"
+                "[recipes.vault-canonical-store]\n"
+                "vault_scope = 'nnodes/proyectos/test-project'\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            agents = (workspace / "AGENTS.md").read_text()
+
+            # Prose sections from [brief] must be present
+            self.assertIn("Canonical runtime context for agents.", agents)
+            self.assertIn("per-project AI harness for configuration and tracking.", agents)
+            self.assertIn("A session works on one explicit user request or Trello card.", agents)
+            self.assertIn("Trello is the source of truth for work state.", agents)
+            self.assertIn("Explicit human instruction controls immediate scope.", agents)
+            self.assertIn("Do not merge without explicit human instruction.", agents)
+            self.assertIn("project tracking through the Roadmap board.", agents)
+
+            # Structured needles from --resolved-config must be present
+            self.assertIn("abc123testboard", agents)         # board_id
+            self.assertIn("development", agents)              # integration_branch
+            self.assertIn("./tests/run.sh", agents)          # test_command
+            self.assertIn("nnodes/proyectos/test-project", agents)  # vault_scope
+
+            # Enabled runtimes must be listed
+            self.assertIn("claude", agents)
+            self.assertIn("cursor", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_sync_rich_brief_identical_on_second_run(self):
+        """Idempotency test on the RICH rendering path.
+
+        Distinct from test_sync_produces_identical_agents_md_on_second_run — this
+        variant uses a manifest with [brief] and recipe configs so the test becomes
+        meaningful only once the enriched renderer lands (Batch 3).
+
+        Fails (RED) because the rich needles are missing from the current thin
+        renderer, so the byte-identity check catches a regression in the feature.
+        The test asserts a needle AFTER the second run to tie idempotency to the
+        rich path — a thin renderer would pass the assertEqual but fail the needle.
+        """
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'brief-idempotency-fixture'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[brief]\n"
+                'runtime_flow = ["Session works on one card."]\n'
+                'workflow_rules = ["No merges without instruction."]\n\n'
+                "[[recipes]]\n"
+                "id = 'trello-mcp-workflow'\n\n"
+                "[recipes.trello-mcp-workflow]\n"
+                "board_id = 'idempotency-board-xyz'\n\n"
+                "[[recipes]]\n"
+                "id = 'tdd-flow'\n\n"
+                "[recipes.tdd-flow]\n"
+                "test_command = './tests/validate.sh'\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            first = (workspace / "AGENTS.md").read_bytes()
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            second = (workspace / "AGENTS.md").read_bytes()
+
+            # Byte-identity gate
+            self.assertEqual(first, second)
+
+            # Rich-path needle: ties idempotency to feature presence
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("idempotency-board-xyz", agents)   # board_id from resolved-config
+            self.assertIn("./tests/validate.sh", agents)      # test_command from resolved-config
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_agents_render_standalone_degradation(self):
+        """Standalone degradation test: agents-render.py invoked WITHOUT --resolved-config.
+
+        Asserts:
+        - Exits 0 (no crash).
+        - Output contains project identity (project name).
+        - Output contains MCP section (when mcp servers present).
+        - Output contains [brief] prose sections (intro, workflow_rules).
+
+        Fails (RED) because the current renderer does not render [brief] sections at all.
+        Batch 3 implements the section helpers that will satisfy the prose assertions.
+        """
+        import tempfile as _tempfile
+        with _tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "ai-specs.toml"
+            output_path = tmp_path / "AGENTS.md"
+
+            toml_path.write_text(
+                "[project]\n"
+                "name = 'standalone-degradation-fixture'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[brief]\n"
+                'intro = "This is the degraded brief intro."\n'
+                'workflow_rules = ["No direct pushes to main."]\n\n'
+                "[mcp.demo-server]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@demo/mcp']\n"
+                "env = { TOKEN = '$DEMO_TOKEN' }\n"
+            )
+
+            agents_render = ROOT / "lib" / "_internal" / "agents-render.py"
+            proc = subprocess.run(
+                ["python3", str(agents_render), str(toml_path), str(output_path)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            # Must not crash
+            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
+
+            # Output file must exist
+            self.assertTrue(output_path.exists(), "AGENTS.md was not created")
+
+            agents = output_path.read_text()
+
+            # Identity: project name must be present
+            self.assertIn("standalone-degradation-fixture", agents)
+
+            # MCP section must be rendered (degraded path still includes MCP)
+            self.assertIn("demo-server", agents)
+
+            # [brief] prose sections must be present even without --resolved-config
+            self.assertIn("This is the degraded brief intro.", agents)
+            self.assertIn("No direct pushes to main.", agents)
+
+    # -----------------------------------------------------------------------
+    # End Batch 1 RED tests
+    # -----------------------------------------------------------------------
+
     def test_sync_resolves_all_skill_sources(self):
         workspace = self.make_workspace()
         try:
