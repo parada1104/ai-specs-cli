@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -32,7 +33,7 @@ class GitPrFlowRecipeTests(unittest.TestCase):
         recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
         self.assertEqual(recipe.id, RECIPE_ID)
         cap_ids = [c.id for c in recipe.capabilities]
-        self.assertIn("vcs-merge-flow", cap_ids)
+        self.assertIn("vcs-pr-flow", cap_ids)
         # Bundled skill is declared
         skill_ids = [(s.id, s.source) for s in recipe.skills]
         self.assertIn(("git-merge-workflow", "bundled"), skill_ids)
@@ -48,11 +49,13 @@ class GitPrFlowRecipeTests(unittest.TestCase):
         ai_specs.mkdir()
         (ai_specs / "skills").mkdir()
         (ai_specs / "commands").mkdir()
+        with (CATALOG / RECIPE_ID / "recipe.toml").open("rb") as fh:
+            recipe_version = tomllib.load(fh)["recipe"]["version"]
         manifest = ai_specs / "ai-specs.toml"
         manifest.write_text(
             "[project]\nname = 'fixture'\n\n"
             "[agents]\nenabled = ['claude']\n\n"
-            f'[recipes.{RECIPE_ID}]\nenabled = true\nversion = "1.0.0"\n'
+            f'[recipes.{RECIPE_ID}]\nenabled = true\nversion = "{recipe_version}"\n'
         )
         return root
 
