@@ -1,0 +1,26 @@
+[recipe]
+id = "tdd-flow"
+name = "TDD Flow"
+description = "Red-green-refactor discipline with a configurable test command"
+version = "1.0.0"
+author = "ai-specs"
+license = "MIT"
+
+[[capabilities]]
+id = "test-runner"
+
+[[hooks]]
+event = "on-sync"
+action = "validate-config"
+
+[config.test_command]
+required = false
+type = "string"
+
+[provides]
+skills = [{ id = "tdd-flow", source = "bundled" }]
+commands = [{ id = "tdd", path = "commands/tdd.md" }]
+
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/tdd-flow/README.md"
