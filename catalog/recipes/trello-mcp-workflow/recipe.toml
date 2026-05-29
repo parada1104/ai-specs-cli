@@ -2,7 +2,10 @@
 id = "trello-mcp-workflow"
 name = "Trello MCP Workflow"
 description = "Automated Trello board integration for ai-specs SDD workflows"
-version = "1.1.0"
+version = "1.2.0"
+
+[[capabilities]]
+id = "tracker"
 
 [[capabilities]]
 id = "trello-session-bootstrap"
