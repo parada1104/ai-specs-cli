@@ -27,6 +27,9 @@
 - args: -y @modelcontextprotocol/server-filesystem $OBSIDIAN_VAULT_PATH/nnodes/proyectos/ai-specs
 - description: canonical project notes in the Obsidian vault scoped to `nnodes/proyectos/ai-specs`.
 
+**engram** *(global)*
+- description: operational/session memory (global MCP).
+
 Never expose env-backed secrets from MCP config in generated docs or comments.
 
 ## Runtime Flow
@@ -39,7 +42,7 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 
 ## Trello Tracking
 
-- **Board**: `69ec097f13e2d38ecd89a557` (`trello-mcp-workflow`).
+- **Board**: `69ec097f13e2d38ecd89a557`
 
 ## Context Sources
 
