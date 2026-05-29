@@ -44,10 +44,14 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         ai_specs.mkdir()
         (ai_specs / "skills").mkdir()
         (ai_specs / "commands").mkdir()
+        import tomllib
+
+        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
+            version = tomllib.load(fh)["recipe"]["version"]
         (ai_specs / "ai-specs.toml").write_text(
             "[project]\nname = 'fixture'\n\n"
             "[agents]\nenabled = ['claude']\n\n"
-            '[recipes.worktree-flow]\nenabled = true\nversion = "1.0.0"\n'
+            f'[recipes.worktree-flow]\nenabled = true\nversion = "{version}"\n'
         )
         return root
 

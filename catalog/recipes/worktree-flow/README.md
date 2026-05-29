@@ -41,9 +41,12 @@ Then run `ai-specs sync`. The cleanup script materializes to
 
 | Worktree state | Action |
 |---|---|
-| Branch merged into base, clean | removed |
+| Branch merged into base (regular **or** squash/rebase), clean | removed |
 | Uncommitted changes | preserved (`dirty`) |
 | Branch not merged | preserved (`unmerged`) |
 | Main / detached HEAD | never touched |
+
+Squash/rebase merges are detected by patch-id (`git cherry`), since the squashed
+commit is not an ancestor of the base branch.
 
 Run with `--dry-run` to preview before removing anything.
