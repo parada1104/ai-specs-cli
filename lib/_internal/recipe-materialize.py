@@ -400,7 +400,59 @@ def clean_orphans(project_root: Path, enabled_recipe_ids: set[str], expected_dep
 
 
 # --- Main ---------------------------------------------------------------------
-def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None) -> int:
+def build_resolved_config(project_root: Path) -> dict[str, Any]:
+    """Build a resolved-config JSON blob from raw manifest data.
+
+    Reads [recipes.*] sub-tables directly (no catalog lookup), plus [[bindings]].
+    Returns: {bindings: {capability→recipe}, recipes: {id→{raw config keys}}, enabled: [id...]}
+    """
+    mod = _load_toml_read()
+    toml_path = project_root / "ai-specs" / "ai-specs.toml"
+    manifest_data = mod.load_toml(toml_path)
+
+    # Raw recipes dict: {id: {all keys except enabled/version}}
+    raw_recipes = manifest_data.get("recipes", {}) or {}
+    recipes_out: dict[str, dict[str, Any]] = {}
+    enabled_ids: list[str] = []
+    if isinstance(raw_recipes, dict):
+        for rid, val in raw_recipes.items():
+            if not isinstance(val, dict):
+                continue
+            # Config = merged catalog-schema defaults + manifest overrides
+            # For raw-manifest mode (no catalog), collect all non-meta keys
+            config: dict[str, Any] = {}
+            for k, v in val.items():
+                if k in ("enabled", "version"):
+                    continue
+                if k == "config" and isinstance(v, dict):
+                    # Real manifest style: [recipes.<id>.config]
+                    config.update(v)
+                else:
+                    # Flat style: key=value directly in [recipes.<id>]
+                    config[k] = v
+            recipes_out[rid] = config
+            if val.get("enabled") is True:
+                enabled_ids.append(rid)
+
+    # Bindings: explicit [[bindings]] → {capability: recipe}
+    raw_bindings = manifest_data.get("bindings", []) or []
+    bindings_out: dict[str, str] = {}
+    if isinstance(raw_bindings, list):
+        for b in raw_bindings:
+            if isinstance(b, dict):
+                cap = b.get("capability", "")
+                rec = b.get("recipe", "")
+                if cap and rec:
+                    bindings_out[cap] = rec
+
+    return {
+        "bindings": bindings_out,
+        "recipes": recipes_out,
+        "enabled": enabled_ids,
+    }
+
+
+def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None, resolved_config_out: Path | None = None) -> int:
     catalog_dir = ai_specs_home / "catalog" / "recipes"
     toml_path = project_root / "ai-specs" / "ai-specs.toml"
 
@@ -417,6 +469,13 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # Still clean up orphaned recipes (none expected) and deps not in manifest
         clean_orphans(project_root, set(), expected_dep_ids)
         print("  (no [recipes.*] enabled — skipping)")
+        # Still write resolved-config if requested (even with no enabled recipes)
+        if resolved_config_out is not None:
+            resolved = build_resolved_config(project_root)
+            with open(resolved_config_out, "w") as f:
+                json.dump(resolved, f, indent=2, sort_keys=True)
+                f.write("\n")
+            print(f"  ✓ wrote resolved-config (0 enabled recipe(s))")
         return 0
 
     manifest_bindings = load_bindings_from_manifest(project_root)
@@ -532,26 +591,40 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     if recipe_mcp_out is None:
         print(f"RECIPE_MCP_TEMP:{temp_path}")
 
+    # Write resolved-config JSON for downstream agents-render.py
+    if resolved_config_out is not None:
+        resolved = build_resolved_config(project_root)
+        with open(resolved_config_out, "w") as f:
+            json.dump(resolved, f, indent=2, sort_keys=True)
+            f.write("\n")
+        print(f"  ✓ wrote resolved-config ({len(resolved['recipes'])} recipe(s))")
+
     return 0
 
 
 def main() -> int:
     args = sys.argv[1:]
     recipe_mcp_out = None
+    resolved_config_out = None
     if "--recipe-mcp-out" in args:
         idx = args.index("--recipe-mcp-out")
         if idx + 1 < len(args):
             recipe_mcp_out = Path(args[idx + 1])
             args = args[:idx] + args[idx + 2:]
+    if "--resolved-config-out" in args:
+        idx = args.index("--resolved-config-out")
+        if idx + 1 < len(args):
+            resolved_config_out = Path(args[idx + 1])
+            args = args[:idx] + args[idx + 2:]
     if len(args) != 2:
-        print(f"Usage: {sys.argv[0]} <project_root> <ai_specs_home> [--recipe-mcp-out <path>]", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <project_root> <ai_specs_home> [--recipe-mcp-out <path>] [--resolved-config-out <path>]", file=sys.stderr)
         return 2
 
     project_root = Path(args[0]).resolve()
     ai_specs_home = Path(args[1]).resolve()
 
     try:
-        return materialize_recipes(project_root, ai_specs_home, recipe_mcp_out)
+        return materialize_recipes(project_root, ai_specs_home, recipe_mcp_out, resolved_config_out)
     except Exception as exc:
         fail(str(exc))
         return 1

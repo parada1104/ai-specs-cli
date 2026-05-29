@@ -60,14 +60,16 @@ SELECT_ALL=0
 EXPLICIT_SOURCE_ROOT=0
 EXPLICIT_TARGET=0
 RECIPE_MCP_JSON=""
+RESOLVED_CONFIG_JSON=""
 declare -a SELECTED_AGENTS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --source-root) SOURCE_ROOT="${2:-}"; EXPLICIT_SOURCE_ROOT=1; shift 2 ;;
-        --target)      TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
-        --recipe-mcp)  RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
-        --all)         SELECT_ALL=1; shift ;;
+        --source-root)      SOURCE_ROOT="${2:-}"; EXPLICIT_SOURCE_ROOT=1; shift 2 ;;
+        --target)           TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
+        --recipe-mcp)       RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
+        --resolved-config)  RESOLVED_CONFIG_JSON="${2:-}"; shift 2 ;;
+        --all)              SELECT_ALL=1; shift ;;
         --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
         -h|--help)     usage; exit 0 ;;
@@ -204,7 +206,11 @@ ensure_target_workspace() {
     python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
-    python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$TARGET_AGENTS_MD"
+    local render_args=("$TOML_PATH" "$TARGET_AGENTS_MD")
+    if [[ -n "$RESOLVED_CONFIG_JSON" && -f "$RESOLVED_CONFIG_JSON" ]]; then
+        render_args+=("--resolved-config" "$RESOLVED_CONFIG_JSON")
+    fi
+    python3 "$AGENTS_RENDER_PY" "${render_args[@]}"
 }
 
 # Resolve enabled agents from ai-specs.toml

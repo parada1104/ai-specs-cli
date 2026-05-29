@@ -752,7 +752,7 @@ class SyncPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
-    def test_sync_produces_identical_agents_md_on_second_run(self):
+    def test_sync_produces_identical_agents_md_on_second_run_thin(self):
         workspace = self.make_workspace()
         try:
             self.init_workspace(workspace)
@@ -850,22 +850,23 @@ class SyncPipelineTests(unittest.TestCase):
                 "[mcp.trello]\n"
                 "command = 'npx'\n"
                 "args = ['-y', '@trello/mcp']\n\n"
-                "[[recipes]]\n"
-                "id = 'trello-mcp-workflow'\n\n"
                 "[recipes.trello-mcp-workflow]\n"
                 "board_id = 'abc123testboard'\n\n"
-                "[[recipes]]\n"
-                "id = 'worktree-flow'\n\n"
                 "[recipes.worktree-flow]\n"
                 "integration_branch = 'development'\n\n"
-                "[[recipes]]\n"
-                "id = 'tdd-flow'\n\n"
                 "[recipes.tdd-flow]\n"
                 "test_command = './tests/run.sh'\n\n"
-                "[[recipes]]\n"
-                "id = 'vault-canonical-store'\n\n"
                 "[recipes.vault-canonical-store]\n"
-                "vault_scope = 'nnodes/proyectos/test-project'\n"
+                "vault_scope = 'nnodes/proyectos/test-project'\n\n"
+                "[[bindings]]\n"
+                "capability = 'tracker'\n"
+                "recipe = 'trello-mcp-workflow'\n\n"
+                "[[bindings]]\n"
+                "capability = 'vcs-pr-flow'\n"
+                "recipe = 'worktree-flow'\n\n"
+                "[[bindings]]\n"
+                "capability = 'canonical-store'\n"
+                "recipe = 'vault-canonical-store'\n"
             )
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
@@ -916,14 +917,13 @@ class SyncPipelineTests(unittest.TestCase):
                 "[brief]\n"
                 'runtime_flow = ["Session works on one card."]\n'
                 'workflow_rules = ["No merges without instruction."]\n\n'
-                "[[recipes]]\n"
-                "id = 'trello-mcp-workflow'\n\n"
                 "[recipes.trello-mcp-workflow]\n"
                 "board_id = 'idempotency-board-xyz'\n\n"
-                "[[recipes]]\n"
-                "id = 'tdd-flow'\n\n"
                 "[recipes.tdd-flow]\n"
-                "test_command = './tests/validate.sh'\n"
+                "test_command = './tests/validate.sh'\n\n"
+                "[[bindings]]\n"
+                "capability = 'tracker'\n"
+                "recipe = 'trello-mcp-workflow'\n"
             )
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
