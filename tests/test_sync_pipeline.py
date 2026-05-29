@@ -1004,6 +1004,47 @@ class SyncPipelineTests(unittest.TestCase):
     # End Batch 1 RED tests
     # -----------------------------------------------------------------------
 
+    def test_brief_useful_commands_renders_extra_items(self):
+        """[brief].useful_commands array items are appended to ## Useful Commands section.
+
+        Fails (RED) because agents-render.py does not yet read brief.useful_commands.
+        Batch 5 adds renderer support and this test becomes GREEN.
+        """
+        import tempfile as _tempfile
+        with _tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "ai-specs.toml"
+            output_path = tmp_path / "AGENTS.md"
+
+            toml_path.write_text(
+                "[project]\n"
+                "name = 'useful-commands-fixture'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[brief]\n"
+                'useful_commands = ["Inspect the active Trello card before resuming work."]\n\n'
+                "[recipes.tdd-flow]\n"
+                "enabled = true\n"
+                "version = '1.0.0'\n"
+                "[recipes.tdd-flow.config]\n"
+                "test_command = './tests/run.sh'\n"
+            )
+
+            agents_render = ROOT / "lib" / "_internal" / "agents-render.py"
+            proc = subprocess.run(
+                ["python3", str(agents_render), str(toml_path), str(output_path)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
+            self.assertTrue(output_path.exists(), "AGENTS.md was not created")
+
+            agents = output_path.read_text()
+            # brief.useful_commands items must appear in ## Useful Commands
+            self.assertIn("Inspect the active Trello card before resuming work.", agents)
+
     def test_sync_resolves_all_skill_sources(self):
         workspace = self.make_workspace()
         try:

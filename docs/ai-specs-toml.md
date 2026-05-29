@@ -17,6 +17,8 @@ The manifest surface supported today is:
 - `[recipes.<id>]`
 - `[recipes.<id>.config]`
 - `[[bindings]]`
+- `[brief]`
+- `[brief.mcp_descriptions]`
 Recipe-specific schema details live in [`docs/recipe-schema.md`](recipe-schema.md).
 
 ## Compatibility rules
@@ -51,6 +53,14 @@ Conservative compatibility rules in V1:
 | `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
 | `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |
 | `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |
+| `[brief]` | `intro` | optional; multi-line string; rendered as a `>` blockquote after H1 |
+| `[brief]` | `purpose` | optional; string; one-line project description in `## Project` |
+| `[brief]` | `runtime_flow` | optional; array of strings; bullet list in `## Runtime Flow` |
+| `[brief]` | `context_sources` | optional; array of strings; bullet list in `## Context Sources` |
+| `[brief]` | `conflict_policy` | optional; array of strings; bullet list in `## Conflict Policy` |
+| `[brief]` | `workflow_rules` | optional; array of strings; bullet list in `## Workflow Rules` |
+| `[brief]` | `useful_commands` | optional; array of strings; extra bullet items appended to `## Useful Commands` |
+| `[brief.mcp_descriptions]` | `<server-name>` | optional per-server description appended to each MCP entry in `## Runtime MCPs` |
 
 ## Manifest sections
 
@@ -163,6 +173,54 @@ board_id = "abc123"
 [[bindings]]
 capability = "trello-card-linking"
 recipe = "trello-mcp-workflow"
+```
+
+### `[brief]`
+
+Supplies prose content for the generated `AGENTS.md` runtime brief. Structured
+values — board ID, integration branch, test command, vault scope — come from
+recipe configs; only prose with no structured home goes here.
+
+All keys are optional. Sections are omitted from the rendered brief when the
+corresponding key is absent.
+
+```toml
+[brief]
+intro = """
+Canonical runtime context for agents: project identity, MCPs,
+context sources, safety rules, and workflow conventions.
+"""
+purpose = "per-project AI harness for configuration, MCPs, recipes, memory, and tracker integration."
+runtime_flow = [
+  "A session works on one explicit user request or Trello card.",
+  "Artifact phases run in a dedicated worktree when they write files.",
+]
+context_sources = [
+  "Trello is the source of truth for work state and dependencies.",
+  "Vault is the canonical note-taker for decisions and handoffs.",
+]
+conflict_policy = [
+  "Current explicit human instruction controls immediate scope unless it conflicts with safety or secrets.",
+  "Proposed agent plans are lowest authority until accepted and recorded in Trello, Vault, docs, or code.",
+]
+workflow_rules = [
+  "Do not merge or push to the integration branch without explicit human instruction.",
+  "Create a dedicated worktree for changes that write artifacts or modify code.",
+]
+useful_commands = [
+  "Inspect the active Trello card before resuming work.",
+]
+```
+
+### `[brief.mcp_descriptions]`
+
+Keyed by MCP server name. Each value is a short description appended to that
+server's entry in the `## Runtime MCPs` section of the generated brief.
+
+```toml
+[brief.mcp_descriptions]
+trello = "project tracking through the Roadmap board."
+engram = "operational/session memory (global MCP)."
 ```
 
 ## Out of scope

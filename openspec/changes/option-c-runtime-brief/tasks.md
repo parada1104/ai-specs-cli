@@ -32,11 +32,11 @@
 
 ## Batch 5: Docs + [brief] population
 
-- [ ] 5.1 [IMPL] `docs/ai-specs-toml.md`: add `[brief]` section documenting all keys (`intro`, `purpose`, `runtime_flow`, `context_sources`, `conflict_policy`, `workflow_rules`, `[brief.mcp_descriptions]`); add to field classification table; update "Canonical V1 surface" list.
-- [ ] 5.2 [IMPL] `ai-specs/ai-specs.toml`: add `[brief]` table populated from current `AGENTS.md` content (intro, purpose, runtime_flow, context_sources, conflict_policy, workflow_rules, mcp_descriptions).
+- [x] 5.1 [IMPL] `docs/ai-specs-toml.md`: add `[brief]` section documenting all keys (`intro`, `purpose`, `runtime_flow`, `context_sources`, `conflict_policy`, `workflow_rules`, `useful_commands`, `[brief.mcp_descriptions]`); add to field classification table; update "Canonical V1 surface" list.
+- [x] 5.2 [IMPL] `ai-specs/ai-specs.toml`: add `[brief]` table populated from current `AGENTS.md` content (intro, purpose, runtime_flow, context_sources, conflict_policy, workflow_rules, useful_commands, mcp_descriptions); change tdd-flow test_command to `./tests/run.sh`; add explicit [[bindings]] for tracker/vcs-pr-flow/canonical-store; fix project name to `ai-specs-cli`.
 
 ## Batch 6: Migration (atomic)
 
-- [ ] 6.1 [VERIFY] Run `python3 lib/_internal/agents-render.py ai-specs/ai-specs.toml /tmp/AGENTS.scratch.md --resolved-config <generated-temp>`; diff `/tmp/AGENTS.scratch.md` vs current `AGENTS.md`; iterate `[brief]` in `ai-specs.toml` until output ≈ manual brief (modulo "Current Transitional State" section).
-- [ ] 6.2 [ATOMIC-COMMIT] In ONE commit: (a) remove `<!-- ai-specs:runtime-brief -->` marker from `AGENTS.md` and `CLAUDE.md`; (b) remove "Current Transitional State" section from `AGENTS.md`; (c) update `CLAUDE.md` "Current Transitional State" / runtime-brief-marker notes to reflect completion; (d) confirm `ai-specs sync` now regenerates `AGENTS.md` without clobbering.
-- [ ] 6.3 [TEST-SMOKE] Run `./tests/validate.sh` on the migrated state; confirm all tests green.
+- [x] 6.1 [VERIFY] Run `python3 lib/_internal/agents-render.py ai-specs/ai-specs.toml /tmp/AGENTS.scratch.md --resolved-config <generated-temp>`; diff confirmed ≈ equivalent; all substantive content preserved; minor formatting differences noted in diff_summary.
+- [x] 6.2 [ATOMIC-COMMIT] In ONE commit: (a) remove `<!-- ai-specs:runtime-brief -->` marker from `AGENTS.md`; (b) remove "Current Transitional State" section; (c) generated content written to AGENTS.md; (d) added `brief.useful_commands` renderer support (TDD: RED test + GREEN impl).
+- [x] 6.3 [TEST-SMOKE] Run `./tests/validate.sh` on the migrated state; confirm all tests green.

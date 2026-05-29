@@ -1,22 +1,33 @@
 # ai-specs-cli Runtime Brief
-<!-- ai-specs:runtime-brief -->
 
-> This is the project's director de orquesta: canonical runtime context for agents. It covers project identity, MCPs, context sources, safety rules, and workflow conventions. It does NOT track day-to-day work state — that lives in Trello and Engram. The auto-generated runtime brief from `ai-specs sync` is thinner than this manual version because `ai-specs.toml` does not yet support richer runtime context (board IDs, dependency tracking, workflow rules, useful commands). The north star is Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing. Until then, this file remains manual.
+> This is the project's director de orquesta: canonical runtime context for agents.
+> It covers project identity, MCPs, context sources, safety rules, and workflow conventions.
+> It does NOT track day-to-day work state — that lives in Trello and Engram.
 
 ## Project
 
-- Project: `ai-specs-cli`
-- Manifest: `ai-specs/ai-specs.toml`
-- Purpose: per-project AI harness for agent configuration, MCPs, recipes, memory, and tracker integration.
-- Enabled runtimes: `claude`, `cursor`, `opencode`, `pi`
-- Integration branch: `development`
+- **Project**: `ai-specs-cli`
+- **Purpose**: per-project AI harness for agent configuration, MCPs, recipes, memory, and tracker integration.
+- **Enabled runtimes**: `claude`, `cursor`, `opencode`, `pi`
+- **Integration branch**: `development`
+- **Vault scope**: `nnodes/proyectos/ai-specs`
 
 ## Runtime MCPs
 
-- `trello`: project tracking through the ai-specs-cli Roadmap board.
-- `engram`: operational/session memory (global MCP).
-- `vault-ai-specs`: canonical project notes in the Obsidian vault scoped to `nnodes/proyectos/ai-specs`.
-- Never expose env-backed secrets from MCP config in generated docs or comments.
+**trello**
+- command: npx
+- args: -y @delorenj/mcp-server-trello
+- env:
+  - TRELLO_API_KEY: ${TRELLO_API_KEY}
+  - TRELLO_TOKEN: ${TRELLO_TOKEN}
+- description: project tracking through the ai-specs-cli Roadmap board.
+
+**vault-ai-specs**
+- command: npx
+- args: -y @modelcontextprotocol/server-filesystem $OBSIDIAN_VAULT_PATH/nnodes/proyectos/ai-specs
+- description: canonical project notes in the Obsidian vault scoped to `nnodes/proyectos/ai-specs`.
+
+Never expose env-backed secrets from MCP config in generated docs or comments.
 
 ## Runtime Flow
 
@@ -24,12 +35,11 @@
 - The orchestrator coordinates work inline using project skills and the runtime brief.
 - `explore` can run without a worktree when it only produces thinking.
 - Artifact phases and implementation phases run in a dedicated worktree when they write files.
-- VCS/PR provider: GitHub through `gh` CLI.
+- VCS/PR provider: github (`gh` CLI); base branch: `development`
 
 ## Trello Tracking
 
-- Board: `69ec097f13e2d38ecd89a557` (`ai-specs-cli`).
-- Trello is the source of truth for work state and dependencies. Check Engram for the current active card and next recommended focus.
+- **Board**: `69ec097f13e2d38ecd89a557` (`trello-mcp-workflow`).
 
 ## Context Sources
 
@@ -38,6 +48,7 @@
 - Vault is the canonical note-taker for decisions, handoffs, and structured project context.
 - Engram is the operational memory layer for session facts, patterns, and short-lived continuity.
 - Skills are executable guidance, not the primary contents of this runtime brief. Load specific skills from `ai-specs/skills/<name>/SKILL.md` only when relevant.
+- Check Engram for the current active card and next recommended focus.
 
 ## Conflict Policy
 
@@ -53,13 +64,7 @@
 - Preserve unrelated worktree changes; never revert changes you did not make.
 - Follow the project's designated workflow for structured changes.
 - Before final verification, run the relevant focused tests plus `./tests/validate.sh` when feasible.
-- Do not run `ai-specs sync` in this repo until the TOML schema supports richer runtime context (Option C).
-- Direct `skill-sync` runs are allowed only for metadata validation; this file's runtime marker makes `skill-sync` skip Auto-invoke insertion.
-
-## Current Transitional State
-
-- `ai-specs/skills/skill-sync/assets/sync.sh` respects the `<!-- ai-specs:runtime-brief -->` marker and skips rewriting `AGENTS.md`.
-- This file remains intentionally manual and non-idempotent until the TOML schema supports richer runtime context (Option C: enrich `ai-specs.toml` so the generated brief matches this content without hand-editing).
+- Direct `skill-sync` runs are allowed only for metadata validation.
 
 ## Useful Commands
 

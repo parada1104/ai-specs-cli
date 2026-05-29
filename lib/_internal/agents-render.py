@@ -234,20 +234,25 @@ def _section_workflow_rules(brief: dict) -> list[str]:
 
 
 def _section_useful_commands(brief: dict, resolved: dict) -> list[str]:
-    """Emit ## Useful Commands from tdd-flow test_command. Omit if absent."""
+    """Emit ## Useful Commands from tdd-flow test_command + [brief].useful_commands. Omit if absent."""
     recipes = resolved.get("recipes", {}) or {}
     tdd_cfg = recipes.get("tdd-flow", {}) or {}
     test_command = tdd_cfg.get("test_command", "")
+    extra_commands = brief.get("useful_commands", []) or []
 
-    if not test_command:
+    if not test_command and not extra_commands:
         return []
 
     lines: list[str] = ["## Useful Commands", ""]
-    lines.append(f"- Focused tests: `{test_command}`")
-    # Derive validate command heuristic: replace 'run.sh' → 'validate.sh'
-    validate_command = test_command.replace("run.sh", "validate.sh")
-    if validate_command != test_command:
-        lines.append(f"- Full validation: `{validate_command}`")
+    if test_command:
+        lines.append(f"- Focused tests: `{test_command}`")
+        # Derive validate command heuristic: replace 'run.sh' → 'validate.sh'
+        validate_command = test_command.replace("run.sh", "validate.sh")
+        if validate_command != test_command:
+            lines.append(f"- Full validation: `{validate_command}`")
+    for cmd in extra_commands:
+        if cmd:
+            lines.append(f"- {cmd}")
     lines.append("")
     return lines
 
