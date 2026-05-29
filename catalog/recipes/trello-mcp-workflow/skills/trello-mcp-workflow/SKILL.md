@@ -229,8 +229,8 @@ from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`.
 ### Separation of concerns
 
 - **Trello** tracks state, priority, dependencies, and PM/CTO visibility.
-- **Canonical store** (e.g. Vault) holds durable decisions and handoffs.
-- **Operational memory** (e.g. Engram) holds searchable session continuity.
+- **Canonical store** holds durable decisions and handoffs.
+- **Operational memory** holds searchable session continuity.
 - **SDD artifacts** hold specs/design/tasks when a card requires durable change.
 
 Do not mix these: Trello is state, not memory. A card links to its decision/spec
