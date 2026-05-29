@@ -1,0 +1,32 @@
+[recipe]
+id = "git-pr-flow"
+name = "Git PR Flow"
+description = "Provider-oriented PR and merge flow for feature branches (GitHub via gh CLI by default)"
+version = "1.0.0"
+author = "ai-specs"
+license = "MIT"
+
+[[capabilities]]
+id = "vcs-merge-flow"
+
+[[hooks]]
+event = "on-sync"
+action = "validate-config"
+
+[config.provider]
+required = false
+type = "string"
+default = "github"
+
+[config.base_branch]
+required = false
+type = "string"
+default = "main"
+
+[provides]
+skills = [{ id = "git-merge-workflow", source = "bundled" }]
+commands = [{ id = "pr-create", path = "commands/pr-create.md" }]
+
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/git-pr-flow/README.md"
