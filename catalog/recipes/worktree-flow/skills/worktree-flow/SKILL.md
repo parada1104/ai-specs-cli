@@ -59,7 +59,9 @@ bash ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh \
 
 The script is conservative by design:
 
-- **Removes** a worktree only when its branch is fully merged into the base.
+- **Removes** a worktree only when its branch is fully merged into the base —
+  detecting both regular/fast-forward merges (ancestry) and squash/rebase merges
+  (all of the branch's changes already present in base by patch-id).
 - **Preserves** worktrees with uncommitted changes (reported as `dirty`).
 - **Preserves** worktrees whose branch is not yet merged (`unmerged`).
 - **Never touches** the main worktree or detached-HEAD worktrees.

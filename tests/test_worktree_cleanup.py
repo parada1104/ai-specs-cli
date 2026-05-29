@@ -80,6 +80,31 @@ class WorktreeCleanupTests(unittest.TestCase):
         self.assertNotIn("feat-merged", branches.split())
         self.assertIn("removed feat-merged", out.stdout)
 
+    def test_removes_squash_merged_worktree(self):
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-squash")
+        (wt / "f.txt").write_text("x\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "work")
+        # squash merge: base gets a NEW commit with the same diff, so the
+        # branch tip is NOT an ancestor of main (the squash-merge blind spot).
+        git(repo, "merge", "-q", "--squash", "feat-squash")
+        git(repo, "commit", "-qm", "squash: feat-squash")
+
+        # Sanity: ancestry alone would not detect this as merged.
+        self.assertNotEqual(
+            subprocess.run(
+                ["git", "merge-base", "--is-ancestor", "feat-squash", "main"],
+                cwd=repo,
+            ).returncode,
+            0,
+        )
+
+        out = self._run_cleanup(repo)
+
+        self.assertFalse(wt.exists(), "squash-merged worktree should be removed")
+        self.assertIn("removed feat-squash", out.stdout)
+
     def test_preserves_unmerged_worktree(self):
         repo = self._make_repo()
         wt = self._add_worktree(repo, "feat-unmerged")

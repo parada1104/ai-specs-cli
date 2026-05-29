@@ -75,7 +75,7 @@ flush() {
         return 0
     fi
 
-    if ! git merge-base --is-ancestor "$sha" "$BASE_BRANCH" 2>/dev/null; then
+    if ! is_merged "$sha" "$BASE_BRANCH"; then
         echo "skipped $name (unmerged)"
         return 0
     fi
@@ -86,8 +86,32 @@ flush() {
     fi
 
     git worktree remove "$path"
-    git branch -d "$branch" >/dev/null 2>&1 || true
+    # -d refuses squash/rebase-merged branches (not ancestors); -D is safe here
+    # because is_merged already confirmed the branch's changes are in base.
+    git branch -d "$branch" >/dev/null 2>&1 || git branch -D "$branch" >/dev/null 2>&1 || true
     echo "removed $name"
+}
+
+# Decide whether a branch is fully merged into base, covering both regular
+# (fast-forward / merge-commit) integration and squash/rebase merges.
+is_merged() {
+    local sha="$1" base="$2"
+    # Regular / fast-forward merge: branch tip is an ancestor of base.
+    if git merge-base --is-ancestor "$sha" "$base" 2>/dev/null; then
+        return 0
+    fi
+    # Squash / rebase merge: the branch tip is not an ancestor, but every commit
+    # unique to the branch is already present in base by patch-id. `git cherry`
+    # prints '+ <sha>' for commits NOT yet in base and '- <sha>' for those that
+    # are. No '+' lines => all of the branch's changes already landed in base.
+    if [[ -n "$(git rev-list "$base..$sha" 2>/dev/null)" ]]; then
+        local cherry
+        cherry="$(git cherry "$base" "$sha" 2>/dev/null)"
+        if [[ -n "$cherry" ]] && ! printf '%s\n' "$cherry" | grep -q '^+'; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 while IFS= read -r line; do
