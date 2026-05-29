@@ -39,10 +39,26 @@ def load_lock(lock_path: Path) -> dict:
         "skills": {k: dict(v) for k, v in (data.get("skills") or {}).items()},
         "commands": dict(data.get("commands") or {}),
         "opted_out": list(data.get("opted-out", {}).get("files", []) or []),
-        "recipes": {k: dict(v) for k, v in (data.get("recipes") or {}).items()},
-        "deps": {k: dict(v) for k, v in (data.get("deps") or {}).items()},
+        # On disk recipe/dep skills live under a `.skills.` sub-table
+        # (`[recipes."<id>".skills."<skill>"]`). Unwrap that level so the
+        # in-memory shape is recipes[<id>][<skill>] = {rel: sha}, matching
+        # write_lock and set_recipe_skill_hashes. Reading it one level too
+        # shallow leaves a stray "skills" key that corrupts the next write.
+        "recipes": _load_skill_groups(data.get("recipes")),
+        "deps": _load_skill_groups(data.get("deps")),
         "agents": {k: dict(v) for k, v in (data.get("agents") or {}).items()},
     }
+
+
+def _load_skill_groups(section: dict | None) -> dict:
+    """Normalize a recipes/deps section to {<id>: {<skill>: {rel: sha}}}."""
+    result: dict = {}
+    for owner_id, owner in (section or {}).items():
+        skills = (owner or {}).get("skills") or {}
+        result[owner_id] = {
+            skill_name: dict(files) for skill_name, files in skills.items()
+        }
+    return result
 
 
 def write_lock(lock_path: Path, lock: dict) -> None:
