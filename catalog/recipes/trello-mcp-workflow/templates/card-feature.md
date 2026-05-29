@@ -12,7 +12,8 @@
 
 ## SDD Tracking
 
-Refer to the `trello-pm-workflow` skill for SDD checklist tracking. The canonical checklist lives in `ai-specs/skills/trello-pm-workflow/SKILL.md`.
+Refer to the `trello-mcp-workflow` skill (see its **Card Contract** section) for
+the SDD checklist and card lifecycle rules.
 
 ## Notes
 

@@ -216,3 +216,76 @@ If progress data files are unavailable, post the comment with available data and
 | `trello_add_comment` | card-linking, state-sync, progress-comment | Post structured comments on cards. | Must validate `idBoard` before use. |
 | `trello_move_card` | state-sync | Move a card to a new list on phase transition. | Must pass `boardId: <board_id>`. |
 | `trello_update_card_details` | state-sync | Replace phase labels on a card. | Must pass `boardId: <board_id>`. |
+
+---
+
+## Card Contract
+
+The automation above (capabilities, board isolation, templates) defines *how* the
+agent drives Trello. This section defines *what* a good card looks like and how PM
+work is structured. Board IDs and list names are never hardcoded here — read them
+from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`.
+
+### Separation of concerns
+
+- **Trello** tracks state, priority, dependencies, and PM/CTO visibility.
+- **Canonical store** (e.g. Vault) holds durable decisions and handoffs.
+- **Operational memory** (e.g. Engram) holds searchable session continuity.
+- **SDD artifacts** hold specs/design/tasks when a card requires durable change.
+
+Do not mix these: Trello is state, not memory. A card links to its decision/spec
+records; it does not duplicate them.
+
+### Card types
+
+| Type | Use | Template |
+|---|---|---|
+| `epic` | Groups cards; no direct code. | `card-epic.md` |
+| `feature` | New capability, command, recipe, skill, or behavior. | `card-feature.md` |
+| `bug` | Regression or fix with reproduction + regression test. | `card-bug.md` |
+| `spike` | Research with a go/no-go conclusion. | `card-spike.md` |
+| `decision` | Tradeoff that must be recorded in the canonical store. | `card-decision.md` |
+| `handoff` | Session-to-session continuity when the active card is not enough. | `card-handoff.md` |
+
+Templates install to `ai-specs/recipes/trello-mcp-workflow/templates/`.
+
+### Card base structure
+
+Every work card carries: Context (why it exists), Objective (one sentence),
+Scope (checklist of deliverables), Out of scope, Acceptance Criteria (verifiable),
+Dependencies (blocking cards/changes), and Notes (links, decisions).
+
+### Flow rules
+
+- One session works one explicit request, one card, or one change.
+- A card that implies implementation, durable design, or a complex technical
+  decision should map to an SDD cycle.
+- A card may block another; dependencies must be explicit in Trello.
+- A card should link or name its SDD change when one exists.
+- Do not move a blocked card into apply while its dependencies stay open.
+
+### SDD checklist for features
+
+Add to the card when applicable:
+
+```markdown
+- [ ] Change created in a dedicated worktree
+- [ ] Proposal complete
+- [ ] Specs complete
+- [ ] Design complete
+- [ ] Tasks complete
+- [ ] Apply executed
+- [ ] Verify report generated
+- [ ] PR / merge done if applicable
+- [ ] Change archived if applicable
+```
+
+### Card close ritual
+
+Before moving a card to Review/Done:
+
+- Verify the acceptance criteria.
+- Confirm the state of SDD artifacts if SDD was used.
+- Record the decision/handoff in the canonical store if it changes project canon.
+- Save operational memory only if it helps future sessions.
+- Leave links to the PR, change, verify report, or handoff.
