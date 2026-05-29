@@ -607,10 +607,54 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     return 0
 
 
+def build_resolved_config_only(project_root: Path, resolved_config_out: Path) -> int:
+    """Lightweight mode: build and write ONLY the resolved-config JSON.
+
+    No skill copying, no hooks, no lock writes, no orphan cleanup, no
+    recipe-mcp temp file. Used by sync-agent standalone to avoid side effects
+    and leaked temp files.
+    """
+    try:
+        resolved = build_resolved_config(project_root)
+
+        # Attempt catalog-aware auto-binding (same as the full materialize path)
+        # so standalone sync-agent forwards the same enriched bindings as sync.sh.
+        # If the catalog lookup fails (catalog not present, version mismatch, etc.)
+        # fall back to the explicit-only bindings from build_resolved_config().
+        try:
+            mod = _load_toml_read()
+            toml_path = project_root / "ai-specs" / "ai-specs.toml"
+            manifest_data = mod.load_toml(toml_path)
+            raw_recipes = manifest_data.get("recipes", {}) or {}
+            enabled_ids = [
+                rid for rid, val in raw_recipes.items()
+                if isinstance(val, dict) and val.get("enabled") is True
+            ]
+            if enabled_ids:
+                # Locate catalog relative to this script's home
+                ai_specs_home = Path(__file__).resolve().parents[2]
+                catalog_dir = ai_specs_home / "catalog" / "recipes"
+                manifest_bindings = load_bindings_from_manifest(project_root)
+                auto_bindings = resolve_bindings(catalog_dir, enabled_ids, manifest_bindings)
+                if auto_bindings:
+                    resolved["bindings"] = auto_bindings
+        except Exception:
+            pass  # degrade to explicit-only bindings — already in resolved
+
+        with open(resolved_config_out, "w") as f:
+            json.dump(resolved, f, indent=2, sort_keys=True)
+            f.write("\n")
+        return 0
+    except Exception as exc:
+        print(f"WARNING: resolved-config generation failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def main() -> int:
     args = sys.argv[1:]
     recipe_mcp_out = None
     resolved_config_out = None
+    resolved_config_only = False
     if "--recipe-mcp-out" in args:
         idx = args.index("--recipe-mcp-out")
         if idx + 1 < len(args):
@@ -621,12 +665,27 @@ def main() -> int:
         if idx + 1 < len(args):
             resolved_config_out = Path(args[idx + 1])
             args = args[:idx] + args[idx + 2:]
+    if "--resolved-config-only" in args:
+        idx = args.index("--resolved-config-only")
+        resolved_config_only = True
+        args = args[:idx] + args[idx + 1:]
     if len(args) != 2:
-        print(f"Usage: {sys.argv[0]} <project_root> <ai_specs_home> [--recipe-mcp-out <path>] [--resolved-config-out <path>]", file=sys.stderr)
+        print(
+            f"Usage: {sys.argv[0]} <project_root> <ai_specs_home>"
+            " [--recipe-mcp-out <path>] [--resolved-config-out <path>]"
+            " [--resolved-config-only]",
+            file=sys.stderr,
+        )
         return 2
 
     project_root = Path(args[0]).resolve()
     ai_specs_home = Path(args[1]).resolve()
+
+    if resolved_config_only:
+        if resolved_config_out is None:
+            print("ERROR: --resolved-config-only requires --resolved-config-out <path>", file=sys.stderr)
+            return 2
+        return build_resolved_config_only(project_root, resolved_config_out)
 
     try:
         return materialize_recipes(project_root, ai_specs_home, recipe_mcp_out, resolved_config_out)

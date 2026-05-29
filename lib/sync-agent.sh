@@ -116,11 +116,16 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
         echo "  mode:        public root fan-out"
         echo ""
 
-        # Generate resolved-config for subrepo AGENTS.md enrichment (FIX 2)
+        # Generate resolved-config for subrepo AGENTS.md enrichment.
+        # Use --resolved-config-only so no skills are copied, no hooks run,
+        # no lock is written, and no recipe-mcp temp file is created.
         STANDALONE_RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
         trap 'rm -f "$STANDALONE_RESOLVED_CONFIG_TEMP"' EXIT
-        python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" \
-            --resolved-config-out "$STANDALONE_RESOLVED_CONFIG_TEMP" >/dev/null 2>&1 || true
+        if ! python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" \
+            --resolved-config-out "$STANDALONE_RESOLVED_CONFIG_TEMP" \
+            --resolved-config-only 2>&1; then
+            echo "WARNING: resolved-config generation failed; subrepo AGENTS.md will be rendered without structured fields." >&2
+        fi
 
         FORWARD_ARGS=()
         if [[ $SELECT_ALL -eq 1 ]]; then

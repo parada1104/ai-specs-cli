@@ -369,6 +369,14 @@ def render(toml_path: Path, output_path: Path, *, preserve_if_marker: bool, reso
                 data = json.load(fh)
             if not isinstance(data, dict):
                 data = {}
+            # Coerce inner fields to their expected types so wrong-typed values
+            # (e.g. {"bindings": ["x"]}) degrade instead of crashing downstream.
+            if not isinstance(data.get("bindings"), dict):
+                data["bindings"] = {}
+            if not isinstance(data.get("recipes"), dict):
+                data["recipes"] = {}
+            if not isinstance(data.get("enabled"), list):
+                data["enabled"] = []
             resolved = data
         except (json.JSONDecodeError, ValueError, OSError):
             resolved = {}  # degrade gracefully — render without structured fields

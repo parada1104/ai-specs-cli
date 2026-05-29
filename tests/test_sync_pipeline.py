@@ -921,12 +921,18 @@ class SyncPipelineTests(unittest.TestCase):
 
         Distinct from test_sync_produces_identical_agents_md_on_second_run — this
         variant uses a manifest with [brief] and recipe configs so the test becomes
-        meaningful only once the enriched renderer lands (Batch 3).
+        meaningful only once the enriched renderer lands.
 
-        Fails (RED) because the rich needles are missing from the current thin
-        renderer, so the byte-identity check catches a regression in the feature.
-        The test asserts a needle AFTER the second run to tie idempotency to the
-        rich path — a thin renderer would pass the assertEqual but fail the needle.
+        Coverage note: this fixture uses recipes WITHOUT enabled=true and relies on
+        explicit [[bindings]] + literal-recipe-id fallback (not resolve_bindings()
+        auto-bind). It exercises:
+          - build_resolved_config() reading all recipes (enabled and disabled alike)
+          - explicit [[bindings]] → board_id lookup in Trello section
+          - literal 'tdd-flow' fallback in _section_useful_commands
+          - byte-identity idempotency across two sync runs
+
+        For auto-binding coverage (resolve_bindings()), see
+        test_auto_binding_without_explicit_bindings and test_sync_renders_rich_brief_from_manifest.
         """
         workspace = self.make_workspace()
         try:
@@ -1029,8 +1035,16 @@ class SyncPipelineTests(unittest.TestCase):
     def test_brief_useful_commands_renders_extra_items(self):
         """[brief].useful_commands array items are appended to ## Useful Commands section.
 
-        Fails (RED) because agents-render.py does not yet read brief.useful_commands.
-        Batch 5 adds renderer support and this test becomes GREEN.
+        Coverage note: this test invokes agents-render.py directly WITHOUT
+        --resolved-config, so test_command from [recipes.tdd-flow.config] is NOT
+        rendered (that path requires resolved-config JSON from materialize). The
+        recipe presence (enabled=true, version='1.0.0') is correct but inert here —
+        it does NOT exercise resolve_bindings(). This test exercises ONLY the
+        brief.useful_commands rendering path in _section_useful_commands().
+
+        For test_command rendering coverage via the real resolve_bindings() path,
+        see test_sync_renders_rich_brief_from_manifest and
+        test_auto_binding_without_explicit_bindings.
         """
         import tempfile as _tempfile
         with _tempfile.TemporaryDirectory() as tmp:
@@ -1669,7 +1683,7 @@ class TestJudgmentDayFixes(unittest.TestCase):
         }
         agents = self.run_render("[project]\nname = 'fix3-gitlab'\n", resolved)
         self.assertIn("VCS/PR provider: gitlab", agents)
-        self.assertNotIn("gh", agents)
+        self.assertNotIn("(`gh` CLI)", agents)
         self.assertIn("base branch: `main`", agents)
 
     def test_vcs_bullet_base_branch_renders_without_provider_gh_hint(self):
@@ -1682,7 +1696,7 @@ class TestJudgmentDayFixes(unittest.TestCase):
         }
         agents = self.run_render("[project]\nname = 'fix3-bitbucket'\n", resolved)
         self.assertIn("VCS/PR provider: bitbucket", agents)
-        self.assertNotIn("gh", agents)
+        self.assertNotIn("(`gh` CLI)", agents)
         self.assertIn("base branch: `develop`", agents)
 
     # --- FIX 5 ---
@@ -1867,6 +1881,164 @@ class TestJudgmentDayFixes(unittest.TestCase):
         agents = self.run_render("[project]\nname = 'fix10-vault'\n", resolved)
         self.assertIn("- **Vault scope**: `my/vault/path`", agents)
         self.assertNotIn("other/path", agents)
+
+    # --- FIX A (Round 2) ---
+
+    def test_resolved_config_only_mode_writes_json_and_leaves_no_recipe_mcp_temp(self):
+        """FIX A (R2): --resolved-config-only writes resolved-config WITHOUT creating
+        any ai-specs-recipe-mcp-* temp files.
+
+        Verifies: (a) the output file is valid JSON with bindings/recipes/enabled keys,
+        (b) no new ai-specs-recipe-mcp-* files appear in /tmp after the call.
+        """
+        import glob
+        import tempfile as _tempfile
+
+        materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
+
+        with _tempfile.TemporaryDirectory() as parent:
+            workspace = Path(parent) / "fixA-workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixA-no-temp-leak'\n\n"
+                "[[bindings]]\n"
+                "capability = 'tracker'\n"
+                "recipe = 'trello-mcp-workflow'\n"
+            )
+
+            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                resolved_out = Path(f.name)
+
+            try:
+                # Count existing recipe-mcp temps before the call
+                before = set(glob.glob("/tmp/**/ai-specs-recipe-mcp-*.json", recursive=True))
+
+                proc = subprocess.run(
+                    [
+                        "python3", str(materialize),
+                        str(workspace), str(ROOT),
+                        "--resolved-config-out", str(resolved_out),
+                        "--resolved-config-only",
+                    ],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    proc.returncode, 0,
+                    f"--resolved-config-only failed:\n{proc.stderr}\n{proc.stdout}",
+                )
+
+                # No new recipe-mcp temp files must have been created
+                after = set(glob.glob("/tmp/**/ai-specs-recipe-mcp-*.json", recursive=True))
+                new_temps = after - before
+                self.assertEqual(
+                    new_temps, set(),
+                    f"--resolved-config-only leaked recipe-mcp temp(s): {new_temps}",
+                )
+
+                # Output must be valid JSON with expected top-level keys
+                with open(resolved_out) as fh:
+                    data = json.load(fh)
+                self.assertIn("bindings", data)
+                self.assertIn("recipes", data)
+                self.assertIn("enabled", data)
+            finally:
+                if resolved_out.exists():
+                    resolved_out.unlink()
+
+    def test_resolved_config_only_mode_fails_loudly_not_silently(self):
+        """FIX A (R2): --resolved-config-only propagates non-zero exit on failure.
+
+        Uses a non-existent project root so build_resolved_config fails. The script
+        must exit non-zero (not silently return 0 with || true).
+        """
+        import tempfile as _tempfile
+
+        materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
+
+        with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            resolved_out = Path(f.name)
+
+        try:
+            proc = subprocess.run(
+                [
+                    "python3", str(materialize),
+                    "/nonexistent/project/root", str(ROOT),
+                    "--resolved-config-out", str(resolved_out),
+                    "--resolved-config-only",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            # Must exit non-zero when project root does not exist
+            self.assertNotEqual(
+                proc.returncode, 0,
+                "Expected non-zero exit for missing project root but got 0",
+            )
+        finally:
+            if resolved_out.exists():
+                resolved_out.unlink()
+
+    # --- FIX B (Round 2) ---
+
+    def test_wrong_typed_inner_fields_degrade_gracefully_no_crash(self):
+        """FIX B (R2): resolved-config with wrong-typed inner fields must not crash.
+
+        A dict with bindings/recipes/enabled set to wrong types (list, string, str)
+        triggers AttributeError in the section helpers unless coerced to the expected
+        types in render(). This test feeds such a dict and verifies: exit 0, no crash,
+        degraded output (project name present).
+        """
+        import tempfile as _tempfile
+
+        with _tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "ai-specs.toml"
+            output_path = tmp_path / "AGENTS.md"
+            bad_resolved_path = tmp_path / "bad_resolved.json"
+
+            toml_path.write_text(
+                "[project]\n"
+                "name = 'fixB-wrong-typed-inner-fields'\n\n"
+                "[brief]\n"
+                'workflow_rules = ["No merges without review."]\n'
+            )
+            # bindings is a list (not dict), recipes is a string (not dict),
+            # enabled is a dict (not list) — all wrong types
+            bad_resolved_path.write_text(json.dumps({
+                "bindings": ["tracker", "vcs-pr-flow"],  # list, not dict
+                "recipes": "should-be-a-dict",           # string, not dict
+                "enabled": {"tdd-flow": True},           # dict, not list
+            }))
+
+            proc = subprocess.run(
+                [
+                    "python3",
+                    str(ROOT / "lib" / "_internal" / "agents-render.py"),
+                    str(toml_path), str(output_path),
+                    "--resolved-config", str(bad_resolved_path),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            # Must not crash
+            self.assertEqual(
+                proc.returncode, 0,
+                f"agents-render.py crashed on wrong-typed inner fields:\n{proc.stderr}",
+            )
+            self.assertTrue(output_path.exists())
+
+            agents = output_path.read_text()
+            # Project identity must be present (degraded but not empty)
+            self.assertIn("fixB-wrong-typed-inner-fields", agents)
+            # Workflow rules must render (from TOML, not from wrong resolved-config)
+            self.assertIn("No merges without review.", agents)
 
 
 if __name__ == "__main__":
