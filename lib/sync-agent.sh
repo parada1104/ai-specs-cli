@@ -116,6 +116,12 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
         echo "  mode:        public root fan-out"
         echo ""
 
+        # Generate resolved-config for subrepo AGENTS.md enrichment (FIX 2)
+        STANDALONE_RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
+        trap 'rm -f "$STANDALONE_RESOLVED_CONFIG_TEMP"' EXIT
+        python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" \
+            --resolved-config-out "$STANDALONE_RESOLVED_CONFIG_TEMP" >/dev/null 2>&1 || true
+
         FORWARD_ARGS=()
         if [[ $SELECT_ALL -eq 1 ]]; then
             FORWARD_ARGS+=("--all")
@@ -123,6 +129,10 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
             for agent in "${SELECTED_AGENTS[@]}"; do
                 FORWARD_ARGS+=("--$agent")
             done
+        fi
+        # Forward resolved-config so subrepo AGENTS.md gets structured fields
+        if [[ -f "$STANDALONE_RESOLVED_CONFIG_TEMP" ]]; then
+            FORWARD_ARGS+=("--resolved-config" "$STANDALONE_RESOLVED_CONFIG_TEMP")
         fi
 
         for resolved_target in "${RESOLVED_TARGETS[@]}"; do

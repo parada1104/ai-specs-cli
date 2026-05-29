@@ -108,6 +108,7 @@ python3 "$VENDOR_SKILLS_PY" "$ROOT_PATH"
 echo "▸ recipe-materialize (root)"
 RECIPE_MCP_TEMP="$(mktemp -t ai-specs-recipe-mcp-XXXXXX.json)"
 RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
+trap 'rm -f "$RECIPE_MCP_TEMP" "$RESOLVED_CONFIG_TEMP"' EXIT
 python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP"
 
 echo "▸ agents-render (root)"
@@ -120,12 +121,9 @@ for idx in "${!RESOLVED_TARGETS[@]}"; do
     echo "  ▸ $label → $target"
     if ! bash "$SYNC_AGENT_SH" --source-root "$ROOT_PATH" --target "$target" --all --recipe-mcp "$RECIPE_MCP_TEMP" --resolved-config "$RESOLVED_CONFIG_TEMP"; then
         echo "ERROR: sync failed for target $target ($label). Stopped on first failure; previous writes are not rolled back." >&2
-        rm -f "$RECIPE_MCP_TEMP" "$RESOLVED_CONFIG_TEMP"
         exit 1
     fi
 done
-
-rm -f "$RECIPE_MCP_TEMP" "$RESOLVED_CONFIG_TEMP"
 
 echo ""
 echo "✓ ai-specs sync complete"
