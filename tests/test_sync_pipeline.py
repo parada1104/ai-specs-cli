@@ -823,9 +823,10 @@ class SyncPipelineTests(unittest.TestCase):
     def test_sync_renders_rich_brief_from_manifest(self):
         """Needle test: [brief] + recipe configs produce structured needles in AGENTS.md.
 
-        Fails (RED) because agents-render.py does not yet accept --resolved-config
-        and does not render [brief] sections.  Batch 2 wires --resolved-config;
-        Batch 3 implements the section helpers.
+        Uses enabled=true recipes so resolve_bindings() actually runs (the real
+        resolution path). The vcs-pr-flow binding uses git-pr-flow (the recipe
+        that actually provides the vcs-pr-flow capability). The test must fail
+        if binding resolution breaks (e.g. wrong capability for a recipe).
         """
         workspace = self.make_workspace()
         try:
@@ -850,20 +851,40 @@ class SyncPipelineTests(unittest.TestCase):
                 "[mcp.trello]\n"
                 "command = 'npx'\n"
                 "args = ['-y', '@trello/mcp']\n\n"
+                # Enable recipes with valid versions so resolve_bindings() runs (FIX 4)
                 "[recipes.trello-mcp-workflow]\n"
-                "board_id = 'abc123testboard'\n\n"
+                "enabled = true\n"
+                "version = '1.2.0'\n"
+                "[recipes.trello-mcp-workflow.config]\n"
+                "board_id = 'aabbcc112233445566778899'\n\n"  # 24-char hex as required
                 "[recipes.worktree-flow]\n"
+                "enabled = true\n"
+                "version = '1.1.0'\n"
+                "[recipes.worktree-flow.config]\n"
                 "integration_branch = 'development'\n\n"
+                "[recipes.git-pr-flow]\n"
+                "enabled = true\n"
+                "version = '1.1.0'\n"
+                "[recipes.git-pr-flow.config]\n"
+                "provider = 'github'\n"
+                "base_branch = 'development'\n\n"
                 "[recipes.tdd-flow]\n"
+                "enabled = true\n"
+                "version = '1.0.0'\n"
+                "[recipes.tdd-flow.config]\n"
                 "test_command = './tests/run.sh'\n\n"
                 "[recipes.vault-canonical-store]\n"
+                "enabled = true\n"
+                "version = '1.0.0'\n"
+                "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/proyectos/test-project'\n\n"
                 "[[bindings]]\n"
                 "capability = 'tracker'\n"
                 "recipe = 'trello-mcp-workflow'\n\n"
+                # FIX 4: vcs-pr-flow must bind to git-pr-flow (the recipe that provides it)
                 "[[bindings]]\n"
                 "capability = 'vcs-pr-flow'\n"
-                "recipe = 'worktree-flow'\n\n"
+                "recipe = 'git-pr-flow'\n\n"
                 "[[bindings]]\n"
                 "capability = 'canonical-store'\n"
                 "recipe = 'vault-canonical-store'\n"
@@ -883,14 +904,15 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertIn("project tracking through the Roadmap board.", agents)
 
             # Structured needles from --resolved-config must be present
-            self.assertIn("abc123testboard", agents)         # board_id
-            self.assertIn("development", agents)              # integration_branch
+            # (Pinned to line-context to avoid tautological bare-token matching — FIX 9)
+            self.assertIn("aabbcc112233445566778899", agents)   # board_id
+            self.assertIn("- **Integration branch**: `development`", agents)  # integration_branch line
             self.assertIn("./tests/run.sh", agents)          # test_command
             self.assertIn("nnodes/proyectos/test-project", agents)  # vault_scope
+            self.assertIn("VCS/PR provider: github (`gh` CLI)", agents)  # VCS line
 
             # Enabled runtimes must be listed
-            self.assertIn("claude", agents)
-            self.assertIn("cursor", agents)
+            self.assertIn("- **Enabled runtimes**: `claude`, `cursor`", agents)  # FIX 9: line context
         finally:
             shutil.rmtree(workspace.parent)
 
@@ -1505,6 +1527,346 @@ class TestAutoBindingFix(unittest.TestCase):
             shutil.rmtree(workspace.parent)
             if resolved_out.exists():
                 resolved_out.unlink()
+
+
+class TestJudgmentDayFixes(unittest.TestCase):
+    """Tests for confirmed issues from Judgment Day Round 1.
+
+    FIX 1: description-only MCP entries (global MCPs) render correctly.
+    FIX 2: standalone sync-agent forwards resolved-config to subrepo AGENTS.md.
+    FIX 3: VCS bullet: gh CLI only for github; provider renders without gh for others.
+    FIX 5: malformed --resolved-config degrades gracefully (no crash).
+    FIX 7: Trello section shows board id without recipe-id parenthetical.
+    FIX 8: useful_commands does NOT fabricate validate.sh via str.replace.
+    FIX 9: hardened needle assertions — pin to line context not bare tokens.
+    FIX 10: structured fields resolved via capability bindings, not literal recipe ids.
+    """
+
+    AGENTS_RENDER = ROOT / "lib" / "_internal" / "agents-render.py"
+
+    def run_render(self, toml_text: str, resolved: dict | None = None) -> str:
+        """Helper: write TOML + optional resolved-config, invoke agents-render.py, return output."""
+        import tempfile as _tempfile
+        with _tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "ai-specs.toml"
+            output_path = tmp_path / "AGENTS.md"
+            toml_path.write_text(toml_text)
+            cmd = ["python3", str(self.AGENTS_RENDER), str(toml_path), str(output_path)]
+            if resolved is not None:
+                resolved_path = tmp_path / "resolved.json"
+                resolved_path.write_text(json.dumps(resolved))
+                cmd += ["--resolved-config", str(resolved_path)]
+            proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
+            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
+            self.assertTrue(output_path.exists())
+            return output_path.read_text()
+
+    # --- FIX 1 ---
+
+    def test_global_mcp_description_renders_without_mcp_block(self):
+        """FIX 1: An MCP entry in [brief.mcp_descriptions] with NO matching [mcp.*] block
+        must render as a description-only note (not silently dropped).
+        """
+        agents = self.run_render(
+            "[project]\n"
+            "name = 'fix1-global-mcp'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
+            "[mcp.trello]\n"
+            "command = 'npx'\n"
+            "args = ['-y', '@trello/mcp']\n\n"
+            "[brief.mcp_descriptions]\n"
+            'trello = "project tracking through the Roadmap board."\n'
+            'engram = "global persistent memory (no local config block)."\n'
+        )
+        # Both must render
+        self.assertIn("project tracking through the Roadmap board.", agents)
+        self.assertIn("global persistent memory (no local config block).", agents)
+        # engram has no [mcp.*] block — it must still appear
+        self.assertIn("engram", agents)
+
+    def test_mcp_section_renders_description_only_entry_with_global_marker(self):
+        """FIX 1: Description-only entries are marked *(global)* to distinguish from
+        full [mcp.*] blocks.
+        """
+        agents = self.run_render(
+            "[project]\n"
+            "name = 'fix1-global-marker'\n\n"
+            "[brief.mcp_descriptions]\n"
+            'global-only = "A global MCP with no local config."\n'
+        )
+        self.assertIn("*(global)*", agents)
+        self.assertIn("A global MCP with no local config.", agents)
+
+    # --- FIX 2 ---
+
+    def test_standalone_sync_agent_subrepo_gets_board_id(self):
+        """FIX 2: standalone ai-specs sync-agent (no --source-root / --target) must
+        forward resolved-config to subrepo AGENTS.md so board_id appears there.
+
+        Verifies that sync-agent generates + forwards resolved-config internally
+        (not just when invoked by sync.sh).
+        """
+        with tempfile.TemporaryDirectory() as parent_tmp:
+            workspace = Path(parent_tmp) / "fix2-workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fix2-subrepo-rich'\n"
+                "subrepos = ['sub/a']\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[brief]\n"
+                'intro = "Subrepo enrichment test."\n\n'
+                "[recipes.trello-mcp-workflow]\n"
+                "enabled = true\n"
+                "version = '1.2.0'\n"
+                "[recipes.trello-mcp-workflow.config]\n"
+                "board_id = 'aabbcc112233ddeeff001122'\n"
+            )
+            (workspace / "sub" / "a").mkdir(parents=True)
+            # Create subrepo AGENTS.md placeholder (required by ensure_target_workspace)
+            (workspace / "AGENTS.md").write_text("placeholder\n")
+
+            # First run sync so root AGENTS.md is proper
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            # Now run standalone sync-agent from the workspace root
+            subprocess.run(
+                [str(CLI), "sync-agent", str(workspace), "--all"],
+                check=True, text=True,
+            )
+
+            subrepo_agents = (workspace / "sub" / "a" / "AGENTS.md").read_text()
+            self.assertIn(
+                "aabbcc112233ddeeff001122", subrepo_agents,
+                "board_id must appear in subrepo AGENTS.md via standalone sync-agent resolved-config passthrough"
+            )
+
+    # --- FIX 3 ---
+
+    def test_vcs_bullet_includes_gh_cli_only_for_github(self):
+        """FIX 3: VCS bullet must include '(gh CLI)' ONLY when provider == 'github'."""
+        resolved = {
+            "bindings": {"vcs-pr-flow": "git-pr-flow"},
+            "recipes": {
+                "git-pr-flow": {"provider": "github", "base_branch": "main"},
+            },
+        }
+        agents = self.run_render("[project]\nname = 'fix3-github'\n", resolved)
+        self.assertIn("VCS/PR provider: github (`gh` CLI)", agents)
+        self.assertIn("base branch: `main`", agents)
+
+    def test_vcs_bullet_excludes_gh_cli_for_gitlab(self):
+        """FIX 3: VCS bullet must NOT include '(gh CLI)' when provider == 'gitlab'."""
+        resolved = {
+            "bindings": {"vcs-pr-flow": "git-pr-flow"},
+            "recipes": {
+                "git-pr-flow": {"provider": "gitlab", "base_branch": "main"},
+            },
+        }
+        agents = self.run_render("[project]\nname = 'fix3-gitlab'\n", resolved)
+        self.assertIn("VCS/PR provider: gitlab", agents)
+        self.assertNotIn("gh", agents)
+        self.assertIn("base branch: `main`", agents)
+
+    def test_vcs_bullet_base_branch_renders_without_provider_gh_hint(self):
+        """FIX 3: base_branch is an independent clause — renders even without gh CLI hint."""
+        resolved = {
+            "bindings": {"vcs-pr-flow": "my-vcs"},
+            "recipes": {
+                "my-vcs": {"provider": "bitbucket", "base_branch": "develop"},
+            },
+        }
+        agents = self.run_render("[project]\nname = 'fix3-bitbucket'\n", resolved)
+        self.assertIn("VCS/PR provider: bitbucket", agents)
+        self.assertNotIn("gh", agents)
+        self.assertIn("base branch: `develop`", agents)
+
+    # --- FIX 5 ---
+
+    def test_malformed_resolved_config_degrades_gracefully(self):
+        """FIX 5: Malformed JSON in --resolved-config must not crash agents-render.py.
+        Degrade to {} (no structured fields); prose and identity still render.
+        """
+        import tempfile as _tempfile
+        with _tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "ai-specs.toml"
+            output_path = tmp_path / "AGENTS.md"
+            bad_json_path = tmp_path / "bad.json"
+
+            toml_path.write_text(
+                "[project]\n"
+                "name = 'fix5-malformed-json'\n\n"
+                "[brief]\n"
+                'workflow_rules = ["No pushes without review."]\n'
+            )
+            bad_json_path.write_text("this is not json {{{")
+
+            proc = subprocess.run(
+                ["python3", str(self.AGENTS_RENDER), str(toml_path), str(output_path),
+                 "--resolved-config", str(bad_json_path)],
+                text=True, capture_output=True, check=False,
+            )
+            # Must not crash
+            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed on bad JSON:\n{proc.stderr}")
+            self.assertTrue(output_path.exists())
+
+            agents = output_path.read_text()
+            self.assertIn("fix5-malformed-json", agents)
+            self.assertIn("No pushes without review.", agents)
+
+    def test_non_dict_resolved_config_degrades_gracefully(self):
+        """FIX 5: Non-dict JSON (e.g. a list) in --resolved-config must degrade to {}."""
+        import tempfile as _tempfile
+        with _tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "ai-specs.toml"
+            output_path = tmp_path / "AGENTS.md"
+            list_json_path = tmp_path / "list.json"
+
+            toml_path.write_text("[project]\nname = 'fix5-list-json'\n")
+            list_json_path.write_text('["a", "b", "c"]')
+
+            proc = subprocess.run(
+                ["python3", str(self.AGENTS_RENDER), str(toml_path), str(output_path),
+                 "--resolved-config", str(list_json_path)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed on list JSON:\n{proc.stderr}")
+            agents = output_path.read_text()
+            self.assertIn("fix5-list-json", agents)
+
+    # --- FIX 7 ---
+
+    def test_trello_section_has_no_recipe_id_parenthetical(self):
+        """FIX 7: The Trello Tracking section must show board_id without the
+        recipe-id parenthetical (e.g. no '(trello-mcp-workflow)').
+        """
+        resolved = {
+            "bindings": {"tracker": "trello-mcp-workflow"},
+            "recipes": {"trello-mcp-workflow": {"board_id": "aabbcc112233445566778899"}},
+        }
+        agents = self.run_render("[project]\nname = 'fix7-trello'\n", resolved)
+        self.assertIn("## Trello Tracking", agents)
+        self.assertIn("aabbcc112233445566778899", agents)
+        # Recipe id must NOT appear as a parenthetical annotation
+        self.assertNotIn("(`trello-mcp-workflow`)", agents)
+        self.assertNotIn("(trello-mcp-workflow)", agents)
+
+    # --- FIX 8 ---
+
+    def test_useful_commands_does_not_fabricate_validate_sh(self):
+        """FIX 8: When test_command is 'run.sh', agents-render must NOT emit a
+        fabricated 'validate.sh' line derived via str.replace.
+        Only explicitly provided commands must appear.
+        """
+        resolved = {
+            "bindings": {"test-runner": "tdd-flow"},
+            "recipes": {"tdd-flow": {"test_command": "./tests/run.sh"}},
+        }
+        agents = self.run_render("[project]\nname = 'fix8-no-fabricate'\n", resolved)
+        self.assertIn("./tests/run.sh", agents)
+        # validate.sh was NOT provided — must not appear
+        self.assertNotIn("validate.sh", agents)
+
+    def test_useful_commands_explicit_validate_renders(self):
+        """FIX 8: When validate.sh is explicitly in brief.useful_commands, it DOES render."""
+        resolved = {
+            "bindings": {"test-runner": "tdd-flow"},
+            "recipes": {"tdd-flow": {"test_command": "./tests/run.sh"}},
+        }
+        agents = self.run_render(
+            "[project]\nname = 'fix8-explicit-validate'\n\n"
+            "[brief]\n"
+            'useful_commands = ["Full validation: `./tests/validate.sh`"]\n',
+            resolved,
+        )
+        self.assertIn("./tests/run.sh", agents)
+        self.assertIn("./tests/validate.sh", agents)
+
+    # --- FIX 9 ---
+
+    def test_integration_branch_renders_as_labeled_line(self):
+        """FIX 9: integration_branch must appear as '- **Integration branch**: `<value>`'
+        not just as a bare token to avoid tautological needle matching.
+        """
+        resolved = {
+            "bindings": {"worktree-isolation": "worktree-flow"},
+            "recipes": {"worktree-flow": {"integration_branch": "development"}},
+        }
+        agents = self.run_render("[project]\nname = 'fix9-branch'\n", resolved)
+        self.assertIn("- **Integration branch**: `development`", agents)
+
+    def test_enabled_runtimes_renders_as_labeled_line(self):
+        """FIX 9: enabled runtimes must appear as a labeled line with backtick values."""
+        agents = self.run_render(
+            "[project]\nname = 'fix9-runtimes'\n\n"
+            "[agents]\nenabled = ['claude', 'cursor']\n"
+        )
+        self.assertIn("- **Enabled runtimes**: `claude`, `cursor`", agents)
+
+    def test_redaction_sentinel_is_exact_string(self):
+        """FIX 9: redacted secrets render as '***REDACTED***' exactly."""
+        agents = self.run_render(
+            "[project]\nname = 'fix9-redact'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            "[mcp.demo]\n"
+            "command = 'npx'\n"
+            "env = { SECRET_KEY = 'literal-value' }\n"
+        )
+        self.assertIn("***REDACTED***", agents)
+        self.assertNotIn("literal-value", agents)
+
+    # --- FIX 10 ---
+
+    def test_test_command_resolves_via_test_runner_capability_binding(self):
+        """FIX 10: test_command resolved via bindings['test-runner'] → recipe, not hardcoded 'tdd-flow'.
+        Swapping the bound recipe id (while keeping the capability) must still surface test_command.
+        """
+        resolved = {
+            "bindings": {"test-runner": "my-custom-runner"},  # different recipe id
+            "recipes": {
+                "my-custom-runner": {"test_command": "./custom-tests.sh"},
+                "tdd-flow": {"test_command": "./tests/run.sh"},  # NOT the bound one
+            },
+        }
+        agents = self.run_render("[project]\nname = 'fix10-test-runner'\n", resolved)
+        # The BOUND recipe's command must appear
+        self.assertIn("./custom-tests.sh", agents)
+        # The un-bound recipe's command must NOT appear (tdd-flow is not the active binding)
+        self.assertNotIn("./tests/run.sh", agents)
+
+    def test_integration_branch_resolves_via_worktree_isolation_binding(self):
+        """FIX 10: integration_branch resolved via bindings['worktree-isolation'] → recipe.
+        Swapping bound recipe id keeps the field.
+        """
+        resolved = {
+            "bindings": {"worktree-isolation": "my-worktree"},  # different recipe id
+            "recipes": {
+                "my-worktree": {"integration_branch": "staging"},
+                "worktree-flow": {"integration_branch": "main"},  # NOT the bound one
+            },
+        }
+        agents = self.run_render("[project]\nname = 'fix10-integration-branch'\n", resolved)
+        self.assertIn("- **Integration branch**: `staging`", agents)
+        self.assertNotIn("`main`", agents)
+
+    def test_vault_scope_resolves_via_canonical_store_binding(self):
+        """FIX 10: vault_scope resolved via bindings['canonical-store'] → recipe."""
+        resolved = {
+            "bindings": {"canonical-store": "my-vault"},
+            "recipes": {
+                "my-vault": {"vault_scope": "my/vault/path"},
+                "vault-canonical-store": {"vault_scope": "other/path"},  # NOT bound
+            },
+        }
+        agents = self.run_render("[project]\nname = 'fix10-vault'\n", resolved)
+        self.assertIn("- **Vault scope**: `my/vault/path`", agents)
+        self.assertNotIn("other/path", agents)
 
 
 if __name__ == "__main__":
