@@ -2,7 +2,7 @@
 id = "trello-mcp-workflow"
 name = "Trello MCP Workflow"
 description = "Automated Trello board integration for ai-specs SDD workflows"
-version = "1.0.0"
+version = "1.1.0"
 
 [[capabilities]]
 id = "trello-session-bootstrap"
@@ -96,6 +96,11 @@ condition = "not_exists"
 [[provides.templates]]
 source = "templates/card-handoff.md"
 target = "ai-specs/recipes/trello-mcp-workflow/templates/card-handoff.md"
+condition = "not_exists"
+
+[[provides.templates]]
+source = "templates/card-decision.md"
+target = "ai-specs/recipes/trello-mcp-workflow/templates/card-decision.md"
 condition = "not_exists"
 
 [[provides.docs]]
