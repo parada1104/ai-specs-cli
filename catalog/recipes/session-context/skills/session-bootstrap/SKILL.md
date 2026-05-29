@@ -1,87 +1,80 @@
 ---
 name: session-bootstrap
 description: >
-  Concise session bootstrap for ai-specs shaped projects. Trigger: at the start
-  of a new session when the active user request, card, or change is unclear.
-  Queries Engram first, then reads the runtime brief, and only
-  checks tracker sources when gaps or contradictions remain.
+  Concise session bootstrap. Trigger: at the start of a new session when the
+  active user request, card, or change is unclear. Resolves focus from the
+  memory capability first, then the runtime brief, and only checks the tracker
+  capability when gaps or contradictions remain.
 license: MIT
 metadata:
-  author: parada1104
-  version: "3.0"
-  scope: [root]
+  author: ai-specs
+  version: "4.0"
+  scope: runtime
   auto_invoke:
     - "Starting a new session or conversation"
 ---
 
 # session-bootstrap
 
-Start every session from Engram, then runtime brief, then tracker.
+Start every session from the **memory** capability, then the runtime brief, then
+the **tracker** capability. This skill is tool-agnostic: it refers to
+capabilities, not specific products. Concrete providers are bound in the
+project's manifest (see `docs/capabilities.md`).
 
 ## Protocol
 
 1. **If the user gave an explicit task:**
-   a. **Check for referential ambiguity.** If the instruction uses language
-      that refers to project state without naming it explicitly — e.g.,
-      "siguiente card", "continuar", "la otra", "avanzar", "apply" without a
-      change name, "verificar" or "archive" without context — treat the focus
-      as unclear and proceed to step 2a to resolve the reference from
-      Engram before acting.
+   a. **Check for referential ambiguity.** If the instruction refers to project
+      state without naming it — e.g. "siguiente card", "continuar", "la otra",
+      "avanzar", "apply" without a change name, "verificar"/"archive" without
+      context — treat the focus as unclear and go to step 2a to resolve the
+      reference from the memory capability before acting.
    b. **If the task is unambiguous** (names a specific card, change, file, or
-      operation with no implicit state reference), use it as the session focus
-      directly.
+      operation), use it as the session focus directly.
 
-2. **If the focus is unclear (no explicit user task, or referential ambiguity
-   detected in step 1a):**
-   a. **Query Engram first.** Use `mem_context` for recent session history,
-      then `mem_search` for:
-      - `next_focus`, `next-card`, `active-card-id`, `active-change`,
-        `next-session-focus`.
-      - Recent handoffs or session-close entries.
-      - Any project-scoped contextual memory from the last 48 h.
-   b. **Read `AGENTS.md`** to extract runtime context: project id, integration
-      branch, configured MCPs, current blockers, workflow rules, and conflict policy.
-   c. **Cross-check Trello only if needed:**
-      - Engram has no recent entry for the active card.
-      - Engram names a card whose status is unknown or potentially stale.
-      - A card/state decision is required (e.g., confirming a Ready → In Progress move).
-   d. **Read the latest Vault handoff** when a vault MCP is configured and
-      Engram coverage is thin.
+2. **If the focus is unclear:**
+   a. **Query the memory capability first.** Get recent session history, then
+      search for: `next_focus`, active card/change references, recent handoffs
+      or session-close entries, and project-scoped context from the last ~48 h.
+   b. **Read `AGENTS.md`** for runtime context: project id, integration branch,
+      configured MCPs/capabilities, blockers, workflow rules, conflict policy.
+   c. **Cross-check the tracker capability only if needed:** memory has no
+      recent entry for the active card, names a card whose status may be stale,
+      or a card/state decision is required.
+   d. **Read the latest handoff from the canonical-store capability** when one is
+      configured and memory coverage is thin.
 
 3. **If sources converge**, proceed and state the focus briefly.
 4. **If sources diverge**, ask one concrete question that names the conflicting
-   sources (e.g., *"Engram says next card is #65, but Trello shows #65 in
+   sources (e.g. *"memory says next card is #65, but the tracker shows #65 in
    Backlog while #66 is in Ready. Which should I prioritize?"*).
-5. **If a configured MCP is unavailable**, continue with available sources and
-   state the gap.
+5. **If a configured capability/MCP is unavailable**, continue with available
+   sources and state the gap.
 
 ## Referential Ambiguity Triggers
 
-Treat an explicit user request as having unclear focus when it contains any of
-these patterns (non-exhaustive):
+Treat an explicit request as unclear focus when it contains (non-exhaustive):
 
-- **Continuation:** "siguiente", "continuar", "seguuir", "la otra card",
-  "avanzar", "proseguir", "vamos con la siguiente".
+- **Continuation:** "siguiente", "continuar", "la otra card", "avanzar",
+  "vamos con la siguiente".
 - **Implicit operations:** "apply", "verificar", "archive" without naming the
   target change.
-- **Vague references:** "eso", "lo otro", "la que falta", "la pendiente",
-  "la del backlog".
-- **Status-relative:** "mover a Ready", "pasar a In Progress" without naming
-  the card.
+- **Vague references:** "eso", "lo otro", "la que falta", "la pendiente".
+- **Status-relative:** "mover a Ready", "pasar a In Progress" without naming the
+  card.
 
-When any trigger is detected, **query Engram for `next_focus` before
-executing**. Do not assume the reference from Trello state or recent context
-without confirming via operational memory first.
+When any trigger fires, **query the memory capability for `next_focus` before
+executing**. Do not infer the reference from tracker state without confirming
+against operational memory first.
 
 ## Memory-First Rule
 
-When no explicit user request exists, **Engram is the first source to
-consult**. Do not query Trello, Git, or Vault for session focus before checking
-operational memory. This prevents redundant API calls and context bloat.
+When no explicit user request exists, **the memory capability is the first
+source to consult**. Do not query the tracker, VCS, or canonical store for
+session focus before checking operational memory. This avoids redundant calls
+and context bloat.
 
 ## Output Shape
-
-Keep bootstrap output short:
 
 ```text
 Focus: <card/change/request>
@@ -93,9 +86,10 @@ Next: <first action>
 
 - Do not assume the next card when no current user request exists.
 - Do not load extra skills before the session focus is known.
-- Scope Engram searches by project when project-specific.
-- Treat Trello as work-state truth, OpenSpec as SDD artifact truth, Vault as
-  canonical handoff/decision truth, and Engram as operational context.
+- Scope memory searches by project when project-specific.
+- Treat the **tracker** as work-state truth, **SDD artifacts** as spec truth,
+  the **canonical store** as durable handoff/decision truth, and **memory** as
+  operational context.
 - Prefer the current explicit user request over stale memory unless it conflicts
   with a higher-authority project rule.
 - Stop after resolving focus; implementation planning belongs to the relevant

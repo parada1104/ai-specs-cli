@@ -1,0 +1,35 @@
+[recipe]
+id = "vault-canonical-store"
+name = "Vault Canonical Store"
+description = "Durable decisions and handoffs in a configured vault MCP (e.g. Obsidian / filesystem)"
+version = "1.0.0"
+author = "ai-specs"
+license = "MIT"
+
+[[capabilities]]
+id = "canonical-store"
+
+[[hooks]]
+event = "on-sync"
+action = "validate-config"
+
+[config.vault_scope]
+required = false
+type = "string"
+
+[config.decisions_folder]
+required = false
+type = "string"
+default = "decisiones"
+
+[config.sessions_folder]
+required = false
+type = "string"
+default = "sessions"
+
+[provides]
+skills = [{ id = "vault-context", source = "bundled" }]
+
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/vault-canonical-store/README.md"

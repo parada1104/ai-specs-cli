@@ -28,21 +28,33 @@ class SessionContextRecipeTests(unittest.TestCase):
         cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_internal")
         cls.mat = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal")
 
+    def _recipe_version(self) -> str:
+        import tomllib
+
+        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
+            return tomllib.load(fh)["recipe"]["version"]
+
     def test_recipe_validates_and_declares_capabilities(self):
         recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
         self.assertEqual(recipe.id, "session-context")
         cap_ids = {c.id for c in recipe.capabilities}
-        self.assertEqual(
-            cap_ids,
-            {"session-bootstrap", "canonical-memory", "conflict-policy"},
-        )
+        # Foundational recipe: provides the bootstrap + conflict patterns.
+        # canonical-store moved out to the vault-canonical-store recipe.
+        self.assertEqual(cap_ids, {"session-bootstrap", "conflict-policy"})
         skill_ids = {s.id for s in recipe.skills}
-        self.assertEqual(
-            skill_ids,
-            {"session-bootstrap", "vault-context", "context-precedence"},
-        )
+        self.assertEqual(skill_ids, {"session-bootstrap", "context-precedence"})
         for skill in recipe.skills:
             self.assertEqual(skill.source, "bundled")
+
+    def test_bootstrap_skill_is_tool_agnostic(self):
+        text = (
+            RECIPE_DIR / "skills" / "session-bootstrap" / "SKILL.md"
+        ).read_text()
+        # Decoupled: refers to capabilities, not specific vendors.
+        for vendor in ("Engram", "Trello", "Obsidian"):
+            self.assertNotIn(vendor, text, f"session-bootstrap still names {vendor}")
+        for capability in ("memory", "tracker", "canonical-store"):
+            self.assertIn(capability, text)
 
     def test_materialize_produces_bundled_skills_and_doc(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -51,17 +63,22 @@ class SessionContextRecipeTests(unittest.TestCase):
             ai_specs.mkdir(parents=True)
             (ai_specs / "skills").mkdir()
             (ai_specs / "commands").mkdir()
+            version = self._recipe_version()
             (ai_specs / "ai-specs.toml").write_text(
                 "[project]\nname = 'fixture'\n\n"
                 "[agents]\nenabled = ['claude']\n\n"
-                "[recipes.session-context]\nenabled = true\nversion = \"1.0.0\"\n"
+                f"[recipes.session-context]\nenabled = true\nversion = \"{version}\"\n"
             )
             self.assertEqual(self.mat.materialize_recipes(project_root, ROOT), 0)
 
             base = project_root / "ai-specs" / ".recipe" / "session-context" / "skills"
-            for skill_id in ("session-bootstrap", "vault-context", "context-precedence"):
+            for skill_id in ("session-bootstrap", "context-precedence"):
                 skill_md = base / skill_id / "SKILL.md"
                 self.assertTrue(skill_md.is_file(), f"missing bundled skill {skill_id}")
+            self.assertFalse(
+                (base / "vault-context").exists(),
+                "vault-context should no longer be bundled in session-context",
+            )
 
             doc = project_root / "ai-specs" / "recipes" / "session-context" / "README.md"
             self.assertTrue(doc.is_file())
