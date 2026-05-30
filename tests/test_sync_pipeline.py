@@ -1345,13 +1345,16 @@ class TestMissingScenarios(unittest.TestCase):
             self.assertIn("No tracker section expected.", agents)
 
     def test_subrepo_sync_agent_forwards_resolved_config(self):
-        """R7 subrepo passthrough: sync-agent --all passes --resolved-config to agents-render
-        so subrepo AGENTS.md gets board_id / test_command structured fields.
+        """R7 subrepo passthrough: standalone sync-agent --all generates resolved-config
+        and forwards it to the subrepo AGENTS.md so board_id / test_command appear there.
 
-        Verifies that the AGENTS.md generated for a subrepo target (workspace synced
-        by sync-agent) contains the structured fields from --resolved-config.
-        Uses a workspace with [brief] + recipe configs (explicit bindings for speed,
-        since this tests the passthrough, not auto-binding).
+        This is a genuine E2E test of the standalone sync-agent path:
+        - workspace has subrepos=['sub/a'] and ENABLED catalog recipes
+        - sync-agent --all is invoked directly (not via sync.sh)
+        - assertions are on the SUBREPO AGENTS.md (sub/a/AGENTS.md), not root
+
+        This exercises build_resolved_config_only() + the resolved-config passthrough
+        in sync-agent.sh when ${#RESOLVED_TARGETS[@]} > 1.
         """
         workspace = None
         try:
@@ -1359,10 +1362,12 @@ class TestMissingScenarios(unittest.TestCase):
             workspace = parent / "subrepo-test-workspace"
             workspace.mkdir()
             subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
-            # Use explicit bindings (24-char hex board_id) + brief to exercise the subrepo path
+            # Workspace has a subrepo (sub/a) and ENABLED catalog recipes.
+            # board_id must be 24-char hex to pass trello-mcp-workflow validate-config.
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
-                "name = 'subrepo-structured-fields'\n\n"
+                "name = 'subrepo-structured-fields'\n"
+                "subrepos = ['sub/a']\n\n"
                 "[agents]\n"
                 "enabled = ['claude']\n\n"
                 "[brief]\n"
@@ -1378,22 +1383,137 @@ class TestMissingScenarios(unittest.TestCase):
                 "[recipes.tdd-flow.config]\n"
                 "test_command = './tests/validate.sh'\n"
             )
+            # Create subrepo directory (required by target-resolve.py)
+            (workspace / "sub" / "a").mkdir(parents=True)
 
-            # Run sync (not sync-agent --all; sync runs materialize + sync-agent)
+            # Run full sync first so recipe assets are materialized (skills, hooks, etc.)
+            # sync-agent --all standalone only generates resolved-config; it still needs
+            # the resolved-skills dir that materialize produces.
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            agents = (workspace / "AGENTS.md").read_text()
+            # Now run STANDALONE sync-agent --all (the path under test).
+            # This exercises build_resolved_config_only() + resolved-config passthrough.
+            subprocess.run(
+                [str(CLI), "sync-agent", str(workspace), "--all"],
+                check=True, text=True,
+            )
 
-            # Structured fields must be present in the workspace AGENTS.md
-            # (the sync pipeline → materialize → resolved-config → agents-render path)
+            # Assert on SUBREPO AGENTS.md — that's what the standalone path generates.
+            subrepo_agents = (workspace / "sub" / "a" / "AGENTS.md").read_text()
+
             self.assertIn(
-                "aabbccddeeff001122334455", agents,
-                "board_id must appear in AGENTS.md after sync (subrepo structured-field passthrough)"
+                "aabbccddeeff001122334455", subrepo_agents,
+                "board_id must appear in subrepo AGENTS.md via standalone sync-agent "
+                "resolved-config passthrough (build_resolved_config_only)"
             )
             self.assertIn(
-                "./tests/validate.sh", agents,
-                "test_command must appear in AGENTS.md after sync (subrepo structured-field passthrough)"
+                "./tests/validate.sh", subrepo_agents,
+                "test_command must appear in subrepo AGENTS.md via standalone sync-agent "
+                "resolved-config passthrough (build_resolved_config_only)"
             )
+        finally:
+            if workspace is not None:
+                shutil.rmtree(workspace.parent)
+
+    def test_resolved_config_only_bindings_match_full_materialize_path(self):
+        """--resolved-config-only bindings must be identical to the full materialize path.
+
+        This is the 'identical output' guarantee: for a manifest with enabled catalog
+        recipes, build_resolved_config_only() must produce the same bindings map that
+        materialize_recipes() writes to resolved-config.
+
+        Setup: a workspace with trello-mcp-workflow + tdd-flow enabled (real catalog
+        recipes, not a 0-enabled stub). Run both paths and compare bindings keys.
+        """
+        workspace = None
+        try:
+            parent = Path(tempfile.mkdtemp())
+            workspace = parent / "rc-only-parity-workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'rc-only-parity'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[brief]\n"
+                'intro = "Resolved-config parity test."\n\n'
+                "[recipes.trello-mcp-workflow]\n"
+                "enabled = true\n"
+                "version = '1.2.0'\n"
+                "[recipes.trello-mcp-workflow.config]\n"
+                "board_id = 'aabbccddeeff001122334455'\n\n"
+                "[recipes.tdd-flow]\n"
+                "enabled = true\n"
+                "version = '1.0.0'\n"
+                "[recipes.tdd-flow.config]\n"
+                "test_command = './tests/validate.sh'\n"
+            )
+
+            materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
+
+            # --- Full materialize path ---
+            import tempfile as _tempfile
+            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                full_resolved_out = Path(f.name)
+            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                standalone_resolved_out = Path(f.name)
+
+            try:
+                # Full path (normal materialize_recipes)
+                proc_full = subprocess.run(
+                    ["python3", str(materialize),
+                     str(workspace), str(ROOT),
+                     "--resolved-config-out", str(full_resolved_out)],
+                    text=True, capture_output=True, check=False,
+                    env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
+                )
+                self.assertEqual(
+                    proc_full.returncode, 0,
+                    f"full materialize failed:\n{proc_full.stderr}\n{proc_full.stdout}"
+                )
+
+                # Standalone path (build_resolved_config_only)
+                proc_standalone = subprocess.run(
+                    ["python3", str(materialize),
+                     str(workspace), str(ROOT),
+                     "--resolved-config-out", str(standalone_resolved_out),
+                     "--resolved-config-only"],
+                    text=True, capture_output=True, check=False,
+                    env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
+                )
+                self.assertEqual(
+                    proc_standalone.returncode, 0,
+                    f"--resolved-config-only failed:\n{proc_standalone.stderr}\n{proc_standalone.stdout}"
+                )
+
+                with open(full_resolved_out) as fh:
+                    full_data = json.load(fh)
+                with open(standalone_resolved_out) as fh:
+                    standalone_data = json.load(fh)
+
+                full_bindings = full_data.get("bindings", {})
+                standalone_bindings = standalone_data.get("bindings", {})
+
+                self.assertEqual(
+                    full_bindings, standalone_bindings,
+                    f"--resolved-config-only bindings must match full materialize path.\n"
+                    f"  full:       {full_bindings}\n"
+                    f"  standalone: {standalone_bindings}"
+                )
+                # Sanity: both must have auto-bound tracker and test-runner
+                self.assertIn("tracker", full_bindings,
+                              "tracker must be auto-bound in full path")
+                self.assertIn("tracker", standalone_bindings,
+                              "tracker must be auto-bound in standalone path")
+                self.assertIn("test-runner", full_bindings,
+                              "test-runner must be auto-bound in full path")
+                self.assertIn("test-runner", standalone_bindings,
+                              "test-runner must be auto-bound in standalone path")
+            finally:
+                for p in (full_resolved_out, standalone_resolved_out):
+                    if p.exists():
+                        p.unlink()
         finally:
             if workspace is not None:
                 shutil.rmtree(workspace.parent)
@@ -1541,6 +1661,75 @@ class TestAutoBindingFix(unittest.TestCase):
             shutil.rmtree(workspace.parent)
             if resolved_out.exists():
                 resolved_out.unlink()
+
+    def test_resolved_config_only_with_explicit_ai_specs_home_resolves_bindings(self):
+        """FIX 1 (R3): --resolved-config-only uses caller-supplied ai_specs_home to
+        locate the catalog instead of recomputing from __file__.
+
+        Invokes the standalone path with an explicit AI_SPECS_HOME env var and asserts
+        that auto-bindings still resolve (board_id present in bindings), proving that
+        the catalog lookup does not diverge when the home is supplied explicitly.
+
+        This guards against custom/symlinked installs where Path(__file__).parents[2]
+        would diverge from the actual AI_SPECS_HOME.
+        """
+        import tempfile as _tempfile
+        import json
+
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'rc-only-explicit-home'\n\n"
+                "[recipes.trello-mcp-workflow]\n"
+                "enabled = true\n"
+                "version = '1.2.0'\n"
+                "[recipes.trello-mcp-workflow.config]\n"
+                "board_id = 'aabbccddeeff001122334455'\n"
+                # NO [[bindings]] — auto-bind must handle this via the supplied home
+            )
+
+            materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
+            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                resolved_out = Path(f.name)
+
+            try:
+                # Pass AI_SPECS_HOME explicitly AND as the second positional arg.
+                # build_resolved_config_only now uses the positional arg to locate the
+                # catalog instead of falling back to Path(__file__).parents[2].
+                proc = subprocess.run(
+                    ["python3", str(materialize),
+                     str(workspace), str(ROOT),
+                     "--resolved-config-out", str(resolved_out),
+                     "--resolved-config-only"],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
+                )
+                self.assertEqual(
+                    proc.returncode, 0,
+                    f"--resolved-config-only with explicit home failed:\n{proc.stderr}\n{proc.stdout}"
+                )
+
+                with open(resolved_out) as fh:
+                    resolved = json.load(fh)
+
+                bindings = resolved.get("bindings", {})
+                self.assertIn(
+                    "tracker", bindings,
+                    f"'tracker' must be auto-bound via explicit ai_specs_home. Got: {bindings}"
+                )
+                self.assertEqual(
+                    bindings["tracker"], "trello-mcp-workflow",
+                    f"tracker must auto-bind to trello-mcp-workflow. Got: {bindings}"
+                )
+            finally:
+                if resolved_out.exists():
+                    resolved_out.unlink()
+        finally:
+            shutil.rmtree(workspace.parent)
 
 
 class TestJudgmentDayFixes(unittest.TestCase):
@@ -1982,6 +2171,71 @@ class TestJudgmentDayFixes(unittest.TestCase):
         finally:
             if resolved_out.exists():
                 resolved_out.unlink()
+
+    def test_resolved_config_only_invalid_binding_exits_nonzero(self):
+        """FIX 2 (R3): --resolved-config-only must exit non-zero on manifest binding
+        validation errors (e.g. explicit binding references a disabled/unknown recipe).
+
+        The full materialize_recipes path raises a RuntimeError (via resolve_bindings)
+        and exits 1 for such errors. The standalone --resolved-config-only path must
+        match this behaviour — it must NOT swallow the error and exit 0 silently.
+
+        Uses a manifest with an explicit [[bindings]] that references a recipe that is
+        NOT enabled, which resolve_bindings raises RuntimeError for.
+        """
+        import tempfile as _tempfile
+
+        materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
+
+        with _tempfile.TemporaryDirectory() as parent:
+            workspace = Path(parent) / "invalid-binding-workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            # An explicit binding that references a recipe NOT in [recipes.*] (not enabled).
+            # resolve_bindings raises RuntimeError for this case.
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'invalid-binding-test'\n\n"
+                "[recipes.trello-mcp-workflow]\n"
+                "enabled = true\n"
+                "version = '1.2.0'\n"
+                "[recipes.trello-mcp-workflow.config]\n"
+                "board_id = 'aabbccddeeff001122334455'\n\n"
+                "[[bindings]]\n"
+                "capability = 'tracker'\n"
+                "recipe = 'nonexistent-recipe'\n"  # references a disabled/unknown recipe
+            )
+
+            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                resolved_out = Path(f.name)
+
+            try:
+                proc = subprocess.run(
+                    [
+                        "python3", str(materialize),
+                        str(workspace), str(ROOT),
+                        "--resolved-config-out", str(resolved_out),
+                        "--resolved-config-only",
+                    ],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
+                )
+                # Must exit non-zero (matching the full materialize path)
+                self.assertNotEqual(
+                    proc.returncode, 0,
+                    "Expected non-zero exit for invalid binding in --resolved-config-only "
+                    f"but got 0.\nstderr: {proc.stderr}\nstdout: {proc.stdout}",
+                )
+                # Error must be surfaced to stderr (not swallowed silently)
+                self.assertIn(
+                    "ERROR", proc.stderr,
+                    "An ERROR message must appear on stderr for invalid binding validation."
+                )
+            finally:
+                if resolved_out.exists():
+                    resolved_out.unlink()
 
     # --- FIX B (Round 2) ---
 
