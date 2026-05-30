@@ -1,0 +1,5 @@
+# Recipe-generated commands are restored by `ai-specs sync`.
+# Only hand-authored commands (e.g. skills-as-rules.md) are committed.
+*
+!.gitignore
+!skills-as-rules.md

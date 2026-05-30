@@ -400,7 +400,59 @@ def clean_orphans(project_root: Path, enabled_recipe_ids: set[str], expected_dep
 
 
 # --- Main ---------------------------------------------------------------------
-def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None) -> int:
+def build_resolved_config(project_root: Path) -> dict[str, Any]:
+    """Build a resolved-config JSON blob from raw manifest data.
+
+    Reads [recipes.*] sub-tables directly (no catalog lookup), plus [[bindings]].
+    Returns: {bindings: {capability→recipe}, recipes: {id→{raw config keys}}, enabled: [id...]}
+    """
+    mod = _load_toml_read()
+    toml_path = project_root / "ai-specs" / "ai-specs.toml"
+    manifest_data = mod.load_toml(toml_path)
+
+    # Raw recipes dict: {id: {all keys except enabled/version}}
+    raw_recipes = manifest_data.get("recipes", {}) or {}
+    recipes_out: dict[str, dict[str, Any]] = {}
+    enabled_ids: list[str] = []
+    if isinstance(raw_recipes, dict):
+        for rid, val in raw_recipes.items():
+            if not isinstance(val, dict):
+                continue
+            # Config = merged catalog-schema defaults + manifest overrides
+            # For raw-manifest mode (no catalog), collect all non-meta keys
+            config: dict[str, Any] = {}
+            for k, v in val.items():
+                if k in ("enabled", "version"):
+                    continue
+                if k == "config" and isinstance(v, dict):
+                    # Real manifest style: [recipes.<id>.config]
+                    config.update(v)
+                else:
+                    # Flat style: key=value directly in [recipes.<id>]
+                    config[k] = v
+            recipes_out[rid] = config
+            if val.get("enabled") is True:
+                enabled_ids.append(rid)
+
+    # Bindings: explicit [[bindings]] → {capability: recipe}
+    raw_bindings = manifest_data.get("bindings", []) or []
+    bindings_out: dict[str, str] = {}
+    if isinstance(raw_bindings, list):
+        for b in raw_bindings:
+            if isinstance(b, dict):
+                cap = b.get("capability", "")
+                rec = b.get("recipe", "")
+                if cap and rec:
+                    bindings_out[cap] = rec
+
+    return {
+        "bindings": bindings_out,
+        "recipes": recipes_out,
+        "enabled": enabled_ids,
+    }
+
+
+def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None, resolved_config_out: Path | None = None) -> int:
     catalog_dir = ai_specs_home / "catalog" / "recipes"
     toml_path = project_root / "ai-specs" / "ai-specs.toml"
 
@@ -417,6 +469,13 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # Still clean up orphaned recipes (none expected) and deps not in manifest
         clean_orphans(project_root, set(), expected_dep_ids)
         print("  (no [recipes.*] enabled — skipping)")
+        # Still write resolved-config if requested (even with no enabled recipes)
+        if resolved_config_out is not None:
+            resolved = build_resolved_config(project_root)
+            with open(resolved_config_out, "w") as f:
+                json.dump(resolved, f, indent=2, sort_keys=True)
+                f.write("\n")
+            print(f"  ✓ wrote resolved-config (0 enabled recipe(s))")
         return 0
 
     manifest_bindings = load_bindings_from_manifest(project_root)
@@ -532,26 +591,121 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     if recipe_mcp_out is None:
         print(f"RECIPE_MCP_TEMP:{temp_path}")
 
+    # Write resolved-config JSON for downstream agents-render.py
+    # IMPORTANT: use the catalog-aware resolved_bindings (auto-bind included) computed
+    # above by resolve_bindings(), rather than re-deriving from explicit [[bindings]] only.
+    # build_resolved_config() provides the recipes/enabled structure; we override the
+    # bindings key with the full auto-bound map so downstream renderers see auto-bindings.
+    if resolved_config_out is not None:
+        resolved = build_resolved_config(project_root)
+        resolved["bindings"] = resolved_bindings  # replace explicit-only with auto-bound
+        with open(resolved_config_out, "w") as f:
+            json.dump(resolved, f, indent=2, sort_keys=True)
+            f.write("\n")
+        print(f"  ✓ wrote resolved-config ({len(resolved['recipes'])} recipe(s))")
+
     return 0
+
+
+def build_resolved_config_only(project_root: Path, resolved_config_out: Path, ai_specs_home: Path | None = None) -> int:
+    """Lightweight mode: build and write ONLY the resolved-config JSON.
+
+    No skill copying, no hooks, no lock writes, no orphan cleanup, no
+    recipe-mcp temp file. Used by sync-agent standalone to avoid side effects
+    and leaked temp files.
+
+    ai_specs_home: explicit home dir to locate the catalog. When None, falls
+    back to resolving relative to __file__ (legacy behaviour, may diverge for
+    custom/symlinked installs).
+    """
+    try:
+        resolved = build_resolved_config(project_root)
+
+        # Attempt catalog-aware auto-binding (same as the full materialize path)
+        # so standalone sync-agent forwards the same enriched bindings as sync.sh.
+        # Distinguish two failure modes:
+        #   - RuntimeError from resolve_bindings: a manifest validation error
+        #     (duplicate binding, unknown recipe, capability mismatch, etc.).
+        #     These are FATAL — surface to stderr and return non-zero, matching
+        #     the full materialize_recipes path.
+        #   - Any other exception (catalog absent, version mismatch, TOML parse
+        #     failure, etc.): degrade silently to explicit-only bindings already
+        #     in resolved; do NOT swallow RuntimeError validation errors.
+        try:
+            mod = _load_toml_read()
+            toml_path = project_root / "ai-specs" / "ai-specs.toml"
+            manifest_data = mod.load_toml(toml_path)
+            raw_recipes = manifest_data.get("recipes", {}) or {}
+            enabled_ids = [
+                rid for rid, val in raw_recipes.items()
+                if isinstance(val, dict) and val.get("enabled") is True
+            ]
+            if enabled_ids:
+                # Use the caller-supplied home so symlinked/custom installs locate
+                # the catalog correctly.  Fall back to __file__-relative only when
+                # no home was passed (backward-compat for direct script invocations
+                # that pre-date the ai_specs_home parameter).
+                _home = ai_specs_home if ai_specs_home is not None else Path(__file__).resolve().parents[2]
+                catalog_dir = _home / "catalog" / "recipes"
+                manifest_bindings = load_bindings_from_manifest(project_root)
+                auto_bindings = resolve_bindings(catalog_dir, enabled_ids, manifest_bindings)
+                if auto_bindings:
+                    resolved["bindings"] = auto_bindings
+        except RuntimeError as exc:
+            # Manifest validation error from resolve_bindings — fatal, not benign.
+            print(f"ERROR: binding validation failed: {exc}", file=sys.stderr)
+            return 1
+        except Exception:
+            pass  # catalog absent or unreadable — degrade to explicit-only bindings
+
+        with open(resolved_config_out, "w") as f:
+            json.dump(resolved, f, indent=2, sort_keys=True)
+            f.write("\n")
+        return 0
+    except Exception as exc:
+        print(f"WARNING: resolved-config generation failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def main() -> int:
     args = sys.argv[1:]
     recipe_mcp_out = None
+    resolved_config_out = None
+    resolved_config_only = False
     if "--recipe-mcp-out" in args:
         idx = args.index("--recipe-mcp-out")
         if idx + 1 < len(args):
             recipe_mcp_out = Path(args[idx + 1])
             args = args[:idx] + args[idx + 2:]
+    if "--resolved-config-out" in args:
+        idx = args.index("--resolved-config-out")
+        if idx + 1 < len(args):
+            resolved_config_out = Path(args[idx + 1])
+            args = args[:idx] + args[idx + 2:]
+    if "--resolved-config-only" in args:
+        idx = args.index("--resolved-config-only")
+        resolved_config_only = True
+        args = args[:idx] + args[idx + 1:]
     if len(args) != 2:
-        print(f"Usage: {sys.argv[0]} <project_root> <ai_specs_home> [--recipe-mcp-out <path>]", file=sys.stderr)
+        print(
+            f"Usage: {sys.argv[0]} <project_root> <ai_specs_home>"
+            " [--recipe-mcp-out <path>] [--resolved-config-out <path>]"
+            " [--resolved-config-only]",
+            file=sys.stderr,
+        )
         return 2
 
     project_root = Path(args[0]).resolve()
     ai_specs_home = Path(args[1]).resolve()
 
+    if resolved_config_only:
+        if resolved_config_out is None:
+            print("ERROR: --resolved-config-only requires --resolved-config-out <path>", file=sys.stderr)
+            return 2
+        return build_resolved_config_only(project_root, resolved_config_out, ai_specs_home)
+
     try:
-        return materialize_recipes(project_root, ai_specs_home, recipe_mcp_out)
+        return materialize_recipes(project_root, ai_specs_home, recipe_mcp_out, resolved_config_out)
     except Exception as exc:
         fail(str(exc))
         return 1

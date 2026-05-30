@@ -60,14 +60,16 @@ SELECT_ALL=0
 EXPLICIT_SOURCE_ROOT=0
 EXPLICIT_TARGET=0
 RECIPE_MCP_JSON=""
+RESOLVED_CONFIG_JSON=""
 declare -a SELECTED_AGENTS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --source-root) SOURCE_ROOT="${2:-}"; EXPLICIT_SOURCE_ROOT=1; shift 2 ;;
-        --target)      TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
-        --recipe-mcp)  RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
-        --all)         SELECT_ALL=1; shift ;;
+        --source-root)      SOURCE_ROOT="${2:-}"; EXPLICIT_SOURCE_ROOT=1; shift 2 ;;
+        --target)           TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
+        --recipe-mcp)       RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
+        --resolved-config)  RESOLVED_CONFIG_JSON="${2:-}"; shift 2 ;;
+        --all)              SELECT_ALL=1; shift ;;
         --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
         -h|--help)     usage; exit 0 ;;
@@ -114,6 +116,17 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
         echo "  mode:        public root fan-out"
         echo ""
 
+        # Generate resolved-config for subrepo AGENTS.md enrichment.
+        # Use --resolved-config-only so no skills are copied, no hooks run,
+        # no lock is written, and no recipe-mcp temp file is created.
+        STANDALONE_RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
+        trap 'rm -f "$STANDALONE_RESOLVED_CONFIG_TEMP"' EXIT
+        if ! python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" \
+            --resolved-config-out "$STANDALONE_RESOLVED_CONFIG_TEMP" \
+            --resolved-config-only 2>&1; then
+            echo "WARNING: resolved-config generation failed; subrepo AGENTS.md will be rendered without structured fields." >&2
+        fi
+
         FORWARD_ARGS=()
         if [[ $SELECT_ALL -eq 1 ]]; then
             FORWARD_ARGS+=("--all")
@@ -121,6 +134,10 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
             for agent in "${SELECTED_AGENTS[@]}"; do
                 FORWARD_ARGS+=("--$agent")
             done
+        fi
+        # Forward resolved-config so subrepo AGENTS.md gets structured fields
+        if [[ -f "$STANDALONE_RESOLVED_CONFIG_TEMP" ]]; then
+            FORWARD_ARGS+=("--resolved-config" "$STANDALONE_RESOLVED_CONFIG_TEMP")
         fi
 
         for resolved_target in "${RESOLVED_TARGETS[@]}"; do
@@ -204,7 +221,11 @@ ensure_target_workspace() {
     python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
-    python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$TARGET_AGENTS_MD"
+    local render_args=("$TOML_PATH" "$TARGET_AGENTS_MD")
+    if [[ -n "$RESOLVED_CONFIG_JSON" && -f "$RESOLVED_CONFIG_JSON" ]]; then
+        render_args+=("--resolved-config" "$RESOLVED_CONFIG_JSON")
+    fi
+    python3 "$AGENTS_RENDER_PY" "${render_args[@]}"
 }
 
 # Resolve enabled agents from ai-specs.toml
