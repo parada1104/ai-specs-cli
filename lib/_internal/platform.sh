@@ -9,7 +9,7 @@
 # a per-project (paths relativos al REPO_ROOT, no a $HOME).
 
 # platform_get <agent> <field>
-#   agent ∈ claude|cursor|opencode|codex|copilot|gemini|pi
+#   agent ∈ claude|cursor|opencode|codex|copilot|gemini|pi|omp
 #   field ∈ instructions_path|skills_dir|agents_dir|mcp_config_path|mcp_key|native
 #         | commands_dir|runtime_hooks_target
 #
@@ -127,6 +127,21 @@ platform_get() {
                 native)            echo "true" ;;
                 commands_dir)      echo "" ;;  # pi has no slash commands
                 runtime_hooks_target) echo ".pi/extensions" ;;
+                *) return 1 ;;
+            esac
+            ;;
+        omp)
+            # Oh My Pi (can1357/oh-my-pi) — Rust pi fork; AGENTS.md native, .omp/ root.
+            # KEY DELTA vs pi: commands_dir is populated (.omp/commands); dedicated mcp path.
+            case "$field" in
+                instructions_path)    echo "" ;;
+                skills_dir)           echo ".omp/skills" ;;
+                agents_dir)           echo "" ;;
+                mcp_config_path)      echo ".omp/mcp.json" ;;   # dedicated; avoids .mcp.json clash with pi
+                mcp_key)              echo "mcpServers" ;;
+                native)               echo "true" ;;
+                commands_dir)         echo ".omp/commands" ;;   # KEY DELTA vs pi ("")
+                runtime_hooks_target) echo ".omp/extensions" ;;
                 *) return 1 ;;
             esac
             ;;

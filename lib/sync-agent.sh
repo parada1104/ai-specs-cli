@@ -51,6 +51,7 @@ Flags:
   --copilot        GitHub Copilot (.github/copilot-instructions.md)
   --gemini         Gemini CLI   (GEMINI.md, .gemini/skills, .gemini/settings.json)
   --pi             Pi (pi.dev)  (.pi/skills, .mcp.json)
+  --omp            Oh My Pi     (.omp/skills, .omp/mcp.json, .omp/commands)
 
 If no selector is given, defaults to --all.
 EOF
@@ -74,7 +75,7 @@ while [[ $# -gt 0 ]]; do
         --resolved-config)  RESOLVED_CONFIG_JSON="${2:-}"; shift 2 ;;
         --resolved-hooks)   RESOLVED_HOOKS_JSON="${2:-}"; shift 2 ;;
         --all)              SELECT_ALL=1; shift ;;
-        --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi)
+        --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi|--omp)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
         -h|--help)     usage; exit 0 ;;
         --)            shift; break ;;

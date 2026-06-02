@@ -1151,6 +1151,204 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertFalse(pi_skills.exists(),
                              ".pi/skills/ must NOT exist when pi is disabled")
 
+    # --- Omp flag and help tests ---
+
+    def test_sync_agent_omp_flag_accepted(self):
+        """--omp flag must be accepted and produce .omp/skills symlink."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            result = subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--omp"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0,
+                             f"--omp must exit 0; stderr={result.stderr!r}")
+            omp_skills = target / ".omp" / "skills"
+            self.assertTrue(omp_skills.is_symlink(),
+                            ".omp/skills/ must be a symlink after --omp")
+
+    def test_sync_agent_help_lists_omp(self):
+        """--help output must include --omp."""
+        result = subprocess.run(
+            [str(CLI), "sync-agent", "--help"],
+            capture_output=True, text=True,
+        )
+        self.assertIn("--omp", result.stdout,
+                      "--omp must appear in sync-agent --help output")
+
+    def test_sync_agent_all_includes_omp_when_enabled(self):
+        """When omp is in [agents].enabled, --all must sync it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            (target / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-omp-all'\n\n"
+                "[agents]\n"
+                "enabled = ['omp']\n"
+            )
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--all"],
+                check=True, text=True,
+            )
+            omp_skills = target / ".omp" / "skills"
+            self.assertTrue(omp_skills.is_symlink(),
+                            ".omp/skills/ must be a symlink after --all")
+            # omp is native (AGENTS.md) — no instruction file
+            self.assertFalse((target / "OMP.md").exists())
+            self.assertFalse((target / "omp.md").exists())
+
+    def test_sync_agent_all_excludes_omp_when_not_enabled(self):
+        """When omp is NOT in [agents].enabled, --all must NOT sync it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            (target / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-no-omp'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n"
+            )
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--all"],
+                check=True, text=True,
+            )
+            omp_skills = target / ".omp" / "skills"
+            self.assertFalse(omp_skills.exists(),
+                             ".omp/skills/ must NOT exist when omp is disabled")
+
+    def test_omp_mcp_json_rendered_when_mcps_declared(self):
+        """--omp must write .omp/mcp.json with mcpServers when [mcp.*] entries exist."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            (target / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-omp-mcp'\n\n"
+                "[agents]\n"
+                "enabled = ['omp']\n\n"
+                "[mcp.my-server]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@example/server']\n"
+            )
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--omp"],
+                check=True, text=True,
+            )
+            mcp_path = target / ".omp" / "mcp.json"
+            self.assertTrue(mcp_path.is_file(),
+                            ".omp/mcp.json must be created when [mcp.*] entries exist")
+            mcp_data = json.loads(mcp_path.read_text())
+            self.assertIn("mcpServers", mcp_data,
+                          ".omp/mcp.json must have mcpServers key")
+
+    def test_omp_mcp_json_absent_when_no_mcps(self):
+        """--omp must NOT write .omp/mcp.json when no MCP servers declared."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            (target / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-omp-no-mcp'\n\n"
+                "[agents]\n"
+                "enabled = ['omp']\n"
+            )
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--omp"],
+                check=True, text=True,
+            )
+            mcp_path = target / ".omp" / "mcp.json"
+            self.assertFalse(mcp_path.exists(),
+                             ".omp/mcp.json must NOT be created when no MCPs declared")
+
+    def test_omp_commands_populated(self):
+        """--omp must copy command files to .omp/commands/."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            # ai-specs init already creates skills-as-rules.md in commands/
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--omp"],
+                check=True, text=True,
+            )
+            omp_commands = target / ".omp" / "commands"
+            self.assertTrue(omp_commands.is_dir(),
+                            ".omp/commands/ must exist after --omp")
+            files = list(omp_commands.glob("*.md"))
+            self.assertGreater(len(files), 0,
+                               ".omp/commands/ must contain at least one command file")
+
+    def test_omp_no_instruction_symlink(self):
+        """--omp must NOT create any instruction symlink (omp is native AGENTS.md)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--omp"],
+                check=True, text=True,
+            )
+            # omp must not create any OMP.md or omp.md instruction file
+            self.assertFalse((target / "OMP.md").exists(),
+                             "OMP.md must NOT be created for omp")
+            self.assertFalse((target / "omp.md").exists(),
+                             "omp.md must NOT be created for omp")
+
+    def test_omp_gitignore_contains_omp_dir(self):
+        """ai-specs init must write .omp/ into the root .gitignore."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            gitignore = (target / ".gitignore").read_text()
+            self.assertIn(".omp/", gitignore,
+                          ".gitignore must contain .omp/ after ai-specs init")
+
+    def test_existing_agents_unchanged_after_omp_added(self):
+        """Existing agent outputs must be byte-identical before and after adding omp."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            # Sync with claude only
+            (target / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-compat'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n"
+            )
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--all"],
+                check=True, text=True,
+            )
+            claude_md_before = (target / "CLAUDE.md").read_text() if (target / "CLAUDE.md").is_file() else None
+
+            # Now add omp to enabled and re-sync
+            (target / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-compat'\n\n"
+                "[agents]\n"
+                "enabled = ['claude', 'omp']\n"
+            )
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--all"],
+                check=True, text=True,
+            )
+            claude_md_after = (target / "CLAUDE.md").read_text() if (target / "CLAUDE.md").is_file() else None
+            self.assertEqual(claude_md_before, claude_md_after,
+                             "CLAUDE.md (via symlink) must be byte-identical before and after adding omp")
+            # .claude/skills symlink should still point to the same target
+            claude_skills = target / ".claude" / "skills"
+            self.assertTrue(claude_skills.is_symlink(),
+                            ".claude/skills must still be a symlink after adding omp")
+
 
 class SkillSyncScriptTests(unittest.TestCase):
     SCRIPT = ROOT / "ai-specs" / "skills" / "skill-sync" / "assets" / "sync.sh"
