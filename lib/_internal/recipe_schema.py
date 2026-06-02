@@ -63,6 +63,22 @@ class Hook:
     action: str
 
 
+# Abstract runtime-hook events the product owns (mapped per-harness downstream).
+KNOWN_RUNTIME_HOOK_EVENTS = ("pre-tool-use", "post-tool-use", "session-start", "stop")
+
+
+@dataclass
+class RuntimeHook:
+    """An agent-runtime lifecycle hook declared via [[provides.hooks]]."""
+
+    id: str
+    event: str
+    script: str
+    matcher: str = ""
+    blocking: bool = False
+    description: str = ""
+
+
 @dataclass
 class ConfigField:
     required: bool
@@ -100,6 +116,7 @@ class Recipe:
     docs: list[DocRef] = field(default_factory=list)
     capabilities: list[Capability] = field(default_factory=list)
     hooks: list[Hook] = field(default_factory=list)
+    runtime_hooks: list[RuntimeHook] = field(default_factory=list)
     config_schema: ConfigSchema = field(default_factory=ConfigSchema)
     init: InitWorkflow | None = None
 
@@ -178,6 +195,77 @@ def _parse_docs(raw: Any, context: str) -> list[DocRef]:
         source = _require_string(item, "source", f"{context}.docs[{idx}]")
         target = _require_string(item, "target", f"{context}.docs[{idx}]")
         out.append(DocRef(source=source, target=target))
+    return out
+
+
+def _parse_runtime_hooks(raw: Any, context: str, recipe_dir: Path | None = None) -> list[RuntimeHook]:
+    """Parse [[provides.hooks]] runtime-hook declarations.
+
+    Each entry requires id/event/script. event must be a known abstract event.
+    script must resolve to a path inside the recipe directory (no absolute paths,
+    no ../ traversal).
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[RuntimeHook] = []
+    seen: set[str] = set()
+    for idx, item in enumerate(raw):
+        ctx = f"{context}.hooks[{idx}]"
+        if not isinstance(item, dict):
+            raise RecipeValidationError(f"{ctx}: expected object, got {type(item).__name__}")
+        hook_id = _require_string(item, "id", ctx)
+        if hook_id in seen:
+            raise RecipeValidationError(f"{ctx}: duplicate hook id '{hook_id}'")
+        seen.add(hook_id)
+        event = _require_string(item, "event", ctx)
+        if event not in KNOWN_RUNTIME_HOOK_EVENTS:
+            raise RecipeValidationError(
+                f"{ctx}: unknown event '{event}'; known events: "
+                f"{', '.join(KNOWN_RUNTIME_HOOK_EVENTS)}"
+            )
+        script = _require_string(item, "script", ctx)
+
+        script_path = Path(script)
+        if script_path.is_absolute():
+            raise RecipeValidationError(
+                f"{ctx}.script: hook script paths must be relative to the recipe directory "
+                f"(got absolute path '{script}')"
+            )
+        if recipe_dir is not None:
+            root = recipe_dir.resolve()
+            target = (recipe_dir / script_path).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError as exc:
+                raise RecipeValidationError(
+                    f"{ctx}.script: hook script paths must stay inside the recipe directory "
+                    f"(got '{script}')"
+                ) from exc
+        else:
+            # No recipe_dir to resolve against; still reject obvious ../ escapes.
+            if ".." in script_path.parts:
+                raise RecipeValidationError(
+                    f"{ctx}.script: hook script paths must stay inside the recipe directory "
+                    f"(got '{script}')"
+                )
+
+        matcher = str(item.get("matcher", ""))
+        blocking_raw = item.get("blocking", False)
+        if not isinstance(blocking_raw, bool):
+            raise RecipeValidationError(
+                f"{ctx}.blocking: expected boolean, got {type(blocking_raw).__name__}"
+            )
+        description = str(item.get("description", ""))
+        out.append(
+            RuntimeHook(
+                id=hook_id,
+                event=event,
+                script=script,
+                matcher=matcher,
+                blocking=blocking_raw,
+                description=description,
+            )
+        )
     return out
 
 
@@ -335,6 +423,7 @@ def validate_recipe_toml(data: dict[str, Any], recipe_dir: Path | None = None) -
         mcp=_parse_mcp(provides.get("mcp"), ctx_prov),
         templates=_parse_templates(provides.get("templates"), ctx_prov),
         docs=_parse_docs(provides.get("docs"), ctx_prov),
+        runtime_hooks=_parse_runtime_hooks(provides.get("hooks"), ctx_prov, recipe_dir),
         capabilities=_parse_capabilities(data.get("capabilities"), ""),
         hooks=_parse_hooks(data.get("hooks"), ""),
         config_schema=_parse_config(data.get("config"), ""),

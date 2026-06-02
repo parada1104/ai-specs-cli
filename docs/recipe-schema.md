@@ -16,7 +16,8 @@ catalog/recipes/<id>/
 ├── skills/         # optional — bundled skills
 ├── commands/       # optional — slash commands
 ├── templates/      # optional — file templates
-└── docs/           # optional — documentation files
+├── docs/           # optional — documentation files
+└── hooks/          # optional — runtime hook scripts ([[provides.hooks]])
 ```
 
 ## `[recipe]` table
@@ -83,6 +84,37 @@ Array of tables:
 Only `source` and `target` are part of the supported docs contract. Extra keys
 may be tolerated by parsing, but doc materialization currently copies declared
 files unconditionally and does not apply template-style conditions.
+
+### `hooks` (agent-runtime lifecycle hooks)
+
+Array of tables declaring **agent-runtime** lifecycle hooks (distinct from the
+sync-time `[[hooks]]` table below). Each hook is a single portable script that
+`ai-specs sync` distributes to every enabled harness in its native format.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Hook identifier; unique within the recipe |
+| `event` | string | yes | Abstract event: `pre-tool-use`, `post-tool-use`, `session-start`, `stop` |
+| `script` | string | yes | Path inside the recipe directory (no `../`, no absolute paths) |
+| `matcher` | string | no | Tool-name pattern (e.g. `Edit\|Write`) |
+| `blocking` | boolean | no | Whether the hook can block the action (default `false`) |
+| `description` | string | no | Human-readable description |
+
+```toml
+[[provides.hooks]]
+id          = "worktree-gate"
+event       = "pre-tool-use"
+script      = "hooks/worktree-gate.sh"
+matcher     = "Edit|Write|MultiEdit|NotebookEdit"
+blocking    = true
+description = "Block writes to the main worktree on a protected branch"
+```
+
+Runtime hooks are declared **only** in `recipe.toml`, never in the project
+manifest. Tunable values ride the existing `[config.*]` → `[recipes.<id>.config]`
+override path and reach the rendered hook as environment variables. See
+[`docs/runtime-hooks.md`](runtime-hooks.md) for the normalized script contract,
+the abstract→native event map, and per-harness distribution details.
 
 ## Manifest declaration
 
