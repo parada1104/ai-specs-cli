@@ -108,8 +108,9 @@ python3 "$VENDOR_SKILLS_PY" "$ROOT_PATH"
 echo "▸ recipe-materialize (root)"
 RECIPE_MCP_TEMP="$(mktemp -t ai-specs-recipe-mcp-XXXXXX.json)"
 RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
-trap 'rm -f "$RECIPE_MCP_TEMP" "$RESOLVED_CONFIG_TEMP"' EXIT
-python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP"
+RESOLVED_HOOKS_TEMP="$(mktemp -t ai-specs-resolved-hooks-XXXXXX.json)"
+trap 'rm -f "$RECIPE_MCP_TEMP" "$RESOLVED_CONFIG_TEMP" "$RESOLVED_HOOKS_TEMP"' EXIT
+python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP" --resolved-hooks-out "$RESOLVED_HOOKS_TEMP"
 
 echo "▸ agents-render (root)"
 python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$ROOT_PATH/AGENTS.md" --preserve-if-runtime-brief --resolved-config "$RESOLVED_CONFIG_TEMP"
@@ -119,7 +120,7 @@ for idx in "${!RESOLVED_TARGETS[@]}"; do
     target="${RESOLVED_TARGETS[$idx]}"
     label="${RESOLVED_TARGET_LABELS[$idx]}"
     echo "  ▸ $label → $target"
-    if ! bash "$SYNC_AGENT_SH" --source-root "$ROOT_PATH" --target "$target" --all --recipe-mcp "$RECIPE_MCP_TEMP" --resolved-config "$RESOLVED_CONFIG_TEMP"; then
+    if ! bash "$SYNC_AGENT_SH" --source-root "$ROOT_PATH" --target "$target" --all --recipe-mcp "$RECIPE_MCP_TEMP" --resolved-config "$RESOLVED_CONFIG_TEMP" --resolved-hooks "$RESOLVED_HOOKS_TEMP"; then
         echo "ERROR: sync failed for target $target ($label). Stopped on first failure; previous writes are not rolled back." >&2
         exit 1
     fi

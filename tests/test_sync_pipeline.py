@@ -859,7 +859,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "board_id = 'aabbcc112233445566778899'\n\n"  # 24-char hex as required
                 "[recipes.worktree-flow]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.2.0'\n"
                 "[recipes.worktree-flow.config]\n"
                 "integration_branch = 'development'\n\n"
                 "[recipes.git-pr-flow]\n"
@@ -2293,6 +2293,74 @@ class TestJudgmentDayFixes(unittest.TestCase):
             self.assertIn("fixB-wrong-typed-inner-fields", agents)
             # Workflow rules must render (from TOML, not from wrong resolved-config)
             self.assertIn("No merges without review.", agents)
+
+
+class RuntimeHookSyncPipelineTests(unittest.TestCase):
+    """End-to-end: enabling the worktree-flow hook fans wiring to every harness."""
+
+    def make_workspace(self) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="ai-specs-hooks-"))
+        shutil.copytree(FIXTURE_ROOT, tmp / "workspace")
+        return tmp / "workspace"
+
+    def _wf_version(self) -> str:
+        import tomllib
+        with open(ROOT / "catalog" / "recipes" / "worktree-flow" / "recipe.toml", "rb") as fh:
+            return tomllib.load(fh)["recipe"]["version"]
+
+    def _manifest(self, version: str) -> str:
+        return (
+            "[project]\nname = 'hook-fixture'\n\n"
+            "[agents]\nenabled = ['claude', 'cursor', 'opencode', 'pi']\n\n"
+            "[recipes.worktree-flow]\n"
+            "enabled = true\n"
+            f"version = '{version}'\n"
+            "[recipes.worktree-flow.config]\n"
+            "integration_branch = 'development'\n"
+        )
+
+    def test_sync_fans_hook_to_every_harness(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(self._manifest(self._wf_version()))
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            # Materialized script at the harness-neutral path, executable.
+            script = workspace / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+            self.assertTrue(script.is_file(), "hook script must materialize")
+            self.assertTrue(os.access(script, os.X_OK), "hook script must be executable")
+
+            # Claude: managed PreToolUse entry wiring the script directly.
+            settings = json.loads((workspace / ".claude" / "settings.json").read_text())
+            pre = settings["hooks"]["PreToolUse"]
+            cmds = json.dumps(pre)
+            self.assertIn("ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh", cmds)
+
+            # OpenCode + Pi: generated shims.
+            self.assertTrue(
+                (workspace / ".opencode" / "plugin" / "worktree-flow-worktree-gate.ts").is_file()
+            )
+            self.assertTrue(
+                (workspace / ".pi" / "extensions" / "worktree-flow-worktree-gate.ts").is_file()
+            )
+
+            # Cursor: file-write matcher → warn-and-skip (no wrapper emitted).
+            self.assertFalse(
+                (workspace / ".cursor" / "hooks" / "worktree-flow-worktree-gate.sh").exists(),
+                "cursor must skip file-write gates",
+            )
+
+            # Idempotency: second sync byte-identical for claude settings + shims.
+            before_claude = (workspace / ".claude" / "settings.json").read_bytes()
+            before_oc = (workspace / ".opencode" / "plugin" / "worktree-flow-worktree-gate.ts").read_bytes()
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            after_claude = (workspace / ".claude" / "settings.json").read_bytes()
+            after_oc = (workspace / ".opencode" / "plugin" / "worktree-flow-worktree-gate.ts").read_bytes()
+            self.assertEqual(before_claude, after_claude)
+            self.assertEqual(before_oc, after_oc)
+        finally:
+            shutil.rmtree(workspace.parent)
 
 
 if __name__ == "__main__":

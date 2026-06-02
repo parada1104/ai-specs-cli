@@ -93,8 +93,13 @@ Declared in `[recipes.<id>]` and materialized by `ai-specs sync`. See
 ### Harness engineering
 
 `ai-specs` treats agent configuration as infrastructure: a single manifest fans out
-to every enabled tool. The primitives are skills, MCP servers, recipes, and
-derived instructions — versioned, vendored, and reproducible.
+to every enabled tool. The primitives are skills, MCP servers, recipes, runtime
+hooks, and derived instructions — versioned, vendored, and reproducible.
+
+Recipes can also declare **agent-runtime hooks** (`[[provides.hooks]]`): one
+portable script that `ai-specs sync` distributes to every enabled harness in its
+native format (Claude `PreToolUse`, generated Cursor/OpenCode/Pi adapters). See
+[`docs/runtime-hooks.md`](docs/runtime-hooks.md).
 
 ### Updating
 

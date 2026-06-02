@@ -28,6 +28,7 @@ TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 FLATTEN_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/flatten-resolved-skills.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
+HOOKS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/hooks-render.py"
 usage() {
     cat <<'EOF'
 Usage: ai-specs sync-agent [path] [--all | --<agent>...]
@@ -41,6 +42,7 @@ Arguments:
 Flags:
   --source-root    Root project that owns ai-specs/ai-specs.toml (default: target)
   --target         Target directory receiving derived local artifacts
+  --resolved-hooks Pre-resolved runtime-hooks JSON (from recipe-materialize)
   --all            All agents listed under [agents].enabled in ai-specs.toml
   --claude         Claude Code  (CLAUDE.md, .claude/skills, .mcp.json)
   --cursor         Cursor       (.cursor/mcp.json)
@@ -61,6 +63,7 @@ EXPLICIT_SOURCE_ROOT=0
 EXPLICIT_TARGET=0
 RECIPE_MCP_JSON=""
 RESOLVED_CONFIG_JSON=""
+RESOLVED_HOOKS_JSON=""
 declare -a SELECTED_AGENTS=()
 
 while [[ $# -gt 0 ]]; do
@@ -69,6 +72,7 @@ while [[ $# -gt 0 ]]; do
         --target)           TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
         --recipe-mcp)       RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
         --resolved-config)  RESOLVED_CONFIG_JSON="${2:-}"; shift 2 ;;
+        --resolved-hooks)   RESOLVED_HOOKS_JSON="${2:-}"; shift 2 ;;
         --all)              SELECT_ALL=1; shift ;;
         --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
@@ -335,6 +339,16 @@ for agent in "${TARGETS[@]}"; do
         done
         if [[ $copied -gt 0 ]]; then
             echo "    ✓ commands     $cmd_dir/ ($copied file(s))"
+        fi
+    fi
+
+    # Runtime hooks ([[provides.hooks]]): render this agent's native wiring from
+    # the pre-resolved blob. hooks-render.py has no catalog access and skips
+    # agents without a runtime-hook target (warn-and-skip on unsupported pairs).
+    hooks_target="$(platform_get "$agent" runtime_hooks_target)"
+    if [[ -n "$hooks_target" && -n "$RESOLVED_HOOKS_JSON" && -f "$RESOLVED_HOOKS_JSON" ]]; then
+        if python3 "$HOOKS_RENDER_PY" "$RESOLVED_HOOKS_JSON" "$agent" "$TARGET_PATH"; then
+            echo "    ✓ runtime hooks $hooks_target"
         fi
     fi
 done

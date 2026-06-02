@@ -11,11 +11,21 @@
 # platform_get <agent> <field>
 #   agent ∈ claude|cursor|opencode|codex|copilot|gemini|pi
 #   field ∈ instructions_path|skills_dir|agents_dir|mcp_config_path|mcp_key|native
-#         | commands_dir
+#         | commands_dir|runtime_hooks_target
 #
 # `commands_dir` is the directory where slash-command files (like
 # `/skills-as-rules`) get written. Empty string means the agent has no native
 # slash-command UX and we skip the fan-out for it.
+#
+# `runtime_hooks_target` is a short descriptor of where this agent's
+# recipe-declared runtime hooks ([[provides.hooks]]) are rendered. The value is
+# the project-relative file or dir owned by hooks-render.py:
+#   claude   → .claude/settings.json   (managed block, script wired directly)
+#   cursor   → .cursor/hooks.json      (managed entry + generated wrapper in .cursor/hooks/)
+#   opencode → .opencode/plugin        (generated TS plugin per hook)
+#   pi       → .pi/extensions          (generated TS extension per hook)
+# Empty string means the agent has no runtime-hook target and hooks-render.py
+# skips it.
 #
 # Imprime el valor en stdout. Exit 1 si agent/field desconocidos.
 platform_get() {
@@ -32,6 +42,7 @@ platform_get() {
                 mcp_key)           echo "mcpServers" ;;
                 native)            echo "false" ;;
                 commands_dir)      echo ".claude/commands" ;;
+                runtime_hooks_target) echo ".claude/settings.json" ;;
                 *) return 1 ;;
             esac
             ;;
@@ -46,6 +57,7 @@ platform_get() {
                 mcp_key)           echo "mcpServers" ;;
                 native)            echo "true" ;;
                 commands_dir)      echo ".cursor/commands" ;;
+                runtime_hooks_target) echo ".cursor/hooks.json" ;;
                 *) return 1 ;;
             esac
             ;;
@@ -60,6 +72,7 @@ platform_get() {
                 mcp_key)           echo "mcp" ;;
                 native)            echo "true" ;;
                 commands_dir)      echo ".opencode/commands" ;;
+                runtime_hooks_target) echo ".opencode/plugin" ;;
                 *) return 1 ;;
             esac
             ;;
@@ -73,6 +86,7 @@ platform_get() {
                 mcp_key)           echo "mcp_servers" ;;
                 native)            echo "true" ;;
                 commands_dir)      echo "" ;;  # codex has no slash commands
+                runtime_hooks_target) echo "" ;;
                 *) return 1 ;;
             esac
             ;;
@@ -85,6 +99,7 @@ platform_get() {
                 mcp_key)           echo "" ;;
                 native)            echo "true" ;;
                 commands_dir)      echo "" ;;  # copilot has no slash commands
+                runtime_hooks_target) echo "" ;;
                 *) return 1 ;;
             esac
             ;;
@@ -97,6 +112,7 @@ platform_get() {
                 mcp_key)           echo "mcpServers" ;;
                 native)            echo "false" ;;
                 commands_dir)      echo "" ;;  # gemini has no slash commands
+                runtime_hooks_target) echo "" ;;
                 *) return 1 ;;
             esac
             ;;
@@ -110,6 +126,7 @@ platform_get() {
                 mcp_key)           echo "mcpServers" ;;
                 native)            echo "true" ;;
                 commands_dir)      echo "" ;;  # pi has no slash commands
+                runtime_hooks_target) echo ".pi/extensions" ;;
                 *) return 1 ;;
             esac
             ;;

@@ -220,6 +220,29 @@ def materialize_doc(recipe_dir: Path, doc: Any, project_root: Path) -> None:
     print(f"    ✓ doc {doc.target}")
 
 
+def hook_script_rel_path(recipe_id: str, hook: Any) -> str:
+    """Harness-neutral materialized path for a hook script (project-relative)."""
+    return f"ai-specs/recipes/{recipe_id}/hooks/{Path(hook.script).name}"
+
+
+def materialize_hook_script(recipe_dir: Path, hook: Any, project_root: Path, recipe_id: str) -> str:
+    """Copy a recipe hook script to the harness-neutral path and chmod +x.
+
+    Returns the project-relative materialized path so every harness's wiring
+    can reference the single copy.
+    """
+    src = recipe_dir / hook.script
+    if not src.is_file():
+        raise RuntimeError(f"hook script not found: {src}")
+    rel = hook_script_rel_path(recipe_id, hook)
+    dest = project_root / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    os.chmod(dest, 0o755)
+    print(f"    ✓ hook script {rel}")
+    return rel
+
+
 # --- Binding resolution -------------------------------------------------------
 def resolve_bindings(
     catalog_dir: Path, enabled_ids: list[str], manifest_bindings: list[dict[str, str]]
@@ -452,12 +475,28 @@ def build_resolved_config(project_root: Path) -> dict[str, Any]:
     }
 
 
-def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None, resolved_config_out: Path | None = None) -> int:
+def _enabled_agents(project_root: Path) -> list[str]:
+    """Read [agents].enabled from the project manifest (best-effort)."""
+    mod = _load_toml_read()
+    toml_path = project_root / "ai-specs" / "ai-specs.toml"
+    try:
+        data = mod.load_toml(toml_path)
+    except Exception:
+        return []
+    agents = data.get("agents", {}) or {}
+    enabled = agents.get("enabled", []) or []
+    return [str(a) for a in enabled if a]
+
+
+def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None, resolved_config_out: Path | None = None, resolved_hooks_out: Path | None = None) -> int:
     catalog_dir = ai_specs_home / "catalog" / "recipes"
     toml_path = project_root / "ai-specs" / "ai-specs.toml"
 
     recipes = load_recipes_from_manifest(project_root)
     enabled = {rid: cfg for rid, cfg in recipes.items() if cfg.get("enabled")}
+
+    # Collect resolved runtime hooks across enabled recipes (for hooks-render.py).
+    resolved_hooks: list[dict[str, Any]] = []
 
     # Collect expected dep IDs from manifest [[deps]]
     mod = _load_toml_read()
@@ -476,6 +515,14 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
                 json.dump(resolved, f, indent=2, sort_keys=True)
                 f.write("\n")
             print(f"  ✓ wrote resolved-config (0 enabled recipe(s))")
+        if resolved_hooks_out is not None:
+            with open(resolved_hooks_out, "w") as f:
+                json.dump(
+                    {"enabled_agents": _enabled_agents(project_root), "hooks": []},
+                    f, indent=2, sort_keys=True,
+                )
+                f.write("\n")
+            print(f"  ✓ wrote resolved-hooks (0 hook(s))")
         return 0
 
     manifest_bindings = load_bindings_from_manifest(project_root)
@@ -574,8 +621,32 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         for doc in recipe.docs:
             materialize_doc(recipe_dir, doc, project_root)
 
-        # Hook execution (NEW)
+        # Hook execution (sync-time [[hooks]])
         execute_hooks(recipe, merged_cfg, project_root)
+
+        # Runtime hooks ([[provides.hooks]]): materialize the script once and
+        # collect a resolved entry for downstream hooks-render.py. Tunable
+        # config values ride along as env (resolved [config.*] overrides).
+        for rhook in getattr(recipe, "runtime_hooks", []) or []:
+            script_path = materialize_hook_script(recipe_dir, rhook, project_root, rid)
+            # Pass tunables to the hook as env vars. Only ENV-shaped config keys
+            # (UPPER_SNAKE_CASE) are exported, so hook scripts can read them as
+            # environment variables; other config keys (e.g. worktrees_dir) are
+            # recipe-internal and not exposed to the runtime hook.
+            hook_env = {
+                k: str(v)
+                for k, v in merged_cfg.items()
+                if k.isupper() and "-" not in k and k.replace("_", "").isalnum()
+            }
+            resolved_hooks.append({
+                "recipe": rid,
+                "id": rhook.id,
+                "event": rhook.event,
+                "matcher": rhook.matcher,
+                "blocking": rhook.blocking,
+                "script_path": script_path,
+                "env": hook_env,
+            })
 
     # Write merged MCP to a temp file for downstream mcp-render.py
     if recipe_mcp_out is not None:
@@ -603,6 +674,16 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
             json.dump(resolved, f, indent=2, sort_keys=True)
             f.write("\n")
         print(f"  ✓ wrote resolved-config ({len(resolved['recipes'])} recipe(s))")
+
+    # Write resolved-hooks JSON for downstream hooks-render.py
+    if resolved_hooks_out is not None:
+        with open(resolved_hooks_out, "w") as f:
+            json.dump(
+                {"enabled_agents": _enabled_agents(project_root), "hooks": resolved_hooks},
+                f, indent=2, sort_keys=True,
+            )
+            f.write("\n")
+        print(f"  ✓ wrote resolved-hooks ({len(resolved_hooks)} hook(s))")
 
     return 0
 
@@ -671,6 +752,7 @@ def main() -> int:
     args = sys.argv[1:]
     recipe_mcp_out = None
     resolved_config_out = None
+    resolved_hooks_out = None
     resolved_config_only = False
     if "--recipe-mcp-out" in args:
         idx = args.index("--recipe-mcp-out")
@@ -682,6 +764,11 @@ def main() -> int:
         if idx + 1 < len(args):
             resolved_config_out = Path(args[idx + 1])
             args = args[:idx] + args[idx + 2:]
+    if "--resolved-hooks-out" in args:
+        idx = args.index("--resolved-hooks-out")
+        if idx + 1 < len(args):
+            resolved_hooks_out = Path(args[idx + 1])
+            args = args[:idx] + args[idx + 2:]
     if "--resolved-config-only" in args:
         idx = args.index("--resolved-config-only")
         resolved_config_only = True
@@ -690,7 +777,7 @@ def main() -> int:
         print(
             f"Usage: {sys.argv[0]} <project_root> <ai_specs_home>"
             " [--recipe-mcp-out <path>] [--resolved-config-out <path>]"
-            " [--resolved-config-only]",
+            " [--resolved-hooks-out <path>] [--resolved-config-only]",
             file=sys.stderr,
         )
         return 2
@@ -705,7 +792,7 @@ def main() -> int:
         return build_resolved_config_only(project_root, resolved_config_out, ai_specs_home)
 
     try:
-        return materialize_recipes(project_root, ai_specs_home, recipe_mcp_out, resolved_config_out)
+        return materialize_recipes(project_root, ai_specs_home, recipe_mcp_out, resolved_config_out, resolved_hooks_out)
     except Exception as exc:
         fail(str(exc))
         return 1

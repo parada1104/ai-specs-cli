@@ -38,7 +38,7 @@ enabled = ["claude", "cursor", "opencode", "pi"]
 
 [recipes.worktree-flow]
 enabled = true
-version = "1.1.0"
+version = "1.2.0"
 [recipes.worktree-flow.config]
 worktrees_dir = ".worktrees"
 integration_branch = "development"
