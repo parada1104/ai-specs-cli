@@ -87,8 +87,10 @@ interactively.
 ### Recipes
 
 Named, versioned bundles of skills, commands, templates, and MCP presets.
-Declared in `[recipes.<id>]` and materialized by `ai-specs sync`. See
-[`docs/recipe-schema.md`](docs/recipe-schema.md).
+Declared in `[recipes.<id>]` and materialized by `ai-specs sync`. See the
+[recipe catalog](docs/recipes-catalog.md) for what each shipped recipe does and
+the config it expects, and [`docs/recipe-schema.md`](docs/recipe-schema.md) for
+the `recipe.toml` schema.
 
 ### Harness engineering
 
