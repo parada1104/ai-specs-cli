@@ -571,6 +571,52 @@ class PlatformGetTests(unittest.TestCase):
         result = self._platform_get("pi", "nonexistent_field")
         self.assertNotEqual(result.returncode, 0)
 
+    # --- Omp agent field tests ---
+
+    def test_omp_skills_dir(self):
+        result = self._platform_get("omp", "skills_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".omp/skills")
+
+    def test_omp_mcp_config_path(self):
+        result = self._platform_get("omp", "mcp_config_path")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".omp/mcp.json")
+
+    def test_omp_mcp_key(self):
+        result = self._platform_get("omp", "mcp_key")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "mcpServers")
+
+    def test_omp_native_true(self):
+        result = self._platform_get("omp", "native")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "true")
+
+    def test_omp_instructions_path_empty(self):
+        result = self._platform_get("omp", "instructions_path")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
+
+    def test_omp_commands_dir(self):
+        result = self._platform_get("omp", "commands_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".omp/commands")
+
+    def test_omp_agents_dir_empty(self):
+        result = self._platform_get("omp", "agents_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
+
+    def test_omp_runtime_hooks_target(self):
+        result = self._platform_get("omp", "runtime_hooks_target")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".omp/extensions")
+
+    def test_omp_invalid_field_exits_nonzero(self):
+        result = self._platform_get("omp", "nonexistent_field")
+        self.assertNotEqual(result.returncode, 0)
+
     # --- Regression: existing agents still work ---
 
     def test_claude_skills_dir_unchanged(self):
