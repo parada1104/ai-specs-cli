@@ -9,8 +9,8 @@ name = "ai-specs-cli"
 subrepos = []
 
 [agents]
-# Supported agents: claude, cursor, opencode, codex, copilot, gemini, pi
-enabled = ["claude", "cursor", "opencode", "pi"]
+# Supported agents: claude, cursor, opencode, codex, copilot, gemini, pi, omp
+enabled = ["claude", "cursor", "opencode", "pi", "omp"]
 
 # -----------------------------------------------------------------------------
 # Recipes — named, versioned bundles of skills, commands, templates, and MCP
@@ -70,7 +70,7 @@ board_id = "69ec097f13e2d38ecd89a557"
 
 [recipes.vault-canonical-store]
 enabled = true
-version = "1.0.0"
+version = "1.1.0"
 [recipes.vault-canonical-store.config]
 vault_scope = "nnodes/proyectos/ai-specs"
 
@@ -107,21 +107,16 @@ vault_scope = "nnodes/proyectos/ai-specs"
 # MCP servers — distributed by sync-agent to each platform's native format.
 # Environment variables are loaded from .envrc; agents interpolate at runtime
 # (e.g. $TRELLO_API_KEY).
-
-[mcp.trello]
-command = "npx"
-args = ["-y", "@delorenj/mcp-server-trello"]
-env = { TRELLO_API_KEY = "$TRELLO_API_KEY", TRELLO_TOKEN = "$TRELLO_TOKEN" }
-timeout = 30000
-
-[mcp.vault-ai-specs]
-command = "npx"
-args = [
-  "-y",
-  "@modelcontextprotocol/server-filesystem",
-  "$OBSIDIAN_VAULT_PATH/nnodes/proyectos/ai-specs",
-]
-timeout = 30000
+#
+# All current servers come from recipe presets ([[provides.mcp]]):
+#   trello          ← trello-mcp-workflow
+#   vault-canonical ← vault-canonical-store (path via $CANONICAL_VAULT_PATH in .envrc)
+# Declare [mcp.<name>] here only for ad-hoc servers without a recipe preset:
+#
+# [mcp.example]
+# command = "npx"
+# args = ["-y", "@example/mcp-server"]
+# env = { EXAMPLE_TOKEN = "$EXAMPLE_TOKEN" }
 
 # -----------------------------------------------------------------------------
 # Runtime brief — prose sections for AGENTS.md generation.
@@ -171,5 +166,5 @@ useful_commands = [
 [brief.mcp_descriptions]
 trello = "project tracking through the ai-specs-cli Roadmap board."
 engram = "operational/session memory (global MCP)."
-"vault-ai-specs" = "canonical project notes in the Obsidian vault scoped to `nnodes/proyectos/ai-specs`."
+"vault-canonical" = "canonical project notes in the vault scoped to `nnodes/proyectos/ai-specs` (path from $CANONICAL_VAULT_PATH)."
 

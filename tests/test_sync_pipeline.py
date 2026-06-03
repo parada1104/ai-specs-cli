@@ -875,7 +875,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "test_command = './tests/run.sh'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.0.0'\n"
+                "version = '1.1.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/proyectos/test-project'\n\n"
                 "[[bindings]]\n"
@@ -1766,7 +1766,7 @@ class TestAutoBindingFix(unittest.TestCase):
                 "board_id = 'aabbccddeeff001122334455'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.0.0'\n"
+                "version = '1.1.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/test/autobind-scope'\n"
                 # NO [[bindings]] section
@@ -1814,7 +1814,7 @@ class TestAutoBindingFix(unittest.TestCase):
                 "board_id = 'aabbccddeeff001122334455'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.0.0'\n"
+                "version = '1.1.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/test/json-scope'\n"
                 # NO [[bindings]] section — auto-bind must handle this

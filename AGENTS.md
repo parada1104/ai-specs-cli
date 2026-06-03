@@ -8,27 +8,20 @@
 
 - **Project**: `ai-specs-cli`
 - **Purpose**: per-project AI harness for agent configuration, MCPs, recipes, memory, and tracker integration.
-- **Enabled runtimes**: `claude`, `cursor`, `opencode`, `pi`
+- **Enabled runtimes**: `claude`, `cursor`, `opencode`, `pi`, `omp`
 - **Integration branch**: `development`
 - **Vault scope**: `nnodes/proyectos/ai-specs`
 
 ## Runtime MCPs
 
-**trello**
-- command: npx
-- args: -y @delorenj/mcp-server-trello
-- env:
-  - TRELLO_API_KEY: ${TRELLO_API_KEY}
-  - TRELLO_TOKEN: ${TRELLO_TOKEN}
+**trello** *(global)*
 - description: project tracking through the ai-specs-cli Roadmap board.
-
-**vault-ai-specs**
-- command: npx
-- args: -y @modelcontextprotocol/server-filesystem $OBSIDIAN_VAULT_PATH/nnodes/proyectos/ai-specs
-- description: canonical project notes in the Obsidian vault scoped to `nnodes/proyectos/ai-specs`.
 
 **engram** *(global)*
 - description: operational/session memory (global MCP).
+
+**vault-canonical** *(global)*
+- description: canonical project notes in the vault scoped to `nnodes/proyectos/ai-specs` (path from $CANONICAL_VAULT_PATH).
 
 Never expose env-backed secrets from MCP config in generated docs or comments.
 
