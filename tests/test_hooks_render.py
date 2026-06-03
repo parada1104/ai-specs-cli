@@ -112,6 +112,13 @@ class HooksRenderTests(unittest.TestCase):
         # Pi exposes the tool name as camelCase `toolName` (verified June 2026);
         # reading only snake_case would make the matcher never fire. Lock it in.
         self.assertIn("call?.toolName", text)
+        # pi/omp tool names are lowercase (write, edit) while matchers use
+        # Claude-style names (Write, Edit) — the regex must be case-insensitive
+        # (live-verified June 2026: case-sensitive matcher never fired in omp).
+        self.assertIn('new RegExp(`^(?:${MATCHER})$`, "i")', text)
+        # pi/omp tool input uses `path`, not `file_path`; the event must
+        # normalize so hook scripts reading file_path keep working.
+        self.assertIn("rawInput.file_path ?? rawInput.path ?? rawInput.notebook_path", text)
 
     def test_omp_extension_shim(self):
         project = self._project()
@@ -127,6 +134,11 @@ class HooksRenderTests(unittest.TestCase):
         self.assertIn("block: true", text)
         # omp exposes the tool name as camelCase `toolName` (same as pi, verified June 2026).
         self.assertIn("call?.toolName", text)
+        # Live-verified June 2026 in omp: tool names arrive lowercase (write,
+        # bash, read) and tool input uses `path`. Case-insensitive matcher +
+        # input normalization are required for the gate to ever fire.
+        self.assertIn('new RegExp(`^(?:${MATCHER})$`, "i")', text)
+        self.assertIn("rawInput.file_path ?? rawInput.path ?? rawInput.notebook_path", text)
 
     def test_unsupported_event_warns_and_skips(self):
         project = self._project()
