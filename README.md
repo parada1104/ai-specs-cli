@@ -87,14 +87,21 @@ interactively.
 ### Recipes
 
 Named, versioned bundles of skills, commands, templates, and MCP presets.
-Declared in `[recipes.<id>]` and materialized by `ai-specs sync`. See
-[`docs/recipe-schema.md`](docs/recipe-schema.md).
+Declared in `[recipes.<id>]` and materialized by `ai-specs sync`. See the
+[recipe catalog](docs/recipes-catalog.md) for what each shipped recipe does and
+the config it expects, and [`docs/recipe-schema.md`](docs/recipe-schema.md) for
+the `recipe.toml` schema.
 
 ### Harness engineering
 
 `ai-specs` treats agent configuration as infrastructure: a single manifest fans out
-to every enabled tool. The primitives are skills, MCP servers, recipes, and
-derived instructions — versioned, vendored, and reproducible.
+to every enabled tool. The primitives are skills, MCP servers, recipes, runtime
+hooks, and derived instructions — versioned, vendored, and reproducible.
+
+Recipes can also declare **agent-runtime hooks** (`[[provides.hooks]]`): one
+portable script that `ai-specs sync` distributes to every enabled harness in its
+native format (Claude `PreToolUse`, generated Cursor/OpenCode/Pi adapters). See
+[`docs/runtime-hooks.md`](docs/runtime-hooks.md).
 
 ### Updating
 

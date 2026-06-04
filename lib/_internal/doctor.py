@@ -83,6 +83,13 @@ class Doctor:
             "mcp_key": "mcpServers",
             "commands_dir": "",
         },
+        "omp": {
+            "instructions_path": "",
+            "skills_dir": ".omp/skills",
+            "mcp_config_path": ".omp/mcp.json",
+            "mcp_key": "mcpServers",
+            "commands_dir": ".omp/commands",
+        },
         "codex": {
             "instructions_path": "",
             "skills_dir": "",

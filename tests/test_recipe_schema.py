@@ -123,6 +123,112 @@ class RecipeSchemaTests(unittest.TestCase):
             self.assertIn("validation", str(ctx.exception))
 
 
+    # --- [[provides.hooks]] runtime hooks ------------------------------------
+
+    def _write_recipe(self, tmp: str, name: str, body: str, *, scripts: list[str] | None = None) -> Path:
+        recipe_dir = Path(tmp) / name
+        recipe_dir.mkdir()
+        (recipe_dir / "recipe.toml").write_text(
+            f'[recipe]\n'
+            f'id = "{name}"\n'
+            f'name = "{name}"\n'
+            f'description = "D"\n'
+            f'version = "1.0"\n'
+            f'\n{body}'
+        )
+        for rel in (scripts or []):
+            sp = recipe_dir / rel
+            sp.parent.mkdir(parents=True, exist_ok=True)
+            sp.write_text("#!/usr/bin/env bash\nexit 0\n")
+        return recipe_dir
+
+    def test_provides_hooks_valid(self):
+        """A valid [[provides.hooks]] entry parses and registers the hook."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "hk-valid",
+                '[[provides.hooks]]\n'
+                'id = "worktree-gate"\n'
+                'event = "pre-tool-use"\n'
+                'script = "hooks/worktree-gate.sh"\n'
+                'matcher = "Edit|Write"\n'
+                'blocking = true\n'
+                'description = "Block writes"\n',
+                scripts=["hooks/worktree-gate.sh"],
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertEqual(len(recipe.runtime_hooks), 1)
+            hook = recipe.runtime_hooks[0]
+            self.assertEqual(hook.id, "worktree-gate")
+            self.assertEqual(hook.event, "pre-tool-use")
+            self.assertEqual(hook.script, "hooks/worktree-gate.sh")
+            self.assertEqual(hook.matcher, "Edit|Write")
+            self.assertEqual(hook.blocking, True)
+            self.assertEqual(hook.description, "Block writes")
+
+    def test_provides_hooks_absent_ok(self):
+        """A recipe with no [[provides.hooks]] parses and registers no runtime hooks."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "hk-none", "")
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertEqual(recipe.runtime_hooks, [])
+
+    def test_provides_hooks_missing_field(self):
+        """Omitting id/event/script raises an explicit error naming the field."""
+        cases = [
+            ('event = "pre-tool-use"\nscript = "hooks/x.sh"\n', "id"),
+            ('id = "x"\nscript = "hooks/x.sh"\n', "event"),
+            ('id = "x"\nevent = "pre-tool-use"\n', "script"),
+        ]
+        for body_inner, missing in cases:
+            with self.subTest(missing=missing):
+                with tempfile.TemporaryDirectory() as tmp:
+                    recipe_dir = self._write_recipe(
+                        tmp, "hk-miss",
+                        "[[provides.hooks]]\n" + body_inner,
+                        scripts=["hooks/x.sh"],
+                    )
+                    with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                        self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+                    self.assertIn(missing, str(ctx.exception))
+
+    def test_provides_hooks_unknown_event(self):
+        """An unknown event raises an error listing the known events."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "hk-evt",
+                '[[provides.hooks]]\n'
+                'id = "x"\n'
+                'event = "bogus-event"\n'
+                'script = "hooks/x.sh"\n',
+                scripts=["hooks/x.sh"],
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            msg = str(ctx.exception)
+            self.assertIn("bogus-event", msg)
+            self.assertIn("pre-tool-use", msg)
+
+    def test_provides_hooks_script_escape(self):
+        """A script path that escapes the recipe dir raises a path-escape error."""
+        for bad in ("../evil.sh", "/etc/passwd"):
+            with self.subTest(bad=bad):
+                with tempfile.TemporaryDirectory() as tmp:
+                    recipe_dir = self._write_recipe(
+                        tmp, "hk-esc",
+                        '[[provides.hooks]]\n'
+                        'id = "x"\n'
+                        'event = "pre-tool-use"\n'
+                        f'script = "{bad}"\n',
+                    )
+                    with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                        self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+                    msg = str(ctx.exception).lower()
+                    self.assertTrue(
+                        "inside" in msg or "escape" in msg or "absolute" in msg,
+                        f"expected a path-escape error, got: {msg}",
+                    )
+
     def test_nonstandard_config_section_parses(self):
         """Non-standard config sections (without 'required' key) parse as extra data."""
         with tempfile.TemporaryDirectory() as tmp:

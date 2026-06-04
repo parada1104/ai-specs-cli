@@ -2,5 +2,9 @@
 
 .internal/
 .resolved-skills/
+# Recipe materialization output (restored by ai-specs sync)
+.recipe/
+.deps/
+recipes/
 
 # --- end ai-specs ---

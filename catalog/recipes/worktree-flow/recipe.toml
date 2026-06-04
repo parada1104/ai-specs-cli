@@ -2,7 +2,7 @@
 id = "worktree-flow"
 name = "Worktree Flow"
 description = "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work"
-version = "1.1.0"
+version = "1.2.0"
 author = "ai-specs"
 license = "MIT"
 
@@ -31,6 +31,14 @@ required = false
 type = "boolean"
 default = true
 
+# Protected branches the worktree-gate runtime hook refuses writes on while in
+# the main worktree. Passed to the rendered hook as the WORKTREE_GATE_PROTECTED
+# env var (space-separated branch names).
+[config.WORKTREE_GATE_PROTECTED]
+required = false
+type = "string"
+default = "main development"
+
 [sdd]
 threshold = "behavior_change"
 
@@ -40,6 +48,14 @@ commands = [
     { id = "worktree-new", path = "commands/worktree-new.md" },
     { id = "worktree-clean", path = "commands/worktree-clean.md" },
 ]
+
+[[provides.hooks]]
+id = "worktree-gate"
+event = "pre-tool-use"
+script = "hooks/worktree-gate.sh"
+matcher = "Edit|Write|MultiEdit|NotebookEdit"
+blocking = true
+description = "Block writes to the main worktree on a protected branch"
 
 [[provides.templates]]
 source = "templates/worktree-cleanup.sh"

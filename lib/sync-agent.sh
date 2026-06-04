@@ -28,6 +28,7 @@ TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 FLATTEN_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/flatten-resolved-skills.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
+HOOKS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/hooks-render.py"
 usage() {
     cat <<'EOF'
 Usage: ai-specs sync-agent [path] [--all | --<agent>...]
@@ -41,6 +42,7 @@ Arguments:
 Flags:
   --source-root    Root project that owns ai-specs/ai-specs.toml (default: target)
   --target         Target directory receiving derived local artifacts
+  --resolved-hooks Pre-resolved runtime-hooks JSON (from recipe-materialize)
   --all            All agents listed under [agents].enabled in ai-specs.toml
   --claude         Claude Code  (CLAUDE.md, .claude/skills, .mcp.json)
   --cursor         Cursor       (.cursor/mcp.json)
@@ -49,6 +51,7 @@ Flags:
   --copilot        GitHub Copilot (.github/copilot-instructions.md)
   --gemini         Gemini CLI   (GEMINI.md, .gemini/skills, .gemini/settings.json)
   --pi             Pi (pi.dev)  (.pi/skills, .mcp.json)
+  --omp            Oh My Pi     (.omp/skills, .omp/mcp.json, .omp/commands)
 
 If no selector is given, defaults to --all.
 EOF
@@ -60,15 +63,19 @@ SELECT_ALL=0
 EXPLICIT_SOURCE_ROOT=0
 EXPLICIT_TARGET=0
 RECIPE_MCP_JSON=""
+RESOLVED_CONFIG_JSON=""
+RESOLVED_HOOKS_JSON=""
 declare -a SELECTED_AGENTS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --source-root) SOURCE_ROOT="${2:-}"; EXPLICIT_SOURCE_ROOT=1; shift 2 ;;
-        --target)      TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
-        --recipe-mcp)  RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
-        --all)         SELECT_ALL=1; shift ;;
-        --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi)
+        --source-root)      SOURCE_ROOT="${2:-}"; EXPLICIT_SOURCE_ROOT=1; shift 2 ;;
+        --target)           TARGET_PATH="${2:-}"; EXPLICIT_TARGET=1; shift 2 ;;
+        --recipe-mcp)       RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
+        --resolved-config)  RESOLVED_CONFIG_JSON="${2:-}"; shift 2 ;;
+        --resolved-hooks)   RESOLVED_HOOKS_JSON="${2:-}"; shift 2 ;;
+        --all)              SELECT_ALL=1; shift ;;
+        --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi|--omp)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
         -h|--help)     usage; exit 0 ;;
         --)            shift; break ;;
@@ -114,6 +121,17 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
         echo "  mode:        public root fan-out"
         echo ""
 
+        # Generate resolved-config for subrepo AGENTS.md enrichment.
+        # Use --resolved-config-only so no skills are copied, no hooks run,
+        # no lock is written, and no recipe-mcp temp file is created.
+        STANDALONE_RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
+        trap 'rm -f "$STANDALONE_RESOLVED_CONFIG_TEMP"' EXIT
+        if ! python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" \
+            --resolved-config-out "$STANDALONE_RESOLVED_CONFIG_TEMP" \
+            --resolved-config-only 2>&1; then
+            echo "WARNING: resolved-config generation failed; subrepo AGENTS.md will be rendered without structured fields." >&2
+        fi
+
         FORWARD_ARGS=()
         if [[ $SELECT_ALL -eq 1 ]]; then
             FORWARD_ARGS+=("--all")
@@ -121,6 +139,10 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
             for agent in "${SELECTED_AGENTS[@]}"; do
                 FORWARD_ARGS+=("--$agent")
             done
+        fi
+        # Forward resolved-config so subrepo AGENTS.md gets structured fields
+        if [[ -f "$STANDALONE_RESOLVED_CONFIG_TEMP" ]]; then
+            FORWARD_ARGS+=("--resolved-config" "$STANDALONE_RESOLVED_CONFIG_TEMP")
         fi
 
         for resolved_target in "${RESOLVED_TARGETS[@]}"; do
@@ -204,7 +226,11 @@ ensure_target_workspace() {
     python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
-    python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$TARGET_AGENTS_MD"
+    local render_args=("$TOML_PATH" "$TARGET_AGENTS_MD")
+    if [[ -n "$RESOLVED_CONFIG_JSON" && -f "$RESOLVED_CONFIG_JSON" ]]; then
+        render_args+=("--resolved-config" "$RESOLVED_CONFIG_JSON")
+    fi
+    python3 "$AGENTS_RENDER_PY" "${render_args[@]}"
 }
 
 # Resolve enabled agents from ai-specs.toml
@@ -314,6 +340,16 @@ for agent in "${TARGETS[@]}"; do
         done
         if [[ $copied -gt 0 ]]; then
             echo "    ✓ commands     $cmd_dir/ ($copied file(s))"
+        fi
+    fi
+
+    # Runtime hooks ([[provides.hooks]]): render this agent's native wiring from
+    # the pre-resolved blob. hooks-render.py has no catalog access and skips
+    # agents without a runtime-hook target (warn-and-skip on unsupported pairs).
+    hooks_target="$(platform_get "$agent" runtime_hooks_target)"
+    if [[ -n "$hooks_target" && -n "$RESOLVED_HOOKS_JSON" && -f "$RESOLVED_HOOKS_JSON" ]]; then
+        if python3 "$HOOKS_RENDER_PY" "$RESOLVED_HOOKS_JSON" "$agent" "$TARGET_PATH"; then
+            echo "    ✓ runtime hooks $hooks_target"
         fi
     fi
 done

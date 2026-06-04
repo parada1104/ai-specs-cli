@@ -698,5 +698,106 @@ class RecipeMaterializeTests(unittest.TestCase):
             self.assertIn("board_id=abc123", marker_content)
 
 
+class RuntimeHookMaterializeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal_rh")
+
+    def _build(self, *, config_section: str = "", config_override: str = "", enabled_agents: str = "'claude'"):
+        """Build a fake home (catalog) + project enabling a hook recipe.
+
+        Returns (project_root, ai_specs_home).
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        catalog = home / "catalog" / "recipes"
+        rid = "wt-hook"
+        recipe_dir = catalog / rid
+        (recipe_dir / "hooks").mkdir(parents=True)
+        (recipe_dir / "recipe.toml").write_text(
+            '[recipe]\n'
+            f'id = "{rid}"\n'
+            'name = "WT Hook"\n'
+            'description = "D"\n'
+            'version = "1.0"\n'
+            f'{config_section}'
+            '[[provides.hooks]]\n'
+            'id = "gate"\n'
+            'event = "pre-tool-use"\n'
+            'script = "hooks/gate.sh"\n'
+            'matcher = "Edit|Write"\n'
+            'blocking = true\n'
+        )
+        (recipe_dir / "hooks" / "gate.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+
+        proj_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(proj_tmp.cleanup)
+        project_root = Path(proj_tmp.name)
+        ai_specs = project_root / "ai-specs"
+        ai_specs.mkdir(parents=True)
+        (ai_specs / "ai-specs.toml").write_text(
+            "[project]\nname = 'p'\n\n"
+            f"[agents]\nenabled = [{enabled_agents}]\n\n"
+            f"[recipes.{rid}]\nenabled = true\nversion = '1.0'\n"
+            f"{config_override}"
+        )
+        return project_root, home, rid
+
+    def test_script_materialized_executable_at_neutral_path(self):
+        project_root, home, rid = self._build()
+        self.assertEqual(self.mod.materialize_recipes(project_root, home), 0)
+        script = project_root / "ai-specs" / "recipes" / rid / "hooks" / "gate.sh"
+        self.assertTrue(script.is_file(), "hook script should materialize at neutral path")
+        import os
+        self.assertTrue(os.access(script, os.X_OK), "hook script should be executable")
+
+    def test_resolved_hooks_out_shape(self):
+        project_root, home, rid = self._build()
+        out = project_root / "hooks.json"
+        self.assertEqual(
+            self.mod.materialize_recipes(project_root, home, resolved_hooks_out=out), 0
+        )
+        data = json.loads(out.read_text())
+        self.assertIn("claude", data["enabled_agents"])
+        self.assertEqual(len(data["hooks"]), 1)
+        h = data["hooks"][0]
+        self.assertEqual(h["recipe"], rid)
+        self.assertEqual(h["id"], "gate")
+        self.assertEqual(h["event"], "pre-tool-use")
+        self.assertEqual(h["matcher"], "Edit|Write")
+        self.assertEqual(h["blocking"], True)
+        self.assertEqual(
+            h["script_path"], f"ai-specs/recipes/{rid}/hooks/gate.sh"
+        )
+
+    def test_resolved_hooks_env_carries_config(self):
+        project_root, home, rid = self._build(
+            config_section=(
+                '[config.WORKTREE_GATE_PROTECTED]\n'
+                'required = false\n'
+                'type = "string"\n'
+                'default = "main"\n'
+                '[config.worktrees_dir]\n'
+                'required = false\n'
+                'type = "string"\n'
+                'default = ".worktrees"\n'
+            ),
+            config_override=(
+                "[recipes.wt-hook.config]\nWORKTREE_GATE_PROTECTED = 'main development'\n"
+            ),
+        )
+        out = project_root / "hooks.json"
+        self.assertEqual(
+            self.mod.materialize_recipes(project_root, home, resolved_hooks_out=out), 0
+        )
+        data = json.loads(out.read_text())
+        env = data["hooks"][0]["env"]
+        # ENV-shaped config keys are exported...
+        self.assertEqual(env.get("WORKTREE_GATE_PROTECTED"), "main development")
+        # ...recipe-internal lowercase keys are not.
+        self.assertNotIn("worktrees_dir", env)
+
+
 if __name__ == "__main__":
     unittest.main()

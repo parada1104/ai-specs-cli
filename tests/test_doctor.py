@@ -261,6 +261,30 @@ class AgentDiagnosticsTests(unittest.TestCase):
             self.assertIn("OK", result.stdout)
             self.assertIn(".pi/skills", result.stdout)
 
+    def test_omp_is_in_platform_dict(self):
+        """omp agent must be registered in the doctor PLATFORM dict (kept in
+        sync with platform.sh, which gained omp in PR #70)."""
+        doctor = load_module(DOCTOR_PY, "doctor_module_omp_in_dict")
+        self.assertIn("omp", doctor.Doctor.PLATFORM)
+        plat = doctor.Doctor.PLATFORM["omp"]
+        self.assertEqual(plat["skills_dir"], ".omp/skills")
+        self.assertEqual(plat["mcp_config_path"], ".omp/mcp.json")
+        self.assertEqual(plat["mcp_key"], "mcpServers")
+        self.assertEqual(plat["commands_dir"], ".omp/commands")
+
+    def test_omp_not_rejected_as_unknown_agent(self):
+        """omp in enabled agents must not produce 'unsupported agent' ERROR."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target, agents=["omp"])
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False
+            )
+            self.assertNotIn("unsupported agent", result.stdout.lower())
+            self.assertIn("omp", result.stdout)
+
     def test_enabled_agent_output_missing_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
@@ -569,6 +593,52 @@ class PlatformGetTests(unittest.TestCase):
 
     def test_pi_invalid_field_exits_nonzero(self):
         result = self._platform_get("pi", "nonexistent_field")
+        self.assertNotEqual(result.returncode, 0)
+
+    # --- Omp agent field tests ---
+
+    def test_omp_skills_dir(self):
+        result = self._platform_get("omp", "skills_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".omp/skills")
+
+    def test_omp_mcp_config_path(self):
+        result = self._platform_get("omp", "mcp_config_path")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".omp/mcp.json")
+
+    def test_omp_mcp_key(self):
+        result = self._platform_get("omp", "mcp_key")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "mcpServers")
+
+    def test_omp_native_true(self):
+        result = self._platform_get("omp", "native")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "true")
+
+    def test_omp_instructions_path_empty(self):
+        result = self._platform_get("omp", "instructions_path")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
+
+    def test_omp_commands_dir(self):
+        result = self._platform_get("omp", "commands_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".omp/commands")
+
+    def test_omp_agents_dir_empty(self):
+        result = self._platform_get("omp", "agents_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
+
+    def test_omp_runtime_hooks_target(self):
+        result = self._platform_get("omp", "runtime_hooks_target")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".omp/extensions")
+
+    def test_omp_invalid_field_exits_nonzero(self):
+        result = self._platform_get("omp", "nonexistent_field")
         self.assertNotEqual(result.returncode, 0)
 
     # --- Regression: existing agents still work ---

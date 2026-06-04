@@ -12,3 +12,24 @@
 
 [commands]
 "skills-as-rules.md" = "793c2d1de600693cfdd1dbbd93bea0c9af76d22838f5ecd4db678737157b0af8"
+
+[recipes."git-pr-flow".skills."git-merge-workflow"]
+"SKILL.md" = "d1cca953994b2fa40464c49d9e7f1f8711374ca4604d87792ef25f93556c3cc4"
+
+[recipes."session-context".skills."context-precedence"]
+"SKILL.md" = "5b09871eadc86d5951d2681ef5e79acc271e48a2f1498128ca2d0b96fa151ba6"
+
+[recipes."session-context".skills."session-bootstrap"]
+"SKILL.md" = "453383b23ea8431f3c3a8e7340678dafee792ba5f38acbc98d1ca4042859eb6c"
+
+[recipes."tdd-flow".skills."tdd-flow"]
+"SKILL.md" = "8d0f44878ea7df962fe220ca384096d8ac51bc67f73bf9f40c9c58ba84140041"
+
+[recipes."trello-mcp-workflow".skills."trello-mcp-workflow"]
+"SKILL.md" = "6f010d7456d1f9191803a42927cfe668918fc7076bdcc2fa240df24c13388574"
+
+[recipes."vault-canonical-store".skills."vault-context"]
+"SKILL.md" = "bfde8e03548d864d695ace17094154cc64e1e47af13a21457065693d0073e81b"
+
+[recipes."worktree-flow".skills."worktree-flow"]
+"SKILL.md" = "4f9dcdd8dbde5f9fd1d29adbb1a9b36d5f55082c59a1f599e7b2e064604dea47"

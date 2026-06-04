@@ -80,6 +80,17 @@ def recipe_to_dict(recipe: Recipe) -> dict:
                 {"source": d.source, "target": d.target}
                 for d in recipe.docs
             ],
+            "hooks": [
+                {
+                    "id": h.id,
+                    "event": h.event,
+                    "script": h.script,
+                    "matcher": h.matcher,
+                    "blocking": h.blocking,
+                    "description": h.description,
+                }
+                for h in recipe.runtime_hooks
+            ],
         },
     }
 
