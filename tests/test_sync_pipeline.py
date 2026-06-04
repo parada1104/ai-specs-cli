@@ -186,6 +186,40 @@ class SyncPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
+    def test_sync_renders_opencode_mcp_arg_var_as_bare_dollar(self):
+        """A var referenced in a command ARG must render as $VAR (no braces)
+        for opencode: opencode interpolates shell-style $VAR in args, but
+        environment values use {env:VAR}. Live-verified June 2026 — a braced
+        ${VAR} in args is NOT interpolated, so the server gets a literal path
+        and never starts."""
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['opencode']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@modelcontextprotocol/server-filesystem', '${VAULT_PATH}']\n"
+                "env = { VAULT_PATH = '$VAULT_PATH' }\n"
+                "timeout = 30000\n"
+                "enabled = true\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            parsed = json.loads((workspace / "opencode.json").read_text())
+            demo = parsed["mcp"]["demo"]
+            # ARG: bare $VAR, never ${VAR}
+            self.assertIn("$VAULT_PATH", demo["command"])
+            self.assertNotIn("${VAULT_PATH}", demo["command"])
+            # ENVIRONMENT: opencode {env:VAR} form, unchanged
+            self.assertEqual(demo["environment"], {"VAULT_PATH": "{env:VAULT_PATH}"})
+        finally:
+            shutil.rmtree(workspace.parent)
+
     def test_sync_renders_cursor_mcp_env_with_braced_dollar_syntax_input(self):
         workspace = self.make_workspace()
         try:
@@ -875,7 +909,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "test_command = './tests/run.sh'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.0.0'\n"
+                "version = '1.1.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/proyectos/test-project'\n\n"
                 "[[bindings]]\n"
@@ -1766,7 +1800,7 @@ class TestAutoBindingFix(unittest.TestCase):
                 "board_id = 'aabbccddeeff001122334455'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.0.0'\n"
+                "version = '1.1.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/test/autobind-scope'\n"
                 # NO [[bindings]] section
@@ -1814,7 +1848,7 @@ class TestAutoBindingFix(unittest.TestCase):
                 "board_id = 'aabbccddeeff001122334455'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.0.0'\n"
+                "version = '1.1.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/test/json-scope'\n"
                 # NO [[bindings]] section — auto-bind must handle this

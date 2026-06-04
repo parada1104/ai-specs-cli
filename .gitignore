@@ -13,6 +13,7 @@ node_modules/
 .opencode/
 opencode.json
 .pi/
+.omp/
 .codex/
 .gemini/
 .github/copilot-instructions.md
