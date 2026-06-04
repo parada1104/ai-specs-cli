@@ -52,6 +52,8 @@ def load_mcp(toml_path: Path, recipe_mcp_path: Path | None = None) -> dict:
 # translator here.
 
 _ENV_VAR_RE = re.compile(r"^\$\{?([A-Z_][A-Z0-9_]*)\}?$")
+# Braced ${VAR} embedded anywhere in a string → bare $VAR (for OpenCode args).
+_OPENCODE_ARG_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # Cursor/Claude JSON use "${env:NAME}" in headers/url; OpenCode remote expects "{env:NAME}".
 _CURSOR_ENV_IN_HEADERS = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -110,6 +112,14 @@ def _translate_opencode(servers: dict) -> dict:
             full_cmd = list(cmd)
         else:
             full_cmd = []
+
+        # OpenCode interpolates shell-style $VAR in command args (not the
+        # braced ${VAR} form, which is left literal and breaks the server).
+        # Environment values use the {env:VAR} form instead (handled below).
+        full_cmd = [
+            _OPENCODE_ARG_VAR_RE.sub(r"$\1", a) if isinstance(a, str) else a
+            for a in full_cmd
+        ]
 
         new = {"type": "local", "command": full_cmd}
 
