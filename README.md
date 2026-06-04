@@ -42,7 +42,10 @@ whenever the manifest changes.
 | `ai-specs sync-agent [path] [--all\|--<agent>]` | Fan out per-agent configs only |
 | `ai-specs doctor [path]` | Read-only health check |
 | `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI |
-| `ai-specs add-dep <git-url> [path]` | Register a vendored skill |
+| `ai-specs skills add <git-url> [path]` | Register a vendored skill (`[[deps]]`) and sync |
+| `ai-specs skills list [path]` | List registered, local, and catalog skills |
+| `ai-specs skills remove <id> [path]` | Remove a vendored skill from the manifest |
+| `ai-specs add-dep <git-url> [path]` | Alias for `skills add` (backward-compatible) |
 | `ai-specs recipe list [path]` | List available recipes |
 | `ai-specs recipe add <id> [path]` | Add a recipe declaration |
 | `ai-specs recipe init <id> [path]` | View recipe initialization brief |

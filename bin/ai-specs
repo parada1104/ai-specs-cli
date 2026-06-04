@@ -6,7 +6,7 @@
 # sync [path] Reconcile manifest → refresh-bundled + vendor + AGENTS.md + agents
 # sync-agent [path] [--all|--<a>] Fan out per-agent configs only
 # refresh-bundled [path] Refresh bundled skills/commands from CLI (lock-aware)
-# add-dep <url> [path] Register a vendored skill ([[deps]]) and sync
+# add-dep <url> [path] Register a vendored skill (alias for 'skills add')
 # doctor [path] Diagnose project health (read-only)
 # recipe list [path] List available and installed recipes
 # recipe add <id> [path] Add a recipe to the manifest
@@ -32,7 +32,8 @@ init) bash "$LIB_DIR/init.sh" "$@" ;;
 sync) bash "$LIB_DIR/sync.sh" "$@" ;;
 sync-agent) bash "$LIB_DIR/sync-agent.sh" "$@" ;;
 refresh-bundled) bash "$LIB_DIR/refresh-bundled.sh" "$@" ;;
-add-dep) bash "$LIB_DIR/add-dep.sh" "$@" ;;
+add-dep) bash "$LIB_DIR/skills-add.sh" "$@" ;;
+skills) bash "$LIB_DIR/skills.sh" "$@" ;;
 doctor) bash "$LIB_DIR/doctor.sh" "$@" ;;
 recipe) bash "$LIB_DIR/recipe.sh" "$@" ;;
 upgrade) bash "$LIB_DIR/upgrade.sh" "$@" ;;
@@ -45,8 +46,11 @@ Commands:
   sync [path] Refresh bundled + vendor deps + regen AGENTS.md + sync agents
   sync-agent [path] [--all | --<agent>] Fan out per-agent configs only
   refresh-bundled [path] Update bundled skills/commands (keeps your edits, drops .new sidecars)
-  add-dep <url> [path] Register a vendored skill (then sync)
+  add-dep <url> [path] Register a vendored skill (alias for 'skills add')
   doctor [path] Diagnose project health (read-only)
+  skills add <url> [path] [flags] Register a vendored skill ([[deps]]) and sync
+  skills list [path]          List registered and installed skills
+  skills remove <id> [path]   Remove a vendored skill from the manifest
   recipe list [path]          List available and installed recipes
   recipe add <id> [path]      Add a recipe to the manifest
   recipe init <id> [path]     Print a read-only recipe init brief
@@ -59,5 +63,5 @@ EOF
 ;;
 *) echo "ai-specs: unknown command '$cmd'" >&2
    echo "Run 'ai-specs help' for usage." >&2
-   exit 1 ;;
+   exit 2 ;;
 esac

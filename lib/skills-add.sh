@@ -1,27 +1,16 @@
 #!/usr/bin/env bash
-# add-dep.sh — register a new vendored skill in ai-specs.toml [[deps]] and sync.
-#
-# The vendored skill is later cloned into <path>/ai-specs/skills/<id>/ by
-# `lib/_internal/vendor-skills.py` (which `ai-specs sync` runs).
+# skills-add.sh — register a new vendored skill in ai-specs.toml [[deps]] and sync.
 #
 # Usage:
-#   ai-specs add-dep <git-url> [path]
-#                    [--id <id>]                 (default: derived from URL)
-#                    [--subdir <subpath>]        (subdir within the repo where SKILL.md lives)
-#                    [--scope <s1,s2,...>]       (default: root)
-#                    [--license <license>]       (default: empty)
-#                    [--attribution <author>]    (default: derived from URL)
-#                    [--trigger <text>]          (auto_invoke entry)
-#                    [--no-sync]                 (skip 'ai-specs sync' at the end)
-
+#   ai-specs skills add <git-url> [path] [flags]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
     cat <<'EOF'
-Usage: ai-specs add-dep <git-url> [path] [flags]
+Usage: ai-specs skills add <git-url> [path] [flags]
 
 Register a vendored skill in ai-specs.toml (under [[deps]]) and run sync.
 
@@ -52,24 +41,24 @@ RUN_SYNC=1
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --id)              ID="${2:-}"; shift 2 ;;
+        --id)              ID="$2"; shift 2 || { echo "ERROR: --id requires a value" >&2; exit 2; } ;;
         --id=*)            ID="${1#*=}"; shift ;;
-        --subdir)          SUBDIR="${2:-}"; shift 2 ;;
+        --subdir)          SUBDIR="$2"; shift 2 || { echo "ERROR: --subdir requires a value" >&2; exit 2; } ;;
         --subdir=*)        SUBDIR="${1#*=}"; shift ;;
-        --scope)           SCOPE="${2:-}"; shift 2 ;;
+        --scope)           SCOPE="$2"; shift 2 || { echo "ERROR: --scope requires a value" >&2; exit 2; } ;;
         --scope=*)         SCOPE="${1#*=}"; shift ;;
-        --license)         LICENSE="${2:-}"; shift 2 ;;
+        --license)         LICENSE="$2"; shift 2 || { echo "ERROR: --license requires a value" >&2; exit 2; } ;;
         --license=*)       LICENSE="${1#*=}"; shift ;;
-        --attribution)     ATTRIBUTION="${2:-}"; shift 2 ;;
+        --attribution)     ATTRIBUTION="$2"; shift 2 || { echo "ERROR: --attribution requires a value" >&2; exit 2; } ;;
         --attribution=*)   ATTRIBUTION="${1#*=}"; shift ;;
-        --trigger)         TRIGGER="${2:-}"; shift 2 ;;
+        --trigger)         TRIGGER="$2"; shift 2 || { echo "ERROR: --trigger requires a value" >&2; exit 2; } ;;
         --trigger=*)       TRIGGER="${1#*=}"; shift ;;
         --no-sync)         RUN_SYNC=0; shift ;;
         -h|--help)         usage; exit 0 ;;
         --)                shift; break ;;
         -*)
             echo "ERROR: unknown flag: $1" >&2
-            echo "Run 'ai-specs add-dep --help' for usage." >&2
+            echo "Run 'ai-specs skills add --help' for usage." >&2
             exit 2
             ;;
         *)
@@ -81,10 +70,13 @@ while [[ $# -gt 0 ]]; do
                 echo "ERROR: unexpected positional argument: $1" >&2
                 exit 2
             fi
-            shift
-            ;;
+            shift ;;
     esac
 done
+
+# Consume positional args after -- (if any)
+[[ -z "$URL" && $# -gt 0 ]] && URL="$1" && shift
+[[ -z "$TARGET_PATH" && $# -gt 0 ]] && TARGET_PATH="$1" && shift
 
 if [[ -z "$URL" ]]; then
     echo "ERROR: <git-url> is required." >&2
@@ -109,7 +101,6 @@ url_basename="${url_basename%.git}"
 [[ -z "$TRIGGER" ]] && TRIGGER="When working on ${ID}"
 
 if [[ -z "$ATTRIBUTION" ]]; then
-    # Derive from .../<author>/<repo>(.git)?
     no_proto="${URL#*://}"
     no_host="${no_proto#*/}"
     ATTRIBUTION="${no_host%%/*}"
@@ -124,19 +115,23 @@ fi
 # Confirm not already registered
 existing="$(python3 - "$TOML_PATH" "$ID" <<'PY'
 import sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    data = tomllib.load(f)
+try:
+    with open(sys.argv[1], "rb") as f:
+        data = tomllib.load(f)
+except (tomllib.TOMLDecodeError, OSError) as e:
+    print(f"ERROR: {e}")
+    sys.exit(2)
 ids = [d.get("id") for d in (data.get("deps", []) or [])]
 print("YES" if sys.argv[2] in ids else "NO")
 PY
 )"
-if [[ "$existing" == "YES" ]]; then
-    echo "ERROR: dep with id '$ID' already exists in $TOML_PATH" >&2
-    exit 1
-fi
+case "$existing" in
+    ERROR:*) echo "ERROR: failed to read manifest — fix ai-specs.toml first." >&2; exit 1 ;;
+    YES) echo "ERROR: dep with id '$ID' already exists in $TOML_PATH" >&2; exit 1 ;;
+esac
 
 echo ""
-echo "ai-specs add-dep"
+echo "ai-specs skills add"
 echo "  url:         $URL"
 echo "  id:          $ID"
 echo "  subdir:      ${SUBDIR:-(none)}"
@@ -145,7 +140,7 @@ echo "  license:     ${LICENSE:-(none)}"
 echo "  attribution: $ATTRIBUTION"
 echo ""
 
-# Append [[deps]] block. Use Python to escape strings safely.
+# Append [[deps]] block
 python3 - "$TOML_PATH" "$ID" "$URL" "$SUBDIR" "$SCOPE" "$TRIGGER" "$LICENSE" "$ATTRIBUTION" <<'PY'
 import sys, pathlib
 
