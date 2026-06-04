@@ -35,5 +35,5 @@ case "$subcmd" in
     "") usage >&2; exit 2 ;;
     *) echo "ai-specs skills: unknown subcommand '$subcmd'" >&2
        echo "Run 'ai-specs skills --help' for usage." >&2
-       exit 1 ;;
+       exit 2 ;;
 esac

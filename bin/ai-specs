@@ -63,5 +63,5 @@ EOF
 ;;
 *) echo "ai-specs: unknown command '$cmd'" >&2
    echo "Run 'ai-specs help' for usage." >&2
-   exit 1 ;;
+   exit 2 ;;
 esac

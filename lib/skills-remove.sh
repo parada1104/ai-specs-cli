@@ -5,7 +5,6 @@
 #   ai-specs skills remove <id> [path] [--help]
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
     cat <<'EOF'
@@ -57,7 +56,13 @@ if [[ ! -f "$TOML_PATH" ]]; then
     exit 1
 fi
 
-# Remove the [[deps]] block matching the given id using Python
+# Remove the [[deps]] block matching the given id using Python.
+#
+# Strategy (stdlib only, text-based, robust): split the manifest into segments
+# delimited by lines that START with '[' at column 0 — these are TOML
+# section/table headers. Array VALUE lines like `scope = ["root"]` never start
+# with '[' at column 0, so they stay attached to their owning block. We drop
+# exactly the one [[deps]] segment whose id matches the target.
 python3 - "$TOML_PATH" "$DEP_ID" <<'PY'
 import sys, pathlib, re
 
@@ -66,20 +71,44 @@ dep_id = sys.argv[2]
 
 p = pathlib.Path(toml_path)
 content = p.read_text()
+lines = content.splitlines(keepends=True)
 
-# Match a [[deps]] block whose id line matches the given dep_id.
-# Pattern: optional blank lines + [[deps]] + any lines until the next
-# section header ([[...]] or [section]) or end of file.
-pattern = re.compile(
-    r'\n*\[\[deps\]\]\n(?:[^[\n]*\n)*id\s*=\s*"' + re.escape(dep_id) + r'"\n(?:[^[\n]*\n)*',
-    re.MULTILINE
-)
+# Build segments: a new segment begins at each line that starts with '[' at
+# column 0. The text before the first header (preamble) is its own segment.
+segments = []  # list of {"header": str|None, "lines": [str, ...]}
+current = {"header": None, "lines": []}
+for line in lines:
+    if line.startswith("["):
+        if current["lines"] or current["header"] is not None:
+            segments.append(current)
+        current = {"header": line, "lines": [line]}
+    else:
+        current["lines"].append(line)
+if current["lines"] or current["header"] is not None:
+    segments.append(current)
 
-new_content, count = pattern.subn('\n', content, count=1)
+id_re = re.compile(r'^\s*id\s*=\s*"' + re.escape(dep_id) + r'"\s*$', re.MULTILINE)
 
-if count == 0:
+target_idx = None
+for i, seg in enumerate(segments):
+    header = seg["header"] or ""
+    # TOML allows inline comments after section headers: [[deps]] # comment
+    if not header.strip().startswith("[[deps]]"):
+        continue
+    block_text = "".join(seg["lines"])
+    if id_re.search(block_text):
+        target_idx = i
+        break
+
+if target_idx is None:
     print(f"  ✗ dep '{dep_id}' not found in {toml_path}", file=sys.stderr)
     sys.exit(1)
+
+del segments[target_idx]
+new_content = "".join("".join(seg["lines"]) for seg in segments)
+
+# Collapse 3+ consecutive newlines left by removal into a single blank line.
+new_content = re.sub(r"\n{3,}", "\n\n", new_content)
 
 p.write_text(new_content)
 print(f"  ✓ removed [[deps]] '{dep_id}' from {toml_path}")

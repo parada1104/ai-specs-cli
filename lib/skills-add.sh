@@ -6,7 +6,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
     cat <<'EOF'
@@ -41,17 +41,17 @@ RUN_SYNC=1
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --id)              ID="${2:-}"; shift 2 ;;
+        --id)              ID="$2"; shift 2 || { echo "ERROR: --id requires a value" >&2; exit 2; } ;;
         --id=*)            ID="${1#*=}"; shift ;;
-        --subdir)          SUBDIR="${2:-}"; shift 2 ;;
+        --subdir)          SUBDIR="$2"; shift 2 || { echo "ERROR: --subdir requires a value" >&2; exit 2; } ;;
         --subdir=*)        SUBDIR="${1#*=}"; shift ;;
-        --scope)           SCOPE="${2:-}"; shift 2 ;;
+        --scope)           SCOPE="$2"; shift 2 || { echo "ERROR: --scope requires a value" >&2; exit 2; } ;;
         --scope=*)         SCOPE="${1#*=}"; shift ;;
-        --license)         LICENSE="${2:-}"; shift 2 ;;
+        --license)         LICENSE="$2"; shift 2 || { echo "ERROR: --license requires a value" >&2; exit 2; } ;;
         --license=*)       LICENSE="${1#*=}"; shift ;;
-        --attribution)     ATTRIBUTION="${2:-}"; shift 2 ;;
+        --attribution)     ATTRIBUTION="$2"; shift 2 || { echo "ERROR: --attribution requires a value" >&2; exit 2; } ;;
         --attribution=*)   ATTRIBUTION="${1#*=}"; shift ;;
-        --trigger)         TRIGGER="${2:-}"; shift 2 ;;
+        --trigger)         TRIGGER="$2"; shift 2 || { echo "ERROR: --trigger requires a value" >&2; exit 2; } ;;
         --trigger=*)       TRIGGER="${1#*=}"; shift ;;
         --no-sync)         RUN_SYNC=0; shift ;;
         -h|--help)         usage; exit 0 ;;
@@ -73,6 +73,10 @@ while [[ $# -gt 0 ]]; do
             shift ;;
     esac
 done
+
+# Consume positional args after -- (if any)
+[[ -z "$URL" && $# -gt 0 ]] && URL="$1" && shift
+[[ -z "$TARGET_PATH" && $# -gt 0 ]] && TARGET_PATH="$1" && shift
 
 if [[ -z "$URL" ]]; then
     echo "ERROR: <git-url> is required." >&2
@@ -111,16 +115,20 @@ fi
 # Confirm not already registered
 existing="$(python3 - "$TOML_PATH" "$ID" <<'PY'
 import sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    data = tomllib.load(f)
+try:
+    with open(sys.argv[1], "rb") as f:
+        data = tomllib.load(f)
+except (tomllib.TOMLDecodeError, OSError) as e:
+    print(f"ERROR: {e}")
+    sys.exit(2)
 ids = [d.get("id") for d in (data.get("deps", []) or [])]
 print("YES" if sys.argv[2] in ids else "NO")
 PY
 )"
-if [[ "$existing" == "YES" ]]; then
-    echo "ERROR: dep with id '$ID' already exists in $TOML_PATH" >&2
-    exit 1
-fi
+case "$existing" in
+    ERROR:*) echo "ERROR: failed to read manifest — fix ai-specs.toml first." >&2; exit 1 ;;
+    YES) echo "ERROR: dep with id '$ID' already exists in $TOML_PATH" >&2; exit 1 ;;
+esac
 
 echo ""
 echo "ai-specs skills add"
