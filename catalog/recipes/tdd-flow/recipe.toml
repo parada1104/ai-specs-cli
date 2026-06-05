@@ -21,6 +21,15 @@ type = "string"
 skills = [{ id = "tdd-flow", source = "bundled" }]
 commands = [{ id = "tdd", path = "commands/tdd.md" }]
 
+[provides.brief]
+workflow_rules = [
+    "Follow red-green-refactor discipline: write a failing test first, then implement, then clean up.",
+    "Run the full test suite before committing; do not leave the suite in a failing state.",
+]
+useful_commands = [
+    "Run tests: `{config.test_command}`",
+]
+
 [[provides.docs]]
 source = "README.md"
 target = "ai-specs/recipes/tdd-flow/README.md"

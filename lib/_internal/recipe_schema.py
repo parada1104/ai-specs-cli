@@ -16,6 +16,33 @@ class RecipeValidationError(Exception):
     pass
 
 
+CONTRIBUTABLE_SECTIONS = (
+    "runtime_flow",
+    "context_sources",
+    "conflict_policy",
+    "workflow_rules",
+    "useful_commands",
+    "mcp_descriptions",
+)
+PROJECT_ONLY_SECTIONS = ("intro", "purpose")
+
+
+@dataclass
+class BriefFragment:
+    text: str
+    key: str | None = None
+
+
+@dataclass
+class BriefFragments:
+    runtime_flow: list[BriefFragment] | None = None
+    context_sources: list[BriefFragment] | None = None
+    conflict_policy: list[BriefFragment] | None = None
+    workflow_rules: list[BriefFragment] | None = None
+    useful_commands: list[BriefFragment] | None = None
+    mcp_descriptions: list[BriefFragment] | None = None
+
+
 
 
 
@@ -119,6 +146,7 @@ class Recipe:
     runtime_hooks: list[RuntimeHook] = field(default_factory=list)
     config_schema: ConfigSchema = field(default_factory=ConfigSchema)
     init: InitWorkflow | None = None
+    brief_fragments: BriefFragments | None = None
 
 
 def _require_string(data: dict[str, Any], key: str, context: str) -> str:
@@ -392,6 +420,80 @@ def _parse_init(raw: Any, context: str, recipe_dir: Path | None = None) -> InitW
     )
 
 
+def _parse_brief_fragments(raw: Any, context: str) -> "BriefFragments | None":
+    """Parse [provides.brief] into a BriefFragments object, or None if absent.
+
+    Supports two forms per section:
+    - Simple string array: ["text1", "text2"] -> BriefFragment(text=s, key=None)
+    - Inline-table array: [{key="k", text="t"}, ...] -> BriefFragment(text=t, key=k)
+
+    Raises RecipeValidationError for:
+    - project-only sections (intro, purpose)
+    - unknown section names
+    - inline-table entries missing 'text' or 'key'
+    - mixed string+dict within the same section list
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        return None
+
+    result: dict[str, list[BriefFragment]] = {}
+
+    for name, value in raw.items():
+        ctx_sec = f"{context}.{name}"
+
+        if name in PROJECT_ONLY_SECTIONS:
+            raise RecipeValidationError(
+                f"{ctx_sec}: section is project-only; recipes MUST NOT contribute it"
+            )
+        if name not in CONTRIBUTABLE_SECTIONS:
+            valid = ", ".join(CONTRIBUTABLE_SECTIONS)
+            raise RecipeValidationError(
+                f"{ctx_sec}: unknown section '{name}'; valid: {valid}"
+            )
+
+        if not isinstance(value, list):
+            raise RecipeValidationError(
+                f"{ctx_sec}: expected array, got {type(value).__name__}"
+            )
+
+        # Mixed-form detection: list must be all-strings OR all-dicts, never mixed.
+        non_empty = [item for item in value]
+        has_strings = any(isinstance(item, str) for item in non_empty)
+        has_dicts = any(isinstance(item, dict) for item in non_empty)
+        if has_strings and has_dicts:
+            raise RecipeValidationError(
+                f"{context}: section '{name}' mixes string-array and inline-table forms"
+            )
+
+        fragments: list[BriefFragment] = []
+        for idx, item in enumerate(value):
+            ctx_item = f"{ctx_sec}[{idx}]"
+            if isinstance(item, str):
+                fragments.append(BriefFragment(text=item, key=None))
+            elif isinstance(item, dict):
+                if "text" not in item:
+                    raise RecipeValidationError(
+                        f"{ctx_item}: missing required field 'text'"
+                    )
+                if "key" not in item:
+                    raise RecipeValidationError(
+                        f"{ctx_item}: missing required field 'key'"
+                    )
+                fragments.append(BriefFragment(text=item["text"], key=item["key"]))
+            else:
+                raise RecipeValidationError(
+                    f"{ctx_item}: expected string or inline-table, got {type(item).__name__}"
+                )
+
+        result[name] = fragments
+
+    # Build BriefFragments with only the sections that were declared
+    kwargs = {name: frags for name, frags in result.items()}
+    return BriefFragments(**kwargs)
+
+
 def validate_recipe_toml(data: dict[str, Any], recipe_dir: Path | None = None) -> Recipe:
     """Validate a raw dict loaded from recipe.toml and return a Recipe dataclass."""
     recipe_table = data.get("recipe", {})
@@ -428,6 +530,7 @@ def validate_recipe_toml(data: dict[str, Any], recipe_dir: Path | None = None) -
         hooks=_parse_hooks(data.get("hooks"), ""),
         config_schema=_parse_config(data.get("config"), ""),
         init=_parse_init(data.get("init"), "[init]", recipe_dir),
+        brief_fragments=_parse_brief_fragments(provides.get("brief"), "[provides.brief]"),
     )
 
 

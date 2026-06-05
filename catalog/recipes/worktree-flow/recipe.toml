@@ -49,6 +49,13 @@ commands = [
     { id = "worktree-clean", path = "commands/worktree-clean.md" },
 ]
 
+[provides.brief]
+workflow_rules = [
+    "Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.",
+    "Do not merge or push to `{config.integration_branch}` without a PR and explicit human instruction.",
+    "Preserve unrelated worktree changes; never revert changes you did not make.",
+]
+
 [[provides.hooks]]
 id = "worktree-gate"
 event = "pre-tool-use"

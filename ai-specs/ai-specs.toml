@@ -136,28 +136,35 @@ runtime_flow = [
   "`explore` can run without a worktree when it only produces thinking.",
   "Artifact phases and implementation phases run in a dedicated worktree when they write files.",
 ]
+# "Trello is the source of truth..." is now contributed by trello-mcp-workflow recipe
+# (key: trello-source-of-truth). Project-specific entries remain here.
 context_sources = [
-  "Trello is the source of truth for work state and dependencies.",
   "Specs and changes are tracked in the project's designated spec store (configurable per project).",
   "Vault is the canonical note-taker for decisions, handoffs, and structured project context.",
   "Engram is the operational memory layer for session facts, patterns, and short-lived continuity.",
   "Skills are executable guidance, not the primary contents of this runtime brief. Load specific skills from `ai-specs/skills/<name>/SKILL.md` only when relevant.",
   "Check Engram for the current active card and next recommended focus.",
 ]
+# "Current explicit human instruction controls..." and "Tracker controls work state..."
+# are now contributed by session-context recipe (keys: conflict-policy-source-authority,
+# conflict-policy-source-hierarchy). Project-specific entries naming Trello/Vault remain.
 conflict_policy = [
-  "Current explicit human instruction controls the immediate scope unless it conflicts with safety, secrets, or a higher-authority project rule.",
-  "Trello controls work state; Vault controls canonical decisions and handoffs; repo docs and manifests control versioned project contracts.",
   "Skills define reusable procedures. Engram provides searchable operational context, not final authority.",
   "Proposed agent plans are lowest authority until accepted and recorded in Trello, Vault, docs, or code.",
 ]
+# Most workflow rules are now contributed by worktree-flow, git-pr-flow, tdd-flow, and
+# session-context recipes. Only project-specific rules remain here.
+# worktree-flow already contributes: "Do not merge or push to `development` without a PR
+# and explicit human instruction." — the version below adds the explicit-human-instruction
+# emphasis for operations that bypass the PR (e.g. direct hotfix on dev).
 workflow_rules = [
-  "Do not merge or push to `development` without explicit human instruction.",
-  "Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.",
-  "Preserve unrelated worktree changes; never revert changes you did not make.",
   "Follow the project's designated workflow for structured changes.",
-  "Before final verification, run the relevant focused tests plus `./tests/validate.sh` when feasible.",
   "Direct `skill-sync` runs are allowed only for metadata validation.",
 ]
+# useful_commands_mode = "replace" keeps only the auto-generated test_command line and
+# project-specific manual commands; suppresses recipe fragments that would duplicate
+# the auto-generated "Full validation: ./tests/validate.sh" line.
+useful_commands_mode = "replace"
 useful_commands = [
   "Focused tests (unit-only): `./tests/run.sh`",
   "Inspect the active Trello card before resuming work.",

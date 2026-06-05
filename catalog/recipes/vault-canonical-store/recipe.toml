@@ -30,6 +30,14 @@ default = "sessions"
 [provides]
 skills = [{ id = "vault-context", source = "bundled" }]
 
+[[provides.brief.context_sources]]
+key = "vault-canonical-note-taker"
+text = "Vault is the canonical note-taker for decisions, handoffs, and structured project context."
+
+[[provides.brief.mcp_descriptions]]
+key = "vault-canonical"
+text = "Canonical project notes in the vault (scoped to the project path)."
+
 # Canonical store served over the filesystem MCP. The project's .envrc owns the
 # full scoped path (e.g. CANONICAL_VAULT_PATH="$OBSIDIAN_VAULT_PATH/<scope>");
 # the preset stays static. Vars referenced in args use ${VAR} and are declared
