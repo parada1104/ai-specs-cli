@@ -112,6 +112,8 @@ BUNDLED_SKILLS_DIR="$AI_SPECS_HOME/bundled-skills"
 BUNDLED_COMMANDS_DIR="$AI_SPECS_HOME/bundled-commands"
 TEMPLATES_DIR="$AI_SPECS_HOME/templates"
 GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
+RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
+AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
 
 GITIGNORE_MARKER_BEGIN="# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---"
 GITIGNORE_MARKER_END="# --- end ai-specs ---"
@@ -176,9 +178,23 @@ else
     echo "  ✓ wrote  ai-specs/ai-specs.toml"
 fi
 
-# 4. AGENTS.md is a manual runtime context file, not auto-generated.
-#    If missing, create a placeholder so the agent-block logic works.
-[[ -f "$AGENTS_PATH" ]] || echo "# AGENTS.md - Runtime context" > "$AGENTS_PATH"
+# 3b. Render a baseline AGENTS.md from the freshly written manifest.
+#     Best-effort: any failure falls back to the placeholder written below.
+#     The if-guard consumes the exit code so set -e cannot abort init.
+#     Mirrors sync.sh:113-116 for byte-stability (identical flags + pipeline).
+RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
+trap 'rm -f "$RESOLVED_CONFIG_TEMP"' EXIT
+if python3 "$RECIPE_MATERIALIZE_PY" "$TARGET_PATH" "$AI_SPECS_HOME" \
+       --resolved-config-out "$RESOLVED_CONFIG_TEMP" \
+   && python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$AGENTS_PATH" \
+       --preserve-if-runtime-brief --resolved-config "$RESOLVED_CONFIG_TEMP"; then
+    echo "  ✓ render AGENTS.md (baseline brief)"
+else
+    # 4. Fallback: if render failed (or was skipped), write a one-line placeholder
+    #    so downstream steps (gitignore, lock) have a file to work with.
+    [[ -f "$AGENTS_PATH" ]] || echo "# AGENTS.md - Runtime context" > "$AGENTS_PATH"
+    echo "  ! render skipped — fallback placeholder written" >&2
+fi
 
 # 5. Append agent-block to root .gitignore (idempotent via marker)
 append_block() {
