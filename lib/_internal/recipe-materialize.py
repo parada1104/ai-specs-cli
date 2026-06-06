@@ -101,6 +101,24 @@ def _load_recipe_schema() -> Any:
     return _recipe_schema_module
 
 
+def _fragments_to_json(bf: Any) -> dict[str, list[dict]]:
+    """Convert a BriefFragments object to a plain JSON-serialisable dict.
+
+    Returns {} when bf is None. Sections with value None are omitted.
+    Each fragment becomes {"key": <str|null>, "text": <str>}.
+    """
+    if bf is None:
+        return {}
+    result: dict[str, list[dict]] = {}
+    for section in ("runtime_flow", "context_sources", "conflict_policy",
+                    "workflow_rules", "useful_commands", "mcp_descriptions"):
+        frags = getattr(bf, section, None)
+        if frags is None:
+            continue
+        result[section] = [{"key": f.key, "text": f.text} for f in frags]
+    return result
+
+
 def read_recipe(catalog_dir: Path, recipe_id: str) -> Any:
     schema = _load_recipe_schema()
     recipe_dir = catalog_dir / recipe_id
@@ -670,6 +688,15 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     if resolved_config_out is not None:
         resolved = build_resolved_config(project_root)
         resolved["bindings"] = resolved_bindings  # replace explicit-only with auto-bound
+        # Attach brief_fragments from catalog into each enabled recipe entry
+        for rid in resolved.get("enabled", []):
+            try:
+                recipe = read_recipe(catalog_dir, rid)
+                resolved["recipes"].setdefault(rid, {})["brief_fragments"] = _fragments_to_json(
+                    getattr(recipe, "brief_fragments", None)
+                )
+            except Exception:
+                pass  # catalog miss for this recipe — skip silently
         with open(resolved_config_out, "w") as f:
             json.dump(resolved, f, indent=2, sort_keys=True)
             f.write("\n")
@@ -738,6 +765,21 @@ def build_resolved_config_only(project_root: Path, resolved_config_out: Path, ai
             return 1
         except Exception:
             pass  # catalog absent or unreadable — degrade to explicit-only bindings
+
+        # Attach brief_fragments from catalog (best-effort; degrades silently if catalog absent).
+        try:
+            _home_bf = ai_specs_home if ai_specs_home is not None else Path(__file__).resolve().parents[2]
+            catalog_dir_bf = _home_bf / "catalog" / "recipes"
+            for rid in resolved.get("enabled", []):
+                try:
+                    recipe = read_recipe(catalog_dir_bf, rid)
+                    resolved["recipes"].setdefault(rid, {})["brief_fragments"] = _fragments_to_json(
+                        getattr(recipe, "brief_fragments", None)
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         with open(resolved_config_out, "w") as f:
             json.dump(resolved, f, indent=2, sort_keys=True)

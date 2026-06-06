@@ -27,6 +27,13 @@ default = "main"
 skills = [{ id = "git-merge-workflow", source = "bundled" }]
 commands = [{ id = "pr-create", path = "commands/pr-create.md" }]
 
+[provides.brief]
+workflow_rules = [
+    "Use a PR-based merge workflow; all changes to `{config.base_branch}` go through a pull request.",
+    "VCS/PR provider: `{config.provider}`. Use the provider CLI for all PR operations.",
+    "Do not push directly to `{config.base_branch}`; always open a PR from a feature branch.",
+]
+
 [[provides.docs]]
 source = "README.md"
 target = "ai-specs/recipes/git-pr-flow/README.md"

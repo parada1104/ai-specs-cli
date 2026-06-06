@@ -85,6 +85,152 @@ Only `source` and `target` are part of the supported docs contract. Extra keys
 may be tolerated by parsing, but doc materialization currently copies declared
 files unconditionally and does not apply template-style conditions.
 
+### `[provides.brief]`
+
+A recipe may contribute prose fragments to the agent runtime brief via the optional
+`[provides.brief]` table. When enabled, the harness collects fragments from all enabled
+recipes (in `enabled` declaration order), deduplicates them, applies `{config.KEY}`
+placeholder substitution, and merges the result with the project's own `[brief]` entries
+before generating `AGENTS.md`.
+
+When `[provides.brief]` is absent, the recipe contributes no fragments and produces
+no change in the renderer's output.
+
+See [`docs/ai-specs-toml.md`](ai-specs-toml.md) for the manifest-side `[brief]` table,
+`<section>_mode` append/replace control, and `mcp_descriptions` override-fills-gap.
+
+#### Contributable sections
+
+Only the following sections may appear under `[provides.brief]`:
+
+| Section | Brief heading rendered |
+|---------|------------------------|
+| `runtime_flow` | `## Runtime Flow` |
+| `context_sources` | `## Context Sources` |
+| `conflict_policy` | `## Conflict Policy` |
+| `workflow_rules` | `## Workflow Rules` |
+| `useful_commands` | `## Useful Commands` |
+| `mcp_descriptions` | `## Runtime MCPs` (per-server description) |
+
+> **Project-only sections** — `intro` and `purpose` are exclusively for the project
+> manifest `[brief]` table. Declaring them in `[provides.brief]` is a validation error:
+>
+> ```
+> [provides.brief].intro: section is project-only; recipes MUST NOT contribute it
+> ```
+
+#### Two supported fragment forms
+
+**Form 1 — simple string array** (use when semantic deduplication by key is not needed):
+
+```toml
+[provides.brief]
+workflow_rules = [
+  "Create a dedicated worktree for changes that write artifacts or modify code.",
+  "Do not push to `{config.integration_branch}` without a PR.",
+]
+```
+
+Each string becomes a bullet with `key = null`. Deduplication uses exact text matching.
+
+**Form 2 — array of inline-tables with explicit `key`** (enables stable semantic deduplication
+across recipes when multiple recipes might contribute the same concept):
+
+```toml
+[[provides.brief.context_sources]]
+key  = "trello-source-of-truth"
+text = "Trello is the source of truth for work state and dependencies."
+
+[[provides.brief.context_sources]]
+key  = "vault-canonical"
+text = "Vault is the canonical note-taker for decisions and handoffs."
+```
+
+Both `key` and `text` are required for the inline-table form. If either is missing, parsing
+raises a validation error naming the missing field.
+
+A single section MUST use one form consistently — mixing string values and inline-table
+entries in the same section is a validation error.
+
+#### `{config.KEY}` substitution
+
+Fragment text strings support `{config.KEY}` placeholder substitution. The namespace is
+the recipe's own merged config (default values from `[config]` plus any `[recipes.<id>.config]`
+overrides from the project manifest).
+
+```toml
+[provides.brief]
+workflow_rules = [
+  "Do not push to `{config.integration_branch}` without a PR.",
+  "Run `{config.test_command}` before opening a PR.",
+]
+```
+
+With `integration_branch = "development"` and `test_command = "./tests/run.sh"` in the
+resolved recipe config, the rendered bullets become:
+
+```
+- Do not push to `development` without a PR.
+- Run `./tests/run.sh` before opening a PR.
+```
+
+**Substitution rules:**
+
+- Only `{config.KEY}` placeholders are substituted (the `config.` prefix is required).
+- Bare `{KEY}` references (without the `config.` prefix) are left verbatim.
+- If a key is referenced but absent from the recipe's merged config, the placeholder is
+  preserved verbatim in the output — the render never fails due to a missing key.
+- `{{` renders as a literal `{`; `}}` renders as a literal `}`. Use these escapes when
+  you need literal curly braces in prose or code examples.
+
+**Escape example:**
+
+```toml
+[provides.brief]
+workflow_rules = [
+  "Run `{config.test_command}` (do not use {{skip}} to bypass hooks).",
+]
+```
+
+With `test_command = "./tests/run.sh"`, the rendered output is:
+
+```
+- Run `./tests/run.sh` (do not use {skip} to bypass hooks).
+```
+
+> **Authoring guidance** — always write generic, placeholder-based prose in recipe
+> `[provides.brief]` declarations. Use `{config.KEY}` for any project-specific value
+> (branches, commands, board IDs). Hard-coding project-specific literals defeats the
+> purpose of reusable recipes and makes deduplication unpredictable.
+
+#### `key` field and deduplication
+
+When two enabled recipes declare a fragment with the same `key`, the **first** recipe in
+the `enabled` list wins and the later one is silently discarded. This makes recipe ordering
+meaningful for semantic deduplication.
+
+When `key` is `null` (simple string array form), deduplication falls back to exact-string
+matching: if a fragment with the same resolved text already appears in the output (from a
+previous recipe or from the manifest itself), the duplicate is discarded.
+
+#### `mcp_descriptions` section
+
+The `mcp_descriptions` section follows the inline-table form exclusively. Use `key` to
+name the MCP server and `text` to provide the description:
+
+```toml
+[[provides.brief.mcp_descriptions]]
+key  = "trello"
+text = "Project tracking through the Trello board."
+
+[[provides.brief.mcp_descriptions]]
+key  = "engram"
+text = "Operational/session memory (global MCP)."
+```
+
+The project manifest `[brief].mcp_descriptions` overrides on a per-server basis. See
+[`docs/ai-specs-toml.md`](ai-specs-toml.md) for the precedence rule.
+
 ### `hooks` (agent-runtime lifecycle hooks)
 
 Array of tables declaring **agent-runtime** lifecycle hooks (distinct from the

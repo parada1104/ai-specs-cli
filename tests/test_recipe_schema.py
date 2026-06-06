@@ -262,5 +262,286 @@ class RecipeSchemaTests(unittest.TestCase):
             self.assertEqual(isolation["card_validation_required"], True)
 
 
+class BriefFragmentDataclassTests(unittest.TestCase):
+    """Task 1.1 — RED: BriefFragment and BriefFragments dataclass structure."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_bf_dc")
+
+    def test_brief_fragment_default_key_is_none(self):
+        """BriefFragment(text='Do X.') has key=None."""
+        frag = self.schema.BriefFragment(text="Do X.")
+        self.assertIsNone(frag.key)
+        self.assertEqual(frag.text, "Do X.")
+
+    def test_brief_fragment_explicit_key(self):
+        """BriefFragment(text='Do Y.', key='foo') preserves key."""
+        frag = self.schema.BriefFragment(text="Do Y.", key="foo")
+        self.assertEqual(frag.key, "foo")
+        self.assertEqual(frag.text, "Do Y.")
+
+    def test_brief_fragments_defaults_all_none(self):
+        """BriefFragments() has None for all six section fields."""
+        bf = self.schema.BriefFragments()
+        for section in ("runtime_flow", "context_sources", "conflict_policy",
+                        "workflow_rules", "useful_commands", "mcp_descriptions"):
+            self.assertIsNone(getattr(bf, section), f"Expected {section} to be None")
+
+    def test_recipe_has_brief_fragments_field(self):
+        """Recipe.brief_fragments field exists and defaults to None."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = Path(tmp) / "bf-test"
+            recipe_dir.mkdir()
+            (recipe_dir / "recipe.toml").write_text(
+                '[recipe]\n'
+                'id = "bf-test"\n'
+                'name = "BF Test"\n'
+                'description = "D"\n'
+                'version = "1.0"\n'
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertTrue(hasattr(recipe, "brief_fragments"))
+            self.assertIsNone(recipe.brief_fragments)
+
+    def test_recipe_brief_fragments_accepts_brief_fragments_object(self):
+        """Recipe.brief_fragments field accepts a BriefFragments object."""
+        bf = self.schema.BriefFragments(
+            workflow_rules=[self.schema.BriefFragment(text="A rule.")]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = Path(tmp) / "bf-val-test"
+            recipe_dir.mkdir()
+            (recipe_dir / "recipe.toml").write_text(
+                '[recipe]\n'
+                'id = "bf-val-test"\n'
+                'name = "BF Val Test"\n'
+                'description = "D"\n'
+                'version = "1.0"\n'
+                '\n'
+                '[provides.brief]\n'
+                'workflow_rules = ["A rule."]\n'
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIsNotNone(recipe.brief_fragments)
+
+
+class ParseBriefFragmentsHappyPathTests(unittest.TestCase):
+    """Task 1.3 — RED: _parse_brief_fragments happy path cases."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_bf_hp")
+
+    def _write_recipe(self, tmp: str, name: str, body: str) -> Path:
+        recipe_dir = Path(tmp) / name
+        recipe_dir.mkdir()
+        (recipe_dir / "recipe.toml").write_text(
+            f'[recipe]\n'
+            f'id = "{name}"\n'
+            f'name = "{name}"\n'
+            f'description = "D"\n'
+            f'version = "1.0"\n'
+            f'\n{body}'
+        )
+        return recipe_dir
+
+    def test_absent_provides_brief_returns_none(self):
+        """Absent [provides.brief] -> brief_fragments is None."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "no-brief", "")
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIsNone(recipe.brief_fragments)
+
+    def test_simple_array_normalizes_key_none(self):
+        """Simple array form -> each string normalized to BriefFragment(key=None, text=s)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "simple-arr",
+                '[provides.brief]\n'
+                'workflow_rules = ["Step one.", "Step two."]\n'
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            bf = recipe.brief_fragments
+            self.assertIsNotNone(bf)
+            self.assertIsNotNone(bf.workflow_rules)
+            self.assertEqual(len(bf.workflow_rules), 2)
+            self.assertIsNone(bf.workflow_rules[0].key)
+            self.assertEqual(bf.workflow_rules[0].text, "Step one.")
+            self.assertIsNone(bf.workflow_rules[1].key)
+            self.assertEqual(bf.workflow_rules[1].text, "Step two.")
+
+    def test_simple_array_preserves_order(self):
+        """Simple array form preserves declaration order."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "order-test",
+                '[provides.brief]\n'
+                'workflow_rules = ["First.", "Second.", "Third."]\n'
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            texts = [f.text for f in recipe.brief_fragments.workflow_rules]
+            self.assertEqual(texts, ["First.", "Second.", "Third."])
+
+    def test_inline_table_form_normalizes_with_key(self):
+        """Inline-table form -> BriefFragment(key=k, text=t), key preserved."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "inline-tbl",
+                '[[provides.brief.context_sources]]\n'
+                'key = "trello-source"\n'
+                'text = "Trello is the source of truth."\n'
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            bf = recipe.brief_fragments
+            self.assertIsNotNone(bf)
+            self.assertIsNotNone(bf.context_sources)
+            self.assertEqual(len(bf.context_sources), 1)
+            self.assertEqual(bf.context_sources[0].key, "trello-source")
+            self.assertEqual(bf.context_sources[0].text, "Trello is the source of truth.")
+
+    def test_both_sections_populated(self):
+        """Both workflow_rules (array) and context_sources (inline-table) can coexist."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "both-secs",
+                '[provides.brief]\n'
+                'workflow_rules = ["Rule A."]\n'
+                '[[provides.brief.context_sources]]\n'
+                'key = "src-key"\n'
+                'text = "Context here."\n'
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            bf = recipe.brief_fragments
+            self.assertIsNotNone(bf)
+            self.assertEqual(len(bf.workflow_rules), 1)
+            self.assertEqual(bf.workflow_rules[0].text, "Rule A.")
+            self.assertEqual(len(bf.context_sources), 1)
+            self.assertEqual(bf.context_sources[0].key, "src-key")
+
+    def test_empty_array_is_valid(self):
+        """Empty array [] is valid and produces zero fragments for that section."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "empty-arr",
+                '[provides.brief]\n'
+                'workflow_rules = []\n'
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            bf = recipe.brief_fragments
+            self.assertIsNotNone(bf)
+            self.assertEqual(bf.workflow_rules, [])
+
+
+class ParseBriefFragmentsValidationTests(unittest.TestCase):
+    """Task 1.5 — RED: _parse_brief_fragments validation error cases."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_bf_val")
+
+    def _write_recipe(self, tmp: str, name: str, body: str) -> Path:
+        recipe_dir = Path(tmp) / name
+        recipe_dir.mkdir()
+        (recipe_dir / "recipe.toml").write_text(
+            f'[recipe]\n'
+            f'id = "{name}"\n'
+            f'name = "{name}"\n'
+            f'description = "D"\n'
+            f'version = "1.0"\n'
+            f'\n{body}'
+        )
+        return recipe_dir
+
+    def test_intro_in_brief_raises_project_only_error(self):
+        """`intro` in [provides.brief] -> validation error naming 'project-only section'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "intro-err",
+                '[provides.brief]\n'
+                'intro = ["My intro."]\n'
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            msg = str(ctx.exception)
+            self.assertIn("intro", msg)
+            self.assertIn("project-only", msg)
+
+    def test_purpose_in_brief_raises_project_only_error(self):
+        """`purpose` in [provides.brief] -> validation error naming 'project-only section'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "purpose-err",
+                '[provides.brief]\n'
+                'purpose = ["My purpose."]\n'
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            msg = str(ctx.exception)
+            self.assertIn("purpose", msg)
+            self.assertIn("project-only", msg)
+
+    def test_unknown_section_raises_error_with_valid_list(self):
+        """Unknown section name -> error naming the key and listing valid sections."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "unknown-sec",
+                '[provides.brief]\n'
+                'custom_section = ["A rule."]\n'
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            msg = str(ctx.exception)
+            self.assertIn("custom_section", msg)
+            # Should mention at least one valid section
+            self.assertTrue(
+                any(s in msg for s in ("workflow_rules", "runtime_flow", "context_sources")),
+                f"Expected valid section names in error message: {msg}"
+            )
+
+    def test_inline_table_missing_text_raises_error(self):
+        """Inline-table entry missing text -> error naming missing field 'text'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "missing-text",
+                '[[provides.brief.workflow_rules]]\n'
+                'key = "foo"\n'
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            msg = str(ctx.exception)
+            self.assertIn("text", msg)
+
+    def test_inline_table_missing_key_raises_error(self):
+        """Inline-table entry missing key -> error naming missing field 'key'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "missing-key",
+                '[[provides.brief.workflow_rules]]\n'
+                'text = "A rule."\n'
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            msg = str(ctx.exception)
+            self.assertIn("key", msg)
+
+    def test_mixed_forms_raises_error(self):
+        """Mixed string-array and inline-table in same section -> error."""
+        # TOML doesn't allow this directly in a single table, so we test the
+        # validation logic by passing raw data programmatically.
+        raw = {
+            "workflow_rules": [
+                "A string item.",  # string
+                {"key": "foo", "text": "A table item."},  # dict
+            ]
+        }
+        with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+            self.schema._parse_brief_fragments(raw, "[provides.brief]")
+        msg = str(ctx.exception)
+        self.assertIn("workflow_rules", msg)
+        # "mixes" or "mixed" — implementation says "mixes string-array and inline-table forms"
+        self.assertTrue("mix" in msg.lower(), f"Expected 'mix*' in error message: {msg}")
+
+
 if __name__ == "__main__":
     unittest.main()

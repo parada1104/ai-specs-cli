@@ -69,6 +69,19 @@ needs_mcp = ["trello"]
 skills = [{ id = "trello-mcp-workflow", source = "bundled" }]
 commands = [{ id = "trello-workflow", path = "commands/trello-workflow.md" }]
 
+[provides.brief]
+workflow_rules = [
+    "Inspect the active Trello card before resuming work and keep card state in sync with actual progress.",
+]
+
+[[provides.brief.context_sources]]
+key = "trello-source-of-truth"
+text = "Trello is the source of truth for work state and dependencies."
+
+[[provides.brief.mcp_descriptions]]
+key = "trello"
+text = "Project tracking via the configured Trello board."
+
 [[provides.mcp]]
 id = "trello"
 command = "npx"
