@@ -90,11 +90,10 @@ contract MUST be honored at both init-time and sync-time.
 
 ### Requirement: Fragment deduplication on additional recipe enable
 
-When a user later enables additional recipes that contribute fragments to the
-same sections as `session-context`, the renderer MUST NOT produce duplicate
-bullets. Key-based and exact-string deduplication (from the existing
-`Fragment deduplication` requirement) applies across `session-context` and
-all additionally enabled recipes.
+The renderer MUST NOT produce duplicate bullets when additional recipes contribute
+fragments to the same sections as `session-context`. Key-based and exact-string
+deduplication (from the existing `Fragment deduplication` requirement) applies
+across `session-context` and all additionally enabled recipes.
 
 #### Scenario: No duplication when second recipe provides same key
 
