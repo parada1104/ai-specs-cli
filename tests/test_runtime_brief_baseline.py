@@ -7,12 +7,16 @@ Covers:
   - E2E: init→sync byte-stability
   - E2E: --preserve-if-runtime-brief marker preserved under --force
   - E2E: no this-repo tokens in baseline AGENTS.md
+  - Unit: W1 — dedupe with session-context + second recipe sharing a key (SessionContextDedupTests)
+  - E2E: W2 — sync-side marker preservation after user adds marker post-init
+  - E2E: optional — no unrendered {config.} or {{ placeholders in baseline brief
 
 All offline: catalog read from AI_SPECS_HOME; session-context skills are bundled.
 """
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
+AGENTS_RENDER_PATH = ROOT / "lib" / "_internal" / "agents-render.py"
 RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 TEMPLATE_PATH = ROOT / "templates" / "ai-specs.toml.tmpl"
 
@@ -309,6 +314,368 @@ class InitBriefE2ETests(unittest.TestCase):
                 content,
                 f"Found project-specific token {token!r} in baseline AGENTS.md",
             )
+
+
+# ---------------------------------------------------------------------------
+# W1 — Fragment dedupe with session-context + second concrete recipe
+# ---------------------------------------------------------------------------
+
+class SessionContextDedupTests(unittest.TestCase):
+    """W1: Dedupe when session-context and a second recipe share the same key.
+
+    Uses collect_recipe_brief_fragments directly (same harness as
+    CollectRecipeBriefFragmentsTests in test_agents_render_brief_fragments.py)
+    with a session-context-shaped resolved config alongside a second recipe
+    that also contributes key='conflict-policy-source-authority'.
+
+    Asserts:
+    - The keyed bullet appears exactly once (first-wins).
+    - session-context wins over the second recipe (ordering preserved).
+    - The session-context workflow_rules fragment is present and also deduplicated.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_session_context_dedup")
+
+    def _session_context_conflict_policy_frags(self):
+        """Fragment list matching catalog/recipes/session-context/recipe.toml [provides.brief]."""
+        return [
+            {
+                "key": "conflict-policy-source-authority",
+                "text": (
+                    "Current explicit human instruction controls the immediate scope "
+                    "unless it conflicts with safety, secrets, or a higher-authority project rule."
+                ),
+            },
+            {
+                "key": "conflict-policy-source-hierarchy",
+                "text": (
+                    "Tracker controls work state; vault controls canonical decisions and handoffs; "
+                    "repo docs and manifests control versioned project contracts. "
+                    "Agent plans are lowest authority until accepted and recorded."
+                ),
+            },
+        ]
+
+    def _resolved(self, enabled, recipes):
+        return {"enabled": enabled, "recipes": recipes}
+
+    def test_session_context_key_wins_over_second_recipe(self):
+        """W1 core: session-context and a second recipe both provide
+        key='conflict-policy-source-authority'. collect_recipe_brief_fragments must
+        return the bullet exactly once with session-context's wording (first-wins)."""
+        resolved = self._resolved(
+            ["session-context", "recipe-extra"],
+            {
+                "session-context": {
+                    "brief_fragments": {
+                        "conflict_policy": self._session_context_conflict_policy_frags()
+                    }
+                },
+                "recipe-extra": {
+                    "brief_fragments": {
+                        "conflict_policy": [
+                            {
+                                "key": "conflict-policy-source-authority",
+                                "text": "Extra recipe override — MUST NOT appear.",
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+        result = self.mod.collect_recipe_brief_fragments(resolved, "conflict_policy")
+
+        # Must have exactly 2 entries: the two session-context keys (not a third from recipe-extra)
+        self.assertEqual(
+            len(result),
+            2,
+            f"Expected 2 unique keyed bullets, got {len(result)}: {[r['text'] for r in result]}",
+        )
+
+        texts = [r["text"] for r in result]
+        # session-context wording wins — check as substring of any text entry
+        self.assertTrue(
+            any("Current explicit human instruction controls the immediate scope" in t for t in texts),
+            f"session-context source-authority bullet must be present in texts: {texts}",
+        )
+        # second recipe duplicate must be suppressed
+        for t in texts:
+            self.assertNotIn(
+                "MUST NOT appear",
+                t,
+                "recipe-extra override must be suppressed by first-wins key dedup",
+            )
+
+    def test_session_context_key_dedup_appears_exactly_once_in_full_render(self):
+        """W1 end-to-end: full render() with session-context + second recipe sharing key.
+        The conflict_policy bullet must appear exactly once in the rendered AGENTS.md."""
+        toml = (
+            "[project]\nname = 'dedup-fixture'\n\n"
+            "[brief]\n"
+            "intro = 'Dedup fixture project.'\n"
+            "purpose = 'Testing fragment dedup with session-context.'\n"
+        )
+        session_context_bullet = (
+            "Current explicit human instruction controls the immediate scope "
+            "unless it conflicts with safety, secrets, or a higher-authority project rule."
+        )
+        resolved = {
+            "enabled": ["session-context", "recipe-extra"],
+            "recipes": {
+                "session-context": {
+                    "brief_fragments": {
+                        "conflict_policy": self._session_context_conflict_policy_frags(),
+                        "workflow_rules": [
+                            {
+                                "key": None,
+                                "text": (
+                                    "A session works on one explicit user request or tracker card; "
+                                    "resolve focus from memory and tracker before starting."
+                                ),
+                            }
+                        ],
+                    }
+                },
+                "recipe-extra": {
+                    "brief_fragments": {
+                        "conflict_policy": [
+                            {
+                                "key": "conflict-policy-source-authority",
+                                "text": "Extra recipe override — MUST NOT appear.",
+                            }
+                        ],
+                        "workflow_rules": [
+                            {
+                                "key": None,
+                                "text": (
+                                    "A session works on one explicit user request or tracker card; "
+                                    "resolve focus from memory and tracker before starting."
+                                ),
+                            }
+                        ],
+                    }
+                },
+            },
+            "bindings": {},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "ai-specs.toml"
+            output_path = tmp_path / "AGENTS.md"
+            resolved_path = tmp_path / "resolved-config.json"
+            toml_path.write_text(toml)
+            resolved_path.write_text(json.dumps(resolved))
+            self.mod.render(
+                toml_path,
+                output_path,
+                preserve_if_marker=False,
+                resolved_config_path=resolved_path,
+            )
+            content = output_path.read_text()
+
+        # Key-dedup: session-context wording appears exactly once
+        self.assertEqual(
+            content.count(session_context_bullet),
+            1,
+            f"session-context source-authority bullet must appear exactly once.\nContent:\n{content}",
+        )
+        # Override from second recipe must not appear at all
+        self.assertNotIn(
+            "MUST NOT appear",
+            content,
+            "recipe-extra duplicate bullet must be suppressed by key dedup",
+        )
+        # Exact-string dedup: shared workflow_rules text appears exactly once
+        session_wf = (
+            "A session works on one explicit user request or tracker card; "
+            "resolve focus from memory and tracker before starting."
+        )
+        self.assertEqual(
+            content.count(session_wf),
+            1,
+            f"Shared workflow_rules bullet must appear exactly once (exact-string dedup).\nContent:\n{content}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# W2 — Sync-side marker preservation
+# ---------------------------------------------------------------------------
+
+class SyncMarkerPreservationTests(unittest.TestCase):
+    """W2: Sync honors --preserve-if-runtime-brief on the sync path.
+
+    Scenario:
+    1. init a fresh project (AGENTS.md written without user marker).
+    2. User edits AGENTS.md to add <!-- ai-specs:runtime-brief --> and custom content.
+    3. Run sync.
+    4. Assert AGENTS.md is left untouched (byte-identical to the user-edited version).
+
+    This closes the gap identified in the verify report: the init --force path was
+    already tested in test_force_init_preserves_runtime_brief_marker, but the
+    sync path had only manual verification.
+    """
+
+    def _make_target(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        target = Path(tmp.name) / "project"
+        target.mkdir()
+        return target
+
+    def test_sync_preserves_user_edited_agents_md_with_runtime_brief_marker(self):
+        """W2: After init (no marker), user adds the marker + custom content.
+        Subsequent sync must leave the file byte-identical (marker honored)."""
+        target = self._make_target()
+
+        # Step 1: fresh init (AGENTS.md rendered from session-context, no marker)
+        result = subprocess.run(
+            [str(CLI), "init", str(target)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, f"init failed:\n{result.stderr}")
+        agents_md = target / "AGENTS.md"
+        self.assertTrue(agents_md.exists(), "AGENTS.md must exist after init")
+
+        # Step 2: user replaces AGENTS.md with hand-managed content + marker
+        hand_managed = (
+            "# Hand-Managed Runtime Brief\n"
+            "<!-- ai-specs:runtime-brief -->\n\n"
+            "This brief is manually maintained. Sync MUST NOT overwrite it.\n"
+        )
+        agents_md.write_text(hand_managed)
+
+        # Step 3: run sync
+        result = subprocess.run(
+            [str(CLI), "sync", str(target)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
+
+        # Step 4: assert byte-identical
+        final = agents_md.read_text()
+        self.assertEqual(
+            final,
+            hand_managed,
+            "sync must not modify AGENTS.md when <!-- ai-specs:runtime-brief --> marker is present",
+        )
+        self.assertIn(
+            "<!-- ai-specs:runtime-brief -->",
+            final,
+            "Marker must be preserved after sync",
+        )
+        self.assertIn(
+            "This brief is manually maintained.",
+            final,
+            "User custom content must be preserved after sync",
+        )
+
+    def test_sync_without_marker_regenerates_agents_md(self):
+        """Counterpart to W2: without the marker, sync DOES regenerate AGENTS.md normally.
+
+        Asserts that the marker-preservation logic is marker-gated (not always-preserve).
+        After init, we leave AGENTS.md as-is (no marker), then overwrite it with stale
+        content (no marker), run sync, and assert the output is NOT the stale content.
+        """
+        target = self._make_target()
+
+        # Fresh init
+        result = subprocess.run(
+            [str(CLI), "init", str(target)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, f"init failed:\n{result.stderr}")
+        agents_md = target / "AGENTS.md"
+
+        # Overwrite with stale content — NO marker
+        stale = "# Stale content — no marker — sync must regenerate this.\n"
+        agents_md.write_text(stale)
+
+        # Run sync
+        result = subprocess.run(
+            [str(CLI), "sync", str(target)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
+
+        final = agents_md.read_text()
+        # Stale content must be gone (sync regenerated the file)
+        self.assertNotEqual(
+            final,
+            stale,
+            "sync must regenerate AGENTS.md when no marker is present",
+        )
+        # Regenerated content must have the real brief structure
+        self.assertIn(
+            "## Workflow Rules",
+            final,
+            "Regenerated AGENTS.md must contain ## Workflow Rules section",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Optional hardening — no unrendered placeholders in baseline brief
+# ---------------------------------------------------------------------------
+
+class BaselineBriefNoPlaceholderTests(unittest.TestCase):
+    """Optional: tighten no-leakage test with regex for unrendered placeholders.
+
+    A fresh default init must produce an AGENTS.md with no unrendered
+    {config.KEY} or {{ escape sequences — every placeholder either resolved
+    or absent from the output.
+    """
+
+    def _make_target(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        target = Path(tmp.name) / "project"
+        target.mkdir()
+        return target
+
+    def test_no_unrendered_config_placeholders_in_baseline_agents_md(self):
+        """A fresh init must produce no {config.KEY} or {{ patterns in AGENTS.md.
+
+        {config.KEY} → indicates a placeholder that should have been substituted
+        but the config key was not present in the resolved recipe config.
+        {{ → indicates an escaped brace that was not collapsed back to {.
+        """
+        target = self._make_target()
+        result = subprocess.run(
+            [str(CLI), "init", str(target)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, f"init failed:\n{result.stderr}")
+
+        agents_md = target / "AGENTS.md"
+        content = agents_md.read_text()
+
+        # No {config.KEY} patterns — all substitutions resolved or absent
+        config_placeholder_re = re.compile(r"\{config\.[A-Za-z_][A-Za-z0-9_]*\}")
+        matches = config_placeholder_re.findall(content)
+        self.assertEqual(
+            matches,
+            [],
+            f"Unrendered {{config.KEY}} placeholders found in AGENTS.md: {matches}",
+        )
+
+        # No {{ patterns remaining (these should be collapsed to { by substitute_config)
+        self.assertNotIn(
+            "{{",
+            content,
+            "Unrendered {{ escape sequences found in AGENTS.md",
+        )
 
 
 if __name__ == "__main__":

@@ -92,18 +92,32 @@ No deviations. Implementation matches design.md.
 None.
 
 **WARNING** (should fix):
-1. **R4 scenario not directly tested for session-context.** The "no duplication when a second recipe provides the same key (`conflict-policy-source-authority`) while session-context is enabled" scenario is satisfied only transitively by the recipe-agnostic dedup tests in `test_agents_render_brief_fragments.py` (`test_key_dedup_first_wins`, `test_exact_string_dedup_across_recipes`). No test in this change enables session-context + a second recipe and asserts the bullet appears exactly once. The underlying logic is genuinely recipe-independent, so risk is low, but the spec scenario's specific wording is unasserted in this change. (Matches the orchestrator's flagged concern.)
-2. **R3 marker scenario only half-asserted in the suite.** `test_force_init_preserves_runtime_brief_marker` covers `init --force` but the spec scenario also requires `sync` to honor the marker. The sync path is verified manually here (exit 0, untouched) and uses the identical renderer code path, but the suite has no `sync`-marker assertion.
+~~1. R4 scenario not directly tested for session-context.~~ **CLOSED** — Added `SessionContextDedupTests` in `test_runtime_brief_baseline.py`: two tests exercise session-context + a second recipe sharing `key="conflict-policy-source-authority"`, asserting the bullet appears exactly once (unit: `test_session_context_key_wins_over_second_recipe`; e2e render: `test_session_context_key_dedup_appears_exactly_once_in_full_render`).
+~~2. R3 marker scenario only half-asserted in the suite.~~ **CLOSED** — Added `SyncMarkerPreservationTests` in `test_runtime_brief_baseline.py`: `test_sync_preserves_user_edited_agents_md_with_runtime_brief_marker` exercises the full init → user adds marker → sync path and asserts byte-identity; `test_sync_without_marker_regenerates_agents_md` is the counterpart proving the guard is marker-gated.
 
 **SUGGESTION** (nice to have):
-1. The no-leakage tests (`test_no_project_specific_tokens_*`) assert absence of 3 hardcoded dogfood tokens only. The spec scenario also says "all `{config.KEY}` placeholders for unbound keys MUST be absent or verbatim." session-context's fragments contain no `{config.KEY}` today, so nothing leaks — but a regex assertion for leftover `{config.` / `{{` would harden the test against a future fragment adding an unbound placeholder.
-2. Add an explicit R4 test in `test_runtime_brief_baseline.py`: enable session-context + a stub recipe both contributing `key="conflict-policy-source-authority"`, render, assert the bullet appears exactly once. Closes W1 with a few lines.
-3. Add a `sync`-side marker assertion to close W2.
+~~1. Regex assertion for unrendered `{config.KEY}` / `{{` placeholders.~~ **CLOSED** — Added `BaselineBriefNoPlaceholderTests.test_no_unrendered_config_placeholders_in_baseline_agents_md`.
+~~2. Add explicit R4 test.~~ **CLOSED** — see W1 above.
+~~3. Add sync-side marker assertion.~~ **CLOSED** — see W2 above.
+
+---
+
+## Addendum (post-verify hardening pass)
+
+**Tests added** (all in `tests/test_runtime_brief_baseline.py`):
+
+| Class | Test | Closes |
+|-------|------|--------|
+| `SessionContextDedupTests` | `test_session_context_key_wins_over_second_recipe` | W1 (unit) |
+| `SessionContextDedupTests` | `test_session_context_key_dedup_appears_exactly_once_in_full_render` | W1 (e2e render) |
+| `SyncMarkerPreservationTests` | `test_sync_preserves_user_edited_agents_md_with_runtime_brief_marker` | W2 (sync path) |
+| `SyncMarkerPreservationTests` | `test_sync_without_marker_regenerates_agents_md` | W2 counterpart |
+| `BaselineBriefNoPlaceholderTests` | `test_no_unrendered_config_placeholders_in_baseline_agents_md` | SUGGESTION 1 |
+
+**Results**: 519 → 524 tests. `./tests/run.sh` and `./tests/validate.sh` both exit 0. No implementation changes — tests only. No defects found.
 
 ---
 
 ## Verdict
 
-**PASS WITH WARNINGS** — all 18 tasks complete; 519 tests + 7 focused tests green; build/validate exit 0; every requirement is behaviorally satisfied (verified by independent re-execution, including the fallback and byte-stability paths). The two warnings are test-coverage gaps for spec-scenario wording (R4 session-context-specific dedupe; R3 sync-side marker), not implementation defects — both behaviors are proven by shared, already-tested code paths.
-
-**Next recommended**: ready to archive + PR. Optionally add the two small tests (W1, W2 / SUGGESTION 2-3) first to make the spec→test mapping airtight.
+**PASS** — all 18 tasks complete; 524 tests green (up from 519); build/validate exit 0; all spec scenarios now directly asserted including W1 (session-context dedup with second recipe) and W2 (sync-side marker preservation). Ready to archive.
