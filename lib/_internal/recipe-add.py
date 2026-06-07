@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,15 @@ def _load_toml_read():
 def _load_recipe_read():
     module_path = Path(__file__).with_name("recipe-read.py")
     spec = importlib.util.spec_from_file_location("recipe_read_internal", module_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_toml_write():
+    module_path = Path(__file__).with_name("toml_write.py")
+    spec = importlib.util.spec_from_file_location("toml_write_internal", module_path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -83,24 +93,36 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
 
     # Append config placeholders so the user knows what needs configuration
     if recipe.config_schema.fields:
+        toml_write = _load_toml_write()
         section += f"\n[recipes.{recipe_id}.config]\n"
         for key in sorted(recipe.config_schema.fields):
             field = recipe.config_schema.fields[key]
             if field.required:
                 section += f'{key} = ""  # REQUIRED\n'
             elif field.default is not None:
-                if isinstance(field.default, str):
-                    section += f'{key} = "{field.default}"\n'
-                else:
-                    section += f"{key} = {field.default}\n"
+                section += f"{key} = {toml_write.toml_value(field.default)}\n"
             else:
                 section += f'# {key} = ""  # optional\n'
 
-    manifest_text = manifest_path.read_text(encoding="utf-8")
+    original_text = manifest_path.read_text(encoding="utf-8")
+    manifest_text = original_text
     if not manifest_text.endswith("\n"):
         manifest_text += "\n"
     manifest_text += section
     manifest_path.write_text(manifest_text, encoding="utf-8")
+
+    # Guard: the appended section must keep the manifest as valid TOML. If it
+    # does not, restore the original so a malformed write never reaches sync.
+    try:
+        tomllib.loads(manifest_text)
+    except tomllib.TOMLDecodeError as exc:
+        manifest_path.write_text(original_text, encoding="utf-8")
+        print(
+            f"Error: agregar '{recipe_id}' produciría un manifest TOML inválido "
+            f"({exc}). No se modificó ai-specs.toml.",
+            file=sys.stderr,
+        )
+        return 1
 
     print(f"Recipe '{recipe_id}' agregada al manifest.")
     print("Próximo sync materializará:")
