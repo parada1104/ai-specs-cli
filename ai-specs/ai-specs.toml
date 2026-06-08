@@ -10,7 +10,7 @@ subrepos = []
 
 [agents]
 # Supported agents: claude, cursor, opencode, codex, copilot, gemini, pi, omp
-enabled = ["claude", "cursor", "opencode", "pi", "omp"]
+enabled = ["claude", "cursor", "opencode", "pi"]
 
 # -----------------------------------------------------------------------------
 # Recipes — named, versioned bundles of skills, commands, templates, and MCP

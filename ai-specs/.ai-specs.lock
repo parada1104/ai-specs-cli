@@ -11,8 +11,7 @@
 "assets/sync.sh" = "412a883f2509f5df8ce9f2e567a7f0d72b8489b363c50bdcd891ae1c1f2cbfe4"
 
 [commands]
-"rules-audit.md" = "35c6719990e207cd9356f66de0b8ed10cf2da6e267b05fac86ef1c1baf9aae26"
-"skills-as-rules.md" = "5d03f61d9a318ac7e0cd75e4116540332432943fd15fa61a925400d60136b3cd"
+"skills-as-rules.md" = "793c2d1de600693cfdd1dbbd93bea0c9af76d22838f5ecd4db678737157b0af8"
 
 [recipes."git-pr-flow".skills."git-merge-workflow"]
 "SKILL.md" = "d1cca953994b2fa40464c49d9e7f1f8711374ca4604d87792ef25f93556c3cc4"
