@@ -658,6 +658,60 @@ class PlatformGetTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
 
 
+class BriefRenderPolicyDoctorTests(unittest.TestCase):
+    def _append_brief_render_false(self, toml_path: Path) -> None:
+        text = toml_path.read_text().rstrip() + "\n\n[brief]\nrender = false\n"
+        toml_path.write_text(text + "\n")
+
+    def test_render_disabled_with_agents_md_reports_info(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._append_brief_render_false(target / "ai-specs" / "ai-specs.toml")
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("INFO", result.stdout)
+            self.assertIn("brief-render", result.stdout)
+
+    def test_render_disabled_missing_agents_md_reports_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            (target / "AGENTS.md").unlink()
+            self._append_brief_render_false(target / "ai-specs" / "ai-specs.toml")
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("ERROR", result.stdout)
+            self.assertIn("brief.render = false", result.stdout)
+
+    def test_render_disabled_with_recipe_fragments_reports_warn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._append_brief_render_false(target / "ai-specs" / "ai-specs.toml")
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertIn("WARN", result.stdout)
+            self.assertIn("brief-fragments-unused", result.stdout)
+
+
 def _find_files(root: Path):
     for p in root.rglob("*"):
         if p.is_file():

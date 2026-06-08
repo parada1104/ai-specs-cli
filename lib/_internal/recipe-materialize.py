@@ -127,6 +127,27 @@ def read_recipe(catalog_dir: Path, recipe_id: str) -> Any:
     return schema.load_recipe_toml(recipe_dir / "recipe.toml")
 
 
+def attach_brief_fragments_to_resolved(
+    resolved: dict[str, Any],
+    ai_specs_home: Path | None = None,
+) -> None:
+    """In-place: attach catalog [provides.brief] fragments for enabled recipes."""
+    try:
+        home = ai_specs_home if ai_specs_home is not None else Path(__file__).resolve().parents[2]
+        catalog_dir = home / "catalog" / "recipes"
+        recipes = resolved.setdefault("recipes", {})
+        for rid in resolved.get("enabled", []):
+            try:
+                recipe = read_recipe(catalog_dir, rid)
+                recipes.setdefault(rid, {})["brief_fragments"] = _fragments_to_json(
+                    getattr(recipe, "brief_fragments", None)
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 # --- Conflict detection -------------------------------------------------------
 _conflict_module = None
 
@@ -688,15 +709,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     if resolved_config_out is not None:
         resolved = build_resolved_config(project_root)
         resolved["bindings"] = resolved_bindings  # replace explicit-only with auto-bound
-        # Attach brief_fragments from catalog into each enabled recipe entry
-        for rid in resolved.get("enabled", []):
-            try:
-                recipe = read_recipe(catalog_dir, rid)
-                resolved["recipes"].setdefault(rid, {})["brief_fragments"] = _fragments_to_json(
-                    getattr(recipe, "brief_fragments", None)
-                )
-            except Exception:
-                pass  # catalog miss for this recipe — skip silently
+        attach_brief_fragments_to_resolved(resolved, ai_specs_home)
         with open(resolved_config_out, "w") as f:
             json.dump(resolved, f, indent=2, sort_keys=True)
             f.write("\n")
@@ -766,20 +779,7 @@ def build_resolved_config_only(project_root: Path, resolved_config_out: Path, ai
         except Exception:
             pass  # catalog absent or unreadable — degrade to explicit-only bindings
 
-        # Attach brief_fragments from catalog (best-effort; degrades silently if catalog absent).
-        try:
-            _home_bf = ai_specs_home if ai_specs_home is not None else Path(__file__).resolve().parents[2]
-            catalog_dir_bf = _home_bf / "catalog" / "recipes"
-            for rid in resolved.get("enabled", []):
-                try:
-                    recipe = read_recipe(catalog_dir_bf, rid)
-                    resolved["recipes"].setdefault(rid, {})["brief_fragments"] = _fragments_to_json(
-                        getattr(recipe, "brief_fragments", None)
-                    )
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        attach_brief_fragments_to_resolved(resolved, ai_specs_home)
 
         with open(resolved_config_out, "w") as f:
             json.dump(resolved, f, indent=2, sort_keys=True)

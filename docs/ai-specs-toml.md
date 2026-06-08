@@ -53,6 +53,7 @@ Conservative compatibility rules in V1:
 | `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
 | `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |
 | `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |
+| `[brief]` | `render` | optional; boolean; default `true` — when `false`, `ai-specs sync`/`init` do not write `AGENTS.md` (manual brief; recipe fragments not merged) |
 | `[brief]` | `intro` | optional; multi-line string; rendered as a `>` blockquote after H1 |
 | `[brief]` | `purpose` | optional; string; one-line project description in `## Project` |
 | `[brief]` | `runtime_flow` | optional; array of strings; bullets **appended after** recipe-contributed fragments in `## Runtime Flow` |
@@ -306,10 +307,17 @@ match, but near-identical entries may both appear.
    relevant section key) to keep your existing manifest entries and suppress recipe
    contributions for that section entirely.
 
-3. **Use the `<!-- ai-specs:runtime-brief -->` marker** — if your `AGENTS.md` contains
-   the marker `<!-- ai-specs:runtime-brief -->`, `ai-specs sync` will not regenerate
-   that file at all. The brief is fully hand-managed and recipe fragments are not merged.
-   This is the recommended approach when you want complete manual control of the output.
+3. **Use `[brief] render = false`** — manifest-level opt-out; sync/init/subrepos skip
+   managed `AGENTS.md` generation entirely. Preferred when the project curates the brief
+   in version control and does not want recipe fragments merged on each sync.
+
+4. **Use the `<!-- ai-specs:runtime-brief -->` marker** — file-level opt-out when
+   `render` is not `false`. If the marker is present, `ai-specs sync` will not regenerate
+   that file. Precedence when `render = true`: marker suppresses overwrite; otherwise
+   normal render runs. When `render = false`, the marker is redundant (renderer is not invoked).
+
+Subrepos inherit the root manifest's `[brief].render` policy — there is no per-subrepo
+override in V1.
 
 ## Out of scope
 

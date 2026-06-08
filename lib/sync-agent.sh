@@ -28,6 +28,7 @@ TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 FLATTEN_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/flatten-resolved-skills.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
+BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
 HOOKS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/hooks-render.py"
 usage() {
     cat <<'EOF'
@@ -226,11 +227,20 @@ ensure_target_workspace() {
     python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
-    local render_args=("$TOML_PATH" "$TARGET_AGENTS_MD")
-    if [[ -n "$RESOLVED_CONFIG_JSON" && -f "$RESOLVED_CONFIG_JSON" ]]; then
-        render_args+=("--resolved-config" "$RESOLVED_CONFIG_JSON")
+    if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
+        local render_args=("$TOML_PATH" "$TARGET_AGENTS_MD")
+        if [[ -n "$RESOLVED_CONFIG_JSON" && -f "$RESOLVED_CONFIG_JSON" ]]; then
+            render_args+=("--resolved-config" "$RESOLVED_CONFIG_JSON")
+        fi
+        python3 "$AGENTS_RENDER_PY" "${render_args[@]}"
+    else
+        [[ -f "$TARGET_AGENTS_MD" ]] || {
+            echo "ERROR: $TARGET_AGENTS_MD not found and brief.render = false." >&2
+            echo "       Create AGENTS.md manually or set [brief].render = true." >&2
+            exit 1
+        }
+        echo "    · skipped AGENTS.md (brief.render = false)"
     fi
-    python3 "$AGENTS_RENDER_PY" "${render_args[@]}"
 }
 
 # Resolve enabled agents from ai-specs.toml

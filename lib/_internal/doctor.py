@@ -28,6 +28,7 @@ def bundled_skill_names(cli_home: Path | None = None) -> list[str]:
 
 class Severity(Enum):
     OK = "OK"
+    INFO = "INFO"
     WARN = "WARN"
     ERROR = "ERROR"
 
@@ -116,6 +117,7 @@ class Doctor:
     def run(self) -> int:
         self._check_manifest()
         self._check_agents_md()
+        self._check_brief_render_policy()
         self._check_bundled_assets()
         self._check_enabled_agents()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
@@ -129,9 +131,10 @@ class Doctor:
             print(f"  {check.render()}")
         print()
         ok = sum(1 for c in self.checks if c.severity == Severity.OK)
+        info = sum(1 for c in self.checks if c.severity == Severity.INFO)
         warn = sum(1 for c in self.checks if c.severity == Severity.WARN)
         err = sum(1 for c in self.checks if c.severity == Severity.ERROR)
-        print(f"Summary: {ok} OK, {warn} WARN, {err} ERROR")
+        print(f"Summary: {ok} OK, {info} INFO, {warn} WARN, {err} ERROR")
 
     # -------------------------------------------------------------------------
     # Core structure checks
@@ -163,10 +166,17 @@ class Doctor:
 
     def _check_agents_md(self) -> None:
         agents = self.root / "AGENTS.md"
+        render_disabled = self._brief_render_disabled()
         if agents.is_file():
             self.checks.append(Check(
                 Severity.OK, "agents-md",
                 "AGENTS.md found"
+            ))
+        elif render_disabled:
+            self.checks.append(Check(
+                Severity.ERROR, "agents-md",
+                "AGENTS.md missing; brief.render = false",
+                guidance="create a manual AGENTS.md or set [brief].render = true"
             ))
         else:
             self.checks.append(Check(
@@ -221,6 +231,88 @@ class Doctor:
                 return tomllib.load(f)
         except Exception:
             return {}
+
+    def _brief_render_disabled(self) -> bool:
+        try:
+            from brief_render_policy import brief_render_enabled
+        except ImportError:
+            policy_path = Path(__file__).with_name("brief-render-policy.py")
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "brief_render_policy", policy_path
+            )
+            if spec is None or spec.loader is None:
+                return False
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            brief_render_enabled = mod.brief_render_enabled
+        try:
+            return not brief_render_enabled(self._load_manifest())
+        except ValueError:
+            return False
+
+    def _check_brief_render_policy(self) -> None:
+        manifest = self._load_manifest()
+        if not manifest:
+            return
+        try:
+            from brief_render_policy import (
+                brief_render_enabled,
+                has_dead_recipe_fragments,
+            )
+        except ImportError:
+            policy_path = Path(__file__).with_name("brief-render-policy.py")
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "brief_render_policy", policy_path
+            )
+            if spec is None or spec.loader is None:
+                return
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            brief_render_enabled = mod.brief_render_enabled
+            has_dead_recipe_fragments = mod.has_dead_recipe_fragments
+        try:
+            enabled = brief_render_enabled(manifest)
+        except ValueError as exc:
+            self.checks.append(Check(
+                Severity.ERROR, "brief-render",
+                str(exc),
+                guidance="use true or false in lowercase"
+            ))
+            return
+        if enabled:
+            return
+        agents = self.root / "AGENTS.md"
+        if agents.is_file():
+            self.checks.append(Check(
+                Severity.INFO, "brief-render",
+                "managed AGENTS.md rendering disabled ([brief].render = false)"
+            ))
+            if "<!-- ai-specs:runtime-brief -->" in agents.read_text():
+                self.checks.append(Check(
+                    Severity.INFO, "brief-render-marker",
+                    "runtime-brief marker present (redundant with render = false)"
+                ))
+        try:
+            materialize_path = AI_SPECS_HOME / "lib" / "_internal" / "recipe-materialize.py"
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "recipe_materialize_doctor", materialize_path
+            )
+            if spec is not None and spec.loader is not None:
+                rm = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(rm)
+                resolved = rm.build_resolved_config(self.root)
+                rm.attach_brief_fragments_to_resolved(resolved, AI_SPECS_HOME)
+                if has_dead_recipe_fragments(resolved):
+                    self.checks.append(Check(
+                        Severity.WARN, "brief-fragments-unused",
+                        "enabled recipes declare [provides.brief] but render = false",
+                        guidance="remove unused recipes or set [brief].render = true"
+                    ))
+        except Exception:
+            pass
 
     def _mcp_server_count(self, data: dict) -> int:
         mcp = data.get("mcp")
