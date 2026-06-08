@@ -30,7 +30,7 @@ Estimated batch count: **7**
 
 ### 1.1 RED — unit tests for `brief_render_enabled`
 
-- [ ] 1.1 Write failing tests in `tests/test_brief_render_policy.py`:
+- [x] 1.1 Write failing tests in `tests/test_brief_render_policy.py`:
   - No `[brief]` table → `True`
   - `[brief]` without `render` key → `True`
   - `[brief] render = true` → `True`
@@ -42,12 +42,12 @@ Estimated batch count: **7**
 
 ### 1.2 GREEN — implement `brief_render_enabled` + `load_brief_render_enabled`
 
-- [ ] 1.2 Create `lib/_internal/brief-render-policy.py` with `PLACEHOLDER_LINE`, `brief_render_enabled()`, `load_brief_render_enabled()`, and `has_dead_recipe_fragments()`.
+- [x] 1.2 Create `lib/_internal/brief-render-policy.py` with `PLACEHOLDER_LINE`, `brief_render_enabled()`, `load_brief_render_enabled()`, and `has_dead_recipe_fragments()`.
   - **Target file**: `lib/_internal/brief-render-policy.py`
 
 ### 1.3 RED — CLI stdout tests
 
-- [ ] 1.3 Write failing tests for CLI:
+- [x] 1.3 Write failing tests for CLI:
   - `python3 brief-render-policy.py <toml>` prints `true` or `false` to stdout, exit 0
   - Manifest with `render = false` → stdout `false`
   - `--validate` exits 1 on non-boolean `render` with stderr mentioning boolean
@@ -55,12 +55,12 @@ Estimated batch count: **7**
 
 ### 1.4 GREEN — implement CLI `main()`
 
-- [ ] 1.4 Add `argparse` CLI: positional `toml_path`, optional `--validate`; print `true`/`false`; propagate `ValueError` as exit 1 on validate.
+- [x] 1.4 Add `argparse` CLI: positional `toml_path`, optional `--validate`; print `true`/`false`; propagate `ValueError` as exit 1 on validate.
   - **Target file**: `lib/_internal/brief-render-policy.py`
 
 ### 1.5 Run B1 tests
 
-- [ ] 1.5 Run `./tests/run.sh tests/test_brief_render_policy.py` — all GREEN.
+- [x] 1.5 Run `./tests/run.sh tests/test_brief_render_policy.py` — all GREEN.
 
 ---
 
@@ -70,7 +70,7 @@ Estimated batch count: **7**
 
 ### 2.1 RED — sync skips AGENTS.md when render false
 
-- [ ] 2.1 Write failing E2E test in `tests/test_agents_md_render_opt_out.py`:
+- [x] 2.1 Write failing E2E test in `tests/test_agents_md_render_opt_out.py`:
   - Fixture project with `[brief] render = false` and existing manual `AGENTS.md`
   - Run sync harness
   - Assert `AGENTS.md` byte-identical pre/post
@@ -81,18 +81,18 @@ Estimated batch count: **7**
 
 ### 2.2 GREEN — wire `sync.sh`
 
-- [ ] 2.2 Add `BRIEF_RENDER_POLICY_PY` variable; wrap `agents-render` block in `brief-render-policy.py` guard with skip message.
+- [x] 2.2 Add `BRIEF_RENDER_POLICY_PY` variable; wrap `agents-render` block in `brief-render-policy.py` guard with skip message.
   - **Target file**: `lib/sync.sh`
 
 ### 2.3 RED — default render true regression
 
-- [ ] 2.3 Write failing regression test: manifest without `render` key still regenerates `AGENTS.md` on sync (behavior unchanged).
+- [x] 2.3 Write failing regression test: manifest without `render` key still regenerates `AGENTS.md` on sync (behavior unchanged).
   - **Spec scenario**: runtime-brief-rendering §"Default render true preserves current behavior"
   - **Target file**: `tests/test_agents_md_render_opt_out.py`
 
 ### 2.4 Run B2 tests
 
-- [ ] 2.4 Run `./tests/run.sh tests/test_agents_md_render_opt_out.py -k sync` — GREEN.
+- [x] 2.4 Run `./tests/run.sh tests/test_agents_md_render_opt_out.py -k sync` — GREEN.
 
 ---
 
@@ -100,7 +100,7 @@ Estimated batch count: **7**
 
 ### 3.1 RED — init placeholder when render false
 
-- [ ] 3.1 Write failing test:
+- [x] 3.1 Write failing test:
   - Fresh init with manifest `[brief] render = false`
   - `AGENTS.md` exists with exactly `# AGENTS.md - Runtime context`
   - stderr mentions placeholder guidance
@@ -110,7 +110,7 @@ Estimated batch count: **7**
 
 ### 3.2 RED — init preserves existing manual brief
 
-- [ ] 3.2 Write failing test:
+- [x] 3.2 Write failing test:
   - Pre-existing `AGENTS.md` with custom content
   - `init` with `[brief] render = false` (and `--force` if needed for other artifacts)
   - `AGENTS.md` byte-identical
@@ -119,12 +119,12 @@ Estimated batch count: **7**
 
 ### 3.3 GREEN — wire `init.sh`
 
-- [ ] 3.3 Branch block 3b on `brief-render-policy.py`; placeholder path uses `PLACEHOLDER_LINE` via python constant or duplicated exact string; skip materialize+render when disabled.
+- [x] 3.3 Branch block 3b on `brief-render-policy.py`; placeholder path uses `PLACEHOLDER_LINE` via python constant or duplicated exact string; skip materialize+render when disabled.
   - **Target file**: `lib/init.sh`
 
 ### 3.4 Run B3 tests
 
-- [ ] 3.4 Run `./tests/run.sh tests/test_agents_md_render_opt_out.py -k init` — GREEN.
+- [x] 3.4 Run `./tests/run.sh tests/test_agents_md_render_opt_out.py -k init` — GREEN.
 
 ---
 
@@ -132,7 +132,7 @@ Estimated batch count: **7**
 
 ### 4.1 RED — subrepo skip when root render false
 
-- [ ] 4.1 Write failing E2E test:
+- [x] 4.1 Write failing E2E test:
   - Root manifest `render = false`
   - Subrepo target with existing `AGENTS.md`
   - Fan-out sync leaves subrepo `AGENTS.md` unchanged
@@ -142,7 +142,7 @@ Estimated batch count: **7**
 
 ### 4.2 RED — subrepo missing AGENTS.md errors
 
-- [ ] 4.2 Write failing test:
+- [x] 4.2 Write failing test:
   - Root `render = false`, subrepo without `AGENTS.md`
   - sync-agent exits non-zero with message to create manually or enable render
   - **Spec scenarios**: runtime-brief-rendering §"Subrepo missing AGENTS.md with render disabled fails clearly"
@@ -150,12 +150,12 @@ Estimated batch count: **7**
 
 ### 4.3 GREEN — wire `sync-agent.sh`
 
-- [ ] 4.3 Add `BRIEF_RENDER_POLICY_PY`; guard `ensure_target_workspace()` render call; error on missing file when disabled.
+- [x] 4.3 Add `BRIEF_RENDER_POLICY_PY`; guard `ensure_target_workspace()` render call; error on missing file when disabled.
   - **Target file**: `lib/sync-agent.sh`
 
 ### 4.4 Run B4 tests
 
-- [ ] 4.4 Run `./tests/run.sh tests/test_agents_md_render_opt_out.py -k subrepo` — GREEN.
+- [x] 4.4 Run `./tests/run.sh tests/test_agents_md_render_opt_out.py -k subrepo` — GREEN.
 
 ---
 
@@ -163,7 +163,7 @@ Estimated batch count: **7**
 
 ### 5.1 RED — doctor checks for render disabled
 
-- [ ] 5.1 Write failing tests in `tests/test_doctor.py`:
+- [x] 5.1 Write failing tests in `tests/test_doctor.py`:
   - `render = false` + `AGENTS.md` present → INFO `brief-render`
   - `render = false` + no `AGENTS.md` → ERROR `brief-render`
   - `render = false` + enabled recipe with `[provides.brief]` → WARN `brief-fragments-unused`
@@ -173,12 +173,12 @@ Estimated batch count: **7**
 
 ### 5.2 GREEN — implement `_check_brief_render_policy`
 
-- [ ] 5.2 Add method to `doctor.py`; call from `run()` after `_check_agents_md()`; reuse `brief_render_enabled` and resolved-config for fragment detection; adjust agents-md guidance when render off.
+- [x] 5.2 Add method to `doctor.py`; call from `run()` after `_check_agents_md()`; reuse `brief_render_enabled` and resolved-config for fragment detection; adjust agents-md guidance when render off.
   - **Target files**: `lib/_internal/doctor.py`
 
 ### 5.3 Run B5 tests
 
-- [ ] 5.3 Run `./tests/run.sh tests/test_doctor.py -k brief_render` — GREEN.
+- [x] 5.3 Run `./tests/run.sh tests/test_doctor.py -k brief_render` — GREEN.
 
 ---
 
@@ -186,12 +186,12 @@ Estimated batch count: **7**
 
 ### 6.1 Update `docs/ai-specs-toml.md`
 
-- [ ] 6.1 Add `[brief].render` to manifest table; document default `true`, precedence (flag > marker > normal render), subrepo inheritance, migration note from marker-only opt-out.
+- [x] 6.1 Add `[brief].render` to manifest table; document default `true`, precedence (flag > marker > normal render), subrepo inheritance, migration note from marker-only opt-out.
   - **Target file**: `docs/ai-specs-toml.md`
 
 ### 6.2 Update scaffold template
 
-- [ ] 6.2 Add commented `[brief] render = false` example to `templates/ai-specs.toml.tmpl`.
+- [x] 6.2 Add commented `[brief] render = false` example to `templates/ai-specs.toml.tmpl`.
   - **Target file**: `templates/ai-specs.toml.tmpl`
 
 ---
@@ -200,7 +200,7 @@ Estimated batch count: **7**
 
 ### 7.1 Marker regression when render enabled
 
-- [ ] 7.1 Confirm existing tests still pass:
+- [x] 7.1 Confirm existing tests still pass:
   - `tests/test_sync_pipeline.py` marker preservation
   - `tests/test_runtime_brief_baseline.py` sync/init idempotency with render enabled
   - Add explicit test if gap: `render=true` (or absent) + marker → file untouched
@@ -209,19 +209,19 @@ Estimated batch count: **7**
 
 ### 7.2 Precedence tests
 
-- [ ] 7.2 Add test: `render=false` without marker → file untouched (no renderer call).
+- [x] 7.2 Add test: `render=false` without marker → file untouched (no renderer call).
   - **Spec scenario**: runtime-brief-rendering §"Render false skips even without marker"
   - **Target file**: `tests/test_agents_md_render_opt_out.py`
 
 ### 7.3 Idempotency with render disabled
 
-- [ ] 7.3 Add test: two consecutive syncs with `render=false` → byte-identical `AGENTS.md`.
+- [x] 7.3 Add test: two consecutive syncs with `render=false` → byte-identical `AGENTS.md`.
   - **Spec scenario**: runtime-brief-rendering §"Two syncs with render disabled produce no diff"
   - **Target file**: `tests/test_agents_md_render_opt_out.py`
 
 ### 7.4 Full validation
 
-- [ ] 7.4 Run `./tests/validate.sh` — all green.
+- [x] 7.4 Run `./tests/validate.sh` — all green.
 
 ---
 
@@ -229,4 +229,4 @@ Estimated batch count: **7**
 
 - [ ] Merge delta specs into `openspec/specs/` at archive time
 - [ ] Trello #18 → In Progress during apply, Review after PR
-- [ ] No dogfood change to ai-specs-cli `[brief]` unless explicitly requested
+- [x] No dogfood change to ai-specs-cli `[brief]` unless explicitly requested
