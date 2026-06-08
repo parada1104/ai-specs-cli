@@ -32,14 +32,14 @@ never touches the foundational layer.
 
 ## At a glance
 
-| Recipe | Tier | Focus | Provides capability | Key config |
-|--------|------|-------|---------------------|------------|
-| [`session-context`](#session-context) | Foundational | Session-start focus resolution + conflict policy | `session-bootstrap`, `conflict-policy` | — (consumes `memory`, `tracker`, `canonical-store`) |
-| [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | `test_command` |
-| [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup | `worktree-isolation`, `worktree-cleanup` | `worktrees_dir`, `integration_branch`, `auto_remove_merged` |
-| [`git-pr-flow`](#git-pr-flow) | Foundational | Branch → PR → approval-gated merge | `vcs-pr-flow` | `provider`, `base_branch` |
-| [`trello-mcp-workflow`](#trello-mcp-workflow) | Specific | Trello board integration (tracker) | `tracker` (+ 4 trello-* capabilities) | **`board_id` (required)**, `default_list`, `epic_list` |
-| [`vault-canonical-store`](#vault-canonical-store) | Specific | Durable decisions/handoffs in a vault MCP | `canonical-store` | `vault_scope`, `decisions_folder`, `sessions_folder` |
+| Recipe | Tier | Focus | Provides capability | Installs MCP | Key config |
+|--------|------|-------|---------------------|--------------|------------|
+| [`session-context`](#session-context) | Foundational | Session-start focus resolution + conflict policy | `session-bootstrap`, `conflict-policy` | — | — (consumes `memory`, `tracker`, `canonical-store`) |
+| [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
+| [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `WORKTREE_GATE_PROTECTED` |
+| [`git-pr-flow`](#git-pr-flow) | Foundational | Branch → PR → approval-gated merge | `vcs-pr-flow` | — | `provider`, `base_branch` |
+| [`trello-mcp-workflow`](#trello-mcp-workflow) | Specific | Trello board integration (tracker) | `tracker` (+ 4 trello-* capabilities) | `trello` | **`board_id` (required)**, `default_list`, `epic_list` |
+| [`vault-canonical-store`](#vault-canonical-store) | Specific | Durable decisions/handoffs in a vault MCP | `canonical-store` | `vault-canonical` | `vault_scope`, `decisions_folder`, `sessions_folder` |
 
 ---
 
@@ -111,6 +111,7 @@ unmerged ones, and never touches the main worktree.
   | `worktrees_dir` | string | `.worktrees` | Directory holding per-change worktrees. |
   | `integration_branch` | string | `main` | Branch worktrees are created from and merged into. |
   | `auto_remove_merged` | boolean | `true` | Whether merged worktrees are eligible for cleanup. |
+  | `WORKTREE_GATE_PROTECTED` | string | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
 
 - **Full README:** [`catalog/recipes/worktree-flow/README.md`](../catalog/recipes/worktree-flow/README.md)
 
@@ -173,6 +174,12 @@ configured board. Ships an MCP preset for `@delorenj/mcp-server-trello` (needs
   | `default_list` | string | no | `In Progress` | List where new cards are created. |
   | `epic_list` | string | no | `Epic` | List where epic-type cards are placed. |
 
+- **Board isolation** (declared in `recipe.toml`, not overridden per project):
+  `forbidden_tools` = `trello_get_my_cards`, `trello_list_boards`;
+  `restricted_tools` = `trello_set_active_board`;
+  `card_validation_required` = `true` (cards must belong to the configured
+  `board_id`).
+
 - **Setup:** `ai-specs recipe add trello-mcp-workflow` then
   `ai-specs recipe init trello-mcp-workflow` (read-only brief), then set
   `board_id` and run `ai-specs sync`.
@@ -193,10 +200,12 @@ board_id = "69ec097f13e2d38ecd89a557"
 and handoffs in a configured vault MCP (e.g. Obsidian over a filesystem MCP
 server). Defines when to read/write canonical context, plus decision- and
 handoff-note shapes. The rule: Vault holds the deliberate, human-auditable
-record; operational memory holds searchable continuity. The recipe does **not**
-declare the MCP server — configure that under `[mcp.<name>]`.
+record; operational memory holds searchable continuity. Ships an MCP preset for
+`@modelcontextprotocol/server-filesystem` (pinned `2025.7.1`) scoped via
+`CANONICAL_VAULT_PATH` in the environment (typically set in `.envrc`).
 
-- **Provides:** skill `vault-context`; capability `canonical-store`.
+- **Provides:** skill `vault-context`; capability `canonical-store`; MCP preset
+  `vault-canonical`.
 - **Config:**
 
   | Key | Type | Default | Description |
@@ -210,7 +219,7 @@ declare the MCP server — configure that under `[mcp.<name>]`.
 ```toml
 [recipes.vault-canonical-store]
 enabled = true
-version = "1.0.0"
+version = "1.1.0"
 
 [recipes.vault-canonical-store.config]
 decisions_folder = "decisiones"
