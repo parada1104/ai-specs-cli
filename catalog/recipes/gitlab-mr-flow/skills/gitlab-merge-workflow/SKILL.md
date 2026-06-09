@@ -80,13 +80,15 @@ glab mr create --source-branch <branch-name> --target-branch <base_branch> --tit
 6. Merge only after explicit user approval and required checks/review:
 
 ```bash
-glab mr merge <mr-number> --squash
+glab mr merge <mr-number> --squash --yes --remove-source-branch
 ```
 
-7. After the MR is merged, remove the worktree and delete the local branch:
+7. After the MR is merged, remove the worktree and delete the local branch.
+   Use the absolute worktree path (the agent may be running inside the worktree
+   itself, so a relative path like `.worktrees/<branch-name>` is unreliable):
 
 ```bash
-git worktree remove .worktrees/<branch-name>
+git worktree remove <absolute-path-to-worktree>
 git branch -d <branch-name>
 ```
 

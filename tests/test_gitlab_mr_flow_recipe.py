@@ -218,6 +218,26 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("--description", self.skill_text)
         self.assertIn("--yes", self.skill_text)
 
+    def test_skill_merge_removes_source_branch(self):
+        """Skill merge command includes --remove-source-branch."""
+        self.assertIn("--remove-source-branch", self.skill_text)
+
+    def test_skill_merge_uses_yes_flag(self):
+        """Skill merge command includes --yes to skip interactive prompt."""
+        # Find the merge command context (after "glab mr merge")
+        merge_pos = self.skill_text.find("glab mr merge")
+        self.assertGreater(merge_pos, 0, "Skill must contain glab mr merge")
+        merge_line = self.skill_text[merge_pos:self.skill_text.find("\n", merge_pos)]
+        self.assertIn("--yes", merge_line)
+
+    def test_skill_worktree_cleanup_uses_absolute_path(self):
+        """Skill worktree cleanup does not assume cwd is repo root."""
+        self.assertNotIn(
+            "git worktree remove .worktrees/",
+            self.skill_text,
+            "Skill must not use relative .worktrees/ path for worktree removal"
+        )
+
     def test_skill_does_not_use_fill(self):
         """Skill does not use --fill (implicit push is forbidden)."""
         self.assertNotIn("--fill", self.skill_text)
@@ -249,6 +269,17 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("--title", self.command_text)
         self.assertIn("--description", self.command_text)
         self.assertIn("--yes", self.command_text)
+
+    def test_command_merge_removes_source_branch(self):
+        """Command merge command includes --remove-source-branch."""
+        self.assertIn("--remove-source-branch", self.command_text)
+
+    def test_command_merge_uses_yes_flag(self):
+        """Command merge command includes --yes to skip interactive prompt."""
+        merge_pos = self.command_text.find("glab mr merge")
+        self.assertGreater(merge_pos, 0, "Command must contain glab mr merge")
+        merge_line = self.command_text[merge_pos:self.command_text.find("\n", merge_pos)]
+        self.assertIn("--yes", merge_line)
 
     def test_command_does_not_use_fill(self):
         """Command does not use --fill (implicit push is forbidden)."""

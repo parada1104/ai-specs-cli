@@ -69,7 +69,7 @@ the runtime brief (`AGENTS.md`) for any provider/branch context it declares.
 8. Merge ONLY after the user explicitly approves and required checks/review pass:
 
    ```bash
-   glab mr merge <mr-number> --squash
+   glab mr merge <mr-number> --squash --yes --remove-source-branch
    ```
 
 ## Guardrails
