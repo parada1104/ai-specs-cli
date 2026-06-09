@@ -77,11 +77,7 @@ else
     git clone --branch "$AI_SPECS_REF" "$AI_SPECS_REPO" "$AI_SPECS_HOME"
 fi
 
-chmod +x \
-    "$AI_SPECS_HOME/bin/ai-specs" \
-    "$AI_SPECS_HOME/lib/"*.sh \
-    "$AI_SPECS_HOME/lib/_internal/"*.py \
-    "$AI_SPECS_HOME/lib/_internal/"*.sh 2>/dev/null || true
+chmod +x "$AI_SPECS_HOME/bin/ai-specs"
 # Bundled skill scripts (shipped to projects via init)
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.sh 2>/dev/null || true
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.py 2>/dev/null || true
