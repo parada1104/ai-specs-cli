@@ -277,6 +277,126 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
             "git push must appear before glab mr create in the skill"
         )
 
+    # --- Runtime blocker messages (verify-report remediation) ---
+
+    def test_skill_install_blocker_message(self):
+        """Skill contains exact install blocker message when glab is missing."""
+        self.assertIn(
+            "glab` is not installed",
+            self.skill_text,
+            "Skill must contain install blocker message"
+        )
+        self.assertIn(
+            "https://gitlab.com/gitlab-org/cli",
+            self.skill_text,
+            "Skill install blocker must include installation URL"
+        )
+
+    def test_skill_auth_blocker_message(self):
+        """Skill contains exact auth blocker message when glab is unauthenticated."""
+        self.assertIn(
+            "glab` is not authenticated",
+            self.skill_text,
+            "Skill must contain auth blocker message"
+        )
+        self.assertIn(
+            "glab auth login",
+            self.skill_text,
+            "Skill auth blocker must include remediation command"
+        )
+
+    def test_skill_preflight_before_push_order(self):
+        """Skill checks glab install and auth BEFORE git push."""
+        install_check_pos = self.skill_text.find("command -v glab")
+        auth_check_pos = self.skill_text.find("glab auth status")
+        push_pos = self.skill_text.find("git push -u origin")
+        self.assertGreater(
+            push_pos, install_check_pos,
+            "git push must appear AFTER command -v glab in the skill"
+        )
+        self.assertGreater(
+            push_pos, auth_check_pos,
+            "git push must appear AFTER glab auth status in the skill"
+        )
+
+    def test_skill_stops_after_mr_create_reports_url(self):
+        """Skill STOPs after MR creation and reports the MR URL."""
+        create_pos = self.skill_text.find("glab mr create")
+        stop_pos = self.skill_text.find("STOP")
+        self.assertGreater(
+            stop_pos, create_pos,
+            "STOP instruction must appear AFTER glab mr create in the skill"
+        )
+        self.assertIn(
+            "Report the MR URL",
+            self.skill_text,
+            "Skill must instruct to report the MR URL after creation"
+        )
+        self.assertIn(
+            "Do not merge",
+            self.skill_text,
+            "Skill must explicitly say not to merge after MR creation"
+        )
+
+    def test_command_install_blocker_message(self):
+        """Command contains exact install blocker message when glab is missing."""
+        self.assertIn(
+            "glab` is not installed",
+            self.command_text,
+            "Command must contain install blocker message"
+        )
+        self.assertIn(
+            "https://gitlab.com/gitlab-org/cli",
+            self.command_text,
+            "Command install blocker must include installation URL"
+        )
+
+    def test_command_auth_blocker_message(self):
+        """Command contains exact auth blocker message when glab is unauthenticated."""
+        self.assertIn(
+            "glab` is not authenticated",
+            self.command_text,
+            "Command must contain auth blocker message"
+        )
+        self.assertIn(
+            "glab auth login",
+            self.command_text,
+            "Command auth blocker must include remediation command"
+        )
+
+    def test_command_preflight_before_push_order(self):
+        """Command checks glab install and auth BEFORE git push."""
+        install_check_pos = self.command_text.find("command -v glab")
+        auth_check_pos = self.command_text.find("glab auth status")
+        push_pos = self.command_text.find("git push -u origin")
+        self.assertGreater(
+            push_pos, install_check_pos,
+            "git push must appear AFTER command -v glab in the command"
+        )
+        self.assertGreater(
+            push_pos, auth_check_pos,
+            "git push must appear AFTER glab auth status in the command"
+        )
+
+    def test_command_stops_after_mr_create_reports_url(self):
+        """Command STOPs after MR creation and reports the MR URL."""
+        create_pos = self.command_text.find("glab mr create")
+        stop_pos = self.command_text.find("STOP")
+        self.assertGreater(
+            stop_pos, create_pos,
+            "STOP instruction must appear AFTER glab mr create in the command"
+        )
+        self.assertIn(
+            "Report the MR URL",
+            self.command_text,
+            "Command must instruct to report the MR URL after creation"
+        )
+        self.assertIn(
+            "Do not merge",
+            self.command_text,
+            "Command must explicitly say not to merge after MR creation"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
