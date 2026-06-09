@@ -59,15 +59,28 @@ If authentication fails, stop and report:
 
 > **Blocker**: `glab` is not authenticated. Run `glab auth login` and retry.
 
+Then verify `jq` is available (required for SHA pinning during merge):
+
+```bash
+command -v jq
+```
+
+If `jq` is not found, stop and report:
+
+> **Blocker**: `jq` is not installed. Install it from https://jqlang.github.io/jq/download/ and retry.
+
 ## Workflow
 
 1. Inspect current branch, worktree path, and `git status`.
 2. Run or confirm any verification required before merge.
-3. Push the feature branch explicitly:
+3. Resolve the GitLab remote and push the feature branch explicitly:
 
 ```bash
-git push -u origin <branch-name>
+REMOTE=$(git remote | grep -E '^(origin|gitlab|upstream)$' | head -1 || echo "origin")
+git push -u $REMOTE <branch-name>
 ```
+
+> **Note**: The remote is resolved dynamically to support repos where the GitLab remote is named `gitlab` or `upstream` instead of `origin`. Falls back to `origin` if no known name matches.
 
 4. Create a merge request with the configured base branch:
 

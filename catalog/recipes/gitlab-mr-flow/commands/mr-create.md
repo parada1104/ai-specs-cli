@@ -50,21 +50,34 @@ the runtime brief (`AGENTS.md`) for any provider/branch context it declares.
 
    > **Blocker**: `glab` is not authenticated. Run `glab auth login` and retry.
 
-4. Confirm or run the verification required by the runtime brief / change.
-
-5. Push the feature branch explicitly:
+4. Verify `jq` is available (required for SHA pinning during merge):
 
    ```bash
-   git push -u origin <branch-name>
+   command -v jq
    ```
 
-6. Create the MR against the configured base branch:
+   If `jq` is not found, stop and report:
+
+   > **Blocker**: `jq` is not installed. Install it from https://jqlang.github.io/jq/download/ and retry.
+
+5. Confirm or run the verification required by the runtime brief / change.
+
+6. Resolve the GitLab remote and push the feature branch explicitly:
+
+   ```bash
+   REMOTE=$(git remote | grep -E '^(origin|gitlab|upstream)$' | head -1 || echo "origin")
+   git push -u $REMOTE <branch-name>
+   ```
+
+   > **Note**: The remote is resolved dynamically to support repos where the GitLab remote is named `gitlab` or `upstream` instead of `origin`. Falls back to `origin` if no known name matches.
+
+7. Create the MR against the configured base branch:
 
    ```bash
    glab mr create --source-branch <branch-name> --target-branch <base_branch> --title "<title>" --description "<summary and verification>" --yes
    ```
 
-7. STOP. Do not merge. Report the MR URL and wait for explicit user approval.
+8. STOP. Do not merge. Report the MR URL and wait for explicit user approval.
 
 For the full merge workflow (approval → merge with SHA pinning → cleanup), see the `gitlab-merge-workflow` skill.
 

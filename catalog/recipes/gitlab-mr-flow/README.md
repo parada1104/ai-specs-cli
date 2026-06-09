@@ -19,6 +19,7 @@ VCS/MR flow provider.
 ## Prerequisites
 
 - **`glab` CLI** installed and authenticated (`glab auth status` to verify).
+- **`jq`** installed (required for SHA pinning during merge). Install from https://jqlang.github.io/jq/download/.
 - A GitLab remote configured on the repository (`git remote -v`).
 
 ## Providers

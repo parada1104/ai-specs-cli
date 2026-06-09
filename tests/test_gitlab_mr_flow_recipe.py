@@ -206,8 +206,8 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("glab auth status", self.skill_text)
 
     def test_skill_uses_explicit_push(self):
-        """Skill uses explicit git push -u origin before MR creation."""
-        self.assertIn("git push -u origin", self.skill_text)
+        """Skill uses explicit git push -u $REMOTE before MR creation."""
+        self.assertIn("git push -u $REMOTE", self.skill_text)
 
     def test_skill_uses_glab_mr_create_with_required_flags(self):
         """Skill creates MR with glab mr create and required flags."""
@@ -267,8 +267,8 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("glab auth status", self.command_text)
 
     def test_command_uses_explicit_push(self):
-        """Command uses explicit git push -u origin before MR creation."""
-        self.assertIn("git push -u origin", self.command_text)
+        """Command uses explicit git push -u $REMOTE before MR creation."""
+        self.assertIn("git push -u $REMOTE", self.command_text)
 
     def test_command_uses_glab_mr_create_with_required_flags(self):
         """Command creates MR with glab mr create and required flags."""
@@ -295,7 +295,7 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
 
     def test_command_push_before_create_order(self):
         """Command places git push before glab mr create."""
-        push_pos = self.command_text.find("git push -u origin")
+        push_pos = self.command_text.find("git push -u $REMOTE")
         create_pos = self.command_text.find("glab mr create")
         self.assertGreater(
             create_pos, push_pos,
@@ -304,7 +304,7 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
 
     def test_skill_push_before_create_order(self):
         """Skill places git push before glab mr create."""
-        push_pos = self.skill_text.find("git push -u origin")
+        push_pos = self.skill_text.find("git push -u $REMOTE")
         create_pos = self.skill_text.find("glab mr create")
         self.assertGreater(
             create_pos, push_pos,
@@ -343,7 +343,7 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
         """Skill checks glab install and auth BEFORE git push."""
         install_check_pos = self.skill_text.find("command -v glab")
         auth_check_pos = self.skill_text.find("glab auth status")
-        push_pos = self.skill_text.find("git push -u origin")
+        push_pos = self.skill_text.find("git push -u $REMOTE")
         self.assertGreater(
             push_pos, install_check_pos,
             "git push must appear AFTER command -v glab in the skill"
@@ -402,7 +402,7 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
         """Command checks glab install and auth BEFORE git push."""
         install_check_pos = self.command_text.find("command -v glab")
         auth_check_pos = self.command_text.find("glab auth status")
-        push_pos = self.command_text.find("git push -u origin")
+        push_pos = self.command_text.find("git push -u $REMOTE")
         self.assertGreater(
             push_pos, install_check_pos,
             "git push must appear AFTER command -v glab in the command"
@@ -430,6 +430,72 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
             self.command_text,
             "Command must explicitly say not to merge after MR creation"
         )
+
+    # --- jq preflight (R4 finding) ---
+
+    def test_skill_checks_jq_installed(self):
+        """Skill checks that jq is installed via command -v jq."""
+        self.assertIn("command -v jq", self.skill_text)
+
+    def test_command_checks_jq_installed(self):
+        """Command checks that jq is installed via command -v jq."""
+        self.assertIn("command -v jq", self.command_text)
+
+    def test_skill_jq_blocker_message(self):
+        """Skill contains jq blocker message when jq is missing."""
+        self.assertIn(
+            "jq` is not installed",
+            self.skill_text,
+            "Skill must contain jq install blocker message"
+        )
+        self.assertIn(
+            "https://jqlang.github.io/jq/download/",
+            self.skill_text,
+            "Skill jq blocker must include installation URL"
+        )
+
+    def test_command_jq_blocker_message(self):
+        """Command contains jq blocker message when jq is missing."""
+        self.assertIn(
+            "jq` is not installed",
+            self.command_text,
+            "Command must contain jq install blocker message"
+        )
+        self.assertIn(
+            "https://jqlang.github.io/jq/download/",
+            self.command_text,
+            "Command jq blocker must include installation URL"
+        )
+
+    def test_skill_jq_preflight_before_push_order(self):
+        """Skill checks jq BEFORE git push."""
+        jq_check_pos = self.skill_text.find("command -v jq")
+        push_pos = self.skill_text.find("git push -u $REMOTE")
+        self.assertGreater(
+            push_pos, jq_check_pos,
+            "git push must appear AFTER command -v jq in the skill"
+        )
+
+    def test_command_jq_preflight_before_push_order(self):
+        """Command checks jq BEFORE git push."""
+        jq_check_pos = self.command_text.find("command -v jq")
+        push_pos = self.command_text.find("git push -u $REMOTE")
+        self.assertGreater(
+            push_pos, jq_check_pos,
+            "git push must appear AFTER command -v jq in the command"
+        )
+
+    # --- Dynamic remote resolution (R4 finding) ---
+
+    def test_skill_uses_dynamic_remote_resolution(self):
+        """Skill resolves the GitLab remote dynamically instead of hardcoding origin."""
+        self.assertIn("REMOTE=$(git remote", self.skill_text)
+        self.assertIn("git push -u $REMOTE", self.skill_text)
+
+    def test_command_uses_dynamic_remote_resolution(self):
+        """Command resolves the GitLab remote dynamically instead of hardcoding origin."""
+        self.assertIn("REMOTE=$(git remote", self.command_text)
+        self.assertIn("git push -u $REMOTE", self.command_text)
 
 
 class GitlabMrFlowDualProviderTests(unittest.TestCase):
