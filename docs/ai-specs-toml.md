@@ -53,14 +53,20 @@ Conservative compatibility rules in V1:
 | `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
 | `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |
 | `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |
+| `[brief]` | `render` | optional; boolean; default `true` — when `false`, `ai-specs sync`/`init` do not write `AGENTS.md` (manual brief; recipe fragments not merged) |
 | `[brief]` | `intro` | optional; multi-line string; rendered as a `>` blockquote after H1 |
 | `[brief]` | `purpose` | optional; string; one-line project description in `## Project` |
-| `[brief]` | `runtime_flow` | optional; array of strings; bullet list in `## Runtime Flow` |
-| `[brief]` | `context_sources` | optional; array of strings; bullet list in `## Context Sources` |
-| `[brief]` | `conflict_policy` | optional; array of strings; bullet list in `## Conflict Policy` |
-| `[brief]` | `workflow_rules` | optional; array of strings; bullet list in `## Workflow Rules` |
-| `[brief]` | `useful_commands` | optional; array of strings; extra bullet items appended to `## Useful Commands` |
-| `[brief.mcp_descriptions]` | `<server-name>` | optional per-server description appended to each MCP entry in `## Runtime MCPs` |
+| `[brief]` | `runtime_flow` | optional; array of strings; bullets **appended after** recipe-contributed fragments in `## Runtime Flow` |
+| `[brief]` | `context_sources` | optional; array of strings; bullets **appended after** recipe-contributed fragments in `## Context Sources` |
+| `[brief]` | `conflict_policy` | optional; array of strings; bullets **appended after** recipe-contributed fragments in `## Conflict Policy` |
+| `[brief]` | `workflow_rules` | optional; array of strings; bullets **appended after** recipe-contributed fragments in `## Workflow Rules` |
+| `[brief]` | `useful_commands` | optional; array of strings; extra bullets **appended after** recipe-contributed fragments in `## Useful Commands` |
+| `[brief]` | `runtime_flow_mode` | optional; `"append"` (default) or `"replace"` — suppress all recipe fragments for `runtime_flow` when `"replace"` |
+| `[brief]` | `context_sources_mode` | optional; `"append"` (default) or `"replace"` — suppress all recipe fragments for `context_sources` when `"replace"` |
+| `[brief]` | `conflict_policy_mode` | optional; `"append"` (default) or `"replace"` — suppress all recipe fragments for `conflict_policy` when `"replace"` |
+| `[brief]` | `workflow_rules_mode` | optional; `"append"` (default) or `"replace"` — suppress all recipe fragments for `workflow_rules` when `"replace"` |
+| `[brief]` | `useful_commands_mode` | optional; `"append"` (default) or `"replace"` — suppress all recipe fragments for `useful_commands` when `"replace"` |
+| `[brief.mcp_descriptions]` | `<server-name>` | optional; overrides the recipe-provided default description per server; entries not covered by the project fall back to the recipe-declared value |
 
 ## Manifest sections
 
@@ -182,7 +188,33 @@ values — board ID, integration branch, test command, vault scope — come from
 recipe configs; only prose with no structured home goes here.
 
 All keys are optional. Sections are omitted from the rendered brief when the
-corresponding key is absent.
+corresponding key is absent **and** no enabled recipe contributes fragments for
+that section.
+
+**`intro` and `purpose` are project-only.** They are always written here and are
+never contributed by recipes.
+
+**Contributable sections** (`runtime_flow`, `context_sources`, `conflict_policy`,
+`workflow_rules`, `useful_commands`) can be populated entirely by recipe fragments.
+A manifest with only `intro` and `purpose` in `[brief]` is fully valid when enabled
+recipes supply the behavioral prose. The project `[brief]` entries for these sections
+are **appended after** recipe fragments (exact-string duplicates are silently discarded).
+
+Minimal `[brief]` for a project that relies on recipe fragments for behavioral sections:
+
+```toml
+[brief]
+intro = """
+Canonical runtime context for agents: project identity, MCPs,
+context sources, safety rules, and workflow conventions.
+"""
+purpose = "per-project AI harness for configuration, MCPs, recipes, memory, and tracker integration."
+# Contributable sections (runtime_flow, context_sources, etc.) are supplied
+# by enabled recipes. Add entries here only for project-specific additions.
+# Use <section>_mode = "replace" to suppress recipe fragments for a section.
+```
+
+Full example with project-specific additions:
 
 ```toml
 [brief]
@@ -212,16 +244,80 @@ useful_commands = [
 ]
 ```
 
+#### `<section>_mode` — append vs. replace
+
+By default (`"append"`), recipe fragments for a section appear first, and project
+`[brief]` entries for that same section are appended after (with exact-string dedup).
+
+Set `<section>_mode = "replace"` to suppress all recipe-contributed fragments for
+that section and use only the project's own entries:
+
+```toml
+[brief]
+# Suppress recipe fragments for workflow_rules; only local entries appear.
+workflow_rules_mode = "replace"
+workflow_rules = [
+  "Follow project-specific deployment checklist before merging.",
+  "All PRs must be reviewed by two team members.",
+]
+```
+
+Replace mode for one section does not affect other sections — each section's mode
+is independent. Any `_mode` value other than `"append"` or `"replace"` is a
+validation error at render time.
+
 ### `[brief.mcp_descriptions]`
 
-Keyed by MCP server name. Each value is a short description appended to that
-server's entry in the `## Runtime MCPs` section of the generated brief.
+Keyed by MCP server name. Each value is the description shown for that server's
+entry in the `## Runtime MCPs` section of the generated brief.
+
+**Override-fills-gap rule:** A project entry for a server **overrides** any
+recipe-provided default for that server. When the project has no entry for a server
+but an enabled recipe declares one via `[provides.brief].mcp_descriptions`, the
+recipe value fills the gap automatically. No project entry is required.
 
 ```toml
 [brief.mcp_descriptions]
 trello = "project tracking through the Roadmap board."
 engram = "operational/session memory (global MCP)."
 ```
+
+Project entries listed here take precedence over any value contributed by a recipe
+for the same server name. Servers not covered by the project fall back to the
+recipe-declared description, if any.
+
+For example, if a `trello-mcp-workflow` recipe declares a default description for
+the `trello` server, and the project manifest also declares `[brief.mcp_descriptions].trello`,
+the project value wins. If the project has no `trello` entry, the recipe default is used.
+
+#### Migration note for existing projects with a full hand-written `[brief]`
+
+If your project was set up before this feature and `[brief]` contains a complete set
+of behavioral sections (runtime_flow, context_sources, etc.), you may see **duplicate
+bullets** once recipes start contributing `[provides.brief]` fragments — recipe
+fragments appear first, and identical manifest entries are deduplicated by exact-string
+match, but near-identical entries may both appear.
+
+**Cleanup options:**
+
+1. **Remove duplicate entries from `[brief]`** — if the recipe fragment covers the same
+   content as your existing bullet, delete the manifest entry.
+
+2. **Use `<section>_mode = "replace"`** — add `workflow_rules_mode = "replace"` (or the
+   relevant section key) to keep your existing manifest entries and suppress recipe
+   contributions for that section entirely.
+
+3. **Use `[brief] render = false`** — manifest-level opt-out; sync/init/subrepos skip
+   managed `AGENTS.md` generation entirely. Preferred when the project curates the brief
+   in version control and does not want recipe fragments merged on each sync.
+
+4. **Use the `<!-- ai-specs:runtime-brief -->` marker** — file-level opt-out when
+   `render` is not `false`. If the marker is present, `ai-specs sync` will not regenerate
+   that file. Precedence when `render = true`: marker suppresses overwrite; otherwise
+   normal render runs. When `render = false`, the marker is redundant (renderer is not invoked).
+
+Subrepos inherit the root manifest's `[brief].render` policy — there is no per-subrepo
+override in V1.
 
 ## Out of scope
 

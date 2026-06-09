@@ -41,8 +41,12 @@ whenever the manifest changes.
 | `ai-specs sync [path]` | Vendor deps, regen AGENTS.md, fan out |
 | `ai-specs sync-agent [path] [--all\|--<agent>]` | Fan out per-agent configs only |
 | `ai-specs doctor [path]` | Read-only health check |
+| `ai-specs rules-audit [path]` | Read-only legacy rules inventory (JSON) |
 | `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI |
-| `ai-specs add-dep <git-url> [path]` | Register a vendored skill |
+| `ai-specs skills add <git-url> [path]` | Register a vendored skill (`[[deps]]`) and sync |
+| `ai-specs skills list [path]` | List registered, local, and catalog skills |
+| `ai-specs skills remove <id> [path]` | Remove a vendored skill from the manifest |
+| `ai-specs add-dep <git-url> [path]` | Alias for `skills add` (backward-compatible) |
 | `ai-specs recipe list [path]` | List available recipes |
 | `ai-specs recipe add <id> [path]` | Add a recipe declaration |
 | `ai-specs recipe init <id> [path]` | View recipe initialization brief |
@@ -82,7 +86,18 @@ Three tiers with automatic precedence (local > recipe > dependency):
 | Dependency | `.deps/<dep-id>/skills/<name>/` | No (gitignored) |
 
 Use the `/skills-as-rules` slash command inside your agent to create local skills
-interactively.
+interactively. For batch migration from legacy Cursor rules, run `/rules-audit`.
+
+### Rules migration audit
+
+`ai-specs rules-audit [path]` scans legacy rule sources read-only and emits JSON
+inventory to stdout. The `/rules-audit` slash command consumes that JSON and
+writes an advisory plan to `ai-specs/plans/rules-migration-<YYYY-MM-DD>.md`.
+
+Classification buckets (suggestions only):
+
+`keep_in_brief` · `enable_recipe` · `use_catalog_dep` · `create_local_skill` ·
+`merge_into_skill` · `already_in_atl` · `deprecate_rule_file`
 
 ### Recipes
 

@@ -20,12 +20,109 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tomllib
 from pathlib import Path
 from typing import Any
 
 RUNTIME_BRIEF_MARKER = "<!-- ai-specs:runtime-brief -->"
+
+_VALID_MODES = {"append", "replace"}
+
+
+# ---------------------------------------------------------------------------
+# Recipe brief fragment helpers
+# ---------------------------------------------------------------------------
+
+_CONFIG_PLACEHOLDER_RE = re.compile(r"\{\{|\}\}|\{config\.([A-Za-z0-9_]+)\}")
+
+
+def substitute_config(text: str, cfg_ns: dict) -> str:
+    """Apply {config.KEY} substitution to a recipe fragment text.
+
+    - {config.KEY} with KEY present in cfg_ns → resolved to its value.
+    - {config.KEY} with KEY absent from cfg_ns → re-emitted verbatim.
+    - Bare {KEY} without the config. prefix → left verbatim (not substituted).
+    - {{ → literal {, }} → literal } (escape sequences).
+    - A lone unbalanced { in prose → text returned untouched (no crash).
+
+    Uses regex scanning so that dotted keys like "config.integration_branch" are
+    matched as a single token, avoiding str.format_map's attribute-access parsing.
+    """
+    # First, check for lone unbalanced braces that would confuse processing.
+    # Strategy: use regex to handle only {{ }}, {config.KEY} patterns; pass everything else through.
+    try:
+        def _replace(m: re.Match) -> str:
+            token = m.group(0)
+            if token == "{{":
+                return "{"
+            if token == "}}":
+                return "}"
+            key_name = m.group(1)  # captured KEY from {config.KEY}
+            cfg_key = f"config.{key_name}"
+            if cfg_key in cfg_ns:
+                return str(cfg_ns[cfg_key])
+            # Unknown key → return verbatim placeholder
+            return token
+
+        return _CONFIG_PLACEHOLDER_RE.sub(_replace, text)
+    except (ValueError, IndexError):
+        return text  # safety net — should not normally be reached with this regex approach
+
+
+def collect_recipe_brief_fragments(resolved: dict, section: str) -> list[dict]:
+    """Collect and deduplicate brief fragments for *section* from enabled recipes.
+
+    Iterates resolved["enabled"] in order, applies {config.KEY} substitution using
+    each recipe's own config namespace, and deduplicates:
+      1. Key-based: first occurrence of a non-None key wins; later duplicates discarded.
+      2. Exact-string: duplicate text (after substitution) discarded.
+
+    Returns a list of {"key": ..., "text": ...} dicts, substituted.
+    """
+    out: list[dict] = []
+    seen_keys: set[str] = set()
+    seen_text: set[str] = set()
+
+    for rid in resolved.get("enabled", []):
+        rcfg = resolved.get("recipes", {}).get(rid, {}) or {}
+        # Build config namespace: all keys except brief_fragments itself, prefixed with "config."
+        cfg_ns = {
+            f"config.{k}": v
+            for k, v in rcfg.items()
+            if k != "brief_fragments"
+        }
+        for frag in (rcfg.get("brief_fragments") or {}).get(section, []):
+            key = frag.get("key")
+            raw = frag.get("text", "")
+            # Key-based dedup — first occurrence wins
+            if key is not None and key in seen_keys:
+                continue
+            text = substitute_config(raw, cfg_ns)
+            # Exact-string dedup
+            if text in seen_text:
+                continue
+            if key is not None:
+                seen_keys.add(key)
+            seen_text.add(text)
+            out.append({"key": key, "text": text})
+
+    return out
+
+
+def _validate_brief_modes(brief: dict) -> None:
+    """Validate all <section>_mode keys in *brief*.
+
+    Raises ValueError for any value not in {"append", "replace"}.
+    """
+    for key, val in brief.items():
+        if key.endswith("_mode"):
+            if val not in _VALID_MODES:
+                raise ValueError(
+                    f"[brief].{key}: invalid mode {val!r}; valid values are "
+                    f"{sorted(_VALID_MODES)}"
+                )
 
 
 def _redact_env_value(value: str) -> str:
@@ -160,8 +257,11 @@ def _section_mcp(manifest: dict, brief: dict) -> list[str]:
 
 
 def _section_runtime_flow(brief: dict, resolved: dict) -> list[str]:
-    """Emit ## Runtime Flow bullets from [brief].runtime_flow + VCS provider bullet."""
-    runtime_flow = brief.get("runtime_flow", []) or []
+    """Emit ## Runtime Flow bullets from recipe fragments + [brief].runtime_flow + VCS bullet."""
+    mode = brief.get("runtime_flow_mode", "append")
+    recipe_items = [] if mode == "replace" else collect_recipe_brief_fragments(resolved, "runtime_flow")
+    manifest_items = brief.get("runtime_flow", []) or []
+
     bindings = resolved.get("bindings", {}) or {}
     recipes = resolved.get("recipes", {}) or {}
 
@@ -174,13 +274,17 @@ def _section_runtime_flow(brief: dict, resolved: dict) -> list[str]:
         provider = vcs_cfg.get("provider", "")
         base_branch = vcs_cfg.get("base_branch", "")
 
-    if not runtime_flow and not provider:
+    bullets: list[str] = [f["text"] for f in recipe_items]
+    for m in manifest_items:
+        if m and m not in bullets:
+            bullets.append(m)
+
+    if not bullets and not provider:
         return []
 
     lines: list[str] = ["## Runtime Flow", ""]
-    for item in runtime_flow:
-        if item:
-            lines.append(f"- {item}")
+    for item in bullets:
+        lines.append(f"- {item}")
     if provider:
         vcs_note = f"VCS/PR provider: {provider}"
         if provider == "github":
@@ -215,50 +319,72 @@ def _section_trello(resolved: dict) -> list[str]:
     return lines
 
 
-def _section_context_sources(brief: dict) -> list[str]:
-    """Emit ## Context Sources bullets from [brief].context_sources. Omit if absent."""
-    context_sources = brief.get("context_sources", []) or []
-    if not context_sources:
+def _section_context_sources(brief: dict, resolved: dict) -> list[str]:
+    """Emit ## Context Sources bullets from recipe fragments + [brief].context_sources."""
+    mode = brief.get("context_sources_mode", "append")
+    recipe_items = [] if mode == "replace" else collect_recipe_brief_fragments(resolved, "context_sources")
+    manifest_items = brief.get("context_sources", []) or []
+
+    bullets: list[str] = [f["text"] for f in recipe_items]
+    for m in manifest_items:
+        if m and m not in bullets:
+            bullets.append(m)
+
+    if not bullets:
         return []
     lines: list[str] = ["## Context Sources", ""]
-    for item in context_sources:
-        if item:
-            lines.append(f"- {item}")
+    for item in bullets:
+        lines.append(f"- {item}")
     lines.append("")
     return lines
 
 
-def _section_conflict_policy(brief: dict) -> list[str]:
-    """Emit ## Conflict Policy bullets from [brief].conflict_policy. Omit if absent."""
-    conflict_policy = brief.get("conflict_policy", []) or []
-    if not conflict_policy:
+def _section_conflict_policy(brief: dict, resolved: dict) -> list[str]:
+    """Emit ## Conflict Policy bullets from recipe fragments + [brief].conflict_policy."""
+    mode = brief.get("conflict_policy_mode", "append")
+    recipe_items = [] if mode == "replace" else collect_recipe_brief_fragments(resolved, "conflict_policy")
+    manifest_items = brief.get("conflict_policy", []) or []
+
+    bullets: list[str] = [f["text"] for f in recipe_items]
+    for m in manifest_items:
+        if m and m not in bullets:
+            bullets.append(m)
+
+    if not bullets:
         return []
     lines: list[str] = ["## Conflict Policy", ""]
-    for item in conflict_policy:
-        if item:
-            lines.append(f"- {item}")
+    for item in bullets:
+        lines.append(f"- {item}")
     lines.append("")
     return lines
 
 
-def _section_workflow_rules(brief: dict) -> list[str]:
-    """Emit ## Workflow Rules bullets from [brief].workflow_rules. Omit if absent."""
-    workflow_rules = brief.get("workflow_rules", []) or []
-    if not workflow_rules:
+def _section_workflow_rules(brief: dict, resolved: dict) -> list[str]:
+    """Emit ## Workflow Rules bullets from recipe fragments + [brief].workflow_rules."""
+    mode = brief.get("workflow_rules_mode", "append")
+    recipe_items = [] if mode == "replace" else collect_recipe_brief_fragments(resolved, "workflow_rules")
+    manifest_items = brief.get("workflow_rules", []) or []
+
+    bullets: list[str] = [f["text"] for f in recipe_items]
+    for m in manifest_items:
+        if m and m not in bullets:
+            bullets.append(m)
+
+    if not bullets:
         return []
     lines: list[str] = ["## Workflow Rules", ""]
-    for item in workflow_rules:
-        if item:
-            lines.append(f"- {item}")
+    for item in bullets:
+        lines.append(f"- {item}")
     lines.append("")
     return lines
 
 
 def _section_useful_commands(brief: dict, resolved: dict) -> list[str]:
-    """Emit ## Useful Commands from test-runner binding test_command + [brief].useful_commands.
+    """Emit ## Useful Commands from test-runner binding, recipe fragments, and [brief].useful_commands.
 
-    Only emits commands that are explicitly provided (from test-runner binding or
-    [brief].useful_commands). Never fabricates commands via string replacement.
+    Only emits commands that are explicitly provided (from test-runner binding,
+    recipe fragments, or [brief].useful_commands). Never fabricates commands via
+    string replacement.
     """
     recipes = resolved.get("recipes", {}) or {}
     bindings = resolved.get("bindings", {}) or {}
@@ -274,9 +400,18 @@ def _section_useful_commands(brief: dict, resolved: dict) -> list[str]:
         tdd_cfg = recipes.get("tdd-flow", {}) or {}
         test_command = tdd_cfg.get("test_command", "")
 
+    mode = brief.get("useful_commands_mode", "append")
+    recipe_items = [] if mode == "replace" else collect_recipe_brief_fragments(resolved, "useful_commands")
     extra_commands = brief.get("useful_commands", []) or []
 
-    if not test_command and not extra_commands:
+    # Build bullets: recipe items first, then manifest items (exact-string dedup vs recipe)
+    recipe_bullets: list[str] = [f["text"] for f in recipe_items]
+    manifest_bullets: list[str] = []
+    for cmd in extra_commands:
+        if cmd and cmd not in recipe_bullets:
+            manifest_bullets.append(cmd)
+
+    if not test_command and not recipe_bullets and not manifest_bullets:
         return []
 
     lines: list[str] = ["## Useful Commands", ""]
@@ -286,9 +421,10 @@ def _section_useful_commands(brief: dict, resolved: dict) -> list[str]:
             lines.append(f"- Full validation: `{test_command}`")
         else:
             lines.append(f"- Focused tests: `{test_command}`")
-    for cmd in extra_commands:
-        if cmd:
-            lines.append(f"- {cmd}")
+    for item in recipe_bullets:
+        lines.append(f"- {item}")
+    for cmd in manifest_bullets:
+        lines.append(f"- {cmd}")
     lines.append("")
     return lines
 
@@ -316,6 +452,9 @@ def _render_lines(manifest: dict, resolved: dict) -> list[str]:
     name = project.get("name", "")
     brief = manifest.get("brief", {}) or {}
 
+    # Validate _mode keys early — fail-fast with a clear message
+    _validate_brief_modes(brief)
+
     lines: list[str] = []
 
     # 1. H1 heading
@@ -330,8 +469,17 @@ def _render_lines(manifest: dict, resolved: dict) -> list[str]:
     # 3. ## Project
     lines += _section_project(manifest, resolved)
 
-    # 4. ## Runtime MCPs
-    lines += _section_mcp(manifest, brief)
+    # 4. ## Runtime MCPs — build effective mcp_descriptions (override-fills-gap)
+    # Recipe-provided descriptions fill gaps; manifest [brief].mcp_descriptions overrides.
+    eff_mcp: dict[str, str] = {
+        f["key"]: f["text"]
+        for f in collect_recipe_brief_fragments(resolved, "mcp_descriptions")
+        if f.get("key")
+    }
+    eff_mcp.update(brief.get("mcp_descriptions", {}) or {})  # project wins
+    # Build a local brief copy with effective mcp_descriptions (no mutation of caller's dict)
+    brief_with_eff_mcp = {**brief, "mcp_descriptions": eff_mcp}
+    lines += _section_mcp(manifest, brief_with_eff_mcp)
 
     # 5. ## Runtime Flow
     lines += _section_runtime_flow(brief, resolved)
@@ -340,13 +488,13 @@ def _render_lines(manifest: dict, resolved: dict) -> list[str]:
     lines += _section_trello(resolved)
 
     # 7. ## Context Sources
-    lines += _section_context_sources(brief)
+    lines += _section_context_sources(brief, resolved)
 
     # 8. ## Conflict Policy
-    lines += _section_conflict_policy(brief)
+    lines += _section_conflict_policy(brief, resolved)
 
     # 9. ## Workflow Rules
-    lines += _section_workflow_rules(brief)
+    lines += _section_workflow_rules(brief, resolved)
 
     # 10. ## Useful Commands
     lines += _section_useful_commands(brief, resolved)

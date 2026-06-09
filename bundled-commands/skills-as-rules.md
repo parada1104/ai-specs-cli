@@ -7,8 +7,12 @@ description: Interactively turn one project convention into a proper Agent Skill
 
 Goal: take ONE convention the dev wants the agent to respect (commits, an
 architectural rule, testing approach, a deploy workflow, etc.) and formalize
-it as a `SKILL.md` under `ai-specs/skills/`. The skill ends up reflected in
-`AGENTS.md` (auto-invoke table) so every agent loads it on the right trigger.
+it as a `SKILL.md` under `ai-specs/skills/`. After `ai-specs sync`, the skill
+appears in the runtime-brief `AGENTS.md` and in each enabled agent's skill
+index; agents load it via `metadata.auto_invoke` in the skill frontmatter.
+
+For **batch** migration of many legacy rules (`.cursor/rules`, `.cursorrules`),
+use `/rules-audit` first to produce an advisory plan.
 
 This command is **interactive and Socratic**. Do NOT skip steps, do NOT batch
 multiple skills in a single run, do NOT touch any file before the dev has
@@ -102,12 +106,13 @@ agent might be about to take.
    Read ai-specs/skills/skill-sync/SKILL.md
    ```
 
-2. Run `ai-specs sync`. The auto-invoke table in `AGENTS.md` should now
-   include the new skill's triggers through the root-supported workflow.
+2. Run `ai-specs sync`. The runtime-brief `AGENTS.md` should list the new skill
+   in its `<available_skills>` block and reflect project workflow context.
 
-3. Verify by grepping `AGENTS.md` for the new skill name. If it's missing,
-   the frontmatter is wrong (most likely missing `metadata.scope` or
-   `metadata.auto_invoke`) — fix and re-run `ai-specs sync`.
+3. Verify by grepping `AGENTS.md` for the new skill name and reading
+   `metadata.auto_invoke` in the skill frontmatter. If the skill is missing
+   from `AGENTS.md`, the frontmatter is wrong (most likely missing
+   `metadata.scope` or `metadata.auto_invoke`) — fix and re-run `ai-specs sync`.
 
 ---
 
@@ -116,7 +121,7 @@ agent might be about to take.
 Report back to the dev, briefly:
 
 - ✓ Skill creada: `ai-specs/skills/<name>/SKILL.md`
-- ✓ Auto-invoke registrado en `AGENTS.md`
+- ✓ Skill indexada en `AGENTS.md` (runtime brief)
 - 📦 Para commitear: `ai-specs/skills/<name>/` y `AGENTS.md`
 - 💡 Si querés formalizar otra convención, corré `/skills-as-rules` de nuevo
 
@@ -131,6 +136,6 @@ dev decide.
 - ❌ Crear varias skills en una sola corrida. Una skill por invocación.
 - ❌ Saltarte el paso interactivo y armar la skill por inferencia.
 - ❌ Frontmatter sin `metadata.scope` o `metadata.auto_invoke` — la skill no
-  va a aparecer en `AGENTS.md` y el dev se va a confundir.
+  entra al runtime brief ni se auto-carga bien; el dev se va a confundir.
 - ❌ Editar `AGENTS.md` a mano. Es regenerado. Siempre pasar por `skill-sync`.
 - ❌ Tomar decisiones de scope/triggers sin confirmar con el dev.

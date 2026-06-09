@@ -233,20 +233,18 @@ def merge_into_toml(target: Path, mcp_key: str, servers: dict) -> str:
     return "\n".join(out_lines).rstrip() + "\n"
 
 
-def _toml_value(v) -> str:
-    """Minimal TOML serializer for str/int/float/bool/list/dict-of-str."""
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return str(v)
-    if isinstance(v, str):
-        return json.dumps(v)  # JSON string ≅ TOML basic string
-    if isinstance(v, list):
-        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
-    if isinstance(v, dict):
-        inner = ", ".join(f"{k} = {_toml_value(val)}" for k, val in v.items())
-        return "{ " + inner + " }"
-    raise TypeError(f"cannot serialize {type(v).__name__} to TOML")
+def _load_toml_write():
+    module_path = Path(__file__).with_name("toml_write.py")
+    spec = importlib.util.spec_from_file_location("toml_write_internal", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load helper module at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Single source of truth for Python -> TOML literal serialization.
+_toml_value = _load_toml_write().toml_value
 
 
 def main() -> int:

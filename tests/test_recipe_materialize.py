@@ -799,5 +799,174 @@ class RuntimeHookMaterializeTests(unittest.TestCase):
         self.assertNotIn("worktrees_dir", env)
 
 
+class FragmentsToJsonTests(unittest.TestCase):
+    """Task 2.1 — RED: _fragments_to_json helper."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_frag_json")
+        # Load recipe_schema to build BriefFragment/BriefFragments objects
+        schema_path = ROOT / "lib" / "_internal" / "recipe_schema.py"
+        cls.schema = load_module(schema_path, "recipe_schema_frag_json")
+
+    def test_none_input_returns_empty_dict(self):
+        """_fragments_to_json(None) -> {}."""
+        result = self.mod._fragments_to_json(None)
+        self.assertEqual(result, {})
+
+    def test_only_workflow_rules_populated(self):
+        """BriefFragments with only workflow_rules -> {'workflow_rules': [{...}]}."""
+        bf = self.schema.BriefFragments(
+            workflow_rules=[self.schema.BriefFragment(text="Do X.")]
+        )
+        result = self.mod._fragments_to_json(bf)
+        self.assertIn("workflow_rules", result)
+        self.assertEqual(result["workflow_rules"], [{"key": None, "text": "Do X."}])
+
+    def test_key_set_in_output(self):
+        """BriefFragments with key set -> key appears in output dict."""
+        bf = self.schema.BriefFragments(
+            context_sources=[self.schema.BriefFragment(text="Context here.", key="foo")]
+        )
+        result = self.mod._fragments_to_json(bf)
+        self.assertIn("context_sources", result)
+        self.assertEqual(result["context_sources"], [{"key": "foo", "text": "Context here."}])
+
+    def test_none_sections_omitted(self):
+        """Sections with None value are omitted from output dict."""
+        bf = self.schema.BriefFragments(
+            workflow_rules=[self.schema.BriefFragment(text="Rule.")],
+            # all others default to None
+        )
+        result = self.mod._fragments_to_json(bf)
+        self.assertIn("workflow_rules", result)
+        # None sections should NOT appear
+        for section in ("runtime_flow", "context_sources", "conflict_policy",
+                        "useful_commands", "mcp_descriptions"):
+            self.assertNotIn(section, result, f"Expected {section} to be omitted")
+
+    def test_all_sections_populated(self):
+        """All sections populated -> all appear in output."""
+        bf = self.schema.BriefFragments(
+            runtime_flow=[self.schema.BriefFragment(text="Flow.")],
+            context_sources=[self.schema.BriefFragment(text="Ctx.", key="k1")],
+            conflict_policy=[self.schema.BriefFragment(text="Policy.")],
+            workflow_rules=[self.schema.BriefFragment(text="Rule.")],
+            useful_commands=[self.schema.BriefFragment(text="Cmd.")],
+            mcp_descriptions=[self.schema.BriefFragment(text="Desc.", key="srv")],
+        )
+        result = self.mod._fragments_to_json(bf)
+        self.assertEqual(len(result), 6)
+
+
+class BriefFragmentsMaterializeIntegrationTests(unittest.TestCase):
+    """Task 2.3 — RED: brief_fragments attached in both materialize paths."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_bf_integ")
+
+    def _make_recipe_with_brief(self, catalog: Path, rid: str, brief_toml: str = "") -> None:
+        """Create a minimal recipe.toml with optional [provides.brief] block."""
+        recipe_dir = catalog / rid
+        recipe_dir.mkdir(parents=True, exist_ok=True)
+        (recipe_dir / "recipe.toml").write_text(
+            f'[recipe]\n'
+            f'id = "{rid}"\n'
+            f'name = "{rid.title()}"\n'
+            f'description = "D"\n'
+            f'version = "1.0"\n'
+            f'{brief_toml}\n'
+        )
+
+    def _make_project(self, root: Path, rid: str, config_extra: str = "") -> None:
+        ai_specs = root / "ai-specs"
+        ai_specs.mkdir(parents=True, exist_ok=True)
+        (ai_specs / "ai-specs.toml").write_text(
+            "[project]\nname = 'fixture'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            f"[recipes.{rid}]\nenabled = true\nversion = \"1.0\"\n"
+            f"{config_extra}\n"
+        )
+
+    def test_materialize_attaches_brief_fragments_for_recipe_with_brief(self):
+        """materialize_recipes path: recipe with [provides.brief] -> resolved has brief_fragments."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            catalog = home / "catalog" / "recipes"
+            catalog.mkdir(parents=True)
+            self._make_recipe_with_brief(
+                catalog, "my-recipe",
+                '[provides.brief]\n'
+                'workflow_rules = ["Do not push to main directly."]\n'
+            )
+            project_root = Path(tmp) / "project"
+            self._make_project(project_root, "my-recipe")
+
+            resolved_out = project_root / "resolved.json"
+            result = self.mod.materialize_recipes(
+                project_root, home,
+                resolved_config_out=resolved_out
+            )
+            self.assertEqual(result, 0)
+            self.assertTrue(resolved_out.is_file())
+            data = json.loads(resolved_out.read_text())
+            recipe_entry = data["recipes"].get("my-recipe", {})
+            self.assertIn("brief_fragments", recipe_entry)
+            bf = recipe_entry["brief_fragments"]
+            self.assertIn("workflow_rules", bf)
+            self.assertEqual(bf["workflow_rules"][0]["text"], "Do not push to main directly.")
+            self.assertIsNone(bf["workflow_rules"][0]["key"])
+
+    def test_materialize_no_brief_fragments_key_absent_for_recipe_without_brief(self):
+        """materialize_recipes path: recipe without [provides.brief] -> brief_fragments absent or {}."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            catalog = home / "catalog" / "recipes"
+            catalog.mkdir(parents=True)
+            self._make_recipe_with_brief(catalog, "no-brief-recipe", "")
+            project_root = Path(tmp) / "project"
+            self._make_project(project_root, "no-brief-recipe")
+
+            resolved_out = project_root / "resolved.json"
+            result = self.mod.materialize_recipes(
+                project_root, home,
+                resolved_config_out=resolved_out
+            )
+            self.assertEqual(result, 0)
+            data = json.loads(resolved_out.read_text())
+            recipe_entry = data["recipes"].get("no-brief-recipe", {})
+            # brief_fragments should be absent or empty dict (both are acceptable)
+            bf = recipe_entry.get("brief_fragments", {})
+            self.assertEqual(bf, {})
+
+    def test_build_resolved_config_only_attaches_brief_fragments(self):
+        """build_resolved_config_only path: recipe with [provides.brief] -> brief_fragments in output."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            catalog = home / "catalog" / "recipes"
+            catalog.mkdir(parents=True)
+            self._make_recipe_with_brief(
+                catalog, "brief-recipe",
+                '[provides.brief]\n'
+                'workflow_rules = ["A rule from brief-recipe."]\n'
+            )
+            project_root = Path(tmp) / "project"
+            self._make_project(project_root, "brief-recipe")
+
+            resolved_out = project_root / "resolved.json"
+            result = self.mod.build_resolved_config_only(project_root, resolved_out, home)
+            self.assertEqual(result, 0)
+            data = json.loads(resolved_out.read_text())
+            recipe_entry = data["recipes"].get("brief-recipe", {})
+            self.assertIn("brief_fragments", recipe_entry)
+            bf = recipe_entry["brief_fragments"]
+            self.assertIn("workflow_rules", bf)
+            self.assertEqual(bf["workflow_rules"][0]["text"], "A rule from brief-recipe.")
+
+
 if __name__ == "__main__":
     unittest.main()

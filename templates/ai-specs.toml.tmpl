@@ -39,6 +39,10 @@ enabled = ["claude", "cursor", "opencode"]
 # enabled = true
 # version = "1.0.0"
 
+[recipes.session-context]
+enabled = true
+version = "2.0.0"
+
 # -----------------------------------------------------------------------------
 # Vendored skill dependencies — each [[deps]] entry is cloned by
 # `ai-specs sync` into ai-specs/skills/<id>/ (gitignored).
@@ -85,3 +89,21 @@ enabled = ["claude", "cursor", "opencode"]
 # args = ["-y", "@example/mcp-server"]
 # env = { API_KEY = "$EXAMPLE_API_KEY" }
 # timeout = 30000
+
+# -----------------------------------------------------------------------------
+# Runtime brief — project identity sections only.
+#
+# Behavioral sections (runtime_flow, context_sources, conflict_policy,
+# workflow_rules, useful_commands, mcp_descriptions) are contributed
+# automatically by enabled recipes via their [provides.brief] declarations.
+# You do NOT need to duplicate them here.
+#
+# To suppress recipe contributions for a section and use only your own prose,
+# add: <section>_mode = "replace" (e.g. workflow_rules_mode = "replace")
+#
+# [brief]
+# render = false   # opt out of managed AGENTS.md generation (default: true)
+# intro = """
+# One-paragraph description of this agent's role and context.
+# """
+# purpose = "One-line statement of this project's primary goal."

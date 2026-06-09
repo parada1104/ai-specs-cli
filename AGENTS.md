@@ -8,7 +8,7 @@
 
 - **Project**: `ai-specs-cli`
 - **Purpose**: per-project AI harness for agent configuration, MCPs, recipes, memory, and tracker integration.
-- **Enabled runtimes**: `claude`, `cursor`, `opencode`, `pi`, `omp`
+- **Enabled runtimes**: `claude`, `cursor`, `opencode`, `pi`
 - **Integration branch**: `development`
 - **Vault scope**: `nnodes/proyectos/ai-specs`
 
@@ -39,7 +39,6 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 
 ## Context Sources
 
-- Trello is the source of truth for work state and dependencies.
 - Specs and changes are tracked in the project's designated spec store (configurable per project).
 - Vault is the canonical note-taker for decisions, handoffs, and structured project context.
 - Engram is the operational memory layer for session facts, patterns, and short-lived continuity.
@@ -48,18 +47,12 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 
 ## Conflict Policy
 
-- Current explicit human instruction controls the immediate scope unless it conflicts with safety, secrets, or a higher-authority project rule.
-- Trello controls work state; Vault controls canonical decisions and handoffs; repo docs and manifests control versioned project contracts.
 - Skills define reusable procedures. Engram provides searchable operational context, not final authority.
 - Proposed agent plans are lowest authority until accepted and recorded in Trello, Vault, docs, or code.
 
 ## Workflow Rules
 
-- Do not merge or push to `development` without explicit human instruction.
-- Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.
-- Preserve unrelated worktree changes; never revert changes you did not make.
 - Follow the project's designated workflow for structured changes.
-- Before final verification, run the relevant focused tests plus `./tests/validate.sh` when feasible.
 - Direct `skill-sync` runs are allowed only for metadata validation.
 
 ## Useful Commands

@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -227,6 +228,110 @@ type = "string"
         manifest_text = (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
         self.assertIn('version = "2.0.0"', manifest_text)
         self.assertNotIn('version = "9.9.9"', manifest_text)
+
+
+    def test_boolean_default_serializes_as_lowercase_toml(self):
+        manifest = '[project]\nname = "test"\n'
+        recipe_toml = """[recipe]
+id = "my-recipe"
+name = "My Recipe"
+description = "Desc"
+version = "1.0.0"
+
+[config.auto_remove]
+required = false
+type = "boolean"
+default = true
+
+[config.dry_run]
+required = false
+type = "boolean"
+default = false
+"""
+        project = self._make_project(manifest)
+        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
+        rc = self.mod.add_recipe(project, "my-recipe")
+        self.assertEqual(rc, 0)
+
+        manifest_text = (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
+        self.assertIn("auto_remove = true", manifest_text)
+        self.assertIn("dry_run = false", manifest_text)
+        self.assertNotIn("True", manifest_text)
+        self.assertNotIn("False", manifest_text)
+
+    def test_list_default_serializes_as_valid_toml(self):
+        manifest = '[project]\nname = "test"\n'
+        recipe_toml = """[recipe]
+id = "my-recipe"
+name = "My Recipe"
+description = "Desc"
+version = "1.0.0"
+
+[config.tags]
+required = false
+type = "list"
+default = ["alpha", "beta"]
+"""
+        project = self._make_project(manifest)
+        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
+        rc = self.mod.add_recipe(project, "my-recipe")
+        self.assertEqual(rc, 0)
+
+        manifest_text = (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
+        self.assertIn('tags = ["alpha", "beta"]', manifest_text)
+
+    def test_manifest_remains_valid_toml_after_add_with_non_string_defaults(self):
+        manifest = '[project]\nname = "test"\n'
+        recipe_toml = """[recipe]
+id = "my-recipe"
+name = "My Recipe"
+description = "Desc"
+version = "1.0.0"
+
+[config.auto_remove]
+required = false
+type = "boolean"
+default = true
+
+[config.retries]
+required = false
+type = "integer"
+default = 3
+
+[config.tags]
+required = false
+type = "list"
+default = ["alpha", "beta"]
+"""
+        project = self._make_project(manifest)
+        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
+        rc = self.mod.add_recipe(project, "my-recipe")
+        self.assertEqual(rc, 0)
+
+        manifest_path = project / "ai-specs" / "ai-specs.toml"
+        with manifest_path.open("rb") as fh:
+            parsed = tomllib.load(fh)
+        cfg = parsed["recipes"]["my-recipe"]["config"]
+        self.assertEqual(cfg["auto_remove"], True)
+        self.assertEqual(cfg["retries"], 3)
+        self.assertEqual(cfg["tags"], ["alpha", "beta"])
+
+    def test_add_rolls_back_when_result_is_invalid_toml(self):
+        # A manifest already corrupted (e.g. by the old buggy serializer) must
+        # not be compounded: the post-write guard reverts and reports failure.
+        broken_manifest = '[project]\nname = "test"\n\n[recipes.old.config]\nflag = True\n'
+        recipe_toml = (
+            '[recipe]\nid = "my-recipe"\nname = "My Recipe"\n'
+            'description = "Desc"\nversion = "1.0.0"\n'
+        )
+        project = self._make_project(broken_manifest)
+        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
+        rc = self.mod.add_recipe(project, "my-recipe")
+        self.assertEqual(rc, 1)
+
+        manifest_text = (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
+        self.assertEqual(manifest_text, broken_manifest)
+        self.assertNotIn("[recipes.my-recipe]", manifest_text)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,19 @@ skills = [
   { id = "context-precedence", source = "bundled" },
 ]
 
+[provides.brief]
+workflow_rules = [
+    "A session works on one explicit user request or tracker card; resolve focus from memory and tracker before starting.",
+]
+
+[[provides.brief.conflict_policy]]
+key = "conflict-policy-source-authority"
+text = "Current explicit human instruction controls the immediate scope unless it conflicts with safety, secrets, or a higher-authority project rule."
+
+[[provides.brief.conflict_policy]]
+key = "conflict-policy-source-hierarchy"
+text = "Tracker controls work state; vault controls canonical decisions and handoffs; repo docs and manifests control versioned project contracts. Agent plans are lowest authority until accepted and recorded."
+
 [[provides.docs]]
 source = "README.md"
 target = "ai-specs/recipes/session-context/README.md"
