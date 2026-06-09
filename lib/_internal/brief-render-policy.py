@@ -2,7 +2,9 @@
 """Read [brief].render from ai-specs.toml — managed AGENTS.md opt-out policy.
 
 Usage:
-  brief-render-policy.py <toml_path>           → prints true/false, exit 0
+  brief-render-policy.py <toml_path>           → prints true/false, exit 0.
+    Non-boolean render values are treated as the default (enabled); this is
+    fail-safe so a typo never silently drops the brief for bash callers.
   brief-render-policy.py <toml_path> --validate  → exit 1 on invalid render type
 """
 
@@ -67,12 +69,20 @@ def main() -> int:
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1 if args.validate else 1
     except tomllib.TOMLDecodeError as exc:
+        # Must be caught before ValueError because TOMLDecodeError inherits
+        # from ValueError in Python's tomllib implementation.
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except ValueError as exc:
+        if args.validate:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        # Non-validate mode: treat an invalid render value as the default
+        # (render enabled). This is fail-safe — a typo must not silently
+        # suppress AGENTS.md for bash callers. The strict gate lives in
+        # --validate (and doctor reports it).
+        enabled = True
 
     if args.validate:
         # load_brief_render_enabled already validated boolean when present

@@ -710,6 +710,10 @@ class BriefRenderPolicyDoctorTests(unittest.TestCase):
             )
             self.assertIn("WARN", result.stdout)
             self.assertIn("brief-fragments-unused", result.stdout)
+            # S2: Also assert the INFO brief-render signal is emitted alongside
+            # the WARN so a future regression dropping INFO is caught.
+            self.assertIn("INFO", result.stdout)
+            self.assertIn("brief-render", result.stdout)
 
 
 def _find_files(root: Path):
