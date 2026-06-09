@@ -83,14 +83,21 @@ glab mr create --source-branch <branch-name> --target-branch <base_branch> --tit
 glab mr merge <mr-number> --squash --yes --remove-source-branch
 ```
 
-7. After the MR is merged, remove the worktree and delete the local branch.
-   Use the absolute worktree path (the agent may be running inside the worktree
-   itself, so a relative path like `.worktrees/<branch-name>` is unreliable):
+7. After the MR is merged, navigate to the main repo root first (the agent may
+   be running inside the worktree, and removing it while `$PWD` points there
+   causes `fatal: Unable to read current working directory`). Then remove the
+   worktree and force-delete the local branch:
 
 ```bash
+cd <main-repo-root>
 git worktree remove <absolute-path-to-worktree>
-git branch -d <branch-name>
+git branch -D <branch-name>
 ```
+
+> **Note**: `git branch -D` (capital D) is required because `glab mr merge --squash`
+> rewrites history — the feature branch commits are not ancestors of the target
+> branch, so `git branch -d` would refuse with "not fully merged". Force-delete
+> is safe here because the MR was already merged.
 
 8. Sync the integration branch:
 
