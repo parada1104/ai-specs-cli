@@ -230,6 +230,15 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
         merge_line = self.skill_text[merge_pos:self.skill_text.find("\n", merge_pos)]
         self.assertIn("--yes", merge_line)
 
+    def test_skill_merge_pins_approved_sha(self):
+        """Skill captures and pins the approved MR head SHA before merging."""
+        self.assertIn("APPROVED_SHA", self.skill_text)
+        self.assertIn("glab mr view", self.skill_text)
+        merge_pos = self.skill_text.find("glab mr merge")
+        self.assertGreater(merge_pos, 0, "Skill must contain glab mr merge")
+        merge_line = self.skill_text[merge_pos:self.skill_text.find("\n", merge_pos)]
+        self.assertIn("--sha", merge_line)
+
     def test_skill_worktree_cleanup_uses_absolute_path(self):
         """Skill worktree cleanup does not assume cwd is repo root."""
         self.assertNotIn(
@@ -270,16 +279,10 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("--description", self.command_text)
         self.assertIn("--yes", self.command_text)
 
-    def test_command_merge_removes_source_branch(self):
-        """Command merge command includes --remove-source-branch."""
-        self.assertIn("--remove-source-branch", self.command_text)
-
-    def test_command_merge_uses_yes_flag(self):
-        """Command merge command includes --yes to skip interactive prompt."""
-        merge_pos = self.command_text.find("glab mr merge")
-        self.assertGreater(merge_pos, 0, "Command must contain glab mr merge")
-        merge_line = self.command_text[merge_pos:self.command_text.find("\n", merge_pos)]
-        self.assertIn("--yes", merge_line)
+    def test_command_does_not_include_merge(self):
+        """Command is create-only and does not include merge steps."""
+        self.assertNotIn("glab mr merge", self.command_text)
+        self.assertNotIn("--remove-source-branch", self.command_text)
 
     def test_command_does_not_use_fill(self):
         """Command does not use --fill (implicit push is forbidden)."""
@@ -427,6 +430,87 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
             self.command_text,
             "Command must explicitly say not to merge after MR creation"
         )
+
+
+class GitlabMrFlowDualProviderTests(unittest.TestCase):
+    """End-to-end dual provider materialization with explicit bindings."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_gitlab_dual")
+        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_gitlab_dual")
+
+    def _make_dual_project(self, binding_recipe: str) -> Path:
+        """Create a project with both git-pr-flow and gitlab-mr-flow enabled, with explicit binding."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        ai_specs = root / "ai-specs"
+        ai_specs.mkdir()
+        (ai_specs / "skills").mkdir()
+        (ai_specs / "commands").mkdir()
+        
+        # Read versions from both recipes
+        with (CATALOG / "git-pr-flow" / "recipe.toml").open("rb") as fh:
+            github_version = tomllib.load(fh)["recipe"]["version"]
+        with (CATALOG / "gitlab-mr-flow" / "recipe.toml").open("rb") as fh:
+            gitlab_version = tomllib.load(fh)["recipe"]["version"]
+        
+        manifest = ai_specs / "ai-specs.toml"
+        manifest.write_text(
+            "[project]\nname = 'dual-fixture'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            f'[recipes.git-pr-flow]\nenabled = true\nversion = "{github_version}"\n\n'
+            f'[recipes.gitlab-mr-flow]\nenabled = true\nversion = "{gitlab_version}"\n\n'
+            f'[[bindings]]\ncapability = "vcs-pr-flow"\nrecipe = "{binding_recipe}"\n'
+        )
+        return root
+
+    def test_dual_provider_gitlab_bound_materializes_both(self):
+        """When bound to gitlab-mr-flow, both recipes materialize their assets (different IDs)."""
+        root = self._make_dual_project("gitlab-mr-flow")
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        
+        # GitLab assets should exist
+        gitlab_skill = (
+            root / "ai-specs" / ".recipe" / "gitlab-mr-flow"
+            / "skills" / "gitlab-merge-workflow" / "SKILL.md"
+        )
+        gitlab_cmd = root / "ai-specs" / "commands" / "mr-create.md"
+        self.assertTrue(gitlab_skill.is_file(), f"missing gitlab skill at {gitlab_skill}")
+        self.assertTrue(gitlab_cmd.is_file(), f"missing gitlab command at {gitlab_cmd}")
+        
+        # GitHub assets should also exist (different IDs, no conflict)
+        github_skill = (
+            root / "ai-specs" / ".recipe" / "git-pr-flow"
+            / "skills" / "git-merge-workflow" / "SKILL.md"
+        )
+        github_cmd = root / "ai-specs" / "commands" / "pr-create.md"
+        self.assertTrue(github_skill.is_file(), f"missing github skill at {github_skill}")
+        self.assertTrue(github_cmd.is_file(), f"missing github command at {github_cmd}")
+
+    def test_dual_provider_github_bound_materializes_both(self):
+        """When bound to git-pr-flow, both recipes materialize their assets (different IDs)."""
+        root = self._make_dual_project("git-pr-flow")
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        
+        # GitHub assets should exist
+        github_skill = (
+            root / "ai-specs" / ".recipe" / "git-pr-flow"
+            / "skills" / "git-merge-workflow" / "SKILL.md"
+        )
+        github_cmd = root / "ai-specs" / "commands" / "pr-create.md"
+        self.assertTrue(github_skill.is_file(), f"missing github skill at {github_skill}")
+        self.assertTrue(github_cmd.is_file(), f"missing github command at {github_cmd}")
+        
+        # GitLab assets should also exist (different IDs, no conflict)
+        gitlab_skill = (
+            root / "ai-specs" / ".recipe" / "gitlab-mr-flow"
+            / "skills" / "gitlab-merge-workflow" / "SKILL.md"
+        )
+        gitlab_cmd = root / "ai-specs" / "commands" / "mr-create.md"
+        self.assertTrue(gitlab_skill.is_file(), f"missing gitlab skill at {gitlab_skill}")
+        self.assertTrue(gitlab_cmd.is_file(), f"missing gitlab command at {gitlab_cmd}")
 
 
 if __name__ == "__main__":

@@ -66,19 +66,13 @@ the runtime brief (`AGENTS.md`) for any provider/branch context it declares.
 
 7. STOP. Do not merge. Report the MR URL and wait for explicit user approval.
 
-8. Merge ONLY after the user explicitly approves and required checks/review pass:
-
-   ```bash
-   glab mr merge <mr-number> --squash --yes --remove-source-branch
-   ```
+For the full merge workflow (approval → merge with SHA pinning → cleanup), see the `gitlab-merge-workflow` skill.
 
 ## Guardrails
 
-- Never push, create, or merge an MR without explicit user instruction.
-- Never merge locally with `git merge` for feature work that should go through an MR.
+- Never push or create an MR without explicit user instruction.
 - Preserve unrelated changes; stop and ask if any step would touch them.
 - Never use implicit push options on `glab mr create` — always push explicitly before creating the MR.
-- Never use options that merge without explicit user approval.
 - If `glab` is unavailable or unauthenticated, stop with the exact blocker before pushing or creating an MR.
 
 See the bundled `gitlab-merge-workflow` skill for the complete workflow and cleanup steps.

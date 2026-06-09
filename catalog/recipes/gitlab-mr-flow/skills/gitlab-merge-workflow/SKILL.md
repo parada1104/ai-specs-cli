@@ -77,13 +77,21 @@ glab mr create --source-branch <branch-name> --target-branch <base_branch> --tit
 
 5. STOP. Do not merge. Report the MR URL and wait for explicit user approval.
 
-6. Merge only after explicit user approval and required checks/review:
+6. Before merging, capture the approved MR head SHA to prevent merging unreviewed commits:
 
 ```bash
-glab mr merge <mr-number> --squash --yes --remove-source-branch
+APPROVED_SHA=$(glab mr view <mr-number> --output json | jq -r '.sha')
 ```
 
-7. After the MR is merged, navigate to the main repo root first (the agent may
+7. Merge only after explicit user approval and required checks/review, pinning the approved SHA:
+
+```bash
+glab mr merge <mr-number> --squash --yes --remove-source-branch --sha $APPROVED_SHA
+```
+
+> **Note**: The `--sha` flag ensures that only the reviewed commit is merged. If the branch was updated between approval and merge, the command will fail, preventing unreviewed commits from being merged.
+
+8. After the MR is merged, navigate to the main repo root first (the agent may
    be running inside the worktree, and removing it while `$PWD` points there
    causes `fatal: Unable to read current working directory`). Then remove the
    worktree and force-delete the local branch:
@@ -99,7 +107,7 @@ git branch -D <branch-name>
 > branch, so `git branch -d` would refuse with "not fully merged". Force-delete
 > is safe here because the MR was already merged.
 
-8. Sync the integration branch:
+9. Sync the integration branch:
 
 ```bash
 git checkout <base_branch>
