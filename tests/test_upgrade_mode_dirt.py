@@ -67,18 +67,32 @@ def _make_fake_install(home: Path, version: str = "1.0.0"):
     local_bin_link = local_bin / "ai-specs"
     local_bin_link.symlink_to(bin_dir / "ai-specs")
 
-    # Init git repo (core.fileMode=true so mode bits count)
-    run(["git", "init"], cwd=ai_specs)
+    # Init git repo with a deterministic branch name (main) regardless of the
+    # system's init.defaultBranch setting.  Try --initial-branch first (git
+    # 2.28+); fall back to renaming the default branch for older git versions.
+    try:
+        run(["git", "init", "--initial-branch=main"], cwd=ai_specs)
+    except subprocess.CalledProcessError:
+        run(["git", "init"], cwd=ai_specs)
+        # Rename whatever default branch was created to "main"
+        try:
+            run(["git", "symbolic-ref", "HEAD", "refs/heads/main"], cwd=ai_specs)
+        except subprocess.CalledProcessError:
+            run(["git", "branch", "-m", "main"], cwd=ai_specs)
+
     run(["git", "config", "user.email", "test@test.com"], cwd=ai_specs)
     run(["git", "config", "user.name", "Test"], cwd=ai_specs)
     run(["git", "config", "core.fileMode", "true"], cwd=ai_specs)
     run(["git", "add", "."], cwd=ai_specs)
     run(["git", "commit", "-m", "init"], cwd=ai_specs)
 
-    # Bare remote
+    # Bare remote (also pin to main for the same reason)
     bare = home / "origin.git"
     bare.mkdir()
-    run(["git", "init", "--bare"], cwd=bare)
+    try:
+        run(["git", "init", "--bare", "--initial-branch=main"], cwd=bare)
+    except subprocess.CalledProcessError:
+        run(["git", "init", "--bare"], cwd=bare)
     run(["git", "remote", "add", "origin", str(bare)], cwd=ai_specs)
     run(["git", "push", "-u", "origin", "main"], cwd=ai_specs)
 
@@ -304,6 +318,38 @@ class InstallModeOnlyDirtTests(unittest.TestCase):
             f"stdout: {result.stdout}\nstderr: {result.stderr}",
         )
 
+    def test_install_sh_tree_is_clean_after_mode_only_remediation(self):
+        """
+        After install.sh remediates mode-only dirt, the working tree must be
+        clean (mirrors the upgrade.sh equivalent assertion).
+        """
+        home = self.fake_home()
+        ai_specs, bare = _make_fake_install(home)
+        env = self._make_install_env(home, ai_specs, bare)
+
+        _apply_chmod_to_tracked_file(ai_specs, "lib/dummy.sh")
+
+        result = run(
+            ["bash", str(ai_specs / "install.sh")],
+            env=env,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"install.sh should succeed on mode-only dirt.\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}",
+        )
+
+        status_after = run(
+            ["git", "status", "--porcelain"], cwd=ai_specs, check=True
+        )
+        self.assertEqual(
+            status_after.stdout.strip(),
+            "",
+            "Working tree must be clean after install.sh mode-only remediation.",
+        )
+
     def test_install_sh_content_dirt_still_blocks(self):
         """
         install.sh must still exit 1 when there is a real content change.
@@ -324,6 +370,59 @@ class InstallModeOnlyDirtTests(unittest.TestCase):
             result.returncode,
             0,
             msg="install.sh must abort on real content changes.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Mode-only dirt + untracked file → upgrade ABORTS (restore not triggered)
+# ---------------------------------------------------------------------------
+class UpgradeModeOnlyDirtPlusUntrackedTests(unittest.TestCase):
+    """
+    When there is mode-only dirt on tracked files AND an untracked file,
+    the upgrade must abort (exit != 0).  The restore-and-continue path
+    must NOT be taken, and the untracked file must remain untouched.
+
+    This pins the restore condition so it cannot be accidentally widened to
+    cover untracked files.
+    """
+
+    def fake_home(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name)
+
+    def _run_upgrade(self, env, args=None):
+        script = Path(env["AI_SPECS_HOME"]) / "lib" / "upgrade.sh"
+        cmd = ["bash", str(script)] + (args or [])
+        return run(cmd, env=env, check=False)
+
+    def test_mode_dirt_plus_untracked_file_aborts_upgrade(self):
+        """
+        upgrade.sh must abort when there is mode-only dirt AND an untracked
+        file.  The untracked file must still be present after the abort.
+        """
+        home = self.fake_home()
+        ai_specs, _ = _make_fake_install(home)
+        env = _make_env(home)
+
+        # Mode-only dirt (tracked 100644 file chmod'd)
+        _apply_chmod_to_tracked_file(ai_specs, "lib/dummy.sh")
+
+        # Add an untracked file on top of the mode-only dirt
+        untracked = ai_specs / "lib" / "untracked_file.sh"
+        untracked.write_text("# untracked\n")
+
+        result = self._run_upgrade(env)
+
+        self.assertNotEqual(
+            result.returncode,
+            0,
+            msg="upgrade.sh must abort when mode-only dirt is combined with an "
+            f"untracked file.\nstdout: {result.stdout}\nstderr: {result.stderr}",
+        )
+        self.assertTrue(
+            untracked.exists(),
+            "Untracked file must remain untouched when upgrade aborts.",
         )
 
 

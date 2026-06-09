@@ -48,7 +48,10 @@ if [ -d "$AI_SPECS_HOME/.git" ]; then
     if [ -n "$(git -C "$AI_SPECS_HOME" status --porcelain 2>/dev/null)" ]; then
         if [ -z "$(git -C "$AI_SPECS_HOME" -c core.fileMode=false status --porcelain 2>/dev/null)" ]; then
             echo "Restoring file modes altered by a previous installer..." >&2
-            git -C "$AI_SPECS_HOME" checkout -- . 2>/dev/null
+            git -C "$AI_SPECS_HOME" checkout -- . || {
+                echo -e "${RED}error: could not restore file modes at $AI_SPECS_HOME${NC}" >&2
+                exit 1
+            }
         else
             echo -e "${RED}error: working tree at $AI_SPECS_HOME has uncommitted changes${NC}" >&2
             echo ""
