@@ -59,15 +59,28 @@ If authentication fails, stop and report:
 
 > **Blocker**: `glab` is not authenticated. Run `glab auth login` and retry.
 
+Then verify `jq` is available (required for SHA pinning during merge):
+
+```bash
+command -v jq
+```
+
+If `jq` is not found, stop and report:
+
+> **Blocker**: `jq` is not installed. Install it from https://jqlang.github.io/jq/download/ and retry.
+
 ## Workflow
 
 1. Inspect current branch, worktree path, and `git status`.
 2. Run or confirm any verification required before merge.
-3. Push the feature branch explicitly:
+3. Resolve the GitLab remote and push the feature branch explicitly:
 
 ```bash
-git push -u origin <branch-name>
+REMOTE=$(git remote | grep -E '^(origin|gitlab|upstream)$' | head -1 || echo "origin")
+git push -u $REMOTE <branch-name>
 ```
+
+> **Note**: The remote is resolved dynamically to support repos where the GitLab remote is named `gitlab` or `upstream` instead of `origin`. Falls back to `origin` if no known name matches.
 
 4. Create a merge request with the configured base branch:
 
@@ -77,20 +90,37 @@ glab mr create --source-branch <branch-name> --target-branch <base_branch> --tit
 
 5. STOP. Do not merge. Report the MR URL and wait for explicit user approval.
 
-6. Merge only after explicit user approval and required checks/review:
+6. Before merging, capture the approved MR head SHA to prevent merging unreviewed commits:
 
 ```bash
-glab mr merge <mr-number> --squash
+APPROVED_SHA=$(glab mr view <mr-number> --output json | jq -r '.sha')
 ```
 
-7. After the MR is merged, remove the worktree and delete the local branch:
+7. Merge only after explicit user approval and required checks/review, pinning the approved SHA:
 
 ```bash
-git worktree remove .worktrees/<branch-name>
-git branch -d <branch-name>
+glab mr merge <mr-number> --squash --yes --remove-source-branch --sha $APPROVED_SHA
 ```
 
-8. Sync the integration branch:
+> **Note**: The `--sha` flag ensures that only the reviewed commit is merged. If the branch was updated between approval and merge, the command will fail, preventing unreviewed commits from being merged.
+
+8. After the MR is merged, navigate to the main repo root first (the agent may
+   be running inside the worktree, and removing it while `$PWD` points there
+   causes `fatal: Unable to read current working directory`). Then remove the
+   worktree and force-delete the local branch:
+
+```bash
+cd <main-repo-root>
+git worktree remove <absolute-path-to-worktree>
+git branch -D <branch-name>
+```
+
+> **Note**: `git branch -D` (capital D) is required because `glab mr merge --squash`
+> rewrites history — the feature branch commits are not ancestors of the target
+> branch, so `git branch -d` would refuse with "not fully merged". Force-delete
+> is safe here because the MR was already merged.
+
+9. Sync the integration branch:
 
 ```bash
 git checkout <base_branch>

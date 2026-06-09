@@ -13,13 +13,13 @@
 
 ## Phase 3: Skill and Command Golden Content
 
-- [x] 3.1 RED: add golden text checks in `tests/test_gitlab_mr_flow_recipe.py` for `command -v glab`, `glab auth status`, explicit `git push -u origin`, `glab mr create --source-branch --target-branch --title --description --yes`, and no `--fill`/auto-merge.
-- [x] 3.2 GREEN: write `catalog/recipes/gitlab-mr-flow/skills/gitlab-merge-workflow/SKILL.md` with MR creation, verification evidence, approval-gated merge, cleanup, and blockers.
-- [x] 3.3 GREEN: write `catalog/recipes/gitlab-mr-flow/commands/mr-create.md` as thin MR creation only; stop after MR URL.
-- [x] 3.4 REFACTOR: tighten wording against the spec scenarios; rerun focused tests.
+- [x] 3.1 RED: golden text checks for SKILL.md and mr-create.md content.
+- [x] 3.2 GREEN: SKILL.md with full MR workflow (preflight, push, MR create, merge, cleanup).
+- [x] 3.3 GREEN: mr-create.md command content (preflight → push → MR create → STOP).
+- [x] 3.4 REFACTOR: tighten wording, 27/27 tests passing.
 
 ## Phase 4: Docs and Verification
 
-- [ ] 4.1 RED: extend `tests/test_recipes_catalog.py` or docs contract tests for `gitlab-mr-flow` catalog and `vcs-pr-flow` provider wording.
-- [ ] 4.2 GREEN: write `catalog/recipes/gitlab-mr-flow/README.md`; update `docs/recipes-catalog.md` and `docs/capabilities.md` with enablement, binding, prerequisites, explicit push, and no auto-merge policy.
-- [ ] 4.3 REFACTOR: verify docs link paths and terminology; run `./tests/run.sh` then `./tests/validate.sh` and record RED/GREEN evidence.
+- [x] 4.1 RED: extend `tests/test_recipes_catalog.py` with docs contract tests for `gitlab-mr-flow` catalog and `vcs-pr-flow` provider wording.
+- [x] 4.2 GREEN: write `catalog/recipes/gitlab-mr-flow/README.md`; update `docs/recipes-catalog.md` and `docs/capabilities.md` with enablement, binding, prerequisites, explicit push, and no auto-merge policy.
+- [x] 4.3 REFACTOR: verify docs link paths and terminology; run `./tests/run.sh` then `./tests/validate.sh` and record RED/GREEN evidence.
