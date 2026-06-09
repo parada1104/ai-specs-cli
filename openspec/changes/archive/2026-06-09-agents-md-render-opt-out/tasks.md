@@ -227,6 +227,6 @@ Estimated batch count: **7**
 
 ## Apply checklist (post-tasks)
 
-- [ ] Merge delta specs into `openspec/specs/` at archive time
+- [x] Merge delta specs into `openspec/specs/` at archive time
 - [ ] Trello #18 → In Progress during apply, Review after PR
 - [x] No dogfood change to ai-specs-cli `[brief]` unless explicitly requested

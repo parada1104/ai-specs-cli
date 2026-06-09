@@ -270,7 +270,7 @@ def brief_render_enabled(manifest: dict) -> bool:
     return brief.get("render", True) is not False  # only explicit false disables
 ```
 
-Use strict boolean: non-boolean values → doctor WARN, treat as true (safe default) or render-time error (stricter — prefer doctor at sync time).
+Use strict boolean: non-boolean values → doctor ERROR at `ai-specs sync` time via materialize validation.
 
 ---
 
