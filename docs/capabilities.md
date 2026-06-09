@@ -24,7 +24,7 @@ through the manifest.
 | `tracker` | Work-state tracking (cards/issues, status, dependencies) | `trello-mcp-workflow`; future `jira-*`, `github-issues-*` |
 | `memory` | Operational/session memory (searchable continuity) | the gentle-ai stack (Engram) |
 | `canonical-store` | Durable decisions and handoffs | `vault-canonical-store`; future `notion-*` |
-| `vcs-pr-flow` | Branch → PR/MR → review → merge | `git-pr-flow` (GitHub/gh); future `gitlab-*` |
+| `vcs-pr-flow` | Branch → PR/MR → review → merge | `git-pr-flow` (GitHub/gh), `gitlab-mr-flow` (GitLab/glab) |
 | `test-runner` | Red-green-refactor discipline with a project test command | `tdd-flow` |
 | `worktree-isolation` | Per-change git worktrees + post-merge cleanup | `worktree-flow` |
 
