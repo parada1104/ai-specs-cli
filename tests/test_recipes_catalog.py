@@ -84,5 +84,109 @@ class RecipesCatalogDriftTests(unittest.TestCase):
         return match.group(1)
 
 
+CAPABILITIES_DOC = ROOT / "docs" / "capabilities.md"
+
+
+class GitlabMrFlowDocsContractTests(unittest.TestCase):
+    """Phase 4: docs contract tests for gitlab-mr-flow."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.catalog = CATALOG_DOC.read_text()
+        cls.capabilities = CAPABILITIES_DOC.read_text()
+        cls.readme_path = RECIPES_DIR / "gitlab-mr-flow" / "README.md"
+        cls.readme_text = cls.readme_path.read_text() if cls.readme_path.is_file() else ""
+
+    # --- README exists and has real content ---
+
+    def test_readme_exists(self):
+        """catalog/recipes/gitlab-mr-flow/README.md exists."""
+        self.assertTrue(self.readme_path.is_file(), "gitlab-mr-flow README.md must exist")
+
+    def test_readme_is_not_placeholder(self):
+        """README has real content, not a placeholder."""
+        self.assertNotIn("Placeholder", self.readme_text,
+                         "README must not contain placeholder text")
+
+    def test_readme_has_overview(self):
+        """README describes what gitlab-mr-flow provides."""
+        self.assertIn("GitLab", self.readme_text)
+        self.assertIn("merge request", self.readme_text.lower())
+
+    def test_readme_has_prerequisites(self):
+        """README documents glab CLI as a prerequisite."""
+        self.assertIn("glab", self.readme_text)
+
+    def test_readme_has_config_table(self):
+        """README documents provider and base_branch config fields."""
+        self.assertIn("provider", self.readme_text)
+        self.assertIn("base_branch", self.readme_text)
+
+    def test_readme_documents_vcs_pr_flow_capability(self):
+        """README declares the vcs-pr-flow capability."""
+        self.assertIn("vcs-pr-flow", self.readme_text)
+
+    def test_readme_has_safety_note(self):
+        """README includes a safety note about explicit push/merge."""
+        self.assertIn("Safety", self.readme_text)
+        self.assertIn("explicit", self.readme_text.lower())
+
+    def test_readme_references_sibling_git_pr_flow(self):
+        """README cross-links to git-pr-flow for GitHub users."""
+        self.assertIn("git-pr-flow", self.readme_text)
+
+    # --- recipes-catalog.md section ---
+
+    def test_catalog_has_gitlab_mr_flow_section(self):
+        """recipes-catalog.md has a ## gitlab-mr-flow section."""
+        pattern = r"## gitlab-mr-flow\n"
+        self.assertRegex(self.catalog, pattern,
+                         "recipes-catalog.md must have a ## gitlab-mr-flow section")
+
+    def test_catalog_at_a_glance_includes_gitlab_mr_flow(self):
+        """The 'At a glance' table has a row for gitlab-mr-flow."""
+        self.assertIn("gitlab-mr-flow", self.catalog)
+        # Check it appears in the At a glance table area (between ## At a glance and ---)
+        glance_start = self.catalog.find("## At a glance")
+        self.assertGreater(glance_start, 0, "At a glance section must exist")
+        glance_end = self.catalog.find("\n---\n", glance_start)
+        table_section = self.catalog[glance_start:glance_end] if glance_end > 0 else self.catalog[glance_start:]
+        self.assertIn("gitlab-mr-flow", table_section,
+                       "gitlab-mr-flow must appear in the At a glance table")
+
+    def test_catalog_section_has_config_table(self):
+        """The catalog section documents provider and base_branch."""
+        section = self._recipe_section("gitlab-mr-flow")
+        self.assertIn("provider", section)
+        self.assertIn("base_branch", section)
+
+    def test_catalog_section_links_readme(self):
+        """The catalog section links to the full README."""
+        section = self._recipe_section("gitlab-mr-flow")
+        self.assertIn("README.md", section)
+
+    def test_catalog_section_mentions_no_mcp(self):
+        """The catalog section notes that gitlab-mr-flow installs no MCP server."""
+        section = self._recipe_section("gitlab-mr-flow")
+        self.assertIn("—", section)  # em-dash in "Installs MCP" column = "—"
+
+    def test_catalog_section_cross_links_git_pr_flow(self):
+        """The catalog section cross-links to git-pr-flow for GitHub users."""
+        section = self._recipe_section("gitlab-mr-flow")
+        self.assertIn("git-pr-flow", section)
+
+    # --- capabilities.md ---
+
+    def test_capabilities_mentions_gitlab_mr_flow_as_provider(self):
+        """capabilities.md lists gitlab-mr-flow as a vcs-pr-flow provider."""
+        self.assertIn("gitlab-mr-flow", self.capabilities)
+
+    def _recipe_section(self, recipe_id: str) -> str:
+        pattern = rf"## {re.escape(recipe_id)}\n(.*?)(?=\n## |\Z)"
+        match = re.search(pattern, self.catalog, re.DOTALL)
+        self.assertIsNotNone(match, f"missing ## {recipe_id} section")
+        return match.group(1)
+
+
 if __name__ == "__main__":
     unittest.main()

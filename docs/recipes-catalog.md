@@ -38,6 +38,7 @@ never touches the foundational layer.
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Foundational | Branch → PR → approval-gated merge | `vcs-pr-flow` | — | `provider`, `base_branch` |
+| [`gitlab-mr-flow`](#gitlab-mr-flow) | Foundational | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `provider`, `base_branch` |
 | [`trello-mcp-workflow`](#trello-mcp-workflow) | Specific | Trello board integration (tracker) | `tracker` (+ 4 trello-* capabilities) | `trello` | **`board_id` (required)**, `default_list`, `epic_list` |
 | [`vault-canonical-store`](#vault-canonical-store) | Specific | Durable decisions/handoffs in a vault MCP | `canonical-store` | `vault-canonical` | `vault_scope`, `decisions_folder`, `sessions_folder` |
 
@@ -150,6 +151,36 @@ version = "1.1.0"
 
 [recipes.git-pr-flow.config]
 provider = "github"
+base_branch = "development"
+```
+
+## gitlab-mr-flow
+
+**Provider-oriented branch → MR → merge flow (GitLab).** Pushes the branch,
+opens a merge request against the configured base, and merges *only* after
+explicit user approval — never a local `git merge` for MR work. Defaults to
+GitLab via the `glab` CLI. Sibling recipe of [`git-pr-flow`](#git-pr-flow);
+both provide `vcs-pr-flow`, so a project selects one through `[[bindings]]`.
+Installs no MCP server.
+
+- **Provides:** skill `gitlab-merge-workflow`, command `/mr-create`; capability
+  `vcs-pr-flow`.
+- **Config:**
+
+  | Key | Type | Required | Default | Description |
+  |-----|------|----------|---------|-------------|
+  | `provider` | string | no | `gitlab` | VCS/MR provider. `gitlab` (via `glab` CLI) is the only implemented provider. |
+  | `base_branch` | string | no | `development` | Base branch the MR targets. |
+
+- **Full README:** [`catalog/recipes/gitlab-mr-flow/README.md`](../catalog/recipes/gitlab-mr-flow/README.md)
+
+```toml
+[recipes.gitlab-mr-flow]
+enabled = true
+version = "1.0.0"
+
+[recipes.gitlab-mr-flow.config]
+provider = "gitlab"
 base_branch = "development"
 ```
 
