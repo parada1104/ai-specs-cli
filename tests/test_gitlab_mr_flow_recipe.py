@@ -183,5 +183,100 @@ class GitlabMrFlowBindingTests(unittest.TestCase):
             self.assertEqual(bindings.get("vcs-pr-flow"), "gitlab-mr-flow")
 
 
+class GitlabMrFlowGoldenContentTests(unittest.TestCase):
+    """Phase 3: golden text checks for skill and command content."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.skill_path = (
+            CATALOG / RECIPE_ID / "skills" / "gitlab-merge-workflow" / "SKILL.md"
+        )
+        cls.command_path = CATALOG / RECIPE_ID / "commands" / "mr-create.md"
+        cls.skill_text = cls.skill_path.read_text()
+        cls.command_text = cls.command_path.read_text()
+
+    # --- Skill golden content ---
+
+    def test_skill_checks_glab_installed(self):
+        """Skill checks that glab is installed via command -v glab."""
+        self.assertIn("command -v glab", self.skill_text)
+
+    def test_skill_checks_glab_auth(self):
+        """Skill checks glab authentication via glab auth status."""
+        self.assertIn("glab auth status", self.skill_text)
+
+    def test_skill_uses_explicit_push(self):
+        """Skill uses explicit git push -u origin before MR creation."""
+        self.assertIn("git push -u origin", self.skill_text)
+
+    def test_skill_uses_glab_mr_create_with_required_flags(self):
+        """Skill creates MR with glab mr create and required flags."""
+        self.assertIn("glab mr create", self.skill_text)
+        self.assertIn("--source-branch", self.skill_text)
+        self.assertIn("--target-branch", self.skill_text)
+        self.assertIn("--title", self.skill_text)
+        self.assertIn("--description", self.skill_text)
+        self.assertIn("--yes", self.skill_text)
+
+    def test_skill_does_not_use_fill(self):
+        """Skill does not use --fill (implicit push is forbidden)."""
+        self.assertNotIn("--fill", self.skill_text)
+
+    def test_skill_does_not_auto_merge(self):
+        """Skill does not include auto-merge flags."""
+        self.assertNotIn("--merge-when-pipeline-succeeds", self.skill_text)
+        self.assertNotIn("auto-merge", self.skill_text.lower())
+
+    # --- Command golden content ---
+
+    def test_command_checks_glab_installed(self):
+        """Command checks that glab is installed via command -v glab."""
+        self.assertIn("command -v glab", self.command_text)
+
+    def test_command_checks_glab_auth(self):
+        """Command checks glab authentication via glab auth status."""
+        self.assertIn("glab auth status", self.command_text)
+
+    def test_command_uses_explicit_push(self):
+        """Command uses explicit git push -u origin before MR creation."""
+        self.assertIn("git push -u origin", self.command_text)
+
+    def test_command_uses_glab_mr_create_with_required_flags(self):
+        """Command creates MR with glab mr create and required flags."""
+        self.assertIn("glab mr create", self.command_text)
+        self.assertIn("--source-branch", self.command_text)
+        self.assertIn("--target-branch", self.command_text)
+        self.assertIn("--title", self.command_text)
+        self.assertIn("--description", self.command_text)
+        self.assertIn("--yes", self.command_text)
+
+    def test_command_does_not_use_fill(self):
+        """Command does not use --fill (implicit push is forbidden)."""
+        self.assertNotIn("--fill", self.command_text)
+
+    def test_command_does_not_auto_merge(self):
+        """Command does not include auto-merge flags."""
+        self.assertNotIn("--merge-when-pipeline-succeeds", self.command_text)
+        self.assertNotIn("auto-merge", self.command_text.lower())
+
+    def test_command_push_before_create_order(self):
+        """Command places git push before glab mr create."""
+        push_pos = self.command_text.find("git push -u origin")
+        create_pos = self.command_text.find("glab mr create")
+        self.assertGreater(
+            create_pos, push_pos,
+            "git push must appear before glab mr create in the command"
+        )
+
+    def test_skill_push_before_create_order(self):
+        """Skill places git push before glab mr create."""
+        push_pos = self.skill_text.find("git push -u origin")
+        create_pos = self.skill_text.find("glab mr create")
+        self.assertGreater(
+            create_pos, push_pos,
+            "git push must appear before glab mr create in the skill"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

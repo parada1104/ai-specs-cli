@@ -10,3 +10,16 @@
 - [x] 2.2 RED: add focused ambiguity/explicit-binding coverage in `tests/test_recipe_materialize.py` only if existing resolver tests do not cover dual `vcs-pr-flow` providers.
 - [x] 2.3 GREEN: add minimal recipe assets placeholders under `catalog/recipes/gitlab-mr-flow/` and, only if tests require it, adjust `lib/_internal/recipe-materialize.py` binding behavior.
 - [x] 2.4 REFACTOR: remove duplicated fixture setup between GitHub/GitLab recipe tests where practical; rerun `./tests/run.sh`.
+
+## Phase 3: Skill and Command Golden Content
+
+- [x] 3.1 RED: add golden text checks in `tests/test_gitlab_mr_flow_recipe.py` for `command -v glab`, `glab auth status`, explicit `git push -u origin`, `glab mr create --source-branch --target-branch --title --description --yes`, and no `--fill`/auto-merge.
+- [x] 3.2 GREEN: write `catalog/recipes/gitlab-mr-flow/skills/gitlab-merge-workflow/SKILL.md` with MR creation, verification evidence, approval-gated merge, cleanup, and blockers.
+- [x] 3.3 GREEN: write `catalog/recipes/gitlab-mr-flow/commands/mr-create.md` as thin MR creation only; stop after MR URL.
+- [x] 3.4 REFACTOR: tighten wording against the spec scenarios; rerun focused tests.
+
+## Phase 4: Docs and Verification
+
+- [ ] 4.1 RED: extend `tests/test_recipes_catalog.py` or docs contract tests for `gitlab-mr-flow` catalog and `vcs-pr-flow` provider wording.
+- [ ] 4.2 GREEN: write `catalog/recipes/gitlab-mr-flow/README.md`; update `docs/recipes-catalog.md` and `docs/capabilities.md` with enablement, binding, prerequisites, explicit push, and no auto-merge policy.
+- [ ] 4.3 REFACTOR: verify docs link paths and terminology; run `./tests/run.sh` then `./tests/validate.sh` and record RED/GREEN evidence.
