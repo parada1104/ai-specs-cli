@@ -63,6 +63,7 @@ GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 REFRESH_BUNDLED_PY="$AI_SPECS_HOME/lib/_internal/refresh-bundled.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
+BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
 SYNC_AGENT_SH="$AI_SPECS_HOME/lib/sync-agent.sh"
 
 PLAN_JSON="$(python3 "$TARGET_RESOLVE_PY" "$TARGET_PATH")" || {
@@ -113,7 +114,11 @@ trap 'rm -f "$RECIPE_MCP_TEMP" "$RESOLVED_CONFIG_TEMP" "$RESOLVED_HOOKS_TEMP"' E
 python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP" --resolved-hooks-out "$RESOLVED_HOOKS_TEMP"
 
 echo "▸ agents-render (root)"
-python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$ROOT_PATH/AGENTS.md" --preserve-if-runtime-brief --resolved-config "$RESOLVED_CONFIG_TEMP"
+if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
+    python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$ROOT_PATH/AGENTS.md" --preserve-if-runtime-brief --resolved-config "$RESOLVED_CONFIG_TEMP"
+else
+    echo "  · skipped AGENTS.md (brief.render = false)"
+fi
 
 echo "▸ target fan-out"
 for idx in "${!RESOLVED_TARGETS[@]}"; do
