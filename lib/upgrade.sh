@@ -164,9 +164,17 @@ else
 fi
 
 # Working tree cleanliness.
+# Mode-only dirt (chmod applied to 100644 files by a previous installer) is
+# auto-remediated: if the tree looks dirty under core.fileMode=true but clean
+# under core.fileMode=false, the diff is purely mode-bits — restore and continue.
+# Real content changes still abort (or proceed with --force).
 DIRTY_FILES="$(git status --porcelain)"
 if [[ -n "$DIRTY_FILES" ]]; then
-    if [[ "$FORCE" == false ]]; then
+    MODE_ONLY_DIRTY="$(git -c core.fileMode=false status --porcelain)"
+    if [[ -z "$MODE_ONLY_DIRTY" ]]; then
+        echo "Restoring file modes altered by a previous installer..." >&2
+        git checkout -- .
+    elif [[ "$FORCE" == false ]]; then
         abort "Working tree is dirty. Stash changes, clean the tree, or use --force.\n$DIRTY_FILES" 3
     else
         echo "Warning: working tree is dirty. Proceeding because --force was given." >&2

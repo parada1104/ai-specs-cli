@@ -41,15 +41,26 @@ command -v python3 >/dev/null 2>&1 || { echo -e "${RED}error: python3 is require
 if [ -d "$AI_SPECS_HOME/.git" ]; then
     echo -e "${YELLOW}[1/2]${NC} Updating existing install at $AI_SPECS_HOME"
 
-    # Detect dirty working tree before attempting any update
+    # Detect dirty working tree before attempting any update.
+    # Mode-only dirt (e.g. chmod applied to 100644 files by a previous installer)
+    # is auto-remediated: restore tracked modes and continue.  Real content
+    # changes still abort.
     if [ -n "$(git -C "$AI_SPECS_HOME" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${RED}error: working tree at $AI_SPECS_HOME has uncommitted changes${NC}" >&2
-        echo ""
-        echo -e "  ${BOLD}git -C $AI_SPECS_HOME status${NC}"
-        echo ""
-        echo "Resolve any modified, added, or deleted files before updating."
-        echo "You can stash changes with: git -C $AI_SPECS_HOME stash"
-        exit 1
+        if [ -z "$(git -C "$AI_SPECS_HOME" -c core.fileMode=false status --porcelain 2>/dev/null)" ]; then
+            echo "Restoring file modes altered by a previous installer..." >&2
+            git -C "$AI_SPECS_HOME" checkout -- . || {
+                echo -e "${RED}error: could not restore file modes at $AI_SPECS_HOME${NC}" >&2
+                exit 1
+            }
+        else
+            echo -e "${RED}error: working tree at $AI_SPECS_HOME has uncommitted changes${NC}" >&2
+            echo ""
+            echo -e "  ${BOLD}git -C $AI_SPECS_HOME status${NC}"
+            echo ""
+            echo "Resolve any modified, added, or deleted files before updating."
+            echo "You can stash changes with: git -C $AI_SPECS_HOME stash"
+            exit 1
+        fi
     fi
 
     git -C "$AI_SPECS_HOME" fetch --tags origin
@@ -77,11 +88,7 @@ else
     git clone --branch "$AI_SPECS_REF" "$AI_SPECS_REPO" "$AI_SPECS_HOME"
 fi
 
-chmod +x \
-    "$AI_SPECS_HOME/bin/ai-specs" \
-    "$AI_SPECS_HOME/lib/"*.sh \
-    "$AI_SPECS_HOME/lib/_internal/"*.py \
-    "$AI_SPECS_HOME/lib/_internal/"*.sh 2>/dev/null || true
+chmod +x "$AI_SPECS_HOME/bin/ai-specs"
 # Bundled skill scripts (shipped to projects via init)
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.sh 2>/dev/null || true
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.py 2>/dev/null || true
