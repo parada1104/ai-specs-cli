@@ -223,6 +223,46 @@ class BitbucketPrFlowDocsContractTests(unittest.TestCase):
         return match.group(1)
 
 
+class GitPrFlowDocsContractTests(unittest.TestCase):
+    """Docs contract tests for git-pr-flow — mirrors GitLab/Bitbucket symmetry."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.catalog = CATALOG_DOC.read_text()
+        cls.capabilities = CAPABILITIES_DOC.read_text()
+        cls.readme_path = RECIPES_DIR / "git-pr-flow" / "README.md"
+        cls.readme_text = cls.readme_path.read_text() if cls.readme_path.is_file() else ""
+
+    def test_readme_exists(self):
+        """catalog/recipes/git-pr-flow/README.md exists."""
+        self.assertTrue(self.readme_path.is_file(), "git-pr-flow README.md must exist")
+
+    def test_readme_has_config_table_without_provider(self):
+        """README documents base_branch config only (no provider key)."""
+        self.assertIn("base_branch", self.readme_text)
+        self.assertNotIn("| `provider`", self.readme_text)
+
+    def test_catalog_has_git_pr_flow_section(self):
+        """recipes-catalog.md has a ## git-pr-flow section."""
+        self.assertRegex(self.catalog, r"## git-pr-flow\n")
+
+    def test_catalog_section_has_base_branch_only(self):
+        """The catalog section documents base_branch only (no provider row)."""
+        section = self._recipe_section("git-pr-flow")
+        self.assertIn("base_branch", section)
+        self.assertNotIn("| `provider`", section)
+
+    def test_capabilities_mentions_git_pr_flow(self):
+        """capabilities.md lists git-pr-flow as a vcs-pr-flow provider."""
+        self.assertIn("git-pr-flow", self.capabilities)
+
+    def _recipe_section(self, recipe_id: str) -> str:
+        pattern = rf"## {re.escape(recipe_id)}\n(.*?)(?=\n## |\Z)"
+        match = re.search(pattern, self.catalog, re.DOTALL)
+        self.assertIsNotNone(match, f"missing ## {recipe_id} section")
+        return match.group(1)
+
+
 class VcsRecipesCatalogTierTests(unittest.TestCase):
     """VCS sibling recipes are documented as Specific tier."""
 
