@@ -1,12 +1,4 @@
-# vcs-pr-flow Specification: Multi-Provider VCS Flow
-
-## Purpose
-
-Provide provider-backed `vcs-pr-flow` recipes that mirror the same semantics across GitHub,
-GitLab, and Bitbucket: explicit branch pushes, review-gated merging, and worktree cleanup.
-The bound recipe id is the provider identity; only `base_branch` is configurable per project.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: VCS Sibling Recipe Manifests
 
@@ -35,21 +27,6 @@ config (no `provider` key).
 - THEN the recipe is valid and declares `vcs-pr-flow`
 - AND `base_branch` defaults to `development`
 - AND no `provider` field exists in `[config]`
-
-### Requirement: Materialized Assets
-
-Sync MUST materialize provider assets without changing sibling provider recipe assets when
-only one provider recipe is enabled.
-
-#### Scenario: GitLab sync provisions assets
-- GIVEN `gitlab-mr-flow` is enabled
-- WHEN `ai-specs sync` runs
-- THEN the GitLab skill, command, and README exist in generated locations
-
-#### Scenario: Bitbucket sync provisions assets
-- GIVEN `bitbucket-pr-flow` is enabled
-- WHEN `ai-specs sync` runs
-- THEN the Bitbucket skill, command, and README exist in generated locations
 
 ### Requirement: Provider Binding Semantics
 
@@ -91,10 +68,3 @@ The bound **recipe id** is the provider identity; there is no separate `provider
 - WHEN sync validates and renders
 - THEN sync warns that `provider` is an unknown config key
 - AND the rendered brief still identifies GitLab from the binding recipe id
-
-### Requirement: Runtime Checks and Docs
-
-Provider skills and commands MUST check CLI install/auth before PR/MR creation, stop with
-actionable blockers on failure, and README MUST document enablement, config (`base_branch`
-only), explicit bindings, runtime prerequisites, explicit push behavior, and no auto-merge
-policy.
