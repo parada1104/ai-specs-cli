@@ -898,9 +898,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "integration_branch = 'development'\n\n"
                 "[recipes.git-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.2.0'\n"
                 "[recipes.git-pr-flow.config]\n"
-                "provider = 'github'\n"
                 "base_branch = 'development'\n\n"
                 "[recipes.tdd-flow]\n"
                 "enabled = true\n"
@@ -943,7 +942,7 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertIn("- **Integration branch**: `development`", agents)  # integration_branch line
             self.assertIn("./tests/run.sh", agents)          # test_command
             self.assertIn("nnodes/proyectos/test-project", agents)  # vault_scope
-            self.assertIn("VCS/PR provider: github (`gh` CLI)", agents)  # VCS line
+            self.assertIn("VCS/PR provider: GitHub (`gh` CLI)", agents)  # VCS line
 
             # Enabled runtimes must be listed
             self.assertIn("- **Enabled runtimes**: `claude`, `cursor`", agents)  # FIX 9: line context
@@ -2082,43 +2081,55 @@ class TestJudgmentDayFixes(unittest.TestCase):
 
     # --- FIX 3 ---
 
-    def test_vcs_bullet_includes_gh_cli_only_for_github(self):
-        """FIX 3: VCS bullet must include '(gh CLI)' ONLY when provider == 'github'."""
+    def test_vcs_bullet_uses_recipe_id_for_github(self):
+        """VCS bullet derives GitHub/gh from bound recipe id, not config.provider."""
         resolved = {
             "bindings": {"vcs-pr-flow": "git-pr-flow"},
             "recipes": {
-                "git-pr-flow": {"provider": "github", "base_branch": "main"},
+                "git-pr-flow": {"base_branch": "main"},
             },
         }
         agents = self.run_render("[project]\nname = 'fix3-github'\n", resolved)
-        self.assertIn("VCS/PR provider: github (`gh` CLI)", agents)
+        self.assertIn("VCS/PR provider: GitHub (`gh` CLI)", agents)
         self.assertIn("base branch: `main`", agents)
 
-    def test_vcs_bullet_excludes_gh_cli_for_gitlab(self):
-        """FIX 3: VCS bullet must NOT include '(gh CLI)' when provider == 'gitlab'."""
+    def test_vcs_bullet_uses_recipe_id_for_gitlab(self):
+        """VCS bullet derives GitLab/glab from bound recipe id."""
         resolved = {
-            "bindings": {"vcs-pr-flow": "git-pr-flow"},
+            "bindings": {"vcs-pr-flow": "gitlab-mr-flow"},
             "recipes": {
-                "git-pr-flow": {"provider": "gitlab", "base_branch": "main"},
+                "gitlab-mr-flow": {"base_branch": "main"},
             },
         }
         agents = self.run_render("[project]\nname = 'fix3-gitlab'\n", resolved)
-        self.assertIn("VCS/PR provider: gitlab", agents)
+        self.assertIn("VCS/PR provider: GitLab (`glab` CLI)", agents)
         self.assertNotIn("(`gh` CLI)", agents)
         self.assertIn("base branch: `main`", agents)
 
-    def test_vcs_bullet_base_branch_renders_without_provider_gh_hint(self):
-        """FIX 3: base_branch is an independent clause — renders even without gh CLI hint."""
+    def test_vcs_bullet_uses_recipe_id_for_bitbucket(self):
+        """VCS bullet derives Bitbucket/bb from bound recipe id."""
         resolved = {
-            "bindings": {"vcs-pr-flow": "my-vcs"},
+            "bindings": {"vcs-pr-flow": "bitbucket-pr-flow"},
             "recipes": {
-                "my-vcs": {"provider": "bitbucket", "base_branch": "develop"},
+                "bitbucket-pr-flow": {"base_branch": "develop"},
             },
         }
         agents = self.run_render("[project]\nname = 'fix3-bitbucket'\n", resolved)
-        self.assertIn("VCS/PR provider: bitbucket", agents)
+        self.assertIn("VCS/PR provider: Bitbucket (`bb` CLI)", agents)
         self.assertNotIn("(`gh` CLI)", agents)
         self.assertIn("base branch: `develop`", agents)
+
+    def test_vcs_bullet_ignores_stale_provider_config(self):
+        """Stale provider in manifest config must not override bound recipe id label."""
+        resolved = {
+            "bindings": {"vcs-pr-flow": "gitlab-mr-flow"},
+            "recipes": {
+                "gitlab-mr-flow": {"provider": "github", "base_branch": "main"},
+            },
+        }
+        agents = self.run_render("[project]\nname = 'fix3-stale-provider'\n", resolved)
+        self.assertIn("VCS/PR provider: GitLab (`glab` CLI)", agents)
+        self.assertNotIn("VCS/PR provider: github", agents)
 
     # --- FIX 5 ---
 

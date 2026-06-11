@@ -2,8 +2,8 @@
 name: gitlab-merge-workflow
 description: >
   Provider-oriented merge workflow for feature branches created in worktrees.
-  Uses the configured MR provider and base branch from
-  [recipes.gitlab-mr-flow.config] (provider and base_branch).
+  Uses the configured base branch from
+  [recipes.gitlab-mr-flow.config] (base_branch). GitLab via the glab CLI.
 license: MIT
 metadata:
   author: ai-specs
@@ -23,9 +23,8 @@ metadata:
 Use this skill only when the user explicitly asks to create an MR, merge, finish
 a branch, or clean up after merge on GitLab.
 
-Use the configured MR provider and base branch from
-`[recipes.gitlab-mr-flow.config]` (`provider` and `base_branch`). GitLab through
-the `glab` CLI is the implemented provider. Honor any no-push/no-merge rules
+Use the configured base branch from `[recipes.gitlab-mr-flow.config]` (`base_branch`).
+This recipe implements GitLab through the `glab` CLI. Honor any no-push/no-merge rules
 declared for the project.
 
 ## Preconditions
