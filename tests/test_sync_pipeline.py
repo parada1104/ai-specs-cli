@@ -2676,6 +2676,54 @@ class TestVcsDropRemediations(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
+    def test_defaulted_base_branch_propagates_into_brief(self):
+        """CRITICAL 2: When a VCS recipe is enabled without setting base_branch in
+        the manifest, the catalog default must be merged into resolved config so
+        the brief includes 'base branch: `<default>`'.
+
+        The spec says: 'base_branch appended when configured or defaulted'.
+        The design says: 'base_branch still read from recipes[vcs_recipe_id].config.base_branch
+        with recipe default fallback during render if unset.'
+
+        bitbucket-pr-flow has default = "development" in its recipe.toml.
+        A manifest enabling it without base_branch must still get the clause.
+        """
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'defaulted-base-branch'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[recipes.bitbucket-pr-flow]\n"
+                "enabled = true\n"
+                "version = '1.0.0'\n"
+                # NO base_branch set — catalog default "development" must apply
+                "[[bindings]]\n"
+                "capability = 'vcs-pr-flow'\n"
+                "recipe = 'bitbucket-pr-flow'\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            agents = (workspace / "AGENTS.md").read_text()
+
+            # The VCS bullet must include the defaulted base branch
+            self.assertIn(
+                "VCS/PR provider: Bitbucket (`bb` CLI)",
+                agents,
+                "Bitbucket VCS bullet must render from recipe id",
+            )
+            self.assertIn(
+                "base branch: `development`",
+                agents,
+                f"Defaulted base_branch 'development' must appear in brief.\n"
+                f"AGENTS.md content:\n{agents}",
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
 
 if __name__ == "__main__":
     unittest.main()
