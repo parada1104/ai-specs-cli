@@ -286,10 +286,19 @@ def _section_runtime_flow(brief: dict, resolved: dict) -> list[str]:
     vcs_recipe_id = bindings.get("vcs-pr-flow", "")
     base_branch = ""
     vcs_label: tuple[str, str] | None = None
+    _warned_vcs_ids: set[str] = set()  # local de-dupe for unknown VCS warnings
     if vcs_recipe_id:
         vcs_cfg = recipes.get(vcs_recipe_id, {}) or {}
         base_branch = vcs_cfg.get("base_branch", "")
         vcs_label = _VCS_RECIPE_LABELS.get(vcs_recipe_id)
+        if vcs_label is None and vcs_recipe_id not in _warned_vcs_ids:
+            print(
+                f"\u26a0 ai-specs: VCS recipe '{vcs_recipe_id}' is not in the known "
+                f"label set; using generic label 'VCS PR (custom)'",
+                file=sys.stderr,
+            )
+            _warned_vcs_ids.add(vcs_recipe_id)
+            vcs_label = ("VCS PR (custom)", "VCS PR (custom)")
 
     bullets: list[str] = [f["text"] for f in recipe_items]
     for m in manifest_items:
@@ -304,7 +313,11 @@ def _section_runtime_flow(brief: dict, resolved: dict) -> list[str]:
         lines.append(f"- {item}")
     if vcs_label:
         name, cli = vcs_label
-        vcs_note = f"VCS/PR provider: {name} (`{cli}` CLI)"
+        if cli == name:
+            # Generic/custom label — no CLI slug
+            vcs_note = f"VCS/PR provider: {name}"
+        else:
+            vcs_note = f"VCS/PR provider: {name} (`{cli}` CLI)"
         if base_branch:
             vcs_note += f"; base branch: `{base_branch}`"
         lines.append(f"- {vcs_note}")
