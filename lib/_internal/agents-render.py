@@ -78,13 +78,21 @@ def substitute_config(text: str, cfg_ns: dict) -> str:
         return text  # safety net — should not normally be reached with this regex approach
 
 
-def collect_recipe_brief_fragments(resolved: dict, section: str) -> list[dict]:
+def collect_recipe_brief_fragments(
+    resolved: dict,
+    section: str,
+    *,
+    recipe_ids: set[str] | None = None,
+) -> list[dict]:
     """Collect and deduplicate brief fragments for *section* from enabled recipes.
 
     Iterates resolved["enabled"] in order, applies {config.KEY} substitution using
     each recipe's own config namespace, and deduplicates:
       1. Key-based: first occurrence of a non-None key wins; later duplicates discarded.
       2. Exact-string: duplicate text (after substitution) discarded.
+
+    When *recipe_ids* is provided, only recipes in that set contribute fragments.
+    When *recipe_ids* is ``None`` (default), all enabled recipes contribute.
 
     Returns a list of {"key": ..., "text": ...} dicts, substituted.
     """
@@ -93,6 +101,8 @@ def collect_recipe_brief_fragments(resolved: dict, section: str) -> list[dict]:
     seen_text: set[str] = set()
 
     for rid in resolved.get("enabled", []):
+        if recipe_ids is not None and rid not in recipe_ids:
+            continue
         rcfg = resolved.get("recipes", {}).get(rid, {}) or {}
         # Build config namespace: all keys except brief_fragments itself, prefixed with "config."
         cfg_ns = {
@@ -276,10 +286,19 @@ def _section_runtime_flow(brief: dict, resolved: dict) -> list[str]:
     vcs_recipe_id = bindings.get("vcs-pr-flow", "")
     base_branch = ""
     vcs_label: tuple[str, str] | None = None
+    _warned_vcs_ids: set[str] = set()  # local de-dupe for unknown VCS warnings
     if vcs_recipe_id:
         vcs_cfg = recipes.get(vcs_recipe_id, {}) or {}
         base_branch = vcs_cfg.get("base_branch", "")
         vcs_label = _VCS_RECIPE_LABELS.get(vcs_recipe_id)
+        if vcs_label is None and vcs_recipe_id not in _warned_vcs_ids:
+            print(
+                f"\u26a0 ai-specs: VCS recipe '{vcs_recipe_id}' is not in the known "
+                f"label set; using generic label 'VCS PR (custom)'",
+                file=sys.stderr,
+            )
+            _warned_vcs_ids.add(vcs_recipe_id)
+            vcs_label = ("VCS PR (custom)", "VCS PR (custom)")
 
     bullets: list[str] = [f["text"] for f in recipe_items]
     for m in manifest_items:
@@ -294,7 +313,11 @@ def _section_runtime_flow(brief: dict, resolved: dict) -> list[str]:
         lines.append(f"- {item}")
     if vcs_label:
         name, cli = vcs_label
-        vcs_note = f"VCS/PR provider: {name} (`{cli}` CLI)"
+        if cli == name:
+            # Generic/custom label — no CLI slug
+            vcs_note = f"VCS/PR provider: {name}"
+        else:
+            vcs_note = f"VCS/PR provider: {name} (`{cli}` CLI)"
         if base_branch:
             vcs_note += f"; base branch: `{base_branch}`"
         lines.append(f"- {vcs_note}")
@@ -368,7 +391,24 @@ def _section_conflict_policy(brief: dict, resolved: dict) -> list[str]:
 def _section_workflow_rules(brief: dict, resolved: dict) -> list[str]:
     """Emit ## Workflow Rules bullets from recipe fragments + [brief].workflow_rules."""
     mode = brief.get("workflow_rules_mode", "append")
-    recipe_items = [] if mode == "replace" else collect_recipe_brief_fragments(resolved, "workflow_rules")
+    # Compute allowed recipe set for workflow_rules fragments.
+    # VCS sibling fragments are filtered to the bound recipe only (or excluded
+    # entirely when no vcs-pr-flow binding exists). Non-VCS recipes always contribute.
+    recipe_ids: set[str] | None = None
+    bindings = resolved.get("bindings", {}) or {}
+    bound_vcs_id = bindings.get("vcs-pr-flow", "")
+    enabled = set(resolved.get("enabled", []))
+    vcs_siblings = set(_VCS_RECIPE_LABELS.keys())
+    if bound_vcs_id:
+        # Exclude VCS siblings except the bound one
+        excluded = vcs_siblings - {bound_vcs_id}
+        recipe_ids = enabled - excluded
+    else:
+        # No binding — exclude all VCS siblings from workflow_rules
+        recipe_ids = enabled - vcs_siblings
+    recipe_items = [] if mode == "replace" else collect_recipe_brief_fragments(
+        resolved, "workflow_rules", recipe_ids=recipe_ids,
+    )
     manifest_items = brief.get("workflow_rules", []) or []
 
     bullets: list[str] = [f["text"] for f in recipe_items]

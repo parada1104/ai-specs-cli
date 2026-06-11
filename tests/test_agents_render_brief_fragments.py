@@ -842,5 +842,133 @@ class B6RegressionTests(unittest.TestCase):
         self.assertEqual(out1.count("Shared rule."), 1)
 
 
+# ---------------------------------------------------------------------------
+
+class VcsFragmentIsolationTests(unittest.TestCase):
+    """VCS workflow_rules fragments stay isolated to the bound recipe.
+
+    When multiple VCS sibling recipes are enabled but only one is bound to
+    vcs-pr-flow, only the bound recipe contributes workflow_rules fragments.
+    When no binding exists, no VCS sibling fragments are emitted.
+    Non-VCS recipes always contribute regardless of VCS binding state.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_vcs_fragment_isolation")
+
+    def _resolved_with_vcs_siblings(self, bound_vcs_id: str | None):
+        """Build resolved config with 3 VCS siblings + 1 non-VCS recipe."""
+        bindings = {}
+        if bound_vcs_id:
+            bindings["vcs-pr-flow"] = bound_vcs_id
+        return {
+            "enabled": ["git-pr-flow", "gitlab-mr-flow", "bitbucket-pr-flow", "worktree-flow"],
+            "recipes": {
+                "git-pr-flow": {
+                    "base_branch": "main",
+                    "brief_fragments": {
+                        "workflow_rules": [
+                            {"key": None, "text": "Use GitHub PRs to merge."},
+                        ],
+                    },
+                },
+                "gitlab-mr-flow": {
+                    "base_branch": "development",
+                    "brief_fragments": {
+                        "workflow_rules": [
+                            {"key": None, "text": "Use GitLab MRs to merge."},
+                        ],
+                    },
+                },
+                "bitbucket-pr-flow": {
+                    "base_branch": "develop",
+                    "brief_fragments": {
+                        "workflow_rules": [
+                            {"key": None, "text": "Use Bitbucket PRs to merge."},
+                        ],
+                    },
+                },
+                "worktree-flow": {
+                    "integration_branch": "main",
+                    "brief_fragments": {
+                        "workflow_rules": [
+                            {"key": None, "text": "Create a worktree for every change."},
+                        ],
+                    },
+                },
+            },
+            "bindings": bindings,
+        }
+
+    def test_bound_gitlab_only_gitlab_fragments_in_workflow_rules(self):
+        """3 VCS recipes enabled, bound to gitlab-mr-flow → only GitLab fragments."""
+        resolved = self._resolved_with_vcs_siblings("gitlab-mr-flow")
+        brief = {}
+        lines = self.mod._section_workflow_rules(brief, resolved)
+        content = "\n".join(lines)
+        # GitLab fragments MUST appear
+        self.assertIn("Use GitLab MRs to merge.", content)
+        # GitHub and Bitbucket fragments MUST NOT appear
+        self.assertNotIn("Use GitHub PRs to merge.", content)
+        self.assertNotIn("Use Bitbucket PRs to merge.", content)
+        # Non-VCS fragments MUST still appear
+        self.assertIn("Create a worktree for every change.", content)
+
+    def test_no_vcs_binding_no_vcs_fragments(self):
+        """VCS siblings enabled but no vcs-pr-flow binding → no VCS fragments."""
+        resolved = self._resolved_with_vcs_siblings(None)
+        brief = {}
+        lines = self.mod._section_workflow_rules(brief, resolved)
+        content = "\n".join(lines)
+        # No VCS fragments should appear when unbound
+        self.assertNotIn("Use GitHub PRs to merge.", content)
+        self.assertNotIn("Use GitLab MRs to merge.", content)
+        self.assertNotIn("Use Bitbucket PRs to merge.", content)
+        # Non-VCS fragments MUST still appear
+        self.assertIn("Create a worktree for every change.", content)
+
+    def test_bound_custom_recipe_contributes_own_fragments(self):
+        """Custom recipe bound to vcs-pr-flow → its own fragments still appear."""
+        resolved = {
+            "enabled": ["my-custom-vcs", "git-pr-flow", "worktree-flow"],
+            "recipes": {
+                "my-custom-vcs": {
+                    "base_branch": "trunk",
+                    "brief_fragments": {
+                        "workflow_rules": [
+                            {"key": None, "text": "Use custom VCS flow."},
+                        ],
+                    },
+                },
+                "git-pr-flow": {
+                    "base_branch": "main",
+                    "brief_fragments": {
+                        "workflow_rules": [
+                            {"key": None, "text": "Use GitHub PRs to merge."},
+                        ],
+                    },
+                },
+                "worktree-flow": {
+                    "brief_fragments": {
+                        "workflow_rules": [
+                            {"key": None, "text": "Create a worktree."},
+                        ],
+                    },
+                },
+            },
+            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
+        }
+        brief = {}
+        lines = self.mod._section_workflow_rules(brief, resolved)
+        content = "\n".join(lines)
+        # Custom recipe fragments MUST appear (it's the bound recipe)
+        self.assertIn("Use custom VCS flow.", content)
+        # Known VCS sibling fragments MUST NOT appear (not the bound recipe)
+        self.assertNotIn("Use GitHub PRs to merge.", content)
+        # Non-VCS fragments MUST still appear
+        self.assertIn("Create a worktree.", content)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2725,5 +2725,90 @@ class TestVcsDropRemediations(unittest.TestCase):
             shutil.rmtree(workspace.parent)
 
 
+class TestCustomVcsWarning(unittest.TestCase):
+    """Unknown/custom vcs-pr-flow recipe ids must warn to stderr and use generic label.
+
+    When the bound vcs-pr-flow recipe id is not in _VCS_RECIPE_LABELS, the renderer
+    must emit a '⚠ ai-specs:' warning to stderr and render 'VCS PR (custom)' as the
+    bullet label instead of falling back silently.
+    """
+
+    AGENTS_RENDER = ROOT / "lib" / "_internal" / "agents-render.py"
+
+    def run_render_with_stderr(self, toml_text: str, resolved: dict) -> tuple[str, str]:
+        """Invoke agents-render.py, return (agents_output, stderr)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "ai-specs.toml"
+            output_path = tmp_path / "AGENTS.md"
+            resolved_path = tmp_path / "resolved.json"
+            toml_path.write_text(toml_text)
+            resolved_path.write_text(json.dumps(resolved))
+            proc = subprocess.run(
+                [
+                    "python3", str(self.AGENTS_RENDER),
+                    str(toml_path), str(output_path),
+                    "--resolved-config", str(resolved_path),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
+            self.assertTrue(output_path.exists())
+            return output_path.read_text(), proc.stderr
+
+    def test_unknown_vcs_recipe_warns_to_stderr(self):
+        """Bound custom vcs-pr-flow id → stderr contains ⚠ ai-specs: warning."""
+        resolved = {
+            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
+            "recipes": {
+                "my-custom-vcs": {"base_branch": "trunk"},
+            },
+            "enabled": ["my-custom-vcs"],
+        }
+        agents, stderr = self.run_render_with_stderr(
+            "[project]\nname = 'custom-vcs-warning'\n", resolved,
+        )
+        self.assertIn("⚠ ai-specs:", stderr)
+        self.assertIn("my-custom-vcs", stderr)
+        self.assertIn("VCS PR (custom)", stderr)
+
+    def test_unknown_vcs_recipe_renders_generic_label(self):
+        """Bound custom vcs-pr-flow id → AGENTS.md uses 'VCS PR (custom)' label."""
+        resolved = {
+            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
+            "recipes": {
+                "my-custom-vcs": {"base_branch": "trunk"},
+            },
+            "enabled": ["my-custom-vcs"],
+        }
+        agents, stderr = self.run_render_with_stderr(
+            "[project]\nname = 'custom-vcs-label'\n", resolved,
+        )
+        self.assertIn("VCS/PR provider: VCS PR (custom)", agents)
+        self.assertIn("base branch: `trunk`", agents)
+
+    def test_unknown_vcs_warning_once_per_id(self):
+        """Warning must appear exactly once per unknown id per render invocation."""
+        resolved = {
+            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
+            "recipes": {
+                "my-custom-vcs": {"base_branch": "trunk"},
+            },
+            "enabled": ["my-custom-vcs"],
+        }
+        agents, stderr = self.run_render_with_stderr(
+            "[project]\nname = 'custom-vcs-dedup'\n", resolved,
+        )
+        # Count occurrences of the warning prefix
+        warning_count = stderr.count("⚠ ai-specs: VCS recipe 'my-custom-vcs'")
+        self.assertEqual(
+            warning_count, 1,
+            f"Warning must appear exactly once, but found {warning_count} times.\n"
+            f"stderr: {stderr}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
