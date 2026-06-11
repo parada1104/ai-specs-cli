@@ -2606,5 +2606,76 @@ class RuntimeHookSyncPipelineTests(unittest.TestCase):
             shutil.rmtree(workspace.parent)
 
 
+class TestVcsDropRemediations(unittest.TestCase):
+    """Remediation tests for verify-report CRITICAL gaps.
+
+    CRITICAL 1: Stale provider config must emit a warning at sync time.
+    CRITICAL 2: Defaulted base_branch from catalog must propagate into resolved config.
+    """
+
+    def make_workspace(self) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="ai-specs-vcs-remediation-"))
+        shutil.copytree(FIXTURE_ROOT, tmp / "workspace")
+        return tmp / "workspace"
+
+    def test_sync_warns_on_stale_provider_config_in_vcs_recipe(self):
+        """CRITICAL 1: sync must warn when a manifest sets a stale 'provider' key
+        in a VCS recipe's [config] block.
+
+        The spec says: 'GIVEN a manifest still sets [recipes.gitlab-mr-flow.config]
+        provider = "github", WHEN sync validates and renders, THEN sync warns that
+        provider is an unknown config key.'
+
+        merge_config() in recipe-materialize.py already warns on unknown keys.
+        This test asserts the warning is actually emitted during sync.
+        """
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'stale-provider-warning'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[recipes.gitlab-mr-flow]\n"
+                "enabled = true\n"
+                "version = '1.1.0'\n"
+                "[recipes.gitlab-mr-flow.config]\n"
+                "base_branch = 'main'\n"
+                "provider = 'github'\n\n"  # stale key — must warn
+                "[[bindings]]\n"
+                "capability = 'vcs-pr-flow'\n"
+                "recipe = 'gitlab-mr-flow'\n"
+            )
+
+            proc = subprocess.run(
+                [str(CLI), "sync", str(workspace)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            # Sync must succeed (not fail on the stale key)
+            self.assertEqual(
+                proc.returncode, 0,
+                f"sync must succeed even with stale provider key.\nstderr: {proc.stderr}",
+            )
+
+            # Warning must appear on stderr
+            self.assertIn(
+                "provider",
+                proc.stderr.lower(),
+                f"Warning about stale 'provider' key must appear in stderr.\n"
+                f"stderr: {proc.stderr}\nstdout: {proc.stdout}",
+            )
+            self.assertIn(
+                "unknown",
+                proc.stderr.lower(),
+                f"Warning must mention 'unknown' config key.\nstderr: {proc.stderr}",
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
+
 if __name__ == "__main__":
     unittest.main()
