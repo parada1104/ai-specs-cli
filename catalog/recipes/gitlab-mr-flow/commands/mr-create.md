@@ -6,16 +6,15 @@ that skill first for the full guardrails before acting.
 
 ## Configuration
 
-Read the provider and base branch from the recipe config in `ai-specs.toml`:
+Read the base branch from the recipe config in `ai-specs.toml`:
 
 ```toml
 [recipes.gitlab-mr-flow.config]
-provider = "gitlab"       # default
 base_branch = "development"  # default
 ```
 
-If a value is unset, fall back to the defaults (`gitlab`, `development`) and to
-the runtime brief (`AGENTS.md`) for any provider/branch context it declares.
+If unset, fall back to the recipe default (`development`) and to the runtime brief
+(`AGENTS.md`) for branch context.
 
 ## Preconditions
 

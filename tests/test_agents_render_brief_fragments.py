@@ -735,11 +735,10 @@ class B6RegressionTests(unittest.TestCase):
                     },
                 },
                 "git-pr-flow": {
-                    "provider": "github",
                     "base_branch": "main",
                     "brief_fragments": {
                         "workflow_rules": [
-                            {"key": None, "text": "Use `{config.provider}` PRs to merge into `{config.base_branch}`."},
+                            {"key": None, "text": "Use GitHub PRs to merge into `{config.base_branch}`."},
                         ]
                     },
                 },

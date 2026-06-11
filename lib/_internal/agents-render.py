@@ -30,6 +30,13 @@ RUNTIME_BRIEF_MARKER = "<!-- ai-specs:runtime-brief -->"
 
 _VALID_MODES = {"append", "replace"}
 
+# Bound vcs-pr-flow recipe id → (display name, CLI slug) for Runtime Flow bullet.
+_VCS_RECIPE_LABELS: dict[str, tuple[str, str]] = {
+    "git-pr-flow": ("GitHub", "gh"),
+    "gitlab-mr-flow": ("GitLab", "glab"),
+    "bitbucket-pr-flow": ("Bitbucket", "bb"),
+}
+
 
 # ---------------------------------------------------------------------------
 # Recipe brief fragment helpers
@@ -265,30 +272,29 @@ def _section_runtime_flow(brief: dict, resolved: dict) -> list[str]:
     bindings = resolved.get("bindings", {}) or {}
     recipes = resolved.get("recipes", {}) or {}
 
-    # VCS provider bullet
+    # VCS provider bullet — identity from bound recipe id, not config.provider
     vcs_recipe_id = bindings.get("vcs-pr-flow", "")
-    provider = ""
     base_branch = ""
+    vcs_label: tuple[str, str] | None = None
     if vcs_recipe_id:
         vcs_cfg = recipes.get(vcs_recipe_id, {}) or {}
-        provider = vcs_cfg.get("provider", "")
         base_branch = vcs_cfg.get("base_branch", "")
+        vcs_label = _VCS_RECIPE_LABELS.get(vcs_recipe_id)
 
     bullets: list[str] = [f["text"] for f in recipe_items]
     for m in manifest_items:
         if m and m not in bullets:
             bullets.append(m)
 
-    if not bullets and not provider:
+    if not bullets and not vcs_label and not base_branch:
         return []
 
     lines: list[str] = ["## Runtime Flow", ""]
     for item in bullets:
         lines.append(f"- {item}")
-    if provider:
-        vcs_note = f"VCS/PR provider: {provider}"
-        if provider == "github":
-            vcs_note += " (`gh` CLI)"
+    if vcs_label:
+        name, cli = vcs_label
+        vcs_note = f"VCS/PR provider: {name} (`{cli}` CLI)"
         if base_branch:
             vcs_note += f"; base branch: `{base_branch}`"
         lines.append(f"- {vcs_note}")

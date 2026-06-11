@@ -148,6 +148,44 @@ def attach_brief_fragments_to_resolved(
         pass
 
 
+def merge_catalog_defaults_into_resolved(
+    resolved: dict[str, Any],
+    ai_specs_home: Path | None = None,
+) -> None:
+    """In-place: merge catalog [config] defaults into resolved recipes.
+
+    For each enabled recipe, read its catalog recipe.toml [config] block and
+    merge default values into the resolved config. Manifest overrides already
+    present in resolved["recipes"][rid] take precedence over catalog defaults.
+
+    This ensures that recipes enabled without explicit config overrides still
+    get their catalog defaults (e.g. base_branch = "development") propagated
+    into the resolved-config JSON for downstream rendering.
+    """
+    try:
+        home = ai_specs_home if ai_specs_home is not None else Path(__file__).resolve().parents[2]
+        catalog_dir = home / "catalog" / "recipes"
+        recipes = resolved.setdefault("recipes", {})
+        for rid in resolved.get("enabled", []):
+            try:
+                recipe = read_recipe(catalog_dir, rid)
+                schema_fields = (
+                    recipe.config_schema.fields
+                    if hasattr(recipe, "config_schema")
+                    else {}
+                )
+                if not schema_fields:
+                    continue
+                existing = recipes.setdefault(rid, {})
+                for key, field in schema_fields.items():
+                    if field.default is not None and key not in existing:
+                        existing[key] = field.default
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 # --- Conflict detection -------------------------------------------------------
 _conflict_module = None
 
@@ -709,6 +747,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     if resolved_config_out is not None:
         resolved = build_resolved_config(project_root)
         resolved["bindings"] = resolved_bindings  # replace explicit-only with auto-bound
+        merge_catalog_defaults_into_resolved(resolved, ai_specs_home)
         attach_brief_fragments_to_resolved(resolved, ai_specs_home)
         with open(resolved_config_out, "w") as f:
             json.dump(resolved, f, indent=2, sort_keys=True)
@@ -779,6 +818,7 @@ def build_resolved_config_only(project_root: Path, resolved_config_out: Path, ai
         except Exception:
             pass  # catalog absent or unreadable — degrade to explicit-only bindings
 
+        merge_catalog_defaults_into_resolved(resolved, ai_specs_home)
         attach_brief_fragments_to_resolved(resolved, ai_specs_home)
 
         with open(resolved_config_out, "w") as f:

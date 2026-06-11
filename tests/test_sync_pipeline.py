@@ -898,9 +898,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "integration_branch = 'development'\n\n"
                 "[recipes.git-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.2.0'\n"
                 "[recipes.git-pr-flow.config]\n"
-                "provider = 'github'\n"
                 "base_branch = 'development'\n\n"
                 "[recipes.tdd-flow]\n"
                 "enabled = true\n"
@@ -943,7 +942,7 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertIn("- **Integration branch**: `development`", agents)  # integration_branch line
             self.assertIn("./tests/run.sh", agents)          # test_command
             self.assertIn("nnodes/proyectos/test-project", agents)  # vault_scope
-            self.assertIn("VCS/PR provider: github (`gh` CLI)", agents)  # VCS line
+            self.assertIn("VCS/PR provider: GitHub (`gh` CLI)", agents)  # VCS line
 
             # Enabled runtimes must be listed
             self.assertIn("- **Enabled runtimes**: `claude`, `cursor`", agents)  # FIX 9: line context
@@ -2082,43 +2081,55 @@ class TestJudgmentDayFixes(unittest.TestCase):
 
     # --- FIX 3 ---
 
-    def test_vcs_bullet_includes_gh_cli_only_for_github(self):
-        """FIX 3: VCS bullet must include '(gh CLI)' ONLY when provider == 'github'."""
+    def test_vcs_bullet_uses_recipe_id_for_github(self):
+        """VCS bullet derives GitHub/gh from bound recipe id, not config.provider."""
         resolved = {
             "bindings": {"vcs-pr-flow": "git-pr-flow"},
             "recipes": {
-                "git-pr-flow": {"provider": "github", "base_branch": "main"},
+                "git-pr-flow": {"base_branch": "main"},
             },
         }
         agents = self.run_render("[project]\nname = 'fix3-github'\n", resolved)
-        self.assertIn("VCS/PR provider: github (`gh` CLI)", agents)
+        self.assertIn("VCS/PR provider: GitHub (`gh` CLI)", agents)
         self.assertIn("base branch: `main`", agents)
 
-    def test_vcs_bullet_excludes_gh_cli_for_gitlab(self):
-        """FIX 3: VCS bullet must NOT include '(gh CLI)' when provider == 'gitlab'."""
+    def test_vcs_bullet_uses_recipe_id_for_gitlab(self):
+        """VCS bullet derives GitLab/glab from bound recipe id."""
         resolved = {
-            "bindings": {"vcs-pr-flow": "git-pr-flow"},
+            "bindings": {"vcs-pr-flow": "gitlab-mr-flow"},
             "recipes": {
-                "git-pr-flow": {"provider": "gitlab", "base_branch": "main"},
+                "gitlab-mr-flow": {"base_branch": "main"},
             },
         }
         agents = self.run_render("[project]\nname = 'fix3-gitlab'\n", resolved)
-        self.assertIn("VCS/PR provider: gitlab", agents)
+        self.assertIn("VCS/PR provider: GitLab (`glab` CLI)", agents)
         self.assertNotIn("(`gh` CLI)", agents)
         self.assertIn("base branch: `main`", agents)
 
-    def test_vcs_bullet_base_branch_renders_without_provider_gh_hint(self):
-        """FIX 3: base_branch is an independent clause — renders even without gh CLI hint."""
+    def test_vcs_bullet_uses_recipe_id_for_bitbucket(self):
+        """VCS bullet derives Bitbucket/bb from bound recipe id."""
         resolved = {
-            "bindings": {"vcs-pr-flow": "my-vcs"},
+            "bindings": {"vcs-pr-flow": "bitbucket-pr-flow"},
             "recipes": {
-                "my-vcs": {"provider": "bitbucket", "base_branch": "develop"},
+                "bitbucket-pr-flow": {"base_branch": "develop"},
             },
         }
         agents = self.run_render("[project]\nname = 'fix3-bitbucket'\n", resolved)
-        self.assertIn("VCS/PR provider: bitbucket", agents)
+        self.assertIn("VCS/PR provider: Bitbucket (`bb` CLI)", agents)
         self.assertNotIn("(`gh` CLI)", agents)
         self.assertIn("base branch: `develop`", agents)
+
+    def test_vcs_bullet_ignores_stale_provider_config(self):
+        """Stale provider in manifest config must not override bound recipe id label."""
+        resolved = {
+            "bindings": {"vcs-pr-flow": "gitlab-mr-flow"},
+            "recipes": {
+                "gitlab-mr-flow": {"provider": "github", "base_branch": "main"},
+            },
+        }
+        agents = self.run_render("[project]\nname = 'fix3-stale-provider'\n", resolved)
+        self.assertIn("VCS/PR provider: GitLab (`glab` CLI)", agents)
+        self.assertNotIn("VCS/PR provider: github", agents)
 
     # --- FIX 5 ---
 
@@ -2591,6 +2602,125 @@ class RuntimeHookSyncPipelineTests(unittest.TestCase):
             after_oc = (workspace / ".opencode" / "plugin" / "worktree-flow-worktree-gate.ts").read_bytes()
             self.assertEqual(before_claude, after_claude)
             self.assertEqual(before_oc, after_oc)
+        finally:
+            shutil.rmtree(workspace.parent)
+
+
+class TestVcsDropRemediations(unittest.TestCase):
+    """Remediation tests for verify-report CRITICAL gaps.
+
+    CRITICAL 1: Stale provider config must emit a warning at sync time.
+    CRITICAL 2: Defaulted base_branch from catalog must propagate into resolved config.
+    """
+
+    def make_workspace(self) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="ai-specs-vcs-remediation-"))
+        shutil.copytree(FIXTURE_ROOT, tmp / "workspace")
+        return tmp / "workspace"
+
+    def test_sync_warns_on_stale_provider_config_in_vcs_recipe(self):
+        """CRITICAL 1: sync must warn when a manifest sets a stale 'provider' key
+        in a VCS recipe's [config] block.
+
+        The spec says: 'GIVEN a manifest still sets [recipes.gitlab-mr-flow.config]
+        provider = "github", WHEN sync validates and renders, THEN sync warns that
+        provider is an unknown config key.'
+
+        merge_config() in recipe-materialize.py already warns on unknown keys.
+        This test asserts the warning is actually emitted during sync.
+        """
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'stale-provider-warning'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[recipes.gitlab-mr-flow]\n"
+                "enabled = true\n"
+                "version = '1.1.0'\n"
+                "[recipes.gitlab-mr-flow.config]\n"
+                "base_branch = 'main'\n"
+                "provider = 'github'\n\n"  # stale key — must warn
+                "[[bindings]]\n"
+                "capability = 'vcs-pr-flow'\n"
+                "recipe = 'gitlab-mr-flow'\n"
+            )
+
+            proc = subprocess.run(
+                [str(CLI), "sync", str(workspace)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            # Sync must succeed (not fail on the stale key)
+            self.assertEqual(
+                proc.returncode, 0,
+                f"sync must succeed even with stale provider key.\nstderr: {proc.stderr}",
+            )
+
+            # Warning must appear on stderr
+            self.assertIn(
+                "provider",
+                proc.stderr.lower(),
+                f"Warning about stale 'provider' key must appear in stderr.\n"
+                f"stderr: {proc.stderr}\nstdout: {proc.stdout}",
+            )
+            self.assertIn(
+                "unknown",
+                proc.stderr.lower(),
+                f"Warning must mention 'unknown' config key.\nstderr: {proc.stderr}",
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_defaulted_base_branch_propagates_into_brief(self):
+        """CRITICAL 2: When a VCS recipe is enabled without setting base_branch in
+        the manifest, the catalog default must be merged into resolved config so
+        the brief includes 'base branch: `<default>`'.
+
+        The spec says: 'base_branch appended when configured or defaulted'.
+        The design says: 'base_branch still read from recipes[vcs_recipe_id].config.base_branch
+        with recipe default fallback during render if unset.'
+
+        bitbucket-pr-flow has default = "development" in its recipe.toml.
+        A manifest enabling it without base_branch must still get the clause.
+        """
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'defaulted-base-branch'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[recipes.bitbucket-pr-flow]\n"
+                "enabled = true\n"
+                "version = '1.0.0'\n"
+                # NO base_branch set — catalog default "development" must apply
+                "[[bindings]]\n"
+                "capability = 'vcs-pr-flow'\n"
+                "recipe = 'bitbucket-pr-flow'\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            agents = (workspace / "AGENTS.md").read_text()
+
+            # The VCS bullet must include the defaulted base branch
+            self.assertIn(
+                "VCS/PR provider: Bitbucket (`bb` CLI)",
+                agents,
+                "Bitbucket VCS bullet must render from recipe id",
+            )
+            self.assertIn(
+                "base branch: `development`",
+                agents,
+                f"Defaulted base_branch 'development' must appear in brief.\n"
+                f"AGENTS.md content:\n{agents}",
+            )
         finally:
             shutil.rmtree(workspace.parent)
 

@@ -9,7 +9,7 @@ capability is the contract.
 
 | Tier | Role | Speaks in terms of | Examples |
 |------|------|--------------------|----------|
-| **Foundational** | Encodes a reusable *pattern*; tool-agnostic and configurable | capabilities | `worktree-flow`, `tdd-flow`, `session-context`, `git-pr-flow` |
+| **Foundational** | Encodes a reusable *pattern*; tool-agnostic and configurable | capabilities | `worktree-flow`, `tdd-flow`, `session-context` |
 | **Specific** | A concrete integration that *provides* a capability | a named tool/service | `trello-mcp-workflow`, `vault-canonical-store`, future `github-*`, `gitlab-*`, `jira-*` |
 
 A foundational recipe should never hardcode a vendor (Trello, Engram, Obsidian,
@@ -24,7 +24,7 @@ through the manifest.
 | `tracker` | Work-state tracking (cards/issues, status, dependencies) | `trello-mcp-workflow`; future `jira-*`, `github-issues-*` |
 | `memory` | Operational/session memory (searchable continuity) | the gentle-ai stack (Engram) |
 | `canonical-store` | Durable decisions and handoffs | `vault-canonical-store`; future `notion-*` |
-| `vcs-pr-flow` | Branch → PR/MR → review → merge | `git-pr-flow` (GitHub/gh), `gitlab-mr-flow` (GitLab/glab) |
+| `vcs-pr-flow` | Branch → PR/MR → review → merge | `git-pr-flow` (GitHub/gh), `gitlab-mr-flow` (GitLab/glab), `bitbucket-pr-flow` (Bitbucket/bb) |
 | `test-runner` | Red-green-refactor discipline with a project test command | `tdd-flow` |
 | `worktree-isolation` | Per-change git worktrees + post-merge cleanup | `worktree-flow` |
 
