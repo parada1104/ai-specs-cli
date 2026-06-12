@@ -135,7 +135,7 @@ resolve_base_candidates() {
         if git rev-parse --verify --quiet "$remote_ref" >/dev/null 2>&1; then
             case "$seen" in
                 *" $remote_ref "*) ;;
-                *) printf '%s\n' "$remote_ref" ;;
+                *) printf '%s\n' "$remote_ref"; seen="$seen$remote_ref " ;;
             esac
         fi
     fi
@@ -148,7 +148,7 @@ resolve_base_candidates() {
         if git rev-parse --verify --quiet "$origin_ref" >/dev/null 2>&1; then
             case "$seen" in
                 *" $origin_ref "*) ;;
-                *) printf '%s\n' "$origin_ref" ;;
+                *) printf '%s\n' "$origin_ref"; seen="$seen$origin_ref " ;;
             esac
         fi
     fi
