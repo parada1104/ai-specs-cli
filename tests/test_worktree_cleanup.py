@@ -279,6 +279,88 @@ class WorktreeCleanupTests(unittest.TestCase):
         self.assertIn("would remove", out.stdout)
         self.assertNotIn("unmerged", out.stdout)
 
+    # ── Fast-forward merge: branch tip is a direct ancestor of local main ──
+
+    def test_removes_fast_forward_merged_worktree(self):
+        """Fast-forward merge locks down the exact-base candidate path.
+
+        When the branch tip is a direct ancestor of the local base (no merge
+        commit, no remote involvement), the script must detect the merge via
+        the exact base ref alone. This is the simplest positive case for the
+        first candidate in `resolve_base_candidates`.
+        """
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-ff")
+        (wt / "ff.txt").write_text("ff work\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "feat: ff work")
+
+        # Fast-forward merge: branch tip becomes the new main tip with no
+        # merge commit. Use --ff-only to assert the operation is reachable
+        # by fast-forward; this fails if the branches have actually diverged.
+        git(repo, "merge", "-q", "--ff-only", "feat-ff")
+
+        # Sanity: the branch tip is now equal to main, so the exact-base
+        # candidate MUST detect the merge.
+        self.assertEqual(
+            git(repo, "rev-parse", "feat-ff").strip(),
+            git(repo, "rev-parse", "main").strip(),
+        )
+
+        out = self._run_cleanup(repo, "--dry-run")
+
+        self.assertIn("would remove feat-ff", out.stdout)
+        self.assertNotIn("unmerged", out.stdout)
+
+    # ── Bounded candidate resolution: script must NOT call `git fetch` ──
+
+    def test_does_not_invoke_git_fetch_when_remote_missing(self):
+        """Bounded candidate resolution: no `git fetch`, no network.
+
+        Even when no `origin/<base>` ref exists, the script must fall back to
+        the local `git cherry` / `git rev-list` behavior. It must never
+        attempt to fetch over the network. This locks down the third
+        "Bounded Candidate Resolution" requirement from the spec.
+        """
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-nonet")
+        (wt / "nonet.txt").write_text("no-network work\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "feat: no-network work")
+
+        # Capture every git invocation via GIT_TRACE. The script may call
+        # `git rev-parse`, `git merge-base`, `git cherry`, `git rev-list`,
+        # etc. — none of those are `git fetch`. Any `git fetch` invocation
+        # would violate the bounded-candidate requirement.
+        env = dict(os.environ)
+        env["GIT_TRACE"] = "1"
+
+        result = subprocess.run(
+            ["bash", str(CLEANUP_SCRIPT), "--base", "main", "--dry-run"],
+            cwd=repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        # Sanity: the script reached a stable verdict for the unmerged branch.
+        self.assertIn("skipped feat-nonet (unmerged)", result.stdout)
+
+        # Look for any `git fetch` invocation in the trace. GIT_TRACE writes
+        # lines like `trace: built-in: git 'fetch' ...` to stderr; we treat
+        # any such line as a violation of the bounded-candidate requirement.
+        fetch_traces = [
+            line
+            for line in result.stderr.splitlines()
+            if "trace:" in line and "fetch" in line.lower()
+        ]
+        self.assertEqual(
+            fetch_traces,
+            [],
+            f"script must not invoke `git fetch`; found: {fetch_traces}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
