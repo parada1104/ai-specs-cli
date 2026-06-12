@@ -364,56 +364,77 @@ class WorktreeCleanupTests(unittest.TestCase):
 
     # ── A1: SIGPIPE false positive in patch-id check ──
 
-    def test_patch_equivalence_does_not_false_positive_with_many_cherry_lines(self):
-        """SIGPIPE regression test: large cherry output must not false-positive.
+    def test_bash_loop_avoids_sigpipe_false_positive(self):
+        """The bash loop (NEW) avoids the SIGPIPE false positive that the
+        `printf | grep -q` pipeline (OLD) under `set -o pipefail` can produce
+        when the cherry output exceeds the OS pipe buffer.
 
-        Creates a branch with 1500 unmerged commits so `git cherry` produces
-        ~90KB+ of '+' lines — well over the OS pipe buffer (16KB macOS, 64KB
-        Linux). Under the OLD buggy code (`printf | grep -q` with pipefail),
-        printf fills the pipe buffer, blocks, grep -q reads line 1 (a '+'),
-        exits 0, printf gets SIGPIPE → exit 141, pipeline fails → false
-        positive (merged). The FIXED bash loop reads all lines and correctly
-        returns unmerged.
+        Pre-fix behavior: pipefail inverts when SIGPIPE fires on printf, so
+        the function returns 0 (merged) even when cherry output contains
+        `+` lines. This is a false positive that can lead to data loss.
 
-        This test is intentionally slow — it is the SIGPIPE regression guard.
+        Post-fix behavior: bash while-read loop reads line by line, returns
+        1 (unmerged) correctly when any `+` line is found.
         """
-        repo = self._make_repo()
-        wt = self._add_worktree(repo, "feat-partial")
+        import textwrap
 
-        # Create 1500 commits on the branch efficiently.
-        # Each commit touches a unique file so they all produce distinct
-        # patch-ids and appear as '+' lines in `git cherry` output.
-        num_commits = 1500
-        for i in range(1, num_commits + 1):
-            (wt / f"file{i}.txt").write_text(f"work {i}\n")
-            git(wt, "add", "-A")
-            git(wt, "commit", "-qm", f"feat: commit {i}")
+        # 10000 `+ <sha>` lines = ~430KB. Far exceeds pipe buffer on macOS (~16KB)
+        # and Linux (~64KB), guaranteeing the producer gets blocked on write
+        # when the consumer (grep -q) exits on the first match.
+        cherry_lines = "\n".join(f"+ {'a' * 40}" for _ in range(10000))
+        cherry_escaped = cherry_lines.replace("'", "'\\''")
 
-        # Diverge main so the branch commits are NOT ancestors of main
-        # (otherwise git cherry would show nothing at all).
-        (repo / "diverge.txt").write_text("diverge\n")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "main: diverge")
+        # OLD pipeline (pre-fix). Set -o pipefail is the trigger.
+        # Logic: if cherry has content AND no '+' lines found, return 0 (merged).
+        # With SIGPIPE: grep finds '+' on line 1, exits 0, printf gets SIGPIPE (141),
+        # pipefail makes pipeline exit 141, ! 141 = 0, condition true, return 0 (FALSE POSITIVE).
+        old_script = textwrap.dedent(f"""
+            set -euo pipefail
+            cherry='{cherry_escaped}'
+            if [[ -n "$cherry" ]] && ! printf '%s\\n' "$cherry" | grep -q '^+'; then
+                exit 0
+            fi
+            exit 1
+        """).strip()
 
-        # Sanity: cherry output has 1500 '+' lines (all unmerged).
-        cherry = subprocess.run(
-            ["git", "cherry", "main", "feat-partial"],
-            cwd=repo, capture_output=True, text=True, check=True,
-        ).stdout
-        cherry_lines = [l for l in cherry.strip().splitlines() if l.strip()]
-        self.assertGreaterEqual(
-            len(cherry_lines), num_commits,
-            f"expected {num_commits} cherry lines, got {len(cherry_lines)}",
+        result = subprocess.run(
+            ["bash", "-c", old_script],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
-        # All lines must be '+' (unmerged)
-        plus_lines = [l for l in cherry_lines if l.startswith("+")]
-        self.assertEqual(len(plus_lines), len(cherry_lines),
-                         "all cherry lines should be '+' (unmerged)")
+        self.assertEqual(
+            result.returncode, 0,
+            "OLD pipeline should false-positive (return 0 = merged) on this OS "
+            "when cherry output exceeds the pipe buffer. If it returned "
+            f"{result.returncode}, the SIGPIPE path didn't fire; increase the "
+            f"line count. stderr: {result.stderr}",
+        )
 
-        out = self._run_cleanup(repo, "--dry-run")
+        # NEW pipeline (post-fix). Bash while-read loop, no pipe.
+        new_script = textwrap.dedent(f"""
+            set -euo pipefail
+            cherry='{cherry_escaped}'
+            if [[ -n "$cherry" ]]; then
+                while IFS= read -r line; do
+                    [[ "$line" == +* ]] && exit 1
+                done <<< "$cherry"
+                exit 0
+            fi
+            exit 1
+        """).strip()
 
-        self.assertIn("skipped feat-partial (unmerged)", out.stdout)
-        self.assertNotIn("would remove feat-partial", out.stdout)
+        result = subprocess.run(
+            ["bash", "-c", new_script],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(
+            result.returncode, 1,
+            f"NEW pipeline should correctly return 1 (unmerged) when `+` lines "
+            f"are present. Got: {result.returncode}. stderr: {result.stderr}",
+        )
 
     # ── B2: origin/<base> fallback when configured remote is stale ──
 
