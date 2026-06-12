@@ -139,6 +139,19 @@ resolve_base_candidates() {
             esac
         fi
     fi
+
+    # 4. Last-resort fallback to origin/<base>, regardless of branch.${base}.remote.
+    # If the configured remote is stale or doesn't track the base, this catches
+    # the case where origin/<base> locally proves the merge.
+    if git config --get "remote.origin.url" >/dev/null 2>&1; then
+        local origin_ref="refs/remotes/origin/${base}"
+        if git rev-parse --verify --quiet "$origin_ref" >/dev/null 2>&1; then
+            case "$seen" in
+                *" $origin_ref "*) ;;
+                *) printf '%s\n' "$origin_ref" ;;
+            esac
+        fi
+    fi
 }
 
 # Check if sha is an ancestor of candidate (regular / fast-forward merge).

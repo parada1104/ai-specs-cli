@@ -414,6 +414,46 @@ class WorktreeCleanupTests(unittest.TestCase):
         self.assertIn("skipped feat-partial (unmerged)", out.stdout)
         self.assertNotIn("would remove feat-partial", out.stdout)
 
+    # ── B2: origin/<base> fallback when configured remote is stale ──
+
+    def test_origin_base_fallback_when_configured_remote_missing(self):
+        """origin/<base> must prove merge when branch.<base>.remote is stale.
+
+        When branch.main.remote points to a non-existent remote (fake-remote)
+        and refs/remotes/fake-remote/main does NOT exist, but
+        refs/remotes/origin/main DOES contain the merge commit, the script
+        must fall back to origin/main. Pre-fix, the third candidate fails
+        rev-parse and there is no fourth candidate — regression to unmerged.
+        Post-fix, the fourth candidate finds origin/main and detects merged.
+        """
+        repo = self._make_repo()
+        main_sha_before = git(repo, "rev-parse", "main").strip()
+
+        wt = self._add_worktree(repo, "feat-fallback")
+        (wt / "fallback.txt").write_text("fallback work\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "feat: fallback work")
+
+        # Merge into local main
+        git(repo, "merge", "-q", "--no-ff", "-m", "merge feat-fallback", "feat-fallback")
+        merge_sha = git(repo, "rev-parse", "HEAD").strip()
+
+        # Set origin/main to the merge commit
+        git(repo, "update-ref", "refs/remotes/origin/main", merge_sha)
+        git(repo, "config", "remote.origin.url", "https://example.com/repo.git")
+
+        # Set branch.main.remote to a non-existent remote
+        git(repo, "config", "branch.main.remote", "fake-remote")
+        # Do NOT set remote.fake-remote.url — the ref won't resolve
+
+        # Reset local main to before the merge (stale local)
+        git(repo, "update-ref", "refs/heads/main", main_sha_before)
+
+        out = self._run_cleanup(repo, "--dry-run")
+
+        self.assertIn("would remove feat-fallback", out.stdout)
+        self.assertNotIn("unmerged", out.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
