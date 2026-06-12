@@ -362,5 +362,58 @@ class WorktreeCleanupTests(unittest.TestCase):
         )
 
 
+    # ── A1: SIGPIPE false positive in patch-id check ──
+
+    def test_patch_equivalence_does_not_false_positive_with_many_cherry_lines(self):
+        """Partial squash-merge must NOT be detected as fully merged.
+
+        When a branch has 5 commits and only the first 2 are cherry-picked
+        into base, `git cherry` outputs 2 '-' lines followed by 3 '+' lines.
+        Pre-fix, the `printf | grep -q` pipe under `set -o pipefail` could
+        produce a false positive (SIGPIPE on printf after grep -q exits early).
+        Post-fix, the bash loop correctly finds the '+' lines and returns
+        unmerged.
+        """
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-partial")
+
+        # Create 5 commits on the branch
+        for i in range(1, 6):
+            (wt / f"file{i}.txt").write_text(f"work {i}\n")
+            git(wt, "add", "-A")
+            git(wt, "commit", "-qm", f"feat: commit {i}")
+
+        # Diverge main before cherry-picking so git creates new SHAs
+        # (otherwise cherry-pick fast-forwards and the commits become
+        # ancestors of main, removing them from git cherry output).
+        (repo / "diverge.txt").write_text("diverge\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "main: diverge")
+
+        # Cherry-pick only the first 2 commits onto main
+        branch_commits = git(
+            wt, "rev-list", "--reverse", "HEAD~5..HEAD"
+        ).strip().splitlines()
+        self.assertEqual(len(branch_commits), 5)
+        for sha in branch_commits[:2]:
+            git(repo, "cherry-pick", sha)
+
+        # Sanity: cherry output has both '-' and '+' lines
+        cherry = subprocess.run(
+            ["git", "cherry", "main", "feat-partial"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertIn("-", cherry, "should have merged (cherry-picked) commits")
+        self.assertIn("+", cherry, "should have unmerged commits")
+        # Must have at least 5 lines total (2 merged + 3 unmerged)
+        cherry_lines = [l for l in cherry.strip().splitlines() if l.strip()]
+        self.assertGreaterEqual(len(cherry_lines), 5)
+
+        out = self._run_cleanup(repo, "--dry-run")
+
+        self.assertIn("skipped feat-partial (unmerged)", out.stdout)
+        self.assertNotIn("would remove feat-partial", out.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

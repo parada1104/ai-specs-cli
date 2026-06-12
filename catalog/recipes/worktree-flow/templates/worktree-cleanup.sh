@@ -153,7 +153,14 @@ candidate_has_patch_equivalence() {
     if [[ -n "$(git rev-list "${candidate}..${sha}" 2>/dev/null)" ]]; then
         local cherry
         cherry="$(git cherry "$candidate" "$sha" 2>/dev/null)"
-        if [[ -n "$cherry" ]] && ! printf '%s\n' "$cherry" | grep -q '^+'; then
+        # Avoid `printf | grep -q` here: under `set -o pipefail`, grep -q
+        # exits early on the first match, SIGPIPE kills printf (exit 141),
+        # and pipefail propagates that as a pipeline failure — a false positive.
+        if [[ -n "$cherry" ]]; then
+            local line
+            while IFS= read -r line; do
+                [[ "$line" == +* ]] && return 1
+            done <<< "$cherry"
             return 0
         fi
     fi
