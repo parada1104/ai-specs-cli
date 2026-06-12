@@ -47,6 +47,7 @@ class WorktreeCleanupTests(unittest.TestCase):
         repo.mkdir()
         git(repo, "init", "-q", "-b", "main")
         (repo / "README.md").write_text("base\n")
+        (repo / ".gitignore").write_text(".worktrees/\n")
         git(repo, "add", "-A")
         git(repo, "commit", "-qm", "init")
         return repo
@@ -144,6 +145,136 @@ class WorktreeCleanupTests(unittest.TestCase):
 
         self.assertTrue(wt.exists(), "--dry-run must not remove anything")
         self.assertIn("would remove feat-merged", out.stdout)
+
+    # ── T2: regular merge on remote base, stale local base (PR #93 repro) ──
+
+    def test_detects_regular_merge_on_remote_base_with_stale_local_base(self):
+        repo = self._make_repo()
+        main_sha_before = git(repo, "rev-parse", "main").strip()
+
+        wt = self._add_worktree(repo, "feat-regular")
+        (wt / "feature.txt").write_text("regular work\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "feat: regular work")
+
+        # Merge into local main (creates merge commit)
+        git(repo, "merge", "-q", "--no-ff", "-m", "Merge feat-regular", "feat-regular")
+        merge_sha = git(repo, "rev-parse", "HEAD").strip()
+
+        # Simulate: origin/main has the merge, local main is stale
+        git(repo, "update-ref", "refs/remotes/origin/main", merge_sha)
+        git(repo, "update-ref", "refs/heads/main", main_sha_before)
+
+        out = self._run_cleanup(repo, "--dry-run")
+
+        self.assertIn("would remove", out.stdout)
+        self.assertNotIn("unmerged", out.stdout)
+
+    # ── T4: rebase merge detected by patch-id ──
+
+    def test_removes_rebase_merged_worktree_by_patch_id(self):
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-rebase")
+        (wt / "rebase.txt").write_text("rebase work\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "feat: rebase work")
+
+        # Simulate rebase merge: apply the same diff on main with a different message.
+        # This creates a commit with the same patch-id but a different SHA.
+        (repo / "rebase.txt").write_text("rebase work\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "main: rebased feat-rebase work")
+
+        # Sanity: feat-rebase tip is NOT an ancestor of main (different SHA)
+        rc = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", "feat-rebase", "main"],
+            cwd=repo,
+        ).returncode
+        self.assertNotEqual(rc, 0, "rebase tip should not be ancestor of main")
+
+        out = self._run_cleanup(repo, "--dry-run")
+
+        self.assertIn("would remove", out.stdout)
+
+    # ── T7: branch ahead of base with remote candidate present ──
+
+    def test_preserves_branch_ahead_of_base(self):
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-ahead")
+        (wt / "ahead.txt").write_text("unlanded work\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "feat: unlanded work")
+
+        # origin/main exists but does NOT contain the branch's commits
+        main_sha = git(repo, "rev-parse", "main").strip()
+        git(repo, "update-ref", "refs/remotes/origin/main", main_sha)
+
+        out = self._run_cleanup(repo, "--dry-run")
+
+        self.assertIn("skipped feat-ahead (unmerged)", out.stdout)
+
+    # ── T9: remote-deleted branch, local base still proves merge ──
+
+    def test_removes_remote_deleted_branch_when_local_base_contains_tip(self):
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-gone")
+        (wt / "gone.txt").write_text("gone work\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "feat: gone work")
+
+        # Merge into local main (local main proves the merge)
+        git(repo, "merge", "-q", "--no-ff", "-m", "merge feat-gone", "feat-gone")
+
+        # No origin/main exists — remote branch was deleted
+        # (we simply don't create refs/remotes/origin/main)
+
+        out = self._run_cleanup(repo, "--dry-run")
+
+        self.assertIn("would remove", out.stdout)
+
+    # ── T10: conflict-resolution merge commit on remote base ──
+
+    def test_detects_conflict_resolution_merge_on_remote_base(self):
+        repo = self._make_repo()
+        main_sha_before = git(repo, "rev-parse", "main").strip()
+
+        wt = self._add_worktree(repo, "feat-conflict")
+
+        # Create conflicting changes on the same file
+        (repo / "README.md").write_text("main version\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "main: update README")
+
+        (wt / "README.md").write_text("feature version\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "feat: update README")
+
+        # Attempt merge — will conflict
+        env = dict(os.environ)
+        env.update({
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+        })
+        subprocess.run(
+            ["git", "merge", "--no-ff", "-m", "Merge feat-conflict", "feat-conflict"],
+            cwd=repo,
+            env=env,
+        )
+        # Resolve conflict and complete merge
+        (repo / "README.md").write_text("resolved version\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "Merge feat-conflict (resolved)")
+
+        merge_sha = git(repo, "rev-parse", "HEAD").strip()
+
+        # Simulate: origin/main has the conflict-resolution merge, local main is stale
+        git(repo, "update-ref", "refs/remotes/origin/main", merge_sha)
+        git(repo, "update-ref", "refs/heads/main", main_sha_before)
+
+        out = self._run_cleanup(repo, "--dry-run")
+
+        self.assertIn("would remove", out.stdout)
+        self.assertNotIn("unmerged", out.stdout)
 
 
 if __name__ == "__main__":
