@@ -92,25 +92,97 @@ flush() {
     echo "removed $name"
 }
 
-# Decide whether a branch is fully merged into base, covering both regular
-# (fast-forward / merge-commit) integration and squash/rebase merges.
-is_merged() {
-    local sha="$1" base="$2"
-    # Regular / fast-forward merge: branch tip is an ancestor of base.
-    if git merge-base --is-ancestor "$sha" "$base" 2>/dev/null; then
-        return 0
+# Print a debug message to stderr when WORKTREE_CLEANUP_DEBUG=1.
+debug_log() {
+    if [[ "${WORKTREE_CLEANUP_DEBUG:-0}" == "1" ]]; then
+        echo "[debug] $*" >&2
     fi
-    # Squash / rebase merge: the branch tip is not an ancestor, but every commit
-    # unique to the branch is already present in base by patch-id. `git cherry`
-    # prints '+ <sha>' for commits NOT yet in base and '- <sha>' for those that
-    # are. No '+' lines => all of the branch's changes already landed in base.
-    if [[ -n "$(git rev-list "$base..$sha" 2>/dev/null)" ]]; then
+    return 0
+}
+
+# Resolve ordered base candidate refs for merge detection.
+# Prints one candidate per line: exact --base, configured upstream, remote-tracking ref.
+resolve_base_candidates() {
+    local base="$1"
+    local seen=" "
+
+    # 1. Exact base ref
+    if git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
+        printf '%s\n' "$base"
+        seen="$seen$base "
+    fi
+
+    # 2. Configured upstream of the base branch
+    local upstream
+    upstream="$(git rev-parse --verify --quiet --abbrev-ref "${base}@{u}" 2>/dev/null)" || true
+    if [[ -n "$upstream" ]] && git rev-parse --verify --quiet "$upstream" >/dev/null 2>&1; then
+        case "$seen" in
+            *" $upstream "*) ;;
+            *) printf '%s\n' "$upstream"; seen="$seen$upstream " ;;
+        esac
+    fi
+
+    # 3. Remote-tracking ref for the base
+    local remote
+    remote="$(git config --get "branch.${base}.remote" 2>/dev/null)" || true
+    if [[ -z "$remote" ]]; then
+        if git config --get "remote.origin.url" >/dev/null 2>&1; then
+            remote="origin"
+        fi
+    fi
+    if [[ -n "$remote" ]]; then
+        local remote_ref="refs/remotes/${remote}/${base}"
+        if git rev-parse --verify --quiet "$remote_ref" >/dev/null 2>&1; then
+            case "$seen" in
+                *" $remote_ref "*) ;;
+                *) printf '%s\n' "$remote_ref" ;;
+            esac
+        fi
+    fi
+}
+
+# Check if sha is an ancestor of candidate (regular / fast-forward merge).
+candidate_has_merged_tip() {
+    local sha="$1" candidate="$2"
+    git merge-base --is-ancestor "$sha" "$candidate" 2>/dev/null
+}
+
+# Check if all unique commits in sha are present in candidate by patch-id.
+candidate_has_patch_equivalence() {
+    local sha="$1" candidate="$2"
+    if [[ -n "$(git rev-list "${candidate}..${sha}" 2>/dev/null)" ]]; then
         local cherry
-        cherry="$(git cherry "$base" "$sha" 2>/dev/null)"
+        cherry="$(git cherry "$candidate" "$sha" 2>/dev/null)"
         if [[ -n "$cherry" ]] && ! printf '%s\n' "$cherry" | grep -q '^+'; then
             return 0
         fi
     fi
+    return 1
+}
+
+# Decide whether a branch is fully merged into base, covering both regular
+# (fast-forward / merge-commit) integration and squash/rebase merges.
+# Evaluates ordered base candidates (exact base, upstream, remote-tracking).
+is_merged() {
+    local sha="$1" base="$2"
+    local candidate
+
+    # First pass: ancestry check across all candidates
+    while IFS= read -r candidate; do
+        if candidate_has_merged_tip "$sha" "$candidate"; then
+            debug_log "merged by ancestry: $candidate"
+            return 0
+        fi
+    done < <(resolve_base_candidates "$base")
+
+    # Second pass: patch-id equivalence across all candidates
+    while IFS= read -r candidate; do
+        if candidate_has_patch_equivalence "$sha" "$candidate"; then
+            debug_log "merged by patch-id: $candidate"
+            return 0
+        fi
+    done < <(resolve_base_candidates "$base")
+
     return 1
 }
 

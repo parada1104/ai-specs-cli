@@ -163,6 +163,7 @@ class WorktreeCleanupTests(unittest.TestCase):
 
         # Simulate: origin/main has the merge, local main is stale
         git(repo, "update-ref", "refs/remotes/origin/main", merge_sha)
+        git(repo, "config", "remote.origin.url", "https://example.com/repo.git")
         git(repo, "update-ref", "refs/heads/main", main_sha_before)
 
         out = self._run_cleanup(repo, "--dry-run")
@@ -208,6 +209,7 @@ class WorktreeCleanupTests(unittest.TestCase):
         # origin/main exists but does NOT contain the branch's commits
         main_sha = git(repo, "rev-parse", "main").strip()
         git(repo, "update-ref", "refs/remotes/origin/main", main_sha)
+        git(repo, "config", "remote.origin.url", "https://example.com/repo.git")
 
         out = self._run_cleanup(repo, "--dry-run")
 
@@ -269,6 +271,7 @@ class WorktreeCleanupTests(unittest.TestCase):
 
         # Simulate: origin/main has the conflict-resolution merge, local main is stale
         git(repo, "update-ref", "refs/remotes/origin/main", merge_sha)
+        git(repo, "config", "remote.origin.url", "https://example.com/repo.git")
         git(repo, "update-ref", "refs/heads/main", main_sha_before)
 
         out = self._run_cleanup(repo, "--dry-run")
