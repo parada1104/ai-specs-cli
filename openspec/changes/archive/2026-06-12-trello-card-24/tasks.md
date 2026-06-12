@@ -16,57 +16,57 @@ Delivery strategy: `single-pr-default`. Chain strategy: not needed.
 
 Each test is a self-contained method in `tests/test_worktree_cleanup.py` that uses `unittest.TestCase` plus `tempfile.TemporaryDirectory` to build a hermetic git repo, runs the canonical template via `subprocess.run`, and asserts on stdout.
 
-- [ ] **T1 — scaffold hermetic test harness for the cleanup script** [AC: 1-9]
+- [x] **T1 — scaffold hermetic test harness for the cleanup script** [AC: 1-9]
   - File: `tests/test_worktree_cleanup.py` (new)
   - Verify: `python3 -m unittest tests.test_worktree_cleanup -v` runs and the harness builds an empty repo and exec's the script with `--dry-run` and `--base main`.
   - Notes: reuse the same `unittest` + `tempfile` + `subprocess` pattern that other `tests/test_*.py` files in this repo use. The script under test is `catalog/recipes/worktree-flow/templates/worktree-cleanup.sh`.
 
-- [ ] **T2 — regular merge on remote base, stale local base** [AC: 1, 8]
+- [x] **T2 — regular merge on remote base, stale local base** [AC: 1, 8]
   - File: `tests/test_worktree_cleanup.py`
   - Setup: a remote-tracking ref `refs/remotes/origin/main` contains a regular merge commit that includes the branch tip; the local `main` is one commit behind. The worktree is a clean worktree with the branch tip checked out.
   - Verify: `assertIn("would remove", stdout)` and `assertNotIn("unmerged", stdout)`.
   - Notes: this is the PR #93 reproduction. Pre-fix, the script returns `unmerged`; post-fix, it returns `merged` via the `origin/main` candidate.
 
-- [ ] **T3 — squash merge, all changes present by patch-id** [AC: 2]
+- [x] **T3 — squash merge, all changes present by patch-id** [AC: 2]
   - File: `tests/test_worktree_cleanup.py`
   - Setup: branch tip is not an ancestor of `main`, but every commit's patch-id is already in `main`. Build with `git cherry-pick` of pre-existing patches.
   - Verify: `assertIn("would remove", stdout)`.
 
-- [ ] **T4 — rebase merge, all changes present by patch-id** [AC: 3]
+- [x] **T4 — rebase merge, all changes present by patch-id** [AC: 3]
   - File: `tests/test_worktree_cleanup.py`
   - Setup: rebase the branch onto a base, then fast-forward `main` to the rebased tip.
   - Verify: `assertIn("would remove", stdout)`.
 
-- [ ] **T5 — fast-forward merge** [AC: 4]
+- [x] **T5 — fast-forward merge** [AC: 4]
   - File: `tests/test_worktree_cleanup.py`
   - Setup: branch tip is an ancestor of `main` (no remote involvement needed).
   - Verify: `assertIn("would remove", stdout)`.
   - Notes: this is the pre-existing happy path; test it to guard against regression.
 
-- [ ] **T6 — local-only branch, no remote, no upstream, not merged** [AC: 5]
+- [x] **T6 — local-only branch, no remote, no upstream, not merged** [AC: 5]
   - File: `tests/test_worktree_cleanup.py`
   - Setup: branch has no `origin/<base>` ref and no `@{u}` upstream. The branch tip is NOT an ancestor of `main` and NOT patch-id-equivalent.
   - Verify: `assertIn("skipped <branch> (unmerged)", stdout)`.
   - Notes: the local-only fallback must remain conservative.
 
-- [ ] **T7 — branch ahead of base, real unmerged work** [AC: 6]
+- [x] **T7 — branch ahead of base, real unmerged work** [AC: 6]
   - File: `tests/test_worktree_cleanup.py`
   - Setup: branch has new commits that are NOT in `main` and not in `origin/main` either.
   - Verify: `assertIn("skipped <branch> (unmerged)", stdout)`.
 
-- [ ] **T8 — dirty worktree, uncommitted changes override any merge verdict** [AC: 7]
+- [x] **T8 — dirty worktree, uncommitted changes override any merge verdict** [AC: 7]
   - File: `tests/test_worktree_cleanup.py`
   - Setup: branch is fully merged by ancestry, but the worktree has an uncommitted file.
   - Verify: `assertIn("skipped <branch> (dirty)", stdout)` AND `assertNotIn("would remove", stdout)`.
   - Notes: the dirty-skip must run BEFORE merge detection (already true in current code; guard against regression).
 
-- [ ] **T9 — branch deleted on remote, local base still contains tip** [AC: 4, 9]
+- [x] **T9 — branch deleted on remote, local base still contains tip** [AC: 4, 9]
   - File: `tests/test_worktree_cleanup.py`
   - Setup: local `main` is the only ref that has the branch tip as ancestor. No `origin/main` exists or it's stale.
   - Verify: `assertIn("would remove", stdout)`.
   - Notes: verifies that we don't BREAK the case where the local base still proves the merge.
 
-- [ ] **T10 — conflict-resolution merge commit on remote base** [AC: 1]
+- [x] **T10 — conflict-resolution merge commit on remote base** [AC: 1]
   - File: `tests/test_worktree_cleanup.py`
   - Setup: a regular merge commit on `origin/main` resolves a conflict; the branch tip is the second parent of that merge commit. Local `main` is stale.
   - Verify: `assertIn("would remove", stdout)`.
@@ -76,25 +76,25 @@ Each test is a self-contained method in `tests/test_worktree_cleanup.py` that us
 
 All edits go into `catalog/recipes/worktree-flow/templates/worktree-cleanup.sh`. Do NOT modify the materialized copy at `ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh` (it is absent in this worktree and should be regenerated by `ai-specs sync` if needed; if sync later creates or updates a tracked copy, address it in the optional Group C chore).
 
-- [ ] **T11 — add `debug_log` helper** [AC: all]
+- [x] **T11 — add `debug_log` helper** [AC: all]
   - File: `catalog/recipes/worktree-flow/templates/worktree-cleanup.sh` (new function, immediately above `is_merged`)
   - Verify: shellcheck-clean. Behavior: prints to stderr only when `WORKTREE_CLEANUP_DEBUG=1`; otherwise no-op.
   - Notes: stable stdout must remain greppable, so debug must go to stderr.
 
-- [ ] **T12 — add `resolve_base_candidates` helper** [AC: 1, 8]
+- [x] **T12 — add `resolve_base_candidates` helper** [AC: 1, 8]
   - File: `catalog/recipes/worktree-flow/templates/worktree-cleanup.sh` (new function)
   - Verify: shellcheck-clean. Prints one candidate ref per line on stdout in this order, deduped: exact `--base`, then `${base}@{u}` if a configured upstream resolves, then `refs/remotes/<remote>/<base>` where `<remote>` is `git config --get branch.${base}.remote` falling back to `origin` only when `remote.origin.url` is set.
   - Notes: every lookup must be silent on failure (use `git rev-parse --verify --quiet`).
 
-- [ ] **T13 — add `candidate_has_merged_tip` helper** [AC: 1, 4, 9]
+- [x] **T13 — add `candidate_has_merged_tip` helper** [AC: 1, 4, 9]
   - File: `catalog/recipes/worktree-flow/templates/worktree-cleanup.sh` (new function)
   - Verify: shellcheck-clean. Returns 0 if `git merge-base --is-ancestor "$sha" "$candidate"` succeeds, non-zero otherwise. Errors must be silenced.
 
-- [ ] **T14 — add `candidate_has_patch_equivalence` helper** [AC: 2, 3]
+- [x] **T14 — add `candidate_has_patch_equivalence` helper** [AC: 2, 3]
   - File: `catalog/recipes/worktree-flow/templates/worktree-cleanup.sh` (new function)
   - Verify: shellcheck-clean. Encapsulates the existing lines 107-110 logic but parameterized by the candidate ref. Returns 0 if `git cherry "$candidate" "$sha"` produces no `+` lines AND there is at least one `rev-list` entry to compare; non-zero otherwise.
 
-- [ ] **T15 — replace the body of `is_merged` with candidate loops** [AC: 1-9]
+- [x] **T15 — replace the body of `is_merged` with candidate loops** [AC: 1-9]
   - File: `catalog/recipes/worktree-flow/templates/worktree-cleanup.sh:97-115`
   - Verify: shellcheck-clean. After replacement: `is_merged` iterates over `resolve_base_candidates "$base"` and tries `candidate_has_merged_tip` first, then `candidate_has_patch_equivalence`, returning 0 on the first hit. The previous `git cherry` fallback against the exact base remains the last-resort behavior because the exact base is always in the candidate list.
   - Notes: the function signature `is_merged "$sha" "$BASE_BRANCH"` (line 78) MUST be preserved. Exit codes 0 / 1 MUST be preserved. Do not change any other function in the script.
@@ -108,12 +108,12 @@ All edits go into `catalog/recipes/worktree-flow/templates/worktree-cleanup.sh`.
 
 ## Group D — Verification (commit 2 or 3)
 
-- [ ] **T17 — run the test suite and capture evidence** [AC: 1-9]
+- [x] **T17 — run the test suite and capture evidence** [AC: 1-9]
   - Command: `cd /Users/robert/proyectos/nnodes/ai-specs-cli/.worktrees/trello-card-24 && ./tests/run.sh` (focused) or `python3 -m unittest discover -s tests -p 'test_worktree_cleanup.py' -v`
   - Verify: all 9+ new tests pass. No regression in any pre-existing test (the existing tests are not coupled to the script, so they should be unaffected, but capture the full run as evidence).
   - Notes: per the project runtime brief, the unit-only command is `./tests/run.sh`. Full validation is `./tests/validate.sh` which also runs shellcheck; use that as the final gate.
 
-- [ ] **T18 — manually reproduce the PR #93 scenario** [AC: 1]
+- [x] **T18 — manually reproduce the PR #93 scenario** [AC: 1]
   - Command: build a synthetic branch whose tip is reachable from `origin/development` but NOT from local `development`, then `bash catalog/recipes/worktree-flow/templates/worktree-cleanup.sh --dir .worktrees --base development --dry-run`.
   - Verify: the script prints `would remove <branch>` (not `skipped <branch> (unmerged)`).
   - Notes: this is the original repro from the Trello card. Captures end-to-end behavior of the script via the canonical template path.
