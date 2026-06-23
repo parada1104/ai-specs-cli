@@ -19,6 +19,7 @@ The manifest surface supported today is:
 - `[[bindings]]`
 - `[brief]`
 - `[brief.mcp_descriptions]`
+- `[tool]`
 Recipe-specific schema details live in [`docs/recipe-schema.md`](recipe-schema.md).
 
 ## Compatibility rules
@@ -67,6 +68,9 @@ Conservative compatibility rules in V1:
 | `[brief]` | `workflow_rules_mode` | optional; `"append"` (default) or `"replace"` — suppress all recipe fragments for `workflow_rules` when `"replace"` |
 | `[brief]` | `useful_commands_mode` | optional; `"append"` (default) or `"replace"` — suppress all recipe fragments for `useful_commands` when `"replace"` |
 | `[brief.mcp_descriptions]` | `<server-name>` | optional; overrides the recipe-provided default description per server; entries not covered by the project fall back to the recipe-declared value |
+| `[tool]` | `version` | optional; exact CLI version pin (semver) |
+| `[tool]` | `min_version` | optional; minimum acceptable CLI version (semver); mutually exclusive with `version` |
+| `[tool]` | `policy` | optional; `exact` or `min` (inferred from which version field is set) |
 
 ## Manifest sections
 
@@ -79,6 +83,29 @@ Project metadata owned by the repo.
 name = "my-project"
 subrepos = ["packages/app", "packages/docs"]
 ```
+
+### `[tool]`
+
+Optional CLI version policy for the project. When set, `ai-specs sync` validates
+the running CLI before writing files. Lock metadata (`ai-specs/.ai-specs.lock`
+`[meta]`) records the CLI version on each successful sync.
+
+```toml
+[tool]
+version = "0.12.2"
+policy = "exact"
+```
+
+Minimum version instead of exact pin:
+
+```toml
+[tool]
+min_version = "0.11.0"
+policy = "min"
+```
+
+Use `ai-specs doctor` to compare installed, pinned, and last-synced CLI versions.
+Pass `ai-specs sync --ignore-cli-version` to bypass enforcement in emergencies.
 
 ### `[agents]`
 

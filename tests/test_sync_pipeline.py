@@ -2878,5 +2878,45 @@ class FanOutDriftTests(unittest.TestCase):
             shutil.rmtree(workspace.parent)
 
 
+class CliVersionSyncGateTests(unittest.TestCase):
+    def test_exact_pin_mismatch_aborts_sync(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            toml = workspace / "ai-specs" / "ai-specs.toml"
+            toml.write_text(
+                toml.read_text().rstrip()
+                + '\n\n[tool]\nversion = "99.99.99"\npolicy = "exact"\n'
+            )
+            result = subprocess.run(
+                [str(CLI), "sync", str(workspace)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("99.99.99", result.stderr)
+
+    def test_ignore_cli_version_flag_proceeds_with_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            toml = workspace / "ai-specs" / "ai-specs.toml"
+            toml.write_text(
+                toml.read_text().rstrip()
+                + '\n\n[tool]\nversion = "99.99.99"\npolicy = "exact"\n'
+            )
+            result = subprocess.run(
+                [str(CLI), "sync", str(workspace), "--ignore-cli-version"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertIn("ignoring CLI version policy", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
