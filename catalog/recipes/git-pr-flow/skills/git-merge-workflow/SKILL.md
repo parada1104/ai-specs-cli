@@ -2,8 +2,8 @@
 name: git-merge-workflow
 description: >
   Provider-oriented merge workflow for feature branches created in worktrees.
-  Uses the configured PR provider and base branch from
-  [recipes.git-pr-flow.config] (provider and base_branch).
+  Uses the configured base branch from [recipes.git-pr-flow.config]
+  (base_branch). GitHub via the gh CLI.
 license: MIT
 metadata:
   author: ai-specs
@@ -22,9 +22,9 @@ metadata:
 
 Use this skill only when the user explicitly asks to create a PR, merge, finish a branch, or clean up after merge.
 
-Use the configured PR provider and base branch from `[recipes.git-pr-flow.config]`
-(`provider` and `base_branch`). GitHub through the `gh` CLI is the implemented provider.
-Honor any no-push/no-merge rules declared for the project.
+Use the configured base branch from `[recipes.git-pr-flow.config]` (`base_branch`).
+This recipe implements GitHub through the `gh` CLI. Honor any no-push/no-merge rules
+declared for the project.
 
 ## Preconditions
 

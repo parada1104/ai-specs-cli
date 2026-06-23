@@ -47,11 +47,11 @@ platform_get() {
             esac
             ;;
         cursor)
-            # Cursor reads AGENTS.md natively at root and has no native
-            # skill auto-invocation (skills are referenced via AGENTS.md table).
+            # Cursor reads AGENTS.md natively at root; skills load from
+            # .cursor/skills/ (symlinked to resolved-skills on sync).
             case "$field" in
                 instructions_path) echo "" ;;
-                skills_dir)        echo "" ;;
+                skills_dir)        echo ".cursor/skills" ;;
                 agents_dir)        echo "" ;;
                 mcp_config_path)   echo ".cursor/mcp.json" ;;
                 mcp_key)           echo "mcpServers" ;;

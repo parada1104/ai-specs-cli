@@ -118,9 +118,9 @@ class GitlabMrFlowDocsContractTests(unittest.TestCase):
         self.assertIn("glab", self.readme_text)
 
     def test_readme_has_config_table(self):
-        """README documents provider and base_branch config fields."""
-        self.assertIn("provider", self.readme_text)
+        """README documents base_branch config only (no provider key)."""
         self.assertIn("base_branch", self.readme_text)
+        self.assertNotIn("| `provider`", self.readme_text)
 
     def test_readme_documents_vcs_pr_flow_capability(self):
         """README declares the vcs-pr-flow capability."""
@@ -155,10 +155,10 @@ class GitlabMrFlowDocsContractTests(unittest.TestCase):
                        "gitlab-mr-flow must appear in the At a glance table")
 
     def test_catalog_section_has_config_table(self):
-        """The catalog section documents provider and base_branch."""
+        """The catalog section documents base_branch only."""
         section = self._recipe_section("gitlab-mr-flow")
-        self.assertIn("provider", section)
         self.assertIn("base_branch", section)
+        self.assertNotIn("| `provider`", section)
 
     def test_catalog_section_links_readme(self):
         """The catalog section links to the full README."""
@@ -168,7 +168,7 @@ class GitlabMrFlowDocsContractTests(unittest.TestCase):
     def test_catalog_section_mentions_no_mcp(self):
         """The catalog section notes that gitlab-mr-flow installs no MCP server."""
         section = self._recipe_section("gitlab-mr-flow")
-        self.assertIn("—", section)  # em-dash in "Installs MCP" column = "—"
+        self.assertIn("Installs no MCP server", section)
 
     def test_catalog_section_cross_links_git_pr_flow(self):
         """The catalog section cross-links to git-pr-flow for GitHub users."""
@@ -186,6 +186,98 @@ class GitlabMrFlowDocsContractTests(unittest.TestCase):
         match = re.search(pattern, self.catalog, re.DOTALL)
         self.assertIsNotNone(match, f"missing ## {recipe_id} section")
         return match.group(1)
+
+
+class BitbucketPrFlowDocsContractTests(unittest.TestCase):
+    """Docs contract tests for bitbucket-pr-flow."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.catalog = CATALOG_DOC.read_text()
+        cls.capabilities = CAPABILITIES_DOC.read_text()
+        cls.readme_path = RECIPES_DIR / "bitbucket-pr-flow" / "README.md"
+        cls.readme_text = cls.readme_path.read_text() if cls.readme_path.is_file() else ""
+
+    def test_readme_exists(self):
+        self.assertTrue(self.readme_path.is_file())
+
+    def test_readme_has_config_table_without_provider(self):
+        self.assertIn("base_branch", self.readme_text)
+        self.assertNotIn("| `provider`", self.readme_text)
+
+    def test_catalog_has_bitbucket_section(self):
+        self.assertRegex(self.catalog, r"## bitbucket-pr-flow\n")
+
+    def test_catalog_section_has_base_branch_only(self):
+        section = self._recipe_section("bitbucket-pr-flow")
+        self.assertIn("base_branch", section)
+        self.assertNotIn("| `provider`", section)
+
+    def test_capabilities_mentions_bitbucket_pr_flow(self):
+        self.assertIn("bitbucket-pr-flow", self.capabilities)
+
+    def _recipe_section(self, recipe_id: str) -> str:
+        pattern = rf"## {re.escape(recipe_id)}\n(.*?)(?=\n## |\Z)"
+        match = re.search(pattern, self.catalog, re.DOTALL)
+        self.assertIsNotNone(match, f"missing ## {recipe_id} section")
+        return match.group(1)
+
+
+class GitPrFlowDocsContractTests(unittest.TestCase):
+    """Docs contract tests for git-pr-flow — mirrors GitLab/Bitbucket symmetry."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.catalog = CATALOG_DOC.read_text()
+        cls.capabilities = CAPABILITIES_DOC.read_text()
+        cls.readme_path = RECIPES_DIR / "git-pr-flow" / "README.md"
+        cls.readme_text = cls.readme_path.read_text() if cls.readme_path.is_file() else ""
+
+    def test_readme_exists(self):
+        """catalog/recipes/git-pr-flow/README.md exists."""
+        self.assertTrue(self.readme_path.is_file(), "git-pr-flow README.md must exist")
+
+    def test_readme_has_config_table_without_provider(self):
+        """README documents base_branch config only (no provider key)."""
+        self.assertIn("base_branch", self.readme_text)
+        self.assertNotIn("| `provider`", self.readme_text)
+
+    def test_catalog_has_git_pr_flow_section(self):
+        """recipes-catalog.md has a ## git-pr-flow section."""
+        self.assertRegex(self.catalog, r"## git-pr-flow\n")
+
+    def test_catalog_section_has_base_branch_only(self):
+        """The catalog section documents base_branch only (no provider row)."""
+        section = self._recipe_section("git-pr-flow")
+        self.assertIn("base_branch", section)
+        self.assertNotIn("| `provider`", section)
+
+    def test_capabilities_mentions_git_pr_flow(self):
+        """capabilities.md lists git-pr-flow as a vcs-pr-flow provider."""
+        self.assertIn("git-pr-flow", self.capabilities)
+
+    def _recipe_section(self, recipe_id: str) -> str:
+        pattern = rf"## {re.escape(recipe_id)}\n(.*?)(?=\n## |\Z)"
+        match = re.search(pattern, self.catalog, re.DOTALL)
+        self.assertIsNotNone(match, f"missing ## {recipe_id} section")
+        return match.group(1)
+
+
+class VcsRecipesCatalogTierTests(unittest.TestCase):
+    """VCS sibling recipes are documented as Specific tier."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.catalog = CATALOG_DOC.read_text()
+
+    def test_at_a_glance_marks_vcs_recipes_as_specific(self):
+        glance_start = self.catalog.find("## At a glance")
+        glance_end = self.catalog.find("\n---\n", glance_start)
+        table = self.catalog[glance_start:glance_end]
+        for recipe_id in ("git-pr-flow", "gitlab-mr-flow", "bitbucket-pr-flow"):
+            with self.subTest(recipe=recipe_id):
+                line = next((ln for ln in table.splitlines() if recipe_id in ln), "")
+                self.assertIn("Specific", line, f"{recipe_id} must be Specific tier in catalog")
 
 
 if __name__ == "__main__":

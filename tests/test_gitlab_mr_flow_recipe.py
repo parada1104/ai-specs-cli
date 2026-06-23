@@ -38,14 +38,15 @@ class GitlabMrFlowRecipeTests(unittest.TestCase):
         cap_ids = [c.id for c in recipe.capabilities]
         self.assertIn("vcs-pr-flow", cap_ids)
 
-    def test_recipe_declares_gitlab_provider_default(self):
-        """Config declares provider=gitlab as default."""
+    def test_recipe_has_no_provider_config(self):
+        """Config must not declare provider — recipe id is the provider identity."""
         recipe_dir = CATALOG / RECIPE_ID
         recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        provider_field = recipe.config_schema.fields.get("provider")
-        self.assertIsNotNone(provider_field, "provider config field must exist")
-        self.assertFalse(provider_field.required)
-        self.assertEqual(provider_field.default, "gitlab")
+        self.assertNotIn(
+            "provider",
+            recipe.config_schema.fields,
+            "provider config field must not exist on sibling VCS recipes",
+        )
 
     def test_recipe_declares_development_base_branch_default(self):
         """Config declares base_branch=development as default."""

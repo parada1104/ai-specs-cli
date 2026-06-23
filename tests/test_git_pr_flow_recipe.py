@@ -28,6 +28,16 @@ class GitPrFlowRecipeTests(unittest.TestCase):
         cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal")
         cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_for_git_pr_flow")
 
+    def test_recipe_has_no_provider_config(self):
+        """Config must not declare provider — recipe id is the provider identity."""
+        recipe_dir = CATALOG / RECIPE_ID
+        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+        self.assertNotIn(
+            "provider",
+            recipe.config_schema.fields,
+            "provider config field must not exist on sibling VCS recipes",
+        )
+
     def test_recipe_validates_and_declares_capability(self):
         recipe_dir = CATALOG / RECIPE_ID
         recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")

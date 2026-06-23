@@ -37,8 +37,9 @@ never touches the foundational layer.
 | [`session-context`](#session-context) | Foundational | Session-start focus resolution + conflict policy | `session-bootstrap`, `conflict-policy` | — | — (consumes `memory`, `tracker`, `canonical-store`) |
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `WORKTREE_GATE_PROTECTED` |
-| [`git-pr-flow`](#git-pr-flow) | Foundational | Branch → PR → approval-gated merge | `vcs-pr-flow` | — | `provider`, `base_branch` |
-| [`gitlab-mr-flow`](#gitlab-mr-flow) | Foundational | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `provider`, `base_branch` |
+| [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch` |
+| [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch` |
+| [`bitbucket-pr-flow`](#bitbucket-pr-flow) | Specific | Branch → PR → approval-gated merge (Bitbucket) | `vcs-pr-flow` | — | `base_branch` |
 | [`trello-mcp-workflow`](#trello-mcp-workflow) | Specific | Trello board integration (tracker) | `tracker` (+ 4 trello-* capabilities) | `trello` | **`board_id` (required)**, `default_list`, `epic_list` |
 | [`vault-canonical-store`](#vault-canonical-store) | Specific | Durable decisions/handoffs in a vault MCP | `canonical-store` | `vault-canonical` | `vault_scope`, `decisions_folder`, `sessions_folder` |
 
@@ -127,11 +128,9 @@ integration_branch = "development"
 
 ## git-pr-flow
 
-**Provider-oriented branch → PR → merge flow.** Pushes the branch, opens a PR
-against the configured base, and merges *only* after explicit user approval —
-never a local `git merge` for PR work. Defaults to GitHub via the `gh` CLI;
-other providers are intended as future sibling recipes bound through
-`[[bindings]]`, so swapping providers is a binding change, not a rewrite.
+**GitHub branch → PR → merge flow.** Pushes the branch, opens a PR against the
+configured base, and merges *only* after explicit user approval. Uses the `gh` CLI.
+Sibling recipes cover GitLab and Bitbucket; select the host through `[[bindings]]`.
 
 - **Provides:** skill `git-merge-workflow`, command `/pr-create`; capability
   `vcs-pr-flow`.
@@ -139,7 +138,6 @@ other providers are intended as future sibling recipes bound through
 
   | Key | Type | Required | Default | Description |
   |-----|------|----------|---------|-------------|
-  | `provider` | string | no | `github` | VCS/PR provider. `github` (via `gh` CLI) is the only implemented provider. |
   | `base_branch` | string | no | `main` | Base branch the PR targets. |
 
 - **Full README:** [`catalog/recipes/git-pr-flow/README.md`](../catalog/recipes/git-pr-flow/README.md)
@@ -147,20 +145,20 @@ other providers are intended as future sibling recipes bound through
 ```toml
 [recipes.git-pr-flow]
 enabled = true
-version = "1.1.0"
+version = "1.2.0"
 
 [recipes.git-pr-flow.config]
-provider = "github"
 base_branch = "development"
+
+[[bindings]]
+capability = "vcs-pr-flow"
+recipe = "git-pr-flow"
 ```
 
 ## gitlab-mr-flow
 
-**Provider-oriented branch → MR → merge flow (GitLab).** Pushes the branch,
-opens a merge request against the configured base, and merges *only* after
-explicit user approval — never a local `git merge` for MR work. Defaults to
-GitLab via the `glab` CLI. Sibling recipe of [`git-pr-flow`](#git-pr-flow);
-both provide `vcs-pr-flow`, so a project selects one through `[[bindings]]`.
+**GitLab branch → MR → merge flow.** Uses the `glab` CLI. Sibling of
+[`git-pr-flow`](#git-pr-flow) and [`bitbucket-pr-flow`](#bitbucket-pr-flow).
 Installs no MCP server.
 
 - **Provides:** skill `gitlab-merge-workflow`, command `/mr-create`; capability
@@ -169,7 +167,6 @@ Installs no MCP server.
 
   | Key | Type | Required | Default | Description |
   |-----|------|----------|---------|-------------|
-  | `provider` | string | no | `gitlab` | VCS/MR provider. `gitlab` (via `glab` CLI) is the only implemented provider. |
   | `base_branch` | string | no | `development` | Base branch the MR targets. |
 
 - **Full README:** [`catalog/recipes/gitlab-mr-flow/README.md`](../catalog/recipes/gitlab-mr-flow/README.md)
@@ -177,11 +174,43 @@ Installs no MCP server.
 ```toml
 [recipes.gitlab-mr-flow]
 enabled = true
-version = "1.0.0"
+version = "1.1.0"
 
 [recipes.gitlab-mr-flow.config]
-provider = "gitlab"
 base_branch = "development"
+
+[[bindings]]
+capability = "vcs-pr-flow"
+recipe = "gitlab-mr-flow"
+```
+
+## bitbucket-pr-flow
+
+**Bitbucket branch → PR → merge flow.** Uses the `bb` CLI. Sibling of
+[`git-pr-flow`](#git-pr-flow) and [`gitlab-mr-flow`](#gitlab-mr-flow).
+Installs no MCP server.
+
+- **Provides:** skill `bitbucket-merge-workflow`, command `/bb-pr-create`; capability
+  `vcs-pr-flow`.
+- **Config:**
+
+  | Key | Type | Required | Default | Description |
+  |-----|------|----------|---------|-------------|
+  | `base_branch` | string | no | `development` | Base branch the PR targets. |
+
+- **Full README:** [`catalog/recipes/bitbucket-pr-flow/README.md`](../catalog/recipes/bitbucket-pr-flow/README.md)
+
+```toml
+[recipes.bitbucket-pr-flow]
+enabled = true
+version = "1.0.0"
+
+[recipes.bitbucket-pr-flow.config]
+base_branch = "development"
+
+[[bindings]]
+capability = "vcs-pr-flow"
+recipe = "bitbucket-pr-flow"
 ```
 
 ## trello-mcp-workflow

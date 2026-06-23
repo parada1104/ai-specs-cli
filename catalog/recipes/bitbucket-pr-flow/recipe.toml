@@ -1,0 +1,34 @@
+[recipe]
+id = "bitbucket-pr-flow"
+name = "Bitbucket PR Flow"
+description = "Bitbucket PR and merge flow for feature branches (via bb CLI)"
+version = "1.0.0"
+author = "ai-specs"
+license = "MIT"
+
+[[capabilities]]
+id = "vcs-pr-flow"
+
+[[hooks]]
+event = "on-sync"
+action = "validate-config"
+
+[config.base_branch]
+required = false
+type = "string"
+default = "development"
+
+[provides]
+skills = [{ id = "bitbucket-merge-workflow", source = "bundled" }]
+commands = [{ id = "bb-pr-create", path = "commands/bb-pr-create.md" }]
+
+[provides.brief]
+workflow_rules = [
+    "Use a PR-based merge workflow; all changes to `{config.base_branch}` go through a pull request.",
+    "VCS/PR provider: Bitbucket (bb CLI). Use bb for all PR operations.",
+    "Do not push directly to `{config.base_branch}`; always open a PR from a feature branch.",
+]
+
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/bitbucket-pr-flow/README.md"
