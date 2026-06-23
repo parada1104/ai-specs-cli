@@ -45,7 +45,7 @@ integration_branch = "development"
 
 [recipes.git-pr-flow]
 enabled = true
-version = "1.1.0"
+version = "1.2.0"
 [recipes.git-pr-flow.config]
 provider = "github"
 base_branch = "development"
