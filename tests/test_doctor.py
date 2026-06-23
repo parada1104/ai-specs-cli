@@ -371,6 +371,25 @@ class SymlinkDiagnosticsTests(unittest.TestCase):
             self.assertIn("OK", result.stdout)
             self.assertIn("CLAUDE.md", result.stdout)
 
+    def test_stale_commands_reports_warn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target, agents=["cursor"])
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target)],
+                check=True,
+                text=True,
+            )
+            (target / ".cursor" / "commands" / "stale.md").write_text("# stale\n")
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("WARN", result.stdout)
+            self.assertIn("stale", result.stdout)
+
     def test_instruction_symlink_invalid_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
@@ -647,6 +666,11 @@ class PlatformGetTests(unittest.TestCase):
         result = self._platform_get("claude", "skills_dir")
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), ".claude/skills")
+
+    def test_cursor_skills_dir(self):
+        result = self._platform_get("cursor", "skills_dir")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), ".cursor/skills")
 
     def test_opencode_mcp_key_unchanged(self):
         result = self._platform_get("opencode", "mcp_key")

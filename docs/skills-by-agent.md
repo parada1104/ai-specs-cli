@@ -7,7 +7,7 @@ lives in each `SKILL.md` frontmatter (`metadata.scope`, `metadata.auto_invoke`).
 | Agent    | Reads AGENTS.md natively? | Native skill auto-invoke? | What sync-agent generates |
 |----------|---------------------------|---------------------------|---------------------------|
 | Claude   | No (needs `CLAUDE.md`)    | Yes (`.claude/skills/<name>/SKILL.md`) | `CLAUDE.md` symlink + `.claude/skills` symlink → `ai-specs/skills` + `.mcp.json` |
-| Cursor   | Yes                       | No (skills via filesystem + registry)  | `.cursor/mcp.json` |
+| Cursor   | Yes                       | Yes (`.cursor/skills/<name>/SKILL.md`) | `.cursor/skills` symlink → resolved-skills + `.cursor/commands` + `.cursor/mcp.json` + runtime hooks |
 | OpenCode | Yes                       | No                                     | `opencode.json` |
 | Codex    | Yes                       | No                                     | `.codex/config.toml` |
 | Copilot  | No (`.github/copilot-instructions.md`) | No                          | `.github/copilot-instructions.md` symlink |
