@@ -2810,5 +2810,73 @@ class TestCustomVcsWarning(unittest.TestCase):
         )
 
 
+class FanOutDriftTests(unittest.TestCase):
+    """Fan-out must mirror managed artifacts and remove stale derived files."""
+
+    def make_workspace(self) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="ai-specs-fanout-drift-"))
+        workspace = tmp / "workspace"
+        workspace.mkdir()
+        return workspace
+
+    def test_command_fanout_removes_stale_files(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname = 'fanout-drift'\n\n"
+                "[agents]\nenabled = ['cursor']\n"
+            )
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            stale = workspace / ".cursor" / "commands" / "stale.md"
+            stale.write_text("# stale\n")
+            self.assertTrue(stale.is_file())
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            self.assertFalse(stale.exists())
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_cursor_skills_symlink_points_to_resolved(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname = 'cursor-skills'\n\n"
+                "[agents]\nenabled = ['cursor']\n"
+            )
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            skills_link = workspace / ".cursor" / "skills"
+            resolved = (workspace / "ai-specs" / ".internal" / "resolved-skills").resolve()
+            self.assertTrue(skills_link.is_symlink(), ".cursor/skills must be a symlink")
+            self.assertEqual(skills_link.resolve(), resolved)
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_cursor_skills_migrates_real_directory(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname = 'cursor-skills-migrate'\n\n"
+                "[agents]\nenabled = ['cursor']\n"
+            )
+            legacy = workspace / ".cursor" / "skills" / "foo"
+            legacy.mkdir(parents=True)
+            (legacy / "SKILL.md").write_text("# foo\n")
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            skills_link = workspace / ".cursor" / "skills"
+            resolved = (workspace / "ai-specs" / ".internal" / "resolved-skills").resolve()
+            self.assertTrue(skills_link.is_symlink())
+            self.assertEqual(skills_link.resolve(), resolved)
+            self.assertFalse((resolved / "foo").exists())
+        finally:
+            shutil.rmtree(workspace.parent)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -323,7 +323,13 @@ for agent in "${TARGETS[@]}"; do
 
     skills="$(platform_get "$agent" skills_dir)"
     if [[ -n "$skills" ]]; then
-        make_relative_symlink "$SKILLS_SOURCE" "$TARGET_PATH/$skills"
+        skills_link="$TARGET_PATH/$skills"
+        if [[ -e "$skills_link" && ! -L "$skills_link" ]]; then
+            # Legacy installs may have a real skills directory; replace so
+            # fan-out can reconcile to the canonical symlink.
+            rm -rf "$skills_link"
+        fi
+        make_relative_symlink "$SKILLS_SOURCE" "$skills_link"
     fi
 
     mcp_path="$(platform_get "$agent" mcp_config_path)"
@@ -341,6 +347,7 @@ for agent in "${TARGETS[@]}"; do
     cmd_dir="$(platform_get "$agent" commands_dir)"
     if [[ -n "$cmd_dir" && -d "$TARGET_AI_COMMANDS" ]]; then
         dest="$TARGET_PATH/$cmd_dir"
+        rm -rf "$dest"
         mkdir -p "$dest"
         copied=0
         for src in "$TARGET_AI_COMMANDS"/*.md; do

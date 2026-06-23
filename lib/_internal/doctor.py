@@ -64,7 +64,7 @@ class Doctor:
         },
         "cursor": {
             "instructions_path": "",
-            "skills_dir": "",
+            "skills_dir": ".cursor/skills",
             "mcp_config_path": ".cursor/mcp.json",
             "mcp_key": "mcpServers",
             "commands_dir": ".cursor/commands",
@@ -446,17 +446,32 @@ class Doctor:
             commands_path = self.root / commands
             ai_specs_commands = self.root / "ai-specs" / "commands"
             if commands_path.is_dir() and ai_specs_commands.is_dir():
-                local_cmds = list(commands_path.glob("*.md"))
-                if local_cmds:
-                    self.checks.append(Check(
-                        Severity.OK, f"{commands}",
-                        f"{len(local_cmds)} command(s) present"
-                    ))
-                else:
+                expected = {p.name for p in ai_specs_commands.glob("*.md")}
+                actual = {p.name for p in commands_path.glob("*.md")}
+                missing = expected - actual
+                extra = actual - expected
+                if not actual:
                     self.checks.append(Check(
                         Severity.WARN, f"{commands}",
                         "directory empty",
                         guidance="ai-specs sync to populate"
+                    ))
+                elif missing:
+                    self.checks.append(Check(
+                        Severity.ERROR, f"{commands}",
+                        f"missing {len(missing)} command(s): {', '.join(sorted(missing))}",
+                        guidance="run ai-specs sync"
+                    ))
+                elif extra:
+                    self.checks.append(Check(
+                        Severity.WARN, f"{commands}",
+                        f"{len(extra)} stale command(s): {', '.join(sorted(extra))}",
+                        guidance="run ai-specs sync"
+                    ))
+                else:
+                    self.checks.append(Check(
+                        Severity.OK, f"{commands}",
+                        f"{len(actual)} command(s) in sync"
                     ))
             else:
                 self.checks.append(Check(
