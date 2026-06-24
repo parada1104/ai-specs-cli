@@ -214,6 +214,18 @@ def check_capability_conflicts(
     return mod.check_capability_conflicts(catalog_dir, recipe_ids, manifest_bindings)
 
 
+def check_tag_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
+    """Load enabled recipes and detect tag-based conflicts between them."""
+    mod = _load_conflict()
+    recipes = []
+    for rid in recipe_ids:
+        recipe_toml = catalog_dir / rid / "recipe.toml"
+        if not recipe_toml.is_file():
+            continue
+        recipes.append(mod.load_recipe_toml(recipe_toml))
+    return mod.check_tag_conflicts(recipes)
+
+
 # --- Version pinning validation ----------------------------------------------
 def validate_version_pin(recipe_id: str, manifest_version: str, recipe: Any) -> None:
     if manifest_version != recipe.version:
@@ -622,6 +634,24 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
                 f"capability ambiguity: {c.primitive_type}.id='{c.primitive_id}' "
                 f"declared by {', '.join(sorted(c.recipes))}. "
                 f"Add an explicit [[bindings]] entry to resolve."
+            )
+
+    # Tag conflict check (NEW): advisory only. Tags are metadata and MUST NOT
+    # block materialization — the capability-binding layer owns blocking
+    # decisions about competing providers. We surface overlaps as warnings so a
+    # developer notices two same-category recipes (e.g. two VCS flows), and flag
+    # explicit conflicts_with more loudly, but never change the exit code.
+    for c in check_tag_conflicts(catalog_dir, list(enabled.keys())):
+        recipes = ", ".join(sorted(c.recipes))
+        if getattr(c, "severity", "warning") == "fatal":
+            warn(
+                f"tag conflict: recipes {recipes} share tag '{c.tag}' and declare "
+                f"an explicit conflicts_with. Review whether both should be enabled."
+            )
+        else:
+            warn(
+                f"tag overlap: recipes {recipes} share tag '{c.tag}' "
+                f"(same capability category)."
             )
 
     # Primitive conflict detection across recipes
