@@ -5,6 +5,7 @@ description = "Isolated git worktrees under .worktrees/ with post-merge cleanup 
 version = "1.2.0"
 author = "ai-specs"
 license = "MIT"
+tags = ["infra", "worktree"]
 
 [[capabilities]]
 id = "worktree-isolation"
