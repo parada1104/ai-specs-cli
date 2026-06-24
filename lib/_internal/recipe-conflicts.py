@@ -54,6 +54,61 @@ class Conflict:
     severity: str = "fatal"
 
 
+@dataclass
+class TagConflict:
+    """A conflict between two or more enabled recipes that share a tag.
+
+    severity:
+      - "warning" when recipes merely share a tag (same capability category)
+      - "fatal" when one of the sharing recipes lists another in conflicts_with
+    """
+
+    tag: str
+    recipes: set[str] = field(default_factory=set)
+    severity: str = "warning"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": "tag_conflict",
+            "tag": self.tag,
+            "recipes": sorted(self.recipes),
+        }
+
+
+def check_tag_conflicts(recipes: list[Recipe]) -> list[TagConflict]:
+    """Detect tag-based conflicts across a set of enabled recipes.
+
+    For each tag shared by 2+ recipes, emit one TagConflict. The conflict is
+    fatal when any sharing recipe lists another sharing recipe in its
+    conflicts_with (the relationship is treated symmetrically); otherwise it is
+    a warning.
+    """
+    tag_groups: dict[str, list[Recipe]] = {}
+    for recipe in recipes:
+        for tag in recipe.tags:
+            tag_groups.setdefault(tag, []).append(recipe)
+
+    conflicts: list[TagConflict] = []
+    for tag, group in tag_groups.items():
+        if len(group) < 2:
+            continue
+        ids = {r.id for r in group}
+        fatal = any(
+            other.id in r.conflicts_with
+            for r in group
+            for other in group
+            if r.id != other.id
+        )
+        conflicts.append(
+            TagConflict(
+                tag=tag,
+                recipes=ids,
+                severity="fatal" if fatal else "warning",
+            )
+        )
+    return conflicts
+
+
 class ConflictRegistry:
     """Tracks claimed primitive IDs across recipes and reports collisions."""
 
