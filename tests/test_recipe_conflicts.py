@@ -134,5 +134,84 @@ class RecipeConflictTests(unittest.TestCase):
             self.assertEqual(conflicts, [])
 
 
+class TagConflictTests(unittest.TestCase):
+    """Card #27 — RED: tag-based conflict detection across enabled recipes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(RECIPE_CONFLICTS_PATH, "recipe_conflicts_tags")
+        cls.schema = load_module(
+            ROOT / "lib" / "_internal" / "recipe_schema.py", "recipe_schema_for_tags"
+        )
+
+    def _recipe(self, rid, tags, conflicts_with=None):
+        return self.schema.Recipe(
+            id=rid,
+            name=rid,
+            description="d",
+            version="1.0",
+            tags=list(tags),
+            conflicts_with=list(conflicts_with or []),
+        )
+
+    def test_no_shared_tag_no_conflict(self):
+        recipes = [self._recipe("a", ["vcs"]), self._recipe("b", ["tracker"])]
+        self.assertEqual(self.mod.check_tag_conflicts(recipes), [])
+
+    def test_single_recipe_no_conflict(self):
+        self.assertEqual(self.mod.check_tag_conflicts([self._recipe("a", ["vcs"])]), [])
+
+    def test_duplicate_tag_on_single_recipe_no_conflict(self):
+        # A recipe listing the same tag twice must not self-conflict.
+        recipes = [self._recipe("a", ["vcs", "vcs"])]
+        self.assertEqual(self.mod.check_tag_conflicts(recipes), [])
+
+    def test_shared_tag_without_conflicts_with_is_warning(self):
+        recipes = [self._recipe("a", ["vcs", "github"]), self._recipe("b", ["vcs", "gitlab"])]
+        conflicts = self.mod.check_tag_conflicts(recipes)
+        self.assertEqual(len(conflicts), 1)
+        c = conflicts[0]
+        self.assertEqual(c.severity, "warning")
+        self.assertEqual(c.tag, "vcs")
+        self.assertEqual(c.recipes, {"a", "b"})
+
+    def test_shared_tag_with_conflicts_with_is_fatal(self):
+        recipes = [
+            self._recipe("a", ["vcs"], conflicts_with=["b"]),
+            self._recipe("b", ["vcs"]),
+        ]
+        conflicts = self.mod.check_tag_conflicts(recipes)
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0].severity, "fatal")
+        self.assertEqual(conflicts[0].tag, "vcs")
+
+    def test_conflicts_with_is_symmetric(self):
+        # Only b declares the conflict, but it must still be fatal for the pair.
+        recipes = [
+            self._recipe("a", ["vcs"]),
+            self._recipe("b", ["vcs"], conflicts_with=["a"]),
+        ]
+        conflicts = self.mod.check_tag_conflicts(recipes)
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0].severity, "fatal")
+
+    def test_to_dict_output_format(self):
+        recipes = [self._recipe("a", ["vcs"]), self._recipe("b", ["vcs"])]
+        c = self.mod.check_tag_conflicts(recipes)[0]
+        d = c.to_dict()
+        self.assertEqual(d["type"], "tag_conflict")
+        self.assertEqual(d["tag"], "vcs")
+        self.assertEqual(sorted(d["recipes"]), ["a", "b"])
+
+    def test_catalog_vcs_recipes_warn_when_enabled_together(self):
+        recipes = [
+            self.mod.load_recipe_toml(CATALOG / rid / "recipe.toml")
+            for rid in ("git-pr-flow", "bitbucket-pr-flow")
+        ]
+        conflicts = self.mod.check_tag_conflicts(recipes)
+        vcs = [c for c in conflicts if c.tag == "vcs"]
+        self.assertTrue(vcs, "expected a vcs tag conflict between two VCS recipes")
+
+
 if __name__ == "__main__":
     unittest.main()

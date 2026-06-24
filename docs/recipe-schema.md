@@ -30,6 +30,23 @@ catalog/recipes/<id>/
 | `version` | string | yes | Exact version string |
 | `author` | string | no | Author or organization |
 | `license` | string | no | SPDX license identifier |
+| `tags` | array of strings | no | Domain/category labels (e.g. `vcs`, `tracker`, `infra`, `quality`, `storage`) used for conflict detection |
+| `conflicts_with` | array of strings | no | Recipe IDs this recipe is incompatible with; a recipe may not list itself |
+
+### `tags` and `conflicts_with`
+
+```toml
+[recipe]
+id = "bitbucket-pr-flow"
+# ...
+tags = ["vcs", "bitbucket"]
+conflicts_with = ["git-pr-flow", "gitlab-mr-flow"]
+```
+
+During `ai-specs sync`, enabled recipes are checked for tag conflicts:
+
+- **Warning** — two enabled recipes share a tag (same capability category, e.g. two `vcs` flows) but neither lists the other in `conflicts_with`.
+- **Fatal** — two enabled recipes share a tag *and* one lists the other in `conflicts_with`. The relationship is symmetric: only one side needs to declare it. Sync fails until one is disabled.
 
 ## `[provides]` table
 

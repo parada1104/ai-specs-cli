@@ -5,6 +5,7 @@ description = "Foundational session-start discipline: bootstrap focus from the m
 version = "2.0.0"
 author = "ai-specs"
 license = "MIT"
+tags = ["infra"]
 
 # Foundational recipe. Provides the bootstrap + conflict patterns; CONSUMES (by
 # convention, see docs/capabilities.md) the `memory`, `tracker`, and

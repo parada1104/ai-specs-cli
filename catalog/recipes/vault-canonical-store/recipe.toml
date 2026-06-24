@@ -5,6 +5,7 @@ description = "Durable decisions and handoffs in a configured vault MCP (e.g. Ob
 version = "1.1.0"
 author = "ai-specs"
 license = "MIT"
+tags = ["storage"]
 
 [[capabilities]]
 id = "canonical-store"
