@@ -93,6 +93,9 @@ def check_tag_conflicts(recipes: list[Recipe]) -> list[TagConflict]:
         if len(group) < 2:
             continue
         ids = {r.id for r in group}
+        # A single recipe that lists the same tag twice is not a conflict.
+        if len(ids) < 2:
+            continue
         fatal = any(
             other.id in r.conflicts_with
             for r in group

@@ -333,6 +333,22 @@ class RecipeTagsConflictsTests(unittest.TestCase):
             self.assertIn("conflicts_with", msg)
             self.assertIn("selfref", msg)
 
+    def test_blank_tag_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "blank-tag", 'tags = ["vcs", ""]\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("tags", str(ctx.exception))
+
+    def test_blank_conflicts_with_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "blank-confl", 'conflicts_with = ["git-pr-flow", "  "]\n'
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("conflicts_with", str(ctx.exception))
+
 
 class BriefFragmentDataclassTests(unittest.TestCase):
     """Task 1.1 — RED: BriefFragment and BriefFragments dataclass structure."""

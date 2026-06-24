@@ -172,6 +172,10 @@ def _parse_tags(raw: Any, context: str) -> list[str]:
             raise RecipeValidationError(
                 f"{context}: 'tags'[{idx}] must be a string, got {type(item).__name__}"
             )
+        if not item.strip():
+            raise RecipeValidationError(
+                f"{context}: 'tags'[{idx}] must be a non-empty string"
+            )
         out.append(item)
     return out
 
@@ -192,6 +196,10 @@ def _parse_conflicts_with(raw: Any, recipe_id: str, context: str) -> list[str]:
         if not isinstance(item, str):
             raise RecipeValidationError(
                 f"{context}: 'conflicts_with'[{idx}] must be a string, got {type(item).__name__}"
+            )
+        if not item.strip():
+            raise RecipeValidationError(
+                f"{context}: 'conflicts_with'[{idx}] must be a non-empty string"
             )
         if item == recipe_id:
             raise RecipeValidationError(

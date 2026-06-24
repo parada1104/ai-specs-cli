@@ -161,6 +161,11 @@ class TagConflictTests(unittest.TestCase):
     def test_single_recipe_no_conflict(self):
         self.assertEqual(self.mod.check_tag_conflicts([self._recipe("a", ["vcs"])]), [])
 
+    def test_duplicate_tag_on_single_recipe_no_conflict(self):
+        # A recipe listing the same tag twice must not self-conflict.
+        recipes = [self._recipe("a", ["vcs", "vcs"])]
+        self.assertEqual(self.mod.check_tag_conflicts(recipes), [])
+
     def test_shared_tag_without_conflicts_with_is_warning(self):
         recipes = [self._recipe("a", ["vcs", "github"]), self._recipe("b", ["vcs", "gitlab"])]
         conflicts = self.mod.check_tag_conflicts(recipes)
