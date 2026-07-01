@@ -105,6 +105,28 @@ class LockRoundTripTests(unittest.TestCase):
         reloaded = self.lock.load_lock(path)
         self.assertEqual(reloaded["deps"]["my-dep"]["my-dep"], {"SKILL.md": "eee"})
 
+    def test_meta_section_written_and_ignored_on_skill_load(self):
+        path = self._lock_path()
+        lock = self.lock.load_lock(path)
+        lock["meta"] = {
+            "cli_version": "0.12.2",
+            "synced_at": "2026-06-23T12:00:00Z",
+        }
+        self.lock.set_recipe_skill_hashes(
+            lock, "worktree-flow", "worktree-flow", {"SKILL.md": "aaa"}
+        )
+        self.lock.write_lock(path, lock)
+
+        text = path.read_text()
+        self.assertIn("[meta]", text)
+        self.assertIn('cli_version = "0.12.2"', text)
+
+        reloaded = self.lock.load_lock(path)
+        self.assertEqual(reloaded["meta"]["cli_version"], "0.12.2")
+        self.assertEqual(
+            reloaded["recipes"]["worktree-flow"]["worktree-flow"], {"SKILL.md": "aaa"}
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

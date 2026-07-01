@@ -15,6 +15,7 @@ LOCK_HEADER = """\
 # Managed by ai-specs. Do not edit by hand.
 # Tracks SHA-256 of bundled files as last installed by the CLI.
 # Used by `ai-specs refresh-bundled` to detect user customizations.
+# [meta] records the CLI version and timestamp of the last lock write.
 """
 
 
@@ -28,6 +29,7 @@ def load_lock(lock_path: Path) -> dict:
         return {
             "skills": {},
             "commands": {},
+            "meta": {},
             "opted_out": [],
             "recipes": {},
             "deps": {},
@@ -35,9 +37,18 @@ def load_lock(lock_path: Path) -> dict:
         }
     with lock_path.open("rb") as f:
         data = tomllib.load(f)
+    meta_raw = data.get("meta") or {}
+    meta = {}
+    if isinstance(meta_raw, dict):
+        for key in ("cli_version", "synced_at"):
+            value = meta_raw.get(key)
+            if isinstance(value, str) and value.strip():
+                meta[key] = value.strip()
+
     return {
         "skills": {k: dict(v) for k, v in (data.get("skills") or {}).items()},
         "commands": dict(data.get("commands") or {}),
+        "meta": meta,
         "opted_out": list(data.get("opted-out", {}).get("files", []) or []),
         # On disk recipe/dep skills live under a `.skills.` sub-table
         # (`[recipes."<id>".skills."<skill>"]`). Unwrap that level so the
@@ -63,6 +74,15 @@ def _load_skill_groups(section: dict | None) -> dict:
 
 def write_lock(lock_path: Path, lock: dict) -> None:
     out = [LOCK_HEADER]
+
+    meta = lock.get("meta") or {}
+    if meta:
+        out.append("[meta]")
+        if meta.get("cli_version"):
+            out.append(f'cli_version = "{meta["cli_version"]}"')
+        if meta.get("synced_at"):
+            out.append(f'synced_at = "{meta["synced_at"]}"')
+        out.append("")
 
     skills = lock.get("skills") or {}
     for skill in sorted(skills):

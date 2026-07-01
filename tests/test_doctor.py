@@ -740,6 +740,90 @@ class BriefRenderPolicyDoctorTests(unittest.TestCase):
             self.assertIn("brief-render", result.stdout)
 
 
+class CliVersionDoctorTests(unittest.TestCase):
+    def _append_tool_section(self, toml_path: Path, body: str) -> None:
+        text = toml_path.read_text().rstrip()
+        toml_path.write_text(text + "\n\n[tool]\n" + body + "\n")
+
+    def test_exact_pin_aligned_reports_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            installed = (ROOT / "VERSION").read_text().strip()
+            self._append_tool_section(
+                target / "ai-specs" / "ai-specs.toml",
+                f'version = "{installed}"\npolicy = "exact"',
+            )
+            lock_path = target / "ai-specs" / ".ai-specs.lock"
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path.write_text(
+                f'[meta]\ncli_version = "{installed}"\n'
+                f'synced_at = "2026-06-23T12:00:00Z"\n'
+            )
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertIn("cli-version", result.stdout)
+            self.assertIn("OK", result.stdout)
+            self.assertIn(installed, result.stdout)
+
+    def test_exact_pin_mismatch_reports_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._append_tool_section(
+                target / "ai-specs" / "ai-specs.toml",
+                'version = "99.99.99"\npolicy = "exact"',
+            )
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertIn("cli-version", result.stdout)
+            self.assertIn("ERROR", result.stdout)
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_no_pin_stale_last_sync_reports_warn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            lock_path = target / "ai-specs" / ".ai-specs.lock"
+            lock_path.write_text(
+                '[meta]\ncli_version = "0.10.0"\n'
+                'synced_at = "2026-01-01T00:00:00Z"\n'
+            )
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertIn("cli-version", result.stdout)
+            self.assertIn("WARN", result.stdout)
+
+    def test_doctor_cli_version_is_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._append_tool_section(
+                target / "ai-specs" / "ai-specs.toml",
+                'version = "99.99.99"\npolicy = "exact"',
+            )
+            toml_path = target / "ai-specs" / "ai-specs.toml"
+            before = toml_path.read_text()
+            subprocess.run([str(CLI), "doctor", str(target)], check=False)
+            self.assertEqual(before, toml_path.read_text())
+
+
 def _find_files(root: Path):
     for p in root.rglob("*"):
         if p.is_file():
