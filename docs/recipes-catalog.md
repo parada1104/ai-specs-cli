@@ -104,7 +104,8 @@ unmerged ones, and never touches the main worktree.
 - **Provides:** skill `worktree-flow`, commands `/worktree-new`,
   `/worktree-clean`, script `bin/worktree-cleanup.sh`, and a `worktree-gate`
   runtime hook (`[[provides.hooks]]`) that blocks writes to the main worktree on
-  a protected branch — see [`docs/runtime-hooks.md`](runtime-hooks.md);
+  a protected branch and supports `gate_mode` dispatch (`always` / `ask` /
+  `off`) — see [`docs/runtime-hooks.md`](runtime-hooks.md);
   capabilities `worktree-isolation`, `worktree-cleanup`.
 - **Config:**
 
@@ -113,6 +114,7 @@ unmerged ones, and never touches the main worktree.
   | `worktrees_dir` | string | `.worktrees` | Directory holding per-change worktrees. |
   | `integration_branch` | string | `main` | Branch worktrees are created from and merged into. |
   | `auto_remove_merged` | boolean | `true` | Whether merged worktrees are eligible for cleanup. |
+  | `gate_mode` | string | `always` | Main-worktree gate mode. `always` keeps the current block, `ask` blocks with a bypass hint, and `off` disables the gate. |
   | `WORKTREE_GATE_PROTECTED` | string | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
 
 - **Full README:** [`catalog/recipes/worktree-flow/README.md`](../catalog/recipes/worktree-flow/README.md)
@@ -124,6 +126,7 @@ version = "1.2.0"
 
 [recipes.worktree-flow.config]
 integration_branch = "development"
+gate_mode = "always"
 ```
 
 ## git-pr-flow

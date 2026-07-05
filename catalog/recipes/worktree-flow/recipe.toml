@@ -40,8 +40,11 @@ required = false
 type = "string"
 default = "main development"
 
-[sdd]
-threshold = "behavior_change"
+[config.gate_mode]
+required = false
+type = "string"
+default = "always"
+enum = ["always", "ask", "off"]
 
 [provides]
 skills = [{ id = "worktree-flow", source = "bundled" }]

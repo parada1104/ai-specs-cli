@@ -34,10 +34,25 @@ class WorktreeGateHookTests(unittest.TestCase):
         _git(self.repo, "add", "-A")
         _git(self.repo, "commit", "-qm", "init")
 
-    def _run(self, event: dict, *, protected: str = "main development") -> subprocess.CompletedProcess:
+    def _stamped_gate(self, mode: str) -> Path:
+        stamped = Path(self.tmp.name) / f"worktree-gate-{mode}.sh"
+        stamped.write_text(GATE.read_text().replace("__WORKTREE_GATE_MODE__", mode))
+        stamped.chmod(0o755)
+        return stamped
+
+    def _run(
+        self,
+        event: dict,
+        *,
+        protected: str = "main development",
+        gate: Path | None = None,
+        extra_env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess:
         env = dict(os.environ, WORKTREE_GATE_PROTECTED=protected)
+        if extra_env:
+            env.update(extra_env)
         return subprocess.run(
-            ["bash", str(GATE)],
+            ["bash", str(gate or GATE)],
             input=json.dumps(event),
             capture_output=True, text=True, env=env,
         )
@@ -98,6 +113,59 @@ class WorktreeGateHookTests(unittest.TestCase):
         wt = Path(self.tmp.name) / "wt"
         _git(self.repo, "worktree", "add", "-q", "-b", "feat", str(wt))
         r = self._run(self._event("Write", str(wt / "x.py")))
+        self.assertEqual(r.returncode, 0)
+
+    def test_gate_always_blocks_protected(self):
+        self._checkout("development")
+        gate = self._stamped_gate("always")
+        r = self._run(self._event("Edit", str(self.repo / "a.txt")), gate=gate)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("development", r.stderr)
+
+    def test_gate_off_self_disables(self):
+        self._checkout("main")
+        gate = self._stamped_gate("off")
+        r = self._run(self._event("Write", str(self.repo / "src.py")), gate=gate)
+        self.assertEqual(r.returncode, 0)
+
+    def test_gate_ask_blocks_with_bypass_hint(self):
+        self._checkout("development")
+        gate = self._stamped_gate("ask")
+        r = self._run(self._event("Edit", str(self.repo / "a.txt")), gate=gate)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("WORKTREE_GATE_MODE=off", r.stderr)
+
+    def test_env_override_beats_stamped(self):
+        self._checkout("main")
+        gate = self._stamped_gate("always")
+        r = self._run(
+            self._event("Write", str(self.repo / "src.py")),
+            gate=gate,
+            extra_env={"WORKTREE_GATE_MODE": "off"},
+        )
+        self.assertEqual(r.returncode, 0)
+
+    def test_empty_env_keeps_stamped(self):
+        self._checkout("development")
+        gate = self._stamped_gate("ask")
+        env = dict(os.environ, WORKTREE_GATE_PROTECTED="main development")
+        env.pop("WORKTREE_GATE_MODE", None)
+        r = subprocess.run(
+            ["bash", str(gate)],
+            input=json.dumps(self._event("Edit", str(self.repo / "a.txt"))),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("WORKTREE_GATE_MODE=off", r.stderr)
+
+    def test_linked_worktree_always_allowed_in_always(self):
+        self._checkout("main")
+        wt = Path(self.tmp.name) / "wt"
+        _git(self.repo, "worktree", "add", "-q", "-b", "feat", str(wt))
+        gate = self._stamped_gate("always")
+        r = self._run(self._event("Write", str(wt / "x.py")), gate=gate)
         self.assertEqual(r.returncode, 0)
 
 

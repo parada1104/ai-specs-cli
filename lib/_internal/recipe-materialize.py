@@ -314,7 +314,16 @@ def hook_script_rel_path(recipe_id: str, hook: Any) -> str:
     return f"ai-specs/recipes/{recipe_id}/hooks/{Path(hook.script).name}"
 
 
-def materialize_hook_script(recipe_dir: Path, hook: Any, project_root: Path, recipe_id: str) -> str:
+GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
+
+
+def materialize_hook_script(
+    recipe_dir: Path,
+    hook: Any,
+    project_root: Path,
+    recipe_id: str,
+    merged_cfg: dict[str, Any] | None = None,
+) -> str:
     """Copy a recipe hook script to the harness-neutral path and chmod +x.
 
     Returns the project-relative materialized path so every harness's wiring
@@ -326,7 +335,13 @@ def materialize_hook_script(recipe_dir: Path, hook: Any, project_root: Path, rec
     rel = hook_script_rel_path(recipe_id, hook)
     dest = project_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    content = src.read_text()
+    if GATE_MODE_PLACEHOLDER in content:
+        mode = "always"
+        if merged_cfg is not None:
+            mode = str(merged_cfg.get("gate_mode", "always"))
+        content = content.replace(GATE_MODE_PLACEHOLDER, mode)
+    dest.write_text(content)
     os.chmod(dest, 0o755)
     print(f"    ✓ hook script {rel}")
     return rel
@@ -408,6 +423,21 @@ def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]
     for key, field in schema_fields.items():
         if field.required and key not in result:
             raise RuntimeError(f"recipe '{recipe.name}': missing required config field '{key}'")
+
+    # Validate enum constraints
+    for key, field in schema_fields.items():
+        if key not in result:
+            continue
+        enum_values = getattr(field, "enum", None)
+        if not enum_values:
+            continue
+        value_str = str(result[key])
+        if value_str not in enum_values:
+            allowed = " | ".join(enum_values)
+            raise RuntimeError(
+                f"recipe '{recipe.name}': config field '{key}' value '{value_str}' "
+                f"is invalid; allowed: {allowed}"
+            )
 
     return result
 
@@ -688,7 +718,10 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
         # Config merge (NEW)
         manifest_config = cfg.get("config", {})
-        merged_cfg = merge_config(recipe, manifest_config)
+        try:
+            merged_cfg = merge_config(recipe, manifest_config)
+        except RuntimeError as exc:
+            fail(str(exc))
 
         recipe_dir = catalog_dir / rid
 
@@ -735,7 +768,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # collect a resolved entry for downstream hooks-render.py. Tunable
         # config values ride along as env (resolved [config.*] overrides).
         for rhook in getattr(recipe, "runtime_hooks", []) or []:
-            script_path = materialize_hook_script(recipe_dir, rhook, project_root, rid)
+            script_path = materialize_hook_script(recipe_dir, rhook, project_root, rid, merged_cfg)
             # Pass tunables to the hook as env vars. Only ENV-shaped config keys
             # (UPPER_SNAKE_CASE) are exported, so hook scripts can read them as
             # environment variables; other config keys (e.g. worktrees_dir) are
