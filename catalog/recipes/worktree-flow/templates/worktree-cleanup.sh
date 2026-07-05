@@ -101,56 +101,71 @@ debug_log() {
 }
 
 # Resolve ordered base candidate refs for merge detection.
-# Prints one candidate per line: exact --base, configured upstream, remote-tracking ref.
+# Prints one candidate per line: exact --base, configured upstream,
+# configured remote-tracking ref, conditional origin/<base> fallback.
 resolve_base_candidates() {
     local base="$1"
     local seen=" "
 
-    # 1. Exact base ref
-    if git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
-        printf '%s\n' "$base"
-        seen="$seen$base "
-    fi
-
-    # 2. Configured upstream of the base branch
-    local upstream
-    upstream="$(git rev-parse --verify --quiet --abbrev-ref "${base}@{u}" 2>/dev/null)" || true
-    if [[ -n "$upstream" ]] && git rev-parse --verify --quiet "$upstream" >/dev/null 2>&1; then
+    # Emit a candidate ref if it resolves to a real object and hasn't been
+    # emitted yet under this exact spelling. Every emission still goes
+    # through `git rev-parse --verify --quiet` so only positively-proven
+    # refs are ever printed (positive-proof-only semantics).
+    #
+    # Returns non-zero when the ref is a duplicate or does not resolve —
+    # NEVER use this return value to decide whether a ref resolves (a
+    # deduplicated ref resolves but returns 1). Callers under `set -e` are
+    # safe here only because these functions run in conditional contexts
+    # (`if ! is_merged ...`); guard any future unconditional call sites.
+    emit_candidate() {
+        local ref="$1"
         case "$seen" in
-            *" $upstream "*) ;;
-            *) printf '%s\n' "$upstream"; seen="$seen$upstream " ;;
+            *" $ref "*) return 1 ;;
         esac
+        if git rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
+            printf '%s\n' "$ref"
+            seen="$seen$ref "
+            return 0
+        fi
+        return 1
+    }
+
+    # 1. Exact base ref
+    emit_candidate "$base"
+
+    # 2. Configured upstream of the base branch, normalized to its full ref
+    # name (refs/remotes/<remote>/<base>) via --symbolic-full-name rather
+    # than --abbrev-ref. --abbrev-ref would print the short form
+    # (e.g. "origin/main"), which does not match the "refs/remotes/..."
+    # spelling used by candidates 3/4 and would defeat the dedup below.
+    local upstream
+    upstream="$(git rev-parse --verify --quiet --symbolic-full-name "${base}@{u}" 2>/dev/null)" || true
+    [[ -n "$upstream" ]] && emit_candidate "$upstream"
+
+    # 3. Remote-tracking ref for the base's configured remote. The
+    # "resolved" flag is decided by a direct rev-parse check, NOT by
+    # emit_candidate's return value: with full upstream tracking, candidate
+    # 2 already emitted this exact ref, so emit_candidate would return
+    # non-zero (dedup) even though the ref resolves — conflating the two
+    # would wrongly re-enable the origin fallback below.
+    local configured_remote configured_remote_resolved=0
+    configured_remote="$(git config --get "branch.${base}.remote" 2>/dev/null)" || true
+    if [[ -n "$configured_remote" ]]; then
+        if git rev-parse --verify --quiet "refs/remotes/${configured_remote}/${base}" >/dev/null 2>&1; then
+            configured_remote_resolved=1
+            emit_candidate "refs/remotes/${configured_remote}/${base}" || true
+        fi
     fi
 
-    # 3. Remote-tracking ref for the base
-    local remote
-    remote="$(git config --get "branch.${base}.remote" 2>/dev/null)" || true
-    if [[ -z "$remote" ]]; then
-        if git config --get "remote.origin.url" >/dev/null 2>&1; then
-            remote="origin"
-        fi
-    fi
-    if [[ -n "$remote" ]]; then
-        local remote_ref="refs/remotes/${remote}/${base}"
-        if git rev-parse --verify --quiet "$remote_ref" >/dev/null 2>&1; then
-            case "$seen" in
-                *" $remote_ref "*) ;;
-                *) printf '%s\n' "$remote_ref"; seen="$seen$remote_ref " ;;
-            esac
-        fi
-    fi
-
-    # 4. Last-resort fallback to origin/<base>, regardless of branch.${base}.remote.
-    # If the configured remote is stale or doesn't track the base, this catches
-    # the case where origin/<base> locally proves the merge.
-    if git config --get "remote.origin.url" >/dev/null 2>&1; then
-        local origin_ref="refs/remotes/origin/${base}"
-        if git rev-parse --verify --quiet "$origin_ref" >/dev/null 2>&1; then
-            case "$seen" in
-                *" $origin_ref "*) ;;
-                *) printf '%s\n' "$origin_ref"; seen="$seen$origin_ref " ;;
-            esac
-        fi
+    # 4. Conditional last-resort fallback to origin/<base>. This only runs
+    # when the configured remote-tracking ref above did NOT resolve (no
+    # branch.${base}.remote configured, or it points at a ref that doesn't
+    # exist locally). If branch.${base}.remote already resolved to a
+    # different, valid remote (e.g. "upstream"), that remote's ref is
+    # authoritative and origin/<base> — which may belong to an unrelated
+    # fork — must not be consulted (dual-remote safety).
+    if [[ "$configured_remote_resolved" -eq 0 ]] && git config --get "remote.origin.url" >/dev/null 2>&1; then
+        emit_candidate "refs/remotes/origin/${base}"
     fi
 }
 
@@ -185,7 +200,10 @@ candidate_has_patch_equivalence() {
 # Evaluates ordered base candidates (exact base, upstream, remote-tracking).
 is_merged() {
     local sha="$1" base="$2"
-    local candidate
+    local candidate candidates
+    candidates="$(resolve_base_candidates "$base")"
+
+    [[ -z "$candidates" ]] && return 1
 
     # First pass: ancestry check across all candidates
     while IFS= read -r candidate; do
@@ -193,7 +211,7 @@ is_merged() {
             debug_log "merged by ancestry: $candidate"
             return 0
         fi
-    done < <(resolve_base_candidates "$base")
+    done <<< "$candidates"
 
     # Second pass: patch-id equivalence across all candidates
     while IFS= read -r candidate; do
@@ -201,10 +219,22 @@ is_merged() {
             debug_log "merged by patch-id: $candidate"
             return 0
         fi
-    done < <(resolve_base_candidates "$base")
+    done <<< "$candidates"
 
     return 1
 }
+
+# Test-only hook: when sourced with WORKTREE_CLEANUP_SOURCE_ONLY=1, stop
+# right after the function definitions above and skip the worktree-scanning
+# loop below. This lets tests source the real script to exercise its
+# functions directly (e.g. candidate_has_patch_equivalence) without running
+# a full cleanup pass as a side effect. Never set in normal usage.
+if [[ "${WORKTREE_CLEANUP_SOURCE_ONLY:-0}" == "1" ]]; then
+    if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+        return 0
+    fi
+    exit 0
+fi
 
 while IFS= read -r line; do
     case "$line" in

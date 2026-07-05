@@ -9,7 +9,7 @@ Governs how worktree-related operations (creation, detection, cleanup) behave, w
 ## Requirements
 
 ### Requirement: Positive Base Candidate Resolution for Merge Detection
-The system MUST treat a worktree branch as merged when any local candidate ref proves ancestry or patch-id equivalence for the branch tip: the exact `--base` ref, the base branch's configured upstream ref, or the remote-tracking ref `origin/<base>` (or the configured remote/base when present). If no candidate proves merge, the system MUST fall back to existing `git cherry` patch-id equivalence.
+The system MUST treat a worktree branch as merged when any local candidate ref proves ancestry or patch-id equivalence for the branch tip. Candidates are evaluated in order: the exact `--base` ref, the base branch's configured upstream ref, and the remote-tracking ref for the base branch's configured remote (`branch.<base>.remote`, or `origin` when no remote is configured). The remote-tracking ref `origin/<base>` is a conditional last-resort candidate: it is consulted ONLY when the configured remote-tracking ref above did not resolve. If a different, valid configured remote resolves, `origin/<base>` MUST NOT be consulted, even if it exists and points elsewhere (dual-remote safety). If no candidate proves merge, the system MUST fall back to existing `git cherry` patch-id equivalence.
 
 #### Scenario: Regular merge on origin/base with stale local base
 - GIVEN a temp repo with clean worktree `feat-regular`
@@ -17,6 +17,14 @@ The system MUST treat a worktree branch as merged when any local candidate ref p
 - AND local `main` still points before that merge
 - WHEN `worktree-cleanup.sh --base main --dry-run` runs
 - THEN it MUST report `would remove feat-regular`
+
+#### Scenario: Configured remote resolving blocks the origin fallback
+- GIVEN a temp repo where `branch.main.remote` is set to `upstream`
+- AND `refs/remotes/upstream/main` exists locally but does NOT contain `feat-dual-remote`
+- AND `refs/remotes/origin/main` exists and DOES contain `feat-dual-remote` (e.g. a personal fork)
+- WHEN `worktree-cleanup.sh --base main --dry-run` runs
+- THEN it MUST report `skipped feat-dual-remote (unmerged)`
+- AND it MUST NOT consult `refs/remotes/origin/main` as proof of merge
 
 #### Scenario: Squash merge still resolves by patch-id
 - GIVEN a temp repo where `feat-squash` was squash-merged into `main`

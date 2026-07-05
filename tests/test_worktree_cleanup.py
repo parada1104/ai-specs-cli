@@ -364,76 +364,80 @@ class WorktreeCleanupTests(unittest.TestCase):
 
     # ── A1: SIGPIPE false positive in patch-id check ──
 
-    def test_bash_loop_avoids_sigpipe_false_positive(self):
-        """The bash loop (NEW) avoids the SIGPIPE false positive that the
-        `printf | grep -q` pipeline (OLD) under `set -o pipefail` can produce
-        when the cherry output exceeds the OS pipe buffer.
+    def _fast_import_linear_commits(
+        self, repo: Path, branch: str, base_sha: str, count: int
+    ) -> str:
+        """Create `count` empty commits on `branch`, built on `base_sha`.
 
-        Pre-fix behavior: pipefail inverts when SIGPIPE fires on printf, so
-        the function returns 0 (merged) even when cherry output contains
-        `+` lines. This is a false positive that can lead to data loss.
-
-        Post-fix behavior: bash while-read loop reads line by line, returns
-        1 (unmerged) correctly when any `+` line is found.
+        Uses a single `git fast-import` call instead of `count` individual
+        `git commit` invocations, which would be far too slow for the commit
+        count needed to exceed the OS pipe buffer.
         """
-        import textwrap
+        parts = []
+        for i in range(1, count + 1):
+            msg = f"c{i}\n"
+            parts.append(f"commit refs/heads/{branch}\n")
+            parts.append(f"mark :{i}\n")
+            parts.append("committer t <t@t> 0 +0000\n")
+            parts.append(f"data {len(msg)}\n{msg}")
+            parts.append(f"from {base_sha}\n" if i == 1 else f"from :{i - 1}\n")
+        subprocess.run(
+            ["git", "fast-import", "--quiet"],
+            cwd=repo,
+            input="".join(parts),
+            text=True,
+            check=True,
+        )
+        return git(repo, "rev-parse", branch).strip()
 
-        # 10000 `+ <sha>` lines = ~430KB. Far exceeds pipe buffer on macOS (~16KB)
-        # and Linux (~64KB), guaranteeing the producer gets blocked on write
-        # when the consumer (grep -q) exits on the first match.
-        cherry_lines = "\n".join(f"+ {'a' * 40}" for _ in range(10000))
-        cherry_escaped = cherry_lines.replace("'", "'\\''")
+    def test_bash_loop_avoids_sigpipe_false_positive(self):
+        """`candidate_has_patch_equivalence` (the real, shipped function)
+        must correctly report "not patch-equivalent" via its bash while-read
+        loop, even when `git cherry` output exceeds the OS pipe buffer
+        (~16KB macOS, ~64KB Linux).
 
-        # OLD pipeline (pre-fix). Set -o pipefail is the trigger.
-        # Logic: if cherry has content AND no '+' lines found, return 0 (merged).
-        # With SIGPIPE: grep finds '+' on line 1, exits 0, printf gets SIGPIPE (141),
-        # pipefail makes pipeline exit 141, ! 141 = 0, condition true, return 0 (FALSE POSITIVE).
-        old_script = textwrap.dedent(f"""
-            set -euo pipefail
-            cherry='{cherry_escaped}'
-            if [[ -n "$cherry" ]] && ! printf '%s\\n' "$cherry" | grep -q '^+'; then
-                exit 0
-            fi
-            exit 1
-        """).strip()
+        This locks down against a regression to a `printf | grep -q`
+        pipeline: under `set -o pipefail`, `grep -q` exits on the first
+        match, the producer (`printf`) can be killed by SIGPIPE once its
+        write blocks on a full pipe, and pipefail then reports the whole
+        pipeline as failed — `! <pipeline>` becomes true, and the function
+        returns 0 (merged) even though `+` lines are present. That is a
+        false positive that can lead to a merged/unmerged worktree and its
+        branch being deleted while still unmerged.
+
+        Sources the actual script (guarded by WORKTREE_CLEANUP_SOURCE_ONLY
+        so only function definitions load, not the worktree-scanning main
+        loop) and calls the real `candidate_has_patch_equivalence` function
+        against a repo with 2000 commits unique to the feature branch —
+        enough for `git cherry` to emit ~85KB of `+` lines, comfortably past
+        both platforms' pipe buffers.
+        """
+        repo = self._make_repo()
+        base_sha = git(repo, "rev-parse", "main").strip()
+        feature_sha = self._fast_import_linear_commits(
+            repo, "feat-huge", base_sha, 2000
+        )
 
         result = subprocess.run(
-            ["bash", "-c", old_script],
+            [
+                "bash",
+                "-c",
+                f'source "{CLEANUP_SCRIPT}"; '
+                f'candidate_has_patch_equivalence "{feature_sha}" "{base_sha}"',
+            ],
+            cwd=repo,
+            env={**os.environ, "WORKTREE_CLEANUP_SOURCE_ONLY": "1"},
             capture_output=True,
             text=True,
             timeout=30,
         )
-        self.assertEqual(
-            result.returncode, 0,
-            "OLD pipeline should false-positive (return 0 = merged) on this OS "
-            "when cherry output exceeds the pipe buffer. If it returned "
-            f"{result.returncode}, the SIGPIPE path didn't fire; increase the "
-            f"line count. stderr: {result.stderr}",
-        )
 
-        # NEW pipeline (post-fix). Bash while-read loop, no pipe.
-        new_script = textwrap.dedent(f"""
-            set -euo pipefail
-            cherry='{cherry_escaped}'
-            if [[ -n "$cherry" ]]; then
-                while IFS= read -r line; do
-                    [[ "$line" == +* ]] && exit 1
-                done <<< "$cherry"
-                exit 0
-            fi
-            exit 1
-        """).strip()
-
-        result = subprocess.run(
-            ["bash", "-c", new_script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
         self.assertEqual(
-            result.returncode, 1,
-            f"NEW pipeline should correctly return 1 (unmerged) when `+` lines "
-            f"are present. Got: {result.returncode}. stderr: {result.stderr}",
+            result.returncode,
+            1,
+            "candidate_has_patch_equivalence must return 1 (not equivalent) "
+            "when cherry output is all '+' lines, even past the pipe buffer. "
+            f"Got: {result.returncode}. stderr: {result.stderr}",
         )
 
     # ── B2: origin/<base> fallback when configured remote is stale ──
@@ -475,6 +479,115 @@ class WorktreeCleanupTests(unittest.TestCase):
 
         self.assertIn("would remove feat-fallback", out.stdout)
         self.assertNotIn("unmerged", out.stdout)
+
+    # ── B3: dual-remote safety — configured remote resolving blocks the
+    #        unconditional origin fallback ──
+
+    def test_dual_remote_configured_remote_resolves_skips_unrelated_origin(self):
+        """A resolvable configured remote must block the origin fallback.
+
+        When `branch.main.remote` points to a different, valid remote
+        (`upstream`) whose ref `refs/remotes/upstream/main` exists locally
+        but does NOT contain the feature branch's commit, and the feature
+        is merged only into `refs/remotes/origin/main` (e.g. a contributor's
+        personal fork used for review), the script must NOT treat
+        `origin/main` as proof of merge.
+
+        Pre-fix, the last-resort candidate unconditionally adds
+        `origin/<base>` regardless of whether the configured remote-tracking
+        ref already resolved, so `is_merged` reports merged even though the
+        branch's actual configured upstream (`upstream/main`) does not
+        contain it. That false positive causes cleanup to delete an
+        unmerged worktree and branch.
+        """
+        repo = self._make_repo()
+        main_sha_before = git(repo, "rev-parse", "main").strip()
+
+        wt = self._add_worktree(repo, "feat-dual-remote")
+        (wt / "feature.txt").write_text("dual remote work\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "feat: dual remote work")
+        feature_sha = git(wt, "rev-parse", "feat-dual-remote").strip()
+
+        # upstream/main is a VALID, resolvable candidate but does NOT
+        # contain the feature branch's commit.
+        git(repo, "update-ref", "refs/remotes/upstream/main", main_sha_before)
+        git(repo, "config", "branch.main.remote", "upstream")
+
+        # origin/main is a DIFFERENT remote (e.g. a personal fork) that DOES
+        # contain the feature tip — but branch.main.remote does not point at
+        # it, so it must not be consulted while upstream/main resolves.
+        git(repo, "update-ref", "refs/remotes/origin/main", feature_sha)
+        git(repo, "config", "remote.origin.url", "https://example.com/fork.git")
+
+        out = self._run_cleanup(repo, "--dry-run")
+
+        self.assertIn("skipped feat-dual-remote (unmerged)", out.stdout)
+        self.assertNotIn("would remove feat-dual-remote", out.stdout)
+
+    def test_dual_remote_with_full_upstream_tracking_skips_unrelated_origin(self):
+        """Dual-remote safety must hold with full upstream tracking config.
+
+        Same dual-remote scenario as above, but with the standard
+        `git branch --set-upstream-to=upstream/main` shape: BOTH
+        `branch.main.remote=upstream` AND `branch.main.merge=refs/heads/main`
+        are set, so `main@{u}` resolves. The upstream candidate then emits
+        `refs/remotes/upstream/main` first, and the configured-remote
+        candidate resolves to that exact same ref and is deduplicated.
+
+        This pins down that "the configured remote ref resolves" must be
+        decided by ref resolution alone, NOT by whether the ref was newly
+        emitted: if dedup (the ref was already emitted as the upstream
+        candidate) is mistaken for "did not resolve", the origin fallback
+        fires and the unrelated fork's `origin/main` falsely proves the
+        merge — deleting an unmerged worktree and branch.
+        """
+        repo = self._make_repo()
+        main_sha_before = git(repo, "rev-parse", "main").strip()
+
+        wt = self._add_worktree(repo, "feat-dual-upstream")
+        (wt / "feature.txt").write_text("dual remote upstream work\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "feat: dual remote upstream work")
+        feature_sha = git(wt, "rev-parse", "feat-dual-upstream").strip()
+
+        # upstream/main is a VALID, resolvable candidate that does NOT
+        # contain the feature branch's commit.
+        git(repo, "update-ref", "refs/remotes/upstream/main", main_sha_before)
+
+        # Full upstream tracking shape (`git remote add upstream` +
+        # `git branch --set-upstream-to=upstream/main`): the remote's fetch
+        # refspec is required for main@{u} to resolve — without it, git
+        # cannot map refs/heads/main to refs/remotes/upstream/main.
+        git(repo, "config", "remote.upstream.url", "https://example.com/upstream.git")
+        git(
+            repo,
+            "config",
+            "remote.upstream.fetch",
+            "+refs/heads/*:refs/remotes/upstream/*",
+        )
+        git(repo, "config", "branch.main.remote", "upstream")
+        git(repo, "config", "branch.main.merge", "refs/heads/main")
+
+        # Sanity: main@{u} must resolve, so the upstream candidate emits
+        # refs/remotes/upstream/main BEFORE the configured-remote candidate
+        # considers the very same ref (the dedup-collision path under test).
+        self.assertEqual(
+            git(
+                repo, "rev-parse", "--symbolic-full-name", "main@{u}"
+            ).strip(),
+            "refs/remotes/upstream/main",
+        )
+
+        # origin/main belongs to a different remote (personal fork) and DOES
+        # contain the feature tip — it must not be consulted.
+        git(repo, "update-ref", "refs/remotes/origin/main", feature_sha)
+        git(repo, "config", "remote.origin.url", "https://example.com/fork.git")
+
+        out = self._run_cleanup(repo, "--dry-run")
+
+        self.assertIn("skipped feat-dual-upstream (unmerged)", out.stdout)
+        self.assertNotIn("would remove feat-dual-upstream", out.stdout)
 
 
 if __name__ == "__main__":
