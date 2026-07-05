@@ -55,6 +55,65 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         )
         return root
 
+    def _make_project_with_config(self, config_block: str = "") -> Path:
+        root = self._make_project()
+        manifest = root / "ai-specs" / "ai-specs.toml"
+        text = manifest.read_text()
+        if config_block:
+            text = text.rstrip() + "\n" + config_block + "\n"
+        manifest.write_text(text)
+        return root
+
+    def test_sync_defaults_to_always(self):
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        hook = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "hooks"
+            / "worktree-gate.sh"
+        )
+        self.assertTrue(hook.is_file())
+        content = hook.read_text()
+        self.assertIn('stamped_gate_mode="always"', content)
+
+    def test_sync_materializes_gate_mode_into_hook(self):
+        root = self._make_project_with_config(
+            '[recipes.worktree-flow.config]\ngate_mode = "ask"'
+        )
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        hook = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "hooks"
+            / "worktree-gate.sh"
+        )
+        content = hook.read_text()
+        self.assertIn('stamped_gate_mode="ask"', content)
+        self.assertNotIn("__WORKTREE_GATE_MODE__", content)
+
+    def test_sync_rejects_invalid_gate_mode(self):
+        root = self._make_project_with_config(
+            '[recipes.worktree-flow.config]\ngate_mode = "bogus"'
+        )
+        with self.assertRaises(SystemExit) as ctx:
+            self.materialize.materialize_recipes(root, ROOT)
+        self.assertEqual(ctx.exception.code, 1)
+        combined = ""
+        # materialize_recipes calls fail() which prints to stderr then exits
+        # Re-run via subprocess to capture diagnostic text.
+        import subprocess
+        proc = subprocess.run(
+            [
+                "python3",
+                str(RECIPE_MATERIALIZE_PATH),
+                str(root),
+                str(ROOT),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        combined = proc.stderr + proc.stdout
+        self.assertIn("bogus", combined)
+        self.assertRegex(combined, r"always.*ask.*off|always \| ask \| off")
+
     def test_materializes_skill_commands_and_script(self):
         root = self._make_project()
         self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)

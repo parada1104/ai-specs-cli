@@ -112,6 +112,7 @@ class ConfigField:
     type: str = ""
     default: Any = None
     validation: dict[str, Any] = field(default_factory=dict)
+    enum: list[str] | None = None
 
 
 @dataclass
@@ -398,6 +399,28 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
         field_type = str(value.get("type", ""))
         default = value.get("default")
 
+        allowed_field_keys = {"required", "type", "default", "validation", "enum"}
+        for fk in value:
+            if fk not in allowed_field_keys:
+                raise RecipeValidationError(
+                    f"{context}.config.{key}: unknown key '{fk}'"
+                )
+
+        enum_raw = value.get("enum")
+        enum_values: list[str] | None = None
+        if enum_raw is not None:
+            if not isinstance(enum_raw, list):
+                raise RecipeValidationError(
+                    f"{context}.config.{key}.enum: expected array of strings, got {type(enum_raw).__name__}"
+                )
+            enum_values = []
+            for idx, item in enumerate(enum_raw):
+                if not isinstance(item, str) or not item.strip():
+                    raise RecipeValidationError(
+                        f"{context}.config.{key}.enum[{idx}]: expected non-empty string"
+                    )
+                enum_values.append(item)
+
         validation_raw = value.get("validation")
         validation: dict[str, Any] = {}
         if isinstance(validation_raw, dict):
@@ -414,7 +437,11 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
             )
 
         fields[key] = ConfigField(
-            required=required, type=field_type, default=default, validation=validation
+            required=required,
+            type=field_type,
+            default=default,
+            validation=validation,
+            enum=enum_values,
         )
     return ConfigSchema(fields=fields, extra=extra)
 
