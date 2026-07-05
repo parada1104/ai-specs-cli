@@ -46,9 +46,6 @@ type = "string"
 default = "always"
 enum = ["always", "ask", "off"]
 
-[sdd]
-threshold = "behavior_change"
-
 [provides]
 skills = [{ id = "worktree-flow", source = "bundled" }]
 commands = [
