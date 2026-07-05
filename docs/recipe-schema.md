@@ -335,6 +335,7 @@ Defines configuration fields that the recipe expects. Values can be overridden p
 | `required` | boolean | yes | Whether the field must be provided |
 | `type` | string | no | Optional hint for the expected type (`string`, `integer`, `boolean` by convention) |
 | `default` | any | no | Default value when not overridden |
+| `enum` | array of strings | no | Closed set of allowed values. When present, sync rejects any manifest override outside the list. |
 
 Example:
 
@@ -347,10 +348,17 @@ default = 30
 [config.board_id]
 required = true
 type = "string"
+
+[config.gate_mode]
+required = false
+type = "string"
+default = "always"
+enum = ["always", "ask", "off"]
 ```
 
 Missing `required` causes a validation error. The current validator treats
-`type` as descriptive metadata and does not enforce a closed enum of values.
+`type` as descriptive metadata, but `enum` is enforced as a closed set at sync
+time.
 
 ## `[[hooks]]` lifecycle events
 

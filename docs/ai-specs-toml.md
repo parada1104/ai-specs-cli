@@ -162,6 +162,16 @@ board_id = "abc123"
 default_list = "In Progress"
 ```
 
+`worktree-flow` also supports gated write modes:
+
+```toml
+[recipes.worktree-flow.config]
+gate_mode = "ask"
+```
+
+For config fields that define an `enum`, sync validates that the manifest value
+is one of the allowed entries before materializing the recipe.
+
 ### `[[bindings]]`
 
 Explicitly binds a capability to one recipe when multiple enabled recipes could
