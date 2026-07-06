@@ -98,7 +98,7 @@ Tasks T2.1–T2.5 write independent new files under
 (catalog entry doc) and T2.7 (re-run tests) are sequential and depend on all
 of T2.1–T2.5.
 
-- [ ] **T2.1 [P]** — Create `catalog/recipes/plan-build-flow/recipe.toml`
+- [x] **T2.1 [P]** — Create `catalog/recipes/plan-build-flow/recipe.toml`
   exactly per design §4: `[recipe]` block (`id = "plan-build-flow"`,
   `version = "1.0.0"`, `tags = ["workflow"]`, no `conflicts_with`),
   `[[capabilities]] id = "plan-build-flow"`, `[[hooks]] event = "on-sync"
@@ -114,7 +114,7 @@ of T2.1–T2.5.
   **Done when:** `T1.2`, `T1.3`, and `T1.5` pass against this file alone
   (schema-level assertions).
 
-- [ ] **T2.2 [P]** — Create
+- [x] **T2.2 [P]** — Create
   `catalog/recipes/plan-build-flow/skills/plan-build-flow/SKILL.md` per
   design §5: front-matter (`name: plan-build-flow`, description, `license:
   MIT`, `metadata.scope: runtime`, `auto_invoke` list), then body sections in
@@ -135,7 +135,7 @@ of T2.1–T2.5.
   **Done when:** file exists and materializes to
   `ai-specs/.recipe/plan-build-flow/skills/plan-build-flow/SKILL.md`.
 
-- [ ] **T2.3 [P]** — Create `catalog/recipes/plan-build-flow/commands/plan.md`
+- [x] **T2.3 [P]** — Create `catalog/recipes/plan-build-flow/commands/plan.md`
   per design §6: title `# /plan — Turn an intent into a reviewable plan`,
   defers to the `plan-build-flow` skill, steps covering slug derivation,
   artifact-store resolution, running explore→proposal→spec→design→tasks
@@ -144,7 +144,7 @@ of T2.1–T2.5.
   **Requirement:** `/plan` phase mapping.
   **Done when:** file exists and materializes to `ai-specs/commands/plan.md`.
 
-- [ ] **T2.4 [P]** — Create `catalog/recipes/plan-build-flow/commands/build.md`
+- [x] **T2.4 [P]** — Create `catalog/recipes/plan-build-flow/commands/build.md`
   per design §6: title `# /build — Implement, validate, and close an
   authorized plan`, defers to the `plan-build-flow` skill, steps covering
   slug/store resolution, authorization check (stop and point back to `/plan`
@@ -155,7 +155,7 @@ of T2.1–T2.5.
   degradation; Worktree-flow cross-reference.
   **Done when:** file exists and materializes to `ai-specs/commands/build.md`.
 
-- [ ] **T2.5 [P]** — Create `catalog/recipes/plan-build-flow/README.md`
+- [x] **T2.5 [P]** — Create `catalog/recipes/plan-build-flow/README.md`
   (materialized doc), following the `worktree-flow`/`tdd-flow` README shape:
   what it provides (skill + two commands), how `/plan` and `/build` map to
   ceremony without naming SDD/OpenSpec/spec-driven, enable snippet
@@ -165,7 +165,7 @@ of T2.1–T2.5.
   **Requirement:** Vocabulary hygiene in generated output.
   **Done when:** `T1.4` passes against this file's materialized content.
 
-- [ ] **T2.6** — Update `docs/recipes-catalog.md`: add a new row to the "At a
+- [x] **T2.6** — Update `docs/recipes-catalog.md`: add a new row to the "At a
   glance" table (`plan-build-flow`, tier `Foundational`, focus summary,
   capability `plan-build-flow`, no MCP, no key config) and a new `##
   plan-build-flow` section (mirroring the `tdd-flow`/`worktree-flow` section
@@ -176,7 +176,7 @@ of T2.1–T2.5.
   **Done when:** the new section renders correctly and a diff shows only
   additions, no edits to pre-existing rows/sections.
 
-- [ ] **T2.7** — Run `./tests/run.sh` (or targeted
+- [x] **T2.7** — Run `./tests/run.sh` (or targeted
   `python3 -m pytest tests/test_plan_build_flow_recipe.py -v`) and confirm
   all six tests from Phase 1 (T1.2–T1.6) now pass (GREEN), with no regression
   in `test_tdd_flow_recipe.py` or `test_worktree_flow_recipe.py`.
