@@ -187,7 +187,7 @@ of T2.1–T2.5.
 
 ## Phase 3 — Docs and catalog polish
 
-- [ ] **T3.1** — Cross-check `tags = ["workflow"]` is still unused by any
+- [x] **T3.1** — Cross-check `tags = ["workflow"]` is still unused by any
   other catalog recipe (re-verify the design's assumption at apply time):
   `grep -r 'tags = \[' catalog/recipes/*/recipe.toml` and confirm no sibling
   recipe already declares `workflow`.
@@ -195,7 +195,7 @@ of T2.1–T2.5.
   **Done when:** confirmed no collision, or a deviation is recorded if one is
   found.
 
-- [ ] **T3.2** — Spot-check the generated `AGENTS.md` brief fragment in the
+- [x] **T3.2** — Spot-check the generated `AGENTS.md` brief fragment in the
   Phase 1/2 tmp-project fixture (or a scratch project) for vocabulary leakage
   beyond the automated string check: read the merged `workflow_rules` /
   `useful_commands` prose by eye and confirm it reads naturally as plan/build
@@ -209,17 +209,17 @@ of T2.1–T2.5.
 
 ## Phase 4 — Verification evidence
 
-- [ ] **T4.1** — Run full validation: `./tests/validate.sh`. Capture pass/fail
+- [x] **T4.1** — Run full validation: `./tests/validate.sh`. Capture pass/fail
   output for the apply/verify record.
   **Done when:** validate.sh exits 0 with the new recipe present.
 
-- [ ] **T4.2** — Record final RED→GREEN evidence in the apply-progress
+- [x] **T4.2** — Record final RED→GREEN evidence in the apply-progress
   artifact: the T1.7 RED capture, the T2.7 GREEN capture, and the T4.1
   full-suite result, per the TDD Evidence Policy.
   **Done when:** evidence is present in `sdd/plan-build-flow/apply-progress`
   (or the equivalent apply record) before verify/archive runs.
 
-- [ ] **T4.3** — **Verification-scope note (read before running sdd-verify):**
+- [x] **T4.3** — **Verification-scope note (read before running sdd-verify):**
   Acceptance criteria **AC3–AC7** (`/plan` stopping before implementation,
   `/build` running apply→verify→close in one invocation, archive no-op
   degradation, inline execution without an orchestrator, and default-store
