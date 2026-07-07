@@ -86,7 +86,8 @@ the generated brief (`[provides.brief]`) or `README.md`, which speak only
 - Degraded-mode persistence: when neither an orchestrator nor a persistent
   memory backend is available, do not rely on unstated persisted state for the
   slug↔store mapping. Instead, the mapping must be inferable directly from the
-  file artifacts themselves — `/build` scans `openspec/changes/*/` for
+  file artifacts themselves — `/build` scans `openspec/changes/*/` (excluding
+  `openspec/changes/archive/`, per the close semantics in Section 8) for
   outstanding (not-yet-built) plans to resolve the change-slug and store.
 
 ## 7. Worktree deference
@@ -107,7 +108,12 @@ The automatic closing step at the tail of `/build` never fails solely because
 an optional output channel is unavailable:
 
 - **Change-folder close** always completes. This is the one step that must
-  succeed for `/build` to be considered done.
+  succeed for `/build` to be considered done. Closing means moving the
+  change's folder from `openspec/changes/<slug>/` to
+  `openspec/changes/archive/<slug>/` (matching this repo's existing archive
+  convention). Consequently, any folder still directly under
+  `openspec/changes/` (excluding `archive/`) is an outstanding, not-yet-built
+  plan — this is the basis for the degraded-mode scan described in Section 6.
 - **Vault/canonical-store summary** — write a durable summary note if a
   canonical-store integration is enabled; otherwise no-op with an informative
   note that this output was skipped (do not fail `/build`).

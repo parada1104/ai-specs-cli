@@ -11,10 +11,12 @@ below.
    graceful no-op rules (Section 8).
 
 2. **Resolve the change.** Resolve the target change-slug and the artifact
-   store used by the prior `/plan`: use the argument if given, otherwise the
-   single outstanding plan if there is exactly one, otherwise ask the user
-   which change to build. If no plan is outstanding, stop and direct the user
-   to run `/plan` first instead of guessing a target.
+   store used by the prior `/plan`. If an argument is given, use it. Otherwise:
+   - If no plan is outstanding, stop and direct the user to run `/plan` first
+     instead of guessing a target.
+   - If exactly one plan is outstanding, resolve to it automatically.
+   - If more than one plan is outstanding, ask the user which change to
+     build rather than guessing.
 
 3. **Confirm authorization.** Confirm the resolved plan was reviewed and
    authorized by the human. If it was not, stop and point the user back to

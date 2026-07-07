@@ -245,6 +245,19 @@ Body sections (in order):
      same artifact store `/plan` used. If `/build` is called with no argument and
      exactly one plan is outstanding, resolve to it; if ambiguous, ask.
 
+   **Post-review refinement (added after the dual-review round):** if no
+   plan is outstanding when `/build` is invoked with no argument, stop and
+   direct the user to run `/plan` first rather than guessing a target — this
+   is the zero-outstanding-plans branch and takes priority over the ambiguous
+   and single-plan branches above. In degraded mode (no orchestrator and no
+   persistent memory backend), the slug↔store mapping is not read from
+   unstated state; instead `/build` scans `openspec/changes/*/` for
+   outstanding plans, treating "outstanding" as any change folder still
+   directly under `openspec/changes/` (excluding `openspec/changes/archive/`).
+   This aligns with the archive-tail close semantics in Section 8: closing a
+   change moves its folder to `openspec/changes/archive/<slug>/`, matching
+   this repo's existing date-prefixed archive convention.
+
 7. **Worktree deference.**
    - `/plan` needs no worktree (it can write planning artifacts, but by policy the
      planning surface is review-first; where worktree-flow is enabled its gate
