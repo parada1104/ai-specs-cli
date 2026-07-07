@@ -85,7 +85,7 @@ show RED (failing/erroring collection) before Phase 2 starts.
 
 - [x] **T1.7** — Run `./tests/run.sh` (or targeted
   `python3 -m pytest tests/test_plan_build_flow_recipe.py -v`) and capture the
-  RED output (all six new tests failing for the expected reason: missing
+  RED output (all five new tests failing for the expected reason: missing
   recipe directory/files, not import or syntax errors).
   **Done when:** RED evidence is captured verbatim for the apply/verify record.
 
@@ -178,7 +178,7 @@ of T2.1–T2.5.
 
 - [x] **T2.7** — Run `./tests/run.sh` (or targeted
   `python3 -m pytest tests/test_plan_build_flow_recipe.py -v`) and confirm
-  all six tests from Phase 1 (T1.2–T1.6) now pass (GREEN), with no regression
+  all five tests from Phase 1 (T1.2–T1.6) now pass (GREEN), with no regression
   in `test_tdd_flow_recipe.py` or `test_worktree_flow_recipe.py`.
   **Done when:** GREEN evidence is captured verbatim; zero failures, zero
   errors across the three recipe test files.
@@ -266,7 +266,12 @@ draft names (`test_recipe_validates_and_declares_capability`,
 The design's four planned assertions are folded into the spec-named tests
 (T1.2 absorbs schema validation + materialization + the new negative
 assertion; T1.3 absorbs the no-config/no-runtime-hooks check). No coverage is
-lost; only naming is aligned to the spec as the source of truth.
+lost; only naming is aligned to the spec as the source of truth. Two further
+assertions were added post-review to close residual gaps: T1.3/T2.1 now also
+assert `recipe.capabilities` declares an id of `plan-build-flow`, and T1.2/T2.1
+now also assert the bundled skill materializes to
+`ai-specs/.recipe/plan-build-flow/skills/plan-build-flow/SKILL.md` with
+non-empty content matching the source file.
 
 ---
 

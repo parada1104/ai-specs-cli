@@ -63,9 +63,12 @@ the generated brief (`[provides.brief]`) or `README.md`, which speak only
 
 - If an orchestrator preflight already resolved an artifact store for this
   session, honor that choice.
-- Otherwise, default to **file artifacts** written to the change's folder.
-  Files are the reviewable deliverable this workflow centers on; do not
-  silently default to memory-only persistence.
+- Otherwise, default to file artifacts written under
+  `openspec/changes/<slug>/`, with `proposal.md`, `specs/<capability>/spec.md`,
+  `design.md`, and `tasks.md` as the concrete on-disk layout. Files are the
+  reviewable deliverable this workflow centers on; do not silently default to
+  memory-only persistence. This ceremony vocabulary stays internal to this
+  skill body — the agent still speaks only "plan" and "build" to the user.
 
 ## 6. Change-slug derivation
 
@@ -74,10 +77,17 @@ the generated brief (`[provides.brief]`) or `README.md`, which speak only
 - Persist or record the slug alongside the resolved artifact store so that a
   later `/build [change]` resolves the exact same slug and store `/plan` used.
 - If `/build` is invoked with no argument:
+  - If no plan is outstanding, stop and direct the user to run `/plan` first
+    instead of guessing a target.
   - If exactly one plan is outstanding (planned but not yet built), resolve to
     it automatically.
   - If more than one plan is outstanding, ask the user which one to build
     rather than guessing.
+- Degraded-mode persistence: when neither an orchestrator nor a persistent
+  memory backend is available, do not rely on unstated persisted state for the
+  slug↔store mapping. Instead, the mapping must be inferable directly from the
+  file artifacts themselves — `/build` scans `openspec/changes/*/` for
+  outstanding (not-yet-built) plans to resolve the change-slug and store.
 
 ## 7. Worktree deference
 

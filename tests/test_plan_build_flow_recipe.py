@@ -93,6 +93,22 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             "no third command file (e.g. archive.md) should be generated",
         )
 
+        skill = (
+            root / "ai-specs" / ".recipe" / RECIPE_ID
+            / "skills" / RECIPE_ID / "SKILL.md"
+        )
+        self.assertTrue(skill.is_file(), f"missing bundled skill at {skill}")
+        skill_content = skill.read_text()
+        self.assertTrue(skill_content.strip(), "materialized SKILL.md must not be empty")
+        source_skill = (
+            CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md"
+        )
+        self.assertEqual(
+            skill_content,
+            source_skill.read_text(),
+            "materialized SKILL.md must match the source skill content",
+        )
+
     # -- AC2: no new schema/materializer surface -----------------------------
 
     def test_recipe_adds_no_schema_surface(self):
@@ -100,6 +116,13 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
 
         self.assertEqual(recipe.config_schema.fields, {}, "no [config.*] fields expected")
+
+        capability_ids = [cap.id for cap in recipe.capabilities]
+        self.assertIn(
+            RECIPE_ID,
+            capability_ids,
+            f"expected [[capabilities]] with id '{RECIPE_ID}' declared",
+        )
 
         hook_pairs = [(h.event, h.action) for h in recipe.hooks]
         self.assertEqual(
