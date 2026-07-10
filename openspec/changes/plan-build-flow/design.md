@@ -255,8 +255,10 @@ Body sections (in order):
    outstanding plans, treating "outstanding" as any change folder still
    directly under `openspec/changes/` (excluding `openspec/changes/archive/`).
    This aligns with the archive-tail close semantics in Section 8: closing a
-   change moves its folder to `openspec/changes/archive/<slug>/`, matching
-   this repo's existing date-prefixed archive convention.
+   change moves its folder to `openspec/changes/archive/<slug>/`. The folder
+   keeps whatever name it had before archiving; the close step adds no date
+   prefix (date-prefixed names seen under `archive/` were part of those
+   changes' original folder names, not an archiving transformation).
 
 7. **Worktree deference.**
    - `/plan` needs no worktree (it can write planning artifacts, but by policy the
@@ -300,7 +302,8 @@ SKILL, exactly as `tdd-flow`'s `/tdd` defers to the `tdd-flow` skill.
 - **Steps:**
   1. Load the `plan-build-flow` skill.
   2. Resolve the target change-slug and the artifact store used by `/plan`
-     (argument, else the single outstanding plan, else ask).
+     (argument wins; else zero outstanding plans → stop and direct the user to
+     `/plan`; exactly one → resolve to it; more than one → ask).
   3. Confirm the plan was authorized; if not, stop and point back to `/plan`.
   4. If `worktree-flow` is enabled, ensure work runs in the change's worktree.
   5. Run implementation and validation (apply → verify).
