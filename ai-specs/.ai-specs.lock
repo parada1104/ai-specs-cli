@@ -14,7 +14,7 @@
 "skills-as-rules.md" = "793c2d1de600693cfdd1dbbd93bea0c9af76d22838f5ecd4db678737157b0af8"
 
 [recipes."git-pr-flow".skills."git-merge-workflow"]
-"SKILL.md" = "d1cca953994b2fa40464c49d9e7f1f8711374ca4604d87792ef25f93556c3cc4"
+"SKILL.md" = "cd34baf946b4bcd41a7de18aa97ccba9cf58bd0cf313aeccc31a1eaf07486c7a"
 
 [recipes."session-context".skills."context-precedence"]
 "SKILL.md" = "5b09871eadc86d5951d2681ef5e79acc271e48a2f1498128ca2d0b96fa151ba6"
