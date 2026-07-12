@@ -13,6 +13,9 @@
 #   --dir   .worktrees
 #   --base  current branch of the main worktree
 #
+# Environment variables:
+#   WORKTREE_CLEANUP_DEBUG=1       print debug messages to stderr
+#   WORKTREE_CLEANUP_SOURCE_ONLY=1  (test helper) skip execution loop when sourced
 # Output lines (stable, greppable):
 #   removed <name>
 #   would remove <name>            (with --dry-run)
@@ -92,27 +95,149 @@ flush() {
     echo "removed $name"
 }
 
-# Decide whether a branch is fully merged into base, covering both regular
-# (fast-forward / merge-commit) integration and squash/rebase merges.
-is_merged() {
-    local sha="$1" base="$2"
-    # Regular / fast-forward merge: branch tip is an ancestor of base.
-    if git merge-base --is-ancestor "$sha" "$base" 2>/dev/null; then
-        return 0
+# Print a debug message to stderr when WORKTREE_CLEANUP_DEBUG=1.
+debug_log() {
+    if [[ "${WORKTREE_CLEANUP_DEBUG:-0}" == "1" ]]; then
+        echo "[debug] $*" >&2
     fi
-    # Squash / rebase merge: the branch tip is not an ancestor, but every commit
-    # unique to the branch is already present in base by patch-id. `git cherry`
-    # prints '+ <sha>' for commits NOT yet in base and '- <sha>' for those that
-    # are. No '+' lines => all of the branch's changes already landed in base.
-    if [[ -n "$(git rev-list "$base..$sha" 2>/dev/null)" ]]; then
+    return 0
+}
+
+# Resolve ordered base candidate refs for merge detection.
+# Prints one candidate per line: exact --base, configured upstream,
+# configured remote-tracking ref, conditional origin/<base> fallback.
+resolve_base_candidates() {
+    local base="$1"
+    local seen=" "
+
+    # Emit a candidate ref if it resolves to a real object and hasn't been
+    # emitted yet under this exact spelling. Every emission still goes
+    # through `git rev-parse --verify --quiet` so only positively-proven
+    # refs are ever printed (positive-proof-only semantics).
+    #
+    # Returns non-zero when the ref is a duplicate or does not resolve —
+    # NEVER use this return value to decide whether a ref resolves (a
+    # deduplicated ref resolves but returns 1). Callers under `set -e` are
+    # safe here only because these functions run in conditional contexts
+    # (`if ! is_merged ...`); guard any future unconditional call sites.
+    emit_candidate() {
+        local ref="$1"
+        case "$seen" in
+            *" $ref "*) return 1 ;;
+        esac
+        if git rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
+            printf '%s\n' "$ref"
+            seen="$seen$ref "
+            return 0
+        fi
+        return 1
+    }
+
+    # 1. Exact base ref
+    emit_candidate "$base"
+
+    # 2. Configured upstream of the base branch, normalized to its full ref
+    # name (refs/remotes/<remote>/<base>) via --symbolic-full-name rather
+    # than --abbrev-ref. --abbrev-ref would print the short form
+    # (e.g. "origin/main"), which does not match the "refs/remotes/..."
+    # spelling used by candidates 3/4 and would defeat the dedup below.
+    local upstream
+    upstream="$(git rev-parse --verify --quiet --symbolic-full-name "${base}@{u}" 2>/dev/null)" || true
+    [[ -n "$upstream" ]] && emit_candidate "$upstream"
+
+    # 3. Remote-tracking ref for the base's configured remote. The
+    # "resolved" flag is decided by a direct rev-parse check, NOT by
+    # emit_candidate's return value: with full upstream tracking, candidate
+    # 2 already emitted this exact ref, so emit_candidate would return
+    # non-zero (dedup) even though the ref resolves — conflating the two
+    # would wrongly re-enable the origin fallback below.
+    local configured_remote configured_remote_resolved=0
+    configured_remote="$(git config --get "branch.${base}.remote" 2>/dev/null)" || true
+    if [[ -n "$configured_remote" ]]; then
+        if git rev-parse --verify --quiet "refs/remotes/${configured_remote}/${base}" >/dev/null 2>&1; then
+            configured_remote_resolved=1
+            emit_candidate "refs/remotes/${configured_remote}/${base}" || true
+        fi
+    fi
+
+    # 4. Conditional last-resort fallback to origin/<base>. This only runs
+    # when the configured remote-tracking ref above did NOT resolve (no
+    # branch.${base}.remote configured, or it points at a ref that doesn't
+    # exist locally). If branch.${base}.remote already resolved to a
+    # different, valid remote (e.g. "upstream"), that remote's ref is
+    # authoritative and origin/<base> — which may belong to an unrelated
+    # fork — must not be consulted (dual-remote safety).
+    if [[ "$configured_remote_resolved" -eq 0 ]] && git config --get "remote.origin.url" >/dev/null 2>&1; then
+        emit_candidate "refs/remotes/origin/${base}"
+    fi
+}
+
+# Check if sha is an ancestor of candidate (regular / fast-forward merge).
+candidate_has_merged_tip() {
+    local sha="$1" candidate="$2"
+    git merge-base --is-ancestor "$sha" "$candidate" 2>/dev/null
+}
+
+# Check if all unique commits in sha are present in candidate by patch-id.
+candidate_has_patch_equivalence() {
+    local sha="$1" candidate="$2"
+    if [[ -n "$(git rev-list "${candidate}..${sha}" 2>/dev/null)" ]]; then
         local cherry
-        cherry="$(git cherry "$base" "$sha" 2>/dev/null)"
-        if [[ -n "$cherry" ]] && ! printf '%s\n' "$cherry" | grep -q '^+'; then
+        cherry="$(git cherry "$candidate" "$sha" 2>/dev/null)"
+        # Avoid `printf | grep -q` here: under `set -o pipefail`, grep -q
+        # exits early on the first match, SIGPIPE kills printf (exit 141),
+        # and pipefail propagates that as a pipeline failure — a false positive.
+        if [[ -n "$cherry" ]]; then
+            local line
+            while IFS= read -r line; do
+                [[ "$line" == +* ]] && return 1
+            done <<< "$cherry"
             return 0
         fi
     fi
     return 1
 }
+
+# Decide whether a branch is fully merged into base, covering both regular
+# (fast-forward / merge-commit) integration and squash/rebase merges.
+# Evaluates ordered base candidates (exact base, upstream, remote-tracking).
+is_merged() {
+    local sha="$1" base="$2"
+    local candidate candidates
+    candidates="$(resolve_base_candidates "$base")"
+
+    [[ -z "$candidates" ]] && return 1
+
+    # First pass: ancestry check across all candidates
+    while IFS= read -r candidate; do
+        if candidate_has_merged_tip "$sha" "$candidate"; then
+            debug_log "merged by ancestry: $candidate"
+            return 0
+        fi
+    done <<< "$candidates"
+
+    # Second pass: patch-id equivalence across all candidates
+    while IFS= read -r candidate; do
+        if candidate_has_patch_equivalence "$sha" "$candidate"; then
+            debug_log "merged by patch-id: $candidate"
+            return 0
+        fi
+    done <<< "$candidates"
+
+    return 1
+}
+
+# Test-only hook: when sourced with WORKTREE_CLEANUP_SOURCE_ONLY=1, stop
+# right after the function definitions above and skip the worktree-scanning
+# loop below. This lets tests source the real script to exercise its
+# functions directly (e.g. candidate_has_patch_equivalence) without running
+# a full cleanup pass as a side effect. Never set in normal usage.
+if [[ "${WORKTREE_CLEANUP_SOURCE_ONLY:-0}" == "1" ]]; then
+    if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+        return 0
+    fi
+    exit 0
+fi
 
 while IFS= read -r line; do
     case "$line" in
