@@ -44,7 +44,7 @@ help|-h|--help) cat <<EOF
 ai-specs — declarative per-project AI agent config
 Usage: ai-specs <command> [args]
 Commands:
-  init [path] Bootstrap ai-specs/ in a project
+  init [path] Bootstrap ai-specs/ in a project (TTY opens onboarding)
   sync [path] Refresh bundled + vendor deps + regen AGENTS.md + sync agents
   sync-agent [path] [--all | --<agent>] Fan out per-agent configs only
   refresh-bundled [path] Update bundled skills/commands (keeps your edits, drops .new sidecars)
