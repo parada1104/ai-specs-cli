@@ -257,6 +257,16 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         """Command checks bb authentication via bb auth status."""
         self.assertIn("bb auth status", self.command_text)
 
+
+
+    def test_skill_requires_pre_merge_archive_before_merge(self):
+        """Skill archives SDD/OpenSpec artifacts before provider merge."""
+        merge_pos = self.skill_text.find("bb pr merge")
+        archive_pos = self.skill_text.find("archive and record SDD/OpenSpec artifacts")
+        self.assertGreater(archive_pos, 0)
+        self.assertGreater(merge_pos, 0)
+        self.assertLess(archive_pos, merge_pos)
+
     def test_command_uses_explicit_push(self):
         """Command uses explicit git push -u $REMOTE before PR creation."""
         self.assertIn("git push -u $REMOTE", self.command_text)

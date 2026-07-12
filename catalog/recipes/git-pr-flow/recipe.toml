@@ -2,7 +2,7 @@
 id = "git-pr-flow"
 name = "Git PR Flow"
 description = "GitHub PR and merge flow for feature branches (via gh CLI)"
-version = "1.2.0"
+version = "1.2.1"
 author = "ai-specs"
 license = "MIT"
 tags = ["vcs", "github"]
