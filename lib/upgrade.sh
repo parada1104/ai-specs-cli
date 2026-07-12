@@ -220,6 +220,12 @@ else
     UP_TO_DATE=false
 fi
 
+if [[ "$UP_TO_DATE" == false ]]; then
+    if ! git merge --ff-only origin/main; then
+        abort "Fast-forward merge failed. The local branch may have diverged. Resolve manually or re-run install.sh." 4
+    fi
+fi
+
 # --- refresh TUI deps (rich + questionary) -----------------------------
 VENDOR_DIR="$AI_SPECS_HOME/lib/_vendor"
 _tui_deps_ok() {

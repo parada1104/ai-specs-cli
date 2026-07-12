@@ -14,6 +14,14 @@ id = "canonical-store"
 event = "on-sync"
 action = "validate-config"
 
+[[deps.cli]]
+binary = "npx"
+purpose = "Run the filesystem MCP server for the canonical vault store"
+required = true
+install_url = "https://nodejs.org/en/download"
+version_check = "npx --version"
+min_version = "8.0.0"
+
 [config.vault_scope]
 required = false
 type = "string"

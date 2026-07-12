@@ -37,9 +37,6 @@ SUPPORTED_AGENTS = [
 DEFAULT_AGENTS = ["claude", "cursor", "opencode"]
 DEFAULT_RECIPES = ["session-context"]
 
-# Pin range keeps bootstrap reproducible without chasing every major.
-DEPS_SPEC = ["rich>=13.0.0,<15", "questionary>=2.0.0,<2.1"]
-
 _BARE_TOML_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
 TOML_HEADER = """\
@@ -52,74 +49,34 @@ TOML_HEADER = """\
 """
 
 
+def _load_sibling(name: str):
+    """Load a same-directory _internal module by absolute path (sys.path-independent)."""
+    import importlib.util
+
+    path = Path(__file__).with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load sibling module {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_util = _load_sibling("util")
+
+
 def _ai_specs_home() -> Path:
-    env = os.environ.get("AI_SPECS_HOME")
-    if env:
-        return Path(env).resolve()
-    return Path(__file__).resolve().parents[2]
+    return _util.ai_specs_home()
 
 
 def _vendor_dir() -> Path:
-    return _ai_specs_home() / "lib" / "_vendor"
+    return _util.vendor_dir()
 
 
 def _ensure_deps() -> int | None:
     """Make rich + questionary importable. Returns exit code 3 if unavailable, else None."""
-    vendor = _vendor_dir()
-    if vendor.is_dir():
-        sys.path.insert(0, str(vendor))
-
-    try:
-        import questionary  # noqa: F401
-        from rich.console import Console  # noqa: F401
-        from rich.panel import Panel  # noqa: F401
-
-        return None
-    except ImportError:
-        pass
-
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        return 3
-
-    print("Interactive init needs 'rich' + 'questionary' packages.")
-    print(f"Install into {_vendor_dir()}? [Y/n] ", end="", flush=True)
-    answer = (sys.stdin.readline() or "").strip().lower()
-    if answer not in ("", "y", "yes"):
-        print("Skipping interactive init.")
-        return 3
-
-    try:
-        vendor.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        print(f"ERROR: cannot create vendor dir {vendor}: {exc}", file=sys.stderr)
-        return 3
-
-    cmd = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--quiet",
-        "--target",
-        str(vendor),
-        *DEPS_SPEC,
-    ]
-    print("▸ installing dependencies…")
-    try:
-        subprocess.run(cmd, check=True)
-    except (subprocess.CalledProcessError, OSError) as exc:
-        print(f"ERROR: could not install dependencies: {exc}", file=sys.stderr)
-        return 3
-
-    sys.path.insert(0, str(vendor))
-    try:
-        import questionary  # noqa: F401
-        from rich.console import Console  # noqa: F401
-        from rich.panel import Panel  # noqa: F401
-    except ImportError as exc:
-        print(f"ERROR: dependencies still unavailable after install: {exc}", file=sys.stderr)
-        return 3
-    return None
+    return _util.ensure_deps(_vendor_dir())
 
 
 def _catalog_recipes() -> list[dict[str, str]]:

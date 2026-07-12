@@ -14,6 +14,14 @@ id = "vcs-pr-flow"
 event = "on-sync"
 action = "validate-config"
 
+[[deps.cli]]
+binary = "gh"
+purpose = "Create and manage GitHub pull requests"
+required = true
+install_url = "https://cli.github.com/"
+version_check = "gh --version"
+min_version = "2.0.0"
+
 [config.base_branch]
 required = false
 type = "string"

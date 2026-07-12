@@ -898,7 +898,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "integration_branch = 'development'\n\n"
                 "[recipes.git-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.2.1'\n"
+                "version = '1.2.2'\n"
                 "[recipes.git-pr-flow.config]\n"
                 "base_branch = 'development'\n\n"
                 "[recipes.tdd-flow]\n"

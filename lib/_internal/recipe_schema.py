@@ -113,12 +113,22 @@ class ConfigField:
     default: Any = None
     validation: dict[str, Any] = field(default_factory=dict)
     enum: list[str] | None = None
-
+    help_text: str = ""
 
 @dataclass
 class ConfigSchema:
     fields: dict[str, ConfigField] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CliDep:
+    binary: str
+    purpose: str
+    required: bool = True
+    install_url: str = ""
+    version_check: str = ""
+    min_version: str = ""
 
 
 @dataclass
@@ -148,6 +158,7 @@ class Recipe:
     hooks: list[Hook] = field(default_factory=list)
     runtime_hooks: list[RuntimeHook] = field(default_factory=list)
     config_schema: ConfigSchema = field(default_factory=ConfigSchema)
+    cli_deps: list[CliDep] = field(default_factory=list)
     init: InitWorkflow | None = None
     brief_fragments: BriefFragments | None = None
 
@@ -156,6 +167,18 @@ def _require_string(data: dict[str, Any], key: str, context: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
         raise RecipeValidationError(f"{context}: missing or invalid required field '{key}'")
+    return value.strip()
+
+
+def _opt_str(data: dict[str, Any], key: str, context: str) -> str:
+    """Return optional string field; absent -> "", present-but-not-str raises."""
+    if key not in data:
+        return ""
+    value = data[key]
+    if not isinstance(value, str):
+        raise RecipeValidationError(
+            f"{context}.{key}: expected string, got {type(value).__name__}"
+        )
     return value.strip()
 
 
@@ -380,6 +403,41 @@ def _parse_hooks(raw: Any, context: str) -> list[Hook]:
     return out
 
 
+def _parse_cli_deps(raw: Any, context: str) -> list[CliDep]:
+    """Parse [[deps.cli]] array-of-tables. Returns [] when absent.
+
+    context example: "[deps.cli]". Each entry must be a table with required
+    'binary' and 'purpose'; unknown keys raise RecipeValidationError.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise RecipeValidationError(
+            f"{context}: expected array of tables, got {type(raw).__name__}"
+        )
+    allowed = {"binary", "purpose", "required", "install_url", "version_check", "min_version"}
+    out: list[CliDep] = []
+    for idx, item in enumerate(raw):
+        ctx = f"{context}[{idx}]"
+        if not isinstance(item, dict):
+            raise RecipeValidationError(f"{ctx}: expected table, got {type(item).__name__}")
+        for k in item:
+            if k not in allowed:
+                raise RecipeValidationError(f"{ctx}: unknown key '{k}'")
+        binary = _require_string(item, "binary", ctx)
+        purpose = _require_string(item, "purpose", ctx)
+        required = item.get("required", True)
+        if not isinstance(required, bool):
+            raise RecipeValidationError(
+                f"{ctx}.required: expected boolean, got {type(required).__name__}"
+            )
+        install_url = _opt_str(item, "install_url", ctx)
+        version_check = _opt_str(item, "version_check", ctx)
+        min_version = _opt_str(item, "min_version", ctx)
+        out.append(CliDep(binary, purpose, required, install_url, version_check, min_version))
+    return out
+
+
 def _parse_config(raw: Any, context: str) -> ConfigSchema:
     if not isinstance(raw, dict):
         return ConfigSchema()
@@ -399,7 +457,7 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
         field_type = str(value.get("type", ""))
         default = value.get("default")
 
-        allowed_field_keys = {"required", "type", "default", "validation", "enum"}
+        allowed_field_keys = {"required", "type", "default", "validation", "enum", "help_text"}
         for fk in value:
             if fk not in allowed_field_keys:
                 raise RecipeValidationError(
@@ -435,6 +493,7 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
             raise RecipeValidationError(
                 f"{context}.config.{key}.validation: expected table, got {type(validation_raw).__name__}"
             )
+        help_text = _opt_str(value, "help_text", f"{context}.config.{key}")
 
         fields[key] = ConfigField(
             required=required,
@@ -442,6 +501,7 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
             default=default,
             validation=validation,
             enum=enum_values,
+            help_text=help_text,
         )
     return ConfigSchema(fields=fields, extra=extra)
 
@@ -595,6 +655,9 @@ def validate_recipe_toml(data: dict[str, Any], recipe_dir: Path | None = None) -
         provides = {}
 
     ctx_prov = "[provides]"
+    deps_table = data.get("deps", {})
+    if not isinstance(deps_table, dict):
+        deps_table = {}
     return Recipe(
         id=recipe_id,
         name=name,
@@ -613,6 +676,7 @@ def validate_recipe_toml(data: dict[str, Any], recipe_dir: Path | None = None) -
         capabilities=_parse_capabilities(data.get("capabilities"), ""),
         hooks=_parse_hooks(data.get("hooks"), ""),
         config_schema=_parse_config(data.get("config"), ""),
+        cli_deps=_parse_cli_deps(deps_table.get("cli"), "[deps.cli]"),
         init=_parse_init(data.get("init"), "[init]", recipe_dir),
         brief_fragments=_parse_brief_fragments(provides.get("brief"), "[provides.brief]"),
     )
