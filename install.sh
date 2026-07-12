@@ -39,7 +39,7 @@ command -v python3 >/dev/null 2>&1 || { echo -e "${RED}error: python3 is require
 
 # 1. Clone or update the repo
 if [ -d "$AI_SPECS_HOME/.git" ]; then
-    echo -e "${YELLOW}[1/2]${NC} Updating existing install at $AI_SPECS_HOME"
+    echo -e "${YELLOW}[1/3]${NC} Updating existing install at $AI_SPECS_HOME"
 
     # Detect dirty working tree before attempting any update.
     # Mode-only dirt (e.g. chmod applied to 100644 files by a previous installer)
@@ -84,7 +84,7 @@ elif [ -e "$AI_SPECS_HOME" ]; then
     echo -e "${RED}error: $AI_SPECS_HOME exists but is not a git repo${NC}" >&2
     exit 1
 else
-    echo -e "${YELLOW}[1/2]${NC} Cloning $AI_SPECS_REPO → $AI_SPECS_HOME"
+    echo -e "${YELLOW}[1/3]${NC} Cloning $AI_SPECS_REPO → $AI_SPECS_HOME"
     git clone --branch "$AI_SPECS_REF" "$AI_SPECS_REPO" "$AI_SPECS_HOME"
 fi
 
@@ -93,8 +93,24 @@ chmod +x "$AI_SPECS_HOME/bin/ai-specs"
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.sh 2>/dev/null || true
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.py 2>/dev/null || true
 
-# 2. Symlink entrypoint
-echo -e "${YELLOW}[2/2]${NC} Symlinking entrypoint"
+# 2. Install Python dependencies (Rich + Questionary for the interactive init TUI)
+VENDOR_DIR="$AI_SPECS_HOME/lib/_vendor"
+_has_deps() {
+    python3 -c "import rich, questionary" 2>/dev/null && return 0
+    [ -d "$VENDOR_DIR" ] && python3 -c "import sys; sys.path.insert(0, '$VENDOR_DIR'); import rich, questionary" 2>/dev/null && return 0
+    return 1
+}
+if _has_deps; then
+    echo "  TUI deps (rich + questionary) already available"
+else
+    echo -e "${YELLOW}[2/3]${NC} Installing TUI dependencies (rich + questionary)"
+    python3 -m pip install --quiet --target "$VENDOR_DIR" 'rich>=13.0.0,<15' 'questionary>=2.0.0,<2.1' || {
+        echo -e "${YELLOW}warning:${NC} could not install TUI deps; init will prompt on first use or fall back to classic mode"
+    }
+fi
+
+# 3. Symlink entrypoint
+echo -e "${YELLOW}[3/3]${NC} Symlinking entrypoint"
 mkdir -p "$INSTALL_BIN"
 ln -sf "$AI_SPECS_HOME/bin/ai-specs" "$INSTALL_BIN/ai-specs"
 
