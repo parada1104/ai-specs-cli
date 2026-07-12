@@ -6,7 +6,7 @@ Usage:
 
 Exit codes:
   0  user confirmed; wrote TOML to --out
-  1  user cancelled (Confirm == No only)
+  1  user cancelled (Confirm == No, Ctrl-C, or Ctrl-D/EOF)
   2  usage / argument error
   3  TUI unavailable or unexpected failure (caller falls back to classic init)
 """
@@ -338,6 +338,8 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         return 0
     except KeyboardInterrupt:
         return _cancel()
+    except EOFError:
+        return _cancel()
 
 
 def main() -> int:
@@ -356,6 +358,10 @@ def main() -> int:
         return run_wizard(target=target, name_prefill=args.name, out_path=Path(args.out))
     except KeyboardInterrupt:
         # Ctrl-C outside run_wizard's own try (e.g. during _ensure_rich prompt)
+        print("\nCancelled", file=sys.stderr)
+        return 1
+    except EOFError:
+        # Ctrl-D / EOF outside run_wizard's own try
         print("\nCancelled", file=sys.stderr)
         return 1
     except Exception as exc:  # noqa: BLE001 — never collide with cancel (rc=1)

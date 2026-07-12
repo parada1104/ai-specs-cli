@@ -344,8 +344,8 @@ class TestInitTuiPTYE2E(unittest.TestCase):
 
         return proc.returncode, output
 
-    def test_accept_defaults_writes_toml(self):
-        """Blank input at each prompt + 'y' confirm → TOML written with defaults."""
+    def test_accept_defaults_writes_toml_with_default_recipes(self):
+        """Blank input at each prompt + 'y' confirm → TOML with defaults, including session-context recipe."""
         target = self._workspace()
         out = target / "staged.toml"
         rc, output = self._spawn_pty(target, out, b"\n\n\ny\n")
@@ -355,6 +355,8 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         data = tomllib.loads(out.read_text(encoding="utf-8"))
         self.assertIn("project", data)
         self.assertIn("agents", data)
+        self.assertIn("session-context", data.get("recipes", {}),
+                        f"default recipe session-context not in TOML; output: {output!r}")
 
     def test_custom_inputs_writes_correct_manifest(self):
         """Custom name, agent selection (1,4), 'none' recipes → TOML with those values."""
@@ -428,6 +430,15 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, f"output: {output!r}")
         self.assertFalse(out.exists(),
                          f"TOML should not exist after Ctrl-C; output: {output!r}")
+
+    def test_eof_at_prompt_cancels_like_ctrl_c(self):
+        """EOF (Ctrl-D) at first prompt → rc=1 (cancel), no TOML — same as Ctrl-C."""
+        target = self._workspace()
+        out = target / "staged.toml"
+        rc, output = self._spawn_pty(target, out, b"\x04", timeout=5)
+        self.assertEqual(rc, 1, f"output: {output!r}")
+        self.assertFalse(out.exists(),
+                         f"TOML should not exist after EOF; output: {output!r}")
 
 if __name__ == "__main__":
     unittest.main()
