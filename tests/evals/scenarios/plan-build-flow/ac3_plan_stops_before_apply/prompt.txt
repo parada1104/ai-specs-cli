@@ -1,0 +1,4 @@
+You are in a project with plan-build-flow synced. Run the /plan command for a small
+documentation-only change slug "eval-ac3-fixture". Produce planning artifacts only.
+Do NOT modify any existing source files under src/, lib/, or catalog/. Stop after
+planning and ask for authorization before implementation.

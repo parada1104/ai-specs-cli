@@ -130,11 +130,11 @@ classic SDD command, skill, or recipe.
 |----|------|-----|
 | AC1 | `test_recipe_materializes_two_commands` | manifest/naming |
 | AC2 | `test_recipe_adds_no_schema_surface` | manifest/naming |
-| AC3 | `test_plan_stops_before_apply` | /plan mapping |
-| AC4 | `test_build_runs_apply_verify_close` | /build mapping |
-| AC5 | `test_close_noops_missing_vault_tracker` | archive degradation |
-| AC6 | `test_inline_execution_without_orchestrator` | orchestrator absence |
-| AC7 | `test_default_store_openspec_no_preflight` | artifact store default |
+| AC3 | `eval_plan_build_flow_live` / `ac3_plan_stops_before_apply` (live); materialization partial | /plan mapping |
+| AC4 | `tests/evals/scenarios/plan-build-flow/ac4_*` (planned live) | /build mapping |
+| AC5 | `tests/evals/scenarios/plan-build-flow/ac5_*` (planned live) | archive degradation |
+| AC6 | transcript judge layer (deferred) | orchestrator absence |
+| AC7 | `tests/evals/scenarios/plan-build-flow/ac7_*` (planned live) | artifact store default |
 | AC8 | `test_brief_and_readme_vocabulary_clean` | vocabulary hygiene |
 | AC9 | `test_build_brief_references_worktree_flow` | worktree cross-ref |
 | AC10 | `test_classic_sdd_commands_unchanged` | coexistence |
