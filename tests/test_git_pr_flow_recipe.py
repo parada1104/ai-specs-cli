@@ -86,5 +86,31 @@ class GitPrFlowRecipeTests(unittest.TestCase):
         self.assertTrue(doc.is_file(), f"missing doc at {doc}")
 
 
+
+class GitPrFlowGoldenContentTests(unittest.TestCase):
+    """Golden text checks for pre-merge archive guidance."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.skill_path = (
+            CATALOG / RECIPE_ID / "skills" / "git-merge-workflow" / "SKILL.md"
+        )
+        cls.skill_text = cls.skill_path.read_text()
+
+    def test_skill_requires_pre_merge_archive_before_merge(self):
+        """Skill archives SDD/OpenSpec artifacts before gh pr merge."""
+        merge_pos = self.skill_text.find("gh pr merge")
+        archive_pos = self.skill_text.find("archive and record SDD/OpenSpec artifacts")
+        self.assertGreater(archive_pos, 0)
+        self.assertGreater(merge_pos, 0)
+        self.assertLess(archive_pos, merge_pos)
+
+    def test_skill_requires_post_merge_branch_cleanup(self):
+        """Skill force-deletes local branch and removes worktree after merge."""
+        self.assertIn("git branch -D", self.skill_text)
+        self.assertIn("git worktree remove", self.skill_text)
+        self.assertIn("git push origin --delete", self.skill_text)
+
+
 if __name__ == "__main__":
     unittest.main()

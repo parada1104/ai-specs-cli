@@ -19,7 +19,7 @@ AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: ai-specs sync [path]
+Usage: ai-specs sync [path] [--ignore-cli-version]
 
 Reconcile a project's ai-specs/ with its root manifest:
   - resolve [root, ...project.subrepos]
@@ -29,13 +29,18 @@ Reconcile a project's ai-specs/ with its root manifest:
 
 Arguments:
   path      Project root (default: current directory)
+
+Flags:
+  --ignore-cli-version  Skip [tool] CLI version policy check (warns on stderr)
 EOF
 }
 
 TARGET_PATH=""
+IGNORE_CLI_VERSION=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
+        --ignore-cli-version) IGNORE_CLI_VERSION="--ignore-cli-version"; shift ;;
         --)        shift; break ;;
         -*)
             echo "ERROR: unknown flag: $1" >&2
@@ -61,6 +66,7 @@ TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 VENDOR_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/vendor-skills.py"
 GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 REFRESH_BUNDLED_PY="$AI_SPECS_HOME/lib/_internal/refresh-bundled.py"
+CLI_VERSION_PY="$AI_SPECS_HOME/lib/_internal/cli_version.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
 BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
@@ -79,6 +85,8 @@ if [[ ! -f "$TOML_PATH" ]]; then
     echo "       Run 'ai-specs init $ROOT_PATH' first." >&2
     exit 1
 fi
+
+python3 "$CLI_VERSION_PY" check-sync "$ROOT_PATH" "$AI_SPECS_HOME" $IGNORE_CLI_VERSION || exit 1
 
 RESOLVED_TARGETS=()
 while IFS= read -r target; do
@@ -130,6 +138,8 @@ for idx in "${!RESOLVED_TARGETS[@]}"; do
         exit 1
     fi
 done
+
+python3 "$CLI_VERSION_PY" stamp-meta "$ROOT_PATH" "$AI_SPECS_HOME"
 
 echo ""
 echo "✓ ai-specs sync complete"

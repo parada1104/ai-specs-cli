@@ -39,7 +39,7 @@ AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: ai-specs init [path] [--name <project-name>] [--force]
+Usage: ai-specs init [path] [--name <project-name>] [--force] [--tui|--no-tui]
 
 Bootstrap the ai-specs standard in a project (idempotent by default).
 
@@ -49,12 +49,20 @@ Arguments:
 Flags:
   --name <name>     Project name in ai-specs.toml (default: basename of path)
   --force           Re-render templates and re-copy bundled skills even if present
+  --tui             Force interactive onboarding (Rich prompts)
+  --no-tui          Skip interactive onboarding (scriptable / CI)
   -h, --help        Show this help
 
+Interactive onboarding (TTY):
+  When stdin/stdout are a TTY, no --name/--force/--no-tui is passed, and
+  ai-specs.toml does not yet exist, init launches a short wizard to choose
+  project name, agents, and recipes. Use --no-tui to keep the classic path.
+
 Examples:
-  ai-specs init                        # initialize cwd
+  ai-specs init                        # TTY → wizard; else classic template
+  ai-specs init --no-tui               # classic non-interactive bootstrap
+  ai-specs init --tui --name my-app    # wizard with name prefilled
   ai-specs init ~/code/my-app          # initialize specific path
-  ai-specs init --name my-app          # override project name
   ai-specs init --force                # re-render templates (destructive)
 EOF
 }
@@ -63,12 +71,17 @@ EOF
 TARGET_PATH=""
 PROJECT_NAME=""
 FORCE=0
+TUI_MODE="auto"   # auto | on | off
+TUI_TOML=""       # staged manifest from init_tui.py when set
+NAME_EXPLICIT=0   # 1 when --name was passed (disables auto-TUI)
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --name)        PROJECT_NAME="${2:-}"; shift 2 ;;
-        --name=*)      PROJECT_NAME="${1#*=}"; shift ;;
+        --name)        PROJECT_NAME="${2:-}"; NAME_EXPLICIT=1; shift 2 ;;
+        --name=*)      PROJECT_NAME="${1#*=}"; NAME_EXPLICIT=1; shift ;;
         --force)       FORCE=1; shift ;;
+        --tui)         TUI_MODE="on"; shift ;;
+        --no-tui)      TUI_MODE="off"; shift ;;
         -h|--help)     usage; exit 0 ;;
         --)            shift; break ;;
         -*)
@@ -115,15 +128,72 @@ GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
 BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
+INIT_TUI_PY="${AI_SPECS_INIT_TUI_PY:-$AI_SPECS_HOME/lib/_internal/init_tui.py}"
 
 GITIGNORE_MARKER_BEGIN="# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---"
 GITIGNORE_MARKER_END="# --- end ai-specs ---"
+
+# Best-effort cleanup for staging temps (TUI + resolved-config). Registered
+# whenever either temp is created; safe no-op when vars are empty.
+_ai_specs_init_cleanup() {
+    rm -f "${TUI_STAGING:-}" "${TUI_STAGING_TOML:-}" "${TUI_STAGING_JSON:-}" "${RESOLVED_CONFIG_TEMP:-}"
+}
+
+# Decide whether to run interactive onboarding.
+SHOULD_TUI=0
+case "$TUI_MODE" in
+    on)  SHOULD_TUI=1 ;;
+    off) SHOULD_TUI=0 ;;
+    auto)
+        if [[ -t 0 && -t 1 && $NAME_EXPLICIT -eq 0 && $FORCE -eq 0 && ! -f "$TOML_PATH" ]]; then
+            SHOULD_TUI=1
+        fi
+        ;;
+esac
+
+if [[ $SHOULD_TUI -eq 1 ]]; then
+    if [[ -f "$TOML_PATH" ]]; then
+        echo "  · skip TUI — ai-specs.toml already exists (never overwritten by init)"
+    elif [[ ! -f "$INIT_TUI_PY" ]]; then
+        echo "  · skip TUI — init_tui.py missing from this install" >&2
+    else
+        TUI_STAGING="$(mktemp -t ai-specs-init-tui-XXXXXX)"
+        TUI_STAGING_TOML="${TUI_STAGING}.toml"
+        TUI_STAGING_JSON="${TUI_STAGING}.json"
+        trap '_ai_specs_init_cleanup' EXIT
+        # init_tui writes --out as given; json sidecar uses Path.with_suffix('.json')
+        set +e
+        python3 "$INIT_TUI_PY"             --target "$TARGET_PATH"             --name "$PROJECT_NAME"             --out "$TUI_STAGING_TOML"
+        tui_rc=$?
+        set -e
+        if [[ $tui_rc -eq 0 ]]; then
+            TUI_TOML="$TUI_STAGING_TOML"
+            if [[ -f "$TUI_STAGING_JSON" ]]; then
+                # Prefer wizard name when present
+                tui_name="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("name",""))' "$TUI_STAGING_JSON" 2>/dev/null || true)"
+                [[ -n "$tui_name" ]] && PROJECT_NAME="$tui_name"
+            fi
+        elif [[ $tui_rc -eq 1 ]]; then
+            echo "ai-specs init: cancelled" >&2
+            rm -f "$TUI_STAGING" "$TUI_STAGING_TOML" "$TUI_STAGING_JSON"
+            exit 1
+        elif [[ $tui_rc -eq 3 ]]; then
+            echo "  · TUI unavailable — falling back to classic init" >&2
+            rm -f "$TUI_STAGING" "$TUI_STAGING_TOML" "$TUI_STAGING_JSON"
+        else
+            echo "ERROR: interactive init failed (exit $tui_rc)" >&2
+            rm -f "$TUI_STAGING" "$TUI_STAGING_TOML" "$TUI_STAGING_JSON"
+            exit "$tui_rc"
+        fi
+    fi
+fi
 
 echo ""
 echo "ai-specs init"
 echo "  target:  $TARGET_PATH"
 echo "  name:    $PROJECT_NAME"
 echo "  force:   $([ $FORCE -eq 1 ] && echo "yes" || echo "no")"
+echo "  tui:     $([ -n "$TUI_TOML" ] && echo "yes" || echo "no")"
 echo ""
 
 # 1. Create directories
@@ -173,6 +243,10 @@ fi
 #    `add-dep` or by hand.
 if [[ -f "$TOML_PATH" ]]; then
     echo "  ✓ keep   ai-specs/ai-specs.toml"
+elif [[ -n "$TUI_TOML" && -f "$TUI_TOML" ]]; then
+    cp "$TUI_TOML" "$TOML_PATH"
+    echo "  ✓ wrote  ai-specs/ai-specs.toml (from TUI)"
+    rm -f "$TUI_TOML" "${TUI_TOML%.toml}.json" "${TUI_TOML%.*}" 2>/dev/null || true
 else
     sed "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" \
         "$TEMPLATES_DIR/ai-specs.toml.tmpl" > "$TOML_PATH"
@@ -185,7 +259,7 @@ fi
 #     Mirrors sync.sh agents-render block for byte-stability.
 if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
     RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
-    trap 'rm -f "$RESOLVED_CONFIG_TEMP"' EXIT
+    trap '_ai_specs_init_cleanup' EXIT
     if python3 "$RECIPE_MATERIALIZE_PY" "$TARGET_PATH" "$AI_SPECS_HOME" \
            --resolved-config-out "$RESOLVED_CONFIG_TEMP" \
        && python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$AGENTS_PATH" \

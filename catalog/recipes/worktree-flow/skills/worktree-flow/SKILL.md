@@ -27,6 +27,7 @@ writes nothing does not need a worktree.
 |---|---|
 | Exploration / reading / answering a question (no files written) | No |
 | Implementing a change, writing artifacts, editing code | Yes |
+| Planning or SDD artifact phases that write files | Yes |
 | Any phase that produces committed output | Yes |
 
 ## Conventions

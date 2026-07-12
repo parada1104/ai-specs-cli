@@ -5,6 +5,7 @@ description = "Isolated git worktrees under .worktrees/ with post-merge cleanup 
 version = "1.2.2"
 author = "ai-specs"
 license = "MIT"
+tags = ["infra", "worktree"]
 
 [[capabilities]]
 id = "worktree-isolation"
@@ -15,6 +16,14 @@ id = "worktree-cleanup"
 [[hooks]]
 event = "on-sync"
 action = "validate-config"
+
+[[deps.cli]]
+binary = "git"
+purpose = "Create and manage git worktrees under .worktrees/"
+required = true
+install_url = "https://git-scm.com/downloads"
+version_check = "git --version"
+min_version = "2.20.0"
 
 [config.worktrees_dir]
 required = false
@@ -39,8 +48,11 @@ required = false
 type = "string"
 default = "main development"
 
-[sdd]
-threshold = "behavior_change"
+[config.gate_mode]
+required = false
+type = "string"
+default = "always"
+enum = ["always", "ask", "off"]
 
 [provides]
 skills = [{ id = "worktree-flow", source = "bundled" }]

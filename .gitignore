@@ -1,5 +1,9 @@
 .DS_Store
 __pycache__/
+# Untracked vendor installs (install.sh/upgrade.sh) stay hidden.
+# The committed pre-vendor tree is force-added (git add -f lib/_vendor).
+lib/_vendor
+lib/_vendor/**/__pycache__/
 *.pyc
 node_modules/
 *.log

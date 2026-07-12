@@ -46,6 +46,15 @@ A config override key does not match any field in the recipe's `[config]` schema
 This is informational — the array form is a supported shorthand. The
 normalization is correct and does not need a fix.
 
+### CLI version mismatch on sync
+
+`ai-specs sync` failed because `[tool].version` or `[tool].min_version` does not
+match the globally installed CLI.
+
+**Fix:** Run `ai-specs upgrade` to update the global CLI, adjust the pin in
+`ai-specs.toml`, or use `ai-specs sync --ignore-cli-version` as a break-glass
+option. Check `ai-specs doctor` for installed vs pinned vs last-synced values.
+
 ## See also
 
 - [`docs/ai-specs-toml.md`](../ai-specs-toml.md) — Canonical manifest reference

@@ -13,7 +13,27 @@
 # Fail-open: any parse/lookup error allows the edit (a buggy guard must never
 # wedge all editing). Override protected branches via WORKTREE_GATE_PROTECTED.
 
+stamped_gate_mode="__WORKTREE_GATE_MODE__"
 protected="${WORKTREE_GATE_PROTECTED:-main development}"
+
+# Resolve gate mode: env override beats stamped sync value; invalid values warn and fall back.
+_resolve_gate_mode() {
+  local candidate="${WORKTREE_GATE_MODE:-$stamped_gate_mode}"
+  case "$candidate" in always|ask|off) echo "$candidate" ; return ;;
+  esac
+  if [ -n "${WORKTREE_GATE_MODE:-}" ]; then
+    echo "worktree-gate: ignoring invalid WORKTREE_GATE_MODE='${WORKTREE_GATE_MODE}'; falling back to stamped mode." >&2
+  elif [ "$stamped_gate_mode" != always ] && [ "$stamped_gate_mode" != ask ] && [ "$stamped_gate_mode" != off ]; then
+    echo "worktree-gate: invalid stamped gate_mode='${stamped_gate_mode}'; falling back to always." >&2
+  fi
+  case "$stamped_gate_mode" in always|ask|off) echo "$stamped_gate_mode" ;;
+  *) echo always ;;
+  esac
+}
+gate_mode="$(_resolve_gate_mode)"
+
+# off → disable the gate entirely.
+[ "$gate_mode" = off ] && exit 0
 
 input="$(cat)"
 
@@ -58,6 +78,9 @@ for b in $protected; do
       */.claude/settings*.json|.claude/settings*.json|*/.claude/hooks/*) exit 0 ;;
     esac
     echo "worktree-gate: refusing to ${tool_name:-edit} '$file_path' on protected branch '$branch' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write." >&2
+    if [ "$gate_mode" = ask ]; then
+      echo "worktree-gate: to bypass for this invocation, re-run with WORKTREE_GATE_MODE=off" >&2
+    fi
     exit 2
   fi
 done

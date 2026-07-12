@@ -74,3 +74,4 @@ echo "ai-specs refresh-bundled"
 echo "  target: $TARGET_PATH"
 echo ""
 python3 "$REFRESH_PY" "$TARGET_PATH" "$AI_SPECS_HOME" $INIT_FLAG
+python3 "$AI_SPECS_HOME/lib/_internal/cli_version.py" stamp-meta "$TARGET_PATH" "$AI_SPECS_HOME"

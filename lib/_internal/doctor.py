@@ -7,6 +7,7 @@ Exit code is non-zero when one or more ERROR checks are present.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import sys
@@ -64,7 +65,7 @@ class Doctor:
         },
         "cursor": {
             "instructions_path": "",
-            "skills_dir": "",
+            "skills_dir": ".cursor/skills",
             "mcp_config_path": ".cursor/mcp.json",
             "mcp_key": "mcpServers",
             "commands_dir": ".cursor/commands",
@@ -116,10 +117,12 @@ class Doctor:
 
     def run(self) -> int:
         self._check_manifest()
+        self._check_cli_version()
         self._check_agents_md()
         self._check_brief_render_policy()
         self._check_bundled_assets()
         self._check_enabled_agents()
+        self._check_recipe_cli_deps()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -163,6 +166,42 @@ class Doctor:
                 "ai-specs/ai-specs.toml missing",
                 guidance="run ai-specs init"
             ))
+
+    def _check_cli_version(self) -> None:
+        cli_version_py = AI_SPECS_HOME / "lib" / "_internal" / "cli_version.py"
+        if not cli_version_py.is_file():
+            return
+
+        spec = importlib.util.spec_from_file_location(
+            "cli_version_doctor", cli_version_py
+        )
+        if spec is None or spec.loader is None:
+            return
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+
+        toml = self.root / "ai-specs" / "ai-specs.toml"
+        lock_path = self.root / "ai-specs" / ".ai-specs.lock"
+        installed = mod.read_installed_version(AI_SPECS_HOME)
+        lock_meta = mod.read_lock_meta(lock_path)
+
+        manifest: dict = {}
+        if toml.is_file():
+            try:
+                import tomllib
+                with toml.open("rb") as f:
+                    manifest = tomllib.load(f)
+            except Exception:
+                return
+
+        severity_name, _check_name, message = mod.evaluate_cli_version(
+            installed=installed,
+            manifest=manifest,
+            lock_meta=lock_meta,
+        )
+        severity = Severity[severity_name]
+        self.checks.append(Check(severity, "cli-version", message))
 
     def _check_agents_md(self) -> None:
         agents = self.root / "AGENTS.md"
@@ -314,6 +353,47 @@ class Doctor:
         except Exception:
             pass
 
+
+    def _collect_recipe_dep_results(self):
+        """Load dep_check and aggregate results for enabled recipes."""
+        dep_check_path = Path(__file__).with_name("dep_check.py")
+        spec = importlib.util.spec_from_file_location("dep_check_doctor", dep_check_path)
+        if spec is None or spec.loader is None:
+            return []
+        mod = importlib.util.module_from_spec(spec)
+        # Pre-register so dataclasses can resolve cls.__module__ (Python 3.12+).
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod.check_project_deps(self.root)
+
+    def _check_recipe_cli_deps(self) -> None:
+        data = self._load_manifest()
+        recipes = data.get("recipes", {})
+        if not isinstance(recipes, dict) or not recipes:
+            return
+        try:
+            results = self._collect_recipe_dep_results()
+        except Exception:
+            return
+        for r in results:
+            if r.ok:
+                self.checks.append(Check(
+                    Severity.OK, "recipe-dep",
+                    f"{r.binary} available for {r.recipe_id}",
+                ))
+            elif r.required:
+                self.checks.append(Check(
+                    Severity.WARN, "recipe-dep",
+                    f"{r.binary} missing/unusable for {r.recipe_id}: {r.purpose}",
+                    guidance=r.install_url or "install the required CLI",
+                ))
+            else:
+                self.checks.append(Check(
+                    Severity.INFO, "recipe-dep",
+                    f"optional {r.binary} not found for {r.recipe_id}: {r.purpose}",
+                    guidance=r.install_url,
+                ))
+
     def _mcp_server_count(self, data: dict) -> int:
         mcp = data.get("mcp")
         if not isinstance(mcp, dict):
@@ -446,17 +526,32 @@ class Doctor:
             commands_path = self.root / commands
             ai_specs_commands = self.root / "ai-specs" / "commands"
             if commands_path.is_dir() and ai_specs_commands.is_dir():
-                local_cmds = list(commands_path.glob("*.md"))
-                if local_cmds:
-                    self.checks.append(Check(
-                        Severity.OK, f"{commands}",
-                        f"{len(local_cmds)} command(s) present"
-                    ))
-                else:
+                expected = {p.name for p in ai_specs_commands.glob("*.md")}
+                actual = {p.name for p in commands_path.glob("*.md")}
+                missing = expected - actual
+                extra = actual - expected
+                if not actual:
                     self.checks.append(Check(
                         Severity.WARN, f"{commands}",
                         "directory empty",
                         guidance="ai-specs sync to populate"
+                    ))
+                elif missing:
+                    self.checks.append(Check(
+                        Severity.ERROR, f"{commands}",
+                        f"missing {len(missing)} command(s): {', '.join(sorted(missing))}",
+                        guidance="run ai-specs sync"
+                    ))
+                elif extra:
+                    self.checks.append(Check(
+                        Severity.WARN, f"{commands}",
+                        f"{len(extra)} stale command(s): {', '.join(sorted(extra))}",
+                        guidance="run ai-specs sync"
+                    ))
+                else:
+                    self.checks.append(Check(
+                        Severity.OK, f"{commands}",
+                        f"{len(actual)} command(s) in sync"
                     ))
             else:
                 self.checks.append(Check(

@@ -5,6 +5,7 @@ description = "Durable decisions and handoffs in a configured vault MCP (e.g. Ob
 version = "1.1.0"
 author = "ai-specs"
 license = "MIT"
+tags = ["storage"]
 
 [[capabilities]]
 id = "canonical-store"
@@ -12,6 +13,14 @@ id = "canonical-store"
 [[hooks]]
 event = "on-sync"
 action = "validate-config"
+
+[[deps.cli]]
+binary = "npx"
+purpose = "Run the filesystem MCP server for the canonical vault store"
+required = true
+install_url = "https://nodejs.org/en/download"
+version_check = "npx --version"
+min_version = "8.0.0"
 
 [config.vault_scope]
 required = false

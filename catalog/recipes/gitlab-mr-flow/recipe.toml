@@ -2,9 +2,10 @@
 id = "gitlab-mr-flow"
 name = "GitLab MR Flow"
 description = "GitLab MR and merge flow for feature branches (via glab CLI)"
-version = "1.1.0"
+version = "1.1.1"
 author = "ai-specs"
 license = "MIT"
+tags = ["vcs", "gitlab"]
 
 [[capabilities]]
 id = "vcs-pr-flow"
@@ -12,6 +13,20 @@ id = "vcs-pr-flow"
 [[hooks]]
 event = "on-sync"
 action = "validate-config"
+
+[[deps.cli]]
+binary = "glab"
+purpose = "Create and manage GitLab merge requests"
+required = true
+install_url = "https://gitlab.com/gitlab-org/cli#installation"
+version_check = "glab --version"
+min_version = "1.0.0"
+
+[[deps.cli]]
+binary = "jq"
+purpose = "Parse GitLab API JSON responses in the MR flow"
+required = true
+install_url = "https://jqlang.github.io/jq/download/"
 
 [config.base_branch]
 required = false

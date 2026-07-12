@@ -33,12 +33,35 @@ ai-specs sync                        # vendor deps + regen AGENTS.md + fan out p
 Your agent configs are now generated from the manifest. Re-run `ai-specs sync`
 whenever the manifest changes.
 
+
+## Interactive hub (`ai-specs` with no subcommand)
+
+Running bare `ai-specs` (or `ai-specs hub [path]`) opens the project hub instead of printing help.
+`ai-specs help` remains available and unchanged.
+
+Behavior is a 4-state matrix of **initialized × TTY**:
+
+| State | Condition | Behavior | Exit |
+|-------|-----------|----------|------|
+| Interactive hub | manifest present + TTY | Status panel + command menu | 0 on Quit |
+| Non-interactive status | manifest present + no TTY | Plain-text status + command list (no deps) | 0 |
+| Offer init | no manifest + TTY | Confirm → run `ai-specs init` → hub | 0 if declined |
+| Uninitialized error | no manifest + no TTY | Stderr guidance to run init | 2 |
+
+Menu actions: Sync, Doctor, Skills, Recipes, Configure recipes, Rules audit, Upgrade, Version, Help, Init wizard, Quit.
+**Version** is printed inline from the `VERSION` file; other actions suspend the menu, run the existing subcommand with inherited stdio, then return to the menu.
+
+Missing interactive deps (`rich` + `questionary`) yield exit **3** with install guidance. Non-interactive status needs **no** third-party packages (CI-safe).
+
 ## CLI
 
 | Command | Description |
 |---------|-------------|
+| `ai-specs` / `ai-specs hub [path]` | Interactive status + command menu (see below) |
+| `ai-specs configure-recipes [path]` | Configure recipe config fields, check CLI deps, offer `.envrc.example` |
 | `ai-specs init [path]` | Bootstrap `ai-specs/` (idempotent) |
 | `ai-specs sync [path]` | Vendor deps, regen AGENTS.md, fan out |
+| `ai-specs sync [path] [--ignore-cli-version]` | Sync with optional CLI pin bypass |
 | `ai-specs sync-agent [path] [--all\|--<agent>]` | Fan out per-agent configs only |
 | `ai-specs doctor [path]` | Read-only health check |
 | `ai-specs rules-audit [path]` | Read-only legacy rules inventory (JSON) |
@@ -60,8 +83,10 @@ Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
 ### Manifest (`ai-specs/ai-specs.toml`)
 
 Single source of truth for the project's AI harness. Declares enabled agents,
-MCP servers, skill dependencies, and recipes. See
-[`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) for the full reference.
+MCP servers, skill dependencies, recipes, and optionally a CLI version pin
+(`[tool]`). See [`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) for the full
+reference. See [`CHANGELOG.md`](CHANGELOG.md) for migration notes between CLI
+versions.
 
 ### Agents
 

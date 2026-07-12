@@ -3,6 +3,7 @@ id = "trello-mcp-workflow"
 name = "Trello MCP Workflow"
 description = "Automated Trello board integration for ai-specs SDD workflows"
 version = "1.2.0"
+tags = ["tracker", "trello"]
 
 [[capabilities]]
 id = "tracker"
@@ -39,21 +40,30 @@ action = "sync-card-state"
 event = "on-sync"
 action = "comment-verification"
 
+[[deps.cli]]
+binary = "npx"
+purpose = "Run the Trello MCP server (@delorenj/mcp-server-trello)"
+required = true
+install_url = "https://nodejs.org/en/download"
+version_check = "npx --version"
+min_version = "8.0.0"
+
 [config.board_id]
 required = true
 type = "string"
 validation.regex = '^[0-9a-fA-F]{24}$'
+help_text = "Find your Trello board ID: open the board in Trello → the URL contains a 24-hex-char ID (e.g. 69ec097f13e2d38ecd89a557). This is NOT the 8-char shortLink from the board URL."
 
 [config.default_list]
 required = false
 type = "string"
 default = "In Progress"
+help_text = "Default list/todo column where new cards land. Must match an existing list name on your Trello board."
 
 [config.epic_list]
 required = false
 type = "string"
 default = "Epic"
-
 [config.board_isolation]
 forbidden_tools = ["trello_get_my_cards", "trello_list_boards"]
 restricted_tools = ["trello_set_active_board"]

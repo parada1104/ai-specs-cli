@@ -262,6 +262,94 @@ class RecipeSchemaTests(unittest.TestCase):
             self.assertEqual(isolation["card_validation_required"], True)
 
 
+class RecipeTagsConflictsTests(unittest.TestCase):
+    """Card #27 — RED: Recipe.tags and Recipe.conflicts_with parsing/validation."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_tags")
+
+    def _write_recipe(self, tmp: str, name: str, extra: str = "") -> Path:
+        recipe_dir = Path(tmp) / name
+        recipe_dir.mkdir()
+        (recipe_dir / "recipe.toml").write_text(
+            f'[recipe]\n'
+            f'id = "{name}"\n'
+            f'name = "{name}"\n'
+            f'description = "D"\n'
+            f'version = "1.0"\n'
+            f'{extra}'
+        )
+        return recipe_dir
+
+    def test_tags_and_conflicts_default_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "no-tags")
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertEqual(recipe.tags, [])
+            self.assertEqual(recipe.conflicts_with, [])
+
+    def test_tags_parsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "tagged", 'tags = ["vcs", "github"]\n')
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertEqual(recipe.tags, ["vcs", "github"])
+
+    def test_conflicts_with_parsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "confl", 'conflicts_with = ["git-pr-flow", "gitlab-mr-flow"]\n'
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertEqual(recipe.conflicts_with, ["git-pr-flow", "gitlab-mr-flow"])
+
+    def test_tags_non_list_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "bad-tags", 'tags = "vcs"\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("tags", str(ctx.exception))
+
+    def test_tags_non_string_element_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "bad-tag-el", 'tags = ["vcs", 3]\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("tags", str(ctx.exception))
+
+    def test_conflicts_with_non_list_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "bad-confl", 'conflicts_with = "git-pr-flow"\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("conflicts_with", str(ctx.exception))
+
+    def test_conflicts_with_self_reference_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "selfref", 'conflicts_with = ["selfref"]\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            msg = str(ctx.exception)
+            self.assertIn("conflicts_with", msg)
+            self.assertIn("selfref", msg)
+
+    def test_blank_tag_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "blank-tag", 'tags = ["vcs", ""]\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("tags", str(ctx.exception))
+
+    def test_blank_conflicts_with_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "blank-confl", 'conflicts_with = ["git-pr-flow", "  "]\n'
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("conflicts_with", str(ctx.exception))
+
+
 class BriefFragmentDataclassTests(unittest.TestCase):
     """Task 1.1 — RED: BriefFragment and BriefFragments dataclass structure."""
 
@@ -541,6 +629,189 @@ class ParseBriefFragmentsValidationTests(unittest.TestCase):
         self.assertIn("workflow_rules", msg)
         # "mixes" or "mixed" — implementation says "mixes string-array and inline-table forms"
         self.assertTrue("mix" in msg.lower(), f"Expected 'mix*' in error message: {msg}")
+
+
+
+class CliDepParsingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_clidep")
+        cls.read_mod = load_module(RECIPE_READ_PATH, "recipe_read_clidep")
+
+    def _write_recipe(self, tmp: str, recipe_id: str, body: str) -> Path:
+        recipe_dir = Path(tmp) / recipe_id
+        recipe_dir.mkdir()
+        (recipe_dir / "recipe.toml").write_text(
+            "[recipe]\n"
+            f'id = "{recipe_id}"\n'
+            'name = "Test"\n'
+            'description = "D"\n'
+            'version = "1.0"\n'
+            "\n"
+            f"{body}"
+        )
+        return recipe_dir
+
+    def test_valid_cli_dep_parses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp,
+                "full-dep",
+                "[[deps.cli]]\n"
+                'binary = "gh"\n'
+                'purpose = "Create PRs"\n'
+                "required = true\n"
+                'install_url = "https://cli.github.com/"\n'
+                'version_check = "gh --version"\n'
+                'min_version = "2.0.0"\n',
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertEqual(len(recipe.cli_deps), 1)
+            dep = recipe.cli_deps[0]
+            self.assertEqual(dep.binary, "gh")
+            self.assertEqual(dep.purpose, "Create PRs")
+            self.assertIs(dep.required, True)
+            self.assertEqual(dep.install_url, "https://cli.github.com/")
+            self.assertEqual(dep.version_check, "gh --version")
+            self.assertEqual(dep.min_version, "2.0.0")
+
+    def test_optional_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp,
+                "defaults-dep",
+                "[[deps.cli]]\n"
+                'binary = "jq"\n'
+                'purpose = "Parse JSON"\n',
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            dep = recipe.cli_deps[0]
+            self.assertIs(dep.required, True)
+            self.assertEqual(dep.install_url, "")
+            self.assertEqual(dep.version_check, "")
+            self.assertEqual(dep.min_version, "")
+
+    def test_missing_binary_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp,
+                "missing-binary",
+                "[[deps.cli]]\n"
+                'purpose = "Create PRs"\n',
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("binary", str(ctx.exception))
+
+    def test_missing_purpose_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp,
+                "missing-purpose",
+                "[[deps.cli]]\n"
+                'binary = "gh"\n',
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("purpose", str(ctx.exception))
+
+    def test_unknown_key_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp,
+                "unknown-key",
+                "[[deps.cli]]\n"
+                'binary = "gh"\n'
+                'purpose = "Create PRs"\n'
+                'foo = "x"\n',
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("foo", str(ctx.exception))
+
+    def test_required_non_bool_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp,
+                "bad-required",
+                "[[deps.cli]]\n"
+                'binary = "gh"\n'
+                'purpose = "Create PRs"\n'
+                'required = "yes"\n',
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("required", str(ctx.exception))
+
+    def test_absent_deps_yields_empty_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "no-deps", "")
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertEqual(recipe.cli_deps, [])
+
+    def test_recipe_to_dict_serializes_cli_deps(self):
+        recipe = self.schema.Recipe(
+            id="x",
+            name="X",
+            description="D",
+            version="1.0",
+            cli_deps=[
+                self.schema.CliDep(
+                    binary="gh",
+                    purpose="PRs",
+                    required=True,
+                    install_url="https://cli.github.com/",
+                    version_check="gh --version",
+                    min_version="2.0.0",
+                )
+            ],
+        )
+        data = self.read_mod.recipe_to_dict(recipe)
+        self.assertIn("cli_deps", data)
+        self.assertEqual(
+            data["cli_deps"],
+            [
+                {
+                    "binary": "gh",
+                    "purpose": "PRs",
+                    "required": True,
+                    "install_url": "https://cli.github.com/",
+                    "version_check": "gh --version",
+                    "min_version": "2.0.0",
+                }
+            ],
+        )
+
+    def test_catalog_git_pr_flow_has_cli_deps(self):
+        catalog = ROOT / "catalog" / "recipes"
+        recipe = self.schema.load_recipe_toml(catalog / "git-pr-flow" / "recipe.toml")
+        self.assertGreaterEqual(len(recipe.cli_deps), 1)
+        self.assertEqual(recipe.cli_deps[0].binary, "gh")
+        self.assertIs(recipe.cli_deps[0].required, True)
+
+    def test_catalog_gitlab_mr_flow_has_two_deps(self):
+        catalog = ROOT / "catalog" / "recipes"
+        recipe = self.schema.load_recipe_toml(catalog / "gitlab-mr-flow" / "recipe.toml")
+        self.assertEqual(len(recipe.cli_deps), 2)
+        self.assertEqual([d.binary for d in recipe.cli_deps], ["glab", "jq"])
+
+    def test_catalog_worktree_flow_has_git_dep(self):
+        catalog = ROOT / "catalog" / "recipes"
+        recipe = self.schema.load_recipe_toml(catalog / "worktree-flow" / "recipe.toml")
+        self.assertEqual(recipe.cli_deps[0].binary, "git")
+
+    def test_recipe_conflicts_tolerates_deps_block(self):
+        conflicts_mod = load_module(
+            ROOT / "lib" / "_internal" / "recipe-conflicts.py",
+            "recipe_conflicts_clidep",
+        )
+        catalog = ROOT / "catalog" / "recipes"
+        # Must not crash when recipes declare [[deps.cli]].
+        conflicts = conflicts_mod.check_recipe_conflicts(
+            catalog, ["git-pr-flow", "worktree-flow"]
+        )
+        self.assertIsInstance(conflicts, list)
+
 
 
 if __name__ == "__main__":

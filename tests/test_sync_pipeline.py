@@ -893,12 +893,12 @@ class SyncPipelineTests(unittest.TestCase):
                 "board_id = 'aabbcc112233445566778899'\n\n"  # 24-char hex as required
                 "[recipes.worktree-flow]\n"
                 "enabled = true\n"
-                "version = '1.2.0'\n"
+                "version = '1.2.1'\n"
                 "[recipes.worktree-flow.config]\n"
                 "integration_branch = 'development'\n\n"
                 "[recipes.git-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.2.0'\n"
+                "version = '1.2.2'\n"
                 "[recipes.git-pr-flow.config]\n"
                 "base_branch = 'development'\n\n"
                 "[recipes.tdd-flow]\n"
@@ -2639,7 +2639,7 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "enabled = ['claude']\n\n"
                 "[recipes.gitlab-mr-flow]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.1.1'\n"
                 "[recipes.gitlab-mr-flow.config]\n"
                 "base_branch = 'main'\n"
                 "provider = 'github'\n\n"  # stale key — must warn
@@ -2698,7 +2698,7 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "enabled = ['claude']\n\n"
                 "[recipes.bitbucket-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.0.0'\n"
+                "version = '1.0.1'\n"
                 # NO base_branch set — catalog default "development" must apply
                 "[[bindings]]\n"
                 "capability = 'vcs-pr-flow'\n"
@@ -2808,6 +2808,114 @@ class TestCustomVcsWarning(unittest.TestCase):
             f"Warning must appear exactly once, but found {warning_count} times.\n"
             f"stderr: {stderr}",
         )
+
+
+class FanOutDriftTests(unittest.TestCase):
+    """Fan-out must mirror managed artifacts and remove stale derived files."""
+
+    def make_workspace(self) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="ai-specs-fanout-drift-"))
+        workspace = tmp / "workspace"
+        workspace.mkdir()
+        return workspace
+
+    def test_command_fanout_removes_stale_files(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname = 'fanout-drift'\n\n"
+                "[agents]\nenabled = ['cursor']\n"
+            )
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            stale = workspace / ".cursor" / "commands" / "stale.md"
+            stale.write_text("# stale\n")
+            self.assertTrue(stale.is_file())
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            self.assertFalse(stale.exists())
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_cursor_skills_symlink_points_to_resolved(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname = 'cursor-skills'\n\n"
+                "[agents]\nenabled = ['cursor']\n"
+            )
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            skills_link = workspace / ".cursor" / "skills"
+            resolved = (workspace / "ai-specs" / ".internal" / "resolved-skills").resolve()
+            self.assertTrue(skills_link.is_symlink(), ".cursor/skills must be a symlink")
+            self.assertEqual(skills_link.resolve(), resolved)
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_cursor_skills_migrates_real_directory(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname = 'cursor-skills-migrate'\n\n"
+                "[agents]\nenabled = ['cursor']\n"
+            )
+            legacy = workspace / ".cursor" / "skills" / "foo"
+            legacy.mkdir(parents=True)
+            (legacy / "SKILL.md").write_text("# foo\n")
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            skills_link = workspace / ".cursor" / "skills"
+            resolved = (workspace / "ai-specs" / ".internal" / "resolved-skills").resolve()
+            self.assertTrue(skills_link.is_symlink())
+            self.assertEqual(skills_link.resolve(), resolved)
+            self.assertFalse((resolved / "foo").exists())
+        finally:
+            shutil.rmtree(workspace.parent)
+
+
+class CliVersionSyncGateTests(unittest.TestCase):
+    def test_exact_pin_mismatch_aborts_sync(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            toml = workspace / "ai-specs" / "ai-specs.toml"
+            toml.write_text(
+                toml.read_text().rstrip()
+                + '\n\n[tool]\nversion = "99.99.99"\npolicy = "exact"\n'
+            )
+            result = subprocess.run(
+                [str(CLI), "sync", str(workspace)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("99.99.99", result.stderr)
+
+    def test_ignore_cli_version_flag_proceeds_with_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            toml = workspace / "ai-specs" / "ai-specs.toml"
+            toml.write_text(
+                toml.read_text().rstrip()
+                + '\n\n[tool]\nversion = "99.99.99"\npolicy = "exact"\n'
+            )
+            result = subprocess.run(
+                [str(CLI), "sync", str(workspace), "--ignore-cli-version"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertIn("ignoring CLI version policy", result.stderr)
 
 
 if __name__ == "__main__":
