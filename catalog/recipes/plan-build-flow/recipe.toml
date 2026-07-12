@@ -1,7 +1,7 @@
 [recipe]
 id = "plan-build-flow"
 name = "Plan / Build Flow"
-description = "Two-verb change workflow: /plan produces reviewable artifacts, /build implements and closes"
+description = "Ambient change workflow: depth classifier, silent planning artifacts, PR/archive gates"
 version = "1.0.0"
 author = "ai-specs"
 license = "MIT"
@@ -16,20 +16,14 @@ action = "validate-config"
 
 [provides]
 skills = [{ id = "plan-build-flow", source = "bundled" }]
-commands = [
-    { id = "plan", path = "commands/plan.md" },
-    { id = "build", path = "commands/build.md" },
-]
 
 [provides.brief]
 workflow_rules = [
-    "Use `/plan` to turn an intent into reviewable planning artifacts before writing code; review and authorize them before building.",
-    "Use `/build` to implement an authorized plan, validate the result, and close out the change.",
-    "Run `/build` where file-writing change work belongs; when isolated worktrees are enabled, build inside the change's worktree.",
-]
-useful_commands = [
-    "Plan a change: `/plan <intent>`",
-    "Build an authorized plan: `/build [change]`",
+    "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; record depth in tasks.md and stop for authorization.",
+    "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
+    "Do not open a PR until the change folder on the branch contains the tier minimum planning files, committed.",
+    "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
+    "Archive the change folder on the review branch before merge; never defer archive until after merge.",
 ]
 
 [[provides.docs]]

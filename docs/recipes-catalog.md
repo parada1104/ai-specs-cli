@@ -36,7 +36,7 @@ never touches the foundational layer.
 |--------|------|-------|---------------------|--------------|------------|
 | [`session-context`](#session-context) | Foundational | Session-start focus resolution + conflict policy | `session-bootstrap`, `conflict-policy` | — | — (consumes `memory`, `tracker`, `canonical-store`) |
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
-| [`plan-build-flow`](#plan-build-flow) | Foundational | Two-verb `/plan` → `/build` change workflow over hidden ceremony | `plan-build-flow` | — | — |
+| [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | — |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch` |
 | [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch` |
@@ -96,18 +96,14 @@ test_command = "./tests/run.sh"
 
 ## plan-build-flow
 
-**Two-verb `/plan` → `/build` change workflow over hidden ceremony.** `/plan`
-turns an intent into reviewable planning artifacts and stops for human
-authorization; `/build` implements the authorized plan, validates it, and
-automatically closes the change (change-folder close, plus an optional vault
-summary and tracker comment when those integrations are enabled) — without
-exposing a separate third command. `/build` defers to an isolated-worktree
+**Ambient skill-only change workflow.** The bundled skill auto-invokes on
+substantial requests to produce reviewable planning artifacts, waits for human
+authorization, then implements, validates, and closes the change — without
+`/plan` or `/build` commands. Implementation defers to an isolated-worktree
 workflow when one is enabled, without hard-depending on it.
 
-- **Provides:** skill `plan-build-flow`, commands `/plan`, `/build`;
-  capability `plan-build-flow`.
-- **Config:** none — the change-slug and artifact store are resolved per
-  invocation, not frozen at sync time.
+- **Provides:** skill `plan-build-flow`; capability `plan-build-flow`.
+- **Config:** none — change slug and artifact store resolve per session.
 - **Full README:** [`catalog/recipes/plan-build-flow/README.md`](../catalog/recipes/plan-build-flow/README.md)
 
 ```toml
