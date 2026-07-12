@@ -132,7 +132,13 @@ def _toml_key(key: str) -> str:
 
 
 
-def _render_manifest(tw, project_name: str, agents: list[str], recipes: list[dict[str, str]]) -> str:
+def _render_manifest(
+    tw,
+    project_name: str,
+    agents: list[str],
+    recipes: list[dict[str, str]],
+    configured: dict | None = None,
+) -> str:
     lines: list[str] = [
         TOML_HEADER.rstrip(),
         "",
@@ -144,6 +150,7 @@ def _render_manifest(tw, project_name: str, agents: list[str], recipes: list[dic
         f"enabled = {tw.toml_value(agents)}",
         "",
     ]
+    configured = configured or {}
     if recipes:
         lines.append("# Recipes — named bundles from catalog/recipes/<id>/")
         for recipe in recipes:
@@ -151,11 +158,48 @@ def _render_manifest(tw, project_name: str, agents: list[str], recipes: list[dic
             lines.append(f"[recipes.{_toml_key(rid)}]")
             lines.append("enabled = true")
             lines.append(f"version = {tw.toml_value(recipe.get('version') or '0.0.0')}")
+            vals = configured.get(rid) or {}
+            if vals:
+                lines.append("")
+                lines.append(f"[recipes.{_toml_key(rid)}.config]")
+                for key in sorted(vals):
+                    lines.append(f"{_toml_key(key)} = {tw.toml_value(vals[key])}")
             lines.append("")
     lines.append("# [[deps]] — add with: ai-specs skills add <url>")
     lines.append("# [mcp.*]  — optional MCP servers; distributed by sync-agent")
     lines.append("")
     return "\n".join(lines)
+
+
+def _configure_recipes(recipes: list[dict[str, str]], console, catalog_dir: Path) -> dict:
+    """Step 3.5 — optional per-recipe config + dep panel. Returns configured map."""
+    import questionary
+
+    wizard = _load_sibling("config_wizard")
+    dep_check = _load_sibling("dep_check")
+    recipe_read = _load_sibling("recipe-read")
+    configured: dict = {}
+    for meta in recipes:
+        rid = meta["id"]
+        try:
+            recipe = recipe_read.read_recipe(catalog_dir, rid)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]skip config for {rid}: {exc}[/yellow]")
+            continue
+        if recipe.cli_deps:
+            results = dep_check.check_cli_deps(recipe)
+            wizard._render_dep_panel(results, console)
+        if not recipe.config_schema.fields:
+            continue
+        do_now = questionary.confirm(f"Configure {rid} now?", default=True).ask()
+        if do_now is None:
+            raise KeyboardInterrupt
+        if not do_now:
+            continue
+        values = wizard.run_config_wizard(recipe, {})
+        if values:
+            configured[rid] = values
+    return configured
 
 
 def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
@@ -234,13 +278,21 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         else:
             recipes = []
 
+        # 3.5 Configure selected recipes (optional per-recipe)
+        catalog_dir = _ai_specs_home() / "catalog" / "recipes"
+        configured = _configure_recipes(recipes, console, catalog_dir) if recipes else {}
+
         # 4. Preview + confirm
         console.print()
+        config_summary = (
+            ", ".join(sorted(configured)) if configured else "(defaults / later)"
+        )
         console.print(
             Panel.fit(
                 f"[bold]name[/bold]     {project_name}\n"
                 f"[bold]agents[/bold]   {', '.join(agents) if agents else '(none)'}\n"
                 f"[bold]recipes[/bold]  {', '.join(r['id'] for r in recipes) if recipes else '(none)'}\n"
+                f"[bold]config[/bold]   {config_summary}\n"
                 f"[bold]mcp[/bold]      configure later via ai-specs.toml",
                 title="Preview",
                 border_style="green",
@@ -254,7 +306,7 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         if not confirmed:
             return _cancel()
 
-        toml_text = _render_manifest(tw, project_name, agents, recipes)
+        toml_text = _render_manifest(tw, project_name, agents, recipes, configured)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(toml_text, encoding="utf-8")
 
@@ -262,9 +314,23 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
             "name": project_name,
             "agents": agents,
             "recipes": [r["id"] for r in recipes],
+            "configured": sorted(configured),
         }
         out_path.with_suffix(".json").write_text(json.dumps(meta) + "\n", encoding="utf-8")
         console.print(f"[green]✓[/green] staged manifest → {out_path}")
+
+        # Offer .envrc.example when MCP env vars are present (best-effort).
+        try:
+            envrc = _load_sibling("envrc-scaffold")
+            if envrc.collect_env_vars(target):
+                if questionary.confirm("Generate ai-specs/.envrc.example?", default=True).ask():
+                    # Manifest is staged at out_path; generation expects project layout.
+                    # Init stages then moves — generate against target only if ai-specs.toml exists.
+                    if (target / "ai-specs" / "ai-specs.toml").is_file():
+                        written = envrc.generate_envrc_example(target)
+                        console.print(f"[green]✓[/green] wrote {written}")
+        except Exception:
+            pass
         return 0
     except KeyboardInterrupt:
         return _cancel()

@@ -44,6 +44,7 @@ skills) bash "$LIB_DIR/skills.sh" "$@" ;;
 doctor) bash "$LIB_DIR/doctor.sh" "$@" ;;
 rules-audit) bash "$LIB_DIR/rules-audit.sh" "$@" ;;
 recipe) bash "$LIB_DIR/recipe.sh" "$@" ;;
+configure-recipes) bash "$LIB_DIR/recipe-config.sh" "$@" ;;
 upgrade) bash "$LIB_DIR/upgrade.sh" "$@" ;;
 version|-v|--version) bash "$LIB_DIR/version.sh" ;;
 help|-h|--help) cat <<EOF
@@ -63,6 +64,7 @@ Commands:
   recipe list [path]          List available and installed recipes
   recipe add <id> [path]      Add a recipe to the manifest
   recipe init <id> [path]     Print a read-only recipe init brief
+  configure-recipes [path]    Configure recipe config, CLI deps, .envrc.example
   upgrade [--dry-run] [--force] Upgrade the global installation safely
   version Print CLI version
   help Show this help

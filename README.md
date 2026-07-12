@@ -48,7 +48,7 @@ Behavior is a 4-state matrix of **initialized × TTY**:
 | Offer init | no manifest + TTY | Confirm → run `ai-specs init` → hub | 0 if declined |
 | Uninitialized error | no manifest + no TTY | Stderr guidance to run init | 2 |
 
-Menu actions: Sync, Doctor, Skills, Recipes, Rules audit, Upgrade, Version, Help, Init wizard, Quit.
+Menu actions: Sync, Doctor, Skills, Recipes, Configure recipes, Rules audit, Upgrade, Version, Help, Init wizard, Quit.
 **Version** is printed inline from the `VERSION` file; other actions suspend the menu, run the existing subcommand with inherited stdio, then return to the menu.
 
 Missing interactive deps (`rich` + `questionary`) yield exit **3** with install guidance. Non-interactive status needs **no** third-party packages (CI-safe).
@@ -58,6 +58,7 @@ Missing interactive deps (`rich` + `questionary`) yield exit **3** with install 
 | Command | Description |
 |---------|-------------|
 | `ai-specs` / `ai-specs hub [path]` | Interactive status + command menu (see below) |
+| `ai-specs configure-recipes [path]` | Configure recipe config fields, check CLI deps, offer `.envrc.example` |
 | `ai-specs init [path]` | Bootstrap `ai-specs/` (idempotent) |
 | `ai-specs sync [path]` | Vendor deps, regen AGENTS.md, fan out |
 | `ai-specs sync [path] [--ignore-cli-version]` | Sync with optional CLI pin bypass |

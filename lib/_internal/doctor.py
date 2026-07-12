@@ -122,6 +122,7 @@ class Doctor:
         self._check_brief_render_policy()
         self._check_bundled_assets()
         self._check_enabled_agents()
+        self._check_recipe_cli_deps()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -351,6 +352,47 @@ class Doctor:
                     ))
         except Exception:
             pass
+
+
+    def _collect_recipe_dep_results(self):
+        """Load dep_check and aggregate results for enabled recipes."""
+        dep_check_path = Path(__file__).with_name("dep_check.py")
+        spec = importlib.util.spec_from_file_location("dep_check_doctor", dep_check_path)
+        if spec is None or spec.loader is None:
+            return []
+        mod = importlib.util.module_from_spec(spec)
+        # Pre-register so dataclasses can resolve cls.__module__ (Python 3.12+).
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod.check_project_deps(self.root)
+
+    def _check_recipe_cli_deps(self) -> None:
+        data = self._load_manifest()
+        recipes = data.get("recipes", {})
+        if not isinstance(recipes, dict) or not recipes:
+            return
+        try:
+            results = self._collect_recipe_dep_results()
+        except Exception:
+            return
+        for r in results:
+            if r.ok:
+                self.checks.append(Check(
+                    Severity.OK, "recipe-dep",
+                    f"{r.binary} available for {r.recipe_id}",
+                ))
+            elif r.required:
+                self.checks.append(Check(
+                    Severity.WARN, "recipe-dep",
+                    f"{r.binary} missing/unusable for {r.recipe_id}: {r.purpose}",
+                    guidance=r.install_url or "install the required CLI",
+                ))
+            else:
+                self.checks.append(Check(
+                    Severity.INFO, "recipe-dep",
+                    f"optional {r.binary} not found for {r.recipe_id}: {r.purpose}",
+                    guidance=r.install_url,
+                ))
 
     def _mcp_server_count(self, data: dict) -> int:
         mcp = data.get("mcp")

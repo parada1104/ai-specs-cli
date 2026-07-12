@@ -366,3 +366,20 @@ Out of scope for this V1 contract (explicitly deferred to future changes):
 
 - [`templates/ai-specs.toml.tmpl`](../templates/ai-specs.toml.tmpl)
 - [`docs/recipe-schema.md`](recipe-schema.md)
+
+## Environment variables (`.envrc.example`)
+
+Enabled recipes may declare MCP env references under `[[provides.mcp]]`
+(e.g. `TRELLO_API_KEY = "$TRELLO_API_KEY"`). The config wizard and init flow can
+generate `ai-specs/.envrc.example` from those references:
+
+```bash
+ai-specs configure-recipes
+# or accept the offer after `ai-specs init` / hub "Configure recipes"
+```
+
+- `.envrc.example` is a committed template (safe to regenerate; existing files are
+  backed up to `.envrc.example.bak`).
+- `.envrc` is user-owned and gitignored — the tool never writes it. Copy the
+  example and fill in real values locally (direnv, etc.).
+

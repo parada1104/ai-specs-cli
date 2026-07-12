@@ -85,8 +85,8 @@ class TestCommandMenu(unittest.TestCase):
         with mock.patch.object(questionary, "select", return_value=fake_select):
             self.assertIs(menu.prompt(), self.mod.Action.QUIT)
 
-    def test_menu_has_exact_ten_entries(self):
-        self.assertEqual(len(self.mod._MENU), 10)
+    def test_menu_has_exact_eleven_entries(self):
+        self.assertEqual(len(self.mod._MENU), 11)
         titles = [t for _, t, _ in self.mod._MENU]
         self.assertEqual(
             titles,
@@ -95,6 +95,7 @@ class TestCommandMenu(unittest.TestCase):
                 "Doctor",
                 "Skills",
                 "Recipes",
+                "Configure recipes",
                 "Rules audit",
                 "Upgrade",
                 "Version",
@@ -103,6 +104,12 @@ class TestCommandMenu(unittest.TestCase):
                 "Quit",
             ],
         )
+
+    def test_configure_recipes_in_menu(self):
+        entry = self.mod._MENU[4]
+        self.assertIs(entry[0], self.mod.Action.CONFIGURE_RECIPES)
+        self.assertEqual(entry[1], "Configure recipes")
+        self.assertEqual(entry[2], "Set up recipe config, CLI deps, env vars")
 
 
 @unittest.skipUnless(_has_deps(), "rich/questionary not importable")
@@ -244,7 +251,7 @@ class TestHubPTYE2E(unittest.TestCase):
         target = self._workspace()
         _ai_specs_init(target)
         # Menu default is Sync (index 0). Arrow down 9 times to Quit, Enter.
-        feed = b"\x1b[B" * 9 + b"\n"
+        feed = b"\x1b[B" * 10 + b"\n"
         rc, output = self._spawn_pty(target, feed)
         self.assertEqual(rc, 0, f"output: {output!r}")
         self.assertNotIn(b"Traceback", output)
@@ -253,9 +260,9 @@ class TestHubPTYE2E(unittest.TestCase):
         target = self._workspace()
         _ai_specs_init(target)
         version = (ROOT / "VERSION").read_text(encoding="utf-8").strip().encode()
-        # Arrow down 6 → Version, Enter; then 9 → Quit, Enter.
+        # Arrow down 7 → Version, Enter; then 10 → Quit, Enter.
         # After Version the menu reappears at Sync again.
-        feed = b"\x1b[B" * 6 + b"\n" + b"\x1b[B" * 9 + b"\n"
+        feed = b"\x1b[B" * 7 + b"\n" + b"\x1b[B" * 10 + b"\n"
         rc, output = self._spawn_pty(target, feed, timeout=15)
         self.assertEqual(rc, 0, f"output: {output!r}")
         self.assertIn(version, output)
@@ -266,7 +273,7 @@ class TestHubPTYE2E(unittest.TestCase):
         stages = [
             (b"What do you want to do?", b"\x1b[B\n"),  # Doctor
             (b"Press Enter to return", b"\n"),
-            (b"What do you want to do?", b"\x1b[B" * 9 + b"\n"),  # Quit
+            (b"What do you want to do?", b"\x1b[B" * 10 + b"\n"),  # Quit
         ]
         rc, output = self._spawn_pty(target, b"", timeout=25, stages=stages)
         self.assertEqual(rc, 0, f"output: {output!r}")

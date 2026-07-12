@@ -52,6 +52,7 @@ class Action(Enum):
     DOCTOR = "doctor"
     SKILLS = "skills"
     RECIPES = "recipe"
+    CONFIGURE_RECIPES = "configure-recipes"
     RULES_AUDIT = "rules-audit"
     UPGRADE = "upgrade"
     VERSION = "version"
@@ -65,6 +66,7 @@ _MENU: list[tuple[Action, str, str]] = [
     (Action.DOCTOR, "Doctor", "Full project health report (read-only)"),
     (Action.SKILLS, "Skills", "List / add / remove vendored skills"),
     (Action.RECIPES, "Recipes", "List / add recipes from the catalog"),
+    (Action.CONFIGURE_RECIPES, "Configure recipes", "Set up recipe config, CLI deps, env vars"),
     (Action.RULES_AUDIT, "Rules audit", "Inventory legacy rules for migration"),
     (Action.UPGRADE, "Upgrade", "Upgrade the global ai-specs installation"),
     (Action.VERSION, "Version", "Print the CLI version"),
@@ -197,8 +199,15 @@ def _print_version() -> None:
         print("unknown")
 
 
+_SUB_ARGS: dict[Action, list[str]] = {
+    Action.RECIPES: ["list"],
+    Action.SKILLS: ["list"],
+}
+
+
 def _run_interactive_hub(target: Path) -> int:
     from rich.console import Console
+
 
     console = Console()
     cli = _util.ai_specs_home() / "bin" / "ai-specs"
@@ -215,7 +224,8 @@ def _run_interactive_hub(target: Path) -> int:
             _print_version()
             continue
 
-        rc = runner.run(action)
+        _extra = _SUB_ARGS.get(action, [])
+        rc = runner.run(action, extra=_extra)
         if rc == 0:
             print("✓ done")
         else:
@@ -235,7 +245,13 @@ def _offer_init(target: Path) -> bool:
         return False
     cli = _util.ai_specs_home() / "bin" / "ai-specs"
     rc = DelegateRunner(cli=cli, target=target).run(Action.INIT)
-    return rc == 0 and _util.is_initialized(target)
+    if rc != 0 or not _util.is_initialized(target):
+        return False
+    # After a successful init, auto-run sync so the hub shows a clean status
+    # instead of doctor errors about missing agent configs.
+    print("✓ init complete — running sync to generate agent configs…")
+    rc = DelegateRunner(cli=cli, target=target).run(Action.SYNC)
+    return rc == 0
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
