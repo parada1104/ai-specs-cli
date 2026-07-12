@@ -33,6 +33,9 @@ declared for the project.
 - Working branch belongs to one focused change.
 - Worktree has no unrelated uncommitted changes.
 - Required verification evidence is complete or the user accepts the gap.
+- A change folder under `openspec/changes/<slug>/` (excluding `archive/`) exists
+  on the branch with at least `tasks.md` committed. If missing, stop before PR
+  creation and complete planning first.
 - `gh` is installed and authenticated when GitHub is the provider.
 
 ## Workflow

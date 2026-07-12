@@ -34,6 +34,9 @@
 33:- Working branch belongs to one focused change.
 34:- Worktree has no unrelated uncommitted changes.
 35:- Required verification evidence is complete or the user accepts the gap.
+- A change folder under `openspec/changes/<slug>/` (excluding `archive/`) exists
+  on the branch with at least `tasks.md` committed. If missing, stop before PR
+  creation and complete planning first.
 36:- `glab` is installed and authenticated.
 37:
 38:## Runtime Preflight
