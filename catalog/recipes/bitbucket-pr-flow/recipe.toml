@@ -14,6 +14,12 @@ id = "vcs-pr-flow"
 event = "on-sync"
 action = "validate-config"
 
+[[deps.cli]]
+binary = "bb"
+purpose = "Create and manage Bitbucket pull requests"
+required = true
+install_url = "https://bitbucket-cli.paulvanderlei.com/getting-started/installation/"
+
 [config.base_branch]
 required = false
 type = "string"

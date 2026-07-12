@@ -17,6 +17,14 @@ id = "worktree-cleanup"
 event = "on-sync"
 action = "validate-config"
 
+[[deps.cli]]
+binary = "git"
+purpose = "Create and manage git worktrees under .worktrees/"
+required = true
+install_url = "https://git-scm.com/downloads"
+version_check = "git --version"
+min_version = "2.20.0"
+
 [config.worktrees_dir]
 required = false
 type = "string"

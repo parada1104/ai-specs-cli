@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Recipe config wizard + CLI deps + `.envrc.example`**: `[[deps.cli]]` schema on recipes; `dep_check.py` + Doctor WARN for missing required CLIs; hub action **Configure recipes** / `ai-specs configure-recipes`; surgical `[recipes.<id>.config]` write-back; init step 3.5 collects config after recipe selection; generates `ai-specs/.envrc.example` from MCP env refs (never writes `.envrc`).
+- **TUI hub** front door: bare `ai-specs` (and `ai-specs hub [path]`) opens an interactive status + command menu when a project is initialized on a TTY. Non-TTY prints a dep-free status summary; uninitialized no-TTY exits 2; uninitialized TTY offers init. Shared `lib/_internal/util.py` deps gate; rich+questionary pre-vendored under `lib/_vendor/`.
+
 ## [0.12.4] — 2026-07-12
 
 ### Changed

@@ -61,6 +61,9 @@ def _make_fake_install(home: Path, version: str = "1.0.0"):
     # VERSION
     (ai_specs / "VERSION").write_text(version + "\n")
 
+    # Mirror production .gitignore so pip --target lib/_vendor stays untracked.
+    (ai_specs / ".gitignore").write_text("lib/_vendor\n")
+
     # Symlink
     local_bin = home / ".local" / "bin"
     local_bin.mkdir(parents=True)
