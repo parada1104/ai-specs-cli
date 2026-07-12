@@ -20,7 +20,7 @@ synced_at = "2026-07-12T01:58:24Z"
 "skills-as-rules.md" = "5d03f61d9a318ac7e0cd75e4116540332432943fd15fa61a925400d60136b3cd"
 
 [recipes."git-pr-flow".skills."git-merge-workflow"]
-"SKILL.md" = "f2b0032426b43468270d6f212b1febc7cf50103dce7a402ba3e89a23e9407c9a"
+"SKILL.md" = "b06d7b2100e0f35984580ba87d6ac19a3a3510203286a067ec7963b9512f2412"
 
 [recipes."plan-build-flow".skills."plan-build-flow"]
 "SKILL.md" = "902062cfb523521a591216e072dc3164153415e8f75163474ffdab0780512e7e"

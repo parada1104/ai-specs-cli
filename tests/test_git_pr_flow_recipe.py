@@ -105,6 +105,12 @@ class GitPrFlowGoldenContentTests(unittest.TestCase):
         self.assertGreater(merge_pos, 0)
         self.assertLess(archive_pos, merge_pos)
 
+    def test_skill_requires_post_merge_branch_cleanup(self):
+        """Skill force-deletes local branch and removes worktree after merge."""
+        self.assertIn("git branch -D", self.skill_text)
+        self.assertIn("git worktree remove", self.skill_text)
+        self.assertIn("git push origin --delete", self.skill_text)
+
 
 if __name__ == "__main__":
     unittest.main()

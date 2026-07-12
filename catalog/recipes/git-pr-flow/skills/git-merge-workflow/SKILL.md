@@ -67,11 +67,26 @@ gh pr create --base <integration-branch> --title "<title>" --body "<summary and 
 gh pr merge --squash
 ```
 
-7. After the PR is merged, remove the worktree and delete the local branch:
+7. After the PR is merged, navigate to the main repo root first (the agent may
+   be running inside the worktree, and removing it while `$PWD` points there
+   causes `fatal: Unable to read current working directory`). Then remove the
+   worktree and force-delete the local feature branch:
 
 ```bash
-git worktree remove .worktrees/<branch-name>
-git branch -d <branch-name>
+cd <main-repo-root>
+git worktree remove <absolute-path-to-worktree>
+git branch -D <branch-name>
+```
+
+> **Note**: `git branch -D` (capital D) is required because `gh pr merge --squash`
+> rewrites history — the feature branch commits are not ancestors of the target
+> branch, so `git branch -d` would refuse with "not fully merged". Force-delete
+> is safe here because the PR was already merged.
+
+If the remote feature branch still exists after merge, delete it explicitly:
+
+```bash
+git push origin --delete <branch-name>
 ```
 
 8. Sync the integration branch:
