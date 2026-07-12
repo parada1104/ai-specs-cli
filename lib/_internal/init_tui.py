@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactive onboarding wizard for `ai-specs init` (Rich prompts).
+"""Interactive onboarding wizard for `ai-specs init` (Questionary prompts).
 
 Usage:
   init_tui.py --target <project_root> [--name <prefill>] --out <toml-path>
@@ -37,8 +37,8 @@ SUPPORTED_AGENTS = [
 DEFAULT_AGENTS = ["claude", "cursor", "opencode"]
 DEFAULT_RECIPES = ["session-context"]
 
-# Pin range keeps bootstrap reproducible without chasing every rich major.
-RICH_SPEC = "rich>=13.0.0,<15"
+# Pin range keeps bootstrap reproducible without chasing every major.
+DEPS_SPEC = ["rich>=13.0.0,<15", "questionary>=2.0.0,<2.1"]
 
 _BARE_TOML_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -63,15 +63,16 @@ def _vendor_dir() -> Path:
     return _ai_specs_home() / "lib" / "_vendor"
 
 
-def _ensure_rich() -> int | None:
-    """Make rich importable. Returns exit code 3 if unavailable, else None."""
+def _ensure_deps() -> int | None:
+    """Make rich + questionary importable. Returns exit code 3 if unavailable, else None."""
     vendor = _vendor_dir()
     if vendor.is_dir():
         sys.path.insert(0, str(vendor))
 
     try:
-        import rich  # noqa: F401
-        from rich.prompt import Confirm, Prompt  # noqa: F401
+        import questionary  # noqa: F401
+        from rich.console import Console  # noqa: F401
+        from rich.panel import Panel  # noqa: F401
 
         return None
     except ImportError:
@@ -80,7 +81,7 @@ def _ensure_rich() -> int | None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         return 3
 
-    print("Interactive init needs the 'rich' package.")
+    print("Interactive init needs 'rich' + 'questionary' packages.")
     print(f"Install into {_vendor_dir()}? [Y/n] ", end="", flush=True)
     answer = (sys.stdin.readline() or "").strip().lower()
     if answer not in ("", "y", "yes"):
@@ -101,21 +102,22 @@ def _ensure_rich() -> int | None:
         "--quiet",
         "--target",
         str(vendor),
-        RICH_SPEC,
+        *DEPS_SPEC,
     ]
-    print("▸ installing rich…")
+    print("▸ installing dependencies…")
     try:
         subprocess.run(cmd, check=True)
     except (subprocess.CalledProcessError, OSError) as exc:
-        print(f"ERROR: could not install rich: {exc}", file=sys.stderr)
+        print(f"ERROR: could not install dependencies: {exc}", file=sys.stderr)
         return 3
 
     sys.path.insert(0, str(vendor))
     try:
-        import rich  # noqa: F401
-        from rich.prompt import Confirm, Prompt  # noqa: F401
+        import questionary  # noqa: F401
+        from rich.console import Console  # noqa: F401
+        from rich.panel import Panel  # noqa: F401
     except ImportError as exc:
-        print(f"ERROR: rich still unavailable after install: {exc}", file=sys.stderr)
+        print(f"ERROR: dependencies still unavailable after install: {exc}", file=sys.stderr)
         return 3
     return None
 
@@ -171,32 +173,6 @@ def _toml_key(key: str) -> str:
     return json.dumps(key)
 
 
-def _parse_selection(raw: str, n: int, defaults: list[int]) -> list[int] | None:
-    """Parse '1,3' / 'all' / '' (defaults). Returns 0-based indices or None if invalid."""
-    text = raw.strip().lower()
-    if text == "":
-        return list(defaults)
-    if text in {"none", "-"}:
-        return []
-    if text == "all":
-        return list(range(n))
-    indices: list[int] = []
-    for part in text.replace(" ", "").split(","):
-        if not part:
-            continue
-        if not part.isdigit():
-            return None
-        idx = int(part)
-        if idx < 1 or idx > n:
-            return None
-        indices.append(idx - 1)
-    seen: set[int] = set()
-    ordered: list[int] = []
-    for i in indices:
-        if i not in seen:
-            seen.add(i)
-            ordered.append(i)
-    return ordered
 
 
 def _render_manifest(tw, project_name: str, agents: list[str], recipes: list[dict[str, str]]) -> str:
@@ -226,19 +202,18 @@ def _render_manifest(tw, project_name: str, agents: list[str], recipes: list[dic
 
 
 def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
-    err = _ensure_rich()
+    err = _ensure_deps()
     if err is not None:
         return err
 
-    # Always require a real TTY for prompts — even when rich is already vendored
+    # Always require a real TTY for prompts — even when deps are already vendored
     # and the caller forced --tui (EOF would otherwise silently accept defaults).
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         return 3
 
+    import questionary
     from rich.console import Console
     from rich.panel import Panel
-    from rich.prompt import Confirm, Prompt
-    from rich.table import Table
 
     tw = _load_toml_write()
     console = Console(stderr=True)
@@ -258,57 +233,51 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         console.print(f"  target: [bold]{target}[/bold]")
         console.print()
 
+        # 1. Project name — text input with default
         default_name = name_prefill or target.name
-        project_name = Prompt.ask("Project name", default=default_name).strip() or default_name
+        project_name = questionary.text("Project name:", default=default_name).ask()
+        if project_name is None:
+            return _cancel()
+        project_name = project_name.strip() or default_name
 
+        # 2. Agents — checkbox multi-select with arrow keys + space toggle
         console.print()
-        console.print("[bold]Agents[/bold] to enable (fan-out targets for sync-agent)")
-        agent_table = Table(show_header=True, header_style="bold")
-        agent_table.add_column("#", style="dim", width=3)
-        agent_table.add_column("id")
-        agent_table.add_column("default")
-        default_agent_idxs = [i for i, a in enumerate(SUPPORTED_AGENTS) if a in DEFAULT_AGENTS]
-        for i, agent in enumerate(SUPPORTED_AGENTS, start=1):
-            agent_table.add_row(str(i), agent, "✓" if agent in DEFAULT_AGENTS else "")
-        console.print(agent_table)
-        console.print("[dim]Enter numbers (e.g. 1,2,3), 'all', 'none', or blank for defaults[/dim]")
+        agent_choices = [
+            questionary.Choice(
+                title=agent,
+                value=agent,
+                checked=agent in DEFAULT_AGENTS,
+            )
+            for agent in SUPPORTED_AGENTS
+        ]
+        agents = questionary.checkbox(
+            "Select agents to enable:",
+            choices=agent_choices,
+        ).ask()
+        if agents is None:
+            return _cancel()
 
-        while True:
-            raw = Prompt.ask("Agents", default="")
-            picked = _parse_selection(raw, len(SUPPORTED_AGENTS), default_agent_idxs)
-            if picked is None:
-                console.print("[red]Invalid selection[/red] — try again")
-                continue
-            agents = [SUPPORTED_AGENTS[i] for i in picked]
-            break
-
+        # 3. Recipes — checkbox multi-select from catalog
         catalog = _catalog_recipes()
-        console.print()
-        console.print("[bold]Recipes[/bold] to enable from the catalog")
-        recipe_table = Table(show_header=True, header_style="bold")
-        recipe_table.add_column("#", style="dim", width=3)
-        recipe_table.add_column("id", min_width=22)
-        recipe_table.add_column("ver", style="dim")
-        recipe_table.add_column("description")
-        default_recipe_idxs = [i for i, r in enumerate(catalog) if r["id"] in DEFAULT_RECIPES]
-        for i, recipe in enumerate(catalog, start=1):
-            desc = recipe["description"]
-            if len(desc) > 64:
-                desc = desc[:61] + "…"
-            mark = " ✓" if recipe["id"] in DEFAULT_RECIPES else ""
-            recipe_table.add_row(str(i), f"{recipe['id']}{mark}", recipe["version"], desc)
-        console.print(recipe_table)
-        console.print("[dim]Enter numbers, 'all', 'none', or blank for defaults (session-context)[/dim]")
+        if catalog:
+            recipe_choices = [
+                questionary.Choice(
+                    title=f"{r['id']}  ({r['version']}) — {r['description'][:64]}",
+                    value=r,
+                    checked=r["id"] in DEFAULT_RECIPES,
+                )
+                for r in catalog
+            ]
+            recipes = questionary.checkbox(
+                "Select recipes to enable:",
+                choices=recipe_choices,
+            ).ask()
+            if recipes is None:
+                return _cancel()
+        else:
+            recipes = []
 
-        while True:
-            raw = Prompt.ask("Recipes", default="")
-            picked = _parse_selection(raw, len(catalog), default_recipe_idxs)
-            if picked is None:
-                console.print("[red]Invalid selection[/red] — try again")
-                continue
-            recipes = [catalog[i] for i in picked]
-            break
-
+        # 4. Preview + confirm
         console.print()
         console.print(
             Panel.fit(
@@ -321,7 +290,11 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
             )
         )
 
-        if not Confirm.ask("Write ai-specs.toml with these choices?", default=True):
+        confirmed = questionary.confirm(
+            "Write ai-specs.toml with these choices?",
+            default=True,
+        ).ask()
+        if not confirmed:
             return _cancel()
 
         toml_text = _render_manifest(tw, project_name, agents, recipes)
@@ -357,7 +330,7 @@ def main() -> int:
     try:
         return run_wizard(target=target, name_prefill=args.name, out_path=Path(args.out))
     except KeyboardInterrupt:
-        # Ctrl-C outside run_wizard's own try (e.g. during _ensure_rich prompt)
+        # Ctrl-C outside run_wizard's own try (e.g. during _ensure_deps install prompt)
         print("\nCancelled", file=sys.stderr)
         return 1
     except EOFError:

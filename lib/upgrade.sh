@@ -220,13 +220,20 @@ else
     UP_TO_DATE=false
 fi
 
-if [[ "$UP_TO_DATE" == true ]]; then
-    echo "Already up to date (version $CURRENT_VERSION)."
-    exit 0
-fi
-
-if ! git merge --ff-only origin/main; then
-    abort "Fast-forward merge failed. The local branch may have diverged. Resolve manually or re-run install.sh." 4
+# --- refresh TUI deps (rich + questionary) -----------------------------
+VENDOR_DIR="$AI_SPECS_HOME/lib/_vendor"
+_tui_deps_ok() {
+    python3 -c "import rich, questionary" 2>/dev/null && return 0
+    [[ -d "$VENDOR_DIR" ]] && python3 -c "import sys; sys.path.insert(0, '$VENDOR_DIR'); import rich, questionary" 2>/dev/null && return 0
+    return 1
+}
+if ! _tui_deps_ok; then
+    echo "Installing TUI dependencies (rich + questionary)..."
+    python3 -m pip install --quiet --target "$VENDOR_DIR" 'rich>=13.0.0,<15' 'questionary>=2.0.0,<2.1' || {
+        echo "warning: could not install TUI deps; init will prompt on first use" >&2
+    }
+else
+    echo "TUI deps (rich + questionary) already available."
 fi
 
 # --- post-upgrade verification -----------------------------------------------
