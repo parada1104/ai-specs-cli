@@ -1,6 +1,11 @@
 # Managed by ai-specs. Do not edit by hand.
 # Tracks SHA-256 of bundled files as last installed by the CLI.
 # Used by `ai-specs refresh-bundled` to detect user customizations.
+# [meta] records the CLI version and timestamp of the last lock write.
+
+[meta]
+cli_version = "0.12.2"
+synced_at = "2026-07-12T01:58:24Z"
 
 [skills."skill-creator"]
 "SKILL.md" = "cf23341f51199d3feb9c157ffe3e52d5e4b4f37b2e77863a8576b78b92b9cdc3"
@@ -11,10 +16,14 @@
 "assets/sync.sh" = "412a883f2509f5df8ce9f2e567a7f0d72b8489b363c50bdcd891ae1c1f2cbfe4"
 
 [commands]
-"skills-as-rules.md" = "793c2d1de600693cfdd1dbbd93bea0c9af76d22838f5ecd4db678737157b0af8"
+"rules-audit.md" = "35c6719990e207cd9356f66de0b8ed10cf2da6e267b05fac86ef1c1baf9aae26"
+"skills-as-rules.md" = "5d03f61d9a318ac7e0cd75e4116540332432943fd15fa61a925400d60136b3cd"
 
 [recipes."git-pr-flow".skills."git-merge-workflow"]
-"SKILL.md" = "f56ffc1ab81a4ace6d2fc047257cfc25d404539dee874a9dde7f1a2e1c2b6aed"
+"SKILL.md" = "f2b0032426b43468270d6f212b1febc7cf50103dce7a402ba3e89a23e9407c9a"
+
+[recipes."plan-build-flow".skills."plan-build-flow"]
+"SKILL.md" = "902062cfb523521a591216e072dc3164153415e8f75163474ffdab0780512e7e"
 
 [recipes."session-context".skills."context-precedence"]
 "SKILL.md" = "5b09871eadc86d5951d2681ef5e79acc271e48a2f1498128ca2d0b96fa151ba6"
