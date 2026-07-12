@@ -59,4 +59,5 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 
 - Full validation: `./tests/validate.sh`
 - Focused tests (unit-only): `./tests/run.sh`
+- Recipe behavior evals (slow, opt-in live): `./tests/evals/run.sh` (set `EVALS_LIVE=1` + API key)
 - Inspect the active Trello card before resuming work.

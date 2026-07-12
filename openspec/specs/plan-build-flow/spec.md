@@ -198,6 +198,11 @@ classic SDD command, skill, or recipe outside this recipe's own surface.
 |----|------|-----|
 | AC1 | `test_recipe_materializes_skill_only` | manifest |
 | AC2 | `test_recipe_adds_no_schema_surface` | manifest |
+| AC3 | `eval_plan_build_flow_live` / `ac3_plan_stops_before_apply` (live); materialization partial | plan stops before implementation |
+| AC4 | `tests/evals/scenarios/plan-build-flow/ac4_*` (planned live) | ambient build mapping |
+| AC5 | `tests/evals/scenarios/plan-build-flow/ac5_*` (planned live) | archive degradation |
+| AC6 | transcript judge layer (deferred) | orchestrator absence |
+| AC7 | `tests/evals/scenarios/plan-build-flow/ac7_*` (planned live) | artifact store default |
 | AC8 | `test_brief_and_readme_vocabulary_clean` | vocabulary |
 | AC9 | `test_implementation_brief_references_worktree_flow` | worktree |
 | AC10 | `test_classic_sdd_commands_unchanged` | coexistence |
