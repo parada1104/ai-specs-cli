@@ -154,6 +154,32 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.mod.materialize_recipes(root, ROOT)
         self.assertEqual(legacy.read_text(), before)
 
+    def test_skill_has_change_depth_classifier(self):
+        skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
+        text = skill.read_text().lower()
+        self.assertIn("change depth classifier", text)
+        for tier in ("full", "standard", "light"):
+            self.assertIn(tier, text)
+
+    def test_skill_has_pr_and_archive_gates(self):
+        skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
+        text = skill.read_text().lower()
+        self.assertIn("pr creation gate", text)
+        self.assertIn("pre-merge archive gate", text)
+        self.assertIn("gh pr create", text)
+        self.assertIn("before merge", text)
+
+    def test_brief_mentions_depth_and_pr_gate(self):
+        recipe_dir = CATALOG / RECIPE_ID
+        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+        brief = recipe.brief_fragments
+        rules = [fragment.text for fragment in (brief.workflow_rules or [])]
+        combined = "\n".join(rules).lower()
+        self.assertIn("classify", combined)
+        self.assertIn("tasks-only", combined)
+        self.assertIn("do not open a pr", combined)
+        self.assertIn("before merge", combined)
+
 
 if __name__ == "__main__":
     unittest.main()

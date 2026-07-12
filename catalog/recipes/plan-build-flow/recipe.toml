@@ -1,8 +1,8 @@
 [recipe]
 id = "plan-build-flow"
 name = "Plan / Build Flow"
-description = "Ambient change workflow: silent planning artifacts before implementation, then validate and close"
-version = "2.0.0"
+description = "Ambient change workflow: depth classifier, silent planning artifacts, PR/archive gates"
+version = "2.1.0"
 author = "ai-specs"
 license = "MIT"
 tags = ["workflow"]
@@ -19,9 +19,11 @@ skills = [{ id = "plan-build-flow", source = "bundled" }]
 
 [provides.brief]
 workflow_rules = [
-    "For substantial changes, produce reviewable planning artifacts before writing production code; stop and wait for human authorization.",
-    "After authorization, implement, validate, and close the change in one flow — archive timing follows the bound VCS merge workflow.",
-    "Run file-writing implementation inside the change worktree when isolated worktrees are enabled.",
+    "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; record depth in tasks.md and stop for authorization.",
+    "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
+    "Do not open a PR until the change folder on the branch contains the tier minimum planning files, committed.",
+    "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
+    "Archive the change folder on the review branch before merge; never defer archive until after merge.",
 ]
 
 [[provides.docs]]

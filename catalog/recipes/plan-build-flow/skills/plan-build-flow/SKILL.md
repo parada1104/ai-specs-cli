@@ -1,83 +1,149 @@
 ---
 name: plan-build-flow
 description: >
-  Ambient change workflow. On substantial requests, silently produce reviewable
-  planning artifacts, stop for authorization, then implement, validate, and
-  close without exposing slash commands. Degrade gracefully when no external
-  orchestrator or memory backend is present.
+  Ambient change workflow. Classify planning depth, produce reviewable artifacts,
+  stop for authorization, then implement, validate, and close without exposing
+  slash commands. Block PR creation without planning files; archive before merge.
 license: MIT
 metadata:
   author: ai-specs
-  version: "2.0"
+  version: "2.1"
   scope: runtime
   auto_invoke:
     - "Starting a substantial feature, fix, or refactor that will modify code or artifacts"
+    - "User gives a direct implementation task without prior planning artifacts"
     - "User describes a multi-step change that needs planning before implementation"
     - "Continuing implementation after the user authorizes a plan"
-    - "Finishing a change: validate, archive artifacts pre-merge, and close out"
+    - "Opening a PR or finishing a change: validate artifacts, archive pre-merge, close out"
+    - "Deciding how much planning ceremony a change needs (full vs spec+tasks vs tasks-only)"
     - "Deciding how to run planning/build phases when no orchestrator or memory is available"
 ---
 
 # Ambient Plan / Build Flow
 
 This skill runs invisibly behind normal agent work. There are **no** `/plan` or
-`/build` slash commands. When a request is substantial, plan first and stop for
-authorization; when the user approves, implement, validate, and close in one
-continuous flow.
+`/build` slash commands. Classify every substantial request, plan to the
+appropriate depth, stop for authorization, then implement, validate, and close.
 
 ## 1. What plan and build mean (internal)
 
 | Phase | Contract |
 |---|---|
-| **Plan** | Turn an intent into reviewable planning artifacts. Stop and wait for human review/authorization. Never implement production code. |
-| **Build** | Implement an authorized plan, validate the result, and close the change — including pre-merge archive per the bound VCS workflow. |
+| **Plan** | Classify depth, write the minimum reviewable planning artifacts for that tier, stop and wait for human review/authorization. Never implement production code. |
+| **Build** | Implement an authorized plan, validate, ensure planning files are committed on the review branch, open PR only when the artifact gate passes, and run archive-tail **before merge**. |
 
 Speak to the user in plain language ("here is the plan", "implementing now") —
-never expose internal phase names or slash verbs.
+never expose internal phase names, tier names, or slash verbs.
 
-## 2. Phase mapping (private)
+## 2. Change depth classifier
 
-- **Plan** runs: explore → proposal → spec → design → tasks.
-- **Build** runs: apply → verify → archive-tail (pre-merge on the review branch).
+Before any production edit, classify the request into exactly one tier. Record
+the chosen tier in `tasks.md` (one line, e.g. `Depth: standard`). Downgrade is
+allowed when new facts appear; upgrade when scope grows.
 
-## 3. When to invoke
+| Tier | When to use | Planning chain (private) | Minimum artifacts before build |
+|---|---|---|---|
+| **Full** | New capability, architecture or cross-cutting refactor, breaking change, ambiguous scope, or user cannot point to concrete files | explore → proposal → spec → design → tasks | `tasks.md` plus `proposal.md` or `design.md`, and at least one spec delta under `specs/` |
+| **Standard** | Scoped feature or multi-file fix in a known area; intent is clear but needs written requirements | spec → tasks (skip explore/proposal/design unless they reduce risk) | `tasks.md` plus at least one spec delta under `specs/` |
+| **Light** | Small bugfix, single-file tweak, typo, or user names exact file(s) and expected edit | tasks only | `tasks.md` |
+
+### Classifier signals (quick)
+
+| Signal | Tier |
+|---|---|
+| "Add OAuth", "redesign sync", "new recipe", "breaking v3" | Full |
+| "Add field to X", "extend handler for Y", bounded multi-file feature | Standard |
+| "Fix typo in README", "change default in config.toml line 12", one-line bug | Light |
+| User says "implement/build/fix now" but **no** `openspec/changes/<slug>/` exists yet | Classify first — verbs do **not** skip planning |
+| User says "go ahead" and a matching change folder already exists | Build (tier already chosen) |
+
+Trivial read-only questions skip the classifier entirely.
+
+## 3. Phase mapping (private)
+
+- **Plan** runs the chain for the classified tier (Section 2), then **stops**.
+- **Build** runs: apply → verify → artifact/PR gates → archive-tail (pre-merge).
+
+## 4. When to invoke
 
 | Situation | Invoke plan? | Invoke build? |
 |---|---|---|
 | Quick question / read-only exploration | No | No |
-| Substantial change request (new feature, refactor, multi-file fix) | Yes — plan and stop | No |
+| Substantial or direct implementation request without prior change folder | Yes — classify, plan, stop | No |
 | User approves a pending plan ("go ahead", "implement it", "build it") | No | Yes |
-| Trivial one-line fix explicitly scoped by user | Optional — use judgment | Maybe inline |
+| User asks to open a PR | No | Yes — but only after artifact gate (Section 7) |
+| Trivial one-line fix explicitly scoped by user | Light tier — plan (tasks only) then may build inline | Maybe same turn after micro-plan |
 
 Prefer the project's native plan/review UX when available (e.g. plan mode) —
 this skill supplies the artifact trail behind that surface.
 
-## 4. Orchestrator degradation policy
+## 5. Orchestrator degradation policy
 
 - **Orchestrator present** — let it drive phases via sub-agents.
 - **Orchestrator absent** — run equivalent phases inline in one conversation.
 
-## 5. Memory degradation policy
+## 6. Memory degradation policy
 
 - **Persistent memory present** — may persist cross-session facts.
 - **Absent** — default to file artifacts under `openspec/changes/<slug>/`.
 
-## 6. Change-slug derivation
+## 7. Artifact, PR, and merge gates
+
+### 7.1 Change folder required
+
+Every non-trivial change MUST have a slug folder at `openspec/changes/<slug>/`
+(excluding `archive/`) before implementation begins on that change. If the user
+jumps straight to "implement X", create the folder and run the classified plan
+first.
+
+### 7.2 PR creation gate (hard stop)
+
+Do **not** run `gh pr create`, `glab mr create`, or equivalent until:
+
+1. The matching `openspec/changes/<slug>/` folder exists on the current branch.
+2. Tier minimum files from Section 2 are present and **committed**.
+3. Implementation and verification for that slug are complete (or the user
+   explicitly accepts opening a draft-only PR for review of planning — still
+   requires the tier minimum files).
+
+If the gate fails, stop with a plain-language blocker: complete planning for
+the classified depth, commit the files, then retry PR creation.
+
+### 7.3 Pre-merge archive gate (hard stop)
+
+Archive-tail MUST run on the **review branch** before merge — never defer until
+after the merge lands on the base branch. This aligns with the bound VCS merge
+workflow.
+
+Sequence on the review branch:
+
+1. Implement and verify.
+2. Commit and push implementation **and** planning files.
+3. Open PR (artifact gate satisfied).
+4. **Before merge:** run archive-tail (Section 8) — move
+   `openspec/changes/<slug>/` → `openspec/changes/archive/<slug>/`, commit,
+   push to the review branch.
+5. Merge only after explicit user approval and the pre-merge archive commit is
+   on the PR branch.
+
+Post-merge archive is **rejected** — if merge already happened, do not treat the
+merged base branch as the archive boundary.
+
+## 8. Change-slug derivation
 
 - On plan, derive a kebab-case slug from intent.
 - On build, resolve slug from outstanding change folders under
   `openspec/changes/` (excluding `archive/`).
 - If multiple outstanding plans exist, ask which to build.
 
-## 7. Worktree deference
+## 9. Worktree deference
 
 - Plan artifacts may be written before a worktree exists when small.
 - Build **must** use a dedicated worktree when `worktree-flow` is enabled.
 
-## 8. Archive-tail graceful no-op
+## 10. Archive-tail graceful no-op
 
-Archive-tail runs at the end of build, **before merge** when a VCS PR/MR flow is
-in play:
+Archive-tail runs at step 4 of Section 7.3 (before merge):
 
 - **Change-folder close** — move `openspec/changes/<slug>/` →
   `openspec/changes/archive/<slug>/` (required).

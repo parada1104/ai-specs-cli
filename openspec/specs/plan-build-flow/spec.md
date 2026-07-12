@@ -4,8 +4,9 @@
 
 Defines the `plan-build-flow` catalog recipe: an **ambient**, skill-only workflow
 over the existing multi-phase change ceremony. No slash commands; the bundled
-skill auto-invokes on substantial change work. Additive, opt-in, coexists with
-classic flows.
+skill auto-invokes on substantial change work, classifies planning depth, and
+enforces PR artifact and pre-merge archive gates. Additive, opt-in, coexists
+with classic flows.
 
 ## Requirements
 
@@ -29,28 +30,97 @@ user-facing identifier.
 - WHEN validated against the current manifest schema
 - THEN it requires zero new fields, on-sync actions, or materializer branches
 
+### Requirement: Change depth classifier
+
+The bundled skill SHALL classify each substantial request into exactly one
+planning depth before production edits:
+
+- **Full** — explore → proposal → spec → design → tasks
+- **Standard** — spec → tasks (explore/proposal/design optional)
+- **Light** — tasks only
+
+The chosen depth MUST be recorded in `tasks.md`. Direct implementation verbs on
+a request with no existing change folder MUST NOT skip planning.
+
+#### Scenario: Full depth for ambiguous scope
+
+- GIVEN a request for a new cross-cutting capability with unclear boundaries
+- WHEN planning starts
+- THEN the full planning chain runs
+- AND tier minimum artifacts exist before build
+
+#### Scenario: Light depth for scoped fix
+
+- GIVEN a one-file bugfix with an explicit file and expected edit
+- WHEN planning starts
+- THEN only `tasks.md` is required
+- AND no production code is modified during planning
+
+#### Scenario: Direct implement still plans first
+
+- GIVEN the user says "implement X" with no `openspec/changes/<slug>/` folder
+- WHEN the skill evaluates the request
+- THEN it classifies depth and runs the plan phase before build
+- AND stops for authorization unless the tier is trivially light and inline build is allowed
+
 ### Requirement: Ambient planning trigger
 
-The bundled skill SHALL auto-invoke on substantial change requests and run
-explore → proposal → spec → design → tasks, stopping for human authorization.
-Planning MUST NOT require slash commands or a dedicated worktree.
+The bundled skill SHALL auto-invoke on substantial change requests, run the
+classified planning chain, and stop for human authorization. Planning MUST NOT
+require slash commands or a dedicated worktree.
 
 #### Scenario: Plan stops before implementation
 
 - GIVEN a developer requests a substantial change
-- WHEN the planning phase chain completes
-- THEN tasks.md (or equivalent) exists and no production code files were modified
+- WHEN the planning phase chain for the classified depth completes
+- THEN `tasks.md` exists and no production code files were modified
 
 ### Requirement: Ambient build trigger
 
-After authorization, the skill SHALL run apply → verify → archive-tail in one
-flow without exposing slash commands.
+After authorization, the skill SHALL run apply → verify → artifact/PR gates →
+archive-tail (pre-merge) without exposing slash commands.
 
 #### Scenario: Build implements, verifies, and closes after authorization
 
 - GIVEN authorized tasks from a prior planning pass
 - WHEN the developer approves implementation
 - THEN implementation, verification, and change-folder close complete without a separate archive command
+
+### Requirement: PR artifact gate
+
+The skill and generated brief fragments SHALL block PR/MR creation until the
+matching `openspec/changes/<slug>/` folder on the review branch contains the
+tier minimum planning files and those files are committed.
+
+#### Scenario: PR blocked without change folder
+
+- GIVEN implementation is complete but no change folder exists on the branch
+- WHEN an agent attempts to open a PR
+- THEN the skill stops with a blocker to complete planning first
+
+#### Scenario: PR allowed with tier minimum files
+
+- GIVEN a standard-tier change with `tasks.md` and spec deltas under `specs/`
+- WHEN the artifact gate is evaluated before PR creation
+- THEN PR creation may proceed
+
+### Requirement: Pre-merge archive gate
+
+Archive-tail MUST run on the review branch before merge. Post-merge archive as
+the boundary MUST be rejected. This aligns with the bound `vcs-pr-flow` contract.
+
+#### Scenario: Archive before merge on review branch
+
+- GIVEN a PR is ready to merge
+- WHEN archive-tail runs
+- THEN `openspec/changes/<slug>/` moves to `openspec/changes/archive/<slug>/` on the review branch
+- AND merge proceeds only after that commit is pushed
+
+#### Scenario: Post-merge archive rejected
+
+- GIVEN a PR has already merged to the base branch
+- WHEN archive-tail is invoked
+- THEN the skill treats post-merge archive as invalid for the change boundary
 
 ### Requirement: Archive channel degradation
 
@@ -131,3 +201,6 @@ classic SDD command, skill, or recipe outside this recipe's own surface.
 | AC8 | `test_brief_and_readme_vocabulary_clean` | vocabulary |
 | AC9 | `test_implementation_brief_references_worktree_flow` | worktree |
 | AC10 | `test_classic_sdd_commands_unchanged` | coexistence |
+| AC11 | `test_skill_has_change_depth_classifier` | classifier |
+| AC12 | `test_skill_has_pr_and_archive_gates` | PR/archive gates |
+| AC13 | `test_brief_mentions_depth_and_pr_gate` | brief fragments |

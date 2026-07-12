@@ -2,18 +2,33 @@
 
 ## Technical Approach
 
-Version bump to 2.0.0 signals a breaking recipe surface change: commands are removed, the bundled skill becomes the sole entry point via `auto_invoke` on substantial change work. Internal phase mapping (explore→proposal→spec→design→tasks before implementation; apply→verify→archive-tail after authorization) is preserved but never exposed as slash verbs.
+Version 2.0.0 removed slash commands; 2.1.0 adds planning depth classification and hard gates without new schema surface.
+
+### Change depth classifier
+
+| Tier | Chain | Minimum before build/PR |
+|------|-------|-------------------------|
+| Full | explore → proposal → spec → design → tasks | tasks + (proposal or design) + spec delta |
+| Standard | spec → tasks | tasks + spec delta |
+| Light | tasks | tasks only |
+
+Direct implementation verbs on requests without a change folder still run classify → plan → stop.
+
+### Gates
+
+1. **PR gate** — block `gh pr create` / equivalents until tier minimum files exist under `openspec/changes/<slug>/` and are committed on the review branch.
+2. **Pre-merge archive gate** — archive-tail on review branch before merge; reject post-merge archive as boundary (aligns with `vcs-pr-flow`).
 
 ## File Changes
 
 | File | Action |
 |------|--------|
-| `catalog/recipes/plan-build-flow/recipe.toml` | Remove commands; ambient brief |
-| `catalog/recipes/plan-build-flow/skills/plan-build-flow/SKILL.md` | Rewrite for ambient flow |
-| `catalog/recipes/plan-build-flow/README.md` | Skill-only docs |
-| `openspec/specs/plan-build-flow/spec.md` | Promote v2 requirements |
-| `tests/test_plan_build_flow_recipe.py` | Replace command tests with ambient tests |
+| `catalog/recipes/plan-build-flow/recipe.toml` | v2.1.0; classifier + gate brief rules |
+| `catalog/recipes/plan-build-flow/skills/plan-build-flow/SKILL.md` | Classifier + Sections 7–10 gates |
+| `catalog/recipes/plan-build-flow/README.md` | Document tiers and gates |
+| `openspec/specs/plan-build-flow/spec.md` | Promote classifier + gate requirements |
+| `tests/test_plan_build_flow_recipe.py` | AC11–AC13 |
 
 ## Testing Strategy
 
-Update AC1/AC9 tests: assert zero commands, skill auto_invoke present, brief references planning before implementation without `/plan`/`/build`.
+Assert classifier tiers in skill, PR/archive gate language, and brief fragments mention classify / PR / pre-merge archive without forbidden vocabulary.
