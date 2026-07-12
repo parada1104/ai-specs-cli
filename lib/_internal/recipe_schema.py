@@ -112,6 +112,7 @@ class ConfigField:
     type: str = ""
     default: Any = None
     validation: dict[str, Any] = field(default_factory=dict)
+    enum: list[str] | None = None
 
 
 @dataclass
@@ -136,6 +137,8 @@ class Recipe:
     version: str
     author: str = ""
     license: str = ""
+    tags: list[str] = field(default_factory=list)
+    conflicts_with: list[str] = field(default_factory=list)
     skills: list[SkillRef] = field(default_factory=list)
     commands: list[CommandRef] = field(default_factory=list)
     mcp: list[McpPreset] = field(default_factory=list)
@@ -154,6 +157,57 @@ def _require_string(data: dict[str, Any], key: str, context: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise RecipeValidationError(f"{context}: missing or invalid required field '{key}'")
     return value.strip()
+
+
+def _parse_tags(raw: Any, context: str) -> list[str]:
+    """Parse the optional `tags` array on [recipe]. Must be an array of strings."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise RecipeValidationError(
+            f"{context}: 'tags' must be an array of strings, got {type(raw).__name__}"
+        )
+    out: list[str] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise RecipeValidationError(
+                f"{context}: 'tags'[{idx}] must be a string, got {type(item).__name__}"
+            )
+        if not item.strip():
+            raise RecipeValidationError(
+                f"{context}: 'tags'[{idx}] must be a non-empty string"
+            )
+        out.append(item)
+    return out
+
+
+def _parse_conflicts_with(raw: Any, recipe_id: str, context: str) -> list[str]:
+    """Parse the optional `conflicts_with` array on [recipe].
+
+    Must be an array of strings (recipe IDs). A recipe may not list itself.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise RecipeValidationError(
+            f"{context}: 'conflicts_with' must be an array of strings, got {type(raw).__name__}"
+        )
+    out: list[str] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise RecipeValidationError(
+                f"{context}: 'conflicts_with'[{idx}] must be a string, got {type(item).__name__}"
+            )
+        if not item.strip():
+            raise RecipeValidationError(
+                f"{context}: 'conflicts_with'[{idx}] must be a non-empty string"
+            )
+        if item == recipe_id:
+            raise RecipeValidationError(
+                f"{context}: 'conflicts_with' must not reference the recipe itself ('{recipe_id}')"
+            )
+        out.append(item)
+    return out
 
 
 def _parse_skills(raw: Any, context: str) -> list[SkillRef]:
@@ -345,6 +399,28 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
         field_type = str(value.get("type", ""))
         default = value.get("default")
 
+        allowed_field_keys = {"required", "type", "default", "validation", "enum"}
+        for fk in value:
+            if fk not in allowed_field_keys:
+                raise RecipeValidationError(
+                    f"{context}.config.{key}: unknown key '{fk}'"
+                )
+
+        enum_raw = value.get("enum")
+        enum_values: list[str] | None = None
+        if enum_raw is not None:
+            if not isinstance(enum_raw, list):
+                raise RecipeValidationError(
+                    f"{context}.config.{key}.enum: expected array of strings, got {type(enum_raw).__name__}"
+                )
+            enum_values = []
+            for idx, item in enumerate(enum_raw):
+                if not isinstance(item, str) or not item.strip():
+                    raise RecipeValidationError(
+                        f"{context}.config.{key}.enum[{idx}]: expected non-empty string"
+                    )
+                enum_values.append(item)
+
         validation_raw = value.get("validation")
         validation: dict[str, Any] = {}
         if isinstance(validation_raw, dict):
@@ -361,7 +437,11 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
             )
 
         fields[key] = ConfigField(
-            required=required, type=field_type, default=default, validation=validation
+            required=required,
+            type=field_type,
+            default=default,
+            validation=validation,
+            enum=enum_values,
         )
     return ConfigSchema(fields=fields, extra=extra)
 
@@ -507,6 +587,8 @@ def validate_recipe_toml(data: dict[str, Any], recipe_dir: Path | None = None) -
     version = _require_string(recipe_table, "version", ctx)
     author = str(recipe_table.get("author", ""))
     license_ = str(recipe_table.get("license", ""))
+    tags = _parse_tags(recipe_table.get("tags"), ctx)
+    conflicts_with = _parse_conflicts_with(recipe_table.get("conflicts_with"), recipe_id, ctx)
 
     provides = data.get("provides", {})
     if not isinstance(provides, dict):
@@ -520,6 +602,8 @@ def validate_recipe_toml(data: dict[str, Any], recipe_dir: Path | None = None) -
         version=version,
         author=author,
         license=license_,
+        tags=tags,
+        conflicts_with=conflicts_with,
         skills=_parse_skills(provides.get("skills"), ctx_prov),
         commands=_parse_commands(provides.get("commands"), ctx_prov),
         mcp=_parse_mcp(provides.get("mcp"), ctx_prov),

@@ -62,6 +62,7 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "- `[recipes.<id>]`",
                 "- `[recipes.<id>.config]`",
                 "- `[[bindings]]`",
+                "- `[tool]`",
                 "- Missing `[agents]`, `[[deps]]`, and `[mcp]` remain valid and normalize to stable defaults.",
                 "- `project.subrepos` remains validated by the existing root target resolver.",
                 "- MCP `env` is the canonical field name.",
@@ -90,6 +91,9 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |",
                 "| `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |",
                 "| `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |",
+                "| `[tool]` | `version` | optional; exact CLI version pin (semver) |",
+                "| `[tool]` | `min_version` | optional; minimum acceptable CLI version (semver); mutually exclusive with `version` |",
+                "| `[tool]` | `policy` | optional; `exact` or `min` (inferred from which version field is set) |",
             ],
         )
 

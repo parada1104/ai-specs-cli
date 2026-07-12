@@ -36,6 +36,7 @@ never touches the foundational layer.
 |--------|------|-------|---------------------|--------------|------------|
 | [`session-context`](#session-context) | Foundational | Session-start focus resolution + conflict policy | `session-bootstrap`, `conflict-policy` | — | — (consumes `memory`, `tracker`, `canonical-store`) |
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
+| [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | — |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch` |
 | [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch` |
@@ -93,6 +94,24 @@ version = "1.0.0"
 test_command = "./tests/run.sh"
 ```
 
+## plan-build-flow
+
+**Ambient skill-only change workflow.** The bundled skill auto-invokes on
+substantial requests to produce reviewable planning artifacts, waits for human
+authorization, then implements, validates, and closes the change — without
+`/plan` or `/build` commands. Implementation defers to an isolated-worktree
+workflow when one is enabled, without hard-depending on it.
+
+- **Provides:** skill `plan-build-flow`; capability `plan-build-flow`.
+- **Config:** none — change slug and artifact store resolve per session.
+- **Full README:** [`catalog/recipes/plan-build-flow/README.md`](../catalog/recipes/plan-build-flow/README.md)
+
+```toml
+[recipes.plan-build-flow]
+enabled = true
+version = "1.0.0"
+```
+
 ## worktree-flow
 
 **Isolated git worktrees under `.worktrees/` with safe post-merge cleanup.**
@@ -104,7 +123,8 @@ unmerged ones, and never touches the main worktree.
 - **Provides:** skill `worktree-flow`, commands `/worktree-new`,
   `/worktree-clean`, script `bin/worktree-cleanup.sh`, and a `worktree-gate`
   runtime hook (`[[provides.hooks]]`) that blocks writes to the main worktree on
-  a protected branch — see [`docs/runtime-hooks.md`](runtime-hooks.md);
+  a protected branch and supports `gate_mode` dispatch (`always` / `ask` /
+  `off`) — see [`docs/runtime-hooks.md`](runtime-hooks.md);
   capabilities `worktree-isolation`, `worktree-cleanup`.
 - **Config:**
 
@@ -113,6 +133,7 @@ unmerged ones, and never touches the main worktree.
   | `worktrees_dir` | string | `.worktrees` | Directory holding per-change worktrees. |
   | `integration_branch` | string | `main` | Branch worktrees are created from and merged into. |
   | `auto_remove_merged` | boolean | `true` | Whether merged worktrees are eligible for cleanup. |
+  | `gate_mode` | string | `always` | Main-worktree gate mode. `always` keeps the current block, `ask` blocks with a bypass hint, and `off` disables the gate. |
   | `WORKTREE_GATE_PROTECTED` | string | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
 
 - **Full README:** [`catalog/recipes/worktree-flow/README.md`](../catalog/recipes/worktree-flow/README.md)
@@ -124,6 +145,7 @@ version = "1.2.0"
 
 [recipes.worktree-flow.config]
 integration_branch = "development"
+gate_mode = "always"
 ```
 
 ## git-pr-flow

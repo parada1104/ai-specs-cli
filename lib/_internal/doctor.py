@@ -7,6 +7,7 @@ Exit code is non-zero when one or more ERROR checks are present.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import sys
@@ -116,6 +117,7 @@ class Doctor:
 
     def run(self) -> int:
         self._check_manifest()
+        self._check_cli_version()
         self._check_agents_md()
         self._check_brief_render_policy()
         self._check_bundled_assets()
@@ -163,6 +165,42 @@ class Doctor:
                 "ai-specs/ai-specs.toml missing",
                 guidance="run ai-specs init"
             ))
+
+    def _check_cli_version(self) -> None:
+        cli_version_py = AI_SPECS_HOME / "lib" / "_internal" / "cli_version.py"
+        if not cli_version_py.is_file():
+            return
+
+        spec = importlib.util.spec_from_file_location(
+            "cli_version_doctor", cli_version_py
+        )
+        if spec is None or spec.loader is None:
+            return
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+
+        toml = self.root / "ai-specs" / "ai-specs.toml"
+        lock_path = self.root / "ai-specs" / ".ai-specs.lock"
+        installed = mod.read_installed_version(AI_SPECS_HOME)
+        lock_meta = mod.read_lock_meta(lock_path)
+
+        manifest: dict = {}
+        if toml.is_file():
+            try:
+                import tomllib
+                with toml.open("rb") as f:
+                    manifest = tomllib.load(f)
+            except Exception:
+                return
+
+        severity_name, _check_name, message = mod.evaluate_cli_version(
+            installed=installed,
+            manifest=manifest,
+            lock_meta=lock_meta,
+        )
+        severity = Severity[severity_name]
+        self.checks.append(Check(severity, "cli-version", message))
 
     def _check_agents_md(self) -> None:
         agents = self.root / "AGENTS.md"

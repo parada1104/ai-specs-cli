@@ -10,7 +10,7 @@ subrepos = []
 
 [agents]
 # Supported agents: claude, cursor, opencode, codex, copilot, gemini, pi, omp
-enabled = ["claude", "cursor", "opencode", "pi"]
+enabled = ["claude", "cursor", "opencode", "pi", "omp"]
 
 # -----------------------------------------------------------------------------
 # Recipes — named, versioned bundles of skills, commands, templates, and MCP
@@ -27,7 +27,7 @@ enabled = ["claude", "cursor", "opencode", "pi"]
 #
 # Recipes follow the capability model (see docs/capabilities.md):
 #   foundational (consume capabilities): worktree-flow, git-pr-flow,
-#     session-context, tdd-flow
+#     session-context, tdd-flow, plan-build-flow
 #   specific (provide a capability): trello-mcp-workflow (tracker),
 #     vault-canonical-store (canonical-store)
 # Each capability has exactly one provider here, so sync auto-binds them; no
@@ -38,16 +38,15 @@ enabled = ["claude", "cursor", "opencode", "pi"]
 
 [recipes.worktree-flow]
 enabled = true
-version = "1.2.0"
+version = "1.2.1"
 [recipes.worktree-flow.config]
 worktrees_dir = ".worktrees"
 integration_branch = "development"
 
 [recipes.git-pr-flow]
 enabled = true
-version = "1.2.0"
+version = "1.2.2"
 [recipes.git-pr-flow.config]
-provider = "github"
 base_branch = "development"
 
 [recipes.session-context]
@@ -59,6 +58,10 @@ enabled = true
 version = "1.0.0"
 [recipes.tdd-flow.config]
 test_command = "./tests/validate.sh"
+
+[recipes.plan-build-flow]
+enabled = true
+version = "1.0.0"
 
 # --- Specific (capability providers) ---
 

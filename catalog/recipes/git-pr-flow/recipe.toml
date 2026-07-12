@@ -2,9 +2,10 @@
 id = "git-pr-flow"
 name = "Git PR Flow"
 description = "GitHub PR and merge flow for feature branches (via gh CLI)"
-version = "1.2.0"
+version = "1.2.2"
 author = "ai-specs"
 license = "MIT"
+tags = ["vcs", "github"]
 
 [[capabilities]]
 id = "vcs-pr-flow"
@@ -27,6 +28,7 @@ workflow_rules = [
     "Use a PR-based merge workflow; all changes to `{config.base_branch}` go through a pull request.",
     "VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations.",
     "Do not push directly to `{config.base_branch}`; always open a PR from a feature branch.",
+    "After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists.",
 ]
 
 [[provides.docs]]

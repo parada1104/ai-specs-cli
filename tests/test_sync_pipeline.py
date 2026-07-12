@@ -893,12 +893,12 @@ class SyncPipelineTests(unittest.TestCase):
                 "board_id = 'aabbcc112233445566778899'\n\n"  # 24-char hex as required
                 "[recipes.worktree-flow]\n"
                 "enabled = true\n"
-                "version = '1.2.0'\n"
+                "version = '1.2.1'\n"
                 "[recipes.worktree-flow.config]\n"
                 "integration_branch = 'development'\n\n"
                 "[recipes.git-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.2.0'\n"
+                "version = '1.2.1'\n"
                 "[recipes.git-pr-flow.config]\n"
                 "base_branch = 'development'\n\n"
                 "[recipes.tdd-flow]\n"
@@ -2639,7 +2639,7 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "enabled = ['claude']\n\n"
                 "[recipes.gitlab-mr-flow]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.1.1'\n"
                 "[recipes.gitlab-mr-flow.config]\n"
                 "base_branch = 'main'\n"
                 "provider = 'github'\n\n"  # stale key — must warn
@@ -2698,7 +2698,7 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "enabled = ['claude']\n\n"
                 "[recipes.bitbucket-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.0.0'\n"
+                "version = '1.0.1'\n"
                 # NO base_branch set — catalog default "development" must apply
                 "[[bindings]]\n"
                 "capability = 'vcs-pr-flow'\n"
@@ -2876,6 +2876,46 @@ class FanOutDriftTests(unittest.TestCase):
             self.assertFalse((resolved / "foo").exists())
         finally:
             shutil.rmtree(workspace.parent)
+
+
+class CliVersionSyncGateTests(unittest.TestCase):
+    def test_exact_pin_mismatch_aborts_sync(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            toml = workspace / "ai-specs" / "ai-specs.toml"
+            toml.write_text(
+                toml.read_text().rstrip()
+                + '\n\n[tool]\nversion = "99.99.99"\npolicy = "exact"\n'
+            )
+            result = subprocess.run(
+                [str(CLI), "sync", str(workspace)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("99.99.99", result.stderr)
+
+    def test_ignore_cli_version_flag_proceeds_with_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            toml = workspace / "ai-specs" / "ai-specs.toml"
+            toml.write_text(
+                toml.read_text().rstrip()
+                + '\n\n[tool]\nversion = "99.99.99"\npolicy = "exact"\n'
+            )
+            result = subprocess.run(
+                [str(CLI), "sync", str(workspace), "--ignore-cli-version"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertIn("ignoring CLI version policy", result.stderr)
 
 
 if __name__ == "__main__":

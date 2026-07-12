@@ -2,9 +2,10 @@
 id = "worktree-flow"
 name = "Worktree Flow"
 description = "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work"
-version = "1.2.0"
+version = "1.2.1"
 author = "ai-specs"
 license = "MIT"
+tags = ["infra", "worktree"]
 
 [[capabilities]]
 id = "worktree-isolation"
@@ -39,8 +40,11 @@ required = false
 type = "string"
 default = "main development"
 
-[sdd]
-threshold = "behavior_change"
+[config.gate_mode]
+required = false
+type = "string"
+default = "always"
+enum = ["always", "ask", "off"]
 
 [provides]
 skills = [{ id = "worktree-flow", source = "bundled" }]

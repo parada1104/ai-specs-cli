@@ -30,6 +30,23 @@ catalog/recipes/<id>/
 | `version` | string | yes | Exact version string |
 | `author` | string | no | Author or organization |
 | `license` | string | no | SPDX license identifier |
+| `tags` | array of strings | no | Domain/category labels (e.g. `vcs`, `tracker`, `infra`, `quality`, `storage`) used for conflict detection |
+| `conflicts_with` | array of strings | no | Recipe IDs this recipe is incompatible with; a recipe may not list itself |
+
+### `tags` and `conflicts_with`
+
+```toml
+[recipe]
+id = "bitbucket-pr-flow"
+# ...
+tags = ["vcs", "bitbucket"]
+conflicts_with = ["git-pr-flow", "gitlab-mr-flow"]
+```
+
+During `ai-specs sync`, enabled recipes are checked for tag conflicts:
+
+- **Warning** — two enabled recipes share a tag (same capability category, e.g. two `vcs` flows) but neither lists the other in `conflicts_with`.
+- **Fatal** — two enabled recipes share a tag *and* one lists the other in `conflicts_with`. The relationship is symmetric: only one side needs to declare it. Sync fails until one is disabled.
 
 ## `[provides]` table
 
@@ -318,6 +335,7 @@ Defines configuration fields that the recipe expects. Values can be overridden p
 | `required` | boolean | yes | Whether the field must be provided |
 | `type` | string | no | Optional hint for the expected type (`string`, `integer`, `boolean` by convention) |
 | `default` | any | no | Default value when not overridden |
+| `enum` | array of strings | no | Closed set of allowed values. When present, sync rejects any manifest override outside the list. |
 
 Example:
 
@@ -330,10 +348,17 @@ default = 30
 [config.board_id]
 required = true
 type = "string"
+
+[config.gate_mode]
+required = false
+type = "string"
+default = "always"
+enum = ["always", "ask", "off"]
 ```
 
 Missing `required` causes a validation error. The current validator treats
-`type` as descriptive metadata and does not enforce a closed enum of values.
+`type` as descriptive metadata, but `enum` is enforced as a closed set at sync
+time.
 
 ## `[[hooks]]` lifecycle events
 

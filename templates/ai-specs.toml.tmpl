@@ -44,6 +44,19 @@ enabled = true
 version = "2.0.0"
 
 # -----------------------------------------------------------------------------
+# CLI version policy (optional) — pin the ai-specs CLI version for this project.
+# Run `ai-specs doctor` to see installed vs pinned vs last-synced versions.
+#
+# Optional CLI version policy — see docs/ai-specs-toml.md (table name: tool).
+# Example:
+#   version = "0.12.2"
+#   policy = "exact"
+#
+# Minimum version instead of exact pin:
+#   min_version = "0.11.0"
+#   policy = "min"
+
+# -----------------------------------------------------------------------------
 # Vendored skill dependencies — each [[deps]] entry is cloned by
 # `ai-specs sync` into ai-specs/skills/<id>/ (gitignored).
 #

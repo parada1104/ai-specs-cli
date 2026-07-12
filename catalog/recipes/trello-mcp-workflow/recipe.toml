@@ -3,6 +3,7 @@ id = "trello-mcp-workflow"
 name = "Trello MCP Workflow"
 description = "Automated Trello board integration for ai-specs SDD workflows"
 version = "1.2.0"
+tags = ["tracker", "trello"]
 
 [[capabilities]]
 id = "tracker"

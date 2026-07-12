@@ -39,6 +39,7 @@ whenever the manifest changes.
 |---------|-------------|
 | `ai-specs init [path]` | Bootstrap `ai-specs/` (idempotent) |
 | `ai-specs sync [path]` | Vendor deps, regen AGENTS.md, fan out |
+| `ai-specs sync [path] [--ignore-cli-version]` | Sync with optional CLI pin bypass |
 | `ai-specs sync-agent [path] [--all\|--<agent>]` | Fan out per-agent configs only |
 | `ai-specs doctor [path]` | Read-only health check |
 | `ai-specs rules-audit [path]` | Read-only legacy rules inventory (JSON) |
@@ -60,8 +61,10 @@ Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
 ### Manifest (`ai-specs/ai-specs.toml`)
 
 Single source of truth for the project's AI harness. Declares enabled agents,
-MCP servers, skill dependencies, and recipes. See
-[`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) for the full reference.
+MCP servers, skill dependencies, recipes, and optionally a CLI version pin
+(`[tool]`). See [`docs/ai-specs-toml.md`](docs/ai-specs-toml.md) for the full
+reference. See [`CHANGELOG.md`](CHANGELOG.md) for migration notes between CLI
+versions.
 
 ### Agents
 

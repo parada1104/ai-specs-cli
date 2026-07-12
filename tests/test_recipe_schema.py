@@ -262,6 +262,94 @@ class RecipeSchemaTests(unittest.TestCase):
             self.assertEqual(isolation["card_validation_required"], True)
 
 
+class RecipeTagsConflictsTests(unittest.TestCase):
+    """Card #27 — RED: Recipe.tags and Recipe.conflicts_with parsing/validation."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_tags")
+
+    def _write_recipe(self, tmp: str, name: str, extra: str = "") -> Path:
+        recipe_dir = Path(tmp) / name
+        recipe_dir.mkdir()
+        (recipe_dir / "recipe.toml").write_text(
+            f'[recipe]\n'
+            f'id = "{name}"\n'
+            f'name = "{name}"\n'
+            f'description = "D"\n'
+            f'version = "1.0"\n'
+            f'{extra}'
+        )
+        return recipe_dir
+
+    def test_tags_and_conflicts_default_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "no-tags")
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertEqual(recipe.tags, [])
+            self.assertEqual(recipe.conflicts_with, [])
+
+    def test_tags_parsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "tagged", 'tags = ["vcs", "github"]\n')
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertEqual(recipe.tags, ["vcs", "github"])
+
+    def test_conflicts_with_parsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "confl", 'conflicts_with = ["git-pr-flow", "gitlab-mr-flow"]\n'
+            )
+            recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertEqual(recipe.conflicts_with, ["git-pr-flow", "gitlab-mr-flow"])
+
+    def test_tags_non_list_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "bad-tags", 'tags = "vcs"\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("tags", str(ctx.exception))
+
+    def test_tags_non_string_element_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "bad-tag-el", 'tags = ["vcs", 3]\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("tags", str(ctx.exception))
+
+    def test_conflicts_with_non_list_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "bad-confl", 'conflicts_with = "git-pr-flow"\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("conflicts_with", str(ctx.exception))
+
+    def test_conflicts_with_self_reference_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "selfref", 'conflicts_with = ["selfref"]\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            msg = str(ctx.exception)
+            self.assertIn("conflicts_with", msg)
+            self.assertIn("selfref", msg)
+
+    def test_blank_tag_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(tmp, "blank-tag", 'tags = ["vcs", ""]\n')
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("tags", str(ctx.exception))
+
+    def test_blank_conflicts_with_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = self._write_recipe(
+                tmp, "blank-confl", 'conflicts_with = ["git-pr-flow", "  "]\n'
+            )
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            self.assertIn("conflicts_with", str(ctx.exception))
+
+
 class BriefFragmentDataclassTests(unittest.TestCase):
     """Task 1.1 — RED: BriefFragment and BriefFragments dataclass structure."""
 

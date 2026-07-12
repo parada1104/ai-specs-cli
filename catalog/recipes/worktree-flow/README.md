@@ -29,6 +29,19 @@ auto_remove_merged = true
 Then run `ai-specs sync`. The cleanup script materializes to
 `ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh`.
 
+## Worktree-gate modes
+
+`worktree-flow` also gates writes to the main worktree on protected branches via
+`gate_mode`:
+
+| Mode | Behavior |
+|---|---|
+| `always` | Current strict behavior: block writes to the main worktree on protected branches. |
+| `ask` | Block, but surface a bypass hint: rerun with `WORKTREE_GATE_MODE=off` for that one invocation. |
+| `off` | Disable the gate entirely; writes are allowed even on protected branches. |
+
+Default: `always`.
+
 ## Config
 
 | Key | Default | Meaning |
@@ -36,6 +49,8 @@ Then run `ai-specs sync`. The cleanup script materializes to
 | `worktrees_dir` | `.worktrees` | Directory that holds per-change worktrees. |
 | `integration_branch` | `main` | Branch worktrees are created from and merged into. |
 | `auto_remove_merged` | `true` | Whether merged worktrees are eligible for cleanup. |
+| `gate_mode` | `always` | Main-worktree gate mode: `always`, `ask`, or `off`. |
+| `WORKTREE_GATE_PROTECTED` | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
 
 ## Cleanup contract
 

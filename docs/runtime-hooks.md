@@ -86,6 +86,12 @@ Tunable values declared in the recipe `[config.*]` (overridable per-project in
 For example, `worktree-flow` exposes `WORKTREE_GATE_PROTECTED` (space-separated
 protected branch names) to its `worktree-gate.sh` hook.
 
+Some hooks also use a sync-stamped constant in the rendered script for values
+that should not be overwritten by env export order. `worktree-flow` uses this
+for `gate_mode`: `ai-specs sync` stamps the resolved mode into
+`worktree-gate.sh`, while `WORKTREE_GATE_MODE` remains a one-shot process
+override at dispatch time.
+
 ## Idempotency
 
 All generated wiring lives in a managed block keyed by
