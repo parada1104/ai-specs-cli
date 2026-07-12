@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] — 2026-07-12
+
+### Changed
+
+- **TUI upgraded to Questionary interactive prompts** — agent and recipe
+  selection now uses arrow keys + space toggle (checkboxes) instead of
+  typing numbers. Project name uses a text input with inline editing.
+  Confirm prompt uses y/n with default yes.
+
+### Added
+
+- `install.sh` and `upgrade.sh` now auto-install `rich` + `questionary`
+  into `lib/_vendor` as step [2/3] of the install/upgrade flow.
+  No manual pip install needed — the TUI works out of the box on fresh installs.
+- Empty recipe catalog guard: skips the recipe checkbox instead of rendering
+  an empty selectable list.
+
+### Removed
+
+- `_parse_selection` function and its 4 unit tests (dead code after the
+  questionary migration replaced text-based selection with checkboxes).
+
+### Fixed
+
+- `upgrade.sh`: TUI deps refresh now runs before the "already up to date"
+  early exit — users on latest code with missing deps can recover via
+  `ai-specs upgrade`.
+- Stale `_ensure_rich` comment updated to `_ensure_deps`.
+
 ## [0.12.3] — 2026-07-12
 
 ### Added
