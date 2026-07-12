@@ -13,6 +13,9 @@
 #   --dir   .worktrees
 #   --base  current branch of the main worktree
 #
+# Environment variables:
+#   WORKTREE_CLEANUP_DEBUG=1       print debug messages to stderr
+#   WORKTREE_CLEANUP_SOURCE_ONLY=1  (test helper) skip execution loop when sourced
 # Output lines (stable, greppable):
 #   removed <name>
 #   would remove <name>            (with --dry-run)
