@@ -1,124 +1,85 @@
 ---
 name: plan-build-flow
 description: >
-  Two-verb change workflow. Map `/plan` to producing reviewable planning
-  artifacts and `/build` to implementing, validating, and closing an authorized
-  plan. Degrade gracefully when no external orchestrator or memory backend is
-  present.
+  Ambient change workflow. On substantial requests, silently produce reviewable
+  planning artifacts, stop for authorization, then implement, validate, and
+  close without exposing slash commands. Degrade gracefully when no external
+  orchestrator or memory backend is present.
 license: MIT
 metadata:
   author: ai-specs
-  version: "1.0"
+  version: "2.0"
   scope: runtime
   auto_invoke:
-    - "Planning a change with /plan before implementation"
-    - "Building an authorized plan with /build"
-    - "Deciding how to run plan/build when no orchestrator or memory is available"
+    - "Starting a substantial feature, fix, or refactor that will modify code or artifacts"
+    - "User describes a multi-step change that needs planning before implementation"
+    - "Continuing implementation after the user authorizes a plan"
+    - "Finishing a change: validate, archive artifacts pre-merge, and close out"
+    - "Deciding how to run planning/build phases when no orchestrator or memory is available"
 ---
 
-# Plan / Build Flow
+# Ambient Plan / Build Flow
 
-Two verbs cover the whole change lifecycle: `/plan` produces a reviewable plan
-and stops; `/build` implements an authorized plan, validates it, and closes
-the change automatically. There is no third visible command.
+This skill runs invisibly behind normal agent work. There are **no** `/plan` or
+`/build` slash commands. When a request is substantial, plan first and stop for
+authorization; when the user approves, implement, validate, and close in one
+continuous flow.
 
-## 1. What plan and build mean
+## 1. What plan and build mean (internal)
 
-| Verb | Contract |
+| Phase | Contract |
 |---|---|
-| `/plan` | Turn an intent into reviewable planning artifacts. Stop and wait for human review/authorization. Never implement. |
-| `/build` | Implement an already-authorized plan, validate the result, and close the change out — all in one invocation. |
+| **Plan** | Turn an intent into reviewable planning artifacts. Stop and wait for human review/authorization. Never implement production code. |
+| **Build** | Implement an authorized plan, validate the result, and close the change — including pre-merge archive per the bound VCS workflow. |
 
-## 2. Phase mapping (internal detail)
+Speak to the user in plain language ("here is the plan", "implementing now") —
+never expose internal phase names or slash verbs.
 
-This mapping is private to this skill. It describes the underlying phases an
-agent runs to fulfill each verb, but the phase names below MUST NOT leak into
-the generated brief (`[provides.brief]`) or `README.md`, which speak only
-"plan" and "build".
+## 2. Phase mapping (private)
 
-- `/plan` runs: explore → proposal → spec → design → tasks.
-- `/build` runs: apply → verify → archive-tail.
-  - The archive-tail is the automatic closing step at the *tail* of `/build`
-    (change-folder close + optional vault summary + optional tracker comment).
-    It is not a separate, visible third verb — see Section 8.
+- **Plan** runs: explore → proposal → spec → design → tasks.
+- **Build** runs: apply → verify → archive-tail (pre-merge on the review branch).
 
-## 3. Orchestrator degradation policy
+## 3. When to invoke
 
-- **Orchestrator present** (e.g. a gentle-ai-style multi-agent orchestrator) —
-  let it drive the phases as it normally would, delegating to sub-agents.
-- **Orchestrator absent** — run the equivalent phases inline, in order, as ONE
-  continuous conversation, without pausing for sub-agent handoffs. Never fail
-  and never silently skip a phase because no orchestrator is available; produce
-  the same artifacts inline that the orchestrated path would have produced.
+| Situation | Invoke plan? | Invoke build? |
+|---|---|---|
+| Quick question / read-only exploration | No | No |
+| Substantial change request (new feature, refactor, multi-file fix) | Yes — plan and stop | No |
+| User approves a pending plan ("go ahead", "implement it", "build it") | No | Yes |
+| Trivial one-line fix explicitly scoped by user | Optional — use judgment | Maybe inline |
 
-## 4. Memory degradation policy
+Prefer the project's native plan/review UX when available (e.g. plan mode) —
+this skill supplies the artifact trail behind that surface.
 
-- **Persistent memory present** (e.g. an Engram-style memory backend) — may be
-  used to persist artifacts for cross-session recovery.
-- **Persistent memory absent** — fall back to file artifacts on disk (see
-  Section 5). If the user explicitly wants no files at all, run inline-only
-  (`none`) but say so explicitly before proceeding.
+## 4. Orchestrator degradation policy
 
-## 5. Artifact-store default policy
+- **Orchestrator present** — let it drive phases via sub-agents.
+- **Orchestrator absent** — run equivalent phases inline in one conversation.
 
-- If an orchestrator preflight already resolved an artifact store for this
-  session, honor that choice.
-- Otherwise, default to file artifacts written under
-  `openspec/changes/<slug>/`, with `proposal.md`, `specs/<capability>/spec.md`,
-  `design.md`, and `tasks.md` as the concrete on-disk layout. Files are the
-  reviewable deliverable this workflow centers on; do not silently default to
-  memory-only persistence. This ceremony vocabulary stays internal to this
-  skill body — the agent still speaks only "plan" and "build" to the user.
+## 5. Memory degradation policy
+
+- **Persistent memory present** — may persist cross-session facts.
+- **Absent** — default to file artifacts under `openspec/changes/<slug>/`.
 
 ## 6. Change-slug derivation
 
-- On `/plan`, derive a short kebab-case slug from the user's intent (e.g. "add
-  rate limiting to the login endpoint" → `rate-limit-login`).
-- Persist or record the slug alongside the resolved artifact store so that a
-  later `/build [change]` resolves the exact same slug and store `/plan` used.
-- If `/build` is invoked with no argument:
-  - If no plan is outstanding, stop and direct the user to run `/plan` first
-    instead of guessing a target.
-  - If exactly one plan is outstanding (planned but not yet built), resolve to
-    it automatically.
-  - If more than one plan is outstanding, ask the user which one to build
-    rather than guessing.
-- Degraded-mode persistence: when neither an orchestrator nor a persistent
-  memory backend is available, do not rely on unstated persisted state for the
-  slug↔store mapping. Instead, the mapping must be inferable directly from the
-  file artifacts themselves — `/build` scans `openspec/changes/*/` (excluding
-  `openspec/changes/archive/`, per the close semantics in Section 8) for
-  outstanding (not-yet-built) plans to resolve the change-slug and store.
+- On plan, derive a kebab-case slug from intent.
+- On build, resolve slug from outstanding change folders under
+  `openspec/changes/` (excluding `archive/`).
+- If multiple outstanding plans exist, ask which to build.
 
 ## 7. Worktree deference
 
-- `/plan` does not require a dedicated worktree — planning artifacts are
-  review-first and typically small. Where an isolated-worktree workflow is
-  enabled in the project, its own gate still governs any writes `/plan` makes.
-- `/build` writes production code and MUST run inside a dedicated worktree
-  when an isolated-worktree workflow is enabled. Defer to that workflow's own
-  conventions for creating and naming the worktree rather than re-implementing
-  isolation here. This is a deference, not a hard dependency: `/build` still
-  runs standalone (in the current working tree) when no worktree workflow is
-  enabled.
+- Plan artifacts may be written before a worktree exists when small.
+- Build **must** use a dedicated worktree when `worktree-flow` is enabled.
 
 ## 8. Archive-tail graceful no-op
 
-The automatic closing step at the tail of `/build` never fails solely because
-an optional output channel is unavailable:
+Archive-tail runs at the end of build, **before merge** when a VCS PR/MR flow is
+in play:
 
-- **Change-folder close** always completes. This is the one step that must
-  succeed for `/build` to be considered done. Closing means moving the
-  change's folder from `openspec/changes/<slug>/` to
-  `openspec/changes/archive/<slug>/` (matching this repo's existing archive
-  convention). Consequently, any folder still directly under
-  `openspec/changes/` (excluding `archive/`) is an outstanding, not-yet-built
-  plan — this is the basis for the degraded-mode scan described in Section 6.
-- **Vault/canonical-store summary** — write a durable summary note if a
-  canonical-store integration is enabled; otherwise no-op with an informative
-  note that this output was skipped (do not fail `/build`).
-- **Tracker comment** — post a progress comment if a tracker integration is
-  enabled; otherwise no-op with an informative note that this output was
-  skipped (do not fail `/build`).
-- Report to the user what was built, validated, and closed, and which optional
-  outputs (if any) were skipped and why.
+- **Change-folder close** — move `openspec/changes/<slug>/` →
+  `openspec/changes/archive/<slug>/` (required).
+- **Vault summary** — no-op with note if canonical store absent.
+- **Tracker comment** — no-op with note if tracker absent.

@@ -1,8 +1,8 @@
 [recipe]
 id = "plan-build-flow"
 name = "Plan / Build Flow"
-description = "Two-verb change workflow: /plan produces reviewable artifacts, /build implements and closes"
-version = "1.0.0"
+description = "Ambient change workflow: silent planning artifacts before implementation, then validate and close"
+version = "2.0.0"
 author = "ai-specs"
 license = "MIT"
 tags = ["workflow"]
@@ -16,20 +16,12 @@ action = "validate-config"
 
 [provides]
 skills = [{ id = "plan-build-flow", source = "bundled" }]
-commands = [
-    { id = "plan", path = "commands/plan.md" },
-    { id = "build", path = "commands/build.md" },
-]
 
 [provides.brief]
 workflow_rules = [
-    "Use `/plan` to turn an intent into reviewable planning artifacts before writing code; review and authorize them before building.",
-    "Use `/build` to implement an authorized plan, validate the result, and close out the change.",
-    "Run `/build` where file-writing change work belongs; when isolated worktrees are enabled, build inside the change's worktree.",
-]
-useful_commands = [
-    "Plan a change: `/plan <intent>`",
-    "Build an authorized plan: `/build [change]`",
+    "For substantial changes, produce reviewable planning artifacts before writing production code; stop and wait for human authorization.",
+    "After authorization, implement, validate, and close the change in one flow — archive timing follows the bound VCS merge workflow.",
+    "Run file-writing implementation inside the change worktree when isolated worktrees are enabled.",
 ]
 
 [[provides.docs]]
