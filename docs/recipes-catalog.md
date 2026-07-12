@@ -109,7 +109,7 @@ workflow when one is enabled, without hard-depending on it.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "2.0.0"
+version = "1.0.0"
 ```
 
 ## worktree-flow

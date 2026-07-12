@@ -39,7 +39,7 @@ folder exists yet.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "2.1.0"
+version = "1.0.0"
 ```
 
 Then run `ai-specs sync`.

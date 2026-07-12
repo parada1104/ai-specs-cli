@@ -2,7 +2,7 @@
 
 ## Technical Approach
 
-Version 2.0.0 removed slash commands; 2.1.0 adds planning depth classification and hard gates without new schema surface.
+Stay on **1.0.0**: skill-only ambient surface (no slash commands) plus planning depth classification and hard gates — no new schema surface.
 
 ### Change depth classifier
 
@@ -23,7 +23,7 @@ Direct implementation verbs on requests without a change folder still run classi
 
 | File | Action |
 |------|--------|
-| `catalog/recipes/plan-build-flow/recipe.toml` | v2.1.0; classifier + gate brief rules |
+| `catalog/recipes/plan-build-flow/recipe.toml` | 1.0.0; classifier + gate brief rules |
 | `catalog/recipes/plan-build-flow/skills/plan-build-flow/SKILL.md` | Classifier + Sections 7–10 gates |
 | `catalog/recipes/plan-build-flow/README.md` | Document tiers and gates |
 | `openspec/specs/plan-build-flow/spec.md` | Promote classifier + gate requirements |

@@ -4,14 +4,14 @@
 
 Make the plan/build change ceremony fully invisible: remove `/plan` and `/build` slash commands and rely on ambient skill auto-invocation so agents plan and build using their native flow while silently maintaining the OpenSpec artifact trail.
 
-v2.1 adds a **change depth classifier** (full / standard / light), a **PR artifact gate** (no PR without committed planning files), and an explicit **pre-merge archive gate** aligned with `vcs-pr-flow`.
+The same **1.0.0** release adds a **change depth classifier** (full / standard / light), a **PR artifact gate** (no PR without committed planning files), and an explicit **pre-merge archive gate** aligned with `vcs-pr-flow`.
 
 ## Scope
 
 ### In Scope
 - Remove `plan` and `build` commands from the `plan-build-flow` recipe.
 - Rewrite bundled skill + brief/README for ambient triggers (no slash verbs).
-- Bump recipe to 2.1.0 with depth classifier and PR/archive gates.
+- Keep recipe at **1.0.0** (not yet widely adopted); ship depth classifier and PR/archive gates in that surface.
 - Add AC11–AC13 tests for classifier and gates.
 
 ### Out of Scope

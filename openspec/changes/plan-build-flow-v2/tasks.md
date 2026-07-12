@@ -3,7 +3,7 @@
 Source spec: `openspec/changes/plan-build-flow-v2/specs/plan-build-flow/spec.md`
 Source design: `openspec/changes/plan-build-flow-v2/design.md`
 
-## Phase 1 — Recipe surface (breaking v2.0.0)
+## Phase 1 — Recipe surface (1.0.0, skill-only)
 
 - [x] **T1.1** — Remove `commands/plan.md` and `commands/build.md` from recipe manifest.
 - [x] **T1.2** — Rewrite bundled skill for ambient `auto_invoke` (no slash verbs).

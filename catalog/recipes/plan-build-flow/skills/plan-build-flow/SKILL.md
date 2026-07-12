@@ -7,7 +7,7 @@ description: >
 license: MIT
 metadata:
   author: ai-specs
-  version: "2.1"
+  version: "1.0"
   scope: runtime
   auto_invoke:
     - "Starting a substantial feature, fix, or refactor that will modify code or artifacts"
