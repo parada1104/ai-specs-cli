@@ -1,3 +1,4 @@
+[SKILL.md#EF5E]
 ---
 name: bitbucket-merge-workflow
 description: >
@@ -33,6 +34,9 @@ declared for the project.
 - Working branch belongs to one focused change.
 - Worktree has no unrelated uncommitted changes.
 - Required verification evidence is complete or the user accepts the gap.
+- A change folder under `openspec/changes/<slug>/` (excluding `archive/`) exists
+  on the branch with at least `tasks.md` committed. If missing, stop before PR
+  creation and complete planning first.
 - `bb` is installed and authenticated.
 
 ## Runtime Preflight
@@ -85,7 +89,15 @@ bb pr create --source <branch-name> --destination <base_branch> --title "<title>
 APPROVED_SHA=$(bb pr view <pr-id> --json --jq '.source.commit.hash')
 ```
 
-7. Merge only after explicit user approval and required checks/review. Re-fetch the source commit and stop if it changed since approval:
+7. Before merging, archive and record SDD/OpenSpec artifacts for the change
+   while still on the review branch. The archive boundary is the pre-merge
+   branch state — never defer this step until after the merge lands on the base
+   branch. Commit and push any archive commits to the review branch before
+   proceeding.
+
+8. Merge only after explicit user approval, required checks/review, the
+   pre-merge archive step above, and a matching approved source commit. Re-fetch
+   the source commit and stop if it changed since approval:
 
 ```bash
 CURRENT_SHA=$(bb pr view <pr-id> --json --jq '.source.commit.hash')
@@ -99,7 +111,7 @@ bb pr merge <pr-id> --strategy squash --close-source-branch
 
 > **Note**: Re-checking the source commit ensures only the reviewed revision is merged. If the branch was updated between approval and merge, stop and ask the user to re-review.
 
-8. After the PR is merged, navigate to the main repo root first (the agent may
+9. After the PR is merged, navigate to the main repo root first (the agent may
    be running inside the worktree, and removing it while `$PWD` points there
    causes `fatal: Unable to read current working directory`). Then remove the
    worktree and force-delete the local branch:
@@ -115,7 +127,7 @@ git branch -D <branch-name>
 > branch, so `git branch -d` would refuse with "not fully merged". Force-delete
 > is safe here because the PR was already merged.
 
-9. Sync the integration branch:
+10. Sync the integration branch:
 
 ```bash
 git checkout <base_branch>

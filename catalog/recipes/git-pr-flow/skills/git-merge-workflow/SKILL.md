@@ -1,3 +1,4 @@
+[SKILL.md#643A]
 ---
 name: git-merge-workflow
 description: >
@@ -32,6 +33,9 @@ declared for the project.
 - Working branch belongs to one focused change.
 - Worktree has no unrelated uncommitted changes.
 - Required verification evidence is complete or the user accepts the gap.
+- A change folder under `openspec/changes/<slug>/` (excluding `archive/`) exists
+  on the branch with at least `tasks.md` committed. If missing, stop before PR
+  creation and complete planning first.
 - `gh` is installed and authenticated when GitHub is the provider.
 
 ## Workflow
@@ -50,20 +54,27 @@ git push -u origin <branch-name>
 gh pr create --base <integration-branch> --title "<title>" --body "<summary and verification>"
 ```
 
-5. Merge only after explicit user approval and required checks/review:
+5. Before merging, archive and record SDD/OpenSpec artifacts for the change
+   while still on the review branch. The archive boundary is the pre-merge
+   branch state — never defer this step until after the merge lands on the base
+   branch. Commit and push any archive commits to the review branch before
+   proceeding.
+
+6. Merge only after explicit user approval, required checks/review, and the
+   pre-merge archive step above:
 
 ```bash
 gh pr merge --squash
 ```
 
-6. After the PR is merged, remove the worktree and delete the local branch:
+7. After the PR is merged, remove the worktree and delete the local branch:
 
 ```bash
 git worktree remove .worktrees/<branch-name>
 git branch -d <branch-name>
 ```
 
-7. Sync the integration branch:
+8. Sync the integration branch:
 
 ```bash
 git checkout <integration-branch>
