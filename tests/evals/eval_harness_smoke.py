@@ -54,8 +54,8 @@ class HarnessSmokeTests(unittest.TestCase):
         plan_cmd = root / "ai-specs" / "commands" / "plan.md"
         build_cmd = root / "ai-specs" / "commands" / "build.md"
         self.assertTrue(skill.is_file())
-        self.assertTrue(plan_cmd.is_file())
-        self.assertTrue(build_cmd.is_file())
+        self.assertFalse(plan_cmd.exists())
+        self.assertFalse(build_cmd.exists())
 
     def test_live_gate_requires_env(self):
         if live_enabled() and claude_available() and api_key_present():
