@@ -242,95 +242,102 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
 
     tw = _load_toml_write()
     console = Console(stderr=True)
-    console.print()
-    console.print(
-        Panel.fit(
-            "[bold]ai-specs init[/bold]\nInteractive project onboarding",
-            border_style="cyan",
-        )
-    )
-    console.print(f"  target: [bold]{target}[/bold]")
-    console.print()
 
-    default_name = name_prefill or target.name
-    project_name = Prompt.ask("Project name", default=default_name).strip() or default_name
-
-    console.print()
-    console.print("[bold]Agents[/bold] to enable (fan-out targets for sync-agent)")
-    agent_table = Table(show_header=True, header_style="bold")
-    agent_table.add_column("#", style="dim", width=3)
-    agent_table.add_column("id")
-    agent_table.add_column("default")
-    default_agent_idxs = [i for i, a in enumerate(SUPPORTED_AGENTS) if a in DEFAULT_AGENTS]
-    for i, agent in enumerate(SUPPORTED_AGENTS, start=1):
-        agent_table.add_row(str(i), agent, "✓" if agent in DEFAULT_AGENTS else "")
-    console.print(agent_table)
-    console.print("[dim]Enter numbers (e.g. 1,2,3), 'all', 'none', or blank for defaults[/dim]")
-
-    while True:
-        raw = Prompt.ask("Agents", default="")
-        picked = _parse_selection(raw, len(SUPPORTED_AGENTS), default_agent_idxs)
-        if picked is None:
-            console.print("[red]Invalid selection[/red] — try again")
-            continue
-        agents = [SUPPORTED_AGENTS[i] for i in picked]
-        break
-
-    catalog = _catalog_recipes()
-    console.print()
-    console.print("[bold]Recipes[/bold] to enable from the catalog")
-    recipe_table = Table(show_header=True, header_style="bold")
-    recipe_table.add_column("#", style="dim", width=3)
-    recipe_table.add_column("id", min_width=22)
-    recipe_table.add_column("ver", style="dim")
-    recipe_table.add_column("description")
-    default_recipe_idxs = [i for i, r in enumerate(catalog) if r["id"] in DEFAULT_RECIPES]
-    for i, recipe in enumerate(catalog, start=1):
-        desc = recipe["description"]
-        if len(desc) > 64:
-            desc = desc[:61] + "…"
-        mark = " ✓" if recipe["id"] in DEFAULT_RECIPES else ""
-        recipe_table.add_row(str(i), f"{recipe['id']}{mark}", recipe["version"], desc)
-    console.print(recipe_table)
-    console.print("[dim]Enter numbers, 'all', 'none', or blank for defaults (session-context)[/dim]")
-
-    while True:
-        raw = Prompt.ask("Recipes", default="")
-        picked = _parse_selection(raw, len(catalog), default_recipe_idxs)
-        if picked is None:
-            console.print("[red]Invalid selection[/red] — try again")
-            continue
-        recipes = [catalog[i] for i in picked]
-        break
-
-    console.print()
-    console.print(
-        Panel.fit(
-            f"[bold]name[/bold]     {project_name}\n"
-            f"[bold]agents[/bold]   {', '.join(agents) if agents else '(none)'}\n"
-            f"[bold]recipes[/bold]  {', '.join(r['id'] for r in recipes) if recipes else '(none)'}\n"
-            f"[bold]mcp[/bold]      configure later via ai-specs.toml",
-            title="Preview",
-            border_style="green",
-        )
-    )
-
-    if not Confirm.ask("Write ai-specs.toml with these choices?", default=True):
-        console.print("[yellow]Cancelled[/yellow]")
+    def _cancel() -> int:
+        console.print("\n[yellow]Cancelled[/yellow]")
         return 1
 
-    toml_text = _render_manifest(tw, project_name, agents, recipes)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(toml_text, encoding="utf-8")
+    try:
+        console.print()
+        console.print(
+            Panel.fit(
+                "[bold]ai-specs init[/bold]\nInteractive project onboarding",
+                border_style="cyan",
+            )
+        )
+        console.print(f"  target: [bold]{target}[/bold]")
+        console.print()
 
-    meta = {
-        "name": project_name,
-        "agents": agents,
-        "recipes": [r["id"] for r in recipes],
-    }
-    out_path.with_suffix(".json").write_text(json.dumps(meta) + "\n", encoding="utf-8")
-    console.print(f"[green]✓[/green] staged manifest → {out_path}")
-    return 0
+        default_name = name_prefill or target.name
+        project_name = Prompt.ask("Project name", default=default_name).strip() or default_name
+
+        console.print()
+        console.print("[bold]Agents[/bold] to enable (fan-out targets for sync-agent)")
+        agent_table = Table(show_header=True, header_style="bold")
+        agent_table.add_column("#", style="dim", width=3)
+        agent_table.add_column("id")
+        agent_table.add_column("default")
+        default_agent_idxs = [i for i, a in enumerate(SUPPORTED_AGENTS) if a in DEFAULT_AGENTS]
+        for i, agent in enumerate(SUPPORTED_AGENTS, start=1):
+            agent_table.add_row(str(i), agent, "✓" if agent in DEFAULT_AGENTS else "")
+        console.print(agent_table)
+        console.print("[dim]Enter numbers (e.g. 1,2,3), 'all', 'none', or blank for defaults[/dim]")
+
+        while True:
+            raw = Prompt.ask("Agents", default="")
+            picked = _parse_selection(raw, len(SUPPORTED_AGENTS), default_agent_idxs)
+            if picked is None:
+                console.print("[red]Invalid selection[/red] — try again")
+                continue
+            agents = [SUPPORTED_AGENTS[i] for i in picked]
+            break
+
+        catalog = _catalog_recipes()
+        console.print()
+        console.print("[bold]Recipes[/bold] to enable from the catalog")
+        recipe_table = Table(show_header=True, header_style="bold")
+        recipe_table.add_column("#", style="dim", width=3)
+        recipe_table.add_column("id", min_width=22)
+        recipe_table.add_column("ver", style="dim")
+        recipe_table.add_column("description")
+        default_recipe_idxs = [i for i, r in enumerate(catalog) if r["id"] in DEFAULT_RECIPES]
+        for i, recipe in enumerate(catalog, start=1):
+            desc = recipe["description"]
+            if len(desc) > 64:
+                desc = desc[:61] + "…"
+            mark = " ✓" if recipe["id"] in DEFAULT_RECIPES else ""
+            recipe_table.add_row(str(i), f"{recipe['id']}{mark}", recipe["version"], desc)
+        console.print(recipe_table)
+        console.print("[dim]Enter numbers, 'all', 'none', or blank for defaults (session-context)[/dim]")
+
+        while True:
+            raw = Prompt.ask("Recipes", default="")
+            picked = _parse_selection(raw, len(catalog), default_recipe_idxs)
+            if picked is None:
+                console.print("[red]Invalid selection[/red] — try again")
+                continue
+            recipes = [catalog[i] for i in picked]
+            break
+
+        console.print()
+        console.print(
+            Panel.fit(
+                f"[bold]name[/bold]     {project_name}\n"
+                f"[bold]agents[/bold]   {', '.join(agents) if agents else '(none)'}\n"
+                f"[bold]recipes[/bold]  {', '.join(r['id'] for r in recipes) if recipes else '(none)'}\n"
+                f"[bold]mcp[/bold]      configure later via ai-specs.toml",
+                title="Preview",
+                border_style="green",
+            )
+        )
+
+        if not Confirm.ask("Write ai-specs.toml with these choices?", default=True):
+            return _cancel()
+
+        toml_text = _render_manifest(tw, project_name, agents, recipes)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(toml_text, encoding="utf-8")
+
+        meta = {
+            "name": project_name,
+            "agents": agents,
+            "recipes": [r["id"] for r in recipes],
+        }
+        out_path.with_suffix(".json").write_text(json.dumps(meta) + "\n", encoding="utf-8")
+        console.print(f"[green]✓[/green] staged manifest → {out_path}")
+        return 0
+    except KeyboardInterrupt:
+        return _cancel()
 
 
 def main() -> int:
@@ -347,6 +354,10 @@ def main() -> int:
 
     try:
         return run_wizard(target=target, name_prefill=args.name, out_path=Path(args.out))
+    except KeyboardInterrupt:
+        # Ctrl-C outside run_wizard's own try (e.g. during _ensure_rich prompt)
+        print("\nCancelled", file=sys.stderr)
+        return 1
     except Exception as exc:  # noqa: BLE001 — never collide with cancel (rc=1)
         print(f"ERROR: interactive init failed: {exc}", file=sys.stderr)
         return 3
