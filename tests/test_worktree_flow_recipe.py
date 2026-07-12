@@ -135,5 +135,11 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertTrue(script.is_file(), "cleanup script should materialize")
 
 
+    def test_skill_mentions_sdd_artifact_phases(self):
+        skill = RECIPE_DIR / "skills" / "worktree-flow" / "SKILL.md"
+        text = skill.read_text()
+        self.assertIn("SDD artifact phases", text)
+
+
 if __name__ == "__main__":
     unittest.main()
