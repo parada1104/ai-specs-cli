@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.12.4] — 2026-07-12
 ### Changed
+- **Hub dispatch fix**: `ai-specs recipe list <path>` y `ai-specs skills list <path>` ahora funcionan correctamente desde el hub.
+- **Lock cleanup en sync**: `clean_orphans` ahora limpia stale lock entries al correr `sync`.
+- **Env vars scaffolding**: Reemplazado `.envrc.example` por escritura directa de `.envrc` con `direnv allow` automatico.
+
+### Removed
+- Acciones separadas "Configure recipes" y "Remove recipe" del menu principal del hub — ahora integradas en submenu Recipes.
+
+## [0.12.4] — 2026-07-12
+### Changed
 
 - **TUI upgraded to Questionary interactive prompts** — agent and recipe
   selection now uses arrow keys + space toggle (checkboxes) instead of
