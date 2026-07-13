@@ -319,16 +319,23 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         out_path.with_suffix(".json").write_text(json.dumps(meta) + "\n", encoding="utf-8")
         console.print(f"[green]✓[/green] staged manifest → {out_path}")
 
-        # Offer .envrc.example when MCP env vars are present (best-effort).
+        # Prompt for MCP env vars, write .envrc, run direnv allow.
         try:
             envrc = _load_sibling("envrc-scaffold")
             if envrc.collect_env_vars(target):
-                if questionary.confirm("Generate ai-specs/.envrc.example?", default=True).ask():
-                    # Manifest is staged at out_path; generation expects project layout.
-                    # Init stages then moves — generate against target only if ai-specs.toml exists.
-                    if (target / "ai-specs" / "ai-specs.toml").is_file():
-                        written = envrc.generate_envrc_example(target)
-                        console.print(f"[green]✓[/green] wrote {written}")
+                # Manifest is staged at out_path; generation expects project layout.
+                if (target / "ai-specs" / "ai-specs.toml").is_file():
+                    values = envrc.prompt_env_vars(target)
+                    if values:
+                        written = envrc.write_envrc(target, values)
+                        console.print(f"[green]✓[/green] escrito {written}")
+                        if not envrc.direnv_allow(target):
+                            console.print(
+                                "[yellow]![/yellow] direnv no instalado. "
+                                "Corre 'brew install direnv && direnv allow' después."
+                            )
+                        else:
+                            console.print("[green]✓[/green] direnv allow")
         except Exception:
             pass
         return 0

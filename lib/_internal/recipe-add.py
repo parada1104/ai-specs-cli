@@ -158,11 +158,10 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
     )
     next_steps = []
     if has_config:
-        next_steps.append("Configurar valores: ai-specs configure-recipes")
+        next_steps.append("Configurar valores requeridos: ai-specs configure-recipes")
     if has_mcp_env:
         next_steps.append(
-            "Variables de entorno requeridas por MCP. "
-            "Copia ai-specs/.envrc.example a .envrc y completa los valores."
+            "Configurar variables de entorno MCP: ai-specs configure-recipes"
         )
     if next_steps:
         print()
