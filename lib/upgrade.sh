@@ -235,7 +235,7 @@ _tui_deps_ok() {
 }
 if ! _tui_deps_ok; then
     echo "Installing TUI dependencies (rich + questionary)..."
-    python3 -m pip install --quiet --target "$VENDOR_DIR" 'rich>=13.0.0,<15' 'questionary>=2.0.0,<2.1' || {
+    python3 -m pip install --upgrade --quiet --target "$VENDOR_DIR" 'rich>=13.0.0,<15' 'questionary>=2.0.0,<2.1' || {
         echo "warning: could not install TUI deps; init will prompt on first use" >&2
     }
 else
