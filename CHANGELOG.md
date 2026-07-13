@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-07-13
+
 ### Added
 - **Hub: Recipes submenu + `recipe add` con wizard integrado**: Recipes ahora es submenu interactivo en el hub (list/add/remove/configure/back). `recipe add` en TTY pregunta si configurar ahora, corre el config wizard, pide MCP env vars, escribe `.envrc` y ejecuta `direnv allow` automaticamente.
 - **Hub: configuracion de Agents**: Nueva opcion en el menu para seleccionar que agentes habilitar via checkbox.
