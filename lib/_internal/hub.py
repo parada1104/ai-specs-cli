@@ -50,6 +50,7 @@ def decide_mode(*, initialized: bool, tty: bool) -> Mode:
 class Action(Enum):
     SYNC = "sync"
     DOCTOR = "doctor"
+    AGENTS = "agents"
     SKILLS = "skills"
     RECIPES = "recipe"
     CONFIGURE_RECIPES = "configure-recipes"
@@ -62,6 +63,7 @@ class Action(Enum):
 _MENU: list[tuple[Action, str, str]] = [
     (Action.SYNC, "Sync", "Reconcile manifest → bundled + vendor + AGENTS.md + agents"),
     (Action.DOCTOR, "Doctor", "Full project health report (read-only)"),
+    (Action.AGENTS, "Agents", "Select which AI agents to enable"),
     (Action.SKILLS, "Skills", "List / add / remove vendored skills"),
     (Action.RECIPES, "Recipes", "List / add / remove / configure catalog recipes"),
     (Action.RULES_AUDIT, "Rules audit", "Inventory legacy rules for migration"),
@@ -257,6 +259,71 @@ def _run_interactive_hub(target: Path) -> int:
             else:
                 continue
             print("✓ done" if rc == 0 else f"✗ exited {rc}")
+            try:
+                input("Press Enter to return…")
+            except EOFError:
+                return 0
+            continue
+
+        if action is Action.AGENTS:
+            import questionary
+            manifest_path = target / "ai-specs" / "ai-specs.toml"
+            if not manifest_path.is_file():
+                console.print("[red]Manifest not found — run ai-specs init first[/red]")
+                continue
+
+            # Read current agents
+            toml_path = Path(__file__).with_name("toml-read.py")
+            spec = importlib.util.spec_from_file_location("toml_read_inline", toml_path)
+            if spec and spec.loader:
+                tr_module = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = tr_module
+                spec.loader.exec_module(tr_module)
+                data = tr_module.load_toml(manifest_path)
+                current = tr_module.read_agents(data).get("enabled", [])
+            else:
+                current = []
+
+            SUPPORTED_AGENTS = ["claude", "cursor", "opencode", "codex", "copilot", "gemini", "pi", "omp"]
+            choices = [
+                questionary.Choice(title=a, value=a, checked=a in current)
+                for a in SUPPORTED_AGENTS
+            ]
+            selected = questionary.checkbox("Select agents to enable:", choices=choices).ask()
+            if selected is None:
+                continue
+
+            # Write back: find [agents] section and update enabled line
+            text = manifest_path.read_text(encoding="utf-8")
+            lines = text.splitlines(keepends=True)
+            in_agents = False
+            written = False
+            new_lines: list[str] = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped == "[agents]":
+                    in_agents = True
+                    new_lines.append(line)
+                    # Replace the next `enabled = [...]` line
+                    continue
+                if in_agents and stripped.startswith("enabled"):
+                    new_lines.append(f'enabled = [{", ".join(repr(a) for a in selected)}]\n')
+                    in_agents = False
+                    written = True
+                    continue
+                if in_agents and stripped.startswith("["):
+                    # Next section without finding enabled — insert one
+                    new_lines.append(f'enabled = [{", ".join(repr(a) for a in selected)}]\n')
+                    in_agents = False
+                    written = True
+                new_lines.append(line)
+
+            if not written:
+                new_lines.append(f"[agents]\nenabled = [{', '.join(repr(a) for a in selected)}]\n")
+
+            manifest_path.write_text("".join(new_lines), encoding="utf-8")
+            print(f"  ✓ agents updated: {', '.join(selected) if selected else '(none)'}")
+            print("  Run sync to regenerate agent configs.")
             try:
                 input("Press Enter to return…")
             except EOFError:
