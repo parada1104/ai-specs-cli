@@ -104,7 +104,7 @@ if _has_deps; then
     echo "  TUI deps (rich + questionary) already available"
 else
     echo -e "${YELLOW}[2/3]${NC} Installing TUI dependencies (rich + questionary)"
-    python3 -m pip install --quiet --target "$VENDOR_DIR" 'rich>=13.0.0,<15' 'questionary>=2.0.0,<2.1' || {
+    python3 -m pip install --upgrade --quiet --target "$VENDOR_DIR" 'rich>=13.0.0,<15' 'questionary>=2.0.0,<2.1' || {
         echo -e "${YELLOW}warning:${NC} could not install TUI deps; init will prompt on first use or fall back to classic mode"
     }
 fi
