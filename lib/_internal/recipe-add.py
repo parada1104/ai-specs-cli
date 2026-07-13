@@ -149,6 +149,26 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
     if not any([skills, commands, mcp, templates, docs]):
         print("  (ninguna primitive declarada)")
 
+
+    # Guidance: what to do next
+    has_config = bool(recipe.config_schema.fields)
+    has_mcp_env = any(
+        bool((mcp.config or {}).get("env"))
+        for mcp in (recipe.mcp or [])
+    )
+    next_steps = []
+    if has_config:
+        next_steps.append("Configurar valores: ai-specs configure-recipes")
+    if has_mcp_env:
+        next_steps.append(
+            "Variables de entorno requeridas por MCP. "
+            "Copia ai-specs/.envrc.example a .envrc y completa los valores."
+        )
+    if next_steps:
+        print()
+        print("Siguientes pasos:")
+        for step in next_steps:
+            print(f"  - {step}")
     return 0
 
 
