@@ -326,6 +326,37 @@ id = "canonical-memory"
 
 Duplicate capability IDs within the same recipe cause a validation error.
 
+## `[[deps.cli]]` table
+
+Declares CLI binaries the recipe needs on `PATH`. Purely additive — recipes without
+`[deps]` parse unchanged. Checked by `ai-specs doctor` (WARN for missing required
+deps; exit code unchanged) and by the config wizard before prompting.
+
+Placement convention: after `[[capabilities]]` / `[[hooks]]`, before the first
+`[config.*]` table.
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `binary` | yes | — | Executable name checked via `PATH` |
+| `purpose` | yes | — | Human label shown in doctor / wizard panels |
+| `required` | no | `true` | `false` → INFO when missing (never WARN) |
+| `install_url` | no | `""` | Guidance link (never auto-installs) |
+| `version_check` | no | `""` | Shell command whose output is scanned for a version |
+| `min_version` | no | `""` | Minimum version; unparseable versions never block |
+
+```toml
+[[deps.cli]]
+binary = "gh"
+purpose = "Create and manage GitHub pull requests"
+required = true
+install_url = "https://cli.github.com/"
+version_check = "gh --version"
+min_version = "2.0.0"
+```
+
+Unknown keys raise `RecipeValidationError`. The checker is guidance-only — it never
+installs binaries.
+
 ## `[config]` schema declaration
 
 Defines configuration fields that the recipe expects. Values can be overridden per-project in the manifest under `[recipes.<id>.config]` (see [`docs/ai-specs-toml.md`](ai-specs-toml.md)).
@@ -336,7 +367,8 @@ Defines configuration fields that the recipe expects. Values can be overridden p
 | `type` | string | no | Optional hint for the expected type (`string`, `integer`, `boolean` by convention) |
 | `default` | any | no | Default value when not overridden |
 | `enum` | array of strings | no | Closed set of allowed values. When present, sync rejects any manifest override outside the list. |
-
+| `validation` | table | no | Validation rules. Currently supports `validation.regex` for string pattern matching. |
+| `help_text` | string | no | Contextual help shown to the user during interactive config prompts (e.g., where to find a value, link to docs). Displayed by the TUI config wizard. |
 Example:
 
 ```toml
@@ -348,6 +380,8 @@ default = 30
 [config.board_id]
 required = true
 type = "string"
+validation.regex = '^[0-9a-fA-F]{24}$'
+help_text = "Find your board ID in the Trello URL (24 hex chars). This is NOT the 8-char shortLink."
 
 [config.gate_mode]
 required = false

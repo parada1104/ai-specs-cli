@@ -46,6 +46,25 @@ never touches the foundational layer.
 
 ---
 
+
+## CLI prerequisites
+
+Recipes that shell out to external CLIs declare them via `[[deps.cli]]` in
+`recipe.toml`. `ai-specs doctor` emits WARN (required) / INFO (optional) when a
+binary is missing; the config wizard shows the same guidance. Install is always
+manual.
+
+| Recipe | Binary | Purpose | Required |
+|--------|--------|---------|----------|
+| `git-pr-flow` | `gh` | GitHub PR create/merge | yes |
+| `gitlab-mr-flow` | `glab`, `jq` | GitLab MR flow + JSON parsing | yes |
+| `bitbucket-pr-flow` | `bb` | Bitbucket PR create/merge | yes |
+| `trello-mcp-workflow` | `npx` | Trello MCP server runtime | yes |
+| `vault-canonical-store` | `npx` | Filesystem MCP server runtime | yes |
+| `worktree-flow` | `git` | Worktree add/remove/cleanup | yes |
+| `tdd-flow` | — | Test command is config-driven | — |
+
+
 ## session-context
 
 **Tool-agnostic session-start discipline.** Resolves the active focus from the

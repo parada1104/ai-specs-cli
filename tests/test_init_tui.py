@@ -59,6 +59,76 @@ class TestRenderManifest(unittest.TestCase):
         self.assertEqual(data["recipes"]["foo.bar"]["version"], "1.2.3")
 
 
+    def test_render_manifest_writes_config_block(self):
+        text = self.mod._render_manifest(
+            self.tw,
+            "demo",
+            ["claude"],
+            [{"id": "worktree-flow", "version": "1.2.1"}],
+            configured={
+                "worktree-flow": {
+                    "auto_remove_merged": True,
+                    "gate_mode": "always",
+                }
+            },
+        )
+        self.assertIn("[recipes.worktree-flow.config]", text)
+        self.assertIn("auto_remove_merged = true", text)
+        self.assertIn('gate_mode = "always"', text)
+        data = tomllib.loads(text)
+        self.assertEqual(data["recipes"]["worktree-flow"]["config"]["gate_mode"], "always")
+        self.assertIs(data["recipes"]["worktree-flow"]["config"]["auto_remove_merged"], True)
+
+    def test_render_manifest_no_config_backward_compat(self):
+        recipes = [{"id": "session-context", "version": "2.0.0"}]
+        legacy = self.mod._render_manifest(self.tw, "demo", ["claude"], recipes)
+        modern = self.mod._render_manifest(self.tw, "demo", ["claude"], recipes, configured=None)
+        self.assertEqual(legacy, modern)
+        self.assertNotIn(".config]", modern)
+
+
+class TestConfigureRecipesStep(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        vendor = ROOT / "lib" / "_vendor"
+        if vendor.is_dir() and str(vendor) not in __import__("sys").path:
+            __import__("sys").path.insert(0, str(vendor))
+        cls.mod = _load()
+
+    def test_configure_recipes_skip_later(self):
+        from unittest import mock
+        from rich.console import Console
+
+        recipe = mock.Mock()
+        recipe.cli_deps = []
+        recipe.config_schema.fields = {"base_branch": object()}
+
+        recipe_read = mock.Mock()
+        recipe_read.read_recipe.return_value = recipe
+        wizard = mock.Mock()
+        wizard.run_config_wizard.return_value = {"base_branch": "main"}
+
+        confirm = mock.Mock()
+        confirm.return_value.ask.return_value = False  # later
+
+        with mock.patch.object(self.mod, "_load_sibling", side_effect=lambda n: {
+            "config_wizard": wizard,
+            "dep_check": mock.Mock(),
+            "recipe-read": recipe_read,
+        }[n]), mock.patch("questionary.confirm", confirm):
+            # questionary imported inside function — patch via sys.modules after import path
+            import questionary
+            with mock.patch.object(questionary, "confirm", confirm):
+                configured = self.mod._configure_recipes(
+                    [{"id": "git-pr-flow"}],
+                    Console(stderr=True),
+                    Path("/tmp"),
+                )
+        self.assertEqual(configured, {})
+        wizard.run_config_wizard.assert_not_called()
+
+
+
 class TestCatalogRecipes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

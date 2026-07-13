@@ -92,6 +92,17 @@ def recipe_to_dict(recipe: Recipe) -> dict:
                 for h in recipe.runtime_hooks
             ],
         },
+        "cli_deps": [
+            {
+                "binary": d.binary,
+                "purpose": d.purpose,
+                "required": d.required,
+                "install_url": d.install_url,
+                "version_check": d.version_check,
+                "min_version": d.min_version,
+            }
+            for d in recipe.cli_deps
+        ],
     }
 
 

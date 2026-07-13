@@ -830,5 +830,166 @@ def _find_files(root: Path):
             yield p
 
 
+
+class RecipeCliDepsDoctorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.doctor = load_module(DOCTOR_PY, "doctor_recipe_deps")
+
+    def _write_project(self, root: Path, recipe_toml: str, enabled: bool = True) -> Path:
+        catalog = root / "catalog" / "recipes" / "demo-recipe"
+        catalog.mkdir(parents=True)
+        (catalog / "recipe.toml").write_text(recipe_toml)
+        project = root / "project"
+        (project / "ai-specs").mkdir(parents=True)
+        (project / "AGENTS.md").write_text("# agents\n")
+        # Satisfy bundled-asset checks so recipe-dep WARN can keep exit code 0.
+        for skill in ("skill-creator", "skill-sync"):
+            (project / "ai-specs" / "skills" / skill).mkdir(parents=True, exist_ok=True)
+        (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+        flag = "true" if enabled else "false"
+        (project / "ai-specs" / "ai-specs.toml").write_text(
+            '[project]\nname = "demo"\n\n'
+            '[agents]\nenabled = []\n\n'
+            f'[recipes.demo-recipe]\nenabled = {flag}\nversion = "1.0"\n'
+        )
+        return project
+
+    def test_recipe_cli_deps_warn_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_project(
+                root,
+                "[recipe]\n"
+                'id = "demo-recipe"\n'
+                'name = "Demo"\n'
+                'description = "D"\n'
+                'version = "1.0"\n'
+                "\n"
+                "[[deps.cli]]\n"
+                'binary = "gh"\n'
+                'purpose = "Create PRs"\n'
+                "required = true\n"
+                'install_url = "https://cli.github.com/"\n',
+            )
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value=None
+            ):
+                doc = self.doctor.Doctor(project)
+                code = doc.run()
+            warn_rows = [
+                c for c in doc.checks
+                if c.name == "recipe-dep" and c.severity == self.doctor.Severity.WARN
+            ]
+            self.assertTrue(warn_rows)
+            self.assertIn("gh", warn_rows[0].message)
+            self.assertEqual(warn_rows[0].guidance, "https://cli.github.com/")
+            self.assertEqual(code, 0)
+
+    def test_recipe_cli_deps_info_when_optional_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_project(
+                root,
+                "[recipe]\n"
+                'id = "demo-recipe"\n'
+                'name = "Demo"\n'
+                'description = "D"\n'
+                'version = "1.0"\n'
+                "\n"
+                "[[deps.cli]]\n"
+                'binary = "jq"\n'
+                'purpose = "JSON"\n'
+                "required = false\n",
+            )
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value=None
+            ):
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            info_rows = [
+                c for c in doc.checks
+                if c.name == "recipe-dep" and c.severity == self.doctor.Severity.INFO
+            ]
+            self.assertTrue(info_rows)
+            self.assertIn("optional jq", info_rows[0].message)
+
+    def test_recipe_cli_deps_ok_when_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_project(
+                root,
+                "[recipe]\n"
+                'id = "demo-recipe"\n'
+                'name = "Demo"\n'
+                'description = "D"\n'
+                'version = "1.0"\n'
+                "\n"
+                "[[deps.cli]]\n"
+                'binary = "gh"\n'
+                'purpose = "Create PRs"\n',
+            )
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value="/usr/bin/gh"
+            ):
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            ok_rows = [
+                c for c in doc.checks
+                if c.name == "recipe-dep" and c.severity == self.doctor.Severity.OK
+            ]
+            self.assertTrue(ok_rows)
+            self.assertIn("gh available", ok_rows[0].message)
+
+    def test_doctor_no_crash_when_no_recipes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            (project / "ai-specs").mkdir(parents=True)
+            (project / "AGENTS.md").write_text("# agents\n")
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "demo"\n\n[agents]\nenabled = []\n'
+            )
+            doc = self.doctor.Doctor(project)
+            code = doc.run()
+            self.assertFalse(any(c.name == "recipe-dep" for c in doc.checks))
+            self.assertIsInstance(code, int)
+
+    def test_doctor_exit_code_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_project(
+                root,
+                "[recipe]\n"
+                'id = "demo-recipe"\n'
+                'name = "Demo"\n'
+                'description = "D"\n'
+                'version = "1.0"\n'
+                "\n"
+                "[[deps.cli]]\n"
+                'binary = "missing-cli-xyz"\n'
+                'purpose = "demo"\n'
+                "required = true\n",
+            )
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value=None
+            ):
+                doc = self.doctor.Doctor(project)
+                code = doc.run()
+            self.assertTrue(
+                any(
+                    c.severity == self.doctor.Severity.WARN and c.name == "recipe-dep"
+                    for c in doc.checks
+                )
+            )
+            self.assertFalse(any(c.severity == self.doctor.Severity.ERROR and c.name == "recipe-dep" for c in doc.checks))
+            # WARN-only recipe-dep rows must not flip the exit code by themselves.
+            # Other ERROR checks from incomplete fixtures may exist; assert recipe-dep
+            # never contributes ERROR and WARN alone would keep exit 0.
+            recipe_only = [c for c in doc.checks if c.name == "recipe-dep"]
+            self.assertTrue(recipe_only)
+            self.assertTrue(all(c.severity != self.doctor.Severity.ERROR for c in recipe_only))
+
+
+
 if __name__ == "__main__":
     unittest.main()

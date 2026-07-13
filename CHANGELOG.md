@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.12.4] — 2026-07-12
+### Added
+- **Hub: Recipes submenu + `recipe add` con wizard integrado**: Recipes ahora es submenu interactivo en el hub (list/add/remove/configure/back). `recipe add` en TTY pregunta si configurar ahora, corre el config wizard, pide MCP env vars, escribe `.envrc` y ejecuta `direnv allow` automaticamente.
+- **Hub: configuracion de Agents**: Nueva opcion en el menu para seleccionar que agentes habilitar via checkbox.
+- **`recipe remove`**: Nuevo comando para eliminar recipes del manifest. Limpia automaticamente el `.ai-specs.lock`.
+- **MCP env vars interactivo**: Las variables de entorno (TRELLO_API_KEY, TRELLO_TOKEN, etc.) se piden interactivamente con masking. Se escriben directo a `.envrc` (no `.envrc.example`).
+- **Recipe config wizard + CLI deps + `.envrc.example`**: `[[deps.cli]]` schema on recipes; `dep_check.py` + Doctor WARN for missing required CLIs; hub action **Configure recipes** / `ai-specs configure-recipes`; surgical `[recipes.<id>.config]` write-back; init step 3.5 collects config after recipe selection; generates `ai-specs/.envrc.example` from MCP env refs (never writes `.envrc`).
+- **TUI hub** front door: bare `ai-specs` (and `ai-specs hub [path]`) opens an interactive status + command menu when a project is initialized on a TTY. Non-TTY prints a dep-free status summary; uninitialized no-TTY exits 2; uninitialized TTY offers init. Shared `lib/_internal/util.py` deps gate; rich+questionary pre-vendored under `lib/_vendor/`.
 
+### Changed
+- **Hub dispatch fix**: `ai-specs recipe list <path>` y `ai-specs skills list <path>` ahora funcionan correctamente desde el hub.
+- **Lock cleanup en sync**: `clean_orphans` ahora limpia stale lock entries al correr `sync`.
+- **Env vars scaffolding**: Reemplazado `.envrc.example` por escritura directa de `.envrc` con `direnv allow` automatico.
+
+### Removed
+- Acciones separadas "Configure recipes" y "Remove recipe" del menu principal del hub — ahora integradas en submenu Recipes.
+
+## [0.12.4] — 2026-07-12
 ### Changed
 
 - **TUI upgraded to Questionary interactive prompts** — agent and recipe

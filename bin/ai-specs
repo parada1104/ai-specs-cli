@@ -14,6 +14,7 @@
 # recipe init <id> [path] Print a read-only recipe init brief
 # upgrade [--dry-run] [--force] Upgrade the global installation safely
 # version Print CLI version
+# hub [path] Interactive status + command menu (also bare `ai-specs`)
 # help Show this help
 set -e
 SOURCE="${BASH_SOURCE[0]}"
@@ -26,9 +27,14 @@ BIN_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$BIN_DIR/.." && pwd)}"
 export AI_SPECS_HOME
 LIB_DIR="$AI_SPECS_HOME/lib"
-cmd="${1:-help}"
-shift || true
+if [[ $# -eq 0 ]]; then
+    cmd="hub"
+else
+    cmd="$1"
+    shift
+fi
 case "$cmd" in
+hub) bash "$LIB_DIR/hub.sh" "$@" ;;
 init) bash "$LIB_DIR/init.sh" "$@" ;;
 sync) bash "$LIB_DIR/sync.sh" "$@" ;;
 sync-agent) bash "$LIB_DIR/sync-agent.sh" "$@" ;;
@@ -38,6 +44,7 @@ skills) bash "$LIB_DIR/skills.sh" "$@" ;;
 doctor) bash "$LIB_DIR/doctor.sh" "$@" ;;
 rules-audit) bash "$LIB_DIR/rules-audit.sh" "$@" ;;
 recipe) bash "$LIB_DIR/recipe.sh" "$@" ;;
+configure-recipes) bash "$LIB_DIR/recipe-config.sh" "$@" ;;
 upgrade) bash "$LIB_DIR/upgrade.sh" "$@" ;;
 version|-v|--version) bash "$LIB_DIR/version.sh" ;;
 help|-h|--help) cat <<EOF
@@ -57,6 +64,7 @@ Commands:
   recipe list [path]          List available and installed recipes
   recipe add <id> [path]      Add a recipe to the manifest
   recipe init <id> [path]     Print a read-only recipe init brief
+  configure-recipes [path]    Configure recipe config, CLI deps, .envrc.example
   upgrade [--dry-run] [--force] Upgrade the global installation safely
   version Print CLI version
   help Show this help
