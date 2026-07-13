@@ -15,6 +15,16 @@ from pathlib import Path
 from typing import Any
 
 
+
+def _load_sibling(name: str):
+    """Load a same-directory _internal module by absolute path."""
+    path = Path(__file__).with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
 def _load_toml_read():
     module_path = Path(__file__).with_name("toml-read.py")
     spec = importlib.util.spec_from_file_location("toml_read_internal", module_path)
@@ -156,18 +166,50 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
         bool((mcp.config or {}).get("env"))
         for mcp in (recipe.mcp or [])
     )
-    next_steps = []
-    if has_config:
-        next_steps.append("Configurar valores requeridos: ai-specs configure-recipes")
-    if has_mcp_env:
-        next_steps.append(
-            "Configurar variables de entorno MCP: ai-specs configure-recipes"
-        )
-    if next_steps:
+
+    # If interactive, run config wizard + env var prompts now
+    tty = sys.stdin.isatty() and sys.stdout.isatty()
+    if tty and (has_config or has_mcp_env):
         print()
-        print("Siguientes pasos:")
-        for step in next_steps:
-            print(f"  - {step}")
+        import questionary
+        if not questionary.confirm("¿Configurar ahora?", default=True).ask():
+            print("Podés configurar después con: ai-specs configure-recipes")
+            return 0
+        if has_config:
+            try:
+                cw = _load_sibling("config_wizard")
+                manifest = project_root / "ai-specs" / "ai-specs.toml"
+                cw.configure_selected_recipes(project_root, [recipe_id], manifest)
+            except Exception:
+                print("  ! no se pudo abrir el asistente de configuración")
+
+        if has_mcp_env:
+            try:
+                envrc = _load_sibling("envrc-scaffold")
+                vars_map = envrc.collect_env_vars(project_root)
+                if vars_map:
+                    env_vals = envrc.prompt_env_vars(project_root)
+                    if env_vals:
+                        path = envrc.write_envrc(project_root, env_vals)
+                        print(f"  ✓ escrito {path}")
+                        if not envrc.direnv_allow(project_root):
+                            print("  ! direnv no instalado. brew install direnv && direnv allow")
+                        else:
+                            print("  ✓ direnv allow")
+            except Exception:
+                print("  ! no se pudieron configurar las variables de entorno")
+    else:
+        # Non-TTY: print guidance
+        next_steps = []
+        if has_config:
+            next_steps.append("Configurar valores requeridos: ai-specs configure-recipes")
+        if has_mcp_env:
+            next_steps.append("Configurar variables de entorno MCP: ai-specs configure-recipes")
+        if next_steps:
+            print()
+            print("Siguientes pasos:")
+            for step in next_steps:
+                print(f"  - {step}")
     return 0
 
 

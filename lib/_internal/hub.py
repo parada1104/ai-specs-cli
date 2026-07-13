@@ -59,16 +59,11 @@ class Action(Enum):
     HELP = "help"
     INIT = "init"
     QUIT = "quit"
-    REMOVE_RECIPE = "remove-recipe"
-
-
 _MENU: list[tuple[Action, str, str]] = [
     (Action.SYNC, "Sync", "Reconcile manifest → bundled + vendor + AGENTS.md + agents"),
     (Action.DOCTOR, "Doctor", "Full project health report (read-only)"),
     (Action.SKILLS, "Skills", "List / add / remove vendored skills"),
-    (Action.RECIPES, "Recipes", "List / add recipes from the catalog"),
-    (Action.CONFIGURE_RECIPES, "Configure recipes", "Set up recipe config, CLI deps, env vars"),
-    (Action.REMOVE_RECIPE, "Remove recipe", "Remove a recipe from the manifest"),
+    (Action.RECIPES, "Recipes", "List / add / remove / configure catalog recipes"),
     (Action.RULES_AUDIT, "Rules audit", "Inventory legacy rules for migration"),
     (Action.UPGRADE, "Upgrade", "Upgrade the global ai-specs installation"),
     (Action.VERSION, "Version", "Print the CLI version"),
@@ -76,8 +71,6 @@ _MENU: list[tuple[Action, str, str]] = [
     (Action.INIT, "Init wizard", "Re-run interactive onboarding"),
     (Action.QUIT, "Quit", "Exit the hub"),
 ]
-
-
 @dataclass(frozen=True)
 class StatusSummary:
     root: Path
@@ -207,7 +200,6 @@ def _print_version() -> None:
 
 
 _SUB_ARGS: dict[Action, list[str]] = {
-    Action.RECIPES: ["list"],
     Action.SKILLS: ["list"],
 }
 
@@ -228,19 +220,43 @@ def _run_interactive_hub(target: Path) -> int:
         if action is Action.QUIT:
             return 0
 
-        if action is Action.REMOVE_RECIPE:
+        if action is Action.RECIPES:
             import questionary
-            recipe_id = questionary.text(
-                "Recipe id to remove:",
-                instruction="(e.g. git-pr-flow, trello-mcp-workflow)",
+            sub = questionary.select(
+                "Recipes:",
+                choices=[
+                    questionary.Choice(title="List recipes", value="list"),
+                    questionary.Choice(title="Add recipe", value="add"),
+                    questionary.Choice(title="Remove recipe", value="remove"),
+                    questionary.Choice(title="Configure recipe", value="configure"),
+                    questionary.Choice(title="Back", value="back"),
+                ],
             ).ask()
-            if not recipe_id:
+            if sub is None or sub == "back":
                 continue
-            rc = runner.run(Action.RECIPES, extra=["remove", recipe_id])
-            if rc == 0:
-                print("✓ done")
+            if sub == "list":
+                rc = runner.run(Action.RECIPES, extra=["list"])
+            elif sub == "add":
+                recipe_id = questionary.text(
+                    "Recipe id:",
+                    instruction="(e.g. trello-mcp-workflow, git-pr-flow)",
+                ).ask()
+                if not recipe_id:
+                    continue
+                rc = runner.run(Action.RECIPES, extra=["add", recipe_id])
+            elif sub == "remove":
+                recipe_id = questionary.text(
+                    "Recipe id to remove:",
+                    instruction="(e.g. git-pr-flow, trello-mcp-workflow)",
+                ).ask()
+                if not recipe_id:
+                    continue
+                rc = runner.run(Action.RECIPES, extra=["remove", recipe_id])
+            elif sub == "configure":
+                rc = runner.run(Action.CONFIGURE_RECIPES)
             else:
-                print(f"✗ exited {rc}")
+                continue
+            print("✓ done" if rc == 0 else f"✗ exited {rc}")
             try:
                 input("Press Enter to return…")
             except EOFError:
