@@ -155,3 +155,12 @@ def set_recipe_skill_hashes(lock: dict, recipe_id: str, skill_name: str, hashes:
 
 def set_dep_skill_hashes(lock: dict, dep_id: str, skill_name: str, hashes: dict[str, str]) -> None:
     lock.setdefault("deps", {}).setdefault(dep_id, {})[skill_name] = dict(hashes)
+
+
+def remove_recipe_lock_entries(lock: dict, recipe_id: str) -> bool:
+    """Remove all lock entries for a recipe. Returns True if anything was removed."""
+    recipes = lock.get("recipes") or {}
+    if recipe_id in recipes:
+        del recipes[recipe_id]
+        return True
+    return False

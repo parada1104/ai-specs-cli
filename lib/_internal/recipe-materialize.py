@@ -42,6 +42,7 @@ write_lock = _lock_mod.write_lock
 set_recipe_skill_hashes = _lock_mod.set_recipe_skill_hashes
 set_dep_skill_hashes = _lock_mod.set_dep_skill_hashes
 sha256_of = _lock_mod.sha256_of
+remove_recipe_lock_entries = _lock_mod.remove_recipe_lock_entries
 
 # Load toml-read helper
 _toml_read_module = None
@@ -524,7 +525,6 @@ def build_recipe_mcp(catalog_dir: Path, recipe_ids: list[str], manifest_mcp: dic
     return merged
 
 
-# --- Orphan cleanup -----------------------------------------------------------
 def clean_orphans(project_root: Path, enabled_recipe_ids: set[str], expected_dep_ids: set[str]) -> None:
     recipe_dir = project_root / "ai-specs" / ".recipe"
     if recipe_dir.is_dir():
@@ -539,6 +539,19 @@ def clean_orphans(project_root: Path, enabled_recipe_ids: set[str], expected_dep
             if child.is_dir() and child.name not in expected_dep_ids:
                 shutil.rmtree(child)
                 print(f"  ✓ removed orphaned .deps/{child.name}")
+
+    # Clean up stale lock entries for recipes no longer in the manifest
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    if lock_path.is_file():
+        lock = load_lock(lock_path)
+        removed_any = False
+        for rid in list(lock.get("recipes", {})):
+            if rid not in enabled_recipe_ids:
+                remove_recipe_lock_entries(lock, rid)
+                removed_any = True
+                print(f"  ✓ removed stale lock entries for recipe '{rid}'")
+        if removed_any:
+            write_lock(lock_path, lock)
 
 
 # --- Main ---------------------------------------------------------------------

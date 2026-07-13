@@ -59,6 +59,7 @@ class Action(Enum):
     HELP = "help"
     INIT = "init"
     QUIT = "quit"
+    REMOVE_RECIPE = "remove-recipe"
 
 
 _MENU: list[tuple[Action, str, str]] = [
@@ -67,6 +68,7 @@ _MENU: list[tuple[Action, str, str]] = [
     (Action.SKILLS, "Skills", "List / add / remove vendored skills"),
     (Action.RECIPES, "Recipes", "List / add recipes from the catalog"),
     (Action.CONFIGURE_RECIPES, "Configure recipes", "Set up recipe config, CLI deps, env vars"),
+    (Action.REMOVE_RECIPE, "Remove recipe", "Remove a recipe from the manifest"),
     (Action.RULES_AUDIT, "Rules audit", "Inventory legacy rules for migration"),
     (Action.UPGRADE, "Upgrade", "Upgrade the global ai-specs installation"),
     (Action.VERSION, "Version", "Print the CLI version"),
@@ -153,8 +155,13 @@ class DelegateRunner:
     target: Path
 
     def run(self, action: Action, extra: list[str] | None = None) -> int:
-        argv = [str(self.cli), action.value, str(self.target), *(extra or [])]
-        # inherited stdio (no capture): child owns the terminal and streams live
+        argv = [str(self.cli), action.value]
+        if extra:
+            # Subcommand-based dispatchers (recipe, skills) want subcommand before target
+            argv.extend(extra)
+            argv.append(str(self.target))
+        else:
+            argv.append(str(self.target))
         return subprocess.run(argv).returncode
 
 
@@ -220,6 +227,25 @@ def _run_interactive_hub(target: Path) -> int:
 
         if action is Action.QUIT:
             return 0
+
+        if action is Action.REMOVE_RECIPE:
+            import questionary
+            recipe_id = questionary.text(
+                "Recipe id to remove:",
+                instruction="(e.g. git-pr-flow, trello-mcp-workflow)",
+            ).ask()
+            if not recipe_id:
+                continue
+            rc = runner.run(Action.RECIPES, extra=["remove", recipe_id])
+            if rc == 0:
+                print("✓ done")
+            else:
+                print(f"✗ exited {rc}")
+            try:
+                input("Press Enter to return…")
+            except EOFError:
+                return 0
+            continue
         if action is Action.VERSION:
             _print_version()
             continue
