@@ -50,6 +50,7 @@ def decide_mode(*, initialized: bool, tty: bool) -> Mode:
 class Action(Enum):
     SYNC = "sync"
     DOCTOR = "doctor"
+    AGENTS = "agents"
     SKILLS = "skills"
     RECIPES = "recipe"
     CONFIGURE_RECIPES = "configure-recipes"
@@ -59,14 +60,12 @@ class Action(Enum):
     HELP = "help"
     INIT = "init"
     QUIT = "quit"
-
-
 _MENU: list[tuple[Action, str, str]] = [
     (Action.SYNC, "Sync", "Reconcile manifest → bundled + vendor + AGENTS.md + agents"),
     (Action.DOCTOR, "Doctor", "Full project health report (read-only)"),
+    (Action.AGENTS, "Agents", "Select which AI agents to enable"),
     (Action.SKILLS, "Skills", "List / add / remove vendored skills"),
-    (Action.RECIPES, "Recipes", "List / add recipes from the catalog"),
-    (Action.CONFIGURE_RECIPES, "Configure recipes", "Set up recipe config, CLI deps, env vars"),
+    (Action.RECIPES, "Recipes", "List / add / remove / configure catalog recipes"),
     (Action.RULES_AUDIT, "Rules audit", "Inventory legacy rules for migration"),
     (Action.UPGRADE, "Upgrade", "Upgrade the global ai-specs installation"),
     (Action.VERSION, "Version", "Print the CLI version"),
@@ -74,8 +73,6 @@ _MENU: list[tuple[Action, str, str]] = [
     (Action.INIT, "Init wizard", "Re-run interactive onboarding"),
     (Action.QUIT, "Quit", "Exit the hub"),
 ]
-
-
 @dataclass(frozen=True)
 class StatusSummary:
     root: Path
@@ -153,8 +150,13 @@ class DelegateRunner:
     target: Path
 
     def run(self, action: Action, extra: list[str] | None = None) -> int:
-        argv = [str(self.cli), action.value, str(self.target), *(extra or [])]
-        # inherited stdio (no capture): child owns the terminal and streams live
+        argv = [str(self.cli), action.value]
+        if extra:
+            # Subcommand-based dispatchers (recipe, skills) want subcommand before target
+            argv.extend(extra)
+            argv.append(str(self.target))
+        else:
+            argv.append(str(self.target))
         return subprocess.run(argv).returncode
 
 
@@ -200,7 +202,6 @@ def _print_version() -> None:
 
 
 _SUB_ARGS: dict[Action, list[str]] = {
-    Action.RECIPES: ["list"],
     Action.SKILLS: ["list"],
 }
 
@@ -220,6 +221,114 @@ def _run_interactive_hub(target: Path) -> int:
 
         if action is Action.QUIT:
             return 0
+
+        if action is Action.RECIPES:
+            import questionary
+            sub = questionary.select(
+                "Recipes:",
+                choices=[
+                    questionary.Choice(title="List recipes", value="list"),
+                    questionary.Choice(title="Add recipe", value="add"),
+                    questionary.Choice(title="Remove recipe", value="remove"),
+                    questionary.Choice(title="Configure recipe", value="configure"),
+                    questionary.Choice(title="Back", value="back"),
+                ],
+            ).ask()
+            if sub is None or sub == "back":
+                continue
+            if sub == "list":
+                rc = runner.run(Action.RECIPES, extra=["list"])
+            elif sub == "add":
+                recipe_id = questionary.text(
+                    "Recipe id:",
+                    instruction="(e.g. trello-mcp-workflow, git-pr-flow)",
+                ).ask()
+                if not recipe_id:
+                    continue
+                rc = runner.run(Action.RECIPES, extra=["add", recipe_id])
+            elif sub == "remove":
+                recipe_id = questionary.text(
+                    "Recipe id to remove:",
+                    instruction="(e.g. git-pr-flow, trello-mcp-workflow)",
+                ).ask()
+                if not recipe_id:
+                    continue
+                rc = runner.run(Action.RECIPES, extra=["remove", recipe_id])
+            elif sub == "configure":
+                rc = runner.run(Action.CONFIGURE_RECIPES)
+            else:
+                continue
+            print("✓ done" if rc == 0 else f"✗ exited {rc}")
+            try:
+                input("Press Enter to return…")
+            except EOFError:
+                return 0
+            continue
+
+        if action is Action.AGENTS:
+            import questionary
+            manifest_path = target / "ai-specs" / "ai-specs.toml"
+            if not manifest_path.is_file():
+                console.print("[red]Manifest not found — run ai-specs init first[/red]")
+                continue
+
+            # Read current agents
+            toml_path = Path(__file__).with_name("toml-read.py")
+            spec = importlib.util.spec_from_file_location("toml_read_inline", toml_path)
+            if spec and spec.loader:
+                tr_module = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = tr_module
+                spec.loader.exec_module(tr_module)
+                data = tr_module.load_toml(manifest_path)
+                current = tr_module.read_agents(data).get("enabled", [])
+            else:
+                current = []
+
+            SUPPORTED_AGENTS = ["claude", "cursor", "opencode", "codex", "copilot", "gemini", "pi", "omp"]
+            choices = [
+                questionary.Choice(title=a, value=a, checked=a in current)
+                for a in SUPPORTED_AGENTS
+            ]
+            selected = questionary.checkbox("Select agents to enable:", choices=choices).ask()
+            if selected is None:
+                continue
+
+            # Write back: find [agents] section and update enabled line
+            text = manifest_path.read_text(encoding="utf-8")
+            lines = text.splitlines(keepends=True)
+            in_agents = False
+            written = False
+            new_lines: list[str] = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped == "[agents]":
+                    in_agents = True
+                    new_lines.append(line)
+                    # Replace the next `enabled = [...]` line
+                    continue
+                if in_agents and stripped.startswith("enabled"):
+                    new_lines.append(f'enabled = [{", ".join(repr(a) for a in selected)}]\n')
+                    in_agents = False
+                    written = True
+                    continue
+                if in_agents and stripped.startswith("["):
+                    # Next section without finding enabled — insert one
+                    new_lines.append(f'enabled = [{", ".join(repr(a) for a in selected)}]\n')
+                    in_agents = False
+                    written = True
+                new_lines.append(line)
+
+            if not written:
+                new_lines.append(f"[agents]\nenabled = [{', '.join(repr(a) for a in selected)}]\n")
+
+            manifest_path.write_text("".join(new_lines), encoding="utf-8")
+            print(f"  ✓ agents updated: {', '.join(selected) if selected else '(none)'}")
+            print("  Run sync to regenerate agent configs.")
+            try:
+                input("Press Enter to return…")
+            except EOFError:
+                return 0
+            continue
         if action is Action.VERSION:
             _print_version()
             continue

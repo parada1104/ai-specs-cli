@@ -225,12 +225,13 @@ def _enabled_recipe_ids(project_root: Path) -> list[str]:
 
 
 def _offer_envrc(project_root: Path) -> None:
-    """Best-effort .envrc.example offer (implemented fully in envrc-scaffold)."""
+    """Prompt for MCP env vars, write .envrc, run direnv allow."""
     try:
         envrc = _load_sibling("envrc-scaffold")
     except Exception:
         return
     import questionary
+    from rich.console import Console
 
     try:
         vars_map = envrc.collect_env_vars(project_root)
@@ -238,10 +239,23 @@ def _offer_envrc(project_root: Path) -> None:
         return
     if not vars_map:
         return
-    if not questionary.confirm("Generate ai-specs/.envrc.example?", default=True).ask():
+
+    console = Console()
+    values = envrc.prompt_env_vars(project_root)
+    if values is None:
         return
-    path = envrc.generate_envrc_example(project_root)
-    print(f"Wrote {path}")
+    if not values:
+        return
+
+    path = envrc.write_envrc(project_root, values)
+    console.print(f"[green]✓[/green] escrito {path}")
+
+    if not envrc.direnv_allow(project_root):
+        print("  ! direnv no está instalado o no se pudo ejecutar.", file=sys.stderr)
+        print("    Instalalo con: brew install direnv", file=sys.stderr)
+        print("    Despues corre: direnv allow", file=sys.stderr)
+    else:
+        print("  ✓ direnv allow — las variables están activas en esta terminal")
 
 
 def main(argv: list[str] | None = None) -> int:

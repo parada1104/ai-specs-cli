@@ -174,7 +174,7 @@ class TestDelegateRunner(unittest.TestCase):
                 run_mock.return_value = mock.Mock(returncode=0)
                 runner.run(self.mod.Action.UPGRADE, extra=["--dry-run"])
             argv = run_mock.call_args[0][0]
-            self.assertEqual(argv, [str(cli), "upgrade", str(target), "--dry-run"])
+            self.assertEqual(argv, [str(cli), "upgrade", "--dry-run", str(target)])
 
 
 class TestNonInteractiveStatus(unittest.TestCase):
