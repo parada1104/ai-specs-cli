@@ -55,18 +55,36 @@ If `bb` is not found, stop and report:
 Then verify authentication:
 
 ```bash
-bb auth status
+bb auth show
 ```
 
 If authentication fails (output includes "Not logged in"), stop and report:
 
 > **Blocker**: `bb` is not authenticated. Run `bb auth login` and retry.
 
+Then run **Runtime Preflight: Account Match** when `expected_owner` is set in
+`[recipes.bitbucket-pr-flow.config]` (skip when empty — no extra CLI calls):
+
+```bash
+# Runtime Preflight: Account Match (Bitbucket)
+# Fix: bb has no `bb auth status`; the correct command is `bb auth show`.
+EXPECTED_OWNER="{config.expected_owner}"
+if [ -n "$EXPECTED_OWNER" ]; then
+  ACTIVE=$(bb auth show 2>&1 | awk '/Username|username/ {print $2}' | head -1)
+  if [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
+    echo "**Blocker**: active bb account is '$ACTIVE'; expected '$EXPECTED_OWNER'."
+    echo "bb has no 'auth switch'. Run: bb auth login"
+    return 1
+  fi
+fi
+```
+
 ## Workflow
 
 1. Inspect current branch, worktree path, and `git status`.
 2. Run or confirm any verification required before merge.
-3. Resolve the Bitbucket remote and push the feature branch explicitly:
+3. Run **Runtime Preflight** (CLI checks + account match above).
+4. Resolve the Bitbucket remote and push the feature branch explicitly:
 
 ```bash
 REMOTE=$(git remote | grep -E '^(origin|bitbucket|upstream)$' | head -1 || echo "origin")

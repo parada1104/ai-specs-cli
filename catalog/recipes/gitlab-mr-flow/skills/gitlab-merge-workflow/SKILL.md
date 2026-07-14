@@ -70,13 +70,35 @@
 66:
 67:If `jq` is not found, stop and report:
 68:
-69:> **Blocker**: `jq` is not installed. Install it from https://jqlang.github.io/jq/download/ and retry.
-70:
-71:## Workflow
-72:
-73:1. Inspect current branch, worktree path, and `git status`.
-74:2. Run or confirm any verification required before merge.
-75:3. Resolve the GitLab remote and push the feature branch explicitly:
+ 69:> **Blocker**: `jq` is not installed. Install it from https://jqlang.github.io/jq/download/ and retry.
+ 70:
+ 71:Then run **Runtime Preflight: Account Match** when `expected_owner` is set in
+ 72:`[recipes.gitlab-mr-flow.config]` (skip when empty — no extra CLI calls):
+ 73:
+ 74:```bash
+ 75:# Runtime Preflight: Account Match (GitLab)
+ 76:EXPECTED_OWNER="{config.expected_owner}"
+ 77:if [ -n "$EXPECTED_OWNER" ]; then
+ 78:  ACTIVE=$(glab auth status 2>&1 | awk '
+ 79:    /Logged in to gitlab\.com account/ {
+ 80:      if (match($0, /account [^ ]+ \(/))      { a=substr($0, RSTART+8, RLENGTH-2) }
+ 81:      else if (match($0, /account [^ ]+$/))   { a=substr($0, RSTART+8) }
+ 82:    }
+ 83:    /Active account: true/ { print a }' | head -1)
+ 84:  if [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
+ 85:    echo "**Blocker**: active glab account is '$ACTIVE'; expected '$EXPECTED_OWNER'."
+ 86:    echo "glab has no 'auth switch'. Run: glab auth login   (or export GLAB_TOKEN=<token>)."
+ 87:    return 1
+ 88:  fi
+ 89:fi
+ 90:```
+ 91:
+ 92:## Workflow
+ 93:
+ 94:1. Inspect current branch, worktree path, and `git status`.
+ 95:2. Run or confirm any verification required before merge.
+ 96:3. Run **Runtime Preflight** (CLI checks + account match above).
+ 97:4. Resolve the GitLab remote and push the feature branch explicitly:
 76:
 77:```bash
 78:REMOTE=$(git remote | grep -E '^(origin|gitlab|upstream)$' | head -1 || echo "origin")

@@ -24,7 +24,7 @@ GitLab ([`gitlab-mr-flow`](../gitlab-mr-flow/README.md)).
 
 ## Prerequisites
 
-- **`bb` CLI** installed and authenticated (`bb auth status`). Install from
+- **`bb` CLI** installed and authenticated (`bb auth show` — not `bb auth status`). Install from
   https://bitbucket-cli.paulvanderlei.com/getting-started/installation/
 
 ## Enable in `ai-specs.toml`
@@ -32,19 +32,23 @@ GitLab ([`gitlab-mr-flow`](../gitlab-mr-flow/README.md)).
 ```toml
 [recipes.bitbucket-pr-flow]
 enabled = true
-version = "1.0.0"
+version = "1.1.0"
 
 [recipes.bitbucket-pr-flow.config]
 base_branch = "development"
+expected_owner = ""
+auto_switch_account = false
 ```
 
 Run `ai-specs sync` to materialize the bundled skill, `/bb-pr-create`, and this doc.
 
 ## Config
 
-| Key           | Required | Type   | Default        | Description |
-| ------------- | -------- | ------ | -------------- | ----------- |
-| `base_branch` | no       | string | `development`  | Base branch the PR targets. |
+| Key                   | Required | Type    | Default        | Description |
+| --------------------- | -------- | ------- | -------------- | ----------- |
+| `base_branch`         | no       | string  | `development`  | Base branch the PR targets. |
+| `expected_owner`      | no       | string  | `""`           | Account username this repo expects; activates auth preflight when set. |
+| `auto_switch_account` | no       | boolean | `false`        | Reserved for API parity; bb has no auth switch — mismatch blocks with guidance. |
 
 ## Safety note
 

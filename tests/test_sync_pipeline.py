@@ -893,12 +893,12 @@ class SyncPipelineTests(unittest.TestCase):
                 "board_id = 'aabbcc112233445566778899'\n\n"  # 24-char hex as required
                 "[recipes.worktree-flow]\n"
                 "enabled = true\n"
-                "version = '1.2.1'\n"
+                "version = '1.2.2'\n"
                 "[recipes.worktree-flow.config]\n"
                 "integration_branch = 'development'\n\n"
                 "[recipes.git-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.2.2'\n"
+                "version = '1.3.0'\n"
                 "[recipes.git-pr-flow.config]\n"
                 "base_branch = 'development'\n\n"
                 "[recipes.tdd-flow]\n"
@@ -2639,7 +2639,7 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "enabled = ['claude']\n\n"
                 "[recipes.gitlab-mr-flow]\n"
                 "enabled = true\n"
-                "version = '1.1.1'\n"
+                "version = '1.2.0'\n"
                 "[recipes.gitlab-mr-flow.config]\n"
                 "base_branch = 'main'\n"
                 "provider = 'github'\n\n"  # stale key — must warn
@@ -2698,7 +2698,7 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "enabled = ['claude']\n\n"
                 "[recipes.bitbucket-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.0.1'\n"
+                "version = '1.1.0'\n"
                 # NO base_branch set — catalog default "development" must apply
                 "[[bindings]]\n"
                 "capability = 'vcs-pr-flow'\n"

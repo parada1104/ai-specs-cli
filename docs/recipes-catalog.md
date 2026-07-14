@@ -38,9 +38,9 @@ never touches the foundational layer.
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
 | [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | — |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `WORKTREE_GATE_PROTECTED` |
-| [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch` |
-| [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch` |
-| [`bitbucket-pr-flow`](#bitbucket-pr-flow) | Specific | Branch → PR → approval-gated merge (Bitbucket) | `vcs-pr-flow` | — | `base_branch` |
+| [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
+| [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
+| [`bitbucket-pr-flow`](#bitbucket-pr-flow) | Specific | Branch → PR → approval-gated merge (Bitbucket) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
 | [`trello-mcp-workflow`](#trello-mcp-workflow) | Specific | Trello board integration (tracker) | `tracker` (+ 4 trello-* capabilities) | `trello` | **`board_id` (required)**, `default_list`, `epic_list` |
 | [`vault-canonical-store`](#vault-canonical-store) | Specific | Durable decisions/handoffs in a vault MCP | `canonical-store` | `vault-canonical` | `vault_scope`, `decisions_folder`, `sessions_folder` |
 
@@ -180,16 +180,20 @@ Sibling recipes cover GitLab and Bitbucket; select the host through `[[bindings]
   | Key | Type | Required | Default | Description |
   |-----|------|----------|---------|-------------|
   | `base_branch` | string | no | `main` | Base branch the PR targets. |
+  | `expected_owner` | string | no | `""` | Account username this repo expects; activates auth preflight when set. |
+  | `auto_switch_account` | boolean | no | `false` | gh only: auto-switch CLI account on mismatch (requires gh ≥ 2.50.0). |
 
 - **Full README:** [`catalog/recipes/git-pr-flow/README.md`](../catalog/recipes/git-pr-flow/README.md)
 
 ```toml
 [recipes.git-pr-flow]
 enabled = true
-version = "1.2.0"
+version = "1.3.0"
 
 [recipes.git-pr-flow.config]
 base_branch = "development"
+expected_owner = ""
+auto_switch_account = false
 
 [[bindings]]
 capability = "vcs-pr-flow"
@@ -209,16 +213,20 @@ Installs no MCP server.
   | Key | Type | Required | Default | Description |
   |-----|------|----------|---------|-------------|
   | `base_branch` | string | no | `development` | Base branch the MR targets. |
+  | `expected_owner` | string | no | `""` | Account username this repo expects; activates auth preflight when set. |
+  | `auto_switch_account` | boolean | no | `false` | Reserved for API parity; glab has no auth switch — mismatch blocks with guidance. |
 
 - **Full README:** [`catalog/recipes/gitlab-mr-flow/README.md`](../catalog/recipes/gitlab-mr-flow/README.md)
 
 ```toml
 [recipes.gitlab-mr-flow]
 enabled = true
-version = "1.1.0"
+version = "1.2.0"
 
 [recipes.gitlab-mr-flow.config]
 base_branch = "development"
+expected_owner = ""
+auto_switch_account = false
 
 [[bindings]]
 capability = "vcs-pr-flow"
@@ -238,16 +246,22 @@ Installs no MCP server.
   | Key | Type | Required | Default | Description |
   |-----|------|----------|---------|-------------|
   | `base_branch` | string | no | `development` | Base branch the PR targets. |
+  | `expected_owner` | string | no | `""` | Account username this repo expects; activates auth preflight when set. |
+  | `auto_switch_account` | boolean | no | `false` | Reserved for API parity; bb has no auth switch — mismatch blocks with guidance. |
+
+- **Auth note:** Bitbucket CLI uses `bb auth show` (not `bb auth status`) to verify authentication.
 
 - **Full README:** [`catalog/recipes/bitbucket-pr-flow/README.md`](../catalog/recipes/bitbucket-pr-flow/README.md)
 
 ```toml
 [recipes.bitbucket-pr-flow]
 enabled = true
-version = "1.0.0"
+version = "1.1.0"
 
 [recipes.bitbucket-pr-flow.config]
 base_branch = "development"
+expected_owner = ""
+auto_switch_account = false
 
 [[bindings]]
 capability = "vcs-pr-flow"
