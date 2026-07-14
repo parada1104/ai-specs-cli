@@ -89,6 +89,12 @@ Array of tables:
 | `target` | string | yes | Relative path inside project root |
 | `condition` | string | no | `"not_exists"` (default) — skip if target already exists |
 
+> **#104 note:** Managed templates with `condition = "not_exists"` are written once
+> and are **not** refreshed on later syncs. After a CLI upgrade, existing on-disk
+> template targets keep their current content. Expect a WARN/docs note only —
+> full managed-template refresh is a separate follow-up.
+
+
 ### `docs`
 
 Array of tables:
@@ -504,3 +510,11 @@ example in this repo. It demonstrates:
 
 Use it as a reference recipe for V2 structure, but treat this document as the
 canonical contract when example details and implementation ergonomics diverge.
+
+## Managed templates (#104)
+
+Templates with `condition = "not_exists"` are copied once when the target is absent.
+Sync does **not** refresh those targets after a CLI upgrade. If you need the newer
+catalog template, update the project file manually (or remove it and re-sync).
+This is WARN/docs-only — there is no automatic template refresh path.
+

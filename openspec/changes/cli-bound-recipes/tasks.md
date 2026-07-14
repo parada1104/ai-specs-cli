@@ -44,28 +44,28 @@ Chained PRs recommended: Yes
 
 ## Phase 2 — PR2: Cache module + skill/dep origin + leftover cleanup
 
-- [ ] 2.1 RED: `project-cache` unit — `cache_key` stable; `meta.toml` sidecar; path helpers; leftover `.recipe`/`.deps` deleted; override migrate before rm
-- [ ] 2.2 GREEN: create `lib/_internal/project-cache.py` (`cache_key`, `cache_root`, `ensure_cache`, roots, `remove_legacy_origin`)
-- [ ] 2.3 RED: materialize/vendor/skill-resolution resolve under cache; orphans clean via resolver; no skills pollution
-- [ ] 2.4 GREEN: `recipe-materialize.py` stage `.recipe` to cache; WARN legacy; call leftover rm + override migrate → `ai-specs/recipes/<id>/overrides/`
-- [ ] 2.5 GREEN: `vendor-skills.py` → cache `.deps`; `skill-resolution.py` scan cache tiers + overrides path
-- [ ] 2.6 Extend `test_external_dirs` / materialize fixtures for cache paths; validate PR2
+- [x] 2.1 RED: `project-cache` unit — `cache_key` stable; `meta.toml` sidecar; path helpers; leftover `.recipe`/`.deps` deleted; override migrate before rm
+- [x] 2.2 GREEN: create `lib/_internal/project-cache.py` (`cache_key`, `cache_root`, `ensure_cache`, roots, `remove_legacy_origin`)
+- [x] 2.3 RED: materialize/vendor/skill-resolution resolve under cache; orphans clean via resolver; no skills pollution
+- [x] 2.4 GREEN: `recipe-materialize.py` stage `.recipe` to cache; WARN legacy; call leftover rm + override migrate → `ai-specs/recipes/<id>/overrides/`
+- [x] 2.5 GREEN: `vendor-skills.py` → cache `.deps`; `skill-resolution.py` scan cache tiers + overrides path
+- [x] 2.6 Extend `test_external_dirs` / materialize fixtures for cache paths; validate PR2
 
 ## Phase 3 — PR3: Commands merge + flatten + sync-agent + init/gitignore
 
-- [ ] 3.1 RED: command merge — cache cmds + `ai-specs/commands/`; local wins; fan-out targets unchanged
-- [ ] 3.2 GREEN: materialize managed cmds → cache `commands/`; merge helper callable from sync
-- [ ] 3.3 RED: flatten dest = cache `resolved-skills/`; sync-agent uses cache flatten + merge
-- [ ] 3.4 GREEN: `flatten-resolved-skills.py` + `sync-agent.sh` wire cache paths
-- [ ] 3.5 GREEN: `init.sh` stop mkdir in-project `.recipe`/`.deps`; `gitignore-render.py` drop those + `.internal/resolved-skills` ignores
-- [ ] 3.6 Integration: extend `test_sync_pipeline` full sync→fan-out; validate PR3
+- [x] 3.1 RED: command merge — cache cmds + `ai-specs/commands/`; local wins; fan-out targets unchanged
+- [x] 3.2 GREEN: materialize managed cmds → cache `commands/`; merge helper callable from sync
+- [x] 3.3 RED: flatten dest = cache `resolved-skills/`; sync-agent uses cache flatten + merge
+- [x] 3.4 GREEN: `flatten-resolved-skills.py` + `sync-agent.sh` wire cache paths
+- [x] 3.5 GREEN: `init.sh` stop mkdir in-project `.recipe`/`.deps`; `gitignore-render.py` drop those + `.internal/resolved-skills` ignores
+- [x] 3.6 Integration: extend `test_sync_pipeline` full sync→fan-out; validate PR3
 
 ## Phase 4 — PR4: Doctor/hub/docs/#104 + on-disk specs
 
-- [ ] 4.1 RED/GREEN: `doctor.py`/`hub.py` — legacy-version WARN / resync note; no outdated-pin UX
-- [ ] 4.2 Docs: #104 WARN/note only (no template refresh); troubleshooting + recipes-catalog
-- [ ] 4.3 Rewrite on disk: `openspec/specs/external-dirs-layout/spec.md`; delta `recipe-manifest-contract`, `recipe-cli`, `recipe-overrides-runtime` (+ skill-source if present)
-- [ ] 4.4 Final fixture sweep + `./tests/validate.sh` full green
+- [x] 4.1 RED/GREEN: `doctor.py`/`hub.py` — legacy-version WARN / resync note; no outdated-pin UX
+- [x] 4.2 Docs: #104 WARN/note only (no template refresh); troubleshooting + recipes-catalog
+- [x] 4.3 Rewrite on disk: `openspec/specs/external-dirs-layout/spec.md`; delta `recipe-manifest-contract`, `recipe-cli`, `recipe-overrides-runtime` (+ skill-source if present)
+- [x] 4.4 Final fixture sweep + `./tests/validate.sh` full green
 
 ## Locked assumptions (do not reopen)
 

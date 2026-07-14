@@ -131,8 +131,9 @@ Classification buckets (suggestions only):
 
 ### Recipes
 
-Named, versioned bundles of skills, commands, templates, and MCP presets.
-Declared in `[recipes.<id>]` and materialized by `ai-specs sync`. See the
+Named bundles of skills, commands, templates, and MCP presets from the installed
+CLI catalog. Declared in `[recipes.<id>]` with `enabled = true` (no version pin)
+and materialized by `ai-specs sync`. See the
 [recipe catalog](docs/recipes-catalog.md) for what each shipped recipe does and
 the config it expects, and [`docs/recipe-schema.md`](docs/recipe-schema.md) for
 the `recipe.toml` schema.

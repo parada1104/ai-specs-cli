@@ -209,7 +209,6 @@ env = ["OPENMEMORY_API_KEY"]
 
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.0.0"
 
 [recipes.trello-mcp-workflow.config]
 board_id = "abc123"
