@@ -166,8 +166,22 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         text = skill.read_text().lower()
         self.assertIn("pr creation gate", text)
         self.assertIn("pre-merge archive gate", text)
+        self.assertIn("pre-merge merge guardian", text)
+        self.assertIn("premerge_guardian", text)
+        self.assertIn("ai-specs/bin/premerge_guardian.py", text)
         self.assertIn("gh pr create", text)
         self.assertIn("before merge", text)
+
+    def test_recipe_ships_premerge_guardian_template(self):
+        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
+        targets = [t.target for t in recipe.templates]
+        self.assertIn("ai-specs/bin/premerge_guardian.py", targets)
+        src = CATALOG / RECIPE_ID / "templates" / "premerge_guardian.py"
+        self.assertTrue(src.is_file())
+        self.assertEqual(
+            src.read_text(),
+            (ROOT / "lib" / "_internal" / "premerge_guardian.py").read_text(),
+        )
 
     def test_brief_mentions_depth_and_pr_gate(self):
         recipe_dir = CATALOG / RECIPE_ID

@@ -2,7 +2,7 @@
 id = "worktree-flow"
 name = "Worktree Flow"
 description = "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work"
-version = "1.2.2"
+version = "1.2.3"
 author = "ai-specs"
 license = "MIT"
 tags = ["infra", "worktree"]

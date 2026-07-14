@@ -9,6 +9,9 @@ under `<worktrees_dir>/` (default `.worktrees/`).
 
 ## Steps
 
+0. Ensure your shell is **outside** the worktree you might remove (`cd` to the
+   main repository root first).
+
 1. Preview what would be removed (safe, mutates nothing):
 
    ```bash
@@ -35,4 +38,5 @@ Use the `worktrees_dir` and `integration_branch` values from
 
 The script removes a worktree only when its branch is fully merged into the
 base and the worktree is clean. It never removes dirty or unmerged worktrees,
-and never touches the main or detached-HEAD worktrees.
+and never touches the main or detached-HEAD worktrees. Prefer this script over
+ad-hoc `git worktree remove` after merge.

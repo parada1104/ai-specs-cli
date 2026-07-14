@@ -1,0 +1,2 @@
+Necesito un .gitignore básico en la raíz del repo para ignorar .env,
+__pycache__/ y .venv/. Es un cambio chico.

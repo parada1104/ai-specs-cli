@@ -2,7 +2,7 @@
 id = "gitlab-mr-flow"
 name = "GitLab MR Flow"
 description = "GitLab MR and merge flow for feature branches (via glab CLI)"
-version = "1.2.0"
+version = "1.3.1"
 author = "ai-specs"
 license = "MIT"
 tags = ["vcs", "gitlab"]
@@ -57,3 +57,8 @@ workflow_rules = [
 [[provides.docs]]
 source = "README.md"
 target = "ai-specs/recipes/gitlab-mr-flow/README.md"
+
+[[provides.templates]]
+source = "templates/premerge_guardian.py"
+target = "ai-specs/bin/premerge_guardian.py"
+condition = "not_exists"

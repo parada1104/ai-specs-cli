@@ -2,7 +2,7 @@
 id = "bitbucket-pr-flow"
 name = "Bitbucket PR Flow"
 description = "Bitbucket PR and merge flow for feature branches (via bb CLI)"
-version = "1.1.0"
+version = "1.2.1"
 author = "ai-specs"
 license = "MIT"
 tags = ["vcs", "bitbucket"]
@@ -49,3 +49,8 @@ workflow_rules = [
 [[provides.docs]]
 source = "README.md"
 target = "ai-specs/recipes/bitbucket-pr-flow/README.md"
+
+[[provides.templates]]
+source = "templates/premerge_guardian.py"
+target = "ai-specs/bin/premerge_guardian.py"
+condition = "not_exists"

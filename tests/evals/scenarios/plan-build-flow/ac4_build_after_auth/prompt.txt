@@ -1,0 +1,2 @@
+Adelante — el plan de signup-validation ya está autorizado.
+Implementá la validación en src/forms/signup.py según tasks.md y el spec.
