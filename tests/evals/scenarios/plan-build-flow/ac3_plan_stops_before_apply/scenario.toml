@@ -1,7 +1,12 @@
 id = "ac3_plan_stops_before_apply"
 recipe_id = "plan-build-flow"
 prompt_file = "prompt.txt"
+mode = "plan"
 ac = "AC3"
-description = "Plan phase produces tasks artifact without modifying production code"
+tier = "standard"
+description = "Ambient plan mode: natural implement request yields tasks+spec without production edits"
 forbidden_path_globs = ["src/**", "lib/**", "catalog/**"]
-required_path_globs = ["openspec/changes/*/tasks.md"]
+required_path_globs = [
+  "openspec/changes/*/tasks.md",
+  "openspec/changes/*/specs/**/*.md",
+]

@@ -1,7 +1,10 @@
-"""Live plan-build-flow behavioral evals (AC3–AC7). Requires EVALS_LIVE=1."""
+"""Live plan-build-flow behavioral evals (AC3+). Requires EVALS_LIVE=1."""
+
+from __future__ import annotations
 
 import fnmatch
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -12,15 +15,20 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from tests.evals.lib.harness import (  # noqa: E402
     api_key_present,
-    claude_available,
+    detect_runtime,
     git_paths_changed,
     init_git_repo,
     live_enabled,
     load_scenario,
     materialize_project,
-    run_claude_prompt,
+    run_prompt,
+    runtime_available,
 )
-from tests.evals.lib.project_fixture import recipe_version  # noqa: E402
+from tests.evals.lib.project_fixture import (  # noqa: E402
+    recipe_version,
+    seed_project_files,
+    setup_runtime_skills,
+)
 
 SCENARIOS = REPO_ROOT / "tests" / "evals" / "scenarios" / "plan-build-flow"
 
@@ -34,29 +42,35 @@ def _matches_any(path: str, patterns: list[str]) -> bool:
 
 
 @unittest.skipUnless(
-    live_enabled() and claude_available() and api_key_present(),
-    "Set EVALS_LIVE=1 with claude CLI and ANTHROPIC_API_KEY to run live evals",
+    live_enabled() and runtime_available() and api_key_present(),
+    "Set EVALS_LIVE=1 with a supported runtime on PATH to run live evals",
 )
 class PlanBuildFlowLiveEvals(unittest.TestCase):
     def _run_scenario(self, name: str):
         scenario_dir = SCENARIOS / name
         scenario = load_scenario(scenario_dir)
+        runtime = detect_runtime()
+        assert runtime is not None
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         version = recipe_version(REPO_ROOT / "catalog", scenario.recipe_id)
         materialize_project(root, scenario.recipe_id, version)
+        seed_project_files(root)
+        setup_runtime_skills(
+            root, runtime, scenario.recipe_id, catalog_root=REPO_ROOT / "catalog"
+        )
         init_git_repo(root)
-        subprocess_git_add = __import__("subprocess").run
-        subprocess_git_add(["git", "add", "-A"], cwd=root, check=True)
-        subprocess_git_add(["git", "commit", "-qm", "baseline"], cwd=root, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "baseline"], cwd=root, check=True)
 
         prompt = scenario.prompt_path.read_text()
-        result = run_claude_prompt(root, prompt)
+        result = run_prompt(root, prompt, runtime=runtime, mode=scenario.mode)
         self.assertEqual(
             result["returncode"],
             0,
-            msg=f"claude failed: {result.get('stderr')}",
+            msg=f"{runtime} failed: {result.get('stderr')}\ncmd={result.get('cmd')}",
         )
 
         changed = git_paths_changed(root)
@@ -70,7 +84,7 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         for required in scenario.meta.get("required_path_globs", []):
             self.assertTrue(
                 _glob_exists(root, required),
-                f"missing required artifact for pattern {required}",
+                f"missing required artifact for pattern {required}; changed={changed}",
             )
 
     def test_ac3_plan_stops_before_apply(self):

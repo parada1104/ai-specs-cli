@@ -1,0 +1,9 @@
+id = "ac4_build_after_auth"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+ac = "AC4"
+tier = "standard"
+description = "Stub: build mode after authorization (live optional)"
+forbidden_path_globs = []
+required_path_globs = []

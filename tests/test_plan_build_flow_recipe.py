@@ -166,6 +166,8 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         text = skill.read_text().lower()
         self.assertIn("pr creation gate", text)
         self.assertIn("pre-merge archive gate", text)
+        self.assertIn("pre-merge merge guardian", text)
+        self.assertIn("premerge_guardian", text)
         self.assertIn("gh pr create", text)
         self.assertIn("before merge", text)
 

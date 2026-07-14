@@ -1,0 +1,9 @@
+id = "ac5_archive_before_merge"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+ac = "AC5"
+tier = "standard"
+description = "Stub: archive-tail before merge (live optional)"
+forbidden_path_globs = []
+required_path_globs = []
