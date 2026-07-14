@@ -45,7 +45,7 @@ integration_branch = "development"
 
 [recipes.git-pr-flow]
 enabled = true
-version = "1.4.0"
+version = "1.4.1"
 [recipes.git-pr-flow.config]
 base_branch = "development"
 
@@ -61,7 +61,7 @@ test_command = "./tests/validate.sh"
 
 [recipes.plan-build-flow]
 enabled = true
-version = "1.1.0"
+version = "1.1.1"
 
 # --- Specific (capability providers) ---
 

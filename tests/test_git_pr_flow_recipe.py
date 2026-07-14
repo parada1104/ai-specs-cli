@@ -85,8 +85,23 @@ class GitPrFlowRecipeTests(unittest.TestCase):
         doc = root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
         self.assertTrue(doc.is_file(), f"missing doc at {doc}")
 
+    def test_materialize_ships_premerge_guardian_template(self):
+        root = self._make_project()
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        helper = root / "ai-specs" / "bin" / "premerge_guardian.py"
+        self.assertTrue(helper.is_file(), f"missing guardian template at {helper}")
+        skill = (
+            root / "ai-specs" / ".recipe" / RECIPE_ID
+            / "skills" / "git-merge-workflow" / "SKILL.md"
+        )
+        self.assertIn("ai-specs/bin/premerge_guardian.py", skill.read_text())
 
-
+    def test_template_matches_canonical_guardian(self):
+        canon = (ROOT / "lib" / "_internal" / "premerge_guardian.py").read_text()
+        shipped = (
+            CATALOG / RECIPE_ID / "templates" / "premerge_guardian.py"
+        ).read_text()
+        self.assertEqual(shipped, canon)
 class GitPrFlowGoldenContentTests(unittest.TestCase):
     """Golden text checks for pre-merge archive guidance."""
 

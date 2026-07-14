@@ -3,6 +3,10 @@
 # Used by `ai-specs refresh-bundled` to detect user customizations.
 # [meta] records the CLI version and timestamp of the last lock write.
 
+[meta]
+cli_version = "0.13.1"
+synced_at = "2026-07-14T15:05:27Z"
+
 [skills."skill-creator"]
 "SKILL.md" = "cf23341f51199d3feb9c157ffe3e52d5e4b4f37b2e77863a8576b78b92b9cdc3"
 "assets/SKILL-TEMPLATE.md" = "468621e48b52a79e412b159ee6686dbb912b30890bc4814015b503478e09166a"
@@ -16,10 +20,10 @@
 "skills-as-rules.md" = "5d03f61d9a318ac7e0cd75e4116540332432943fd15fa61a925400d60136b3cd"
 
 [recipes."git-pr-flow".skills."git-merge-workflow"]
-"SKILL.md" = "7cbe0af185620f02c2e25ebc2afed334306b4c7591ae5913f0fd4e185003952a"
+"SKILL.md" = "acd4cc5528e3a6ce2fc257d0b285ae7cd00247fee5303c04b55c0e1a6b19f9d9"
 
 [recipes."plan-build-flow".skills."plan-build-flow"]
-"SKILL.md" = "65b6ef31b59b56b632d06b2d87c4ffc6504c8255e5e5f2591f4fdf32132039d1"
+"SKILL.md" = "73f6fe973850a36a3400702f9ff4c4db429fcb173404ee9e4be57445a0972591"
 
 [recipes."session-context".skills."context-precedence"]
 "SKILL.md" = "5b09871eadc86d5951d2681ef5e79acc271e48a2f1498128ca2d0b96fa151ba6"

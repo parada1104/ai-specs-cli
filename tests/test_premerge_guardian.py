@@ -116,6 +116,18 @@ class PremergeGuardianTests(unittest.TestCase):
         result = self.mod.check_premerge(root, slug, tier=None)
         self.assertTrue(result.ok, result.blockers)
 
+    def test_omitted_tier_defaults_to_inference_not_standard(self):
+        """Omitting tier must infer Depth from tasks.md (light → no specs required)."""
+        root = self._repo()
+        slug = "omit-tier"
+        archived = root / "openspec" / "changes" / "archive" / slug
+        archived.mkdir(parents=True)
+        (archived / "tasks.md").write_text("Depth: light\n- [x] done\n")
+
+        result = self.mod.check_premerge(root, slug)  # no tier kwarg
+        self.assertTrue(result.ok, result.blockers)
+        self.assertEqual(result.tier, "light")
+
 
 if __name__ == "__main__":
     unittest.main()

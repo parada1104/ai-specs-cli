@@ -118,8 +118,11 @@ gh pr create --base <integration-branch> --title "<title>" --body "<summary and 
    tier-minimum files. Prefer:
 
 ```bash
-python3 lib/_internal/premerge_guardian.py <slug> --root <repo-root>
+python3 ai-specs/bin/premerge_guardian.py <slug> --root <repo-root>
 ```
+
+Sync materializes that helper into consumer projects. In the ai-specs monorepo,
+`lib/_internal/premerge_guardian.py` is the same script.
 
 Do **not** merge if `openspec/changes/<slug>/` still exists, or if
 `openspec/changes/archive/<slug>/` is missing tier files.

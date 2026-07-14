@@ -53,13 +53,22 @@ def _matches_any(path: str, patterns: list[str]) -> bool:
 def _selected_runtimes() -> list[str]:
     raw = os.environ.get("EVALS_RUNTIMES") or os.environ.get("EVALS_RUNTIME", "")
     if raw.strip():
-        return [r.strip() for r in raw.split(",") if r.strip() in SUPPORTED_RUNTIMES]
-    prefer = os.environ.get("EVALS_PREFER", "opencode,pi,omp,claude")
+        names = [r.strip() for r in raw.split(",") if r.strip()]
+    else:
+        names = [
+            n.strip()
+            for n in os.environ.get("EVALS_PREFER", "opencode,pi,omp,claude").split(",")
+            if n.strip()
+        ]
     out: list[str] = []
-    for name in prefer.split(","):
-        name = name.strip()
-        if name in SUPPORTED_RUNTIMES and shutil.which(name) and api_key_present(name):
-            out.append(name)
+    for name in names:
+        if name not in SUPPORTED_RUNTIMES:
+            continue
+        if not shutil.which(name):
+            continue
+        if not api_key_present(name):
+            continue
+        out.append(name)
     return out
 
 

@@ -7,9 +7,9 @@
 | T4 worktree-flow | done | leave-cwd + script-first in skill + worktree-clean command |
 | T5 specs | done | recipe-evals promoted; plan-build-flow guardian req added |
 | T6–T9 eval harness v2 | done | multi-runtime + natural AC3 + AC4/AC5/AC7; omp→`.omp/skills`; Claude acceptEdits |
-| T10 live smoke | done | deepseek-v4-flash on opencode/pi/omp; opus on claude (see matrix below) |
-| T11 validate | partial | related suites green; 2–3 flaky `test_init_tui` Ctrl-C PTY failures unrelated |
-| T12 PR | pending | after user ask / commit remaining harness fixes |
+| T10 live smoke | done | 4×4 PASS; Bugbot findings fixed (guardian ship, tier default, evals creds) |
+| T11 validate | partial | focused suites green; full validate optional on CI |
+| T12 PR | open | https://github.com/parada1104/ai-specs-cli/pull/122 |
 
 ## Live matrix (model: `opencode-go/deepseek-v4-flash` except Claude=`opus`)
 

@@ -106,6 +106,20 @@ class HarnessSmokeTests(unittest.TestCase):
             self.skipTest("live eval env present — see eval_plan_build_flow_live.py")
         self.assertFalse(live_enabled())
 
+    def test_evals_runtimes_honors_credential_gate(self):
+        """Forced EVALS_RUNTIMES must still require PATH + credentials."""
+        import os
+        from unittest import mock
+
+        from tests.evals import eval_plan_build_flow_live as live
+
+        with mock.patch.dict(os.environ, {"EVALS_RUNTIMES": "claude"}, clear=False):
+            with mock.patch.object(live.shutil, "which", return_value="/bin/claude"):
+                with mock.patch.object(live, "api_key_present", return_value=False):
+                    self.assertEqual(live._selected_runtimes(), [])
+                with mock.patch.object(live, "api_key_present", return_value=True):
+                    self.assertEqual(live._selected_runtimes(), ["claude"])
+
 
 class HarnessPathTests(unittest.TestCase):
     def test_runtime_binary_optional(self):
