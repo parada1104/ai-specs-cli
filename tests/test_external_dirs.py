@@ -72,6 +72,16 @@ class InitExternalDirsTests(unittest.TestCase):
             self.assertNotIn("ai-specs/.recipe/", gitignore)
             self.assertNotIn("ai-specs/.deps/", gitignore)
 
+    def test_gitignore_does_not_ignore_user_recipes_surface(self):
+        """ai-specs/.gitignore must not contain recipes/ — that surface is user-committed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            ai_specs_gitignore = (target / "ai-specs" / ".gitignore").read_text()
+            self.assertNotIn("recipes/", ai_specs_gitignore,
+                             "ai-specs/.gitignore must not ignore recipes/ (user surface)")
+
     def test_gitignore_idempotent_no_origin_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"

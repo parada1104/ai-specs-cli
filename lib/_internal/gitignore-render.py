@@ -29,8 +29,6 @@ FOOTER = """\
 def render(deps: list[dict]) -> str:
     lines = [HEADER]
     lines.append(".internal/")
-    lines.append("# Recipe docs/hooks/templates materialization (project surface)")
-    lines.append("recipes/")
     lines.append("")
     lines.append(FOOTER)
     return "\n".join(lines)

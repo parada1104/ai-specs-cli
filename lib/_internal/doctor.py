@@ -265,6 +265,34 @@ class Doctor:
     # Bundled asset checks
     # -------------------------------------------------------------------------
 
+    def _load_project_cache(self):
+        """Load project-cache module for cache-aware command resolution."""
+        try:
+            cache_mod_path = Path(__file__).with_name("project-cache.py")
+            spec = importlib.util.spec_from_file_location(
+                "project_cache_doctor_assets", cache_mod_path
+            )
+            if spec is not None and spec.loader is not None:
+                pc = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(pc)
+                return pc
+        except Exception:
+            pass
+        return None
+
+    def _cache_command_names(self) -> set[str]:
+        """Return the set of .md filenames in the per-project CLI cache commands dir."""
+        pc = self._load_project_cache()
+        if pc is None:
+            return set()
+        try:
+            cache_cmds = pc.commands_dir(self.root)
+            if cache_cmds.is_dir():
+                return {p.name for p in cache_cmds.glob("*.md")}
+        except Exception:
+            pass
+        return set()
+
     def _check_bundled_assets(self) -> None:
         skills_root = self.root / "ai-specs" / "skills"
         commands_root = self.root / "ai-specs" / "commands"
@@ -281,7 +309,9 @@ class Doctor:
                     f"ai-specs/skills/{skill} missing",
                     guidance="ai-specs init --force or ai-specs refresh-bundled"
                 ))
-        if commands_root.is_dir() and any(commands_root.glob("*.md")):
+        local_ok = commands_root.is_dir() and any(commands_root.glob("*.md"))
+        cache_ok = bool(self._cache_command_names())
+        if local_ok or cache_ok:
             self.checks.append(Check(
                 Severity.OK, "bundled-commands",
                 "ai-specs/commands/ present"
@@ -599,13 +629,16 @@ class Doctor:
                         "missing; run ai-specs sync",
                         guidance="ai-specs sync"
                     ))
-        # Commands
+        # Commands: expected = hand-authored ai-specs/commands/ ∪ cache commands/
         commands = plat.get("commands_dir", "")
         if commands:
             commands_path = self.root / commands
             ai_specs_commands = self.root / "ai-specs" / "commands"
-            if commands_path.is_dir() and ai_specs_commands.is_dir():
-                expected = {p.name for p in ai_specs_commands.glob("*.md")}
+            if commands_path.is_dir():
+                local_names: set[str] = set()
+                if ai_specs_commands.is_dir():
+                    local_names = {p.name for p in ai_specs_commands.glob("*.md")}
+                expected = local_names | self._cache_command_names()
                 actual = {p.name for p in commands_path.glob("*.md")}
                 missing = expected - actual
                 extra = actual - expected

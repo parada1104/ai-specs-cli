@@ -991,5 +991,76 @@ class RecipeCliDepsDoctorTests(unittest.TestCase):
 
 
 
+class CacheAwareCommandsDoctorTests(unittest.TestCase):
+    """Doctor must treat cache-managed commands as 'expected', not stale extras."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.doctor = load_module(DOCTOR_PY, "doctor_cache_cmd_tests")
+
+    def _load_project_cache(self):
+        """Load project-cache helpers for test setup."""
+        pc_path = DOCTOR_PY.parent / "project-cache.py"
+        return load_module(pc_path, "project_cache_cache_cmd_doctor")
+
+    def test_bundled_commands_ok_when_only_cache_has_commands(self):
+        """bundled-commands must report OK when cache commands/ is non-empty, even if ai-specs/commands/ is empty."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            # Clear hand-authored commands
+            commands_root = target / "ai-specs" / "commands"
+            shutil.rmtree(commands_root, ignore_errors=True)
+            commands_root.mkdir(parents=True)
+            # Populate cache commands
+            pc = self._load_project_cache()
+            cache_cmds = pc.commands_dir(target)
+            cache_cmds.mkdir(parents=True, exist_ok=True)
+            (cache_cmds / "recipe-cmd.md").write_text("# recipe command\n")
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False
+            )
+            # Should NOT warn about bundled-commands when cache has commands
+            bundled_lines = [
+                ln for ln in result.stdout.splitlines()
+                if "bundled-commands" in ln
+            ]
+            self.assertTrue(
+                bundled_lines and all("OK" in ln for ln in bundled_lines),
+                f"Expected bundled-commands OK when cache has commands; got: {bundled_lines}"
+            )
+
+    def test_cache_managed_commands_not_flagged_as_stale(self):
+        """Doctor must not flag agent commands as stale when they come from the cache."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target, agents=["cursor"])
+            # Populate cache with a recipe-managed command
+            pc = self._load_project_cache()
+            cache_cmds = pc.commands_dir(target)
+            cache_cmds.mkdir(parents=True, exist_ok=True)
+            (cache_cmds / "recipe-cmd.md").write_text("# recipe command\n")
+            # Sync so agent commands dir is populated
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--cursor"],
+                check=True, text=True,
+            )
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False
+            )
+            cmd_lines = [
+                ln for ln in result.stdout.splitlines()
+                if ".cursor/commands" in ln
+            ]
+            self.assertFalse(
+                any("stale" in ln.lower() for ln in cmd_lines),
+                f"Cache-managed commands must not be flagged as stale; got: {cmd_lines}"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

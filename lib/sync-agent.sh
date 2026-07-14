@@ -167,6 +167,19 @@ TARGET_AI_SKILLS="$TARGET_AI_SPECS/skills"
 TARGET_AI_COMMANDS="$TARGET_AI_SPECS/commands"
 TARGET_AGENTS_MD="$TARGET_PATH/AGENTS.md"
 
+# Materialize recipes into cache FIRST so flatten/merge-commands see up-to-date content.
+# When --recipe-mcp is not passed, run materialize now and capture the temp MCP path.
+if [[ -z "$RECIPE_MCP_JSON" ]]; then
+    _MATERIALIZE_OUT="$(mktemp -t ai-specs-materialize-XXXXXX)"
+    trap 'rm -f "$_MATERIALIZE_OUT"' EXIT
+    if ! python3 "$RECIPE_MATERIALIZE_PY" "$SOURCE_ROOT" "$AI_SPECS_HOME" >"$_MATERIALIZE_OUT" 2>&1; then
+        echo "ERROR: recipe materialize failed" >&2
+        grep -v '^RECIPE_MCP_TEMP:' "$_MATERIALIZE_OUT" >&2 || true
+        exit 1
+    fi
+    RECIPE_MCP_JSON="$(grep '^RECIPE_MCP_TEMP:' "$_MATERIALIZE_OUT" | cut -d: -f2- || true)"
+fi
+
 # Flatten resolved skills into the per-project CLI cache; merge commands (local wins)
 RESOLVED_SKILLS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path resolved-skills)"
 python3 "$FLATTEN_SKILLS_PY" "$SOURCE_ROOT" "$RESOLVED_SKILLS_DIR"
@@ -292,10 +305,6 @@ if [[ ${#TARGETS[@]} -eq 0 ]]; then
     exit 0
 fi
 
-# Recipe MCP presets: use --recipe-mcp if passed, otherwise generate temp
-if [[ -z "$RECIPE_MCP_JSON" ]]; then
-    RECIPE_MCP_JSON="$(python3 "$RECIPE_MATERIALIZE_PY" "$SOURCE_ROOT" "$AI_SPECS_HOME" | grep '^RECIPE_MCP_TEMP:' | cut -d: -f2- || true)"
-fi
 MCP_COUNT="$(python3 - "$TOML_PATH" "$RECIPE_MCP_JSON" <<'PY'
 import sys, tomllib, json
 with open(sys.argv[1], "rb") as f:
