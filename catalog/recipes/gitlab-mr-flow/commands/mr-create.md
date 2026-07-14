@@ -49,7 +49,36 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 
    > **Blocker**: `glab` is not authenticated. Run `glab auth login` and retry.
 
-4. Verify `jq` is available (required for SHA pinning during merge):
+4. Run **Runtime Preflight: Account Match** (config-gated — skip when `expected_owner` is empty):
+
+   Read from recipe config in `ai-specs.toml`:
+
+   ```toml
+   [recipes.gitlab-mr-flow.config]
+   expected_owner = ""           # default; set to activate preflight
+   ```
+
+   ```bash
+   # Runtime Preflight: Account Match (GitLab)
+   EXPECTED_OWNER="{config.expected_owner}"
+   if [ -n "$EXPECTED_OWNER" ]; then
+     ACTIVE=$(glab auth status 2>&1 | awk '
+       /Logged in to gitlab\.com account/ {
+         if (match($0, /account [^ ]+ \(/))      { a=substr($0, RSTART+8, RLENGTH-2) }
+         else if (match($0, /account [^ ]+$/))   { a=substr($0, RSTART+8) }
+       }
+       /Active account: true/ { print a }' | head -1)
+     if [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
+       echo "**Blocker**: active glab account is '$ACTIVE'; expected '$EXPECTED_OWNER'."
+       echo "glab has no 'auth switch'. Run: glab auth login   (or export GLAB_TOKEN=<token>)."
+       return 1
+     fi
+   fi
+   ```
+
+   If the preflight returns a blocker, stop before pushing.
+
+5. Verify `jq` is available (required for SHA pinning during merge):
 
    ```bash
    command -v jq

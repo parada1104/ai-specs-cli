@@ -42,14 +42,39 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 3. Verify authentication:
 
    ```bash
-   bb auth status
+   bb auth show
    ```
 
    If authentication fails (output includes "Not logged in"), stop and report:
 
    > **Blocker**: `bb` is not authenticated. Run `bb auth login` and retry.
 
-4. Confirm or run the verification required by the runtime brief / change.
+4. Run **Runtime Preflight: Account Match** (config-gated — skip when `expected_owner` is empty):
+
+   Read from recipe config in `ai-specs.toml`:
+
+   ```toml
+   [recipes.bitbucket-pr-flow.config]
+   expected_owner = ""           # default; set to activate preflight
+   ```
+
+   ```bash
+   # Runtime Preflight: Account Match (Bitbucket)
+   # Fix: bb has no `bb auth status`; the correct command is `bb auth show`.
+   EXPECTED_OWNER="{config.expected_owner}"
+   if [ -n "$EXPECTED_OWNER" ]; then
+     ACTIVE=$(bb auth show 2>&1 | awk '/Username|username/ {print $2}' | head -1)
+     if [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
+       echo "**Blocker**: active bb account is '$ACTIVE'; expected '$EXPECTED_OWNER'."
+       echo "bb has no 'auth switch'. Run: bb auth login"
+       return 1
+     fi
+   fi
+   ```
+
+   If the preflight returns a blocker, stop before pushing.
+
+5. Confirm or run the verification required by the runtime brief / change.
 
 5. Resolve the Bitbucket remote and push the feature branch explicitly:
 
