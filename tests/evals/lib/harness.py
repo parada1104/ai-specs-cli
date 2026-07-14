@@ -23,9 +23,9 @@ SUPPORTED_RUNTIMES = ("claude", "opencode", "pi", "omp")
 
 DEFAULT_MODELS = {
     "claude": "opus",
-    "opencode": "opencode-go/glm-5.2",
-    "pi": "opencode-go/glm-5.2",
-    "omp": "opencode-go/glm-5.2",
+    "opencode": "opencode-go/deepseek-v4-flash",
+    "pi": "opencode-go/deepseek-v4-flash",
+    "omp": "opencode-go/deepseek-v4-flash",
 }
 
 META_PROMPT_RE = re.compile(
@@ -127,20 +127,33 @@ def _max_turns() -> str:
 
 
 def _run(cmd: list[str], cwd: Path) -> dict[str, Any]:
-    proc = subprocess.run(
+    """Run a command; on timeout kill and return partial stdout/stderr."""
+    proc = subprocess.Popen(
         cmd,
         cwd=cwd,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=_timeout(),
-        check=False,
     )
-    return {
-        "returncode": proc.returncode,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
-        "cmd": cmd,
-    }
+    try:
+        stdout, stderr = proc.communicate(timeout=_timeout())
+        return {
+            "returncode": proc.returncode,
+            "stdout": stdout or "",
+            "stderr": stderr or "",
+            "cmd": cmd,
+            "timed_out": False,
+        }
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+        return {
+            "returncode": 124,
+            "stdout": stdout or "",
+            "stderr": (stderr or "") + f"\ntimed out after {_timeout()}s",
+            "cmd": cmd,
+            "timed_out": True,
+        }
 
 
 def _parse_claude_json(stdout: str) -> dict[str, Any]:
@@ -200,7 +213,10 @@ def _parse_pi_ndjson(stdout: str) -> dict[str, Any]:
 
 def run_claude_prompt(project_root: Path, prompt: str, *, mode: str = "plan") -> dict[str, Any]:
     model = default_model("claude")
-    permission = "plan" if mode == "plan" else "acceptEdits"
+    # Claude's "plan" permission mode is read-only and cannot write OpenSpec
+    # artifacts. Ambient plan-build needs writes; FS assertions gate production edits.
+    permission = "acceptEdits"
+    _ = mode
     cmd = [
         "claude",
         "-p",
@@ -232,6 +248,9 @@ def run_opencode_prompt(project_root: Path, prompt: str, *, mode: str = "plan") 
     cmd = [
         "opencode",
         "run",
+        "--pure",
+        "--dir",
+        str(project_root),
         "--format",
         "json",
         "--model",
@@ -258,7 +277,14 @@ def run_pi_family_prompt(
     mode: str = "plan",
 ) -> dict[str, Any]:
     model = default_model(binary if binary in DEFAULT_MODELS else "pi")
-    cmd = [binary, "-p", "--mode", "json", "--model", model, prompt]
+    cmd = [binary, "-p", "--mode", "json", "--model", model, "--no-session"]
+    # omp accepts --cwd; pi relies on process cwd from _run.
+    if binary == "omp":
+        cmd.extend(["--cwd", str(project_root)])
+        # Extensions (e.g. background job tool) can hang headless evals.
+        cmd.append("--no-extensions")
+        cmd.extend(["--approval-mode", "yolo"])
+    cmd.append(prompt)
     # Pi/OMP: plan-mode flags vary by extension; skill + FS assertions are the gate.
     _ = mode
     result = _run(cmd, project_root)

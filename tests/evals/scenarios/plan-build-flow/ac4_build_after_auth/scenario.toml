@@ -4,6 +4,13 @@ prompt_file = "prompt.txt"
 mode = "build"
 ac = "AC4"
 tier = "standard"
-description = "Stub: build mode after authorization (live optional)"
+slug = "signup-validation"
+seed_plan = true
+description = "After authorization, build mode implements signup validation"
 forbidden_path_globs = []
 required_path_globs = []
+required_changed_globs = ["src/forms/signup.py"]
+
+[[required_content]]
+path = "src/forms/signup.py"
+contains_any = ["@", "ValueError", "raise", "invalid", "len("]

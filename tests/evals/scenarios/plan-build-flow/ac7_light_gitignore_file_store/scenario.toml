@@ -1,0 +1,13 @@
+id = "ac7_light_gitignore_file_store"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+ac = "AC7"
+tier = "light"
+seed_plan = false
+description = "Light request yields file-store outcome: either openspec tasks or the .gitignore file"
+forbidden_path_globs = ["src/**"]
+required_path_globs = []
+required_any_path_globs = [
+  ["openspec/changes/*/tasks.md", ".gitignore"],
+]

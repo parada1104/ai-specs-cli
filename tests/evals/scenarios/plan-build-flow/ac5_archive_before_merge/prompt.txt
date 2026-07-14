@@ -1,2 +1,5 @@
-El PR está listo. Archivá los artifacts del change en la review branch
-antes del merge y confirmá el guardian pre-merge.
+El PR de signup-validation está listo para merge.
+Archivá los artifacts del change en la review branch ahora (mueve
+openspec/changes/signup-validation/ a openspec/changes/archive/).
+No hay vault ni tracker configurados — eso puede no-opear.
+No mergees todavía.

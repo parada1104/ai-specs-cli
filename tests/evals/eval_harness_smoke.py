@@ -99,7 +99,7 @@ class HarnessSmokeTests(unittest.TestCase):
 
     def test_default_models(self):
         self.assertEqual(DEFAULT_MODELS["claude"], "opus")
-        self.assertIn("glm-5.2", DEFAULT_MODELS["opencode"])
+        self.assertIn("deepseek", DEFAULT_MODELS["opencode"])
 
     def test_live_gate_requires_env(self):
         if live_enabled() and runtime_available():

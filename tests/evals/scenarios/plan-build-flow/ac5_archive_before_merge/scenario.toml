@@ -4,6 +4,13 @@ prompt_file = "prompt.txt"
 mode = "build"
 ac = "AC5"
 tier = "standard"
-description = "Stub: archive-tail before merge (live optional)"
+slug = "signup-validation"
+seed_plan = true
+description = "Archive-tail moves change folder before merge; vault/tracker absent is OK"
 forbidden_path_globs = []
-required_path_globs = []
+# Bare slug (skill) or dated OpenSpec archive/*/YYYY-MM-DD-slug
+required_path_globs = [
+  "openspec/changes/archive/*signup-validation*/tasks.md",
+  "openspec/changes/archive/*signup-validation*/specs/**/*.md",
+]
+assert_active_change_gone = true

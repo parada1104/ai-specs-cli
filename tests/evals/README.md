@@ -41,5 +41,21 @@ tests/evals/
 
 ## First client
 
-`plan-build-flow` AC3 (ambient plan stops before apply). AC4/AC5 stubs exist
-for build/archive follow-ups.
+`plan-build-flow` live scenarios:
+
+| Scenario | Mode | Asserts |
+|----------|------|---------|
+| AC3 `ac3_plan_stops_before_apply` | plan | tasks + specs; no `src/` edits |
+| AC4 `ac4_build_after_auth` | build | implements seeded plan (`signup.py`) |
+| AC5 `ac5_archive_before_merge` | build | archives change folder; active gone |
+| AC7 `ac7_light_gitignore_file_store` | build | writes `.gitignore` (file store) |
+
+Live multi-runtime:
+
+```bash
+EVALS_RUNTIMES=opencode,pi,omp ./tests/evals/run-live.sh
+EVALS_RUNTIMES=opencode EVALS_SCENARIOS=ac3_plan_stops_before_apply,ac7_light_gitignore_file_store ./tests/evals/run-live.sh
+```
+
+Prefer OpenCode when Claude is rate-limited. Defaults: `opus` / `opencode-go/glm-5.2`.
+

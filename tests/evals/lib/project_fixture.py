@@ -12,7 +12,7 @@ RUNTIME_SKILL_DIRS = {
     "opencode": ".opencode/skills",
     "cursor": ".cursor/skills",
     "pi": ".pi/skills",
-    "omp": ".pi/skills",  # omp shares pi skill discovery
+    "omp": ".omp/skills",
 }
 
 
@@ -114,3 +114,35 @@ def setup_runtime_skills(
             "- Do not implement production code during planning.\n"
         )
     return dest
+
+
+def seed_authorized_plan(
+    root: Path,
+    *,
+    slug: str = "signup-validation",
+    tier: str = "standard",
+) -> Path:
+    """Seed a reviewable plan folder so build/archive scenarios start authorized."""
+    change = root / "openspec" / "changes" / slug
+    change.mkdir(parents=True, exist_ok=True)
+    (change / "tasks.md").write_text(
+        f"# Tasks: {slug}\n\n"
+        f"Depth: {tier}\n\n"
+        "## Intent\n\n"
+        "Add email/password validation to src/forms/signup.py.\n\n"
+        "## Tasks\n\n"
+        "- [ ] Reject empty email and password\n"
+        "- [ ] Reject emails without '@'\n"
+        "- [ ] Keep return shape as a dict on success\n"
+    )
+    if tier in {"standard", "full"}:
+        spec = change / "specs" / "signup-validation" / "spec.md"
+        spec.parent.mkdir(parents=True, exist_ok=True)
+        spec.write_text(
+            "# Spec: signup validation\n\n"
+            "## Requirement: Validate signup inputs\n\n"
+            "signup() SHALL reject empty email/password and emails without '@'.\n"
+        )
+    if tier == "full":
+        (change / "design.md").write_text("# Design\n\nInline validation in signup().\n")
+    return change
