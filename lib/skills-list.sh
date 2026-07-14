@@ -14,7 +14,8 @@ List vendored ([[deps]]) and local skills for a project.
 
 Shows:
   - Installed deps from ai-specs.toml
-  - Local skills in ai-specs/skills/ (excluding vendored)
+  - Bundled skills (CLI-shipped) present in ai-specs/skills/
+  - Local skills in ai-specs/skills/ (excluding vendored + bundled)
   - Available catalog skills shipped with the CLI
 EOF
 }
@@ -114,6 +115,51 @@ else
 fi
 echo ""
 
+# Bundled skill ids from CLI-shipped bundled-skills/ directory.
+# Falls back to known bundled skills when directory is absent.
+BUNDLED_IDS=()
+if [[ -d "$AI_SPECS_HOME/bundled-skills" ]]; then
+    for b in "$AI_SPECS_HOME/bundled-skills"/*/; do
+        [[ -d "$b" ]] && BUNDLED_IDS+=("$(basename "$b")")
+    done
+else
+    BUNDLED_IDS=(skill-creator skill-sync)
+fi
+
+# ── Bundled skills (CLI-shipped) ──
+echo "── Bundled skills (CLI-shipped) ──"
+if [[ -d "$SKILLS_DIR" ]]; then
+    has_bundled=0
+    for d in "$SKILLS_DIR"/*/; do
+        [[ -d "$d" ]] || continue
+        name="$(basename "$d")"
+        is_bundled=0
+        for bid in "${BUNDLED_IDS[@]}"; do
+            if [[ "$name" == "$bid" ]]; then
+                is_bundled=1
+                break
+            fi
+        done
+        [[ $is_bundled -eq 1 ]] || continue
+        has_bundled=1
+        if [[ -f "$d/SKILL.md" ]]; then
+            desc="$(skill_description "$d/SKILL.md")"
+            echo "  $name"
+            if [[ -n "$desc" ]]; then
+                echo "    $desc"
+            fi
+        else
+            echo "  $name  (no SKILL.md)"
+        fi
+    done
+    if [[ $has_bundled -eq 0 ]]; then
+        echo "  (none)"
+    fi
+else
+    echo "  (none)"
+fi
+echo ""
+
 # ── Local skills in ai-specs/skills/ ──
 echo "── Local skills (ai-specs/skills/) ──"
 if [[ -d "$SKILLS_DIR" ]]; then
@@ -131,6 +177,10 @@ if [[ -d "$SKILLS_DIR" ]]; then
         # Skip synced vendored deps (they appear in the deps section above)
         for rid in "${REGISTERED_IDS[@]}"; do
             [[ "$name" == "$rid" ]] && continue 2
+        done
+        # Skip bundled skills (they appear in the Bundled section above)
+        for bid in "${BUNDLED_IDS[@]}"; do
+            [[ "$name" == "$bid" ]] && continue 2
         done
         has_entries=1
         if [[ -f "$d/SKILL.md" ]]; then
