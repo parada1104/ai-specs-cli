@@ -1,4 +1,3 @@
-[SKILL.md#643A]
 ---
 name: git-merge-workflow
 description: >
@@ -115,20 +114,36 @@ gh pr create --base <integration-branch> --title "<title>" --body "<summary and 
    branch. Commit and push any archive commits to the review branch before
    proceeding.
 
-6. Merge only after explicit user approval, required checks/review, and the
-   pre-merge archive step above:
+6. **Pre-merge guardian (hard stop):** confirm the change is archived and has
+   tier-minimum files. Prefer:
+
+```bash
+python3 lib/_internal/premerge_guardian.py <slug> --root <repo-root>
+```
+
+Do **not** merge if `openspec/changes/<slug>/` still exists, or if
+`openspec/changes/archive/<slug>/` is missing tier files.
+
+7. Merge only after explicit user approval, required checks/review, archive on
+   the review branch, and a clean guardian result:
 
 ```bash
 gh pr merge --squash
 ```
 
-7. After the PR is merged, navigate to the main repo root first (the agent may
-   be running inside the worktree, and removing it while `$PWD` points there
-   causes `fatal: Unable to read current working directory`). Then remove the
-   worktree and force-delete the local feature branch:
+8. After the PR is merged, **leave the worktree first** (`cd` to the main repo
+   root — never remove while `$PWD` is inside the worktree). Prefer the
+   worktree-flow cleanup script:
 
 ```bash
 cd <main-repo-root>
+bash ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh \
+  --dir .worktrees --base <integration-branch>
+```
+
+Manual fallback only if the script is unavailable:
+
+```bash
 git worktree remove <absolute-path-to-worktree>
 git branch -D <branch-name>
 ```
@@ -136,7 +151,8 @@ git branch -D <branch-name>
 > **Note**: `git branch -D` (capital D) is required because `gh pr merge --squash`
 > rewrites history — the feature branch commits are not ancestors of the target
 > branch, so `git branch -d` would refuse with "not fully merged". Force-delete
-> is safe here because the PR was already merged.
+> is safe here because the PR was already merged. Stop without deleting if the
+> worktree is dirty.
 
 If the remote feature branch still exists after merge, delete it explicitly:
 
@@ -144,7 +160,7 @@ If the remote feature branch still exists after merge, delete it explicitly:
 git push origin --delete <branch-name>
 ```
 
-8. Sync the integration branch:
+9. Sync the integration branch:
 
 ```bash
 git checkout <integration-branch>

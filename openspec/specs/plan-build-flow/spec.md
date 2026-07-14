@@ -192,6 +192,18 @@ classic SDD command, skill, or recipe outside this recipe's own surface.
 - WHEN `plan-build-flow` is enabled and synced
 - THEN all pre-existing non-plan-build-flow commands and skills remain unchanged
 
+
+### Requirement: Pre-merge merge guardian
+
+Before merge, missing tier artifacts or a still-active (non-archived) change
+folder is a hard stop. Prefer `lib/_internal/premerge_guardian.py <slug>`.
+
+#### Scenario: Merge blocked when change folder still active
+
+- GIVEN `openspec/changes/<slug>/` still exists (not archived)
+- WHEN an agent attempts to merge the PR/MR
+- THEN the skill stops with a plain-language blocker requiring archive-tail first
+
 ## Acceptance Criteria (test map)
 
 | AC | Test | Req |

@@ -2,7 +2,7 @@
 id = "bitbucket-pr-flow"
 name = "Bitbucket PR Flow"
 description = "Bitbucket PR and merge flow for feature branches (via bb CLI)"
-version = "1.1.0"
+version = "1.2.0"
 author = "ai-specs"
 license = "MIT"
 tags = ["vcs", "bitbucket"]

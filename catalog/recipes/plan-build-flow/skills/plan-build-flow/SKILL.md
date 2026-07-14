@@ -75,7 +75,11 @@ Trivial read-only questions skip the classifier entirely.
 | Trivial one-line fix explicitly scoped by user | Light tier — plan (tasks only) then may build inline | Maybe same turn after micro-plan |
 
 Prefer the project's native plan/review UX when available (e.g. plan mode) —
-this skill supplies the artifact trail behind that surface.
+this skill supplies the artifact trail behind that surface. **All classified
+planning artifacts MUST be written during plan mode**; production code is never
+modified while planning. Do not tell the user to "run /plan" or similar —
+respond to natural requests ("necesito implementar…") by classifying and
+planning.
 
 ## 5. Orchestrator degradation policy
 
@@ -125,6 +129,25 @@ Sequence on the review branch:
    push to the review branch.
 5. Merge only after explicit user approval and the pre-merge archive commit is
    on the PR branch.
+
+### 7.4 Pre-merge merge guardian (hard stop)
+
+Before `gh pr merge` / `glab mr merge` / Bitbucket merge (or equivalent), verify
+the archive is complete. Prefer the shared helper when available:
+
+```bash
+python3 lib/_internal/premerge_guardian.py <slug> --root <repo-root>
+# or: --tier light|standard|full
+```
+
+Hard blockers (do **not** merge):
+
+1. `openspec/changes/<slug>/` still exists (active, not archived).
+2. `openspec/changes/archive/<slug>/` is missing.
+3. Archived folder lacks the tier minimum files (Light: `tasks.md`; Standard:
+   `tasks.md` + `specs/**/*.md`; Full: those plus `proposal.md` or `design.md`).
+
+If any blocker fires, stop with plain language and complete archive-tail first.
 
 Post-merge archive is **rejected** — if merge already happened, do not treat the
 merged base branch as the archive boundary.
