@@ -6,9 +6,9 @@
 
 ## Commits
 1. Phase 1 — unpin + WARN + add/init/list (`237a3d6`)
-2. Phase 2 — `project-cache` + materialize/vendor/skill-resolution origin move
-3. Phase 3 — commands merge + flatten + sync-agent + init/gitignore
-4. Phase 4 — doctor/hub/docs/#104 + on-disk specs + fixture sweep + PTY flake fix
+2. Phases 2–3 — project-cache + origin move + commands/flatten/sync (`454acff`)
+3. Phase 4 — doctor/hub/docs/#104 + on-disk specs (`fdec967`)
+4. Test harden — PTY Ctrl-C via `\x03` (`c65fc26`)
 
 ## TDD Cycle Evidence
 
@@ -20,7 +20,7 @@
 | 4 | doctor legacy WARN + cache symlink OK; docs/#104; specs rewrite | ✅ | ✅ | fixture sweep via `_cache_paths` |
 
 ### Full suite
-`./tests/validate.sh` — green after PTY Ctrl-C tests switched from `send_signal(SIGINT)` to PTY `\x03` (avoids hung prompt_toolkit → rc 120).
+`./tests/validate.sh` — **OK** (943 tests, ~217s) after `c65fc26` PTY `\x03` fix.
 
 ## Deviations
 - Absolute symlinks for cache-backed `resolved-skills` (relative links break under `/var/folders` → `/private/var`).
