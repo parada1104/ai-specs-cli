@@ -29,6 +29,10 @@ def _scrub_tui_modules():
             sys.modules.pop(name, None)
 
 CLI = ROOT / "bin" / "ai-specs"
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 HUB_PY = ROOT / "lib" / "_internal" / "hub.py"
 
 
@@ -409,12 +413,14 @@ class TestCategorizeSkills(unittest.TestCase):
             self._skill(project / "ai-specs" / "skills" / "skill-creator", "skill-creator", "bundled")
             self._skill(project / "ai-specs" / "skills" / "my-local", "my-local", "local only")
             self._skill(
-                project / "ai-specs" / ".recipe" / "demo" / "skills" / "recipe-skill",
+                recipe_root(project, "demo", cli_home=home) / "skills" / "recipe-skill",
                 "recipe-skill",
                 "from recipe",
             )
+            from _cache_paths import deps_skill_dir
+
             self._skill(
-                project / "ai-specs" / ".deps" / "dep1" / "skills" / "dep-skill",
+                deps_skill_dir(project, "dep1", "dep-skill", cli_home=home),
                 "dep-skill",
                 "from dep",
             )

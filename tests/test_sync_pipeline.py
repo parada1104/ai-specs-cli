@@ -1,3 +1,5 @@
+import importlib.util
+import sys
 import json
 import os
 import shutil
@@ -8,6 +10,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from _cache_paths import recipe_root, cache_command, resolved_skills_dir, deps_skill_dir
 CLI = ROOT / "bin" / "ai-specs"
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
 
@@ -625,7 +631,7 @@ class SyncPipelineTests(unittest.TestCase):
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            root_skill = workspace / "ai-specs" / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
+            root_skill = deps_skill_dir(workspace, "vendored-demo") / "SKILL.md"
             subrepo_skill = workspace / "packages" / "a" / "ai-specs" / "skills" / "vendored-demo" / "SKILL.md"
             content = root_skill.read_text()
 
@@ -659,7 +665,7 @@ class SyncPipelineTests(unittest.TestCase):
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            root_skill = workspace / "ai-specs" / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
+            root_skill = deps_skill_dir(workspace, "vendored-demo") / "SKILL.md"
             root_skill.write_text(
                 "---\n"
                 "name: vendored-demo\n"
@@ -1135,7 +1141,7 @@ class SyncPipelineTests(unittest.TestCase):
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
             # Verify local skills are resolved in .internal/resolved-skills
-            resolved = workspace / "ai-specs" / ".internal" / "resolved-skills"
+            resolved = resolved_skills_dir(workspace)
             self.assertTrue((resolved / "local-skill" / "SKILL.md").is_file())
             # No registry artifact should exist
             self.assertFalse((workspace / "ai-specs" / ".skill-registry.md").exists())
@@ -2849,7 +2855,7 @@ class FanOutDriftTests(unittest.TestCase):
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
             skills_link = workspace / ".cursor" / "skills"
-            resolved = (workspace / "ai-specs" / ".internal" / "resolved-skills").resolve()
+            resolved = (resolved_skills_dir(workspace)).resolve()
             self.assertTrue(skills_link.is_symlink(), ".cursor/skills must be a symlink")
             self.assertEqual(skills_link.resolve(), resolved)
         finally:
@@ -2870,7 +2876,7 @@ class FanOutDriftTests(unittest.TestCase):
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
             skills_link = workspace / ".cursor" / "skills"
-            resolved = (workspace / "ai-specs" / ".internal" / "resolved-skills").resolve()
+            resolved = (resolved_skills_dir(workspace)).resolve()
             self.assertTrue(skills_link.is_symlink())
             self.assertEqual(skills_link.resolve(), resolved)
             self.assertFalse((resolved / "foo").exists())

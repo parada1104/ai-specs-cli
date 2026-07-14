@@ -21,6 +21,25 @@ def load_module(path: Path, name: str):
     spec.loader.exec_module(module)
     return module
 
+def _cache_mod():
+    path = ROOT / "lib" / "_internal" / "project-cache.py"
+    return load_module(path, "project_cache_for_tests")
+
+
+def cache_recipe_skill(project_root: Path, recipe_id: str, skill_id: str, cli_home: Path = ROOT) -> Path:
+    pc = _cache_mod()
+    return pc.recipe_skills_root(project_root, cli_home=cli_home) / recipe_id / "skills" / skill_id
+
+
+def cache_command(project_root: Path, cmd_id: str, cli_home: Path = ROOT) -> Path:
+    pc = _cache_mod()
+    return pc.commands_dir(project_root, cli_home=cli_home) / f"{cmd_id}.md"
+
+
+def cache_dep_skill(project_root: Path, dep_id: str, cli_home: Path = ROOT) -> Path:
+    pc = _cache_mod()
+    return pc.deps_skills_root(project_root, cli_home=cli_home) / dep_id / "skills" / dep_id
+
 
 class RecipeMaterializeTests(unittest.TestCase):
     @classmethod
@@ -49,7 +68,7 @@ class RecipeMaterializeTests(unittest.TestCase):
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        skill_dir = root / "ai-specs" / ".recipe" / "test-fixture" / "skills" / "test-skill"
+        skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
         self.assertTrue(skill_dir.is_dir())
         self.assertTrue((skill_dir / "SKILL.md").is_file())
 
@@ -58,7 +77,7 @@ class RecipeMaterializeTests(unittest.TestCase):
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        cmd = root / "ai-specs" / "commands" / "test-command.md"
+        cmd = cache_command(root, "test-command")
         self.assertTrue(cmd.is_file())
 
     def test_materializes_doc(self):
@@ -104,14 +123,14 @@ class RecipeMaterializeTests(unittest.TestCase):
             '[recipes.test-fixture]\nenabled = false\nversion = "1.0.0"\n'
         )
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        self.assertFalse((root / "ai-specs" / ".recipe" / "test-fixture" / "skills" / "test-skill").exists())
+        self.assertFalse((cache_recipe_skill(root, "test-fixture", "test-skill")).exists())
 
     def test_sync_without_version_succeeds(self):
         root = self._make_project(
             "[recipes.test-fixture]\nenabled = true\n"
         )
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        skill_dir = root / "ai-specs" / ".recipe" / "test-fixture" / "skills" / "test-skill"
+        skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
         self.assertTrue(skill_dir.is_dir())
 
     def test_legacy_version_warns_and_succeeds(self):
@@ -129,7 +148,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         stderr_output = captured.getvalue()
         self.assertIn("legacy", stderr_output.lower())
         self.assertIn("version", stderr_output.lower())
-        skill_dir = root / "ai-specs" / ".recipe" / "test-fixture" / "skills" / "test-skill"
+        skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
         self.assertTrue(skill_dir.is_dir())
 
     def test_unknown_recipe_fails(self):
@@ -154,7 +173,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
         # Recipe version goes to .recipe/ and local skill is preserved
         self.assertEqual((user_skill / "SKILL.md").read_text(), "user local")
-        recipe_skill = root / "ai-specs" / ".recipe" / "test-fixture" / "skills" / "test-skill"
+        recipe_skill = cache_recipe_skill(root, "test-fixture", "test-skill")
         self.assertTrue(recipe_skill.is_dir())
 
     # --- V2 materialize tests -----------------------------------------------
@@ -321,7 +340,9 @@ class RecipeMaterializeTests(unittest.TestCase):
                 "[recipes.v2-recipe.config]\nboard_id = 'abc123'\n"
             )
             self.assertEqual(self.mod.materialize_recipes(root, ai_specs_home), 0)
-            self.assertTrue((root / "ai-specs" / ".recipe" / "v2-recipe" / "skills" / "v2-skill").is_dir())
+            self.assertTrue(
+                cache_recipe_skill(root, "v2-recipe", "v2-skill", cli_home=ai_specs_home).is_dir()
+            )
 
     def test_v1_manifest_without_bindings_or_config_succeeds(self):
         root = self._make_project(
@@ -407,7 +428,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)
             self.mod.execute_hooks(recipe, {"board_id": "test-board-123", "default_list": "In Progress", "epic_list": "Epic"}, project_root)
-            marker_dir = project_root / "ai-specs" / ".recipe" / "r"
+            marker_dir = _cache_mod().recipe_skills_root(project_root, cli_home=ROOT) / "r"
             self.assertTrue(marker_dir.is_dir())
             marker_file = marker_dir / "bootstrap-ready"
             self.assertTrue(marker_file.is_file())
@@ -425,7 +446,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)
             self.mod.execute_hooks(recipe, {"board_id": "b1", "default_list": "Todo", "epic_list": "Backlog"}, project_root)
-            marker_file = project_root / "ai-specs" / ".recipe" / "myrecipe" / "bootstrap-ready"
+            marker_file = _cache_mod().recipe_skills_root(project_root, cli_home=ROOT) / "myrecipe" / "bootstrap-ready"
             content = marker_file.read_text()
             self.assertEqual(content, "board_id=b1\ndefault_list=Todo\nepic_list=Backlog\n")
 
@@ -512,7 +533,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)
             self.mod.execute_hooks(recipe, {"board_id": "b1"}, project_root)
-            marker = project_root / "ai-specs" / ".recipe" / "r" / "bootstrap-ready"
+            marker = _cache_mod().recipe_skills_root(project_root, cli_home=ROOT) / "r" / "bootstrap-ready"
             self.assertTrue(marker.is_file())
             self.assertIn("board_id=b1", marker.read_text())
 
@@ -530,8 +551,8 @@ class RecipeMaterializeTests(unittest.TestCase):
                 self.mod.execute_hooks(recipe, cfg, root1)
                 cfg2 = {"board_id": "board-2", "default_list": "List2", "epic_list": "Epic2"}
                 self.mod.execute_hooks(recipe, cfg2, root2)
-                m1 = root1 / "ai-specs" / ".recipe" / "r" / "bootstrap-ready"
-                m2 = root2 / "ai-specs" / ".recipe" / "r" / "bootstrap-ready"
+                m1 = _cache_mod().recipe_skills_root(root1, cli_home=ROOT) / "r" / "bootstrap-ready"
+                m2 = _cache_mod().recipe_skills_root(root2, cli_home=ROOT) / "r" / "bootstrap-ready"
                 self.assertTrue(m1.is_file())
                 self.assertTrue(m2.is_file())
                 self.assertIn("board_id=board-1", m1.read_text())
@@ -708,10 +729,16 @@ class RecipeMaterializeTests(unittest.TestCase):
             )
             result = self.mod.materialize_recipes(project_root, ai_specs_home)
             self.assertEqual(result, 0)
-            skill_path = project_root / "ai-specs" / ".recipe" / rid / "skills" / "trello-pm-workflow"
+            skill_path = cache_recipe_skill(
+                project_root, rid, "trello-pm-workflow", cli_home=ai_specs_home
+            )
             self.assertTrue(skill_path.is_dir())
             self.assertTrue((skill_path / "SKILL.md").is_file())
-            marker = project_root / "ai-specs" / ".recipe" / rid / "bootstrap-ready"
+            marker = (
+                _cache_mod().recipe_skills_root(project_root, cli_home=ai_specs_home)
+                / rid
+                / "bootstrap-ready"
+            )
             self.assertTrue(marker.is_file())
             marker_content = marker.read_text()
             self.assertIn("board_id=abc123", marker_content)

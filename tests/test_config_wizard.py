@@ -267,7 +267,7 @@ class ConfigWizardTests(unittest.TestCase):
             confirm.return_value.ask.return_value = True
             envrc = MagicMock()
             envrc.collect_env_vars.return_value = {"TRELLO_API_KEY": "required by trello"}
-            envrc.generate_envrc_example.return_value = project / "ai-specs" / ".envrc.example"
+            envrc.write_envrc.return_value = project / "ai-specs" / ".envrc"
             import questionary as q
 
             with patch.object(self.mod, "_enabled_recipe_ids", return_value=["demo"]), patch.object(
@@ -281,7 +281,9 @@ class ConfigWizardTests(unittest.TestCase):
             ):
                 rc = self.mod.main([str(project)])
             self.assertEqual(rc, 0)
-            envrc.generate_envrc_example.assert_called_with(project.resolve())
+            envrc.write_envrc.assert_called()
+            # write_envrc(project_root, values) — first arg is project root
+            self.assertEqual(envrc.write_envrc.call_args.args[0], project.resolve())
 
     def test_main_skips_envrc_when_no_mcp_recipes(self):
         with tempfile.TemporaryDirectory() as tmp:

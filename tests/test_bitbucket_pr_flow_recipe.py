@@ -11,6 +11,10 @@ RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 CATALOG = ROOT / "catalog" / "recipes"
 RECIPE_ID = "bitbucket-pr-flow"
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 
 
 def load_module(path: Path, name: str):
@@ -110,7 +114,7 @@ class BitbucketPrFlowRecipeTests(unittest.TestCase):
         root = self._make_project()
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
         skill = (
-            root / "ai-specs" / ".recipe" / RECIPE_ID
+            recipe_root(root, RECIPE_ID)
             / "skills" / "bitbucket-merge-workflow" / "SKILL.md"
         )
         self.assertTrue(skill.is_file(), f"missing bundled skill at {skill}")
@@ -119,7 +123,7 @@ class BitbucketPrFlowRecipeTests(unittest.TestCase):
         """Sync materializes the bb-pr-create command."""
         root = self._make_project()
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        cmd = root / "ai-specs" / "commands" / "bb-pr-create.md"
+        cmd = cache_command(root, "bb-pr-create")
         self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
     def test_materialize_produces_readme(self):
@@ -134,7 +138,7 @@ class BitbucketPrFlowRecipeTests(unittest.TestCase):
         root = self._make_project()
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
         github_skill = (
-            root / "ai-specs" / ".recipe" / "git-pr-flow"
+            recipe_root(root, "git-pr-flow")
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
         self.assertFalse(
@@ -478,18 +482,18 @@ class BitbucketPrFlowDualProviderTests(unittest.TestCase):
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
 
         bitbucket_skill = (
-            root / "ai-specs" / ".recipe" / RECIPE_ID
+            recipe_root(root, RECIPE_ID)
             / "skills" / "bitbucket-merge-workflow" / "SKILL.md"
         )
-        bitbucket_cmd = root / "ai-specs" / "commands" / "bb-pr-create.md"
+        bitbucket_cmd = cache_command(root, "bb-pr-create")
         self.assertTrue(bitbucket_skill.is_file(), f"missing bitbucket skill at {bitbucket_skill}")
         self.assertTrue(bitbucket_cmd.is_file(), f"missing bitbucket command at {bitbucket_cmd}")
 
         github_skill = (
-            root / "ai-specs" / ".recipe" / "git-pr-flow"
+            recipe_root(root, "git-pr-flow")
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
-        github_cmd = root / "ai-specs" / "commands" / "pr-create.md"
+        github_cmd = cache_command(root, "pr-create")
         self.assertTrue(github_skill.is_file(), f"missing github skill at {github_skill}")
         self.assertTrue(github_cmd.is_file(), f"missing github command at {github_cmd}")
 
@@ -499,18 +503,18 @@ class BitbucketPrFlowDualProviderTests(unittest.TestCase):
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
 
         github_skill = (
-            root / "ai-specs" / ".recipe" / "git-pr-flow"
+            recipe_root(root, "git-pr-flow")
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
-        github_cmd = root / "ai-specs" / "commands" / "pr-create.md"
+        github_cmd = cache_command(root, "pr-create")
         self.assertTrue(github_skill.is_file(), f"missing github skill at {github_skill}")
         self.assertTrue(github_cmd.is_file(), f"missing github command at {github_cmd}")
 
         bitbucket_skill = (
-            root / "ai-specs" / ".recipe" / RECIPE_ID
+            recipe_root(root, RECIPE_ID)
             / "skills" / "bitbucket-merge-workflow" / "SKILL.md"
         )
-        bitbucket_cmd = root / "ai-specs" / "commands" / "bb-pr-create.md"
+        bitbucket_cmd = cache_command(root, "bb-pr-create")
         self.assertTrue(bitbucket_skill.is_file(), f"missing bitbucket skill at {bitbucket_skill}")
         self.assertTrue(bitbucket_cmd.is_file(), f"missing bitbucket command at {bitbucket_cmd}")
 

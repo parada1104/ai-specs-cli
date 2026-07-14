@@ -37,6 +37,21 @@ def _load_lock_module():
     return module
 
 _lock_mod = _load_lock_module()
+
+_project_cache_module = None
+
+def _load_project_cache():
+    global _project_cache_module
+    if _project_cache_module is None:
+        module_path = Path(__file__).with_name("project-cache.py")
+        spec = importlib.util.spec_from_file_location("project_cache_internal", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load project-cache.py at {module_path}")
+        _project_cache_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = _project_cache_module
+        spec.loader.exec_module(_project_cache_module)
+    return _project_cache_module
+
 load_lock = _lock_mod.load_lock
 write_lock = _lock_mod.write_lock
 set_recipe_skill_hashes = _lock_mod.set_recipe_skill_hashes
@@ -239,9 +254,10 @@ def warn_legacy_version(recipe_id: str, manifest_version: str) -> None:
 
 
 # --- Materialize helpers ------------------------------------------------------
-def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Path, recipe_id: str) -> None:
+def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Path, recipe_id: str, cli_home: Path | None = None) -> None:
     src = recipe_dir / "skills" / skill_id
-    dest = project_root / "ai-specs" / ".recipe" / recipe_id / "skills" / skill_id
+    pc = _load_project_cache()
+    dest = pc.recipe_skills_root(project_root, cli_home=cli_home) / recipe_id / "skills" / skill_id
     if not src.is_dir():
         raise RuntimeError(f"bundled skill not found: {src}")
     if dest.exists():
@@ -257,7 +273,7 @@ def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Pat
     write_lock(lock_path, lock)
 
 
-def materialize_dep_skill(skill: Any, project_root: Path) -> None:
+def materialize_dep_skill(skill: Any, project_root: Path, cli_home: Path | None = None) -> None:
     # Reuse vendor-skills.py logic via import
     vendor_path = Path(__file__).with_name("vendor-skills.py")
     spec = importlib.util.spec_from_file_location("vendor_skills_internal", vendor_path)
@@ -272,17 +288,23 @@ def materialize_dep_skill(skill: Any, project_root: Path) -> None:
     }
     if skill.path:
         dep["path"] = skill.path
-    vendor_mod.sync_dep_target(dep, project_root)
+    vendor_mod.sync_dep_target(dep, project_root, cli_home=cli_home)
     print(f"    ✓ dep skill {skill.id}")
 
 
-def materialize_command(recipe_dir: Path, cmd: Any, project_root: Path) -> None:
+def materialize_command(
+    recipe_dir: Path,
+    cmd: Any,
+    project_root: Path,
+    cli_home: Path | None = None,
+) -> None:
     src = recipe_dir / cmd.path
-    dest = project_root / "ai-specs" / "commands" / f"{cmd.id}.md"
+    pc = _load_project_cache()
+    dest = pc.commands_dir(project_root, cli_home=cli_home) / f"{cmd.id}.md"
     if not src.is_file():
         raise RuntimeError(f"command source not found: {src}")
     if dest.exists() and (not dest.is_file() or dest.read_bytes() != src.read_bytes()):
-        warn(f"recipe command '{cmd.id}' overwrites existing command at {dest.relative_to(project_root)}")
+        warn(f"recipe command '{cmd.id}' overwrites existing managed command at {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dest)
     print(f"    ✓ command {cmd.id}")
@@ -446,7 +468,12 @@ def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]
 
 
 # --- Hook execution -----------------------------------------------------------
-def execute_hooks(recipe: Any, merged_config: dict[str, Any], project_root: Path) -> None:
+def execute_hooks(
+    recipe: Any,
+    merged_config: dict[str, Any],
+    project_root: Path,
+    cli_home: Path | None = None,
+) -> None:
     """Execute recipe hooks in declaration order.
 
     Unknown actions emit a warning and are skipped.
@@ -484,7 +511,8 @@ def execute_hooks(recipe: Any, merged_config: dict[str, Any], project_root: Path
                             f"field '{key}' value '{value_str}' does not match required pattern '{pattern}'"
                         )
         elif hook.action == "bootstrap-board":
-            marker_dir = project_root / "ai-specs" / ".recipe" / recipe.id
+            pc = _load_project_cache()
+            marker_dir = pc.recipe_skills_root(project_root, cli_home=cli_home) / recipe.id
             marker_dir.mkdir(parents=True, exist_ok=True)
             (marker_dir / "bootstrap-ready").write_text(
                 f"board_id={merged_config.get('board_id', '')}\n"
@@ -527,20 +555,26 @@ def build_recipe_mcp(catalog_dir: Path, recipe_ids: list[str], manifest_mcp: dic
     return merged
 
 
-def clean_orphans(project_root: Path, enabled_recipe_ids: set[str], expected_dep_ids: set[str]) -> None:
-    recipe_dir = project_root / "ai-specs" / ".recipe"
+def clean_orphans(
+    project_root: Path,
+    enabled_recipe_ids: set[str],
+    expected_dep_ids: set[str],
+    cli_home: Path | None = None,
+) -> None:
+    pc = _load_project_cache()
+    recipe_dir = pc.recipe_skills_root(project_root, cli_home=cli_home)
     if recipe_dir.is_dir():
         for child in recipe_dir.iterdir():
             if child.is_dir() and child.name not in enabled_recipe_ids:
                 shutil.rmtree(child)
-                print(f"  ✓ removed orphaned .recipe/{child.name}")
+                print(f"  ✓ removed orphaned cache .recipe/{child.name}")
 
-    deps_dir = project_root / "ai-specs" / ".deps"
+    deps_dir = pc.deps_skills_root(project_root, cli_home=cli_home)
     if deps_dir.is_dir():
         for child in deps_dir.iterdir():
             if child.is_dir() and child.name not in expected_dep_ids:
                 shutil.rmtree(child)
-                print(f"  ✓ removed orphaned .deps/{child.name}")
+                print(f"  ✓ removed orphaned cache .deps/{child.name}")
 
     # Clean up stale lock entries for recipes no longer in the manifest
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
@@ -625,6 +659,10 @@ def _enabled_agents(project_root: Path) -> list[str]:
 def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None, resolved_config_out: Path | None = None, resolved_hooks_out: Path | None = None) -> int:
     catalog_dir = ai_specs_home / "catalog" / "recipes"
     toml_path = project_root / "ai-specs" / "ai-specs.toml"
+    cli_home = Path(ai_specs_home)
+    pc = _load_project_cache()
+    pc.ensure_cache(project_root, cli_home=cli_home)
+    pc.remove_legacy_origin(project_root)
 
     recipes = load_recipes_from_manifest(project_root)
     enabled = {rid: cfg for rid, cfg in recipes.items() if cfg.get("enabled")}
@@ -640,7 +678,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
     if not enabled:
         # Still clean up orphaned recipes (none expected) and deps not in manifest
-        clean_orphans(project_root, set(), expected_dep_ids)
+        clean_orphans(project_root, set(), expected_dep_ids, cli_home=cli_home)
         print("  (no [recipes.*] enabled — skipping)")
         # Still write resolved-config if requested (even with no enabled recipes)
         if resolved_config_out is not None:
@@ -724,7 +762,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
             if skill.source == "dep":
                 expected_dep_ids.add(skill.id)
 
-    clean_orphans(project_root, set(enabled.keys()), expected_dep_ids)
+    clean_orphans(project_root, set(enabled.keys()), expected_dep_ids, cli_home=cli_home)
 
     for rid, cfg in enabled.items():
         print(f"  ▸ recipe {rid}")
@@ -743,15 +781,15 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # Skills (bundled then deps)
         for skill in recipe.skills:
             if skill.source == "bundled":
-                materialize_bundled_skill(recipe_dir, skill.id, project_root, rid)
+                materialize_bundled_skill(recipe_dir, skill.id, project_root, rid, cli_home=cli_home)
             elif skill.source == "dep":
-                materialize_dep_skill(skill, project_root)
+                materialize_dep_skill(skill, project_root, cli_home=cli_home)
             else:
                 raise RuntimeError(f"unknown skill source '{skill.source}' for skill '{skill.id}'")
 
         # Commands
         for cmd in recipe.commands:
-            materialize_command(recipe_dir, cmd, project_root)
+            materialize_command(recipe_dir, cmd, project_root, cli_home=cli_home)
 
         # MCP presets (shallow merge with manifest precedence)
         for mcp in recipe.mcp:
@@ -777,7 +815,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
             materialize_doc(recipe_dir, doc, project_root)
 
         # Hook execution (sync-time [[hooks]])
-        execute_hooks(recipe, merged_cfg, project_root)
+        execute_hooks(recipe, merged_cfg, project_root, cli_home=cli_home)
 
         # Runtime hooks ([[provides.hooks]]): materialize the script once and
         # collect a resolved entry for downstream hooks-render.py. Tunable

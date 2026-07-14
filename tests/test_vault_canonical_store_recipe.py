@@ -9,6 +9,10 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "vault-canonical-store"
@@ -53,7 +57,7 @@ class VaultCanonicalStoreRecipeTests(unittest.TestCase):
             )
             self.assertEqual(self.mat.materialize_recipes(project_root, ROOT), 0)
             skill = (
-                project_root / "ai-specs" / ".recipe" / "vault-canonical-store"
+                recipe_root(project_root, "vault-canonical-store")
                 / "skills" / "vault-context" / "SKILL.md"
             )
             self.assertTrue(skill.is_file())
