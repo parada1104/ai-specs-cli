@@ -6,8 +6,9 @@
 
 ## Commits
 1. Phase 1 — unpin + WARN + add/init/list (`237a3d6`)
-2. Phases 2–3 — project-cache + origin move + commands/flatten/sync-agent/init
-3. Phase 4 — doctor/hub/docs/#104 + on-disk specs + fixture sweep
+2. Phase 2 — `project-cache` + materialize/vendor/skill-resolution origin move
+3. Phase 3 — commands merge + flatten + sync-agent + init/gitignore
+4. Phase 4 — doctor/hub/docs/#104 + on-disk specs + fixture sweep + PTY flake fix
 
 ## TDD Cycle Evidence
 
@@ -19,12 +20,13 @@
 | 4 | doctor legacy WARN + cache symlink OK; docs/#104; specs rewrite | ✅ | ✅ | fixture sweep via `_cache_paths` |
 
 ### Full suite
-`./tests/validate.sh` — re-run after final commit prep.
+`./tests/validate.sh` — green after PTY Ctrl-C tests switched from `send_signal(SIGINT)` to PTY `\x03` (avoids hung prompt_toolkit → rc 120).
 
 ## Deviations
 - Absolute symlinks for cache-backed `resolved-skills` (relative links break under `/var/folders` → `/private/var`).
 - `command-merge.py` thin wrapper; sync-agent uses `project-cache.py merge-commands`.
 - Fixed stale `config_wizard` test to assert `write_envrc` (pre-existing API drift).
+- PTY Ctrl-C e2e: deliver `\x03` on master FD instead of process SIGINT.
 
 ## Risks
-- PTY Ctrl-C init_tui e2e tests may flake (timeout 120) in this environment.
+- Worktree / rename creates a new cache key (sidecar records old root); expected by design.
