@@ -109,6 +109,7 @@ def remove_legacy_origin(project_root: Path) -> None:
     legacy_recipe = ai_specs / ".recipe"
     legacy_deps = ai_specs / ".deps"
 
+    migration_failed = False
     if legacy_recipe.is_dir():
         for recipe_child in sorted(legacy_recipe.iterdir()):
             if not recipe_child.is_dir():
@@ -130,9 +131,16 @@ def remove_legacy_origin(project_root: Path) -> None:
                 _warn(
                     f"failed to migrate overrides for '{recipe_child.name}': {exc}"
                 )
+                migration_failed = True
 
     for path, label in ((legacy_recipe, ".recipe"), (legacy_deps, ".deps")):
         if not path.exists():
+            continue
+        if path == legacy_recipe and migration_failed:
+            _warn(
+                f"skipping removal of ai-specs/{label}/ — "
+                "one or more override migrations failed; re-run ai-specs sync to retry"
+            )
             continue
         try:
             shutil.rmtree(path)

@@ -642,7 +642,12 @@ class Doctor:
                 actual = {p.name for p in commands_path.glob("*.md")}
                 missing = expected - actual
                 extra = actual - expected
-                if not actual:
+                if not actual and not expected:
+                    self.checks.append(Check(
+                        Severity.OK, f"{commands}",
+                        "no commands configured"
+                    ))
+                elif not actual:
                     self.checks.append(Check(
                         Severity.WARN, f"{commands}",
                         "directory empty",

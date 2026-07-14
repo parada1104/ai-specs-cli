@@ -131,6 +131,28 @@ class ProjectCacheTests(unittest.TestCase):
         self.assertEqual((existing / "config.toml").read_text(), "keep = true\n")
         self.assertFalse((root / "ai-specs" / ".recipe").exists())
 
+    def test_remove_legacy_origin_skips_recipe_rmtree_if_override_migration_failed(self):
+        """If a copytree fails with OSError, .recipe/ must NOT be deleted (data loss guard)."""
+        root = self._tmp_project()
+        legacy_overrides = root / "ai-specs" / ".recipe" / "demo" / "overrides"
+        legacy_overrides.mkdir(parents=True)
+        (legacy_overrides / "config.toml").write_text('board_id = "x"\n')
+        # Block migration: place a FILE where the recipe dir should be so mkdir raises OSError
+        recipes_dir = root / "ai-specs" / "recipes"
+        recipes_dir.mkdir(parents=True, exist_ok=True)
+        (recipes_dir / "demo").write_text("blocking file\n")
+        # Also create .deps — it should still be removed (independent)
+        (root / "ai-specs" / ".deps" / "dep-a").mkdir(parents=True)
+        (root / "ai-specs" / ".deps" / "dep-a" / "marker").write_text("d\n")
+
+        self.mod.remove_legacy_origin(root)
+
+        # .recipe/ must survive — overrides were not migrated
+        self.assertTrue((root / "ai-specs" / ".recipe").exists())
+        self.assertTrue(legacy_overrides.exists())
+        # .deps/ cleanup is independent and should have proceeded
+        self.assertFalse((root / "ai-specs" / ".deps").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

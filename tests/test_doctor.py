@@ -1062,5 +1062,69 @@ class CacheAwareCommandsDoctorTests(unittest.TestCase):
             )
 
 
+class CommandsEmptyExpectedDoctorTests(unittest.TestCase):
+    """Doctor must not WARN when both expected and actual command sets are empty."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.doctor = load_module(DOCTOR_PY, "doctor_empty_cmd_tests")
+
+    def _make_project(self, tmp: str) -> Path:
+        """Minimal project fixture: manifest + AGENTS.md + bundled skills."""
+        target = Path(tmp) / "prj"
+        target.mkdir()
+        (target / "AGENTS.md").write_text("# agents\n")
+        (target / "ai-specs").mkdir()
+        for skill in ("skill-creator", "skill-sync"):
+            (target / "ai-specs" / "skills" / skill).mkdir(parents=True, exist_ok=True)
+        (target / "ai-specs" / "ai-specs.toml").write_text(
+            '[project]\nname = "demo"\n[agents]\nenabled = ["claude"]\n'
+        )
+        return target
+
+    def test_empty_commands_dir_with_no_expected_reports_ok_not_warn(self):
+        """Empty agent commands dir + zero expected commands → OK, not WARN."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = self._make_project(tmp)
+            # Controlled AI_SPECS_HOME so cache lookup returns empty
+            fake_home = Path(tmp) / "cli-home"
+            fake_home.mkdir()
+            # Create an empty commands dir for the claude agent
+            (target / ".claude" / "commands").mkdir(parents=True)
+            plat = self.doctor.Doctor.PLATFORM["claude"]
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(fake_home)}):
+                doc = self.doctor.Doctor(target)
+                doc._check_agent_outputs("claude", plat, 0)
+            warn_rows = [
+                c for c in doc.checks
+                if ".claude/commands" in c.name and c.severity == self.doctor.Severity.WARN
+            ]
+            self.assertEqual(
+                warn_rows,
+                [],
+                f"Should not WARN when no commands configured; got: {warn_rows}",
+            )
+
+    def test_empty_commands_dir_with_no_expected_emits_ok_label(self):
+        """Empty agent commands dir + zero expected commands → at least one OK for commands."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = self._make_project(tmp)
+            fake_home = Path(tmp) / "cli-home"
+            fake_home.mkdir()
+            (target / ".claude" / "commands").mkdir(parents=True)
+            plat = self.doctor.Doctor.PLATFORM["claude"]
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(fake_home)}):
+                doc = self.doctor.Doctor(target)
+                doc._check_agent_outputs("claude", plat, 0)
+            ok_rows = [
+                c for c in doc.checks
+                if ".claude/commands" in c.name and c.severity == self.doctor.Severity.OK
+            ]
+            self.assertTrue(
+                ok_rows,
+                f"Should emit OK when no commands configured; checks: {doc.checks}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
