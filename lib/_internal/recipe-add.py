@@ -97,9 +97,7 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
 
     # Append to manifest
     recipe_dict = recipe_read.recipe_to_dict(recipe)
-    version = recipe_dict["version"]
-
-    section = f"\n[recipes.{recipe_id}]\nenabled = true\nversion = \"{version}\"\n"
+    section = f"\n[recipes.{recipe_id}]\nenabled = true\n"
 
     # Append config placeholders so the user knows what needs configuration
     if recipe.config_schema.fields:

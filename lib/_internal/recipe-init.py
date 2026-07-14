@@ -124,7 +124,7 @@ def _config_lines(recipe: Any, recipe_id: str, manifest_recipes: dict[str, dict[
 
     if recipe_id not in manifest_recipes:
         lines.append("Reviewable manifest addition:")
-        lines.append(f"```toml\n[recipes.{recipe_id}]\nenabled = true\nversion = \"{recipe.version}\"\n```")
+        lines.append(f"```toml\n[recipes.{recipe_id}]\nenabled = true\n```")
 
     if fields:
         lines.append("Schema-aligned config targets:")

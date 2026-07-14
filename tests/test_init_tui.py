@@ -44,7 +44,8 @@ class TestRenderManifest(unittest.TestCase):
         self.assertEqual(data["project"]["name"], "demo")
         self.assertEqual(data["agents"]["enabled"], ["claude", "pi"])
         self.assertTrue(data["recipes"]["session-context"]["enabled"])
-        self.assertEqual(data["recipes"]["tdd-flow"]["version"], "1.0.0")
+        self.assertNotIn("version", data["recipes"]["tdd-flow"])
+        self.assertNotIn("version =", text)
 
     def test_dotted_recipe_id_is_quoted_literal_key(self):
         text = self.mod._render_manifest(
@@ -56,7 +57,8 @@ class TestRenderManifest(unittest.TestCase):
         self.assertIn('[recipes."foo.bar"]', text)
         data = tomllib.loads(text)
         self.assertIn("foo.bar", data["recipes"])
-        self.assertEqual(data["recipes"]["foo.bar"]["version"], "1.2.3")
+        self.assertTrue(data["recipes"]["foo.bar"]["enabled"])
+        self.assertNotIn("version", data["recipes"]["foo.bar"])
 
 
     def test_render_manifest_writes_config_block(self):

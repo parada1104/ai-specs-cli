@@ -34,13 +34,13 @@ Chained PRs recommended: Yes
 
 ## Phase 1 — PR1: Manifest unpin + WARN + add/init/list
 
-- [ ] 1.1 RED: tests — sync without `version` succeeds; legacy `version` WARN+succeed; add/init omit `version`; list catalog version info-only (not outdated)
-- [ ] 1.2 GREEN: delete `validate_version_pin` in `recipe-materialize.py`; `toml-read.py` make `version` optional + expose for WARN
-- [ ] 1.3 GREEN: `recipe-add.py`, `recipe-init.py`, `recipe-config-write.py`, `init_tui.py` stop writing `version=`
-- [ ] 1.4 GREEN: `recipe-list.py` catalog version info-only; no outdated/pin-bump path
-- [ ] 1.5 Docs/tmpl: `templates/ai-specs.toml.tmpl` + brief README/recipe-schema note (no pin ceremony)
-- [ ] 1.6 Fixture sweep for PR1: drop required `version=` where tests assert pin fail-close
-- [ ] 1.7 Validate: `./tests/validate.sh` green for PR1 scope
+- [x] 1.1 RED: tests — sync without `version` succeeds; legacy `version` WARN+succeed; add/init omit `version`; list catalog version info-only (not outdated)
+- [x] 1.2 GREEN: delete `validate_version_pin` in `recipe-materialize.py`; `toml-read.py` make `version` optional + expose for WARN
+- [x] 1.3 GREEN: `recipe-add.py`, `recipe-init.py`, `recipe-config-write.py`, `init_tui.py` stop writing `version=`
+- [x] 1.4 GREEN: `recipe-list.py` catalog version info-only; no outdated/pin-bump path
+- [x] 1.5 Docs/tmpl: `templates/ai-specs.toml.tmpl` + brief README/recipe-schema note (no pin ceremony)
+- [x] 1.6 Fixture sweep for PR1: drop required `version=` where tests assert pin fail-close
+- [x] 1.7 Validate: `./tests/validate.sh` green for PR1 scope
 
 ## Phase 2 — PR2: Cache module + skill/dep origin + leftover cleanup
 

@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import subprocess
 import sys
@@ -105,13 +106,31 @@ class RecipeMaterializeTests(unittest.TestCase):
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
         self.assertFalse((root / "ai-specs" / ".recipe" / "test-fixture" / "skills" / "test-skill").exists())
 
-    def test_version_mismatch_fails(self):
+    def test_sync_without_version_succeeds(self):
+        root = self._make_project(
+            "[recipes.test-fixture]\nenabled = true\n"
+        )
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        skill_dir = root / "ai-specs" / ".recipe" / "test-fixture" / "skills" / "test-skill"
+        self.assertTrue(skill_dir.is_dir())
+
+    def test_legacy_version_warns_and_succeeds(self):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "2.0.0"\n'
         )
-        with self.assertRaises(RuntimeError) as ctx:
-            self.mod.materialize_recipes(root, ROOT)
-        self.assertIn("version mismatch", str(ctx.exception))
+        captured = io.StringIO()
+        real_stderr = sys.stderr
+        sys.stderr = captured
+        try:
+            rc = self.mod.materialize_recipes(root, ROOT)
+        finally:
+            sys.stderr = real_stderr
+        self.assertEqual(rc, 0)
+        stderr_output = captured.getvalue()
+        self.assertIn("legacy", stderr_output.lower())
+        self.assertIn("version", stderr_output.lower())
+        skill_dir = root / "ai-specs" / ".recipe" / "test-fixture" / "skills" / "test-skill"
+        self.assertTrue(skill_dir.is_dir())
 
     def test_unknown_recipe_fails(self):
         root = self._make_project(

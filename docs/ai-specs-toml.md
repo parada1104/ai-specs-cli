@@ -51,7 +51,7 @@ Conservative compatibility rules in V1:
 | `[mcp.<name>]` | `timeout` | optional |
 | `[mcp.<name>]` | `enabled` | tolerated passthrough field |
 | `[recipes.<id>]` | `enabled` | required; boolean — must be `true` to materialize |
-| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |
+| `[recipes.<id>]` | `version` | optional legacy; ignored with WARN — sync uses CLI catalog |
 | `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |
 | `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |
 | `[brief]` | `render` | optional; boolean; default `true` — when `false`, `ai-specs sync`/`init` do not write `AGENTS.md` (manual brief; recipe fragments not merged) |
@@ -143,12 +143,13 @@ timeout = 30000
 
 ### `[recipes.<id>]`
 
-Enables a named recipe and pins its catalog version.
+Enables a named recipe. Sync materializes the catalog version shipped with the
+installed CLI; no per-recipe pin is required. A legacy `version` key is ignored
+with a WARN.
 
 ```toml
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.0.0"
 ```
 
 ### `[recipes.<id>.config]`

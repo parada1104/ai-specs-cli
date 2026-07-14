@@ -286,15 +286,14 @@ In `ai-specs/ai-specs.toml`:
 ```toml
 [recipes.<id>]
 enabled = true
-version = "1.0.0"
 ```
 
 - `enabled` (boolean, required): must be `true` for the recipe to materialize
-- `version` (string, required): exact version that must match `recipe.toml`
+- `version` (string, optional legacy): ignored with a WARN when present; sync always uses the installed CLI catalog
 
-## Version pinning
+## Version pins (legacy)
 
-If the manifest pin does not match the catalog `recipe.toml` version, `ai-specs sync` fails with an explicit error.
+Per-recipe `version` pins are no longer required. If a legacy `version` key remains in the manifest, sync emits a WARN and continues with the catalog shipped by the installed CLI. After `ai-specs upgrade`, run `ai-specs sync` — no toml pin bump is needed.
 
 ## Conflict detection
 

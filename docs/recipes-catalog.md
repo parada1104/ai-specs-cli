@@ -2,9 +2,10 @@
 
 The recipes `ai-specs` ships in its catalog, what each one is for, and the
 config it expects in `ai-specs/ai-specs.toml`. Enable a recipe with
-`[recipes.<id>] enabled = true` (pin `version`), set any config under
+`[recipes.<id>] enabled = true`, set any config under
 `[recipes.<id>.config]`, then run `ai-specs sync` to materialize its skills,
-commands, templates, and docs.
+commands, templates, and docs. Catalog `version` in `recipe list` is
+informational only — no per-recipe pin is required.
 
 - For the **schema** of `recipe.toml` and `[config]` fields, see
   [`docs/recipe-schema.md`](recipe-schema.md).

@@ -227,13 +227,15 @@ def check_tag_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
     return mod.check_tag_conflicts(recipes)
 
 
-# --- Version pinning validation ----------------------------------------------
-def validate_version_pin(recipe_id: str, manifest_version: str, recipe: Any) -> None:
-    if manifest_version != recipe.version:
-        raise RuntimeError(
-            f"recipe '{recipe_id}' version mismatch: manifest pins "
-            f"'{manifest_version}' but catalog has '{recipe.version}'"
-        )
+# --- Legacy version key handling ---------------------------------------------
+def warn_legacy_version(recipe_id: str, manifest_version: str) -> None:
+    """Emit a non-blocking WARN when a legacy manifest version= key is present."""
+    if not manifest_version:
+        return
+    warn(
+        f"recipe '{recipe_id}' has legacy version='{manifest_version}' in "
+        "ai-specs.toml; pins are ignored — sync uses the installed CLI catalog"
+    )
 
 
 # --- Materialize helpers ------------------------------------------------------
@@ -727,7 +729,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     for rid, cfg in enabled.items():
         print(f"  ▸ recipe {rid}")
         recipe = read_recipe(catalog_dir, rid)
-        validate_version_pin(rid, cfg.get("version", ""), recipe)
+        warn_legacy_version(rid, cfg.get("version", ""))
 
         # Config merge (NEW)
         manifest_config = cfg.get("config", {})
