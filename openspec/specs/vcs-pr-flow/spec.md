@@ -1,187 +1,199 @@
-[spec.md#DE38]
-1:[spec.md#F967]
-2:1:# vcs-pr-flow Specification: Multi-Provider VCS Flow
-3:2:
-4:3:## Purpose
-5:4:
-6:5:Provide provider-backed `vcs-pr-flow` recipes that mirror the same semantics across GitHub,
-7:6:GitLab, and Bitbucket: explicit branch pushes, review-gated merging, and worktree cleanup.
-8:7:The bound recipe id is the provider identity; only `base_branch` is configurable per project.
-9:8:
-10:9:## Requirements
-11:10:
-12:11:### Requirement: VCS Sibling Recipe Manifests
-13:12:
-14:13:Each VCS sibling recipe (`git-pr-flow`, `gitlab-mr-flow`, `bitbucket-pr-flow`) MUST declare
-15:14:`vcs-pr-flow`, an `on-sync` `validate-config` hook, a bundled host-specific merge workflow
-16:15:skill, a host-specific create command, README doc provision, and **only** `base_branch` as
-17:16:config (no `provider` key).
-18:17:
-19:18:#### Scenario: GitHub manifest validates
-20:19:- GIVEN the `git-pr-flow` catalog recipe is loaded
-21:20:- WHEN recipe schema validation runs
-22:21:- THEN the recipe is valid and declares `vcs-pr-flow`
-23:22:- AND `base_branch` defaults to `main`
-24:23:- AND no `provider` field exists in `[config]`
-25:24:
-26:25:#### Scenario: GitLab manifest validates
-27:26:- GIVEN the `gitlab-mr-flow` catalog recipe is loaded
-28:27:- WHEN recipe schema validation runs
-29:28:- THEN the recipe is valid and declares `vcs-pr-flow`
-30:29:- AND `base_branch` defaults to `development`
-31:30:- AND no `provider` field exists in `[config]`
-32:31:
-33:32:#### Scenario: Bitbucket manifest validates
-34:33:- GIVEN the `bitbucket-pr-flow` catalog recipe is loaded
-35:34:- WHEN recipe schema validation runs
-36:35:- THEN the recipe is valid and declares `vcs-pr-flow`
-37:36:- AND `base_branch` defaults to `development`
-38:37:- AND no `provider` field exists in `[config]`
-39:38:
-40:39:### Requirement: Materialized Assets
-41:40:
-42:41:Sync MUST materialize provider assets without changing sibling provider recipe assets when
-43:42:only one provider recipe is enabled.
-44:43:
-45:44:#### Scenario: GitLab sync provisions assets
-46:45:- GIVEN `gitlab-mr-flow` is enabled
-47:46:- WHEN `ai-specs sync` runs
-48:47:- THEN the GitLab skill, command, and README exist in generated locations
-49:48:
-50:49:#### Scenario: Bitbucket sync provisions assets
-51:50:- GIVEN `bitbucket-pr-flow` is enabled
-52:51:- WHEN `ai-specs sync` runs
-53:52:- THEN the Bitbucket skill, command, and README exist in generated locations
-54:53:
-55:54:### Requirement: Provider Binding Semantics
-56:55:
-57:56:When multiple recipes provide `vcs-pr-flow`, the system MUST require an explicit
-58:57:`[[bindings]]` selection; without it, sync MUST warn and leave `vcs-pr-flow` unbound.
-59:58:The bound **recipe id** is the provider identity; there is no separate `provider` config.
-60:59:
-61:60:#### Scenario: Ambiguous providers stay unbound
-62:61:- GIVEN multiple VCS provider recipes are enabled without `[[bindings]]`
-63:62:- WHEN sync resolves capabilities
-64:63:- THEN a warning names the ambiguity
-65:64:- AND no implicit `vcs-pr-flow` binding is selected
-66:65:
-67:66:#### Scenario: Explicit binding selects host
-68:67:- GIVEN multiple VCS provider recipes are enabled with a binding to `bitbucket-pr-flow`
-69:68:- WHEN sync resolves capabilities
-70:69:- THEN `vcs-pr-flow` is bound to Bitbucket assets and brief rules
-71:70:
-72:71:### Requirement: Runtime Brief VCS Bullet
-73:72:
-74:73:The renderer MUST derive the Runtime Flow VCS provider bullet from the bound `vcs-pr-flow` recipe id, not from a `provider` config value.
-75:74:If the bound recipe id is unknown to the VCS label table, it MUST emit a `⚠ ai-specs:` warning to stderr and render `VCS PR (custom)`.
-76:75:It MUST append `base branch: \`<base_branch>\`` when `base_branch` is configured or defaulted.
-77:76:(Previously: The bullet only mapped known recipe ids and appended base branch.)
-78:77:
-79:78:#### Scenario: GitHub binding renders gh hint
-80:79:- GIVEN `bindings.vcs-pr-flow = "git-pr-flow"` and `base_branch = "development"`
-81:80:- WHEN the brief is rendered
-82:81:- THEN the Runtime Flow section includes `VCS/PR provider: GitHub` and `gh` CLI
-83:82:- AND includes `base branch: \`development\``
-84:83:
-85:84:#### Scenario: Unknown recipe id warns and falls back
-86:85:- GIVEN `bindings.vcs-pr-flow = "custom-pr-flow"`
-87:86:- WHEN the brief is rendered
-88:87:- THEN stderr includes `⚠ ai-specs:`
-89:88:- AND the Runtime Flow section uses `VCS PR (custom)`
-90:89:
-91:90:#### Scenario: Multiple unknown ids each warn
-92:91:- GIVEN two render passes bind different unknown `vcs-pr-flow` ids
-93:92:- WHEN each brief is rendered
-94:93:- THEN each pass emits one `⚠ ai-specs:` warning
-95:94:- AND each pass uses `VCS PR (custom)`
-96:95:
-97:96:#### Scenario: Stale provider config ignored
-98:97:- GIVEN a manifest still sets `[recipes.gitlab-mr-flow.config] provider = "github"`
-99:98:- WHEN sync validates and renders
-100:99:- THEN sync warns that `provider` is an unknown config key
-101:100:- AND the rendered brief still identifies GitLab from the binding recipe id
-102:101:
-103:102:### Requirement: Runtime Checks and Docs
-104:103:
-105:104:Provider skills and commands MUST check CLI install/auth before PR/MR creation, stop with
-106:105:actionable blockers on failure, and README MUST document enablement, config (`base_branch`
-107:106:only), explicit bindings, runtime prerequisites, explicit push behavior, and no auto-merge
-108:107:policy.
-109:108:
-110:109:### Requirement: Bound VCS Workflow Rules Stay Isolated
-111:110:
-112:111:The system MUST emit `workflow_rules` brief fragments only from the recipe bound to `vcs-pr-flow`.
-113:112:Fragments from other enabled VCS sibling recipes MUST NOT appear when a binding exists.
-114:113:
-115:114:#### Scenario: One bound recipe among three enabled
-116:115:- GIVEN `git-pr-flow`, `gitlab-mr-flow`, and `bitbucket-pr-flow` are enabled
-117:116:- AND `vcs-pr-flow` is bound to `gitlab-mr-flow`
-118:117:- WHEN the brief is rendered
-119:118:- THEN only GitLab workflow rules appear
-120:119:- AND GitHub and Bitbucket workflow rules do not appear
-121:120:
-122:121:#### Scenario: Single enabled bound recipe
-123:122:- GIVEN only `git-pr-flow` is enabled and bound
-124:123:- WHEN the brief is rendered
-125:124:- THEN the GitHub workflow rules appear
-126:125:- AND no other VCS workflow rules are added
-127:126:
-128:127:#### Scenario: No VCS binding exists
-129:128:- GIVEN VCS sibling recipes are enabled
-130:129:- AND `vcs-pr-flow` is unbound
-131:130:- WHEN the brief is rendered
-132:131:- THEN no VCS workflow rule fragments are emitted
-133:132:
-134:133:### Requirement: Git PR Flow Docs Omit Provider
-135:134:
-136:135:The `git-pr-flow` README and `docs/recipes-catalog.md` section for `git-pr-flow` MUST document `base_branch` only for config.
-137:136:Neither document MAY include a `provider` config row.
-138:137:
-139:138:#### Scenario: README contract
-140:139:- GIVEN `catalog/recipes/git-pr-flow/README.md`
-141:140:- WHEN the docs contract is checked
-142:141:- THEN the config table includes `base_branch`
-143:142:- AND it does not include `provider`
-144:143:
-145:144:#### Scenario: Catalog contract
-146:145:- GIVEN `docs/recipes-catalog.md`
-147:146:- WHEN the `## git-pr-flow` section is checked
-148:147:- THEN the config table includes `base_branch`
-149:148:- AND it does not include `provider`
-150:149:
-151:150:### Requirement: Pre-merge archive artifacts
-152:
-153:The system MUST archive and record SDD/OpenSpec artifacts before a VCS PR/MR is merged. The archive boundary MUST occur while the change is still on the review branch, not after the merge commit lands on the base branch.
-154:
-155:#### Scenario: Archive runs before merge
-156:
-157:- GIVEN a provider-backed PR/MR is ready to merge
-158:- WHEN the archive step runs for the change
-159:- THEN the change artifacts are persisted before merge completes
-160:- AND the archive records the pre-merge state as the source of truth
-161:
-162:#### Scenario: Post-merge archive is rejected
-163:
-164:- GIVEN a PR/MR has already been merged into the base branch
-165:- WHEN the archive step tries to treat the merged state as the archive boundary
-166:- THEN the system rejects that interpretation
-167:- AND the archive must reference the pre-merge branch state instead
-168:
-169:#### Scenario: Provider behavior stays aligned
-170:
-171:- GIVEN GitHub, GitLab, or Bitbucket provider flows are enabled
-172:- WHEN the pre-merge archive rule is rendered into workflow guidance
-173:- THEN the provider guidance matches the same archive-before-merge contract
-174:- AND no provider introduces a different timing rule
-175:
-176:#### Scenario: Hidden ceremony remains hidden
-177:
-178:- GIVEN the user follows the normal plan/build flow
-179:- WHEN the archive rule is applied
-180:- THEN no new slash command or extra user-facing mode is introduced
-181:- AND the archive step remains part of the existing invisible workflow
-182:
-183:### Requirement: Post-merge branch and worktree cleanup
+# vcs-pr-flow Specification: Multi-Provider VCS Flow
+
+## Purpose
+
+Provide provider-backed `vcs-pr-flow` recipes that mirror the same semantics across GitHub,
+GitLab, and Bitbucket: explicit branch pushes, review-gated merging, and worktree cleanup.
+The bound recipe id is the provider identity; `base_branch`, `expected_owner`, and
+`auto_switch_account` are configurable per project.
+
+## Requirements
+
+### Requirement: VCS Sibling Recipe Manifests
+
+Each VCS sibling recipe (`git-pr-flow`, `gitlab-mr-flow`, `bitbucket-pr-flow`) MUST declare
+`vcs-pr-flow`, an `on-sync` `validate-config` hook, a bundled host-specific merge workflow
+skill, a host-specific create command, README doc provision, `base_branch`, `expected_owner`,
+and `auto_switch_account` as config (no `provider` key).
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `expected_owner` | string | no | `""` | Expected VCS account username for this repo |
+| `auto_switch_account` | boolean | no | `false` | Auto-switch CLI account if mismatch detected (gh only) |
+
+#### Scenario: GitHub manifest validates
+- GIVEN the `git-pr-flow` catalog recipe is loaded
+- WHEN recipe schema validation runs
+- THEN the recipe is valid and declares `vcs-pr-flow`
+- AND `base_branch` defaults to `main`
+- AND `expected_owner` defaults to `""` (empty string)
+- AND `auto_switch_account` defaults to `false`
+- AND no `provider` field exists in `[config]`
+
+#### Scenario: GitLab manifest validates
+- GIVEN the `gitlab-mr-flow` catalog recipe is loaded
+- WHEN recipe schema validation runs
+- THEN the recipe is valid and declares `vcs-pr-flow`
+- AND `base_branch` defaults to `development`
+- AND `expected_owner` defaults to `""` (empty string)
+- AND `auto_switch_account` defaults to `false`
+- AND no `provider` field exists in `[config]`
+
+#### Scenario: Bitbucket manifest validates
+- GIVEN the `bitbucket-pr-flow` catalog recipe is loaded
+- WHEN recipe schema validation runs
+- THEN the recipe is valid and declares `vcs-pr-flow`
+- AND `base_branch` defaults to `development`
+- AND `expected_owner` defaults to `""` (empty string)
+- AND `auto_switch_account` defaults to `false`
+- AND no `provider` field exists in `[config]`
+
+### Requirement: Materialized Assets
+
+Sync MUST materialize provider assets without changing sibling provider recipe assets when
+only one provider recipe is enabled.
+
+#### Scenario: GitLab sync provisions assets
+- GIVEN `gitlab-mr-flow` is enabled
+- WHEN `ai-specs sync` runs
+- THEN the GitLab skill, command, and README exist in generated locations
+
+#### Scenario: Bitbucket sync provisions assets
+- GIVEN `bitbucket-pr-flow` is enabled
+- WHEN `ai-specs sync` runs
+- THEN the Bitbucket skill, command, and README exist in generated locations
+
+### Requirement: Provider Binding Semantics
+
+When multiple recipes provide `vcs-pr-flow`, the system MUST require an explicit
+`[[bindings]]` selection; without it, sync MUST warn and leave `vcs-pr-flow` unbound.
+The bound **recipe id** is the provider identity; there is no separate `provider` config.
+
+#### Scenario: Ambiguous providers stay unbound
+- GIVEN multiple VCS provider recipes are enabled without `[[bindings]]`
+- WHEN sync resolves capabilities
+- THEN a warning names the ambiguity
+- AND no implicit `vcs-pr-flow` binding is selected
+
+#### Scenario: Explicit binding selects host
+- GIVEN multiple VCS provider recipes are enabled with a binding to `bitbucket-pr-flow`
+- WHEN sync resolves capabilities
+- THEN `vcs-pr-flow` is bound to Bitbucket assets and brief rules
+
+### Requirement: Runtime Brief VCS Bullet
+
+The renderer MUST derive the Runtime Flow VCS provider bullet from the bound `vcs-pr-flow` recipe id, not from a `provider` config value.
+If the bound recipe id is unknown to the VCS label table, it MUST emit a `⚠ ai-specs:` warning to stderr and render `VCS PR (custom)`.
+It MUST append `base branch: \`<base_branch>\`` when `base_branch` is configured or defaulted.
+(Previously: The bullet only mapped known recipe ids and appended base branch.)
+
+#### Scenario: GitHub binding renders gh hint
+- GIVEN `bindings.vcs-pr-flow = "git-pr-flow"` and `base_branch = "development"`
+- WHEN the brief is rendered
+- THEN the Runtime Flow section includes `VCS/PR provider: GitHub` and `gh` CLI
+- AND includes `base branch: \`development\``
+
+#### Scenario: Unknown recipe id warns and falls back
+- GIVEN `bindings.vcs-pr-flow = "custom-pr-flow"`
+- WHEN the brief is rendered
+- THEN stderr includes `⚠ ai-specs:`
+- AND the Runtime Flow section uses `VCS PR (custom)`
+
+#### Scenario: Multiple unknown ids each warn
+- GIVEN two render passes bind different unknown `vcs-pr-flow` ids
+- WHEN each brief is rendered
+- THEN each pass emits one `⚠ ai-specs:` warning
+- AND each pass uses `VCS PR (custom)`
+
+#### Scenario: Stale provider config ignored
+- GIVEN a manifest still sets `[recipes.gitlab-mr-flow.config] provider = "github"`
+- WHEN sync validates and renders
+- THEN sync warns that `provider` is an unknown config key
+- AND the rendered brief still identifies GitLab from the binding recipe id
+
+### Requirement: Runtime Checks and Docs
+
+Provider skills and commands MUST check CLI install/auth before PR/MR creation, run
+config-gated account-match preflight when `expected_owner` is set, stop with actionable
+blockers on failure, and README MUST document enablement, config (`base_branch`,
+`expected_owner`, `auto_switch_account`), explicit bindings, runtime prerequisites,
+explicit push behavior, and no auto-merge policy.
+
+### Requirement: Bound VCS Workflow Rules Stay Isolated
+
+The system MUST emit `workflow_rules` brief fragments only from the recipe bound to `vcs-pr-flow`.
+Fragments from other enabled VCS sibling recipes MUST NOT appear when a binding exists.
+
+#### Scenario: One bound recipe among three enabled
+- GIVEN `git-pr-flow`, `gitlab-mr-flow`, and `bitbucket-pr-flow` are enabled
+- AND `vcs-pr-flow` is bound to `gitlab-mr-flow`
+- WHEN the brief is rendered
+- THEN only GitLab workflow rules appear
+- AND GitHub and Bitbucket workflow rules do not appear
+
+#### Scenario: Single enabled bound recipe
+- GIVEN only `git-pr-flow` is enabled and bound
+- WHEN the brief is rendered
+- THEN the GitHub workflow rules appear
+- AND no other VCS workflow rules are added
+
+#### Scenario: No VCS binding exists
+- GIVEN VCS sibling recipes are enabled
+- AND `vcs-pr-flow` is unbound
+- WHEN the brief is rendered
+- THEN no VCS workflow rule fragments are emitted
+
+### Requirement: Git PR Flow Docs Omit Provider
+
+The `git-pr-flow` README and `docs/recipes-catalog.md` section for `git-pr-flow` MUST
+document `base_branch`, `expected_owner`, and `auto_switch_account` for config.
+Neither document MAY include a `provider` config row.
+
+#### Scenario: README contract
+- GIVEN `catalog/recipes/git-pr-flow/README.md`
+- WHEN the docs contract is checked
+- THEN the config table includes `base_branch`, `expected_owner`, and `auto_switch_account`
+- AND it does not include `provider`
+
+#### Scenario: Catalog contract
+- GIVEN `docs/recipes-catalog.md`
+- WHEN the `## git-pr-flow` section is checked
+- THEN the config table includes `base_branch`, `expected_owner`, and `auto_switch_account`
+- AND it does not include `provider`
+
+### Requirement: Pre-merge archive artifacts
+
+The system MUST archive and record SDD/OpenSpec artifacts before a VCS PR/MR is merged. The archive boundary MUST occur while the change is still on the review branch, not after the merge commit lands on the base branch.
+
+#### Scenario: Archive runs before merge
+
+- GIVEN a provider-backed PR/MR is ready to merge
+- WHEN the archive step runs for the change
+- THEN the change artifacts are persisted before merge completes
+- AND the archive records the pre-merge state as the source of truth
+
+#### Scenario: Post-merge archive is rejected
+
+- GIVEN a PR/MR has already been merged into the base branch
+- WHEN the archive step tries to treat the merged state as the archive boundary
+- THEN the system rejects that interpretation
+- AND the archive must reference the pre-merge branch state instead
+
+#### Scenario: Provider behavior stays aligned
+
+- GIVEN GitHub, GitLab, or Bitbucket provider flows are enabled
+- WHEN the pre-merge archive rule is rendered into workflow guidance
+- THEN the provider guidance matches the same archive-before-merge contract
+- AND no provider introduces a different timing rule
+
+#### Scenario: Hidden ceremony remains hidden
+
+- GIVEN the user follows the normal plan/build flow
+- WHEN the archive rule is applied
+- THEN no new slash command or extra user-facing mode is introduced
+- AND the archive step remains part of the existing invisible workflow
+
+### Requirement: Post-merge branch and worktree cleanup
 
 After a VCS PR/MR is merged, provider merge-workflow skills MUST instruct the
 agent to remove the feature worktree and delete the local feature branch when
@@ -202,17 +214,161 @@ the user requests merge cleanup. Squash and rebase merges MUST use force-delete
 - THEN each provider skill documents worktree removal and local branch deletion
 - AND no provider omits cleanup as an optional afterthought
 
+### Requirement: Auth Preflight Gating
+
+The auth preflight MUST only activate when `expected_owner` is set to a non-empty string.
+When `expected_owner` is unset or empty, the recipe behaves identically to before this change —
+no additional CLI calls, no account checks, no blocking.
+
+#### Scenario: No expected_owner set — preflight skipped
+- GIVEN a recipe has `expected_owner = ""` (default)
+- WHEN the preflight step is reached
+- THEN no auth status command is run
+- AND no account comparison occurs
+- AND the workflow proceeds as before
+
+#### Scenario: expected_owner set — preflight runs
+- GIVEN a recipe has `expected_owner = "myuser"`
+- WHEN the preflight step is reached
+- THEN the provider's auth status command is executed
+- AND the active account is compared against `"myuser"`
+
+### Requirement: GitHub (gh) Auth Preflight
+
+When the bound provider is `git-pr-flow` and `expected_owner` is set, the preflight MUST:
+
+1. Check gh version (>= 2.50.0 required for `gh auth switch`)
+2. Detect active account via `gh auth status`
+3. Extract repo owner from `git remote get-url origin`
+4. Compare active account to `expected_owner`
+5. Auto-switch with `gh auth switch --user <expected_owner>` when `auto_switch_account = true`,
+   otherwise block with guidance
+
+#### Scenario: gh account matches — proceed
+- GIVEN `expected_owner = "robert"` and the active gh account is `robert`
+- WHEN the preflight runs
+- THEN no switch is attempted
+- AND the workflow proceeds to push/create
+
+#### Scenario: gh account mismatch with auto_switch enabled
+- GIVEN `expected_owner = "robert"`, active gh account is `other`, and `auto_switch_account = true`
+- AND gh version >= 2.50.0
+- WHEN the preflight runs
+- THEN `gh auth switch --user robert` is executed
+- AND `gh auth status` is re-checked
+- AND if the account is now `robert`, the workflow proceeds
+
+#### Scenario: gh account mismatch with auto_switch disabled
+- GIVEN `expected_owner = "robert"`, active gh account is `other`, and `auto_switch_account = false`
+- WHEN the preflight runs
+- THEN the workflow is blocked with current/expected account and switch guidance
+
+### Requirement: GitLab (glab) Auth Preflight
+
+When the bound provider is `gitlab-mr-flow` and `expected_owner` is set, the preflight MUST
+detect active account via `glab auth status`, compare to `expected_owner`, and block with
+guidance (glab has no `auth switch`).
+
+#### Scenario: glab account matches — proceed
+- GIVEN `expected_owner = "robert"` and the active glab account is `robert`
+- WHEN the preflight runs
+- THEN the workflow proceeds to push/create
+
+#### Scenario: glab account mismatch — block
+- GIVEN `expected_owner = "robert"` and the active glab account is `other`
+- WHEN the preflight runs
+- THEN the workflow is blocked with manual login and env-var guidance
+
+### Requirement: Bitbucket (bb) Auth Preflight
+
+When the bound provider is `bitbucket-pr-flow` and `expected_owner` is set, the preflight MUST
+detect active account via `bb auth show` (NOT `bb auth status`), compare to `expected_owner`,
+and block with guidance (bb has no `auth switch`).
+
+#### Scenario: bb auth show replaces bb auth status
+- GIVEN the `bitbucket-pr-flow` recipe's bb-pr-create.md command
+- WHEN the authentication verification step is reviewed
+- THEN the command used is `bb auth show` (not `bb auth status`)
+
+#### Scenario: bb account mismatch — block
+- GIVEN `expected_owner = "myworkspace"` and the active bb account is `other`
+- WHEN the preflight runs
+- THEN the workflow is blocked with manual login guidance
+
+### Requirement: Remote URL Owner Parsing
+
+The owner extraction from `git remote get-url origin` MUST handle SSH and HTTPS formats
+for GitHub, GitLab, and Bitbucket. Malformed URLs MUST warn but NOT block.
+
+#### Scenario: SSH remote URL parsed correctly
+- GIVEN `git remote get-url origin` returns `git@github.com:acme/widget.git`
+- WHEN the owner is extracted
+- THEN the result is `acme`
+
+#### Scenario: Malformed remote URL does not block
+- GIVEN `git remote get-url origin` returns an unrecognized format
+- WHEN the owner extraction runs
+- THEN a warning is logged
+- AND the preflight continues with `expected_owner` if set, or skips
+
+### Requirement: Command File Preflight Steps
+
+Each VCS create command MUST include a "Runtime Preflight: Account Match" step between the
+existing authentication check and the push step.
+
+#### Scenario: pr-create.md includes account match step
+- GIVEN the `git-pr-flow` command `pr-create.md`
+- WHEN the command is read
+- THEN it contains a "Runtime Preflight: Account Match" section with gh auth status,
+  remote owner extraction, version check, and conditional switch/block logic
+
+#### Scenario: mr-create.md includes account match step
+- GIVEN the `gitlab-mr-flow` command `mr-create.md`
+- WHEN the command is read
+- THEN it contains a "Runtime Preflight: Account Match" section with glab auth status
+  and block-on-mismatch logic
+
+#### Scenario: bb-pr-create.md includes account match step
+- GIVEN the `bitbucket-pr-flow` command `bb-pr-create.md`
+- WHEN the command is read
+- THEN it contains a "Runtime Preflight: Account Match" section using `bb auth show`
+
+### Requirement: Skill Runtime Preflight Updates
+
+Each provider merge-workflow skill MUST include the account-match preflight in its
+"Runtime Preflight" section, positioned after install/auth checks and before workflow steps.
+
+#### Scenario: git-merge-workflow includes account preflight
+- GIVEN the `git-merge-workflow` skill
+- WHEN the skill is read
+- THEN its Runtime Preflight section includes account-match check with gh auth switch support
+
+#### Scenario: bitbucket-merge-workflow uses bb auth show
+- GIVEN the `bitbucket-merge-workflow` skill
+- WHEN the skill is read
+- THEN its Runtime Preflight authentication check uses `bb auth show` (not `bb auth status`)
+
+### Requirement: No Regression When Config Unset
+
+Recipes that do not set `expected_owner` (empty string or absent) MUST behave identically
+to their pre-change behavior. No additional CLI calls, no account checks, no delays.
+
+#### Scenario: Unset expected_owner — no extra calls
+- GIVEN a recipe with no `expected_owner` override in the manifest
+- WHEN the create command runs
+- THEN no account-check call is made for the preflight
+- AND the command proceeds directly to push/create
+
 ### Requirement: Test and Validation Commands Pass
-184:151:
-185:152:The implementation MUST pass `./tests/run.sh` and `./tests/validate.sh` with the change applied.
-186:153:
-187:154:#### Scenario: Focused run passes
-188:155:- GIVEN the change is applied
-189:156:- WHEN `./tests/run.sh` runs
-190:157:- THEN it exits successfully
-191:158:
-192:159:#### Scenario: Full validation passes
-193:160:- GIVEN the change is applied
-194:161:- WHEN `./tests/validate.sh` runs
-195:162:- THEN it exits successfully
-196:163:
+
+The implementation MUST pass `./tests/run.sh` and `./tests/validate.sh` with the change applied.
+
+#### Scenario: Focused run passes
+- GIVEN the change is applied
+- WHEN `./tests/run.sh` runs
+- THEN it exits successfully
+
+#### Scenario: Full validation passes
+- GIVEN the change is applied
+- WHEN `./tests/validate.sh` runs
+- THEN it exits successfully
