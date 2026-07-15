@@ -172,3 +172,21 @@ The system SHALL provide `ai-specs recipe init <id> [path]` to produce an agent-
 - **WHEN** `ai-specs recipe init tracker` runs
 - **THEN** the initialization brief SHALL identify the existing target
 - **AND** the brief SHALL propose reviewable update, skip, or diff guidance instead of silently overwriting the file
+
+### Requirement: #104 documentation
+
+Docs SHALL state that `not_exists` managed templates do not refresh on sync.
+
+#### Scenario: #104 docs
+
+- **WHEN** users read recipe/template docs
+- **THEN** non-refresh behavior for `not_exists` templates is documented
+
+### Requirement: No pin-bump UX
+
+The CLI and hub MUST NOT expose pin-bump or outdated-pin workflows.
+
+#### Scenario: No update path
+
+- **WHEN** a user seeks to bump a recipe pin
+- **THEN** the supported path is upgrade plus sync, not `recipe update`
