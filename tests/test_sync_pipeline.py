@@ -2924,5 +2924,73 @@ class CliVersionSyncGateTests(unittest.TestCase):
             self.assertIn("ignoring CLI version policy", result.stderr)
 
 
+class SyncAgentGuardOrderTests(unittest.TestCase):
+    """Guards (toml exists, agents configured) must fire BEFORE recipe materialize.
+
+    Round 3 regression: materialize was moved before flatten (Round 1 fix) but
+    also ran before the init / no-agents guards, producing confusing errors
+    instead of helpful user messages on uninitialized or agent-less projects.
+
+    The critical path: sync-agent --source-root <root> --target <path>
+    bypasses target-resolve.py (which provides its own guard for the simple
+    'sync /path' invocation).  In that code path materialize previously ran
+    before either guard, so missing-toml errors said 'recipe materialize failed'
+    instead of 'Run ai-specs init first', and no-agents projects ran a full
+    (wasted) materialize before emitting 'no agents to sync'.
+    """
+
+    def test_sync_agent_explicit_flags_missing_toml_emits_init_guidance_not_materialize_error(self):
+        """sync-agent --source-root --target on an uninitialized project must emit
+        'Run ai-specs init first', not 'recipe materialize failed'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            # Do NOT run init — no ai-specs/ai-specs.toml
+            result = subprocess.run(
+                [str(CLI), "sync-agent",
+                 "--source-root", str(workspace),
+                 "--target", str(workspace)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            combined = result.stdout + result.stderr
+            # Must emit the helpful guidance message from the TOML guard
+            self.assertIn("ai-specs init", combined)
+            # Must NOT say 'recipe materialize failed' as the primary UX signal
+            self.assertNotIn("recipe materialize failed", combined)
+            # Must NOT expose a raw Python traceback
+            self.assertNotIn("Traceback (most recent call last)", combined)
+
+    def test_sync_agent_explicit_flags_no_agents_exits_cleanly_without_materialize_error(self):
+        """sync-agent --source-root --target on a project with no agents must
+        emit 'no agents to sync' cleanly (exit 0) without any materialize error
+        or traceback. Flatten may still run to populate the resolved-skills cache."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            # Overwrite toml with empty agents list
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname = 'guard-order-test'\n\n[agents]\nenabled = []\n"
+            )
+            result = subprocess.run(
+                [str(CLI), "sync-agent",
+                 "--source-root", str(workspace),
+                 "--target", str(workspace)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            # Exit 0 (graceful early exit) with a warning
+            self.assertEqual(result.returncode, 0, result.stderr)
+            combined = result.stdout + result.stderr
+            self.assertIn("no agents to sync", combined)
+            # Must NOT expose a raw materialize error/traceback
+            self.assertNotIn("Traceback (most recent call last)", combined)
+            self.assertNotIn("ERROR: recipe materialize failed", combined)
+
+
 if __name__ == "__main__":
     unittest.main()

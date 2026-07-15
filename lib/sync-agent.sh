@@ -167,6 +167,14 @@ TARGET_AI_SKILLS="$TARGET_AI_SPECS/skills"
 TARGET_AI_COMMANDS="$TARGET_AI_SPECS/commands"
 TARGET_AGENTS_MD="$TARGET_PATH/AGENTS.md"
 
+# Guard: project must be initialized before any recipe/flatten work.
+# This runs before materialize so an uninitialized project gets a helpful
+# "Run ai-specs init first" message instead of a "recipe materialize failed" error.
+if [[ ! -f "$TOML_PATH" ]]; then
+    echo "ERROR: $TOML_PATH not found. Run 'ai-specs init $SOURCE_ROOT' first." >&2
+    exit 1
+fi
+
 # Materialize recipes into cache FIRST so flatten/merge-commands see up-to-date content.
 # When --recipe-mcp is not passed, run materialize now and capture the temp MCP path.
 if [[ -z "$RECIPE_MCP_JSON" ]]; then
@@ -185,11 +193,6 @@ RESOLVED_SKILLS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path resolved-
 python3 "$FLATTEN_SKILLS_PY" "$SOURCE_ROOT" "$RESOLVED_SKILLS_DIR"
 MERGED_COMMANDS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path root)/merged-commands"
 python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" merge-commands "$MERGED_COMMANDS_DIR"
-
-if [[ ! -f "$TOML_PATH" ]]; then
-    echo "ERROR: $TOML_PATH not found. Run 'ai-specs init $SOURCE_ROOT' first." >&2
-    exit 1
-fi
 
 mirror_directory() {
     local src="$1"
@@ -292,7 +295,7 @@ while IFS= read -r agent; do
     [[ -n "$agent" ]] && ENABLED_AGENTS+=("$agent")
 done < <(python3 -c "import json,sys; [print(a) for a in json.loads(sys.argv[1]).get('enabled', [])]" "$ENABLED_JSON")
 
-# Pick targets
+# Pick targets; guard before per-agent fan-out (flatten already ran — cache is populated).
 declare -a TARGETS=()
 if [[ $SELECT_ALL -eq 1 || ${#SELECTED_AGENTS[@]} -eq 0 ]]; then
     TARGETS=(${ENABLED_AGENTS[@]+"${ENABLED_AGENTS[@]}"})
