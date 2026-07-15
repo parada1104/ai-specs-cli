@@ -151,7 +151,7 @@ _SKILL_BUCKET_KEYS: dict[str, str] = {
 def categorize_skills(project_root: Path, cli_home: Path) -> dict[str, list[dict]]:
     """Partition project skills into bundled / local / recipe / dep buckets."""
     bundled_names = set(_doctor.bundled_skill_names(cli_home))
-    collected = _skillres.collect_skills(project_root)
+    collected = _skillres.collect_skills(project_root, cli_home=cli_home)
     buckets: dict[str, list[dict]] = {k: [] for k in _SKILL_BUCKET_KEYS}
     for skill_id, (source_type, path) in collected.items():
         entry = {"id": skill_id, "path": path, "desc": _skill_description(path)}

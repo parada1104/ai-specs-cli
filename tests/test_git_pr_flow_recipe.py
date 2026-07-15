@@ -11,6 +11,10 @@ RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 CATALOG = ROOT / "catalog" / "recipes"
 RECIPE_ID = "git-pr-flow"
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 
 
 def load_module(path: Path, name: str):
@@ -74,12 +78,12 @@ class GitPrFlowRecipeTests(unittest.TestCase):
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
 
         skill = (
-            root / "ai-specs" / ".recipe" / RECIPE_ID
+            recipe_root(root, RECIPE_ID)
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
         self.assertTrue(skill.is_file(), f"missing bundled skill at {skill}")
 
-        cmd = root / "ai-specs" / "commands" / "pr-create.md"
+        cmd = cache_command(root, "pr-create")
         self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
         doc = root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
@@ -91,7 +95,7 @@ class GitPrFlowRecipeTests(unittest.TestCase):
         helper = root / "ai-specs" / "bin" / "premerge_guardian.py"
         self.assertTrue(helper.is_file(), f"missing guardian template at {helper}")
         skill = (
-            root / "ai-specs" / ".recipe" / RECIPE_ID
+            recipe_root(root, RECIPE_ID)
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
         self.assertIn("ai-specs/bin/premerge_guardian.py", skill.read_text())

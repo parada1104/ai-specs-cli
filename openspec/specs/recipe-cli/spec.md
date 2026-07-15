@@ -11,7 +11,8 @@ El sistema SHALL proveer `ai-specs recipe list [path]` que escanee el catálogo 
 
 #### Scenario: Lista con recipes disponibles e instaladas
 - **WHEN** el catálogo contiene recipes y el manifest declara `[recipes.test-fixture]` con `enabled = true`
-- **THEN** `recipe list` SHALL mostrar: ID, nombre, versión, y estado (`installed` / `available` / `disabled`)
+- **THEN** `recipe list` SHALL mostrar: ID, nombre, versión de catálogo (informativa), y estado (`installed` / `available` / `disabled`)
+- **AND** el estado MUST NOT ser `outdated`
 - **AND** cada recipe del catálogo SHALL aparecer exactamente una vez
 
 #### Scenario: Catálogo vacío
@@ -29,9 +30,10 @@ El sistema SHALL proveer `ai-specs recipe add <id> [path]` que valide la recipe 
 
 #### Scenario: Agregar recipe disponible
 - **WHEN** se ejecuta `recipe add test-fixture` y la recipe existe en el catálogo
-- **THEN** SHALL agregar `[recipes.test-fixture]` con `enabled = true` y `version` exacta del catálogo
+- **THEN** SHALL agregar `[recipes.test-fixture]` con `enabled = true` y SIN `version`
 - **AND** SHALL mostrar preview de skills, commands, mcp, templates y docs
 - **AND** exit code SHALL ser 0
+- **AND** no materialize/sync is triggered
 
 #### Scenario: Recipe ya instalada
 - **WHEN** `[recipes.test-fixture]` ya existe en el manifest
@@ -170,3 +172,21 @@ The system SHALL provide `ai-specs recipe init <id> [path]` to produce an agent-
 - **WHEN** `ai-specs recipe init tracker` runs
 - **THEN** the initialization brief SHALL identify the existing target
 - **AND** the brief SHALL propose reviewable update, skip, or diff guidance instead of silently overwriting the file
+
+### Requirement: #104 documentation
+
+Docs SHALL state that `not_exists` managed templates do not refresh on sync.
+
+#### Scenario: #104 docs
+
+- **WHEN** users read recipe/template docs
+- **THEN** non-refresh behavior for `not_exists` templates is documented
+
+### Requirement: No pin-bump UX
+
+The CLI and hub MUST NOT expose pin-bump or outdated-pin workflows.
+
+#### Scenario: No update path
+
+- **WHEN** a user seeks to bump a recipe pin
+- **THEN** the supported path is upgrade plus sync, not `recipe update`

@@ -108,7 +108,7 @@ def update_recipe_config(manifest_path: Path, recipe_id: str, values: dict) -> N
     recipe_idx = _find_recipe_header(lines, recipe_id)
     if recipe_idx is None:
         # APPEND full recipe + config block.
-        block_lines = ["\n", f"{_header_for(recipe_id)}\n", "enabled = true\n", 'version = "0.0.0"\n', "\n"]
+        block_lines = ["\n", f"{_header_for(recipe_id)}\n", "enabled = true\n", "\n"]
         block_lines.append(f"{_header_for(recipe_id, 'config')}\n")
         for key in sorted(values):
             block_lines.append(f"{_toml_key(key)} = {_toml_write.toml_value(values[key])}\n")

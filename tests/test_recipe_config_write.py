@@ -97,6 +97,9 @@ class RecipeConfigWriteTests(unittest.TestCase):
         self.mod.update_recipe_config(path, "x", {"k": "v"})
         data = tomllib.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(data["recipes"]["x"]["config"]["k"], "v")
+        self.assertEqual(data["recipes"]["x"]["enabled"], True)
+        self.assertNotIn("version", data["recipes"]["x"])
+        self.assertNotIn("version =", path.read_text(encoding="utf-8"))
 
     def test_bool_serialization(self):
         path = self._manifest(

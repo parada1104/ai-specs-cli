@@ -88,7 +88,7 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "| `[mcp.<name>]` | `timeout` | optional |",
                 "| `[mcp.<name>]` | `enabled` | tolerated passthrough field |",
                 "| `[recipes.<id>]` | `enabled` | required; boolean — must be `true` to materialize |",
-                "| `[recipes.<id>]` | `version` | required; exact string matching `recipe.toml` version |",
+                "| `[recipes.<id>]` | `version` | optional legacy; ignored with WARN — sync uses CLI catalog |",
                 "| `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |",
                 "| `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |",
                 "| `[tool]` | `version` | optional; exact CLI version pin (semver) |",

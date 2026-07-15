@@ -14,6 +14,10 @@ RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 CATALOG = ROOT / "catalog" / "recipes"
 RECIPE_ID = "plan-build-flow"
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 
 FORBIDDEN_TERMS = ("sdd", "openspec", "spec-driven")
 FORBIDDEN_SLASH = ("/plan", "/build", "/archive")
@@ -74,7 +78,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
 
         skill = (
-            root / "ai-specs" / ".recipe" / RECIPE_ID
+            recipe_root(root, RECIPE_ID)
             / "skills" / "plan-build-flow" / "SKILL.md"
         )
         self.assertTrue(skill.is_file())

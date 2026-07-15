@@ -92,6 +92,25 @@ class RecipeListTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["status"], "installed")
 
+    def test_list_catalog_version_info_only_not_outdated(self):
+        manifest = (
+            '[project]\nname = "test"\n'
+            "[recipes.my-recipe]\nenabled = true\n"
+        )
+        recipe_toml = (
+            '[recipe]\nid = "my-recipe"\nname = "My Recipe"\n'
+            'description = "Desc"\nversion = "3.1.4"\n'
+        )
+        project = self._make_project(manifest)
+        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
+        results = self.mod.list_recipes(project)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["version"], "3.1.4")
+        self.assertEqual(results[0]["status"], "installed")
+        self.assertNotEqual(results[0]["status"], "outdated")
+        statuses = {r["status"] for r in results}
+        self.assertNotIn("outdated", statuses)
+
     def test_list_shows_disabled_when_enabled_false(self):
         manifest = (
             '[project]\nname = "test"\n'

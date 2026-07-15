@@ -26,6 +26,7 @@ MCP_RENDER="$AI_SPECS_HOME/lib/_internal/mcp-render.py"
 GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 FLATTEN_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/flatten-resolved-skills.py"
+PROJECT_CACHE_PY="$AI_SPECS_HOME/lib/_internal/project-cache.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
 BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
@@ -166,14 +167,32 @@ TARGET_AI_SKILLS="$TARGET_AI_SPECS/skills"
 TARGET_AI_COMMANDS="$TARGET_AI_SPECS/commands"
 TARGET_AGENTS_MD="$TARGET_PATH/AGENTS.md"
 
-# Flatten resolved skills (multi-source) into an internal dir for agent fan-out
-RESOLVED_SKILLS_DIR="$SOURCE_AI_SPECS/.internal/resolved-skills"
-python3 "$FLATTEN_SKILLS_PY" "$SOURCE_ROOT" "$RESOLVED_SKILLS_DIR"
-
+# Guard: project must be initialized before any recipe/flatten work.
+# This runs before materialize so an uninitialized project gets a helpful
+# "Run ai-specs init first" message instead of a "recipe materialize failed" error.
 if [[ ! -f "$TOML_PATH" ]]; then
     echo "ERROR: $TOML_PATH not found. Run 'ai-specs init $SOURCE_ROOT' first." >&2
     exit 1
 fi
+
+# Materialize recipes into cache FIRST so flatten/merge-commands see up-to-date content.
+# When --recipe-mcp is not passed, run materialize now and capture the temp MCP path.
+if [[ -z "$RECIPE_MCP_JSON" ]]; then
+    _MATERIALIZE_OUT="$(mktemp -t ai-specs-materialize-XXXXXX)"
+    trap 'rm -f "$_MATERIALIZE_OUT"' EXIT
+    if ! python3 "$RECIPE_MATERIALIZE_PY" "$SOURCE_ROOT" "$AI_SPECS_HOME" >"$_MATERIALIZE_OUT" 2>&1; then
+        echo "ERROR: recipe materialize failed" >&2
+        grep -v '^RECIPE_MCP_TEMP:' "$_MATERIALIZE_OUT" >&2 || true
+        exit 1
+    fi
+    RECIPE_MCP_JSON="$(grep '^RECIPE_MCP_TEMP:' "$_MATERIALIZE_OUT" | cut -d: -f2- || true)"
+fi
+
+# Flatten resolved skills into the per-project CLI cache; merge commands (local wins)
+RESOLVED_SKILLS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path resolved-skills)"
+python3 "$FLATTEN_SKILLS_PY" "$SOURCE_ROOT" "$RESOLVED_SKILLS_DIR"
+MERGED_COMMANDS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path root)/merged-commands"
+python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" merge-commands "$MERGED_COMMANDS_DIR"
 
 mirror_directory() {
     local src="$1"
@@ -185,6 +204,32 @@ mirror_directory() {
     else
         mkdir -p "$dest"
     fi
+}
+
+make_skills_symlink() {
+    # Absolute symlink for cache-backed resolved-skills (out-of-tree).
+    local target_abs="$1"
+    local link_path="$2"
+    local link_dir
+    link_dir="$(dirname "$link_path")"
+    mkdir -p "$link_dir"
+    local abs
+    abs="$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$target_abs")"
+
+    if [[ -L "$link_path" ]]; then
+        local existing
+        existing="$(readlink "$link_path")"
+        if [[ "$existing" == "$abs" ]]; then
+            echo "    · symlink ok      $link_path → $abs"
+            return 0
+        fi
+        rm "$link_path"
+    elif [[ -e "$link_path" ]]; then
+        echo "    ✗ refuse to overwrite non-symlink: $link_path" >&2
+        return 1
+    fi
+    ln -s "$abs" "$link_path"
+    echo "    ✓ symlink created $link_path → $abs"
 }
 
 make_relative_symlink() {
@@ -226,7 +271,7 @@ ensure_target_workspace() {
     mkdir -p "$TARGET_AI_SPECS"
     python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
-    mirror_directory "$SOURCE_AI_COMMANDS" "$TARGET_AI_COMMANDS"
+    mirror_directory "$MERGED_COMMANDS_DIR" "$TARGET_AI_COMMANDS"
     if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
         local render_args=("$TOML_PATH" "$TARGET_AGENTS_MD")
         if [[ -n "$RESOLVED_CONFIG_JSON" && -f "$RESOLVED_CONFIG_JSON" ]]; then
@@ -250,7 +295,7 @@ while IFS= read -r agent; do
     [[ -n "$agent" ]] && ENABLED_AGENTS+=("$agent")
 done < <(python3 -c "import json,sys; [print(a) for a in json.loads(sys.argv[1]).get('enabled', [])]" "$ENABLED_JSON")
 
-# Pick targets
+# Pick targets; guard before per-agent fan-out (flatten already ran — cache is populated).
 declare -a TARGETS=()
 if [[ $SELECT_ALL -eq 1 || ${#SELECTED_AGENTS[@]} -eq 0 ]]; then
     TARGETS=(${ENABLED_AGENTS[@]+"${ENABLED_AGENTS[@]}"})
@@ -263,10 +308,6 @@ if [[ ${#TARGETS[@]} -eq 0 ]]; then
     exit 0
 fi
 
-# Recipe MCP presets: use --recipe-mcp if passed, otherwise generate temp
-if [[ -z "$RECIPE_MCP_JSON" ]]; then
-    RECIPE_MCP_JSON="$(python3 "$RECIPE_MATERIALIZE_PY" "$SOURCE_ROOT" "$AI_SPECS_HOME" | grep '^RECIPE_MCP_TEMP:' | cut -d: -f2- || true)"
-fi
 MCP_COUNT="$(python3 - "$TOML_PATH" "$RECIPE_MCP_JSON" <<'PY'
 import sys, tomllib, json
 with open(sys.argv[1], "rb") as f:
@@ -293,11 +334,13 @@ echo ""
 echo "  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs"
 ensure_target_workspace
 
-# For root workspace, agents consume from resolved dir to avoid polluting ai-specs/skills/
+# For root workspace, agents consume from cache flatten + merged commands
 if [[ "$TARGET_PATH" == "$SOURCE_ROOT" ]]; then
     SKILLS_SOURCE="$RESOLVED_SKILLS_DIR"
+    COMMANDS_SOURCE="$MERGED_COMMANDS_DIR"
 else
     SKILLS_SOURCE="$TARGET_AI_SKILLS"
+    COMMANDS_SOURCE="$TARGET_AI_COMMANDS"
 fi
 
 for agent in "${TARGETS[@]}"; do
@@ -329,7 +372,7 @@ for agent in "${TARGETS[@]}"; do
             # fan-out can reconcile to the canonical symlink.
             rm -rf "$skills_link"
         fi
-        make_relative_symlink "$SKILLS_SOURCE" "$skills_link"
+        make_skills_symlink "$SKILLS_SOURCE" "$skills_link"
     fi
 
     mcp_path="$(platform_get "$agent" mcp_config_path)"
@@ -345,12 +388,12 @@ for agent in "${TARGETS[@]}"; do
     fi
 
     cmd_dir="$(platform_get "$agent" commands_dir)"
-    if [[ -n "$cmd_dir" && -d "$TARGET_AI_COMMANDS" ]]; then
+    if [[ -n "$cmd_dir" && -d "$COMMANDS_SOURCE" ]]; then
         dest="$TARGET_PATH/$cmd_dir"
         rm -rf "$dest"
         mkdir -p "$dest"
         copied=0
-        for src in "$TARGET_AI_COMMANDS"/*.md; do
+        for src in "$COMMANDS_SOURCE"/*.md; do
             [[ -f "$src" ]] || continue
             cp "$src" "$dest/$(basename "$src")"
             copied=$((copied + 1))

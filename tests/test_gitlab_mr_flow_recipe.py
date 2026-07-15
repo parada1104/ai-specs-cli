@@ -11,6 +11,10 @@ RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 CATALOG = ROOT / "catalog" / "recipes"
 RECIPE_ID = "gitlab-mr-flow"
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 
 
 def load_module(path: Path, name: str):
@@ -110,7 +114,7 @@ class GitlabMrFlowRecipeTests(unittest.TestCase):
         root = self._make_project()
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
         skill = (
-            root / "ai-specs" / ".recipe" / RECIPE_ID
+            recipe_root(root, RECIPE_ID)
             / "skills" / "gitlab-merge-workflow" / "SKILL.md"
         )
         self.assertTrue(skill.is_file(), f"missing bundled skill at {skill}")
@@ -119,7 +123,7 @@ class GitlabMrFlowRecipeTests(unittest.TestCase):
         """Sync materializes the mr-create command."""
         root = self._make_project()
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        cmd = root / "ai-specs" / "commands" / "mr-create.md"
+        cmd = cache_command(root, "mr-create")
         self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
     def test_materialize_produces_readme(self):
@@ -134,7 +138,7 @@ class GitlabMrFlowRecipeTests(unittest.TestCase):
         root = self._make_project()
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
         github_skill = (
-            root / "ai-specs" / ".recipe" / "git-pr-flow"
+            recipe_root(root, "git-pr-flow")
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
         self.assertFalse(
@@ -550,19 +554,19 @@ class GitlabMrFlowDualProviderTests(unittest.TestCase):
         
         # GitLab assets should exist
         gitlab_skill = (
-            root / "ai-specs" / ".recipe" / "gitlab-mr-flow"
+            recipe_root(root, "gitlab-mr-flow")
             / "skills" / "gitlab-merge-workflow" / "SKILL.md"
         )
-        gitlab_cmd = root / "ai-specs" / "commands" / "mr-create.md"
+        gitlab_cmd = cache_command(root, "mr-create")
         self.assertTrue(gitlab_skill.is_file(), f"missing gitlab skill at {gitlab_skill}")
         self.assertTrue(gitlab_cmd.is_file(), f"missing gitlab command at {gitlab_cmd}")
         
         # GitHub assets should also exist (different IDs, no conflict)
         github_skill = (
-            root / "ai-specs" / ".recipe" / "git-pr-flow"
+            recipe_root(root, "git-pr-flow")
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
-        github_cmd = root / "ai-specs" / "commands" / "pr-create.md"
+        github_cmd = cache_command(root, "pr-create")
         self.assertTrue(github_skill.is_file(), f"missing github skill at {github_skill}")
         self.assertTrue(github_cmd.is_file(), f"missing github command at {github_cmd}")
 
@@ -573,19 +577,19 @@ class GitlabMrFlowDualProviderTests(unittest.TestCase):
         
         # GitHub assets should exist
         github_skill = (
-            root / "ai-specs" / ".recipe" / "git-pr-flow"
+            recipe_root(root, "git-pr-flow")
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
-        github_cmd = root / "ai-specs" / "commands" / "pr-create.md"
+        github_cmd = cache_command(root, "pr-create")
         self.assertTrue(github_skill.is_file(), f"missing github skill at {github_skill}")
         self.assertTrue(github_cmd.is_file(), f"missing github command at {github_cmd}")
         
         # GitLab assets should also exist (different IDs, no conflict)
         gitlab_skill = (
-            root / "ai-specs" / ".recipe" / "gitlab-mr-flow"
+            recipe_root(root, "gitlab-mr-flow")
             / "skills" / "gitlab-merge-workflow" / "SKILL.md"
         )
-        gitlab_cmd = root / "ai-specs" / "commands" / "mr-create.md"
+        gitlab_cmd = cache_command(root, "mr-create")
         self.assertTrue(gitlab_skill.is_file(), f"missing gitlab skill at {gitlab_skill}")
         self.assertTrue(gitlab_cmd.is_file(), f"missing gitlab command at {gitlab_cmd}")
 

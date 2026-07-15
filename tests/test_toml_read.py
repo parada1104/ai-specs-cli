@@ -129,6 +129,18 @@ class TomlReadTests(unittest.TestCase):
         recipes = self.mod.read_recipes(data)
         self.assertEqual(recipes["my-recipe"]["config"], {})
 
+    def test_recipes_without_version_normalizes_empty(self):
+        manifest = self.write_manifest(
+            "[project]\nname = 'fixture'\n\n"
+            "[recipes.my-recipe]\n"
+            "enabled = true\n"
+        )
+        data = self.mod.load_toml(manifest)
+        self.assertEqual(
+            self.mod.read_recipes(data),
+            {"my-recipe": {"enabled": True, "version": "", "config": {}}},
+        )
+
     def test_bindings_present(self):
         manifest = self.write_manifest(
             "[project]\nname = 'fixture'\n\n"

@@ -79,14 +79,22 @@ def load_deps(project_root: Path) -> list[dict]:
     return module.read_deps(data)
 
 
-def sync_dep_target(dep: dict, project_root: Path) -> None:
+def sync_dep_target(dep: dict, project_root: Path, cli_home: Path | None = None) -> None:
     dep_id = dep.get("id")
     source = dep.get("source")
     if not dep_id or not source:
         fail(f"dep missing id/source: {dep!r}")
 
     skill_subpath = dep.get("path", "").strip("/")
-    target_dir = project_root / "ai-specs" / ".deps" / dep_id / "skills" / dep_id
+    cache_mod_path = Path(__file__).with_name("project-cache.py")
+    spec = importlib.util.spec_from_file_location("project_cache_internal", cache_mod_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load project-cache.py at {cache_mod_path}")
+    pc = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = pc
+    spec.loader.exec_module(pc)
+    pc.ensure_cache(project_root, cli_home=cli_home)
+    target_dir = pc.deps_skills_root(project_root, cli_home=cli_home) / dep_id / "skills" / dep_id
 
     print(f"  ▸ {dep_id}  ←  {source}" + (f"  (path: {skill_subpath})" if skill_subpath else ""))
 
@@ -113,13 +121,13 @@ def sync_dep_target(dep: dict, project_root: Path) -> None:
                 shutil.copytree(a_src, target_dir / ancillary, dirs_exist_ok=False)
 
 
-def sync_vendored_skills(project_root: Path, deps: list[dict]) -> int:
+def sync_vendored_skills(project_root: Path, deps: list[dict], cli_home: Path | None = None) -> int:
     if not deps:
         print("  (no [[deps]] declared — nothing to vendor)")
         return 0
 
     for dep in deps:
-        sync_dep_target(dep, project_root)
+        sync_dep_target(dep, project_root, cli_home=cli_home)
 
     print(f"  ✓ vendored {len(deps)} dep(s)")
     return 0

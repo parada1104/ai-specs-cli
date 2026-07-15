@@ -157,7 +157,6 @@ def _render_manifest(
             rid = recipe["id"]
             lines.append(f"[recipes.{_toml_key(rid)}]")
             lines.append("enabled = true")
-            lines.append(f"version = {tw.toml_value(recipe.get('version') or '0.0.0')}")
             vals = configured.get(rid) or {}
             if vals:
                 lines.append("")

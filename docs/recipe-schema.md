@@ -89,6 +89,12 @@ Array of tables:
 | `target` | string | yes | Relative path inside project root |
 | `condition` | string | no | `"not_exists"` (default) — skip if target already exists |
 
+> **#104 note:** Managed templates with `condition = "not_exists"` are written once
+> and are **not** refreshed on later syncs. After a CLI upgrade, existing on-disk
+> template targets keep their current content. Expect a WARN/docs note only —
+> full managed-template refresh is a separate follow-up.
+
+
 ### `docs`
 
 Array of tables:
@@ -286,15 +292,14 @@ In `ai-specs/ai-specs.toml`:
 ```toml
 [recipes.<id>]
 enabled = true
-version = "1.0.0"
 ```
 
 - `enabled` (boolean, required): must be `true` for the recipe to materialize
-- `version` (string, required): exact version that must match `recipe.toml`
+- `version` (string, optional legacy): ignored with a WARN when present; sync always uses the installed CLI catalog
 
-## Version pinning
+## Version pins (legacy)
 
-If the manifest pin does not match the catalog `recipe.toml` version, `ai-specs sync` fails with an explicit error.
+Per-recipe `version` pins are no longer required. If a legacy `version` key remains in the manifest, sync emits a WARN and continues with the catalog shipped by the installed CLI. After `ai-specs upgrade`, run `ai-specs sync` — no toml pin bump is needed.
 
 ## Conflict detection
 
@@ -505,3 +510,11 @@ example in this repo. It demonstrates:
 
 Use it as a reference recipe for V2 structure, but treat this document as the
 canonical contract when example details and implementation ergonomics diverge.
+
+## Managed templates (#104)
+
+Templates with `condition = "not_exists"` are copied once when the target is absent.
+Sync does **not** refresh those targets after a CLI upgrade. If you need the newer
+catalog template, update the project file manually (or remove it and re-sync).
+This is WARN/docs-only — there is no automatic template refresh path.
+

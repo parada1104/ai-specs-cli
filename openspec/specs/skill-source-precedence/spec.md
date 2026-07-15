@@ -9,8 +9,10 @@ Define the multi-source skill scanning behavior and precedence rules used by `sy
 ### Requirement: Three-tier skill source scanning
 `sync-agent` SHALL scan exactly three sources for skills, in this order:
 1. `ai-specs/skills/{id}/` — local project skills (highest precedence)
-2. `.recipe/{recipe-id}/skills/{id}/` — recipe-bundled skills (middle precedence)
-3. `.deps/{dep-id}/skills/{id}/` — vendored dependency skills (lowest precedence)
+2. `{cache}/.recipe/{recipe-id}/skills/{id}/` — recipe-bundled skills (middle precedence)
+3. `{cache}/.deps/{dep-id}/skills/{id}/` — vendored dependency skills (lowest precedence)
+
+Fan-out targets remain unchanged.
 
 #### Scenario: All three sources present
 - **GIVEN** a skill with `id = "test-skill"` exists in all three sources
@@ -18,24 +20,35 @@ Define the multi-source skill scanning behavior and precedence rules used by `sy
 - **THEN** it SHALL select the copy from `ai-specs/skills/test-skill/`
 
 #### Scenario: Only recipe and dep sources present
-- **GIVEN** a skill exists in `.recipe/my-recipe/skills/test-skill/` and `.deps/my-dep/skills/test-skill/`
+- **GIVEN** a skill exists in cache `.recipe/my-recipe/skills/test-skill/` and cache `.deps/my-dep/skills/test-skill/`
 - **WHEN** `sync-agent` resolves the skill path
-- **THEN** it SHALL select the copy from `.recipe/my-recipe/skills/test-skill/`
+- **THEN** it SHALL select the copy from cache `.recipe/my-recipe/skills/test-skill/`
 
 #### Scenario: Only dep source present
-- **GIVEN** a skill exists only in `.deps/my-dep/skills/test-skill/`
+- **GIVEN** a skill exists only in cache `.deps/my-dep/skills/test-skill/`
 - **WHEN** `sync-agent` resolves the skill path
-- **THEN** it SHALL select the copy from `.deps/my-dep/skills/test-skill/`
+- **THEN** it SHALL select the copy from cache `.deps/my-dep/skills/test-skill/`
+
+### Requirement: Command merge
+
+Managed recipe commands SHALL stage in the cache. Hand-authored commands remain in `ai-specs/commands/`. On conflict, hand-authored commands win. Fan-out targets remain unchanged.
+
+#### Scenario: Merge and fan-out
+
+- **GIVEN** a command id present in both cache-managed and hand-authored locations
+- **WHEN** fan-out runs
+- **THEN** the hand-authored command wins
+- **AND** agent command targets match pre-change behavior aside from source relocation
 
 ### Requirement: Precedence is source-level, not file-level
 If a skill is selected from a higher-precedence source, the system SHALL use the entire skill directory from that source. It SHALL NOT merge individual files across sources.
 
 #### Scenario: Skill selected from local source
 - **GIVEN** `ai-specs/skills/test-skill/SKILL.md` exists but `ai-specs/skills/test-skill/assets/` does not
-- **AND** `.recipe/my-recipe/skills/test-skill/assets/` exists
+- **AND** cache `.recipe/my-recipe/skills/test-skill/assets/` exists
 - **WHEN** the skill is resolved
 - **THEN** the system SHALL use only files from `ai-specs/skills/test-skill/`
-- **AND** it SHALL NOT fall back to `.recipe/my-recipe/skills/test-skill/assets/`
+- **AND** it SHALL NOT fall back to cache recipe assets
 
 ### Requirement: Missing skill in all sources is an error
 If a skill ID is referenced by the manifest or by a recipe but does not exist in any of the three sources, `sync-agent` SHALL fail with an explicit error.

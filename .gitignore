@@ -29,3 +29,4 @@ GEMINI.md
 .env
 .envrc
 .venv/
+cache/
