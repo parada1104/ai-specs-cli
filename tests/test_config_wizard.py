@@ -267,7 +267,9 @@ class ConfigWizardTests(unittest.TestCase):
             confirm.return_value.ask.return_value = True
             envrc = MagicMock()
             envrc.collect_env_vars.return_value = {"TRELLO_API_KEY": "required by trello"}
+            envrc.prompt_env_vars.return_value = {"TRELLO_API_KEY": "test-key"}
             envrc.write_envrc.return_value = project / "ai-specs" / ".envrc"
+            envrc.direnv_allow.return_value = False
             import questionary as q
 
             with patch.object(self.mod, "_enabled_recipe_ids", return_value=["demo"]), patch.object(
@@ -312,6 +314,39 @@ class ConfigWizardTests(unittest.TestCase):
             confirm.assert_not_called()
             envrc.generate_envrc_example.assert_not_called()
 
+    def test_offer_envrc_soft_fails_on_prompt_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            (project / "ai-specs").mkdir(parents=True)
+            envrc = MagicMock()
+            envrc.collect_env_vars.return_value = {"TRELLO_API_KEY": "required by trello"}
+            envrc.prompt_env_vars.side_effect = TypeError(
+                "PromptSession.__init__() got an unexpected keyword argument 'password'"
+            )
+            with patch.object(self.mod, "_load_sibling", return_value=envrc):
+                # Must not raise — soft-fail path.
+                self.mod._offer_envrc(project)
+            envrc.write_envrc.assert_not_called()
+
+    def test_boolean_type_alias_uses_confirm(self):
+        recipe = self._recipe(
+            fields={
+                "auto_switch_account": self.schema.ConfigField(
+                    required=False, type="bool", default=False
+                )
+            }
+        )
+        confirm = MagicMock()
+        confirm.return_value.ask.return_value = True
+        text = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"questionary": MagicMock(select=MagicMock(), text=text, confirm=confirm)},
+        ):
+            result = self.mod.run_config_wizard(recipe, {})
+        self.assertEqual(result["auto_switch_account"], True)
+        confirm.assert_called()
+        text.assert_not_called()
 
 
 class ConfigureRecipesDispatchTests(unittest.TestCase):

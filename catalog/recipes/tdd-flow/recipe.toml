@@ -17,6 +17,7 @@ action = "validate-config"
 [config.test_command]
 required = false
 type = "string"
+help_text = "Shell command that runs the project's test suite (e.g. ./tests/validate.sh or npm test). Used by tdd-flow RED/GREEN cycles."
 
 [provides]
 skills = [{ id = "tdd-flow", source = "bundled" }]

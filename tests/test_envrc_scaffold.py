@@ -9,9 +9,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ENVRC_PATH = ROOT / "lib" / "_internal" / "envrc-scaffold.py"
+VENDOR = ROOT / "lib" / "_vendor"
+
+
+def _ensure_vendor_path() -> None:
+    if VENDOR.is_dir() and str(VENDOR) not in sys.path:
+        sys.path.insert(0, str(VENDOR))
 
 
 def load_module(path: Path, name: str):
+    _ensure_vendor_path()
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -23,6 +30,7 @@ def load_module(path: Path, name: str):
 class EnvrcScaffoldTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        _ensure_vendor_path()
         cls.mod = load_module(ENVRC_PATH, "envrc_scaffold_internal")
 
     def _project_with_recipe(
@@ -232,6 +240,107 @@ class EnvrcScaffoldTests(unittest.TestCase):
             with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
                 vars_map = self.mod.collect_env_vars(project)
             self.assertEqual(vars_map, {})
+
+    def test_prompt_env_vars_uses_password_api_for_secrets(self):
+        """Regression: password= kwarg crashes questionary 2.x; use password()."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root,
+                recipe_id="trello-mcp-workflow",
+                recipe_toml=(
+                    "[recipe]\n"
+                    'id = "trello-mcp-workflow"\n'
+                    'name = "Trello"\n'
+                    'description = "D"\n'
+                    'version = "1.0"\n\n'
+                    "[[provides.mcp]]\n"
+                    'id = "trello"\n'
+                    'command = "npx"\n'
+                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", MODE = \"$MODE\" }\n"
+                ),
+            )
+            import os
+            from unittest.mock import MagicMock, patch
+
+            password = MagicMock()
+            password.return_value.ask.return_value = "secret-key"
+            text = MagicMock()
+            text.return_value.ask.return_value = "plain"
+            confirm = MagicMock()
+            confirm.return_value.ask.return_value = True
+            q = MagicMock(password=password, text=text, confirm=confirm)
+
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.dict(
+                "sys.modules", {"questionary": q}
+            ):
+                result = self.mod.prompt_env_vars(project)
+
+            self.assertEqual(result["TRELLO_API_KEY"], "secret-key")
+            self.assertEqual(result["MODE"], "plain")
+            password.assert_called()
+            # Secrets must not go through text(..., password=...)
+            for call in text.call_args_list:
+                self.assertNotIn("password", call.kwargs)
+
+    def test_generate_includes_env_var_help_comments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root,
+                recipe_id="trello-mcp-workflow",
+                recipe_toml=(
+                    "[recipe]\n"
+                    'id = "trello-mcp-workflow"\n'
+                    'name = "Trello"\n'
+                    'description = "D"\n'
+                    'version = "1.0"\n\n'
+                    "[[provides.mcp]]\n"
+                    'id = "trello"\n'
+                    'command = "npx"\n'
+                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n"
+                ),
+            )
+            import os
+            from unittest.mock import patch
+
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                path = self.mod.generate_envrc_example(project)
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("trello.com/power-ups/admin", text)
+            self.assertIn("TRELLO_API_KEY", text)
+            self.assertIn("TRELLO_TOKEN", text)
+
+    def test_env_var_help_map_has_known_vars(self):
+        self.assertIn("TRELLO_API_KEY", self.mod.ENV_VAR_HELP)
+        self.assertIn("TRELLO_TOKEN", self.mod.ENV_VAR_HELP)
+        self.assertIn("CANONICAL_VAULT_PATH", self.mod.ENV_VAR_HELP)
+        self.assertIn("https://trello.com/power-ups/admin", self.mod.ENV_VAR_HELP["TRELLO_API_KEY"])
+
+    def test_catalog_config_fields_have_help_text(self):
+        """Key catalog ConfigFields must ship wizard help_text."""
+        schema = load_module(
+            ROOT / "lib" / "_internal" / "recipe_schema.py",
+            "recipe_schema_help_check",
+        )
+        catalog = ROOT / "catalog" / "recipes"
+        required = {
+            "trello-mcp-workflow": ["board_id", "default_list", "epic_list"],
+            "worktree-flow": ["integration_branch", "worktrees_dir", "gate_mode"],
+            "git-pr-flow": ["base_branch", "expected_owner", "auto_switch_account"],
+            "gitlab-mr-flow": ["base_branch", "expected_owner", "auto_switch_account"],
+            "bitbucket-pr-flow": ["base_branch", "expected_owner", "auto_switch_account"],
+            "vault-canonical-store": ["vault_scope", "decisions_folder", "sessions_folder"],
+            "tdd-flow": ["test_command"],
+        }
+        for recipe_id, keys in required.items():
+            recipe = schema.load_recipe_toml(catalog / recipe_id / "recipe.toml")
+            for key in keys:
+                field = recipe.config_schema.fields[key]
+                self.assertTrue(
+                    field.help_text and field.help_text.strip(),
+                    f"{recipe_id}.{key} missing help_text",
+                )
 
 
 if __name__ == "__main__":

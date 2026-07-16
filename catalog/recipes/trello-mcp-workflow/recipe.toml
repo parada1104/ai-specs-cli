@@ -52,18 +52,19 @@ min_version = "8.0.0"
 required = true
 type = "string"
 validation.regex = '^[0-9a-fA-F]{24}$'
-help_text = "Find your Trello board ID: open the board in Trello → the URL contains a 24-hex-char ID (e.g. 69ec097f13e2d38ecd89a557). This is NOT the 8-char shortLink from the board URL."
+help_text = "Trello board ID: 24 hex chars (e.g. 69ec097f13e2d38ecd89a557). Not the 8-char shortLink in https://trello.com/b/<shortLink>/.... Tip: trello_get_active_board_info → id, or Board menu → More → Close board URL."
 
 [config.default_list]
 required = false
 type = "string"
 default = "In Progress"
-help_text = "Default list/todo column where new cards land. Must match an existing list name on your Trello board."
+help_text = "Default list where new cards land. Must match an existing list name on your Trello board."
 
 [config.epic_list]
 required = false
 type = "string"
 default = "Epic"
+help_text = "List name for epic-type cards. Must match an existing list on your Trello board (create the list first if needed)."
 [config.board_isolation]
 forbidden_tools = ["trello_get_my_cards", "trello_list_boards"]
 restricted_tools = ["trello_set_active_board"]
