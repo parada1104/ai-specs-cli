@@ -32,6 +32,15 @@ def is_initialized(root: Path) -> bool:
     return (root / "ai-specs" / "ai-specs.toml").is_file()
 
 
+def is_internal_test_recipe(recipe_id: str) -> bool:
+    """True for catalog fixtures that must never appear in user-facing lists.
+
+    Convention: directory/id prefix ``test-`` (hyphen). Used by hub recipe list,
+    CLI ``recipe list``, and init wizard/onboarding pickers.
+    """
+    return recipe_id.startswith("test-")
+
+
 def ensure_deps(vendor: Path, *, prompt: bool = True) -> int | None:
     """Make rich + questionary importable. Returns exit code 3 if unavailable, else None.
 

@@ -85,7 +85,11 @@ def _catalog_recipes() -> list[dict[str, str]]:
     if not catalog.is_dir():
         return results
     for entry in sorted(catalog.iterdir()):
-        if not entry.is_dir() or entry.name.startswith(".") or entry.name.startswith("test-"):
+        if (
+            not entry.is_dir()
+            or entry.name.startswith(".")
+            or _util.is_internal_test_recipe(entry.name)
+        ):
             continue
         recipe_path = entry / "recipe.toml"
         if not recipe_path.is_file():
