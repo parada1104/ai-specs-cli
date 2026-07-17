@@ -40,10 +40,19 @@ Live entrypoints SHALL NOT mix capability clients in one process. At minimum:
 
 For `opencode`, `pi`, and `omp`, the harness default model SHALL use the
 OpenCode provider id `cursorapi` (display name "API for Cursor"), e.g.
-`cursorapi/composer-2.5`. `claude` continues to default to `opus`.
-`EVALS_MODEL` remains an override for any runtime.
+`cursorapi/composer-2.5`. Those runtimes SHALL NOT use `anthropic/*` models or
+an Anthropic API-key path. `claude` SHALL use the Claude Code subscription via
+the `claude` CLI (default model id `opus`).
+
+`EVALS_MODEL` / `EVALS_MODEL_<RUNTIME>` may override, but for OpenCode-family
+overrides MUST start with `cursorapi/` or the harness SHALL error.
 
 #### Scenario: Default models prefer cursorapi for OpenCode-family
 - **GIVEN** `DEFAULT_MODELS` in the eval harness
 - **WHEN** defaults for `opencode`, `pi`, and `omp` are read
 - **THEN** each value SHALL start with `cursorapi/`
+
+#### Scenario: anthropic override rejected for opencode
+- **GIVEN** `EVALS_MODEL=anthropic/claude-sonnet-4-6`
+- **WHEN** `default_model("opencode")` runs
+- **THEN** it SHALL raise an error mentioning `cursorapi/`
