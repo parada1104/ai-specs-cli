@@ -11,12 +11,15 @@ A key in `ai-specs.toml` is not recognized by the current validator.
 **Fix:** Check [`docs/ai-specs-toml.md`](../ai-specs-toml.md) for the canonical
 V1 surface. Remove unrecognized sections or move them to a comment.
 
-### `version` mismatch in `[recipes.<id>]`
+### Legacy `version` in `[recipes.<id>]`
 
-The version pin in your manifest does not match the recipe's catalog version.
+Per-recipe version pins are no longer required. If a leftover `version` key
+remains in the manifest, sync emits a WARN and continues with the catalog
+shipped by the installed CLI.
 
-**Fix:** Update the manifest version to match the catalog, or use
-`ai-specs recipe list` to check available versions.
+**Fix:** Optional — delete the `version` lines from `[recipes.<id>]`. After
+`ai-specs upgrade`, run `ai-specs sync` (no pin bump). Use
+`ai-specs recipe list` to see catalog versions as info only.
 
 ### `subrepos` path resolution failed
 

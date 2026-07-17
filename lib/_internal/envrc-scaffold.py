@@ -35,6 +35,22 @@ _HEADER = """\
 # Generated from enabled recipes' [[provides.mcp]] env references.
 """
 
+# Curated how-to-get help for known MCP env vars (shown in prompts + .envrc.example).
+# Do not put this on [[provides.mcp]] — materialize copies MCP config into client JSON.
+ENV_VAR_HELP: dict[str, str] = {
+    "TRELLO_API_KEY": (
+        "Trello API key — create at https://trello.com/power-ups/admin"
+    ),
+    "TRELLO_TOKEN": (
+        "Trello token — generate from https://trello.com/power-ups/admin "
+        "(Power-Up → API key page → Token)"
+    ),
+    "CANONICAL_VAULT_PATH": (
+        "Absolute path to the scoped vault folder "
+        "(e.g. $OBSIDIAN_VAULT_PATH/<scope> or the Obsidian vault root + scope)"
+    ),
+}
+
 
 def _catalog_dir() -> Path:
     home = os.environ.get("AI_SPECS_HOME")
@@ -99,7 +115,10 @@ def generate_envrc_example(project_root: Path) -> Path:
     lines = [_HEADER.rstrip(), ""]
     if vars_map:
         for var in sorted(vars_map):
-            lines.append(f'export {var}=""  # {vars_map[var]}')
+            help_bits = [vars_map[var]]
+            if var in ENV_VAR_HELP:
+                help_bits.append(ENV_VAR_HELP[var])
+            lines.append(f'export {var}=""  # {"; ".join(help_bits)}')
     else:
         lines.append("# (no env vars required by enabled recipes)")
     lines.append("")
@@ -107,11 +126,16 @@ def generate_envrc_example(project_root: Path) -> Path:
     return target
 
 
+def _is_secret_var(var: str) -> bool:
+    upper = var.upper()
+    return any(kw in upper for kw in ["API_KEY", "TOKEN", "SECRET", "PASSWORD", "APIKEY"])
+
+
 def prompt_env_vars(project_root: Path) -> dict[str, str] | None:
     """Prompt interactively for each MCP env var value.
 
     Returns {VAR: value} or None if cancelled.
-    Secrets (API_KEY, TOKEN, SECRET, PASSWORD) are masked.
+    Secrets (API_KEY, TOKEN, SECRET, PASSWORD) are masked via questionary.password.
     """
     vars_map = collect_env_vars(project_root)
     if not vars_map:
@@ -125,6 +149,8 @@ def prompt_env_vars(project_root: Path) -> dict[str, str] | None:
     console.print("[bold]Variables de entorno requeridas[/bold]")
     for var, purpose in vars_map.items():
         console.print(f"  [yellow]{var}[/yellow] — {purpose}")
+        if var in ENV_VAR_HELP:
+            console.print(f"    [dim]ℹ️  {ENV_VAR_HELP[var]}[/]")
     console.print()
 
     if not questionary.confirm("¿Configurar ahora los valores?", default=True).ask():
@@ -132,12 +158,13 @@ def prompt_env_vars(project_root: Path) -> dict[str, str] | None:
 
     result: dict[str, str] = {}
     for var in sorted(vars_map):
-        is_secret = any(kw in var.upper() for kw in ["API_KEY", "TOKEN", "SECRET", "PASSWORD", "APIKEY"])
-        value = questionary.text(
-            var,
-            instruction="(input oculto)" if is_secret else "",
-            password=is_secret,
-        ).ask()
+        if var in ENV_VAR_HELP:
+            console.print(f"[dim]ℹ️  {ENV_VAR_HELP[var]}[/]")
+        if _is_secret_var(var):
+            # questionary.text does NOT accept password= — use password() (is_password).
+            value = questionary.password(var, instruction="(input oculto)").ask()
+        else:
+            value = questionary.text(var).ask()
         if value is None:
             return None
         result[var] = value

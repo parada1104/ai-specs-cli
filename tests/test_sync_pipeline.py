@@ -1,3 +1,5 @@
+import importlib.util
+import sys
 import json
 import os
 import shutil
@@ -8,6 +10,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from _cache_paths import recipe_root, cache_command, resolved_skills_dir, deps_skill_dir
 CLI = ROOT / "bin" / "ai-specs"
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
 
@@ -625,7 +631,7 @@ class SyncPipelineTests(unittest.TestCase):
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            root_skill = workspace / "ai-specs" / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
+            root_skill = deps_skill_dir(workspace, "vendored-demo") / "SKILL.md"
             subrepo_skill = workspace / "packages" / "a" / "ai-specs" / "skills" / "vendored-demo" / "SKILL.md"
             content = root_skill.read_text()
 
@@ -659,7 +665,7 @@ class SyncPipelineTests(unittest.TestCase):
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            root_skill = workspace / "ai-specs" / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
+            root_skill = deps_skill_dir(workspace, "vendored-demo") / "SKILL.md"
             root_skill.write_text(
                 "---\n"
                 "name: vendored-demo\n"
@@ -893,12 +899,12 @@ class SyncPipelineTests(unittest.TestCase):
                 "board_id = 'aabbcc112233445566778899'\n\n"  # 24-char hex as required
                 "[recipes.worktree-flow]\n"
                 "enabled = true\n"
-                "version = '1.2.1'\n"
+                "version = '1.2.2'\n"
                 "[recipes.worktree-flow.config]\n"
                 "integration_branch = 'development'\n\n"
                 "[recipes.git-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.2.2'\n"
+                "version = '1.3.0'\n"
                 "[recipes.git-pr-flow.config]\n"
                 "base_branch = 'development'\n\n"
                 "[recipes.tdd-flow]\n"
@@ -1135,7 +1141,7 @@ class SyncPipelineTests(unittest.TestCase):
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
             # Verify local skills are resolved in .internal/resolved-skills
-            resolved = workspace / "ai-specs" / ".internal" / "resolved-skills"
+            resolved = resolved_skills_dir(workspace)
             self.assertTrue((resolved / "local-skill" / "SKILL.md").is_file())
             # No registry artifact should exist
             self.assertFalse((workspace / "ai-specs" / ".skill-registry.md").exists())
@@ -2639,7 +2645,7 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "enabled = ['claude']\n\n"
                 "[recipes.gitlab-mr-flow]\n"
                 "enabled = true\n"
-                "version = '1.1.1'\n"
+                "version = '1.2.0'\n"
                 "[recipes.gitlab-mr-flow.config]\n"
                 "base_branch = 'main'\n"
                 "provider = 'github'\n\n"  # stale key — must warn
@@ -2698,7 +2704,7 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "enabled = ['claude']\n\n"
                 "[recipes.bitbucket-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.0.1'\n"
+                "version = '1.1.0'\n"
                 # NO base_branch set — catalog default "development" must apply
                 "[[bindings]]\n"
                 "capability = 'vcs-pr-flow'\n"
@@ -2849,7 +2855,7 @@ class FanOutDriftTests(unittest.TestCase):
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
             skills_link = workspace / ".cursor" / "skills"
-            resolved = (workspace / "ai-specs" / ".internal" / "resolved-skills").resolve()
+            resolved = (resolved_skills_dir(workspace)).resolve()
             self.assertTrue(skills_link.is_symlink(), ".cursor/skills must be a symlink")
             self.assertEqual(skills_link.resolve(), resolved)
         finally:
@@ -2870,7 +2876,7 @@ class FanOutDriftTests(unittest.TestCase):
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
             skills_link = workspace / ".cursor" / "skills"
-            resolved = (workspace / "ai-specs" / ".internal" / "resolved-skills").resolve()
+            resolved = (resolved_skills_dir(workspace)).resolve()
             self.assertTrue(skills_link.is_symlink())
             self.assertEqual(skills_link.resolve(), resolved)
             self.assertFalse((resolved / "foo").exists())
@@ -2916,6 +2922,74 @@ class CliVersionSyncGateTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertIn("ignoring CLI version policy", result.stderr)
+
+
+class SyncAgentGuardOrderTests(unittest.TestCase):
+    """Guards (toml exists, agents configured) must fire BEFORE recipe materialize.
+
+    Round 3 regression: materialize was moved before flatten (Round 1 fix) but
+    also ran before the init / no-agents guards, producing confusing errors
+    instead of helpful user messages on uninitialized or agent-less projects.
+
+    The critical path: sync-agent --source-root <root> --target <path>
+    bypasses target-resolve.py (which provides its own guard for the simple
+    'sync /path' invocation).  In that code path materialize previously ran
+    before either guard, so missing-toml errors said 'recipe materialize failed'
+    instead of 'Run ai-specs init first', and no-agents projects ran a full
+    (wasted) materialize before emitting 'no agents to sync'.
+    """
+
+    def test_sync_agent_explicit_flags_missing_toml_emits_init_guidance_not_materialize_error(self):
+        """sync-agent --source-root --target on an uninitialized project must emit
+        'Run ai-specs init first', not 'recipe materialize failed'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            # Do NOT run init — no ai-specs/ai-specs.toml
+            result = subprocess.run(
+                [str(CLI), "sync-agent",
+                 "--source-root", str(workspace),
+                 "--target", str(workspace)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            combined = result.stdout + result.stderr
+            # Must emit the helpful guidance message from the TOML guard
+            self.assertIn("ai-specs init", combined)
+            # Must NOT say 'recipe materialize failed' as the primary UX signal
+            self.assertNotIn("recipe materialize failed", combined)
+            # Must NOT expose a raw Python traceback
+            self.assertNotIn("Traceback (most recent call last)", combined)
+
+    def test_sync_agent_explicit_flags_no_agents_exits_cleanly_without_materialize_error(self):
+        """sync-agent --source-root --target on a project with no agents must
+        emit 'no agents to sync' cleanly (exit 0) without any materialize error
+        or traceback. Flatten may still run to populate the resolved-skills cache."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            # Overwrite toml with empty agents list
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname = 'guard-order-test'\n\n[agents]\nenabled = []\n"
+            )
+            result = subprocess.run(
+                [str(CLI), "sync-agent",
+                 "--source-root", str(workspace),
+                 "--target", str(workspace)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            # Exit 0 (graceful early exit) with a warning
+            self.assertEqual(result.returncode, 0, result.stderr)
+            combined = result.stdout + result.stderr
+            self.assertIn("no agents to sync", combined)
+            # Must NOT expose a raw materialize error/traceback
+            self.assertNotIn("Traceback (most recent call last)", combined)
+            self.assertNotIn("ERROR: recipe materialize failed", combined)
 
 
 if __name__ == "__main__":

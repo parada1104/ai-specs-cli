@@ -70,7 +70,7 @@ class RecipeAddTests(unittest.TestCase):
 
         self.addCleanup(restore)
 
-    def test_add_appends_recipe_with_exact_version(self):
+    def test_add_appends_recipe_without_version(self):
         manifest = '[project]\nname = "test"\n'
         recipe_toml = (
             '[recipe]\nid = "my-recipe"\nname = "My Recipe"\n'
@@ -83,8 +83,8 @@ class RecipeAddTests(unittest.TestCase):
 
         manifest_text = (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
         self.assertIn("[recipes.my-recipe]", manifest_text)
-        self.assertIn('enabled = true', manifest_text)
-        self.assertIn('version = "2.1.0"', manifest_text)
+        self.assertIn("enabled = true", manifest_text)
+        self.assertNotIn("version =", manifest_text)
 
     def test_add_aborts_when_recipe_already_exists(self):
         manifest = (
@@ -226,8 +226,9 @@ type = "string"
         rc = self.mod.add_recipe(project, "shared-recipe")
         self.assertEqual(rc, 0)
         manifest_text = (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
-        self.assertIn('version = "2.0.0"', manifest_text)
-        self.assertNotIn('version = "9.9.9"', manifest_text)
+        self.assertIn("[recipes.shared-recipe]", manifest_text)
+        self.assertIn("enabled = true", manifest_text)
+        self.assertNotIn("version =", manifest_text)
 
 
     def test_boolean_default_serializes_as_lowercase_toml(self):

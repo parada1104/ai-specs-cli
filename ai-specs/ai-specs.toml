@@ -13,12 +13,13 @@ subrepos = []
 enabled = ["claude", "cursor", "opencode", "pi", "omp"]
 
 # -----------------------------------------------------------------------------
-# Recipes — named, versioned bundles of skills, commands, templates, and MCP
-# presets. Declared in catalog/recipes/<id>/recipe.toml.
+# Recipes — named bundles of skills, commands, templates, and MCP presets.
+# Declared in catalog/recipes/<id>/recipe.toml. Sync uses the installed CLI
+# catalog; no per-recipe version pin is required.
 #
 # [recipes.<id>]
 # enabled = true
-# version = "1.0.0"
+# # version = "1.0.0"  # legacy — ignored with WARN if present
 
 # Flow primitives for this project come from these catalog recipes. Local
 # skills under ai-specs/skills/ are limited to ai-specs' own bundled tooling
@@ -38,42 +39,35 @@ enabled = ["claude", "cursor", "opencode", "pi", "omp"]
 
 [recipes.worktree-flow]
 enabled = true
-version = "1.2.1"
 [recipes.worktree-flow.config]
 worktrees_dir = ".worktrees"
 integration_branch = "development"
 
 [recipes.git-pr-flow]
 enabled = true
-version = "1.2.2"
 [recipes.git-pr-flow.config]
 base_branch = "development"
 
 [recipes.session-context]
 enabled = true
-version = "2.0.0"
 
 [recipes.tdd-flow]
 enabled = true
-version = "1.0.0"
 [recipes.tdd-flow.config]
 test_command = "./tests/validate.sh"
 
 [recipes.plan-build-flow]
 enabled = true
-version = "1.0.0"
 
 # --- Specific (capability providers) ---
 
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.2.0"
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"
 
 [recipes.vault-canonical-store]
 enabled = true
-version = "1.1.0"
 [recipes.vault-canonical-store.config]
 vault_scope = "nnodes/proyectos/ai-specs"
 

@@ -2,7 +2,7 @@
 id = "worktree-flow"
 name = "Worktree Flow"
 description = "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work"
-version = "1.2.2"
+version = "1.2.3"
 author = "ai-specs"
 license = "MIT"
 tags = ["infra", "worktree"]
@@ -29,16 +29,19 @@ min_version = "2.20.0"
 required = false
 type = "string"
 default = ".worktrees"
+help_text = "Directory for isolated git worktrees (relative to project root). Usually .worktrees/ and gitignored."
 
 [config.integration_branch]
 required = false
 type = "string"
 default = "main"
+help_text = "Branch worktrees are created from and merged into (e.g. main or development). Must already exist in the repo."
 
 [config.auto_remove_merged]
 required = false
-type = "boolean"
+type = "bool"
 default = true
+help_text = "If true, worktree cleanup removes worktrees whose branches are fully merged into the integration branch."
 
 # Protected branches the worktree-gate runtime hook refuses writes on while in
 # the main worktree. Passed to the rendered hook as the WORKTREE_GATE_PROTECTED
@@ -47,12 +50,14 @@ default = true
 required = false
 type = "string"
 default = "main development"
+help_text = "Space-separated branch names the worktree gate protects in the main worktree (writes blocked unless gate_mode allows)."
 
 [config.gate_mode]
 required = false
 type = "string"
 default = "always"
 enum = ["always", "ask", "off"]
+help_text = "Worktree gate behavior: always (block), ask (prompt), or off (disabled)."
 
 [provides]
 skills = [{ id = "worktree-flow", source = "bundled" }]

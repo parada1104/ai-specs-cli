@@ -1,4 +1,3 @@
-[SKILL.md#EF5E]
 ---
 name: bitbucket-merge-workflow
 description: >
@@ -55,18 +54,36 @@ If `bb` is not found, stop and report:
 Then verify authentication:
 
 ```bash
-bb auth status
+bb auth show
 ```
 
 If authentication fails (output includes "Not logged in"), stop and report:
 
 > **Blocker**: `bb` is not authenticated. Run `bb auth login` and retry.
 
+Then run **Runtime Preflight: Account Match** when `expected_owner` is set in
+`[recipes.bitbucket-pr-flow.config]` (skip when empty — no extra CLI calls):
+
+```bash
+# Runtime Preflight: Account Match (Bitbucket)
+# Fix: bb has no `bb auth status`; the correct command is `bb auth show`.
+EXPECTED_OWNER="{config.expected_owner}"
+if [ -n "$EXPECTED_OWNER" ]; then
+  ACTIVE=$(bb auth show 2>&1 | awk '/Username|username/ {print $2}' | head -1)
+  if [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
+    echo "**Blocker**: active bb account is '$ACTIVE'; expected '$EXPECTED_OWNER'."
+    echo "bb has no 'auth switch'. Run: bb auth login"
+    return 1
+  fi
+fi
+```
+
 ## Workflow
 
 1. Inspect current branch, worktree path, and `git status`.
 2. Run or confirm any verification required before merge.
-3. Resolve the Bitbucket remote and push the feature branch explicitly:
+3. Run **Runtime Preflight** (CLI checks + account match above).
+4. Resolve the Bitbucket remote and push the feature branch explicitly:
 
 ```bash
 REMOTE=$(git remote | grep -E '^(origin|bitbucket|upstream)$' | head -1 || echo "origin")
@@ -95,9 +112,23 @@ APPROVED_SHA=$(bb pr view <pr-id> --json --jq '.source.commit.hash')
    branch. Commit and push any archive commits to the review branch before
    proceeding.
 
-8. Merge only after explicit user approval, required checks/review, the
-   pre-merge archive step above, and a matching approved source commit. Re-fetch
-   the source commit and stop if it changed since approval:
+8. **Pre-merge guardian (hard stop):** confirm the change is archived and has
+   tier-minimum files. Prefer:
+
+```bash
+python3 ai-specs/bin/premerge_guardian.py <slug> --root <repo-root>
+```
+
+Sync materializes that helper into consumer projects. In the ai-specs monorepo,
+`lib/_internal/premerge_guardian.py` is the same script.
+
+Do **not** merge if `openspec/changes/<slug>/` still exists, or if
+`openspec/changes/archive/<slug>/` is missing tier files.
+
+9. Merge only after explicit user approval, required checks/review, the
+   pre-merge archive step above, a clean guardian result, and a matching
+   approved source commit. Re-fetch the source commit and stop if it changed
+   since approval:
 
 ```bash
 CURRENT_SHA=$(bb pr view <pr-id> --json --jq '.source.commit.hash')
@@ -111,13 +142,19 @@ bb pr merge <pr-id> --strategy squash --close-source-branch
 
 > **Note**: Re-checking the source commit ensures only the reviewed revision is merged. If the branch was updated between approval and merge, stop and ask the user to re-review.
 
-9. After the PR is merged, navigate to the main repo root first (the agent may
-   be running inside the worktree, and removing it while `$PWD` points there
-   causes `fatal: Unable to read current working directory`). Then remove the
-   worktree and force-delete the local branch:
+10. After the PR is merged, **leave the worktree first** (`cd` to the main repo
+   root — never remove while `$PWD` is inside the worktree). Prefer the
+   worktree-flow cleanup script:
 
 ```bash
 cd <main-repo-root>
+bash ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh \
+  --dir .worktrees --base <base_branch>
+```
+
+Manual fallback only if the script is unavailable:
+
+```bash
 git worktree remove <absolute-path-to-worktree>
 git branch -D <branch-name>
 ```
@@ -125,9 +162,10 @@ git branch -D <branch-name>
 > **Note**: `git branch -D` (capital D) is required because `bb pr merge --strategy squash`
 > rewrites history — the feature branch commits are not ancestors of the target
 > branch, so `git branch -d` would refuse with "not fully merged". Force-delete
-> is safe here because the PR was already merged.
+> is safe here because the PR was already merged. Stop without deleting if the
+> worktree is dirty.
 
-10. Sync the integration branch:
+11. Sync the integration branch:
 
 ```bash
 git checkout <base_branch>

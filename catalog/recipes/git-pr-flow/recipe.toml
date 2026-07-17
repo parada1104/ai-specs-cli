@@ -2,7 +2,7 @@
 id = "git-pr-flow"
 name = "Git PR Flow"
 description = "GitHub PR and merge flow for feature branches (via gh CLI)"
-version = "1.2.2"
+version = "1.4.1"
 author = "ai-specs"
 license = "MIT"
 tags = ["vcs", "github"]
@@ -26,6 +26,19 @@ min_version = "2.0.0"
 required = false
 type = "string"
 default = "main"
+help_text = "Integration/base branch for PRs (e.g. main or development). PRs target this branch."
+
+[config.expected_owner]
+required = false
+type = "string"
+default = ""
+help_text = "GitHub org or user that should own the remote (for multi-account gh). Leave empty to skip owner checks. See: gh auth status / gh auth switch."
+
+[config.auto_switch_account]
+required = false
+type = "bool"
+default = false
+help_text = "If true, try gh auth switch when the active account does not match expected_owner. Requires gh CLI: https://cli.github.com/"
 
 [provides]
 skills = [{ id = "git-merge-workflow", source = "bundled" }]
@@ -42,3 +55,8 @@ workflow_rules = [
 [[provides.docs]]
 source = "README.md"
 target = "ai-specs/recipes/git-pr-flow/README.md"
+
+[[provides.templates]]
+source = "templates/premerge_guardian.py"
+target = "ai-specs/bin/premerge_guardian.py"
+condition = "not_exists"

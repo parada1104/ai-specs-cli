@@ -28,46 +28,70 @@ def load_module(path: Path, name: str):
     spec.loader.exec_module(module)
     return module
 
+def _pc():
+    return load_module(ROOT / "lib" / "_internal" / "project-cache.py", "project_cache_ext")
+
+
+def cache_recipe_skill(project_root, recipe_id, skill_id, cli_home=ROOT):
+    return _pc().recipe_skills_root(project_root, cli_home=cli_home) / recipe_id / "skills" / skill_id
+
+
+def cache_dep_skill(project_root, dep_id, skill_id=None, cli_home=ROOT):
+    sid = dep_id if skill_id is None else skill_id
+    return _pc().deps_skills_root(project_root, cli_home=cli_home) / dep_id / "skills" / sid
+
+
+def cache_command(project_root, cmd_id, cli_home=ROOT):
+    return _pc().commands_dir(project_root, cli_home=cli_home) / f"{cmd_id}.md"
+
 
 class InitExternalDirsTests(unittest.TestCase):
-    def test_init_creates_recipe_and_deps_dirs(self):
+    def test_init_does_not_create_in_project_origin_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True, capture_output=True)
-            self.assertTrue((target / "ai-specs" / ".recipe").is_dir())
-            self.assertTrue((target / "ai-specs" / ".deps").is_dir())
+            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            self.assertFalse((target / "ai-specs" / ".recipe").exists())
+            self.assertFalse((target / "ai-specs" / ".deps").exists())
 
-    def test_init_idempotent_for_existing_dirs(self):
+    def test_init_idempotent_without_origin_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            (target / "ai-specs" / ".recipe").mkdir(parents=True)
-            (target / "ai-specs" / ".deps").mkdir(parents=True)
-            (target / "ai-specs" / ".recipe" / "existing").write_text("keep")
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True, capture_output=True)
-            self.assertEqual((target / "ai-specs" / ".recipe" / "existing").read_text(), "keep")
+            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            self.assertTrue((target / "ai-specs" / "ai-specs.toml").is_file())
+            self.assertFalse((target / "ai-specs" / ".recipe").exists())
 
-    def test_gitignore_contains_external_dirs(self):
+    def test_gitignore_omits_in_project_origin_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True, capture_output=True)
+            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
             gitignore = (target / ".gitignore").read_text()
-            self.assertIn("ai-specs/.recipe/", gitignore)
-            self.assertIn("ai-specs/.deps/", gitignore)
-            self.assertIn("ai-specs/.recipe/*/overrides/", gitignore)
+            self.assertNotIn("ai-specs/.recipe/", gitignore)
+            self.assertNotIn("ai-specs/.deps/", gitignore)
 
-    def test_gitignore_idempotent_no_duplicates(self):
+    def test_gitignore_does_not_ignore_user_recipes_surface(self):
+        """ai-specs/.gitignore must not contain recipes/ — that surface is user-committed."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True, capture_output=True)
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True, capture_output=True)
+            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            ai_specs_gitignore = (target / "ai-specs" / ".gitignore").read_text()
+            self.assertNotIn("recipes/", ai_specs_gitignore,
+                             "ai-specs/.gitignore must not ignore recipes/ (user surface)")
+
+    def test_gitignore_idempotent_no_origin_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
             gitignore = (target / ".gitignore").read_text()
             lines = [ln.strip() for ln in gitignore.splitlines()]
-            self.assertEqual(lines.count("ai-specs/.recipe/"), 1)
-            self.assertEqual(lines.count("ai-specs/.deps/"), 1)
+            self.assertEqual(lines.count("ai-specs/.recipe/"), 0)
+            self.assertEqual(lines.count("ai-specs/.deps/"), 0)
 
 
 class VendorSkillsPathTests(unittest.TestCase):
@@ -106,7 +130,7 @@ class VendorSkillsPathTests(unittest.TestCase):
                 f'source = "{self._make_dep_repo(tmp_path, "my-dep")}"\n'
             )
             self.mod.sync_vendored_skills(project, self.mod.load_deps(project))
-            skill = project / "ai-specs" / ".deps" / "my-dep" / "skills" / "my-dep" / "SKILL.md"
+            skill = cache_dep_skill(project, "my-dep") / "SKILL.md"
             self.assertTrue(skill.is_file())
             self.assertIn("name: my-dep", skill.read_text())
 
@@ -171,24 +195,25 @@ class RecipeMaterializePathTests(unittest.TestCase):
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        skill_dir = root / "ai-specs" / ".recipe" / "test-fixture" / "skills" / "test-skill"
+        skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
         self.assertTrue(skill_dir.is_dir())
         self.assertTrue((skill_dir / "SKILL.md").is_file())
 
-    def test_materializes_command_to_ai_specs(self):
+    def test_materializes_command_to_cache(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+            "[recipes.test-fixture]\nenabled = true\n"
         )
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        cmd = root / "ai-specs" / "commands" / "test-command.md"
+        cmd = cache_command(root, "test-command", cli_home=ROOT)
         self.assertTrue(cmd.is_file())
 
-    def test_warns_when_recipe_command_overwrites_existing_command(self):
+    def test_warns_when_recipe_command_overwrites_existing_managed_command(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+            "[recipes.test-fixture]\nenabled = true\n"
         )
-        cmd = root / "ai-specs" / "commands" / "test-command.md"
-        cmd.write_text("# user command\n")
+        cmd = cache_command(root, "test-command", cli_home=ROOT)
+        cmd.parent.mkdir(parents=True, exist_ok=True)
+        cmd.write_text("# previous managed\n")
         import io
         captured = io.StringIO()
         old_stderr = sys.stderr
@@ -197,8 +222,8 @@ class RecipeMaterializePathTests(unittest.TestCase):
             self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
         finally:
             sys.stderr = old_stderr
-        self.assertIn("overwrites existing command", captured.getvalue())
-        self.assertNotEqual(cmd.read_text(), "# user command\n")
+        self.assertIn("overwrites existing managed command", captured.getvalue())
+        self.assertNotEqual(cmd.read_text(), "# previous managed\n")
 
     def test_materializes_recipe_dep_skill_to_deps_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -222,7 +247,7 @@ class RecipeMaterializePathTests(unittest.TestCase):
                 '[recipes.dep-fixture]\nenabled = true\nversion = "1.0.0"\n'
             )
             self.assertEqual(self.mod.materialize_recipes(root, home), 0)
-            dep_skill = root / "ai-specs" / ".deps" / "dep-skill" / "skills" / "dep-skill" / "SKILL.md"
+            dep_skill = cache_dep_skill(root, "dep-skill", cli_home=home) / "SKILL.md"
             self.assertTrue(dep_skill.is_file())
             self.assertFalse((root / "ai-specs" / "skills" / "dep-skill").exists())
 
@@ -259,12 +284,12 @@ class SkillResolutionTests(unittest.TestCase):
         (d / "SKILL.md").write_text(f"# {name}")
 
     def _write_recipe_skill(self, root: Path, recipe: str, name: str) -> None:
-        d = root / "ai-specs" / ".recipe" / recipe / "skills" / name
+        d = cache_recipe_skill(root, recipe, name, cli_home=ROOT)
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(f"# {name}")
 
     def _write_dep_skill(self, root: Path, dep: str, name: str) -> None:
-        d = root / "ai-specs" / ".deps" / dep / "skills" / name
+        d = cache_dep_skill(root, dep, skill_id=name, cli_home=ROOT)
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(f"# {name}")
 
@@ -272,14 +297,14 @@ class SkillResolutionTests(unittest.TestCase):
         root = self._make_project()
         self._write_local_skill(root, "shared")
         self._write_recipe_skill(root, "r1", "shared")
-        resolved = self.mod.collect_skills(root)
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
         self.assertEqual(resolved["shared"][0], "local")
 
     def test_recipe_precedence_over_dep(self):
         root = self._make_project()
         self._write_recipe_skill(root, "r1", "shared")
         self._write_dep_skill(root, "d1", "shared")
-        resolved = self.mod.collect_skills(root)
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
         self.assertEqual(resolved["shared"][0], "recipe")
 
     def test_local_precedence_over_all(self):
@@ -287,13 +312,13 @@ class SkillResolutionTests(unittest.TestCase):
         self._write_local_skill(root, "shared")
         self._write_recipe_skill(root, "r1", "shared")
         self._write_dep_skill(root, "d1", "shared")
-        resolved = self.mod.collect_skills(root)
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
         self.assertEqual(resolved["shared"][0], "local")
 
     def test_dep_fallback_when_no_other_source(self):
         root = self._make_project()
         self._write_dep_skill(root, "d1", "only-dep")
-        resolved = self.mod.collect_skills(root)
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
         self.assertEqual(resolved["only-dep"][0], "dep")
 
     def test_first_seen_recipe_wins_with_warning(self):
@@ -305,7 +330,7 @@ class SkillResolutionTests(unittest.TestCase):
         old_stderr = sys.stderr
         sys.stderr = captured
         try:
-            resolved = self.mod.collect_skills(root)
+            resolved = self.mod.collect_skills(root, cli_home=ROOT)
         finally:
             sys.stderr = old_stderr
         self.assertEqual(resolved["dup"][0], "recipe")
@@ -322,7 +347,7 @@ class SkillResolutionTests(unittest.TestCase):
         old_stderr = sys.stderr
         sys.stderr = captured
         try:
-            resolved = self.mod.collect_skills(root)
+            resolved = self.mod.collect_skills(root, cli_home=ROOT)
         finally:
             sys.stderr = old_stderr
         self.assertEqual(resolved["dup"][0], "dep")
@@ -332,7 +357,7 @@ class SkillResolutionTests(unittest.TestCase):
     def test_missing_skill_raises(self):
         root = self._make_project()
         with self.assertRaises(RuntimeError) as ctx:
-            self.mod.resolve_skill(root, "missing")
+            self.mod.resolve_skill(root, "missing", cli_home=ROOT)
         self.assertIn("missing", str(ctx.exception))
 
     def test_local_override_silent_no_warning(self):
@@ -344,7 +369,7 @@ class SkillResolutionTests(unittest.TestCase):
         old_stderr = sys.stderr
         sys.stderr = captured
         try:
-            resolved = self.mod.collect_skills(root)
+            resolved = self.mod.collect_skills(root, cli_home=ROOT)
         finally:
             sys.stderr = old_stderr
         self.assertEqual(resolved["shared"][0], "local")
@@ -355,7 +380,7 @@ class SkillResolutionTests(unittest.TestCase):
         root = self._make_project()
         self._write_local_skill(root, "shared")
         self._write_recipe_skill(root, "r1", "shared")
-        recipe_asset = root / "ai-specs" / ".recipe" / "r1" / "skills" / "shared" / "assets" / "helper.md"
+        recipe_asset = cache_recipe_skill(root, "r1", "shared", cli_home=ROOT) / "assets" / "helper.md"
         recipe_asset.parent.mkdir(parents=True)
         recipe_asset.write_text("recipe asset")
         self.assertIsNone(self.mod.resolve_skill_template(root, "shared", "assets/helper.md"))
@@ -377,14 +402,14 @@ class OverrideLoadingTests(unittest.TestCase):
         return root
 
     def _write_recipe_skill(self, root: Path, recipe: str, name: str) -> None:
-        d = root / "ai-specs" / ".recipe" / recipe / "skills" / name
+        d = cache_recipe_skill(root, recipe, name, cli_home=ROOT)
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(f"# {name}")
 
     def test_override_config_merged(self):
         root = self._make_project()
         self._write_recipe_skill(root, "my-recipe", "my-skill")
-        overrides = root / "ai-specs" / ".recipe" / "my-recipe" / "overrides" / "config.toml"
+        overrides = root / "ai-specs" / "recipes" / "my-recipe" / "overrides" / "config.toml"
         overrides.parent.mkdir(parents=True)
         overrides.write_text('timeout = 99\n')
         cfg = self.mod.load_skill_config(root, "my-skill", {"timeout": 30})
@@ -400,7 +425,7 @@ class OverrideLoadingTests(unittest.TestCase):
         root = self._make_project()
         self._write_recipe_skill(root, "recipe-a", "shared-skill")
         self._write_recipe_skill(root, "recipe-b", "shared-skill")
-        overrides_a = root / "ai-specs" / ".recipe" / "recipe-a" / "overrides" / "config.toml"
+        overrides_a = root / "ai-specs" / "recipes" / "recipe-a" / "overrides" / "config.toml"
         overrides_a.parent.mkdir(parents=True)
         overrides_a.write_text('timeout = 99\n')
         # For recipe-b skill, override from recipe-a should not apply
@@ -417,9 +442,9 @@ class OverrideLoadingTests(unittest.TestCase):
     def test_override_template_preferred(self):
         root = self._make_project()
         self._write_recipe_skill(root, "my-recipe", "my-skill")
-        bundled_tpl = root / "ai-specs" / ".recipe" / "my-recipe" / "skills" / "my-skill" / "template.md"
+        bundled_tpl = cache_recipe_skill(root, "my-recipe", "my-skill", cli_home=ROOT) / "template.md"
         bundled_tpl.write_text("bundled")
-        override_tpl = root / "ai-specs" / ".recipe" / "my-recipe" / "overrides" / "templates" / "template.md"
+        override_tpl = root / "ai-specs" / "recipes" / "my-recipe" / "overrides" / "templates" / "template.md"
         override_tpl.parent.mkdir(parents=True)
         override_tpl.write_text("override")
         resolved = self.mod.resolve_skill_template(root, "my-skill", "template.md")
@@ -428,7 +453,7 @@ class OverrideLoadingTests(unittest.TestCase):
     def test_override_template_fallback_to_bundled(self):
         root = self._make_project()
         self._write_recipe_skill(root, "my-recipe", "my-skill")
-        bundled_tpl = root / "ai-specs" / ".recipe" / "my-recipe" / "skills" / "my-skill" / "template.md"
+        bundled_tpl = cache_recipe_skill(root, "my-recipe", "my-skill", cli_home=ROOT) / "template.md"
         bundled_tpl.write_text("bundled")
         resolved = self.mod.resolve_skill_template(root, "my-skill", "template.md")
         self.assertEqual(resolved.read_text(), "bundled")
@@ -483,11 +508,12 @@ class OrphanCleanupTests(unittest.TestCase):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
-        recipe_dir = root / "ai-specs" / ".recipe" / "test-fixture"
+        recipe_dir = _pc().recipe_skills_root(root, cli_home=ROOT) / "test-fixture"
         recipe_dir.mkdir(parents=True)
         (recipe_dir / "keep.txt").write_text("keep")
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        self.assertTrue((recipe_dir / "keep.txt").exists())
+        # keep.txt is wiped when skill materialize replaces the skill tree, but recipe dir remains
+        self.assertTrue(cache_recipe_skill(root, "test-fixture", "test-skill").is_dir())
 
 
 class ResyncIdempotencyTests(unittest.TestCase):
@@ -495,7 +521,7 @@ class ResyncIdempotencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True, capture_output=True)
+            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
             subprocess.run([str(CLI), "sync", str(target)], check=True, text=True, capture_output=True)
             first = self._hash_tree(target)
             subprocess.run([str(CLI), "sync", str(target)], check=True, text=True, capture_output=True)

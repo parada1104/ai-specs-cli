@@ -6,8 +6,10 @@ Usage:
 
 Scans three skill sources:
   1. ai-specs/skills/{id}/          — local (highest precedence)
-  2. .recipe/{recipe-id}/skills/{id}/ — recipe-bundled (middle)
-  3. .deps/{dep-id}/skills/{id}/      — vendored dependency (lowest)
+  2. {cache}/.recipe/{recipe-id}/skills/{id}/ — recipe-bundled (middle)
+  3. {cache}/.deps/{dep-id}/skills/{id}/      — vendored dependency (lowest)
+
+Overrides live under ai-specs/recipes/{recipe-id}/overrides/.
 
 Returns a dict mapping skill_id -> (source_type, abs_path).
 When the same skill ID appears in multiple recipes or deps within the same
@@ -19,11 +21,28 @@ Otherwise, prints a human-readable table.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 import tomllib
 from pathlib import Path
 from typing import Optional
+
+
+_project_cache_module = None
+
+
+def _load_project_cache():
+    global _project_cache_module
+    if _project_cache_module is None:
+        module_path = Path(__file__).with_name("project-cache.py")
+        spec = importlib.util.spec_from_file_location("project_cache_internal", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load project-cache.py at {module_path}")
+        _project_cache_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = _project_cache_module
+        spec.loader.exec_module(_project_cache_module)
+    return _project_cache_module
 
 
 def warn(msg: str) -> None:
@@ -41,8 +60,9 @@ def _scan_local_skills(project_root: Path) -> dict[str, Path]:
     return result
 
 
-def _scan_recipe_skills(project_root: Path) -> dict[str, Path]:
-    recipe_dir = project_root / "ai-specs" / ".recipe"
+def _scan_recipe_skills(project_root: Path, cli_home: Path | None = None) -> dict[str, Path]:
+    pc = _load_project_cache()
+    recipe_dir = pc.recipe_skills_root(project_root, cli_home=cli_home)
     result: dict[str, Path] = {}
     if not recipe_dir.is_dir():
         return result
@@ -65,8 +85,9 @@ def _scan_recipe_skills(project_root: Path) -> dict[str, Path]:
     return result
 
 
-def _scan_dep_skills(project_root: Path) -> dict[str, Path]:
-    deps_dir = project_root / "ai-specs" / ".deps"
+def _scan_dep_skills(project_root: Path, cli_home: Path | None = None) -> dict[str, Path]:
+    pc = _load_project_cache()
+    deps_dir = pc.deps_skills_root(project_root, cli_home=cli_home)
     result: dict[str, Path] = {}
     if not deps_dir.is_dir():
         return result
@@ -89,10 +110,15 @@ def _scan_dep_skills(project_root: Path) -> dict[str, Path]:
     return result
 
 
-def _get_recipe_id_for_skill(skill_path: Path, project_root: Path) -> str | None:
+def _get_recipe_id_for_skill(
+    skill_path: Path,
+    project_root: Path,
+    cli_home: Path | None = None,
+) -> str | None:
     """Infer recipe-id from a recipe skill path like .recipe/{id}/skills/{skill}/"""
+    pc = _load_project_cache()
     try:
-        rel = skill_path.relative_to(project_root / "ai-specs" / ".recipe")
+        rel = skill_path.relative_to(pc.recipe_skills_root(project_root, cli_home=cli_home))
         parts = rel.parts
         if len(parts) >= 3 and parts[1] == "skills":
             return parts[0]
@@ -101,13 +127,22 @@ def _get_recipe_id_for_skill(skill_path: Path, project_root: Path) -> str | None
     return None
 
 
-def load_skill_config(project_root: Path, skill_id: str, bundled_config: dict | None = None) -> dict:
+def _overrides_dir(project_root: Path, recipe_id: str) -> Path:
+    return project_root / "ai-specs" / "recipes" / recipe_id / "overrides"
+
+
+def load_skill_config(
+    project_root: Path,
+    skill_id: str,
+    bundled_config: dict | None = None,
+    cli_home: Path | None = None,
+) -> dict:
     """Load config for a skill, merging recipe overrides if applicable.
 
     Returns a dict with override values taking precedence over bundled defaults.
     Missing override files are handled gracefully (no error, no warning).
     """
-    resolved = collect_skills(project_root)
+    resolved = collect_skills(project_root, cli_home=cli_home)
     if skill_id not in resolved:
         raise RuntimeError(f"required skill '{skill_id}' not found in any source")
 
@@ -115,9 +150,9 @@ def load_skill_config(project_root: Path, skill_id: str, bundled_config: dict | 
     result = dict(bundled_config or {})
 
     if source_type == "recipe":
-        recipe_id = _get_recipe_id_for_skill(skill_path, project_root)
+        recipe_id = _get_recipe_id_for_skill(skill_path, project_root, cli_home=cli_home)
         if recipe_id:
-            override_path = project_root / "ai-specs" / ".recipe" / recipe_id / "overrides" / "config.toml"
+            override_path = _overrides_dir(project_root, recipe_id) / "config.toml"
             if override_path.is_file():
                 with override_path.open("rb") as f:
                     overrides = tomllib.load(f)
@@ -127,24 +162,31 @@ def load_skill_config(project_root: Path, skill_id: str, bundled_config: dict | 
     return result
 
 
-def resolve_skill_template(project_root: Path, skill_id: str, template_name: str) -> Path | None:
+def resolve_skill_template(
+    project_root: Path,
+    skill_id: str,
+    template_name: str,
+    cli_home: Path | None = None,
+) -> Path | None:
     """Resolve a template path for a skill, preferring recipe overrides.
 
     If the skill comes from a recipe and an identically-named template exists in
-    .recipe/{recipe-id}/overrides/templates/, that override is returned.
+    ai-specs/recipes/{recipe-id}/overrides/templates/, that override is returned.
     Otherwise the bundled template in the skill directory is returned.
     If neither exists, returns None.
     """
-    resolved = collect_skills(project_root)
+    resolved = collect_skills(project_root, cli_home=cli_home)
     if skill_id not in resolved:
         raise RuntimeError(f"required skill '{skill_id}' not found in any source")
 
     source_type, skill_path = resolved[skill_id]
 
     if source_type == "recipe":
-        recipe_id = _get_recipe_id_for_skill(skill_path, project_root)
+        recipe_id = _get_recipe_id_for_skill(skill_path, project_root, cli_home=cli_home)
         if recipe_id:
-            override_template = project_root / "ai-specs" / ".recipe" / recipe_id / "overrides" / "templates" / template_name
+            override_template = (
+                _overrides_dir(project_root, recipe_id) / "templates" / template_name
+            )
             if override_template.is_file():
                 return override_template
 
@@ -155,7 +197,10 @@ def resolve_skill_template(project_root: Path, skill_id: str, template_name: str
     return None
 
 
-def collect_skills(project_root: Path) -> dict[str, tuple[str, Path]]:
+def collect_skills(
+    project_root: Path,
+    cli_home: Path | None = None,
+) -> dict[str, tuple[str, Path]]:
     """Resolve skills across three sources with precedence.
 
     Returns {skill_id: (source_type, abs_path)} where source_type is one of
@@ -168,21 +213,25 @@ def collect_skills(project_root: Path) -> dict[str, tuple[str, Path]]:
         resolved[skill_id] = ("local", path)
 
     # Tier 2: recipe (middle precedence)
-    for skill_id, path in _scan_recipe_skills(project_root).items():
+    for skill_id, path in _scan_recipe_skills(project_root, cli_home=cli_home).items():
         if skill_id not in resolved:
             resolved[skill_id] = ("recipe", path)
 
     # Tier 3: dep (lowest precedence)
-    for skill_id, path in _scan_dep_skills(project_root).items():
+    for skill_id, path in _scan_dep_skills(project_root, cli_home=cli_home).items():
         if skill_id not in resolved:
             resolved[skill_id] = ("dep", path)
 
     return resolved
 
 
-def resolve_skill(project_root: Path, skill_id: str) -> tuple[str, Path]:
+def resolve_skill(
+    project_root: Path,
+    skill_id: str,
+    cli_home: Path | None = None,
+) -> tuple[str, Path]:
     """Resolve a single skill ID. Raises RuntimeError if not found."""
-    resolved = collect_skills(project_root)
+    resolved = collect_skills(project_root, cli_home=cli_home)
     if skill_id not in resolved:
         raise RuntimeError(f"required skill '{skill_id}' not found in any source")
     return resolved[skill_id]

@@ -2,55 +2,67 @@
 
 ## Purpose
 
-Define the directory structure, gitignore rules, and `ai-specs init` behavior for isolating external skill sources from local project skills.
+Define the project-surface vs CLI-cache split for recipe origin staging.
+Origin skills, deps, managed commands, and resolved-skills flatten live under
+`$AI_SPECS_HOME/cache/projects/<key>/`. The project keeps `ai-specs.toml`,
+`ai-specs/skills/`, and `ai-specs/recipes/` (docs, hooks, templates, overrides).
 
 ## Requirements
 
-### Requirement: Init creates external directories
-When `ai-specs init` runs, the system SHALL create `.recipe/` and `.deps/` directories at the project root if they do not already exist.
+### Requirement: Init does not create in-project origin dirs
+
+`ai-specs init` MUST NOT create in-project `.recipe/` or `.deps/` origin directories.
+Leftover cleanup is handled during sync migration.
 
 #### Scenario: Fresh init
+
 - **WHEN** `ai-specs init` runs in a new project
-- **THEN** the project root SHALL contain a `.recipe/` directory
-- **AND** the project root SHALL contain a `.deps/` directory
+- **THEN** the project MUST NOT require `ai-specs/.recipe/` or `ai-specs/.deps/`
 
-#### Scenario: Directories already exist
-- **WHEN** `ai-specs init` runs and `.recipe/` and `.deps/` already exist
-- **THEN** init SHALL succeed without error
-- **AND** existing contents SHALL NOT be modified
+### Requirement: In-project origin gitignore removed
 
-### Requirement: External directories are gitignored
-The system SHALL add `.recipe/` and `.deps/` to the generated `.gitignore` during `ai-specs init`.
+Gitignore rules for in-project origin paths (`.recipe/`, `.deps/`) SHALL be
+removed as part of migration. Origin trees are disposable under AI_SPECS_HOME.
 
 #### Scenario: Gitignore generation
+
 - **WHEN** `ai-specs init` completes
-- **THEN** `.gitignore` SHALL contain an entry for `.recipe/`
-- **AND** `.gitignore` SHALL contain an entry for `.deps/`
+- **THEN** root `.gitignore` MUST NOT list `ai-specs/.recipe/` or `ai-specs/.deps/` as required origin paths
 
-#### Scenario: Gitignore idempotency
-- **WHEN** `ai-specs init` runs multiple times
-- **THEN** `.gitignore` SHALL NOT contain duplicate entries for `.recipe/` or `.deps/`
+### Requirement: Recipe skill layout
 
-### Requirement: Recipe materialization directory layout
-Recipe-bundled skills SHALL be materialized into `.recipe/{recipe-id}/skills/{skill-id}/`.
+Recipe bundled skill origin SHALL live at `{cache}/.recipe/{id}/skills/{skill}/`.
 
-#### Scenario: Recipe skill materialization
-- **WHEN** a recipe declares a bundled skill with `id = "my-skill"`
-- **THEN** sync SHALL materialize it to `.recipe/{recipe-id}/skills/my-skill/`
-- **AND** the skill files SHALL be identical to the recipe catalog source
+#### Scenario: Recipe skills in cache
 
-### Requirement: Dependency vendor directory layout
-Vendored dependency skills SHALL be cloned into `.deps/{dep-id}/skills/{skill-id}/`.
+- **WHEN** materialize runs for a recipe
+- **THEN** bundled skills are staged under the cache `.recipe` path
+- **AND** catalog content matches the installed CLI
 
-#### Scenario: Dependency skill vendoring
-- **WHEN** a dependency declares a skill with `id = "vendor-skill"`
-- **THEN** vendor-skills.py SHALL clone it to `.deps/{dep-id}/skills/vendor-skill/`
-- **AND** the clone SHALL be a shallow clone if configured
+### Requirement: Dependency skill layout
 
-### Requirement: Local skills directory exclusivity
-`ai-specs/skills/` SHALL contain only local, project-owned skills. The system SHALL NOT place recipe-bundled or vendored dependency skills into `ai-specs/skills/`.
+Dependency skill origin SHALL live at `{cache}/.deps/{dep}/skills/{skill}/`.
 
-#### Scenario: Sync does not pollute local skills
-- **WHEN** sync materializes a recipe skill and a dep skill
-- **THEN** neither SHALL be written to `ai-specs/skills/`
-- **AND** `ai-specs/skills/` SHALL be unchanged except by explicit local actions
+#### Scenario: Dep skills in cache
+
+- **WHEN** vendor sync runs for a dependency
+- **THEN** dependency skills are staged under the cache `.deps` path
+
+### Requirement: Local skills exclusivity
+
+`ai-specs/skills/` SHALL contain only local user skills after sync.
+
+#### Scenario: No skills pollution
+
+- **WHEN** sync completes
+- **THEN** `ai-specs/skills/` contains only local skills
+
+### Requirement: recipes/ user surface
+
+`ai-specs/recipes/` SHALL hold docs, overrides, hooks, and `not_exists` templates.
+It is user/project surface, not origin staging for skills or deps.
+
+#### Scenario: Not origin
+
+- **WHEN** sync completes
+- **THEN** skills and deps are not required under `ai-specs/recipes/` as origin paths

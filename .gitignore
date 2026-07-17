@@ -28,3 +28,5 @@ GEMINI.md
 # --- end ai-specs ---
 .env
 .envrc
+.venv/
+cache/

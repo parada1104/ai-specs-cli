@@ -25,16 +25,19 @@ min_version = "8.0.0"
 [config.vault_scope]
 required = false
 type = "string"
+help_text = "Relative path under the vault root for this project (e.g. nnodes/proyectos/ai-specs). Combined with CANONICAL_VAULT_PATH / Obsidian vault."
 
 [config.decisions_folder]
 required = false
 type = "string"
 default = "decisiones"
+help_text = "Folder name under vault_scope for durable decision notes."
 
 [config.sessions_folder]
 required = false
 type = "string"
 default = "sessions"
+help_text = "Folder name under vault_scope for session handoffs / summaries."
 
 [provides]
 skills = [{ id = "vault-context", source = "bundled" }]

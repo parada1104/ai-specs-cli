@@ -139,7 +139,11 @@ def read_mcp(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def read_recipes(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Extract [recipes.<id>] tables. Returns {id: {enabled, version, config}}."""
+    """Extract [recipes.<id>] tables. Returns {id: {enabled, version, config}}.
+
+    ``version`` is optional legacy metadata exposed for WARN paths; it is not
+    required and empty string means absent.
+    """
     out: dict[str, dict[str, Any]] = {}
     recipes = data.get("recipes", {})
     if not isinstance(recipes, dict):

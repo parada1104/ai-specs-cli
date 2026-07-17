@@ -2,13 +2,16 @@
 """Interactive front door for bare `ai-specs` (status + command menu).
 
 Import-time contract: pure stdlib. rich/questionary are imported lazily only
-after the deps gate passes. Sibling modules (util, doctor) load via absolute path.
+after the deps gate passes. Sibling modules (util, doctor, recipe-list,
+skill-resolution) load via absolute path.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -18,8 +21,6 @@ from pathlib import Path
 
 def _load_sibling(name: str):
     """Load a same-directory _internal module by absolute path (sys.path-independent)."""
-    import importlib.util
-
     path = Path(__file__).with_name(f"{name}.py")
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
@@ -32,6 +33,8 @@ def _load_sibling(name: str):
 
 _util = _load_sibling("util")
 _doctor = _load_sibling("doctor")
+_recipes = _load_sibling("recipe-list")
+_skillres = _load_sibling("skill-resolution")
 
 
 class Mode(Enum):
@@ -60,11 +63,13 @@ class Action(Enum):
     HELP = "help"
     INIT = "init"
     QUIT = "quit"
+
+
 _MENU: list[tuple[Action, str, str]] = [
     (Action.SYNC, "Sync", "Reconcile manifest → bundled + vendor + AGENTS.md + agents"),
     (Action.DOCTOR, "Doctor", "Full project health report (read-only)"),
     (Action.AGENTS, "Agents", "Select which AI agents to enable"),
-    (Action.SKILLS, "Skills", "List / add / remove vendored skills"),
+    (Action.SKILLS, "Skills", "List / inspect project skills by origin"),
     (Action.RECIPES, "Recipes", "List / add / remove / configure catalog recipes"),
     (Action.RULES_AUDIT, "Rules audit", "Inventory legacy rules for migration"),
     (Action.UPGRADE, "Upgrade", "Upgrade the global ai-specs installation"),
@@ -73,6 +78,95 @@ _MENU: list[tuple[Action, str, str]] = [
     (Action.INIT, "Init wizard", "Re-run interactive onboarding"),
     (Action.QUIT, "Quit", "Exit the hub"),
 ]
+
+
+# ── Pure layer (dep-free) ────────────────────────────────────────────────────
+
+
+def _read_version() -> str:
+    p = _util.ai_specs_home() / "VERSION"
+    return p.read_text(encoding="utf-8").strip() if p.is_file() else "unknown"
+
+
+def _print_version() -> None:
+    print(_read_version())
+
+
+def recipe_add_choices(recipes: list[dict]) -> list[tuple[str, str]]:
+    """Recipes installable now = status == 'available'."""
+    out: list[tuple[str, str]] = []
+    for r in recipes:
+        if r.get("status") != "available":
+            continue
+        rid = r["id"]
+        name = r.get("name") or rid
+        version = r.get("version") or ""
+        out.append((f"{name} ({rid})  v{version}", rid))
+    return out
+
+
+def recipe_remove_choices(recipes: list[dict]) -> list[tuple[str, str]]:
+    """Recipes in the manifest = status in {'installed','disabled'}."""
+    out: list[tuple[str, str]] = []
+    for r in recipes:
+        status = r.get("status")
+        if status not in {"installed", "disabled"}:
+            continue
+        rid = r["id"]
+        name = r.get("name") or rid
+        out.append((f"{name} ({rid})  [{status}]", rid))
+    return out
+
+
+def _skill_description(skill_dir: Path) -> str:
+    """Read SKILL.md front-matter description: (mirrors skills-list.sh)."""
+    path = skill_dir / "SKILL.md"
+    if not path.is_file():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+    if not m:
+        return ""
+    dm = re.search(r"^description:\s*(.+?)\s*$", m.group(1), re.MULTILINE)
+    if not dm:
+        return ""
+    desc = dm.group(1).strip()
+    if desc.startswith('"') and desc.endswith('"'):
+        desc = desc[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    elif desc.startswith("'") and desc.endswith("'"):
+        desc = desc[1:-1]
+    return desc[:80]
+
+_SKILL_BUCKET_KEYS: dict[str, str] = {
+    "bundled": "Bundled (CLI-shipped)",
+    "local": "Local / vendored (project)",
+    "recipe": "Provided by recipes / catalog",
+    "dep": "Registered deps",
+}
+
+
+def categorize_skills(project_root: Path, cli_home: Path) -> dict[str, list[dict]]:
+    """Partition project skills into bundled / local / recipe / dep buckets."""
+    bundled_names = set(_doctor.bundled_skill_names(cli_home))
+    collected = _skillres.collect_skills(project_root, cli_home=cli_home)
+    buckets: dict[str, list[dict]] = {k: [] for k in _SKILL_BUCKET_KEYS}
+    for skill_id, (source_type, path) in collected.items():
+        entry = {"id": skill_id, "path": path, "desc": _skill_description(path)}
+        if source_type == "local":
+            if skill_id in bundled_names:
+                buckets["bundled"].append(entry)
+            else:
+                buckets["local"].append(entry)
+        elif source_type in buckets:
+            buckets[source_type].append(entry)
+    for key in buckets:
+        buckets[key].sort(key=lambda e: e["id"])
+    return buckets
+
+
 @dataclass(frozen=True)
 class StatusSummary:
     root: Path
@@ -83,6 +177,7 @@ class StatusSummary:
     exit_code: int
     headline: str
     checks: list
+    version: str
 
 
 def status_summary(root: Path) -> StatusSummary:
@@ -107,6 +202,7 @@ def status_summary(root: Path) -> StatusSummary:
         exit_code=exit_code,
         headline=headline,
         checks=list(doc.checks),
+        version=_read_version(),
     )
 
 
@@ -118,6 +214,7 @@ def _print_uninit_error(target: Path) -> None:
 def _run_noninteractive(target: Path) -> int:
     summary = status_summary(target)
     print(f"ai-specs status — {summary.headline}")
+    print(f"  version: {summary.version}")
     print(f"  target: {summary.root}")
     print(
         f"  Summary: {summary.ok} OK, {summary.info} INFO, "
@@ -128,6 +225,56 @@ def _run_noninteractive(target: Path) -> int:
     for _act, title, desc in _MENU:
         print(f"  {title:12s}  {desc}")
     return 0
+
+
+# ── Widget layer (lazy questionary / input) ──────────────────────────────────
+
+
+def pick_one(
+    message: str,
+    options: list[tuple[str, str]],
+    *,
+    default: str | None = None,
+) -> str | None:
+    """questionary.select. options = [(label, value), ...]. None if aborted/empty."""
+    if not options:
+        return None
+    import questionary
+
+    choices = [questionary.Choice(title=label, value=value) for label, value in options]
+    kwargs: dict = {}
+    if default is not None:
+        kwargs["default"] = default
+    return questionary.select(message, choices=choices, **kwargs).ask()
+
+
+def pick_many(message: str, options: list[tuple[str, str, bool]]) -> list[str] | None:
+    """questionary.checkbox. options = [(label, value, checked), ...]."""
+    if not options:
+        return None
+    import questionary
+
+    choices = [
+        questionary.Choice(title=label, value=value, checked=checked)
+        for label, value, checked in options
+    ]
+    return questionary.checkbox(message, choices=choices).ask()
+
+
+def confirm_action(message: str, *, default: bool = True) -> bool | None:
+    """questionary.confirm. Returns bool, or None if aborted."""
+    import questionary
+
+    return questionary.confirm(message, default=default).ask()
+
+
+def pause(message: str = "Press Enter to return…") -> bool:
+    """Lightweight blocking pause. True normally, False on EOFError."""
+    try:
+        input(message)
+        return True
+    except EOFError:
+        return False
 
 
 @dataclass
@@ -171,6 +318,7 @@ class StatusPanel:
         table = Table.grid(padding=(0, 1))
         table.add_column(style="bold")
         table.add_column()
+        table.add_row("version", self.summary.version)
         table.add_row("target", str(self.summary.root))
         table.add_row(
             "Summary:",
@@ -191,24 +339,201 @@ class StatusPanel:
         else:
             border = "green"
         return Panel(table, title="ai-specs", border_style=border)
+def _render_skills_buckets(console, buckets: dict[str, list[dict]]) -> None:
+    for key, title in _SKILL_BUCKET_KEYS.items():
+        console.print(f"[bold]── {title} ──[/bold]")
+        entries = buckets.get(key) or []
+        if not entries:
+            console.print("  (none)")
+        else:
+            for e in entries:
+                line = f"  {e['id']}"
+                if e.get("desc"):
+                    line += f"  — {e['desc']}"
+                from rich.markup import escape
+                console.print(escape(line))
+        console.print()
 
 
-def _print_version() -> None:
-    version_path = _util.ai_specs_home() / "VERSION"
-    if version_path.is_file():
-        print(version_path.read_text(encoding="utf-8").strip())
+def _run_skills_submenu(console, target: Path) -> int | None:
+    """Interactive Skills submenu (mirrors Recipes: one action then back)."""
+    sub = pick_one(
+        "Skills:",
+        [
+            ("List skills (categorized)", "list"),
+            ("Inspect a skill", "inspect"),
+            ("Back", "back"),
+        ],
+    )
+    if sub is None or sub == "back":
+        return None
+
+    cli_home = _util.ai_specs_home()
+    buckets = categorize_skills(target, cli_home)
+
+    if sub == "list":
+        _render_skills_buckets(console, buckets)
+        if not pause():
+            return 0
+        return None
+    if sub == "inspect":
+        options: list[tuple[str, str]] = []
+        for key in _SKILL_BUCKET_KEYS:
+            for e in buckets.get(key) or []:
+                options.append((f"{e['id']}  [{key}]", e["id"]))
+        if not options:
+            console.print("[yellow]No skills found to inspect.[/yellow]")
+            if not pause():
+                return 0
+            return None
+        sid = pick_one("Skill to inspect:", options)
+        if sid is None:
+            return None
+        found = None
+        for entries in buckets.values():
+            for e in entries:
+                if e["id"] == sid:
+                    found = e
+                    break
+            if found:
+                break
+        if found is None:
+            console.print(f"[red]Skill not found: {sid}[/red]")
+        else:
+            from rich.markup import escape
+            console.print(f"[bold]{escape(found['id'])}[/bold]")
+            console.print(f"  path: {escape(str(found['path'] / 'SKILL.md'))}")
+            console.print(f"  desc: {escape(found['desc'] or '(none)')}")
+        if not pause():
+            return 0
+        return None
+
+    return None
+
+
+def _run_recipes_submenu(console, runner: DelegateRunner, target: Path) -> int | None:
+    """Interactive Recipes submenu. Returns 0 to quit hub, None to continue."""
+    sub = pick_one(
+        "Recipes:",
+        [
+            ("List recipes", "list"),
+            ("Add recipe", "add"),
+            ("Remove recipe", "remove"),
+            ("Configure recipe", "configure"),
+            ("Back", "back"),
+        ],
+    )
+    if sub is None or sub == "back":
+        return None
+
+    if sub == "list":
+        rc = runner.run(Action.RECIPES, extra=["list"])
+    elif sub == "add":
+        try:
+            recipes = _recipes.list_recipes(target)
+        except Exception as exc:
+            console.print(f"[yellow]Recipes unavailable: {exc}[/yellow]")
+            if not pause():
+                return 0
+            return None
+        choices = recipe_add_choices(recipes)
+        if not choices:
+            console.print("[yellow]No catalog recipes available to add.[/yellow]")
+            if not pause():
+                return 0
+            return None
+        rid = pick_one("Recipe to add:", choices)
+        if rid is None:
+            return None
+        rc = runner.run(Action.RECIPES, extra=["add", rid])
+    elif sub == "remove":
+        try:
+            recipes = _recipes.list_recipes(target)
+        except Exception as exc:
+            console.print(f"[yellow]Recipes unavailable: {exc}[/yellow]")
+            if not pause():
+                return 0
+            return None
+        choices = recipe_remove_choices(recipes)
+        if not choices:
+            console.print("[yellow]No recipes installed to remove.[/yellow]")
+            if not pause():
+                return 0
+            return None
+        rid = pick_one("Recipe to remove:", choices)
+        if rid is None:
+            return None
+        rc = runner.run(Action.RECIPES, extra=["remove", rid])
+    elif sub == "configure":
+        rc = runner.run(Action.CONFIGURE_RECIPES)
     else:
-        print("unknown")
+        return None
+
+    print("✓ done" if rc == 0 else f"✗ exited {rc}")
+    if not pause():
+        return 0
+    return None
 
 
-_SUB_ARGS: dict[Action, list[str]] = {
-    Action.SKILLS: ["list"],
-}
+def _run_agents_submenu(console, target: Path) -> int | None:
+    """Interactive Agents picker. Returns 0 to quit hub, None to continue."""
+    manifest_path = target / "ai-specs" / "ai-specs.toml"
+    if not manifest_path.is_file():
+        console.print("[red]Manifest not found — run ai-specs init first[/red]")
+        return None
+
+    toml_path = Path(__file__).with_name("toml-read.py")
+    spec = importlib.util.spec_from_file_location("toml_read_inline", toml_path)
+    if spec and spec.loader:
+        tr_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = tr_module
+        spec.loader.exec_module(tr_module)
+        data = tr_module.load_toml(manifest_path)
+        current = tr_module.read_agents(data).get("enabled", [])
+    else:
+        current = []
+
+    supported = ["claude", "cursor", "opencode", "codex", "copilot", "gemini", "pi", "omp"]
+    options = [(a, a, a in current) for a in supported]
+    selected = pick_many("Select agents to enable:", options)
+    if selected is None:
+        return None
+
+    text = manifest_path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    in_agents = False
+    written = False
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "[agents]":
+            in_agents = True
+            new_lines.append(line)
+            continue
+        if in_agents and stripped.startswith("enabled"):
+            new_lines.append(f'enabled = [{", ".join(repr(a) for a in selected)}]\n')
+            in_agents = False
+            written = True
+            continue
+        if in_agents and stripped.startswith("["):
+            new_lines.append(f'enabled = [{", ".join(repr(a) for a in selected)}]\n')
+            in_agents = False
+            written = True
+        new_lines.append(line)
+
+    if not written:
+        new_lines.append(f"[agents]\nenabled = [{', '.join(repr(a) for a in selected)}]\n")
+
+    manifest_path.write_text("".join(new_lines), encoding="utf-8")
+    print(f"  ✓ agents updated: {', '.join(selected) if selected else '(none)'}")
+    print("  Run sync to regenerate agent configs.")
+    if not pause():
+        return 0
+    return None
 
 
 def _run_interactive_hub(target: Path) -> int:
     from rich.console import Console
-
 
     console = Console()
     cli = _util.ai_specs_home() / "bin" / "ai-specs"
@@ -223,133 +548,39 @@ def _run_interactive_hub(target: Path) -> int:
             return 0
 
         if action is Action.RECIPES:
-            import questionary
-            sub = questionary.select(
-                "Recipes:",
-                choices=[
-                    questionary.Choice(title="List recipes", value="list"),
-                    questionary.Choice(title="Add recipe", value="add"),
-                    questionary.Choice(title="Remove recipe", value="remove"),
-                    questionary.Choice(title="Configure recipe", value="configure"),
-                    questionary.Choice(title="Back", value="back"),
-                ],
-            ).ask()
-            if sub is None or sub == "back":
-                continue
-            if sub == "list":
-                rc = runner.run(Action.RECIPES, extra=["list"])
-            elif sub == "add":
-                recipe_id = questionary.text(
-                    "Recipe id:",
-                    instruction="(e.g. trello-mcp-workflow, git-pr-flow)",
-                ).ask()
-                if not recipe_id:
-                    continue
-                rc = runner.run(Action.RECIPES, extra=["add", recipe_id])
-            elif sub == "remove":
-                recipe_id = questionary.text(
-                    "Recipe id to remove:",
-                    instruction="(e.g. git-pr-flow, trello-mcp-workflow)",
-                ).ask()
-                if not recipe_id:
-                    continue
-                rc = runner.run(Action.RECIPES, extra=["remove", recipe_id])
-            elif sub == "configure":
-                rc = runner.run(Action.CONFIGURE_RECIPES)
-            else:
-                continue
-            print("✓ done" if rc == 0 else f"✗ exited {rc}")
-            try:
-                input("Press Enter to return…")
-            except EOFError:
-                return 0
+            result = _run_recipes_submenu(console, runner, target)
+            if result is not None:
+                return result
+            continue
+
+        if action is Action.SKILLS:
+            result = _run_skills_submenu(console, target)
+            if result is not None:
+                return result
             continue
 
         if action is Action.AGENTS:
-            import questionary
-            manifest_path = target / "ai-specs" / "ai-specs.toml"
-            if not manifest_path.is_file():
-                console.print("[red]Manifest not found — run ai-specs init first[/red]")
-                continue
-
-            # Read current agents
-            toml_path = Path(__file__).with_name("toml-read.py")
-            spec = importlib.util.spec_from_file_location("toml_read_inline", toml_path)
-            if spec and spec.loader:
-                tr_module = importlib.util.module_from_spec(spec)
-                sys.modules[spec.name] = tr_module
-                spec.loader.exec_module(tr_module)
-                data = tr_module.load_toml(manifest_path)
-                current = tr_module.read_agents(data).get("enabled", [])
-            else:
-                current = []
-
-            SUPPORTED_AGENTS = ["claude", "cursor", "opencode", "codex", "copilot", "gemini", "pi", "omp"]
-            choices = [
-                questionary.Choice(title=a, value=a, checked=a in current)
-                for a in SUPPORTED_AGENTS
-            ]
-            selected = questionary.checkbox("Select agents to enable:", choices=choices).ask()
-            if selected is None:
-                continue
-
-            # Write back: find [agents] section and update enabled line
-            text = manifest_path.read_text(encoding="utf-8")
-            lines = text.splitlines(keepends=True)
-            in_agents = False
-            written = False
-            new_lines: list[str] = []
-            for line in lines:
-                stripped = line.strip()
-                if stripped == "[agents]":
-                    in_agents = True
-                    new_lines.append(line)
-                    # Replace the next `enabled = [...]` line
-                    continue
-                if in_agents and stripped.startswith("enabled"):
-                    new_lines.append(f'enabled = [{", ".join(repr(a) for a in selected)}]\n')
-                    in_agents = False
-                    written = True
-                    continue
-                if in_agents and stripped.startswith("["):
-                    # Next section without finding enabled — insert one
-                    new_lines.append(f'enabled = [{", ".join(repr(a) for a in selected)}]\n')
-                    in_agents = False
-                    written = True
-                new_lines.append(line)
-
-            if not written:
-                new_lines.append(f"[agents]\nenabled = [{', '.join(repr(a) for a in selected)}]\n")
-
-            manifest_path.write_text("".join(new_lines), encoding="utf-8")
-            print(f"  ✓ agents updated: {', '.join(selected) if selected else '(none)'}")
-            print("  Run sync to regenerate agent configs.")
-            try:
-                input("Press Enter to return…")
-            except EOFError:
-                return 0
+            result = _run_agents_submenu(console, target)
+            if result is not None:
+                return result
             continue
+
         if action is Action.VERSION:
             _print_version()
             continue
 
-        _extra = _SUB_ARGS.get(action, [])
-        rc = runner.run(action, extra=_extra)
+        rc = runner.run(action)
         if rc == 0:
             print("✓ done")
         else:
             print(f"✗ exited {rc}")
-        try:
-            input("Press Enter to return…")
-        except EOFError:
+        if not pause():
             return 0
 
 
 def _offer_init(target: Path) -> bool:
-    import questionary
-
     print(f"No ai-specs project found at {target}.")
-    answer = questionary.confirm("Run the init wizard now?", default=True).ask()
+    answer = confirm_action("Run the init wizard now?", default=True)
     if not answer:
         return False
     cli = _util.ai_specs_home() / "bin" / "ai-specs"

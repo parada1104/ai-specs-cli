@@ -48,8 +48,13 @@ Behavior is a 4-state matrix of **initialized × TTY**:
 | Offer init | no manifest + TTY | Confirm → run `ai-specs init` → hub | 0 if declined |
 | Uninitialized error | no manifest + no TTY | Stderr guidance to run init | 2 |
 
-Menu actions: Sync, Doctor, Skills, Recipes, Configure recipes, Rules audit, Upgrade, Version, Help, Init wizard, Quit.
-**Version** is printed inline from the `VERSION` file; other actions suspend the menu, run the existing subcommand with inherited stdio, then return to the menu.
+Menu actions: Sync, Doctor, Agents, Skills, Recipes, Rules audit, Upgrade, Version, Help, Init wizard, Quit.
+
+Hub UX notes:
+- **Status** (interactive panel + non-interactive text) includes a `version` row from the CLI `VERSION` file (`unknown` when missing).
+- **Recipes** Add/Remove use pickers over catalog/manifest recipes (no free-text id prompts). Configure stays nested under Recipes.
+- **Skills** opens an interactive categorized submenu (Bundled / Local·vendored / Recipes·catalog / Registered deps) with list + inspect.
+- **`ai-specs skills list`** labels CLI-shipped skills under **Bundled skills**, not Local.
 
 Missing interactive deps (`rich` + `questionary`) yield exit **3** with install guidance. Non-interactive status needs **no** third-party packages (CI-safe).
 
@@ -67,7 +72,7 @@ Missing interactive deps (`rich` + `questionary`) yield exit **3** with install 
 | `ai-specs rules-audit [path]` | Read-only legacy rules inventory (JSON) |
 | `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI |
 | `ai-specs skills add <git-url> [path]` | Register a vendored skill (`[[deps]]`) and sync |
-| `ai-specs skills list [path]` | List registered, local, and catalog skills |
+| `ai-specs skills list [path]` | List bundled, registered, local, and catalog skills |
 | `ai-specs skills remove <id> [path]` | Remove a vendored skill from the manifest |
 | `ai-specs add-dep <git-url> [path]` | Alias for `skills add` (backward-compatible) |
 | `ai-specs recipe list [path]` | List available recipes |
@@ -126,8 +131,9 @@ Classification buckets (suggestions only):
 
 ### Recipes
 
-Named, versioned bundles of skills, commands, templates, and MCP presets.
-Declared in `[recipes.<id>]` and materialized by `ai-specs sync`. See the
+Named bundles of skills, commands, templates, and MCP presets from the installed
+CLI catalog. Declared in `[recipes.<id>]` with `enabled = true` (no version pin)
+and materialized by `ai-specs sync`. See the
 [recipe catalog](docs/recipes-catalog.md) for what each shipped recipe does and
 the config it expects, and [`docs/recipe-schema.md`](docs/recipe-schema.md) for
 the `recipe.toml` schema.

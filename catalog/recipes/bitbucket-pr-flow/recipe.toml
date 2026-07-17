@@ -2,7 +2,7 @@
 id = "bitbucket-pr-flow"
 name = "Bitbucket PR Flow"
 description = "Bitbucket PR and merge flow for feature branches (via bb CLI)"
-version = "1.0.1"
+version = "1.2.1"
 author = "ai-specs"
 license = "MIT"
 tags = ["vcs", "bitbucket"]
@@ -24,6 +24,19 @@ install_url = "https://bitbucket-cli.paulvanderlei.com/getting-started/installat
 required = false
 type = "string"
 default = "development"
+help_text = "Integration/base branch for PRs (e.g. main or development). PRs target this branch."
+
+[config.expected_owner]
+required = false
+type = "string"
+default = ""
+help_text = "Bitbucket workspace or user that should own the remote (multi-account). Leave empty to skip."
+
+[config.auto_switch_account]
+required = false
+type = "bool"
+default = false
+help_text = "If true, try to switch bb CLI account when it does not match expected_owner. Install: https://bitbucket-cli.paulvanderlei.com/getting-started/installation/"
 
 [provides]
 skills = [{ id = "bitbucket-merge-workflow", source = "bundled" }]
@@ -39,3 +52,8 @@ workflow_rules = [
 [[provides.docs]]
 source = "README.md"
 target = "ai-specs/recipes/bitbucket-pr-flow/README.md"
+
+[[provides.templates]]
+source = "templates/premerge_guardian.py"
+target = "ai-specs/bin/premerge_guardian.py"
+condition = "not_exists"

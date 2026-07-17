@@ -8,6 +8,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
 SKILL = ROOT / "catalog" / "skills" / "context-precedence" / "SKILL.md"
 README = ROOT / "README.md"
@@ -97,8 +101,12 @@ class ContextPrecedenceSkillTests(unittest.TestCase):
 
             agents = (workspace / "AGENTS.md").read_text()
             self.assertNotIn("## Context Precedence", agents)
-            # Verify the dep skill is resolved in .internal/resolved-skills
-            resolved_skill = workspace / "ai-specs" / ".internal" / "resolved-skills" / "context-precedence" / "SKILL.md"
+            # Verify the dep skill is flattened into the CLI project cache
+            from _cache_paths import resolved_skills_dir
+
+            resolved_skill = (
+                resolved_skills_dir(workspace) / "context-precedence" / "SKILL.md"
+            )
             self.assertTrue(resolved_skill.is_file())
         finally:
             shutil.rmtree(tmp)

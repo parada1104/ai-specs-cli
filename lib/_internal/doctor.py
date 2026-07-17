@@ -53,6 +53,9 @@ class Doctor:
     root: Path
     checks: list[Check] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        self.root = Path(self.root).resolve()
+
     # Static platform table — mirrors platform.sh for doctor use only.
     # Do not mutate; tests lock this to expected generated paths.
     PLATFORM = {
@@ -118,6 +121,7 @@ class Doctor:
     def run(self) -> int:
         self._check_manifest()
         self._check_cli_version()
+        self._check_legacy_recipe_versions()
         self._check_agents_md()
         self._check_brief_render_policy()
         self._check_bundled_assets()
@@ -203,6 +207,39 @@ class Doctor:
         severity = Severity[severity_name]
         self.checks.append(Check(severity, "cli-version", message))
 
+    def _check_legacy_recipe_versions(self) -> None:
+        """WARN when manifests still declare legacy per-recipe version= keys."""
+        toml = self.root / "ai-specs" / "ai-specs.toml"
+        if not toml.is_file():
+            return
+        try:
+            import tomllib
+
+            with toml.open("rb") as f:
+                data = tomllib.load(f)
+        except Exception:
+            return
+        recipes = data.get("recipes", {}) or {}
+        if not isinstance(recipes, dict):
+            return
+        legacy = [
+            rid
+            for rid, cfg in recipes.items()
+            if isinstance(cfg, dict) and cfg.get("version") not in (None, "")
+        ]
+        if not legacy:
+            return
+        sample = ", ".join(sorted(legacy)[:5])
+        more = f" (+{len(legacy) - 5} more)" if len(legacy) > 5 else ""
+        self.checks.append(
+            Check(
+                Severity.WARN,
+                "recipe-version",
+                f"legacy recipe version= keys present ({sample}{more}); ignored — sync uses CLI catalog",
+                guidance="optional: remove version= from [recipes.*]; after ai-specs upgrade run ai-specs sync",
+            )
+        )
+
     def _check_agents_md(self) -> None:
         agents = self.root / "AGENTS.md"
         render_disabled = self._brief_render_disabled()
@@ -228,6 +265,34 @@ class Doctor:
     # Bundled asset checks
     # -------------------------------------------------------------------------
 
+    def _load_project_cache(self):
+        """Load project-cache module for cache-aware command resolution."""
+        try:
+            cache_mod_path = Path(__file__).with_name("project-cache.py")
+            spec = importlib.util.spec_from_file_location(
+                "project_cache_doctor_assets", cache_mod_path
+            )
+            if spec is not None and spec.loader is not None:
+                pc = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(pc)
+                return pc
+        except Exception:
+            pass
+        return None
+
+    def _cache_command_names(self) -> set[str]:
+        """Return the set of .md filenames in the per-project CLI cache commands dir."""
+        pc = self._load_project_cache()
+        if pc is None:
+            return set()
+        try:
+            cache_cmds = pc.commands_dir(self.root)
+            if cache_cmds.is_dir():
+                return {p.name for p in cache_cmds.glob("*.md")}
+        except Exception:
+            pass
+        return set()
+
     def _check_bundled_assets(self) -> None:
         skills_root = self.root / "ai-specs" / "skills"
         commands_root = self.root / "ai-specs" / "commands"
@@ -244,7 +309,9 @@ class Doctor:
                     f"ai-specs/skills/{skill} missing",
                     guidance="ai-specs init --force or ai-specs refresh-bundled"
                 ))
-        if commands_root.is_dir() and any(commands_root.glob("*.md")):
+        local_ok = commands_root.is_dir() and any(commands_root.glob("*.md"))
+        cache_ok = bool(self._cache_command_names())
+        if local_ok or cache_ok:
             self.checks.append(Check(
                 Severity.OK, "bundled-commands",
                 "ai-specs/commands/ present"
@@ -492,15 +559,57 @@ class Doctor:
                         guidance="ai-specs sync"
                     ))
             else:
-                # Symlink
+                # Symlink — may point at in-project resolved-skills (legacy) or
+                # the per-project CLI cache resolved-skills directory.
                 if skills_path.is_symlink():
                     target = skills_path.resolve()
                     ai_specs_skills = (self.root / "ai-specs" / "skills").resolve()
                     resolved_skills = (self.root / "ai-specs" / ".internal" / "resolved-skills").resolve()
-                    if target == ai_specs_skills or target == resolved_skills:
+                    cache_resolved = None
+                    try:
+                        cache_mod_path = Path(__file__).with_name("project-cache.py")
+                        spec = importlib.util.spec_from_file_location(
+                            "project_cache_doctor", cache_mod_path
+                        )
+                        if spec is not None and spec.loader is not None:
+                            pc = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(pc)
+                            cache_resolved = pc.resolved_skills_dir(self.root).resolve()
+                    except Exception:
+                        cache_resolved = None
+                    valid_targets = {ai_specs_skills, resolved_skills}
+                    if cache_resolved is not None:
+                        valid_targets.add(cache_resolved)
+                    # Compare via realpath strings and samefile to tolerate
+                    # macOS /var vs /private/var and absolute cache links.
+                    matched = False
+                    for candidate in valid_targets:
+                        try:
+                            if target == candidate or (
+                                candidate.exists() and target.exists() and target.samefile(candidate)
+                            ):
+                                matched = True
+                                break
+                        except OSError:
+                            continue
+                        if os.path.realpath(str(target)) == os.path.realpath(str(candidate)):
+                            matched = True
+                            break
+                    # Accept any existing cache resolved-skills target even if the
+                    # computed cache key differs (path string /var vs /private/var).
+                    if not matched and target.exists():
+                        parts = target.parts
+                        if "cache" in parts and "projects" in parts and target.name == "resolved-skills":
+                            matched = True
+                    if matched:
+                        display = (
+                            str(target.relative_to(self.root))
+                            if target.is_relative_to(self.root)
+                            else str(target)
+                        )
                         self.checks.append(Check(
                             Severity.OK, f"{skills}",
-                            f"symlink valid → {target.relative_to(self.root) if target.is_relative_to(self.root) else target}"
+                            f"symlink valid → {display}"
                         ))
                     else:
                         self.checks.append(Check(
@@ -520,17 +629,25 @@ class Doctor:
                         "missing; run ai-specs sync",
                         guidance="ai-specs sync"
                     ))
-        # Commands
+        # Commands: expected = hand-authored ai-specs/commands/ ∪ cache commands/
         commands = plat.get("commands_dir", "")
         if commands:
             commands_path = self.root / commands
             ai_specs_commands = self.root / "ai-specs" / "commands"
-            if commands_path.is_dir() and ai_specs_commands.is_dir():
-                expected = {p.name for p in ai_specs_commands.glob("*.md")}
+            if commands_path.is_dir():
+                local_names: set[str] = set()
+                if ai_specs_commands.is_dir():
+                    local_names = {p.name for p in ai_specs_commands.glob("*.md")}
+                expected = local_names | self._cache_command_names()
                 actual = {p.name for p in commands_path.glob("*.md")}
                 missing = expected - actual
                 extra = actual - expected
-                if not actual:
+                if not actual and not expected:
+                    self.checks.append(Check(
+                        Severity.OK, f"{commands}",
+                        "no commands configured"
+                    ))
+                elif not actual:
                     self.checks.append(Check(
                         Severity.WARN, f"{commands}",
                         "directory empty",

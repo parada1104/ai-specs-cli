@@ -8,6 +8,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow"
 RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
@@ -119,13 +123,13 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
 
         skill = (
-            root / "ai-specs" / ".recipe" / "worktree-flow" / "skills"
+            recipe_root(root, "worktree-flow") / "skills"
             / "worktree-flow" / "SKILL.md"
         )
         self.assertTrue(skill.is_file(), "bundled skill should materialize")
 
         for cmd in ("worktree-new", "worktree-clean"):
-            path = root / "ai-specs" / "commands" / f"{cmd}.md"
+            path = cache_command(root, cmd)
             self.assertTrue(path.is_file(), f"command {cmd} should materialize")
 
         script = (

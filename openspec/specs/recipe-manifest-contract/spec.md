@@ -7,26 +7,35 @@ Define how recipes are declared in a project's `ai-specs.toml` manifest.
 ## ADDED Requirements
 
 ### Requirement: Recipe instance declaration
-A project MAY declare an installed recipe using a top-level `[recipes.<id>]` table. The table SHALL contain `enabled` (boolean, required) and `version` (string, required). The `id` MUST match a recipe in the CLI recipe catalog.
+A project MAY declare an installed recipe using a top-level `[recipes.<id>]` table. The table SHALL contain `enabled` (boolean, required). `version` is not required. Sync SHALL materialize the CLI catalog version with no pin fail-close. Legacy `version` keys SHALL be ignored with a WARN and MUST NOT block sync. Floating or `min_version` pins are not supported. The `id` MUST match a recipe in the CLI recipe catalog.
 
-#### Scenario: Recipe enabled and pinned
-- **WHEN** `[recipes.runtime-memory-openmemory]` declares `enabled = true` and `version = "1.0.0"`
-- **THEN** sync SHALL validate the recipe exists in the catalog
-- **AND** sync SHALL validate the version matches `recipe.toml`
-- **AND** sync SHALL materialize the recipe
+#### Scenario: No version
+- **GIVEN** an enabled recipe with no `version` key
+- **WHEN** sync runs
+- **THEN** catalog content is materialized successfully
+
+#### Scenario: Legacy WARN
+- **GIVEN** an enabled recipe with a stale `version` key
+- **WHEN** sync runs
+- **THEN** a WARN is emitted
+- **AND** sync succeeds with current catalog content
 
 #### Scenario: Recipe disabled
 - **WHEN** `[recipes.runtime-memory-openmemory]` declares `enabled = false`
 - **THEN** sync SHALL skip materialization for this recipe
 - **AND** sync SHALL NOT fail
 
-#### Scenario: Version mismatch
-- **WHEN** manifest pins `version = "1.0.0"` but catalog has `version = "1.1.0"`
-- **THEN** sync SHALL fail with an explicit version-mismatch error
-
 #### Scenario: Unknown recipe ID
 - **WHEN** manifest declares `[recipes.unknown-id]`
 - **THEN** sync SHALL fail with an explicit "recipe not found" error
+
+### Requirement: CLI catalog without pin ceremony
+After a CLI upgrade, enabled recipes SHALL sync to the new catalog without requiring a toml edit.
+
+#### Scenario: Post-upgrade
+- **GIVEN** enabled recipes and an upgraded CLI
+- **WHEN** sync runs without toml changes
+- **THEN** new catalog content is materialized
 
 ### Requirement: Backward compatibility
 The absence of any `[recipes.*]` section SHALL NOT cause validation or sync to fail.
@@ -56,14 +65,15 @@ Recipe initialization output that is intended to survive sync SHALL be stored in
 
 ### Requirement: Init manifest deltas avoid duplicate declarations
 
-When init proposes updates to `ai-specs/ai-specs.toml`, it SHALL update existing `[recipes.<id>]` and `[recipes.<id>.config]` declarations instead of appending duplicate tables or duplicate keys.
+When init proposes updates to `ai-specs/ai-specs.toml`, it SHALL update existing `[recipes.<id>]` and `[recipes.<id>.config]` declarations instead of appending duplicate tables or duplicate keys. These paths MUST NOT write `version`.
 
 #### Scenario: Existing recipe table updated
 
 - **GIVEN** the manifest already contains `[recipes.tracker]`
-- **WHEN** init proposes changing `enabled` or `version`
+- **WHEN** init proposes changing `enabled`
 - **THEN** the proposed manifest delta SHALL update the existing `[recipes.tracker]` table
 - **AND** it SHALL NOT add a second `[recipes.tracker]` table
+- **AND** no `version` key is written
 
 #### Scenario: Existing config key updated
 

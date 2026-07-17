@@ -32,16 +32,16 @@ subrepos = []
 enabled = ["claude", "cursor", "opencode"]
 
 # -----------------------------------------------------------------------------
-# Recipes — named, versioned bundles of skills, commands, templates, and MCP
-# presets. Declared in catalog/recipes/<id>/recipe.toml.
+# Recipes — named bundles of skills, commands, templates, and MCP presets.
+# Declared in catalog/recipes/<id>/recipe.toml. Sync materializes the version
+# shipped with the installed CLI; no per-recipe version pin is required.
 #
 # [recipes.<id>]
 # enabled = true
-# version = "1.0.0"
+# # version = "1.0.0"  # legacy — ignored with WARN if present
 
 [recipes.session-context]
 enabled = true
-version = "2.0.0"
 
 # -----------------------------------------------------------------------------
 # CLI version policy (optional) — pin the ai-specs CLI version for this project.

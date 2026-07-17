@@ -32,19 +32,23 @@ Bitbucket ([`bitbucket-pr-flow`](../bitbucket-pr-flow/README.md)).
 ```toml
 [recipes.gitlab-mr-flow]
 enabled = true
-version = "1.1.0"
+version = "1.2.0"
 
 [recipes.gitlab-mr-flow.config]
 base_branch = "development"
+expected_owner = ""
+auto_switch_account = false
 ```
 
 Run `ai-specs sync` to materialize the bundled skill, `/mr-create`, and this doc.
 
 ## Config
 
-| Key           | Required | Type   | Default        | Description |
-| ------------- | -------- | ------ | -------------- | ----------- |
-| `base_branch` | no       | string | `development`  | Base branch the MR targets. |
+| Key                   | Required | Type    | Default        | Description |
+| --------------------- | -------- | ------- | -------------- | ----------- |
+| `base_branch`         | no       | string  | `development`  | Base branch the MR targets. |
+| `expected_owner`      | no       | string  | `""`           | Account username this repo expects; activates auth preflight when set. |
+| `auto_switch_account` | no       | boolean | `false`        | Reserved for API parity; glab has no auth switch — mismatch blocks with guidance. |
 
 ## Safety note
 

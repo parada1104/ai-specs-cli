@@ -44,7 +44,8 @@ class TestRenderManifest(unittest.TestCase):
         self.assertEqual(data["project"]["name"], "demo")
         self.assertEqual(data["agents"]["enabled"], ["claude", "pi"])
         self.assertTrue(data["recipes"]["session-context"]["enabled"])
-        self.assertEqual(data["recipes"]["tdd-flow"]["version"], "1.0.0")
+        self.assertNotIn("version", data["recipes"]["tdd-flow"])
+        self.assertNotIn("version =", text)
 
     def test_dotted_recipe_id_is_quoted_literal_key(self):
         text = self.mod._render_manifest(
@@ -56,7 +57,8 @@ class TestRenderManifest(unittest.TestCase):
         self.assertIn('[recipes."foo.bar"]', text)
         data = tomllib.loads(text)
         self.assertIn("foo.bar", data["recipes"])
-        self.assertEqual(data["recipes"]["foo.bar"]["version"], "1.2.3")
+        self.assertTrue(data["recipes"]["foo.bar"]["enabled"])
+        self.assertNotIn("version", data["recipes"]["foo.bar"])
 
 
     def test_render_manifest_writes_config_block(self):
@@ -433,10 +435,9 @@ class TestInitTuiPTYE2E(unittest.TestCase):
                          f"TOML should not exist after decline; output: {output!r}")
 
     def test_ctrl_c_at_prompt_cancels_cleanly(self):
-        """SIGINT (what Ctrl-C generates via TTY) at first prompt → rc=1, no TOML."""
+        """Ctrl-C via PTY (\\x03) at first prompt → rc=1, no TOML."""
         import os
         import select
-        import signal
         import time
 
         target = self._workspace()
@@ -472,15 +473,37 @@ class TestInitTuiPTYE2E(unittest.TestCase):
                 break
 
         if not output:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+            proc.kill()
+            proc.wait(timeout=2)
             self.fail(f"wizard produced no output; rc={proc.returncode}")
 
-        # Send SIGINT — the same signal the TTY line-discipline generates on Ctrl-C.
-        proc.send_signal(signal.SIGINT)
+        # Deliver Ctrl-C through the PTY line-discipline (more reliable than
+        # send_signal(SIGINT), which can leave prompt_toolkit hung → rc 120).
+        os.write(master, b"\x03")
         try:
-            os.close(master)
-        except OSError:
-            pass
-        proc.wait(timeout=5)
+            while time.monotonic() < deadline + 5:
+                if proc.poll() is not None:
+                    break
+                r, _, _ = select.select([master], [], [], 0.2)
+                if r:
+                    try:
+                        chunk = os.read(master, 4096)
+                        if chunk:
+                            output += chunk
+                    except OSError:
+                        break
+            else:
+                proc.kill()
+            proc.wait(timeout=5)
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
         self.assertEqual(proc.returncode, 1, f"output: {output!r}")
         self.assertFalse(out.exists(),
                          f"TOML should not exist after Ctrl-C; output: {output!r}")
@@ -590,10 +613,9 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         self.assertIn("agents", data)
 
     def test_ctrl_c_during_checkbox_cancels_cleanly(self):
-        """SIGINT during agent checkbox navigation → rc=1 (cancel), no TOML."""
+        """Ctrl-C via PTY (\\x03) during agent checkbox → rc=1 (cancel), no TOML."""
         import os
         import select
-        import signal
         import time
 
         target = self._workspace()
@@ -647,15 +669,37 @@ class TestInitTuiPTYE2E(unittest.TestCase):
                 break
 
         if b"Select agents" not in output:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+            proc.kill()
+            proc.wait(timeout=2)
             self.fail(f"agent checkbox didn't appear; output: {output[:200]!r}")
 
-        # Send SIGINT during checkbox navigation
-        proc.send_signal(signal.SIGINT)
+        # Deliver Ctrl-C through the PTY (line-discipline), not process SIGINT.
+        os.write(master, b"\x03")
         try:
-            os.close(master)
-        except OSError:
-            pass
-        proc.wait(timeout=5)
+            end = time.monotonic() + 5
+            while time.monotonic() < end:
+                if proc.poll() is not None:
+                    break
+                r, _, _ = select.select([master], [], [], 0.2)
+                if r:
+                    try:
+                        chunk = os.read(master, 4096)
+                        if chunk:
+                            output += chunk
+                    except OSError:
+                        break
+            else:
+                proc.kill()
+            proc.wait(timeout=5)
+        finally:
+            try:
+                os.close(master)
+            except OSError:
+                pass
         self.assertEqual(proc.returncode, 1, f"output: {output!r}")
         self.assertFalse(out.exists(),
                          f"TOML should not exist after Ctrl-C during checkbox; output: {output!r}")

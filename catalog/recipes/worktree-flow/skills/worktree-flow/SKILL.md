@@ -50,13 +50,29 @@ git worktree add .worktrees/<slug> -b <branch> <integration_branch>
 
 ## Post-merge cleanup
 
-After a branch is merged into the integration branch, reclaim its worktree with
-the materialized cleanup script (or the `/worktree-clean` command):
+After a branch is merged into the integration branch, reclaim its worktree.
+
+### Leave the worktree first (hard rule)
+
+Never run `git worktree remove` (or the cleanup script) while `$PWD` is inside
+the worktree being removed — that yields `fatal: Unable to read current working
+directory`. Always:
+
+```bash
+cd <main-repo-root>
+```
+
+### Script-first (preferred)
+
+Prefer the materialized cleanup script (or `/worktree-clean`) over ad-hoc
+remove sequences:
 
 ```bash
 bash ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh \
   --dir <worktrees_dir> --base <integration_branch>
 ```
+
+Run with `--dry-run` first to preview removals.
 
 The script is conservative by design:
 
@@ -67,5 +83,10 @@ The script is conservative by design:
 - **Preserves** worktrees whose branch is not yet merged (`unmerged`).
 - **Never touches** the main worktree or detached-HEAD worktrees.
 
-Run with `--dry-run` first to preview removals. This honors the project rule:
-never revert or discard changes you did not make.
+### Manual fallback
+
+Only if the script is unavailable: from the main repo root, `git worktree
+remove <path>`, then `git branch -D <branch>` after squash/rebase merges.
+Stop without deleting if the worktree is dirty.
+
+This honors the project rule: never revert or discard changes you did not make.

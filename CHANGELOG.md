@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-07-16
+
+### Added
+- **CLI-bound recipes + off-project origin cache**: Enabled recipes bind to the installed CLI catalog (no per-recipe version pins). Origin staging (`.recipe` / `.deps` / managed commands) moves under `$AI_SPECS_HOME/cache/projects/<key>/`; project keeps `ai-specs.toml`, local skills, and recipe docs/overrides.
+- **Plan-build multi-runtime evals + pre-merge guardian**: Eval harness coverage for plan-build flow; VCS pre-merge guardian template improvements.
+- **VCS auth preflight (multi-account)**: `expected_owner` / `auto_switch_account` config on git-pr-flow, gitlab-mr-flow, and bitbucket-pr-flow so agents pick the right CLI account before PR/MR work.
+- **Catalog config `help_text`**: Wizard shows how-to-get guidance for fields like `board_id`, `integration_branch`, `base_branch`, vault paths, and test commands.
+- **MCP env var help map**: `ENV_VAR_HELP` for `TRELLO_API_KEY`, `TRELLO_TOKEN`, and `CANONICAL_VAULT_PATH` (prompt + `.envrc.example` comments with links).
+
+### Fixed
+- **`configure-recipes` / hub crash on MCP env prompts**: `questionary.text(..., password=)` is invalid in questionary 2.x; secrets now use `questionary.password`. `_offer_envrc` soft-fails instead of aborting the wizard.
+- **Config `type = "boolean"`**: Schema normalizes to `"bool"` so the wizard uses confirm prompts (catalog recipes aligned).
+
 ## [0.13.1] — 2026-07-13
 
 ### Added
