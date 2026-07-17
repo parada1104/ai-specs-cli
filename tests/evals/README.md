@@ -39,9 +39,9 @@ tests/evals/
 - Fixtures seed a tiny app and copy the recipe skill into the runtime discovery
   path (`.claude/skills`, `.opencode/skills`, `.pi/skills`, …)
 
-## First client
+## Clients
 
-`plan-build-flow` live scenarios:
+### `plan-build-flow`
 
 | Scenario | Mode | Asserts |
 |----------|------|---------|
@@ -50,7 +50,28 @@ tests/evals/
 | AC5 `ac5_archive_before_merge` | build | archives change folder; active gone |
 | AC7 `ac7_light_gitignore_file_store` | build | writes `.gitignore` (file store) |
 
-Live multi-runtime:
+### `vcs-pr-flow` siblings (`git-pr-flow`, `gitlab-mr-flow`, `bitbucket-pr-flow`)
+
+Live module: `eval_vcs_pr_flow_live.py`. Agents write
+`ai-specs/eval-notes/merge-plan.md` (no real remote merges).
+
+| Scenario | git | gitlab | bitbucket | Asserts |
+|----------|-----|--------|-----------|---------|
+| `ac_protected_head_no_delete` | yes | yes | yes | no provider delete-source for `development` |
+| `ac_feature_head_cleanup` | yes | yes | yes | delete-source flag + worktree/local cleanup |
+| `ac_release_head_preferred` | yes | yes | yes | recommends `release/v*` head |
+| `ac_delete_branch_on_merge_warn` | yes | — | — | warns + documents `gh api` PATCH; no auto-apply |
+
+Select with `recipe/scenario` tokens (or bare scenario id for all providers that
+define it):
+
+```bash
+EVALS_LIVE=1 EVALS_RUNTIMES=opencode \
+  EVALS_SCENARIOS=git-pr-flow/ac_protected_head_no_delete,gitlab-mr-flow/ac_feature_head_cleanup \
+  ./tests/evals/run.sh
+```
+
+Live multi-runtime (plan-build helper script):
 
 ```bash
 EVALS_RUNTIMES=opencode,pi,omp ./tests/evals/run-live.sh

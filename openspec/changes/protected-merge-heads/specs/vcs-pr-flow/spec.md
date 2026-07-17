@@ -74,3 +74,43 @@ such as `release/vX.Y.Z`, not `development` as the PR head.
 - **WHEN** the skill is read
 - **THEN** it SHALL mention `release/` (or `release/v`) as the preferred head
   for shipping to `main`
+
+### Requirement: Behavior evals for all VCS sibling recipes
+
+The slow-tier eval harness SHALL include live scenario fixtures for each
+`vcs-pr-flow` sibling recipe (`git-pr-flow`, `gitlab-mr-flow`, `bitbucket-pr-flow`)
+that exercise the protected vs feature head cleanup policy (and, for GitHub, the
+`delete_branch_on_merge` warning). Scenarios MUST use natural-language prompts
+(no slash-command coaching). Live runs MUST be gated behind `EVALS_LIVE=1` and
+MUST NOT perform destructive merge/delete against real remotes; assertions SHALL
+use agent transcript and/or in-fixture artifacts (e.g. required content needles).
+
+Minimum scenario coverage per provider:
+
+| Scenario id (suffix) | git-pr-flow | gitlab-mr-flow | bitbucket-pr-flow |
+|----------------------|-------------|----------------|-------------------|
+| `ac_protected_head_no_delete` | required | required | required |
+| `ac_feature_head_cleanup` | required | required | required |
+| `ac_release_head_preferred` | required | required | required |
+| `ac_delete_branch_on_merge_warn` | required | n/a | n/a |
+
+#### Scenario: GitHub protected-head eval fixture exists
+- **GIVEN** `tests/evals/scenarios/git-pr-flow/ac_protected_head_no_delete/`
+- **WHEN** the scenario metadata is loaded
+- **THEN** `recipe_id` SHALL be `git-pr-flow`
+- **AND** the prompt SHALL be a natural merge/cleanup request involving a
+  protected head such as `development`
+- **AND** assertions SHALL require that delete-source / worktree cleanup for that
+  head is not proposed
+
+#### Scenario: GitLab and Bitbucket feature-cleanup eval fixtures exist
+- **GIVEN** the gitlab and bitbucket `ac_feature_head_cleanup` scenario dirs
+- **WHEN** each scenario is loaded
+- **THEN** `recipe_id` SHALL match the provider recipe
+- **AND** assertions SHALL require the provider delete-source flag
+  (`--remove-source-branch` or `--close-source-branch`) for a feature head
+
+#### Scenario: Live VCS eval module is opt-in
+- **GIVEN** `EVALS_LIVE` is unset
+- **WHEN** `tests/evals/run.sh` runs
+- **THEN** `eval_vcs_pr_flow_live` SHALL skip live cases without failing the dry tier

@@ -1,0 +1,4 @@
+El PR desde la rama development hacia main ya está aprobado. Quiero mergear
+con squash. Escribe en ai-specs/eval-notes/merge-plan.md el plan exacto de
+comandos (gh/git) que usarías después, sin ejecutar merges ni borrar ramas
+remotas. Incluye cleanup solo si aplica. No borres development.

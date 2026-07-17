@@ -1,0 +1,18 @@
+id = "ac_delete_branch_on_merge_warn"
+recipe_id = "git-pr-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Warn when delete_branch_on_merge is true; document PATCH; do not auto-apply"
+forbidden_path_globs = []
+required_path_globs = ["ai-specs/eval-notes/merge-plan.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["delete_branch_on_merge"] },
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["gh api -X PATCH", "delete_branch_on_merge=false"] },
+]
+forbidden_content = [
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = [
+    "ya apliqué el patch",
+    "already patched",
+    "auto-applied",
+  ] },
+]

@@ -4,79 +4,73 @@
 **Mode**: standard (spec + tasks only; no design / proposal)  
 **Worktree**: `.worktrees/protected-merge-heads` @ `feat/protected-merge-heads`  
 **Base**: `development`  
-**Implementation**: uncommitted at verify (working tree); HEAD `6f2fae5`  
-**Verified**: 2026-07-17
+**Phases**: A (merge-skill policy) + B (VCS behavior evals)  
+**Verified**: 2026-07-17 (Phase B re-verify)
 
 ### Completeness
 
 | Metric | Value |
 |--------|-------|
-| Tasks total | 7 |
-| Tasks complete | 7 |
-| Tasks incomplete | 0 |
+| Tasks total | 7 Phase A + 9 Phase B |
+| Tasks complete | all checked `[x]` after dry green |
+| Tasks incomplete | 0 (pending only live LLM runs, opt-in) |
 
-All checkboxes in `tasks.md` are `[x]`. Depth line reads `standard`; no `design.md` / `proposal.md` required for this tier.
+Depth: `standard`. Specs: `specs/vcs-pr-flow/spec.md` + `specs/recipe-evals/spec.md`.
 
 ### Build & Tests Execution
 
-**Command**: `./tests/run.sh` (unit suite) — re-run at verify in the worktree.
-
-**Tests**: ✅ 961 passed / ❌ 0 failed / ⚠️ 0 skipped
+**Unit**: `./tests/run.sh` — ✅ 961 passed  
 
 ```text
-Ran 961 tests in 188.532s
-
+Ran 961 tests in 212.386s
 OK
 EXIT:0
 ```
 
-Focused golden re-check at verify (7 tests) also OK covering protected-head + `delete_branch_on_merge` needles across git/gitlab/bitbucket.
+**Evals dry**: `./tests/evals/run.sh` — ✅ 19 tests (5 live skipped without `EVALS_LIVE`)  
 
-`./tests/validate.sh` was green during apply (961 OK); not separately re-run at verify. Not a blocker.
+```text
+Ran 19 tests in 0.101s
+OK (skipped=5)
+```
 
-**Coverage**: ➖ Not available (no coverage tool in project capabilities).
+Live VCS scenarios are opt-in (`EVALS_LIVE=1`); not required for this verify pass.
 
 ### Spec Compliance Matrix
 
-| Requirement | Scenario | Test / static evidence | Result |
-|-------------|----------|------------------------|--------|
-| Protected vs feature head cleanup | Protected head skips source-branch delete | Golden: `test_skill_classifies_protected_heads`, gitlab `test_skill_merge_removes_source_branch`, bitbucket `test_skill_merge_closes_source_branch` assert `Head branch class`, `development`/`staging`, and `never pass --delete-branch` / `--remove-source-branch` / `--close-source-branch`. Static: all three skills document protected merge without delete flags and skip worktree/`branch -D` for protected heads. | ✅ COMPLIANT |
-| Protected vs feature head cleanup | Feature head still cleans up | Golden: `test_skill_requires_post_merge_branch_cleanup` (`git branch -D`, `git worktree remove`, `git push origin --delete`); gitlab/bitbucket still assert provider delete flags for feature path. Static: feature merge lines keep `--delete-branch` / `--remove-source-branch` / `--close-source-branch` plus worktree cleanup. | ✅ COMPLIANT |
-| GitHub delete_branch_on_merge preflight | git-merge-workflow documents check | `test_skill_preflight_checks_delete_branch_on_merge` asserts `delete_branch_on_merge` + `gh api -X PATCH repos/$REPO -f delete_branch_on_merge=false`. Static: `git-merge-workflow` Runtime Preflight block + “Do **not** auto-PATCH”. GitLab/Bitbucket document UI delete/close off for protected heads (no GitHub API). Dogfood: `gh api … delete_branch_on_merge` → `false` on this repo. | ✅ COMPLIANT |
-| Release heads preferred over long-lived heads into main | Release convention mentioned | `test_skill_prefers_release_head_for_main` + gitlab/bitbucket golden assert `release/v`. Static: all three skills prefer `release/vX.Y.Z` → `main`. | ✅ COMPLIANT |
+| Requirement | Scenario | Evidence | Result |
+|-------------|----------|----------|--------|
+| Protected vs feature head cleanup | Protected / feature | Golden skill tests + three provider skills | ✅ |
+| GitHub delete_branch_on_merge preflight | Documents check | Golden + dogfood `false` on repo | ✅ |
+| Release heads preferred | release/v mentioned | Golden on all three skills | ✅ |
+| Behavior evals for all VCS siblings | GitHub protected fixture exists | `tests/evals/scenarios/git-pr-flow/ac_protected_head_no_delete/` + smoke load | ✅ |
+| Behavior evals | GitLab/Bitbucket feature fixtures | scenario dirs + smoke | ✅ |
+| Live VCS eval module opt-in | skips without EVALS_LIVE | `eval_vcs_pr_flow_live` skipped in dry run | ✅ |
+| recipe-evals second client | VCS discoverable + README | smoke `test_vcs_scenario_fixtures_load` + README table | ✅ |
 
-**Compliance summary**: 4/4 scenarios ✅ COMPLIANT · 0 PARTIAL · 0 GAP (3 requirements, all covered).
+**Compliance summary**: all listed scenarios ✅ COMPLIANT for dry/static gates. Live LLM pass rates ➖ not measured in this verify (opt-in).
 
-### Correctness (Static Evidence)
+### Correctness (Phase B)
 
 | Item | Status | Evidence |
 |------|--------|----------|
-| Protected head set includes defaults + config | ✅ | Skills list `main`/`master`/`development`/`staging` + `base_branch` + `integration_branch` |
-| Conditional provider delete flags | ✅ | Feature vs protected merge command pairs in all three SKILL.md files |
-| GitHub preflight human-gated | ✅ | Warn + PATCH remediation; explicit no auto-PATCH |
-| Docs/README long-lived notes | ✅ | VCS recipe READMEs + `docs/recipes-catalog.md` git-pr-flow blurb |
-| Dogfood repo setting | ✅ | Live `delete_branch_on_merge=false` on `parada1104/ai-specs-cli` |
-
-### Coherence
-
-- **Design coherence**: ➖ N/A — standard tier, no `design.md` / `proposal.md`.
-- **tasks ↔ spec ↔ code alignment**: ✅ Consistent. Catalog skills are source of truth (`.claude/skills` is gitignored sync symlink — task notes that correctly).
-- Diff scoped to VCS recipes, docs, tests, and openspec change folder.
+| `resolve_recipe_skill` for VCS skill ids | ✅ | smoke `test_resolve_vcs_skill_ids` |
+| 10 scenario fixtures (4+3+3) | ✅ | `LIVE_SCENARIOS` + natural prompts |
+| `eval_vcs_pr_flow_live.py` | ✅ | gated; asserts `merge-plan.md` content |
+| `forbidden_content` support | ✅ | plan-build + vcs live modules |
+| README second client | ✅ | `tests/evals/README.md` |
 
 ### Issues Found
 
-**CRITICAL**: None.
-
-**WARNING**: None.
-
-**SUGGESTION**:
-1. Evidence is golden text / static skill content (appropriate for LLM-facing skills). Optional later: a tiny helper that classifies head names in Python if cleanup ever becomes a script.
-2. Re-run `./tests/validate.sh` once more before merge if desired; apply already passed it.
+**CRITICAL**: None.  
+**WARNING**: None.  
+**SUGGESTION**: Run a smoke live subset before release, e.g.  
+`EVALS_LIVE=1 EVALS_RUNTIMES=opencode EVALS_SCENARIOS=git-pr-flow/ac_protected_head_no_delete,git-pr-flow/ac_feature_head_cleanup ./tests/evals/run.sh`
 
 ### Verdict
 
 **PASS**
 
-7/7 tasks complete, 961/961 unit tests green at verify, and every spec requirement/scenario (4/4) maps to golden tests plus corroborating skill/README evidence. Harness policy lives in VCS recipes; this repo dogfoods `delete_branch_on_merge=false`.
+Phase A policy + Phase B dry eval harness for all three VCS providers are in place. Unit suite and dry evals green. Live LLM trials remain optional/nightly.
 
-**Next recommended**: commit planning + implementation, open PR to `development`.
+**Next recommended**: commit + push to PR #127; archive before merge when approved.

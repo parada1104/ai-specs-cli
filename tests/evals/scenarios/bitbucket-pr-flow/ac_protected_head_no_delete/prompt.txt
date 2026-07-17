@@ -1,0 +1,3 @@
+El PR desde development hacia main ya está aprobado en Bitbucket. Escribe en
+ai-specs/eval-notes/merge-plan.md los comandos bb/git para merge squash sin
+cerrar/borrar development (sin --close-source-branch). No ejecutes nada.

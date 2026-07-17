@@ -1,0 +1,3 @@
+El MR desde development hacia main ya está aprobado en GitLab. Escribe en
+ai-specs/eval-notes/merge-plan.md los comandos glab/git exactos para merge
+squash sin borrar development (sin --remove-source-branch). No ejecutes nada.

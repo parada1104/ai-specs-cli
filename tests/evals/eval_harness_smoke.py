@@ -21,9 +21,17 @@ from tests.evals.lib.harness import (  # noqa: E402
 )
 from tests.evals.lib.project_fixture import (  # noqa: E402
     recipe_version,
+    resolve_recipe_skill,
     seed_project_files,
     setup_runtime_skills,
 )
+
+VCS_RECIPES = ("git-pr-flow", "gitlab-mr-flow", "bitbucket-pr-flow")
+VCS_SKILL_IDS = {
+    "git-pr-flow": "git-merge-workflow",
+    "gitlab-mr-flow": "gitlab-merge-workflow",
+    "bitbucket-pr-flow": "bitbucket-merge-workflow",
+}
 
 
 class HarnessSmokeTests(unittest.TestCase):
@@ -49,23 +57,19 @@ class HarnessSmokeTests(unittest.TestCase):
             assert_natural_prompt("Run the /plan command for this change")
 
     def test_materialize_plan_build_flow_fixture(self):
+        from tests._cache_paths import recipe_skill_dir
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         version = recipe_version(REPO_ROOT / "catalog", "plan-build-flow")
         materialize_project(root, "plan-build-flow", version)
         skill = (
-            root
-            / "ai-specs"
-            / ".recipe"
-            / "plan-build-flow"
-            / "skills"
-            / "plan-build-flow"
-            / "SKILL.md"
+            recipe_skill_dir(root, "plan-build-flow", "plan-build-flow") / "SKILL.md"
         )
         plan_cmd = root / "ai-specs" / "commands" / "plan.md"
         build_cmd = root / "ai-specs" / "commands" / "build.md"
-        self.assertTrue(skill.is_file())
+        self.assertTrue(skill.is_file(), f"missing skill at {skill}")
         self.assertFalse(plan_cmd.exists())
         self.assertFalse(build_cmd.exists())
 
@@ -119,6 +123,44 @@ class HarnessSmokeTests(unittest.TestCase):
                     self.assertEqual(live._selected_runtimes(), [])
                 with mock.patch.object(live, "api_key_present", return_value=True):
                     self.assertEqual(live._selected_runtimes(), ["claude"])
+
+    def test_vcs_scenario_fixtures_load(self):
+        from tests.evals import eval_vcs_pr_flow_live as vcs
+
+        for recipe_id, scenario_id in vcs.LIVE_SCENARIOS:
+            scenario_dir = (
+                REPO_ROOT / "tests" / "evals" / "scenarios" / recipe_id / scenario_id
+            )
+            scenario = load_scenario(scenario_dir)
+            self.assertEqual(scenario.recipe_id, recipe_id)
+            self.assertEqual(scenario.id, scenario_id)
+            assert_natural_prompt(scenario.prompt_path.read_text())
+
+    def test_resolve_vcs_skill_ids(self):
+        for recipe_id, skill_id in VCS_SKILL_IDS.items():
+            path, resolved = resolve_recipe_skill(
+                recipe_id, catalog_root=REPO_ROOT / "catalog"
+            )
+            self.assertEqual(resolved, skill_id)
+            self.assertTrue(path.is_file())
+
+    def test_materialize_and_setup_vcs_recipes(self):
+        for recipe_id in VCS_RECIPES:
+            with self.subTest(recipe=recipe_id):
+                tmp = tempfile.TemporaryDirectory()
+                self.addCleanup(tmp.cleanup)
+                root = Path(tmp.name)
+                version = recipe_version(REPO_ROOT / "catalog", recipe_id)
+                materialize_project(root, recipe_id, version)
+                dest = setup_runtime_skills(
+                    root, "claude", recipe_id, catalog_root=REPO_ROOT / "catalog"
+                )
+                skill_id = VCS_SKILL_IDS[recipe_id]
+                self.assertEqual(
+                    dest,
+                    root / ".claude" / "skills" / skill_id / "SKILL.md",
+                )
+                self.assertTrue(dest.is_file())
 
 
 class HarnessPathTests(unittest.TestCase):

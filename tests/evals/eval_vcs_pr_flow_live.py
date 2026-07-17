@@ -1,4 +1,4 @@
-"""Live plan-build-flow behavioral evals (AC3–AC7). Requires EVALS_LIVE=1."""
+"""Live vcs-pr-flow sibling recipe evals. Requires EVALS_LIVE=1."""
 
 from __future__ import annotations
 
@@ -17,28 +17,33 @@ sys.path.insert(0, str(REPO_ROOT))
 from tests.evals.lib.harness import (  # noqa: E402
     SUPPORTED_RUNTIMES,
     api_key_present,
-    detect_runtime,
     git_paths_changed,
     init_git_repo,
     live_enabled,
     load_scenario,
     materialize_project,
     run_prompt,
-    runtime_available,
 )
 from tests.evals.lib.project_fixture import (  # noqa: E402
     recipe_version,
-    seed_authorized_plan,
     seed_project_files,
     setup_runtime_skills,
 )
 
-SCENARIOS = REPO_ROOT / "tests" / "evals" / "scenarios" / "plan-build-flow"
-LIVE_SCENARIOS = (
-    "ac3_plan_stops_before_apply",
-    "ac4_build_after_auth",
-    "ac5_archive_before_merge",
-    "ac7_light_gitignore_file_store",
+SCENARIOS_ROOT = REPO_ROOT / "tests" / "evals" / "scenarios"
+
+# (recipe_id, scenario_id)
+LIVE_SCENARIOS: tuple[tuple[str, str], ...] = (
+    ("git-pr-flow", "ac_protected_head_no_delete"),
+    ("git-pr-flow", "ac_feature_head_cleanup"),
+    ("git-pr-flow", "ac_delete_branch_on_merge_warn"),
+    ("git-pr-flow", "ac_release_head_preferred"),
+    ("gitlab-mr-flow", "ac_protected_head_no_delete"),
+    ("gitlab-mr-flow", "ac_feature_head_cleanup"),
+    ("gitlab-mr-flow", "ac_release_head_preferred"),
+    ("bitbucket-pr-flow", "ac_protected_head_no_delete"),
+    ("bitbucket-pr-flow", "ac_feature_head_cleanup"),
+    ("bitbucket-pr-flow", "ac_release_head_preferred"),
 )
 
 
@@ -72,41 +77,54 @@ def _selected_runtimes() -> list[str]:
     return out
 
 
-def _selected_scenarios() -> list[str]:
+def _selected_scenarios() -> list[tuple[str, str]]:
     raw = os.environ.get("EVALS_SCENARIOS", "")
-    if raw.strip():
-        return [s.strip() for s in raw.split(",") if s.strip()]
-    return list(LIVE_SCENARIOS)
+    if not raw.strip():
+        return list(LIVE_SCENARIOS)
+    selected: list[tuple[str, str]] = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "/" in token:
+            recipe_id, scenario_id = token.split("/", 1)
+            selected.append((recipe_id, scenario_id))
+            continue
+        # Bare scenario id: all recipes that define it
+        for recipe_id, scenario_id in LIVE_SCENARIOS:
+            if scenario_id == token:
+                selected.append((recipe_id, scenario_id))
+    return selected
 
 
 def _n_of_m(passed: int, trials: int) -> int:
     return trials if trials == 1 else max(2, (trials * 2) // 3)
 
 
+def _key(recipe_id: str, scenario_id: str) -> str:
+    return f"{recipe_id}/{scenario_id}"
+
+
 @unittest.skipUnless(
     live_enabled() and bool(_selected_runtimes()),
-    "Set EVALS_LIVE=1 with a supported runtime on PATH to run live evals",
+    "Set EVALS_LIVE=1 with a supported runtime on PATH to run live VCS evals",
 )
-class PlanBuildFlowLiveEvals(unittest.TestCase):
-    def _run_scenario(self, name: str, runtime: str):
-        scenario_dir = SCENARIOS / name
+class VcsPrFlowLiveEvals(unittest.TestCase):
+    def _run_scenario(self, recipe_id: str, scenario_id: str, runtime: str):
+        scenario_dir = SCENARIOS_ROOT / recipe_id / scenario_id
         scenario = load_scenario(scenario_dir)
         meta = scenario.meta
-        slug = str(meta.get("slug", "signup-validation"))
+        self.assertEqual(scenario.recipe_id, recipe_id)
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
-        version = recipe_version(REPO_ROOT / "catalog", scenario.recipe_id)
-        materialize_project(root, scenario.recipe_id, version)
+        version = recipe_version(REPO_ROOT / "catalog", recipe_id)
+        materialize_project(root, recipe_id, version)
         seed_project_files(root)
         setup_runtime_skills(
-            root, runtime, scenario.recipe_id, catalog_root=REPO_ROOT / "catalog"
+            root, runtime, recipe_id, catalog_root=REPO_ROOT / "catalog"
         )
-        if meta.get("seed_plan"):
-            seed_authorized_plan(
-                root, slug=slug, tier=str(meta.get("tier", "standard"))
-            )
 
         init_git_repo(root)
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
@@ -123,28 +141,23 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
             else:
                 os.environ["EVALS_RUNTIME"] = old
 
+        label = f"{runtime}/{_key(recipe_id, scenario_id)}"
         changed = git_paths_changed(root)
-        # If the agent wrote required artifacts then hung (MCP/etc), accept timeout.
+
         soft_ok = False
         if result.get("timed_out"):
             required_ok = all(
                 _glob_exists(root, required)
                 for required in meta.get("required_path_globs", [])
             )
-            any_ok = all(
-                any(_glob_exists(root, pat) for pat in group)
-                for group in meta.get("required_any_path_globs", [])
-            )
-            soft_ok = (bool(meta.get("required_path_globs")) and required_ok) or (
-                bool(meta.get("required_any_path_globs")) and any_ok
-            )
+            soft_ok = bool(meta.get("required_path_globs")) and required_ok
 
         if not soft_ok:
             self.assertEqual(
                 result["returncode"],
                 0,
                 msg=(
-                    f"{runtime}/{name} failed rc={result.get('returncode')} "
+                    f"{label} failed rc={result.get('returncode')} "
                     f"timed_out={result.get('timed_out')}\n"
                     f"stderr={result.get('stderr')}\n"
                     f"stdout_tail={(result.get('stdout') or '')[-2000:]}\n"
@@ -152,40 +165,28 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                     f"changed={changed}"
                 ),
             )
+
         forbidden = meta.get("forbidden_path_globs", [])
         for path in changed:
             self.assertFalse(
                 _matches_any(path, forbidden),
-                f"{runtime}/{name}: forbidden path modified: {path}",
+                f"{label}: forbidden path modified: {path}",
             )
 
         for required in meta.get("required_path_globs", []):
             self.assertTrue(
                 _glob_exists(root, required),
-                f"{runtime}/{name}: missing {required}; changed={changed}",
-            )
-
-        for group in meta.get("required_any_path_globs", []):
-            self.assertTrue(
-                any(_glob_exists(root, pat) for pat in group),
-                f"{runtime}/{name}: expected any of {group}; changed={changed}",
-            )
-
-        for pattern in meta.get("required_changed_globs", []):
-            self.assertTrue(
-                any(_matches_any(path, [pattern]) for path in changed)
-                or _glob_exists(root, pattern),
-                f"{runtime}/{name}: expected change matching {pattern}; changed={changed}",
+                f"{label}: missing {required}; changed={changed}",
             )
 
         for rule in meta.get("required_content", []):
             path = root / rule["path"]
-            self.assertTrue(path.is_file(), f"{runtime}/{name}: missing {rule['path']}")
+            self.assertTrue(path.is_file(), f"{label}: missing {rule['path']}")
             text = path.read_text(encoding="utf-8", errors="replace").lower()
             needles = [str(n).lower() for n in rule.get("contains_any", [])]
             self.assertTrue(
                 any(n in text for n in needles),
-                f"{runtime}/{name}: {rule['path']} missing any of {needles}",
+                f"{label}: {rule['path']} missing any of {needles}\n---\n{text[:2000]}",
             )
 
         for rule in meta.get("forbidden_content", []):
@@ -197,28 +198,10 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 self.assertNotIn(
                     str(needle).lower(),
                     text,
-                    f"{runtime}/{name}: {rule['path']} must not contain {needle!r}",
+                    f"{label}: {rule['path']} must not contain {needle!r}",
                 )
 
-        transcript = (result.get("result_text") or result.get("stdout") or "").lower()
-        for needle in meta.get("required_transcript_any", []):
-            # Soft: only enforce when no required_content path was written
-            if meta.get("required_content"):
-                break
-            self.assertIn(
-                str(needle).lower(),
-                transcript,
-                f"{runtime}/{name}: transcript missing {needle!r}",
-            )
-
-        if meta.get("assert_active_change_gone"):
-            active = root / "openspec" / "changes" / slug
-            self.assertFalse(
-                active.exists(),
-                f"{runtime}/{name}: active change folder still present at {active}",
-            )
-
-    def _run_named(self, name: str):
+    def _run_named(self, recipe_id: str, scenario_id: str):
         trials = int(os.environ.get("EVALS_TRIALS", "1"))
         runtimes = _selected_runtimes()
         self.assertTrue(runtimes, "no runtimes selected")
@@ -228,34 +211,24 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
             last_err: Exception | None = None
             for _ in range(trials):
                 try:
-                    self._run_scenario(name, runtime)
+                    self._run_scenario(recipe_id, scenario_id, runtime)
                     passed += 1
                 except AssertionError as exc:
                     last_err = exc
             needed = _n_of_m(passed, trials)
             if passed < needed:
-                failures.append(f"{runtime}:{name} {passed}/{trials} — {last_err}")
+                failures.append(
+                    f"{runtime}:{_key(recipe_id, scenario_id)} "
+                    f"{passed}/{trials} — {last_err}"
+                )
         self.assertFalse(failures, msg="; ".join(failures))
 
-    def test_ac3_plan_stops_before_apply(self):
-        if "ac3_plan_stops_before_apply" not in _selected_scenarios():
-            self.skipTest("ac3 not selected via EVALS_SCENARIOS")
-        self._run_named("ac3_plan_stops_before_apply")
-
-    def test_ac4_build_after_auth(self):
-        if "ac4_build_after_auth" not in _selected_scenarios():
-            self.skipTest("ac4 not selected via EVALS_SCENARIOS")
-        self._run_named("ac4_build_after_auth")
-
-    def test_ac5_archive_before_merge(self):
-        if "ac5_archive_before_merge" not in _selected_scenarios():
-            self.skipTest("ac5 not selected via EVALS_SCENARIOS")
-        self._run_named("ac5_archive_before_merge")
-
-    def test_ac7_light_gitignore_file_store(self):
-        if "ac7_light_gitignore_file_store" not in _selected_scenarios():
-            self.skipTest("ac7 not selected via EVALS_SCENARIOS")
-        self._run_named("ac7_light_gitignore_file_store")
+    def test_vcs_scenarios(self):
+        selected = _selected_scenarios()
+        self.assertTrue(selected, "no VCS scenarios selected")
+        for recipe_id, scenario_id in selected:
+            with self.subTest(scenario=_key(recipe_id, scenario_id)):
+                self._run_named(recipe_id, scenario_id)
 
 
 if __name__ == "__main__":

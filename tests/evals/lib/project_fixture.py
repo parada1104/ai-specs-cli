@@ -62,6 +62,34 @@ def seed_project_files(root: Path) -> None:
     )
 
 
+def resolve_recipe_skill(
+    recipe_id: str,
+    *,
+    catalog_root: Path | None = None,
+    project_root: Path | None = None,
+) -> tuple[Path, str]:
+    """Return (SKILL.md path, skill_id). skill_id may differ from recipe_id (VCS)."""
+    catalog = catalog_root or (Path(__file__).resolve().parents[3] / "catalog")
+    catalog_skills = catalog / "recipes" / recipe_id / "skills"
+    preferred = catalog_skills / recipe_id / "SKILL.md"
+    if preferred.is_file():
+        return preferred, recipe_id
+    bundled = sorted(catalog_skills.glob("*/SKILL.md"))
+    if bundled:
+        return bundled[0], bundled[0].parent.name
+    if project_root is not None:
+        mat_skills = project_root / "ai-specs" / ".recipe" / recipe_id / "skills"
+        preferred_m = mat_skills / recipe_id / "SKILL.md"
+        if preferred_m.is_file():
+            return preferred_m, recipe_id
+        mat_bundled = sorted(mat_skills.glob("*/SKILL.md"))
+        if mat_bundled:
+            return mat_bundled[0], mat_bundled[0].parent.name
+    raise FileNotFoundError(
+        f"skill not found for {recipe_id}: tried catalog + materialize"
+    )
+
+
 def setup_runtime_skills(
     root: Path,
     runtime: str,
@@ -71,33 +99,15 @@ def setup_runtime_skills(
 ) -> Path:
     """Copy recipe SKILL.md into the runtime discovery path."""
     catalog = catalog_root or (Path(__file__).resolve().parents[3] / "catalog")
-    src = (
-        catalog
-        / "recipes"
-        / recipe_id
-        / "skills"
-        / recipe_id
-        / "SKILL.md"
+    src, skill_id = resolve_recipe_skill(
+        recipe_id, catalog_root=catalog, project_root=root
     )
-    if not src.is_file():
-        # Fall back to materialized path
-        src = (
-            root
-            / "ai-specs"
-            / ".recipe"
-            / recipe_id
-            / "skills"
-            / recipe_id
-            / "SKILL.md"
-        )
-    if not src.is_file():
-        raise FileNotFoundError(f"skill not found for {recipe_id}: tried catalog + materialize")
 
     rel = RUNTIME_SKILL_DIRS.get(runtime)
     if not rel:
         raise ValueError(f"no skill dir mapping for runtime {runtime}")
 
-    dest_dir = root / rel / recipe_id
+    dest_dir = root / rel / skill_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / "SKILL.md"
     shutil.copy2(src, dest)
@@ -107,11 +117,12 @@ def setup_runtime_skills(
     if not agents.exists():
         agents.write_text(
             "# Eval fixture\n\n"
-            f"Enabled recipe: `{recipe_id}`.\n\n"
+            f"Enabled recipe: `{recipe_id}` (skill `{skill_id}`).\n\n"
             "## Workflow\n\n"
             "- Classify change depth (full/standard/light) before production edits.\n"
             "- Write planning artifacts, present the plan, wait for authorization.\n"
             "- Do not implement production code during planning.\n"
+            "- Follow the bound VCS merge-workflow skill for PR/MR merge and cleanup.\n"
         )
     return dest
 

@@ -1,0 +1,3 @@
+El MR de feat/widget-fix hacia development está aprobado en GitLab. Escribe
+en ai-specs/eval-notes/merge-plan.md merge squash con --remove-source-branch
+y cleanup de worktree/rama local. No ejecutes los comandos.
