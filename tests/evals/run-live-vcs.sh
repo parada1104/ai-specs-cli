@@ -7,9 +7,10 @@
 #   EVALS_RUNTIMES=opencode,claude \
 #     EVALS_SCENARIOS=git-pr-flow/ac_protected_head_no_delete ./tests/evals/run-live-vcs.sh
 #
-# Models (override with EVALS_MODEL):
-#   claude              → opus
-#   opencode / pi / omp → cursorapi/composer-2.5  (API for Cursor provider)
+# Models:
+#   claude              → opus (Claude Code subscription; not Anthropic API key)
+#   opencode / pi / omp → cursorapi/composer-2.5 only (API for Cursor)
+# Override OpenCode-family with EVALS_MODEL=cursorapi/... (anthropic/* is rejected)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"

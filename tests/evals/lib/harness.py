@@ -21,14 +21,18 @@ RECIPE_MATERIALIZE = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 
 SUPPORTED_RUNTIMES = ("claude", "opencode", "pi", "omp")
 
-# opencode/pi/omp default through the local "API for Cursor" provider (cursorapi).
-# Override any runtime with EVALS_MODEL=<provider/model>.
+# Routing (this harness):
+# - claude → Claude Code subscription via `claude` CLI (model id like `opus`)
+# - opencode / pi / omp → OpenCode provider `cursorapi` ("API for Cursor") only
+#   Never anthropic/* on those runtimes (no Anthropic API key path).
 DEFAULT_MODELS = {
     "claude": "opus",
     "opencode": "cursorapi/composer-2.5",
     "pi": "cursorapi/composer-2.5",
     "omp": "cursorapi/composer-2.5",
 }
+
+_OPENCODE_FAMILY = frozenset({"opencode", "pi", "omp"})
 
 META_PROMPT_RE = re.compile(
     r"(?i)(/plan\b|/build\b|haz un plan|run the /plan|produce planning artifacts only)"
@@ -105,21 +109,29 @@ def claude_available() -> bool:
 
 
 def default_model(runtime: str) -> str:
-    override = os.environ.get("EVALS_MODEL", "").strip()
+    # Per-runtime override wins, then global EVALS_MODEL, then defaults.
+    specific = os.environ.get(f"EVALS_MODEL_{runtime.upper()}", "").strip()
+    override = specific or os.environ.get("EVALS_MODEL", "").strip()
     if override:
+        if runtime in _OPENCODE_FAMILY and not override.startswith("cursorapi/"):
+            raise RuntimeError(
+                f"{runtime} live evals must use cursorapi/* (API for Cursor); "
+                f"got {override!r}. Example: EVALS_MODEL=cursorapi/composer-2.5 "
+                f"(do not pass anthropic/* or bare Claude model ids here)."
+            )
         return override
     return DEFAULT_MODELS.get(runtime, DEFAULT_MODELS["claude"])
 
 
 def api_key_present(runtime: str | None = None) -> bool:
-    """Runtime-aware credential gate. Prefer env keys; allow local CLI auth."""
+    """Runtime-aware credential gate — local CLI/provider auth, not Anthropic keys for OpenCode-family."""
     name = runtime or detect_runtime() or "claude"
     if name == "claude":
-        if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY"):
-            return True
-        # Claude Code headless `-p` works with the local auth store (no env key).
+        # Claude Code subscription / local auth store (headless `-p`).
         return shutil.which("claude") is not None
-    # OpenCode / Pi / OMP typically use local provider auth (e.g. cursorapi).
+    if name in _OPENCODE_FAMILY:
+        # cursorapi is configured in the OpenCode/Pi/OMP provider store.
+        return shutil.which(name) is not None
     return True
 
 

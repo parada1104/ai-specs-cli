@@ -16,12 +16,14 @@ invocation. **Not** part of `./tests/run.sh` — uses `eval_*.py` naming so
 
 - A supported runtime on `PATH`: `claude`, `opencode`, `pi`, or `omp`
 - Select with `EVALS_RUNTIME` / `EVALS_RUNTIMES` (otherwise prefer order)
-- Optional model override: `EVALS_MODEL`
-- Defaults:
-  - `claude` → `opus`
-  - `opencode` / `pi` / `omp` → `cursorapi/composer-2.5`
-    (OpenCode provider id for **API for Cursor**; alternates:
-    `cursorapi/composer-2.5-fast`, `cursorapi/grok-4.5`)
+- Model routing (hard rule):
+  - `claude` → Claude Code **subscription** via the `claude` CLI (`opus`)
+  - `opencode` / `pi` / `omp` → **API for Cursor** only (`cursorapi/...`)
+    — never `anthropic/*` and never an Anthropic API key on those runtimes
+- Optional override: `EVALS_MODEL=cursorapi/...` (OpenCode-family) or
+  `EVALS_MODEL_OPENCODE` / `EVALS_MODEL_PI` / `EVALS_MODEL_OMP` / `EVALS_MODEL_CLAUDE`
+- Defaults: `opus` (claude) · `cursorapi/composer-2.5` (opencode/pi/omp)
+  Alternates: `cursorapi/composer-2.5-fast`, `cursorapi/grok-4.5`
 - Optional: `EVALS_MAX_TURNS`, `EVALS_TRIALS` (default trials=1; use 3 for N-of-M)
 
 ## Layout

@@ -102,6 +102,8 @@ class HarnessSmokeTests(unittest.TestCase):
         self.assertTrue((root / "src" / "forms" / "signup.py").is_file())
 
     def test_default_models(self):
+        from tests.evals.lib.harness import default_model
+
         self.assertEqual(DEFAULT_MODELS["claude"], "opus")
         self.assertTrue(
             DEFAULT_MODELS["opencode"].startswith("cursorapi/"),
@@ -109,6 +111,18 @@ class HarnessSmokeTests(unittest.TestCase):
         )
         self.assertEqual(DEFAULT_MODELS["opencode"], DEFAULT_MODELS["pi"])
         self.assertEqual(DEFAULT_MODELS["opencode"], DEFAULT_MODELS["omp"])
+        self.assertEqual(default_model("opencode"), "cursorapi/composer-2.5")
+
+    def test_opencode_family_rejects_anthropic_model_override(self):
+        import os
+        from unittest import mock
+
+        from tests.evals.lib.harness import default_model
+
+        with mock.patch.dict(os.environ, {"EVALS_MODEL": "anthropic/claude-sonnet-4-6"}):
+            with self.assertRaises(RuntimeError) as ctx:
+                default_model("opencode")
+            self.assertIn("cursorapi/", str(ctx.exception))
 
     def test_live_gate_requires_env(self):
         if live_enabled() and runtime_available():
