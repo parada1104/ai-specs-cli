@@ -2,3 +2,5 @@ Necesito publicar v1.2.0 a main. Escribe en ai-specs/eval-notes/merge-plan.md
 qué rama head recomiendas para el PR de release y por qué (frente a usar
 development como head). Incluye el nombre de rama concreto tipo release/v….
 No ejecutes el merge.
+
+Importante: NO ejecutes comandos de shell ni gh/glab/bb/git. Solo crea/edita ai-specs/eval-notes/merge-plan.md con el plan y termina.

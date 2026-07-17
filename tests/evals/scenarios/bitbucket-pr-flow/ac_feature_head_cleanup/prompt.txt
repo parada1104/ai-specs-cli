@@ -1,3 +1,5 @@
 El PR de feat/widget-fix hacia development está aprobado en Bitbucket.
 Escribe en ai-specs/eval-notes/merge-plan.md merge squash con
 --close-source-branch y cleanup de worktree/rama local. No ejecutes nada.
+
+Importante: NO ejecutes comandos de shell ni gh/glab/bb/git. Solo crea/edita ai-specs/eval-notes/merge-plan.md con el plan y termina.

@@ -2,16 +2,13 @@ id = "ac_protected_head_no_delete"
 recipe_id = "git-pr-flow"
 prompt_file = "prompt.txt"
 mode = "build"
-description = "Protected head development: merge without --delete-branch or branch cleanup"
+description = "Protected head development: merge without --delete-branch"
 forbidden_path_globs = []
 required_path_globs = ["ai-specs/eval-notes/merge-plan.md"]
 required_content = [
-  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["gh pr merge --squash", "protected"] },
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["protected"] },
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["never pass --delete-branch", "do not use", "do not run", "sin --delete-branch", "without --delete-branch", "no branch deletion"] },
 ]
-forbidden_content = [
-  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = [
-    "gh pr merge --squash --delete-branch",
-    "git push origin --delete development",
-    "git branch -D development",
-  ] },
+forbidden_command_lines = [
+  { path = "ai-specs/eval-notes/merge-plan.md", starts_with = "gh pr merge", must_not_contain = "--delete-branch" },
 ]

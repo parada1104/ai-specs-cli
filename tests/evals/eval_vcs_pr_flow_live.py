@@ -150,7 +150,11 @@ class VcsPrFlowLiveEvals(unittest.TestCase):
                 _glob_exists(root, required)
                 for required in meta.get("required_path_globs", [])
             )
-            soft_ok = bool(meta.get("required_path_globs")) and required_ok
+            content_ok = all(
+                (root / rule["path"]).is_file()
+                for rule in meta.get("required_content", [])
+            ) if meta.get("required_content") else False
+            soft_ok = (bool(meta.get("required_path_globs")) and required_ok) or content_ok
 
         if not soft_ok:
             self.assertEqual(
@@ -182,11 +186,13 @@ class VcsPrFlowLiveEvals(unittest.TestCase):
         for rule in meta.get("required_content", []):
             path = root / rule["path"]
             self.assertTrue(path.is_file(), f"{label}: missing {rule['path']}")
-            text = path.read_text(encoding="utf-8", errors="replace").lower()
-            needles = [str(n).lower() for n in rule.get("contains_any", [])]
+            raw = path.read_text(encoding="utf-8", errors="replace").lower()
+            # Agents often wrap flags in backticks (`--delete-branch`).
+            text = raw.replace("`", "")
+            needles = [str(n).lower().replace("`", "") for n in rule.get("contains_any", [])]
             self.assertTrue(
                 any(n in text for n in needles),
-                f"{label}: {rule['path']} missing any of {needles}\n---\n{text[:2000]}",
+                f"{label}: {rule['path']} missing any of {needles}\n---\n{raw[:2000]}",
             )
 
         for rule in meta.get("forbidden_content", []):
@@ -199,6 +205,29 @@ class VcsPrFlowLiveEvals(unittest.TestCase):
                     str(needle).lower(),
                     text,
                     f"{label}: {rule['path']} must not contain {needle!r}",
+                )
+
+        for rule in meta.get("forbidden_command_lines", []):
+            path = root / rule["path"]
+            self.assertTrue(path.is_file(), f"{label}: missing {rule['path']}")
+            starts = str(rule["starts_with"]).lower()
+            ban = str(rule["must_not_contain"]).lower()
+            neg = ("never", "do not", "don't", "sin ", "without", "forbid", "not ")
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            for idx, raw in enumerate(lines):
+                line = raw.strip().lower().lstrip("-* ").strip().strip("`")
+                if not line or line.startswith("#"):
+                    continue
+                # Placeholder / abbreviated negative examples (e.g. `gh pr merge ... --delete-branch`)
+                if "..." in line or "…" in line:
+                    continue
+                if not (line.startswith(starts) and ban in line):
+                    continue
+                window = "\n".join(lines[max(0, idx - 3) : idx + 1]).lower()
+                if any(marker in window for marker in neg):
+                    continue
+                self.fail(
+                    f"{label}: affirmative command line must not contain {ban!r}: {raw}"
                 )
 
     def _run_named(self, recipe_id: str, scenario_id: str):

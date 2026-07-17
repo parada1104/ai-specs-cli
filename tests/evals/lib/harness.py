@@ -112,11 +112,14 @@ def default_model(runtime: str) -> str:
 
 
 def api_key_present(runtime: str | None = None) -> bool:
-    """Runtime-aware credential gate. OpenCode/Pi/OMP often use local auth."""
+    """Runtime-aware credential gate. Prefer env keys; allow local CLI auth."""
     name = runtime or detect_runtime() or "claude"
     if name == "claude":
-        return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY"))
-    # Local CLIs typically have their own auth stores; do not require env keys.
+        if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY"):
+            return True
+        # Claude Code headless `-p` works with the local auth store (no env key).
+        return shutil.which("claude") is not None
+    # OpenCode / Pi / OMP typically use local provider auth (e.g. cursorapi).
     return True
 
 
@@ -133,6 +136,7 @@ def _run(cmd: list[str], cwd: Path) -> dict[str, Any]:
     proc = subprocess.Popen(
         cmd,
         cwd=cwd,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
