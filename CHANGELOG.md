@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2] — 2026-07-17
+
+### Fixed
+- **Minimal project surface on sync**: Shared helpers like `premerge_guardian.py` stay under `$AI_SPECS_HOME` (not copied into `ai-specs/bin/`). Sync removes leftover in-project skill-cache dirs (`.resolved-skills/`, `.internal/`) and stale bin copies, and refreshes the root agent `.gitignore` block so existing projects pick up `.pi/` / `.omp/`.
+- **Hide `test-*` catalog fixtures**: Hub, CLI recipe list, and related user-facing surfaces no longer show internal `test-*` catalog recipes.
+
 ## [0.14.1] — 2026-07-17
 
 ### Added
