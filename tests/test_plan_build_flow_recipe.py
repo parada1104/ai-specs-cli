@@ -167,24 +167,24 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
 
     def test_skill_has_pr_and_archive_gates(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
-        text = skill.read_text().lower()
+        raw = skill.read_text()
+        text = raw.lower()
         self.assertIn("pr creation gate", text)
         self.assertIn("pre-merge archive gate", text)
         self.assertIn("pre-merge merge guardian", text)
         self.assertIn("premerge_guardian", text)
-        self.assertIn("ai-specs/bin/premerge_guardian.py", text)
+        self.assertIn("AI_SPECS_HOME", raw)
+        self.assertIn("lib/_internal/premerge_guardian.py", text)
+        self.assertNotIn("ai-specs/bin/premerge_guardian.py", text)
         self.assertIn("gh pr create", text)
         self.assertIn("before merge", text)
 
-    def test_recipe_ships_premerge_guardian_template(self):
+    def test_recipe_does_not_stage_premerge_guardian_into_project(self):
         recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
         targets = [t.target for t in recipe.templates]
-        self.assertIn("ai-specs/bin/premerge_guardian.py", targets)
-        src = CATALOG / RECIPE_ID / "templates" / "premerge_guardian.py"
-        self.assertTrue(src.is_file())
-        self.assertEqual(
-            src.read_text(),
-            (ROOT / "lib" / "_internal" / "premerge_guardian.py").read_text(),
+        self.assertNotIn("ai-specs/bin/premerge_guardian.py", targets)
+        self.assertTrue(
+            (ROOT / "lib" / "_internal" / "premerge_guardian.py").is_file()
         )
 
     def test_brief_mentions_depth_and_pr_gate(self):

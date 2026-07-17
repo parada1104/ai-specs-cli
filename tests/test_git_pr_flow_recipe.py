@@ -89,23 +89,24 @@ class GitPrFlowRecipeTests(unittest.TestCase):
         doc = root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
         self.assertTrue(doc.is_file(), f"missing doc at {doc}")
 
-    def test_materialize_ships_premerge_guardian_template(self):
+    def test_materialize_does_not_stage_premerge_guardian_into_project(self):
         root = self._make_project()
         self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
         helper = root / "ai-specs" / "bin" / "premerge_guardian.py"
-        self.assertTrue(helper.is_file(), f"missing guardian template at {helper}")
+        self.assertFalse(helper.exists(), f"unexpected in-project guardian at {helper}")
         skill = (
             recipe_root(root, RECIPE_ID)
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
-        self.assertIn("ai-specs/bin/premerge_guardian.py", skill.read_text())
+        text = skill.read_text()
+        self.assertIn("AI_SPECS_HOME", text)
+        self.assertIn("lib/_internal/premerge_guardian.py", text)
+        self.assertNotIn("ai-specs/bin/premerge_guardian.py", text)
 
-    def test_template_matches_canonical_guardian(self):
-        canon = (ROOT / "lib" / "_internal" / "premerge_guardian.py").read_text()
-        shipped = (
-            CATALOG / RECIPE_ID / "templates" / "premerge_guardian.py"
-        ).read_text()
-        self.assertEqual(shipped, canon)
+    def test_canonical_guardian_lives_in_cli_home(self):
+        canon = ROOT / "lib" / "_internal" / "premerge_guardian.py"
+        self.assertTrue(canon.is_file())
+        self.assertIn("pre-merge guardian", canon.read_text().lower())
 class GitPrFlowGoldenContentTests(unittest.TestCase):
     """Golden text checks for pre-merge archive guidance."""
 

@@ -136,12 +136,13 @@ Before `gh pr merge` / `glab mr merge` / Bitbucket merge (or equivalent), verify
 the archive is complete. Prefer the shared helper when available:
 
 ```bash
-python3 ai-specs/bin/premerge_guardian.py <slug> --root <repo-root>
+python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
+  <slug> --root <repo-root>
 # optional: --tier light|standard|full
 ```
 
-Sync materializes that helper into consumer projects. In the ai-specs monorepo,
-`lib/_internal/premerge_guardian.py` is the same script.
+The helper ships with the CLI install under `~/.ai-specs` (not copied into
+consumer projects).
 
 Hard blockers (do **not** merge):
 
