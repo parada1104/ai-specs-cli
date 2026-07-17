@@ -92,6 +92,20 @@ if [ -n "$EXPECTED_OWNER" ]; then
 fi
 ```
 
+## Head branch class
+
+Before merge and cleanup, resolve `HEAD_BRANCH` = the MR source branch name.
+
+**Protected heads** (exact match): `main`, `master`, `development`, `staging`,
+plus configured `[recipes.gitlab-mr-flow.config].base_branch` and (when set)
+`[recipes.worktree-flow.config].integration_branch`.
+
+**Feature heads**: everything else — including `release/vX.Y.Z`, `feat/*`, `fix/*`.
+
+Prefer shipping to `main` from a disposable `release/vX.Y.Z` head, not from
+`development` as the MR source. Keep GitLab UI "Delete source branch" off for
+protected heads; this skill only passes `--remove-source-branch` for feature heads.
+
 ## Workflow
 
 1. Inspect current branch, worktree path, and `git status`.
@@ -139,19 +153,32 @@ Sync materializes that helper into consumer projects. In the ai-specs monorepo,
 Do **not** merge if `openspec/changes/<slug>/` still exists, or if
 `openspec/changes/archive/<slug>/` is missing tier files.
 
-9. Merge only after explicit user approval, required checks/review, the
-   pre-merge archive step above, a clean guardian result, and pinning the
-   approved SHA:
+9. Classify `HEAD_BRANCH` (see **Head branch class**). Merge only after explicit
+   user approval, required checks/review, the pre-merge archive step above, a
+   clean guardian result, and pinning the approved SHA:
 
 ```bash
+# Feature head — remove source branch
 glab mr merge <mr-number> --squash --yes --remove-source-branch --sha $APPROVED_SHA
+
+# Protected head — never pass --remove-source-branch
+glab mr merge <mr-number> --squash --yes --sha $APPROVED_SHA
 ```
 
 > **Note**: The `--sha` flag ensures that only the reviewed commit is merged. If the branch was updated between approval and merge, the command will fail, preventing unreviewed commits from being merged.
 
-10. After the MR is merged, **leave the worktree first** (`cd` to the main repo
-   root — never remove while `$PWD` is inside the worktree). Prefer the
-   worktree-flow cleanup script:
+10. After the MR is merged, sync the integration branch. **Post-merge worktree /
+    local branch cleanup runs only for feature heads.** For a protected head,
+    skip worktree remove and `git branch -D` for that head — only sync the base:
+
+```bash
+git checkout <base_branch>
+git pull --ff-only origin <base_branch>
+```
+
+For a **feature** head, leave the worktree first (`cd` to the main repo root —
+never remove while `$PWD` is inside the worktree). Prefer the worktree-flow
+cleanup script:
 
 ```bash
 cd <main-repo-root>
@@ -172,18 +199,14 @@ git branch -D <branch-name>
 > is safe here because the MR was already merged. Stop without deleting if the
 > worktree is dirty.
 
-11. Sync the integration branch:
-
-```bash
-git checkout <base_branch>
-git pull --ff-only origin <base_branch>
-```
-
 ## Guardrails
 
 - Never merge locally with `git merge` for feature work that should go through MR.
 - Never push, merge, delete branches, or remove worktrees without explicit user instruction.
 - Never remove a worktree before confirming the MR is merged and no uncommitted work remains.
+- Never delete a protected head (`main` / `master` / `development` / `staging` /
+  configured base or integration branch) via `--remove-source-branch`, worktree
+  cleanup, or remote branch delete.
 - Preserve unrelated changes; stop and ask if cleanup would touch them.
 - Never use implicit push options on `glab mr create` — always push explicitly before creating the MR.
 - Never use options that merge without explicit user approval.
