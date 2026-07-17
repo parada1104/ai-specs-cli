@@ -103,7 +103,12 @@ class HarnessSmokeTests(unittest.TestCase):
 
     def test_default_models(self):
         self.assertEqual(DEFAULT_MODELS["claude"], "opus")
-        self.assertIn("deepseek", DEFAULT_MODELS["opencode"])
+        self.assertTrue(
+            DEFAULT_MODELS["opencode"].startswith("cursorapi/"),
+            DEFAULT_MODELS["opencode"],
+        )
+        self.assertEqual(DEFAULT_MODELS["opencode"], DEFAULT_MODELS["pi"])
+        self.assertEqual(DEFAULT_MODELS["opencode"], DEFAULT_MODELS["omp"])
 
     def test_live_gate_requires_env(self):
         if live_enabled() and runtime_available():
@@ -123,6 +128,14 @@ class HarnessSmokeTests(unittest.TestCase):
                     self.assertEqual(live._selected_runtimes(), [])
                 with mock.patch.object(live, "api_key_present", return_value=True):
                     self.assertEqual(live._selected_runtimes(), ["claude"])
+
+    def test_live_scripts_are_capability_scoped(self):
+        plan = (REPO_ROOT / "tests" / "evals" / "run-live.sh").read_text()
+        vcs = (REPO_ROOT / "tests" / "evals" / "run-live-vcs.sh").read_text()
+        self.assertIn("eval_plan_build_flow_live", plan)
+        self.assertNotIn("eval_vcs_pr_flow_live", plan)
+        self.assertIn("eval_vcs_pr_flow_live", vcs)
+        self.assertNotIn("eval_plan_build_flow_live", vcs)
 
     def test_vcs_scenario_fixtures_load(self):
         from tests.evals import eval_vcs_pr_flow_live as vcs

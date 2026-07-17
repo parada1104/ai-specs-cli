@@ -21,11 +21,13 @@ RECIPE_MATERIALIZE = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 
 SUPPORTED_RUNTIMES = ("claude", "opencode", "pi", "omp")
 
+# opencode/pi/omp default through the local "API for Cursor" provider (cursorapi).
+# Override any runtime with EVALS_MODEL=<provider/model>.
 DEFAULT_MODELS = {
     "claude": "opus",
-    "opencode": "opencode-go/deepseek-v4-flash",
-    "pi": "opencode-go/deepseek-v4-flash",
-    "omp": "opencode-go/deepseek-v4-flash",
+    "opencode": "cursorapi/composer-2.5",
+    "pi": "cursorapi/composer-2.5",
+    "omp": "cursorapi/composer-2.5",
 }
 
 META_PROMPT_RE = re.compile(

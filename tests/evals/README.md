@@ -7,27 +7,33 @@ invocation. **Not** part of `./tests/run.sh` — uses `eval_*.py` naming so
 ## When to run
 
 - Nightly or pre-release (not per-PR): needs billed LLM calls, inherent flakiness.
-- Local opt-in: `EVALS_LIVE=1 ./tests/evals/run.sh`
+- Local dry (no LLM): `./tests/evals/run.sh`
+- Live is **per capability / client** — never mix modules in one run:
+  - plan-build: `./tests/evals/run-live.sh`
+  - vcs-pr-flow: `./tests/evals/run-live-vcs.sh`
 
 ## Requirements
 
 - A supported runtime on `PATH`: `claude`, `opencode`, `pi`, or `omp`
-- Select with `EVALS_RUNTIME` (otherwise first available is auto-detected)
+- Select with `EVALS_RUNTIME` / `EVALS_RUNTIMES` (otherwise prefer order)
 - Optional model override: `EVALS_MODEL`
 - Defaults:
   - `claude` → `opus`
-  - `opencode` / `pi` / `omp` → `opencode-go/glm-5.2`
-    (alternate: `opencode-go/deepseek-v4-flash`)
+  - `opencode` / `pi` / `omp` → `cursorapi/composer-2.5`
+    (OpenCode provider id for **API for Cursor**; alternates:
+    `cursorapi/composer-2.5-fast`, `cursorapi/grok-4.5`)
 - Optional: `EVALS_MAX_TURNS`, `EVALS_TRIALS` (default trials=1; use 3 for N-of-M)
 
 ## Layout
 
 ```
 tests/evals/
-  lib/           # harness + project fixtures
-  scenarios/     # per-recipe scenario folders
-  eval_*.py      # unittest modules (dry + live)
-  run.sh         # discover eval_*.py only
+  lib/              # harness + project fixtures
+  scenarios/        # per-recipe scenario folders
+  eval_*.py         # unittest modules (dry + live)
+  run.sh            # dry discover (all eval_*.py)
+  run-live.sh       # LIVE plan-build-flow only
+  run-live-vcs.sh   # LIVE vcs-pr-flow siblings only
 ```
 
 ## Scenario contract
@@ -43,6 +49,8 @@ tests/evals/
 
 ### `plan-build-flow`
 
+Live: `./tests/evals/run-live.sh` → `eval_plan_build_flow_live.py`
+
 | Scenario | Mode | Asserts |
 |----------|------|---------|
 | AC3 `ac3_plan_stops_before_apply` | plan | tasks + specs; no `src/` edits |
@@ -50,10 +58,15 @@ tests/evals/
 | AC5 `ac5_archive_before_merge` | build | archives change folder; active gone |
 | AC7 `ac7_light_gitignore_file_store` | build | writes `.gitignore` (file store) |
 
+```bash
+EVALS_RUNTIMES=opencode,claude EVALS_SCENARIOS=ac3_plan_stops_before_apply \
+  ./tests/evals/run-live.sh
+```
+
 ### `vcs-pr-flow` siblings (`git-pr-flow`, `gitlab-mr-flow`, `bitbucket-pr-flow`)
 
-Live module: `eval_vcs_pr_flow_live.py`. Agents write
-`ai-specs/eval-notes/merge-plan.md` (no real remote merges).
+Live: `./tests/evals/run-live-vcs.sh` → `eval_vcs_pr_flow_live.py`  
+Agents write `ai-specs/eval-notes/merge-plan.md` (no real remote merges).
 
 | Scenario | git | gitlab | bitbucket | Asserts |
 |----------|-----|--------|-----------|---------|
@@ -66,17 +79,10 @@ Select with `recipe/scenario` tokens (or bare scenario id for all providers that
 define it):
 
 ```bash
-EVALS_LIVE=1 EVALS_RUNTIMES=opencode \
-  EVALS_SCENARIOS=git-pr-flow/ac_protected_head_no_delete,gitlab-mr-flow/ac_feature_head_cleanup \
-  ./tests/evals/run.sh
+EVALS_RUNTIMES=opencode,pi,omp,claude \
+  EVALS_SCENARIOS=git-pr-flow/ac_protected_head_no_delete,git-pr-flow/ac_feature_head_cleanup \
+  ./tests/evals/run-live-vcs.sh
+
+# alternate cursorapi model for non-claude runtimes
+EVALS_MODEL=cursorapi/grok-4.5 EVALS_RUNTIMES=opencode ./tests/evals/run-live-vcs.sh
 ```
-
-Live multi-runtime (plan-build helper script):
-
-```bash
-EVALS_RUNTIMES=opencode,pi,omp ./tests/evals/run-live.sh
-EVALS_RUNTIMES=opencode EVALS_SCENARIOS=ac3_plan_stops_before_apply,ac7_light_gitignore_file_store ./tests/evals/run-live.sh
-```
-
-Prefer OpenCode when Claude is rate-limited. Defaults: `opus` / `opencode-go/glm-5.2`.
-
