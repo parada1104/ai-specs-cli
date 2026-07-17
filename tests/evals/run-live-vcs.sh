@@ -8,15 +8,17 @@
 #     EVALS_SCENARIOS=git-pr-flow/ac_protected_head_no_delete ./tests/evals/run-live-vcs.sh
 #
 # Models:
-#   claude              → opus (Claude Code subscription; not Anthropic API key)
+#   claude              → opus (Claude Code subscription)
+#   cursor-agent        → composer-2.5 (Cursor Agent subscription; binary cursor-agent|agent)
 #   opencode / pi / omp → cursorapi/composer-2.5 only (API for Cursor)
-# Override OpenCode-family with EVALS_MODEL=cursorapi/... (anthropic/* is rejected)
+# Override: EVALS_MODEL / EVALS_MODEL_CURSOR_AGENT / EVALS_MODEL_OPENCODE …
+#   OpenCode-family must stay cursorapi/*; cursor-agent rejects cursorapi/*
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 export EVALS_LIVE=1
-export EVALS_PREFER="${EVALS_PREFER:-opencode,pi,omp,claude}"
+export EVALS_PREFER="${EVALS_PREFER:-claude,cursor-agent,opencode,pi,omp}"
 export EVALS_MODEL="${EVALS_MODEL:-}"
 export EVALS_TRIALS="${EVALS_TRIALS:-1}"
 export EVALS_TIMEOUT_SEC="${EVALS_TIMEOUT_SEC:-600}"
@@ -26,6 +28,6 @@ echo "client=vcs-pr-flow"
 echo "EVALS_PREFER=$EVALS_PREFER"
 echo "EVALS_RUNTIMES=${EVALS_RUNTIMES:-"(from prefer)"}"
 echo "EVALS_SCENARIOS=${EVALS_SCENARIOS:-"(all vcs live)"}"
-echo "EVALS_MODEL=${EVALS_MODEL:-"(runtime defaults: claude=opus; others=cursorapi/composer-2.5)"}"
+echo "EVALS_MODEL=${EVALS_MODEL:-"(defaults: claude=opus; cursor-agent=composer-2.5; others=cursorapi/composer-2.5)"}"
 
 python3 -m unittest tests.evals.eval_vcs_pr_flow_live -v

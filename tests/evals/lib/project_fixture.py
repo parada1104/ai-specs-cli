@@ -11,6 +11,7 @@ RUNTIME_SKILL_DIRS = {
     "claude": ".claude/skills",
     "opencode": ".opencode/skills",
     "cursor": ".cursor/skills",
+    "cursor-agent": ".cursor/skills",
     "pi": ".pi/skills",
     "omp": ".omp/skills",
 }

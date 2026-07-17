@@ -40,4 +40,6 @@ below — **do not implement Phase B until authorized**.
       content — no real remote merges
 - [x] Update `tests/evals/README.md` second-client table for vcs-pr-flow siblings
 - [x] Dry: `tests/evals/run.sh` green offline; unit suite still green
+- [x] Add `cursor-agent` as first-class EVALS_RUNTIME (Cursor subscription;
+      default `composer-2.5`; skills under `.cursor/skills`)
 - [x] Re-verify change (update `verify-report.md`) before merge

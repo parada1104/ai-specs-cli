@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import fnmatch
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,6 +22,7 @@ from tests.evals.lib.harness import (  # noqa: E402
     load_scenario,
     materialize_project,
     run_prompt,
+    runtime_available,
 )
 from tests.evals.lib.project_fixture import (  # noqa: E402
     recipe_version,
@@ -62,14 +62,16 @@ def _selected_runtimes() -> list[str]:
     else:
         names = [
             n.strip()
-            for n in os.environ.get("EVALS_PREFER", "opencode,pi,omp,claude").split(",")
+            for n in os.environ.get(
+                "EVALS_PREFER", "claude,cursor-agent,opencode,pi,omp"
+            ).split(",")
             if n.strip()
         ]
     out: list[str] = []
     for name in names:
         if name not in SUPPORTED_RUNTIMES:
             continue
-        if not shutil.which(name):
+        if not runtime_available(name):
             continue
         if not api_key_present(name):
             continue
@@ -103,6 +105,57 @@ def _n_of_m(passed: int, trials: int) -> int:
 
 def _key(recipe_id: str, scenario_id: str) -> str:
     return f"{recipe_id}/{scenario_id}"
+
+
+# Markers that mean a forbidden flag appears only as a counter-example.
+_FORBIDDEN_LINE_NEG = (
+    "never",
+    "do not",
+    "don't",
+    "sin ",
+    "without",
+    "forbid",
+    "not ",
+    "❌",
+    "✗",
+    "🚫",
+    "# bad",
+    "# wrong",
+    "# incorrect",
+    "# avoid",
+    "# no",
+    "incorrect",
+    "anti-pattern",
+    "wrong:",
+    "bad:",
+)
+
+
+def forbidden_command_line_violations(
+    text: str, *, starts_with: str, must_not_contain: str
+) -> list[str]:
+    """Return affirmative command lines that illegally include a banned flag."""
+    starts = starts_with.lower()
+    ban = must_not_contain.lower()
+    lines = text.splitlines()
+    hits: list[str] = []
+    for idx, raw in enumerate(lines):
+        line = raw.strip().lower().lstrip("-* ").strip().strip("`")
+        if not line or line.startswith("#"):
+            continue
+        # Placeholder / abbreviated negative examples
+        if "..." in line or "…" in line:
+            continue
+        if not (line.startswith(starts) and ban in line):
+            continue
+        window = "\n".join(lines[max(0, idx - 3) : idx + 1]).lower()
+        if any(marker in window for marker in _FORBIDDEN_LINE_NEG):
+            continue
+        # Same-line comment markers (e.g. `gh pr merge --delete-branch  # ❌`)
+        if any(marker in line for marker in _FORBIDDEN_LINE_NEG):
+            continue
+        hits.append(raw)
+    return hits
 
 
 @unittest.skipUnless(
@@ -210,24 +263,16 @@ class VcsPrFlowLiveEvals(unittest.TestCase):
         for rule in meta.get("forbidden_command_lines", []):
             path = root / rule["path"]
             self.assertTrue(path.is_file(), f"{label}: missing {rule['path']}")
-            starts = str(rule["starts_with"]).lower()
-            ban = str(rule["must_not_contain"]).lower()
-            neg = ("never", "do not", "don't", "sin ", "without", "forbid", "not ")
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            for idx, raw in enumerate(lines):
-                line = raw.strip().lower().lstrip("-* ").strip().strip("`")
-                if not line or line.startswith("#"):
-                    continue
-                # Placeholder / abbreviated negative examples (e.g. `gh pr merge ... --delete-branch`)
-                if "..." in line or "…" in line:
-                    continue
-                if not (line.startswith(starts) and ban in line):
-                    continue
-                window = "\n".join(lines[max(0, idx - 3) : idx + 1]).lower()
-                if any(marker in window for marker in neg):
-                    continue
+            ban = str(rule["must_not_contain"])
+            hits = forbidden_command_line_violations(
+                path.read_text(encoding="utf-8", errors="replace"),
+                starts_with=str(rule["starts_with"]),
+                must_not_contain=ban,
+            )
+            if hits:
                 self.fail(
-                    f"{label}: affirmative command line must not contain {ban!r}: {raw}"
+                    f"{label}: affirmative command line must not contain {ban!r}: "
+                    f"{hits[0]}"
                 )
 
     def _run_named(self, recipe_id: str, scenario_id: str):

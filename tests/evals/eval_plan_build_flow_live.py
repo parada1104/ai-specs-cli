@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import fnmatch
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -57,14 +56,16 @@ def _selected_runtimes() -> list[str]:
     else:
         names = [
             n.strip()
-            for n in os.environ.get("EVALS_PREFER", "opencode,pi,omp,claude").split(",")
+            for n in os.environ.get(
+                "EVALS_PREFER", "claude,cursor-agent,opencode,pi,omp"
+            ).split(",")
             if n.strip()
         ]
     out: list[str] = []
     for name in names:
         if name not in SUPPORTED_RUNTIMES:
             continue
-        if not shutil.which(name):
+        if not runtime_available(name):
             continue
         if not api_key_present(name):
             continue

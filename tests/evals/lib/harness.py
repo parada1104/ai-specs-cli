@@ -19,14 +19,17 @@ ROOT = Path(__file__).resolve().parents[3]
 CATALOG = ROOT / "catalog"
 RECIPE_MATERIALIZE = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 
-SUPPORTED_RUNTIMES = ("claude", "opencode", "pi", "omp")
+SUPPORTED_RUNTIMES = ("claude", "cursor-agent", "opencode", "pi", "omp")
 
 # Routing (this harness):
 # - claude → Claude Code subscription via `claude` CLI (model id like `opus`)
+# - cursor-agent → Cursor Agent CLI subscription (`cursor-agent` / `agent`;
+#   model ids like `composer-2.5` — not OpenCode `cursorapi/*`)
 # - opencode / pi / omp → OpenCode provider `cursorapi` ("API for Cursor") only
 #   Never anthropic/* on those runtimes (no Anthropic API key path).
 DEFAULT_MODELS = {
     "claude": "opus",
+    "cursor-agent": "composer-2.5",
     "opencode": "cursorapi/composer-2.5",
     "pi": "cursorapi/composer-2.5",
     "omp": "cursorapi/composer-2.5",
@@ -89,28 +92,44 @@ def live_enabled() -> bool:
     return os.environ.get("EVALS_LIVE", "").lower() in {"1", "true", "yes"}
 
 
+def resolve_runtime_binary(runtime: str) -> str | None:
+    """Resolve CLI path for a supported runtime.
+
+    `cursor-agent` accepts either `cursor-agent` or `agent`. Never the `cursor`
+    IDE shim (different binary; not headless-agent capable here).
+    """
+    if runtime == "cursor-agent":
+        return shutil.which("cursor-agent") or shutil.which("agent")
+    return shutil.which(runtime)
+
+
 def detect_runtime() -> str | None:
     forced = os.environ.get("EVALS_RUNTIME", "").strip().lower()
     if forced:
         return forced if forced in SUPPORTED_RUNTIMES else None
     for name in SUPPORTED_RUNTIMES:
-        if shutil.which(name):
+        if resolve_runtime_binary(name):
             return name
     return None
 
 
 def runtime_available(runtime: str | None = None) -> bool:
     name = runtime or detect_runtime()
-    return bool(name and shutil.which(name))
+    return bool(name and resolve_runtime_binary(name))
 
 
 def claude_available() -> bool:
     return shutil.which("claude") is not None
 
 
+def _model_env_key(runtime: str) -> str:
+    # Hyphenated runtime ids → EVALS_MODEL_CURSOR_AGENT
+    return f"EVALS_MODEL_{runtime.upper().replace('-', '_')}"
+
+
 def default_model(runtime: str) -> str:
     # Per-runtime override wins, then global EVALS_MODEL, then defaults.
-    specific = os.environ.get(f"EVALS_MODEL_{runtime.upper()}", "").strip()
+    specific = os.environ.get(_model_env_key(runtime), "").strip()
     override = specific or os.environ.get("EVALS_MODEL", "").strip()
     if override:
         if runtime in _OPENCODE_FAMILY and not override.startswith("cursorapi/"):
@@ -118,6 +137,12 @@ def default_model(runtime: str) -> str:
                 f"{runtime} live evals must use cursorapi/* (API for Cursor); "
                 f"got {override!r}. Example: EVALS_MODEL=cursorapi/composer-2.5 "
                 f"(do not pass anthropic/* or bare Claude model ids here)."
+            )
+        if runtime == "cursor-agent" and override.startswith("cursorapi/"):
+            raise RuntimeError(
+                "cursor-agent live evals use Cursor Agent model ids "
+                "(e.g. composer-2.5), not OpenCode cursorapi/* provider paths. "
+                f"got {override!r}."
             )
         return override
     return DEFAULT_MODELS.get(runtime, DEFAULT_MODELS["claude"])
@@ -129,6 +154,9 @@ def api_key_present(runtime: str | None = None) -> bool:
     if name == "claude":
         # Claude Code subscription / local auth store (headless `-p`).
         return shutil.which("claude") is not None
+    if name == "cursor-agent":
+        # Cursor Agent subscription / local login (`cursor-agent login`).
+        return resolve_runtime_binary("cursor-agent") is not None
     if name in _OPENCODE_FAMILY:
         # cursorapi is configured in the OpenCode/Pi/OMP provider store.
         return shutil.which(name) is not None
@@ -261,6 +289,39 @@ def run_claude_prompt(project_root: Path, prompt: str, *, mode: str = "plan") ->
     return result
 
 
+def run_cursor_agent_prompt(
+    project_root: Path, prompt: str, *, mode: str = "plan"
+) -> dict[str, Any]:
+    """Headless Cursor Agent CLI (`cursor-agent` / `agent`)."""
+    model = default_model("cursor-agent")
+    binary = resolve_runtime_binary("cursor-agent")
+    if not binary:
+        raise RuntimeError("cursor-agent (or agent) not found on PATH")
+    # Plan mode is read-only; eval writes (merge-plan / OpenSpec) need force.
+    _ = mode
+    cmd = [
+        binary,
+        "-p",
+        prompt,
+        "--model",
+        model,
+        "--force",
+        "--trust",
+        "--sandbox",
+        "disabled",
+        "--output-format",
+        "text",
+        "--workspace",
+        str(project_root),
+    ]
+    result = _run(cmd, project_root)
+    result["runtime"] = "cursor-agent"
+    result["model"] = model
+    result["mode"] = mode
+    result["result_text"] = result["stdout"]
+    return result
+
+
 def run_opencode_prompt(project_root: Path, prompt: str, *, mode: str = "plan") -> dict[str, Any]:
     model = default_model("opencode")
     cmd = [
@@ -326,9 +387,13 @@ def run_prompt(
     assert_natural_prompt(prompt)
     name = runtime or detect_runtime()
     if not name:
-        raise RuntimeError("no supported runtime on PATH (claude|opencode|pi|omp)")
+        raise RuntimeError(
+            "no supported runtime on PATH (claude|cursor-agent|opencode|pi|omp)"
+        )
     if name == "claude":
         return run_claude_prompt(project_root, prompt, mode=mode)
+    if name == "cursor-agent":
+        return run_cursor_agent_prompt(project_root, prompt, mode=mode)
     if name == "opencode":
         return run_opencode_prompt(project_root, prompt, mode=mode)
     if name in {"pi", "omp"}:

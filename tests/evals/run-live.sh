@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 export EVALS_LIVE=1
-export EVALS_PREFER="${EVALS_PREFER:-opencode,pi,omp,claude}"
+export EVALS_PREFER="${EVALS_PREFER:-claude,cursor-agent,opencode,pi,omp}"
 export EVALS_MODEL="${EVALS_MODEL:-}"
 export EVALS_TRIALS="${EVALS_TRIALS:-1}"
 export EVALS_TIMEOUT_SEC="${EVALS_TIMEOUT_SEC:-600}"

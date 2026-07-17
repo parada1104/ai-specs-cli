@@ -105,6 +105,7 @@ class HarnessSmokeTests(unittest.TestCase):
         from tests.evals.lib.harness import default_model
 
         self.assertEqual(DEFAULT_MODELS["claude"], "opus")
+        self.assertEqual(DEFAULT_MODELS["cursor-agent"], "composer-2.5")
         self.assertTrue(
             DEFAULT_MODELS["opencode"].startswith("cursorapi/"),
             DEFAULT_MODELS["opencode"],
@@ -112,6 +113,7 @@ class HarnessSmokeTests(unittest.TestCase):
         self.assertEqual(DEFAULT_MODELS["opencode"], DEFAULT_MODELS["pi"])
         self.assertEqual(DEFAULT_MODELS["opencode"], DEFAULT_MODELS["omp"])
         self.assertEqual(default_model("opencode"), "cursorapi/composer-2.5")
+        self.assertEqual(default_model("cursor-agent"), "composer-2.5")
 
     def test_opencode_family_rejects_anthropic_model_override(self):
         import os
@@ -123,6 +125,106 @@ class HarnessSmokeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 default_model("opencode")
             self.assertIn("cursorapi/", str(ctx.exception))
+
+    def test_cursor_agent_rejects_cursorapi_model_override(self):
+        import os
+        from unittest import mock
+
+        from tests.evals.lib.harness import default_model
+
+        with mock.patch.dict(os.environ, {"EVALS_MODEL": "cursorapi/composer-2.5"}):
+            with self.assertRaises(RuntimeError) as ctx:
+                default_model("cursor-agent")
+            self.assertIn("composer-2.5", str(ctx.exception))
+
+    def test_cursor_agent_model_env_uses_underscore(self):
+        import os
+        from unittest import mock
+
+        from tests.evals.lib.harness import default_model
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in {"EVALS_MODEL", "EVALS_MODEL_CURSOR_AGENT"}
+        }
+        env["EVALS_MODEL_CURSOR_AGENT"] = "composer-2.5-fast"
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(default_model("cursor-agent"), "composer-2.5-fast")
+
+    def test_setup_runtime_skills_cursor_agent(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        dest = setup_runtime_skills(
+            root, "cursor-agent", "git-pr-flow", catalog_root=REPO_ROOT / "catalog"
+        )
+        self.assertEqual(
+            dest,
+            root / ".cursor" / "skills" / "git-merge-workflow" / "SKILL.md",
+        )
+        self.assertTrue(dest.is_file())
+
+    def test_resolve_runtime_binary_cursor_agent(self):
+        import os
+        from unittest import mock
+
+        from tests.evals.lib.harness import resolve_runtime_binary, runtime_available
+
+        with mock.patch("tests.evals.lib.harness.shutil.which") as which:
+            which.side_effect = lambda name: {
+                "cursor-agent": "/bin/cursor-agent",
+                "agent": "/bin/agent",
+            }.get(name)
+            self.assertEqual(resolve_runtime_binary("cursor-agent"), "/bin/cursor-agent")
+            self.assertTrue(runtime_available("cursor-agent"))
+
+        with mock.patch("tests.evals.lib.harness.shutil.which") as which:
+            which.side_effect = lambda name: {
+                "agent": "/bin/agent",
+            }.get(name)
+            self.assertEqual(resolve_runtime_binary("cursor-agent"), "/bin/agent")
+
+        with mock.patch("tests.evals.lib.harness.shutil.which", return_value=None):
+            self.assertIsNone(resolve_runtime_binary("cursor-agent"))
+            self.assertFalse(runtime_available("cursor-agent"))
+
+    def test_selected_runtimes_accepts_cursor_agent(self):
+        import os
+        from unittest import mock
+
+        from tests.evals import eval_vcs_pr_flow_live as live
+
+        with mock.patch.dict(os.environ, {"EVALS_RUNTIMES": "cursor-agent"}, clear=False):
+            with mock.patch.object(live, "runtime_available", return_value=True):
+                with mock.patch.object(live, "api_key_present", return_value=True):
+                    self.assertEqual(live._selected_runtimes(), ["cursor-agent"])
+
+    def test_forbidden_command_line_allows_counterexample_emoji(self):
+        from tests.evals.eval_vcs_pr_flow_live import forbidden_command_line_violations
+
+        text = (
+            "# merge plan\n"
+            "gh pr merge 42 --squash\n"
+            "gh pr merge --squash --delete-branch   # ❌\n"
+        )
+        self.assertEqual(
+            forbidden_command_line_violations(
+                text,
+                starts_with="gh pr merge",
+                must_not_contain="--delete-branch",
+            ),
+            [],
+        )
+        bad = "gh pr merge 42 --squash --delete-branch\n"
+        self.assertEqual(
+            forbidden_command_line_violations(
+                bad,
+                starts_with="gh pr merge",
+                must_not_contain="--delete-branch",
+            ),
+            ["gh pr merge 42 --squash --delete-branch"],
+        )
 
     def test_live_gate_requires_env(self):
         if live_enabled() and runtime_available():
@@ -137,7 +239,7 @@ class HarnessSmokeTests(unittest.TestCase):
         from tests.evals import eval_plan_build_flow_live as live
 
         with mock.patch.dict(os.environ, {"EVALS_RUNTIMES": "claude"}, clear=False):
-            with mock.patch.object(live.shutil, "which", return_value="/bin/claude"):
+            with mock.patch.object(live, "runtime_available", return_value=True):
                 with mock.patch.object(live, "api_key_present", return_value=False):
                     self.assertEqual(live._selected_runtimes(), [])
                 with mock.patch.object(live, "api_key_present", return_value=True):

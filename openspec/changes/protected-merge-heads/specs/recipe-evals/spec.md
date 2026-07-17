@@ -36,16 +36,23 @@ Live entrypoints SHALL NOT mix capability clients in one process. At minimum:
 - **THEN** it SHALL invoke `eval_vcs_pr_flow_live`
 - **AND** SHALL NOT invoke `eval_plan_build_flow_live`
 
-### Requirement: Non-Claude live defaults use API for Cursor
+### Requirement: Live runtime model routing
 
-For `opencode`, `pi`, and `omp`, the harness default model SHALL use the
-OpenCode provider id `cursorapi` (display name "API for Cursor"), e.g.
-`cursorapi/composer-2.5`. Those runtimes SHALL NOT use `anthropic/*` models or
-an Anthropic API-key path. `claude` SHALL use the Claude Code subscription via
-the `claude` CLI (default model id `opus`).
+Supported live runtimes SHALL include `claude`, `cursor-agent`, `opencode`,
+`pi`, and `omp`.
 
-`EVALS_MODEL` / `EVALS_MODEL_<RUNTIME>` may override, but for OpenCode-family
-overrides MUST start with `cursorapi/` or the harness SHALL error.
+- `claude` SHALL use the Claude Code subscription via the `claude` CLI
+  (default model id `opus`).
+- `cursor-agent` SHALL use the Cursor Agent subscription via `cursor-agent` or
+  `agent` (default model id `composer-2.5`). Skills SHALL materialize under
+  `.cursor/skills`. The IDE shim named `cursor` MUST NOT be treated as the
+  agent binary. Overrides via `EVALS_MODEL` / `EVALS_MODEL_CURSOR_AGENT` MUST
+  NOT use OpenCode `cursorapi/*` paths.
+- `opencode`, `pi`, and `omp` SHALL default to the OpenCode provider id
+  `cursorapi` (display name "API for Cursor"), e.g. `cursorapi/composer-2.5`.
+  Those runtimes SHALL NOT use `anthropic/*` models or an Anthropic API-key
+  path. OpenCode-family overrides MUST start with `cursorapi/` or the harness
+  SHALL error.
 
 #### Scenario: Default models prefer cursorapi for OpenCode-family
 - **GIVEN** `DEFAULT_MODELS` in the eval harness
@@ -56,3 +63,11 @@ overrides MUST start with `cursorapi/` or the harness SHALL error.
 - **GIVEN** `EVALS_MODEL=anthropic/claude-sonnet-4-6`
 - **WHEN** `default_model("opencode")` runs
 - **THEN** it SHALL raise an error mentioning `cursorapi/`
+
+#### Scenario: cursor-agent is a first-class runtime
+- **GIVEN** `SUPPORTED_RUNTIMES` and `DEFAULT_MODELS`
+- **WHEN** `cursor-agent` is selected
+- **THEN** the default model SHALL be `composer-2.5`
+- **AND** `setup_runtime_skills(..., "cursor-agent", ...)` SHALL write under
+  `.cursor/skills/`
+- **AND** `EVALS_MODEL=cursorapi/...` SHALL raise an error for `cursor-agent`
