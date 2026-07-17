@@ -26,16 +26,19 @@ min_version = "2.0.0"
 required = false
 type = "string"
 default = "main"
+help_text = "Integration/base branch for PRs (e.g. main or development). PRs target this branch."
 
 [config.expected_owner]
 required = false
 type = "string"
 default = ""
+help_text = "GitHub org or user that should own the remote (for multi-account gh). Leave empty to skip owner checks. See: gh auth status / gh auth switch."
 
 [config.auto_switch_account]
 required = false
-type = "boolean"
+type = "bool"
 default = false
+help_text = "If true, try gh auth switch when the active account does not match expected_owner. Requires gh CLI: https://cli.github.com/"
 
 [provides]
 skills = [{ id = "git-merge-workflow", source = "bundled" }]

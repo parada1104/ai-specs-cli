@@ -225,14 +225,18 @@ def _enabled_recipe_ids(project_root: Path) -> list[str]:
 
 
 def _offer_envrc(project_root: Path) -> None:
-    """Prompt for MCP env vars, write .envrc, run direnv allow."""
+    """Prompt for MCP env vars, write .envrc, run direnv allow.
+
+    Soft-fails on prompt/write errors so configure-recipes is not aborted
+    (matches recipe-add / init_tui degraded paths).
+    """
     try:
         envrc = _load_sibling("envrc-scaffold")
     except Exception:
         return
-    import questionary
     from rich.console import Console
 
+    console = Console()
     try:
         vars_map = envrc.collect_env_vars(project_root)
     except Exception:
@@ -240,22 +244,32 @@ def _offer_envrc(project_root: Path) -> None:
     if not vars_map:
         return
 
-    console = Console()
-    values = envrc.prompt_env_vars(project_root)
+    try:
+        values = envrc.prompt_env_vars(project_root)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]No se pudieron configurar variables de entorno: {exc}[/yellow]")
+        return
     if values is None:
         return
     if not values:
         return
 
-    path = envrc.write_envrc(project_root, values)
-    console.print(f"[green]✓[/green] escrito {path}")
+    try:
+        path = envrc.write_envrc(project_root, values)
+        console.print(f"[green]✓[/green] escrito {path}")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]No se pudo escribir .envrc: {exc}[/yellow]")
+        return
 
-    if not envrc.direnv_allow(project_root):
-        print("  ! direnv no está instalado o no se pudo ejecutar.", file=sys.stderr)
-        print("    Instalalo con: brew install direnv", file=sys.stderr)
-        print("    Despues corre: direnv allow", file=sys.stderr)
-    else:
-        print("  ✓ direnv allow — las variables están activas en esta terminal")
+    try:
+        if not envrc.direnv_allow(project_root):
+            print("  ! direnv no está instalado o no se pudo ejecutar.", file=sys.stderr)
+            print("    Instalalo con: brew install direnv", file=sys.stderr)
+            print("    Despues corre: direnv allow", file=sys.stderr)
+        else:
+            print("  ✓ direnv allow — las variables están activas en esta terminal")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]direnv allow falló: {exc}[/yellow]")
 
 
 def main(argv: list[str] | None = None) -> int:

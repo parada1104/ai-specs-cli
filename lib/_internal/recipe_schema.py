@@ -455,6 +455,9 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
         if not isinstance(required, bool):
             raise RecipeValidationError(f"{context}.config.{key}: missing or invalid 'required' (must be boolean)")
         field_type = str(value.get("type", ""))
+        # Catalog recipes historically use type = "boolean"; wizard expects "bool".
+        if field_type == "boolean":
+            field_type = "bool"
         default = value.get("default")
 
         allowed_field_keys = {"required", "type", "default", "validation", "enum", "help_text"}

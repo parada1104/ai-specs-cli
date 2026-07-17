@@ -261,6 +261,26 @@ class RecipeSchemaTests(unittest.TestCase):
             self.assertEqual(isolation["restricted_tools"], ["trello_set_active_board"])
             self.assertEqual(isolation["card_validation_required"], True)
 
+    def test_boolean_type_normalizes_to_bool(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = Path(tmp) / "bool-alias"
+            recipe_dir.mkdir()
+            (recipe_dir / "recipe.toml").write_text(
+                '[recipe]\n'
+                'id = "bool-alias"\n'
+                'name = "Bool Alias"\n'
+                'description = "D"\n'
+                'version = "1.0"\n'
+                '\n'
+                '[config.auto_switch_account]\n'
+                'required = false\n'
+                'type = "boolean"\n'
+                'default = false\n'
+            )
+            data = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+            field = data.config_schema.fields["auto_switch_account"]
+            self.assertEqual(field.type, "bool")
+
 
 class RecipeTagsConflictsTests(unittest.TestCase):
     """Card #27 — RED: Recipe.tags and Recipe.conflicts_with parsing/validation."""

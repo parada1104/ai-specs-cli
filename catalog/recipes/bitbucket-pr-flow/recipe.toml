@@ -24,16 +24,19 @@ install_url = "https://bitbucket-cli.paulvanderlei.com/getting-started/installat
 required = false
 type = "string"
 default = "development"
+help_text = "Integration/base branch for PRs (e.g. main or development). PRs target this branch."
 
 [config.expected_owner]
 required = false
 type = "string"
 default = ""
+help_text = "Bitbucket workspace or user that should own the remote (multi-account). Leave empty to skip."
 
 [config.auto_switch_account]
 required = false
-type = "boolean"
+type = "bool"
 default = false
+help_text = "If true, try to switch bb CLI account when it does not match expected_owner. Install: https://bitbucket-cli.paulvanderlei.com/getting-started/installation/"
 
 [provides]
 skills = [{ id = "bitbucket-merge-workflow", source = "bundled" }]

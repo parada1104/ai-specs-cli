@@ -32,16 +32,19 @@ install_url = "https://jqlang.github.io/jq/download/"
 required = false
 type = "string"
 default = "development"
+help_text = "Integration/base branch for MRs (e.g. main or development). MRs target this branch."
 
 [config.expected_owner]
 required = false
 type = "string"
 default = ""
+help_text = "GitLab group or user that should own the remote (multi-account). Leave empty to skip. See: glab auth status — https://gitlab.com/gitlab-org/cli"
 
 [config.auto_switch_account]
 required = false
-type = "boolean"
+type = "bool"
 default = false
+help_text = "If true, prefer re-auth when the active glab account does not match expected_owner. Install: https://gitlab.com/gitlab-org/cli#installation"
 
 [provides]
 skills = [{ id = "gitlab-merge-workflow", source = "bundled" }]
