@@ -153,6 +153,44 @@ class ProjectCacheTests(unittest.TestCase):
         # .deps/ cleanup is independent and should have proceeded
         self.assertFalse((root / "ai-specs" / ".deps").exists())
 
+    def test_remove_legacy_origin_deletes_resolved_skills_and_internal(self):
+        root = self._tmp_project()
+        (root / "ai-specs" / ".resolved-skills" / "old").mkdir(parents=True)
+        (root / "ai-specs" / ".internal" / "resolved-skills" / "old").mkdir(
+            parents=True
+        )
+        (root / "ai-specs" / ".resolved-skills" / "old" / "SKILL.md").write_text(
+            "x\n"
+        )
+
+        self.mod.remove_legacy_origin(root)
+
+        self.assertFalse((root / "ai-specs" / ".resolved-skills").exists())
+        self.assertFalse((root / "ai-specs" / ".internal").exists())
+
+    def test_remove_legacy_origin_deletes_stale_premerge_bin(self):
+        root = self._tmp_project()
+        bin_dir = root / "ai-specs" / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "premerge_guardian.py").write_text("stale\n")
+        (bin_dir / "keep-me.sh").write_text("#!/bin/sh\n")
+
+        self.mod.remove_legacy_origin(root)
+
+        self.assertFalse((bin_dir / "premerge_guardian.py").exists())
+        self.assertTrue((bin_dir / "keep-me.sh").is_file())
+        self.assertTrue(bin_dir.is_dir())
+
+    def test_remove_legacy_origin_removes_empty_bin_after_guardian(self):
+        root = self._tmp_project()
+        bin_dir = root / "ai-specs" / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "premerge_guardian.py").write_text("stale\n")
+
+        self.mod.remove_legacy_origin(root)
+
+        self.assertFalse(bin_dir.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -52,8 +52,3 @@ workflow_rules = [
 [[provides.docs]]
 source = "README.md"
 target = "ai-specs/recipes/bitbucket-pr-flow/README.md"
-
-[[provides.templates]]
-source = "templates/premerge_guardian.py"
-target = "ai-specs/bin/premerge_guardian.py"
-condition = "not_exists"

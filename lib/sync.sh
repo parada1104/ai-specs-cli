@@ -65,6 +65,7 @@ TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"
 TARGET_RESOLVE_PY="$AI_SPECS_HOME/lib/_internal/target-resolve.py"
 VENDOR_SKILLS_PY="$AI_SPECS_HOME/lib/_internal/vendor-skills.py"
 GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
+GITIGNORE_ROOT_REFRESH="$AI_SPECS_HOME/lib/_internal/gitignore-root-refresh.py"
 REFRESH_BUNDLED_PY="$AI_SPECS_HOME/lib/_internal/refresh-bundled.py"
 CLI_VERSION_PY="$AI_SPECS_HOME/lib/_internal/cli_version.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
@@ -107,6 +108,9 @@ echo ""
 
 echo "▸ gitignore-render (root)"
 python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$AI_GITIGNORE"
+
+echo "▸ gitignore-root-refresh (agent block)"
+python3 "$GITIGNORE_ROOT_REFRESH" "$ROOT_PATH" "$AI_SPECS_HOME/templates/gitignore-root.tmpl"
 
 echo "▸ refresh-bundled (root)"
 python3 "$REFRESH_BUNDLED_PY" "$ROOT_PATH" "$AI_SPECS_HOME"

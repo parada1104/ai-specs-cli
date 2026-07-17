@@ -108,6 +108,21 @@ class TestIsInitialized(unittest.TestCase):
             self.assertFalse(self.mod.is_initialized(root))
 
 
+class TestIsInternalTestRecipe(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = _load()
+
+    def test_true_for_test_prefix(self):
+        self.assertTrue(self.mod.is_internal_test_recipe("test-fixture"))
+        self.assertTrue(self.mod.is_internal_test_recipe("test-conflict-a"))
+
+    def test_false_for_public_recipes(self):
+        self.assertFalse(self.mod.is_internal_test_recipe("trello-mcp-workflow"))
+        self.assertFalse(self.mod.is_internal_test_recipe("tdd-flow"))
+        self.assertFalse(self.mod.is_internal_test_recipe("testing-helpers"))
+
+
 def _force_missing_deps():
     """Remove rich/questionary from importability."""
     _scrub_tui_modules()

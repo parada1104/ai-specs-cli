@@ -103,7 +103,12 @@ def _warn(msg: str) -> None:
 
 
 def remove_legacy_origin(project_root: Path) -> None:
-    """Migrate leftover overrides, then delete in-project .recipe and .deps."""
+    """Migrate leftover overrides, then delete in-project origin leftovers.
+
+    Removes legacy origin trees (``.recipe``, ``.deps``), obsolete skill-cache
+    dirs (``.resolved-skills``, ``.internal``), and the stale shared helper
+    formerly staged at ``ai-specs/bin/premerge_guardian.py``.
+    """
     root = Path(project_root)
     ai_specs = root / "ai-specs"
     legacy_recipe = ai_specs / ".recipe"
@@ -147,6 +152,35 @@ def remove_legacy_origin(project_root: Path) -> None:
             print(f"  ✓ removed leftover ai-specs/{label}/")
         except OSError as exc:
             _warn(f"failed to remove leftover ai-specs/{label}/: {exc}")
+
+    for path, label in (
+        (ai_specs / ".resolved-skills", ".resolved-skills"),
+        (ai_specs / ".internal", ".internal"),
+    ):
+        if not path.exists():
+            continue
+        try:
+            shutil.rmtree(path)
+            print(f"  ✓ removed leftover ai-specs/{label}/")
+        except OSError as exc:
+            _warn(f"failed to remove leftover ai-specs/{label}/: {exc}")
+
+    guardian = ai_specs / "bin" / "premerge_guardian.py"
+    if guardian.is_file() or guardian.is_symlink():
+        try:
+            guardian.unlink()
+            print("  ✓ removed leftover ai-specs/bin/premerge_guardian.py")
+        except OSError as exc:
+            _warn(f"failed to remove leftover ai-specs/bin/premerge_guardian.py: {exc}")
+
+    bin_dir = ai_specs / "bin"
+    if bin_dir.is_dir():
+        try:
+            if not any(bin_dir.iterdir()):
+                bin_dir.rmdir()
+                print("  ✓ removed empty ai-specs/bin/")
+        except OSError as exc:
+            _warn(f"failed to remove empty ai-specs/bin/: {exc}")
 
 
 def merge_commands(

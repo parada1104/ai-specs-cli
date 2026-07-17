@@ -155,6 +155,30 @@ class TestCatalogRecipes(unittest.TestCase):
             ids = [r["id"] for r in recipes]
             self.assertEqual(ids, ["good-one"])
 
+    def test_hides_internal_test_recipes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            catalog = home / "catalog" / "recipes"
+            good = catalog / "good-one"
+            internal = catalog / "test-fixture"
+            good.mkdir(parents=True)
+            internal.mkdir(parents=True)
+            (good / "recipe.toml").write_text(
+                '[recipe]\nid = "good-one"\nname = "Good"\nversion = "1.0.0"\n'
+                'description = "ok"\n',
+                encoding="utf-8",
+            )
+            (internal / "recipe.toml").write_text(
+                '[recipe]\nid = "test-fixture"\nname = "Test Fixture"\n'
+                'version = "1.0.0"\ndescription = "internal"\n',
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, {"AI_SPECS_HOME": str(home)}):
+                recipes = self.mod._catalog_recipes()
+            ids = [r["id"] for r in recipes]
+            self.assertEqual(ids, ["good-one"])
+            self.assertFalse(any(rid.startswith("test-") for rid in ids))
+
 
 class TestEnsureDepsAndMain(unittest.TestCase):
     @classmethod
