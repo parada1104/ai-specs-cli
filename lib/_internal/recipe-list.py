@@ -14,22 +14,25 @@ from pathlib import Path
 from typing import Any
 
 
-def _load_toml_read():
-    module_path = Path(__file__).with_name("toml-read.py")
-    spec = importlib.util.spec_from_file_location("toml_read_internal", module_path)
+def _load_sibling(name: str):
+    module_path = Path(__file__).with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(f"{name}_internal", module_path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _load_toml_read():
+    return _load_sibling("toml-read")
 
 
 def _load_recipe_read():
-    module_path = Path(__file__).with_name("recipe-read.py")
-    spec = importlib.util.spec_from_file_location("recipe_read_internal", module_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return _load_sibling("recipe-read")
+
+
+def _load_util():
+    return _load_sibling("util")
 
 
 def _resolve_catalog_dir(project_root: Path) -> Path:
@@ -60,11 +63,17 @@ def list_recipes(project_root: Path) -> list[dict[str, str]]:
         except Exception:
             pass
 
+    util = _load_util()
+
     # Scan catalog
     results: list[dict[str, str]] = []
     if catalog_dir.is_dir():
         for entry in sorted(catalog_dir.iterdir()):
-            if not entry.is_dir() or entry.name.startswith("."):
+            if (
+                not entry.is_dir()
+                or entry.name.startswith(".")
+                or util.is_internal_test_recipe(entry.name)
+            ):
                 continue
             recipe_id = entry.name
             try:

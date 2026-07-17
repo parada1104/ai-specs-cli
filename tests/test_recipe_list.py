@@ -130,12 +130,32 @@ class RecipeListTests(unittest.TestCase):
         results = self.mod.list_recipes(project)
         self.assertEqual(results, [])
 
+    def test_list_hides_internal_test_recipes(self):
+        manifest = '[project]\nname = "test"\n'
+        public = (
+            '[recipe]\nid = "public-recipe"\nname = "Public"\n'
+            'description = "Desc"\nversion = "1.0.0"\n'
+        )
+        internal = (
+            '[recipe]\nid = "test-fixture"\nname = "Test Fixture"\n'
+            'description = "internal"\nversion = "1.0.0"\n'
+        )
+        project = self._make_project(manifest)
+        self._set_ai_specs_home(
+            self._make_cli_home({"public-recipe": public, "test-fixture": internal})
+        )
+        results = self.mod.list_recipes(project)
+        ids = [r["id"] for r in results]
+        self.assertEqual(ids, ["public-recipe"])
+        self.assertFalse(any(rid.startswith("test-") for rid in ids))
+
     def test_list_uses_cli_catalog_when_project_has_no_local_catalog(self):
         manifest = '[project]\nname = "test"\n'
         project = self._make_project(manifest)
         self._set_ai_specs_home(ROOT)
         results = self.mod.list_recipes(project)
         self.assertTrue(any(r["id"] == "trello-mcp-workflow" for r in results))
+        self.assertFalse(any(r["id"].startswith("test-") for r in results))
 
     def test_invalid_recipe_toml_shows_error(self):
         manifest = '[project]\nname = "test"\n'
@@ -175,7 +195,13 @@ class RecipeListTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(proc.returncode, 0)
-        self.assertIn("test-fixture", proc.stdout)
+        self.assertIn("trello-mcp-workflow", proc.stdout)
+        self.assertNotIn("test-fixture", proc.stdout)
+        for line in proc.stdout.splitlines():
+            # status column then id — reject any catalog id starting with test-
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].startswith("test-"):
+                self.fail(f"internal test recipe leaked into CLI list: {line!r}")
 
 
 if __name__ == "__main__":
