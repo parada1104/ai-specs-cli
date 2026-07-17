@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-07-17
+
+### Added
+- **Local `release-flow` skill**: Dogfooded playbook for bump → `development`, promote via disposable `release/v*` → `main`, tag + GitHub release (product policy kept out of `vcs-pr-flow`).
+- **VCS behavior evals**: Live/dry scenarios for git/gitlab/bitbucket PR flow, including protected-head and preferred release-head ACs; `cursor-agent` as a first-class eval runtime.
+
+### Fixed
+- **Protected merge heads**: Merge cleanup no longer deletes long-lived heads (`development`/`main`/`staging`); prefer `release/v*` into `main`; GitHub `delete_branch_on_merge` preflight before promote.
+
 ## [0.14.0] — 2026-07-16
 
 ### Added
