@@ -1,0 +1,16 @@
+id = "ac_release_head_preferred"
+recipe_id = "git-pr-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Prefer release/v* head into main over development"
+forbidden_path_globs = []
+required_path_globs = ["ai-specs/eval-notes/merge-plan.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["release/v"] },
+]
+forbidden_content = [
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = [
+    "usar development como head del release",
+    "use development as the release head",
+  ] },
+]

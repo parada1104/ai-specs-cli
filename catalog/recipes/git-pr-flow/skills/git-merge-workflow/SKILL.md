@@ -91,11 +91,45 @@ fi
 
 When `expected_owner` is empty (default), skip this block entirely — no extra CLI calls.
 
+### Runtime Preflight: delete_branch_on_merge (GitHub)
+
+GitHub's `delete_branch_on_merge` is **repo-wide** — it cannot exempt `development`
+or other long-lived heads. Before merge (and when advising release PRs), check it:
+
+```bash
+# Runtime Preflight: delete_branch_on_merge (GitHub)
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+AUTO_DELETE=$(gh api "repos/$REPO" --jq .delete_branch_on_merge)
+if [ "$AUTO_DELETE" = "true" ]; then
+  echo "⚠ ai-specs: delete_branch_on_merge is true — long-lived heads"
+  echo "  (development/staging) can be wiped if used as a PR head."
+  echo "Remediation (needs admin; run only with explicit user approval):"
+  echo "  gh api -X PATCH repos/$REPO -f delete_branch_on_merge=false"
+  echo "Do not rely on GitHub auto-delete for feature cleanup — this skill"
+  echo "deletes feature heads explicitly after merge."
+fi
+```
+
+Do **not** auto-PATCH without explicit user approval.
+
+## Head branch class
+
+Before merge and cleanup, resolve `HEAD_BRANCH` = the PR head (source) branch name.
+
+**Protected heads** (exact match): `main`, `master`, `development`, `staging`,
+plus configured `[recipes.git-pr-flow.config].base_branch` and (when set)
+`[recipes.worktree-flow.config].integration_branch`.
+
+**Feature heads**: everything else — including `release/vX.Y.Z`, `feat/*`, `fix/*`.
+
+Prefer shipping to `main` from a disposable `release/vX.Y.Z` head, not from
+`development` as the PR head.
+
 ## Workflow
 
 1. Inspect current branch, worktree path, and `git status`.
 2. Run or confirm any verification required before merge.
-3. Run **Runtime Preflight: Account Match** (see above).
+3. Run **Runtime Preflight: Account Match** and **delete_branch_on_merge** (above).
 4. Push the feature branch:
 
 ```bash
@@ -127,16 +161,31 @@ Sync materializes that helper into consumer projects. In the ai-specs monorepo,
 Do **not** merge if `openspec/changes/<slug>/` still exists, or if
 `openspec/changes/archive/<slug>/` is missing tier files.
 
-7. Merge only after explicit user approval, required checks/review, archive on
-   the review branch, and a clean guardian result:
+7. Classify `HEAD_BRANCH` (see **Head branch class**). Merge only after explicit
+   user approval, required checks/review, archive on the review branch, and a
+   clean guardian result:
 
 ```bash
+# Feature head — delete remote source via gh
+gh pr merge --squash --delete-branch
+
+# Protected head — never pass --delete-branch
 gh pr merge --squash
 ```
 
-8. After the PR is merged, **leave the worktree first** (`cd` to the main repo
-   root — never remove while `$PWD` is inside the worktree). Prefer the
-   worktree-flow cleanup script:
+8. After the PR is merged, sync the integration branch. **Post-merge worktree /
+   local / remote branch cleanup runs only for feature heads.** For a protected
+   head, skip worktree remove, `git branch -D`, and `git push origin --delete`
+   for that head — only sync the base:
+
+```bash
+git checkout <integration-branch>
+git pull --ff-only origin <integration-branch>
+```
+
+For a **feature** head, leave the worktree first (`cd` to the main repo root —
+never remove while `$PWD` is inside the worktree). Prefer the worktree-flow
+cleanup script:
 
 ```bash
 cd <main-repo-root>
@@ -157,17 +206,11 @@ git branch -D <branch-name>
 > is safe here because the PR was already merged. Stop without deleting if the
 > worktree is dirty.
 
-If the remote feature branch still exists after merge, delete it explicitly:
+If the remote feature branch still exists after merge (e.g. merge without
+`--delete-branch`), delete it explicitly — **feature heads only**:
 
 ```bash
 git push origin --delete <branch-name>
-```
-
-9. Sync the integration branch:
-
-```bash
-git checkout <integration-branch>
-git pull --ff-only origin <integration-branch>
 ```
 
 ## Guardrails
@@ -175,5 +218,8 @@ git pull --ff-only origin <integration-branch>
 - Never merge locally with `git merge` for feature work that should go through PR.
 - Never push, merge, delete branches, or remove worktrees without explicit user instruction.
 - Never remove a worktree before confirming the PR is merged and no uncommitted work remains.
+- Never delete a protected head (`main` / `master` / `development` / `staging` /
+  configured base or integration branch) via `--delete-branch`, worktree cleanup,
+  or `git push --delete`.
 - Preserve unrelated changes; stop and ask if cleanup would touch them.
 - If `gh` is unavailable or unauthenticated, stop with the exact blocker.

@@ -1,0 +1,6 @@
+El PR de la rama feat/widget-fix hacia development está aprobado. Escribe en
+ai-specs/eval-notes/merge-plan.md los comandos exactos de merge squash y
+cleanup post-merge (incluyendo borrar la rama remota/feature y el worktree
+si aplica). No ejecutes los comandos; solo documenta el plan.
+
+Importante: NO ejecutes comandos de shell ni gh/glab/bb/git. Solo crea/edita ai-specs/eval-notes/merge-plan.md con el plan y termina.

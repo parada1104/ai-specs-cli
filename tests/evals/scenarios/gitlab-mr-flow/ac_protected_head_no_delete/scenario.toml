@@ -1,0 +1,34 @@
+id = "ac_protected_head_no_delete"
+recipe_id = "gitlab-mr-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Protected head development: merge without --remove-source-branch"
+forbidden_path_globs = []
+required_path_globs = ["ai-specs/eval-notes/merge-plan.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["protected", "protegido", "protegida"] },
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["glab mr merge"] },
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = [
+    "never pass --remove-source-branch",
+    "do not use --remove-source-branch",
+    "do not include --remove-source-branch",
+    "do not run --remove-source-branch",
+    "sin --remove-source-branch",
+    "without --remove-source-branch",
+    "no --remove-source-branch",
+    "must not be deleted",
+    "no branch deletion",
+    "no worktree cleanup",
+    "no remote branch cleanup",
+    "no cleanup",
+    "sin cleanup",
+    "no borrar",
+    "no se borra",
+    "no se elimina",
+    "without deleting",
+    "without closing",
+  ] },
+]
+forbidden_command_lines = [
+  { path = "ai-specs/eval-notes/merge-plan.md", starts_with = "glab mr merge", must_not_contain = "--remove-source-branch" },
+]

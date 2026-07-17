@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import fnmatch
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -57,14 +56,16 @@ def _selected_runtimes() -> list[str]:
     else:
         names = [
             n.strip()
-            for n in os.environ.get("EVALS_PREFER", "opencode,pi,omp,claude").split(",")
+            for n in os.environ.get(
+                "EVALS_PREFER", "claude,cursor-agent,opencode,pi,omp"
+            ).split(",")
             if n.strip()
         ]
     out: list[str] = []
     for name in names:
         if name not in SUPPORTED_RUNTIMES:
             continue
-        if not shutil.which(name):
+        if not runtime_available(name):
             continue
         if not api_key_present(name):
             continue
@@ -186,6 +187,29 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
             self.assertTrue(
                 any(n in text for n in needles),
                 f"{runtime}/{name}: {rule['path']} missing any of {needles}",
+            )
+
+        for rule in meta.get("forbidden_content", []):
+            path = root / rule["path"]
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace").lower()
+            for needle in rule.get("contains_any", []):
+                self.assertNotIn(
+                    str(needle).lower(),
+                    text,
+                    f"{runtime}/{name}: {rule['path']} must not contain {needle!r}",
+                )
+
+        transcript = (result.get("result_text") or result.get("stdout") or "").lower()
+        for needle in meta.get("required_transcript_any", []):
+            # Soft: only enforce when no required_content path was written
+            if meta.get("required_content"):
+                break
+            self.assertIn(
+                str(needle).lower(),
+                transcript,
+                f"{runtime}/{name}: transcript missing {needle!r}",
             )
 
         if meta.get("assert_active_change_gone"):

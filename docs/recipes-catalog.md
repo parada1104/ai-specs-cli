@@ -173,6 +173,9 @@ gate_mode = "always"
 **GitHub branch → PR → merge flow.** Pushes the branch, opens a PR against the
 configured base, and merges *only* after explicit user approval. Uses the `gh` CLI.
 Sibling recipes cover GitLab and Bitbucket; select the host through `[[bindings]]`.
+Long-lived heads (`main` / `development` / `staging` / configured base) are not
+deleted after merge; prefer `release/vX.Y.Z` into `main`. The skill warns when
+repo-wide `delete_branch_on_merge` is enabled.
 
 - **Provides:** skill `git-merge-workflow`, command `/pr-create`; capability
   `vcs-pr-flow`.

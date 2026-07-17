@@ -50,6 +50,14 @@ Run `ai-specs sync` to materialize the bundled skill, `/bb-pr-create`, and this 
 | `expected_owner`      | no       | string  | `""`           | Account username this repo expects; activates auth preflight when set. |
 | `auto_switch_account` | no       | boolean | `false`        | Reserved for API parity; bb has no auth switch — mismatch blocks with guidance. |
 
+## Long-lived branches
+
+Protected heads (`main`, `master`, `development`, `staging`, plus configured
+`base_branch` / `integration_branch`) are **not** deleted after merge. The skill
+passes `--close-source-branch` only for feature heads. Keep Bitbucket UI "Close
+source branch" off for protected heads. Prefer `release/vX.Y.Z` → `main` for
+releases, not `development` as the PR source.
+
 ## Safety note
 
 Never push, create, or merge a PR without explicit user instruction. Feature work goes

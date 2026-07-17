@@ -78,6 +78,20 @@ if [ -n "$EXPECTED_OWNER" ]; then
 fi
 ```
 
+## Head branch class
+
+Before merge and cleanup, resolve `HEAD_BRANCH` = the PR source branch name.
+
+**Protected heads** (exact match): `main`, `master`, `development`, `staging`,
+plus configured `[recipes.bitbucket-pr-flow.config].base_branch` and (when set)
+`[recipes.worktree-flow.config].integration_branch`.
+
+**Feature heads**: everything else — including `release/vX.Y.Z`, `feat/*`, `fix/*`.
+
+Prefer shipping to `main` from a disposable `release/vX.Y.Z` head, not from
+`development` as the PR source. Keep Bitbucket UI "Close source branch" off for
+protected heads; this skill only passes `--close-source-branch` for feature heads.
+
 ## Workflow
 
 1. Inspect current branch, worktree path, and `git status`.
@@ -134,17 +148,32 @@ Do **not** merge if `openspec/changes/<slug>/` still exists, or if
 CURRENT_SHA=$(bb pr view <pr-id> --json --jq '.source.commit.hash')
 ```
 
-If `CURRENT_SHA` differs from `APPROVED_SHA`, stop and report that the branch moved after approval. Otherwise merge with squash and close the source branch:
+If `CURRENT_SHA` differs from `APPROVED_SHA`, stop and report that the branch
+moved after approval. Otherwise classify `HEAD_BRANCH` (see **Head branch class**)
+and merge with squash:
 
 ```bash
+# Feature head — close source branch
 bb pr merge <pr-id> --strategy squash --close-source-branch
+
+# Protected head — never pass --close-source-branch
+bb pr merge <pr-id> --strategy squash
 ```
 
 > **Note**: Re-checking the source commit ensures only the reviewed revision is merged. If the branch was updated between approval and merge, stop and ask the user to re-review.
 
-10. After the PR is merged, **leave the worktree first** (`cd` to the main repo
-   root — never remove while `$PWD` is inside the worktree). Prefer the
-   worktree-flow cleanup script:
+10. After the PR is merged, sync the integration branch. **Post-merge worktree /
+    local branch cleanup runs only for feature heads.** For a protected head,
+    skip worktree remove and `git branch -D` for that head — only sync the base:
+
+```bash
+git checkout <base_branch>
+git pull --ff-only $REMOTE <base_branch>
+```
+
+For a **feature** head, leave the worktree first (`cd` to the main repo root —
+never remove while `$PWD` is inside the worktree). Prefer the worktree-flow
+cleanup script:
 
 ```bash
 cd <main-repo-root>
@@ -165,18 +194,14 @@ git branch -D <branch-name>
 > is safe here because the PR was already merged. Stop without deleting if the
 > worktree is dirty.
 
-11. Sync the integration branch:
-
-```bash
-git checkout <base_branch>
-git pull --ff-only $REMOTE <base_branch>
-```
-
 ## Guardrails
 
 - Never merge locally with `git merge` for feature work that should go through PR.
 - Never push, merge, delete branches, or remove worktrees without explicit user instruction.
 - Never remove a worktree before confirming the PR is merged and no uncommitted work remains.
+- Never delete a protected head (`main` / `master` / `development` / `staging` /
+  configured base or integration branch) via `--close-source-branch`, worktree
+  cleanup, or remote branch delete.
 - Preserve unrelated changes; stop and ask if cleanup would touch them.
 - Never rely on implicit push behavior from the Bitbucket CLI — always push explicitly before creating the PR.
 - Never use options that merge without explicit user approval.
