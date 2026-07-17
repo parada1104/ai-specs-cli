@@ -1,0 +1,11 @@
+id = "ac_feature_head_cleanup"
+recipe_id = "gitlab-mr-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Feature head: merge with --remove-source-branch and worktree cleanup"
+forbidden_path_globs = []
+required_path_globs = ["ai-specs/eval-notes/merge-plan.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["--remove-source-branch"] },
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["worktree", "git branch -D"] },
+]

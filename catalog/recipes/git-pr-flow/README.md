@@ -49,6 +49,20 @@ Run `ai-specs sync` to materialize the bundled skill, `/pr-create`, and this doc
 
 - **`gh` CLI** installed and authenticated.
 
+## Long-lived branches
+
+Protected heads (`main`, `master`, `development`, `staging`, plus configured
+`base_branch` / `integration_branch`) are **not** deleted after merge. The merge
+skill warns when GitHub `delete_branch_on_merge` is enabled (repo-wide; no
+per-branch exempt) and documents:
+
+```bash
+gh api -X PATCH repos/{owner}/{repo} -f delete_branch_on_merge=false
+```
+
+Feature heads (including `release/vX.Y.Z`) are deleted explicitly by the skill.
+Prefer `release/vX.Y.Z` → `main` for releases, not `development` as the PR head.
+
 ## Safety note
 
 Never push, create, or merge a PR without explicit user instruction. Feature work goes

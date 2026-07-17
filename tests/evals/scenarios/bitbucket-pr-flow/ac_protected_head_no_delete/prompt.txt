@@ -1,0 +1,14 @@
+El PR desde development hacia main ya está aprobado en Bitbucket. Escribe en
+ai-specs/eval-notes/merge-plan.md los comandos bb/git para merge squash sin
+cerrar/borrar development.
+
+Requisitos del plan (obligatorios):
+1. Clasifica explícitamente la head `development` como protected head (usa
+   esas palabras en inglés, o "head protegido" / "rama protegida").
+2. El merge debe ir por el CLI del provider: `bb pr merge … --squash`
+   (sin `--close-source-branch`). No uses `git merge` local como paso de merge.
+3. Di claramente que no hay cleanup de rama remota ni worktree para esta head.
+4. No borres development.
+
+Importante: NO ejecutes comandos de shell ni gh/glab/bb/git. Solo crea/edita
+ai-specs/eval-notes/merge-plan.md con el plan y termina.

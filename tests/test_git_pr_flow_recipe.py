@@ -130,6 +130,27 @@ class GitPrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("git worktree remove", self.skill_text)
         self.assertIn("git push origin --delete", self.skill_text)
 
+    def test_skill_classifies_protected_heads(self):
+        """Skill skips delete/cleanup for protected long-lived heads."""
+        self.assertIn("Head branch class", self.skill_text)
+        self.assertIn("development", self.skill_text)
+        self.assertIn("staging", self.skill_text)
+        self.assertIn("Protected head", self.skill_text)
+        self.assertIn("--delete-branch", self.skill_text)
+        self.assertIn("never pass --delete-branch", self.skill_text.lower())
+
+    def test_skill_preflight_checks_delete_branch_on_merge(self):
+        """Skill warns when GitHub auto-deletes heads on merge."""
+        self.assertIn("delete_branch_on_merge", self.skill_text)
+        self.assertIn(
+            "gh api -X PATCH repos/$REPO -f delete_branch_on_merge=false",
+            self.skill_text,
+        )
+
+    def test_skill_prefers_release_head_for_main(self):
+        """Skill documents release/* heads for shipping to main."""
+        self.assertIn("release/v", self.skill_text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,5 @@
+Voy a publicar v1.2.0 a main en Bitbucket. Escribe en
+ai-specs/eval-notes/merge-plan.md qué source branch recomiendas para el PR
+de release (tipo release/v…) en lugar de development. No ejecutes el merge.
+
+Importante: NO ejecutes comandos de shell ni gh/glab/bb/git. Solo crea/edita ai-specs/eval-notes/merge-plan.md con el plan y termina.

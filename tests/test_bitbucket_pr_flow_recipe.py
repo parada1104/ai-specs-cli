@@ -223,8 +223,13 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("--body", self.skill_text)
 
     def test_skill_merge_closes_source_branch(self):
-        """Skill merge command includes --close-source-branch."""
+        """Skill merge command includes --close-source-branch for feature heads."""
         self.assertIn("--close-source-branch", self.skill_text)
+        self.assertIn("never pass --close-source-branch", self.skill_text.lower())
+        self.assertIn("Head branch class", self.skill_text)
+        self.assertIn("development", self.skill_text)
+        self.assertIn("staging", self.skill_text)
+        self.assertIn("release/v", self.skill_text)
 
     def test_skill_merge_uses_squash_strategy(self):
         """Skill merge command uses squash strategy."""

@@ -224,8 +224,13 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("--yes", self.skill_text)
 
     def test_skill_merge_removes_source_branch(self):
-        """Skill merge command includes --remove-source-branch."""
+        """Skill merge command includes --remove-source-branch for feature heads."""
         self.assertIn("--remove-source-branch", self.skill_text)
+        self.assertIn("never pass --remove-source-branch", self.skill_text.lower())
+        self.assertIn("Head branch class", self.skill_text)
+        self.assertIn("development", self.skill_text)
+        self.assertIn("staging", self.skill_text)
+        self.assertIn("release/v", self.skill_text)
 
     def test_skill_merge_uses_yes_flag(self):
         """Skill merge command includes --yes to skip interactive prompt."""

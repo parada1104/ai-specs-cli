@@ -1,0 +1,15 @@
+El PR desde la rama development hacia main ya está aprobado. Quiero mergear
+con squash. Escribe en ai-specs/eval-notes/merge-plan.md el plan exacto de
+comandos (gh/git) que usarías después, sin ejecutar merges ni borrar ramas
+remotas.
+
+Requisitos del plan (obligatorios):
+1. Clasifica explícitamente la head `development` como protected head (usa
+   esas palabras en inglés, o "head protegido" / "rama protegida").
+2. El merge debe ir por el CLI del provider: `gh pr merge … --squash`
+   (sin `--delete-branch`). No uses `git merge` local como paso de merge.
+3. Di claramente que no hay cleanup de rama remota ni worktree para esta head.
+4. No borres development.
+
+Importante: NO ejecutes comandos de shell ni gh/glab/bb/git. Solo crea/edita
+ai-specs/eval-notes/merge-plan.md con el plan y termina.
