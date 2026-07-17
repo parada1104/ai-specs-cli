@@ -6,8 +6,28 @@ description = "Protected head development: merge without --delete-branch"
 forbidden_path_globs = []
 required_path_globs = ["ai-specs/eval-notes/merge-plan.md"]
 required_content = [
-  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["protected"] },
-  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["never pass --delete-branch", "do not use", "do not run", "sin --delete-branch", "without --delete-branch", "no branch deletion"] },
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["protected", "protegido", "protegida"] },
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = ["gh pr merge"] },
+  { path = "ai-specs/eval-notes/merge-plan.md", contains_any = [
+    "never pass --delete-branch",
+    "do not use --delete-branch",
+    "do not include --delete-branch",
+    "do not run --delete-branch",
+    "sin --delete-branch",
+    "without --delete-branch",
+    "no --delete-branch",
+    "must not be deleted",
+    "no branch deletion",
+    "no worktree cleanup",
+    "no remote branch cleanup",
+    "no cleanup",
+    "sin cleanup",
+    "no borrar",
+    "no se borra",
+    "no se elimina",
+    "without deleting",
+    "without closing",
+  ] },
 ]
 forbidden_command_lines = [
   { path = "ai-specs/eval-notes/merge-plan.md", starts_with = "gh pr merge", must_not_contain = "--delete-branch" },
