@@ -425,12 +425,20 @@ def _section_workflow_rules(brief: dict, resolved: dict) -> list[str]:
     return lines
 
 
+# Always-on pointer so runtimes without skill auto-invoke still discover CLI literacy.
+HARNESS_CLI_LITERACY_POINTER = (
+    "For ai-specs harness operations (init, sync, recipes, skills/deps, doctor), "
+    "load the `harness-lifecycle`, `harness-recipes`, or `harness-skills-deps` "
+    "skills under `ai-specs/skills/`."
+)
+
+
 def _section_useful_commands(brief: dict, resolved: dict) -> list[str]:
     """Emit ## Useful Commands from test-runner binding, recipe fragments, and [brief].useful_commands.
 
-    Only emits commands that are explicitly provided (from test-runner binding,
-    recipe fragments, or [brief].useful_commands). Never fabricates commands via
-    string replacement.
+    Always includes the harness CLI literacy pointer. Other bullets are only those
+    explicitly provided (test-runner binding, recipe fragments, or
+    [brief].useful_commands) — never fabricated via string replacement.
     """
     recipes = resolved.get("recipes", {}) or {}
     bindings = resolved.get("bindings", {}) or {}
@@ -457,9 +465,6 @@ def _section_useful_commands(brief: dict, resolved: dict) -> list[str]:
         if cmd and cmd not in recipe_bullets:
             manifest_bullets.append(cmd)
 
-    if not test_command and not recipe_bullets and not manifest_bullets:
-        return []
-
     lines: list[str] = ["## Useful Commands", ""]
     if test_command:
         # Label heuristic: validate.sh = full suite; run.sh = focused/unit-only
@@ -471,6 +476,9 @@ def _section_useful_commands(brief: dict, resolved: dict) -> list[str]:
         lines.append(f"- {item}")
     for cmd in manifest_bullets:
         lines.append(f"- {cmd}")
+    emitted = {line[2:] for line in lines if line.startswith("- ")}
+    if HARNESS_CLI_LITERACY_POINTER not in emitted:
+        lines.append(f"- {HARNESS_CLI_LITERACY_POINTER}")
     lines.append("")
     return lines
 

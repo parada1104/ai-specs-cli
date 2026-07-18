@@ -844,9 +844,10 @@ class RecipeCliDepsDoctorTests(unittest.TestCase):
         (project / "ai-specs").mkdir(parents=True)
         (project / "AGENTS.md").write_text("# agents\n")
         # Satisfy bundled-asset checks so recipe-dep WARN can keep exit code 0.
-        for skill in ("skill-creator", "skill-sync"):
+        for skill in self.doctor.bundled_skill_names():
             (project / "ai-specs" / "skills" / skill).mkdir(parents=True, exist_ok=True)
         (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+        (project / "ai-specs" / "commands" / "placeholder.md").write_text("# placeholder\n")
         flag = "true" if enabled else "false"
         (project / "ai-specs" / "ai-specs.toml").write_text(
             '[project]\nname = "demo"\n\n'
@@ -1075,7 +1076,7 @@ class CommandsEmptyExpectedDoctorTests(unittest.TestCase):
         target.mkdir()
         (target / "AGENTS.md").write_text("# agents\n")
         (target / "ai-specs").mkdir()
-        for skill in ("skill-creator", "skill-sync"):
+        for skill in self.doctor.bundled_skill_names():
             (target / "ai-specs" / "skills" / skill).mkdir(parents=True, exist_ok=True)
         (target / "ai-specs" / "ai-specs.toml").write_text(
             '[project]\nname = "demo"\n[agents]\nenabled = ["claude"]\n'
