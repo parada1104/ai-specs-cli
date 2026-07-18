@@ -12,3 +12,14 @@ lives in each `SKILL.md` frontmatter (`metadata.scope`, `metadata.auto_invoke`).
 | Codex    | Yes                       | No                                     | `.codex/config.toml` |
 | Copilot  | No (`.github/copilot-instructions.md`) | No                          | `.github/copilot-instructions.md` symlink |
 | Gemini   | No (needs `GEMINI.md`)    | Yes (`.gemini/skills/<name>/SKILL.md`) | `GEMINI.md` symlink + `.gemini/skills` symlink + `.gemini/settings.json` |
+
+## Harness CLI literacy (always-on)
+
+Bundled skills `harness-lifecycle`, `harness-recipes`, and `harness-skills-deps`
+ship via `refresh-bundled` into every project. They teach agents how to operate
+the public `ai-specs` CLI (init/sync, recipes, skills/deps, doctor).
+
+On agents with native skill auto-invoke (Claude, Cursor, Gemini), intent-matched
+triggers load those skills. On agents without auto-invoke (OpenCode, Codex,
+Copilot, and typically pi/omp), the generated `AGENTS.md` `## Useful Commands`
+section includes a fixed pointer to the same skills under `ai-specs/skills/`.
