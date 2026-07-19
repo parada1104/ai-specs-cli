@@ -103,7 +103,18 @@ EVALS_MODEL=cursorapi/grok-4.5 EVALS_RUNTIMES=opencode ./tests/evals/run-live-vc
 ### `vault-canonical-store`
 
 Live: `./tests/evals/run-live-vault.sh` → `eval_vault_canonical_live.py`  
-Agents write notes under `ai-specs/eval-notes/` (no real vault MCP writes required).
+Agents write notes under `ai-specs/eval-notes/` (skill/guidance behavior; not a
+filesystem-MCP connect).
+
+**MCP path smoke (no sync / no release / no LLM):**
+
+```bash
+python3 tests/smoke_vault_mcp_fs.py
+python3 tests/smoke_vault_mcp_fs.py --path "$CANONICAL_VAULT_PATH"
+```
+
+Asserts `vault-fs-mcp.sh` + `@modelcontextprotocol/server-filesystem@2025.7.1`
+starts with `Allowed directories` equal to standalone `CANONICAL_VAULT_PATH`.
 
 | Scenario | Asserts |
 |----------|---------|

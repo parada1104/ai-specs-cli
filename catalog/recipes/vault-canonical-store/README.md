@@ -68,6 +68,30 @@ args:    [ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh]
 env:     CANONICAL_VAULT_PATH=${CANONICAL_VAULT_PATH}
 ```
 
+### Prove the MCP path without a release / without sync
+
+The wrapper can be smoke-tested against the real filesystem MCP (no LLM, no
+published CLI). From a checkout that contains this recipe (e.g. the feature
+worktree):
+
+```bash
+# temp scope with spaces in the path
+python3 tests/smoke_vault_mcp_fs.py
+
+# or your absolute project scope
+python3 tests/smoke_vault_mcp_fs.py --path "$CANONICAL_VAULT_PATH"
+```
+
+Success prints `SMOKE_OK` and shows `Allowed directories: [<your path>]`.
+
+To sync a consumer project with the **unreleased** recipe, point the CLI home
+at the checkout (no GitHub release required):
+
+```bash
+AI_SPECS_HOME=/path/to/ai-specs-cli/.worktrees/vault-canonical-reinforce \
+  /path/to/ai-specs-cli/.worktrees/vault-canonical-reinforce/bin/ai-specs sync
+```
+
 ## Config
 
 | Key | Default | Meaning |
