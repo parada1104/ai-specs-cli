@@ -16,6 +16,7 @@ RECIPES_DIR = ROOT / "catalog" / "recipes"
 MCP_RECIPES: dict[str, str] = {
     "trello-mcp-workflow": "trello",
     "vault-canonical-store": "vault-canonical",
+    "playwright-mcp": "playwright",
 }
 
 # User-facing config keys that must be documented in the per-recipe section.
