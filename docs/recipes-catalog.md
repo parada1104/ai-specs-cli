@@ -372,11 +372,16 @@ and handoffs in a configured vault MCP (e.g. Obsidian over a filesystem MCP
 server). Defines when to read/write canonical context, plus decision- and
 handoff-note shapes. The rule: Vault holds the deliberate, human-auditable
 record; operational memory holds searchable continuity. Ships an MCP preset for
-`@modelcontextprotocol/server-filesystem` (pinned `2025.7.1`) scoped via
-`CANONICAL_VAULT_PATH` in the environment (typically set in `.envrc`).
+`@modelcontextprotocol/server-filesystem` (pinned `2025.7.1`) via
+`vault-fs-mcp.sh`, which reads absolute `CANONICAL_VAULT_PATH` from the
+environment at exec time (not a bare `${VAR}` MCP arg). Also vendors the
+kepano Obsidian skills (`obsidian-markdown`, `obsidian-bases`, `json-canvas`,
+`obsidian-cli`, `defuddle`) for LLM wiki / second-brain note formats. Set the
+path in `.envrc` (shell expansion); quote when the Obsidian path contains
+spaces (e.g. iCloud `Mobile Documents/`).
 
-- **Provides:** skill `vault-context`; capability `canonical-store`; MCP preset
-  `vault-canonical`.
+- **Provides:** skill `vault-context`; kepano dep skills above; capability
+  `canonical-store`; MCP preset `vault-canonical`.
 - **Config:**
 
   | Key | Type | Default | Description |
@@ -390,7 +395,7 @@ record; operational memory holds searchable continuity. Ships an MCP preset for
 ```toml
 [recipes.vault-canonical-store]
 enabled = true
-version = "1.1.0"
+version = "1.2.0"
 
 [recipes.vault-canonical-store.config]
 decisions_folder = "decisiones"

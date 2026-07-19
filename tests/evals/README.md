@@ -11,6 +11,7 @@ invocation. **Not** part of `./tests/run.sh` — uses `eval_*.py` naming so
 - Live is **per capability / client** — never mix modules in one run:
   - plan-build: `./tests/evals/run-live.sh`
   - vcs-pr-flow: `./tests/evals/run-live-vcs.sh`
+  - vault-canonical-store: `./tests/evals/run-live-vault.sh`
 
 ## Requirements
 
@@ -97,4 +98,20 @@ EVALS_RUNTIMES=cursor-agent EVALS_MODEL=composer-2.5 ./tests/evals/run-live-vcs.
 
 # alternate cursorapi model for OpenCode-family runtimes
 EVALS_MODEL=cursorapi/grok-4.5 EVALS_RUNTIMES=opencode ./tests/evals/run-live-vcs.sh
+```
+
+### `vault-canonical-store`
+
+Live: `./tests/evals/run-live-vault.sh` → `eval_vault_canonical_live.py`  
+Agents write notes under `ai-specs/eval-notes/` (no real vault MCP writes required).
+
+| Scenario | Asserts |
+|----------|---------|
+| `ac_kepano_skills_present` | Obsidian-native decision draft (wikilinks / decision shape) |
+| `ac_mcp_path_with_spaces` | Documents single-argv `CANONICAL_VAULT_PATH` for spaced iCloud paths |
+| `ac_vault_context_guidance` | Decision note shape + Vault vs Engram split |
+
+```bash
+EVALS_RUNTIMES=claude,cursor-agent \
+  EVALS_SCENARIOS=ac_vault_context_guidance ./tests/evals/run-live-vault.sh
 ```

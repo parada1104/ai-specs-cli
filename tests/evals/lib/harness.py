@@ -83,6 +83,11 @@ def assert_natural_prompt(prompt: str) -> None:
 def materialize_project(project_root: Path, recipe_id: str, version: str, extra: str = "") -> None:
     from tests.evals.lib.project_fixture import write_manifest
 
+    # vault-canonical-store vendors kepano deps; keep offline via fixture when set.
+    os.environ.setdefault(
+        "AI_SPECS_VENDOR_FIXTURE_ROOT",
+        str(ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"),
+    )
     write_manifest(project_root, recipe_id=recipe_id, version=version, extra_recipes=extra)
     mod = _load_materialize()
     mod.materialize_recipes(project_root, ROOT)

@@ -1,0 +1,5 @@
+Our Obsidian vault lives under an iCloud path with spaces (Mobile Documents).
+Write a short note to ai-specs/eval-notes/vault-mcp-path.md explaining how
+ai-specs configures vault-canonical: CANONICAL_VAULT_PATH is an absolute path
+in the environment, and vault-fs-mcp.sh (not a bare ${VAR} MCP arg) passes it
+as one argv — including when the path has spaces. Mention the env var name.

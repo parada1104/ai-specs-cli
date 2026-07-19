@@ -1,0 +1,12 @@
+id = "ac_mcp_path_with_spaces"
+recipe_id = "vault-canonical-store"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Dry-oriented: document that vault MCP path stays a single env arg (spaces safe)"
+forbidden_path_globs = []
+required_path_globs = ["ai-specs/eval-notes/vault-mcp-path.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/vault-mcp-path.md", contains_any = ["CANONICAL_VAULT_PATH"] },
+  { path = "ai-specs/eval-notes/vault-mcp-path.md", contains_any = ["vault-fs-mcp", "wrapper"] },
+  { path = "ai-specs/eval-notes/vault-mcp-path.md", contains_any = ["Mobile Documents", "spaces", "espacios"] },
+]

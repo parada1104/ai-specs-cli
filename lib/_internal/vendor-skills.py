@@ -52,9 +52,34 @@ def fail(msg: str) -> None:
     print(f"  ✗ {msg}", file=sys.stderr)
     sys.exit(1)
 
+def _resolve_clone_source(source: str) -> str:
+    """Allow offline/CI override for kepano/obsidian-skills (and similar).
+
+    When AI_SPECS_VENDOR_FIXTURE_ROOT points at a local git checkout and
+    ``source`` is the kepano obsidian-skills URL, clone from the fixture
+    instead. Production sync never sets this env var.
+    """
+    import os
+
+    fixture = (os.environ.get("AI_SPECS_VENDOR_FIXTURE_ROOT") or "").strip()
+    if not fixture:
+        return source
+    if "kepano/obsidian-skills" in source:
+        return fixture
+    return source
+
+
 def clone(source: str, dest: Path) -> None:
+    resolved = _resolve_clone_source(source)
+    resolved_path = Path(resolved)
+    # Local fixture dirs used by tests may be plain trees (no .git).
+    if resolved_path.is_dir() and not (resolved_path / ".git").exists():
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(resolved_path, dest)
+        return
     subprocess.run(
-        ["git", "clone", "--depth", "1", "--quiet", source, str(dest)],
+        ["git", "clone", "--depth", "1", "--quiet", resolved, str(dest)],
         check=True,
     )
 

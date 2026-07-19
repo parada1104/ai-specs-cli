@@ -46,8 +46,9 @@ ENV_VAR_HELP: dict[str, str] = {
         "(Power-Up → API key page → Token)"
     ),
     "CANONICAL_VAULT_PATH": (
-        "Absolute path to the scoped vault folder "
-        "(e.g. $OBSIDIAN_VAULT_PATH/<scope> or the Obsidian vault root + scope)"
+        "Absolute path to the project-scoped vault folder (the only env the "
+        "vault MCP reads). Example: /Users/you/.../vault/nnodes/proyectos/app. "
+        "Must be fully resolved — do not leave nested $OTHER_VAR unexpanded."
     ),
 }
 

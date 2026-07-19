@@ -15,6 +15,14 @@ from pathlib import Path as _P
 sys.path.insert(0, str(_P(__file__).resolve().parent))
 from _cache_paths import recipe_root, cache_command, resolved_skills_dir, deps_skill_dir
 CLI = ROOT / "bin" / "ai-specs"
+KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
+
+def _sync_env() -> dict:
+    return {
+        **os.environ,
+        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
+    }
+
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
 
 
@@ -28,6 +36,7 @@ class SyncPipelineTests(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="ai-specs-sync-"))
         shutil.copytree(FIXTURE_ROOT, tmp / "workspace")
         return tmp / "workspace"
+
 
     def write_local_skill(
         self,
@@ -914,7 +923,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "test_command = './tests/run.sh'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.2.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/proyectos/test-project'\n\n"
                 "[[bindings]]\n"
@@ -929,7 +938,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "recipe = 'vault-canonical-store'\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True, env=_sync_env())
 
             agents = (workspace / "AGENTS.md").read_text()
 
@@ -1805,13 +1814,13 @@ class TestAutoBindingFix(unittest.TestCase):
                 "board_id = 'aabbccddeeff001122334455'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.2.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/test/autobind-scope'\n"
                 # NO [[bindings]] section
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True, env=_sync_env())
 
             agents = (workspace / "AGENTS.md").read_text()
 
@@ -1853,7 +1862,7 @@ class TestAutoBindingFix(unittest.TestCase):
                 "board_id = 'aabbccddeeff001122334455'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.2.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/test/json-scope'\n"
                 # NO [[bindings]] section — auto-bind must handle this
@@ -1870,7 +1879,11 @@ class TestAutoBindingFix(unittest.TestCase):
                 text=True,
                 capture_output=True,
                 check=False,
-                env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
+                env={
+                    **os.environ,
+                    "AI_SPECS_HOME": str(ROOT),
+                    "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
+                },
             )
             self.assertEqual(proc.returncode, 0, f"materialize failed:\n{proc.stderr}\n{proc.stdout}")
 

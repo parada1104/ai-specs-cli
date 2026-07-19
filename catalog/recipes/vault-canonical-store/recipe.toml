@@ -2,7 +2,7 @@
 id = "vault-canonical-store"
 name = "Vault Canonical Store"
 description = "Durable decisions and handoffs in a configured vault MCP (e.g. Obsidian / filesystem)"
-version = "1.1.0"
+version = "1.2.0"
 author = "ai-specs"
 license = "MIT"
 tags = ["storage"]
@@ -40,7 +40,15 @@ default = "sessions"
 help_text = "Folder name under vault_scope for session handoffs / summaries."
 
 [provides]
-skills = [{ id = "vault-context", source = "bundled" }]
+skills = [
+  { id = "vault-context", source = "bundled" },
+  # kepano/obsidian-skills — Obsidian-native stack for LLM wiki / second-brain notes
+  { id = "obsidian-markdown", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "skills/obsidian-markdown" },
+  { id = "obsidian-bases", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "skills/obsidian-bases" },
+  { id = "json-canvas", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "skills/json-canvas" },
+  { id = "obsidian-cli", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "skills/obsidian-cli" },
+  { id = "defuddle", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "skills/defuddle" },
+]
 
 [[provides.brief.context_sources]]
 key = "vault-canonical-note-taker"
@@ -50,19 +58,26 @@ text = "Vault is the canonical note-taker for decisions, handoffs, and structure
 key = "vault-canonical"
 text = "Canonical project notes in the vault (scoped to the project path)."
 
-# Canonical store served over the filesystem MCP. The project's .envrc owns the
-# full scoped path (e.g. CANONICAL_VAULT_PATH="$OBSIDIAN_VAULT_PATH/<scope>");
-# the preset stays static. Vars referenced in args use ${VAR} and are declared
-# as env passthrough so every harness resolves them.
-# Version pinned: 2025.7.29+ replaces argv dirs with MCP client roots when the
-# client advertises the roots capability (omp/pi do), which silently re-scopes
-# the server to the project cwd instead of the vault.
+# Canonical store served over the filesystem MCP.
+#
+# Path resolution: do NOT put ${CANONICAL_VAULT_PATH} in MCP args. Several
+# hosts expand ${VAR} only when it is already in the process environment at
+# config-parse time; a bare "${VAR}" argv then reaches the server literally
+# (while "~/${VAR}" can look like it "works" for home-relative values). The
+# wrapper reads CANONICAL_VAULT_PATH from the child env at exec time.
+#
+# Filesystem package pinned: 2025.7.29+ replaces argv dirs with MCP client
+# roots when the client advertises roots (omp/pi), silently re-scoping to cwd.
 [[provides.mcp]]
 id = "vault-canonical"
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem@2025.7.1", "${CANONICAL_VAULT_PATH}"]
+command = "bash"
+args = ["ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"]
 env = { CANONICAL_VAULT_PATH = "$CANONICAL_VAULT_PATH" }
 timeout = 30000
+
+[[provides.templates]]
+source = "templates/vault-fs-mcp.sh"
+target = "ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"
 
 [[provides.docs]]
 source = "README.md"

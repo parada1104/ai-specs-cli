@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **vault-canonical-store 1.2.0**: Vendors kepano Obsidian skills (`obsidian-markdown`, `obsidian-bases`, `json-canvas`, `obsidian-cli`, `defuddle`) as recipe dep skills; refreshes `vault-context` cross-links and README for env-owned `CANONICAL_VAULT_PATH` (including spaced iCloud paths). Dry + live eval client (`./tests/evals/run-live-vault.sh`).
+
+### Fixed
+- **Vault MCP path via env (not `${VAR}` argv)**: `vault-canonical` now runs `vault-fs-mcp.sh`, which reads absolute `CANONICAL_VAULT_PATH` from the process env at exec time. Avoids hosts that leave a bare `"${CANONICAL_VAULT_PATH}"` argv unexpanded (the `~/${path}` workaround class of bugs).
+- **Recipe dep skill import path**: `materialize_dep_skill` ensures `lib/_internal` is on `sys.path` so `vendor-skills` can import `skill_contract` when loaded via importlib.
+
 ## [0.14.2] — 2026-07-17
 
 ### Fixed
