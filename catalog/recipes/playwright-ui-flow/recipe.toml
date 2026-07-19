@@ -1,0 +1,66 @@
+[recipe]
+id = "playwright-ui-flow"
+name = "Playwright UI Flow"
+description = "Playwright UI test/smoke discipline + CLI surface for agents"
+version = "1.0.0"
+author = "ai-specs"
+license = "MIT"
+tags = ["ui-testing"]
+
+[[capabilities]]
+id = "ui-browser-testing"
+
+[[hooks]]
+event = "on-sync"
+action = "validate-config"
+
+[[deps.cli]]
+binary = "npx"
+purpose = "Run the project's Playwright UI test/smoke command"
+required = true
+install_url = "https://nodejs.org/en/download"
+version_check = "npx --version"
+
+[config.ui_test_command]
+required = false
+type = "string"
+help_text = "Full UI suite command (e.g. `npx playwright test`). Leave unset to have init discover it."
+
+[config.ui_smoke_command]
+required = false
+type = "string"
+help_text = "Fast smoke subset (e.g. `npx playwright test --grep @smoke`)."
+
+[config.playwright_config]
+required = false
+type = "string"
+help_text = "Optional path to playwright.config.* when non-standard."
+
+[init]
+prompt = "init.md"
+description = "Discover the project's Playwright test/smoke command and propose config"
+needs_manifest = true
+
+[provides]
+skills = [
+  { id = "ui-browser-testing", source = "bundled" },
+  { id = "playwright-cli", source = "bundled" },
+]
+commands = [{ id = "ui-smoke", path = "commands/ui-smoke.md" }]
+
+[provides.brief]
+useful_commands = [
+  "Run UI smokes via the command configured at `[recipes.playwright-ui-flow.config].ui_smoke_command` (or `ui_test_command` for the full suite); if unset, discover the project's Playwright script and propose a config value.",
+]
+
+[[provides.brief.workflow_rules]]
+key = "ui-suites-via-cli"
+text = "Run UI suites and smokes via the CLI/project test command; use the browser MCP only for exploratory navigation, debugging, and locator discovery."
+
+[[provides.brief.workflow_rules]]
+key = "ui-evidence-before-done"
+text = "Record the UI smoke/suite command and its pass/fail result as evidence before treating UI verification as done."
+
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/playwright-ui-flow/README.md"

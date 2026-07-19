@@ -37,6 +37,8 @@ never touches the foundational layer.
 |--------|------|-------|---------------------|--------------|------------|
 | [`session-context`](#session-context) | Foundational | Session-start focus resolution + conflict policy | `session-bootstrap`, `conflict-policy` | — | — (consumes `memory`, `tracker`, `canonical-store`) |
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
+| [`playwright-ui-flow`](#playwright-ui-flow) | Specific | Playwright UI test/smoke discipline + CLI surface | `ui-browser-testing` | — | `ui_test_command`, `ui_smoke_command`, `playwright_config` |
+| [`playwright-mcp`](#playwright-mcp) | Specific | Exploratory browser automation via `@playwright/mcp` (add-on) | — (augments base) | `playwright` | — (override via `[mcp.playwright]`) |
 | [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | — |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
@@ -64,6 +66,8 @@ manual.
 | `vault-canonical-store` | `npx` | Filesystem MCP server runtime | yes |
 | `worktree-flow` | `git` | Worktree add/remove/cleanup | yes |
 | `tdd-flow` | — | Test command is config-driven | — |
+| `playwright-ui-flow` | `npx` | Playwright UI test/smoke commands | yes |
+| `playwright-mcp` | `npx` | `@playwright/mcp` server runtime | yes |
 
 
 ## session-context
@@ -112,6 +116,54 @@ version = "1.0.0"
 
 [recipes.tdd-flow.config]
 test_command = "./tests/run.sh"
+```
+
+## playwright-ui-flow
+
+**Playwright UI test/smoke discipline + CLI surface.** Canonical
+`ui-browser-testing` capability: when to run suites/smokes, CLI-first
+precedence, and evidence before merge. Complements `tdd-flow` (does not
+replace it). Installs no MCP server — add [`playwright-mcp`](#playwright-mcp)
+for exploratory automation.
+
+- **Provides:** skills `ui-browser-testing`, `playwright-cli`, command
+  `/ui-smoke`; capability `ui-browser-testing`.
+- **Config:**
+
+  | Key | Type | Required | Default | Description |
+  |-----|------|----------|---------|-------------|
+  | `ui_test_command` | string | no | _(unset)_ | Full UI suite command (e.g. `npx playwright test`). |
+  | `ui_smoke_command` | string | no | _(unset)_ | Fast smoke subset (e.g. `npx playwright test --grep @smoke`). |
+  | `playwright_config` | string | no | _(unset)_ | Path to `playwright.config.*` when non-standard. |
+
+- **Full README:** [`catalog/recipes/playwright-ui-flow/README.md`](../catalog/recipes/playwright-ui-flow/README.md)
+
+```toml
+[recipes.playwright-ui-flow]
+enabled = true
+
+[recipes.playwright-ui-flow.config]
+ui_test_command = "npx playwright test"
+ui_smoke_command = "npx playwright test --grep @smoke"
+```
+
+## playwright-mcp
+
+**Exploratory browser automation via `@playwright/mcp`.** Add-on to
+[`playwright-ui-flow`](#playwright-ui-flow): hybrid = enable both. Declares no
+capability of its own (avoids binding ambiguity). Ships MCP preset `playwright`.
+
+- **Provides:** skill `playwright-mcp`, MCP preset `playwright`.
+- **Config:** none in v1 — tune browser/headless via `[mcp.playwright]` in the
+  project manifest.
+- **Full README:** [`catalog/recipes/playwright-mcp/README.md`](../catalog/recipes/playwright-mcp/README.md)
+
+```toml
+[recipes.playwright-ui-flow]
+enabled = true
+
+[recipes.playwright-mcp]
+enabled = true
 ```
 
 ## plan-build-flow
