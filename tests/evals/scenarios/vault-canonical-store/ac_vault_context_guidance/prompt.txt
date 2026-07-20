@@ -1,0 +1,5 @@
+We chose to keep durable architecture decisions in the vault and short-lived
+session facts in Engram. Draft the decision note to
+ai-specs/eval-notes/vault-decision.md using the vault-context decision note
+shape (frontmatter tipo: decision, Contexto/Decisión sections). Briefly state
+why Vault vs Engram. No secrets.

@@ -276,6 +276,11 @@ def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Pat
 def materialize_dep_skill(skill: Any, project_root: Path, cli_home: Path | None = None) -> None:
     # Reuse vendor-skills.py logic via import
     vendor_path = Path(__file__).with_name("vendor-skills.py")
+    # vendor-skills imports sibling modules (skill_contract); ensure _internal is on path
+    # when this file was loaded via importlib from tests (sys.path[0] is not _internal).
+    internal_dir = str(vendor_path.parent)
+    if internal_dir not in sys.path:
+        sys.path.insert(0, internal_dir)
     spec = importlib.util.spec_from_file_location("vendor_skills_internal", vendor_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"unable to load vendor-skills.py at {vendor_path}")

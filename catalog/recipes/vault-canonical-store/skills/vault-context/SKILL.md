@@ -7,7 +7,7 @@ description: >
 license: MIT
 metadata:
   author: parada1104
-  version: "3.0"
+  version: "3.1"
   scope: [root]
   auto_invoke:
     - "Making an architecture or design decision"
@@ -23,6 +23,23 @@ Vault is the canonical notetaker. Use the vault MCP declared in the project runt
 - Store decisions, conventions, and handoffs that future humans or agents must trust.
 - Keep notes structured, dated, and human-auditable.
 - Avoid duplicating transient runtime observations already captured by Engram.
+
+## Obsidian-native skills (kepano)
+
+This recipe also vendors Obsidian skills from `kepano/obsidian-skills`. Load them
+when the note format requires it:
+
+| Skill | Use when |
+|---|---|
+| `obsidian-markdown` | Writing `.md` notes with `[[wikilinks]]`, properties, callouts, embeds |
+| `obsidian-bases` | Creating or editing `.base` database views |
+| `json-canvas` | Creating or editing `.canvas` files |
+| `obsidian-cli` | Operating a running Obsidian app via the `obsidian` CLI (Obsidian must be open) |
+| `defuddle` | Ingesting a web URL into clean markdown before filing a vault note |
+
+Default for decision/handoff notes: load `obsidian-markdown` so wikilinks and
+properties stay Obsidian-native (do not use plain Markdown links for in-vault
+targets).
 
 ## Read Moments
 
@@ -104,3 +121,4 @@ sesion_id: <short-id>
 - Do not edit `_context/` or `specs/` unless the user explicitly asks or the active SDD workflow owns that path.
 - Use ISO dates in filenames and frontmatter.
 - If it changes how future sessions should work, put it in Vault; if it is only searchable operational continuity, put it in Engram.
+- Do not hardcode absolute vault filesystem paths; use the configured `vault-canonical` MCP. The path comes from `CANONICAL_VAULT_PATH` in the environment (absolute), resolved by `vault-fs-mcp.sh` — not from a bare `${VAR}` MCP argv.

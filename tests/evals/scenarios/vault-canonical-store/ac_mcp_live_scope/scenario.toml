@@ -1,0 +1,11 @@
+id = "ac_mcp_live_scope"
+recipe_id = "vault-canonical-store"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Live: agent uses vault-canonical MCP to read scoped marker; sibling stays out of scope"
+# Assertions are applied in eval_vault_canonical_live (token / sibling secret).
+required_path_globs = ["ai-specs/eval-notes/vault-mcp-live.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/vault-mcp-live.md", contains_any = ["token=", "mcp_used"] },
+]
+forbidden_path_globs = []

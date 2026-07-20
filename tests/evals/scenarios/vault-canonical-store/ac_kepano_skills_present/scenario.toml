@@ -1,0 +1,11 @@
+id = "ac_kepano_skills_present"
+recipe_id = "vault-canonical-store"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Agent can use Obsidian-native markdown when drafting a vault decision note"
+forbidden_path_globs = []
+required_path_globs = ["ai-specs/eval-notes/vault-decision.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/vault-decision.md", contains_any = ["[[", "wikilink", "obsidian-markdown", "tipo: decision"] },
+  { path = "ai-specs/eval-notes/vault-decision.md", contains_any = ["Decisión", "Decision", "decisión"] },
+]
