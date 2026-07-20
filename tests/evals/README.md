@@ -102,9 +102,9 @@ EVALS_MODEL=cursorapi/grok-4.5 EVALS_RUNTIMES=opencode ./tests/evals/run-live-vc
 
 ### `vault-canonical-store`
 
-Live: `./tests/evals/run-live-vault.sh` → `eval_vault_canonical_live.py`  
-Agents write notes under `ai-specs/eval-notes/` (skill/guidance behavior; not a
-filesystem-MCP connect).
+Live: `./tests/evals/run-live-vault.sh` → `eval_vault_canonical_live.py`
+
+**Guidance scenarios** write notes under `ai-specs/eval-notes/` (skill behavior).
 
 **MCP path smoke (no sync / no release / no LLM):**
 
@@ -116,13 +116,32 @@ python3 tests/smoke_vault_mcp_fs.py --path "$CANONICAL_VAULT_PATH"
 Asserts `vault-fs-mcp.sh` + `@modelcontextprotocol/server-filesystem@2025.7.1`
 starts with `Allowed directories` equal to standalone `CANONICAL_VAULT_PATH`.
 
+**Live MCP connect + scope** (`ac_mcp_live_scope`, claude + cursor-agent):
+syncs/registers the vault filesystem MCP, places `MARKER.md` under an in-project
+scoped dir with spaces, asks the agent to read it via MCP only, and asserts an
+*outside* sibling secret does not leak. Requires `mcp__vault-canonical__*` tool
+evidence unless `EVALS_MCP_REQUIRE_TOOL_EVIDENCE=0`.
+
+Host notes (Claude Code 2.1.215, 2026-07):
+- Recipe pin `@…/server-filesystem@2025.7.1` starts but **tools fetch fails**.
+- `2025.11.25+` connects; those builds replace argv dirs with MCP **roots**.
+- Live Claude registration therefore uses `2025.11.25` and passes
+  `--add-dir <scope>`; override package with `EVALS_VAULT_FS_MCP_PACKAGE`.
+- Wrapper + `2025.7.1` `AllowedDirectories` remain proven by
+  `python3 tests/smoke_vault_mcp_fs.py` (no LLM).
+
 | Scenario | Asserts |
 |----------|---------|
 | `ac_kepano_skills_present` | Obsidian-native decision draft (wikilinks / decision shape) |
 | `ac_mcp_path_with_spaces` | Documents single-argv `CANONICAL_VAULT_PATH` for spaced iCloud paths |
 | `ac_vault_context_guidance` | Decision note shape + Vault vs Engram split |
+| `ac_mcp_live_scope` | Live MCP read of scoped marker; sibling secret stays out |
 
 ```bash
 EVALS_RUNTIMES=claude,cursor-agent \
   EVALS_SCENARIOS=ac_vault_context_guidance ./tests/evals/run-live-vault.sh
+
+# expensive MCP connect/scope proof
+EVALS_RUNTIMES=claude,cursor-agent \
+  EVALS_SCENARIOS=ac_mcp_live_scope ./tests/evals/run-live-vault.sh
 ```

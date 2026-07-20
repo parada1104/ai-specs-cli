@@ -84,6 +84,14 @@ python3 tests/smoke_vault_mcp_fs.py --path "$CANONICAL_VAULT_PATH"
 
 Success prints `SMOKE_OK` and shows `Allowed directories: [<your path>]`.
 
+Live host connect (Claude Code / Cursor Agent) is opt-in via
+`EVALS_SCENARIOS=ac_mcp_live_scope ./tests/evals/run-live-vault.sh`. Note:
+Claude Code 2.1.x fails tools-fetch on the recipe pin `2025.7.1`; modern
+filesystem MCP builds also replace argv dirs with client **roots**, so vault
+scopes outside the workspace need the host to include that directory (e.g.
+Claude `--add-dir "$CANONICAL_VAULT_PATH"`). Obsidian CLI is **not** a
+subdirectory sandbox — it can operate on the whole vault.
+
 To sync a consumer project with the **unreleased** recipe, point the CLI home
 at the checkout (no GitHub release required):
 

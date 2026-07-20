@@ -32,7 +32,7 @@ Tracker: Trello https://trello.com/c/6CxB4kAs (card 45)
 - [x] **T1.2** `[P]` — RED: materialize with network fixture or mocked vendor proves kepano dep skill ids are expected after enable (follow `test_external_dirs.py` dep pattern).
   **Req:** kepano skills present after enable/sync (dry).
 
-- [x] **T1.3** `[P]` — RED in `tests/test_sync_pipeline.py` (or vault-specific): sync with agents `[claude, cursor, opencode, pi, omp]` and `CANONICAL_VAULT_PATH` containing spaces; assert each MCP config keeps a **single** path arg element (`$CANONICAL_VAULT_PATH` / `${CANONICAL_VAULT_PATH}` per agent rules), never split on spaces; OpenCode uses bare `$CANONICAL_VAULT_PATH` in command array.
+- [x] **T1.3** `[P]` — RED in `tests/test_sync_pipeline.py` (or vault-specific): sync with agents `[claude, cursor, opencode, pi, omp]` and `CANONICAL_VAULT_PATH` containing spaces; assert each MCP config keeps a **single** path arg element (`$CANONICAL_VAULT_PATH` / `${CANONICAL_VAULT_PATH}` per agent rules), never split on spaces; OpenCode command args use `{env:CANONICAL_VAULT_PATH}` (not bare `$VAR` — OpenCode only expands `{env:VAR}`).
   **Req:** spaced-path MCP args.
 
 - [x] **T1.4** `[P]` — RED: `tests/evals/eval_harness_smoke.py` loads
@@ -84,6 +84,14 @@ Tracker: Trello https://trello.com/c/6CxB4kAs (card 45)
   **Req:** discoverable vault eval client.
 
 - [x] **T4.4** — Run `./tests/validate.sh` (or project full suite) green before commit/PR.
+
+- [x] **T4.5** — Live MCP connect/scope: `ac_mcp_live_scope` with
+  `EVALS_RUNTIMES=claude,cursor-agent` — agent reads scoped `MARKER.md` via
+  vault-canonical MCP; sibling secret must not leak; prefer tool-call evidence.
+  **Done when:** live run green (or documented soft-fail with cause).
+  **Evidence:** Claude OK (~36s) and cursor-agent OK (~33s) for
+  `EVALS_SCENARIOS=ac_mcp_live_scope`. Host notes in `tests/evals/README.md`
+  (pin 2025.7.1 tools-fetch fail on Claude; live uses 2025.11.25 + roots/add-dir).
 
 ---
 

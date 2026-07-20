@@ -15,6 +15,12 @@ Both forms MUST produce identical canonical output per target agent:
 - For agent `opencode`, the rendered value MUST be `{env:VARIABLE_NAME}` placed under the `environment` field of the server entry.
 - For generic agents (Claude, Cursor, and any other agent without a registered translator), the rendered value MUST be `${VARIABLE_NAME}` placed under the `env` field of the server entry.
 
+### Requirement: OpenCode command args MUST use `{env:VAR}` (not shell `$VAR`)
+
+When rendering local MCP `command` arrays for agent `opencode`, the renderer SHALL rewrite shell-style `$VARIABLE_NAME` and `${VARIABLE_NAME}` references that appear in any command/arg string to OpenCode's `{env:VARIABLE_NAME}` form. OpenCode substitutes `{env:NAME}` when loading config; `$NAME` and `${NAME}` are left literal and MUST NOT be emitted for resolvable env references.
+
+This applies to sole-arg paths (e.g. a filesystem root that is only `${CANONICAL_VAULT_PATH}`) and to embedded references inside longer strings.
+
 Variable names MUST follow shell conventions: an initial letter or underscore, followed by uppercase letters, digits, or underscores (`[A-Z_][A-Z0-9_]*`). Values that do not match either form (for example literal strings, mixed-case identifiers, or values containing surrounding text) MUST pass through unchanged.
 
 #### Scenario: Braced env reference renders as OpenCode native syntax
@@ -22,6 +28,18 @@ Variable names MUST follow shell conventions: an initial letter or underscore, f
 - **GIVEN** an `ai-specs.toml` with `[mcp.demo]` whose `environment` is `{ API_KEY = '${DEMO_API_KEY}' }` and `enabled = ['opencode']`
 - **WHEN** the user runs `ai-specs sync`
 - **THEN** the rendered `opencode.json` MUST contain `"environment": { "API_KEY": "{env:DEMO_API_KEY}" }` for the `demo` server entry
+
+#### Scenario: Braced env reference in OpenCode command args renders as `{env:VAR}`
+
+- **GIVEN** an `ai-specs.toml` with `[mcp.demo]` whose `args` include `'${VAULT_PATH}'` and `enabled = ['opencode']`
+- **WHEN** the user runs `ai-specs sync`
+- **THEN** the rendered `opencode.json` command array MUST contain `"{env:VAULT_PATH}"` and MUST NOT contain `"$VAULT_PATH"` or `"${VAULT_PATH}"`
+
+#### Scenario: Bare `$VAR` in OpenCode command args renders as `{env:VAR}`
+
+- **GIVEN** an `ai-specs.toml` with `[mcp.demo]` whose `args` include `'$VAULT_PATH'` and `enabled = ['opencode']`
+- **WHEN** the user runs `ai-specs sync`
+- **THEN** the rendered `opencode.json` command array MUST contain `"{env:VAULT_PATH}"`
 
 #### Scenario: Braced env reference renders as Cursor canonical syntax
 

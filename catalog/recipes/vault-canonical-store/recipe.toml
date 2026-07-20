@@ -60,11 +60,11 @@ text = "Canonical project notes in the vault (scoped to the project path)."
 
 # Canonical store served over the filesystem MCP.
 #
-# Path resolution: do NOT put ${CANONICAL_VAULT_PATH} in MCP args. Several
-# hosts expand ${VAR} only when it is already in the process environment at
-# config-parse time; a bare "${VAR}" argv then reaches the server literally
-# (while "~/${VAR}" can look like it "works" for home-relative values). The
-# wrapper reads CANONICAL_VAULT_PATH from the child env at exec time.
+# Path resolution: keep the vault root out of MCP args. OpenCode only expands
+# {env:VAR} at config-load (shell $VAR/${VAR} stay literal); other hosts expand
+# ${VAR} from process env at parse time and a sole-arg "${VAR}" can still fail
+# when the var is missing then. The wrapper reads CANONICAL_VAULT_PATH from the
+# child env at exec time (validates absolute path, allows spaces, expands ~/).
 #
 # Filesystem package pinned: 2025.7.29+ replaces argv dirs with MCP client
 # roots when the client advertises roots (omp/pi), silently re-scoping to cwd.

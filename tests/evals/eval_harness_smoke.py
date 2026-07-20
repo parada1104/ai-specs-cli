@@ -338,6 +338,33 @@ class HarnessSmokeTests(unittest.TestCase):
                 self.assertTrue(dest.is_file())
 
 
+class VaultMcpLiveHelperTests(unittest.TestCase):
+    def test_create_scoped_vault_and_sync_mcp_config(self):
+        from tests.evals.lib.vault_mcp_live import (
+            cleanup_vault,
+            create_scoped_vault,
+            sync_vault_mcp,
+        )
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        vault = create_scoped_vault()
+        self.addCleanup(cleanup_vault, vault)
+        self.assertTrue((vault["scoped"] / "MARKER.md").is_file())
+        self.assertIn("VAULT_LIVE_", vault["token"])
+        self.assertNotEqual(vault["token"], vault["sibling"])
+
+        version = recipe_version(REPO_ROOT / "catalog", "vault-canonical-store")
+        materialize_project(root, "vault-canonical-store", version)
+        cfg = sync_vault_mcp(root, "claude")
+        self.assertEqual(cfg, root / ".mcp.json")
+        text = cfg.read_text()
+        self.assertIn("vault-canonical", text)
+        self.assertIn("vault-fs-mcp.sh", text)
+        self.assertIn("CANONICAL_VAULT_PATH", text)
+
+
 class HarnessPathTests(unittest.TestCase):
     def test_runtime_binary_optional(self):
         if not detect_runtime():

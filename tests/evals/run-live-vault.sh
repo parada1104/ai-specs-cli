@@ -7,6 +7,10 @@
 #   EVALS_RUNTIMES=claude,cursor-agent \
 #     EVALS_SCENARIOS=ac_vault_context_guidance ./tests/evals/run-live-vault.sh
 #
+# Live MCP connect/scope (expensive; claude + cursor-agent):
+#   EVALS_RUNTIMES=claude,cursor-agent \
+#     EVALS_SCENARIOS=ac_mcp_live_scope ./tests/evals/run-live-vault.sh
+#
 # Models:
 #   claude              → opus (Claude Code subscription)
 #   cursor-agent        → composer-2.5 (Cursor Agent subscription)
@@ -21,6 +25,7 @@ export EVALS_MODEL="${EVALS_MODEL:-}"
 export EVALS_TRIALS="${EVALS_TRIALS:-1}"
 export EVALS_TIMEOUT_SEC="${EVALS_TIMEOUT_SEC:-600}"
 export EVALS_MAX_TURNS="${EVALS_MAX_TURNS:-16}"
+export EVALS_MCP_REQUIRE_TOOL_EVIDENCE="${EVALS_MCP_REQUIRE_TOOL_EVIDENCE:-1}"
 export AI_SPECS_VENDOR_FIXTURE_ROOT="${AI_SPECS_VENDOR_FIXTURE_ROOT:-$ROOT/tests/fixtures/kepano-obsidian-skills}"
 
 echo "client=vault-canonical-store"
@@ -28,5 +33,6 @@ echo "EVALS_PREFER=$EVALS_PREFER"
 echo "EVALS_RUNTIMES=${EVALS_RUNTIMES:-"(from prefer)"}"
 echo "EVALS_SCENARIOS=${EVALS_SCENARIOS:-"(all vault live)"}"
 echo "EVALS_MODEL=${EVALS_MODEL:-"(defaults: claude=opus; cursor-agent=composer-2.5; others=cursorapi/composer-2.5)"}"
+echo "EVALS_MCP_REQUIRE_TOOL_EVIDENCE=$EVALS_MCP_REQUIRE_TOOL_EVIDENCE"
 
 python3 -m unittest tests.evals.eval_vault_canonical_live -v
