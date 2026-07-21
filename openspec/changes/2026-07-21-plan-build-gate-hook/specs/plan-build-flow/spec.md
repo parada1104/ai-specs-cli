@@ -11,12 +11,12 @@ block, and fail open (exit `0`) on any parse or lookup error.
 
 The hook SHALL block a matched edit only when BOTH hold: (a) the target path is
 under a production directory (default top-level `src`, `lib`, `catalog`,
-overridable via `PLAN_BUILD_GATE_PATHS`), AND (b) no active change folder exists
-(no `openspec/changes/*/tasks.md` outside `archive/`). It SHALL allow edits
-under `openspec/changes/**`, non-production paths, and gitignored agent config
-(`.claude/settings*.json`, `.claude/hooks/*`) unconditionally. Mode SHALL be
-resolved from `PLAN_BUILD_GATE_MODE` (`always` default, `ask`, `off`); `off`
-SHALL disable the gate.
+overridable via `PLAN_BUILD_GATE_PATHS` — scope configuration only), AND (b) no
+active change folder exists (no `openspec/changes/*/tasks.md` outside
+`archive/`). It SHALL allow edits under `openspec/changes/**`, non-production
+paths, and gitignored agent config (`.claude/settings*.json`, `.claude/hooks/*`)
+unconditionally. The gate SHALL be non-bypassable: it exposes no on/off/ask
+mode, so the only way past it is to write the plan the gate requires.
 
 Because the hook pipeline exposes no pre-file-write event for `cursor`, this
 hook enforces on `claude`, `opencode`, `pi`, and `omp` only; `cursor` retains
@@ -49,9 +49,9 @@ the advisory skill + workflow-rules layer.
 - WHEN the hook runs
 - THEN it MUST exit 0 (a buggy guard must never wedge all editing)
 
-#### Scenario: Mode off disables the gate
+#### Scenario: No mode bypass
 
-- GIVEN `PLAN_BUILD_GATE_MODE=off`
-- AND a production `Write` with no change folder
+- GIVEN a production `Write` with no active change folder
+- AND any `PLAN_BUILD_GATE_MODE` value is set in the environment
 - WHEN the hook runs
-- THEN it MUST exit 0
+- THEN it MUST still exit 2 (the mode env has no effect; the gate has no off switch)

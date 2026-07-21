@@ -37,8 +37,10 @@ mirroring the worktree-gate contract:
   `archive/`).
 - Allows everything else: edits under `openspec/changes/**` (so the agent can
   always write the plan), tests, docs, and gitignored agent config.
-- Mode via `PLAN_BUILD_GATE_MODE` (`always` default | `ask` | `off`), env-only —
-  no stamped placeholder, to avoid touching the shared materialize substitution.
+- Non-bypassable by design: no on/off/ask mode. An on/off switch would just be a
+  "skip the plan" affordance — the exact thing the gate prevents. The only knob
+  is `PLAN_BUILD_GATE_PATHS` (which dirs count as production), scope config, not
+  a switch. The way past the gate is to write the plan it asks for.
 
 This enforces the artifact precondition of the gate: production code cannot be
 written until planning artifacts exist. It does not (and cannot) prove a human
@@ -60,8 +62,8 @@ artifacts and touch no production code.
 
 ## Out of scope
 
-- Generalizing the `__WORKTREE_GATE_MODE__` stamped-config mechanism to a second
-  hook (env-only mode is sufficient for this reinforcement).
+- Any on/off/ask mode for this gate (deliberately omitted — a switch would
+  defeat the purpose).
 - Any Cursor file-write enforcement (not supported by the hook pipeline).
 - Detecting explicit human authorization (a hook cannot; the artifact
   precondition is the enforceable proxy).

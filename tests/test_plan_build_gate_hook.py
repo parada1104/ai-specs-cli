@@ -119,22 +119,14 @@ class PlanBuildGateHookTests(unittest.TestCase):
         r = self._run(self._event("Write", str(self.repo / "lib" / "core.py")))
         self.assertEqual(r.returncode, 2, r.stderr)
 
-    # 9. Mode off self-disables.
-    def test_gate_off_self_disables(self):
+    # 9. The gate is non-bypassable: there is no on/off/ask mode. Setting the
+    #    (now-removed) mode env var must NOT open the gate.
+    def test_no_mode_bypass(self):
         r = self._run(
             self._event("Write", str(self.repo / "src" / "app.py")),
             extra_env={"PLAN_BUILD_GATE_MODE": "off"},
         )
-        self.assertEqual(r.returncode, 0, r.stderr)
-
-    # 10. Mode ask blocks with a bypass hint.
-    def test_gate_ask_blocks_with_bypass_hint(self):
-        r = self._run(
-            self._event("Edit", str(self.repo / "src" / "app.py")),
-            extra_env={"PLAN_BUILD_GATE_MODE": "ask"},
-        )
         self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertIn("PLAN_BUILD_GATE_MODE=off", r.stderr)
 
     # 11. PLAN_BUILD_GATE_PATHS override redefines production dirs.
     def test_custom_production_paths_override(self):

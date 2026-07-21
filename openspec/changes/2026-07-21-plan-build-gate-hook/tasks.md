@@ -15,8 +15,8 @@
       - allow (exit 0) non-production paths (tests, docs)
       - allow (exit 0) gitignored agent config on production trees
       - fail-open (exit 0) on malformed stdin / missing file_path
-      - `PLAN_BUILD_GATE_MODE=off` self-disables; `ask` blocks with bypass hint
-      - `PLAN_BUILD_GATE_PATHS` override honored
+      - non-bypassable: no on/off/ask mode (mode env ignored)
+      - `PLAN_BUILD_GATE_PATHS` scope override honored
 - [x] GREEN: `catalog/recipes/plan-build-flow/hooks/plan-build-gate.sh`.
 - [x] Wire `[[provides.hooks]]` in `catalog/recipes/plan-build-flow/recipe.toml`.
 - [x] Eval: `ac8_approval_verb_without_folder/` scenario.toml + prompt.txt.

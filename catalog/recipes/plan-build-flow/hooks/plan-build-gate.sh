@@ -15,22 +15,17 @@
 # Fail-open: any parse/lookup error allows the edit (a buggy guard must never
 # wedge all editing).
 #
-# Config (env-only; no stamped placeholder):
-#   PLAN_BUILD_GATE_MODE   always (default) | ask | off
-#   PLAN_BUILD_GATE_PATHS  space-separated production top-level dirs (default: "src lib catalog")
-
-gate_mode="${PLAN_BUILD_GATE_MODE:-always}"
-case "$gate_mode" in
-  always|ask|off) ;;
-  *)
-    echo "plan-build-gate: ignoring invalid PLAN_BUILD_GATE_MODE='${gate_mode}'; falling back to always." >&2
-    gate_mode=always ;;
-esac
-
-# off → disable the gate entirely.
-[ "$gate_mode" = off ] && exit 0
+# The gate is intentionally non-bypassable: there is NO on/off/ask mode. The
+# only way past it is to do what it asks — write the plan under
+# openspec/changes/<slug>/. Escaping the plan step is the exact failure it
+# exists to prevent.
+#
+# Config (scope only, not a switch):
+#   PLAN_BUILD_GATE_PATHS  space-separated production top-level dirs
+#                          (default: "src lib catalog"; empty falls back to default)
 
 prod_dirs="${PLAN_BUILD_GATE_PATHS:-src lib catalog}"
+[ -n "${prod_dirs// /}" ] || prod_dirs="src lib catalog"
 
 input="$(cat)"
 
@@ -101,7 +96,4 @@ done
 [ "$active" -eq 1 ] && exit 0
 
 echo "plan-build-gate: refusing to ${tool_name:-edit} '$rel' — no active change folder (openspec/changes/<slug>/tasks.md) found. Classify the change and write the plan first, then implement. Writing planning artifacts under openspec/changes/ is never blocked." >&2
-if [ "$gate_mode" = ask ]; then
-  echo "plan-build-gate: to bypass for this invocation, re-run with PLAN_BUILD_GATE_MODE=off" >&2
-fi
 exit 2
