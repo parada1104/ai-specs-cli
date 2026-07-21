@@ -5,7 +5,7 @@
 The system MUST register `omp` in `lib/_internal/platform.sh` with:
 `skills_dir=.omp/skills`, `mcp_config_path=.omp/mcp.json`, `mcp_key=mcpServers`,
 `native=true`, `commands_dir=.omp/commands`, `runtime_hooks_target=.omp/extensions`,
-and empty `instructions_path`, `agents_dir`.
+`instructions_path=.omp/AGENTS.md`, and empty `agents_dir`.
 
 #### Scenario: Lookup succeeds
 
@@ -17,7 +17,7 @@ and empty `instructions_path`, `agents_dir`.
 
 - GIVEN `platform_get omp <field>` is invoked for each registered field
 - WHEN executed
-- THEN `instructions_path` MUST return `""`, `skills_dir` MUST return `.omp/skills`, `agents_dir` MUST return `""`, `mcp_config_path` MUST return `.omp/mcp.json`, `mcp_key` MUST return `mcpServers`, `native` MUST return `true`, `commands_dir` MUST return `.omp/commands`, `runtime_hooks_target` MUST return `.omp/extensions`
+- THEN `instructions_path` MUST return `.omp/AGENTS.md`, `skills_dir` MUST return `.omp/skills`, `agents_dir` MUST return `""`, `mcp_config_path` MUST return `.omp/mcp.json`, `mcp_key` MUST return `mcpServers`, `native` MUST return `true`, `commands_dir` MUST return `.omp/commands`, `runtime_hooks_target` MUST return `.omp/extensions`
 
 #### Scenario: Invalid field fails
 
@@ -104,15 +104,26 @@ The system MUST render runtime hook shims to `.omp/extensions/` when syncing to 
 - WHEN sync completes
 - THEN shim files MUST exist under `.omp/extensions/`
 
-### Requirement: AGENTS.md native
+### Requirement: AGENTS.md native slot
 
-The system MUST NOT create an instruction symlink for omp.
+The system MUST route omp's runtime brief through its native, highest-priority
+provider slot by symlinking `.omp/AGENTS.md` to the root `AGENTS.md`. This is
+required because omp's `agents-md` provider ignores any `AGENTS.md` whose parent
+directory name starts with a dot and loads the standalone root file only at the
+lowest provider priority; the native `.omp/AGENTS.md` provider has the highest
+priority and shadows other providers at the same depth.
 
-#### Scenario: No instruction symlink
+#### Scenario: Native instruction symlink created
 
 - GIVEN `ai-specs sync-agent --omp` runs
 - WHEN sync completes
-- THEN no instruction symlink MUST be created for omp
+- THEN `.omp/AGENTS.md` MUST be a symlink resolving to the root `AGENTS.md`
+
+#### Scenario: Symlink is relative
+
+- GIVEN `ai-specs sync-agent --omp` runs with `TARGET_PATH == SOURCE_ROOT`
+- WHEN sync completes
+- THEN the `.omp/AGENTS.md` symlink target MUST be the relative path `../AGENTS.md`
 
 ### Requirement: --all integration
 
