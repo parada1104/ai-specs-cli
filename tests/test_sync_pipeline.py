@@ -579,6 +579,28 @@ class SyncPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
+    def test_sync_symlinks_omp_native_agents_md_slot(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n"
+                "subrepos = []\n\n"
+                "[agents]\n"
+                "enabled = ['omp']\n"
+            )
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            omp_brief = workspace / ".omp" / "AGENTS.md"
+            self.assertTrue(omp_brief.is_symlink(), ".omp/AGENTS.md must be a symlink")
+            self.assertEqual(os.readlink(omp_brief), "../AGENTS.md")
+            self.assertEqual(
+                omp_brief.resolve(), (workspace / "AGENTS.md").resolve()
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
     def test_synced_subrepo_supports_local_agent_startup_read_paths(self):
         workspace = self.make_workspace()
         try:
@@ -1272,7 +1294,10 @@ class SyncPipelineTests(unittest.TestCase):
             omp_skills = target / ".omp" / "skills"
             self.assertTrue(omp_skills.is_symlink(),
                             ".omp/skills/ must be a symlink after --all")
-            # omp is native (AGENTS.md) — no instruction file
+            # omp's runtime brief lives in its native slot .omp/AGENTS.md,
+            # symlinked to the root AGENTS.md — not a root-level OMP.md file.
+            self.assertTrue((target / ".omp" / "AGENTS.md").is_symlink(),
+                            ".omp/AGENTS.md must be a symlink after --all")
             self.assertFalse((target / "OMP.md").exists())
             self.assertFalse((target / "omp.md").exists())
 

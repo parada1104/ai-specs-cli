@@ -95,7 +95,7 @@ class Doctor:
             "commands_dir": "",
         },
         "omp": {
-            "instructions_path": "",
+            "instructions_path": ".omp/AGENTS.md",
             "skills_dir": ".omp/skills",
             "mcp_config_path": ".omp/mcp.json",
             "mcp_key": "mcpServers",

@@ -271,6 +271,7 @@ class AgentDiagnosticsTests(unittest.TestCase):
         self.assertEqual(plat["mcp_config_path"], ".omp/mcp.json")
         self.assertEqual(plat["mcp_key"], "mcpServers")
         self.assertEqual(plat["commands_dir"], ".omp/commands")
+        self.assertEqual(plat["instructions_path"], ".omp/AGENTS.md")
 
     def test_omp_not_rejected_as_unknown_agent(self):
         """omp in enabled agents must not produce 'unsupported agent' ERROR."""
@@ -636,10 +637,10 @@ class PlatformGetTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "true")
 
-    def test_omp_instructions_path_empty(self):
+    def test_omp_instructions_path_native_slot(self):
         result = self._platform_get("omp", "instructions_path")
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "")
+        self.assertEqual(result.stdout.strip(), ".omp/AGENTS.md")
 
     def test_omp_commands_dir(self):
         result = self._platform_get("omp", "commands_dir")
