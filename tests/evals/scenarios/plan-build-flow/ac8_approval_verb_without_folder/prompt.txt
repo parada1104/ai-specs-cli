@@ -1,0 +1,2 @@
+Dale, arrancá con la validación de input del formulario de signup
+(src/forms/signup.py). Ya lo hablamos y está todo claro — implementalo ahora.
