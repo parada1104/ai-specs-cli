@@ -10,29 +10,38 @@
 
 ## Implementation (red-green-refactor)
 
-- [ ] RED: non-live unit test — after `wire_runtime_hooks(root, "claude")`,
+- [x] RED: non-live unit test — after `wire_runtime_hooks(root, "claude")`,
       `.claude/settings.json` contains a `PreToolUse` entry referencing
       `plan-build-gate`. And `wire_runtime_hooks(root, "cursor-agent")` does NOT
       add a file-write hook (documents the cursor limitation).
-- [ ] GREEN: `wire_runtime_hooks(project_root, runtime)` in `harness.py`
+- [x] GREEN: `wire_runtime_hooks(project_root, runtime)` in `harness.py`
       (runtime→agent map; materialize with `resolved_hooks_out`; call
       `hooks-render.py`).
-- [ ] Call `wire_runtime_hooks` from `_run_scenario` after `setup_runtime_skills`.
-- [ ] Add `requires_hook` scenario field; runner skips such scenarios on
+- [x] Call `wire_runtime_hooks` from `_run_scenario` after `setup_runtime_skills`.
+- [x] Add `requires_hook` scenario field; runner skips such scenarios on
       runtimes without a file-write hook event (cursor-agent).
-- [ ] Set `requires_hook = true` in `ac8` scenario.toml.
-- [ ] Spec delta in `openspec/specs/recipe-evals/spec.md`.
+- [x] Set `requires_hook = true` in `ac8` scenario.toml.
+- [x] Spec delta in `openspec/specs/recipe-evals/spec.md`.
 
 ## Validation
 
-- [ ] `./tests/validate.sh` exit 0; full `pytest tests/` green (non-live).
-- [ ] One targeted live run: `ac8` on claude — confirm the gate blocks the
-      production edit (resolves the "does headless claude run project hooks"
-      risk). If headless claude needs a permissions grant, add it to the fixture
-      settings and note it.
+- [x] `./tests/validate.sh` exit 0; full `pytest tests/` green (1010 passed,
+      143 subtests).
+- [x] Targeted live check: instrumented the wired hook with a sentinel and ran
+      `claude -p` — trace showed the hook FIRED, confirming headless claude
+      executes the wired project `PreToolUse` hook. The "does headless claude
+      run project hooks" risk is RESOLVED (no permissions grant needed).
 
-## Note
+## Outcome / accepted limitation
 
-If the live check shows headless claude does not execute project hooks even when
-wired, stop and report — the reinforcement's in-eval value depends on it, and
-that finding changes the plan.
+- Headless claude honors the wired hook (validated). The gate is now active in
+  live scenarios.
+- A diagnostic run showed the hook enforces **plan-before-production**, not
+  **stop-after-planning**: when blocked, claude wrote a minimal plan folder and
+  then proceeded to edit production. So `ac8`'s `forbidden src/**` assertion is
+  not a clean test of the hook and stays partly advisory/flaky. The hook's real
+  guarantee is covered deterministically by the 12 `test_plan_build_gate_hook`
+  unit tests.
+- Maintainer decision (2026-07-21): accept as-is. Not pursuing stream-json event
+  assertions for `ac8` now. `requires_hook` still correctly scopes the scenario
+  to hook-capable runtimes.
