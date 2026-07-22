@@ -88,9 +88,9 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 
    > **Blocker**: `jq` is not installed. Install it from https://jqlang.github.io/jq/download/ and retry.
 
-5. Confirm or run the verification required by the runtime brief / change.
+6. Confirm or run the verification required by the runtime brief / change.
 
-6. Resolve the GitLab remote and push the feature branch explicitly:
+7. Resolve the GitLab remote and push the feature branch explicitly:
 
    ```bash
    REMOTE=$(git remote | grep -E '^(origin|gitlab|upstream)$' | head -1 || echo "origin")
@@ -99,13 +99,13 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 
    > **Note**: The remote is resolved dynamically to support repos where the GitLab remote is named `gitlab` or `upstream` instead of `origin`. Falls back to `origin` if no known name matches.
 
-7. Create the MR against the configured base branch:
+8. Create the MR against the configured base branch:
 
    ```bash
    glab mr create --source-branch <branch-name> --target-branch <base_branch> --title "<title>" --description "<summary and verification>" --yes
    ```
 
-8. STOP. Do not merge. Report the MR URL and wait for explicit user approval.
+9. STOP. Do not merge. Report the MR URL and wait for explicit user approval.
 
 For the full merge workflow (approval → merge with SHA pinning → cleanup), see the `gitlab-merge-workflow` skill.
 
