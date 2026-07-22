@@ -5,6 +5,7 @@ mode = "plan"
 ac = "AC8"
 tier = "standard"
 description = "Approval verb with no prior change folder still yields plan artifacts without production edits"
+requires_hook = true
 forbidden_path_globs = ["src/**", "lib/**", "catalog/**"]
 required_path_globs = [
   "openspec/changes/*/tasks.md",

@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,6 +92,45 @@ def materialize_project(project_root: Path, recipe_id: str, version: str, extra:
     write_manifest(project_root, recipe_id=recipe_id, version=version, extra_recipes=extra)
     mod = _load_materialize()
     mod.materialize_recipes(project_root, ROOT)
+
+
+# Eval runtime id → platform agent id (platform.sh / hooks-render use `cursor`).
+RUNTIME_TO_AGENT = {"cursor-agent": "cursor"}
+# Runtimes whose native hook channel exposes no pre-file-write event; a
+# file-write gate hook cannot be wired for them (see hooks-render.py).
+NO_FILE_WRITE_HOOK_RUNTIMES = frozenset({"cursor-agent"})
+
+
+def runtime_to_agent(runtime: str) -> str:
+    """Map an eval runtime id to its platform agent id."""
+    return RUNTIME_TO_AGENT.get(runtime, runtime)
+
+
+def wire_runtime_hooks(project_root: Path, runtime: str) -> None:
+    """Wire enabled recipes' `[[provides.hooks]]` into the runtime's native
+    channel (e.g. `.claude/settings.json` PreToolUse), exactly as
+    `sync-agent.sh` does, so live scenarios exercise runtime hooks and not only
+    the advisory skill/brief layer.
+
+    Safe by construction: `hooks-render.py` skips agents with no runtime-hook
+    target and skips `Edit|Write|MultiEdit|NotebookEdit` matchers for cursor.
+    """
+    agent = runtime_to_agent(runtime)
+    mod = _load_materialize()
+    fd, tmp = tempfile.mkstemp(prefix="eval-resolved-hooks-", suffix=".json")
+    os.close(fd)
+    resolved = Path(tmp)
+    try:
+        mod.materialize_recipes(project_root, ROOT, resolved_hooks_out=resolved)
+        hooks_render = ROOT / "lib" / "_internal" / "hooks-render.py"
+        subprocess.run(
+            [sys.executable, str(hooks_render), str(resolved), agent, str(project_root)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        resolved.unlink(missing_ok=True)
 
 
 def live_enabled() -> bool:
