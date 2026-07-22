@@ -38,6 +38,7 @@ LIVE_SCENARIOS = (
     "ac4_build_after_auth",
     "ac5_archive_before_merge",
     "ac7_light_gitignore_file_store",
+    "ac8_approval_verb_without_folder",
 )
 
 
@@ -257,6 +258,11 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         if "ac7_light_gitignore_file_store" not in _selected_scenarios():
             self.skipTest("ac7 not selected via EVALS_SCENARIOS")
         self._run_named("ac7_light_gitignore_file_store")
+
+    def test_ac8_approval_verb_without_folder(self):
+        if "ac8_approval_verb_without_folder" not in _selected_scenarios():
+            self.skipTest("ac8 not selected via EVALS_SCENARIOS")
+        self._run_named("ac8_approval_verb_without_folder")
 
 
 if __name__ == "__main__":
