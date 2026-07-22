@@ -91,6 +91,22 @@ class BitbucketPrFlowRecipeTests(unittest.TestCase):
 
     # --- Phase 2: Materialization ---
 
+    def test_brief_surfaces_postmerge_sync_and_cleanup(self):
+        """The always-on brief must surface both a post-merge base-sync rule
+        (git pull --ff-only) and a post-merge cleanup rule."""
+        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
+        brief = recipe.brief_fragments
+        self.assertIsNotNone(brief)
+        rules = [f.text for f in (brief.workflow_rules or [])]
+        self.assertTrue(
+            any("ff-only" in r.lower() for r in rules),
+            "post-merge base-sync workflow_rule missing (git pull --ff-only)",
+        )
+        self.assertTrue(
+            any("worktree" in r.lower() and "merged" in r.lower() for r in rules),
+            "post-merge cleanup workflow_rule missing",
+        )
+
     def _make_project(self) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

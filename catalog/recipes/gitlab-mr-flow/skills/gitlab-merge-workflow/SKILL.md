@@ -120,27 +120,27 @@ git push -u $REMOTE <branch-name>
 
 > **Note**: The remote is resolved dynamically to support repos where the GitLab remote is named `gitlab` or `upstream` instead of `origin`. Falls back to `origin` if no known name matches.
 
-4. Create a merge request with the configured base branch:
+5. Create a merge request with the configured base branch:
 
 ```bash
 glab mr create --source-branch <branch-name> --target-branch <base_branch> --title "<title>" --description "<summary and verification>" --yes
 ```
 
-5. STOP. Do not merge. Report the MR URL and wait for explicit user approval.
+6. STOP. Do not merge. Report the MR URL and wait for explicit user approval.
 
-6. Before merging, capture the approved MR head SHA to prevent merging unreviewed commits:
+7. Before merging, capture the approved MR head SHA to prevent merging unreviewed commits:
 
 ```bash
 APPROVED_SHA=$(glab mr view <mr-number> --output json | jq -r '.sha')
 ```
 
-7. Before merging, archive and record SDD/OpenSpec artifacts for the change
+8. Before merging, archive and record SDD/OpenSpec artifacts for the change
    while still on the review branch. The archive boundary is the pre-merge
    branch state — never defer this step until after the merge lands on the base
    branch. Commit and push any archive commits to the review branch before
    proceeding.
 
-8. **Pre-merge guardian (hard stop):** confirm the change is archived and has
+9. **Pre-merge guardian (hard stop):** confirm the change is archived and has
    tier-minimum files. Prefer:
 
 ```bash
@@ -154,7 +154,7 @@ consumer projects).
 Do **not** merge if `openspec/changes/<slug>/` still exists, or if
 `openspec/changes/archive/<slug>/` is missing tier files.
 
-9. Classify `HEAD_BRANCH` (see **Head branch class**). Merge only after explicit
+10. Classify `HEAD_BRANCH` (see **Head branch class**). Merge only after explicit
    user approval, required checks/review, the pre-merge archive step above, a
    clean guardian result, and pinning the approved SHA:
 
@@ -168,13 +168,14 @@ glab mr merge <mr-number> --squash --yes --sha $APPROVED_SHA
 
 > **Note**: The `--sha` flag ensures that only the reviewed commit is merged. If the branch was updated between approval and merge, the command will fail, preventing unreviewed commits from being merged.
 
-10. After the MR is merged, sync the integration branch. **Post-merge worktree /
+11. After the MR is merged, sync the integration branch. **Post-merge worktree /
     local branch cleanup runs only for feature heads.** For a protected head,
     skip worktree remove and `git branch -D` for that head — only sync the base:
 
 ```bash
 git checkout <base_branch>
-git pull --ff-only origin <base_branch>
+REMOTE=$(git remote | grep -E '^(origin|gitlab|upstream)$' | head -1 || echo "origin")
+git pull --ff-only $REMOTE <base_branch>
 ```
 
 For a **feature** head, leave the worktree first (`cd` to the main repo root —

@@ -76,7 +76,7 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 
 5. Confirm or run the verification required by the runtime brief / change.
 
-5. Resolve the Bitbucket remote and push the feature branch explicitly:
+6. Resolve the Bitbucket remote and push the feature branch explicitly:
 
    ```bash
    REMOTE=$(git remote | grep -E '^(origin|bitbucket|upstream)$' | head -1 || echo "origin")
@@ -85,13 +85,13 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 
    > **Note**: The remote is resolved dynamically to support repos where the Bitbucket remote is named `bitbucket` or `upstream` instead of `origin`. Falls back to `origin` if no known name matches.
 
-6. Create the PR against the configured base branch:
+7. Create the PR against the configured base branch:
 
    ```bash
    bb pr create --source <branch-name> --destination <base_branch> --title "<title>" --body "<summary and verification>"
    ```
 
-7. STOP. Do not merge. Report the PR URL and wait for explicit user approval.
+8. STOP. Do not merge. Report the PR URL and wait for explicit user approval.
 
 For the full merge workflow (approval → merge with source-commit check → cleanup), see the `bitbucket-merge-workflow` skill.
 

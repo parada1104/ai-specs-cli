@@ -9,16 +9,16 @@
 
 ## Implementation (red-green-refactor)
 
-- [ ] RED: extend `test_{git_pr_flow,gitlab_mr_flow,bitbucket_pr_flow}_recipe.py`
+- [x] RED: extend `test_{git_pr_flow,gitlab_mr_flow,bitbucket_pr_flow}_recipe.py`
       to assert the recipe's brief `workflow_rules` include a post-merge
       base-sync rule (mentions `ff-only`) and a post-merge cleanup rule.
-- [ ] GREEN: add the base-sync `workflow_rule` to all three recipe.toml; add the
+- [x] GREEN: add the base-sync `workflow_rule` to all three recipe.toml; add the
       cleanup `workflow_rule` to gitlab + bitbucket; bump versions.
-- [ ] Fix `gitlab-merge-workflow` post-merge pull `origin` → `$REMOTE`.
-- [ ] Fix duplicated step numbers in the 3 merge skills and 3 create commands.
-- [ ] Spec delta in `openspec/specs/vcs-pr-flow/spec.md` (brief rules requirement).
+- [x] Fix `gitlab-merge-workflow` post-merge pull `origin` → `$REMOTE`.
+- [x] Fix duplicated step numbers in the 3 merge skills and 3 create commands.
+- [x] Spec delta in `openspec/specs/vcs-pr-flow/spec.md` (brief rules requirement).
 
 ## Validation
 
-- [ ] `./tests/validate.sh` exit 0; full `pytest tests/` green.
-- [ ] New brief-rule assertions pass for all three recipes.
+- [x] `./tests/validate.sh` exit 0; full `pytest tests/` green.
+- [x] New brief-rule assertions pass for all three recipes.
