@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-07-23
+
+### Changed
+- **Minimal committed project surface**: Bundled skills and helpers stay under the CLI cache (not committed under `ai-specs/skills/`); lock stamp / toml-deps materialization keeps the project tree leaner after sync (#145).
+
+### Fixed
+- **Harness literacy pointer**: AGENTS Useful Commands no longer claim harness skills live under `ai-specs/skills/`; harness-lifecycle docs match cache-flatten / no `.new` sidecars (#146).
+- **Tracked bundled leftovers**: Sync and doctor WARN when git still tracks removed bundled skill paths, with `git rm --cached` remediation — CLI never mutates the index (#146).
+
 ## [0.15.0] — 2026-07-23
 
 ### Added
