@@ -300,20 +300,28 @@ class Doctor:
         return set()
 
     def _check_bundled_assets(self) -> None:
-        skills_root = self.root / "ai-specs" / "skills"
         commands_root = self.root / "ai-specs" / "commands"
+        # CLI-bundled skills resolve from the cache ({cache}/.bundled/skills/),
+        # not the project surface. Sync/refresh-bundled flattens them there.
+        pc = self._load_project_cache()
+        bundled_root = None
+        if pc is not None:
+            try:
+                bundled_root = pc.bundled_skills_root(self.root) / "skills"
+            except Exception:
+                bundled_root = None
         for skill in bundled_skill_names():
-            skill_path = skills_root / skill
-            if skill_path.is_dir():
+            skill_path = (bundled_root / skill) if bundled_root is not None else None
+            if skill_path is not None and skill_path.is_dir():
                 self.checks.append(Check(
                     Severity.OK, "bundled-skill",
-                    f"ai-specs/skills/{skill} present"
+                    f"cache .bundled/skills/{skill} present"
                 ))
             else:
                 self.checks.append(Check(
                     Severity.ERROR, "bundled-skill",
-                    f"ai-specs/skills/{skill} missing",
-                    guidance="ai-specs init --force or ai-specs refresh-bundled"
+                    f"cache .bundled/skills/{skill} missing",
+                    guidance="ai-specs sync (flattens CLI-bundled skills into the cache)"
                 ))
         local_ok = commands_root.is_dir() and any(commands_root.glob("*.md"))
         cache_ok = bool(self._cache_command_names())

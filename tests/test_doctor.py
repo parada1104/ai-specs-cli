@@ -318,7 +318,9 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
             target = Path(tmp) / "prj"
             target.mkdir()
             ai_specs_init(target)
-            shutil.rmtree(target / "ai-specs" / "skills" / "skill-sync")
+            # CLI-bundled skills live in the cache now; remove one there.
+            pc = load_module(ROOT / "lib" / "_internal" / "project-cache.py", "pc_doctor_missing")
+            shutil.rmtree(pc.bundled_skills_root(target, cli_home=ROOT) / "skills" / "skill-sync")
             result = subprocess.run(
                 [str(CLI), "doctor", str(target)],
                 capture_output=True, text=True, check=False
@@ -845,8 +847,14 @@ class RecipeCliDepsDoctorTests(unittest.TestCase):
         (project / "ai-specs").mkdir(parents=True)
         (project / "AGENTS.md").write_text("# agents\n")
         # Satisfy bundled-asset checks so recipe-dep WARN can keep exit code 0.
-        for skill in self.doctor.bundled_skill_names():
-            (project / "ai-specs" / "skills" / skill).mkdir(parents=True, exist_ok=True)
+        # CLI-bundled skills now resolve from the cache; the test sets
+        # AI_SPECS_HOME=root, so flatten them under that home's cache.
+        pc = load_module(ROOT / "lib" / "_internal" / "project-cache.py", "pc_doctor_recipe_deps")
+        bundled = pc.bundled_skills_root(project, cli_home=root) / "skills"
+        for skill in self.doctor.bundled_skill_names(cli_home=root):
+            d = bundled / skill
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "SKILL.md").write_text(f"# {skill}\n")
         (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
         (project / "ai-specs" / "commands" / "placeholder.md").write_text("# placeholder\n")
         flag = "true" if enabled else "false"
