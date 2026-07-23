@@ -18,6 +18,7 @@ import hashlib
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tomllib
 from datetime import datetime, timezone
@@ -190,6 +191,85 @@ def remove_bundled_skill_leftovers(
             print(f"  ✓ removed leftover bundled skill ai-specs/skills/{child.name}/")
         except OSError as exc:
             _warn(f"failed to remove leftover ai-specs/skills/{child.name}/: {exc}")
+
+    # Disk cleanup does not touch the git index. Guide the developer when
+    # removed bundled skills are still tracked (never run git rm here).
+    leftovers = tracked_bundled_skill_leftovers(ai_specs.parent, cli_home=home)
+    if leftovers:
+        print(format_tracked_bundled_remediation(leftovers))
+
+
+def bundled_skill_ids(cli_home: Path | None = None) -> list[str]:
+    """Directory names under ``bundled-skills/`` that ship a ``SKILL.md``."""
+    home = Path(cli_home) if cli_home is not None else _ai_specs_home()
+    root = home / "bundled-skills"
+    if not root.is_dir():
+        return []
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and (p / "SKILL.md").is_file()
+    )
+
+
+def _is_git_work_tree(project_root: Path) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _git_ls_files(project_root: Path, pathspec: str) -> list[str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "ls-files", "--", pathspec],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return []
+    if result.returncode != 0:
+        return []
+    return [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+
+
+def tracked_bundled_skill_leftovers(
+    project_root: Path, cli_home: Path | None = None
+) -> list[str]:
+    """Bundled skill ids still tracked in git after the working-tree copy is gone.
+
+    Does not mutate the index. Empty when not a git work tree.
+    """
+    root = Path(project_root)
+    if not _is_git_work_tree(root):
+        return []
+    leftover_ids: list[str] = []
+    for skill_id in bundled_skill_ids(cli_home):
+        skill_dir = root / "ai-specs" / "skills" / skill_id
+        if skill_dir.is_dir():
+            continue
+        if _git_ls_files(root, f"ai-specs/skills/{skill_id}"):
+            leftover_ids.append(skill_id)
+    return leftover_ids
+
+
+def format_tracked_bundled_remediation(skill_ids: list[str]) -> str:
+    """Human-readable remediation; never executes git."""
+    paths = " ".join(f"ai-specs/skills/{sid}" for sid in skill_ids)
+    names = ", ".join(skill_ids)
+    return (
+        f"  ℹ git still tracks removed CLI-bundled skill(s): {names}\n"
+        f"    To stop committing them (ai-specs will not modify the index):\n"
+        f"    git rm -r --cached {paths}\n"
+        f"    # then commit when ready"
+    )
 
 
 def remove_legacy_origin(project_root: Path, cli_home: Path | None = None) -> None:

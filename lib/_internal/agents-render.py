@@ -426,10 +426,11 @@ def _section_workflow_rules(brief: dict, resolved: dict) -> list[str]:
 
 
 # Always-on pointer so runtimes without skill auto-invoke still discover CLI literacy.
+# Do not claim these live under ai-specs/skills/ — CLI-bundled skills resolve via
+# agent fan-out from the cache ({cache}/.bundled/), not the committed surface.
 HARNESS_CLI_LITERACY_POINTER = (
     "For ai-specs harness operations (init, sync, recipes, skills/deps, doctor), "
-    "load the `harness-lifecycle`, `harness-recipes`, or `harness-skills-deps` "
-    "skills under `ai-specs/skills/`."
+    "load the `harness-lifecycle`, `harness-recipes`, or `harness-skills-deps` skills."
 )
 
 
