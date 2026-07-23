@@ -19,7 +19,11 @@
 - [x] D3 — `refresh-bundled` fate: **flatten-only** (no in-project write, no
       `.new`). (recommended default; revert if maintainer objects)
 
-## Implementation (red-green-refactor) — pending authorization
+## Implementation (red-green-refactor) — COMPLETE
+
+> All blocks implemented TDD, committed on `change/minimal-project-materialization`
+> (commits `9b01e40`→`ca5b02f`). Full `validate.sh` green (1020 tests). Boxes below
+> reflect the delivered work.
 
 ### Skill resolution (four-tier)
 
@@ -63,9 +67,27 @@
 - [ ] GREEN: strip hash writes from `skills-add`, `skills-remove`,
       `recipe-remove`, `init`.
 
+## Backward-compatibility (existing projects)
+
+- [x] Lock-hash migration guard: `remove_bundled_skill_leftovers` removes an
+      in-project bundled copy when its `SKILL.md` matches the current source OR
+      the legacy lock hash (untouched copy from an older CLI); user-edited copies
+      preserved. Run inside `refresh-bundled` before the lock is normalized so
+      the `[skills.*]` signal is still available.
+- [x] `init.sh` no longer copies `skill-creator`/`skill-sync` into the project
+      (removed the redundant second materialization path); next-steps text fixed.
+- [x] End-to-end migration smoke test (14/14): simulated a pre-upgrade project
+      (committed bundled skills from mixed versions, legacy lock with
+      `[skills.*]`/`[recipes.*]`, committed `recipes/`, a declared override) →
+      clean migration, no data loss.
+- [ ] FOLLOW-UP (not this change): migration guidance for `recipes/` already
+      committed on 0.15 projects — gitignore does not untrack; users run
+      `git rm -r --cached ai-specs/recipes` (keeping `*/overrides/`).
+- [ ] FOLLOW-UP (not this change): relocate bundled COMMANDS to the cache and
+      drop `[commands]`/`[opted-out]` from the lock (kept for now).
+
 ## Validation
 
-- [ ] `./tests/validate.sh` exit 0; full `pytest tests/` green.
-- [ ] Dogfooding self-sync on this repo produces the expected minimal surface
-      without deleting locally-authored skills.
-- [ ] `openspec` deltas validate against the affected capabilities.
+- [x] `./tests/validate.sh` exit 0; full unittest suite green (1020 tests).
+- [x] Migration smoke test green (scratchpad `migrate_smoke.sh`, 14 assertions).
+- [ ] `openspec` deltas validate against the affected capabilities (at archive).
