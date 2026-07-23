@@ -88,6 +88,7 @@
 
 ## Validation
 
-- [x] `./tests/validate.sh` exit 0; full unittest suite green (1020 tests).
-- [x] Migration smoke test green (scratchpad `migrate_smoke.sh`, 14 assertions).
-- [ ] `openspec` deltas validate against the affected capabilities (at archive).
+- [x] `./tests/validate.sh` exit 0; full unittest suite green (1020 tests, 226.342s) — re-verified 2026-07-23.
+- [x] Migration AC unit subset green (32 tests: leftover cleanup, lock-hash migration, refresh ordering, lock stamp, gitignore/overrides, toml-deps). Scratchpad `migrate_smoke.sh` was disposable and is gone; unit coverage replaces it.
+- [x] `verify-report.md` written (PASS). Spec wording suggestion: “Root `.gitignore`” → `ai-specs/.gitignore` at archive.
+- [x] `openspec` deltas promoted into `openspec/specs/{skill-source-precedence,external-dirs-layout,sync-lock}/` (at archive).

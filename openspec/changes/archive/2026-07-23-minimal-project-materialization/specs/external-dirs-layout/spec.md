@@ -37,7 +37,7 @@ the declared git source). Dependencies pulled in transitively by a recipe
 - **GIVEN** a dependency declared in `ai-specs.toml`
 - **WHEN** vendor sync runs
 - **THEN** its skills materialize under `ai-specs/.deps/`
-- **AND** root `.gitignore` lists `ai-specs/.deps/`
+- **AND** `ai-specs/.gitignore` lists `.deps/`
 
 #### Scenario: recipe-dep stays in cache
 
@@ -60,8 +60,8 @@ that re-include only the declared override surface.
 #### Scenario: Only overrides committed
 
 - **WHEN** sync completes
-- **THEN** root `.gitignore` ignores `ai-specs/recipes/` except
-  `ai-specs/recipes/*/overrides/`
+- **THEN** `ai-specs/.gitignore` ignores `recipes/**` except
+  `recipes/*/overrides/`
 - **AND** bundled recipe docs/hooks/templates are not required as committed
   content
 
@@ -70,15 +70,15 @@ that re-include only the declared override surface.
 - **WHEN** sync completes
 - **THEN** skills and deps are not required under `ai-specs/recipes/` as origin paths
 
-### Requirement: In-project origin gitignore
+### Requirement: In-project surface gitignore
 
-Root `.gitignore` SHALL ignore `ai-specs/.deps/` (toml-dep materialization) and
-`ai-specs/recipes/` (except the declared override surface). It SHALL NOT list
-`ai-specs/.recipe/` (recipe/dep origin lives under `$AI_SPECS_HOME` cache).
+`ai-specs/.gitignore` SHALL ignore `.deps/` (toml-dep materialization) and
+`recipes/**` (except the declared override surface). Root `.gitignore` SHALL
+NOT list `ai-specs/.recipe/` as a required origin path.
 
 #### Scenario: Gitignore generation
 
 - **WHEN** `ai-specs init` or `sync` completes
-- **THEN** root `.gitignore` ignores `ai-specs/.deps/` and `ai-specs/recipes/**`
-  except `ai-specs/recipes/*/overrides/`
-- **AND** it does NOT require `ai-specs/.recipe/`
+- **THEN** `ai-specs/.gitignore` ignores `.deps/` and `recipes/**`
+  except `recipes/*/overrides/`
+- **AND** root `.gitignore` does NOT require `ai-specs/.recipe/`
