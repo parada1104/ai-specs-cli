@@ -45,6 +45,10 @@ def cache_command(project_root, cmd_id, cli_home=ROOT):
     return _pc().commands_dir(project_root, cli_home=cli_home) / f"{cmd_id}.md"
 
 
+def cache_bundled_skill(project_root, skill_id, cli_home=ROOT):
+    return _pc().bundled_skills_root(project_root, cli_home=cli_home) / "skills" / skill_id
+
+
 class InitExternalDirsTests(unittest.TestCase):
     def test_init_does_not_create_in_project_origin_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -292,6 +296,31 @@ class SkillResolutionTests(unittest.TestCase):
         d = cache_dep_skill(root, dep, skill_id=name, cli_home=ROOT)
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(f"# {name}")
+
+    def _write_bundled_skill(self, root: Path, name: str) -> None:
+        d = cache_bundled_skill(root, name, cli_home=ROOT)
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(f"# {name}")
+
+    def test_bundled_fallback_when_no_other_source(self):
+        root = self._make_project()
+        self._write_bundled_skill(root, "harness-lifecycle")
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
+        self.assertEqual(resolved["harness-lifecycle"][0], "bundled")
+
+    def test_dep_precedence_over_bundled(self):
+        root = self._make_project()
+        self._write_dep_skill(root, "d1", "shared")
+        self._write_bundled_skill(root, "shared")
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
+        self.assertEqual(resolved["shared"][0], "dep")
+
+    def test_local_precedence_over_bundled(self):
+        root = self._make_project()
+        self._write_local_skill(root, "skill-creator")
+        self._write_bundled_skill(root, "skill-creator")
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
+        self.assertEqual(resolved["skill-creator"][0], "local")
 
     def test_local_precedence_over_recipe(self):
         root = self._make_project()

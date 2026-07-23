@@ -90,6 +90,11 @@ def deps_skills_root(project_root: Path, cli_home: Path | None = None) -> Path:
     return cache_root(project_root, cli_home=cli_home) / ".deps"
 
 
+def bundled_skills_root(project_root: Path, cli_home: Path | None = None) -> Path:
+    """CLI-bundled skills flattened into the cache (recipe-independent)."""
+    return cache_root(project_root, cli_home=cli_home) / ".bundled"
+
+
 def commands_dir(project_root: Path, cli_home: Path | None = None) -> Path:
     return cache_root(project_root, cli_home=cli_home) / "commands"
 
@@ -226,14 +231,14 @@ def main() -> int:
     """CLI helpers for shell callers.
 
     Usage:
-      project-cache.py <project_root> path <resolved-skills|commands|recipe|deps|root>
+      project-cache.py <project_root> path <resolved-skills|commands|recipe|deps|bundled|root>
       project-cache.py <project_root> merge-commands <dest_dir>
       project-cache.py <project_root> ensure
     """
     if len(sys.argv) < 3:
         print(
             f"Usage: {sys.argv[0]} <project_root> "
-            "path <resolved-skills|commands|recipe|deps|root> | "
+            "path <resolved-skills|commands|recipe|deps|bundled|root> | "
             "merge-commands <dest> | ensure",
             file=sys.stderr,
         )
@@ -257,6 +262,7 @@ def main() -> int:
             "commands": commands_dir,
             "recipe": recipe_skills_root,
             "deps": deps_skills_root,
+            "bundled": bundled_skills_root,
         }
         if kind not in mapping:
             print(f"unknown path kind: {kind}", file=sys.stderr)

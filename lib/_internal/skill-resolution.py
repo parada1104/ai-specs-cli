@@ -110,6 +110,19 @@ def _scan_dep_skills(project_root: Path, cli_home: Path | None = None) -> dict[s
     return result
 
 
+def _scan_bundled_skills(project_root: Path, cli_home: Path | None = None) -> dict[str, Path]:
+    """CLI-bundled skills flattened at {cache}/.bundled/skills/{id}/ (flat namespace)."""
+    pc = _load_project_cache()
+    skills_dir = pc.bundled_skills_root(project_root, cli_home=cli_home) / "skills"
+    result: dict[str, Path] = {}
+    if not skills_dir.is_dir():
+        return result
+    for skill_child in sorted(skills_dir.iterdir()):
+        if skill_child.is_dir() and (skill_child / "SKILL.md").is_file():
+            result[skill_child.name] = skill_child
+    return result
+
+
 def _get_recipe_id_for_skill(
     skill_path: Path,
     project_root: Path,
@@ -201,10 +214,10 @@ def collect_skills(
     project_root: Path,
     cli_home: Path | None = None,
 ) -> dict[str, tuple[str, Path]]:
-    """Resolve skills across three sources with precedence.
+    """Resolve skills across four sources with precedence.
 
     Returns {skill_id: (source_type, abs_path)} where source_type is one of
-    'local', 'recipe', or 'dep'.
+    'local', 'recipe', 'dep', or 'bundled' (in descending precedence).
     """
     resolved: dict[str, tuple[str, Path]] = {}
 
@@ -212,15 +225,20 @@ def collect_skills(
     for skill_id, path in _scan_local_skills(project_root).items():
         resolved[skill_id] = ("local", path)
 
-    # Tier 2: recipe (middle precedence)
+    # Tier 2: recipe
     for skill_id, path in _scan_recipe_skills(project_root, cli_home=cli_home).items():
         if skill_id not in resolved:
             resolved[skill_id] = ("recipe", path)
 
-    # Tier 3: dep (lowest precedence)
+    # Tier 3: dep
     for skill_id, path in _scan_dep_skills(project_root, cli_home=cli_home).items():
         if skill_id not in resolved:
             resolved[skill_id] = ("dep", path)
+
+    # Tier 4: CLI-bundled (lowest precedence)
+    for skill_id, path in _scan_bundled_skills(project_root, cli_home=cli_home).items():
+        if skill_id not in resolved:
+            resolved[skill_id] = ("bundled", path)
 
     return resolved
 
