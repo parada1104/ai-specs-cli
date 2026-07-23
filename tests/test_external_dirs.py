@@ -266,6 +266,46 @@ class RecipeMaterializePathTests(unittest.TestCase):
         self.assertEqual((local_skill / "SKILL.md").read_text(), "local")
 
 
+class BundledLeftoverCleanupTests(unittest.TestCase):
+    """remove_legacy_origin deletes materialized bundled-skill copies from the
+    project surface, but never genuine local skills or customized copies."""
+
+    def _project(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "ai-specs" / "skills").mkdir(parents=True)
+        return root
+
+    def test_removes_bundled_leftover_keeps_local_and_customized(self):
+        root = self._project()
+        skills = root / "ai-specs" / "skills"
+        bundled_src = ROOT / "bundled-skills"
+
+        # 1. Materialized bundled copy (byte-identical to CLI source) → remove.
+        leftover = skills / "harness-lifecycle"
+        leftover.mkdir()
+        (leftover / "SKILL.md").write_text(
+            (bundled_src / "harness-lifecycle" / "SKILL.md").read_text()
+        )
+
+        # 2. Genuine local skill (no bundled counterpart) → keep.
+        local = skills / "my-local-skill"
+        local.mkdir()
+        (local / "SKILL.md").write_text("# my-local-skill\n")
+
+        # 3. Customized copy of a bundled skill (content differs) → keep + warn.
+        customized = skills / "skill-creator"
+        customized.mkdir()
+        (customized / "SKILL.md").write_text("# skill-creator (locally edited)\n")
+
+        _pc().remove_legacy_origin(root, cli_home=ROOT)
+
+        self.assertFalse(leftover.exists(), "bundled leftover should be removed")
+        self.assertTrue(local.exists(), "genuine local skill must be preserved")
+        self.assertTrue(customized.exists(), "customized copy must be preserved")
+
+
 class SkillResolutionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

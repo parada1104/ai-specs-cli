@@ -667,7 +667,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     cli_home = Path(ai_specs_home)
     pc = _load_project_cache()
     pc.ensure_cache(project_root, cli_home=cli_home)
-    pc.remove_legacy_origin(project_root)
+    pc.remove_legacy_origin(project_root, cli_home=cli_home)
 
     recipes = load_recipes_from_manifest(project_root)
     enabled = {rid: cfg for rid, cfg in recipes.items() if cfg.get("enabled")}

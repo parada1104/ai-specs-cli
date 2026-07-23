@@ -107,12 +107,51 @@ def _warn(msg: str) -> None:
     print(f"  ! {msg}", file=sys.stderr)
 
 
-def remove_legacy_origin(project_root: Path) -> None:
+def _normalized_bytes(path: Path) -> bytes:
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
+def _remove_bundled_skill_leftovers(ai_specs: Path, cli_home: Path | None) -> None:
+    """Delete in-project copies of CLI-bundled skills (now cache-resolved).
+
+    A directory under ``ai-specs/skills/`` is removed only when a bundled skill
+    of the same id ships under ``{cli_home}/bundled-skills/`` AND its ``SKILL.md``
+    is byte-identical (CRLF-normalized) to the bundled source. Genuine local
+    skills (no bundled counterpart) and customized copies (differing content)
+    are preserved.
+    """
+    home = Path(cli_home) if cli_home is not None else _ai_specs_home()
+    bundled_src = home / "bundled-skills"
+    skills_dir = ai_specs / "skills"
+    if not bundled_src.is_dir() or not skills_dir.is_dir():
+        return
+    for child in sorted(skills_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        src_skill = bundled_src / child.name / "SKILL.md"
+        proj_skill = child / "SKILL.md"
+        if not src_skill.is_file() or not proj_skill.is_file():
+            continue
+        if _normalized_bytes(src_skill) != _normalized_bytes(proj_skill):
+            _warn(
+                f"keeping customized ai-specs/skills/{child.name}/ "
+                "(differs from CLI-bundled source; resolve manually)"
+            )
+            continue
+        try:
+            shutil.rmtree(child)
+            print(f"  ✓ removed leftover bundled skill ai-specs/skills/{child.name}/")
+        except OSError as exc:
+            _warn(f"failed to remove leftover ai-specs/skills/{child.name}/: {exc}")
+
+
+def remove_legacy_origin(project_root: Path, cli_home: Path | None = None) -> None:
     """Migrate leftover overrides, then delete in-project origin leftovers.
 
     Removes legacy origin trees (``.recipe``, ``.deps``), obsolete skill-cache
-    dirs (``.resolved-skills``, ``.internal``), and the stale shared helper
-    formerly staged at ``ai-specs/bin/premerge_guardian.py``.
+    dirs (``.resolved-skills``, ``.internal``), the stale shared helper formerly
+    staged at ``ai-specs/bin/premerge_guardian.py``, and in-project copies of
+    CLI-bundled skills (which now resolve from the cache).
     """
     root = Path(project_root)
     ai_specs = root / "ai-specs"
@@ -186,6 +225,8 @@ def remove_legacy_origin(project_root: Path) -> None:
                 print("  ✓ removed empty ai-specs/bin/")
         except OSError as exc:
             _warn(f"failed to remove empty ai-specs/bin/: {exc}")
+
+    _remove_bundled_skill_leftovers(ai_specs, cli_home)
 
 
 def merge_commands(
