@@ -139,7 +139,7 @@ context_sources = [
   "Specs and changes are tracked in the project's designated spec store (configurable per project).",
   "Vault is the canonical note-taker for decisions, handoffs, and structured project context.",
   "Engram is the operational memory layer for session facts, patterns, and short-lived continuity.",
-  "Skills are executable guidance, not the primary contents of this runtime brief. Load specific skills from `ai-specs/skills/<name>/SKILL.md` only when relevant.",
+  "Skills are executable guidance, not the primary contents of this runtime brief. Load specific skills by id when relevant (local under `ai-specs/skills/`, or CLI-bundled / recipe / dep via agent fan-out).",
   "Check Engram for the current active card and next recommended focus.",
 ]
 # "Current explicit human instruction controls..." and "Tracker controls work state..."
