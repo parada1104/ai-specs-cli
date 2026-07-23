@@ -12,7 +12,7 @@ Trello: https://trello.com/c/AfRD6P6O (#49)
 - [x] RED/GREEN: harness-lifecycle bundled skill documents cache flatten; no `.new` sidecar story
 - [x] RED/GREEN: doctor WARNs when git still tracks removed CLI-bundled skill paths; guidance is `git rm -r --cached …`; never runs git rm
 - [x] RED/GREEN: sync/refresh prints the same remediation after leftover removal when tracked paths remain
-- [ ] `./tests/validate.sh` green
+- [x] `./tests/validate.sh` green (1023 tests)
 
 ## Out of scope
 
