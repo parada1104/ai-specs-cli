@@ -581,6 +581,15 @@ def clean_orphans(
                 shutil.rmtree(child)
                 print(f"  ✓ removed orphaned cache .deps/{child.name}")
 
+    # Prune in-project toml-dep materialization (ai-specs/.deps/) for deps no
+    # longer declared in the manifest.
+    inproject_deps = pc.inproject_deps_root(project_root)
+    if inproject_deps.is_dir():
+        for child in inproject_deps.iterdir():
+            if child.is_dir() and child.name not in expected_dep_ids:
+                shutil.rmtree(child)
+                print(f"  ✓ removed orphaned ai-specs/.deps/{child.name}")
+
     # Clean up stale lock entries for recipes no longer in the manifest
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
     if lock_path.is_file():

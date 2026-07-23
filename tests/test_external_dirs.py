@@ -49,6 +49,11 @@ def cache_bundled_skill(project_root, skill_id, cli_home=ROOT):
     return _pc().bundled_skills_root(project_root, cli_home=cli_home) / "skills" / skill_id
 
 
+def inproject_dep_skill(project_root, dep_id, skill_id=None):
+    sid = dep_id if skill_id is None else skill_id
+    return _pc().inproject_deps_root(project_root) / dep_id / "skills" / sid
+
+
 class InitExternalDirsTests(unittest.TestCase):
     def test_init_does_not_create_in_project_origin_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -134,9 +139,12 @@ class VendorSkillsPathTests(unittest.TestCase):
                 f'source = "{self._make_dep_repo(tmp_path, "my-dep")}"\n'
             )
             self.mod.sync_vendored_skills(project, self.mod.load_deps(project))
-            skill = cache_dep_skill(project, "my-dep") / "SKILL.md"
+            # toml-deps ([[deps]]) are project-governed → in-project ai-specs/.deps/
+            skill = inproject_dep_skill(project, "my-dep") / "SKILL.md"
             self.assertTrue(skill.is_file())
             self.assertIn("name: my-dep", skill.read_text())
+            # and NOT staged under the CLI cache
+            self.assertFalse((cache_dep_skill(project, "my-dep") / "SKILL.md").is_file())
 
     def test_vendor_does_not_write_to_ai_specs_skills(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -389,6 +397,14 @@ class SkillResolutionTests(unittest.TestCase):
         self._write_dep_skill(root, "d1", "only-dep")
         resolved = self.mod.collect_skills(root, cli_home=ROOT)
         self.assertEqual(resolved["only-dep"][0], "dep")
+
+    def test_inproject_toml_dep_resolves_as_dep(self):
+        root = self._make_project()
+        d = inproject_dep_skill(root, "d1", "only-toml-dep")
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text("# only-toml-dep")
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
+        self.assertEqual(resolved["only-toml-dep"][0], "dep")
 
     def test_first_seen_recipe_wins_with_warning(self):
         root = self._make_project()

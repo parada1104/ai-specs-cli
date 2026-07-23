@@ -95,6 +95,16 @@ def bundled_skills_root(project_root: Path, cli_home: Path | None = None) -> Pat
     return cache_root(project_root, cli_home=cli_home) / ".bundled"
 
 
+def inproject_deps_root(project_root: Path) -> Path:
+    """toml-declared deps ([[deps]]) materialize in-project (gitignored).
+
+    These are project governance (the user chose them via add-dep), so unlike
+    recipe-deps (which stay in the cache) their skills live under the project
+    tree — but gitignored, since they are regenerable from the declared source.
+    """
+    return Path(project_root) / "ai-specs" / ".deps"
+
+
 def commands_dir(project_root: Path, cli_home: Path | None = None) -> Path:
     return cache_root(project_root, cli_home=cli_home) / "commands"
 
@@ -156,7 +166,6 @@ def remove_legacy_origin(project_root: Path, cli_home: Path | None = None) -> No
     root = Path(project_root)
     ai_specs = root / "ai-specs"
     legacy_recipe = ai_specs / ".recipe"
-    legacy_deps = ai_specs / ".deps"
 
     migration_failed = False
     if legacy_recipe.is_dir():
@@ -182,20 +191,20 @@ def remove_legacy_origin(project_root: Path, cli_home: Path | None = None) -> No
                 )
                 migration_failed = True
 
-    for path, label in ((legacy_recipe, ".recipe"), (legacy_deps, ".deps")):
-        if not path.exists():
-            continue
-        if path == legacy_recipe and migration_failed:
+    # Only .recipe/ is legacy origin. ai-specs/.deps/ is now the toml-dep home
+    # (gitignored) and must NOT be deleted.
+    if legacy_recipe.exists():
+        if migration_failed:
             _warn(
-                f"skipping removal of ai-specs/{label}/ — "
+                "skipping removal of ai-specs/.recipe/ — "
                 "one or more override migrations failed; re-run ai-specs sync to retry"
             )
-            continue
-        try:
-            shutil.rmtree(path)
-            print(f"  ✓ removed leftover ai-specs/{label}/")
-        except OSError as exc:
-            _warn(f"failed to remove leftover ai-specs/{label}/: {exc}")
+        else:
+            try:
+                shutil.rmtree(legacy_recipe)
+                print("  ✓ removed leftover ai-specs/.recipe/")
+            except OSError as exc:
+                _warn(f"failed to remove leftover ai-specs/.recipe/: {exc}")
 
     for path, label in (
         (ai_specs / ".resolved-skills", ".resolved-skills"),

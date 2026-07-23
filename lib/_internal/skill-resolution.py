@@ -86,27 +86,34 @@ def _scan_recipe_skills(project_root: Path, cli_home: Path | None = None) -> dic
 
 
 def _scan_dep_skills(project_root: Path, cli_home: Path | None = None) -> dict[str, Path]:
+    """Scan dep skills from both the in-project toml-dep root (project-governed,
+    scanned first) and the CLI cache root (recipe-deps). Both are the 'dep' tier.
+    """
     pc = _load_project_cache()
-    deps_dir = pc.deps_skills_root(project_root, cli_home=cli_home)
     result: dict[str, Path] = {}
-    if not deps_dir.is_dir():
-        return result
-    for dep_child in sorted(deps_dir.iterdir()):
-        if not dep_child.is_dir():
+    roots = (
+        pc.inproject_deps_root(project_root),
+        pc.deps_skills_root(project_root, cli_home=cli_home),
+    )
+    for deps_dir in roots:
+        if not deps_dir.is_dir():
             continue
-        skills_dir = dep_child / "skills"
-        if not skills_dir.is_dir():
-            continue
-        for skill_child in sorted(skills_dir.iterdir()):
-            if skill_child.is_dir() and (skill_child / "SKILL.md").is_file():
-                skill_id = skill_child.name
-                if skill_id in result:
-                    warn(
-                        f"skill '{skill_id}' found in multiple deps; "
-                        f"using first-seen from '{result[skill_id].parents[1].name}'"
-                    )
-                else:
-                    result[skill_id] = skill_child
+        for dep_child in sorted(deps_dir.iterdir()):
+            if not dep_child.is_dir():
+                continue
+            skills_dir = dep_child / "skills"
+            if not skills_dir.is_dir():
+                continue
+            for skill_child in sorted(skills_dir.iterdir()):
+                if skill_child.is_dir() and (skill_child / "SKILL.md").is_file():
+                    skill_id = skill_child.name
+                    if skill_id in result:
+                        warn(
+                            f"skill '{skill_id}' found in multiple deps; "
+                            f"using first-seen from '{result[skill_id].parents[1].name}'"
+                        )
+                    else:
+                        result[skill_id] = skill_child
     return result
 
 
