@@ -7,11 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-07-23
+
 ### Added
+- **Always-on harness CLI literacy**: Bundled playbooks for CLI lifecycle, recipes, and skills/deps, plus a fixed AGENTS.md Useful Commands pointer so agents can operate the public CLI without relying on README/help alone.
+- **Playwright UI flow + MCP add-on**: `ui-browser-testing` base CLI/smoke recipe plus optional `@playwright/mcp` surface for agent UI verification.
 - **vault-canonical-store 1.2.0**: Vendors kepano Obsidian skills (`obsidian-markdown`, `obsidian-bases`, `json-canvas`, `obsidian-cli`, `defuddle`) as recipe dep skills; refreshes `vault-context` cross-links and README for env-owned `CANONICAL_VAULT_PATH` (including spaced iCloud paths). Dry + live eval client (`./tests/evals/run-live-vault.sh`).
+- **Plan-build pre-tool-use artifact gate**: Non-bypassable hook blocking production edits until an active change folder exists (with eval coverage).
+- **Live-eval runtime hook wiring**: Harness wires `[[provides.hooks]]` into the runtime channel so gate scenarios test end-to-end.
+- **VCS post-merge base-sync rule**: Surfaced across git/gitlab/bitbucket recipe briefs so agents sync the integration branch after a merged PR/MR.
 
 ### Fixed
+- **omp native brief slot**: Routes the runtime brief through `.omp/AGENTS.md` (omp's highest-priority provider slot) instead of relying only on the root standalone AGENTS.md.
 - **Vault MCP path via env (not `${VAR}` argv)**: `vault-canonical` now runs `vault-fs-mcp.sh`, which reads absolute `CANONICAL_VAULT_PATH` from the process env at exec time. Avoids hosts that leave a bare `"${CANONICAL_VAULT_PATH}"` argv unexpanded (the `~/${path}` workaround class of bugs).
+- **OpenCode MCP env substitution**: MCP command args use `{env:VAR}` so OpenCode expands them at config load.
 - **Recipe dep skill import path**: `materialize_dep_skill` ensures `lib/_internal` is on `sys.path` so `vendor-skills` can import `skill_contract` when loaded via importlib.
 
 ## [0.14.2] — 2026-07-17
