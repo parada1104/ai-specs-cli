@@ -131,6 +131,7 @@ class Doctor:
         self._check_agents_md()
         self._check_brief_render_policy()
         self._check_bundled_assets()
+        self._check_tracked_bundled_leftovers()
         self._check_enabled_agents()
         self._check_recipe_cli_deps()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
@@ -336,6 +337,31 @@ class Doctor:
                 "ai-specs/commands/ missing or empty",
                 guidance="ai-specs init --force or ai-specs refresh-bundled"
             ))
+
+    def _check_tracked_bundled_leftovers(self) -> None:
+        """WARN when git still tracks CLI-bundled skills removed from disk.
+
+        Never runs ``git rm`` — only guides the developer.
+        """
+        pc = self._load_project_cache()
+        if pc is None:
+            return
+        try:
+            skill_ids = pc.tracked_bundled_skill_leftovers(self.root)
+        except Exception:
+            return
+        if not skill_ids:
+            return
+        paths = " ".join(f"ai-specs/skills/{sid}" for sid in skill_ids)
+        self.checks.append(Check(
+            Severity.WARN,
+            "tracked-bundled-leftover",
+            f"{len(skill_ids)} removed CLI-bundled skill(s) still tracked in git",
+            guidance=(
+                f"git rm -r --cached {paths}  "
+                "# then commit; ai-specs never modifies the index"
+            ),
+        ))
 
     # -------------------------------------------------------------------------
     # Agent-driven checks

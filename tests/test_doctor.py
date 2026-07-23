@@ -329,6 +329,49 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
             self.assertIn("ERROR", result.stdout)
             self.assertIn("skill-sync", result.stdout)
 
+    def test_tracked_bundled_leftover_warns_without_git_rm(self):
+        """Doctor WARNs when git still tracks a removed CLI-bundled skill path."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run(["git", "init", "-q", str(target)], check=True)
+            subprocess.run(
+                ["git", "-C", str(target), "config", "user.email", "t@example.com"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(target), "config", "user.name", "t"],
+                check=True,
+            )
+            ai_specs_init(target)
+            skill = target / "ai-specs" / "skills" / "skill-creator"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text("# leftover\n")
+            subprocess.run(["git", "-C", str(target), "add", "-A"], check=True)
+            subprocess.run(
+                ["git", "-C", str(target), "commit", "-qm", "track bundled leftover"],
+                check=True,
+            )
+            shutil.rmtree(skill)
+            before = subprocess.run(
+                ["git", "-C", str(target), "ls-files", "ai-specs/skills/skill-creator"],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            self.assertIn("SKILL.md", before)
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertIn("WARN", result.stdout)
+            self.assertIn("tracked-bundled", result.stdout)
+            self.assertIn("git rm -r --cached", result.stdout)
+            self.assertIn("skill-creator", result.stdout)
+            after = subprocess.run(
+                ["git", "-C", str(target), "ls-files", "ai-specs/skills/skill-creator"],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            self.assertEqual(before, after)
+
     def test_bundled_commands_present_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"

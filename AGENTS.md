@@ -43,7 +43,7 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - Vault is the canonical note-taker for decisions, handoffs, and structured project context.
 - Specs and changes are tracked in the project's designated spec store (configurable per project).
 - Engram is the operational memory layer for session facts, patterns, and short-lived continuity.
-- Skills are executable guidance, not the primary contents of this runtime brief. Load specific skills from `ai-specs/skills/<name>/SKILL.md` only when relevant.
+- Skills are executable guidance, not the primary contents of this runtime brief. Load specific skills by id when relevant (local under `ai-specs/skills/`, or CLI-bundled / recipe / dep via agent fan-out).
 - Check Engram for the current active card and next recommended focus.
 
 ## Conflict Policy
@@ -62,6 +62,7 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations.
 - Do not push directly to `development`; always open a PR from a feature branch.
 - After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists.
+- After a merged PR, sync `development` in the main worktree before further work: `git checkout development` then `git pull --ff-only`.
 - A session works on one explicit user request or tracker card; resolve focus from memory and tracker before starting.
 - Follow red-green-refactor discipline: write a failing test first, then implement, then clean up.
 - Run the full test suite before committing; do not leave the suite in a failing state.
@@ -79,3 +80,4 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - Full validation: `./tests/validate.sh`
 - Focused tests (unit-only): `./tests/run.sh`
 - Inspect the active Trello card before resuming work.
+- For ai-specs harness operations (init, sync, recipes, skills/deps, doctor), load the `harness-lifecycle`, `harness-recipes`, or `harness-skills-deps` skills.
