@@ -81,15 +81,32 @@ class InitExternalDirsTests(unittest.TestCase):
             self.assertNotIn("ai-specs/.recipe/", gitignore)
             self.assertNotIn("ai-specs/.deps/", gitignore)
 
-    def test_gitignore_does_not_ignore_user_recipes_surface(self):
-        """ai-specs/.gitignore must not contain recipes/ — that surface is user-committed."""
+    def test_gitignore_ignores_recipes_except_overrides(self):
+        """recipes/ is CLI-owned; only declared overrides are committed."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
+            subprocess.run(["git", "init", "-q", str(target)], check=True, text=True, capture_output=True)
             subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
-            ai_specs_gitignore = (target / "ai-specs" / ".gitignore").read_text()
-            self.assertNotIn("recipes/", ai_specs_gitignore,
-                             "ai-specs/.gitignore must not ignore recipes/ (user surface)")
+            ai_specs = target / "ai-specs"
+            # A bundled recipe doc should be ignored; a declared override committed.
+            (ai_specs / "recipes" / "demo").mkdir(parents=True)
+            (ai_specs / "recipes" / "demo" / "README.md").write_text("bundled doc\n")
+            (ai_specs / "recipes" / "demo" / "overrides").mkdir()
+            (ai_specs / "recipes" / "demo" / "overrides" / "config.toml").write_text("x = 1\n")
+            (ai_specs / ".deps" / "mydep").mkdir(parents=True)
+            (ai_specs / ".deps" / "mydep" / "SKILL.md").write_text("# mydep\n")
+
+            def ignored(rel: str) -> bool:
+                r = subprocess.run(
+                    ["git", "check-ignore", "-q", rel],
+                    cwd=target, capture_output=True,
+                )
+                return r.returncode == 0
+
+            self.assertTrue(ignored("ai-specs/recipes/demo/README.md"))
+            self.assertFalse(ignored("ai-specs/recipes/demo/overrides/config.toml"))
+            self.assertTrue(ignored("ai-specs/.deps/mydep/SKILL.md"))
 
     def test_gitignore_idempotent_no_origin_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
