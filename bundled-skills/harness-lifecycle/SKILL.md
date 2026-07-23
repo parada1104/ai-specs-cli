@@ -66,15 +66,18 @@ hand-edit generated agent instruction files when sync owns them.
 `ai-specs rules-audit` exists for legacy rules inventory; not part of this
 literacy skill's primary flows — use when migrating old Cursor rules.
 
-## refresh-bundled and `.new` sidecars
+## refresh-bundled (CLI-bundled skills)
 
-Bundled skills (including this one) ship via `refresh-bundled` on init/sync:
+CLI-bundled skills (including this one) ship via `refresh-bundled` on init/sync:
 
-- First install copies into `ai-specs/skills/<name>/`.
-- If you edit a bundled skill and upstream changes, CLI may write
-  `SKILL.md.new` — review and resolve; do not ignore forever.
-- Deleting a bundled skill can opt it out permanently (lock records opt-out).
-  Prefer editing with intent over silent delete unless you mean to opt out.
+- Skills are **flattened** into `{cache}/.bundled/skills/<name>/` (never into
+  `ai-specs/skills/`). Agents resolve them through the usual skill fan-out.
+- Sync deletes leftover in-project copies of bundled ids when untouched; a
+  locally authored skill of the same id is preserved.
+- If git still tracks a removed leftover, the CLI prints / `doctor` WARNs with
+  `git rm -r --cached …` guidance — it never modifies the git index for you.
+- Bundled **commands** still materialize under `ai-specs/commands/` (relocation
+  is a follow-up).
 
 ## Pitfalls
 

@@ -115,7 +115,9 @@ class ProjectCacheTests(unittest.TestCase):
         self.assertEqual((dest / "config.toml").read_text(), 'board_id = "x"\n')
         self.assertTrue((dest / "templates" / "card.md").is_file())
         self.assertFalse((root / "ai-specs" / ".recipe").exists())
-        self.assertFalse((root / "ai-specs" / ".deps").exists())
+        # ai-specs/.deps/ is now the toml-dep materialization home (gitignored) —
+        # it must be preserved, not deleted as legacy origin.
+        self.assertTrue((root / "ai-specs" / ".deps").exists())
 
     def test_remove_legacy_origin_keeps_existing_overrides(self):
         root = self._tmp_project()
@@ -141,7 +143,7 @@ class ProjectCacheTests(unittest.TestCase):
         recipes_dir = root / "ai-specs" / "recipes"
         recipes_dir.mkdir(parents=True, exist_ok=True)
         (recipes_dir / "demo").write_text("blocking file\n")
-        # Also create .deps — it should still be removed (independent)
+        # Create .deps — the toml-dep home, which must be preserved.
         (root / "ai-specs" / ".deps" / "dep-a").mkdir(parents=True)
         (root / "ai-specs" / ".deps" / "dep-a" / "marker").write_text("d\n")
 
@@ -150,8 +152,8 @@ class ProjectCacheTests(unittest.TestCase):
         # .recipe/ must survive — overrides were not migrated
         self.assertTrue((root / "ai-specs" / ".recipe").exists())
         self.assertTrue(legacy_overrides.exists())
-        # .deps/ cleanup is independent and should have proceeded
-        self.assertFalse((root / "ai-specs" / ".deps").exists())
+        # .deps/ is the toml-dep materialization home — preserved, not deleted.
+        self.assertTrue((root / "ai-specs" / ".deps").exists())
 
     def test_remove_legacy_origin_deletes_resolved_skills_and_internal(self):
         root = self._tmp_project()

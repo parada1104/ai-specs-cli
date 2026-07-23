@@ -72,3 +72,14 @@ def deps_skill_dir(
     sid = dep_id if skill_id is None else skill_id
     pc = _load_project_cache()
     return pc.deps_skills_root(project_root, cli_home=home) / dep_id / "skills" / sid
+
+
+def inproject_deps_skill_dir(
+    project_root: Path,
+    dep_id: str,
+    skill_id: str | None = None,
+) -> Path:
+    """In-project toml-dep materialization: ai-specs/.deps/{dep}/skills/{skill}/."""
+    sid = dep_id if skill_id is None else skill_id
+    pc = _load_project_cache()
+    return pc.inproject_deps_root(project_root) / dep_id / "skills" / sid

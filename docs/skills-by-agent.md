@@ -22,4 +22,5 @@ the public `ai-specs` CLI (init/sync, recipes, skills/deps, doctor).
 On agents with native skill auto-invoke (Claude, Cursor, Gemini), intent-matched
 triggers load those skills. On agents without auto-invoke (OpenCode, Codex,
 Copilot, and typically pi/omp), the generated `AGENTS.md` `## Useful Commands`
-section includes a fixed pointer to the same skills under `ai-specs/skills/`.
+section includes a fixed pointer to the same harness skill ids (resolved via
+agent fan-out from the CLI cache, not from `ai-specs/skills/`).

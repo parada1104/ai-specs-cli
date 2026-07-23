@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Render <project>/ai-specs/.gitignore from ai-specs.toml.
 
-Patterns derived:
-  - Vendored deps (each [[deps]].id → skills/<id>/)
+Ignored (CLI-owned / regenerable materialization):
+  - .internal/            transient internal state
+  - .deps/                toml-dep materialization (regenerable from git source)
+  - recipes/**            recipe docs/hooks/templates are CLI-owned
 
-Bundled skills (skill-creator, skill-sync) are NOT ignored — they are
-committed by the project after `ai-specs init` so the project can customize
-the skill template / sync behavior.
+Committed (project governance):
+  - recipes/*/overrides/  declared per-recipe override surface
 
 Usage:
   gitignore-render.py <toml_path> <output_path>
@@ -29,6 +30,13 @@ FOOTER = """\
 def render(deps: list[dict]) -> str:
     lines = [HEADER]
     lines.append(".internal/")
+    lines.append(".deps/")
+    lines.append("")
+    lines.append("# Recipe materialization is CLI-owned; only declared overrides are committed.")
+    lines.append("recipes/**")
+    lines.append("!recipes/*/")
+    lines.append("!recipes/*/overrides/")
+    lines.append("!recipes/*/overrides/**")
     lines.append("")
     lines.append(FOOTER)
     return "\n".join(lines)

@@ -80,7 +80,10 @@ class HarnessCliLiteracyTests(unittest.TestCase):
             self.assertIn("root", meta["scope"], name)
             self.assertTrue(meta["auto_invoke"], name)
 
-    def test_refresh_bundled_ships_harness_skills(self):
+    def test_refresh_bundled_flattens_harness_skills_to_cache(self):
+        pc = load_module(
+            ROOT / "lib" / "_internal" / "project-cache.py", "project_cache_literacy"
+        )
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             (project / "ai-specs").mkdir()
@@ -88,15 +91,51 @@ class HarnessCliLiteracyTests(unittest.TestCase):
                 '[project]\nname = "literacy-fixture"\n\n[agents]\nenabled = ["claude"]\n'
             )
             proc = subprocess.run(
-                [sys.executable, str(REFRESH_BUNDLED), str(project), str(ROOT), "--init"],
+                [sys.executable, str(REFRESH_BUNDLED), str(project), str(ROOT)],
                 text=True,
                 capture_output=True,
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+            bundled_root = pc.bundled_skills_root(project, cli_home=ROOT) / "skills"
             for name in HARNESS_SKILLS:
-                skill = project / "ai-specs" / "skills" / name / "SKILL.md"
-                self.assertTrue(skill.is_file(), f"not shipped: {skill}")
+                self.assertTrue(
+                    (bundled_root / name / "SKILL.md").is_file(),
+                    f"not flattened to cache: {name}",
+                )
+                # CLI-bundled skills must NOT leak into the committed project surface.
+                self.assertFalse(
+                    (project / "ai-specs" / "skills" / name).exists(),
+                    f"leaked into project surface: {name}",
+                )
+
+    def test_refresh_bundled_migrates_inproject_copy_via_lock_hash(self):
+        """An untouched in-project bundled copy from an older CLI (differs from
+        source, but recorded in the legacy lock) is removed on refresh-bundled —
+        while the legacy [skills.*] hashes are still in memory."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "ai-specs" / "skills" / "harness-lifecycle").mkdir(parents=True)
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "mig"\n\n[agents]\nenabled = ["claude"]\n'
+            )
+            old = project / "ai-specs" / "skills" / "harness-lifecycle" / "SKILL.md"
+            content = "# harness-lifecycle (older CLI, untouched)\n"
+            old.write_text(content)
+            h = hashlib.sha256(content.encode()).hexdigest()
+            (project / "ai-specs" / ".ai-specs.lock").write_text(
+                f'[skills."harness-lifecycle"]\n"SKILL.md" = "{h}"\n'
+            )
+            proc = subprocess.run(
+                [sys.executable, str(REFRESH_BUNDLED), str(project), str(ROOT)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+            self.assertFalse(
+                (project / "ai-specs" / "skills" / "harness-lifecycle").exists(),
+                "untouched in-project copy should be migrated out via lock hash",
+            )
 
     def test_agents_render_emits_harness_literacy_pointer(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,6 +182,69 @@ class HarnessCliLiteracyTests(unittest.TestCase):
                 text,
                 r"[Hh]arness|ai-specs harness|harness operations",
             )
+            # Bundled harness skills resolve via agent fan-out / cache — never
+            # claim they live on the committed project surface.
+            self.assertNotIn("under `ai-specs/skills/`", text)
+            self.assertNotIn("under ai-specs/skills/", text)
+
+    def test_harness_lifecycle_documents_cache_flatten(self):
+        text = (BUNDLED / "harness-lifecycle" / "SKILL.md").read_text()
+        self.assertRegex(text, r"\.bundled|cache.*bundled|flatten", re.I)
+        self.assertNotIn("SKILL.md.new", text)
+        self.assertNotRegex(
+            text,
+            r"First install copies into `ai-specs/skills/",
+        )
+
+    def test_refresh_prints_tracked_leftover_remediation(self):
+        """After removing leftovers, refresh prints git rm --cached guidance."""
+        pc = load_module(
+            ROOT / "lib" / "_internal" / "project-cache.py", "project_cache_lit_track"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            subprocess.run(["git", "init", "-q", str(project)], check=True)
+            subprocess.run(
+                ["git", "-C", str(project), "config", "user.email", "t@example.com"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(project), "config", "user.name", "t"],
+                check=True,
+            )
+            (project / "ai-specs").mkdir()
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "lit-track"\n\n[agents]\nenabled = ["claude"]\n'
+            )
+            leftover = project / "ai-specs" / "skills" / "skill-creator"
+            leftover.mkdir(parents=True)
+            (leftover / "SKILL.md").write_text(
+                (BUNDLED / "skill-creator" / "SKILL.md").read_text()
+            )
+            subprocess.run(["git", "-C", str(project), "add", "-A"], check=True)
+            subprocess.run(
+                ["git", "-C", str(project), "commit", "-qm", "track leftover"],
+                check=True,
+            )
+            proc = subprocess.run(
+                [sys.executable, str(REFRESH_BUNDLED), str(project), str(ROOT)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+            self.assertFalse(leftover.exists())
+            out = proc.stdout + proc.stderr
+            self.assertIn("git rm -r --cached", out)
+            self.assertIn("skill-creator", out)
+            tracked = subprocess.run(
+                ["git", "-C", str(project), "ls-files", "ai-specs/skills/skill-creator"],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            self.assertIn("SKILL.md", tracked)
+            # Helper agrees with the printed guidance.
+            ids = pc.tracked_bundled_skill_leftovers(project, cli_home=ROOT)
+            self.assertIn("skill-creator", ids)
 
     def test_harness_skill_commands_match_cli_help(self):
         known = public_cli_commands()
