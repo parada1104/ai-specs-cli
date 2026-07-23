@@ -13,9 +13,11 @@ from pathlib import Path
 
 LOCK_HEADER = """\
 # Managed by ai-specs. Do not edit by hand.
-# Tracks SHA-256 of bundled files as last installed by the CLI.
-# Used by `ai-specs refresh-bundled` to detect user customizations.
-# [meta] records the CLI version and timestamp of the last lock write.
+# Provenance stamp: [meta] records the CLI version and timestamp of the last
+# sync. It is the CLI-provenance signal that travels with a fresh clone (the
+# machine-local cache meta.toml does not). git covers integrity/diff of the
+# committed project surface; skill/recipe/dep content hashes are not tracked.
+# [commands] / [opted-out] still track bundled-command materialization.
 """
 
 
@@ -84,46 +86,17 @@ def write_lock(lock_path: Path, lock: dict) -> None:
             out.append(f'synced_at = "{meta["synced_at"]}"')
         out.append("")
 
-    skills = lock.get("skills") or {}
-    for skill in sorted(skills):
-        files = skills[skill]
-        if not files:
-            continue
-        out.append(f'[skills."{skill}"]')
-        for rel in sorted(files):
-            out.append(f'"{rel}" = "{files[rel]}"')
-        out.append("")
-
+    # Skill/recipe/dep content hashes are intentionally NOT serialized: the lock
+    # is a provenance stamp (see LOCK_HEADER), not an integrity manifest. git
+    # covers integrity/diff for the committed surface, and bundled/recipe skills
+    # resolve from the CLI cache. Any legacy [skills.*]/[recipes.*]/[deps.*]
+    # sections loaded from an older lock are dropped here on the next write.
     commands = lock.get("commands") or {}
     if commands:
         out.append("[commands]")
         for rel in sorted(commands):
             out.append(f'"{rel}" = "{commands[rel]}"')
         out.append("")
-
-    recipes = lock.get("recipes") or {}
-    for recipe_id in sorted(recipes):
-        recipe_skills = recipes[recipe_id]
-        for skill_name in sorted(recipe_skills):
-            files = recipe_skills[skill_name]
-            if not files:
-                continue
-            out.append(f'[recipes."{recipe_id}".skills."{skill_name}"]')
-            for rel in sorted(files):
-                out.append(f'"{rel}" = "{files[rel]}"')
-            out.append("")
-
-    deps = lock.get("deps") or {}
-    for dep_id in sorted(deps):
-        dep_skills = deps[dep_id]
-        for skill_name in sorted(dep_skills):
-            files = dep_skills[skill_name]
-            if not files:
-                continue
-            out.append(f'[deps."{dep_id}".skills."{skill_name}"]')
-            for rel in sorted(files):
-                out.append(f'"{rel}" = "{files[rel]}"')
-            out.append("")
 
     agents = lock.get("agents") or {}
     for harness in sorted(agents):
