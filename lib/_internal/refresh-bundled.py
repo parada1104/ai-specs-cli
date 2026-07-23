@@ -177,6 +177,13 @@ def refresh(
     lock_path = project / LOCK_REL
     lock = load_lock(lock_path)
 
+    # Migrate away any in-project bundled-skill copies while the legacy lock
+    # (with [skills.*] hashes) is still in memory — write_lock below drops those
+    # sections, so this must happen first for the lock-hash migration signal.
+    _load_project_cache().remove_bundled_skill_leftovers(
+        project / "ai-specs", cli_source, lock.get("skills") or {}
+    )
+
     touched: list[tuple[str, str, str]] = []
     seen: set[tuple[str, Optional[str], str]] = set()
     opted_out: set[str] = set(lock.get("opted_out") or [])

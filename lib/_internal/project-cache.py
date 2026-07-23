@@ -143,7 +143,11 @@ def _legacy_lock_skill_hashes(ai_specs: Path) -> dict[str, dict]:
     return {sid: files for sid, files in skills.items() if isinstance(files, dict)}
 
 
-def _remove_bundled_skill_leftovers(ai_specs: Path, cli_home: Path | None) -> None:
+def remove_bundled_skill_leftovers(
+    ai_specs: Path,
+    cli_home: Path | None,
+    lock_skills: dict | None = None,
+) -> None:
     """Delete in-project copies of CLI-bundled skills (now cache-resolved).
 
     A directory under ``ai-specs/skills/`` is removed only when a bundled skill
@@ -152,13 +156,18 @@ def _remove_bundled_skill_leftovers(ai_specs: Path, cli_home: Path | None) -> No
     to EITHER the current bundled source OR the hash the legacy lock recorded for
     it (migration signal for copies from an older CLI version). Genuine local
     skills (no bundled counterpart) and user-edited copies are preserved.
+
+    ``lock_skills`` may be supplied by a caller that still holds the legacy lock
+    in memory (e.g. refresh-bundled, before it normalizes the lock away); when
+    omitted the hashes are read from the on-disk lock best-effort.
     """
     home = Path(cli_home) if cli_home is not None else _ai_specs_home()
     bundled_src = home / "bundled-skills"
     skills_dir = ai_specs / "skills"
     if not bundled_src.is_dir() or not skills_dir.is_dir():
         return
-    lock_skills = _legacy_lock_skill_hashes(ai_specs)
+    if lock_skills is None:
+        lock_skills = _legacy_lock_skill_hashes(ai_specs)
     for child in sorted(skills_dir.iterdir()):
         if not child.is_dir():
             continue
@@ -263,7 +272,7 @@ def remove_legacy_origin(project_root: Path, cli_home: Path | None = None) -> No
         except OSError as exc:
             _warn(f"failed to remove empty ai-specs/bin/: {exc}")
 
-    _remove_bundled_skill_leftovers(ai_specs, cli_home)
+    remove_bundled_skill_leftovers(ai_specs, cli_home)
 
 
 def merge_commands(
