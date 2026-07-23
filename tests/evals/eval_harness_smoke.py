@@ -248,10 +248,56 @@ class HarnessSmokeTests(unittest.TestCase):
     def test_live_scripts_are_capability_scoped(self):
         plan = (REPO_ROOT / "tests" / "evals" / "run-live.sh").read_text()
         vcs = (REPO_ROOT / "tests" / "evals" / "run-live-vcs.sh").read_text()
+        vault = (REPO_ROOT / "tests" / "evals" / "run-live-vault.sh").read_text()
         self.assertIn("eval_plan_build_flow_live", plan)
         self.assertNotIn("eval_vcs_pr_flow_live", plan)
         self.assertIn("eval_vcs_pr_flow_live", vcs)
         self.assertNotIn("eval_plan_build_flow_live", vcs)
+        self.assertIn("eval_vault_canonical_live", vault)
+        self.assertNotIn("eval_plan_build_flow_live", vault)
+        self.assertNotIn("eval_vcs_pr_flow_live", vault)
+
+    def test_vault_canonical_scenario_fixtures_load(self):
+        from tests.evals import eval_vault_canonical_live as vault
+
+        for scenario_id in vault.LIVE_SCENARIOS:
+            scenario_dir = (
+                REPO_ROOT
+                / "tests"
+                / "evals"
+                / "scenarios"
+                / "vault-canonical-store"
+                / scenario_id
+            )
+            scenario = load_scenario(scenario_dir)
+            self.assertEqual(scenario.recipe_id, "vault-canonical-store")
+            self.assertEqual(scenario.id, scenario_id)
+            assert_natural_prompt(scenario.prompt_path.read_text())
+
+    def test_materialize_vault_canonical_store(self):
+        from tests._cache_paths import recipe_skill_dir
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        version = recipe_version(REPO_ROOT / "catalog", "vault-canonical-store")
+        materialize_project(root, "vault-canonical-store", version)
+        skill = (
+            recipe_skill_dir(root, "vault-canonical-store", "vault-context")
+            / "SKILL.md"
+        )
+        self.assertTrue(skill.is_file(), f"missing skill at {skill}")
+        for kepano_id in (
+            "obsidian-markdown",
+            "obsidian-bases",
+            "json-canvas",
+            "obsidian-cli",
+            "defuddle",
+        ):
+            from tests._cache_paths import deps_skill_dir
+
+            dep = deps_skill_dir(root, kepano_id) / "SKILL.md"
+            self.assertTrue(dep.is_file(), f"missing kepano dep {dep}")
 
     def test_vcs_scenario_fixtures_load(self):
         from tests.evals import eval_vcs_pr_flow_live as vcs
@@ -290,6 +336,33 @@ class HarnessSmokeTests(unittest.TestCase):
                     root / ".claude" / "skills" / skill_id / "SKILL.md",
                 )
                 self.assertTrue(dest.is_file())
+
+
+class VaultMcpLiveHelperTests(unittest.TestCase):
+    def test_create_scoped_vault_and_sync_mcp_config(self):
+        from tests.evals.lib.vault_mcp_live import (
+            cleanup_vault,
+            create_scoped_vault,
+            sync_vault_mcp,
+        )
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        vault = create_scoped_vault()
+        self.addCleanup(cleanup_vault, vault)
+        self.assertTrue((vault["scoped"] / "MARKER.md").is_file())
+        self.assertIn("VAULT_LIVE_", vault["token"])
+        self.assertNotEqual(vault["token"], vault["sibling"])
+
+        version = recipe_version(REPO_ROOT / "catalog", "vault-canonical-store")
+        materialize_project(root, "vault-canonical-store", version)
+        cfg = sync_vault_mcp(root, "claude")
+        self.assertEqual(cfg, root / ".mcp.json")
+        text = cfg.read_text()
+        self.assertIn("vault-canonical", text)
+        self.assertIn("vault-fs-mcp.sh", text)
+        self.assertIn("CANONICAL_VAULT_PATH", text)
 
 
 class HarnessPathTests(unittest.TestCase):

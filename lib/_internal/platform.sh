@@ -131,10 +131,15 @@ platform_get() {
             esac
             ;;
         omp)
-            # Oh My Pi (can1357/oh-my-pi) — Rust pi fork; AGENTS.md native, .omp/ root.
-            # KEY DELTA vs pi: commands_dir is populated (.omp/commands); dedicated mcp path.
+            # Oh My Pi (can1357/oh-my-pi) — Rust pi fork; .omp/ root.
+            # instructions_path is its NATIVE (highest-priority) provider slot:
+            # sync symlinks .omp/AGENTS.md → root AGENTS.md. Relying on the root
+            # standalone AGENTS.md alone is fragile — omp's agents-md provider is
+            # lowest priority and any .claude/.gemini/.github instruction file
+            # would shadow it. KEY DELTAS vs pi: populated commands_dir and a
+            # dedicated mcp path.
             case "$field" in
-                instructions_path)    echo "" ;;
+                instructions_path)    echo ".omp/AGENTS.md" ;;
                 skills_dir)           echo ".omp/skills" ;;
                 agents_dir)           echo "" ;;
                 mcp_config_path)      echo ".omp/mcp.json" ;;   # dedicated; avoids .mcp.json clash with pi

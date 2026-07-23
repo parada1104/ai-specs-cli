@@ -1,0 +1,5 @@
+We decided to keep PostgreSQL as the system of record for inventory. Please draft
+the durable decision note we would file in the vault (Obsidian). Write it to
+ai-specs/eval-notes/vault-decision.md using Obsidian-native conventions
+(wikilinks / properties where appropriate) and the project's decision note shape.
+Do not invent secrets.

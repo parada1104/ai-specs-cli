@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -83,9 +84,53 @@ def assert_natural_prompt(prompt: str) -> None:
 def materialize_project(project_root: Path, recipe_id: str, version: str, extra: str = "") -> None:
     from tests.evals.lib.project_fixture import write_manifest
 
+    # vault-canonical-store vendors kepano deps; keep offline via fixture when set.
+    os.environ.setdefault(
+        "AI_SPECS_VENDOR_FIXTURE_ROOT",
+        str(ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"),
+    )
     write_manifest(project_root, recipe_id=recipe_id, version=version, extra_recipes=extra)
     mod = _load_materialize()
     mod.materialize_recipes(project_root, ROOT)
+
+
+# Eval runtime id → platform agent id (platform.sh / hooks-render use `cursor`).
+RUNTIME_TO_AGENT = {"cursor-agent": "cursor"}
+# Runtimes whose native hook channel exposes no pre-file-write event; a
+# file-write gate hook cannot be wired for them (see hooks-render.py).
+NO_FILE_WRITE_HOOK_RUNTIMES = frozenset({"cursor-agent"})
+
+
+def runtime_to_agent(runtime: str) -> str:
+    """Map an eval runtime id to its platform agent id."""
+    return RUNTIME_TO_AGENT.get(runtime, runtime)
+
+
+def wire_runtime_hooks(project_root: Path, runtime: str) -> None:
+    """Wire enabled recipes' `[[provides.hooks]]` into the runtime's native
+    channel (e.g. `.claude/settings.json` PreToolUse), exactly as
+    `sync-agent.sh` does, so live scenarios exercise runtime hooks and not only
+    the advisory skill/brief layer.
+
+    Safe by construction: `hooks-render.py` skips agents with no runtime-hook
+    target and skips `Edit|Write|MultiEdit|NotebookEdit` matchers for cursor.
+    """
+    agent = runtime_to_agent(runtime)
+    mod = _load_materialize()
+    fd, tmp = tempfile.mkstemp(prefix="eval-resolved-hooks-", suffix=".json")
+    os.close(fd)
+    resolved = Path(tmp)
+    try:
+        mod.materialize_recipes(project_root, ROOT, resolved_hooks_out=resolved)
+        hooks_render = ROOT / "lib" / "_internal" / "hooks-render.py"
+        subprocess.run(
+            [sys.executable, str(hooks_render), str(resolved), agent, str(project_root)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        resolved.unlink(missing_ok=True)
 
 
 def live_enabled() -> bool:
@@ -171,7 +216,12 @@ def _max_turns() -> str:
     return os.environ.get("EVALS_MAX_TURNS", "12")
 
 
-def _run(cmd: list[str], cwd: Path) -> dict[str, Any]:
+def _run(
+    cmd: list[str],
+    cwd: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Run a command; on timeout kill and return partial stdout/stderr."""
     proc = subprocess.Popen(
         cmd,
@@ -180,6 +230,7 @@ def _run(cmd: list[str], cwd: Path) -> dict[str, Any]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=env,
     )
     try:
         stdout, stderr = proc.communicate(timeout=_timeout())
@@ -257,11 +308,24 @@ def _parse_pi_ndjson(stdout: str) -> dict[str, Any]:
     return {"result_text": "".join(texts), "cost": cost}
 
 
-def run_claude_prompt(project_root: Path, prompt: str, *, mode: str = "plan") -> dict[str, Any]:
+def run_claude_prompt(
+    project_root: Path,
+    prompt: str,
+    *,
+    mode: str = "plan",
+    env: dict[str, str] | None = None,
+    mcp_config: Path | None = None,
+    add_dirs: list[Path] | None = None,
+) -> dict[str, Any]:
     model = default_model("claude")
     # Claude's "plan" permission mode is read-only and cannot write OpenSpec
     # artifacts. Ambient plan-build needs writes; FS assertions gate production edits.
-    permission = "acceptEdits"
+    # Live MCP / headless writes: bypass permissions when caller opts in via
+    # mcp_config OR EVALS_CLAUDE_BYPASS=1 (local-scope MCP registration path).
+    bypass = mcp_config is not None or os.environ.get(
+        "EVALS_CLAUDE_BYPASS", ""
+    ).lower() in {"1", "true", "yes"}
+    permission = "bypassPermissions" if bypass else "acceptEdits"
     _ = mode
     cmd = [
         "claude",
@@ -276,7 +340,21 @@ def run_claude_prompt(project_root: Path, prompt: str, *, mode: str = "plan") ->
         "--output-format",
         "json",
     ]
-    result = _run(cmd, project_root)
+    if bypass:
+        cmd.append("--dangerously-skip-permissions")
+    if mcp_config is not None:
+        cmd.extend(
+            [
+                "--mcp-config",
+                str(mcp_config),
+                "--strict-mcp-config",
+            ]
+        )
+    # Modern filesystem MCP replaces argv dirs with client roots; --add-dir
+    # puts the vault scope into Claude's root set so AllowedDirectories match.
+    for extra in add_dirs or []:
+        cmd.extend(["--add-dir", str(extra)])
+    result = _run(cmd, project_root, env=env)
     result["runtime"] = "claude"
     result["model"] = model
     result["mode"] = mode
@@ -290,7 +368,12 @@ def run_claude_prompt(project_root: Path, prompt: str, *, mode: str = "plan") ->
 
 
 def run_cursor_agent_prompt(
-    project_root: Path, prompt: str, *, mode: str = "plan"
+    project_root: Path,
+    prompt: str,
+    *,
+    mode: str = "plan",
+    env: dict[str, str] | None = None,
+    approve_mcps: bool = False,
 ) -> dict[str, Any]:
     """Headless Cursor Agent CLI (`cursor-agent` / `agent`)."""
     model = default_model("cursor-agent")
@@ -314,7 +397,9 @@ def run_cursor_agent_prompt(
         "--workspace",
         str(project_root),
     ]
-    result = _run(cmd, project_root)
+    if approve_mcps:
+        cmd.append("--approve-mcps")
+    result = _run(cmd, project_root, env=env)
     result["runtime"] = "cursor-agent"
     result["model"] = model
     result["mode"] = mode
@@ -322,7 +407,13 @@ def run_cursor_agent_prompt(
     return result
 
 
-def run_opencode_prompt(project_root: Path, prompt: str, *, mode: str = "plan") -> dict[str, Any]:
+def run_opencode_prompt(
+    project_root: Path,
+    prompt: str,
+    *,
+    mode: str = "plan",
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
     model = default_model("opencode")
     cmd = [
         "opencode",
@@ -339,7 +430,7 @@ def run_opencode_prompt(project_root: Path, prompt: str, *, mode: str = "plan") 
     ]
     # OpenCode has no universal --mode plan; rely on ambient skill + assertions.
     _ = mode
-    result = _run(cmd, project_root)
+    result = _run(cmd, project_root, env=env)
     result["runtime"] = "opencode"
     result["model"] = model
     result["mode"] = mode
@@ -354,6 +445,7 @@ def run_pi_family_prompt(
     prompt: str,
     *,
     mode: str = "plan",
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     model = default_model(binary if binary in DEFAULT_MODELS else "pi")
     cmd = [binary, "-p", "--mode", "json", "--model", model, "--no-session"]
@@ -366,7 +458,7 @@ def run_pi_family_prompt(
     cmd.append(prompt)
     # Pi/OMP: plan-mode flags vary by extension; skill + FS assertions are the gate.
     _ = mode
-    result = _run(cmd, project_root)
+    result = _run(cmd, project_root, env=env)
     result["runtime"] = binary
     result["model"] = model
     result["mode"] = mode
@@ -383,6 +475,10 @@ def run_prompt(
     *,
     runtime: str | None = None,
     mode: str = "plan",
+    env: dict[str, str] | None = None,
+    mcp_config: Path | None = None,
+    approve_mcps: bool = False,
+    add_dirs: list[Path] | None = None,
 ) -> dict[str, Any]:
     assert_natural_prompt(prompt)
     name = runtime or detect_runtime()
@@ -391,13 +487,22 @@ def run_prompt(
             "no supported runtime on PATH (claude|cursor-agent|opencode|pi|omp)"
         )
     if name == "claude":
-        return run_claude_prompt(project_root, prompt, mode=mode)
+        return run_claude_prompt(
+            project_root,
+            prompt,
+            mode=mode,
+            env=env,
+            mcp_config=mcp_config,
+            add_dirs=add_dirs,
+        )
     if name == "cursor-agent":
-        return run_cursor_agent_prompt(project_root, prompt, mode=mode)
+        return run_cursor_agent_prompt(
+            project_root, prompt, mode=mode, env=env, approve_mcps=approve_mcps
+        )
     if name == "opencode":
-        return run_opencode_prompt(project_root, prompt, mode=mode)
+        return run_opencode_prompt(project_root, prompt, mode=mode, env=env)
     if name in {"pi", "omp"}:
-        return run_pi_family_prompt(name, project_root, prompt, mode=mode)
+        return run_pi_family_prompt(name, project_root, prompt, mode=mode, env=env)
     raise RuntimeError(f"unsupported runtime: {name}")
 
 

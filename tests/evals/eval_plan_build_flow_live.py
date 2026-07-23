@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tests.evals.lib.harness import (  # noqa: E402
+    NO_FILE_WRITE_HOOK_RUNTIMES,
     SUPPORTED_RUNTIMES,
     api_key_present,
     detect_runtime,
@@ -24,6 +25,7 @@ from tests.evals.lib.harness import (  # noqa: E402
     materialize_project,
     run_prompt,
     runtime_available,
+    wire_runtime_hooks,
 )
 from tests.evals.lib.project_fixture import (  # noqa: E402
     recipe_version,
@@ -38,6 +40,7 @@ LIVE_SCENARIOS = (
     "ac4_build_after_auth",
     "ac5_archive_before_merge",
     "ac7_light_gitignore_file_store",
+    "ac8_approval_verb_without_folder",
 )
 
 
@@ -104,6 +107,10 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         setup_runtime_skills(
             root, runtime, scenario.recipe_id, catalog_root=REPO_ROOT / "catalog"
         )
+        # Wire the recipe's runtime hooks into this runtime's native channel so
+        # the scenario exercises the gate hook end-to-end, not just the advisory
+        # skill/brief layer.
+        wire_runtime_hooks(root, runtime)
         if meta.get("seed_plan"):
             seed_authorized_plan(
                 root, slug=slug, tier=str(meta.get("tier", "standard"))
@@ -223,8 +230,13 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         trials = int(os.environ.get("EVALS_TRIALS", "1"))
         runtimes = _selected_runtimes()
         self.assertTrue(runtimes, "no runtimes selected")
+        requires_hook = bool(load_scenario(SCENARIOS / name).meta.get("requires_hook"))
         failures: list[str] = []
         for runtime in runtimes:
+            # A gate scenario asserts only where the gate can be enforced; skip
+            # runtimes with no pre-file-write hook event (e.g. cursor-agent).
+            if requires_hook and runtime in NO_FILE_WRITE_HOOK_RUNTIMES:
+                continue
             passed = 0
             last_err: Exception | None = None
             for _ in range(trials):
@@ -257,6 +269,11 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         if "ac7_light_gitignore_file_store" not in _selected_scenarios():
             self.skipTest("ac7 not selected via EVALS_SCENARIOS")
         self._run_named("ac7_light_gitignore_file_store")
+
+    def test_ac8_approval_verb_without_folder(self):
+        if "ac8_approval_verb_without_folder" not in _selected_scenarios():
+            self.skipTest("ac8 not selected via EVALS_SCENARIOS")
+        self._run_named("ac8_approval_verb_without_folder")
 
 
 if __name__ == "__main__":

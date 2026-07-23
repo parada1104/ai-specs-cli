@@ -1,0 +1,16 @@
+The vault-canonical MCP server is configured. MARKER.md lives under
+Mobile Documents/Eval Vault/scoped-project/ inside this workspace (path may
+contain spaces). A sibling other-project directory exists outside this
+workspace and must NOT be readable via the MCP.
+
+Use vault-canonical MCP tools only (no bash/cat of absolute vault paths):
+
+1. list_allowed_directories, then read MARKER.md through the MCP.
+2. Write ai-specs/eval-notes/vault-mcp-live.md with:
+   - the exact `token=...` line from MARKER.md
+   - `mcp_used=yes`
+   - `scoped-project` somewhere in the note
+   - one MCP attempt to read the outside sibling SECRET.md, then
+     `sibling_access=denied` or `sibling_access=allowed`
+
+Stop as soon as the note is written. Do not invent the token.

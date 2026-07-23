@@ -23,7 +23,13 @@ def bundled_skill_names(cli_home: Path | None = None) -> list[str]:
     home = cli_home or AI_SPECS_HOME
     root = home / "bundled-skills"
     if not root.is_dir():
-        return ["skill-creator", "skill-sync"]
+        return [
+            "harness-lifecycle",
+            "harness-recipes",
+            "harness-skills-deps",
+            "skill-creator",
+            "skill-sync",
+        ]
     return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
@@ -89,7 +95,7 @@ class Doctor:
             "commands_dir": "",
         },
         "omp": {
-            "instructions_path": "",
+            "instructions_path": ".omp/AGENTS.md",
             "skills_dir": ".omp/skills",
             "mcp_config_path": ".omp/mcp.json",
             "mcp_key": "mcpServers",

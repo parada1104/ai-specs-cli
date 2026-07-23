@@ -52,10 +52,19 @@ def load_mcp(toml_path: Path, recipe_mcp_path: Path | None = None) -> dict:
 # translator here.
 
 _ENV_VAR_RE = re.compile(r"^\$\{?([A-Z_][A-Z0-9_]*)\}?$")
-# Braced ${VAR} embedded anywhere in a string → bare $VAR (for OpenCode args).
-_OPENCODE_ARG_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# Shell-style ${VAR} / $VAR in OpenCode strings → {env:VAR}.
+# OpenCode ConfigVariable.substitute only expands {env:NAME} (and {file:…})
+# at config-load time; $VAR and ${VAR} stay literal (live-verified 1.18.3).
+_OPENCODE_BRACED_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_OPENCODE_BARE_VAR_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
 # Cursor/Claude JSON use "${env:NAME}" in headers/url; OpenCode remote expects "{env:NAME}".
 _CURSOR_ENV_IN_HEADERS = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _env_refs_for_opencode(value: str) -> str:
+    """Rewrite shell-style env refs to OpenCode `{env:VAR}` form."""
+    value = _OPENCODE_BRACED_VAR_RE.sub(r"{env:\1}", value)
+    return _OPENCODE_BARE_VAR_RE.sub(r"{env:\1}", value)
 
 
 def _headers_for_opencode(headers: dict) -> dict:
@@ -64,7 +73,7 @@ def _headers_for_opencode(headers: dict) -> dict:
     out: dict = {}
     for k, v in headers.items():
         if isinstance(v, str):
-            out[k] = _CURSOR_ENV_IN_HEADERS.sub(r"{env:\1}", v)
+            out[k] = _env_refs_for_opencode(_CURSOR_ENV_IN_HEADERS.sub(r"{env:\1}", v))
         else:
             out[k] = v
     return out
@@ -113,11 +122,10 @@ def _translate_opencode(servers: dict) -> dict:
         else:
             full_cmd = []
 
-        # OpenCode interpolates shell-style $VAR in command args (not the
-        # braced ${VAR} form, which is left literal and breaks the server).
-        # Environment values use the {env:VAR} form instead (handled below).
+        # Command args use the same {env:VAR} form as environment values.
+        # Bare $VAR / braced ${VAR} are NOT expanded by OpenCode.
         full_cmd = [
-            _OPENCODE_ARG_VAR_RE.sub(r"$\1", a) if isinstance(a, str) else a
+            _env_refs_for_opencode(a) if isinstance(a, str) else a
             for a in full_cmd
         ]
 

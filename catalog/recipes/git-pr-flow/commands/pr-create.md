@@ -93,13 +93,13 @@ If unset, fall back to the recipe default (`main`) and to the runtime brief
    git push -u origin <branch-name>
    ```
 
-4. Create the PR against the configured base branch:
+5. Create the PR against the configured base branch:
 
    ```bash
    gh pr create --base <base_branch> --title "<title>" --body "<summary and verification>"
    ```
 
-5. STOP. Do not merge. Report the PR URL and wait for explicit user approval.
+6. STOP. Do not merge. Report the PR URL and wait for explicit user approval.
 
 For the full merge workflow (approval → merge → cleanup), see the `git-merge-workflow` skill.
 

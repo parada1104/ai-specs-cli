@@ -37,6 +37,8 @@ never touches the foundational layer.
 |--------|------|-------|---------------------|--------------|------------|
 | [`session-context`](#session-context) | Foundational | Session-start focus resolution + conflict policy | `session-bootstrap`, `conflict-policy` | — | — (consumes `memory`, `tracker`, `canonical-store`) |
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
+| [`playwright-ui-flow`](#playwright-ui-flow) | Specific | Playwright UI test/smoke discipline + CLI surface | `ui-browser-testing` | — | `ui_test_command`, `ui_smoke_command`, `playwright_config` |
+| [`playwright-mcp`](#playwright-mcp) | Specific | Exploratory browser automation via `@playwright/mcp` (add-on) | — (augments base) | `playwright` | — (override via `[mcp.playwright]`) |
 | [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | — |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
@@ -64,6 +66,8 @@ manual.
 | `vault-canonical-store` | `npx` | Filesystem MCP server runtime | yes |
 | `worktree-flow` | `git` | Worktree add/remove/cleanup | yes |
 | `tdd-flow` | — | Test command is config-driven | — |
+| `playwright-ui-flow` | `npx` | Playwright UI test/smoke commands | yes |
+| `playwright-mcp` | `npx` | `@playwright/mcp` server runtime | yes |
 
 
 ## session-context
@@ -112,6 +116,54 @@ version = "1.0.0"
 
 [recipes.tdd-flow.config]
 test_command = "./tests/run.sh"
+```
+
+## playwright-ui-flow
+
+**Playwright UI test/smoke discipline + CLI surface.** Canonical
+`ui-browser-testing` capability: when to run suites/smokes, CLI-first
+precedence, and evidence before merge. Complements `tdd-flow` (does not
+replace it). Installs no MCP server — add [`playwright-mcp`](#playwright-mcp)
+for exploratory automation.
+
+- **Provides:** skills `ui-browser-testing`, `playwright-cli`, command
+  `/ui-smoke`; capability `ui-browser-testing`.
+- **Config:**
+
+  | Key | Type | Required | Default | Description |
+  |-----|------|----------|---------|-------------|
+  | `ui_test_command` | string | no | _(unset)_ | Full UI suite command (e.g. `npx playwright test`). |
+  | `ui_smoke_command` | string | no | _(unset)_ | Fast smoke subset (e.g. `npx playwright test --grep @smoke`). |
+  | `playwright_config` | string | no | _(unset)_ | Path to `playwright.config.*` when non-standard. |
+
+- **Full README:** [`catalog/recipes/playwright-ui-flow/README.md`](../catalog/recipes/playwright-ui-flow/README.md)
+
+```toml
+[recipes.playwright-ui-flow]
+enabled = true
+
+[recipes.playwright-ui-flow.config]
+ui_test_command = "npx playwright test"
+ui_smoke_command = "npx playwright test --grep @smoke"
+```
+
+## playwright-mcp
+
+**Exploratory browser automation via `@playwright/mcp`.** Add-on to
+[`playwright-ui-flow`](#playwright-ui-flow): hybrid = enable both. Declares no
+capability of its own (avoids binding ambiguity). Ships MCP preset `playwright`.
+
+- **Provides:** skill `playwright-mcp`, MCP preset `playwright`.
+- **Config:** none in v1 — tune browser/headless via `[mcp.playwright]` in the
+  project manifest.
+- **Full README:** [`catalog/recipes/playwright-mcp/README.md`](../catalog/recipes/playwright-mcp/README.md)
+
+```toml
+[recipes.playwright-ui-flow]
+enabled = true
+
+[recipes.playwright-mcp]
+enabled = true
 ```
 
 ## plan-build-flow
@@ -320,11 +372,16 @@ and handoffs in a configured vault MCP (e.g. Obsidian over a filesystem MCP
 server). Defines when to read/write canonical context, plus decision- and
 handoff-note shapes. The rule: Vault holds the deliberate, human-auditable
 record; operational memory holds searchable continuity. Ships an MCP preset for
-`@modelcontextprotocol/server-filesystem` (pinned `2025.7.1`) scoped via
-`CANONICAL_VAULT_PATH` in the environment (typically set in `.envrc`).
+`@modelcontextprotocol/server-filesystem` (pinned `2025.7.1`) via
+`vault-fs-mcp.sh`, which reads absolute `CANONICAL_VAULT_PATH` from the
+environment at exec time (not a bare `${VAR}` MCP arg). Also vendors the
+kepano Obsidian skills (`obsidian-markdown`, `obsidian-bases`, `json-canvas`,
+`obsidian-cli`, `defuddle`) for LLM wiki / second-brain note formats. Set the
+path in `.envrc` (shell expansion); quote when the Obsidian path contains
+spaces (e.g. iCloud `Mobile Documents/`).
 
-- **Provides:** skill `vault-context`; capability `canonical-store`; MCP preset
-  `vault-canonical`.
+- **Provides:** skill `vault-context`; kepano dep skills above; capability
+  `canonical-store`; MCP preset `vault-canonical`.
 - **Config:**
 
   | Key | Type | Default | Description |
@@ -338,7 +395,7 @@ record; operational memory holds searchable continuity. Ships an MCP preset for
 ```toml
 [recipes.vault-canonical-store]
 enabled = true
-version = "1.1.0"
+version = "1.2.0"
 
 [recipes.vault-canonical-store.config]
 decisions_folder = "decisiones"

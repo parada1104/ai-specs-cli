@@ -2,7 +2,7 @@
 id = "bitbucket-pr-flow"
 name = "Bitbucket PR Flow"
 description = "Bitbucket PR and merge flow for feature branches (via bb CLI)"
-version = "1.2.1"
+version = "1.3.0"
 author = "ai-specs"
 license = "MIT"
 tags = ["vcs", "bitbucket"]
@@ -47,6 +47,8 @@ workflow_rules = [
     "Use a PR-based merge workflow; all changes to `{config.base_branch}` go through a pull request.",
     "VCS/PR provider: Bitbucket (bb CLI). Use bb for all PR operations.",
     "Do not push directly to `{config.base_branch}`; always open a PR from a feature branch.",
+    "After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists.",
+    "After a merged PR, sync `{config.base_branch}` in the main worktree before further work: `git checkout {config.base_branch}` then `git pull --ff-only`.",
 ]
 
 [[provides.docs]]

@@ -106,27 +106,27 @@ git push -u $REMOTE <branch-name>
 
 > **Note**: The remote is resolved dynamically to support repos where the Bitbucket remote is named `bitbucket` or `upstream` instead of `origin`. Falls back to `origin` if no known name matches.
 
-4. Create a pull request with the configured base branch:
+5. Create a pull request with the configured base branch:
 
 ```bash
 bb pr create --source <branch-name> --destination <base_branch> --title "<title>" --body "<summary and verification>"
 ```
 
-5. STOP. Do not merge. Report the PR URL and wait for explicit user approval.
+6. STOP. Do not merge. Report the PR URL and wait for explicit user approval.
 
-6. Before merging, capture the approved PR source commit to prevent merging unreviewed commits:
+7. Before merging, capture the approved PR source commit to prevent merging unreviewed commits:
 
 ```bash
 APPROVED_SHA=$(bb pr view <pr-id> --json --jq '.source.commit.hash')
 ```
 
-7. Before merging, archive and record SDD/OpenSpec artifacts for the change
+8. Before merging, archive and record SDD/OpenSpec artifacts for the change
    while still on the review branch. The archive boundary is the pre-merge
    branch state — never defer this step until after the merge lands on the base
    branch. Commit and push any archive commits to the review branch before
    proceeding.
 
-8. **Pre-merge guardian (hard stop):** confirm the change is archived and has
+9. **Pre-merge guardian (hard stop):** confirm the change is archived and has
    tier-minimum files. Prefer:
 
 ```bash
@@ -140,7 +140,7 @@ consumer projects).
 Do **not** merge if `openspec/changes/<slug>/` still exists, or if
 `openspec/changes/archive/<slug>/` is missing tier files.
 
-9. Merge only after explicit user approval, required checks/review, the
+10. Merge only after explicit user approval, required checks/review, the
    pre-merge archive step above, a clean guardian result, and a matching
    approved source commit. Re-fetch the source commit and stop if it changed
    since approval:
@@ -163,12 +163,13 @@ bb pr merge <pr-id> --strategy squash
 
 > **Note**: Re-checking the source commit ensures only the reviewed revision is merged. If the branch was updated between approval and merge, stop and ask the user to re-review.
 
-10. After the PR is merged, sync the integration branch. **Post-merge worktree /
+11. After the PR is merged, sync the integration branch. **Post-merge worktree /
     local branch cleanup runs only for feature heads.** For a protected head,
     skip worktree remove and `git branch -D` for that head — only sync the base:
 
 ```bash
 git checkout <base_branch>
+REMOTE=$(git remote | grep -E '^(origin|bitbucket|upstream)$' | head -1 || echo "origin")
 git pull --ff-only $REMOTE <base_branch>
 ```
 

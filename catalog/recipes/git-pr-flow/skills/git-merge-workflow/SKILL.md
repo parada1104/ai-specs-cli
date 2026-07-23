@@ -136,19 +136,19 @@ Prefer shipping to `main` from a disposable `release/vX.Y.Z` head, not from
 git push -u origin <branch-name>
 ```
 
-4. Create a PR with the configured base branch:
+5. Create a PR with the configured base branch:
 
 ```bash
 gh pr create --base <integration-branch> --title "<title>" --body "<summary and verification>"
 ```
 
-5. Before merging, archive and record SDD/OpenSpec artifacts for the change
+6. Before merging, archive and record SDD/OpenSpec artifacts for the change
    while still on the review branch. The archive boundary is the pre-merge
    branch state — never defer this step until after the merge lands on the base
    branch. Commit and push any archive commits to the review branch before
    proceeding.
 
-6. **Pre-merge guardian (hard stop):** confirm the change is archived and has
+7. **Pre-merge guardian (hard stop):** confirm the change is archived and has
    tier-minimum files. Prefer:
 
 ```bash
@@ -162,7 +162,7 @@ consumer projects).
 Do **not** merge if `openspec/changes/<slug>/` still exists, or if
 `openspec/changes/archive/<slug>/` is missing tier files.
 
-7. Classify `HEAD_BRANCH` (see **Head branch class**). Merge only after explicit
+8. Classify `HEAD_BRANCH` (see **Head branch class**). Merge only after explicit
    user approval, required checks/review, archive on the review branch, and a
    clean guardian result:
 
@@ -174,7 +174,7 @@ gh pr merge --squash --delete-branch
 gh pr merge --squash
 ```
 
-8. After the PR is merged, sync the integration branch. **Post-merge worktree /
+9. After the PR is merged, sync the integration branch. **Post-merge worktree /
    local / remote branch cleanup runs only for feature heads.** For a protected
    head, skip worktree remove, `git branch -D`, and `git push origin --delete`
    for that head — only sync the base:

@@ -32,7 +32,7 @@ Conservative compatibility rules in V1:
 - MCP `environment` is still accepted as a tolerated input alias and normalizes to `env`.
 - `env = ["VAR"]` is treated as an env-reference form and normalizes to `{ VAR = "$VAR" }`.
 - `env = { VAR = "literal" }` is preserved as a literal mapping.
-- Env reference values accept both `$VARIABLE_NAME` (canonical) and `${VARIABLE_NAME}` (tolerated fallback). Both produce the same rendered output per agent: `{env:VAR}` for OpenCode and `${VAR}` for Claude/Cursor. Variable names must follow shell convention (`[A-Z_][A-Z0-9_]*`); other strings pass through as literals.
+- Env reference values accept both `$VARIABLE_NAME` (canonical) and `${VARIABLE_NAME}` (tolerated fallback). Both produce the same rendered output per agent: `{env:VAR}` for OpenCode and `${VAR}` for Claude/Cursor. For OpenCode, the same `{env:VAR}` form is used in MCP `command` args (OpenCode does not expand shell `$VAR` / `${VAR}` in JSON). Variable names must follow shell convention (`[A-Z_][A-Z0-9_]*`); other strings pass through as literals.
 - A manifest without `[recipes.*]`, `[recipes.<id>.config]`, or `[[bindings]]` remains valid.
 
 ## Field classification

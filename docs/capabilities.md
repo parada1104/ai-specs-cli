@@ -26,6 +26,7 @@ through the manifest.
 | `canonical-store` | Durable decisions and handoffs | `vault-canonical-store`; future `notion-*` |
 | `vcs-pr-flow` | Branch → PR/MR → review → merge | `git-pr-flow` (GitHub/gh), `gitlab-mr-flow` (GitLab/glab), `bitbucket-pr-flow` (Bitbucket/bb) |
 | `test-runner` | Red-green-refactor discipline with a project test command | `tdd-flow` |
+| `ui-browser-testing` | Browser UI suites/smokes (+ optional explore surface) | `playwright-ui-flow` (CLI/discipline); optional add-on `playwright-mcp` |
 | `worktree-isolation` | Per-change git worktrees + post-merge cleanup | `worktree-flow` |
 
 This list is the shared vocabulary; new capabilities should be added here before

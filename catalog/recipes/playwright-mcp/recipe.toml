@@ -1,0 +1,43 @@
+[recipe]
+id = "playwright-mcp"
+name = "Playwright MCP"
+description = "Exploratory browser automation surface via @playwright/mcp (augments playwright-ui-flow)"
+version = "1.0.0"
+author = "ai-specs"
+license = "MIT"
+tags = ["mcp", "browser-automation"]
+
+[[deps.cli]]
+binary = "npx"
+purpose = "Run the @playwright/mcp server"
+required = true
+install_url = "https://nodejs.org/en/download"
+version_check = "npx --version"
+
+[init]
+prompt = "init.md"
+description = "Install browsers and select headless/browser via the manifest MCP override"
+needs_mcp = ["playwright"]
+
+[provides]
+skills = [{ id = "playwright-mcp", source = "bundled" }]
+
+[provides.brief]
+
+[[provides.brief.workflow_rules]]
+key = "ui-explore-via-mcp"
+text = "For interactive UI exploration, debugging, or locator discovery, prefer the Playwright MCP tools over ad-hoc browser drivers."
+
+[[provides.brief.mcp_descriptions]]
+key = "playwright"
+text = "Interactive browser automation for UI exploration, debugging, and locator discovery."
+
+[[provides.mcp]]
+id = "playwright"
+command = "npx"
+args = ["-y", "@playwright/mcp@latest", "--headless"]
+timeout = 30000
+
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/playwright-mcp/README.md"

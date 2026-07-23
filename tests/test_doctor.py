@@ -271,6 +271,7 @@ class AgentDiagnosticsTests(unittest.TestCase):
         self.assertEqual(plat["mcp_config_path"], ".omp/mcp.json")
         self.assertEqual(plat["mcp_key"], "mcpServers")
         self.assertEqual(plat["commands_dir"], ".omp/commands")
+        self.assertEqual(plat["instructions_path"], ".omp/AGENTS.md")
 
     def test_omp_not_rejected_as_unknown_agent(self):
         """omp in enabled agents must not produce 'unsupported agent' ERROR."""
@@ -636,10 +637,10 @@ class PlatformGetTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "true")
 
-    def test_omp_instructions_path_empty(self):
+    def test_omp_instructions_path_native_slot(self):
         result = self._platform_get("omp", "instructions_path")
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "")
+        self.assertEqual(result.stdout.strip(), ".omp/AGENTS.md")
 
     def test_omp_commands_dir(self):
         result = self._platform_get("omp", "commands_dir")
@@ -844,9 +845,10 @@ class RecipeCliDepsDoctorTests(unittest.TestCase):
         (project / "ai-specs").mkdir(parents=True)
         (project / "AGENTS.md").write_text("# agents\n")
         # Satisfy bundled-asset checks so recipe-dep WARN can keep exit code 0.
-        for skill in ("skill-creator", "skill-sync"):
+        for skill in self.doctor.bundled_skill_names():
             (project / "ai-specs" / "skills" / skill).mkdir(parents=True, exist_ok=True)
         (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+        (project / "ai-specs" / "commands" / "placeholder.md").write_text("# placeholder\n")
         flag = "true" if enabled else "false"
         (project / "ai-specs" / "ai-specs.toml").write_text(
             '[project]\nname = "demo"\n\n'
@@ -1075,7 +1077,7 @@ class CommandsEmptyExpectedDoctorTests(unittest.TestCase):
         target.mkdir()
         (target / "AGENTS.md").write_text("# agents\n")
         (target / "ai-specs").mkdir()
-        for skill in ("skill-creator", "skill-sync"):
+        for skill in self.doctor.bundled_skill_names():
             (target / "ai-specs" / "skills" / skill).mkdir(parents=True, exist_ok=True)
         (target / "ai-specs" / "ai-specs.toml").write_text(
             '[project]\nname = "demo"\n[agents]\nenabled = ["claude"]\n'

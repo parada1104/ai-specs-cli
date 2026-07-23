@@ -15,6 +15,14 @@ from pathlib import Path as _P
 sys.path.insert(0, str(_P(__file__).resolve().parent))
 from _cache_paths import recipe_root, cache_command, resolved_skills_dir, deps_skill_dir
 CLI = ROOT / "bin" / "ai-specs"
+KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
+
+def _sync_env() -> dict:
+    return {
+        **os.environ,
+        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
+    }
+
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
 
 
@@ -28,6 +36,7 @@ class SyncPipelineTests(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="ai-specs-sync-"))
         shutil.copytree(FIXTURE_ROOT, tmp / "workspace")
         return tmp / "workspace"
+
 
     def write_local_skill(
         self,
@@ -192,12 +201,13 @@ class SyncPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
-    def test_sync_renders_opencode_mcp_arg_var_as_bare_dollar(self):
-        """A var referenced in a command ARG must render as $VAR (no braces)
-        for opencode: opencode interpolates shell-style $VAR in args, but
-        environment values use {env:VAR}. Live-verified June 2026 — a braced
-        ${VAR} in args is NOT interpolated, so the server gets a literal path
-        and never starts."""
+    def test_sync_renders_opencode_mcp_arg_var_as_env_form(self):
+        """A var in a command ARG must render as {env:VAR} for OpenCode.
+
+        OpenCode ConfigVariable.substitute only expands {env:NAME} at config
+        load (live-verified 1.18.3). Shell-style $VAR / ${VAR} stay literal,
+        so a sole-arg path like ${VAULT_PATH} never reaches the server.
+        """
         workspace = self.make_workspace()
         try:
             subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
@@ -218,11 +228,37 @@ class SyncPipelineTests(unittest.TestCase):
 
             parsed = json.loads((workspace / "opencode.json").read_text())
             demo = parsed["mcp"]["demo"]
-            # ARG: bare $VAR, never ${VAR}
-            self.assertIn("$VAULT_PATH", demo["command"])
+            # ARG and ENVIRONMENT: same OpenCode {env:VAR} form
+            self.assertIn("{env:VAULT_PATH}", demo["command"])
+            self.assertNotIn("$VAULT_PATH", demo["command"])
             self.assertNotIn("${VAULT_PATH}", demo["command"])
-            # ENVIRONMENT: opencode {env:VAR} form, unchanged
             self.assertEqual(demo["environment"], {"VAULT_PATH": "{env:VAULT_PATH}"})
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_sync_renders_opencode_mcp_bare_dollar_arg_as_env_form(self):
+        """Bare $VAR in a command ARG also becomes {env:VAR} for OpenCode."""
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n\n"
+                "[agents]\n"
+                "enabled = ['opencode']\n\n"
+                "[mcp.demo]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@modelcontextprotocol/server-filesystem', '$VAULT_PATH']\n"
+                "timeout = 30000\n"
+                "enabled = true\n"
+            )
+
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            parsed = json.loads((workspace / "opencode.json").read_text())
+            demo = parsed["mcp"]["demo"]
+            self.assertIn("{env:VAULT_PATH}", demo["command"])
+            self.assertNotIn("$VAULT_PATH", demo["command"])
         finally:
             shutil.rmtree(workspace.parent)
 
@@ -540,6 +576,28 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertTrue((subrepo / ".opencode" / "commands" / "skills-as-rules.md").is_file())
             self.assertFalse((subrepo / ".opencode" / "command").exists())
             self.assertIn("fixture-sync", (subrepo / "AGENTS.md").read_text())
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_sync_symlinks_omp_native_agents_md_slot(self):
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n"
+                "subrepos = []\n\n"
+                "[agents]\n"
+                "enabled = ['omp']\n"
+            )
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+
+            omp_brief = workspace / ".omp" / "AGENTS.md"
+            self.assertTrue(omp_brief.is_symlink(), ".omp/AGENTS.md must be a symlink")
+            self.assertEqual(os.readlink(omp_brief), "../AGENTS.md")
+            self.assertEqual(
+                omp_brief.resolve(), (workspace / "AGENTS.md").resolve()
+            )
         finally:
             shutil.rmtree(workspace.parent)
 
@@ -914,7 +972,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "test_command = './tests/run.sh'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.2.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/proyectos/test-project'\n\n"
                 "[[bindings]]\n"
@@ -929,7 +987,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "recipe = 'vault-canonical-store'\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True, env=_sync_env())
 
             agents = (workspace / "AGENTS.md").read_text()
 
@@ -1236,7 +1294,10 @@ class SyncPipelineTests(unittest.TestCase):
             omp_skills = target / ".omp" / "skills"
             self.assertTrue(omp_skills.is_symlink(),
                             ".omp/skills/ must be a symlink after --all")
-            # omp is native (AGENTS.md) — no instruction file
+            # omp's runtime brief lives in its native slot .omp/AGENTS.md,
+            # symlinked to the root AGENTS.md — not a root-level OMP.md file.
+            self.assertTrue((target / ".omp" / "AGENTS.md").is_symlink(),
+                            ".omp/AGENTS.md must be a symlink after --all")
             self.assertFalse((target / "OMP.md").exists())
             self.assertFalse((target / "omp.md").exists())
 
@@ -1805,13 +1866,13 @@ class TestAutoBindingFix(unittest.TestCase):
                 "board_id = 'aabbccddeeff001122334455'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.2.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/test/autobind-scope'\n"
                 # NO [[bindings]] section
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True, env=_sync_env())
 
             agents = (workspace / "AGENTS.md").read_text()
 
@@ -1853,7 +1914,7 @@ class TestAutoBindingFix(unittest.TestCase):
                 "board_id = 'aabbccddeeff001122334455'\n\n"
                 "[recipes.vault-canonical-store]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.2.0'\n"
                 "[recipes.vault-canonical-store.config]\n"
                 "vault_scope = 'nnodes/test/json-scope'\n"
                 # NO [[bindings]] section — auto-bind must handle this
@@ -1870,7 +1931,11 @@ class TestAutoBindingFix(unittest.TestCase):
                 text=True,
                 capture_output=True,
                 check=False,
-                env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
+                env={
+                    **os.environ,
+                    "AI_SPECS_HOME": str(ROOT),
+                    "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
+                },
             )
             self.assertEqual(proc.returncode, 0, f"materialize failed:\n{proc.stderr}\n{proc.stdout}")
 

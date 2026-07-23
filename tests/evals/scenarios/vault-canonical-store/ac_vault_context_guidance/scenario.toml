@@ -1,0 +1,13 @@
+id = "ac_vault_context_guidance"
+recipe_id = "vault-canonical-store"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Agent follows vault-context decision shape and Vault vs Engram split"
+forbidden_path_globs = []
+required_path_globs = ["ai-specs/eval-notes/vault-decision.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/vault-decision.md", contains_any = ["tipo: decision"] },
+  { path = "ai-specs/eval-notes/vault-decision.md", contains_any = ["Contexto", "Context"] },
+  { path = "ai-specs/eval-notes/vault-decision.md", contains_any = ["Decisión", "Decision"] },
+  { path = "ai-specs/eval-notes/vault-decision.md", contains_any = ["Vault", "Engram", "operational"] },
+]
