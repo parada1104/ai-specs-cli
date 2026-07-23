@@ -17,21 +17,21 @@
 
 ### Phase 1 — `project-cache.py`: bundled-command primitives
 
-- [ ] 1.1 RED: `bundled_commands_root(project_root, cli_home)` returns
+- [x] 1.1 RED: `bundled_commands_root(project_root, cli_home)` returns
       `{cache}/.bundled/commands`.
-- [ ] 1.2 RED: `bundled_command_ids(cli_home)` returns `.md` stems under
+- [x] 1.2 RED: `bundled_command_ids(cli_home)` returns `.md` stems under
       `bundled-commands/`.
-- [ ] 1.3 RED: `remove_bundled_command_leftovers` deletes an
+- [x] 1.3 RED: `remove_bundled_command_leftovers` deletes an
       `ai-specs/commands/{name}.md` byte-identical to the bundled source;
       keeps one that differs (customized) with a warning; keeps one whose name
       has no bundled counterpart untouched.
-- [ ] 1.4 RED: `remove_bundled_command_leftovers` also removes via legacy lock
+- [x] 1.4 RED: `remove_bundled_command_leftovers` also removes via legacy lock
       hash match (untouched copy from an older CLI, mirrors the skill
       lock-hash migration guard).
-- [ ] 1.5 RED: `tracked_bundled_command_leftovers` finds a git-tracked
+- [x] 1.5 RED: `tracked_bundled_command_leftovers` finds a git-tracked
       `ai-specs/commands/{name}.md` for a bundled name whose working-tree copy
       is gone; returns `[]` when the file still exists on disk.
-- [ ] 1.6 GREEN: implement all of the above (factor the shared git-ls-files +
+- [x] 1.6 GREEN: implement all of the above (factor the shared git-ls-files +
       remediation-formatting plumbing out of the skill versions rather than
       duplicating it, per design.md).
 

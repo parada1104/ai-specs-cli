@@ -358,6 +358,119 @@ class BundledLeftoverCleanupTests(unittest.TestCase):
         self.assertTrue(edited.exists(), "user-edited copy must be preserved")
 
 
+class BundledCommandLeftoverCleanupTests(unittest.TestCase):
+    """remove_bundled_command_leftovers deletes materialized bundled-command
+    copies from the project surface, but never genuine local commands or
+    customized copies."""
+
+    def _project(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "ai-specs" / "commands").mkdir(parents=True)
+        return root
+
+    def test_removes_bundled_leftover_keeps_local_and_customized(self):
+        root = self._project()
+        commands = root / "ai-specs" / "commands"
+        bundled_src = ROOT / "bundled-commands"
+
+        # 1. Materialized bundled copy (byte-identical to CLI source) → remove.
+        leftover = commands / "rules-audit.md"
+        leftover.write_text((bundled_src / "rules-audit.md").read_text())
+
+        # 2. Genuine local command (no bundled counterpart) → keep.
+        local = commands / "my-local-command.md"
+        local.write_text("# my-local-command\n")
+
+        # 3. Customized copy of a bundled command (content differs) → keep + warn.
+        customized = commands / "skills-as-rules.md"
+        customized.write_text("# skills-as-rules (locally edited)\n")
+
+        _pc().remove_bundled_command_leftovers(root / "ai-specs", ROOT)
+
+        self.assertFalse(leftover.exists(), "bundled leftover should be removed")
+        self.assertTrue(local.exists(), "genuine local command must be preserved")
+        self.assertTrue(customized.exists(), "customized copy must be preserved")
+
+    def test_removes_untouched_old_version_copy_via_lock_hash(self):
+        """Migration: a copy from an older CLI (differs from current source) but
+        recorded untouched in the legacy lock is safe to remove."""
+        import hashlib
+        root = self._project()
+        old = root / "ai-specs" / "commands" / "rules-audit.md"
+        old_content = "# rules-audit (older CLI version, untouched)\n"
+        old.write_text(old_content)
+        h = hashlib.sha256(old_content.encode()).hexdigest()
+        _pc().remove_bundled_command_leftovers(
+            root / "ai-specs", ROOT, lock_commands={"rules-audit.md": h}
+        )
+        self.assertFalse(old.exists(), "untouched managed copy should be removed via lock hash")
+
+    def test_keeps_edited_copy_not_matching_source_or_lock(self):
+        root = self._project()
+        edited = root / "ai-specs" / "commands" / "rules-audit.md"
+        edited.write_text("# genuinely edited by the user\n")
+        _pc().remove_bundled_command_leftovers(
+            root / "ai-specs", ROOT, lock_commands={"rules-audit.md": "0000000000000000"}
+        )
+        self.assertTrue(edited.exists(), "user-edited copy must be preserved")
+
+    def test_no_bundled_counterpart_is_untouched(self):
+        root = self._project()
+        only_local = root / "ai-specs" / "commands" / "totally-local.md"
+        only_local.write_text("# no bundled counterpart\n")
+        _pc().remove_bundled_command_leftovers(root / "ai-specs", ROOT)
+        self.assertTrue(only_local.exists())
+
+
+class TrackedBundledCommandLeftoverTests(unittest.TestCase):
+    """tracked_bundled_command_leftovers finds git-tracked bundled-command
+    copies whose working-tree file is gone; never mutates the index."""
+
+    def _git_project(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "config", "user.email", "t@example.com"], check=True
+        )
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "t"], check=True)
+        return root
+
+    def test_finds_tracked_command_with_missing_working_tree_copy(self):
+        root = self._git_project()
+        commands = root / "ai-specs" / "commands"
+        commands.mkdir(parents=True)
+        (commands / "rules-audit.md").write_text("# leftover\n")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "track"], check=True)
+        (commands / "rules-audit.md").unlink()
+
+        ids = _pc().tracked_bundled_command_leftovers(root, cli_home=ROOT)
+        self.assertIn("rules-audit", ids)
+
+    def test_empty_when_working_tree_copy_exists(self):
+        root = self._git_project()
+        commands = root / "ai-specs" / "commands"
+        commands.mkdir(parents=True)
+        (commands / "rules-audit.md").write_text("# still here\n")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "track"], check=True)
+
+        ids = _pc().tracked_bundled_command_leftovers(root, cli_home=ROOT)
+        self.assertEqual(ids, [])
+
+    def test_empty_when_not_a_git_work_tree(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "ai-specs" / "commands").mkdir(parents=True)
+        ids = _pc().tracked_bundled_command_leftovers(root, cli_home=ROOT)
+        self.assertEqual(ids, [])
+
+
 class SkillResolutionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

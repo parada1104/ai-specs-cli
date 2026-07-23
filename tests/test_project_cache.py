@@ -194,6 +194,49 @@ class ProjectCacheTests(unittest.TestCase):
         self.assertFalse(bin_dir.exists())
 
 
+class BundledCommandPathTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(PROJECT_CACHE_PATH, "project_cache_bundled_cmd_paths")
+
+    def _tmp_project(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "my-project"
+        root.mkdir()
+        (root / "ai-specs").mkdir()
+        return root.resolve()
+
+    def _tmp_home(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name) / "cli-home"
+        home.mkdir()
+        return home
+
+    def test_bundled_commands_root_is_bundled_skills_root_sibling(self):
+        root = self._tmp_project()
+        home = self._tmp_home()
+        self.mod.ensure_cache(root, cli_home=home)
+        commands_root = self.mod.bundled_commands_root(root, cli_home=home)
+        skills_root = self.mod.bundled_skills_root(root, cli_home=home)
+        self.assertEqual(commands_root, skills_root / "commands")
+        self.assertEqual(commands_root, self.mod.cache_root(root, cli_home=home) / ".bundled" / "commands")
+
+    def test_bundled_command_ids_returns_md_stems(self):
+        home = self._tmp_home()
+        (home / "bundled-commands").mkdir()
+        (home / "bundled-commands" / "rules-audit.md").write_text("# rules audit\n")
+        (home / "bundled-commands" / "skills-as-rules.md").write_text("# skills as rules\n")
+        (home / "bundled-commands" / "README.txt").write_text("not a command\n")
+        ids = self.mod.bundled_command_ids(cli_home=home)
+        self.assertEqual(ids, ["rules-audit", "skills-as-rules"])
+
+    def test_bundled_command_ids_empty_when_dir_missing(self):
+        home = self._tmp_home()
+        self.assertEqual(self.mod.bundled_command_ids(cli_home=home), [])
+
+
 if __name__ == "__main__":
     unittest.main()
 

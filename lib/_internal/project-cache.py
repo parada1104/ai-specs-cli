@@ -97,6 +97,11 @@ def bundled_skills_root(project_root: Path, cli_home: Path | None = None) -> Pat
     return cache_root(project_root, cli_home=cli_home) / ".bundled"
 
 
+def bundled_commands_root(project_root: Path, cli_home: Path | None = None) -> Path:
+    """CLI-bundled commands flattened into the cache (recipe-independent)."""
+    return bundled_skills_root(project_root, cli_home=cli_home) / "commands"
+
+
 def inproject_deps_root(project_root: Path) -> Path:
     """toml-declared deps ([[deps]]) materialize in-project (gitignored).
 
@@ -199,6 +204,89 @@ def remove_bundled_skill_leftovers(
         print(format_tracked_bundled_remediation(leftovers))
 
 
+def _legacy_lock_command_hashes(ai_specs: Path) -> dict[str, str]:
+    """Read the legacy [commands] hash table from an old lock (best-effort).
+
+    Used only as a migration signal: a committed bundled-command copy whose
+    content matches its recorded lock hash was installed by the CLI and never
+    edited, so it is safe to remove even across a version bump.
+    """
+    lock_path = ai_specs / ".ai-specs.lock"
+    if not lock_path.is_file():
+        return {}
+    try:
+        with lock_path.open("rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    commands = data.get("commands")
+    if not isinstance(commands, dict):
+        return {}
+    return {name: sha for name, sha in commands.items() if isinstance(sha, str)}
+
+
+def remove_bundled_command_leftovers(
+    ai_specs: Path,
+    cli_home: Path | None,
+    lock_commands: dict | None = None,
+) -> None:
+    """Delete in-project copies of CLI-bundled commands (now cache-resolved).
+
+    A ``*.md`` file directly under ``ai-specs/commands/`` is removed only when
+    a bundled command of the same name ships under
+    ``{cli_home}/bundled-commands/`` AND the project copy is untouched — i.e.
+    byte-identical (CRLF-normalized) to EITHER the current bundled source OR
+    the hash the legacy lock recorded for it (migration signal for copies from
+    an older CLI version). Genuine local commands (no bundled counterpart) and
+    user-edited copies are preserved.
+
+    ``lock_commands`` may be supplied by a caller that still holds the legacy
+    lock in memory (e.g. refresh-bundled, before it normalizes the lock away);
+    when omitted the hashes are read from the on-disk lock best-effort.
+    """
+    home = Path(cli_home) if cli_home is not None else _ai_specs_home()
+    bundled_src = home / "bundled-commands"
+    commands_dir = ai_specs / "commands"
+    if not bundled_src.is_dir() or not commands_dir.is_dir():
+        return
+    if lock_commands is None:
+        lock_commands = _legacy_lock_command_hashes(ai_specs)
+    for child in sorted(commands_dir.iterdir()):
+        if not child.is_file() or child.suffix != ".md":
+            continue
+        src_cmd = bundled_src / child.name
+        if not src_cmd.is_file():
+            continue
+        proj_norm = _normalized_bytes(child)
+        matches_source = proj_norm == _normalized_bytes(src_cmd)
+        lock_hash = lock_commands.get(child.name)
+        matches_lock = bool(lock_hash) and hashlib.sha256(proj_norm).hexdigest() == lock_hash
+        if not (matches_source or matches_lock):
+            _warn(
+                f"keeping customized ai-specs/commands/{child.name} "
+                "(differs from CLI-bundled source and lock; resolve manually)"
+            )
+            continue
+        try:
+            child.unlink()
+            print(f"  ✓ removed leftover bundled command ai-specs/commands/{child.name}")
+        except OSError as exc:
+            _warn(f"failed to remove leftover ai-specs/commands/{child.name}: {exc}")
+
+    # Disk cleanup does not touch the git index. Guide the developer when
+    # removed bundled commands are still tracked (never run git rm here).
+    leftovers = tracked_bundled_command_leftovers(ai_specs.parent, cli_home=home)
+    if leftovers:
+        print(
+            format_tracked_bundled_remediation(
+                leftovers,
+                kind="command",
+                path_template="ai-specs/commands/{name}.md",
+                recursive=False,
+            )
+        )
+
+
 def bundled_skill_ids(cli_home: Path | None = None) -> list[str]:
     """Directory names under ``bundled-skills/`` that ship a ``SKILL.md``."""
     home = Path(cli_home) if cli_home is not None else _ai_specs_home()
@@ -210,6 +298,15 @@ def bundled_skill_ids(cli_home: Path | None = None) -> list[str]:
         for p in root.iterdir()
         if p.is_dir() and (p / "SKILL.md").is_file()
     )
+
+
+def bundled_command_ids(cli_home: Path | None = None) -> list[str]:
+    """``.md`` stems shipped under ``bundled-commands/``."""
+    home = Path(cli_home) if cli_home is not None else _ai_specs_home()
+    root = home / "bundled-commands"
+    if not root.is_dir():
+        return []
+    return sorted(p.stem for p in root.glob("*.md") if p.is_file())
 
 
 def _is_git_work_tree(project_root: Path) -> bool:
@@ -240,6 +337,28 @@ def _git_ls_files(project_root: Path, pathspec: str) -> list[str]:
     return [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
 
 
+def _tracked_bundled_leftovers(
+    project_root: Path, bundled_ids: list[str], path_template: str
+) -> list[str]:
+    """Bundled ids still tracked in git after their working-tree copy is gone.
+
+    ``path_template`` is formatted with ``name=<id>`` to build both the
+    on-disk existence check and the ``git ls-files`` pathspec. Does not
+    mutate the index. Empty when not a git work tree.
+    """
+    root = Path(project_root)
+    if not _is_git_work_tree(root):
+        return []
+    leftover_ids: list[str] = []
+    for bundled_id in bundled_ids:
+        rel = path_template.format(name=bundled_id)
+        if (root / rel).exists():
+            continue
+        if _git_ls_files(root, rel):
+            leftover_ids.append(bundled_id)
+    return leftover_ids
+
+
 def tracked_bundled_skill_leftovers(
     project_root: Path, cli_home: Path | None = None
 ) -> list[str]:
@@ -247,27 +366,38 @@ def tracked_bundled_skill_leftovers(
 
     Does not mutate the index. Empty when not a git work tree.
     """
-    root = Path(project_root)
-    if not _is_git_work_tree(root):
-        return []
-    leftover_ids: list[str] = []
-    for skill_id in bundled_skill_ids(cli_home):
-        skill_dir = root / "ai-specs" / "skills" / skill_id
-        if skill_dir.is_dir():
-            continue
-        if _git_ls_files(root, f"ai-specs/skills/{skill_id}"):
-            leftover_ids.append(skill_id)
-    return leftover_ids
+    return _tracked_bundled_leftovers(
+        project_root, bundled_skill_ids(cli_home), "ai-specs/skills/{name}"
+    )
 
 
-def format_tracked_bundled_remediation(skill_ids: list[str]) -> str:
+def tracked_bundled_command_leftovers(
+    project_root: Path, cli_home: Path | None = None
+) -> list[str]:
+    """Bundled command ids still tracked in git after the working-tree copy is gone.
+
+    Does not mutate the index. Empty when not a git work tree.
+    """
+    return _tracked_bundled_leftovers(
+        project_root, bundled_command_ids(cli_home), "ai-specs/commands/{name}.md"
+    )
+
+
+def format_tracked_bundled_remediation(
+    bundled_ids: list[str],
+    *,
+    kind: str = "skill",
+    path_template: str = "ai-specs/skills/{name}",
+    recursive: bool = True,
+) -> str:
     """Human-readable remediation; never executes git."""
-    paths = " ".join(f"ai-specs/skills/{sid}" for sid in skill_ids)
-    names = ", ".join(skill_ids)
+    paths = " ".join(path_template.format(name=bid) for bid in bundled_ids)
+    names = ", ".join(bundled_ids)
+    flag = "-r --cached" if recursive else "--cached"
     return (
-        f"  ℹ git still tracks removed CLI-bundled skill(s): {names}\n"
+        f"  ℹ git still tracks removed CLI-bundled {kind}(s): {names}\n"
         f"    To stop committing them (ai-specs will not modify the index):\n"
-        f"    git rm -r --cached {paths}\n"
+        f"    git rm {flag} {paths}\n"
         f"    # then commit when ready"
     )
 
