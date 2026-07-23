@@ -39,93 +39,63 @@ class LockRoundTripTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         return Path(tmp.name) / ".ai-specs.lock"
 
-    def test_recipe_skill_hashes_round_trip(self):
+    def test_skill_recipe_dep_hashes_not_emitted(self):
+        """The lock is a provenance stamp: content hashes are no longer tracked."""
         path = self._lock_path()
         lock = self.lock.load_lock(path)
+        lock["skills"]["skill-creator"] = {"SKILL.md": "zzz"}
         self.lock.set_recipe_skill_hashes(
             lock, "worktree-flow", "worktree-flow", {"SKILL.md": "aaa"}
         )
-        self.lock.write_lock(path, lock)
-
-        reloaded = self.lock.load_lock(path)
-        self.assertEqual(
-            reloaded["recipes"]["worktree-flow"]["worktree-flow"],
-            {"SKILL.md": "aaa"},
-        )
-
-    def test_multiple_recipes_survive_repeated_write_load(self):
-        path = self._lock_path()
-
-        lock = self.lock.load_lock(path)
-        self.lock.set_recipe_skill_hashes(
-            lock, "worktree-flow", "worktree-flow", {"SKILL.md": "aaa"}
-        )
-        self.lock.write_lock(path, lock)
-
-        # Simulate the next bundled skill from a different recipe: load, mutate,
-        # write — this is where the round-trip used to corrupt the file.
-        lock = self.lock.load_lock(path)
-        self.lock.set_recipe_skill_hashes(
-            lock, "git-pr-flow", "git-merge-workflow", {"SKILL.md": "bbb"}
-        )
-        self.lock.write_lock(path, lock)
-
-        # And a third with multiple files.
-        lock = self.lock.load_lock(path)
-        self.lock.set_recipe_skill_hashes(
-            lock,
-            "session-context",
-            "context-precedence",
-            {"SKILL.md": "ccc", "assets/extra.md": "ddd"},
-        )
-        self.lock.write_lock(path, lock)
-
-        # Must still be valid TOML after all the re-writes.
-        with path.open("rb") as fh:
-            tomllib.load(fh)  # raises if corrupted
-
-        final = self.lock.load_lock(path)
-        self.assertEqual(
-            final["recipes"]["worktree-flow"]["worktree-flow"], {"SKILL.md": "aaa"}
-        )
-        self.assertEqual(
-            final["recipes"]["git-pr-flow"]["git-merge-workflow"], {"SKILL.md": "bbb"}
-        )
-        self.assertEqual(
-            final["recipes"]["session-context"]["context-precedence"],
-            {"SKILL.md": "ccc", "assets/extra.md": "ddd"},
-        )
-
-    def test_dep_skill_hashes_round_trip(self):
-        path = self._lock_path()
-        lock = self.lock.load_lock(path)
         self.lock.set_dep_skill_hashes(lock, "my-dep", "my-dep", {"SKILL.md": "eee"})
         self.lock.write_lock(path, lock)
 
-        reloaded = self.lock.load_lock(path)
-        self.assertEqual(reloaded["deps"]["my-dep"]["my-dep"], {"SKILL.md": "eee"})
+        text = path.read_text()
+        self.assertNotIn("[skills.", text)
+        self.assertNotIn("[recipes.", text)
+        self.assertNotIn("[deps.", text)
 
-    def test_meta_section_written_and_ignored_on_skill_load(self):
+        reloaded = self.lock.load_lock(path)
+        self.assertEqual(reloaded["skills"], {})
+        self.assertEqual(reloaded["recipes"], {})
+        self.assertEqual(reloaded["deps"], {})
+
+    def test_legacy_hash_sections_dropped_on_rewrite(self):
+        """A lock written by an older CLI (with hash sections) is normalized."""
+        path = self._lock_path()
+        path.write_text(
+            '[meta]\ncli_version = "0.14.0"\nsynced_at = "2026-07-01T00:00:00Z"\n\n'
+            '[skills."skill-creator"]\n"SKILL.md" = "zzz"\n\n'
+            '[recipes."worktree-flow".skills."worktree-flow"]\n"SKILL.md" = "aaa"\n\n'
+            '[deps."my-dep".skills."my-dep"]\n"SKILL.md" = "eee"\n'
+        )
+        lock = self.lock.load_lock(path)
+        self.lock.write_lock(path, lock)
+
+        text = path.read_text()
+        self.assertNotIn("[skills.", text)
+        self.assertNotIn("[recipes.", text)
+        self.assertNotIn("[deps.", text)
+        self.assertIn('cli_version = "0.14.0"', text)
+
+    def test_meta_commands_opted_out_preserved(self):
         path = self._lock_path()
         lock = self.lock.load_lock(path)
-        lock["meta"] = {
-            "cli_version": "0.12.2",
-            "synced_at": "2026-06-23T12:00:00Z",
-        }
-        self.lock.set_recipe_skill_hashes(
-            lock, "worktree-flow", "worktree-flow", {"SKILL.md": "aaa"}
-        )
+        lock["meta"] = {"cli_version": "0.12.2", "synced_at": "2026-06-23T12:00:00Z"}
+        lock["commands"] = {"rules-audit.md": "cmdhash"}
+        lock["opted_out"] = ["commands/skills-as-rules.md"]
         self.lock.write_lock(path, lock)
 
         text = path.read_text()
         self.assertIn("[meta]", text)
         self.assertIn('cli_version = "0.12.2"', text)
+        self.assertIn("[commands]", text)
+        self.assertIn("[opted-out]", text)
 
         reloaded = self.lock.load_lock(path)
         self.assertEqual(reloaded["meta"]["cli_version"], "0.12.2")
-        self.assertEqual(
-            reloaded["recipes"]["worktree-flow"]["worktree-flow"], {"SKILL.md": "aaa"}
-        )
+        self.assertEqual(reloaded["commands"], {"rules-audit.md": "cmdhash"})
+        self.assertEqual(reloaded["opted_out"], ["commands/skills-as-rules.md"])
 
 
 if __name__ == "__main__":

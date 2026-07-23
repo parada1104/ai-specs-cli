@@ -104,7 +104,18 @@ def load_deps(project_root: Path) -> list[dict]:
     return module.read_deps(data)
 
 
-def sync_dep_target(dep: dict, project_root: Path, cli_home: Path | None = None) -> None:
+def sync_dep_target(
+    dep: dict,
+    project_root: Path,
+    cli_home: Path | None = None,
+    in_project: bool = False,
+) -> None:
+    """Vendor one dependency skill.
+
+    ``in_project=True`` (toml-declared deps) materializes under the project's
+    ``ai-specs/.deps/`` (gitignored, project governance). ``in_project=False``
+    (recipe-deps) stages under the CLI cache ``{cache}/.deps/``.
+    """
     dep_id = dep.get("id")
     source = dep.get("source")
     if not dep_id or not source:
@@ -118,8 +129,12 @@ def sync_dep_target(dep: dict, project_root: Path, cli_home: Path | None = None)
     pc = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = pc
     spec.loader.exec_module(pc)
-    pc.ensure_cache(project_root, cli_home=cli_home)
-    target_dir = pc.deps_skills_root(project_root, cli_home=cli_home) / dep_id / "skills" / dep_id
+    if in_project:
+        deps_root = pc.inproject_deps_root(project_root)
+    else:
+        pc.ensure_cache(project_root, cli_home=cli_home)
+        deps_root = pc.deps_skills_root(project_root, cli_home=cli_home)
+    target_dir = deps_root / dep_id / "skills" / dep_id
 
     print(f"  ▸ {dep_id}  ←  {source}" + (f"  (path: {skill_subpath})" if skill_subpath else ""))
 
@@ -152,7 +167,7 @@ def sync_vendored_skills(project_root: Path, deps: list[dict], cli_home: Path | 
         return 0
 
     for dep in deps:
-        sync_dep_target(dep, project_root, cli_home=cli_home)
+        sync_dep_target(dep, project_root, cli_home=cli_home, in_project=True)
 
     print(f"  ✓ vendored {len(deps)} dep(s)")
     return 0

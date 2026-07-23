@@ -136,12 +136,13 @@ if recipe_id not in recipes:
 
 del recipes[recipe_id]
 
-# Re-serialize using simple string building to preserve TOML-compatible output.
+# Re-serialize as a provenance stamp (mirrors lock.py:write_lock). Skill/recipe/
+# dep content hashes are no longer tracked; any legacy sections are dropped here.
 out = []
 out.append("# Managed by ai-specs. Do not edit by hand.")
-out.append("# Tracks SHA-256 of bundled files as last installed by the CLI.")
-out.append("# Used by `ai-specs refresh-bundled` to detect user customizations.")
-out.append("# [meta] records the CLI version and timestamp of the last lock write.")
+out.append("# Provenance stamp: [meta] records the CLI version and last sync.")
+out.append("# git covers integrity of the committed surface; skill/recipe/dep")
+out.append("# hashes are not tracked. [commands]/[opted-out] track bundled commands.")
 out.append("")
 
 meta = data.get("meta") or {}
@@ -153,45 +154,12 @@ if meta:
         out.append(f'synced_at = "{meta["synced_at"]}"')
     out.append("")
 
-skills = data.get("skills") or {}
-for skill in sorted(skills):
-    files = skills[skill]
-    if not files:
-        continue
-    out.append(f'[skills."{skill}"]')
-    for rel in sorted(files):
-        out.append(f'"{rel}" = "{files[rel]}"')
-    out.append("")
-
 cmds = data.get("commands") or {}
 if cmds:
     out.append("[commands]")
     for rel in sorted(cmds):
         out.append(f'"{rel}" = "{cmds[rel]}"')
     out.append("")
-
-for recipe_id_cur in sorted(recipes):
-    recipe_skills = recipes[recipe_id_cur]
-    for skill_name in sorted(recipe_skills):
-        files = recipe_skills[skill_name]
-        if not files:
-            continue
-        out.append(f'[recipes."{recipe_id_cur}".skills."{skill_name}"]')
-        for rel in sorted(files):
-            out.append(f'"{rel}" = "{files[rel]}"')
-        out.append("")
-
-deps = data.get("deps") or {}
-for dep_id in sorted(deps):
-    dep_skills = deps[dep_id]
-    for skill_name in sorted(dep_skills):
-        files = dep_skills[skill_name]
-        if not files:
-            continue
-        out.append(f'[deps."{dep_id}".skills."{skill_name}"]')
-        for rel in sorted(files):
-            out.append(f'"{rel}" = "{files[rel]}"')
-        out.append("")
 
 agents = data.get("agents") or {}
 for harness in sorted(agents):

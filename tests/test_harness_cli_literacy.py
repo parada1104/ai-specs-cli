@@ -80,7 +80,10 @@ class HarnessCliLiteracyTests(unittest.TestCase):
             self.assertIn("root", meta["scope"], name)
             self.assertTrue(meta["auto_invoke"], name)
 
-    def test_refresh_bundled_ships_harness_skills(self):
+    def test_refresh_bundled_flattens_harness_skills_to_cache(self):
+        pc = load_module(
+            ROOT / "lib" / "_internal" / "project-cache.py", "project_cache_literacy"
+        )
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             (project / "ai-specs").mkdir()
@@ -88,15 +91,51 @@ class HarnessCliLiteracyTests(unittest.TestCase):
                 '[project]\nname = "literacy-fixture"\n\n[agents]\nenabled = ["claude"]\n'
             )
             proc = subprocess.run(
-                [sys.executable, str(REFRESH_BUNDLED), str(project), str(ROOT), "--init"],
+                [sys.executable, str(REFRESH_BUNDLED), str(project), str(ROOT)],
                 text=True,
                 capture_output=True,
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+            bundled_root = pc.bundled_skills_root(project, cli_home=ROOT) / "skills"
             for name in HARNESS_SKILLS:
-                skill = project / "ai-specs" / "skills" / name / "SKILL.md"
-                self.assertTrue(skill.is_file(), f"not shipped: {skill}")
+                self.assertTrue(
+                    (bundled_root / name / "SKILL.md").is_file(),
+                    f"not flattened to cache: {name}",
+                )
+                # CLI-bundled skills must NOT leak into the committed project surface.
+                self.assertFalse(
+                    (project / "ai-specs" / "skills" / name).exists(),
+                    f"leaked into project surface: {name}",
+                )
+
+    def test_refresh_bundled_migrates_inproject_copy_via_lock_hash(self):
+        """An untouched in-project bundled copy from an older CLI (differs from
+        source, but recorded in the legacy lock) is removed on refresh-bundled —
+        while the legacy [skills.*] hashes are still in memory."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "ai-specs" / "skills" / "harness-lifecycle").mkdir(parents=True)
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "mig"\n\n[agents]\nenabled = ["claude"]\n'
+            )
+            old = project / "ai-specs" / "skills" / "harness-lifecycle" / "SKILL.md"
+            content = "# harness-lifecycle (older CLI, untouched)\n"
+            old.write_text(content)
+            h = hashlib.sha256(content.encode()).hexdigest()
+            (project / "ai-specs" / ".ai-specs.lock").write_text(
+                f'[skills."harness-lifecycle"]\n"SKILL.md" = "{h}"\n'
+            )
+            proc = subprocess.run(
+                [sys.executable, str(REFRESH_BUNDLED), str(project), str(ROOT)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+            self.assertFalse(
+                (project / "ai-specs" / "skills" / "harness-lifecycle").exists(),
+                "untouched in-project copy should be migrated out via lock hash",
+            )
 
     def test_agents_render_emits_harness_literacy_pointer(self):
         with tempfile.TemporaryDirectory() as tmp:

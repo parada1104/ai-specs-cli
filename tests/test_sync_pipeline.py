@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 import sys
 from pathlib import Path as _P
 sys.path.insert(0, str(_P(__file__).resolve().parent))
-from _cache_paths import recipe_root, cache_command, resolved_skills_dir, deps_skill_dir
+from _cache_paths import recipe_root, cache_command, resolved_skills_dir, deps_skill_dir, inproject_deps_skill_dir
 CLI = ROOT / "bin" / "ai-specs"
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 
@@ -689,7 +689,7 @@ class SyncPipelineTests(unittest.TestCase):
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            root_skill = deps_skill_dir(workspace, "vendored-demo") / "SKILL.md"
+            root_skill = inproject_deps_skill_dir(workspace, "vendored-demo") / "SKILL.md"
             subrepo_skill = workspace / "packages" / "a" / "ai-specs" / "skills" / "vendored-demo" / "SKILL.md"
             content = root_skill.read_text()
 
@@ -723,7 +723,7 @@ class SyncPipelineTests(unittest.TestCase):
 
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            root_skill = deps_skill_dir(workspace, "vendored-demo") / "SKILL.md"
+            root_skill = inproject_deps_skill_dir(workspace, "vendored-demo") / "SKILL.md"
             root_skill.write_text(
                 "---\n"
                 "name: vendored-demo\n"

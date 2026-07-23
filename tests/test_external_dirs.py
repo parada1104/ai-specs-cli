@@ -45,6 +45,15 @@ def cache_command(project_root, cmd_id, cli_home=ROOT):
     return _pc().commands_dir(project_root, cli_home=cli_home) / f"{cmd_id}.md"
 
 
+def cache_bundled_skill(project_root, skill_id, cli_home=ROOT):
+    return _pc().bundled_skills_root(project_root, cli_home=cli_home) / "skills" / skill_id
+
+
+def inproject_dep_skill(project_root, dep_id, skill_id=None):
+    sid = dep_id if skill_id is None else skill_id
+    return _pc().inproject_deps_root(project_root) / dep_id / "skills" / sid
+
+
 class InitExternalDirsTests(unittest.TestCase):
     def test_init_does_not_create_in_project_origin_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -72,15 +81,32 @@ class InitExternalDirsTests(unittest.TestCase):
             self.assertNotIn("ai-specs/.recipe/", gitignore)
             self.assertNotIn("ai-specs/.deps/", gitignore)
 
-    def test_gitignore_does_not_ignore_user_recipes_surface(self):
-        """ai-specs/.gitignore must not contain recipes/ — that surface is user-committed."""
+    def test_gitignore_ignores_recipes_except_overrides(self):
+        """recipes/ is CLI-owned; only declared overrides are committed."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
+            subprocess.run(["git", "init", "-q", str(target)], check=True, text=True, capture_output=True)
             subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
-            ai_specs_gitignore = (target / "ai-specs" / ".gitignore").read_text()
-            self.assertNotIn("recipes/", ai_specs_gitignore,
-                             "ai-specs/.gitignore must not ignore recipes/ (user surface)")
+            ai_specs = target / "ai-specs"
+            # A bundled recipe doc should be ignored; a declared override committed.
+            (ai_specs / "recipes" / "demo").mkdir(parents=True)
+            (ai_specs / "recipes" / "demo" / "README.md").write_text("bundled doc\n")
+            (ai_specs / "recipes" / "demo" / "overrides").mkdir()
+            (ai_specs / "recipes" / "demo" / "overrides" / "config.toml").write_text("x = 1\n")
+            (ai_specs / ".deps" / "mydep").mkdir(parents=True)
+            (ai_specs / ".deps" / "mydep" / "SKILL.md").write_text("# mydep\n")
+
+            def ignored(rel: str) -> bool:
+                r = subprocess.run(
+                    ["git", "check-ignore", "-q", rel],
+                    cwd=target, capture_output=True,
+                )
+                return r.returncode == 0
+
+            self.assertTrue(ignored("ai-specs/recipes/demo/README.md"))
+            self.assertFalse(ignored("ai-specs/recipes/demo/overrides/config.toml"))
+            self.assertTrue(ignored("ai-specs/.deps/mydep/SKILL.md"))
 
     def test_gitignore_idempotent_no_origin_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -130,9 +156,12 @@ class VendorSkillsPathTests(unittest.TestCase):
                 f'source = "{self._make_dep_repo(tmp_path, "my-dep")}"\n'
             )
             self.mod.sync_vendored_skills(project, self.mod.load_deps(project))
-            skill = cache_dep_skill(project, "my-dep") / "SKILL.md"
+            # toml-deps ([[deps]]) are project-governed → in-project ai-specs/.deps/
+            skill = inproject_dep_skill(project, "my-dep") / "SKILL.md"
             self.assertTrue(skill.is_file())
             self.assertIn("name: my-dep", skill.read_text())
+            # and NOT staged under the CLI cache
+            self.assertFalse((cache_dep_skill(project, "my-dep") / "SKILL.md").is_file())
 
     def test_vendor_does_not_write_to_ai_specs_skills(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -262,6 +291,73 @@ class RecipeMaterializePathTests(unittest.TestCase):
         self.assertEqual((local_skill / "SKILL.md").read_text(), "local")
 
 
+class BundledLeftoverCleanupTests(unittest.TestCase):
+    """remove_legacy_origin deletes materialized bundled-skill copies from the
+    project surface, but never genuine local skills or customized copies."""
+
+    def _project(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "ai-specs" / "skills").mkdir(parents=True)
+        return root
+
+    def test_removes_bundled_leftover_keeps_local_and_customized(self):
+        root = self._project()
+        skills = root / "ai-specs" / "skills"
+        bundled_src = ROOT / "bundled-skills"
+
+        # 1. Materialized bundled copy (byte-identical to CLI source) → remove.
+        leftover = skills / "harness-lifecycle"
+        leftover.mkdir()
+        (leftover / "SKILL.md").write_text(
+            (bundled_src / "harness-lifecycle" / "SKILL.md").read_text()
+        )
+
+        # 2. Genuine local skill (no bundled counterpart) → keep.
+        local = skills / "my-local-skill"
+        local.mkdir()
+        (local / "SKILL.md").write_text("# my-local-skill\n")
+
+        # 3. Customized copy of a bundled skill (content differs) → keep + warn.
+        customized = skills / "skill-creator"
+        customized.mkdir()
+        (customized / "SKILL.md").write_text("# skill-creator (locally edited)\n")
+
+        _pc().remove_legacy_origin(root, cli_home=ROOT)
+
+        self.assertFalse(leftover.exists(), "bundled leftover should be removed")
+        self.assertTrue(local.exists(), "genuine local skill must be preserved")
+        self.assertTrue(customized.exists(), "customized copy must be preserved")
+
+    def test_removes_untouched_old_version_copy_via_lock_hash(self):
+        """Migration: a copy from an older CLI (differs from current source) but
+        recorded untouched in the legacy lock is safe to remove."""
+        import hashlib
+        root = self._project()
+        old = root / "ai-specs" / "skills" / "skill-creator"
+        old.mkdir()
+        old_content = "# skill-creator (older CLI version, untouched)\n"
+        (old / "SKILL.md").write_text(old_content)
+        h = hashlib.sha256(old_content.encode()).hexdigest()
+        (root / "ai-specs" / ".ai-specs.lock").write_text(
+            f'[skills."skill-creator"]\n"SKILL.md" = "{h}"\n'
+        )
+        _pc().remove_legacy_origin(root, cli_home=ROOT)
+        self.assertFalse(old.exists(), "untouched managed copy should be removed via lock hash")
+
+    def test_keeps_edited_copy_not_matching_source_or_lock(self):
+        root = self._project()
+        edited = root / "ai-specs" / "skills" / "skill-creator"
+        edited.mkdir()
+        (edited / "SKILL.md").write_text("# genuinely edited by the user\n")
+        (root / "ai-specs" / ".ai-specs.lock").write_text(
+            '[skills."skill-creator"]\n"SKILL.md" = "0000000000000000"\n'
+        )
+        _pc().remove_legacy_origin(root, cli_home=ROOT)
+        self.assertTrue(edited.exists(), "user-edited copy must be preserved")
+
+
 class SkillResolutionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -293,6 +389,31 @@ class SkillResolutionTests(unittest.TestCase):
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(f"# {name}")
 
+    def _write_bundled_skill(self, root: Path, name: str) -> None:
+        d = cache_bundled_skill(root, name, cli_home=ROOT)
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(f"# {name}")
+
+    def test_bundled_fallback_when_no_other_source(self):
+        root = self._make_project()
+        self._write_bundled_skill(root, "harness-lifecycle")
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
+        self.assertEqual(resolved["harness-lifecycle"][0], "bundled")
+
+    def test_dep_precedence_over_bundled(self):
+        root = self._make_project()
+        self._write_dep_skill(root, "d1", "shared")
+        self._write_bundled_skill(root, "shared")
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
+        self.assertEqual(resolved["shared"][0], "dep")
+
+    def test_local_precedence_over_bundled(self):
+        root = self._make_project()
+        self._write_local_skill(root, "skill-creator")
+        self._write_bundled_skill(root, "skill-creator")
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
+        self.assertEqual(resolved["skill-creator"][0], "local")
+
     def test_local_precedence_over_recipe(self):
         root = self._make_project()
         self._write_local_skill(root, "shared")
@@ -320,6 +441,14 @@ class SkillResolutionTests(unittest.TestCase):
         self._write_dep_skill(root, "d1", "only-dep")
         resolved = self.mod.collect_skills(root, cli_home=ROOT)
         self.assertEqual(resolved["only-dep"][0], "dep")
+
+    def test_inproject_toml_dep_resolves_as_dep(self):
+        root = self._make_project()
+        d = inproject_dep_skill(root, "d1", "only-toml-dep")
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text("# only-toml-dep")
+        resolved = self.mod.collect_skills(root, cli_home=ROOT)
+        self.assertEqual(resolved["only-toml-dep"][0], "dep")
 
     def test_first_seen_recipe_wins_with_warning(self):
         root = self._make_project()
