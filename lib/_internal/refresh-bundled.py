@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Refresh bundled skills and commands, respecting user customizations.
+"""Refresh bundled skills and commands.
+
+CLI-bundled SKILLS are flattened into the cache at ``{cache}/.bundled/skills/``
+(see ``flatten_bundled_skills``) and are NEVER written into the project surface.
+CLI-bundled COMMANDS still materialize into ``ai-specs/commands/`` via the
+content-hash + lock algorithm below (relocating bundled commands to the cache is
+a follow-up). The algorithm therefore applies to COMMANDS only.
 
 Algorithm: content-hash + lock file at <project>/ai-specs/.ai-specs.lock.
 
@@ -102,6 +108,37 @@ load_lock = _lock_mod.load_lock
 write_lock = _lock_mod.write_lock
 
 
+def _load_project_cache():
+    module_path = Path(__file__).with_name("project-cache.py")
+    spec = importlib.util.spec_from_file_location("project_cache_refresh", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load project-cache.py at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def flatten_bundled_skills(cli_source: Path, project: Path, cli_home: Path) -> int:
+    """Flatten CLI-bundled skills into the cache at {cache}/.bundled/skills/.
+
+    CLI-bundled skills are recipe-independent and NEVER written into the project
+    surface. The destination is rebuilt each run so upstream removals propagate.
+    """
+    pc = _load_project_cache()
+    dest = pc.bundled_skills_root(project, cli_home=cli_home) / "skills"
+    if dest.exists():
+        shutil.rmtree(dest)
+    src = cli_source / "bundled-skills"
+    count = 0
+    if src.is_dir():
+        dest.mkdir(parents=True, exist_ok=True)
+        for skill_dir in sorted(p for p in src.iterdir() if p.is_dir()):
+            shutil.copytree(skill_dir, dest / skill_dir.name)
+            count += 1
+    return count
+
+
 def lock_get(lock: dict, kind: str, owner: Optional[str], rel: str) -> Optional[str]:
     if kind == "skill":
         return (lock["skills"].get(owner) or {}).get(rel)
@@ -134,6 +171,9 @@ def save_new_sidecar(cli_path: Path, proj_path: Path) -> Path:
 def refresh(
     project: Path, cli_source: Path, init_mode: bool = False
 ) -> int:
+    # CLI-bundled skills flatten into the cache — never into the project surface.
+    n_skills = flatten_bundled_skills(cli_source, project, cli_source)
+
     lock_path = project / LOCK_REL
     lock = load_lock(lock_path)
 
@@ -142,6 +182,10 @@ def refresh(
     opted_out: set[str] = set(lock.get("opted_out") or [])
 
     for kind, owner, rel, cli_path in iter_bundled(cli_source):
+        # Skills are flattened to the cache above; only commands materialize
+        # into the project (relocation of bundled commands is a follow-up).
+        if kind != "command":
+            continue
         key = (kind, owner, rel)
         seen.add(key)
 
@@ -214,13 +258,9 @@ def refresh(
             touched.append(("~", name, f"customized → saved {sidecar.name}"))
         # else: user customized, CLI unchanged → nothing to do.
 
-    # Purge lock entries for files the CLI no longer ships.
+    # Purge lock entries for command files the CLI no longer ships.
     stale: list[tuple[str, Optional[str], str]] = []
-    for skill, files in lock["skills"].items():
-        for rel in files:
-            if ("skill", skill, rel) not in seen:
-                stale.append(("skill", skill, rel))
-    for rel in lock["commands"]:
+    for rel in list(lock["commands"]):
         if ("command", None, rel) not in seen:
             stale.append(("command", None, rel))
     for kind, owner, rel in stale:
@@ -228,17 +268,21 @@ def refresh(
         touched.append(("-", display_name(kind, owner, rel), "untracked (removed upstream)"))
 
     shipped_names = {
-        display_name(k, o, r) for k, o, r, _cli in iter_bundled(cli_source)
+        display_name(k, o, r)
+        for k, o, r, _cli in iter_bundled(cli_source)
+        if k == "command"
     }
     opted_out &= shipped_names
     lock["opted_out"] = sorted(opted_out)
 
     write_lock(lock_path, lock)
 
+    if n_skills:
+        print(f"  ⇢ flattened {n_skills} bundled skill(s) → cache/.bundled/skills")
     if touched:
         for sym, name, msg in touched:
             print(f"  {sym} {name}  {msg}")
-    else:
+    elif not n_skills:
         print("  = all bundled up-to-date")
     return 0
 
