@@ -11,9 +11,13 @@
 
 ## Open decisions to resolve before build
 
-- [ ] D1 — toml-deps location: in-project `ai-specs/.deps/` (gitignored) vs cache.
-- [ ] D2 — recipes/ override boundary: require `overrides/` vs widen allow-list.
-- [ ] D3 — `refresh-bundled` fate: remove vs flatten-only.
+- [x] D1 — toml-deps location: **in-project `ai-specs/.deps/` (gitignored)** —
+      maintainer decision (governance visibility over on-disk footprint).
+- [x] D2 — recipes/ override boundary: **require `overrides/` path**; non-`overrides/`
+      declared content (e.g. trello `templates/`) migrates or becomes bundled.
+      (recommended default; revert if maintainer objects)
+- [x] D3 — `refresh-bundled` fate: **flatten-only** (no in-project write, no
+      `.new`). (recommended default; revert if maintainer objects)
 
 ## Implementation (red-green-refactor) — pending authorization
 
