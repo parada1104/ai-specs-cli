@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -121,20 +122,43 @@ def _normalized_bytes(path: Path) -> bytes:
     return path.read_bytes().replace(b"\r\n", b"\n")
 
 
+def _legacy_lock_skill_hashes(ai_specs: Path) -> dict[str, dict]:
+    """Read the legacy [skills.*] hash table from an old lock (best-effort).
+
+    Used only as a migration signal: a committed bundled-skill copy whose
+    SKILL.md matches its recorded lock hash was installed by the CLI and never
+    edited, so it is safe to remove even across a version bump.
+    """
+    lock_path = ai_specs / ".ai-specs.lock"
+    if not lock_path.is_file():
+        return {}
+    try:
+        with lock_path.open("rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    skills = data.get("skills")
+    if not isinstance(skills, dict):
+        return {}
+    return {sid: files for sid, files in skills.items() if isinstance(files, dict)}
+
+
 def _remove_bundled_skill_leftovers(ai_specs: Path, cli_home: Path | None) -> None:
     """Delete in-project copies of CLI-bundled skills (now cache-resolved).
 
     A directory under ``ai-specs/skills/`` is removed only when a bundled skill
-    of the same id ships under ``{cli_home}/bundled-skills/`` AND its ``SKILL.md``
-    is byte-identical (CRLF-normalized) to the bundled source. Genuine local
-    skills (no bundled counterpart) and customized copies (differing content)
-    are preserved.
+    of the same id ships under ``{cli_home}/bundled-skills/`` AND the project
+    copy is untouched — i.e. its ``SKILL.md`` is byte-identical (CRLF-normalized)
+    to EITHER the current bundled source OR the hash the legacy lock recorded for
+    it (migration signal for copies from an older CLI version). Genuine local
+    skills (no bundled counterpart) and user-edited copies are preserved.
     """
     home = Path(cli_home) if cli_home is not None else _ai_specs_home()
     bundled_src = home / "bundled-skills"
     skills_dir = ai_specs / "skills"
     if not bundled_src.is_dir() or not skills_dir.is_dir():
         return
+    lock_skills = _legacy_lock_skill_hashes(ai_specs)
     for child in sorted(skills_dir.iterdir()):
         if not child.is_dir():
             continue
@@ -142,10 +166,14 @@ def _remove_bundled_skill_leftovers(ai_specs: Path, cli_home: Path | None) -> No
         proj_skill = child / "SKILL.md"
         if not src_skill.is_file() or not proj_skill.is_file():
             continue
-        if _normalized_bytes(src_skill) != _normalized_bytes(proj_skill):
+        proj_norm = _normalized_bytes(proj_skill)
+        matches_source = proj_norm == _normalized_bytes(src_skill)
+        lock_hash = (lock_skills.get(child.name) or {}).get("SKILL.md")
+        matches_lock = bool(lock_hash) and hashlib.sha256(proj_norm).hexdigest() == lock_hash
+        if not (matches_source or matches_lock):
             _warn(
                 f"keeping customized ai-specs/skills/{child.name}/ "
-                "(differs from CLI-bundled source; resolve manually)"
+                "(differs from CLI-bundled source and lock; resolve manually)"
             )
             continue
         try:

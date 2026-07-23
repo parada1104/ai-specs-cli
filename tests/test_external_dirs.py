@@ -330,6 +330,33 @@ class BundledLeftoverCleanupTests(unittest.TestCase):
         self.assertTrue(local.exists(), "genuine local skill must be preserved")
         self.assertTrue(customized.exists(), "customized copy must be preserved")
 
+    def test_removes_untouched_old_version_copy_via_lock_hash(self):
+        """Migration: a copy from an older CLI (differs from current source) but
+        recorded untouched in the legacy lock is safe to remove."""
+        import hashlib
+        root = self._project()
+        old = root / "ai-specs" / "skills" / "skill-creator"
+        old.mkdir()
+        old_content = "# skill-creator (older CLI version, untouched)\n"
+        (old / "SKILL.md").write_text(old_content)
+        h = hashlib.sha256(old_content.encode()).hexdigest()
+        (root / "ai-specs" / ".ai-specs.lock").write_text(
+            f'[skills."skill-creator"]\n"SKILL.md" = "{h}"\n'
+        )
+        _pc().remove_legacy_origin(root, cli_home=ROOT)
+        self.assertFalse(old.exists(), "untouched managed copy should be removed via lock hash")
+
+    def test_keeps_edited_copy_not_matching_source_or_lock(self):
+        root = self._project()
+        edited = root / "ai-specs" / "skills" / "skill-creator"
+        edited.mkdir()
+        (edited / "SKILL.md").write_text("# genuinely edited by the user\n")
+        (root / "ai-specs" / ".ai-specs.lock").write_text(
+            '[skills."skill-creator"]\n"SKILL.md" = "0000000000000000"\n'
+        )
+        _pc().remove_legacy_origin(root, cli_home=ROOT)
+        self.assertTrue(edited.exists(), "user-edited copy must be preserved")
+
 
 class SkillResolutionTests(unittest.TestCase):
     @classmethod
