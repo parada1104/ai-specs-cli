@@ -490,9 +490,13 @@ def merge_commands(
     dest_dir: Path,
     cli_home: Path | None = None,
 ) -> int:
-    """Merge cache-managed commands with hand-authored ai-specs/commands/.
+    """Merge bundled, recipe-managed, and hand-authored commands.
 
-    Local hand-authored commands win on id conflict. Returns file count in dest.
+    Ascending precedence copy order: CLI-bundled (``{cache}/.bundled/commands``)
+    -> recipe-managed (``{cache}/commands``) -> local hand-authored
+    (``ai-specs/commands/``). Recipe-managed silently overrides bundled (both
+    CLI-driven tiers, no user-facing signal); local hand-authored wins on id
+    conflict with either lower tier and warns. Returns file count in dest.
     """
     dest_dir = Path(dest_dir)
     if dest_dir.exists():
@@ -500,26 +504,36 @@ def merge_commands(
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     count = 0
+    seen: set[str] = set()
+
+    bundled = bundled_commands_root(project_root, cli_home=cli_home)
+    if bundled.is_dir():
+        for src in sorted(bundled.glob("*.md")):
+            shutil.copy2(src, dest_dir / src.name)
+            seen.add(src.name)
+            count += 1
+
     managed = commands_dir(project_root, cli_home=cli_home)
-    managed_names: set[str] = set()
     if managed.is_dir():
         for src in sorted(managed.glob("*.md")):
             shutil.copy2(src, dest_dir / src.name)
-            managed_names.add(src.name)
-            count += 1
+            if src.name not in seen:
+                count += 1
+            seen.add(src.name)
 
     local = Path(project_root) / "ai-specs" / "commands"
     if local.is_dir():
         for src in sorted(local.glob("*.md")):
             target = dest_dir / src.name
-            if src.name in managed_names:
+            if src.name in seen:
                 _warn(
                     f"command '{src.stem}' present in cache and ai-specs/commands/; "
                     f"local hand-authored wins"
                 )
             shutil.copy2(src, target)
-            if src.name not in managed_names:
+            if src.name not in seen:
                 count += 1
+            seen.add(src.name)
 
     return count
 

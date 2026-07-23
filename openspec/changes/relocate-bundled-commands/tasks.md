@@ -37,15 +37,15 @@
 
 ### Phase 2 — Command precedence (3-tier merge)
 
-- [ ] 2.1 RED (`tests/test_command_merge.py`): bundled-only command appears in
+- [x] 2.1 RED (`tests/test_command_merge.py`): bundled-only command appears in
       merge output.
-- [ ] 2.2 RED: recipe-managed command silently overrides a bundled command of
+- [x] 2.2 RED: recipe-managed command silently overrides a bundled command of
       the same name (no warning).
-- [ ] 2.3 RED: local hand-authored command wins over both bundled and
+- [x] 2.3 RED: local hand-authored command wins over both bundled and
       recipe-managed, with a warning on either collision.
-- [ ] 2.4 GREEN: extend `project-cache.merge_commands` to copy in ascending
+- [x] 2.4 GREEN: extend `project-cache.merge_commands` to copy in ascending
       precedence order (bundled → recipe-managed → local).
-- [ ] 2.5 GREEN: delete `lib/_internal/command-merge.py` (confirmed dead;
+- [x] 2.5 GREEN: delete `lib/_internal/command-merge.py` (confirmed dead;
       zero callers).
 
 ### Phase 3 — `refresh-bundled.py`: flatten-only for commands
