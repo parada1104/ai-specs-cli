@@ -15,7 +15,7 @@ under `<worktrees_dir>/` (default `.worktrees/`).
 1. Preview what would be removed (safe, mutates nothing):
 
    ```bash
-   bash ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh \
+   bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
      --dir <worktrees_dir> --base <integration_branch> --dry-run
    ```
 
@@ -27,7 +27,7 @@ under `<worktrees_dir>/` (default `.worktrees/`).
 3. Apply the cleanup once the preview looks right:
 
    ```bash
-   bash ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh \
+   bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
      --dir <worktrees_dir> --base <integration_branch>
    ```
 

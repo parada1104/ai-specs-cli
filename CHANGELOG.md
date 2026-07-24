@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Recipe override boundary completed for trello/worktree templates**:
+  `trello-mcp-workflow` card templates and the `worktree-flow` cleanup
+  script now materialize under `ai-specs/recipes/{id}/overrides/` so they
+  are committable (previously written to gitignored `templates/`/`bin/`
+  paths). Projects synced before this release may delete the orphaned
+  old-path copies (`ai-specs/recipes/trello-mcp-workflow/templates/`,
+  `ai-specs/recipes/worktree-flow/bin/`); they are gitignored and no
+  longer used.
+
 ## [0.16.0] — 2026-07-23
 
 ### Changed

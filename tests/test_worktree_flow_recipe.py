@@ -133,7 +133,7 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
             self.assertTrue(path.is_file(), f"command {cmd} should materialize")
 
         script = (
-            root / "ai-specs" / "recipes" / "worktree-flow" / "bin"
+            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides" / "bin"
             / "worktree-cleanup.sh"
         )
         self.assertTrue(script.is_file(), "cleanup script should materialize")

@@ -119,6 +119,104 @@ class InitExternalDirsTests(unittest.TestCase):
             self.assertEqual(lines.count("ai-specs/.recipe/"), 0)
             self.assertEqual(lines.count("ai-specs/.deps/"), 0)
 
+    def test_gitignore_committable_relocated_recipe_templates(self):
+        """Relocated conditional templates/bin under overrides/ are committable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run(["git", "init", "-q", str(target)], check=True, text=True, capture_output=True)
+            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            ai_specs = target / "ai-specs"
+
+            trello_ovr = (
+                ai_specs / "recipes" / "trello-mcp-workflow" / "overrides" / "templates"
+            )
+            trello_ovr.mkdir(parents=True)
+            (trello_ovr / "card-feature.md").write_text("# feature\n")
+
+            wt_ovr = ai_specs / "recipes" / "worktree-flow" / "overrides" / "bin"
+            wt_ovr.mkdir(parents=True)
+            (wt_ovr / "worktree-cleanup.sh").write_text("#!/bin/sh\n")
+
+            trello_bare = ai_specs / "recipes" / "trello-mcp-workflow" / "templates"
+            trello_bare.mkdir(parents=True)
+            (trello_bare / "card-feature.md").write_text("# bare\n")
+
+            wt_bare = ai_specs / "recipes" / "worktree-flow" / "bin"
+            wt_bare.mkdir(parents=True)
+            (wt_bare / "worktree-cleanup.sh").write_text("#!/bin/sh\n")
+
+            def ignored(rel: str) -> bool:
+                r = subprocess.run(
+                    ["git", "check-ignore", "-q", rel],
+                    cwd=target, capture_output=True,
+                )
+                return r.returncode == 0
+
+            self.assertFalse(
+                ignored(
+                    "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-feature.md"
+                )
+            )
+            self.assertFalse(
+                ignored(
+                    "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"
+                )
+            )
+            self.assertTrue(
+                ignored(
+                    "ai-specs/recipes/trello-mcp-workflow/templates/card-feature.md"
+                )
+            )
+            self.assertTrue(
+                ignored("ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh")
+            )
+
+
+class CatalogConditionalTemplateTargetLintTests(unittest.TestCase):
+    """Catalog-only guard: not_exists templates under ai-specs/recipes/ use overrides/."""
+
+    EXPECTED_TARGETS = {
+        "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-feature.md",
+        "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-bug.md",
+        "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-spike.md",
+        "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-epic.md",
+        "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-handoff.md",
+        "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-decision.md",
+        "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh",
+    }
+
+    def test_not_exists_recipe_template_targets_use_overrides(self):
+        import re
+
+        found = []
+        for recipe_toml in sorted(CATALOG.glob("*/recipe.toml")):
+            recipe_id = recipe_toml.parent.name
+            if recipe_id == "test-fixture" or recipe_id.startswith("test-"):
+                continue
+            text = recipe_toml.read_text()
+            parts = re.split(r"\n\[\[provides\.templates\]\]\n", text)
+            for part in parts[1:]:
+                block = re.split(r"\n\[\[", part, maxsplit=1)[0]
+                cond_m = re.search(r'(?m)^condition\s*=\s*"([^"]+)"\s*$', block)
+                tgt_m = re.search(r'(?m)^target\s*=\s*"([^"]+)"\s*$', block)
+                if not tgt_m:
+                    continue
+                target = tgt_m.group(1)
+                condition = cond_m.group(1) if cond_m else None
+                if condition != "not_exists":
+                    continue
+                if not target.startswith("ai-specs/recipes/"):
+                    continue
+                found.append(target)
+                self.assertIn(
+                    "/overrides/",
+                    target,
+                    f"{recipe_id}: not_exists target must nest under overrides/: {target}",
+                )
+
+        self.assertEqual(set(found), self.EXPECTED_TARGETS)
+
 
 class VendorSkillsPathTests(unittest.TestCase):
     @classmethod

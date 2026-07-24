@@ -68,7 +68,7 @@ Prefer the materialized cleanup script (or `/worktree-clean`) over ad-hoc
 remove sequences:
 
 ```bash
-bash ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh \
+bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
   --dir <worktrees_dir> --base <integration_branch>
 ```
 
