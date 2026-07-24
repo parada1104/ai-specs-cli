@@ -27,7 +27,7 @@ auto_remove_merged = true
 ```
 
 Then run `ai-specs sync`. The cleanup script materializes to
-`ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh`.
+`ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh`.
 
 ## Worktree-gate modes
 

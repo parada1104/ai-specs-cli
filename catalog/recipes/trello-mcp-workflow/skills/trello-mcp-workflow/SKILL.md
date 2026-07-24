@@ -130,7 +130,7 @@ New structured change or feature request.
 
 ### Templates
 
-Templates are located at `ai-specs/recipes/trello-mcp-workflow/templates/` and are installed by the recipe:
+Templates are located at `ai-specs/recipes/trello-mcp-workflow/overrides/templates/` and are installed by the recipe:
 
 | Template | File | Use Case |
 |---|---|---|
@@ -247,7 +247,7 @@ records; it does not duplicate them.
 | `decision` | Tradeoff that must be recorded in the canonical store. | `card-decision.md` |
 | `handoff` | Session-to-session continuity when the active card is not enough. | `card-handoff.md` |
 
-Templates install to `ai-specs/recipes/trello-mcp-workflow/templates/`.
+Templates install to `ai-specs/recipes/trello-mcp-workflow/overrides/templates/`.
 
 ### Card base structure
 

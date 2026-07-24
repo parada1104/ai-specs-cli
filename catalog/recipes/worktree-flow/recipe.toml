@@ -83,7 +83,7 @@ description = "Block writes to the main worktree on a protected branch"
 
 [[provides.templates]]
 source = "templates/worktree-cleanup.sh"
-target = "ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh"
+target = "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"
 condition = "not_exists"
 
 [[provides.docs]]

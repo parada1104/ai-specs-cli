@@ -179,7 +179,7 @@ cleanup script:
 
 ```bash
 cd <main-repo-root>
-bash ai-specs/recipes/worktree-flow/bin/worktree-cleanup.sh \
+bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
   --dir .worktrees --base <base_branch>
 ```
 
