@@ -3,7 +3,12 @@
 # sync. It is the CLI-provenance signal that travels with a fresh clone (the
 # machine-local cache meta.toml does not). git covers integrity/diff of the
 # committed project surface; skill/recipe/dep content hashes are not tracked.
+# [commands] / [opted-out] still track bundled-command materialization.
 
 [meta]
-cli_version = "0.16.0"
-synced_at = "2026-07-24T01:03:32Z"
+cli_version = "0.15.0"
+synced_at = "2026-07-23T22:53:45Z"
+
+[commands]
+"rules-audit.md" = "35c6719990e207cd9356f66de0b8ed10cf2da6e267b05fac86ef1c1baf9aae26"
+"skills-as-rules.md" = "5d03f61d9a318ac7e0cd75e4116540332432943fd15fa61a925400d60136b3cd"
