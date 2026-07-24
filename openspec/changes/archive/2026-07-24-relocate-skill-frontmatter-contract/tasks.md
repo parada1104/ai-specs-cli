@@ -47,16 +47,16 @@ Notes:
 
 ### Phase 1 — Relocate canonical contract (git mv)
 
-- [ ] 1.1 Confirm preconditions: `ai-specs/contracts/skill-frontmatter.md` is
+- [x] 1.1 Confirm preconditions: `ai-specs/contracts/skill-frontmatter.md` is
       the sole entry under `ai-specs/contracts/`; destination
       `bundled-skills/skill-creator/assets/skill-frontmatter-contract.md` does
       not yet exist; `bundled-skills/skill-creator/assets/SKILL-TEMPLATE.md`
       already present.
-- [ ] 1.2 GREEN: `git mv ai-specs/contracts/skill-frontmatter.md
+- [x] 1.2 GREEN: `git mv ai-specs/contracts/skill-frontmatter.md
       bundled-skills/skill-creator/assets/skill-frontmatter-contract.md`
       (basename rename is intentional per design — self-describing asset next
       to `SKILL-TEMPLATE.md`). Content body unchanged.
-- [ ] 1.3 GREEN: `rmdir ai-specs/contracts` if the empty directory lingers in
+- [x] 1.3 GREEN: `rmdir ai-specs/contracts` if the empty directory lingers in
       the working tree (git drops the tracked path via the mv alone; no
       `.gitkeep`, no init/sync recreate path).
 
@@ -64,7 +64,7 @@ Notes:
 
 Exact before/after from `design.md` (paths relative to each file's directory):
 
-- [ ] 2.1 GREEN (`bundled-skills/skill-creator/SKILL.md` ~L69): replace
+- [x] 2.1 GREEN (`bundled-skills/skill-creator/SKILL.md` ~L69): replace
       ```
       Canonical reference: [`../../contracts/skill-frontmatter.md`](../../contracts/skill-frontmatter.md).
       ```
@@ -72,7 +72,7 @@ Exact before/after from `design.md` (paths relative to each file's directory):
       ```
       Canonical reference: [`assets/skill-frontmatter-contract.md`](assets/skill-frontmatter-contract.md).
       ```
-- [ ] 2.2 GREEN (`bundled-skills/skill-creator/SKILL.md` ~L85): replace
+- [x] 2.2 GREEN (`bundled-skills/skill-creator/SKILL.md` ~L85): replace
       ```
       - [ ] Frontmatter matches `ai-specs/contracts/skill-frontmatter.md`
       ```
@@ -80,7 +80,7 @@ Exact before/after from `design.md` (paths relative to each file's directory):
       ```
       - [ ] Frontmatter matches `assets/skill-frontmatter-contract.md`
       ```
-- [ ] 2.3 GREEN (`bundled-skills/skill-creator/assets/SKILL-TEMPLATE.md` ~L42):
+- [x] 2.3 GREEN (`bundled-skills/skill-creator/assets/SKILL-TEMPLATE.md` ~L42):
       replace
       ```
       - **Contract**: [../../contracts/skill-frontmatter.md](../../contracts/skill-frontmatter.md)
@@ -94,13 +94,13 @@ Exact before/after from `design.md` (paths relative to each file's directory):
 
 ### Phase 3 — Confirm parser / tests path-agnostic (no code change)
 
-- [ ] 3.1 Verify `lib/_internal/skill_contract.py` has zero matches for
+- [x] 3.1 Verify `lib/_internal/skill_contract.py` has zero matches for
       `contracts/`, `skill-frontmatter.md`, and `ai-specs/contracts` (path-
       agnostic parser; **no edit expected**).
-- [ ] 3.2 Verify `tests/test_skill_contract.py` and
+- [x] 3.2 Verify `tests/test_skill_contract.py` and
       `tests/test_manifest_contract_docs.py` do not assert on the contract
       document path (**no test edits expected**).
-- [ ] 3.3 Verify `docs/`, `AGENTS.md`, `templates/`, `README.md` have no
+- [x] 3.3 Verify `docs/`, `AGENTS.md`, `templates/`, `README.md` have no
       stale `contracts/skill-frontmatter` citations (**no doc edits expected**
       per proposal grep; skip CHANGELOG unless apply surfaces a user-facing
       path string that already documents the old location — design does not
@@ -108,21 +108,21 @@ Exact before/after from `design.md` (paths relative to each file's directory):
 
 ### Phase 4 — Link resolution + hygiene verification
 
-- [ ] 4.1 From `bundled-skills/skill-creator/`, confirm
+- [x] 4.1 From `bundled-skills/skill-creator/`, confirm
       `assets/skill-frontmatter-contract.md` exists and is readable (covers
       SKILL.md L69/L85 targets). Example:
       `test -f bundled-skills/skill-creator/assets/skill-frontmatter-contract.md`.
-- [ ] 4.2 From `bundled-skills/skill-creator/assets/`, confirm
+- [x] 4.2 From `bundled-skills/skill-creator/assets/`, confirm
       `skill-frontmatter-contract.md` resolves as a same-dir sibling of
       `SKILL-TEMPLATE.md`.
-- [ ] 4.3 Grep hygiene (non-archive):
+- [x] 4.3 Grep hygiene (non-archive):
       `grep -rn "contracts/skill-frontmatter" bundled-skills/ lib/ docs/
       AGENTS.md templates/ tests/` → **zero** hits.
-- [ ] 4.4 Confirm no file under `openspec/changes/archive/` was modified
+- [x] 4.4 Confirm no file under `openspec/changes/archive/` was modified
       (historical path citations stay as audit trail).
-- [ ] 4.5 Confirm `ai-specs/contracts/` is absent (no file, no empty dir left
+- [x] 4.5 Confirm `ai-specs/contracts/` is absent (no file, no empty dir left
       committed).
-- [ ] 4.6 Spec delta already correct: change-local
+- [x] 4.6 Spec delta already correct: change-local
       `specs/skill-frontmatter-contract/spec.md` GIVEN cites
       `bundled-skills/skill-creator/assets/skill-frontmatter-contract.md`
       (MODIFIED scenario "Contract document describes required and generated
@@ -136,22 +136,22 @@ Exact before/after from `design.md` (paths relative to each file's directory):
 
 ### Phase 5 — Validation suite
 
-- [ ] 5.1 `./tests/run.sh tests.test_skill_contract tests.test_manifest_contract_docs`
+- [x] 5.1 `./tests/run.sh tests.test_skill_contract tests.test_manifest_contract_docs`
       (or equivalent focused discovery) still green — triangulation that the
       move did not disturb enforcement.
-- [ ] 5.2 `./tests/validate.sh` exit 0 (py_compile, bash -n, full unittest).
-- [ ] 5.3 Write `verify-report.md` at verify phase comparing against every
+- [x] 5.2 `./tests/validate.sh` exit 0 (py_compile, bash -n, full unittest).
+- [x] 5.3 Write `verify-report.md` at verify phase comparing against every
       scenario in
       `openspec/changes/relocate-skill-frontmatter-contract/specs/skill-frontmatter-contract/spec.md`
       (both MODIFIED scenarios: contract path GIVEN + generated-files-are-derived).
 
 ## Archive / follow-up (not apply)
 
-- [ ] 6.1 At archive: promote the spec delta into live
+- [x] 6.1 At archive: promote the spec delta into live
       `openspec/specs/skill-frontmatter-contract/spec.md` (replace GIVEN
       `ai-specs/contracts/skill-frontmatter.md` with
       `bundled-skills/skill-creator/assets/skill-frontmatter-contract.md`).
-- [ ] 6.2 No doctor WARN, no init scaffolding, no consumer leftover migration
+- [x] 6.2 No doctor WARN, no init scaffolding, no consumer leftover migration
       (D4 Option A) — explicitly out of scope forever for this change.
 
 ## Rollback (apply-time)
