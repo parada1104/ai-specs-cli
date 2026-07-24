@@ -109,16 +109,17 @@ def refresh(
     lock = load_lock(lock_path)
 
     # Migrate away any in-project bundled copies while the legacy lock (with
-    # [skills.*]/[commands] hashes) is still in memory — write_lock below drops
-    # those sections, so this must happen first for the lock-hash migration
-    # signal (mirrors the pre-existing skill migration ordering).
+    # [skills.*] hashes) is still in memory — write_lock below drops that
+    # section, so this must happen first for the lock-hash migration signal
+    # (mirrors the pre-existing skill migration ordering). ``load_lock`` no
+    # longer exposes a legacy ``[commands]`` key (dropped in Phase 4), so the
+    # command variant self-reads the raw on-disk lock (still present at this
+    # point, before write_lock below normalizes it away).
     pc = _load_project_cache()
     pc.remove_bundled_skill_leftovers(
         project / "ai-specs", cli_source, lock.get("skills") or {}
     )
-    pc.remove_bundled_command_leftovers(
-        project / "ai-specs", cli_source, lock.get("commands") or {}
-    )
+    pc.remove_bundled_command_leftovers(project / "ai-specs", cli_source)
 
     write_lock(lock_path, lock)
 

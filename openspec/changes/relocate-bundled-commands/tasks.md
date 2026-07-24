@@ -66,11 +66,11 @@
 
 ### Phase 4 — Lock schema
 
-- [ ] 4.1 RED: `.ai-specs.lock` has no `[commands]`/`[opted-out]` after
+- [x] 4.1 RED: `.ai-specs.lock` has no `[commands]`/`[opted-out]` after
       `sync`.
-- [ ] 4.2 RED: a legacy lock with `[commands]`/`[opted-out]` sections has them
+- [x] 4.2 RED: a legacy lock with `[commands]`/`[opted-out]` sections has them
       dropped on the next `sync`/`refresh-bundled`.
-- [ ] 4.3 GREEN: strip both sections from `lock.py` (`load_lock`,
+- [x] 4.3 GREEN: strip both sections from `lock.py` (`load_lock`,
       `write_lock`, `LOCK_HEADER`) and from `recipe-remove.sh`'s embedded
       rewrite.
 

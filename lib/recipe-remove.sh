@@ -137,12 +137,13 @@ if recipe_id not in recipes:
 del recipes[recipe_id]
 
 # Re-serialize as a provenance stamp (mirrors lock.py:write_lock). Skill/recipe/
-# dep content hashes are no longer tracked; any legacy sections are dropped here.
+# dep content hashes, and legacy [commands]/[opted-out] sections, are no
+# longer tracked; any such legacy sections are dropped here.
 out = []
 out.append("# Managed by ai-specs. Do not edit by hand.")
 out.append("# Provenance stamp: [meta] records the CLI version and last sync.")
 out.append("# git covers integrity of the committed surface; skill/recipe/dep")
-out.append("# hashes are not tracked. [commands]/[opted-out] track bundled commands.")
+out.append("# hashes are not tracked.")
 out.append("")
 
 meta = data.get("meta") or {}
@@ -154,13 +155,6 @@ if meta:
         out.append(f'synced_at = "{meta["synced_at"]}"')
     out.append("")
 
-cmds = data.get("commands") or {}
-if cmds:
-    out.append("[commands]")
-    for rel in sorted(cmds):
-        out.append(f'"{rel}" = "{cmds[rel]}"')
-    out.append("")
-
 agents = data.get("agents") or {}
 for harness in sorted(agents):
     files = agents[harness]
@@ -169,15 +163,6 @@ for harness in sorted(agents):
     out.append(f'[agents."{harness}"]')
     for name in sorted(files):
         out.append(f'"{name}" = "{files[name]}"')
-    out.append("")
-
-opted = sorted(set(data.get("opted-out", {}).get("files", []) or []))
-if opted:
-    out.append("[opted-out]")
-    out.append("# Bundled files the user deleted intentionally; the CLI will")
-    out.append("# not re-install them. Remove a line here to let the file be")
-    out.append("# restored on the next `ai-specs refresh-bundled`.")
-    out.append(f'files = [{", ".join(f'"{name}"' for name in opted)}]')
     out.append("")
 
 lock_path.write_text("\n".join(out).rstrip("\n") + "\n")
