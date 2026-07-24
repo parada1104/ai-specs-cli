@@ -66,6 +66,65 @@ class CommandMergeTests(unittest.TestCase):
         self.assertEqual(n, 3)
         self.assertIn("local hand-authored wins", captured.getvalue())
 
+    def test_bundled_only_appears_in_merge_output(self):
+        root, home = self._project()
+        bundled = self.mod.bundled_commands_root(root, cli_home=home)
+        bundled.mkdir(parents=True, exist_ok=True)
+        (bundled / "rules-audit.md").write_text("bundled\n")
+        dest = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(dest, ignore_errors=True))
+        n = self.mod.merge_commands(root, dest, cli_home=home)
+        self.assertEqual(n, 1)
+        self.assertEqual((dest / "rules-audit.md").read_text(), "bundled\n")
+
+    def test_managed_silently_overrides_bundled(self):
+        root, home = self._project()
+        bundled = self.mod.bundled_commands_root(root, cli_home=home)
+        bundled.mkdir(parents=True, exist_ok=True)
+        (bundled / "shared.md").write_text("bundled\n")
+        managed = self.mod.commands_dir(root, cli_home=home)
+        managed.mkdir(parents=True, exist_ok=True)
+        (managed / "shared.md").write_text("managed\n")
+        dest = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(dest, ignore_errors=True))
+        captured = io.StringIO()
+        old = sys.stderr
+        sys.stderr = captured
+        try:
+            n = self.mod.merge_commands(root, dest, cli_home=home)
+        finally:
+            sys.stderr = old
+        self.assertEqual((dest / "shared.md").read_text(), "managed\n")
+        self.assertEqual(n, 1)
+        self.assertEqual(captured.getvalue(), "", "no warning for bundled-vs-managed collision")
+
+    def test_local_wins_over_bundled_and_managed_with_warning(self):
+        root, home = self._project()
+        bundled = self.mod.bundled_commands_root(root, cli_home=home)
+        bundled.mkdir(parents=True, exist_ok=True)
+        (bundled / "vs-bundled.md").write_text("bundled\n")
+        managed = self.mod.commands_dir(root, cli_home=home)
+        managed.mkdir(parents=True, exist_ok=True)
+        (managed / "vs-managed.md").write_text("managed\n")
+        (root / "ai-specs" / "commands" / "vs-bundled.md").write_text("local-over-bundled\n")
+        (root / "ai-specs" / "commands" / "vs-managed.md").write_text("local-over-managed\n")
+        dest = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(dest, ignore_errors=True))
+        captured = io.StringIO()
+        old = sys.stderr
+        sys.stderr = captured
+        try:
+            n = self.mod.merge_commands(root, dest, cli_home=home)
+        finally:
+            sys.stderr = old
+        self.assertEqual((dest / "vs-bundled.md").read_text(), "local-over-bundled\n")
+        self.assertEqual((dest / "vs-managed.md").read_text(), "local-over-managed\n")
+        self.assertEqual(n, 2)
+        warnings = captured.getvalue()
+        self.assertIn("vs-bundled", warnings)
+        self.assertIn("vs-managed", warnings)
+        self.assertIn("local hand-authored wins", warnings)
+
     def test_managed_only(self):
         root, home = self._project()
         managed = self.mod.commands_dir(root, cli_home=home)

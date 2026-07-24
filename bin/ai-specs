@@ -5,7 +5,7 @@
 # init [path] Bootstrap ai-specs/ in a project (idempotent)
 # sync [path] Reconcile manifest → refresh-bundled + vendor + AGENTS.md + agents
 # sync-agent [path] [--all|--<a>] Fan out per-agent configs only
-# refresh-bundled [path] Refresh bundled skills/commands from CLI (lock-aware)
+# refresh-bundled [path] Flatten CLI-bundled skills/commands into the cache
 # add-dep <url> [path] Register a vendored skill (alias for 'skills add')
 # doctor [path] Diagnose project health (read-only)
 # rules-audit [path] Inventory legacy rules for migration planning (read-only)
@@ -54,7 +54,7 @@ Commands:
   init [path] Bootstrap ai-specs/ in a project (TTY opens onboarding)
   sync [path] Refresh bundled + vendor deps + regen AGENTS.md + sync agents
   sync-agent [path] [--all | --<agent>] Fan out per-agent configs only
-  refresh-bundled [path] Update bundled skills/commands (keeps your edits, drops .new sidecars)
+  refresh-bundled [path] Flatten CLI-bundled skills/commands into the cache (no in-project writes)
   add-dep <url> [path] Register a vendored skill (alias for 'skills add')
   doctor [path] Diagnose project health (read-only)
   rules-audit [path] Inventory legacy rules for migration planning (read-only)

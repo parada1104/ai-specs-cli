@@ -1,12 +1,4 @@
-# sync-lock Specification
-
-## Purpose
-
-Define `ai-specs/.ai-specs.lock` as a CLI provenance stamp that travels with a
-fresh clone. The lock records which CLI version last synced the project; it is
-not an integrity manifest for committed content.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Lock is a provenance stamp
 
@@ -32,17 +24,3 @@ clone (the machine-local cache `meta.toml` does not).
 - **WHEN** `sync` (or `refresh-bundled`) runs
 - **THEN** those sections are removed
 - **AND** `[meta].cli_version` is updated to the running CLI version
-
-### Requirement: Lock is not an integrity manifest for committed content
-
-The lock SHALL NOT be used to detect user edits of committed content; git is the
-integrity/diff source for the committed project surface. Version-drift detection
-in `doctor`/`upgrade` SHALL read `[meta].cli_version` only.
-
-#### Scenario: Doctor reads version from meta
-
-- **GIVEN** a project whose `.ai-specs.lock` `[meta].cli_version` is older than
-  the installed CLI
-- **WHEN** `doctor` runs
-- **THEN** it reports version drift based on `[meta].cli_version`
-- **AND** it does NOT compute per-file skill/recipe hashes

@@ -17,7 +17,6 @@ LOCK_HEADER = """\
 # sync. It is the CLI-provenance signal that travels with a fresh clone (the
 # machine-local cache meta.toml does not). git covers integrity/diff of the
 # committed project surface; skill/recipe/dep content hashes are not tracked.
-# [commands] / [opted-out] still track bundled-command materialization.
 """
 
 
@@ -30,9 +29,7 @@ def load_lock(lock_path: Path) -> dict:
     if not lock_path.is_file():
         return {
             "skills": {},
-            "commands": {},
             "meta": {},
-            "opted_out": [],
             "recipes": {},
             "deps": {},
             "agents": {},
@@ -49,9 +46,7 @@ def load_lock(lock_path: Path) -> dict:
 
     return {
         "skills": {k: dict(v) for k, v in (data.get("skills") or {}).items()},
-        "commands": dict(data.get("commands") or {}),
         "meta": meta,
-        "opted_out": list(data.get("opted-out", {}).get("files", []) or []),
         # On disk recipe/dep skills live under a `.skills.` sub-table
         # (`[recipes."<id>".skills."<skill>"]`). Unwrap that level so the
         # in-memory shape is recipes[<id>][<skill>] = {rel: sha}, matching
@@ -89,15 +84,10 @@ def write_lock(lock_path: Path, lock: dict) -> None:
     # Skill/recipe/dep content hashes are intentionally NOT serialized: the lock
     # is a provenance stamp (see LOCK_HEADER), not an integrity manifest. git
     # covers integrity/diff for the committed surface, and bundled/recipe skills
-    # resolve from the CLI cache. Any legacy [skills.*]/[recipes.*]/[deps.*]
-    # sections loaded from an older lock are dropped here on the next write.
-    commands = lock.get("commands") or {}
-    if commands:
-        out.append("[commands]")
-        for rel in sorted(commands):
-            out.append(f'"{rel}" = "{commands[rel]}"')
-        out.append("")
-
+    # resolve from the CLI cache. Any legacy [skills.*]/[recipes.*]/[deps.*]/
+    # [commands]/[opted-out] sections loaded from an older lock are dropped
+    # here on the next write — commands no longer materialize in-project, so
+    # no per-file hash or delete-memory bookkeeping is needed for them either.
     agents = lock.get("agents") or {}
     for harness in sorted(agents):
         files = agents[harness]
@@ -106,16 +96,6 @@ def write_lock(lock_path: Path, lock: dict) -> None:
         out.append(f'[agents."{harness}"]')
         for name in sorted(files):
             out.append(f'"{name}" = "{files[name]}"')
-        out.append("")
-
-    opted = sorted(set(lock.get("opted_out") or []))
-    if opted:
-        out.append("[opted-out]")
-        out.append("# Bundled files the user deleted intentionally; the CLI will")
-        out.append("# not re-install them. Remove a line here to let the file be")
-        out.append("# restored on the next `ai-specs refresh-bundled`.")
-        formatted = ", ".join(f'"{name}"' for name in opted)
-        out.append(f"files = [{formatted}]")
         out.append("")
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
