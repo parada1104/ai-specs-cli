@@ -76,16 +76,16 @@
 
 ### Phase 5 — `doctor.py`
 
-- [ ] 5.1 RED: per-bundled-command-id OK check when
+- [x] 5.1 RED: per-bundled-command-id OK check when
       `{cache}/.bundled/commands/{name}.md` exists.
-- [ ] 5.2 RED: per-bundled-command-id ERROR check when it's missing, with
+- [x] 5.2 RED: per-bundled-command-id ERROR check when it's missing, with
       `ai-specs sync` guidance.
-- [ ] 5.3 RED: rewrite `test_bundled_commands_missing_reports_warn` — an empty
+- [x] 5.3 RED: rewrite `test_bundled_commands_missing_reports_warn` — an empty
       `ai-specs/commands/` is now healthy (no WARN); a missing bundled command
       in the cache is the new ERROR signal.
-- [ ] 5.4 RED: tracked-but-removed `ai-specs/commands/{name}.md` produces a
+- [x] 5.4 RED: tracked-but-removed `ai-specs/commands/{name}.md` produces a
       WARN with `git rm --cached` guidance; index is unchanged.
-- [ ] 5.5 GREEN: implement per-id check + tracked-leftover extension in
+- [x] 5.5 GREEN: implement per-id check + tracked-leftover extension in
       `doctor.py`.
 
 ### Phase 6 — `init.sh` + help text

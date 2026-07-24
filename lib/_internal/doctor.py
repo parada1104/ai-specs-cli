@@ -33,6 +33,19 @@ def bundled_skill_names(cli_home: Path | None = None) -> list[str]:
     return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
+def bundled_command_names(cli_home: Path | None = None) -> list[str]:
+    """Command ids (``.md`` stems) shipped under bundled-commands/ (source of
+    truth for the per-bundled-command-id doctor check)."""
+    home = cli_home or AI_SPECS_HOME
+    root = home / "bundled-commands"
+    if not root.is_dir():
+        return [
+            "rules-audit",
+            "skills-as-rules",
+        ]
+    return sorted(p.stem for p in root.glob("*.md") if p.is_file())
+
+
 class Severity(Enum):
     OK = "OK"
     INFO = "INFO"
@@ -314,18 +327,17 @@ class Doctor:
         return set()
 
     def _check_bundled_assets(self) -> None:
-        commands_root = self.root / "ai-specs" / "commands"
         # CLI-bundled skills resolve from the cache ({cache}/.bundled/skills/),
         # not the project surface. Sync/refresh-bundled flattens them there.
         pc = self._load_project_cache()
-        bundled_root = None
+        bundled_skills_root = None
         if pc is not None:
             try:
-                bundled_root = pc.bundled_skills_root(self.root) / "skills"
+                bundled_skills_root = pc.bundled_skills_root(self.root) / "skills"
             except Exception:
-                bundled_root = None
+                bundled_skills_root = None
         for skill in bundled_skill_names():
-            skill_path = (bundled_root / skill) if bundled_root is not None else None
+            skill_path = (bundled_skills_root / skill) if bundled_skills_root is not None else None
             if skill_path is not None and skill_path.is_dir():
                 self.checks.append(Check(
                     Severity.OK, "bundled-skill",
@@ -337,22 +349,35 @@ class Doctor:
                     f"cache .bundled/skills/{skill} missing",
                     guidance="ai-specs sync (flattens CLI-bundled skills into the cache)"
                 ))
-        local_ok = commands_root.is_dir() and any(commands_root.glob("*.md"))
-        cache_ok = bool(self._cache_command_names())
-        if local_ok or cache_ok:
-            self.checks.append(Check(
-                Severity.OK, "bundled-commands",
-                "ai-specs/commands/ present"
-            ))
-        else:
-            self.checks.append(Check(
-                Severity.WARN, "bundled-commands",
-                "ai-specs/commands/ missing or empty",
-                guidance="ai-specs init --force or ai-specs refresh-bundled"
-            ))
+        # CLI-bundled commands resolve from the cache ({cache}/.bundled/commands/)
+        # too — never the project surface. An empty hand-authored
+        # ai-specs/commands/ is healthy on its own (same as ai-specs/skills/);
+        # it is not checked here.
+        bundled_commands_root = None
+        if pc is not None:
+            try:
+                bundled_commands_root = pc.bundled_commands_root(self.root)
+            except Exception:
+                bundled_commands_root = None
+        for command in bundled_command_names():
+            command_path = (
+                (bundled_commands_root / f"{command}.md")
+                if bundled_commands_root is not None else None
+            )
+            if command_path is not None and command_path.is_file():
+                self.checks.append(Check(
+                    Severity.OK, "bundled-commands",
+                    f"cache .bundled/commands/{command}.md present"
+                ))
+            else:
+                self.checks.append(Check(
+                    Severity.ERROR, "bundled-commands",
+                    f"cache .bundled/commands/{command}.md missing",
+                    guidance="ai-specs sync (flattens CLI-bundled commands into the cache)"
+                ))
 
     def _check_tracked_bundled_leftovers(self) -> None:
-        """WARN when git still tracks CLI-bundled skills removed from disk.
+        """WARN when git still tracks CLI-bundled skills/commands removed from disk.
 
         Never runs ``git rm`` — only guides the developer.
         """
@@ -362,19 +387,33 @@ class Doctor:
         try:
             skill_ids = pc.tracked_bundled_skill_leftovers(self.root)
         except Exception:
-            return
-        if not skill_ids:
-            return
-        paths = " ".join(f"ai-specs/skills/{sid}" for sid in skill_ids)
-        self.checks.append(Check(
-            Severity.WARN,
-            "tracked-bundled-leftover",
-            f"{len(skill_ids)} removed CLI-bundled skill(s) still tracked in git",
-            guidance=(
-                f"git rm -r --cached {paths}  "
-                "# then commit; ai-specs never modifies the index"
-            ),
-        ))
+            skill_ids = []
+        if skill_ids:
+            paths = " ".join(f"ai-specs/skills/{sid}" for sid in skill_ids)
+            self.checks.append(Check(
+                Severity.WARN,
+                "tracked-bundled-leftover",
+                f"{len(skill_ids)} removed CLI-bundled skill(s) still tracked in git",
+                guidance=(
+                    f"git rm -r --cached {paths}  "
+                    "# then commit; ai-specs never modifies the index"
+                ),
+            ))
+        try:
+            command_ids = pc.tracked_bundled_command_leftovers(self.root)
+        except Exception:
+            command_ids = []
+        if command_ids:
+            paths = " ".join(f"ai-specs/commands/{cid}.md" for cid in command_ids)
+            self.checks.append(Check(
+                Severity.WARN,
+                "tracked-bundled-leftover",
+                f"{len(command_ids)} removed CLI-bundled command(s) still tracked in git",
+                guidance=(
+                    f"git rm --cached {paths}  "
+                    "# then commit; ai-specs never modifies the index"
+                ),
+            ))
 
     # -------------------------------------------------------------------------
     # Agent-driven checks

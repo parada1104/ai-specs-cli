@@ -384,7 +384,45 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
             self.assertIn("OK", result.stdout)
             self.assertIn("commands", result.stdout)
 
-    def test_bundled_commands_missing_reports_warn(self):
+    def test_bundled_command_present_reports_ok_by_name(self):
+        """Per-bundled-command-id OK check names each bundled command."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False
+            )
+            self.assertIn("OK", result.stdout)
+            self.assertIn("rules-audit", result.stdout)
+            self.assertIn("skills-as-rules", result.stdout)
+
+    def test_bundled_command_missing_reports_error(self):
+        """A bundled command id missing from {cache}/.bundled/commands/ is the
+        ERROR signal now (mirrors the per-bundled-skill check); an empty
+        hand-authored ai-specs/commands/ is unrelated and healthy."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            pc = load_module(
+                ROOT / "lib" / "_internal" / "project-cache.py", "pc_doctor_cmd_missing"
+            )
+            (pc.bundled_commands_root(target, cli_home=ROOT) / "rules-audit.md").unlink()
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("ERROR", result.stdout)
+            self.assertIn("rules-audit", result.stdout)
+            self.assertIn("sync", result.stdout)
+
+    def test_empty_ai_specs_commands_dir_is_healthy(self):
+        """An empty hand-authored ai-specs/commands/ is healthy (bundled
+        commands resolve from the cache, never from the project surface) —
+        the old aggregate 'any command present' WARN no longer applies."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
@@ -395,7 +433,56 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
                 capture_output=True, text=True, check=False
             )
             self.assertEqual(result.returncode, 0)
+            command_lines = [
+                ln for ln in result.stdout.splitlines()
+                if "bundled-command" in ln or "ai-specs/commands" in ln
+            ]
+            self.assertFalse(
+                any("WARN" in ln or "ERROR" in ln for ln in command_lines),
+                f"empty ai-specs/commands/ must not be flagged; got: {command_lines}",
+            )
+
+    def test_tracked_bundled_command_leftover_warns_without_git_rm(self):
+        """Doctor WARNs when git still tracks a removed CLI-bundled command path."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run(["git", "init", "-q", str(target)], check=True)
+            subprocess.run(
+                ["git", "-C", str(target), "config", "user.email", "t@example.com"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(target), "config", "user.name", "t"],
+                check=True,
+            )
+            ai_specs_init(target)
+            leftover = target / "ai-specs" / "commands" / "rules-audit.md"
+            leftover.write_text("# leftover\n")
+            subprocess.run(["git", "-C", str(target), "add", "-A"], check=True)
+            subprocess.run(
+                ["git", "-C", str(target), "commit", "-qm", "track bundled command leftover"],
+                check=True,
+            )
+            leftover.unlink()
+            before = subprocess.run(
+                ["git", "-C", str(target), "ls-files", "ai-specs/commands/rules-audit.md"],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            self.assertIn("rules-audit.md", before)
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False,
+            )
             self.assertIn("WARN", result.stdout)
+            self.assertIn("tracked-bundled", result.stdout)
+            self.assertIn("git rm --cached", result.stdout)
+            self.assertIn("rules-audit", result.stdout)
+            after = subprocess.run(
+                ["git", "-C", str(target), "ls-files", "ai-specs/commands/rules-audit.md"],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            self.assertEqual(before, after)
 
 
 class SymlinkDiagnosticsTests(unittest.TestCase):
@@ -890,7 +977,7 @@ class RecipeCliDepsDoctorTests(unittest.TestCase):
         (project / "ai-specs").mkdir(parents=True)
         (project / "AGENTS.md").write_text("# agents\n")
         # Satisfy bundled-asset checks so recipe-dep WARN can keep exit code 0.
-        # CLI-bundled skills now resolve from the cache; the test sets
+        # CLI-bundled skills/commands now resolve from the cache; the test sets
         # AI_SPECS_HOME=root, so flatten them under that home's cache.
         pc = load_module(ROOT / "lib" / "_internal" / "project-cache.py", "pc_doctor_recipe_deps")
         bundled = pc.bundled_skills_root(project, cli_home=root) / "skills"
@@ -898,6 +985,10 @@ class RecipeCliDepsDoctorTests(unittest.TestCase):
             d = bundled / skill
             d.mkdir(parents=True, exist_ok=True)
             (d / "SKILL.md").write_text(f"# {skill}\n")
+        bundled_cmds = pc.bundled_commands_root(project, cli_home=root)
+        bundled_cmds.mkdir(parents=True, exist_ok=True)
+        for command in self.doctor.bundled_command_names(cli_home=root):
+            (bundled_cmds / f"{command}.md").write_text(f"# {command}\n")
         (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
         (project / "ai-specs" / "commands" / "placeholder.md").write_text("# placeholder\n")
         flag = "true" if enabled else "false"
