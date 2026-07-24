@@ -255,6 +255,13 @@ class RulesAuditTests(unittest.TestCase):
         import shutil
         import tempfile
 
+        pc_spec = importlib.util.spec_from_file_location(
+            "pc_rules_audit_cmd_dist", ROOT / "lib" / "_internal" / "project-cache.py"
+        )
+        pc = importlib.util.module_from_spec(pc_spec)
+        assert pc_spec.loader is not None
+        pc_spec.loader.exec_module(pc)
+
         project = Path(tempfile.mkdtemp())
         try:
             (project / "ai-specs").mkdir()
@@ -264,18 +271,35 @@ class RulesAuditTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            commands_dir = project / "ai-specs" / "commands"
-            self.assertTrue((commands_dir / "rules-audit.md").is_file())
-            skills_text = (commands_dir / "skills-as-rules.md").read_text(encoding="utf-8")
+            # Bundled commands flatten into the cache — never the project surface.
+            bundled_commands_root = pc.bundled_commands_root(project, cli_home=ROOT)
+            self.assertTrue((bundled_commands_root / "rules-audit.md").is_file())
+            skills_text = (bundled_commands_root / "skills-as-rules.md").read_text(encoding="utf-8")
             self.assertNotIn("auto-invoke table", skills_text.lower())
+            local_commands_dir = project / "ai-specs" / "commands"
+            local_names = (
+                sorted(p.name for p in local_commands_dir.glob("*.md"))
+                if local_commands_dir.is_dir() else []
+            )
+            self.assertEqual(
+                local_names, [],
+                "bundled commands must not be materialized into ai-specs/commands/",
+            )
+
             subprocess.run([str(CLI), "init", str(project)], check=True, text=True)
             (project / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\nname = 'fixture'\n\n[agents]\nenabled = ['cursor', 'opencode']\n"
             )
             subprocess.run([str(CLI), "sync", str(project)], check=True, text=True)
+
+            # A project with no local commands still has an empty/absent
+            # ai-specs/commands/ after init+sync — bundled commands never land there.
+            local_names = (
+                sorted(p.name for p in local_commands_dir.glob("*.md"))
+                if local_commands_dir.is_dir() else []
+            )
+            self.assertEqual(local_names, [])
             for rel in (
-                "ai-specs/commands/rules-audit.md",
-                "ai-specs/commands/skills-as-rules.md",
                 ".cursor/commands/rules-audit.md",
                 ".cursor/commands/skills-as-rules.md",
                 ".opencode/commands/rules-audit.md",

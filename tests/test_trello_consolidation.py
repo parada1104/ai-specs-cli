@@ -88,7 +88,7 @@ class TrelloConsolidationTests(unittest.TestCase):
         self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
         dest = (
             root / "ai-specs" / "recipes" / "trello-mcp-workflow"
-            / "templates" / "card-decision.md"
+            / "overrides" / "templates" / "card-decision.md"
         )
         self.assertTrue(dest.is_file(), "card-decision template should materialize")
 

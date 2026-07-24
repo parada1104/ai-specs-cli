@@ -66,7 +66,7 @@ Use `metadata.scope` values defined in [skill-sync/SKILL.md](../skill-sync/SKILL
 | `metadata.scope` | For sync | Scopes whose `AGENTS.md` get Auto-invoke rows |
 | `metadata.auto_invoke` | For sync | Action phrases as a YAML list |
 
-Canonical reference: [`../../contracts/skill-frontmatter.md`](../../contracts/skill-frontmatter.md).
+Canonical reference: [`assets/skill-frontmatter-contract.md`](assets/skill-frontmatter-contract.md).
 
 ---
 
@@ -82,7 +82,7 @@ workflow.
 
 - [ ] Skill name not already in `skills/`
 - [ ] Pattern is reusable
-- [ ] Frontmatter matches `ai-specs/contracts/skill-frontmatter.md`
+- [ ] Frontmatter matches `assets/skill-frontmatter-contract.md`
 - [ ] Commands section with copy-paste commands
 - [ ] Run `ai-specs sync` after adding `scope` + `auto_invoke`
 

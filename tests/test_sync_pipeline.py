@@ -1451,7 +1451,7 @@ class SyncPipelineTests(unittest.TestCase):
 
 
 class SkillSyncScriptTests(unittest.TestCase):
-    SCRIPT = ROOT / "ai-specs" / "skills" / "skill-sync" / "assets" / "sync.sh"
+    SCRIPT = ROOT / "bundled-skills" / "skill-sync" / "assets" / "sync.sh"
 
     def test_skill_sync_validates_metadata_and_reports_missing(self):
         repo_root = Path(tempfile.mkdtemp(prefix="ai-specs-skill-sync-"))

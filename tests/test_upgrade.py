@@ -99,7 +99,7 @@ class UpgradeTests(unittest.TestCase):
     def test_help_lists_upgrade(self):
         result = run_ai_specs(["help"], check=True)
         self.assertIn("upgrade", result.stdout)
-        self.assertIn("update", result.stdout.lower())
+        self.assertIn("installation", result.stdout.lower())
 
     # --- 2. Upgrade accepts dry-run flag ---
     def test_upgrade_help_prints_flags(self):

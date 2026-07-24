@@ -137,6 +137,76 @@ class HarnessCliLiteracyTests(unittest.TestCase):
                 "untouched in-project copy should be migrated out via lock hash",
             )
 
+    def test_refresh_bundled_init_flattens_commands_without_writing_project(self):
+        pc = load_module(
+            ROOT / "lib" / "_internal" / "project-cache.py", "project_cache_literacy_cmd"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "ai-specs" / "commands").mkdir(parents=True)
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "literacy-cmd-fixture"\n\n[agents]\nenabled = ["claude"]\n'
+            )
+            proc = subprocess.run(
+                [sys.executable, str(REFRESH_BUNDLED), str(project), str(ROOT), "--init"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+            bundled_root = pc.bundled_commands_root(project, cli_home=ROOT)
+            self.assertTrue((bundled_root / "rules-audit.md").is_file())
+            self.assertTrue((bundled_root / "skills-as-rules.md").is_file())
+            self.assertEqual(
+                sorted(p.name for p in (project / "ai-specs" / "commands").glob("*.md")),
+                [],
+                "bundled commands must not be written into ai-specs/commands/",
+            )
+            self.assertFalse(
+                list((project / "ai-specs" / "commands").glob("*.new")),
+                "refresh-bundled must never write .new sidecars",
+            )
+
+    def test_refresh_bundled_removes_byte_identical_command_leftover(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "ai-specs" / "commands").mkdir(parents=True)
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "leftover-cmd"\n\n[agents]\nenabled = ["claude"]\n'
+            )
+            leftover = project / "ai-specs" / "commands" / "rules-audit.md"
+            leftover.write_text((ROOT / "bundled-commands" / "rules-audit.md").read_text())
+            proc = subprocess.run(
+                [sys.executable, str(REFRESH_BUNDLED), str(project), str(ROOT)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+            self.assertFalse(leftover.exists(), "byte-identical bundled command must be removed")
+            self.assertFalse((project / "ai-specs" / "commands" / "rules-audit.md.new").exists())
+
+    def test_refresh_bundled_keeps_customized_command_with_notice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "ai-specs" / "commands").mkdir(parents=True)
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "customized-cmd"\n\n[agents]\nenabled = ["claude"]\n'
+            )
+            customized = project / "ai-specs" / "commands" / "rules-audit.md"
+            customized.write_text("# rules-audit (locally edited)\n")
+            proc = subprocess.run(
+                [sys.executable, str(REFRESH_BUNDLED), str(project), str(ROOT)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+            self.assertTrue(customized.exists(), "customized copy must be preserved")
+            out = proc.stdout + proc.stderr
+            self.assertIn("customized", out)
+            self.assertFalse((project / "ai-specs" / "commands" / "rules-audit.md.new").exists())
+
     def test_agents_render_emits_harness_literacy_pointer(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

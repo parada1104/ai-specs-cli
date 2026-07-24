@@ -78,7 +78,10 @@ class LockRoundTripTests(unittest.TestCase):
         self.assertNotIn("[deps.", text)
         self.assertIn('cli_version = "0.14.0"', text)
 
-    def test_meta_commands_opted_out_preserved(self):
+    def test_legacy_commands_opted_out_dropped_on_write(self):
+        """[commands]/[opted-out] were the last non-[meta]/[agents.*] legacy
+        sections; both are dropped unconditionally now that commands no longer
+        materialize in-project (no per-file hash or delete-memory needed)."""
         path = self._lock_path()
         lock = self.lock.load_lock(path)
         lock["meta"] = {"cli_version": "0.12.2", "synced_at": "2026-06-23T12:00:00Z"}
@@ -89,13 +92,61 @@ class LockRoundTripTests(unittest.TestCase):
         text = path.read_text()
         self.assertIn("[meta]", text)
         self.assertIn('cli_version = "0.12.2"', text)
-        self.assertIn("[commands]", text)
-        self.assertIn("[opted-out]", text)
+        self.assertNotIn("[commands]", text)
+        self.assertNotIn("[opted-out]", text)
 
         reloaded = self.lock.load_lock(path)
         self.assertEqual(reloaded["meta"]["cli_version"], "0.12.2")
-        self.assertEqual(reloaded["commands"], {"rules-audit.md": "cmdhash"})
-        self.assertEqual(reloaded["opted_out"], ["commands/skills-as-rules.md"])
+        self.assertNotIn("commands", reloaded)
+        self.assertNotIn("opted_out", reloaded)
+
+    def test_legacy_lock_with_commands_opted_out_sections_normalized(self):
+        """A lock written by a prior CLI version (with [commands]/[opted-out])
+        is normalized on the next write — sections silently dropped, no crash."""
+        path = self._lock_path()
+        path.write_text(
+            '[meta]\ncli_version = "0.14.0"\nsynced_at = "2026-07-01T00:00:00Z"\n\n'
+            '[commands]\n"rules-audit.md" = "cmdhash"\n\n'
+            '[opted-out]\nfiles = ["commands/skills-as-rules.md"]\n'
+        )
+        lock = self.lock.load_lock(path)
+        self.lock.write_lock(path, lock)
+
+        text = path.read_text()
+        self.assertNotIn("[commands]", text)
+        self.assertNotIn("[opted-out]", text)
+        self.assertIn('cli_version = "0.14.0"', text)
+
+    def test_legacy_commands_opted_out_dropped_agents_preserved(self):
+        """Combined legacy case: [commands]/[opted-out] dropped, [agents.*] kept.
+
+        A lock that still has both the pre-relocation hash sections AND a
+        populated [agents.*] section must normalize both correctly on rewrite —
+        drop the legacy sections, preserve agents provenance unchanged.
+        """
+        path = self._lock_path()
+        path.write_text(
+            '[meta]\ncli_version = "0.14.0"\nsynced_at = "2026-07-01T00:00:00Z"\n\n'
+            '[commands]\n"rules-audit.md" = "cmdhash"\n\n'
+            '[opted-out]\nfiles = ["commands/skills-as-rules.md"]\n\n'
+            '[agents."claude"]\n"AGENTS.md" = "agenthash"\n'
+        )
+        lock = self.lock.load_lock(path)
+        self.assertEqual(lock["agents"]["claude"]["AGENTS.md"], "agenthash")
+        self.lock.write_lock(path, lock)
+
+        text = path.read_text()
+        self.assertNotIn("[commands]", text)
+        self.assertNotIn("[opted-out]", text)
+        self.assertIn('[agents."claude"]', text)
+        self.assertIn('"AGENTS.md" = "agenthash"', text)
+        self.assertIn('cli_version = "0.14.0"', text)
+
+        reloaded = self.lock.load_lock(path)
+        self.assertEqual(reloaded["agents"]["claude"]["AGENTS.md"], "agenthash")
+        self.assertNotIn("commands", reloaded)
+        self.assertNotIn("opted_out", reloaded)
+
 
 
 if __name__ == "__main__":

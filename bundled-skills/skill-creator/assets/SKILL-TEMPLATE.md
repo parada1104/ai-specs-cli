@@ -39,4 +39,4 @@ Use this skill when:
 ## Resources
 
 - **Templates**: See [assets/](assets/) for optional files
-- **Contract**: [../../contracts/skill-frontmatter.md](../../contracts/skill-frontmatter.md)
+- **Contract**: [skill-frontmatter-contract.md](skill-frontmatter-contract.md)
