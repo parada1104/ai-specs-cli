@@ -65,7 +65,7 @@ The system MUST validate that skills intended for Auto-invoke have complete sync
 The system MUST publish a human-owned contract document for skill frontmatter and define ownership boundaries for local, vendored, and fan-out skill files.
 
 #### Scenario: Contract document describes required and generated fields
-- **GIVEN** `ai-specs/contracts/skill-frontmatter.md`
+- **GIVEN** `bundled-skills/skill-creator/assets/skill-frontmatter-contract.md`
 - **WHEN** a maintainer reads the contract
 - **THEN** it MUST document required local fields, optional sync metadata, generated vendored fields, compatibility behavior, and hard-fail cutover expectations
 
