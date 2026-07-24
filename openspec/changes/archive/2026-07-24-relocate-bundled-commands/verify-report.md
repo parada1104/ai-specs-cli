@@ -93,7 +93,7 @@ This is real proof the migration path works end-to-end, not just against
 | `doctor` per-bundled-command-id check | ✅ Implemented | Replaces the old aggregate "any commands present" check |
 | `doctor` tracked-leftover extension | ✅ Implemented | Found and removed a duplicate-method bug during implementation that would have silently no-op'd this check — now covered by a dedicated test |
 | `init.sh` step 2b removed | ✅ Implemented | Comment mirrors the existing skills-removal explanation |
-| Dogfood `ai-specs/.ai-specs.lock` (this repo) | ✅ Migrated | Ran real `sync`, applied doctor's `git rm --cached` guidance, verified clean |
+| Dogfood `ai-specs/.ai-specs.lock` (this repo) | ✅ Verified live, then reverted | Ran real `sync`, applied doctor's `git rm --cached` guidance, confirmed clean — then reverted all three resulting file changes (`git revert`) per `dogfood-verification-isolation`: verification output is evidence, not a shippable part of this PR. This repo's own dogfood migration happens later, as its own act, once the feature is released. |
 
 ### Coherence (Design)
 
@@ -169,8 +169,8 @@ This is real proof the migration path works end-to-end, not just against
 
 | Item | Status |
 |------|--------|
-| Dogfood `ai-specs/.ai-specs.lock` (this repo) | ✅ Migrated live during verify; `[meta]`-only, `cli_version = "0.16.0"` |
-| Dogfood `ai-specs/commands/` (this repo) | ✅ Empty of bundled leftovers; git index untracked via `git rm --cached` per doctor's own guidance |
+| Dogfood `ai-specs/.ai-specs.lock` (this repo) | ✅ Verified live (`[meta]`-only, `cli_version = "0.16.0"` observed), then **reverted** — not part of this PR's shipped diff |
+| Dogfood `ai-specs/commands/` (this repo) | ✅ Verified the leftover-cleanup + tracked-leftover-WARN cycle live, then **reverted** — the two files remain committed as-is on `development` until a real post-release `ai-specs sync` migrates them |
 | README.md bundled-commands section | ✅ Checked, still accurate (describes this repo's own CLI source-tree, not the per-project materialization model) |
 
 ### Verdict
@@ -180,10 +180,13 @@ This is real proof the migration path works end-to-end, not just against
 30/30 implementation tasks done, 1044/1044 tests green (independently
 re-verified), all 9 spec scenarios COMPLIANT, and the migration was proven
 live against this repo's own real (not synthetic) legacy state end-to-end
-(sync → doctor WARN → git rm --cached → doctor clean). Two pre-existing,
-unrelated test fixes were necessary to make `./tests/validate.sh` pass at all
-and are called out explicitly, not hidden. No CRITICAL or blocking WARNING
-issues for judgment-day.
+(sync → doctor WARN → git rm --cached → doctor clean). That live-verification
+state change was reverted before shipping — see `dogfood-verification-isolation`
+skill (added in a follow-up PR): verification output is evidence, not a
+deliverable, and must not be committed as part of the feature branch. Two
+pre-existing, unrelated test fixes were necessary to make `./tests/validate.sh`
+pass at all and are called out explicitly, not hidden. No CRITICAL or blocking
+WARNING issues for judgment-day.
 
 **Next recommended**: judgment-day (parent launches, blind adversarial
 review).

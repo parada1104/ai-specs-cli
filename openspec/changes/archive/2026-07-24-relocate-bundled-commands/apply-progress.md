@@ -44,5 +44,11 @@ out of scope for this apply pass — see Deviations)
 
 - The pre-existing `SkillSyncScriptTests` fix (test-file-only, one-line constant change) is outside this change's stated scope (bundled commands) but was necessary to make `./tests/validate.sh` exit 0. A reviewer should confirm this is an acceptable inclusion rather than a separate follow-up PR.
 - `doctor.py`'s `_bundled_command_names()` fix (Phase 3) and the `_check_tracked_bundled_leftovers` duplicate-method removal (Phase 5) are both unplanned-but-necessary fixes discovered mid-implementation, not literally itemized in tasks.md. Both are covered by tests (the pre-existing `CacheAwareCommandsDoctorTests` suite for the former; the new `test_tracked_bundled_command_leftover_warns_without_git_rm` for the latter, which would have silently passed-but-done-nothing without the fix — worth a close look at that specific diff).
-- This repo's own dogfooded `ai-specs/.ai-specs.lock` was migrated during verify (commit `9a3f1ce`): trimmed to `[meta]`-only with `cli_version` 0.16.0 — the earlier "intentionally left untouched" note no longer applies.
+- This repo's own dogfooded `ai-specs/.ai-specs.lock` was verified live during
+  verify (commit `9a3f1ce`: trimmed to `[meta]`-only, `cli_version` 0.16.0)
+  and then **reverted** (`58d7762`) before shipping — that verification output
+  is evidence the migration works, not a deliverable of this PR. See the
+  `dogfood-verification-isolation` skill (added in a follow-up PR): this
+  repo's own dogfood migration happens later, as its own ordinary act, once
+  the feature is released and re-synced for real.
 - Diff size: 7 feature/test phases + 1 unrelated pre-existing-failure fix, ~14 files touched. Within a single PR per the change's stated delivery strategy (phase commits, no chaining).

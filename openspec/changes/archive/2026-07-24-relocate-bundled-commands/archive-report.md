@@ -34,14 +34,20 @@ CLI-bundled COMMANDS:
   `.new`-sidecar loop for commands — `refresh-bundled` is now flatten-only
   for both bundled asset kinds, with zero in-project writes and zero lock
   interaction.
-- This repo's own dogfooded `ai-specs/` project was live-migrated during
-  verify: real legacy state (`cli_version = "0.15.0"`, `[commands]` /
-  `[opted-out]` sections, two committed byte-identical bundled-command
-  copies) was run through `./bin/ai-specs sync .` and `./bin/ai-specs
-  doctor .` end-to-end — lock trimmed to `[meta]`-only, bundled-command
-  leftovers removed from disk, doctor's WARN + exact `git rm --cached`
-  guidance reproduced, guidance applied, doctor clean afterward. Not a
-  synthetic `tempfile.mkdtemp()` fixture.
+- This repo's own dogfooded `ai-specs/` project was used as a **live
+  verification smoke test** during verify: real legacy state
+  (`cli_version = "0.15.0"`, `[commands]` / `[opted-out]` sections, two
+  committed byte-identical bundled-command copies) was run through
+  `./bin/ai-specs sync .` and `./bin/ai-specs doctor .` end-to-end — lock
+  trimmed to `[meta]`-only, bundled-command leftovers removed from disk,
+  doctor's WARN + exact `git rm --cached` guidance reproduced, guidance
+  applied, doctor clean afterward. Not a synthetic `tempfile.mkdtemp()`
+  fixture. **That resulting state change was reverted before shipping**
+  (commit `58d7762`) — it is verification evidence, not a deliverable. This
+  repo's own dogfood migration happens later, as its own ordinary act, once
+  the feature is released and a real `ai-specs sync` is run against it. See
+  the `dogfood-verification-isolation` local skill (added in a follow-up
+  PR) for the standing rule this codifies.
 
 ## Specs synced
 
@@ -78,6 +84,14 @@ CLI-bundled COMMANDS:
    functional or spec impact — noted by judgment-day as an optional future
    rename (would need the one coupled test updated in the same commit for
    exact symmetry).
+2. This repo's own dogfooded `ai-specs/` project (root `ai-specs.toml`) still
+   has the pre-migration state: `.ai-specs.lock` `cli_version = "0.15.0"`
+   with `[commands]`/`[opted-out]`, and `ai-specs/commands/{rules-audit,
+   skills-as-rules}.md` present. This was deliberately left as-is — verified
+   live during this change (then reverted, see `dogfood-verification-isolation`
+   skill) but not migrated for real. Run `ai-specs sync .` from the repo root
+   once this change is on `development`/released to complete the actual
+   migration, as its own separate, ordinary commit.
 
 ## Archive move
 

@@ -42,8 +42,13 @@ exit 0) rather than trusting `verify-report.md`'s claim.
   `test_legacy_commands_opted_out_dropped_agents_preserved`.
 - **A-I1 / B-I1** (converging) — `apply-progress.md`'s risk bullet claiming
   the repo's own dogfood lock "was intentionally left untouched" was stale
-  (contradicted by the verify-phase self-migration, commit `9a3f1ce`).
-  Updated to record the completed migration.
+  (contradicted by the verify-phase self-migration commit `9a3f1ce` at the
+  time). Updated to record the completed migration — then, post-judgment-day,
+  that self-migration commit was itself reverted (`58d7762`): its output was
+  verification evidence, not shippable product state (see the
+  `dogfood-verification-isolation` skill added in a follow-up PR). The
+  `apply-progress.md` note now needs a second correction reflecting the
+  revert, tracked as part of this same closure rather than a new round.
 
 ## Notable independent verifications (not just trust)
 
