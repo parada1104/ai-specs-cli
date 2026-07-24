@@ -115,13 +115,14 @@
 
 ## Validation
 
-- [ ] `./tests/run.sh` green after every RED→GREEN pair (focused feedback
+- [x] `./tests/run.sh` green after every RED→GREEN pair (focused feedback
       during implementation, per config.yaml `apply` rules).
-- [ ] `./tests/validate.sh` exit 0 (py_compile, bash -n, full unittest suite).
-- [ ] README update if `ai-specs refresh-bundled`/`doctor` user-facing text
+- [x] `./tests/validate.sh` exit 0 (py_compile, bash -n, full unittest suite).
+- [x] README update if `ai-specs refresh-bundled`/`doctor` user-facing text
       changed (config.yaml `tasks` rule: update README when CLI/user-facing
-      behavior changes) — check `README.md` bundled-commands section (line
-      ~168) for accuracy.
+      behavior changes) — checked `README.md` bundled-commands section (line
+      ~168): describes this repo's own source-tree layout, still accurate,
+      no change needed.
 - [ ] `verify-report.md` written; compare against every spec scenario in
       `specs/{skill-source-precedence,sync-lock,project-doctor}/spec.md`.
 - [ ] Promote spec deltas into `openspec/specs/{skill-source-precedence,
