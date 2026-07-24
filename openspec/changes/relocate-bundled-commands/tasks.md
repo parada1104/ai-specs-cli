@@ -123,7 +123,7 @@
       behavior changes) — checked `README.md` bundled-commands section (line
       ~168): describes this repo's own source-tree layout, still accurate,
       no change needed.
-- [ ] `verify-report.md` written; compare against every spec scenario in
+- [x] `verify-report.md` written; compared against every spec scenario in
       `specs/{skill-source-precedence,sync-lock,project-doctor}/spec.md`.
 - [ ] Promote spec deltas into `openspec/specs/{skill-source-precedence,
       sync-lock,project-doctor}/spec.md` at archive.
