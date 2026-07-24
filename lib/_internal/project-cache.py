@@ -246,12 +246,12 @@ def remove_bundled_command_leftovers(
     """
     home = Path(cli_home) if cli_home is not None else _ai_specs_home()
     bundled_src = home / "bundled-commands"
-    commands_dir = ai_specs / "commands"
-    if not bundled_src.is_dir() or not commands_dir.is_dir():
+    local_commands_dir = ai_specs / "commands"
+    if not bundled_src.is_dir() or not local_commands_dir.is_dir():
         return
     if lock_commands is None:
         lock_commands = _legacy_lock_command_hashes(ai_specs)
-    for child in sorted(commands_dir.iterdir()):
+    for child in sorted(local_commands_dir.iterdir()):
         if not child.is_file() or child.suffix != ".md":
             continue
         src_cmd = bundled_src / child.name

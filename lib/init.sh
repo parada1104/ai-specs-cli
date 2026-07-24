@@ -18,7 +18,7 @@
 # Always (re)generated regardless of --force:
 #   <path>/ai-specs/.gitignore      (derived from [[deps]] in ai-specs.toml)
 #   <path>/AGENTS.md                (generated artifact)
-#   <path>/ai-specs/.ai-specs.lock  (bundled-file SHA baseline)
+#   <path>/ai-specs/.ai-specs.lock  ([meta]+[agents.*] provenance stamp)
 #
 # Layout produced:
 #   <path>/

@@ -97,9 +97,7 @@ def flatten_bundled_commands(cli_source: Path, project: Path, cli_home: Path) ->
     return count
 
 
-def refresh(
-    project: Path, cli_source: Path, init_mode: bool = False
-) -> int:
+def refresh(project: Path, cli_source: Path) -> int:
     # CLI-bundled skills and commands flatten into the cache — never into the
     # project surface.
     n_skills = flatten_bundled_skills(cli_source, project, cli_source)
@@ -134,10 +132,9 @@ def refresh(
 
 def main() -> int:
     args = list(sys.argv[1:])
-    init_mode = False
+    # Accepted and ignored for backward-compatible invocation (e.g. init.sh).
     if "--init" in args:
         args.remove("--init")
-        init_mode = True
     if len(args) != 2:
         print(
             "Usage: refresh-bundled.py <project_root> <ai_specs_home> [--init]",
@@ -155,7 +152,7 @@ def main() -> int:
         )
         return 1
 
-    return refresh(project, cli_source, init_mode=init_mode)
+    return refresh(project, cli_source)
 
 
 if __name__ == "__main__":
