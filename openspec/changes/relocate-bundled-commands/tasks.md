@@ -105,7 +105,7 @@
 
 ## Migration smoke test
 
-- [ ] 7.1 End-to-end: simulate a pre-upgrade project (committed bundled
+- [x] 7.1 End-to-end: simulate a pre-upgrade project (committed bundled
       commands, legacy lock with `[commands]`/`[opted-out]`, one customized
       bundled command, one genuine local command) → `sync` → clean migration:
       byte-identical bundled copies removed, customization preserved with

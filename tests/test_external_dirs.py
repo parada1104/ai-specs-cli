@@ -779,5 +779,108 @@ class ResyncIdempotencyTests(unittest.TestCase):
         return "\n".join(hashes)
 
 
+class CommandRelocationMigrationSmokeTest(unittest.TestCase):
+    """End-to-end: a pre-upgrade project (bundled commands committed under
+    ai-specs/commands/, legacy lock with [commands]/[opted-out]) cleanly
+    migrates on the next `sync` — byte-identical bundled copies removed,
+    customizations preserved with a warning, genuine local commands
+    untouched, lock trimmed to [meta] (+ [agents.*]), and the merged/fan-out
+    command set still includes the bundled command from the cache."""
+
+    def test_pre_upgrade_project_migrates_cleanly_on_sync(self):
+        import hashlib
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        target = Path(tmp.name) / "prj"
+        target.mkdir()
+        subprocess.run(["git", "init", "-q", str(target)], check=True)
+        subprocess.run(
+            ["git", "-C", str(target), "config", "user.email", "t@example.com"], check=True
+        )
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "t"], check=True)
+
+        # `ai-specs init` on a current CLI never materializes bundled commands;
+        # simulate the pre-upgrade (0.16.0-era) committed state by hand.
+        subprocess.run([str(CLI), "init", str(target)], check=True, capture_output=True, text=True)
+        commands_dir = target / "ai-specs" / "commands"
+        bundled_src = ROOT / "bundled-commands"
+
+        # 1. Byte-identical committed bundled copy → must be removed as a leftover.
+        rules_audit_content = (bundled_src / "rules-audit.md").read_text()
+        (commands_dir / "rules-audit.md").write_text(rules_audit_content)
+
+        # 2. Customized bundled copy (content differs) → must be preserved + warned.
+        (commands_dir / "skills-as-rules.md").write_text(
+            "# skills-as-rules (customized by this project)\n"
+        )
+
+        # 3. Genuine local command (no bundled counterpart) → must be untouched.
+        (commands_dir / "my-local-command.md").write_text("# my-local-command\n")
+
+        # 4. Legacy lock with [commands]/[opted-out] (0.16.0-era schema).
+        rules_audit_hash = hashlib.sha256(rules_audit_content.encode("utf-8")).hexdigest()
+        (target / "ai-specs" / ".ai-specs.lock").write_text(
+            '[meta]\ncli_version = "0.16.0"\nsynced_at = "2026-07-01T00:00:00Z"\n\n'
+            "[commands]\n"
+            f'"rules-audit.md" = "{rules_audit_hash}"\n'
+            '"skills-as-rules.md" = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"\n\n'
+            "[opted-out]\n"
+            'files = ["commands/some-other-file.md"]\n'
+        )
+
+        subprocess.run(
+            ["git", "-C", str(target), "add", "-A"], check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "-C", str(target), "commit", "-qm", "pre-upgrade snapshot"], check=True
+        )
+
+        (target / "ai-specs" / "ai-specs.toml").write_text(
+            "[project]\nname = 'migration-fixture'\n\n"
+            "[agents]\nenabled = ['cursor', 'opencode']\n"
+        )
+        result = subprocess.run(
+            [str(CLI), "sync", str(target)],
+            check=True, capture_output=True, text=True,
+        )
+        out = result.stdout + result.stderr
+
+        # Byte-identical bundled copy removed.
+        self.assertFalse((commands_dir / "rules-audit.md").exists())
+
+        # Customized copy preserved, with a warning printed.
+        self.assertTrue((commands_dir / "skills-as-rules.md").exists())
+        self.assertIn("customized", out)
+
+        # Genuine local command untouched.
+        self.assertEqual(
+            (commands_dir / "my-local-command.md").read_text(), "# my-local-command\n"
+        )
+
+        # Lock trimmed to [meta] (+ [agents.*]) — no [commands]/[opted-out].
+        lock_text = (target / "ai-specs" / ".ai-specs.lock").read_text()
+        self.assertIn("[meta]", lock_text)
+        self.assertNotIn("[commands]", lock_text)
+        self.assertNotIn("[opted-out]", lock_text)
+
+        # Merged/fan-out command set still includes the bundled command (from
+        # cache) alongside the customized and genuine local ones.
+        for rel in (
+            ".cursor/commands/rules-audit.md",
+            ".cursor/commands/skills-as-rules.md",
+            ".cursor/commands/my-local-command.md",
+            ".opencode/commands/rules-audit.md",
+            ".opencode/commands/skills-as-rules.md",
+            ".opencode/commands/my-local-command.md",
+        ):
+            self.assertTrue((target / rel).is_file(), rel)
+        self.assertEqual(
+            (target / ".cursor" / "commands" / "skills-as-rules.md").read_text(),
+            "# skills-as-rules (customized by this project)\n",
+            "the customized local copy must win over the bundled/cache tier in fan-out",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
