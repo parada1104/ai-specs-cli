@@ -6,9 +6,11 @@
 #
 # Flags:
 #   --name <name>   Project name baked into ai-specs.toml (default: basename of path)
-#   --force         Re-copy bundled skills & commands, regenerate AGENTS.md,
-#                   and refresh the agent-block in <path>/.gitignore. Default
-#                   behavior preserves user-edited files (idempotent).
+#   --force         Regenerate AGENTS.md and refresh the agent-block in
+#                   <path>/.gitignore. Default behavior preserves user-edited
+#                   files (idempotent). CLI-bundled skills/commands never copy
+#                   into the project either way — they resolve from the cache
+#                   via refresh-bundled.
 #
 # NEVER overwritten (user-owned, source of truth):
 #   <path>/ai-specs/ai-specs.toml   — mutated only by `add-dep` or by the user.
@@ -25,12 +27,11 @@
 #   └── ai-specs/
 #       ├── ai-specs.toml               (template if missing; source of truth only at root)
 #       ├── .gitignore                  (always rendered from ai-specs.toml)
-#       ├── skills/
-#       │   ├── skill-creator/          (bundled — committable)
-#       │   └── skill-sync/             (bundled — committable)
+#       ├── skills/                     (your LOCAL skills only)
+#       │   (CLI-bundled skills resolve from {cache}/.bundled/skills/ — never copied here)
 #       │   (optional: vendor policy skills from catalog/ — see ai-specs-cli catalog/README.md)
-#       └── commands/
-#           └── skills-as-rules.md      (bundled — committable, fan-out to agents)
+#       └── commands/                   (your LOCAL commands only)
+#           (CLI-bundled commands resolve from {cache}/.bundled/commands/ — never copied here)
 
 set -euo pipefail
 
@@ -48,7 +49,8 @@ Arguments:
 
 Flags:
   --name <name>     Project name in ai-specs.toml (default: basename of path)
-  --force           Re-render templates and re-copy bundled skills even if present
+  --force           Re-render templates even if present (CLI-bundled
+                    skills/commands never copy into the project either way)
   --tui             Force interactive onboarding (Rich prompts)
   --no-tui          Skip interactive onboarding (scriptable / CI)
   -h, --help        Show this help
@@ -122,7 +124,6 @@ ROOT_GITIGNORE="$TARGET_PATH/.gitignore"
 AI_GITIGNORE="$AI_SPECS_DIR/.gitignore"
 
 BUNDLED_SKILLS_DIR="$AI_SPECS_HOME/bundled-skills"
-BUNDLED_COMMANDS_DIR="$AI_SPECS_HOME/bundled-commands"
 TEMPLATES_DIR="$AI_SPECS_HOME/templates"
 GITIGNORE_RENDER="$AI_SPECS_HOME/lib/_internal/gitignore-render.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
@@ -207,20 +208,10 @@ echo "  ✓ ensure $AI_SPECS_DIR/commands/"
 #    only local project skills.
 #    Optional policy skills → [[deps]] from ai-specs-cli catalog/ (see catalog/README.md).
 
-# 2b. Copy bundled commands (same pattern as skills: idempotent, --force overwrites)
-if [[ -d "$BUNDLED_COMMANDS_DIR" ]]; then
-    for src in "$BUNDLED_COMMANDS_DIR"/*.md; do
-        [[ -f "$src" ]] || continue
-        base="$(basename "$src")"
-        dst="$COMMANDS_DIR/$base"
-        if [[ -f "$dst" && $FORCE -eq 0 ]]; then
-            echo "  ✓ keep   commands/$base (use --force to overwrite)"
-        else
-            cp "$src" "$dst"
-            echo "  ✓ copy   commands/$base"
-        fi
-    done
-fi
+# 2b. CLI-bundled commands (rules-audit, skills-as-rules) are likewise NOT
+#     copied into the project. They flatten into the CLI cache
+#     ({cache}/.bundled/commands/) via refresh-bundled below and resolve from
+#     there. ai-specs/commands/ holds only local, hand-authored commands.
 
 # 3. Render ai-specs.toml from template (ONLY if missing — never overwritten).
 #    The TOML is user-owned source of truth: [agents].enabled, [[deps]], [mcp.*]
@@ -300,9 +291,9 @@ fi
 # 6. Generate ai-specs/.gitignore (always, derived)
 python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$AI_GITIGNORE"
 
-# 7. Establish the bundled-file SHA baseline (ai-specs/.ai-specs.lock).
-#    --init mode: never writes .new sidecars; just records CLI shas so future
-#    `refresh-bundled` can diff against them.
+# 7. Flatten CLI-bundled skills/commands into the cache
+#    ({cache}/.bundled/{skills,commands}/) and stamp the lock's [meta]
+#    provenance. Zero in-project writes; no per-file diffing or .new sidecars.
 echo "▸ refresh-bundled --init"
 python3 "$AI_SPECS_HOME/lib/_internal/refresh-bundled.py" \
     "$TARGET_PATH" "$AI_SPECS_HOME" --init

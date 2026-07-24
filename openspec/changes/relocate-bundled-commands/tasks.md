@@ -90,12 +90,12 @@
 
 ### Phase 6 — `init.sh` + help text
 
-- [ ] 6.1 GREEN: remove init.sh step 2b (bundled-commands copy loop); add the
+- [x] 6.1 GREEN: remove init.sh step 2b (bundled-commands copy loop); add the
       explanatory comment (mirrors the skills-removal comment).
-- [ ] 6.2 GREEN: fix `refresh-bundled.sh` usage text and `bin/ai-specs` help
+- [x] 6.2 GREEN: fix `refresh-bundled.sh` usage text and `bin/ai-specs` help
       line — flatten-only, no `.new` sidecars, no in-project writes (mirrors
       current skills wording).
-- [ ] 6.3 RED→GREEN (`tests/test_rules_audit.py::test_bundled_commands_distribution_after_refresh`):
+- [x] 6.3 RED→GREEN (`tests/test_rules_audit.py::test_bundled_commands_distribution_after_refresh`):
       after `refresh-bundled --init`, assert commands land in
       `{cache}/.bundled/commands/`, NOT `ai-specs/commands/`; after
       `init`+`sync`, assert commands still land in each harness `commands_dir`
