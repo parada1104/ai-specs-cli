@@ -50,15 +50,15 @@
 
 ### Phase 3 — `refresh-bundled.py`: flatten-only for commands
 
-- [ ] 3.1 RED: `refresh-bundled --init` on a fresh project flattens bundled
+- [x] 3.1 RED: `refresh-bundled --init` on a fresh project flattens bundled
       commands into `{cache}/.bundled/commands/` and does NOT write
       `ai-specs/commands/*.md`.
-- [ ] 3.2 RED: a project with a pre-existing byte-identical bundled-command
+- [x] 3.2 RED: a project with a pre-existing byte-identical bundled-command
       copy in `ai-specs/commands/` has it removed on `refresh-bundled` (no
       `.new` sidecar ever written).
-- [ ] 3.3 RED: a project with a customized bundled-command copy (content
+- [x] 3.3 RED: a project with a customized bundled-command copy (content
       differs) keeps it and prints a "customized" notice; no `.new` sidecar.
-- [ ] 3.4 GREEN: add `flatten_bundled_commands`; call
+- [x] 3.4 GREEN: add `flatten_bundled_commands`; call
       `remove_bundled_command_leftovers` before `write_lock` (ordering mirrors
       the skill migration); remove `iter_bundled`, `project_path_for`,
       `display_name`, `lock_get`/`lock_set`/`lock_del`, `save_new_sidecar`,

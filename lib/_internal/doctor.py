@@ -300,6 +300,19 @@ class Doctor:
             pass
         return set()
 
+    def _bundled_command_names(self) -> set[str]:
+        """Return the set of .md filenames flattened into {cache}/.bundled/commands/."""
+        pc = self._load_project_cache()
+        if pc is None:
+            return set()
+        try:
+            bundled_cmds = pc.bundled_commands_root(self.root)
+            if bundled_cmds.is_dir():
+                return {p.name for p in bundled_cmds.glob("*.md")}
+        except Exception:
+            pass
+        return set()
+
     def _check_bundled_assets(self) -> None:
         commands_root = self.root / "ai-specs" / "commands"
         # CLI-bundled skills resolve from the cache ({cache}/.bundled/skills/),
@@ -670,6 +683,7 @@ class Doctor:
                         guidance="ai-specs sync"
                     ))
         # Commands: expected = hand-authored ai-specs/commands/ ∪ cache commands/
+        # ∪ CLI-bundled commands (all three are CLI-driven or merge inputs).
         commands = plat.get("commands_dir", "")
         if commands:
             commands_path = self.root / commands
@@ -678,7 +692,7 @@ class Doctor:
                 local_names: set[str] = set()
                 if ai_specs_commands.is_dir():
                     local_names = {p.name for p in ai_specs_commands.glob("*.md")}
-                expected = local_names | self._cache_command_names()
+                expected = local_names | self._cache_command_names() | self._bundled_command_names()
                 actual = {p.name for p in commands_path.glob("*.md")}
                 missing = expected - actual
                 extra = actual - expected
