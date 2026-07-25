@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **OpenCode runtime-hook matcher is case-insensitive**: generated
+  `tool.execute.before` plugins now use the same `"i"` RegExp flag as pi/omp,
+  so lowercase OpenCode tool ids match Claude-style recipe matchers.
+
+### Changed
+- **Honest runtime-hook coverage docs**: `docs/runtime-hooks.md` documents
+  `omp` as a first-class harness, clarifies that pi/omp `tool_call` is
+  per-process (not a cross-process subagent guarantee), and notes that
+  worktree/plan-build gates must not be the sole guard for delegated work.
+- **worktree-flow pre-delegation brief rule**: always-on workflow rule (plus
+  skill/README guidance) requires verifying worktree/branch before dispatching
+  write-capable subagents/tasks.
+
 ## [0.17.0] — 2026-07-24
 
 ### Fixed

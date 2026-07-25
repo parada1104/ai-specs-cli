@@ -2,7 +2,7 @@
 id = "worktree-flow"
 name = "Worktree Flow"
 description = "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work"
-version = "1.2.3"
+version = "1.2.4"
 author = "ai-specs"
 license = "MIT"
 tags = ["infra", "worktree"]
@@ -71,6 +71,7 @@ workflow_rules = [
     "Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.",
     "Do not merge or push to `{config.integration_branch}` without a PR and explicit human instruction.",
     "Preserve unrelated worktree changes; never revert changes you did not make.",
+    "Before dispatching a write-capable subagent or task, verify the current worktree and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.",
 ]
 
 [[provides.hooks]]

@@ -42,6 +42,11 @@ Then run `ai-specs sync`. The cleanup script materializes to
 
 Default: `always`.
 
+**Delegation caveat:** the gate is a `pre-tool-use` hook. On opencode/pi/omp it
+may not see tool calls made inside a delegated subagent/task (separate process
+or host gap — see `docs/runtime-hooks.md`). Before dispatching write-capable
+subagents, verify worktree and branch yourself; do not rely on the hook alone.
+
 ## Config
 
 | Key | Default | Meaning |

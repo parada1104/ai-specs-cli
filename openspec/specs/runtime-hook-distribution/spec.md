@@ -81,7 +81,7 @@ block), so sync SHALL wire the materialized script **directly** into
 - **WHEN** sync runs
 - **THEN** `.claude/settings.json` SHALL contain, inside the managed block, a `PreToolUse` entry whose matcher equals the hook matcher and whose command invokes the materialized script directly
 
-### Requirement: Adapter rendering for non-native harnesses (Cursor, OpenCode, Pi)
+### Requirement: Adapter rendering for non-native harnesses (Cursor, OpenCode, Pi, Omp)
 
 Harnesses that do not decide by exit code SHALL each get a **generated adapter**
 that runs the materialized script with the normalized event on stdin and
@@ -99,15 +99,40 @@ only generated artifact that differs per harness; the script stays single-source
 - **WHEN** sync runs
 - **THEN** sync SHALL generate `.opencode/plugin/<recipe>-<hook>.ts` that registers `tool.execute.before`, spawns the script, and `throw`s when the script exits `2`
 
+#### Scenario: OpenCode matcher is case-insensitive
+- **GIVEN** an enabled `opencode` agent and a `pre-tool-use` hook with a non-empty matcher
+- **WHEN** sync generates the OpenCode plugin
+- **THEN** the plugin SHALL construct the matcher as `new RegExp(\`^(?:${MATCHER})$\`, "i")`
+
 #### Scenario: Pi extension returns block
 - **GIVEN** an enabled `pi` agent and a `pre-tool-use` hook
 - **WHEN** sync runs
 - **THEN** sync SHALL generate `.pi/extensions/<recipe>-<hook>.ts` (importing `@earendil-works/pi-coding-agent`) that registers `pi.on("tool_call", …)`, spawns the script, and returns `{ block: true }` when the script exits `2`
 
+#### Scenario: Omp extension returns block
+- **GIVEN** an enabled `omp` agent and a `pre-tool-use` hook
+- **WHEN** sync runs
+- **THEN** sync SHALL generate `.omp/extensions/<recipe>-<hook>.ts` (importing `@oh-my-pi/pi-coding-agent`) that registers `pi.on("tool_call", …)`, spawns the script, and returns `{ block: true }` when the script exits `2`
+
 #### Scenario: No pre-file-write target on Cursor
 - **GIVEN** an enabled `cursor` agent and a `pre-tool-use` hook whose `matcher` targets file writes (e.g. `Edit|Write`)
 - **WHEN** sync runs
 - **THEN** sync SHALL warn that Cursor has no pre-file-write hook and SHALL skip the hook for Cursor, while still rendering it for harnesses that support file-write gating
+
+### Requirement: Documented pre-tool-use reach is honest about process boundaries
+
+Product documentation for runtime hooks SHALL state that pi and omp `tool_call`
+handlers apply to tool calls in **that agent process**, and SHALL NOT claim they
+cover subprocess/subagent-delegated tool calls unless that coverage is verified.
+OpenCode's primary-agent-only caveat (subagent/MCP) SHALL remain. Guidance SHALL
+state that worktree/plan-build gates must not be the sole guard for
+delegation-heavy workflows on opencode/pi/omp.
+
+#### Scenario: Status table distinguishes process vs cross-process coverage
+- **GIVEN** a reader of `docs/runtime-hooks.md`
+- **WHEN** they consult the pre-tool-use status table
+- **THEN** pi and omp SHALL be described as blocking in the current agent process
+- **AND** omp SHALL appear as its own row
 
 ### Requirement: Config values flow to hooks
 
