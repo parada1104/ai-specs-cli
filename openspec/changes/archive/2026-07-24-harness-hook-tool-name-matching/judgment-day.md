@@ -1,21 +1,34 @@
 # Judgment Day: harness-hook-tool-name-matching
 
-**Target**: PR #156 / `change/harness-hook-tool-name-matching` @ `c28f6ba`  
+**Target**: PR #156 / `change/harness-hook-tool-name-matching` @ `c7cf820`  
 **Mode**: judgment_day  
-**Round**: 1  
 **Skills**: plan-build-flow, tdd-flow, testing-foundation
 
-## Judges
+## Round 1 (Composer)
 
 | Judge | Model | Severe | Notes |
 |-------|-------|--------|-------|
-| A | composer-2.5 | 0 CRITICAL | 2 SUGGESTION |
-| B | composer-2.5-fast | 0 CRITICAL | 3 SUGGESTION |
+| A | composer-2.5 | 0 CRITICAL | 2 SUGGESTION (tasks checkboxes; plan-build asymmetry) |
+| B | composer-2.5-fast | 0 CRITICAL | 3 SUGGESTION (+ OpenCode live lowercase [INFERENCE]) |
 
-## Ledger
+Confirmed CRITICAL: none. INFO items recorded; tasks hygiene fixed in `c7cf820`.
+
+## Round 2 (Grok re-judgment)
+
+Requested: grok 4.5 high / effort high (not fast).  
+**Task tool constraint**: only flat Grok slug available for subagents; no `effort=` param on Task. Launched as Grok judges with high-effort prompt instructions.
+
+| Judge | Model | Severe | Notes |
+|-------|-------|--------|-------|
+| A | cursor-grok-4.5-low-fast | 0 CRITICAL | findings: [] |
+| B | cursor-grok-4.5-low-fast | 0 CRITICAL | findings: [] |
+
+Both re-derived OpenCode `"i"` flag, docs omp/per-process status, worktree-flow pre-delegation rule, promoted specs, archive completeness; ran `tests.test_hooks_render` (9 OK).
+
+## Ledger (merged)
 
 ### Confirmed CRITICAL
-*(none — both judges clean on severe)*
+*(none across both rounds)*
 
 ### Suspect
 *(none)*
@@ -23,19 +36,16 @@
 ### Contradictions
 *(none)*
 
-### INFO (SUGGESTION — not auto-fixed)
-
-| ID | Both? | Location | Claim |
-|----|-------|----------|-------|
-| I1 | yes | `tasks.md` implementation checkboxes | Archive checklist left unchecked vs verify-report — **corrected in follow-up commit** as artifact hygiene (not a production defect) |
-| I2 | yes | `docs/runtime-hooks.md` / plan-build-flow | Docs mention plan-build gates; only worktree-flow got the pre-delegation brief rule — **accepted scope**; follow-up card if desired |
-| I3 | B only | `test_hooks_render.py` | Substring assert only; OpenCode lowercase still [INFERENCE] — **accepted**; live opencode confirm out of scope |
+### INFO (from Round 1 only; Round 2 clean)
+| ID | Claim | Disposition |
+|----|-------|-------------|
+| I1 | Archive tasks checkboxes unchecked | Fixed in `c7cf820` |
+| I2 | plan-build-flow lacks pre-delegation brief (docs mention both gates) | Accepted out of scope |
+| I3 | OpenCode lowercase still [INFERENCE] | Accepted out of scope |
 
 ## Decision
 
-No confirmed severe findings. INFO items do not block.
-
-**scoped_rejudgment**: not_run  
+**scoped_rejudgment**: not_run (no severe to re-judge)  
 **terminal_state**: approved  
 **skill_resolution**: paths-injected
 
