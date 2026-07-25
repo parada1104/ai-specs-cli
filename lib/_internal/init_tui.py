@@ -329,7 +329,7 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         out_path.with_suffix(".json").write_text(json.dumps(meta) + "\n", encoding="utf-8")
         console.print(f"[green]✓[/green] staged manifest → {out_path}")
 
-        # Prompt for MCP env vars → ai-specs/.env + root .envrc + direnv allow.
+        # Prompt for MCP env vars → ai-specs.env + root .envrc + direnv allow.
         try:
             env = _load_sibling("env_scaffold")
             if env.collect_env_vars(target):

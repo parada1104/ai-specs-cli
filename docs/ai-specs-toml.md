@@ -382,9 +382,9 @@ Layout (app secrets stay separate from harness secrets):
 
 | Path | Role |
 |------|------|
-| `ai-specs/.env` | Harness MCP values (gitignored). Written by the wizard. |
-| `ai-specs/.env.example` | Committed template (safe to regenerate; backed up to `.env.example.bak`). |
-| Project-root `.envrc` | direnv entry with a merge-safe `# managed-by: ai-specs` block that runs `dotenv_if_exists .env` and `dotenv_if_exists ai-specs/.env`. Custom direnv lines outside the block are preserved. |
+| `ai-specs.env` | Harness MCP values at project root (gitignored). Written by the wizard. |
+| `ai-specs.env.example` | Committed template (safe to regenerate; backed up to `ai-specs.env.example.bak`). |
+| Project-root `.envrc` | direnv entry with a merge-safe `# managed-by: ai-specs` block that runs `dotenv_if_exists .env` and `dotenv_if_exists ai-specs.env`. Custom direnv lines outside the block are preserved. |
 | Project-root `.env` | Application-owned — **never** written by ai-specs. |
 
 After scaffold the CLI runs `direnv allow` on the project root when `direnv` is
@@ -392,7 +392,7 @@ available (TTY flows may offer opt-in install). Agents resolve MCP `$VAR` from
 the process environment — use a direnv-hooked shell, or set the same vars in the
 IDE environment. Secrets are never inlined into agent MCP JSON.
 
-Legacy `ai-specs/.envrc` (export lines) is migrated into `ai-specs/.env` on the
-next configure pass. `ai-specs/.envrc.example` is a deprecation stub pointing at
-`.env.example`.
+Legacy `ai-specs/.envrc` (export lines) and nested `ai-specs/.env` migrate into
+root `ai-specs.env` on the next configure pass. `ai-specs/.env.example` and
+`ai-specs/.envrc.example` are deprecation stubs pointing at `ai-specs.env.example`.
 

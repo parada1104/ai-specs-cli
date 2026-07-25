@@ -238,7 +238,7 @@ def _enabled_recipe_ids(project_root: Path) -> list[str]:
 
 
 def _offer_envrc(project_root: Path) -> None:
-    """Prompt for MCP env vars, write ai-specs/.env + root .envrc, direnv allow.
+    """Prompt for MCP env vars, write ai-specs.env + root .envrc, direnv allow.
 
     Soft-fails so configure-recipes is not aborted.
     """

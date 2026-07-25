@@ -611,13 +611,13 @@ class Doctor:
         if missing:
             self.checks.append(Check(
                 Severity.WARN, "harness-env",
-                f"missing/empty in ai-specs/.env: {', '.join(missing)}",
+                f"missing/empty in ai-specs.env: {', '.join(missing)}",
                 guidance="run ai-specs configure-recipes to set harness env values",
             ))
         else:
             self.checks.append(Check(
                 Severity.OK, "harness-env",
-                f"ai-specs/.env has {len(vars_map)} required MCP env key(s)",
+                f"ai-specs.env has {len(vars_map)} required MCP env key(s)",
             ))
 
     def _mcp_server_count(self, data: dict) -> int:

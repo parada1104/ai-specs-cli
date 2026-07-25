@@ -298,13 +298,13 @@ Doctor MUST remain read-only.
 ### Requirement: Harness env key diagnostics
 
 When enabled recipes declare MCP env variable references, doctor SHALL WARN for
-each required variable that is missing or empty in `ai-specs/.env`. Doctor MUST
-NOT print secret values.
+each required variable that is missing or empty in project-root `ai-specs.env`.
+Doctor MUST NOT print secret values.
 
 #### Scenario: Empty harness key
 
 - **GIVEN** enabled recipes require `TRELLO_TOKEN`
-- **AND** `ai-specs/.env` exists but `TRELLO_TOKEN` is missing or empty
+- **AND** `ai-specs.env` exists but `TRELLO_TOKEN` is missing or empty
 - **WHEN** `ai-specs doctor` runs
 - **THEN** the report MUST include a WARN naming `TRELLO_TOKEN`
 - **AND** the message MUST NOT include any secret value
@@ -312,7 +312,7 @@ NOT print secret values.
 #### Scenario: Present harness key is OK
 
 - **GIVEN** enabled recipes require `TRELLO_TOKEN`
-- **AND** `ai-specs/.env` contains a non-empty `TRELLO_TOKEN`
+- **AND** `ai-specs.env` contains a non-empty `TRELLO_TOKEN`
 - **WHEN** `ai-specs doctor` runs
 - **THEN** the report MUST NOT WARN for that key as missing
 

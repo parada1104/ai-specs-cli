@@ -84,8 +84,8 @@ class EnvScaffoldTests(unittest.TestCase):
     def test_write_env_merges_preserves_extras(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"
-            (project / "ai-specs").mkdir(parents=True)
-            env = project / "ai-specs" / ".env"
+            project.mkdir()
+            env = project / "ai-specs.env"
             env.write_text("CUSTOM=1\nTRELLO_API_KEY=old\n", encoding="utf-8")
             self.mod.write_env(project, {"TRELLO_API_KEY": "new"})
             text = env.read_text(encoding="utf-8")
@@ -95,9 +95,9 @@ class EnvScaffoldTests(unittest.TestCase):
     def test_write_env_quotes_spaces(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"
-            (project / "ai-specs").mkdir(parents=True)
+            project.mkdir()
             self.mod.write_env(project, {"CANONICAL_VAULT_PATH": "/path with spaces/x"})
-            text = (project / "ai-specs" / ".env").read_text(encoding="utf-8")
+            text = (project / "ai-specs.env").read_text(encoding="utf-8")
             self.assertIn('CANONICAL_VAULT_PATH="/path with spaces/x"', text)
 
     def test_generate_env_example(self):
@@ -109,12 +109,14 @@ class EnvScaffoldTests(unittest.TestCase):
             with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
                 path = self.mod.generate_env_example(project)
             text = path.read_text(encoding="utf-8")
-            self.assertTrue(str(path).endswith(".env.example"))
+            self.assertTrue(str(path).endswith("ai-specs.env.example"))
             self.assertIn("TRELLO_API_KEY=", text)
             self.assertIn("trello.com/power-ups/admin", text)
             self.assertNotIn("export ", text)
             stub = (project / "ai-specs" / ".envrc.example").read_text(encoding="utf-8")
             self.assertIn("DEPRECATED", stub)
+            nested_stub = (project / "ai-specs" / ".env.example").read_text(encoding="utf-8")
+            self.assertIn("DEPRECATED", nested_stub)
 
     def test_generate_env_example_backup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,12 +124,12 @@ class EnvScaffoldTests(unittest.TestCase):
             project = self._project_with_recipe(
                 root, recipe_id="trello-mcp-workflow", recipe_toml=self._trello_toml()
             )
-            example = project / "ai-specs" / ".env.example"
+            example = project / "ai-specs.env.example"
             example.write_text("OLD\n", encoding="utf-8")
             with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
                 self.mod.generate_env_example(project)
             self.assertEqual(
-                (project / "ai-specs" / ".env.example.bak").read_text(encoding="utf-8"),
+                (project / "ai-specs.env.example.bak").read_text(encoding="utf-8"),
                 "OLD\n",
             )
 
@@ -139,7 +141,7 @@ class EnvScaffoldTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             self.assertIn(self.mod.MANAGED_START, text)
             self.assertIn("dotenv_if_exists .env", text)
-            self.assertIn("dotenv_if_exists ai-specs/.env", text)
+            self.assertIn("dotenv_if_exists ai-specs.env", text)
 
     def test_ensure_root_envrc_appends_preserving_custom(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,12 +172,12 @@ class EnvScaffoldTests(unittest.TestCase):
                 'export TRELLO_TOKEN="abc"\nexport EMPTY=""\n',
                 encoding="utf-8",
             )
-            (project / "ai-specs" / ".env").write_text(
+            (project / "ai-specs.env").write_text(
                 "TRELLO_API_KEY=keep\nTRELLO_TOKEN=existing\n",
                 encoding="utf-8",
             )
             self.assertTrue(self.mod.migrate_legacy_envrc(project))
-            env_text = (project / "ai-specs" / ".env").read_text(encoding="utf-8")
+            env_text = (project / "ai-specs.env").read_text(encoding="utf-8")
             self.assertIn("TRELLO_API_KEY=keep", env_text)
             self.assertIn("TRELLO_TOKEN=existing", env_text)
             self.assertFalse(legacy.exists())
@@ -183,7 +185,7 @@ class EnvScaffoldTests(unittest.TestCase):
             self.assertTrue((project / ".envrc").is_file())
 
     def test_migrate_legacy_envrc_fills_absent_key(self):
-        """Absent .env key receives migrated export value from legacy .envrc."""
+        """Absent harness key receives migrated export value from legacy .envrc."""
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"
             (project / "ai-specs").mkdir(parents=True)
@@ -192,22 +194,35 @@ class EnvScaffoldTests(unittest.TestCase):
                 'export TRELLO_TOKEN="abc"\n',
                 encoding="utf-8",
             )
-            (project / "ai-specs" / ".env").write_text(
+            (project / "ai-specs.env").write_text(
                 "TRELLO_API_KEY=keep\n",
                 encoding="utf-8",
             )
             self.assertTrue(self.mod.migrate_legacy_envrc(project))
-            env_text = (project / "ai-specs" / ".env").read_text(encoding="utf-8")
+            env_text = (project / "ai-specs.env").read_text(encoding="utf-8")
             self.assertIn("TRELLO_API_KEY=keep", env_text)
             self.assertIn("TRELLO_TOKEN=abc", env_text)
             self.assertFalse(legacy.exists())
             self.assertTrue((project / "ai-specs" / ".envrc.bak").is_file())
 
+    def test_migrate_nested_harness_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            (project / "ai-specs").mkdir(parents=True)
+            nested = project / "ai-specs" / ".env"
+            nested.write_text("TRELLO_API_KEY=legacy\n", encoding="utf-8")
+            self.assertTrue(self.mod.migrate_nested_harness_env(project))
+            env_text = (project / "ai-specs.env").read_text(encoding="utf-8")
+            self.assertIn("TRELLO_API_KEY=legacy", env_text)
+            self.assertFalse(nested.exists())
+            self.assertTrue((project / "ai-specs" / ".env.bak").is_file())
+            self.assertIn("dotenv_if_exists ai-specs.env", (project / ".envrc").read_text())
+
     def test_migrate_noop_when_absent(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"
             (project / "ai-specs").mkdir(parents=True)
-            self.assertFalse(self.mod.migrate_legacy_envrc(project))
+            self.assertFalse(self.mod.migrate_legacy_harness_env(project))
 
     def test_offer_harness_env_soft_fails_on_prompt_error(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -221,7 +236,7 @@ class EnvScaffoldTests(unittest.TestCase):
                 side_effect=TypeError("password="),
             ):
                 self.mod.offer_harness_env(project, offer_direnv_install=False)
-            self.assertFalse((project / "ai-specs" / ".env").exists())
+            self.assertFalse((project / "ai-specs.env").exists())
 
     def test_offer_harness_env_invokes_direnv_allow(self):
         """When direnv is present, offer path runs `direnv allow <project_root>`."""
@@ -245,7 +260,7 @@ class EnvScaffoldTests(unittest.TestCase):
             ]
             self.assertEqual(len(allow_calls), 1)
             self.assertEqual(allow_calls[0].args[0], ["direnv", "allow", str(project)])
-            self.assertTrue((project / "ai-specs" / ".env").is_file())
+            self.assertTrue((project / "ai-specs.env").is_file())
 
     def test_offer_harness_env_soft_fails_without_direnv(self):
         """Missing direnv does not abort; non-fatal install guidance is printed."""
@@ -262,7 +277,7 @@ class EnvScaffoldTests(unittest.TestCase):
             ), patch("builtins.print") as mock_print:
                 # Soft-fail path only — isolate from direnv install offer.
                 self.mod.offer_harness_env(project, offer_direnv_install=False)
-            self.assertTrue((project / "ai-specs" / ".env").is_file())
+            self.assertTrue((project / "ai-specs.env").is_file())
             self.assertTrue((project / ".envrc").is_file())
             guidance = " ".join(
                 str(c.args[0]) for c in mock_print.call_args_list if c.args

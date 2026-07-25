@@ -44,13 +44,14 @@ sessions_folder = "sessions"
 vault_scope = "nnodes/proyectos/my-project"
 ```
 
-Prefer **direnv** with harness values in `ai-specs/.env` (and optional app `.env`
-at the repo root). `ai-specs configure-recipes` writes a managed block in
-project-root `.envrc` that loads both via `dotenv_if_exists`. Quote values that
-contain spaces (Obsidian iCloud paths under `Mobile Documents/`):
+Prefer **direnv** with harness values in project-root `ai-specs.env` (and
+optional app `.env` at the repo root). `ai-specs configure-recipes` writes a
+managed block in project-root `.envrc` that loads both via `dotenv_if_exists`.
+Quote values that contain spaces (Obsidian iCloud paths under
+`Mobile Documents/`):
 
 ```bash
-# ai-specs/.env — good (fully resolved absolute path)
+# ai-specs.env — good (fully resolved absolute path)
 CANONICAL_VAULT_PATH="/Users/you/Library/Mobile Documents/iCloud~md~obsidian/Documents/my-vault/nnodes/proyectos/my-project"
 ```
 

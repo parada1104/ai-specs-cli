@@ -1227,7 +1227,7 @@ class HarnessEnvDoctorTests(unittest.TestCase):
             root = Path(tmp)
             project = self._write_mcp_project(root)
             (project / ".envrc").write_text("use nix\n", encoding="utf-8")
-            (project / "ai-specs" / ".env").write_text("TRELLO_TOKEN=\n", encoding="utf-8")
+            (project / "ai-specs.env").write_text("TRELLO_TOKEN=\n", encoding="utf-8")
             with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
                 "shutil.which", return_value="/usr/bin/direnv"
             ):
@@ -1248,18 +1248,18 @@ class HarnessEnvDoctorTests(unittest.TestCase):
             self.assertNotIn("secret", harness[0].message.lower())
 
     def test_present_harness_key_ok(self):
-        """Non-empty required key in ai-specs/.env yields harness-env OK (not WARN)."""
+        """Non-empty required key in ai-specs.env yields harness-env OK (not WARN)."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = self._write_mcp_project(root)
             (project / ".envrc").write_text(
                 "# managed-by: ai-specs (do not remove block)\n"
                 "dotenv_if_exists .env\n"
-                "dotenv_if_exists ai-specs/.env\n"
+                "dotenv_if_exists ai-specs.env\n"
                 "# end managed-by: ai-specs\n",
                 encoding="utf-8",
             )
-            (project / "ai-specs" / ".env").write_text(
+            (project / "ai-specs.env").write_text(
                 "TRELLO_TOKEN=filled-value\n",
                 encoding="utf-8",
             )

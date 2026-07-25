@@ -131,7 +131,7 @@ class EnvrcScaffoldTests(unittest.TestCase):
             with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
                 path = self.mod.generate_envrc_example(project)
             text = path.read_text(encoding="utf-8")
-            self.assertTrue(str(path).endswith(".env.example"))
+            self.assertTrue(str(path).endswith("ai-specs.env.example"))
             self.assertIn("TRELLO_API_KEY=", text)
             self.assertIn("TRELLO_TOKEN=", text)
             self.assertTrue(text.index("TRELLO_API_KEY") < text.index("TRELLO_TOKEN"))
@@ -162,7 +162,7 @@ class EnvrcScaffoldTests(unittest.TestCase):
             with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
                 self.mod.generate_envrc_example(project)
             self.assertFalse((project / "ai-specs" / ".envrc").exists())
-            self.assertTrue((project / "ai-specs" / ".env.example").is_file())
+            self.assertTrue((project / "ai-specs.env.example").is_file())
             stub = (project / "ai-specs" / ".envrc.example").read_text(encoding="utf-8")
             self.assertIn("DEPRECATED", stub)
 
@@ -184,14 +184,14 @@ class EnvrcScaffoldTests(unittest.TestCase):
                     "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\" }\n"
                 ),
             )
-            example = project / "ai-specs" / ".env.example"
+            example = project / "ai-specs.env.example"
             example.write_text("OLD CONTENT\n", encoding="utf-8")
             import os
             from unittest.mock import patch
 
             with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
                 self.mod.generate_envrc_example(project)
-            bak = project / "ai-specs" / ".env.example.bak"
+            bak = project / "ai-specs.env.example.bak"
             self.assertTrue(bak.is_file())
             self.assertEqual(bak.read_text(encoding="utf-8"), "OLD CONTENT\n")
             self.assertIn("TRELLO_API_KEY", example.read_text(encoding="utf-8"))
@@ -218,7 +218,7 @@ class EnvrcScaffoldTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             self.assertIn("no env vars required", text)
             self.assertFalse((project / "ai-specs" / ".envrc").exists())
-            self.assertTrue(str(path).endswith(".env.example"))
+            self.assertTrue(str(path).endswith("ai-specs.env.example"))
 
     def test_disabled_recipe_excluded(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -312,7 +312,7 @@ class EnvrcScaffoldTests(unittest.TestCase):
             with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
                 path = self.mod.generate_envrc_example(project)
             text = path.read_text(encoding="utf-8")
-            self.assertTrue(str(path).endswith(".env.example"))
+            self.assertTrue(str(path).endswith("ai-specs.env.example"))
             self.assertIn("trello.com/power-ups/admin", text)
             self.assertIn("TRELLO_API_KEY", text)
             self.assertIn("TRELLO_TOKEN", text)
