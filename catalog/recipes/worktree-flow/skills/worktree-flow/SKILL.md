@@ -39,6 +39,11 @@ writes nothing does not need a worktree.
 - Branch name and directory slug match so cleanup can map them 1:1.
 - Add `<worktrees_dir>/` to `.gitignore` so worktree checkouts are never
   committed into the parent tree.
+- Before dispatching a write-capable subagent or task, verify the current
+  worktree and branch yourself (`git rev-parse --show-toplevel`,
+  `git branch --show-current`, `git worktree list`). Runtime pre-tool-use hooks
+  may not fire for delegated/subprocess tool calls on opencode/pi/omp — do not
+  treat the gate as the sole guard for delegated writes.
 
 ## Creating a worktree
 

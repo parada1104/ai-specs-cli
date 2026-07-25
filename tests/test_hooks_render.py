@@ -96,6 +96,9 @@ class HooksRenderTests(unittest.TestCase):
         self.assertIn("tool.execute.before", text)
         self.assertIn("throw", text)
         self.assertIn("ai-specs/recipes/demo/hooks/gate.sh", text)
+        # OpenCode tool ids may be lowercase while recipe matchers use
+        # Claude-style names — same case-insensitive contract as pi/omp.
+        self.assertIn('new RegExp(`^(?:${MATCHER})$`, "i")', text)
 
     def test_pi_extension_shim(self):
         project = self._project()
