@@ -367,19 +367,32 @@ Out of scope for this V1 contract (explicitly deferred to future changes):
 - [`templates/ai-specs.toml.tmpl`](../templates/ai-specs.toml.tmpl)
 - [`docs/recipe-schema.md`](recipe-schema.md)
 
-## Environment variables (`.envrc.example`)
+## Environment variables (harness env + direnv)
 
 Enabled recipes may declare MCP env references under `[[provides.mcp]]`
-(e.g. `TRELLO_API_KEY = "$TRELLO_API_KEY"`). The config wizard and init flow can
-generate `ai-specs/.envrc.example` from those references:
+(e.g. `TRELLO_API_KEY = "$TRELLO_API_KEY"`). Interactive configure / init /
+`recipe add` collect values and scaffold:
 
 ```bash
 ai-specs configure-recipes
 # or accept the offer after `ai-specs init` / hub "Configure recipes"
 ```
 
-- `.envrc.example` is a committed template (safe to regenerate; existing files are
-  backed up to `.envrc.example.bak`).
-- `.envrc` is user-owned and gitignored — the tool never writes it. Copy the
-  example and fill in real values locally (direnv, etc.).
+Layout (app secrets stay separate from harness secrets):
+
+| Path | Role |
+|------|------|
+| `ai-specs/.env` | Harness MCP values (gitignored). Written by the wizard. |
+| `ai-specs/.env.example` | Committed template (safe to regenerate; backed up to `.env.example.bak`). |
+| Project-root `.envrc` | direnv entry with a merge-safe `# managed-by: ai-specs` block that runs `dotenv_if_exists .env` and `dotenv_if_exists ai-specs/.env`. Custom direnv lines outside the block are preserved. |
+| Project-root `.env` | Application-owned — **never** written by ai-specs. |
+
+After scaffold the CLI runs `direnv allow` on the project root when `direnv` is
+available (TTY flows may offer opt-in install). Agents resolve MCP `$VAR` from
+the process environment — use a direnv-hooked shell, or set the same vars in the
+IDE environment. Secrets are never inlined into agent MCP JSON.
+
+Legacy `ai-specs/.envrc` (export lines) is migrated into `ai-specs/.env` on the
+next configure pass. `ai-specs/.envrc.example` is a deprecation stub pointing at
+`.env.example`.
 

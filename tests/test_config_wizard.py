@@ -225,6 +225,57 @@ class ConfigWizardTests(unittest.TestCase):
         ):
             self.assertTrue(self.mod._dep_gate(recipe, console))
 
+    def test_dep_gate_offers_install_on_tty(self):
+        """On TTY with missing required dep, _dep_gate calls offer_and_install."""
+        recipe = self._recipe(
+            fields={
+                "base_branch": self.schema.ConfigField(
+                    required=False, type="string", default="main"
+                )
+            },
+            cli_deps=[self.schema.CliDep(binary="jq", purpose="JSON")],
+        )
+        missing = [
+            self.mod._dep_check.DepResult(
+                binary="jq",
+                found=False,
+                version="",
+                ok=False,
+                install_url="https://example.com/jq",
+                purpose="JSON",
+                required=True,
+            )
+        ]
+        plan = MagicMock(
+            binary="jq",
+            command=["brew", "install", "jq"],
+            kind="brew",
+            display="brew install jq",
+            guidance_url="",
+        )
+        dep_install = MagicMock()
+        dep_install.resolve_install_plan.return_value = plan
+        dep_install.offer_and_install.return_value = []
+        confirm = MagicMock()
+        confirm.return_value.ask.return_value = True
+        console = MagicMock()
+        import questionary as q
+
+        with patch.object(
+            self.mod._dep_check, "check_cli_deps", return_value=missing
+        ), patch.object(self.mod, "_load_sibling", return_value=dep_install), patch.object(
+            sys.stdin, "isatty", return_value=True
+        ), patch.object(sys.stdout, "isatty", return_value=True), patch.object(
+            q, "confirm", confirm
+        ):
+            self.assertTrue(self.mod._dep_gate(recipe, console))
+        dep_install.offer_and_install.assert_called_once()
+        call_args, call_kwargs = dep_install.offer_and_install.call_args
+        self.assertEqual(call_args[0], [plan])
+        self.assertTrue(call_kwargs.get("tty"))
+        dep_install.resolve_install_plan.assert_called()
+        self.assertEqual(dep_install.resolve_install_plan.call_args.args[0], "jq")
+
     def test_configure_selected_writes_each(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -263,29 +314,20 @@ class ConfigWizardTests(unittest.TestCase):
             (project / "ai-specs" / "ai-specs.toml").write_text(
                 '[project]\nname = "p"\n\n[recipes.demo]\nenabled = true\nversion = "1"\n'
             )
-            confirm = MagicMock()
-            confirm.return_value.ask.return_value = True
-            envrc = MagicMock()
-            envrc.collect_env_vars.return_value = {"TRELLO_API_KEY": "required by trello"}
-            envrc.prompt_env_vars.return_value = {"TRELLO_API_KEY": "test-key"}
-            envrc.write_envrc.return_value = project / "ai-specs" / ".envrc"
-            envrc.direnv_allow.return_value = False
-            import questionary as q
-
+            env = MagicMock()
             with patch.object(self.mod, "_enabled_recipe_ids", return_value=["demo"]), patch.object(
                 self.mod, "configure_selected_recipes", return_value={}
             ), patch.object(
-                self.mod, "_load_sibling", return_value=envrc
-            ), patch.object(q, "confirm", confirm), patch.object(
+                self.mod, "_load_sibling", return_value=env
+            ), patch.object(
                 self.mod._util, "ensure_deps", return_value=None
             ), patch("sys.stdin.isatty", return_value=True), patch(
                 "sys.stdout.isatty", return_value=True
             ):
                 rc = self.mod.main([str(project)])
             self.assertEqual(rc, 0)
-            envrc.write_envrc.assert_called()
-            # write_envrc(project_root, values) — first arg is project root
-            self.assertEqual(envrc.write_envrc.call_args.args[0], project.resolve())
+            env.offer_harness_env.assert_called()
+            self.assertEqual(env.offer_harness_env.call_args.args[0], project.resolve())
 
     def test_main_skips_envrc_when_no_mcp_recipes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -295,38 +337,33 @@ class ConfigWizardTests(unittest.TestCase):
             (project / "ai-specs" / "ai-specs.toml").write_text(
                 '[project]\nname = "p"\n\n[recipes.demo]\nenabled = true\nversion = "1"\n'
             )
-            confirm = MagicMock()
-            envrc = MagicMock()
-            envrc.collect_env_vars.return_value = {}
-            import questionary as q
-
+            env = MagicMock()
+            # offer_harness_env itself no-ops when collect is empty; still invoked.
             with patch.object(self.mod, "_enabled_recipe_ids", return_value=["demo"]), patch.object(
                 self.mod, "configure_selected_recipes", return_value={}
             ), patch.object(
-                self.mod, "_load_sibling", return_value=envrc
-            ), patch.object(q, "confirm", confirm), patch.object(
+                self.mod, "_load_sibling", return_value=env
+            ), patch.object(
                 self.mod._util, "ensure_deps", return_value=None
             ), patch("sys.stdin.isatty", return_value=True), patch(
                 "sys.stdout.isatty", return_value=True
             ):
                 rc = self.mod.main([str(project)])
             self.assertEqual(rc, 0)
-            confirm.assert_not_called()
-            envrc.generate_envrc_example.assert_not_called()
+            env.offer_harness_env.assert_called()
 
     def test_offer_envrc_soft_fails_on_prompt_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"
             (project / "ai-specs").mkdir(parents=True)
-            envrc = MagicMock()
-            envrc.collect_env_vars.return_value = {"TRELLO_API_KEY": "required by trello"}
-            envrc.prompt_env_vars.side_effect = TypeError(
+            env = MagicMock()
+            env.offer_harness_env.side_effect = TypeError(
                 "PromptSession.__init__() got an unexpected keyword argument 'password'"
             )
-            with patch.object(self.mod, "_load_sibling", return_value=envrc):
+            with patch.object(self.mod, "_load_sibling", return_value=env):
                 # Must not raise — soft-fail path.
                 self.mod._offer_envrc(project)
-            envrc.write_envrc.assert_not_called()
+            env.offer_harness_env.assert_called()
 
     def test_boolean_type_alias_uses_confirm(self):
         recipe = self._recipe(

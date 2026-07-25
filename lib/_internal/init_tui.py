@@ -179,7 +179,6 @@ def _configure_recipes(recipes: list[dict[str, str]], console, catalog_dir: Path
     import questionary
 
     wizard = _load_sibling("config_wizard")
-    dep_check = _load_sibling("dep_check")
     recipe_read = _load_sibling("recipe-read")
     configured: dict = {}
     for meta in recipes:
@@ -189,9 +188,9 @@ def _configure_recipes(recipes: list[dict[str, str]], console, catalog_dir: Path
         except Exception as exc:  # noqa: BLE001
             console.print(f"[yellow]skip config for {rid}: {exc}[/yellow]")
             continue
-        if recipe.cli_deps:
-            results = dep_check.check_cli_deps(recipe)
-            wizard._render_dep_panel(results, console)
+        if recipe.cli_deps and not wizard._dep_gate(recipe, console):
+            console.print(f"[yellow]Skipped {rid} (missing CLI deps)[/yellow]")
+            continue
         if not recipe.config_schema.fields:
             continue
         do_now = questionary.confirm(f"Configure {rid} now?", default=True).ask()
@@ -313,6 +312,14 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(toml_text, encoding="utf-8")
 
+        # Fresh init stages --out; init.sh copies after TUI exits. Place the
+        # confirmed manifest at the real path now so harness-env collection can
+        # see enabled recipes (never overwrite an existing project toml).
+        real_toml = target / "ai-specs" / "ai-specs.toml"
+        if not real_toml.is_file():
+            real_toml.parent.mkdir(parents=True, exist_ok=True)
+            real_toml.write_text(toml_text, encoding="utf-8")
+
         meta = {
             "name": project_name,
             "agents": agents,
@@ -322,23 +329,11 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         out_path.with_suffix(".json").write_text(json.dumps(meta) + "\n", encoding="utf-8")
         console.print(f"[green]✓[/green] staged manifest → {out_path}")
 
-        # Prompt for MCP env vars, write .envrc, run direnv allow.
+        # Prompt for MCP env vars → ai-specs/.env + root .envrc + direnv allow.
         try:
-            envrc = _load_sibling("envrc-scaffold")
-            if envrc.collect_env_vars(target):
-                # Manifest is staged at out_path; generation expects project layout.
-                if (target / "ai-specs" / "ai-specs.toml").is_file():
-                    values = envrc.prompt_env_vars(target)
-                    if values:
-                        written = envrc.write_envrc(target, values)
-                        console.print(f"[green]✓[/green] escrito {written}")
-                        if not envrc.direnv_allow(target):
-                            console.print(
-                                "[yellow]![/yellow] direnv no instalado. "
-                                "Corre 'brew install direnv && direnv allow' después."
-                            )
-                        else:
-                            console.print("[green]✓[/green] direnv allow")
+            env = _load_sibling("env_scaffold")
+            if env.collect_env_vars(target):
+                env.offer_harness_env(target)
         except Exception:
             pass
         return 0

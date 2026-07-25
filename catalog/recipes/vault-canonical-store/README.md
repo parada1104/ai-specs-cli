@@ -44,19 +44,19 @@ sessions_folder = "sessions"
 vault_scope = "nnodes/proyectos/my-project"
 ```
 
-Prefer **`.envrc`** (shell expansion) so nested vars resolve before the agent
-starts. Quote values that contain spaces (Obsidian iCloud paths under
-`Mobile Documents/`):
+Prefer **direnv** with harness values in `ai-specs/.env` (and optional app `.env`
+at the repo root). `ai-specs configure-recipes` writes a managed block in
+project-root `.envrc` that loads both via `dotenv_if_exists`. Quote values that
+contain spaces (Obsidian iCloud paths under `Mobile Documents/`):
 
 ```bash
-# .envrc — good (shell expands OBSIDIAN_VAULT_PATH)
-export OBSIDIAN_VAULT_PATH="${OBSIDIAN_VAULT_PATH:-$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/my-vault}"
-export CANONICAL_VAULT_PATH="$OBSIDIAN_VAULT_PATH/nnodes/proyectos/my-project"
+# ai-specs/.env — good (fully resolved absolute path)
+CANONICAL_VAULT_PATH="/Users/you/Library/Mobile Documents/iCloud~md~obsidian/Documents/my-vault/nnodes/proyectos/my-project"
 ```
 
-Avoid leaving nested `$OBSIDIAN_VAULT_PATH/...` **unexpanded** in a plain `.env`
-if the agent is launched without direnv (IDE / Dock) — the wrapper rejects
-paths that still contain `$`.
+Avoid leaving nested `$OBSIDIAN_VAULT_PATH/...` **unexpanded** if the agent is
+launched without direnv (IDE / Dock) — the wrapper rejects paths that still
+contain `$`.
 
 Then run `ai-specs sync` and **restart the agent** so it picks up env + MCP.
 Sync materializes `ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh`

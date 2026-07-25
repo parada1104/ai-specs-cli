@@ -1,7 +1,3 @@
-# ai-specs/.envrc.example — committed template (safe to regenerate).
-# Copy to a project .envrc (gitignored) and fill in real values.
-# Generated from enabled recipes' [[provides.mcp]] env references.
-
-export CANONICAL_VAULT_PATH=""  # required by vault-canonical (vault-canonical-store)
-export TRELLO_API_KEY=""  # required by trello (trello-mcp-workflow)
-export TRELLO_TOKEN=""  # required by trello (trello-mcp-workflow)
+# DEPRECATED: use ai-specs/.env.example instead.
+# Root .envrc is managed by ai-specs (dotenv_if_exists ai-specs/.env).
+# Regenerate with: ai-specs configure-recipes
