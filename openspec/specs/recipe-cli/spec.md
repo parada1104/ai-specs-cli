@@ -10,10 +10,11 @@ Definir los comandos CLI `ai-specs recipe list` y `ai-specs recipe add <id>` par
 El sistema SHALL proveer `ai-specs recipe list [path]` que escanee el catálogo de recipes del CLI, lea cada `recipe.toml`, determine el estado de instalación desde el manifest local, y muestre una tabla legible.
 
 #### Scenario: Lista con recipes disponibles e instaladas
-- **WHEN** el catálogo contiene recipes y el manifest declara `[recipes.test-fixture]` con `enabled = true`
+- **WHEN** el catálogo contiene recipes públicas y el manifest declara una de ellas con `enabled = true`
 - **THEN** `recipe list` SHALL mostrar: ID, nombre, versión de catálogo (informativa), y estado (`installed` / `available` / `disabled`)
 - **AND** el estado MUST NOT ser `outdated`
-- **AND** cada recipe del catálogo SHALL aparecer exactamente una vez
+- **AND** cada recipe del catálogo público SHALL aparecer exactamente una vez
+- **AND** ids internos `test-*` MUST NOT aparecer (fixtures no se shippean en el catálogo)
 
 #### Scenario: Catálogo vacío
 - **WHEN** el catálogo de recipes del CLI no contiene recipes válidas
@@ -29,15 +30,21 @@ El sistema SHALL proveer `ai-specs recipe list [path]` que escanee el catálogo 
 El sistema SHALL proveer `ai-specs recipe add <id> [path]` que valide la recipe en el catálogo, la agregue al manifest local, y muestre preview de primitives.
 
 #### Scenario: Agregar recipe disponible
-- **WHEN** se ejecuta `recipe add test-fixture` y la recipe existe en el catálogo
-- **THEN** SHALL agregar `[recipes.test-fixture]` con `enabled = true` y SIN `version`
+- **WHEN** se ejecuta `recipe add <public-id>` y la recipe existe en el catálogo
+- **THEN** SHALL agregar `[recipes.<public-id>]` con `enabled = true` y SIN `version`
 - **AND** SHALL mostrar preview de skills, commands, mcp, templates y docs
 - **AND** exit code SHALL ser 0
 - **AND** no materialize/sync is triggered
 
+#### Scenario: Reject internal test recipe id
+- **WHEN** se ejecuta `recipe add test-fixture` (o cualquier id `test-*`)
+- **THEN** SHALL fallar indicando que es un fixture interno de tests
+- **AND** NO SHALL mutar el manifest
+- **AND** exit code SHALL ser 1
+
 #### Scenario: Recipe ya instalada
-- **WHEN** `[recipes.test-fixture]` ya existe en el manifest
-- **THEN** SHALL abortar con "Recipe 'test-fixture' ya está en el manifest. Usa ai-specs sync para materializar."
+- **WHEN** `[recipes.<public-id>]` ya existe en el manifest
+- **THEN** SHALL abortar con mensaje de que ya está en el manifest
 - **AND** NO SHALL mutar el manifest
 - **AND** exit code SHALL ser 1
 
@@ -80,7 +87,7 @@ Ambos comandos SHALL reutilizar `lib/_internal/recipe-read.py` y `lib/_internal/
 `recipe add` SHALL NOT ejecutar sync, copiar archivos, ni materializar primitives. Su única responsabilidad es declarar la recipe en el manifest.
 
 #### Scenario: Add sin sync
-- **WHEN** `recipe add test-fixture` completa exitosamente
+- **WHEN** `recipe add <public-id>` completa exitosamente
 - **THEN** los archivos de la recipe NO SHALL existir en `ai-specs/` ni en el proyecto root
 - **AND** solo SHALL mutarse `ai-specs.toml`
 
@@ -88,9 +95,9 @@ Ambos comandos SHALL reutilizar `lib/_internal/recipe-read.py` y `lib/_internal/
 Ejecutar `recipe add` dos veces para el mismo ID SHALL producir el mismo manifest (sin duplicados) o fallar limpiamente.
 
 #### Scenario: Doble add
-- **WHEN** `recipe add test-fixture` se ejecuta dos veces
+- **WHEN** `recipe add <public-id>` se ejecuta dos veces
 - **THEN** la segunda ejecución SHALL fallar con "ya está en el manifest"
-- **AND** el manifest SHALL tener exactamente una entrada `[recipes.test-fixture]`
+- **AND** el manifest SHALL tener exactamente una entrada `[recipes.<public-id>]`
 
 ### Requirement: Command recipe init
 

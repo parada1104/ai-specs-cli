@@ -33,12 +33,22 @@ def is_initialized(root: Path) -> bool:
 
 
 def is_internal_test_recipe(recipe_id: str) -> bool:
-    """True for catalog fixtures that must never appear in user-facing lists.
+    """True for internal test fixtures that must not ship or install.
 
     Convention: directory/id prefix ``test-`` (hyphen). Used by hub recipe list,
-    CLI ``recipe list``, and init wizard/onboarding pickers.
+    CLI ``recipe list``, init wizard/onboarding pickers, and ``recipe add`` /
+    ``recipe init`` / materialize guards. Fixtures live under
+    ``tests/fixtures/recipes/``, not the shipped catalog.
     """
     return recipe_id.startswith("test-")
+
+
+def internal_test_recipe_message(recipe_id: str) -> str:
+    """User-facing reject message for internal ``test-*`` recipe ids."""
+    return (
+        f"Recipe '{recipe_id}' is an internal test fixture and is not part of "
+        "the public catalog."
+    )
 
 
 def ensure_deps(vendor: Path, *, prompt: bool = True) -> int | None:

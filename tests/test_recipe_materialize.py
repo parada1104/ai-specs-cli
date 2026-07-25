@@ -1,16 +1,26 @@
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+from _fixture_catalog import (  # noqa: E402
+    ALLOW_INTERNAL_TEST_RECIPES_ENV,
+    allow_internal_test_recipes_env,
+    populate_catalog,
+    unit_catalog,
+)
+
 RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-CATALOG = ROOT / "catalog" / "recipes"
+CATALOG = unit_catalog()
+FIXTURE_HOME: Path | None = None
 
 
 def load_module(path: Path, name: str):
@@ -26,25 +36,48 @@ def _cache_mod():
     return load_module(path, "project_cache_for_tests")
 
 
-def cache_recipe_skill(project_root: Path, recipe_id: str, skill_id: str, cli_home: Path = ROOT) -> Path:
+def _home() -> Path:
+    assert FIXTURE_HOME is not None
+    return FIXTURE_HOME
+
+
+def cache_recipe_skill(project_root: Path, recipe_id: str, skill_id: str, cli_home: Path | None = None) -> Path:
     pc = _cache_mod()
-    return pc.recipe_skills_root(project_root, cli_home=cli_home) / recipe_id / "skills" / skill_id
+    home = _home() if cli_home is None else cli_home
+    return pc.recipe_skills_root(project_root, cli_home=home) / recipe_id / "skills" / skill_id
 
 
-def cache_command(project_root: Path, cmd_id: str, cli_home: Path = ROOT) -> Path:
+def cache_command(project_root: Path, cmd_id: str, cli_home: Path | None = None) -> Path:
     pc = _cache_mod()
-    return pc.commands_dir(project_root, cli_home=cli_home) / f"{cmd_id}.md"
+    home = _home() if cli_home is None else cli_home
+    return pc.commands_dir(project_root, cli_home=home) / f"{cmd_id}.md"
 
 
-def cache_dep_skill(project_root: Path, dep_id: str, cli_home: Path = ROOT) -> Path:
+def cache_dep_skill(project_root: Path, dep_id: str, cli_home: Path | None = None) -> Path:
     pc = _cache_mod()
-    return pc.deps_skills_root(project_root, cli_home=cli_home) / dep_id / "skills" / dep_id
+    home = _home() if cli_home is None else cli_home
+    return pc.deps_skills_root(project_root, cli_home=home) / dep_id / "skills" / dep_id
 
 
 class RecipeMaterializeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        global FIXTURE_HOME
         cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal")
+        cls._home_tmpdir = tempfile.TemporaryDirectory()
+        FIXTURE_HOME = Path(cls._home_tmpdir.name)
+        populate_catalog(FIXTURE_HOME / "catalog" / "recipes")
+
+    @classmethod
+    def tearDownClass(cls):
+        global FIXTURE_HOME
+        cls._home_tmpdir.cleanup()
+        FIXTURE_HOME = None
+
+    def setUp(self):
+        self._allow = mock.patch.dict(os.environ, allow_internal_test_recipes_env())
+        self._allow.start()
+        self.addCleanup(self._allow.stop)
 
     def _make_project(self, recipe_section: str) -> Path:
         tmp = tempfile.TemporaryDirectory()
@@ -67,7 +100,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
         skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
         self.assertTrue(skill_dir.is_dir())
         self.assertTrue((skill_dir / "SKILL.md").is_file())
@@ -76,7 +109,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
         cmd = cache_command(root, "test-command")
         self.assertTrue(cmd.is_file())
 
@@ -84,7 +117,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
         doc = root / "docs" / "test-doc-output.md"
         self.assertTrue(doc.is_file())
 
@@ -92,7 +125,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
         tpl = root / "docs" / "test-template-output.md"
         self.assertTrue(tpl.is_file())
 
@@ -103,7 +136,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         existing = root / "docs" / "test-template-output.md"
         existing.parent.mkdir(parents=True, exist_ok=True)
         existing.write_text("existing")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
         self.assertEqual(existing.read_text(), "existing")
 
     def test_writes_recipe_mcp_json(self):
@@ -112,7 +145,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         )
         mcp_path = root / "ai-specs" / ".tmp" / "recipe-mcp.json"
         mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT, mcp_path), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home(), mcp_path), 0)
         self.assertTrue(mcp_path.is_file())
         data = json.loads(mcp_path.read_text())
         self.assertIn("test-mcp", data)
@@ -122,14 +155,14 @@ class RecipeMaterializeTests(unittest.TestCase):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = false\nversion = "1.0.0"\n'
         )
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
         self.assertFalse((cache_recipe_skill(root, "test-fixture", "test-skill")).exists())
 
     def test_sync_without_version_succeeds(self):
         root = self._make_project(
             "[recipes.test-fixture]\nenabled = true\n"
         )
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
         skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
         self.assertTrue(skill_dir.is_dir())
 
@@ -141,7 +174,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         real_stderr = sys.stderr
         sys.stderr = captured
         try:
-            rc = self.mod.materialize_recipes(root, ROOT)
+            rc = self.mod.materialize_recipes(root, _home())
         finally:
             sys.stderr = real_stderr
         self.assertEqual(rc, 0)
@@ -156,11 +189,11 @@ class RecipeMaterializeTests(unittest.TestCase):
             '[recipes.nonexistent]\nenabled = true\nversion = "1.0.0"\n'
         )
         with self.assertRaises(Exception):
-            self.mod.materialize_recipes(root, ROOT)
+            self.mod.materialize_recipes(root, _home())
 
     def test_no_recipes_section_succeeds(self):
         root = self._make_project("")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
 
     def test_recipe_does_not_overwrite_user_local_skill(self):
         root = self._make_project(
@@ -170,7 +203,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         user_skill = root / "ai-specs" / "skills" / "test-skill"
         user_skill.mkdir(parents=True)
         (user_skill / "SKILL.md").write_text("user local")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
         # Recipe version goes to .recipe/ and local skill is preserved
         self.assertEqual((user_skill / "SKILL.md").read_text(), "user local")
         recipe_skill = cache_recipe_skill(root, "test-fixture", "test-skill")
@@ -348,7 +381,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
 
     # --- MCP preset merge safety tests --------------------------------------
 
@@ -377,7 +410,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         )
         mcp_path = root / "ai-specs" / ".tmp" / "recipe-mcp.json"
         mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT, mcp_path), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home(), mcp_path), 0)
         self.assertTrue(mcp_path.is_file())
         data = json.loads(mcp_path.read_text())
         self.assertIn("test-mcp", data)
@@ -394,7 +427,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         )
         mcp_path = root / "ai-specs" / ".tmp" / "recipe-mcp.json"
         mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT, mcp_path), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, _home(), mcp_path), 0)
         self.assertTrue(mcp_path.is_file())
         data = json.loads(mcp_path.read_text())
         self.assertIn("test-mcp", data)
@@ -411,7 +444,7 @@ class RecipeMaterializeTests(unittest.TestCase):
         real_stderr = sys.stderr
         sys.stderr = captured
         try:
-            self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+            self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
         finally:
             sys.stderr = real_stderr
         stderr_output = captured.getvalue()
@@ -742,6 +775,21 @@ class RecipeMaterializeTests(unittest.TestCase):
             self.assertTrue(marker.is_file())
             marker_content = marker.read_text()
             self.assertIn("board_id=abc123", marker_content)
+
+    def test_materialize_refuses_internal_test_recipe_without_allow_env(self):
+        self._allow.stop()
+        os.environ.pop(ALLOW_INTERNAL_TEST_RECIPES_ENV, None)
+        public_home = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(public_home, ignore_errors=True))
+        populate_catalog(public_home / "catalog" / "recipes", include_fixtures=False)
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        with self.assertRaises(SystemExit) as ctx:
+            self.mod.materialize_recipes(root, public_home)
+        self.assertEqual(ctx.exception.code, 1)
+        skill = cache_recipe_skill(root, "test-fixture", "test-skill", cli_home=public_home)
+        self.assertFalse(skill.exists())
 
 
 class RuntimeHookMaterializeTests(unittest.TestCase):

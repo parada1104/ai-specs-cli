@@ -74,6 +74,22 @@ def _load_toml_read() -> Any:
     return _toml_read_module
 
 
+_util_module = None
+
+
+def _load_util() -> Any:
+    global _util_module
+    if _util_module is None:
+        module_path = Path(__file__).with_name("util.py")
+        spec = importlib.util.spec_from_file_location("util_internal", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load util.py at {module_path}")
+        _util_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = _util_module
+        spec.loader.exec_module(_util_module)
+    return _util_module
+
+
 def load_recipes_from_manifest(project_root: Path) -> dict[str, dict[str, Any]]:
     mod = _load_toml_read()
     toml_path = project_root / "ai-specs" / "ai-specs.toml"
@@ -680,6 +696,13 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
     recipes = load_recipes_from_manifest(project_root)
     enabled = {rid: cfg for rid, cfg in recipes.items() if cfg.get("enabled")}
+
+    util = _load_util()
+    allow_internal = os.environ.get("AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES") == "1"
+    blocked = sorted(rid for rid in enabled if util.is_internal_test_recipe(rid))
+    if blocked and not allow_internal:
+        # fail() exits the process (same pattern as other materialize guards).
+        fail(util.internal_test_recipe_message(blocked[0]))
 
     # Collect resolved runtime hooks across enabled recipes (for hooks-render.py).
     resolved_hooks: list[dict[str, Any]] = []

@@ -129,6 +129,15 @@ class RecipeInitTests(unittest.TestCase):
             self.mod.build_init_brief(root, "missing")
         self.assertIn("Recipe 'missing' no encontrada", str(ctx.exception))
 
+    def test_init_rejects_internal_test_recipe(self):
+        root = self._make_project()
+        self._set_ai_specs_home(self._make_cli_home())
+        with self.assertRaises(self.mod.RecipeInitError) as ctx:
+            self.mod.build_init_brief(root, "test-fixture")
+        self.assertIn("internal test fixture", str(ctx.exception))
+        rc = self.mod.init_recipe(root, "test-fixture")
+        self.assertEqual(rc, 1)
+
     def test_uninitialized_project_fails_without_mutating(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OpenCode runtime-hook matcher is case-insensitive**: generated
   `tool.execute.before` plugins now use the same `"i"` RegExp flag as pi/omp,
   so lowercase OpenCode tool ids match Claude-style recipe matchers.
+- **Internal `test-*` recipes fully excluded from consumers**: fixtures moved
+  out of the shipped catalog to `tests/fixtures/recipes/`; `recipe add` /
+  `recipe init` reject those ids; materialize refuses them unless the test
+  suite opt-in env is set.
 
 ### Changed
 - **Honest runtime-hook coverage docs**: `docs/runtime-hooks.md` documents

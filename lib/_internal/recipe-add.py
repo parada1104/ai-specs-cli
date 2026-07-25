@@ -72,6 +72,11 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
         print("Proyecto no inicializado. Ejecuta: ai-specs init", file=sys.stderr)
         return 1
 
+    util = _load_sibling("util")
+    if util.is_internal_test_recipe(recipe_id):
+        print(util.internal_test_recipe_message(recipe_id), file=sys.stderr)
+        return 1
+
     # Validate recipe exists in catalog
     recipe_read = _load_recipe_read()
     try:
