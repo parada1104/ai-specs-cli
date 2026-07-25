@@ -72,10 +72,12 @@ class GitignoreRootRefreshTests(unittest.TestCase):
         )
 
     def test_root_template_ignores_harness_env_secrets(self):
-        """JD-2: consumer root gitignore must ignore ai-specs.env (and dotenv entrypoints)."""
+        """JD-2/JD-7: consumer root gitignore must ignore harness env + migration bak."""
         text = TEMPLATE.read_text(encoding="utf-8")
         self.assertIn("ai-specs.env", text)
         self.assertIn("ai-specs/.env", text)
+        self.assertIn("ai-specs/.env.bak", text)
+        self.assertIn("ai-specs/.envrc.bak", text)
         self.assertIn(".env", text.splitlines())
         self.assertIn(".envrc", text.splitlines())
 
@@ -86,6 +88,8 @@ class GitignoreRootRefreshTests(unittest.TestCase):
         text = (root / ".gitignore").read_text(encoding="utf-8")
         self.assertIn("ai-specs.env", text)
         self.assertIn("ai-specs/.env", text)
+        self.assertIn("ai-specs/.env.bak", text)
+        self.assertIn("ai-specs/.envrc.bak", text)
 
 
 if __name__ == "__main__":

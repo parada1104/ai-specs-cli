@@ -33,6 +33,7 @@ load_harness_env = _env.load_harness_env
 write_envrc = _env.write_envrc
 ensure_root_envrc = _env.ensure_root_envrc
 has_managed_block = _env.has_managed_block
+managed_block_is_current = _env.managed_block_is_current
 migrate_legacy_envrc = _env.migrate_legacy_envrc
 migrate_nested_harness_env = _env.migrate_nested_harness_env
 migrate_legacy_harness_env = _env.migrate_legacy_harness_env

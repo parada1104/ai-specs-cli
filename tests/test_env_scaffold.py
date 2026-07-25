@@ -253,6 +253,54 @@ class EnvScaffoldTests(unittest.TestCase):
             self.assertTrue((project / "ai-specs" / ".env.bak").is_file())
             self.assertIn("dotenv_if_exists ai-specs.env", (project / ".envrc").read_text())
 
+    def test_migrate_nested_empty_does_not_rename(self):
+        """JD-6: comment-only nested .env must not be renamed to .env.bak."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            (project / "ai-specs").mkdir(parents=True)
+            nested = project / "ai-specs" / ".env"
+            nested.write_text("# only comments\n\n", encoding="utf-8")
+            self.assertFalse(self.mod.migrate_nested_harness_env(project))
+            self.assertTrue(nested.is_file())
+            self.assertFalse((project / "ai-specs" / ".env.bak").exists())
+
+    def test_migrate_nested_export_lines_merged(self):
+        """JD-6: export-prefixed nested .env keys must parse, merge, then rename."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            (project / "ai-specs").mkdir(parents=True)
+            nested = project / "ai-specs" / ".env"
+            nested.write_text('export TRELLO_TOKEN="from-export"\n', encoding="utf-8")
+            self.assertTrue(self.mod.migrate_nested_harness_env(project))
+            env_text = (project / "ai-specs.env").read_text(encoding="utf-8")
+            self.assertIn("TRELLO_TOKEN=from-export", env_text)
+            self.assertFalse(nested.exists())
+            self.assertTrue((project / "ai-specs" / ".env.bak").is_file())
+
+    def test_migrate_legacy_envrc_empty_does_not_rename(self):
+        """JD-6 parity: non-export legacy .envrc is left in place (no silent bak)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            (project / "ai-specs").mkdir(parents=True)
+            legacy = project / "ai-specs" / ".envrc"
+            legacy.write_text("# no exports\n", encoding="utf-8")
+            self.assertFalse(self.mod.migrate_legacy_envrc(project))
+            self.assertTrue(legacy.is_file())
+            self.assertFalse((project / "ai-specs" / ".envrc.bak").exists())
+
+    def test_managed_block_is_current_rejects_stale_body(self):
+        """JD-8 helper: markers with old dotenv path are not current."""
+        stale = (
+            f"{self.mod.MANAGED_START}\n"
+            "dotenv_if_exists .env\n"
+            "dotenv_if_exists ai-specs/.env\n"
+            f"{self.mod.MANAGED_END}\n"
+        )
+        self.assertTrue(self.mod.has_managed_block(stale))
+        self.assertFalse(self.mod.managed_block_is_current(stale))
+        current = self.mod.managed_block_text() + "\n"
+        self.assertTrue(self.mod.managed_block_is_current(current))
+
     def test_migrate_noop_when_absent(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"

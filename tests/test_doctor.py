@@ -1281,6 +1281,35 @@ class HarnessEnvDoctorTests(unittest.TestCase):
             self.assertTrue(ok, "expected harness-env OK when key is present")
             self.assertFalse(warn, "harness-env must not WARN when key is non-empty")
 
+    def test_stale_managed_body_warns(self):
+        """JD-8: markers with nested ai-specs/.env body must WARN envrc-managed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_mcp_project(root)
+            (project / ".envrc").write_text(
+                "# managed-by: ai-specs (do not remove block)\n"
+                "dotenv_if_exists .env\n"
+                "dotenv_if_exists ai-specs/.env\n"
+                "# end managed-by: ai-specs\n",
+                encoding="utf-8",
+            )
+            (project / "ai-specs.env").write_text(
+                "TRELLO_TOKEN=filled-value\n",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value="/usr/bin/direnv"
+            ):
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            warn = [
+                c
+                for c in doc.checks
+                if c.name == "envrc-managed" and c.severity == self.doctor.Severity.WARN
+            ]
+            self.assertTrue(warn, "expected envrc-managed WARN for stale body")
+            self.assertIn("stale", warn[0].message.lower())
+
     def test_doctor_never_calls_install(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

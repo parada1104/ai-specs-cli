@@ -589,12 +589,23 @@ class Doctor:
             ))
 
         envrc = self.root / ".envrc"
-        if not envrc.is_file() or not env_mod.has_managed_block(
-            envrc.read_text(encoding="utf-8")
-        ):
+        envrc_text = envrc.read_text(encoding="utf-8") if envrc.is_file() else ""
+        is_current = False
+        if envrc.is_file():
+            checker = getattr(env_mod, "managed_block_is_current", None)
+            if callable(checker):
+                is_current = checker(envrc_text)
+            else:
+                is_current = env_mod.has_managed_block(envrc_text)
+        if not is_current:
+            stale = bool(envrc_text) and env_mod.has_managed_block(envrc_text)
             self.checks.append(Check(
                 Severity.WARN, "envrc-managed",
-                "project-root .envrc missing ai-specs managed block",
+                (
+                    "project-root .envrc has stale ai-specs managed block"
+                    if stale
+                    else "project-root .envrc missing ai-specs managed block"
+                ),
                 guidance="run ai-specs configure-recipes to ensure root .envrc",
             ))
         else:

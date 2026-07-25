@@ -264,6 +264,20 @@ def has_managed_block(text: str) -> bool:
     return MANAGED_START in text and MANAGED_END in text
 
 
+def managed_block_is_current(text: str) -> bool:
+    """True when managed markers exist and body matches the canonical MANAGED_BODY."""
+    if not has_managed_block(text):
+        return False
+    pattern = re.compile(
+        re.escape(MANAGED_START) + r"(.*?)" + re.escape(MANAGED_END),
+        re.DOTALL,
+    )
+    match = pattern.search(text)
+    if match is None:
+        return False
+    return match.group(1).strip() == MANAGED_BODY
+
+
 def ensure_root_envrc(project_root: Path) -> Path:
     """Ensure project-root .envrc contains the merge-safe managed block."""
     target = project_root / ".envrc"
@@ -314,18 +328,32 @@ def _merge_into_harness_env(
     return write_values
 
 
+def _parse_nested_harness_file(text: str) -> dict[str, str]:
+    """Parse nested ai-specs/.env as dotenv, then fill gaps from export lines."""
+    parsed = _parse_dotenv(text)
+    for key, value in _parse_exports(text).items():
+        if key not in parsed or not (parsed.get(key) or "").strip():
+            parsed[key] = value
+    return parsed
+
+
 def migrate_nested_harness_env(project_root: Path) -> bool:
-    """Migrate ai-specs/.env dotenv into root ai-specs.env. Returns True if migrated."""
+    """Migrate ai-specs/.env into root ai-specs.env. Returns True if migrated.
+
+    Only renames the nested file when at least one key was parsed (JD-6).
+    """
     nested = project_root / "ai-specs" / ".env"
     if not nested.is_file():
         return False
-    parsed = _parse_dotenv(nested.read_text(encoding="utf-8"))
+    parsed = _parse_nested_harness_file(nested.read_text(encoding="utf-8"))
+    if not parsed:
+        return False
     existing = load_harness_env(project_root)
     write_values = _merge_into_harness_env(
         project_root, parsed, existing_override=existing
     )
-    if write_values or not harness_env_path(project_root).is_file():
-        write_env(project_root, write_values)
+    # Persist gap fills / full merged map without wiping via blank omit in write_env.
+    write_env(project_root, write_values)
     bak = project_root / "ai-specs" / ".env.bak"
     if bak.exists():
         bak.unlink()
@@ -335,17 +363,21 @@ def migrate_nested_harness_env(project_root: Path) -> bool:
 
 
 def migrate_legacy_envrc(project_root: Path) -> bool:
-    """Migrate ai-specs/.envrc exports into root ai-specs.env. Returns True if migrated."""
+    """Migrate ai-specs/.envrc exports into root ai-specs.env. Returns True if migrated.
+
+    Only renames the legacy file when at least one export was parsed (JD-6 parity).
+    """
     legacy = project_root / "ai-specs" / ".envrc"
     if not legacy.is_file():
         return False
     parsed = _parse_exports(legacy.read_text(encoding="utf-8"))
+    if not parsed:
+        return False
     existing = load_harness_env(project_root)
     write_values = _merge_into_harness_env(
         project_root, parsed, existing_override=existing
     )
-    if write_values or not harness_env_path(project_root).is_file():
-        write_env(project_root, write_values)
+    write_env(project_root, write_values)
     bak = project_root / "ai-specs" / ".envrc.bak"
     if bak.exists():
         bak.unlink()

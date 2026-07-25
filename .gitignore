@@ -30,5 +30,7 @@ GEMINI.md
 .envrc
 ai-specs.env
 ai-specs/.env
+ai-specs/.env.bak
+ai-specs/.envrc.bak
 .venv/
 cache/
