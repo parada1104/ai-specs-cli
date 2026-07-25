@@ -15,8 +15,7 @@ informational only — no per-recipe pin is required.
   [`docs/capabilities.md`](capabilities.md).
 
 Run `ai-specs recipe list` to see which catalog recipes are installed vs.
-available in a project. The `test-*` entries are test fixtures, not real
-recipes — ignore them.
+available in a project.
 
 ## Two tiers
 

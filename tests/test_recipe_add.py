@@ -106,6 +106,21 @@ class RecipeAddTests(unittest.TestCase):
         rc = self.mod.add_recipe(project, "nonexistent")
         self.assertEqual(rc, 1)
 
+    def test_add_rejects_internal_test_recipe(self):
+        manifest = '[project]\nname = "test"\n'
+        recipe_toml = (
+            '[recipe]\nid = "test-fixture"\nname = "Test Fixture"\n'
+            'description = "internal"\nversion = "1.0.0"\n'
+        )
+        project = self._make_project(manifest)
+        self._set_ai_specs_home(self._make_cli_home({"test-fixture": recipe_toml}))
+        before = (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
+        rc = self.mod.add_recipe(project, "test-fixture")
+        self.assertEqual(rc, 1)
+        after = (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
+        self.assertEqual(before, after)
+        self.assertNotIn("[recipes.test-fixture]", after)
+
     def test_add_does_not_mutate_other_files(self):
         manifest = '[project]\nname = "test"\n'
         recipe_toml = (

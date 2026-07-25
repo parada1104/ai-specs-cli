@@ -122,6 +122,11 @@ class TestIsInternalTestRecipe(unittest.TestCase):
         self.assertFalse(self.mod.is_internal_test_recipe("tdd-flow"))
         self.assertFalse(self.mod.is_internal_test_recipe("testing-helpers"))
 
+    def test_internal_test_recipe_message(self):
+        msg = self.mod.internal_test_recipe_message("test-fixture")
+        self.assertIn("test-fixture", msg)
+        self.assertIn("internal test fixture", msg)
+
 
 def _force_missing_deps():
     """Remove rich/questionary from importability."""
