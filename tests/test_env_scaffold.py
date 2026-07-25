@@ -100,6 +100,41 @@ class EnvScaffoldTests(unittest.TestCase):
             text = (project / "ai-specs.env").read_text(encoding="utf-8")
             self.assertIn('CANONICAL_VAULT_PATH="/path with spaces/x"', text)
 
+    def test_write_env_blank_preserves_existing_secret(self):
+        """JD-1: blank/whitespace updates must not wipe non-empty harness secrets."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            project.mkdir()
+            self.mod.write_env(project, {"TRELLO_API_KEY": "secret", "TRELLO_TOKEN": "tok"})
+            self.mod.write_env(
+                project,
+                {"TRELLO_API_KEY": "", "TRELLO_TOKEN": "   ", "CUSTOM": "keep-me"},
+            )
+            text = (project / "ai-specs.env").read_text(encoding="utf-8")
+            self.assertIn("TRELLO_API_KEY=secret", text)
+            self.assertIn("TRELLO_TOKEN=tok", text)
+            self.assertIn("CUSTOM=keep-me", text)
+
+    def test_offer_harness_env_blank_prompt_preserves_existing(self):
+        """JD-1: offer path with blank prompt values preserves prior ai-specs.env."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="trello-mcp-workflow", recipe_toml=self._trello_toml()
+            )
+            (project / "ai-specs.env").write_text(
+                "TRELLO_API_KEY=keep-key\nTRELLO_TOKEN=keep-tok\n",
+                encoding="utf-8",
+            )
+            blanks = {"TRELLO_API_KEY": "", "TRELLO_TOKEN": ""}
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.object(
+                self.mod, "prompt_env_vars", return_value=blanks
+            ), patch.object(self.mod, "direnv_allow", return_value=True):
+                self.mod.offer_harness_env(project, offer_direnv_install=False)
+            text = (project / "ai-specs.env").read_text(encoding="utf-8")
+            self.assertIn("TRELLO_API_KEY=keep-key", text)
+            self.assertIn("TRELLO_TOKEN=keep-tok", text)
+
     def test_generate_env_example(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
