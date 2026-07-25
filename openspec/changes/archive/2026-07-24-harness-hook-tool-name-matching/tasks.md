@@ -36,6 +36,6 @@ Trello: [#53](https://trello.com/c/mMtm3KhA)
 
 ## Close
 
-- [ ] Archive change folder on review branch
+- [x] Archive change folder on review branch
 - [ ] Open PR → development (link Trello #53)
 - [ ] Judgment Day
