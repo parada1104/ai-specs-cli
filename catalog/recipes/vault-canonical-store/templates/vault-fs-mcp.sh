@@ -31,4 +31,20 @@ if [[ ! -d "$ROOT" ]]; then
   exit 1
 fi
 
-exec npx -y @modelcontextprotocol/server-filesystem@2025.7.1 "$ROOT"
+# Why zod is pinned separately: 2025.7.1 does not depend on zod directly — it
+# inherits it from @modelcontextprotocol/sdk, which now resolves to zod 4.x. Its
+# own zod-to-json-schema@^3 only understands zod 3 internals, so against zod 4 it
+# emits an empty '{"$schema": ...}' for every tool: no "type", no "properties".
+# Hosts that validate tool schemas then reject the whole tools/list. Naming zod@3
+# as a second -p package hoists it above the SDK copy, so the server converts its
+# schemas with the zod its converter expects.
+#
+# Do NOT "fix" this by bumping the package. 2025.7.29+ replaces argv directories
+# with MCP client roots whenever the client advertises that capability, with no
+# opt-out. A host always advertises its cwd as a root, so the vault would either
+# fall out of scope entirely or be widened to cwd + vault — and this recipe's
+# contract is that CANONICAL_VAULT_PATH alone decides the scope.
+exec npx -y \
+  -p "@modelcontextprotocol/server-filesystem@2025.7.1" \
+  -p "zod@3" \
+  mcp-server-filesystem "$ROOT"

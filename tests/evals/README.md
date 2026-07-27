@@ -123,10 +123,15 @@ scoped dir with spaces, asks the agent to read it via MCP only, and asserts an
 evidence unless `EVALS_MCP_REQUIRE_TOOL_EVIDENCE=0`.
 
 Host notes (Claude Code 2.1.215, 2026-07):
-- Recipe pin `@…/server-filesystem@2025.7.1` starts but **tools fetch fails**.
-- `2025.11.25+` connects; those builds replace argv dirs with MCP **roots**.
-- Live Claude registration therefore uses `2025.11.25` and passes
-  `--add-dir <scope>`; override package with `EVALS_VAULT_FS_MCP_PACKAGE`.
+- The recipe pin `@…/server-filesystem@2025.7.1` **tools-fetched empty schemas** until
+  the wrapper started pinning `zod@3` alongside it. The package inherits zod from the
+  SDK, which resolves to zod 4, and its `zod-to-json-schema@3` emits schemas without
+  `type`/`properties` for zod 4 definitions. Fixed in the wrapper; see the recipe
+  README section "Why `zod@3` is pinned".
+- `2025.7.29+` connects but replaces argv dirs with MCP **roots**, and a host always
+  advertises its cwd. That either denies the vault or widens the scope to cwd + vault,
+  so the recipe stays on `2025.7.1`. `EVALS_VAULT_FS_MCP_PACKAGE` still overrides the
+  package when a scenario needs to probe roots behavior explicitly.
 - Wrapper + `2025.7.1` `AllowedDirectories` remain proven by
   `python3 tests/smoke_vault_mcp_fs.py` (no LLM).
 

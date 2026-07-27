@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **direnv allow path mismatch**: secrets no longer land only under `ai-specs/`
   while `direnv allow` targeted the project root (vars never loaded from root).
+- **Vault filesystem MCP returned empty tool schemas**: `vault-fs-mcp.sh` now pins
+  `zod@3` alongside `@modelcontextprotocol/server-filesystem@2025.7.1`. The package
+  inherits `zod` from `@modelcontextprotocol/sdk`, which resolves to zod 4, and its
+  `zod-to-json-schema@^3` emits `{"$schema": ...}` with no `type`/`properties` for zod
+  4 definitions — so hosts that validate schemas rejected the whole `tools/list`
+  (`tools[0].inputSchema.type: Invalid input: expected "object"` on Claude Code). No
+  change here caused it: `npx -y` re-resolves transitives on every launch, so zod 4's
+  release broke a working pin retroactively. The package pin is intentionally kept —
+  `2025.7.29+` replaces argv dirs with MCP client roots with no opt-out, which either
+  denies a vault outside the workspace or widens the store's scope to cwd + vault.
 - **OpenCode runtime-hook matcher is case-insensitive**: generated
   `tool.execute.before` plugins now use the same `"i"` RegExp flag as pi/omp,
   so lowercase OpenCode tool ids match Claude-style recipe matchers.

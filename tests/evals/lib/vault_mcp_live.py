@@ -149,11 +149,14 @@ def register_claude_local_mcp(
 ) -> None:
     """Register vault MCP in Claude local scope (avoids .mcp.json pending gate).
 
-    Claude Code 2.1.215 fails ``tools fetch`` on filesystem ``2025.7.1`` /
-    ``2025.7.29`` (recipe pin). Live host eval registers ``2025.11.25+`` which
-    connects, but those builds honor MCP roots and replace argv dirs with the
-    client root set — so the eval must also pass ``claude --add-dir <scope>``
-    (see harness). Recipe pin + wrapper stay covered by ``smoke_vault_mcp_fs.py``.
+    This registers the package directly, without the recipe wrapper, so it does not
+    inherit the wrapper's ``zod@3`` pin; it therefore uses a build whose schemas are
+    valid on their own. ``2025.11.25+`` qualifies, but those builds honor MCP roots and
+    replace argv dirs with the client root set — so the eval must also pass
+    ``claude --add-dir <scope>`` (see harness).
+
+    The recipe path (pin ``2025.7.1`` + wrapper + ``zod@3``) is covered separately by
+    ``smoke_vault_mcp_fs.py``.
     """
     _approve_claude_project_mcp(project_root, server_id=server_id)
     # Remove stale local entry if present (idempotent re-register).
@@ -231,8 +234,8 @@ def write_eval_mcp_config(
 ) -> Path:
     """Write a dedicated MCP config for live hosts (absolute scope path).
 
-    Uses ``EVALS_VAULT_FS_MCP_PACKAGE`` (default ``…@2025.11.25``) because the
-    recipe pin ``2025.7.1`` tools-fetches fail on current Claude Code.
+    Uses ``EVALS_VAULT_FS_MCP_PACKAGE`` (default ``…@2025.11.25``) because this config
+    launches the package directly, without the recipe wrapper that pins ``zod@3``.
     """
     fs_pkg = os.environ.get(
         "EVALS_VAULT_FS_MCP_PACKAGE",
