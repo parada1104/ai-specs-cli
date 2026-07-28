@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **TTY opt-in CLI install**: when required `[[deps.cli]]` binaries are missing,
+  configure/init may offer Homebrew / apt install (explicit confirm; never
+  silent). `npx` and `bb` remain guidance-only. Doctor stays check-only.
+- **Harness env layout for direnv**: wizard writes project-root `ai-specs.env`,
+  generates `ai-specs.env.example`, and ensures a merge-safe managed block in
+  project-root `.envrc` (`dotenv_if_exists` for app `.env` + `ai-specs.env`).
+  Migrates legacy `ai-specs/.envrc` exports and nested `ai-specs/.env`. Doctor
+  WARNs for missing direnv, managed block, or empty harness keys.
+
 ### Fixed
+- **direnv allow path mismatch**: secrets no longer land only under `ai-specs/`
+  while `direnv allow` targeted the project root (vars never loaded from root).
 - **OpenCode runtime-hook matcher is case-insensitive**: generated
   `tool.execute.before` plugins now use the same `"i"` RegExp flag as pi/omp,
   so lowercase OpenCode tool ids match Claude-style recipe matchers.

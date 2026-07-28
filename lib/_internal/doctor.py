@@ -147,6 +147,7 @@ class Doctor:
         self._check_tracked_bundled_leftovers()
         self._check_enabled_agents()
         self._check_recipe_cli_deps()
+        self._check_harness_env_layout()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -552,6 +553,83 @@ class Doctor:
                     f"optional {r.binary} not found for {r.recipe_id}: {r.purpose}",
                     guidance=r.install_url,
                 ))
+
+    def _load_env_scaffold(self):
+        path = Path(__file__).with_name("env_scaffold.py")
+        spec = importlib.util.spec_from_file_location("env_scaffold_doctor", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _check_harness_env_layout(self) -> None:
+        """WARN on direnv / managed .envrc / missing harness env keys when MCP env needed."""
+        env_mod = self._load_env_scaffold()
+        if env_mod is None:
+            return
+        try:
+            vars_map = env_mod.collect_env_vars(self.root)
+        except Exception:
+            return
+        if not vars_map:
+            return
+
+        if shutil.which("direnv") is None:
+            self.checks.append(Check(
+                Severity.WARN, "direnv",
+                "direnv not on PATH (needed to load harness MCP env for shells)",
+                guidance="brew install direnv && direnv allow  # or see https://direnv.net",
+            ))
+        else:
+            self.checks.append(Check(
+                Severity.OK, "direnv",
+                "direnv available on PATH",
+            ))
+
+        envrc = self.root / ".envrc"
+        envrc_text = envrc.read_text(encoding="utf-8") if envrc.is_file() else ""
+        is_current = False
+        if envrc.is_file():
+            checker = getattr(env_mod, "managed_block_is_current", None)
+            if callable(checker):
+                is_current = checker(envrc_text)
+            else:
+                is_current = env_mod.has_managed_block(envrc_text)
+        if not is_current:
+            stale = bool(envrc_text) and env_mod.has_managed_block(envrc_text)
+            self.checks.append(Check(
+                Severity.WARN, "envrc-managed",
+                (
+                    "project-root .envrc has stale ai-specs managed block"
+                    if stale
+                    else "project-root .envrc missing ai-specs managed block"
+                ),
+                guidance="run ai-specs configure-recipes to ensure root .envrc",
+            ))
+        else:
+            self.checks.append(Check(
+                Severity.OK, "envrc-managed",
+                "project-root .envrc has ai-specs managed block",
+            ))
+
+        try:
+            present = env_mod.load_harness_env(self.root)
+        except Exception:
+            present = {}
+        missing = [v for v in sorted(vars_map) if not (present.get(v) or "").strip()]
+        if missing:
+            self.checks.append(Check(
+                Severity.WARN, "harness-env",
+                f"missing/empty in ai-specs.env: {', '.join(missing)}",
+                guidance="run ai-specs configure-recipes to set harness env values",
+            ))
+        else:
+            self.checks.append(Check(
+                Severity.OK, "harness-env",
+                f"ai-specs.env has {len(vars_map)} required MCP env key(s)",
+            ))
 
     def _mcp_server_count(self, data: dict) -> int:
         mcp = data.get("mcp")

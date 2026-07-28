@@ -163,6 +163,19 @@ def _dep_gate(recipe: Recipe, console) -> bool:
     results = _dep_check.check_cli_deps(recipe)
     _render_dep_panel(results, console)
     missing_required = [r for r in results if r.required and not r.ok]
+    if missing_required and sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            dep_install = _load_sibling("dep_install")
+            plans = [
+                dep_install.resolve_install_plan(r.binary, install_url=r.install_url or "")
+                for r in missing_required
+            ]
+            dep_install.offer_and_install(plans, tty=True)
+            results = _dep_check.check_cli_deps(recipe)
+            _render_dep_panel(results, console)
+            missing_required = [r for r in results if r.required and not r.ok]
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]install offer skipped: {exc}[/yellow]")
     if not missing_required:
         return True
     answer = questionary.confirm(
@@ -225,51 +238,23 @@ def _enabled_recipe_ids(project_root: Path) -> list[str]:
 
 
 def _offer_envrc(project_root: Path) -> None:
-    """Prompt for MCP env vars, write .envrc, run direnv allow.
+    """Prompt for MCP env vars, write ai-specs.env + root .envrc, direnv allow.
 
-    Soft-fails on prompt/write errors so configure-recipes is not aborted
-    (matches recipe-add / init_tui degraded paths).
+    Soft-fails so configure-recipes is not aborted.
     """
     try:
-        envrc = _load_sibling("envrc-scaffold")
+        env = _load_sibling("env_scaffold")
     except Exception:
-        return
-    from rich.console import Console
-
-    console = Console()
+        try:
+            env = _load_sibling("envrc-scaffold")
+        except Exception:
+            return
     try:
-        vars_map = envrc.collect_env_vars(project_root)
-    except Exception:
-        return
-    if not vars_map:
-        return
-
-    try:
-        values = envrc.prompt_env_vars(project_root)
+        env.offer_harness_env(project_root)
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]No se pudieron configurar variables de entorno: {exc}[/yellow]")
-        return
-    if values is None:
-        return
-    if not values:
-        return
+        from rich.console import Console
 
-    try:
-        path = envrc.write_envrc(project_root, values)
-        console.print(f"[green]✓[/green] escrito {path}")
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]No se pudo escribir .envrc: {exc}[/yellow]")
-        return
-
-    try:
-        if not envrc.direnv_allow(project_root):
-            print("  ! direnv no está instalado o no se pudo ejecutar.", file=sys.stderr)
-            print("    Instalalo con: brew install direnv", file=sys.stderr)
-            print("    Despues corre: direnv allow", file=sys.stderr)
-        else:
-            print("  ✓ direnv allow — las variables están activas en esta terminal")
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]direnv allow falló: {exc}[/yellow]")
+        Console().print(f"[yellow]Harness env offer skipped: {exc}[/yellow]")
 
 
 def main(argv: list[str] | None = None) -> int:

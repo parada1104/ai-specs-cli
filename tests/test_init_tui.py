@@ -115,7 +115,6 @@ class TestConfigureRecipesStep(unittest.TestCase):
 
         with mock.patch.object(self.mod, "_load_sibling", side_effect=lambda n: {
             "config_wizard": wizard,
-            "dep_check": mock.Mock(),
             "recipe-read": recipe_read,
         }[n]), mock.patch("questionary.confirm", confirm):
             # questionary imported inside function — patch via sys.modules after import path
@@ -129,6 +128,110 @@ class TestConfigureRecipesStep(unittest.TestCase):
         self.assertEqual(configured, {})
         wizard.run_config_wizard.assert_not_called()
 
+    def test_configure_recipes_uses_dep_gate_for_cli_deps(self):
+        """JD-3: init must offer TTY install via _dep_gate, not panel-only."""
+        from rich.console import Console
+
+        recipe = mock.Mock()
+        recipe.cli_deps = [object()]
+        recipe.config_schema.fields = {}
+
+        recipe_read = mock.Mock()
+        recipe_read.read_recipe.return_value = recipe
+        wizard = mock.Mock()
+        wizard._dep_gate.return_value = True
+
+        with mock.patch.object(
+            self.mod,
+            "_load_sibling",
+            side_effect=lambda n: {
+                "config_wizard": wizard,
+                "recipe-read": recipe_read,
+            }[n],
+        ):
+            configured = self.mod._configure_recipes(
+                [{"id": "git-pr-flow"}],
+                Console(stderr=True),
+                Path("/tmp"),
+            )
+
+        self.assertEqual(configured, {})
+        wizard._dep_gate.assert_called_once_with(recipe, mock.ANY)
+        wizard._render_dep_panel.assert_not_called()
+
+
+class TestRunWizardHarnessEnv(unittest.TestCase):
+    """JD-1: fresh init must spoon-feed harness env after staging write."""
+
+    @classmethod
+    def setUpClass(cls):
+        vendor = ROOT / "lib" / "_vendor"
+        if vendor.is_dir() and str(vendor) not in sys.path:
+            sys.path.insert(0, str(vendor))
+        cls.mod = _load()
+
+    def test_fresh_init_writes_real_toml_and_offers_harness_env(self):
+        import questionary
+        from rich.console import Console
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "proj"
+            target.mkdir()
+            out = Path(tmp) / "staged.toml"
+            env = mock.Mock()
+            env.collect_env_vars.return_value = {"TRELLO_API_KEY": "x"}
+            offer_calls: list[Path] = []
+
+            def _offer(root: Path, **_kwargs):
+                offer_calls.append(root)
+                real = root / "ai-specs" / "ai-specs.toml"
+                self.assertTrue(
+                    real.is_file(),
+                    "real ai-specs/ai-specs.toml must exist before offer_harness_env",
+                )
+
+            env.offer_harness_env.side_effect = _offer
+
+            def _sibling(name: str):
+                if name == "env_scaffold":
+                    return env
+                raise AssertionError(f"unexpected sibling load: {name}")
+
+            text = mock.Mock()
+            text.return_value.ask.return_value = "demo"
+            checkbox = mock.Mock()
+            checkbox.return_value.ask.side_effect = [["claude"], []]
+            confirm = mock.Mock()
+            confirm.return_value.ask.return_value = True
+
+            with mock.patch.object(self.mod, "_ensure_deps", return_value=None), mock.patch.object(
+                self.mod.sys.stdin, "isatty", return_value=True
+            ), mock.patch.object(
+                self.mod.sys.stdout, "isatty", return_value=True
+            ), mock.patch.object(
+                self.mod, "_configure_recipes", return_value={}
+            ), mock.patch.object(
+                self.mod, "_catalog_recipes", return_value=[]
+            ), mock.patch.object(
+                self.mod, "_load_sibling", side_effect=_sibling
+            ), mock.patch.object(
+                questionary, "text", text
+            ), mock.patch.object(
+                questionary, "checkbox", checkbox
+            ), mock.patch.object(
+                questionary, "confirm", confirm
+            ), mock.patch(
+                "rich.console.Console", Console
+            ):
+                rc = self.mod.run_wizard(
+                    target=target, name_prefill="demo", out_path=out
+                )
+
+            self.assertEqual(rc, 0)
+            self.assertTrue(out.is_file())
+            self.assertTrue((target / "ai-specs" / "ai-specs.toml").is_file())
+            env.offer_harness_env.assert_called_once_with(target)
+            self.assertEqual(offer_calls, [target])
 
 
 class TestCatalogRecipes(unittest.TestCase):

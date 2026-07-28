@@ -71,6 +71,26 @@ class GitignoreRootRefreshTests(unittest.TestCase):
             text,
         )
 
+    def test_root_template_ignores_harness_env_secrets(self):
+        """JD-2/JD-7: consumer root gitignore must ignore harness env + migration bak."""
+        text = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("ai-specs.env", text)
+        self.assertIn("ai-specs/.env", text)
+        self.assertIn("ai-specs/.env.bak", text)
+        self.assertIn("ai-specs/.envrc.bak", text)
+        self.assertIn(".env", text.splitlines())
+        self.assertIn(".envrc", text.splitlines())
+
+    def test_refresh_appends_ai_specs_env_ignore(self):
+        root = self._tmp_root()
+        action = self.mod.refresh_root_gitignore(root, TEMPLATE)
+        self.assertEqual(action, "appended")
+        text = (root / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("ai-specs.env", text)
+        self.assertIn("ai-specs/.env", text)
+        self.assertIn("ai-specs/.env.bak", text)
+        self.assertIn("ai-specs/.envrc.bak", text)
+
 
 if __name__ == "__main__":
     unittest.main()
