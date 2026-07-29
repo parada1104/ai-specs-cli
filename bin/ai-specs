@@ -64,7 +64,7 @@ Commands:
   recipe list [path]          List available and installed recipes
   recipe add <id> [path]      Add a recipe to the manifest
   recipe init <id> [path]     Print a read-only recipe init brief
-  configure-recipes [path]    Configure recipe config, CLI deps, .envrc.example
+  configure-recipes [path]    Configure recipe config, CLI deps, harness env
   upgrade [--dry-run] [--force] Upgrade the global installation safely
   version Print CLI version
   help Show this help

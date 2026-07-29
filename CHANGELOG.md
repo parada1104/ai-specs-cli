@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-07-28
+
+### Added
+- **TTY opt-in CLI install**: when required `[[deps.cli]]` binaries are missing,
+  configure/init may offer Homebrew / apt install (explicit confirm; never
+  silent). `npx` and `bb` remain guidance-only. Doctor stays check-only.
+- **Harness env layout for direnv**: wizard writes project-root `ai-specs.env`,
+  generates `ai-specs.env.example`, and ensures a merge-safe managed block in
+  project-root `.envrc` (`dotenv_if_exists` for app `.env` + `ai-specs.env`).
+  Migrates legacy `ai-specs/.envrc` exports and nested `ai-specs/.env`. Doctor
+  WARNs for missing direnv, managed block, or empty harness keys.
+
+### Fixed
+- **direnv allow path mismatch**: secrets no longer land only under `ai-specs/`
+  while `direnv allow` targeted the project root (vars never loaded from root).
+- **Vault filesystem MCP returned empty tool schemas**: `vault-fs-mcp.sh` now pins
+  `zod@3` alongside `@modelcontextprotocol/server-filesystem@2025.7.1`. The package
+  inherits `zod` from `@modelcontextprotocol/sdk`, which resolves to zod 4, and its
+  `zod-to-json-schema@^3` emits `{"$schema": ...}` with no `type`/`properties` for zod
+  4 definitions — so hosts that validate schemas rejected the whole `tools/list`
+  (`tools[0].inputSchema.type: Invalid input: expected "object"` on Claude Code). No
+  change here caused it: `npx -y` re-resolves transitives on every launch, so zod 4's
+  release broke a working pin retroactively. The package pin is intentionally kept —
+  `2025.7.29+` replaces argv dirs with MCP client roots with no opt-out, which either
+  denies a vault outside the workspace or widens the store's scope to cwd + vault.
+- **OpenCode runtime-hook matcher is case-insensitive**: generated
+  `tool.execute.before` plugins now use the same `"i"` RegExp flag as pi/omp,
+  so lowercase OpenCode tool ids match Claude-style recipe matchers.
+- **Internal `test-*` recipes fully excluded from consumers**: fixtures moved
+  out of the shipped catalog to `tests/fixtures/recipes/`; `recipe add` /
+  `recipe init` reject those ids; materialize refuses them unless the test
+  suite opt-in env is set.
+
+### Changed
+- **Honest runtime-hook coverage docs**: `docs/runtime-hooks.md` documents
+  `omp` as a first-class harness, clarifies that pi/omp `tool_call` is
+  per-process (not a cross-process subagent guarantee), and notes that
+  worktree/plan-build gates must not be the sole guard for delegated work.
+- **worktree-flow pre-delegation brief rule**: always-on workflow rule (plus
+  skill/README guidance) requires verifying worktree/branch before dispatching
+  write-capable subagents/tasks.
+
 ## [0.17.0] — 2026-07-24
 
 ### Fixed

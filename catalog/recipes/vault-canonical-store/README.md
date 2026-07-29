@@ -16,8 +16,9 @@ consume when they need a canonical store.
 - **Capability `canonical-store`** — so a project can bind it wherever a
   canonical store is needed.
 - **MCP preset `vault-canonical`** — launches
-  `@modelcontextprotocol/server-filesystem@2025.7.1` via a small wrapper that
-  reads **`CANONICAL_VAULT_PATH` from the environment** (not from a `${VAR}` argv).
+  `@modelcontextprotocol/server-filesystem@2025.7.1` (with `zod@3`, see below) via a
+  small wrapper that reads **`CANONICAL_VAULT_PATH` from the environment** (not from a
+  `${VAR}` argv).
 
 ## Why a wrapper (not `${CANONICAL_VAULT_PATH}` in args)
 
@@ -30,6 +31,47 @@ for home-relative values, but the durable model is:
 1. Set `CANONICAL_VAULT_PATH` to an **absolute** scoped vault directory.
 2. Pass that var through MCP `env`.
 3. Let `vault-fs-mcp.sh` resolve it at exec time and pass one argv to the server.
+
+## Why `zod@3` is pinned, and why not to bump the package
+
+The wrapper launches two packages, not one:
+
+```bash
+npx -y -p "@modelcontextprotocol/server-filesystem@2025.7.1" -p "zod@3" \
+  mcp-server-filesystem "$ROOT"
+```
+
+`2025.7.1` does not depend on `zod` directly — it inherits it from
+`@modelcontextprotocol/sdk`, which now resolves to **zod 4.x**. Its own
+`zod-to-json-schema@^3` only understands zod 3 internals, so against zod 4 it emits an
+empty `{"$schema": ...}` for every tool: no `type`, no `properties`. Hosts that
+validate tool schemas reject the entire `tools/list`:
+
+```text
+tools[0].inputSchema.type: Invalid input: expected "object"
+```
+
+Only `list_allowed_directories` survives, because its schema is a hand-written object
+literal rather than a zod conversion — a useful tell when diagnosing this. Naming
+`zod@3` as a second `-p` package hoists it above the SDK copy, so the server converts
+its schemas with the zod its converter expects.
+
+Note that nothing here changed to cause the break: `npx -y` re-resolves transitive
+dependencies on every launch, so zod 4's release broke a working pin retroactively.
+Pinning zod makes the launch reproducible instead of leaving a transitive floating.
+
+**Do not "fix" this by bumping the package.** `2025.7.29+` replaces argv directories
+with MCP client **roots** whenever the client advertises that capability, with no
+opt-out. A host always advertises its cwd as a root, so bumping gives you one of two
+broken outcomes:
+
+| Host roots | Resulting scope |
+|---|---|
+| workspace only | vault denied — `path outside allowed directories` |
+| workspace + vault | **both** — the store is no longer confined to the vault |
+
+Neither expresses this recipe's contract, which is that `CANONICAL_VAULT_PATH` alone
+decides the scope. Keeping the pin keeps that guarantee.
 
 ## Enable
 
@@ -44,19 +86,20 @@ sessions_folder = "sessions"
 vault_scope = "nnodes/proyectos/my-project"
 ```
 
-Prefer **`.envrc`** (shell expansion) so nested vars resolve before the agent
-starts. Quote values that contain spaces (Obsidian iCloud paths under
+Prefer **direnv** with harness values in project-root `ai-specs.env` (and
+optional app `.env` at the repo root). `ai-specs configure-recipes` writes a
+managed block in project-root `.envrc` that loads both via `dotenv_if_exists`.
+Quote values that contain spaces (Obsidian iCloud paths under
 `Mobile Documents/`):
 
 ```bash
-# .envrc — good (shell expands OBSIDIAN_VAULT_PATH)
-export OBSIDIAN_VAULT_PATH="${OBSIDIAN_VAULT_PATH:-$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/my-vault}"
-export CANONICAL_VAULT_PATH="$OBSIDIAN_VAULT_PATH/nnodes/proyectos/my-project"
+# ai-specs.env — good (fully resolved absolute path)
+CANONICAL_VAULT_PATH="/Users/you/Library/Mobile Documents/iCloud~md~obsidian/Documents/my-vault/nnodes/proyectos/my-project"
 ```
 
-Avoid leaving nested `$OBSIDIAN_VAULT_PATH/...` **unexpanded** in a plain `.env`
-if the agent is launched without direnv (IDE / Dock) — the wrapper rejects
-paths that still contain `$`.
+Avoid leaving nested `$OBSIDIAN_VAULT_PATH/...` **unexpanded** if the agent is
+launched without direnv (IDE / Dock) — the wrapper rejects paths that still
+contain `$`.
 
 Then run `ai-specs sync` and **restart the agent** so it picks up env + MCP.
 Sync materializes `ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh`
@@ -85,12 +128,8 @@ python3 tests/smoke_vault_mcp_fs.py --path "$CANONICAL_VAULT_PATH"
 Success prints `SMOKE_OK` and shows `Allowed directories: [<your path>]`.
 
 Live host connect (Claude Code / Cursor Agent) is opt-in via
-`EVALS_SCENARIOS=ac_mcp_live_scope ./tests/evals/run-live-vault.sh`. Note:
-Claude Code 2.1.x fails tools-fetch on the recipe pin `2025.7.1`; modern
-filesystem MCP builds also replace argv dirs with client **roots**, so vault
-scopes outside the workspace need the host to include that directory (e.g.
-Claude `--add-dir "$CANONICAL_VAULT_PATH"`). Obsidian CLI is **not** a
-subdirectory sandbox — it can operate on the whole vault.
+`EVALS_SCENARIOS=ac_mcp_live_scope ./tests/evals/run-live-vault.sh`. Obsidian CLI is
+**not** a subdirectory sandbox — it can operate on the whole vault.
 
 To sync a consumer project with the **unreleased** recipe, point the CLI home
 at the checkout (no GitHub release required):

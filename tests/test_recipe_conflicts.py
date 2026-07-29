@@ -6,7 +6,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE_CONFLICTS_PATH = ROOT / "lib" / "_internal" / "recipe-conflicts.py"
-CATALOG = ROOT / "catalog" / "recipes"
+sys.path.insert(0, str(ROOT / "tests"))
+from _fixture_catalog import PUBLIC_RECIPES, unit_catalog  # noqa: E402
+
+CATALOG = unit_catalog()
 
 
 def load_module(path: Path, name: str):
@@ -205,7 +208,7 @@ class TagConflictTests(unittest.TestCase):
 
     def test_catalog_vcs_recipes_warn_when_enabled_together(self):
         recipes = [
-            self.mod.load_recipe_toml(CATALOG / rid / "recipe.toml")
+            self.mod.load_recipe_toml(PUBLIC_RECIPES / rid / "recipe.toml")
             for rid in ("git-pr-flow", "bitbucket-pr-flow")
         ]
         conflicts = self.mod.check_tag_conflicts(recipes)

@@ -1134,6 +1134,198 @@ class RecipeCliDepsDoctorTests(unittest.TestCase):
             self.assertTrue(all(c.severity != self.doctor.Severity.ERROR for c in recipe_only))
 
 
+class HarnessEnvDoctorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.doctor = load_module(DOCTOR_PY, "doctor_harness_env")
+
+    def _write_mcp_project(self, root: Path) -> Path:
+        catalog = root / "catalog" / "recipes" / "demo-recipe"
+        catalog.mkdir(parents=True)
+        (catalog / "recipe.toml").write_text(
+            "[recipe]\n"
+            'id = "demo-recipe"\n'
+            'name = "Demo"\n'
+            'description = "D"\n'
+            'version = "1.0"\n\n'
+            "[[provides.mcp]]\n"
+            'id = "trello"\n'
+            'command = "npx"\n'
+            "env = { TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n",
+            encoding="utf-8",
+        )
+        project = root / "project"
+        (project / "ai-specs").mkdir(parents=True)
+        (project / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
+        pc = load_module(ROOT / "lib" / "_internal" / "project-cache.py", "pc_doctor_harness")
+        bundled = pc.bundled_skills_root(project, cli_home=root) / "skills"
+        for skill in self.doctor.bundled_skill_names(cli_home=root):
+            d = bundled / skill
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "SKILL.md").write_text(f"# {skill}\n", encoding="utf-8")
+        bundled_cmds = pc.bundled_commands_root(project, cli_home=root)
+        bundled_cmds.mkdir(parents=True, exist_ok=True)
+        for command in self.doctor.bundled_command_names(cli_home=root):
+            (bundled_cmds / f"{command}.md").write_text(f"# {command}\n", encoding="utf-8")
+        (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+        (project / "ai-specs" / "commands" / "placeholder.md").write_text(
+            "# placeholder\n", encoding="utf-8"
+        )
+        (project / "ai-specs" / "ai-specs.toml").write_text(
+            '[project]\nname = "demo"\n\n'
+            '[agents]\nenabled = []\n\n'
+            '[recipes.demo-recipe]\nenabled = true\nversion = "1.0"\n',
+            encoding="utf-8",
+        )
+        return project
+
+    def test_direnv_warn_when_mcp_env_required(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_mcp_project(root)
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value=None
+            ):
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            warn = [
+                c for c in doc.checks
+                if c.name == "direnv" and c.severity == self.doctor.Severity.WARN
+            ]
+            self.assertTrue(warn)
+
+    def test_no_direnv_warn_without_mcp_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = root / "catalog" / "recipes" / "demo-recipe"
+            catalog.mkdir(parents=True)
+            (catalog / "recipe.toml").write_text(
+                "[recipe]\n"
+                'id = "demo-recipe"\n'
+                'name = "Demo"\n'
+                'description = "D"\n'
+                'version = "1.0"\n',
+                encoding="utf-8",
+            )
+            project = root / "project"
+            (project / "ai-specs").mkdir(parents=True)
+            (project / "AGENTS.md").write_text("# a\n", encoding="utf-8")
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "demo"\n\n[agents]\nenabled = []\n\n'
+                '[recipes.demo-recipe]\nenabled = true\nversion = "1.0"\n',
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value=None
+            ):
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            self.assertFalse(any(c.name == "direnv" for c in doc.checks))
+
+    def test_managed_envrc_and_harness_key_warns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_mcp_project(root)
+            (project / ".envrc").write_text("use nix\n", encoding="utf-8")
+            (project / "ai-specs.env").write_text("TRELLO_TOKEN=\n", encoding="utf-8")
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value="/usr/bin/direnv"
+            ):
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            self.assertTrue(
+                any(
+                    c.name == "envrc-managed" and c.severity == self.doctor.Severity.WARN
+                    for c in doc.checks
+                )
+            )
+            harness = [
+                c for c in doc.checks
+                if c.name == "harness-env" and c.severity == self.doctor.Severity.WARN
+            ]
+            self.assertTrue(harness)
+            self.assertIn("TRELLO_TOKEN", harness[0].message)
+            self.assertNotIn("secret", harness[0].message.lower())
+
+    def test_present_harness_key_ok(self):
+        """Non-empty required key in ai-specs.env yields harness-env OK (not WARN)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_mcp_project(root)
+            (project / ".envrc").write_text(
+                "# managed-by: ai-specs (do not remove block)\n"
+                "dotenv_if_exists .env\n"
+                "dotenv_if_exists ai-specs.env\n"
+                "# end managed-by: ai-specs\n",
+                encoding="utf-8",
+            )
+            (project / "ai-specs.env").write_text(
+                "TRELLO_TOKEN=filled-value\n",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value="/usr/bin/direnv"
+            ):
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            ok = [
+                c
+                for c in doc.checks
+                if c.name == "harness-env" and c.severity == self.doctor.Severity.OK
+            ]
+            warn = [
+                c
+                for c in doc.checks
+                if c.name == "harness-env" and c.severity == self.doctor.Severity.WARN
+            ]
+            self.assertTrue(ok, "expected harness-env OK when key is present")
+            self.assertFalse(warn, "harness-env must not WARN when key is non-empty")
+
+    def test_stale_managed_body_warns(self):
+        """JD-8: markers with nested ai-specs/.env body must WARN envrc-managed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_mcp_project(root)
+            (project / ".envrc").write_text(
+                "# managed-by: ai-specs (do not remove block)\n"
+                "dotenv_if_exists .env\n"
+                "dotenv_if_exists ai-specs/.env\n"
+                "# end managed-by: ai-specs\n",
+                encoding="utf-8",
+            )
+            (project / "ai-specs.env").write_text(
+                "TRELLO_TOKEN=filled-value\n",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value="/usr/bin/direnv"
+            ):
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            warn = [
+                c
+                for c in doc.checks
+                if c.name == "envrc-managed" and c.severity == self.doctor.Severity.WARN
+            ]
+            self.assertTrue(warn, "expected envrc-managed WARN for stale body")
+            self.assertIn("stale", warn[0].message.lower())
+
+    def test_doctor_never_calls_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_mcp_project(root)
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value=None
+            ), patch("subprocess.run") as run:
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            for call in run.call_args_list:
+                argv = list(call.args[0]) if call.args else []
+                if not argv:
+                    continue
+                self.assertNotEqual(argv[0], "brew")
+                self.assertNotIn("apt-get", argv)
+
 
 class CacheAwareCommandsDoctorTests(unittest.TestCase):
     """Doctor must treat cache-managed commands as 'expected', not stale extras."""

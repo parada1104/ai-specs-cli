@@ -33,12 +33,12 @@ The product owns a fixed set of abstract events mapped to each harness's native
 event. This map is the single source of truth used by every renderer
 (`lib/_internal/hooks-render.py`).
 
-| abstract | claude | cursor | opencode | pi |
-|----------|--------|--------|----------|-----|
-| `pre-tool-use` | `PreToolUse` | `beforeShellExecution` (shell/MCP only; **no pre-file-write hook**) | `tool.execute.before` | `tool_call` |
-| `post-tool-use` | `PostToolUse` | `afterShellExecution` | `tool.execute.after` | `tool_result` |
-| `session-start` | `SessionStart` | `sessionStart` | — (observe-only) | `session_start` |
-| `stop` | `Stop` | `stop` | — (no equivalent) | `agent_end` |
+| abstract | claude | cursor | opencode | pi | omp |
+|----------|--------|--------|----------|-----|-----|
+| `pre-tool-use` | `PreToolUse` | `beforeShellExecution` (shell/MCP only; **no pre-file-write hook**) | `tool.execute.before` | `tool_call` | `tool_call` |
+| `post-tool-use` | `PostToolUse` | `afterShellExecution` | `tool.execute.after` | `tool_result` | `tool_result` |
+| `session-start` | `SessionStart` | `sessionStart` | — (observe-only) | `session_start` | `session_start` |
+| `stop` | `Stop` | `stop` | — (no equivalent) | `agent_end` | `agent_end` |
 
 Unsupported `(event, harness)` pairs (—) are **warned and skipped** — sync never
 emits broken wiring, and continues rendering the hook for harnesses that support
@@ -52,6 +52,7 @@ it.
 | **cursor** | generated shell wrapper in `.cursor/hooks/<recipe>-<hook>.sh`, referenced by `.cursor/hooks.json` | wrapper emits `{"permission":"deny", ...}` (snake_case) on `exit 2` |
 | **opencode** | generated TS plugin `.opencode/plugin/<recipe>-<hook>.ts` | `throw` on `exit 2` |
 | **pi** | generated TS extension `.pi/extensions/<recipe>-<hook>.ts` (imports `@earendil-works/pi-coding-agent`) | `return { block: true, reason }` on `exit 2` |
+| **omp** | generated TS extension `.omp/extensions/<recipe>-<hook>.ts` (imports `@oh-my-pi/pi-coding-agent`) | `return { block: true, reason }` on `exit 2` |
 
 Only **Claude** natively honors the normalized contract, so it gets the script
 wired directly. Every other harness decides through a different channel, so sync
@@ -65,6 +66,12 @@ stdin and translates `exit 2` into that harness's native decision.
   `MultiEdit`/`NotebookEdit`) has no Cursor target → warn-and-skip.
 - **OpenCode** `tool.execute.before` does **not** fire for **subagent** tool
   calls (opencode#5894) or **MCP** tool calls (opencode#2319).
+- **Pi / omp** `tool_call` handlers apply to tool calls in **that agent
+  process**. Typical subagent/task delegation spawns a **separate process**;
+  the parent's extension handlers do not see the child's `write`/`edit` calls.
+  Child enforcement only happens if that child also loads the same project
+  extensions — not part of the ai-specs distribution contract. Do not treat
+  worktree/plan-build gates as the sole guard for delegation-heavy workflows.
 - **OpenCode** `session-start`/`stop` are observe-only; there is no blocking
   session hook.
 
@@ -105,6 +112,7 @@ block are preserved.
 | harness | `pre-tool-use` blocking | notes |
 |---------|-------------------------|-------|
 | claude | ✅ | native exit-2 |
-| pi | ✅ | covers all tool calls |
+| pi | ✅ (this process) | not a cross-process subagent guarantee |
+| omp | ✅ (this process) | same handler shape as pi |
 | opencode | ✅ (primary agent) | not subagent/MCP tool calls |
 | cursor | ⚠️ | no pre-file-write hook; shell/MCP gates only |

@@ -50,6 +50,10 @@ env -u OBSIDIAN_VAULT_PATH \
   "$SCRIPT"
 grep -qxF "$SCOPE" "$VAULT_FS_MCP_ARGV_LOG" || fail "argv log missing absolute path; got: $(cat "$VAULT_FS_MCP_ARGV_LOG")"
 grep -q 'server-filesystem@2025.7.1' "$VAULT_FS_MCP_ARGV_LOG" || fail "missing pinned package"
+# zod must be pinned to 3.x alongside the package: 2025.7.1 inherits zod from the SDK,
+# which now resolves to 4.x, and zod-to-json-schema@3 emits empty tool schemas for it.
+grep -qxF 'zod@3' "$VAULT_FS_MCP_ARGV_LOG" || fail "missing zod@3 pin; got: $(cat "$VAULT_FS_MCP_ARGV_LOG")"
+grep -qxF 'mcp-server-filesystem' "$VAULT_FS_MCP_ARGV_LOG" || fail "missing explicit binary name"
 # Must not depend on a second vault env var being present.
 pass "standalone absolute CANONICAL_VAULT_PATH (OBSIDIAN unset) works"
 

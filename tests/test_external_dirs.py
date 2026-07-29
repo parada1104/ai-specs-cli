@@ -6,14 +6,26 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+from _fixture_catalog import allow_internal_test_recipes_env, populate_catalog  # noqa: E402
+
 CLI = ROOT / "bin" / "ai-specs"
 RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 VENDOR_SKILLS_PATH = ROOT / "lib" / "_internal" / "vendor-skills.py"
 SKILL_RESOLUTION_PATH = ROOT / "lib" / "_internal" / "skill-resolution.py"
 CATALOG = ROOT / "catalog" / "recipes"
+_FIXTURE_HOME: Path | None = None
+
+
+def _fixture_home() -> Path:
+    global _FIXTURE_HOME
+    if _FIXTURE_HOME is None:
+        _FIXTURE_HOME = Path(tempfile.mkdtemp(prefix="ai-specs-ext-fixture-home-"))
+        populate_catalog(_FIXTURE_HOME / "catalog" / "recipes")
+    return _FIXTURE_HOME
 
 
 def load_module(path: Path, name: str):
@@ -32,21 +44,25 @@ def _pc():
     return load_module(ROOT / "lib" / "_internal" / "project-cache.py", "project_cache_ext")
 
 
-def cache_recipe_skill(project_root, recipe_id, skill_id, cli_home=ROOT):
-    return _pc().recipe_skills_root(project_root, cli_home=cli_home) / recipe_id / "skills" / skill_id
+def cache_recipe_skill(project_root, recipe_id, skill_id, cli_home=None):
+    home = _fixture_home() if cli_home is None else cli_home
+    return _pc().recipe_skills_root(project_root, cli_home=home) / recipe_id / "skills" / skill_id
 
 
-def cache_dep_skill(project_root, dep_id, skill_id=None, cli_home=ROOT):
+def cache_dep_skill(project_root, dep_id, skill_id=None, cli_home=None):
+    home = ROOT if cli_home is None else cli_home
     sid = dep_id if skill_id is None else skill_id
-    return _pc().deps_skills_root(project_root, cli_home=cli_home) / dep_id / "skills" / sid
+    return _pc().deps_skills_root(project_root, cli_home=home) / dep_id / "skills" / sid
 
 
-def cache_command(project_root, cmd_id, cli_home=ROOT):
-    return _pc().commands_dir(project_root, cli_home=cli_home) / f"{cmd_id}.md"
+def cache_command(project_root, cmd_id, cli_home=None):
+    home = _fixture_home() if cli_home is None else cli_home
+    return _pc().commands_dir(project_root, cli_home=home) / f"{cmd_id}.md"
 
 
-def cache_bundled_skill(project_root, skill_id, cli_home=ROOT):
-    return _pc().bundled_skills_root(project_root, cli_home=cli_home) / "skills" / skill_id
+def cache_bundled_skill(project_root, skill_id, cli_home=None):
+    home = ROOT if cli_home is None else cli_home
+    return _pc().bundled_skills_root(project_root, cli_home=home) / "skills" / skill_id
 
 
 def inproject_dep_skill(project_root, dep_id, skill_id=None):
@@ -283,6 +299,11 @@ class RecipeMaterializePathTests(unittest.TestCase):
     def setUpClass(cls):
         cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal")
 
+    def setUp(self):
+        self._allow = mock.patch.dict(os.environ, allow_internal_test_recipes_env())
+        self._allow.start()
+        self.addCleanup(self._allow.stop)
+
     def _make_dep_repo(self, tmp: Path, name: str) -> Path:
         repo = tmp / name
         repo.mkdir()
@@ -321,8 +342,9 @@ class RecipeMaterializePathTests(unittest.TestCase):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
+        home = _fixture_home()
+        self.assertEqual(self.mod.materialize_recipes(root, home), 0)
+        skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill", cli_home=home)
         self.assertTrue(skill_dir.is_dir())
         self.assertTrue((skill_dir / "SKILL.md").is_file())
 
@@ -330,15 +352,17 @@ class RecipeMaterializePathTests(unittest.TestCase):
         root = self._make_project(
             "[recipes.test-fixture]\nenabled = true\n"
         )
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        cmd = cache_command(root, "test-command", cli_home=ROOT)
+        home = _fixture_home()
+        self.assertEqual(self.mod.materialize_recipes(root, home), 0)
+        cmd = cache_command(root, "test-command", cli_home=home)
         self.assertTrue(cmd.is_file())
 
     def test_warns_when_recipe_command_overwrites_existing_managed_command(self):
         root = self._make_project(
             "[recipes.test-fixture]\nenabled = true\n"
         )
-        cmd = cache_command(root, "test-command", cli_home=ROOT)
+        home = _fixture_home()
+        cmd = cache_command(root, "test-command", cli_home=home)
         cmd.parent.mkdir(parents=True, exist_ok=True)
         cmd.write_text("# previous managed\n")
         import io
@@ -346,7 +370,7 @@ class RecipeMaterializePathTests(unittest.TestCase):
         old_stderr = sys.stderr
         sys.stderr = captured
         try:
-            self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+            self.assertEqual(self.mod.materialize_recipes(root, home), 0)
         finally:
             sys.stderr = old_stderr
         self.assertIn("overwrites existing managed command", captured.getvalue())
@@ -382,10 +406,11 @@ class RecipeMaterializePathTests(unittest.TestCase):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
+        home = _fixture_home()
         local_skill = root / "ai-specs" / "skills" / "local-only"
         local_skill.mkdir()
         (local_skill / "SKILL.md").write_text("local")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, home), 0)
         self.assertEqual((local_skill / "SKILL.md").read_text(), "local")
 
 
@@ -810,6 +835,11 @@ class OrphanCleanupTests(unittest.TestCase):
     def setUpClass(cls):
         cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal")
 
+    def setUp(self):
+        self._allow = mock.patch.dict(os.environ, allow_internal_test_recipes_env())
+        self._allow.start()
+        self.addCleanup(self._allow.stop)
+
     def _make_project(self, recipe_section: str = "", deps_section: str = "") -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -848,12 +878,15 @@ class OrphanCleanupTests(unittest.TestCase):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
         )
-        recipe_dir = _pc().recipe_skills_root(root, cli_home=ROOT) / "test-fixture"
+        home = _fixture_home()
+        recipe_dir = _pc().recipe_skills_root(root, cli_home=home) / "test-fixture"
         recipe_dir.mkdir(parents=True)
         (recipe_dir / "keep.txt").write_text("keep")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(self.mod.materialize_recipes(root, home), 0)
         # keep.txt is wiped when skill materialize replaces the skill tree, but recipe dir remains
-        self.assertTrue(cache_recipe_skill(root, "test-fixture", "test-skill").is_dir())
+        self.assertTrue(
+            cache_recipe_skill(root, "test-fixture", "test-skill", cli_home=home).is_dir()
+        )
 
 
 class ResyncIdempotencyTests(unittest.TestCase):

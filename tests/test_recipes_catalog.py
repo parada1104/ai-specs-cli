@@ -31,17 +31,17 @@ CONFIG_KEYS_IN_CATALOG: dict[str, list[str]] = {
 
 
 def _catalog_recipe_dirs() -> list[Path]:
-    return sorted(
-        p
-        for p in RECIPES_DIR.iterdir()
-        if p.is_dir() and not p.name.startswith("test-")
-    )
+    return sorted(p for p in RECIPES_DIR.iterdir() if p.is_dir())
 
 
 class RecipesCatalogDriftTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.catalog = CATALOG_DOC.read_text()
+
+    def test_shipped_catalog_has_no_internal_test_recipes(self):
+        leaked = [p.name for p in RECIPES_DIR.iterdir() if p.is_dir() and p.name.startswith("test-")]
+        self.assertEqual(leaked, [], f"internal fixtures must not ship in catalog: {leaked}")
 
     def test_at_a_glance_table_has_installs_mcp_column(self):
         self.assertIn("| Installs MCP |", self.catalog)

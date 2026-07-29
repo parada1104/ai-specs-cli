@@ -72,6 +72,11 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
         print("Proyecto no inicializado. Ejecuta: ai-specs init", file=sys.stderr)
         return 1
 
+    util = _load_sibling("util")
+    if util.is_internal_test_recipe(recipe_id):
+        print(util.internal_test_recipe_message(recipe_id), file=sys.stderr)
+        return 1
+
     # Validate recipe exists in catalog
     recipe_read = _load_recipe_read()
     try:
@@ -183,17 +188,9 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
 
         if has_mcp_env:
             try:
-                envrc = _load_sibling("envrc-scaffold")
-                vars_map = envrc.collect_env_vars(project_root)
-                if vars_map:
-                    env_vals = envrc.prompt_env_vars(project_root)
-                    if env_vals:
-                        path = envrc.write_envrc(project_root, env_vals)
-                        print(f"  ✓ escrito {path}")
-                        if not envrc.direnv_allow(project_root):
-                            print("  ! direnv no instalado. brew install direnv && direnv allow")
-                        else:
-                            print("  ✓ direnv allow")
+                env = _load_sibling("env_scaffold")
+                if env.collect_env_vars(project_root):
+                    env.offer_harness_env(project_root)
             except Exception:
                 print("  ! no se pudieron configurar las variables de entorno")
     else:

@@ -345,7 +345,7 @@ Placement convention: after `[[capabilities]]` / `[[hooks]]`, before the first
 | `binary` | yes | — | Executable name checked via `PATH` |
 | `purpose` | yes | — | Human label shown in doctor / wizard panels |
 | `required` | no | `true` | `false` → INFO when missing (never WARN) |
-| `install_url` | no | `""` | Guidance link (never auto-installs) |
+| `install_url` | no | `""` | Guidance link when no installer map entry / user declines |
 | `version_check` | no | `""` | Shell command whose output is scanned for a version |
 | `min_version` | no | `""` | Minimum version; unparseable versions never block |
 
@@ -359,8 +359,11 @@ version_check = "gh --version"
 min_version = "2.0.0"
 ```
 
-Unknown keys raise `RecipeValidationError`. The checker is guidance-only — it never
-installs binaries.
+Unknown keys raise `RecipeValidationError`. Detection is always safe: doctor and
+non-TTY paths never install. On an interactive TTY, configure / init may **offer**
+opt-in install via Homebrew or `apt-get` for known binaries (`gh`, `glab`, `jq`,
+`direnv`, `git`); `npx` / `bb` stay guidance-only. Nothing is installed without an
+explicit Yes.
 
 ## `[config]` schema declaration
 

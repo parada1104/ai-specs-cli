@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# recipe-config.sh — configure recipe config / CLI deps / envrc example.
+# recipe-config.sh — configure recipe config / CLI deps / harness env.
 #
 # Usage:
 #   ai-specs configure-recipes [path] [--help]
@@ -11,7 +11,7 @@ WIZARD_PY="$AI_SPECS_HOME/lib/_internal/config_wizard.py"
 usage() {
     cat <<'EOF'
 Usage: ai-specs configure-recipes [path] [--help]
-Configure enabled recipes (config fields, CLI deps, .envrc.example).
+Configure enabled recipes (config fields, CLI deps, ai-specs.env + root .envrc).
 Arguments:
   path    Target project root (default: current directory)
 Flags:

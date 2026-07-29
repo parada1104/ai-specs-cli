@@ -93,6 +93,10 @@ def _load_manifest(project_root: Path) -> tuple[Any, dict[str, Any]]:
 
 
 def _load_recipe(project_root: Path, recipe_id: str) -> tuple[Any, Any, Path]:
+    util = _load_module("util.py", "util_internal")
+    if util.is_internal_test_recipe(recipe_id):
+        raise RecipeInitError(util.internal_test_recipe_message(recipe_id))
+
     catalog_dir = _resolve_catalog_dir(project_root)
     recipe_dir = catalog_dir / recipe_id
     if not recipe_dir.is_dir():

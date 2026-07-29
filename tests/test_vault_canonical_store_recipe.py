@@ -88,6 +88,9 @@ class VaultCanonicalStoreRecipeTests(unittest.TestCase):
         wrapper = RECIPE_DIR / "templates" / "vault-fs-mcp.sh"
         self.assertTrue(wrapper.is_file())
         self.assertIn("server-filesystem@2025.7.1", wrapper.read_text())
+        # zod pinned to 3.x: the package inherits zod from the SDK (now 4.x) and its
+        # zod-to-json-schema@3 emits empty inputSchemas for zod 4 definitions.
+        self.assertIn("zod@3", wrapper.read_text())
         self.assertIn("CANONICAL_VAULT_PATH", wrapper.read_text())
         self.assertNotIn("OBSIDIAN_VAULT_PATH", wrapper.read_text())
 
