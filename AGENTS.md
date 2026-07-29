@@ -58,6 +58,7 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.
 - Do not merge or push to `development` without a PR and explicit human instruction.
 - Preserve unrelated worktree changes; never revert changes you did not make.
+- Before dispatching a write-capable subagent or task, verify the current worktree and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.
 - Use a PR-based merge workflow; all changes to `development` go through a pull request.
 - VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations.
 - Do not push directly to `development`; always open a PR from a feature branch.
