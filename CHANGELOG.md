@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-07-28
+
 ### Added
 - **TTY opt-in CLI install**: when required `[[deps.cli]]` binaries are missing,
   configure/init may offer Homebrew / apt install (explicit confirm; never
