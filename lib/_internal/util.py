@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
 # Pin range keeps bootstrap reproducible without chasing every major.
@@ -111,3 +113,135 @@ def ensure_deps(vendor: Path, *, prompt: bool = True) -> int | None:
         print(f"ERROR: dependencies still unavailable after install: {exc}", file=sys.stderr)
         return 3
     return None
+
+
+@dataclass(frozen=True)
+class TopologyResolution:
+    """Resolved repo topology for worktree-flow surfaces."""
+
+    resolved: str  # "standalone" | "monorepo-apps" | "monorepo-submodules"
+    configured: str  # "auto" | one of the above
+    via: str  # "config" (explicit) | "auto" (detected)
+    submodules: tuple[str, ...]  # initialized submodule paths (rel to repo_root)
+    gitmodules_present: bool
+
+
+def _run_git_config_paths(repo_root: Path) -> set[str]:
+    """Return submodule paths registered in ``.gitmodules`` via git config."""
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "config",
+                "-f",
+                ".gitmodules",
+                "--get-regexp",
+                r"^submodule\..*\.path$",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, FileNotFoundError):
+        return set()
+    if proc.returncode != 0:
+        return set()
+    paths: set[str] = set()
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # "submodule.<name>.path <path>"
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        paths.add(parts[1].strip())
+    return paths
+
+
+def _run_submodule_status(repo_root: Path) -> list[str]:
+    """Return raw ``git submodule status`` lines (non-recursive)."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "submodule", "status"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, FileNotFoundError):
+        return []
+    if proc.returncode != 0:
+        return []
+    return proc.stdout.splitlines()
+
+
+def detect_submodules(repo_root: Path) -> tuple[bool, tuple[str, ...]]:
+    """Return ``(gitmodules_present, initialized_submodule_paths)``.
+
+    Pure inspection; no worktree/branch mutation. Non-recursive (v1).
+    Prefixes ``' '``, ``'+'``, ``'U'`` count as initialized; ``'-'`` is skipped.
+    """
+    gm = repo_root / ".gitmodules"
+    if not gm.is_file():
+        return (False, ())
+
+    registered_paths = _run_git_config_paths(repo_root)
+    initialized: list[str] = []
+    for line in _run_submodule_status(repo_root):
+        if not line:
+            continue
+        prefix = line[0]
+        rest = line[1:].split()
+        if len(rest) < 2:
+            continue
+        path = rest[1]
+        if path not in registered_paths:
+            continue
+        if prefix != "-":
+            initialized.append(path)
+    return (True, tuple(sorted(initialized)))
+
+
+def resolve_repo_topology(
+    repo_root: Path, config_value: str = "auto"
+) -> TopologyResolution:
+    """Resolve configured/auto topology for a project root.
+
+    ``auto`` never resolves to ``monorepo-apps``. Git failures degrade to
+    ``standalone`` without raising.
+    """
+    configured = (config_value or "auto").strip() or "auto"
+
+    if configured in ("standalone", "monorepo-apps"):
+        return TopologyResolution(configured, configured, "config", (), False)
+
+    try:
+        if configured == "monorepo-submodules":
+            present, subs = detect_submodules(repo_root)
+            return TopologyResolution(
+                "monorepo-submodules", configured, "config", subs, present
+            )
+
+        # configured == "auto"
+        present, subs = detect_submodules(repo_root)
+        resolved = "monorepo-submodules" if subs else "standalone"
+        return TopologyResolution(resolved, "auto", "auto", subs, present)
+    except (OSError, subprocess.SubprocessError):
+        via = "auto" if configured == "auto" else "config"
+        return TopologyResolution("standalone", configured, via, (), False)
+
+
+def override_is_stale(catalog_src: Path, materialized_dest: Path) -> bool:
+    """True when a not_exists override exists but no longer matches catalog bytes.
+
+    Missing dest or missing catalog src → not stale (fresh-copy / no-op path).
+    Compares content via sha256, not mtime.
+    """
+    if not materialized_dest.is_file() or not catalog_src.is_file():
+        return False
+    return (
+        sha256(catalog_src.read_bytes()).digest()
+        != sha256(materialized_dest.read_bytes()).digest()
+    )
