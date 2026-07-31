@@ -66,23 +66,25 @@ Prefer the `/worktree-new` command.
 ### standalone / monorepo-apps
 
 ```bash
-git worktree add .worktrees/<slug> -b <branch> <integration_branch>
+git worktree add <worktrees_dir>/<slug> -b <branch> <integration_branch>
 ```
 
 ### monorepo-submodules (locked contract)
 
 Destination MUST be absolute. Infer or require `<subrepo>`; validate path-then
 unique name; reject uninitialized (`git submodule update --init <path>`).
+`<subrepo>` selection is validated by `util.resolve_subrepo`.
 
 ```bash
-super_abs="$(git rev-parse --show-toplevel)"   # superproject root
+super_abs="$(git -C "$super_root" rev-parse --show-toplevel)"
 git -C "$super_abs/<subrepo_path>" worktree add \
-  "$super_abs/.worktrees/<subrepo>-<slug>" \
+  "$super_abs/<worktrees_dir>/<subrepo>-<slug>" \
   -b <branch> <integration_branch>
 ```
 
-cwd inference uses `git rev-parse --show-toplevel` and, for linked worktrees
-named `<path>-<slug>`, the **longest** matching submodule path prefix.
+cwd inference uses `git -C`/`rev-parse --show-toplevel` and, for linked
+worktrees named `<path>-<slug>`, the **longest** matching submodule path
+prefix (see `util.resolve_subrepo`).
 
 ## Post-merge cleanup
 

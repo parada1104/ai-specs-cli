@@ -225,5 +225,19 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertIn("monorepo-submodules", rules)
 
 
+
+    def test_skill_md_create_block_matches_worktree_new_contract(self):
+        """SKILL.md create block must stay byte-consistent with worktree-new.md."""
+        skill = (RECIPE_DIR / "skills" / "worktree-flow" / "SKILL.md").read_text()
+        # Must use super_root-scoped rev-parse (not bare show-toplevel).
+        self.assertIn('git -C "$super_root" rev-parse --show-toplevel', skill)
+        # Must use configurable worktrees_dir placeholder, not hardcoded .worktrees
+        # as the create destination (default may still be mentioned as prose).
+        self.assertIn("<worktrees_dir>", skill)
+        # Hardcoded ".worktrees/<subrepo>" create path recreates the original bug.
+        self.assertNotIn("$super_abs/.worktrees/", skill)
+        self.assertNotIn("git worktree add .worktrees/", skill)
+
+
 if __name__ == "__main__":
     unittest.main()
