@@ -148,6 +148,8 @@ class Doctor:
         self._check_enabled_agents()
         self._check_recipe_cli_deps()
         self._check_harness_env_layout()
+        self._check_repo_topology()
+        self._check_stale_template_overrides()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -636,6 +638,100 @@ class Doctor:
         if not isinstance(mcp, dict):
             return 0
         return len(mcp)
+
+
+    def _load_util(self):
+        path = Path(__file__).with_name("util.py")
+        spec = importlib.util.spec_from_file_location("util_doctor", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _check_repo_topology(self) -> None:
+        """INFO: echo resolved worktree-flow topology + initialized submodule count."""
+        manifest = self.root / "ai-specs" / "ai-specs.toml"
+        if not manifest.is_file():
+            return
+        util = self._load_util()
+        if util is None:
+            return
+        try:
+            import tomllib
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        recipes = data.get("recipes") or {}
+        wf = recipes.get("worktree-flow") or {}
+        if not isinstance(wf, dict) or wf.get("enabled") is not True:
+            return
+        cfg = wf.get("config") or {}
+        configured = str(cfg.get("repo_topology") or "auto")
+        try:
+            res = util.resolve_repo_topology(self.root, configured)
+        except Exception:
+            return
+        n = len(res.submodules)
+        self.checks.append(Check(
+            Severity.INFO,
+            "repo-topology",
+            f"{res.resolved} (via {res.via}; {n} initialized submodule(s))",
+        ))
+
+    def _check_stale_template_overrides(self) -> None:
+        """WARN when enabled-recipe not_exists template overrides diverge from catalog."""
+        util = self._load_util()
+        if util is None:
+            return
+        catalog = AI_SPECS_HOME / "catalog" / "recipes"
+        if not catalog.is_dir():
+            return
+        manifest = self.root / "ai-specs" / "ai-specs.toml"
+        if not manifest.is_file():
+            return
+        try:
+            import tomllib
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        recipes = data.get("recipes") or {}
+        # Load recipe schema once
+        schema_path = Path(__file__).with_name("recipe_schema.py")
+        spec = importlib.util.spec_from_file_location("recipe_schema_doctor", schema_path)
+        if spec is None or spec.loader is None:
+            return
+        schema = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = schema
+        try:
+            spec.loader.exec_module(schema)
+        except Exception:
+            return
+
+        for rid, val in recipes.items():
+            if not isinstance(val, dict) or val.get("enabled") is not True:
+                continue
+            recipe_dir = catalog / rid
+            recipe_toml = recipe_dir / "recipe.toml"
+            if not recipe_toml.is_file():
+                continue
+            try:
+                recipe = schema.load_recipe_toml(recipe_toml)
+            except Exception:
+                continue
+            for tpl in getattr(recipe, "templates", []) or []:
+                if getattr(tpl, "condition", None) != "not_exists":
+                    continue
+                src = recipe_dir / tpl.source
+                dest = self.root / tpl.target
+                if util.override_is_stale(src, dest):
+                    self.checks.append(Check(
+                        Severity.WARN,
+                        "stale-override",
+                        f"{tpl.target} differs from catalog (condition=not_exists)",
+                        guidance=f"rm {tpl.target} && ai-specs sync",
+                    ))
 
     def _check_enabled_agents(self) -> None:
         data = self._load_manifest()

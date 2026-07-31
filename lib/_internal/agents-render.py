@@ -25,6 +25,21 @@ import sys
 import tomllib
 from pathlib import Path
 from typing import Any
+import importlib.util
+
+def _load_util():
+    path = Path(__file__).with_name("util.py")
+    name = "util_agents_render"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load util.py at {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
 
 RUNTIME_BRIEF_MARKER = "<!-- ai-specs:runtime-brief -->"
 
@@ -210,6 +225,23 @@ def _section_project(manifest: dict, resolved: dict) -> list[str]:
 
     if integration_branch:
         lines.append(f"- **Integration branch**: `{integration_branch}`")
+
+    # Resolved repo topology (worktree-flow)
+    wf_for_topo = recipes.get(worktree_recipe_id, {}) if worktree_recipe_id else {}
+    if not wf_for_topo:
+        wf_for_topo = recipes.get("worktree-flow", {}) or {}
+    if wf_for_topo or "worktree-flow" in (resolved.get("enabled") or []):
+        cfg_val = str(wf_for_topo.get("repo_topology") or "auto")
+        # project root: parent of ai-specs/ when available via resolved hint, else cwd
+        project_root = Path(resolved.get("project_root") or Path.cwd())
+        try:
+            util = _load_util()
+            res = util.resolve_repo_topology(project_root, cfg_val)
+            lines.append(
+                f"- **Repo topology**: `{res.resolved}` (via {res.via})"
+            )
+        except Exception:
+            pass
 
     # vault_scope from canonical-store binding
     canonical_store_id = bindings.get("canonical-store", "")
@@ -583,6 +615,9 @@ def render(toml_path: Path, output_path: Path, *, preserve_if_marker: bool, reso
             resolved = data
         except (json.JSONDecodeError, ValueError, OSError):
             resolved = {}  # degrade gracefully — render without structured fields
+
+    # Superproject root for topology detection (ai-specs.toml lives under ai-specs/).
+    resolved.setdefault("project_root", str(toml_path.resolve().parent.parent))
 
     content = "\n".join(_render_lines(manifest, resolved))
     output_path.parent.mkdir(parents=True, exist_ok=True)

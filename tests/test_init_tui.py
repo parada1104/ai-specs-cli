@@ -530,7 +530,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         target = self._workspace()
         out = target / "staged.toml"
         # name + agents checkbox + recipes checkbox + confirm (default Yes)
-        rc, output = self._spawn_pty(target, out, b"\n\n\n\n")
+        rc, output = self._spawn_pty(target, out, b"\n\n\n\n\n")
         self.assertEqual(rc, 0, f"output: {output!r}")
         self.assertTrue(out.is_file(),
                         f"no staged TOML; output: {output!r}")
@@ -545,7 +545,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         target = self._workspace()
         out = target / "staged.toml"
         # Ctrl-A Ctrl-K clears questionary's default text, then type name; Enter through rest.
-        rc, output = self._spawn_pty(target, out, b"\x01\x0bmy-app\n\n\n\n")
+        rc, output = self._spawn_pty(target, out, b"\x01\x0bmy-app\n\n\n\n\n")
         self.assertEqual(rc, 0, f"output: {output!r}")
         data = tomllib.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(data["project"]["name"], "my-app")
@@ -556,7 +556,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         """Enter through prompts, then 'n' at confirm → rc=1 (cancel), no TOML file."""
         target = self._workspace()
         out = target / "staged.toml"
-        rc, output = self._spawn_pty(target, out, b"\n\n\nn\n")
+        rc, output = self._spawn_pty(target, out, b"\n\n\n\nn\n")
         self.assertEqual(rc, 1, f"output: {output!r}")
         self.assertFalse(out.exists(),
                          f"TOML should not exist after decline; output: {output!r}")
@@ -698,6 +698,12 @@ class TestInitTuiPTYE2E(unittest.TestCase):
             # Ctrl-A (move to start) + Ctrl-K (clear) + custom name + Enter
             os.write(master, b"\x01\x0bcustom-app\n")
 
+            # Accept repo topology select (Enter = auto default)
+            o = _wait_for(b"Repo topology", time.monotonic() + 5)
+            if not o:
+                self.fail(f"topology prompt didn't appear; rc={proc.returncode}")
+            os.write(master, b"\n")
+
             # Wait for agent checkbox to appear
             o = _wait_for(b"Select agents", time.monotonic() + 5)
             if not o:
@@ -779,7 +785,24 @@ class TestInitTuiPTYE2E(unittest.TestCase):
 
         os.write(master, b"\n")
 
-        # Wait for "Select agents" to appear (we're past the name prompt)
+        # Accept repo topology select (Enter = auto default)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            r, _, _ = select.select([master], [], [], 0.2)
+            if r:
+                try:
+                    chunk = os.read(master, 4096)
+                    if chunk:
+                        output += chunk
+                        if b"Repo topology" in output or b"topology" in output.lower():
+                            break
+                except OSError:
+                    break
+            if proc.poll() is not None:
+                break
+        os.write(master, b"\n")
+
+        # Wait for "Select agents" to appear (we're past name + topology)
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             r, _, _ = select.select([master], [], [], 0.2)
@@ -830,6 +853,119 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, f"output: {output!r}")
         self.assertFalse(out.exists(),
                          f"TOML should not exist after Ctrl-C during checkbox; output: {output!r}")
+
+
+class TopologyWizardNodeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = _load()
+        cls.tw = cls.mod._load_toml_write()
+
+    def test_topology_merged_into_configured_when_worktree_flow_enabled(self):
+        text = self.mod._render_manifest(
+            self.tw,
+            "demo",
+            ["claude"],
+            [{"id": "worktree-flow", "version": "1.3.0"}],
+            configured={"worktree-flow": {"repo_topology": "standalone"}},
+        )
+        self.assertIn("[recipes.worktree-flow.config]", text)
+        self.assertIn('repo_topology = "standalone"', text)
+
+    def test_run_wizard_asks_topology_and_writes_override(self):
+        """Mock questionary select after project name; write repo_topology when wf enabled."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        target = Path(tmp.name) / "prj"
+        target.mkdir()
+        out = Path(tmp.name) / "staged.toml"
+
+        class FakeChoice:
+            def __init__(self, title, value, checked=False):
+                self.title = title
+                self.value = value
+                self.checked = checked
+
+        testcase = self
+
+        class BoundFakeQ:
+            Choice = FakeChoice
+
+            @staticmethod
+            def text(prompt, default=""):
+                class A:
+                    def ask(self_inner):
+                        return "demo"
+                return A()
+
+            @staticmethod
+            def select(prompt, choices=None, default=None):
+                class A:
+                    def ask(self_inner):
+                        testcase.assertIn("topology", prompt.lower())
+                        if choices:
+                            testcase.assertEqual(choices[0].value, "auto")
+                        return "standalone"
+                return A()
+
+            @staticmethod
+            def checkbox(prompt, choices=None):
+                class A:
+                    def ask(self_inner):
+                        if "agents" in prompt.lower():
+                            return ["claude"]
+                        if "recipes" in prompt.lower():
+                            return [
+                                {
+                                    "id": "worktree-flow",
+                                    "version": "1.3.0",
+                                    "description": "wt",
+                                }
+                            ]
+                        return []
+                return A()
+
+            @staticmethod
+            def confirm(prompt, default=True):
+                class A:
+                    def ask(self_inner):
+                        return True
+                return A()
+
+        import types
+        fake_console = mock.MagicMock()
+        rich_console = types.ModuleType("rich.console")
+        rich_console.Console = mock.MagicMock(return_value=fake_console)
+        rich_panel = types.ModuleType("rich.panel")
+        rich_panel.Panel = mock.MagicMock(return_value="panel")
+        rich = types.ModuleType("rich")
+        with mock.patch.object(self.mod, "_ensure_deps", return_value=None), \
+             mock.patch.object(
+                 self.mod,
+                 "_catalog_recipes",
+                 return_value=[
+                     {"id": "worktree-flow", "version": "1.3.0", "description": "wt"}
+                 ],
+             ), \
+             mock.patch.object(self.mod, "_configure_recipes", return_value={}), \
+             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch.object(sys.stdout, "isatty", return_value=True), \
+             mock.patch.dict(
+                 sys.modules,
+                 {
+                     "questionary": BoundFakeQ,
+                     "rich": rich,
+                     "rich.console": rich_console,
+                     "rich.panel": rich_panel,
+                 },
+             ):
+            rc = self.mod.run_wizard(
+                target=target, name_prefill="demo", out_path=out
+            )
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.is_file())
+        self.assertIn('repo_topology = "standalone"', out.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

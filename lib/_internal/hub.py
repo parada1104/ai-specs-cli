@@ -178,6 +178,8 @@ class StatusSummary:
     headline: str
     checks: list
     version: str
+    topology: str = ""
+    topology_via: str = ""
 
 
 def status_summary(root: Path) -> StatusSummary:
@@ -193,6 +195,21 @@ def status_summary(root: Path) -> StatusSummary:
         headline = f"{warn} warning{'s' if warn != 1 else ''}"
     else:
         headline = "healthy"
+    topology = ""
+    topology_via = ""
+    manifest = root / "ai-specs" / "ai-specs.toml"
+    if manifest.is_file():
+        try:
+            import tomllib
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+            wf = (data.get("recipes") or {}).get("worktree-flow") or {}
+            if isinstance(wf, dict) and wf.get("enabled") is True:
+                cfg_val = str((wf.get("config") or {}).get("repo_topology") or "auto")
+                res = _util.resolve_repo_topology(root, cfg_val)
+                topology = res.resolved
+                topology_via = res.via
+        except Exception:
+            pass
     return StatusSummary(
         root=root,
         ok=counts[Sev.OK],
@@ -203,6 +220,8 @@ def status_summary(root: Path) -> StatusSummary:
         headline=headline,
         checks=list(doc.checks),
         version=_read_version(),
+        topology=topology,
+        topology_via=topology_via,
     )
 
 
@@ -216,6 +235,9 @@ def _run_noninteractive(target: Path) -> int:
     print(f"ai-specs status — {summary.headline}")
     print(f"  version: {summary.version}")
     print(f"  target: {summary.root}")
+    if summary.topology:
+        via = summary.topology_via or "auto"
+        print(f"  topology: {summary.topology} ({via})")
     print(
         f"  Summary: {summary.ok} OK, {summary.info} INFO, "
         f"{summary.warn} WARN, {summary.error} ERROR"
@@ -320,6 +342,14 @@ class StatusPanel:
         table.add_column()
         table.add_row("version", self.summary.version)
         table.add_row("target", str(self.summary.root))
+        if self.summary.topology:
+            via = self.summary.topology_via or "auto"
+            label = self.summary.topology
+            if via == "auto":
+                label = f"{self.summary.topology} (auto→{self.summary.topology})"
+            else:
+                label = f"{self.summary.topology} (via {via})"
+            table.add_row("topology", label)
         table.add_row(
             "Summary:",
             f"{self.summary.ok} OK, {self.summary.info} INFO, "

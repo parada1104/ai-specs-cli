@@ -970,5 +970,39 @@ class VcsFragmentIsolationTests(unittest.TestCase):
         self.assertIn("Create a worktree.", content)
 
 
+
+class RepoTopologyBriefTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(
+            ROOT / "lib" / "_internal" / "agents-render.py",
+            "agents_render_topology",
+        )
+
+    def test_repo_topology_line_in_project_section(self):
+        import tempfile
+        from pathlib import Path as P
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_repo_topology import make_super_with_submodule
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(P(tmp.name))
+        resolved = {
+            "bindings": {"worktree-isolation": "worktree-flow"},
+            "enabled": ["worktree-flow"],
+            "recipes": {
+                "worktree-flow": {
+                    "integration_branch": "main",
+                    "repo_topology": "auto",
+                }
+            },
+            "project_root": str(super_repo),
+        }
+        manifest = {"project": {"name": "topo"}, "agents": {"enabled": ["claude"]}}
+        lines = self.mod._section_project(manifest, resolved)
+        text = "\n".join(lines)
+        self.assertIn("- **Repo topology**: `monorepo-submodules` (via auto)", text)
+
 if __name__ == "__main__":
     unittest.main()
