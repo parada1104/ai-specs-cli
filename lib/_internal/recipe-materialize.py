@@ -338,6 +338,17 @@ def materialize_template(recipe_dir: Path, tpl: Any, project_root: Path) -> None
         raise RuntimeError(f"template source not found: {src}")
     if tpl.condition == "not_exists":
         if dest.exists():
+            util = _load_util()
+            if util.override_is_stale(src, dest):
+                warn(
+                    "worktree-flow: your override\n"
+                    f"  {tpl.target}\n"
+                    "differs from the current catalog template "
+                    "(condition=not_exists, not refreshed).\n"
+                    "Review upstream changes, then either re-apply your "
+                    "customizations or refresh with:\n"
+                    f"  rm {tpl.target} && ai-specs sync"
+                )
             print(f"    · template skipped (exists) {tpl.target}")
             return
     dest.parent.mkdir(parents=True, exist_ok=True)

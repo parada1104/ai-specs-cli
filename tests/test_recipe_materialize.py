@@ -1062,5 +1062,86 @@ class BriefFragmentsMaterializeIntegrationTests(unittest.TestCase):
             self.assertEqual(bf["workflow_rules"][0]["text"], "A rule from brief-recipe.")
 
 
+
+class StaleCleanupOverrideTests(unittest.TestCase):
+    """ADDED Stale Cleanup Override Detection — sync WARN path."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_stale_override")
+        import tomllib
+        with open(ROOT / "catalog" / "recipes" / "worktree-flow" / "recipe.toml", "rb") as fh:
+            cls.version = tomllib.load(fh)["recipe"]["version"]
+
+    def _make_wf_project(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        ai_specs = root / "ai-specs"
+        ai_specs.mkdir()
+        (ai_specs / "skills").mkdir()
+        (ai_specs / "commands").mkdir()
+        (ai_specs / "ai-specs.toml").write_text(
+            "[project]\nname = 'fixture'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            f'[recipes.worktree-flow]\nenabled = true\nversion = "{self.version}"\n'
+        )
+        return root
+
+    def _cleanup_target(self, root: Path) -> Path:
+        return (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides" / "bin"
+            / "worktree-cleanup.sh"
+        )
+
+    def _catalog_src(self) -> Path:
+        return (
+            ROOT / "catalog" / "recipes" / "worktree-flow" / "templates"
+            / "worktree-cleanup.sh"
+        )
+
+    def test_identical_override_no_stale_warn(self):
+        root = self._make_wf_project()
+        dest = self._cleanup_target(root)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        payload = self._catalog_src().read_bytes()
+        dest.write_bytes(payload)
+        buf = io.StringIO()
+        with mock.patch.object(self.mod.sys, "stderr", buf):
+            rc = self.mod.materialize_recipes(root, ROOT)
+        self.assertEqual(rc, 0)
+        self.assertEqual(dest.read_bytes(), payload)
+        self.assertNotIn("not refreshed", buf.getvalue())
+        self.assertNotIn("condition=not_exists", buf.getvalue())
+
+    def test_divergent_override_warns_and_sync_succeeds(self):
+        root = self._make_wf_project()
+        dest = self._cleanup_target(root)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        custom = b"# customized override\n"
+        dest.write_bytes(custom)
+        buf = io.StringIO()
+        with mock.patch.object(self.mod.sys, "stderr", buf):
+            rc = self.mod.materialize_recipes(root, ROOT)
+        self.assertEqual(rc, 0)
+        self.assertEqual(dest.read_bytes(), custom)
+        err = buf.getvalue()
+        self.assertIn("not refreshed", err)
+        self.assertIn("worktree-cleanup.sh", err)
+        self.assertIn("rm ", err)
+        self.assertIn("ai-specs sync", err)
+
+    def test_missing_override_gets_fresh_copy(self):
+        root = self._make_wf_project()
+        dest = self._cleanup_target(root)
+        self.assertFalse(dest.exists())
+        buf = io.StringIO()
+        with mock.patch.object(self.mod.sys, "stderr", buf):
+            rc = self.mod.materialize_recipes(root, ROOT)
+        self.assertEqual(rc, 0)
+        self.assertTrue(dest.is_file())
+        self.assertEqual(dest.read_bytes(), self._catalog_src().read_bytes())
+        self.assertNotIn("not refreshed", buf.getvalue())
+
 if __name__ == "__main__":
     unittest.main()
