@@ -1004,5 +1004,33 @@ class RepoTopologyBriefTests(unittest.TestCase):
         text = "\n".join(lines)
         self.assertIn("- **Repo topology**: `monorepo-submodules` (via auto)", text)
 
+
+    def test_repo_topology_omitted_when_worktree_flow_disabled(self):
+        """Config dict alone must not surface Repo topology when recipe disabled."""
+        import tempfile
+        from pathlib import Path as P
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_repo_topology import make_super_with_submodule
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(P(tmp.name))
+        resolved = {
+            "bindings": {},
+            "enabled": [],  # worktree-flow NOT enabled
+            "recipes": {
+                "worktree-flow": {
+                    "integration_branch": "main",
+                    "repo_topology": "auto",
+                }
+            },
+            "project_root": str(super_repo),
+        }
+        manifest = {"project": {"name": "topo"}, "agents": {"enabled": ["claude"]}}
+        lines = self.mod._section_project(manifest, resolved)
+        text = "\n".join(lines)
+        self.assertNotIn("Repo topology", text)
+
+
 if __name__ == "__main__":
     unittest.main()
