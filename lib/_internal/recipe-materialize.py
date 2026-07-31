@@ -331,7 +331,12 @@ def materialize_command(
     print(f"    ✓ command {cmd.id}")
 
 
-def materialize_template(recipe_dir: Path, tpl: Any, project_root: Path) -> None:
+def materialize_template(
+    recipe_dir: Path,
+    tpl: Any,
+    project_root: Path,
+    merged_cfg: dict[str, Any] | None = None,
+) -> None:
     src = recipe_dir / tpl.source
     dest = project_root / tpl.target
     if not src.is_file():
@@ -352,7 +357,16 @@ def materialize_template(recipe_dir: Path, tpl: Any, project_root: Path) -> None
             print(f"    · template skipped (exists) {tpl.target}")
             return
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    content = src.read_text()
+    if REPO_TOPOLOGY_PLACEHOLDER in content:
+        topo = "auto"
+        if merged_cfg is not None:
+            topo = str(merged_cfg.get("repo_topology", "auto"))
+        content = content.replace(REPO_TOPOLOGY_PLACEHOLDER, topo)
+        dest.write_text(content)
+        os.chmod(dest, src.stat().st_mode)
+    else:
+        shutil.copy2(src, dest)
     print(f"    ✓ template {tpl.target}")
 
 
@@ -372,6 +386,7 @@ def hook_script_rel_path(recipe_id: str, hook: Any) -> str:
 
 
 GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
+REPO_TOPOLOGY_PLACEHOLDER = "__WORKTREE_REPO_TOPOLOGY__"
 
 
 def materialize_hook_script(
@@ -856,7 +871,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
         # Templates
         for tpl in recipe.templates:
-            materialize_template(recipe_dir, tpl, project_root)
+            materialize_template(recipe_dir, tpl, project_root, merged_cfg)
 
         # Docs
         for doc in recipe.docs:

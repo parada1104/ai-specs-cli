@@ -16,6 +16,11 @@ linked worktrees. `standalone` / `monorepo-apps` keep a single-repo pass.
 
 Optional scope flags (forwarded to the script):
 
+- `--topology <value>` — `auto` (default / stamped), `standalone`,
+  `monorepo-apps`, or `monorepo-submodules`. Pass the project's configured
+  `repo_topology` so an explicit `standalone`/`monorepo-apps` does **not**
+  enumerate submodules even when `.gitmodules` exists (vendored-submodule
+  mitigation). Sync stamps `__WORKTREE_REPO_TOPOLOGY__` like gate_mode.
 - `--submodule <path>` / `--subrepo <path>` (repeatable) — limit to one or more
   initialized modules. Default = all initialized submodules.
 - On a standalone repo these flags are inert (single pass), not an error.

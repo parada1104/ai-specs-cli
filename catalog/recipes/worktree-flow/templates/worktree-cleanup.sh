@@ -12,11 +12,14 @@
 #
 # Usage:
 #   worktree-cleanup.sh [--dir <worktrees_dir>] [--base <integration_branch>]
-#                       [--dry-run] [--submodule <path>|--subrepo <path>]...
+#                       [--dry-run] [--topology <value>]
+#                       [--submodule <path>|--subrepo <path>]...
 #
 # Defaults:
 #   --dir   .worktrees
 #   --base  current branch of each scanned repo (or --base when provided)
+#   --topology  stamped sync value, else auto
+#               (auto|standalone|monorepo-apps|monorepo-submodules)
 #   --submodule / --subrepo  (none = all initialized submodules)
 #
 # Environment variables:
@@ -34,6 +37,9 @@ WORKTREES_DIR=".worktrees"
 BASE_BRANCH=""
 DRY_RUN=0
 SUBMODULE_SCOPE=()
+# Stamped at sync (like worktree-gate.sh __WORKTREE_GATE_MODE__). Flag wins.
+stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"
+TOPOLOGY=""
 
 usage() {
     sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
@@ -44,6 +50,8 @@ while [[ $# -gt 0 ]]; do
         --dir) WORKTREES_DIR="${2:?--dir requires a value}"; shift 2 ;;
         --base) BASE_BRANCH="${2:?--base requires a value}"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --topology)
+            TOPOLOGY="${2:?--topology requires a value}"; shift 2 ;;
         --submodule|--subrepo)
             SUBMODULE_SCOPE+=("${2:?$1 requires a value}"); shift 2 ;;
         -h|--help) usage; exit 0 ;;
@@ -58,6 +66,17 @@ WT_ROOT="$SUPER_ROOT/${WORKTREES_DIR%/}"
 # Absolute directory that holds the worktrees we are allowed to clean.
 # Shared across all modules (not recomputed per submodule).
 WT_PREFIX="$WT_ROOT/"
+
+# Resolve topology: --topology flag > sync-stamped value > auto.
+# Invalid/unstamped placeholder falls back to auto (self-detect).
+_resolve_repo_topology() {
+    local candidate="${TOPOLOGY:-$stamped_repo_topology}"
+    case "$candidate" in
+        auto|standalone|monorepo-apps|monorepo-submodules) echo "$candidate" ;;
+        *) echo "auto" ;;
+    esac
+}
+RESOLVED_TOPOLOGY="$(_resolve_repo_topology)"
 
 # Parse `git worktree list --porcelain` into (path, sha, branch) records.
 wt_path="" wt_sha="" wt_branch=""
@@ -244,9 +263,17 @@ _in_scope() {
     return 1
 }
 
-# Topology self-detect (bash mirror of util.resolve_repo_topology):
-# monorepo-submodules iff .gitmodules exists AND has >=1 non-'-' status line.
+# Topology resolution (bash mirror of util.resolve_repo_topology):
+# Explicit standalone/monorepo-apps → SUPER_ROOT only (ignore .gitmodules).
+# auto → self-detect; monorepo-submodules → initialized modules (may be empty).
 enumerate_modules() {
+    # Explicit override: never misclassify vendored .gitmodules as submodules.
+    case "$RESOLVED_TOPOLOGY" in
+        standalone|monorepo-apps)
+            printf '%s\n' "$SUPER_ROOT"
+            return 0
+            ;;
+    esac
     # Avoid `grep -q` under `set -o pipefail`: with 2+ initialized modules,
     # grep -q exits early, SIGPIPEs git, and the pipeline fails → false
     # standalone classification. Drain status in a while-read instead.

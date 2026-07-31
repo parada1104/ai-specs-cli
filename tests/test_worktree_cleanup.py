@@ -712,5 +712,28 @@ class WorktreeCleanupTests(unittest.TestCase):
         self.assertIn("would remove feat-merged", out.stdout)
 
 
+
+    def test_explicit_topology_standalone_skips_submodule_enumeration(self):
+        """Configured standalone must not scan submodules even if .gitmodules exists."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(Path(tmp.name), path="apps/api")
+        wt = self._add_submodule_worktree(super_repo, "apps/api", "feat-done")
+        (wt / "f.txt").write_text("x\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "work")
+        git(super_repo / "apps/api", "merge", "-q", "--no-ff", "-m", "merge", "feat-done")
+
+        # Auto/default would find the submodule-owned worktree.
+        auto_out = self._run_cleanup(super_repo, "--dry-run")
+        self.assertIn("would remove apps/api-feat-done", auto_out.stdout)
+
+        # Explicit standalone: only SUPER_ROOT is scanned; submodule worktrees
+        # never appear on the superproject worktree list.
+        out = self._run_cleanup(super_repo, "--dry-run", "--topology", "standalone")
+        self.assertNotIn("would remove apps/api-feat-done", out.stdout)
+        self.assertNotIn("apps/api-feat-done", out.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
