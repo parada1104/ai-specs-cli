@@ -197,5 +197,23 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertTrue(script.is_file(), "cleanup script should materialize")
 
 
+    def test_worktree_new_documents_submodule_create_contract(self):
+        """Doc-content only — live git worktree add under submodules is manual/agent."""
+        text = (RECIPE_DIR / "commands" / "worktree-new.md").read_text()
+        self.assertIn("git -C", text)
+        self.assertIn("worktrees_dir", text)
+        self.assertIn("<subrepo>-<slug>", text)
+        self.assertIn("show-toplevel", text)
+        self.assertIn("longest", text.lower())
+        self.assertIn("submodule update --init", text)
+
+    def test_brief_workflow_rules_require_which_repo_check(self):
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        rules = " ".join(recipe.brief.workflow_rules)
+        self.assertIn("which", rules.lower())
+        self.assertIn("show-toplevel", rules)
+        self.assertIn("monorepo-submodules", rules)
+
+
 if __name__ == "__main__":
     unittest.main()
