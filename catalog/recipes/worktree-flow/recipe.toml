@@ -2,7 +2,7 @@
 id = "worktree-flow"
 name = "Worktree Flow"
 description = "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work"
-version = "1.2.4"
+version = "1.3.0"
 author = "ai-specs"
 license = "MIT"
 tags = ["infra", "worktree"]
@@ -72,6 +72,7 @@ workflow_rules = [
     "Do not merge or push to `{config.integration_branch}` without a PR and explicit human instruction.",
     "Preserve unrelated worktree changes; never revert changes you did not make.",
     "Before dispatching a write-capable subagent or task, verify the current worktree and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.",
+    "If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). Create a worktree first (e.g. `/worktree-new`) and write there instead.",
 ]
 
 [[provides.hooks]]
@@ -82,6 +83,13 @@ matcher = "Edit|Write|MultiEdit|NotebookEdit"
 blocking = true
 description = "Block writes to the main worktree on a protected branch"
 
+[[provides.hooks]]
+id = "worktree-gate-shell"
+event = "pre-tool-use"
+script = "hooks/worktree-gate.sh"
+matcher = "Bash|Shell|Execute|Terminal"
+blocking = true
+description = "Best-effort block shell commands that write into the main worktree on a protected branch (bash-bypass coverage)"
 [[provides.templates]]
 source = "templates/worktree-cleanup.sh"
 target = "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"
