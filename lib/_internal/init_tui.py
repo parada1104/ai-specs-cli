@@ -302,8 +302,13 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         # 3.5 Configure selected recipes (optional per-recipe)
         catalog_dir = _ai_specs_home() / "catalog" / "recipes"
         configured = _configure_recipes(recipes, console, catalog_dir) if recipes else {}
+        # Identity topology is a convenience default only. A later explicit
+        # answer from _configure_recipes (schema-driven enum) wins — do not
+        # clobber repo_topology if already set.
         if any(r.get("id") == "worktree-flow" for r in recipes):
-            configured.setdefault("worktree-flow", {})["repo_topology"] = topology
+            configured.setdefault("worktree-flow", {}).setdefault(
+                "repo_topology", topology
+            )
 
         # 4. Preview + confirm
         console.print()

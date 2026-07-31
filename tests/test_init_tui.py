@@ -973,5 +973,106 @@ class TopologyWizardNodeTests(unittest.TestCase):
         self.assertIn('repo_topology = "standalone"', out.read_text())
 
 
+
+    def test_configure_recipes_topology_wins_over_identity_prompt(self):
+        """Later explicit recipe-config answer must not be clobbered by identity."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        target = Path(tmp.name) / "prj"
+        target.mkdir()
+        out = Path(tmp.name) / "staged.toml"
+
+        class FakeChoice:
+            def __init__(self, title, value, checked=False):
+                self.title = title
+                self.value = value
+                self.checked = checked
+
+        testcase = self
+
+        class BoundFakeQ:
+            Choice = FakeChoice
+
+            @staticmethod
+            def text(prompt, default=""):
+                class A:
+                    def ask(self_inner):
+                        return "demo"
+                return A()
+
+            @staticmethod
+            def select(prompt, choices=None, default=None):
+                class A:
+                    def ask(self_inner):
+                        # Identity topology prompt → monorepo-submodules
+                        testcase.assertIn("topology", prompt.lower())
+                        return "monorepo-submodules"
+                return A()
+
+            @staticmethod
+            def checkbox(prompt, choices=None):
+                class A:
+                    def ask(self_inner):
+                        if "agents" in prompt.lower():
+                            return ["claude"]
+                        if "recipes" in prompt.lower():
+                            return [
+                                {
+                                    "id": "worktree-flow",
+                                    "version": "1.3.0",
+                                    "description": "wt",
+                                }
+                            ]
+                        return []
+                return A()
+
+            @staticmethod
+            def confirm(prompt, default=True):
+                class A:
+                    def ask(self_inner):
+                        return True
+                return A()
+
+        import types
+        fake_console = mock.MagicMock()
+        rich_console = types.ModuleType("rich.console")
+        rich_console.Console = mock.MagicMock(return_value=fake_console)
+        rich_panel = types.ModuleType("rich.panel")
+        rich_panel.Panel = mock.MagicMock(return_value="panel")
+        rich = types.ModuleType("rich")
+        # _configure_recipes returns a DIFFERENT topology than identity
+        with mock.patch.object(self.mod, "_ensure_deps", return_value=None), \
+             mock.patch.object(
+                 self.mod,
+                 "_catalog_recipes",
+                 return_value=[
+                     {"id": "worktree-flow", "version": "1.3.0", "description": "wt"}
+                 ],
+             ), \
+             mock.patch.object(
+                 self.mod,
+                 "_configure_recipes",
+                 return_value={"worktree-flow": {"repo_topology": "standalone"}},
+             ), \
+             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch.object(sys.stdout, "isatty", return_value=True), \
+             mock.patch.dict(
+                 sys.modules,
+                 {
+                     "questionary": BoundFakeQ,
+                     "rich": rich,
+                     "rich.console": rich_console,
+                     "rich.panel": rich_panel,
+                 },
+             ):
+            rc = self.mod.run_wizard(
+                target=target, name_prefill="demo", out_path=out
+            )
+        self.assertEqual(rc, 0)
+        staged = out.read_text()
+        self.assertIn('repo_topology = "standalone"', staged)
+        self.assertNotIn('repo_topology = "monorepo-submodules"', staged)
+
+
 if __name__ == "__main__":
     unittest.main()
