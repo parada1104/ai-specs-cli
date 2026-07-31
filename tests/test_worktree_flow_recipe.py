@@ -145,5 +145,57 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertIn("SDD artifact phases", text)
 
 
+    def test_sync_defaults_repo_topology_to_auto(self):
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        import tomllib
+        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
+            manifest = tomllib.load(fh)
+        user_cfg = (manifest.get("recipes") or {}).get("worktree-flow", {}).get("config") or {}
+        merged = self.materialize.merge_config(recipe, user_cfg)
+        self.assertEqual(merged.get("repo_topology"), "auto")
+
+    def test_sync_rejects_invalid_repo_topology(self):
+        root = self._make_project_with_config(
+            '[recipes.worktree-flow.config]\nrepo_topology = "nested"'
+        )
+        import subprocess
+        proc = subprocess.run(
+            [
+                "python3",
+                str(RECIPE_MATERIALIZE_PATH),
+                str(root),
+                str(ROOT),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        combined = proc.stderr + proc.stdout
+        self.assertIn("nested", combined)
+        self.assertRegex(
+            combined,
+            r"auto.*standalone.*monorepo-apps.*monorepo-submodules"
+            r"|auto \| standalone \| monorepo-apps \| monorepo-submodules",
+        )
+
+    def test_sync_materializes_with_repo_topology_default(self):
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        skill = (
+            recipe_skill_dir(root, "worktree-flow", "worktree-flow") / "SKILL.md"
+        )
+        self.assertTrue(skill.is_file(), "skill should materialize with default topology")
+        for cmd in ("worktree-new", "worktree-clean"):
+            path = cache_command(root, cmd)
+            self.assertTrue(path.is_file(), f"command {cmd} should materialize")
+        script = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides" / "bin"
+            / "worktree-cleanup.sh"
+        )
+        self.assertTrue(script.is_file(), "cleanup script should materialize")
+
+
 if __name__ == "__main__":
     unittest.main()
