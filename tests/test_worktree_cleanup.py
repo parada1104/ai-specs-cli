@@ -18,6 +18,11 @@ CLEANUP_SCRIPT = (
     ROOT / "catalog" / "recipes" / "worktree-flow" / "templates" / "worktree-cleanup.sh"
 )
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from test_repo_topology import make_super_with_submodule
+
 
 def git(repo: Path, *args: str) -> str:
     env = dict(os.environ)
@@ -588,6 +593,123 @@ class WorktreeCleanupTests(unittest.TestCase):
 
         self.assertIn("skipped feat-dual-upstream (unmerged)", out.stdout)
         self.assertNotIn("would remove feat-dual-upstream", out.stdout)
+
+
+    # ── Submodule topology enumeration (worktree-flow-repo-topology) ──
+
+    def _add_submodule_worktree(self, super_repo: Path, module: str, branch: str) -> Path:
+        """Create a linked worktree owned by submodule at shared .worktrees/<module>-<branch>."""
+        wt = super_repo / ".worktrees" / f"{module}-{branch}"
+        wt.parent.mkdir(parents=True, exist_ok=True)
+        git(
+            super_repo / module,
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            branch,
+            str(wt.resolve()),
+            "main",
+        )
+        return wt
+
+    def test_submodule_merged_worktree_scanned_from_super(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(Path(tmp.name), path="apps/api")
+        wt = self._add_submodule_worktree(super_repo, "apps/api", "feat-done")
+        (wt / "f.txt").write_text("x\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "work")
+        git(super_repo / "apps/api", "merge", "-q", "--no-ff", "-m", "merge", "feat-done")
+
+        out = self._run_cleanup(super_repo, "--dry-run")
+        self.assertIn("would remove apps/api-feat-done", out.stdout)
+        # Shared WT_PREFIX is super worktrees_dir
+        self.assertTrue(str(wt).startswith(str(super_repo / ".worktrees")))
+
+    def test_multiple_submodules_both_scanned(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name),
+            path="apps/api",
+            second={"path": "apps/web", "name": "web"},
+        )
+        wt_api = self._add_submodule_worktree(super_repo, "apps/api", "feat-api")
+        wt_web = self._add_submodule_worktree(super_repo, "apps/web", "feat-web")
+        for wt, mod, br in (
+            (wt_api, "apps/api", "feat-api"),
+            (wt_web, "apps/web", "feat-web"),
+        ):
+            (wt / "f.txt").write_text("x\n")
+            git(wt, "add", "-A")
+            git(wt, "commit", "-qm", "work")
+            git(super_repo / mod, "merge", "-q", "--no-ff", "-m", "merge", br)
+
+        out = self._run_cleanup(super_repo, "--dry-run")
+        self.assertIn("would remove apps/api-feat-api", out.stdout)
+        self.assertIn("would remove apps/web-feat-web", out.stdout)
+
+    def test_submodule_scope_flag_limits_to_one_module(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name),
+            path="apps/api",
+            second={"path": "apps/web", "name": "web"},
+        )
+        wt_api = self._add_submodule_worktree(super_repo, "apps/api", "feat-api")
+        wt_web = self._add_submodule_worktree(super_repo, "apps/web", "feat-web")
+        for wt, mod, br in (
+            (wt_api, "apps/api", "feat-api"),
+            (wt_web, "apps/web", "feat-web"),
+        ):
+            (wt / "f.txt").write_text("x\n")
+            git(wt, "add", "-A")
+            git(wt, "commit", "-qm", "work")
+            git(super_repo / mod, "merge", "-q", "--no-ff", "-m", "merge", br)
+
+        out = self._run_cleanup(
+            super_repo, "--dry-run", "--submodule", "apps/api"
+        )
+        self.assertIn("would remove apps/api-feat-api", out.stdout)
+        self.assertNotIn("would remove apps/web-feat-web", out.stdout)
+
+        out2 = self._run_cleanup(
+            super_repo, "--dry-run", "--subrepo", "apps/web"
+        )
+        self.assertIn("would remove apps/web-feat-web", out2.stdout)
+        self.assertNotIn("would remove apps/api-feat-api", out2.stdout)
+
+    def test_uninitialized_submodule_skipped(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name),
+            path="apps/api",
+            second={"path": "apps/web", "name": "web", "initialized": False},
+        )
+        wt = self._add_submodule_worktree(super_repo, "apps/api", "feat-done")
+        (wt / "f.txt").write_text("x\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "work")
+        git(super_repo / "apps/api", "merge", "-q", "--no-ff", "-m", "merge", "feat-done")
+
+        # Must not fail trying to git -C the uninitialized module
+        out = self._run_cleanup(super_repo, "--dry-run")
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("would remove apps/api-feat-done", out.stdout)
+
+    def test_submodule_flag_inert_on_standalone(self):
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-merged")
+        (wt / "f.txt").write_text("x\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "work")
+        git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feat-merged")
+        out = self._run_cleanup(repo, "--dry-run", "--submodule", "apps/api")
+        self.assertIn("would remove feat-merged", out.stdout)
 
 
 if __name__ == "__main__":
