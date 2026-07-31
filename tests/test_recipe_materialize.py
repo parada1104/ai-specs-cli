@@ -1140,7 +1140,14 @@ class StaleCleanupOverrideTests(unittest.TestCase):
             rc = self.mod.materialize_recipes(root, ROOT)
         self.assertEqual(rc, 0)
         self.assertTrue(dest.is_file())
-        self.assertEqual(dest.read_bytes(), self._catalog_src().read_bytes())
+        # Sync stamps __WORKTREE_REPO_TOPOLOGY__ (default auto), mirroring gate_mode.
+        expected = (
+            self._catalog_src()
+            .read_text()
+            .replace("__WORKTREE_REPO_TOPOLOGY__", "auto")
+        )
+        self.assertEqual(dest.read_text(), expected)
+        self.assertNotIn("__WORKTREE_REPO_TOPOLOGY__", dest.read_text())
         self.assertNotIn("not refreshed", buf.getvalue())
 
 if __name__ == "__main__":
