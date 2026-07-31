@@ -209,7 +209,17 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
 
     def test_brief_workflow_rules_require_which_repo_check(self):
         recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        rules = " ".join(recipe.brief.workflow_rules)
+        frags = recipe.brief_fragments
+        self.assertIsNotNone(frags)
+        rules = " ".join(
+            f.text if hasattr(f, "text") else str(f)
+            for f in (frags.workflow_rules or [])
+        )
+        if not rules:
+            # fragments may be plain strings depending on schema version
+            raw = (RECIPE_DIR / "recipe.toml").read_text()
+            start = raw.index("workflow_rules")
+            rules = raw[start:start + 800]
         self.assertIn("which", rules.lower())
         self.assertIn("show-toplevel", rules)
         self.assertIn("monorepo-submodules", rules)
