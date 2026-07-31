@@ -233,6 +233,168 @@ def resolve_repo_topology(
         return TopologyResolution("standalone", configured, via, (), False)
 
 
+class SubrepoResolutionError(ValueError):
+    """Raised when ``resolve_subrepo`` cannot pick a valid submodule path."""
+
+
+def parse_gitmodules_entries(repo_root: Path) -> tuple[tuple[str, str], ...]:
+    """Return ``(name, path)`` pairs registered in ``.gitmodules``.
+
+    Uses ``git config -f .gitmodules --get-regexp`` so parsing stays robust
+    versus hand-rolled INI. Order follows git's output; names are the middle
+    segment of ``submodule.<name>.path``.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "config",
+                "-f",
+                ".gitmodules",
+                "--get-regexp",
+                r"^submodule\..*\.path$",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, FileNotFoundError):
+        return ()
+    if proc.returncode != 0:
+        return ()
+    entries: list[tuple[str, str]] = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        key, path = parts[0].strip(), parts[1].strip()
+        # key = submodule.<name>.path
+        if not (key.startswith("submodule.") and key.endswith(".path")):
+            continue
+        name = key[len("submodule.") : -len(".path")]
+        if name and path:
+            entries.append((name, path))
+    return tuple(entries)
+
+
+def _git_show_toplevel(cwd: Path) -> Path | None:
+    """Return ``git -C <cwd> rev-parse --show-toplevel`` or None on failure."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, FileNotFoundError):
+        return None
+    if proc.returncode != 0:
+        return None
+    top = proc.stdout.strip()
+    return Path(top) if top else None
+
+
+def _infer_subrepo_from_cwd(
+    super_root: Path,
+    worktrees_dir: str,
+    initialized_paths: tuple[str, ...],
+    cwd: Path,
+) -> str | None:
+    """Infer submodule path from cwd (design §2a). No superproject-working-tree."""
+    top = _git_show_toplevel(cwd)
+    if top is None:
+        return None
+    try:
+        super_res = super_root.resolve()
+        top_res = top.resolve()
+        rel = os.path.relpath(str(top_res), str(super_res))
+    except (OSError, ValueError):
+        return None
+    if rel.startswith(".."):
+        # Not under the superproject.
+        return None
+    rel_posix = Path(rel).as_posix()
+    if rel_posix in initialized_paths:
+        return rel_posix  # primary submodule checkout
+
+    # linked worktree: top == <super>/<worktrees_dir>/<name>-<slug>
+    base = top_res.name
+    try:
+        parent = Path(os.path.relpath(str(top_res.parent), str(super_res))).as_posix()
+    except (OSError, ValueError):
+        return None
+    wt_dir = worktrees_dir.rstrip("/")
+    if parent != wt_dir:
+        return None
+    cands = [p for p in initialized_paths if base.startswith(p + "-")]
+    if not cands:
+        return None
+    return max(cands, key=len)
+
+
+def resolve_subrepo(
+    super_root: Path,
+    worktrees_dir: str,
+    initialized_paths: tuple[str, ...],
+    cwd: Path,
+    explicit: str | None,
+    gitmodules_entries: tuple[tuple[str, str], ...] | list[tuple[str, str]],
+) -> str:
+    """Resolve ``<subrepo>`` for monorepo-submodules ``/worktree-new`` (design §2).
+
+    Returns the submodule **path** (not name). Raises ``SubrepoResolutionError``
+    with a diagnostic message on every rejection path:
+    missing inference, explicit/inferred mismatch, unknown, ambiguous name,
+    or uninitialized.
+    """
+    entries = list(gitmodules_entries)
+    registered_paths = {p for (_n, p) in entries}
+
+    inferred = _infer_subrepo_from_cwd(
+        super_root, worktrees_dir, initialized_paths, cwd
+    )
+
+    explicit_norm = (explicit or "").strip() or None
+
+    if explicit_norm and inferred and explicit_norm != inferred:
+        raise SubrepoResolutionError(
+            f"cwd is inside submodule '{inferred}' but you passed '{explicit_norm}'"
+        )
+
+    subrepo = explicit_norm or inferred
+    if not subrepo:
+        raise SubrepoResolutionError(
+            "monorepo-submodules: pass <subrepo> (cannot infer from cwd)"
+        )
+
+    # Validate against .gitmodules: path first, then unique name.
+    if subrepo in registered_paths:
+        resolved_path = subrepo
+    else:
+        by_name = [p for (name, p) in entries if name == subrepo]
+        if len(by_name) == 0:
+            raise SubrepoResolutionError(f"unknown submodule '{subrepo}'")
+        if len(by_name) > 1:
+            raise SubrepoResolutionError(
+                f"ambiguous name '{subrepo}'; use its path instead"
+            )
+        resolved_path = by_name[0]
+
+    if resolved_path not in initialized_paths:
+        raise SubrepoResolutionError(
+            f"submodule '{resolved_path}' not initialized; run "
+            f"git submodule update --init {resolved_path}"
+        )
+
+    return resolved_path
+
+
+
 def override_is_stale(catalog_src: Path, materialized_dest: Path) -> bool:
     """True when a not_exists override exists but no longer matches catalog bytes.
 

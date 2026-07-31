@@ -48,6 +48,8 @@ Destination MUST be absolute. A relative path under `git -C <subrepo>` resolves
 
 #### `<subrepo>` resolution
 
+This command's `<subrepo>` selection is validated by `util.resolve_subrepo` (see `lib/_internal/util.py`).
+
 1. **cwd inference** via `git rev-parse --show-toplevel` (do **not** use
    `--show-superproject-working-tree` — it is empty from linked worktrees):
    - If toplevel is an initialized submodule path under the super root → that

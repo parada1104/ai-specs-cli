@@ -367,5 +367,182 @@ class OverrideIsStaleTests(unittest.TestCase):
         self.assertTrue(self.util.override_is_stale(src, dest))
 
 
+
+class ResolveSubrepoTests(unittest.TestCase):
+    """Behavioral tests for util.resolve_subrepo (design §2 / 8 delta scenarios)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.util = _load_util()
+
+    def _entries(self, super_repo: Path):
+        return self.util.parse_gitmodules_entries(super_repo)
+
+    def _add_linked_worktree(self, super_repo: Path, module: str, slug: str) -> Path:
+        wt = super_repo / ".worktrees" / f"{module}-{slug}"
+        wt.parent.mkdir(parents=True, exist_ok=True)
+        git(
+            super_repo / module,
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            slug,
+            str(wt.resolve()),
+            "main",
+        )
+        return wt
+
+    def test_cwd_inference_from_primary_checkout(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(Path(tmp.name), path="apps/api", name="api")
+        present, initialized = self.util.detect_submodules(super_repo)
+        self.assertTrue(present)
+        cwd = super_repo / "apps" / "api"
+        got = self.util.resolve_subrepo(
+            super_repo,
+            ".worktrees",
+            initialized,
+            cwd,
+            None,
+            self._entries(super_repo),
+        )
+        self.assertEqual(got, "apps/api")
+
+    def test_cwd_inference_from_linked_worktree_longest_prefix(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name),
+            path="alquimia-front",
+            name="alquimia-front",
+            second={"path": "alquimia-front-web", "name": "alquimia-front-web"},
+        )
+        _present, initialized = self.util.detect_submodules(super_repo)
+        wt = self._add_linked_worktree(super_repo, "alquimia-front-web", "feat-x")
+        got = self.util.resolve_subrepo(
+            super_repo,
+            ".worktrees",
+            initialized,
+            wt,
+            None,
+            self._entries(super_repo),
+        )
+        self.assertEqual(got, "alquimia-front-web")
+
+    def test_explicit_path_validated(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(Path(tmp.name), path="apps/api", name="api")
+        _p, initialized = self.util.detect_submodules(super_repo)
+        got = self.util.resolve_subrepo(
+            super_repo,
+            ".worktrees",
+            initialized,
+            super_repo,  # cwd not inside a submodule
+            "apps/api",
+            self._entries(super_repo),
+        )
+        self.assertEqual(got, "apps/api")
+
+    def test_explicit_unique_name_resolves_to_path(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(Path(tmp.name), path="apps/api", name="api")
+        _p, initialized = self.util.detect_submodules(super_repo)
+        got = self.util.resolve_subrepo(
+            super_repo,
+            ".worktrees",
+            initialized,
+            super_repo,
+            "api",
+            self._entries(super_repo),
+        )
+        self.assertEqual(got, "apps/api")
+
+    def test_explicit_inferred_mismatch_raises(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name),
+            path="apps/api",
+            name="api",
+            second={"path": "apps/web", "name": "web"},
+        )
+        _p, initialized = self.util.detect_submodules(super_repo)
+        cwd = super_repo / "apps" / "api"
+        with self.assertRaises(self.util.SubrepoResolutionError) as ctx:
+            self.util.resolve_subrepo(
+                super_repo,
+                ".worktrees",
+                initialized,
+                cwd,
+                "apps/web",
+                self._entries(super_repo),
+            )
+        msg = str(ctx.exception)
+        self.assertIn("apps/api", msg)
+        self.assertIn("apps/web", msg)
+
+    def test_uninitialized_submodule_rejected(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name), path="apps/api", name="api", initialized=False
+        )
+        _p, initialized = self.util.detect_submodules(super_repo)
+        self.assertEqual(initialized, ())
+        entries = self._entries(super_repo)
+        with self.assertRaises(self.util.SubrepoResolutionError) as ctx:
+            self.util.resolve_subrepo(
+                super_repo,
+                ".worktrees",
+                initialized,
+                super_repo,
+                "apps/api",
+                entries,
+            )
+        msg = str(ctx.exception)
+        self.assertIn("not initialized", msg.lower())
+        self.assertIn("git submodule update --init", msg)
+
+    def test_unknown_submodule_rejected(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(Path(tmp.name), path="apps/api", name="api")
+        _p, initialized = self.util.detect_submodules(super_repo)
+        with self.assertRaises(self.util.SubrepoResolutionError) as ctx:
+            self.util.resolve_subrepo(
+                super_repo,
+                ".worktrees",
+                initialized,
+                super_repo,
+                "does-not-exist",
+                self._entries(super_repo),
+            )
+        self.assertIn("unknown submodule", str(ctx.exception).lower())
+        self.assertIn("does-not-exist", str(ctx.exception))
+
+    def test_ambiguous_name_requires_path(self):
+        # gitmodules names are unique keys in real git; pass synthetic duplicate
+        # entries to exercise the design §2 ambiguous-name rejection path.
+        entries = (("shared", "apps/a"), ("shared", "apps/b"))
+        initialized = ("apps/a", "apps/b")
+        with self.assertRaises(self.util.SubrepoResolutionError) as ctx:
+            self.util.resolve_subrepo(
+                Path("/tmp"),
+                ".worktrees",
+                initialized,
+                Path("/tmp"),
+                "shared",
+                entries,
+            )
+        msg = str(ctx.exception).lower()
+        self.assertIn("ambiguous", msg)
+        self.assertIn("path", msg)
+
+
+
 if __name__ == "__main__":
     unittest.main()
