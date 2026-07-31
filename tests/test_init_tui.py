@@ -199,6 +199,8 @@ class TestRunWizardHarnessEnv(unittest.TestCase):
 
             text = mock.Mock()
             text.return_value.ask.return_value = "demo"
+            select = mock.Mock()
+            select.return_value.ask.return_value = "auto"
             checkbox = mock.Mock()
             checkbox.return_value.ask.side_effect = [["claude"], []]
             confirm = mock.Mock()
@@ -216,6 +218,10 @@ class TestRunWizardHarnessEnv(unittest.TestCase):
                 self.mod, "_load_sibling", side_effect=_sibling
             ), mock.patch.object(
                 questionary, "text", text
+            ), mock.patch.object(
+                questionary, "select", select
+            ), mock.patch.object(
+                questionary, "Choice", mock.Mock(side_effect=lambda **kw: kw)
             ), mock.patch.object(
                 questionary, "checkbox", checkbox
             ), mock.patch.object(
