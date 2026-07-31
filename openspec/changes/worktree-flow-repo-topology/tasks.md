@@ -90,18 +90,18 @@ uninitialized `-` status entry.
 (explicit-bypass scenarios); ADDED *Stale Cleanup Override Detection* (comparator
 unit only).
 
-- [ ] 1.1 RED: add shared submodule fixture builder used by helper + cleanup
+- [x] 1.1 RED: add shared submodule fixture builder used by helper + cleanup
       tests (e.g. `_make_super_with_submodule(tmp, *, initialized=True,
       path="apps/api", name=...)` plus optional second path / uninitialized
       entry). Assert fixture produces `.gitmodules` and the expected
       `git submodule status` prefix (`' '` vs `'-'`). No production code yet.
-- [ ] 1.2 RED: `detect_submodules` unit tests — (a) prefixes `' '`, `'+'`, `'U'`
+- [x] 1.2 RED: `detect_submodules` unit tests — (a) prefixes `' '`, `'+'`, `'U'`
       count as initialized; (b) `'-'` skipped; (c) no `.gitmodules` →
       `(False, ())`; (d) path registered in `.gitmodules` but missing from
       status ignored; (e) name≠path still returns the **path**. Satisfies Auto
       Topology Detection scenarios *Initialized submodules…*, *Only
       uninitialized…*, *No gitmodules…*.
-- [ ] 1.3 RED: `resolve_repo_topology` unit tests — `auto`+initialized →
+- [x] 1.3 RED: `resolve_repo_topology` unit tests — `auto`+initialized →
       `monorepo-submodules` / `via="auto"`; `auto`+only `-` or no gitmodules →
       `standalone`; `auto` never returns `monorepo-apps`; explicit
       `standalone` / `monorepo-apps` / `monorepo-submodules` bypass detection
@@ -110,16 +110,16 @@ unit only).
       `standalone` without raising. Satisfies Auto Topology Detection (*all
       four scenarios*) + Repo Topology Configuration (*Explicit standalone /
       monorepo-apps / monorepo-submodules bypasses detection*).
-- [ ] 1.4 RED: `override_is_stale` unit tests — missing dest → `False`; missing
+- [x] 1.4 RED: `override_is_stale` unit tests — missing dest → `False`; missing
       catalog src → `False`; identical bytes → `False`; divergent bytes →
       `True` (content/sha256, not mtime). Satisfies Stale Cleanup Override
       Detection comparator contract (design §6).
-- [ ] 1.5 GREEN: implement in `lib/_internal/util.py` (stdlib + `subprocess`
+- [x] 1.5 GREEN: implement in `lib/_internal/util.py` (stdlib + `subprocess`
       only; no `toml-read`/rich): frozen `@dataclass TopologyResolution`;
       `detect_submodules`; `resolve_repo_topology`; `override_is_stale` — match
       design §1 / §6 signatures exactly. Make 1.2–1.4 pass via `./tests/run.sh`
       on the new file.
-- [ ] 1.6 REFACTOR: keep git config path parsing (`git config -f .gitmodules
+- [x] 1.6 REFACTOR: keep git config path parsing (`git config -f .gitmodules
       --get-regexp`) and status parsing in small private helpers; confirm
       util.py still imports without third-party deps (existing
       `tests/test_util.py` import guard remains green).
@@ -131,19 +131,19 @@ unit only).
 **Reqs:** ADDED *Repo Topology Configuration* (Default when unset / Invalid enum
 rejected / materialize still succeeds with default).
 
-- [ ] 2.1 RED: extend `tests/test_worktree_flow_recipe.py` with
+- [x] 2.1 RED: extend `tests/test_worktree_flow_recipe.py` with
       `test_sync_defaults_repo_topology_to_auto` (manifest omits key → resolved
       config is `auto`, sync succeeds) and
       `test_sync_rejects_invalid_repo_topology` (`repo_topology = "nested"` →
       non-zero; stderr names `nested` and lists
       `auto | standalone | monorepo-apps | monorepo-submodules`) — mirror
       `test_sync_rejects_invalid_gate_mode`.
-- [ ] 2.2 RED: `test_sync_materializes_with_repo_topology_default` (or extend
+- [x] 2.2 RED: `test_sync_materializes_with_repo_topology_default` (or extend
       existing materialize assertion) — with no override, sync still
       materializes skill/commands/cleanup template; config block may omit the
       key (default applied by `merge_config`) or write `auto` if the test
       asserts stamped manifest output. Covers Default + materialize path.
-- [ ] 2.3 GREEN: add to `catalog/recipes/worktree-flow/recipe.toml`:
+- [x] 2.3 GREEN: add to `catalog/recipes/worktree-flow/recipe.toml`:
       ```toml
       [config.repo_topology]
       type = "string"
@@ -173,7 +173,7 @@ automatable: (1) doc-content assertion tests that the catalog prose contains the
 locked contract phrases; (2) recipe.toml `workflow_rules` string assertions
 (already pattern-matched elsewhere for brief fragments).
 
-- [ ] 3.1 PROSE: update `commands/worktree-new.md` per design §2–3 — `<subrepo>`
+- [x] 3.1 PROSE: update `commands/worktree-new.md` per design §2–3 — `<subrepo>`
       require/infer only under resolved `monorepo-submodules`; cwd inference via
       `rev-parse --show-toplevel` (primary path + longest `<path>-` prefix under
       `worktrees_dir`); explicit vs inferred mismatch hard-error; path-then-unique-name
@@ -182,23 +182,23 @@ locked contract phrases; (2) recipe.toml `workflow_rules` string assertions
       -b <branch> <integration_branch>`; standalone/apps keep today’s single-repo
       command. Closes Creation Contract scenarios (inference, longest-prefix,
       path/name validation, mismatch, uninitialized, unknown, ambiguous).
-- [ ] 3.2 RED (doc-content only): extend `tests/test_worktree_flow_recipe.py`
+- [x] 3.2 RED (doc-content only): extend `tests/test_worktree_flow_recipe.py`
       (or small dedicated test) asserting materialized/catalog `worktree-new.md`
       contains: `git -C`, absolute destination under `worktrees_dir`,
       `<subrepo>-<slug>`, longest-prefix / `show-toplevel` inference notes, and
       rejection guidance for uninitialized (`submodule update --init`). **Not** a
       runtime create test — document that end-to-end create remains manual/agent
       verification. GREEN by landing 3.1 content.
-- [ ] 3.3 PROSE: update `commands/worktree-clean.md` — optional `--submodule` /
+- [x] 3.3 PROSE: update `commands/worktree-clean.md` — optional `--submodule` /
       `--subrepo` scope (default = all initialized); under submodules enumerate
       via per-module `git -C` / `submodule foreach`, never superproject
       `worktree list` alone; standalone/apps unchanged. Closes MODIFIED cleanup
       requirement (docs side).
-- [ ] 3.4 PROSE: update `skills/worktree-flow/SKILL.md` — per-topology
+- [x] 3.4 PROSE: update `skills/worktree-flow/SKILL.md` — per-topology
       create/clean matrix; `git -C` absolute-destination contract; strengthen
       pre-delegation to verify *which git repository* (`rev-parse --show-toplevel`)
       under `monorepo-submodules`, not only branch + worktree list.
-- [ ] 3.5 RED→GREEN: extend `workflow_rules` in `recipe.toml` so under
+- [x] 3.5 RED→GREEN: extend `workflow_rules` in `recipe.toml` so under
       monorepo-submodules the always-on rule requires which-repo verification via
       `rev-parse --show-toplevel` (keep existing “hooks are not the sole guard”
       language). Add/extend a recipe test asserting the rule text mentions
@@ -214,7 +214,7 @@ locked contract phrases; (2) recipe.toml `workflow_rules` string assertions
 scenarios); preserve main-spec Positive Base Candidate Resolution behavior on
 the standalone path.
 
-- [ ] 4.1 RED: using the shared submodule fixture, add cleanup tests:
+- [x] 4.1 RED: using the shared submodule fixture, add cleanup tests:
       (a) merged feature wt at `<super>/<worktrees_dir>/<module>-feat-done`
       reported `would remove` when scanned from super root (*Merged feature
       worktree under one submodule…*);
@@ -224,7 +224,7 @@ the standalone path.
       --submodule flag…*);
       (d) uninitialized `-` module is not `git -C`’d (*Uninitialized submodules
       are skipped*). Assert shared `WT_PREFIX` is super `worktrees_dir`.
-- [ ] 4.2 GREEN: restructure template per design #7 — add `--submodule` /
+- [x] 4.2 GREEN: restructure template per design #7 — add `--submodule` /
       `--subrepo` (repeatable) to flag parser; `enumerate_modules`,
       `_cleanup_one` (wrap today’s scan→`flush` block unchanged), `_in_scope`;
       outer loop `cd`’s each module with shared `WT_PREFIX=$SUPER_ROOT/$WORKTREES_DIR/`;
@@ -232,7 +232,7 @@ the standalone path.
       Leave `flush` / `is_merged` / `resolve_base_candidates` /
       `candidate_has_*` / `WORKTREE_CLEANUP_SOURCE_ONLY` byte-identical.
       Pass 4.1.
-- [ ] 4.3 REGRESSION GUARD (must stay green after 4.2): re-run the existing
+- [x] 4.3 REGRESSION GUARD (must stay green after 4.2): re-run the existing
       standalone merge-detection suite in `tests/test_worktree_cleanup.py` and
       assert the **7 Positive Base Candidate Resolution scenarios** from
       `openspec/specs/worktree-flow/spec.md` still pass with unchanged output
@@ -247,7 +247,7 @@ the standalone path.
       Also keep dirty-skip + bounded no-fetch + dual-remote safety tests green.
       Closes *Standalone repo cleanup unchanged* (byte-for-byte single-pass when
       no `.gitmodules`).
-- [ ] 4.4 REFACTOR / sanity: `--submodule` on a standalone repo is inert (single
+- [x] 4.4 REFACTOR / sanity: `--submodule` on a standalone repo is inert (single
       sentinel pass, not an error); confirm `bash -n` on the template; no
       accidental edits to merge-helper function bodies (diff review).
 
@@ -258,7 +258,7 @@ not_exists branch); `tests/test_recipe_materialize.py` (hand-edited override).
 **Reqs:** ADDED *Stale Cleanup Override Detection* (all three scenarios).
 Depends on 1.4/1.5 (`override_is_stale`).
 
-- [ ] 5.1 RED: tests for worktree-flow cleanup template target
+- [x] 5.1 RED: tests for worktree-flow cleanup template target
       `ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh`:
       (a) identical override → sync succeeds, **no** stale WARN, file untouched
       (*Unmodified override produces no warning*);
@@ -267,7 +267,7 @@ Depends on 1.4/1.5 (`override_is_stale`).
       override warns and sync succeeds*);
       (c) missing target → normal fresh copy, no stale WARN (*Missing override
       gets a fresh copy*).
-- [ ] 5.2 GREEN: in `materialize_template`, inside existing
+- [x] 5.2 GREEN: in `materialize_template`, inside existing
       `condition == "not_exists"` + `dest.exists()` branch, call
       `util.override_is_stale(src, dest)` and `warn(...)` with the design §6
       message; **never** overwrite. Pass 5.1.
@@ -281,13 +281,13 @@ mirror — **include** both checks so surfaces stay consistent.
 **Reqs:** ADDED *Stale Cleanup Override Detection* (doctor mirror); ADDED
 *Topology Surfacing* (informational echo only — not a blocking scenario).
 
-- [ ] 6.1 RED: `_check_repo_topology` — INFO (or OK) line echoing resolved
+- [x] 6.1 RED: `_check_repo_topology` — INFO (or OK) line echoing resolved
       topology + initialized submodule count via `resolve_repo_topology`;
       non-blocking. `_check_stale_template_overrides` — WARN when enabled
       recipe `not_exists` template dest is stale via shared
       `override_is_stale`; no WARN when identical/missing. Doctor never
       overwrites files (`test_doctor_is_read_only` remains true).
-- [ ] 6.2 GREEN: implement both checks; wire into doctor’s check list via
+- [x] 6.2 GREEN: implement both checks; wire into doctor’s check list via
       existing sibling-load of `util`. Pass 6.1.
 
 ### Phase 7 — Wizard integration
@@ -297,13 +297,13 @@ mirror — **include** both checks so surfaces stay consistent.
 and accepts override*). `config_wizard` needs no special-case (schema enum
 select already works once Phase 2 lands) — smoke optional only.
 
-- [ ] 7.1 RED: extend `tests/test_init_tui.py` — after project-name prompt,
+- [x] 7.1 RED: extend `tests/test_init_tui.py` — after project-name prompt,
       topology select default is `auto` with detected label (e.g. fixture repo
       resolving to `monorepo-submodules`); user override to `standalone` writes
       `recipes.worktree-flow.config.repo_topology = "standalone"` into staged
       manifest via `_render_manifest` / wizard `configured` map when
       worktree-flow is enabled. Mock `questionary` like existing wizard tests.
-- [ ] 7.2 GREEN: in `run_wizard`, immediately after “Project name:” (~L241),
+- [x] 7.2 GREEN: in `run_wizard`, immediately after “Project name:” (~L241),
       call `_util.resolve_repo_topology(target, "auto")`, present hub-style
       select over `auto|standalone|monorepo-apps|monorepo-submodules` with
       default `auto` (label shows detected), thread into `configured` so
@@ -316,14 +316,14 @@ select already works once Phase 2 lands) — smoke optional only.
 **Files:** `lib/_internal/hub.py`; `tests/test_hub.py`.
 **Reqs:** ADDED *Topology Surfacing* (*Hub panel…* + *Noninteractive status…*).
 
-- [ ] 8.1 RED: `StatusSummary` gains `topology` + `topology_via`;
+- [x] 8.1 RED: `StatusSummary` gains `topology` + `topology_via`;
       `status_summary()` reads manifest `repo_topology` and calls
       `resolve_repo_topology`; `StatusPanel.render` adds one grid row
       (`topology  monorepo-submodules (auto→…)` / equivalent);
       `_run_noninteractive` prints `topology: {resolved} ({via})`. Tests:
       auto→monorepo-submodules shows resolved + via auto; explicit standalone
       shows via config.
-- [ ] 8.2 GREEN: implement hub wiring (`_util` already loaded). Pass 8.1.
+- [x] 8.2 GREEN: implement hub wiring (`_util` already loaded). Pass 8.1.
 
 ### Phase 9 — Agent brief `_section_project` surfacing
 
@@ -333,11 +333,11 @@ pattern that already checks `- **Integration branch**:`.
 **Reqs:** ADDED *Topology Surfacing* (*Brief Project section includes resolved
 topology*).
 
-- [ ] 9.1 RED: assert Project section includes
+- [x] 9.1 RED: assert Project section includes
       `- **Repo topology**: \`<resolved>\` (via <config|auto>)` (or equivalent
       provenance) when worktree-flow is enabled and topology resolves via auto
       to `monorepo-submodules`.
-- [ ] 9.2 GREEN: in `_section_project`, after the integration_branch block
+- [x] 9.2 GREEN: in `_section_project`, after the integration_branch block
       (~L211–212), read `recipes.worktree-flow.config.repo_topology` from
       `resolved`, call shared helper, append the Repo topology line. Load
       `util` via existing sibling-load stanza. Pass 9.1.
@@ -349,21 +349,21 @@ topology*).
 `templates/ai-specs.toml.tmpl`; optional message-only hint in
 `hooks/worktree-gate.sh` (skip unless cheap — no decision change).
 
-- [ ] 10.1 Update recipe `README.md` — topology table; `repo_topology` config
+- [x] 10.1 Update recipe `README.md` — topology table; `repo_topology` config
       row; shared `<worktrees_dir>/<subrepo>-<slug>` layout; stale-override
       refresh (`rm … && ai-specs sync`); `monorepo-apps` naming-only note.
-- [ ] 10.2 Update `docs/recipes-catalog.md` — worktree-flow topology /
+- [x] 10.2 Update `docs/recipes-catalog.md` — worktree-flow topology /
       layout / cleanup enumeration notes.
-- [ ] 10.3 Update `docs/ai-specs-toml.md` — document
+- [x] 10.3 Update `docs/ai-specs-toml.md` — document
       `recipes.worktree-flow.config.repo_topology` enum + default `auto`.
-- [ ] 10.4 OPTIONAL: commented `repo_topology` example in
+- [x] 10.4 OPTIONAL: commented `repo_topology` example in
       `templates/ai-specs.toml.tmpl`; OPTIONAL gate stderr hint naming
       `/worktree-new <subrepo>` only if it stays message-only (no test change
       required unless `test_worktree_gate_hook.py` asserts exact stderr).
 
 ### Phase 11 — Final validation gate
 
-- [ ] 11.1 Run focused suites green:
+- [x] 11.1 Run focused suites green:
       `tests/test_repo_topology.py` (or chosen helper file),
       `tests/test_worktree_flow_recipe.py`,
       `tests/test_worktree_cleanup.py`,
@@ -372,11 +372,11 @@ topology*).
       `tests/test_init_tui.py`,
       `tests/test_hub.py`,
       agents-render brief tests — via `./tests/run.sh` on those paths.
-- [ ] 11.2 Cross-check every delta scenario (5 ADDED + 2 MODIFIED) has a
+- [x] 11.2 Cross-check every delta scenario (5 ADDED + 2 MODIFIED) has a
       RED→GREEN task or an explicit prose/manual verification note (Creation
       Contract live create = manual/agent only; doc-content tests cover the
       catalog contract).
-- [ ] 11.3 FINAL GATE: from the change worktree root run `./tests/validate.sh`
+- [x] 11.3 FINAL GATE: from the change worktree root run `./tests/validate.sh`
       (py_compile + `bash -n` + full tests per Useful Commands). Fix drift
       until exit 0. Change is ready for apply/verify only after this passes.
 

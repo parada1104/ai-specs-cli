@@ -163,12 +163,16 @@ board_id = "abc123"
 default_list = "In Progress"
 ```
 
-`worktree-flow` also supports gated write modes:
+`worktree-flow` also supports gated write modes and repo topology:
 
 ```toml
 [recipes.worktree-flow.config]
 gate_mode = "ask"
+repo_topology = "auto"   # auto | standalone | monorepo-apps | monorepo-submodules
 ```
+
+`repo_topology` defaults to `auto` (initialized `.gitmodules` →
+`monorepo-submodules`, else `standalone`). `monorepo-apps` is naming-only.
 
 For config fields that define an `enum`, sync validates that the manifest value
 is one of the allowed entries before materializing the recipe.
