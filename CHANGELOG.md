@@ -13,12 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Warnings, notices, and errors always pass through untouched, and a failing
   step always prints its full unfiltered output regardless of mode. Pass
   `-v`/`--verbose` to restore the previous full detail; it forwards through
-  public-root fan-out to nested `sync-agent` invocations.
-
-### Fixed
-- **Fan-out double-sync**: public-root `sync-agent` fan-out now terminates
-  after all child invocations finish instead of falling through to an extra,
-  silent parent sync pass.
+  public-root fan-out to nested `sync-agent` invocations. During development of
+  this change (before any release), fan-out briefly lost its terminal `exit 0`
+  and would have fallen through into an extra silent parent sync pass; that
+  pre-release regression was caught and restored so public-root fan-out still
+  terminates after children finish.
 
 ## [0.18.0] — 2026-07-28
 

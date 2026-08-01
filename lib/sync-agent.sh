@@ -2,8 +2,8 @@
 # sync-agent.sh — fan out skills + MCP + slash commands to per-agent locations.
 #
 # Usage:
-#   ai-specs sync-agent [path] [--all | --<agent>...]
-#   ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...]
+#   ai-specs sync-agent [path] [--all | --<agent>...] [-v|--verbose]
+#   ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...] [-v|--verbose]
 #
 # In multi-target mode the root manifest remains the source of truth, while the
 # target receives a fully local derived artifact set:
@@ -33,8 +33,8 @@ BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
 HOOKS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/hooks-render.py"
 usage() {
     cat <<'EOF'
-Usage: ai-specs sync-agent [path] [--all | --<agent>...]
-       ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...]
+Usage: ai-specs sync-agent [path] [--all | --<agent>...] [-v|--verbose]
+       ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...] [-v|--verbose]
 
 Render per-agent configs from the root manifest.
 

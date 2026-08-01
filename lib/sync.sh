@@ -19,7 +19,7 @@ AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: ai-specs sync [path] [--ignore-cli-version]
+Usage: ai-specs sync [path] [--ignore-cli-version] [-v|--verbose]
 
 Reconcile a project's ai-specs/ with its root manifest:
   - resolve [root, ...project.subrepos]
