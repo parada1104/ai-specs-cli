@@ -343,13 +343,17 @@ else
     COMMANDS_SOURCE="$TARGET_AI_COMMANDS"
 fi
 
-for agent in "${TARGETS[@]}"; do
+# inherit_errexit so failures inside $(...) surface to || return $? below.
+shopt -s inherit_errexit
+
+sync_one_agent() {
+    local agent="$1"
     if ! platform_get "$agent" native >/dev/null 2>&1; then
         echo "  ✗ unknown agent: $agent" >&2
-        continue
+        return 0
     fi
 
-    is_enabled=0
+    local is_enabled=0 e
     for e in "${ENABLED_AGENTS[@]}"; do
         [[ "$e" == "$agent" ]] && is_enabled=1 && break
     done
@@ -359,43 +363,47 @@ for agent in "${TARGETS[@]}"; do
 
     echo "  ▸ $agent"
 
-    instr="$(platform_get "$agent" instructions_path)"
+    local instr
+    instr="$(platform_get "$agent" instructions_path)" || return $?
     if [[ -n "$instr" ]]; then
-        make_relative_symlink "$TARGET_AGENTS_MD" "$TARGET_PATH/$instr"
+        make_relative_symlink "$TARGET_AGENTS_MD" "$TARGET_PATH/$instr" || return $?
     fi
 
-    skills="$(platform_get "$agent" skills_dir)"
+    local skills skills_link
+    skills="$(platform_get "$agent" skills_dir)" || return $?
     if [[ -n "$skills" ]]; then
         skills_link="$TARGET_PATH/$skills"
         if [[ -e "$skills_link" && ! -L "$skills_link" ]]; then
             # Legacy installs may have a real skills directory; replace so
             # fan-out can reconcile to the canonical symlink.
-            rm -rf "$skills_link"
+            rm -rf "$skills_link" || return $?
         fi
-        make_skills_symlink "$SKILLS_SOURCE" "$skills_link"
+        make_skills_symlink "$SKILLS_SOURCE" "$skills_link" || return $?
     fi
 
-    mcp_path="$(platform_get "$agent" mcp_config_path)"
-    mcp_key="$(platform_get "$agent" mcp_key)"
+    local mcp_path mcp_key
+    mcp_path="$(platform_get "$agent" mcp_config_path)" || return $?
+    mcp_key="$(platform_get "$agent" mcp_key)" || return $?
     if [[ -n "$mcp_path" && -n "$mcp_key" ]]; then
         if [[ "$MCP_COUNT" -gt 0 ]]; then
             python3 "$MCP_RENDER" "$TOML_PATH" "$agent" \
                 "$TARGET_PATH/$mcp_path" "$mcp_key" \
-                --recipe-mcp "$RECIPE_MCP_JSON"
+                --recipe-mcp "$RECIPE_MCP_JSON" || return $?
         else
             echo "    · mcp skipped (no [mcp.*] in manifest)"
         fi
     fi
 
-    cmd_dir="$(platform_get "$agent" commands_dir)"
+    local cmd_dir dest copied src
+    cmd_dir="$(platform_get "$agent" commands_dir)" || return $?
     if [[ -n "$cmd_dir" && -d "$COMMANDS_SOURCE" ]]; then
         dest="$TARGET_PATH/$cmd_dir"
-        rm -rf "$dest"
-        mkdir -p "$dest"
+        rm -rf "$dest" || return $?
+        mkdir -p "$dest" || return $?
         copied=0
         for src in "$COMMANDS_SOURCE"/*.md; do
             [[ -f "$src" ]] || continue
-            cp "$src" "$dest/$(basename "$src")"
+            cp "$src" "$dest/$(basename "$src")" || return $?
             copied=$((copied + 1))
         done
         if [[ $copied -gt 0 ]]; then
@@ -406,12 +414,17 @@ for agent in "${TARGETS[@]}"; do
     # Runtime hooks ([[provides.hooks]]): render this agent's native wiring from
     # the pre-resolved blob. hooks-render.py has no catalog access and skips
     # agents without a runtime-hook target (warn-and-skip on unsupported pairs).
-    hooks_target="$(platform_get "$agent" runtime_hooks_target)"
+    local hooks_target
+    hooks_target="$(platform_get "$agent" runtime_hooks_target)" || return $?
     if [[ -n "$hooks_target" && -n "$RESOLVED_HOOKS_JSON" && -f "$RESOLVED_HOOKS_JSON" ]]; then
         if python3 "$HOOKS_RENDER_PY" "$RESOLVED_HOOKS_JSON" "$agent" "$TARGET_PATH"; then
             echo "    ✓ runtime hooks $hooks_target"
         fi
     fi
+}
+
+for agent in "${TARGETS[@]}"; do
+    sync_one_agent "$agent" || exit $?
 done
 
 echo ""
