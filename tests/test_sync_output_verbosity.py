@@ -546,6 +546,104 @@ class NestedFramingTests(_WorkspaceMixin, unittest.TestCase):
             shutil.rmtree(workspace.parent, ignore_errors=True)
 
 
+
+def _leaked_detail_markers(text: str, *, allow_footer: bool) -> list[str]:
+    """Return detail-marker lines that must not appear in compact stdout.
+
+    Allows the intentional top-level footer '✓ sync-agent complete' when
+    allow_footer is True; every other leading ✓/·/⇢/▸ line is a leak.
+    """
+    leaked: list[str] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped:
+            continue
+        if stripped[0] not in "✓·⇢▸":
+            continue
+        if allow_footer and stripped == "✓ sync-agent complete":
+            continue
+        leaked.append(line)
+    return leaked
+
+
+class CompactModeLeakTests(_WorkspaceMixin, unittest.TestCase):
+    """F1/H1 — flatten/merge/gitignore must not bypass run_step in compact mode."""
+
+    def test_f1_standalone_sync_agent_compact_has_no_leaked_detail_markers(self):
+        """E2E: standalone sync-agent compact stdout has zero leaked ✓/·/⇢/▸."""
+        workspace = self.make_workspace()
+        try:
+            self.init_workspace(workspace, agents=["claude"], subrepos=[])
+            proc = subprocess.run(
+                [str(CLI), "sync-agent", str(workspace), "--claude"],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=_sync_env(),
+            )
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}",
+            )
+            leaked = _leaked_detail_markers(proc.stdout, allow_footer=True)
+            self.assertEqual(
+                leaked,
+                [],
+                "compact sync-agent must not print raw detail markers "
+                f"(flatten/merge/gitignore bypassing run_step):\n"
+                + "\n".join(leaked)
+                + f"\n\nfull stdout:\n{proc.stdout}",
+            )
+            # Intentional footer remains for standalone (non-nested) runs.
+            self.assertIn("✓ sync-agent complete", proc.stdout)
+            # And we still ran the work that used to leak (skills were flattened).
+            self.assertIn("  syncing claude\n", proc.stdout)
+        finally:
+            shutil.rmtree(workspace.parent, ignore_errors=True)
+
+    def test_f1_public_root_fanout_compact_has_no_child_detail_leaks(self):
+        """E2E: public-root fan-out (2+ targets) leaks zero child flatten/merge/gitignore lines."""
+        workspace = self.make_workspace()
+        try:
+            self.init_workspace(workspace, agents=["claude"])
+            n_targets = self.resolved_target_count(workspace)
+            self.assertGreaterEqual(n_targets, 2)
+            proc = subprocess.run(
+                [str(CLI), "sync-agent", str(workspace), "--all"],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=_sync_env(),
+            )
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}",
+            )
+            leaked = _leaked_detail_markers(proc.stdout, allow_footer=True)
+            self.assertEqual(
+                leaked,
+                [],
+                "fan-out compact mode must suppress every child's flatten/"
+                f"merge/gitignore detail lines; leaked:\n"
+                + "\n".join(leaked)
+                + f"\n\nfull stdout:\n{proc.stdout}",
+            )
+            # T3.1: only the parent footer — children must not emit their own.
+            self.assertEqual(
+                proc.stdout.count("✓ sync-agent complete"),
+                1,
+                f"expected exactly one top-level footer;\n{proc.stdout}",
+            )
+            self.assertIn("mode:        public root fan-out", proc.stdout)
+            # Children still sync (labels present) — silence is from filtering,
+            # not from skipping work.
+            self.assertGreaterEqual(proc.stdout.count("  syncing "), n_targets)
+        finally:
+            shutil.rmtree(workspace.parent, ignore_errors=True)
+
+
 class MarkerHygieneTests(_WorkspaceMixin, unittest.TestCase):
     """P3 — notices that must survive compaction use ℹ, not ·."""
 

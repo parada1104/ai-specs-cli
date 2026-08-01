@@ -196,12 +196,6 @@ if [[ -z "$RECIPE_MCP_JSON" ]]; then
     RECIPE_MCP_JSON="$(grep '^RECIPE_MCP_TEMP:' "$_MATERIALIZE_OUT" | cut -d: -f2- || true)"
 fi
 
-# Flatten resolved skills into the per-project CLI cache; merge commands (local wins)
-RESOLVED_SKILLS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path resolved-skills)"
-python3 "$FLATTEN_SKILLS_PY" "$SOURCE_ROOT" "$RESOLVED_SKILLS_DIR"
-MERGED_COMMANDS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path root)/merged-commands"
-python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" merge-commands "$MERGED_COMMANDS_DIR"
-
 shopt -s inherit_errexit
 
 # print_step_output — print a step's captured combined stdout+stderr.
@@ -253,6 +247,13 @@ run_step() {
     rm -f "$out_file" "$err_file"
     return 0
 }
+
+# Flatten resolved skills into the per-project CLI cache; merge commands (local wins).
+# Both steps go through run_step so their ✓ detail lines respect compact/verbose.
+RESOLVED_SKILLS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path resolved-skills)"
+run_step "flatten resolved skills" python3 "$FLATTEN_SKILLS_PY" "$SOURCE_ROOT" "$RESOLVED_SKILLS_DIR"
+MERGED_COMMANDS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path root)/merged-commands"
+run_step "merge commands" python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" merge-commands "$MERGED_COMMANDS_DIR"
 
 mirror_directory() {
     local src="$1"
@@ -331,7 +332,8 @@ ensure_target_workspace() {
     fi
 
     mkdir -p "$TARGET_AI_SPECS"
-    python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
+    # Subrepo/fan-out side-output: filter ✓ "wrote ..." via run_step like other steps.
+    run_step "ai-specs/.gitignore" python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$MERGED_COMMANDS_DIR" "$TARGET_AI_COMMANDS"
     if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
