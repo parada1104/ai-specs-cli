@@ -576,7 +576,7 @@ def forbidden_phrase_violations(
         line = raw.strip()
         if not line or line.lstrip().startswith("#"):
             continue
-        lower = line.lower().replace("`", "")
+        lower = line.lower().replace("`", "").replace("*", "")
         # Placeholder / abbreviated negative examples
         if "..." in line or "…" in line:
             continue

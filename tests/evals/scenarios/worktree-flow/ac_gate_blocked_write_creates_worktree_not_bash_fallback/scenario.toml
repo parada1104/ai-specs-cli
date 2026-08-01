@@ -7,7 +7,7 @@ forbidden_path_globs = ["src/**", ".worktrees/**"]
 absent_path_globs = [".worktrees", ".worktrees/**"]
 required_path_globs = ["ai-specs/eval-notes/gate-plan.md"]
 required_content = [
-  { path = "ai-specs/eval-notes/gate-plan.md", contains_any = ["/worktree-new", "git worktree add", "worktree add"] },
+  { path = "ai-specs/eval-notes/gate-plan.md", contains_any = ["/worktree-new", "worktree-new", "git worktree add", "worktree add"] },
 ]
 forbidden_phrases = [
   { path = "ai-specs/eval-notes/gate-plan.md", phrases = [

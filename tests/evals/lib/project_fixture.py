@@ -18,6 +18,15 @@ RUNTIME_SKILL_DIRS = {
     "omp": ".omp/skills",
 }
 
+RUNTIME_COMMAND_DIRS = {
+    "claude": ".claude/commands",
+    "opencode": ".opencode/commands",
+    "cursor": ".cursor/commands",
+    "cursor-agent": ".cursor/commands",
+    "pi": ".pi/commands",
+    "omp": ".omp/commands",
+}
+
 
 def recipe_version(catalog_root: Path, recipe_id: str) -> str:
     text = (catalog_root / "recipes" / recipe_id / "recipe.toml").read_text()
@@ -128,6 +137,37 @@ def setup_runtime_skills(
             "- Follow the bound VCS merge-workflow skill for PR/MR merge and cleanup.\n"
         )
     return dest
+
+
+def setup_runtime_commands(
+    root: Path,
+    runtime: str,
+    recipe_id: str,
+    *,
+    catalog_root: Path | None = None,
+) -> list[Path]:
+    """Copy recipe [[provides.commands]] .md files into the runtime discovery
+    path, mirroring the basename-preserving copy `sync-agent.sh` performs
+    (`cp "$src" "$dest/$(basename "$src")"`). Without this, a live eval agent
+    never sees the recipe's actual slash commands (e.g. `/worktree-new`) —
+    only whatever a SKILL.md happens to describe in prose."""
+    catalog = catalog_root or (Path(__file__).resolve().parents[3] / "catalog")
+    commands_src_dir = catalog / "recipes" / recipe_id / "commands"
+    if not commands_src_dir.is_dir():
+        return []
+
+    rel = RUNTIME_COMMAND_DIRS.get(runtime)
+    if not rel:
+        raise ValueError(f"no command dir mapping for runtime {runtime}")
+
+    dest_dir = root / rel
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[Path] = []
+    for src in sorted(commands_src_dir.glob("*.md")):
+        dest = dest_dir / src.name
+        shutil.copy2(src, dest)
+        copied.append(dest)
+    return copied
 
 
 def seed_authorized_plan(

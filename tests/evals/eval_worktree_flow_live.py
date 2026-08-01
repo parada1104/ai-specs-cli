@@ -29,6 +29,7 @@ from tests.evals.lib.project_fixture import (  # noqa: E402
     recipe_version,
     seed_monorepo_apps,
     seed_project_files,
+    setup_runtime_commands,
     setup_runtime_skills,
 )
 
@@ -173,6 +174,9 @@ class WorktreeFlowLiveEvals(unittest.TestCase):
         materialize_project(root, RECIPE_ID, version, extra=extra)
         seed_project_files(root)
         setup_runtime_skills(
+            root, runtime, RECIPE_ID, catalog_root=REPO_ROOT / "catalog"
+        )
+        setup_runtime_commands(
             root, runtime, RECIPE_ID, catalog_root=REPO_ROOT / "catalog"
         )
 
