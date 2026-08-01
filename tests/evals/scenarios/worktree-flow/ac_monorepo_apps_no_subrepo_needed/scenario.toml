@@ -1,0 +1,16 @@
+id = "ac_monorepo_apps_no_subrepo_needed"
+recipe_id = "worktree-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "apps/ monorepo (no .gitmodules): plain repo-root git worktree add, no -C subrepo"
+forbidden_path_globs = [".worktrees/**"]
+absent_path_globs = [".worktrees", ".worktrees/**"]
+required_path_globs = ["ai-specs/eval-notes/worktree-plan.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/worktree-plan.md", contains_any = ["git worktree add", "worktree add"] },
+  { path = "ai-specs/eval-notes/worktree-plan.md", contains_any = [".worktrees/", "worktrees_dir"] },
+]
+forbidden_phrases = [
+  { path = "ai-specs/eval-notes/worktree-plan.md", phrases = ["git -C", "gitmodules", "submodule", "submódulo"] },
+]
+fixture = "monorepo_apps"
