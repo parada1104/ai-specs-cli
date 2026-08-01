@@ -834,6 +834,80 @@ class DotMarkerAuditTests(unittest.TestCase):
 
 
 
+class TemplateSkippedClassificationTests(unittest.TestCase):
+    """M1 / T3.3 gap — classify recipe-materialize 'template skipped (exists)'."""
+
+    def test_m1_template_skipped_is_noise_filtered_in_compact(self):
+        """Keep · (noise): idempotent 'already exists' detail, like symlink ok.
+
+        Precedent (daad3aa): promote to ℹ only for user-facing policy/absence
+        notices ('skipped AGENTS.md', 'mcp skipped'). Template-skipped reports
+        a no-op success when condition=not_exists and the dest already exists —
+        same class as 'symlink ok', so it stays · and is filtered in compact.
+        """
+        recipe_py = ROOT / "lib" / "_internal" / "recipe-materialize.py"
+        lines = recipe_py.read_text().splitlines()
+        hit = None
+        for i, line in enumerate(lines):
+            if "template skipped (exists)" in line and "print" in line:
+                hit = i
+                break
+        self.assertIsNotNone(hit, "template skipped print not found")
+        prev = lines[hit - 1] if hit >= 1 else ""
+        self.assertRegex(
+            prev,
+            r"Noise \(keep ·\)|Notice \(promote to ℹ\)",
+            f"unclassified template-skipped line at {recipe_py}:{hit+1}: "
+            f"{lines[hit].strip()}\nprev: {prev!r}",
+        )
+        self.assertIn("Noise (keep ·)", prev)
+        self.assertIn("· template skipped (exists)", lines[hit])
+        self.assertNotIn("ℹ template skipped", lines[hit])
+
+        sample = "    · template skipped (exists) ai-specs/foo.md"
+        for script in (SYNC_SH, SYNC_AGENT_SH):
+            with self.subTest(script=script.name):
+                fns = _extract_bash_functions(
+                    script, ("print_step_output", "run_step")
+                )
+                body = (
+                    "set -euo pipefail\n"
+                    "VERBOSE=0\n"
+                    + fns
+                    + "\n"
+                    + "print_step_output \"$(printf '%s\n' '"
+                    + sample
+                    + "' 'keep-me')\"\n"
+                )
+                proc = subprocess.run(
+                    ["bash", "-c", body],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(proc.stdout, "keep-me\n")
+                self.assertNotIn("template skipped", proc.stdout)
+
+                body_v = (
+                    "set -euo pipefail\n"
+                    "VERBOSE=1\n"
+                    + fns
+                    + "\n"
+                    + "print_step_output \"$(printf '%s\n' '"
+                    + sample
+                    + "')\"\n"
+                )
+                proc_v = subprocess.run(
+                    ["bash", "-c", body_v],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(proc_v.returncode, 0, proc_v.stderr)
+                self.assertIn(sample, proc_v.stdout)
+
+
 class ErrexitInteractionTests(_WorkspaceMixin, unittest.TestCase):
     """P4 — inherit_errexit + sync_one_agent || return $? failure propagation."""
 
