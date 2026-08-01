@@ -145,5 +145,99 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertIn("SDD artifact phases", text)
 
 
+    def test_sync_defaults_repo_topology_to_auto(self):
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        import tomllib
+        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
+            manifest = tomllib.load(fh)
+        user_cfg = (manifest.get("recipes") or {}).get("worktree-flow", {}).get("config") or {}
+        merged = self.materialize.merge_config(recipe, user_cfg)
+        self.assertEqual(merged.get("repo_topology"), "auto")
+
+    def test_sync_rejects_invalid_repo_topology(self):
+        root = self._make_project_with_config(
+            '[recipes.worktree-flow.config]\nrepo_topology = "nested"'
+        )
+        import subprocess
+        proc = subprocess.run(
+            [
+                "python3",
+                str(RECIPE_MATERIALIZE_PATH),
+                str(root),
+                str(ROOT),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        combined = proc.stderr + proc.stdout
+        self.assertIn("nested", combined)
+        self.assertRegex(
+            combined,
+            r"auto.*standalone.*monorepo-apps.*monorepo-submodules"
+            r"|auto \| standalone \| monorepo-apps \| monorepo-submodules",
+        )
+
+    def test_sync_materializes_with_repo_topology_default(self):
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        skill = (
+            recipe_skill_dir(root, "worktree-flow", "worktree-flow") / "SKILL.md"
+        )
+        self.assertTrue(skill.is_file(), "skill should materialize with default topology")
+        for cmd in ("worktree-new", "worktree-clean"):
+            path = cache_command(root, cmd)
+            self.assertTrue(path.is_file(), f"command {cmd} should materialize")
+        script = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides" / "bin"
+            / "worktree-cleanup.sh"
+        )
+        self.assertTrue(script.is_file(), "cleanup script should materialize")
+
+
+    def test_worktree_new_documents_submodule_create_contract(self):
+        """Doc-content only — live git worktree add under submodules is manual/agent."""
+        text = (RECIPE_DIR / "commands" / "worktree-new.md").read_text()
+        self.assertIn("git -C", text)
+        self.assertIn("worktrees_dir", text)
+        self.assertIn("<subrepo>-<slug>", text)
+        self.assertIn("show-toplevel", text)
+        self.assertIn("longest", text.lower())
+        self.assertIn("submodule update --init", text)
+
+    def test_brief_workflow_rules_require_which_repo_check(self):
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        frags = recipe.brief_fragments
+        self.assertIsNotNone(frags)
+        rules = " ".join(
+            f.text if hasattr(f, "text") else str(f)
+            for f in (frags.workflow_rules or [])
+        )
+        if not rules:
+            # fragments may be plain strings depending on schema version
+            raw = (RECIPE_DIR / "recipe.toml").read_text()
+            start = raw.index("workflow_rules")
+            rules = raw[start:start + 800]
+        self.assertIn("which", rules.lower())
+        self.assertIn("show-toplevel", rules)
+        self.assertIn("monorepo-submodules", rules)
+
+
+
+    def test_skill_md_create_block_matches_worktree_new_contract(self):
+        """SKILL.md create block must stay byte-consistent with worktree-new.md."""
+        skill = (RECIPE_DIR / "skills" / "worktree-flow" / "SKILL.md").read_text()
+        # Must use super_root-scoped rev-parse (not bare show-toplevel).
+        self.assertIn('git -C "$super_root" rev-parse --show-toplevel', skill)
+        # Must use configurable worktrees_dir placeholder, not hardcoded .worktrees
+        # as the create destination (default may still be mentioned as prose).
+        self.assertIn("<worktrees_dir>", skill)
+        # Hardcoded ".worktrees/<subrepo>" create path recreates the original bug.
+        self.assertNotIn("$super_abs/.worktrees/", skill)
+        self.assertNotIn("git worktree add .worktrees/", skill)
+
+
 if __name__ == "__main__":
     unittest.main()

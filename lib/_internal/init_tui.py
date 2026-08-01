@@ -243,6 +243,25 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
             return _cancel()
         project_name = project_name.strip() or default_name
 
+        # 1b. Repo topology — confirm auto-detect (worktree-flow)
+        det = _util.resolve_repo_topology(target, "auto")
+        topo_choices = [
+            questionary.Choice(
+                title=f"auto → {det.resolved} (detected)",
+                value="auto",
+            ),
+            questionary.Choice(title="standalone", value="standalone"),
+            questionary.Choice(title="monorepo-apps", value="monorepo-apps"),
+            questionary.Choice(title="monorepo-submodules", value="monorepo-submodules"),
+        ]
+        topology = questionary.select(
+            "Repo topology for worktree-flow:",
+            choices=topo_choices,
+            default=topo_choices[0],
+        ).ask()
+        if topology is None:
+            return _cancel()
+
         # 2. Agents — checkbox multi-select with arrow keys + space toggle
         console.print()
         agent_choices = [
@@ -283,6 +302,13 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         # 3.5 Configure selected recipes (optional per-recipe)
         catalog_dir = _ai_specs_home() / "catalog" / "recipes"
         configured = _configure_recipes(recipes, console, catalog_dir) if recipes else {}
+        # Identity topology is a convenience default only. A later explicit
+        # answer from _configure_recipes (schema-driven enum) wins — do not
+        # clobber repo_topology if already set.
+        if any(r.get("id") == "worktree-flow" for r in recipes):
+            configured.setdefault("worktree-flow", {}).setdefault(
+                "repo_topology", topology
+            )
 
         # 4. Preview + confirm
         console.print()
