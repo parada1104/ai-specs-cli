@@ -78,27 +78,30 @@ SYNC_AGENT_SH="$AI_SPECS_HOME/lib/sync-agent.sh"
 
 shopt -s inherit_errexit
 
-# print_step_output — print a step's captured combined stdout+stderr.
-# Verbose mode: print as-is. Compact mode: drop lines whose first
-# non-whitespace char is one of the success/detail-noise markers (✓ · ⇢ ▸),
-# keeping every other non-blank line (warnings/notices: !, ✗, ℹ, ...) intact
-# and unindented from how the underlying command formatted them.
+# print_step_output FILE — print a step's captured stdout or stderr file.
+# Verbose mode: cat the file bytes as-is (byte-identical, including trailing
+# blank lines). Compact mode: drop lines whose first non-whitespace char is
+# one of the success/detail-noise markers (✓ · ⇢ ▸), keeping every other
+# non-blank line (warnings/notices: !, ✗, ℹ, ...) intact.
+# Takes a file path (not a string) so command substitution cannot strip
+# trailing newlines from the replayed output.
 print_step_output() {
-    local out="$1"
-    [[ -z "$out" ]] && return 0
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+    [[ -s "$file" ]] || return 0
     if [[ $VERBOSE -eq 1 ]]; then
-        printf '%s\n' "$out"
+        cat "$file"
         return 0
     fi
     local line stripped
-    while IFS= read -r line; do
+    while IFS= read -r line || [[ -n "$line" ]]; do
         stripped="${line#"${line%%[![:space:]]*}"}"
         [[ -z "$stripped" ]] && continue
         case "$stripped" in
             '✓'*|'·'*|'⇢'*|'▸'*) continue ;;
         esac
         printf '%s\n' "$line"
-    done <<< "$out"
+    done < "$file"
 }
 
 # run_step LABEL CMD [ARGS...] — print "  syncing LABEL", run CMD capturing
@@ -122,8 +125,8 @@ run_step() {
         rm -f "$out_file" "$err_file"
         return $rc
     fi
-    print_step_output "$(cat "$out_file")"
-    print_step_output "$(cat "$err_file")" >&2
+    print_step_output "$out_file"
+    print_step_output "$err_file" >&2
     rm -f "$out_file" "$err_file"
     return 0
 }
@@ -179,22 +182,21 @@ set +e
 python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP" --resolved-hooks-out "$RESOLVED_HOOKS_TEMP" >"$RECIPE_OUT_FILE" 2>"$RECIPE_ERR_FILE"
 RECIPE_RC=$?
 set -e
-RECIPE_OUT="$(cat "$RECIPE_OUT_FILE")"
-RECIPE_ERR="$(cat "$RECIPE_ERR_FILE")"
-rm -f "$RECIPE_OUT_FILE" "$RECIPE_ERR_FILE"
-RECIPE_NAMES="$( { printf '%s\n' "$RECIPE_OUT" | grep -oE '▸ recipe [^ ]+' | sed -E 's/.*recipe //' | paste -sd, - ; } 2>/dev/null || true)"
+RECIPE_NAMES="$( { grep -oE '▸ recipe [^ ]+' "$RECIPE_OUT_FILE" | sed -E 's/.*recipe //' | paste -sd, - ; } 2>/dev/null || true)"
 if [[ -n "$RECIPE_NAMES" ]]; then
     echo "  syncing recipes → ${RECIPE_NAMES//,/, }"
 else
     echo "  syncing recipes"
 fi
 if [[ $RECIPE_RC -ne 0 ]]; then
-    [[ -n "$RECIPE_OUT" ]] && printf '%s\n' "$RECIPE_OUT"
-    [[ -n "$RECIPE_ERR" ]] && printf '%s\n' "$RECIPE_ERR" >&2
+    [[ -s "$RECIPE_OUT_FILE" ]] && cat "$RECIPE_OUT_FILE"
+    [[ -s "$RECIPE_ERR_FILE" ]] && cat "$RECIPE_ERR_FILE" >&2
+    rm -f "$RECIPE_OUT_FILE" "$RECIPE_ERR_FILE"
     exit $RECIPE_RC
 fi
-print_step_output "$RECIPE_OUT"
-print_step_output "$RECIPE_ERR" >&2
+print_step_output "$RECIPE_OUT_FILE"
+print_step_output "$RECIPE_ERR_FILE" >&2
+rm -f "$RECIPE_OUT_FILE" "$RECIPE_ERR_FILE"
 
 sync_agents_render() {
     if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then

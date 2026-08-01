@@ -198,27 +198,30 @@ fi
 
 shopt -s inherit_errexit
 
-# print_step_output — print a step's captured combined stdout+stderr.
-# Verbose mode: print as-is. Compact mode: drop lines whose first
-# non-whitespace char is one of the success/detail-noise markers (✓ · ⇢ ▸),
-# keeping every other non-blank line (warnings/notices: !, ✗, ℹ, ...) intact
-# and unindented from how the underlying command formatted them.
+# print_step_output FILE — print a step's captured stdout or stderr file.
+# Verbose mode: cat the file bytes as-is (byte-identical, including trailing
+# blank lines). Compact mode: drop lines whose first non-whitespace char is
+# one of the success/detail-noise markers (✓ · ⇢ ▸), keeping every other
+# non-blank line (warnings/notices: !, ✗, ℹ, ...) intact.
+# Takes a file path (not a string) so command substitution cannot strip
+# trailing newlines from the replayed output.
 print_step_output() {
-    local out="$1"
-    [[ -z "$out" ]] && return 0
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+    [[ -s "$file" ]] || return 0
     if [[ $VERBOSE -eq 1 ]]; then
-        printf '%s\n' "$out"
+        cat "$file"
         return 0
     fi
     local line stripped
-    while IFS= read -r line; do
+    while IFS= read -r line || [[ -n "$line" ]]; do
         stripped="${line#"${line%%[![:space:]]*}"}"
         [[ -z "$stripped" ]] && continue
         case "$stripped" in
             '✓'*|'·'*|'⇢'*|'▸'*) continue ;;
         esac
         printf '%s\n' "$line"
-    done <<< "$out"
+    done < "$file"
 }
 
 # run_step LABEL CMD [ARGS...] — print "  syncing LABEL", run CMD capturing
@@ -242,8 +245,8 @@ run_step() {
         rm -f "$out_file" "$err_file"
         return $rc
     fi
-    print_step_output "$(cat "$out_file")"
-    print_step_output "$(cat "$err_file")" >&2
+    print_step_output "$out_file"
+    print_step_output "$err_file" >&2
     rm -f "$out_file" "$err_file"
     return 0
 }

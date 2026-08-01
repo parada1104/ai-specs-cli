@@ -317,7 +317,8 @@ class StepOutputContractTests(unittest.TestCase):
             with self.subTest(script=script.name):
                 body = textwrap.dedent(
                     r"""
-                    print_step_output "$(printf '%s\n' \
+                    f="$(mktemp)"
+                    printf '%s\n' \
                         '    ✓ bundled skill worktree-flow' \
                         '    · symlink ok' \
                         '    ⇢ flattened 1' \
@@ -327,7 +328,9 @@ class StepOutputContractTests(unittest.TestCase):
                         'keep-me' \
                         '  ! warning' \
                         '  ✗ error' \
-                        '  ℹ notice')"
+                        '  ℹ notice' >"$f"
+                    print_step_output "$f"
+                    rm -f "$f"
                     """
                 )
                 proc = self._harness(script, verbose=0, body=body)
@@ -384,6 +387,48 @@ class StepOutputContractTests(unittest.TestCase):
                     "  syncing demo\n    ✓ a\n    · b\n  ! c\n",
                 )
                 self.assertEqual(proc.stderr, "  ✗ d\n")
+
+    def test_m3_verbose_preserves_trailing_blank_lines(self):
+        """M3/F5: verbose replay must be byte-identical, including trailing blanks.
+
+        `printf '%s\n' "$(cat out_file)"` strips ALL trailing newlines from the
+        captured step output; a step that ends with blank lines must still
+        reproduce them under --verbose.
+        """
+        for script in (SYNC_SH, SYNC_AGENT_SH):
+            with self.subTest(script=script.name):
+                fns = _extract_bash_functions(
+                    script, ("print_step_output", "run_step")
+                )
+                # Emit: "line\n\n\n" (one content line + two trailing blank lines)
+                # via a real temp file written with trailing newlines, then run_step.
+                body = (
+                    "set -euo pipefail\n"
+                    "VERBOSE=1\n"
+                    + fns
+                    + "\n"
+                    + "step() {\n"
+                    + "  # exact bytes: 'detail' + newline + blank + blank\n"
+                    + "  printf 'detail\n\n\n'\n"
+                    + "}\n"
+                    + "run_step \"demo\" step\n"
+                )
+                proc = subprocess.run(
+                    ["bash", "-c", body],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                # Expect: syncing line, then detail, then two trailing blanks
+                # exactly as the step printed (byte-identical replay).
+                self.assertEqual(
+                    proc.stdout,
+                    "  syncing demo\ndetail\n\n\n",
+                    f"verbose must preserve trailing blank lines; got:\n"
+                    f"{proc.stdout!r}",
+                )
+
 
     def test_t2_4_failing_step_prints_full_output_and_status_both_modes(self):
         """T2.4: failure always prints full stdout+stderr and propagates status."""
@@ -914,9 +959,12 @@ class TemplateSkippedClassificationTests(unittest.TestCase):
                     "VERBOSE=0\n"
                     + fns
                     + "\n"
-                    + "print_step_output \"$(printf '%s\n' '"
+                    + 'f="$(mktemp)"\n'
+                    + "printf '%s\n' '"
                     + sample
-                    + "' 'keep-me')\"\n"
+                    + "' 'keep-me' >\"$f\"\n"
+                    + "print_step_output \"$f\"\n"
+                    + "rm -f \"$f\"\n"
                 )
                 proc = subprocess.run(
                     ["bash", "-c", body],
@@ -933,9 +981,12 @@ class TemplateSkippedClassificationTests(unittest.TestCase):
                     "VERBOSE=1\n"
                     + fns
                     + "\n"
-                    + "print_step_output \"$(printf '%s\n' '"
+                    + 'f="$(mktemp)"\n'
+                    + "printf '%s\n' '"
                     + sample
-                    + "')\"\n"
+                    + "' >\"$f\"\n"
+                    + "print_step_output \"$f\"\n"
+                    + "rm -f \"$f\"\n"
                 )
                 proc_v = subprocess.run(
                     ["bash", "-c", body_v],
