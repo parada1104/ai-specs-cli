@@ -799,6 +799,45 @@ class MarkerHygieneTests(_WorkspaceMixin, unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent, ignore_errors=True)
 
+    def test_m2_skipped_agents_md_notice_survives_compaction(self):
+        """M2: 'skipped AGENTS.md (brief.render = false)' must remain visible in compact."""
+        workspace = self.make_workspace()
+        try:
+            self.init_workspace(workspace, agents=["claude"], subrepos=[])
+            # Root sync emits the notice via sync_agents_render (sync-agent root
+            # short-circuits ensure_target_workspace before the skip message).
+            toml = workspace / "ai-specs" / "ai-specs.toml"
+            toml.write_text(toml.read_text().rstrip() + "\n\n[brief]\nrender = false\n")
+            agents_md = workspace / "AGENTS.md"
+            agents_md.write_text("# manual runtime brief\n")
+
+            proc = subprocess.run(
+                [str(CLI), "sync", str(workspace)],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=_sync_env(),
+            )
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}",
+            )
+            combined = proc.stdout + proc.stderr
+            self.assertRegex(
+                combined,
+                r"ℹ.*skipped AGENTS\.md \(brief\.render = false\)",
+                f"skipped AGENTS.md notice must survive compact mode;\n{combined}",
+            )
+            self.assertNotRegex(
+                combined,
+                r"·\s*skipped AGENTS\.md",
+                "skipped AGENTS.md must not use the suppressed · marker",
+            )
+            # Content left untouched (opt-out still honored under compaction).
+            self.assertEqual(agents_md.read_text(), "# manual runtime brief\n")
+        finally:
+            shutil.rmtree(workspace.parent, ignore_errors=True)
 
 
 class DotMarkerAuditTests(unittest.TestCase):
