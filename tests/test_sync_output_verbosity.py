@@ -468,6 +468,127 @@ class VerboseFlagIntegrationTests(_WorkspaceMixin, unittest.TestCase):
                     if log_path.parent.exists():
                         shutil.rmtree(log_path.parent, ignore_errors=True)
 
+    def test_h2_sync_verbose_shows_parent_and_child_detail(self):
+        """H2(a): `ai-specs sync -v` on a public root shows detail from parent AND every child."""
+        workspace = self.make_workspace()
+        try:
+            self.init_workspace(workspace, agents=["claude"])
+            n_targets = self.resolved_target_count(workspace)
+            self.assertGreaterEqual(n_targets, 2)
+
+            proc = subprocess.run(
+                [str(CLI), "sync", str(workspace), "-v"],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=_sync_env(),
+            )
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}",
+            )
+            out = proc.stdout
+            # Parent body detail (root sync steps, not only the fan-out labels).
+            self.assertRegex(
+                out,
+                r"✓\s+wrote\s+\S+/ai-specs/\.gitignore",
+                f"parent verbose detail missing (gitignore):\n{out}",
+            )
+            # Child body detail forwarded via -v → --verbose on each sync-agent.
+            # Flatten runs once per child target; require the marker, not just argv.
+            flat_count = len(re.findall(r"(?m)^\s*✓\s+flattened\b", out))
+            self.assertGreaterEqual(
+                flat_count,
+                n_targets,
+                f"expected flatten detail from each of {n_targets} children, "
+                f"got {flat_count}:\n{out}",
+            )
+            merge_count = len(re.findall(r"(?m)^\s*✓\s+merged\b", out))
+            self.assertGreaterEqual(
+                merge_count,
+                n_targets,
+                f"expected merge detail from each of {n_targets} children, "
+                f"got {merge_count}:\n{out}",
+            )
+            # Subrepo children also render a target gitignore (root child skips it).
+            wrote_gi = len(
+                re.findall(r"(?m)^\s*✓\s+wrote\s+\S+/packages/\S+/ai-specs/\.gitignore", out)
+            )
+            self.assertGreaterEqual(
+                wrote_gi,
+                n_targets - 1,
+                f"expected subrepo gitignore detail from children; got {wrote_gi}:\n{out}",
+            )
+        finally:
+            shutil.rmtree(workspace.parent, ignore_errors=True)
+
+    def test_h2_short_v_forwards_through_sync_and_sync_agent_fanout(self):
+        """H2(b): short `-v` (not only `--verbose`) forwards through both fan-out paths."""
+        # Path 1: sync → sync-agent fan-out
+        workspace = self.make_workspace()
+        try:
+            self.init_workspace(workspace, agents=["claude"])
+            n_targets = self.resolved_target_count(workspace)
+            self.assertGreaterEqual(n_targets, 2)
+            proc = subprocess.run(
+                [str(CLI), "sync", str(workspace), "-v"],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=_sync_env(),
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertGreaterEqual(
+                len(re.findall(r"(?m)^\s*✓\s+flattened\b", proc.stdout)),
+                n_targets,
+                f"sync -v must forward short -v into child detail;\n{proc.stdout}",
+            )
+        finally:
+            shutil.rmtree(workspace.parent, ignore_errors=True)
+
+        # Path 2: sync-agent's own public-root fan-out
+        workspace = self.make_workspace()
+        try:
+            self.init_workspace(workspace, agents=["claude"])
+            n_targets = self.resolved_target_count(workspace)
+            self.assertGreaterEqual(n_targets, 2)
+            proc = subprocess.run(
+                [str(CLI), "sync-agent", str(workspace), "--all", "-v"],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=_sync_env(),
+            )
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}",
+            )
+            flat_count = len(re.findall(r"(?m)^\s*✓\s+flattened\b", proc.stdout))
+            self.assertGreaterEqual(
+                flat_count,
+                n_targets,
+                f"sync-agent -v must forward short -v to nested children; "
+                f"flatten markers={flat_count}:\n{proc.stdout}",
+            )
+            # Compact control: without -v, those markers must be absent.
+            proc_c = subprocess.run(
+                [str(CLI), "sync-agent", str(workspace), "--all"],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=_sync_env(),
+            )
+            self.assertEqual(proc_c.returncode, 0, proc_c.stderr)
+            self.assertEqual(
+                len(re.findall(r"(?m)^\s*✓\s+flattened\b", proc_c.stdout)),
+                0,
+                f"compact control unexpectedly showed flatten detail;\n{proc_c.stdout}",
+            )
+        finally:
+            shutil.rmtree(workspace.parent, ignore_errors=True)
+
     def test_t2_7_unknown_flag_rejected_on_sync_and_sync_agent(self):
         """T2.7: unknown flags still exit non-zero on both commands."""
         for command in ("sync", "sync-agent"):
