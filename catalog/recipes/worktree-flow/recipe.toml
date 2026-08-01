@@ -59,6 +59,15 @@ default = "always"
 enum = ["always", "ask", "off"]
 help_text = "Worktree gate behavior: always (block), ask (prompt), or off (disabled)."
 
+
+[config.repo_topology]
+type = "string"
+required = false
+default = "auto"
+enum = ["auto", "standalone", "monorepo-apps", "monorepo-submodules"]
+help_text = "Repository topology for worktree create/clean: auto (detect initialized submodules → monorepo-submodules, else standalone), standalone, monorepo-apps (naming-only; same mechanics as standalone), or monorepo-submodules (per-submodule worktrees under shared worktrees_dir)."
+
+
 [provides]
 skills = [{ id = "worktree-flow", source = "bundled" }]
 commands = [
@@ -71,7 +80,7 @@ workflow_rules = [
     "Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.",
     "Do not merge or push to `{config.integration_branch}` without a PR and explicit human instruction.",
     "Preserve unrelated worktree changes; never revert changes you did not make.",
-    "Before dispatching a write-capable subagent or task, verify the current worktree and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.",
+    "Before dispatching a write-capable subagent or task, verify which git repository, worktree, and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Under monorepo-submodules, confirming which-repo via show-toplevel is mandatory. Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.",
     "If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). Create a worktree first (e.g. `/worktree-new`) and write there instead.",
 ]
 

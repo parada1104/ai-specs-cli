@@ -1462,5 +1462,52 @@ class CommandsEmptyExpectedDoctorTests(unittest.TestCase):
             )
 
 
+
+class RepoTopologyDoctorTests(unittest.TestCase):
+    def _enable_worktree_flow(self, target: Path) -> None:
+        manifest = target / "ai-specs" / "ai-specs.toml"
+        # Always append an enabled block — the init template may contain a
+        # commented [recipes.worktree-flow] example that must not count.
+        manifest.write_text(
+            manifest.read_text()
+            + "\n[recipes.worktree-flow]\nenabled = true\n\n"
+            + "[recipes.worktree-flow.config]\nrepo_topology = \"auto\"\n"
+        )
+
+    def test_repo_topology_info_when_worktree_flow_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._enable_worktree_flow(target)
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertIn("repo-topology", result.stdout)
+            self.assertIn("INFO", result.stdout)
+
+    def test_stale_override_warns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._enable_worktree_flow(target)
+            dest = (
+                target / "ai-specs" / "recipes" / "worktree-flow" / "overrides"
+                / "bin" / "worktree-cleanup.sh"
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text("# customized\n")
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertIn("stale-override", result.stdout)
+            self.assertIn("WARN", result.stdout)
+            # read-only: file unchanged
+            self.assertEqual(dest.read_text(), "# customized\n")
+
+
 if __name__ == "__main__":
     unittest.main()
