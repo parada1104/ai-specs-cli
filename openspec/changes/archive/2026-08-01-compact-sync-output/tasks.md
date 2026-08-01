@@ -101,8 +101,9 @@ introduced by the uncommitted code and gates everything else.
 - [x] **T5.4** — Manual check: `ai-specs sync` and `ai-specs sync -v` on this repo, per the
   `dogfood-verification-isolation` skill so dogfood state does not leak into the commit.
   (both modes verified; AGENTS.md regen reverted, only README/CHANGELOG kept)
-- [ ] **T5.5** — Verify against this spec, then archive the change folder on the review
-  branch before opening the PR.
+- [x] **T5.5** — Verify against this spec, then archive the change folder on the review
+  branch before opening the PR. (Two rounds of blind adversarial re-verification —
+  jd-judge-a/jd-judge-b — both PASS; see archive-report.md.)
 
 ---
 
