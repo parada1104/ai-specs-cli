@@ -44,6 +44,11 @@ writes nothing does not need a worktree.
   `git branch --show-current`, `git worktree list`). Runtime pre-tool-use hooks
   may not fire for delegated/subprocess tool calls on opencode/pi/omp — do not
   treat the gate as the sole guard for delegated writes.
+- If a structured Edit/Write/MultiEdit call is blocked or errors for any
+  reason while on a protected branch, that is never grounds to retry the
+  write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`) —
+  using bash to write bypasses the worktree gate entirely. Create a worktree
+  first (`/worktree-new`) and write there instead.
 
 ## Creating a worktree
 
