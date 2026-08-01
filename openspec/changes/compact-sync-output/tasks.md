@@ -106,6 +106,36 @@ introduced by the uncommitted code and gates everything else.
 
 ---
 
+
+---
+
+## P6 — Verify remediation (post-judge findings)
+
+Remediation after Judgment Day / adversarial review on `f799196`. T5.5
+(archive) remains open until this remediation is independently re-verified.
+
+- [x] **F1/H1** — Wrap `flatten-resolved-skills`, `merge-commands`, and subrepo
+  `gitignore-render` through `run_step` in `lib/sync-agent.sh` so compact mode
+  no longer leaks raw `✓` detail lines. E2E tests cover standalone and
+  public-root fan-out (2+ targets), allowing only the intentional top-level
+  `✓ sync-agent complete` footer.
+- [x] **H2** — Behavioral e2e tests: `ai-specs sync -v` shows detail from parent
+  and every fanned-out child; short `-v` forwards through `sync` → `sync-agent`
+  fan-out and through `sync-agent`'s own fan-out (beyond T2.6 argv checks).
+- [x] **M1** — Classified `· template skipped (exists)` in
+  `recipe-materialize.py` as **Noise (keep ·)** (idempotent no-op, same class
+  as `symlink ok`; not an ℹ policy notice). Inline comment + compact-filter test.
+- [x] **M2** — Test that `ℹ skipped AGENTS.md (brief.render = false)` survives
+  compact mode (parallel to the mcp-skipped compact-visibility test).
+- [x] **M3/F5** — `print_step_output` / `run_step` in both `lib/sync.sh` and
+  `lib/sync-agent.sh` now cat capture files for verbose replay (byte-identical,
+  including trailing blank lines). Test proves trailing blanks survive `-v`.
+- [x] **L1** — Reworded CHANGELOG fan-out entry so it does not overstate a
+  product regression from a prior release (pre-release development fix note
+  folded into the compact-output Added bullet).
+- [x] **L2** — Added `[-v|--verbose]` to Usage: synopses in `sync.sh` and
+  `sync-agent.sh` `--help` text.
+
 ## Notes
 
 - Branch is currently 4 commits behind `development` with zero commits of its own; rebase
