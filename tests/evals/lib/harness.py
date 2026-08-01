@@ -521,3 +521,79 @@ def init_git_repo(project_root: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=project_root, check=True)
     subprocess.run(["git", "config", "user.email", "eval@ai-specs.local"], cwd=project_root, check=True)
     subprocess.run(["git", "config", "user.name", "eval"], cwd=project_root, check=True)
+
+
+# Markers that mean a forbidden phrase appears only as a counter-example /
+# negative instruction (shared by notes-file prose checks).
+FORBIDDEN_PHRASE_NEG_MARKERS = (
+    "never",
+    "do not",
+    "don't",
+    "dont",
+    "sin ",
+    "without",
+    "forbid",
+    "not ",
+    "no uses",
+    "no usar",
+    "nunca",
+    "❌",
+    "✗",
+    "🚫",
+    "# bad",
+    "# wrong",
+    "# incorrect",
+    "# avoid",
+    "# no",
+    "incorrect",
+    "anti-pattern",
+    "antipattern",
+    "wrong:",
+    "bad:",
+)
+
+
+def forbidden_phrase_violations(
+    text: str,
+    phrases: list[str],
+    *,
+    window: int = 3,
+) -> list[str]:
+    """Return forbidden phrases that appear in affirmative (non-negated) context.
+
+    Notes-file prose often documents the anti-pattern with an explicit "do not /
+    never / sin …" — those are allowed. Affirmative mentions (retry via
+    ``python3 -c``, claim root ``git worktree list`` alone is enough, etc.) are
+    violations. Window matches ``forbidden_command_line_violations`` in the VCS
+    live eval module.
+    """
+    if not phrases:
+        return []
+    lines = text.splitlines()
+    hits: list[str] = []
+    seen: set[str] = set()
+    for idx, raw in enumerate(lines):
+        line = raw.strip()
+        if not line or line.lstrip().startswith("#"):
+            continue
+        lower = line.lower().replace("`", "").replace("*", "")
+        # Placeholder / abbreviated negative examples
+        if "..." in line or "…" in line:
+            continue
+        for phrase in phrases:
+            needle = str(phrase).lower().replace("`", "")
+            if not needle or needle not in lower:
+                continue
+            window_text = "\n".join(
+                lines[max(0, idx - window) : idx + 1]
+            ).lower()
+            if any(marker in window_text for marker in FORBIDDEN_PHRASE_NEG_MARKERS):
+                continue
+            if any(marker in lower for marker in FORBIDDEN_PHRASE_NEG_MARKERS):
+                continue
+            key = f"{idx}:{needle}"
+            if key in seen:
+                continue
+            seen.add(key)
+            hits.append(raw if needle in raw.lower() else f"{phrase} @ line {idx + 1}")
+    return hits

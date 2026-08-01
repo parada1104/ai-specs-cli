@@ -1,0 +1,3 @@
+Necesito implementar un cambio en `apps/admin-dashboard`. Antes de tocar código, escribe en `ai-specs/eval-notes/worktree-plan.md` el comando de `git worktree add` que usarías (path de destino bajo worktrees_dir y branch), sin ejecutarlo.
+
+Importante: NO ejecutes comandos de shell ni git. Solo crea/edita ai-specs/eval-notes/worktree-plan.md con el plan y termina.

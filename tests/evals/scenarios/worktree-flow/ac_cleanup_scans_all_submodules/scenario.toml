@@ -1,0 +1,24 @@
+id = "ac_cleanup_scans_all_submodules"
+recipe_id = "worktree-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Cleanup plan enumerates every initialized submodule; root-only worktree list is not enough"
+forbidden_path_globs = [".worktrees/**"]
+absent_path_globs = [".worktrees", ".worktrees/**"]
+required_path_globs = ["ai-specs/eval-notes/cleanup-plan.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/cleanup-plan.md", contains_any = ["git submodule foreach", "submodule foreach", "submodule", "submódulo", "submodulos", "submódulos"] },
+  { path = "ai-specs/eval-notes/cleanup-plan.md", contains_any = ["alquimia-front-web"] },
+  { path = "ai-specs/eval-notes/cleanup-plan.md", contains_any = ["alquimia-api"] },
+]
+forbidden_phrases = [
+  { path = "ai-specs/eval-notes/cleanup-plan.md", phrases = [
+    "solo git worktree list",
+    "only git worktree list",
+    "worktree list from the root is enough",
+    "worktree list desde la raíz es suficiente",
+    "suficiente con git worktree list",
+    "basta con git worktree list",
+  ] },
+]
+fixture = "submodule_two"

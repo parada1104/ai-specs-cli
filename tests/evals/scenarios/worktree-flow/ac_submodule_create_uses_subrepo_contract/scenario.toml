@@ -1,0 +1,15 @@
+id = "ac_submodule_create_uses_subrepo_contract"
+recipe_id = "worktree-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Submodule topology: plan uses git -C <subrepo> worktree add with <subrepo>-<slug> dest"
+forbidden_path_globs = [".worktrees/**"]
+absent_path_globs = [".worktrees", ".worktrees/**"]
+required_path_globs = ["ai-specs/eval-notes/worktree-plan.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/worktree-plan.md", contains_any = ["git -c"] },
+  { path = "ai-specs/eval-notes/worktree-plan.md", contains_any = ["alquimia-front-web"] },
+  { path = "ai-specs/eval-notes/worktree-plan.md", contains_any = ["worktree add"] },
+  { path = "ai-specs/eval-notes/worktree-plan.md", contains_any = ["alquimia-front-web-", ".worktrees/alquimia-front-web"] },
+]
+fixture = "submodule_one"
