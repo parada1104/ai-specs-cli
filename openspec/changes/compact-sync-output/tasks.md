@@ -33,7 +33,7 @@ starts from existing-but-unverified code rather than from nothing.
 - [x] Spec delta: `sync-output-verbosity`
 - [x] `tasks.md` (this file)
 - [x] Commit the existing uncommitted work so it stops living only in the working tree
-- [ ] **Human authorization to continue implementation**
+- [x] **Human authorization to continue implementation** (given in chat: "si, continuemos con el cambio")
 
 ---
 
@@ -94,12 +94,13 @@ introduced by the uncommitted code and gates everything else.
 
 ## P5 — Docs and close
 
-- [ ] **T5.1** — Document both modes and the failure-always-full guarantee in the sync
-  docs; note the cross-stream ordering caveat.
-- [ ] **T5.2** — `CHANGELOG.md` entry under `## [Unreleased]`.
-- [ ] **T5.3** — `./tests/validate.sh` green.
-- [ ] **T5.4** — Manual check: `ai-specs sync` and `ai-specs sync -v` on this repo, per the
+- [x] **T5.1** — Document both modes and the failure-always-full guarantee in the sync
+  docs; note the cross-stream ordering caveat. (README.md CLI table + note)
+- [x] **T5.2** — `CHANGELOG.md` entry under `## [Unreleased]`.
+- [x] **T5.3** — `./tests/validate.sh` green. (1187 tests OK)
+- [x] **T5.4** — Manual check: `ai-specs sync` and `ai-specs sync -v` on this repo, per the
   `dogfood-verification-isolation` skill so dogfood state does not leak into the commit.
+  (both modes verified; AGENTS.md regen reverted, only README/CHANGELOG kept)
 - [ ] **T5.5** — Verify against this spec, then archive the change folder on the review
   branch before opening the PR.
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Compact sync output**: `ai-specs sync` and `ai-specs sync-agent` now print
+  one `syncing <label>` line per step by default instead of every detail line.
+  Warnings, notices, and errors always pass through untouched, and a failing
+  step always prints its full unfiltered output regardless of mode. Pass
+  `-v`/`--verbose` to restore the previous full detail; it forwards through
+  public-root fan-out to nested `sync-agent` invocations.
+
+### Fixed
+- **Fan-out double-sync**: public-root `sync-agent` fan-out now terminates
+  after all child invocations finish instead of falling through to an extra,
+  silent parent sync pass.
+
 ## [0.18.0] — 2026-07-28
 
 ### Added
