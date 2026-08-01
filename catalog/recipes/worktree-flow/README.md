@@ -48,6 +48,15 @@ may not see tool calls made inside a delegated subagent/task (separate process
 or host gap — see `docs/runtime-hooks.md`). Before dispatching write-capable
 subagents, verify worktree and branch yourself; do not rely on the hook alone.
 
+**Shell-write coverage:** the same gate also best-effort blocks shell/bash
+commands (`>`, `>>`, `tee`, `sed -i`/`perl -i`, `cp`/`mv`, interpreter
+heredoc/`-c` write calls) that would write into the protected main worktree —
+closing the gap where an agent falls back to bash after a blocked or errored
+Edit/Write. This is a **heuristic, not a sandbox**: obfuscated or multi-stage
+writers (`awk`, `dd`, base64-piped content, opaque `bash -c "$(...)"`) can
+still evade it by design (fail-open on ambiguity), and coverage is uneven by
+harness — see the coverage matrix in `docs/runtime-hooks.md`.
+
 ## Config
 
 | Key | Default | Meaning |
