@@ -32,7 +32,7 @@ starts from existing-but-unverified code rather than from nothing.
 - [x] `proposal.md`
 - [x] Spec delta: `sync-output-verbosity`
 - [x] `tasks.md` (this file)
-- [ ] Commit the existing uncommitted work so it stops living only in the working tree
+- [x] Commit the existing uncommitted work so it stops living only in the working tree
 - [ ] **Human authorization to continue implementation**
 
 ---
