@@ -71,18 +71,32 @@ Persisted checkboxes in `tasks.md`: **48 checked / 3 open** (51 total).
 | `./tests/validate.sh` | **not run** (assignment constraint) |
 | Live `EVALS_LIVE` scenarios | scaffolded; not executed in apply |
 
-## TDD Cycle Evidence (summary)
+## TDD Cycle Evidence
 
-| Phase | RED | GREEN | Notes |
-|-------|-----|-------|-------|
-| 1 | failing `test_trello_link` | parser module | parity twin for gate later |
-| 2–4 | failing gate harness | path+shell modes | exit 0/2/fail-open; openspec never blocked |
-| 5 | materialize/recipe tests | placeholder map + dual hooks | version 1.2.0→1.3.0 |
-| 6 | doctor tracker tests | WARN-only check | recipe+marker activation |
-| 7–8 | recipe/docs/config assertions | skill+config.yaml | tracking declarative only |
-| 9 | dogfood warn/always smoke | toml commit; revert generated | isolation honored |
-| 10–11 | hermetic + live client tests | scenarios + runner | no live network in apply |
-| 12 | fenced `## Tracker` false positive | parser ignore fences | proposal section written |
+Evidence below is limited to committed test files, observable commit history,
+and test results recorded or rerun in this worktree. A RED marker says whether
+the test was separately committed before implementation; it does not infer an
+unobserved failing-run transcript.
+
+| Phase/task | Test file(s) | RED Written | GREEN Passed | Triangulation | Safety-net |
+|---|---|---|---|---|---|
+| 1.1 parser | `tests/test_trello_link.py` | Written in `6db316f` (no separate RED commit) | Passed: parser implementation and tests committed in `6db316f` | Python parser + gate parity fixture in `tests/test_tracker_card_gate_hook.py` | Focused suite below |
+| 2.1 gate harness | `tests/test_tracker_card_gate_hook.py` | Written/RED commit `06b009e` | Passed: gate implementation in `3838ac4` | Path and shell event matrices | Focused suite below |
+| 3.1 path gate | `tests/test_tracker_card_gate_hook.py` | Existing RED harness `06b009e` | Passed: `3838ac4` | Path-mode cases and fail-open cases | Focused suite below |
+| 4.1 shell gate | `tests/test_tracker_card_gate_hook.py` | Existing RED harness `06b009e` | Passed: `3838ac4` | Shell `gh pr create` and archive cases | Focused suite below |
+| 5.1 materialize/hooks | `tests/test_trello_mcp_workflow_recipe.py` | Written in `46fd59b` (no separate RED commit) | Passed: materializer and dual-hook implementation in `46fd59b` | Recipe render/materialize assertions | Focused suite below |
+| 6.1 doctor | `tests/test_doctor_tracker_card.py` | Written in `0733f73` (no separate RED commit) | Passed: doctor implementation in `0733f73` | Doctor tracker tests + general doctor suite | Focused suite below |
+| 7.1 skill/command | `tests/test_trello_mcp_workflow_recipe.py` | Written in `9874b3e` (no separate RED commit) | Passed: skill/command changes in `9874b3e` | Recipe contract assertions | Focused suite below |
+| 8.1 docs/config | `tests/test_trello_mcp_workflow_recipe.py` | No dedicated RED test commit observed | Passed: docs/config commit `296f5a5`; contract assertions in recipe suite | Declarative config plus generated recipe surfaces | Focused suite below |
+| 9.1 dogfood | `tests/test_trello_mcp_workflow_recipe.py` | No separate RED commit observed | Passed: dogfood config commit `9324028` | Warn-mode configuration and generated-file isolation | Focused suite below |
+| 10.1 hermetic eval harness | `tests/evals/eval_harness_smoke.py` | Written in `b9bf5a8` (no separate RED commit) | Passed: harness tests committed in `b9bf5a8` | Scenario discovery and hook wiring | Focused suite below |
+| 11.1 live eval client | `tests/evals/eval_trello_mcp_workflow_live.py` | Written in `b9bf5a8` (no separate RED commit) | Passed: client/scenario files committed in `b9bf5a8`; live execution not observed | Four scenario directories and smoke harness | Live run intentionally not executed |
+| 12.1 fenced Tracker parsing | `tests/test_trello_link.py` | Written in `1769ca9` (no separate RED commit) | Passed: parser/gate fence fix in `1769ca9` | Python parser and shell twin | Focused suite below |
+
+**Safety-net execution:** `python3 -m unittest tests.test_trello_link tests.test_tracker_card_gate_hook tests.test_doctor_tracker_card tests.test_trello_mcp_workflow_recipe` — **52 OK**, as recorded before the archive-fallback regression. The new regression is rerun separately during remediation; no unobserved historical count is claimed here.
+
+`./tests/run.sh` — **1224 OK** (2026-08-02 recovery verify, historical apply
+record). `./tests/validate.sh` was not run during apply (assignment constraint).
 
 ## Deviations from design
 

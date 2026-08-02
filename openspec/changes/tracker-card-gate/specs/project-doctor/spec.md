@@ -17,10 +17,11 @@ For each directory matching `openspec/changes/<slug>/` that is **not** under
 
 - If `tracker.none` (`tracker:none` exemption) is present → no missing-card WARN
   for that slug.
-- Else if the `## Tracker` link section is absent, or present but invalid (missing non-empty
-  `card_id` or `url` per `trello-card-linking` validity rules) → emit
-  `Severity.WARN` naming the slug and remediation guidance to create/link a
-  card and write the `## Tracker` link section.
+- Else if the `## Tracker` link section is absent, or present but invalid
+  (missing a non-empty `card_id` per `trello-card-linking` validity rules) →
+  emit `Severity.WARN` naming the slug and remediation guidance to
+  create/link a card and write the `## Tracker` link section. A missing `url`
+  is only an informational nudge and MUST NOT make the link invalid.
 
 Default severity is WARN only. Doctor MUST NOT fail the command exit solely
 because of these WARN findings (no FAIL-by-default in v1). Doctor MUST remain

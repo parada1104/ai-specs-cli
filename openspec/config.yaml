@@ -125,5 +125,6 @@ tracking:
   tracker: trello
   board_id: "69ec097f13e2d38ecd89a557"
   artifact_section: "## Tracker"
+  # Fields recorded when linking; validity is non-empty card_id. Missing url is an INFO nudge, never a validity block.
   required_fields: [card_id, url]
   gate_mode: warn

@@ -19,10 +19,12 @@ A valid `## Tracker` section SHALL be a tolerant bold-key (or plain
 `key: value`) list and MUST include a non-empty value for:
 
 - `card_id` (Trello card id)
-- `url` (Trello card URL)
 
-Optional keys MAY include `shortLink`, `list`, and `pr`. Parsers SHALL accept
-the de-facto bold-key list form:
+The `url` (Trello card URL) is expected and SHOULD be recorded when
+available. Its absence is a doctor `INFO` nudge and MUST NOT make the link
+invalid. Optional keys MAY include `shortLink`, `list`, and `pr`.
+
+Parsers SHALL accept the de-facto bold-key list form:
 
 ```markdown
 ## Tracker
@@ -41,7 +43,8 @@ mode) SHALL be declared in `openspec/config.yaml` under `tracking:`.
 - **WHEN** the `trello-card-linking` capability completes successfully
 - **THEN** the change's `proposal.md` MUST contain a `## Tracker` section
 - **AND** that section MUST contain a non-empty `card_id` value
-- **AND** it MUST contain a non-empty `url` value
+- **AND** it SHOULD contain a non-empty `url` value when available
+- **AND** absence of `url` MUST NOT make the link invalid (doctor emits INFO)
 
 #### Scenario: Skill vocabulary maps trello_card_id to the Tracker section
 
