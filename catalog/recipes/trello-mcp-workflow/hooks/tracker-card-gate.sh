@@ -80,11 +80,11 @@ def _preprocess_command(cmd: str) -> str:
     pending = []
     single = False
     double = False
-    for line in cmd.splitlines():
+    for line in cmd.split("\n"):
         if pending:
             delimiter, strip_tabs = pending[0]
             candidate = line.lstrip("\t") if strip_tabs else line
-            if candidate == delimiter:
+            if candidate.rstrip("\r") == delimiter:
                 pending.pop(0)
             continue
 
