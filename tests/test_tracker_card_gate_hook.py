@@ -287,6 +287,17 @@ class TrackerCardGateHookTests(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 r = self._run(self._shell_event(cmd), mode="always")
                 self.assertEqual(r.returncode, 2, f"{cmd}\n{r.stderr}")
+    def test_archive_unresolved_slug_falls_back_to_any_deficient(self):
+        self._seed_change("needs-card", with_tracker=False)
+        for mode, expected_rc in (("always", 2), ("warn", 0)):
+            with self.subTest(mode=mode):
+                r = self._run(
+                    self._shell_event("openspec archive unknown-slug"),
+                    mode=mode,
+                )
+                self.assertEqual(r.returncode, expected_rc, r.stderr)
+                self.assertIn("needs-card", r.stderr)
+
 
     def test_ambiguous_shell_command_fail_open(self):
         self._seed_change(with_tracker=False)
