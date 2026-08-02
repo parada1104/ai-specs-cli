@@ -223,6 +223,40 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertIn("`both`", content)
         self.assertNotIn("{config.artifact_store_default}", content)
         self.assertLess(content.index("Classify each substantial change"), content.index("Default artifact store"))
+    def test_materialization_renders_default_store_into_agents(self):
+        root = self._make_project()
+        resolved = root / "resolved-config.json"
+        self.assertEqual(
+            self.mod.materialize_recipes(root, ROOT, resolved_config_out=resolved), 0
+        )
+        renderer = load_module(ROOT / "lib" / "_internal" / "agents-render.py", "agents_render_pbf_default_e2e")
+        agents = root / "AGENTS.md"
+        renderer.render(
+            root / "ai-specs" / "ai-specs.toml",
+            agents,
+            preserve_if_marker=False,
+            resolved_config_path=resolved,
+        )
+        content = agents.read_text()
+        self.assertIn("`openspec`", content)
+        self.assertNotIn("{config.artifact_store_default}", content)
+
+    def test_validate_config_hook_accepts_each_store_enum(self):
+        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
+        for value in STORE_ENUM:
+            with self.subTest(value=value):
+                self.mod.execute_hooks(recipe, {"artifact_store_default": value}, Path(tempfile.mkdtemp()))
+
+    def test_version_and_catalog_documentation_use_current_contract(self):
+        self.assertEqual(_recipe_version(), "1.3.0")
+        readme = (CATALOG / RECIPE_ID / "README.md").read_text()
+        catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
+        for text in (readme, catalog):
+            self.assertIn("artifact_store_default", text)
+            self.assertIn("openspec", text)
+            self.assertIn("engram", text)
+            self.assertIn("both", text)
+            self.assertIn("1.3.0", text)
 
     def test_implementation_brief_references_worktree_flow(self):
         recipe_dir = CATALOG / RECIPE_ID
