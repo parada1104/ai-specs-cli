@@ -101,6 +101,7 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
+        version = recipe_version(REPO_ROOT / "catalog", scenario.recipe_id)
         manifest_extra = str(meta.get("manifest_extra", ""))
         materialize_project(root, scenario.recipe_id, version, extra=manifest_extra)
         if meta.get("sync_before_prompt"):

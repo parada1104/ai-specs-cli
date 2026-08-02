@@ -85,3 +85,7 @@ None. All P0–P5 tasks are checked in `tasks.md`.
 
 - `plan-build-gate.sh` and all `lib/_internal/*` files remain untouched. Generated outputs remain sync products and were not hand-edited.
 - The existing eval harness is reused; the new live scenario is opt-in through `EVALS_LIVE=1` and does not require an external preflight package.
+
+## Live eval note
+
+The opt-in `EVALS_LIVE=1 EVALS_RUNTIMES=opencode EVALS_SCENARIOS=ac_delivery_contract_artifact_store ./tests/evals/run-live.sh` reached the delivery scenario and materialized the brief, but the external `opencode` provider returned `UnknownError: Unexpected server error. Check server logs for details.` (exit 1, no project files changed). The corrected harness version setup passes hermetically; live execution requires a healthy provider and is not a repository failure.
