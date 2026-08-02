@@ -366,10 +366,15 @@ blurb.
 - [ ] 8.4 `openspec/config.yaml`: add `tracking:` section declaring the global
       contract — `tracker: trello`, `board_id` (this repo's dogfood board),
       `artifact_section: "## Tracker"`, `required_fields: [card_id, url]`,
-      `gate_mode: warn`. Keep it declarative (doctor/gate still read the
-      operational `gate_mode` from the recipe config); do not duplicate other
-      top-level keys. Add a doc-content test if the repo asserts config.yaml
-      shape (else note the convention in the README/skill).
+      `gate_mode: warn`. IMPORTANT — consumers of this file: the `openspec`
+      CLI and the SDD phase agents read it by convention; NO ai-specs code
+      (bin/lib) reads it, and its presence is NOT guaranteed in projects
+      without SDD enabled. Therefore it is a canonical DECLARATIVE contract
+      for agents/humans only: doctor/gate MUST keep reading the operational
+      `gate_mode`/`board_id` from the recipe config in `ai-specs.toml` (never
+      depend on config.yaml for enforcement). Do not duplicate other top-level
+      keys. Add a doc-content test only if the repo asserts config.yaml shape;
+      otherwise document the convention in the recipe README/skill.
 
 ### Phase 9 — Dogfood config (Decision 10)
 
