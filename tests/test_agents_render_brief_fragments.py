@@ -47,6 +47,13 @@ class SubstituteConfigTests(unittest.TestCase):
             "Do not push to `{config.integration_branch}` without a PR.", cfg
         )
         self.assertEqual(result, "Do not push to `development` without a PR.")
+    def test_artifact_store_enum_value_resolves(self):
+        result = self.mod.substitute_config(
+            "Default artifact store: `{config.artifact_store_default}`.",
+            {"config.artifact_store_default": "both"},
+        )
+        self.assertEqual(result, "Default artifact store: `both`.")
+        self.assertNotIn("{config.artifact_store_default}", result)
 
     def test_missing_key_verbatim(self):
         cfg = {}

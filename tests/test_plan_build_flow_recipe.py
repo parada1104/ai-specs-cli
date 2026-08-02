@@ -21,7 +21,30 @@ from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_
 
 FORBIDDEN_TERMS = ("sdd", "openspec", "spec-driven")
 FORBIDDEN_SLASH = ("/plan", "/build", "/archive")
+STORE_ENUM = ["openspec", "engram", "both"]
 
+
+def _without_store_config_table(raw: str) -> str:
+    """Remove exactly the store table, leaving all other recipe prose guarded."""
+    pattern = r"(?ms)^\[config\.artifact_store_default\]\n.*?(?=^\[|\Z)"
+    stripped, count = re.subn(pattern, "", raw, count=1)
+    assert count == 1, "store config table must be present exactly once"
+    return stripped
+
+
+def _without_delivery_contracts_section(raw: str) -> str:
+    """Remove exactly one README section through the next same-level heading."""
+    pattern = r"(?ms)^## Delivery contracts\n.*?(?=^## |\Z)"
+    stripped, count = re.subn(pattern, "", raw, count=1)
+    assert count == 1, "README delivery contracts section must be present exactly once"
+    return stripped
+
+
+def _recipe_surface_text(recipe_dir: Path) -> str:
+    recipe = _without_store_config_table((recipe_dir / "recipe.toml").read_text())
+    readme = _without_delivery_contracts_section((recipe_dir / "README.md").read_text())
+    skill = (recipe_dir / "skills" / RECIPE_ID / "SKILL.md").read_text()
+    return "\n".join((recipe, readme, skill)).lower()
 
 def load_module(path: Path, name: str):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -88,16 +111,40 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
                 f"unexpected command {forbidden}",
             )
 
-    def test_recipe_adds_no_schema_surface(self):
+    def test_recipe_declares_exact_store_schema_and_hook_pair(self):
         recipe_dir = CATALOG / RECIPE_ID
         recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        self.assertEqual(len(recipe.config_schema.fields), 0)
+        self.assertEqual(list(recipe.config_schema.fields), ["artifact_store_default"])
+        field = recipe.config_schema.fields["artifact_store_default"]
+        self.assertFalse(field.required)
+        self.assertEqual(field.type, "string")
+        self.assertEqual(field.default, "openspec")
+        self.assertEqual(field.enum, STORE_ENUM)
+        self.assertTrue(field.help_text.strip())
         hook_pairs = [(h.event, h.action) for h in recipe.hooks]
         self.assertEqual(hook_pairs, [("on-sync", "validate-config")])
 
-        raw = (recipe_dir / "recipe.toml").read_text().lower()
-        for term in FORBIDDEN_TERMS:
-            self.assertNotIn(term, raw)
+        raw = (recipe_dir / "recipe.toml").read_text()
+        self.assertEqual(raw.count("[config.artifact_store_default]"), 1)
+        self.assertIn('enum = ["openspec", "engram", "both"]', raw)
+
+    def test_recipe_brief_rule_is_last_string_fragment_with_store_placeholder(self):
+        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
+        rules = recipe.brief_fragments.workflow_rules
+        self.assertEqual(len(rules), 6)
+        self.assertEqual([fragment.key for fragment in rules], [None] * 6)
+        self.assertEqual(
+            [fragment.text for fragment in rules[:5]],
+            [
+                "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; record depth in tasks.md and stop for authorization.",
+                "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
+                "Do not open a PR until the change folder on the branch contains the tier minimum planning files, committed.",
+                "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
+                "Archive the change folder on the review branch before merge; never defer archive until after merge.",
+            ],
+        )
+        self.assertIn("{config.artifact_store_default}", rules[-1].text)
+        self.assertEqual(rules[-1].text.count("{config.artifact_store_default}"), 1)
 
     def test_skill_has_ambient_auto_invoke(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
@@ -120,9 +167,62 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
 
         root = self._make_project()
         self.mod.materialize_recipes(root, ROOT)
-        readme = (root / "ai-specs" / "recipes" / RECIPE_ID / "README.md").read_text().lower()
+        readme = (root / "ai-specs" / "recipes" / RECIPE_ID / "README.md").read_text()
         for term in FORBIDDEN_TERMS:
-            self.assertNotIn(term, readme)
+            self.assertNotIn(term, _without_delivery_contracts_section(readme).lower())
+
+    def test_store_defaults_override_and_enum_rejection(self):
+        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
+        self.assertEqual(self.mod.merge_config(recipe, {}), {"artifact_store_default": "openspec"})
+        self.assertEqual(
+            self.mod.merge_config(recipe, {"artifact_store_default": "both"}),
+            {"artifact_store_default": "both"},
+        )
+        with self.assertRaisesRegex(RuntimeError, "artifact_store_default"):
+            self.mod.merge_config(recipe, {"artifact_store_default": "vault"})
+
+    def test_recipe_surface_excludes_session_controls_and_budget_contract(self):
+        recipe_dir = CATALOG / RECIPE_ID
+        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+        schema_keys = set(recipe.config_schema.fields)
+        self.assertNotIn("chained_pr_default", schema_keys)
+        self.assertFalse(any("mode" in key.lower() for key in schema_keys))
+
+        surface = _recipe_surface_text(recipe_dir)
+        removed_key = "review_" + "budget"
+        removed_phrase = "review " + "budget"
+        self.assertNotIn(removed_key, surface)
+        self.assertNotIn(removed_phrase, surface)
+        gate = (recipe_dir / "hooks" / "plan-build-gate.sh").read_text().lower()
+        self.assertNotIn("budget", gate)
+        self.assertNotIn("forecast", gate)
+        external_terms = ("gentle-" + "ai", "gentle-" + "pi")
+        catalog_section = (ROOT / "docs" / "recipes-catalog.md").read_text().lower()
+        for term in external_terms:
+            self.assertNotIn(term, surface)
+            self.assertNotIn(term, catalog_section)
+
+    def test_materialization_renders_manifest_store_override_into_agents(self):
+        root = self._make_project(
+            "\n[recipes.plan-build-flow.config]\nartifact_store_default = 'both'\n"
+        )
+        resolved = root / "resolved-config.json"
+        self.assertEqual(
+            self.mod.materialize_recipes(root, ROOT, resolved_config_out=resolved), 0
+        )
+        renderer = load_module(ROOT / "lib" / "_internal" / "agents-render.py", "agents_render_pbf_e2e")
+        agents = root / "AGENTS.md"
+        renderer.render(
+            root / "ai-specs" / "ai-specs.toml",
+            agents,
+            preserve_if_marker=False,
+            resolved_config_path=resolved,
+        )
+        content = agents.read_text()
+        self.assertIn("Default artifact store", content)
+        self.assertIn("`both`", content)
+        self.assertNotIn("{config.artifact_store_default}", content)
+        self.assertLess(content.index("Classify each substantial change"), content.index("Default artifact store"))
 
     def test_implementation_brief_references_worktree_flow(self):
         recipe_dir = CATALOG / RECIPE_ID
