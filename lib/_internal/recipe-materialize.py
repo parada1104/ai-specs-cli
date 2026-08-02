@@ -354,6 +354,10 @@ def materialize_template(
                     "customizations or refresh with:\n"
                     f"  rm {tpl.target} && ai-specs sync"
                 )
+            # Idempotent no-op when condition=not_exists and dest already exists —
+            # same class as sync-agent 'symlink ok', not a user-facing policy/absence
+            # notice like 'skipped AGENTS.md' / 'mcp skipped'.
+            # Noise (keep ·): filtered in compact mode via print_step_output.
             print(f"    · template skipped (exists) {tpl.target}")
             return
     dest.parent.mkdir(parents=True, exist_ok=True)

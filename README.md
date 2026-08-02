@@ -65,9 +65,10 @@ Missing interactive deps (`rich` + `questionary`) yield exit **3** with install 
 | `ai-specs` / `ai-specs hub [path]` | Interactive status + command menu (see below) |
 | `ai-specs configure-recipes [path]` | Configure recipe config fields, check CLI deps, offer `.envrc.example` |
 | `ai-specs init [path]` | Bootstrap `ai-specs/` (idempotent) |
-| `ai-specs sync [path]` | Vendor deps, regen AGENTS.md, fan out |
+| `ai-specs sync [path]` | Vendor deps, regen AGENTS.md, fan out (compact output by default) |
 | `ai-specs sync [path] [--ignore-cli-version]` | Sync with optional CLI pin bypass |
-| `ai-specs sync-agent [path] [--all\|--<agent>]` | Fan out per-agent configs only |
+| `ai-specs sync [path] [-v\|--verbose]` | Sync with full per-step detail instead of the compact summary |
+| `ai-specs sync-agent [path] [--all\|--<agent>] [-v\|--verbose]` | Fan out per-agent configs only; `-v` forwards through fan-out |
 | `ai-specs doctor [path]` | Read-only health check |
 | `ai-specs rules-audit [path]` | Read-only legacy rules inventory (JSON) |
 | `ai-specs refresh-bundled [path]` | Update bundled skills/commands from the CLI |
@@ -82,6 +83,15 @@ Missing interactive deps (`rich` + `questionary`) yield exit **3** with install 
 | `ai-specs version` | Print version |
 
 Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
+
+`sync` and `sync-agent` print one compact `syncing <label>` line per step by
+default; warnings, notices, and errors always pass through untouched. Pass
+`-v`/`--verbose` to restore full per-step detail. A failing step always prints
+its complete, unfiltered stdout+stderr regardless of mode, so compaction never
+hides a diagnosis. Note: compact/verbose capture stdout and stderr separately
+per step and replay them sequentially, so exact interleaving between the two
+streams is not preserved in the summary view — acceptable for a status
+overview, not a replacement for verbose output when debugging ordering.
 
 ## Key concepts
 

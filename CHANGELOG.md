@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Doctor WARN** for active changes missing a valid `## Tracker` section when the recipe is enabled and the bootstrap marker is present.
 - Hermetic tests: `tests/test_trello_link.py`, `tests/test_tracker_card_gate_hook.py`, `tests/test_doctor_tracker_card.py`, `tests/test_trello_mcp_workflow_recipe.py`.
 - Live eval client: `tests/evals/run-live-trello.sh` + `eval_trello_mcp_workflow_live.py` with four notes-file scenarios.
+- **Compact sync output**: `ai-specs sync` and `ai-specs sync-agent` now print
+  one `syncing <label>` line per step by default instead of every detail line.
+  Warnings, notices, and errors always pass through untouched, and a failing
+  step always prints its full unfiltered output regardless of mode. Pass
+  `-v`/`--verbose` to restore the previous full detail; it forwards through
+  public-root fan-out to nested `sync-agent` invocations. During development of
+  this change (before any release), fan-out briefly lost its terminal `exit 0`
+  and would have fallen through into an extra silent parent sync pass; that
+  pre-release regression was caught and restored so public-root fan-out still
+  terminates after children finish.
 
 ### Changed
 - `trello-mcp-workflow` `1.2.0` → `1.3.0`: `gate_mode` config, dual hooks, brief anti-bypass / link-before-apply rules; skip hatch replaced by `tracker.none`; Decision #7 narrowed to availability-only degrade.

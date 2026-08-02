@@ -19,7 +19,7 @@ AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: ai-specs sync [path] [--ignore-cli-version]
+Usage: ai-specs sync [path] [--ignore-cli-version] [-v|--verbose]
 
 Reconcile a project's ai-specs/ with its root manifest:
   - resolve [root, ...project.subrepos]
@@ -32,15 +32,18 @@ Arguments:
 
 Flags:
   --ignore-cli-version  Skip [tool] CLI version policy check (warns on stderr)
+  -v, --verbose         Print full per-step detail instead of compact summaries
 EOF
 }
 
 TARGET_PATH=""
 IGNORE_CLI_VERSION=""
+VERBOSE=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
         --ignore-cli-version) IGNORE_CLI_VERSION="--ignore-cli-version"; shift ;;
+        -v|--verbose) VERBOSE=1; shift ;;
         --)        shift; break ;;
         -*)
             echo "ERROR: unknown flag: $1" >&2
@@ -72,6 +75,61 @@ RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
 BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
 SYNC_AGENT_SH="$AI_SPECS_HOME/lib/sync-agent.sh"
+
+shopt -s inherit_errexit
+
+# print_step_output FILE — print a step's captured stdout or stderr file.
+# Verbose mode: cat the file bytes as-is (byte-identical, including trailing
+# blank lines). Compact mode: drop lines whose first non-whitespace char is
+# one of the success/detail-noise markers (✓ · ⇢ ▸), keeping every other
+# non-blank line (warnings/notices: !, ✗, ℹ, ...) intact.
+# Takes a file path (not a string) so command substitution cannot strip
+# trailing newlines from the replayed output.
+print_step_output() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+    [[ -s "$file" ]] || return 0
+    if [[ $VERBOSE -eq 1 ]]; then
+        cat "$file"
+        return 0
+    fi
+    local line stripped
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        stripped="${line#"${line%%[![:space:]]*}"}"
+        [[ -z "$stripped" ]] && continue
+        case "$stripped" in
+            '✓'*|'·'*|'⇢'*|'▸'*) continue ;;
+        esac
+        printf '%s\n' "$line"
+    done < "$file"
+}
+
+# run_step LABEL CMD [ARGS...] — print "  syncing LABEL", run CMD capturing
+# its stdout and stderr separately (preserving which stream each line came
+# from), then print each through print_step_output on its original stream.
+# On failure, print the FULL unfiltered stdout/stderr before returning the
+# command's exit status so the caller's existing error handling still runs.
+run_step() {
+    local label="$1"; shift
+    echo "  syncing $label"
+    local out_file err_file rc=0
+    out_file="$(mktemp)"
+    err_file="$(mktemp)"
+    set +e
+    "$@" >"$out_file" 2>"$err_file"
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 ]]; then
+        [[ -s "$out_file" ]] && cat "$out_file"
+        [[ -s "$err_file" ]] && cat "$err_file" >&2
+        rm -f "$out_file" "$err_file"
+        return $rc
+    fi
+    print_step_output "$out_file"
+    print_step_output "$err_file" >&2
+    rm -f "$out_file" "$err_file"
+    return 0
+}
 
 PLAN_JSON="$(python3 "$TARGET_RESOLVE_PY" "$TARGET_PATH")" || {
     echo "ERROR: target resolution failed before any writes." >&2
@@ -106,38 +164,56 @@ echo "  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/co
 echo "  note:    .gitmodules is advisory-only in V1"
 echo ""
 
-echo "▸ gitignore-render (root)"
-python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$AI_GITIGNORE"
+run_step "ai-specs/.gitignore" python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$AI_GITIGNORE"
 
-echo "▸ gitignore-root-refresh (agent block)"
-python3 "$GITIGNORE_ROOT_REFRESH" "$ROOT_PATH" "$AI_SPECS_HOME/templates/gitignore-root.tmpl"
+run_step "root .gitignore (agent block)" python3 "$GITIGNORE_ROOT_REFRESH" "$ROOT_PATH" "$AI_SPECS_HOME/templates/gitignore-root.tmpl"
 
-echo "▸ refresh-bundled (root)"
-python3 "$REFRESH_BUNDLED_PY" "$ROOT_PATH" "$AI_SPECS_HOME"
+run_step "bundled skills + commands" python3 "$REFRESH_BUNDLED_PY" "$ROOT_PATH" "$AI_SPECS_HOME"
 
-echo "▸ vendor-skills (root only)"
-python3 "$VENDOR_SKILLS_PY" "$ROOT_PATH"
+run_step "vendored skills" python3 "$VENDOR_SKILLS_PY" "$ROOT_PATH"
 
-echo "▸ recipe-materialize (root)"
 RECIPE_MCP_TEMP="$(mktemp -t ai-specs-recipe-mcp-XXXXXX.json)"
 RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
 RESOLVED_HOOKS_TEMP="$(mktemp -t ai-specs-resolved-hooks-XXXXXX.json)"
 trap 'rm -f "$RECIPE_MCP_TEMP" "$RESOLVED_CONFIG_TEMP" "$RESOLVED_HOOKS_TEMP"' EXIT
-python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP" --resolved-hooks-out "$RESOLVED_HOOKS_TEMP"
-
-echo "▸ agents-render (root)"
-if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
-    python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$ROOT_PATH/AGENTS.md" --preserve-if-runtime-brief --resolved-config "$RESOLVED_CONFIG_TEMP"
+RECIPE_OUT_FILE="$(mktemp)"
+RECIPE_ERR_FILE="$(mktemp)"
+set +e
+python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP" --resolved-hooks-out "$RESOLVED_HOOKS_TEMP" >"$RECIPE_OUT_FILE" 2>"$RECIPE_ERR_FILE"
+RECIPE_RC=$?
+set -e
+RECIPE_NAMES="$( { grep -oE '▸ recipe [^ ]+' "$RECIPE_OUT_FILE" | sed -E 's/.*recipe //' | paste -sd, - ; } 2>/dev/null || true)"
+if [[ -n "$RECIPE_NAMES" ]]; then
+    echo "  syncing recipes → ${RECIPE_NAMES//,/, }"
 else
-    echo "  · skipped AGENTS.md (brief.render = false)"
+    echo "  syncing recipes"
 fi
+if [[ $RECIPE_RC -ne 0 ]]; then
+    [[ -s "$RECIPE_OUT_FILE" ]] && cat "$RECIPE_OUT_FILE"
+    [[ -s "$RECIPE_ERR_FILE" ]] && cat "$RECIPE_ERR_FILE" >&2
+    rm -f "$RECIPE_OUT_FILE" "$RECIPE_ERR_FILE"
+    exit $RECIPE_RC
+fi
+print_step_output "$RECIPE_OUT_FILE"
+print_step_output "$RECIPE_ERR_FILE" >&2
+rm -f "$RECIPE_OUT_FILE" "$RECIPE_ERR_FILE"
 
-echo "▸ target fan-out"
+sync_agents_render() {
+    if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
+        python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$ROOT_PATH/AGENTS.md" --preserve-if-runtime-brief --resolved-config "$RESOLVED_CONFIG_TEMP"
+    else
+        echo "  ℹ skipped AGENTS.md (brief.render = false)"
+    fi
+}
+run_step "AGENTS.md" sync_agents_render
+
+export AI_SPECS_SYNC_NESTED=1
 for idx in "${!RESOLVED_TARGETS[@]}"; do
     target="${RESOLVED_TARGETS[$idx]}"
     label="${RESOLVED_TARGET_LABELS[$idx]}"
-    echo "  ▸ $label → $target"
-    if ! bash "$SYNC_AGENT_SH" --source-root "$ROOT_PATH" --target "$target" --all --recipe-mcp "$RECIPE_MCP_TEMP" --resolved-config "$RESOLVED_CONFIG_TEMP" --resolved-hooks "$RESOLVED_HOOKS_TEMP"; then
+    SYNC_AGENT_ARGS=(--source-root "$ROOT_PATH" --target "$target" --all --recipe-mcp "$RECIPE_MCP_TEMP" --resolved-config "$RESOLVED_CONFIG_TEMP" --resolved-hooks "$RESOLVED_HOOKS_TEMP")
+    [[ $VERBOSE -eq 1 ]] && SYNC_AGENT_ARGS+=(--verbose)
+    if ! run_step "$label → $target" bash "$SYNC_AGENT_SH" "${SYNC_AGENT_ARGS[@]}"; then
         echo "ERROR: sync failed for target $target ($label). Stopped on first failure; previous writes are not rolled back." >&2
         exit 1
     fi
