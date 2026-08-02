@@ -74,29 +74,83 @@ def command_word(seg):
     return None, None
 
 
-def _strip_heredoc_bodies(cmd: str) -> str:
-    lines = cmd.splitlines()
+def _preprocess_command(cmd: str) -> str:
+    """Remove shell comments and heredoc bodies without parsing quoted text."""
     output = []
     pending = []
-    for line in lines:
+    single = False
+    double = False
+    for line in cmd.splitlines():
         if pending:
             delimiter, strip_tabs = pending[0]
             candidate = line.lstrip("\t") if strip_tabs else line
             if candidate == delimiter:
                 pending.pop(0)
             continue
-        output.append(line)
-        for match in re.finditer(
-            r"<<(-?)\s*(?:'([^']+)'|\"([^\"]+)\"|([^\s;|&]+))", line
-        ):
-            delimiter = next(value for value in match.groups()[1:] if value is not None)
-            pending.append((delimiter, bool(match.group(1))))
+
+        visible = []
+        i = 0
+        while i < len(line):
+            char = line[i]
+            if single:
+                visible.append(char)
+                if char == "'":
+                    single = False
+                i += 1
+                continue
+            if double:
+                visible.append(char)
+                if char == "\\" and i + 1 < len(line):
+                    visible.append(line[i + 1])
+                    i += 2
+                    continue
+                if char == '"':
+                    double = False
+                i += 1
+                continue
+            if char == "'":
+                single = True
+                visible.append(char)
+                i += 1
+                continue
+            if char == '"':
+                double = True
+                visible.append(char)
+                i += 1
+                continue
+            if char == "#":
+                break
+            if char == "<" and i + 1 < len(line) and line[i + 1] == "<":
+                delimiter_start = i + 2
+                strip_tabs = delimiter_start < len(line) and line[delimiter_start] == "-"
+                if strip_tabs:
+                    delimiter_start += 1
+                if delimiter_start >= len(line) or line[delimiter_start] != "<":
+                    while delimiter_start < len(line) and line[delimiter_start].isspace():
+                        delimiter_start += 1
+                    if delimiter_start < len(line) and line[delimiter_start] in "'\"":
+                        quote = line[delimiter_start]
+                        end = line.find(quote, delimiter_start + 1)
+                        if end >= 0:
+                            pending.append((line[delimiter_start + 1:end], strip_tabs))
+                    else:
+                        end = delimiter_start
+                        while end < len(line) and line[end] not in " \t;|&<>":
+                            end += 1
+                        if end > delimiter_start:
+                            pending.append((line[delimiter_start:end], strip_tabs))
+                visible.extend(line[i:i + 2])
+                i += 2
+                continue
+            visible.append(char)
+            i += 1
+        output.append("".join(visible))
     return "\n".join(output)
 
 
 def segments(cmd: str):
     try:
-        lexer = shlex.shlex(_strip_heredoc_bodies(cmd).replace("\n", " ; "), posix=True, punctuation_chars=";|&")
+        lexer = shlex.shlex(_preprocess_command(cmd).replace("\n", " ; "), posix=True, punctuation_chars=";|&")
         lexer.commenters = ""
         lexer.whitespace_split = True
         tokens = list(lexer)
