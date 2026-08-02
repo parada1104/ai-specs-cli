@@ -169,7 +169,7 @@ project-local fallback
 **Reqs:** `tracker-card-gate` — activation, production-path by mode, openspec
 never blocked, fail-open, dogfood-relevant warn semantics.
 
-- [ ] 2.1 RED scaffolding: helpers + failing placeholders for the explore
+- [x] 2.1 RED scaffolding: helpers + failing placeholders for the explore
       matrix (script may be absent/stub — tests must fail for the right reason):
       - `missing_card_blocks_prod_write` (mode=`always`, marker, active change
         w/o `## Tracker` section, `Edit lib/foo.py` → exit 2; stderr names
@@ -186,11 +186,11 @@ never blocked, fail-open, dogfood-relevant warn semantics.
       - `no_active_change_allows`, `non_production_path_allows`
         (`Edit tests/x.py`), `malformed_stdin_fail_open`,
         `missing_file_path_fail_open`
-- [ ] 2.2 RED: active-change enumeration edge cases —
+- [x] 2.2 RED: active-change enumeration edge cases —
       archive-only tree ignored; stray dir without proposal/tasks/spec/design
       ignored; at least one deficient active change among several → block under
       `always`.
-- [ ] 2.3 RED: `TRACKER_CARD_GATE_PATHS` override honored (e.g. include
+- [x] 2.3 RED: `TRACKER_CARD_GATE_PATHS` override honored (e.g. include
       `ai-specs` → block; default excludes it → allow `Edit ai-specs/…`).
 
 ### Phase 3 — `tracker-card-gate.sh` path-mode GREEN (Decision 4 path/activation)
