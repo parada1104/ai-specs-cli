@@ -102,7 +102,8 @@ production writes MUST be allowed (exit `0`) regardless of `warn`/`always`.
 #### Scenario: valid Tracker link section allows production write
 
 - **GIVEN** gate active with mode=`always`
-- **AND** the active change has valid `## Tracker` link section (`card_id` + `url`)
+- **AND** the active change has a valid `## Tracker` link section with
+  non-empty `card_id` (and SHOULD include `url` when available)
 - **AND** a production-path `Write` is attempted
 - **WHEN** the hook runs
 - **THEN** it MUST exit `0`

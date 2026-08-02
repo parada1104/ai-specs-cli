@@ -42,9 +42,8 @@ Archived changes MUST NOT be migrated or warned by this check.
 
 #### Scenario: Valid Tracker link section is OK
 
-- **GIVEN** recipe enabled and bootstrap marker present
-- **AND** the change's `proposal.md` `## Tracker` section contains non-empty `card_id`
-  and `url`
+- **AND** the change's `proposal.md` `## Tracker` section contains non-empty
+  `card_id` (and SHOULD include `url` when available)
 - **WHEN** `ai-specs doctor` runs
 - **THEN** the report MUST NOT WARN for `demo-change` as missing a card link
 
