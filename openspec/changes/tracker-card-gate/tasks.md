@@ -289,7 +289,7 @@ file matches proposal Affected Areas).
 **Reqs:** `project-doctor` — *Active-change missing Tracker link section WARN*
 (all scenarios).
 
-- [ ] 6.1 RED: Doctor on temp project —
+- [x] 6.1 RED: Doctor on temp project —
       - recipe enabled + marker + missing `## Tracker` section → `tracker-card`
         WARN; doctor exit still 0
       - valid `## Tracker` section → OK (no missing-card WARN)
@@ -300,7 +300,7 @@ file matches proposal Affected Areas).
       - invalid/empty `card_id` in present file → WARN (deficient)
       - optional INFO nudge for non-24-hex `card_id` / missing `url` (if
         implemented; do not fail validity)
-- [ ] 6.2 GREEN: add `_check_tracker_card_link` after
+- [x] 6.2 GREEN: add `_check_tracker_card_link` after
       `_check_recipe_cli_deps`, before `_check_harness_env_layout`; sibling-load
       `trello_link.py`; resolve marker via `recipe_skills_root` + local
       fallback; same active-change enumeration as the gate. Pass 6.1.

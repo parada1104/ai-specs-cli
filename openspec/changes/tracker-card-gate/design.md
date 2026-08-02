@@ -50,7 +50,7 @@ Grounding reads for this design:
    contract declared in `openspec/config.yaml` under `tracking:`.
 2. Harden `trello-mcp-workflow`: `gate_mode` config, two `[[provides.hooks]]`
    entries (path + shell) reusing the existing renderer, `auto_invoke`
-   triggers, `tracker:none` exemption replacing the broad skip hatch,
+   triggers, `tracker.none` exemption replacing the broad skip hatch,
    per-phase `workflow_rules`, corrected bootstrap-marker path docs, narrowed
    Decision #7.
 3. Ship `tracker-card-gate.sh`: portable pre-tool-use guard, exit `0` allow /
@@ -236,7 +236,7 @@ workflow_rules = [
     "Before apply/production work on a structured change, create or link a Trello card and record it in the ## Tracker section of the change's proposal.md (or tasks.md) — card_id + url. openspec/** writes are never gated — write the link section there first.",
     "On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.",
     "If the tracker gate warns or blocks, create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down.",
-    "Only omit a card by writing openspec/changes/<slug>/tracker:none with a one-line reason; this is logged and rare.",
+    "Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare.",
 ]
 ```
 
@@ -366,7 +366,7 @@ is an active change iff it contains at least one of `proposal.md`, `tasks.md`,
 
 > An active change `<slug>` is **card-deficient** iff it has **no** valid
 > `## Tracker` link section in `proposal.md`/`tasks.md` (Decision 1) **and** no
-> `openspec/changes/<slug>/tracker:none` exemption file.
+> `openspec/changes/<slug>/tracker.none` exemption file.
 
 Path-mode block rule: block a production write iff **at least one active change
 is card-deficient**. If there are **no** active changes at all → allow (no
@@ -377,7 +377,7 @@ or exemption → allow.
 **Rationale.** A production edit cannot be mapped to a specific change slug
 (production files live outside change folders), so — exactly like
 `plan-build-gate` keying off "an active plan exists" — the gate keys off "every
-active change carries a card." The `tracker:none` file provides per-change
+active change carries a card." The `tracker.none` file provides per-change
 exemption so a legitimately card-less change never blocks the others.
 
 **4c. Shell-mode detection (high-confidence only).** Tokenize each `&&`/`||`/
@@ -419,7 +419,7 @@ opt-in" (flagged in §"Proposal notes").
 **Do not call Trello MCP from the gate.** Presence of the `## Tracker` link
 section is the proof (proposal Approach §5).
 
-**4f. `tracker:none` exemption file.** `openspec/changes/<slug>/tracker:none`
+**4f. `tracker.none` exemption file.** `openspec/changes/<slug>/tracker.none`
 (any content; a one-line reason is the documented convention). Presence exempts
 that change from the deficiency predicate in both gate and doctor. When the gate
 observes the file it is honored silently (the *logging* of exemption use is the
@@ -490,7 +490,7 @@ def _check_tracker_card_link(self) -> None:
         if not any((change / f).is_file()
                    for f in ("proposal.md", "tasks.md", "spec.md", "design.md")):
             continue
-        if (change / "tracker:none").is_file():
+        if (change / "tracker.none").is_file():
             continue
         if not (link and link.is_valid_link([change / "proposal.md", change / "tasks.md"])):
             deficient.append(change.name)
@@ -550,8 +550,8 @@ new/ambiguous path when bound). No other step changes.
   `trello_card_id`-field language (`SKILL.md:116`, `:129`) with "record the card
   in the `## Tracker` section of the change's proposal.md (or tasks.md)."
 - **Remove the skip hatch** (`SKILL.md:128` "Allow the agent to skip card
-  creation …") and replace with the narrow `tracker:none` exemption: "Only omit
-  a card by writing `openspec/changes/<slug>/tracker:none` with a one-line
+  creation …") and replace with the narrow `tracker.none` exemption: "Only omit
+  a card by writing `openspec/changes/<slug>/tracker.none` with a one-line
   reason; log the exemption. This is rare."
 - **Narrow Decision #7** in the Graceful Degradation section (`SKILL.md:198-203`):
   keep "MCP/network availability failures degrade (warn + continue, never
@@ -618,7 +618,7 @@ marker; assert:
 - active change without a `## Tracker` section → a `tracker-card` `WARN` check,
   exit code unchanged (0);
 - active change with a valid `## Tracker` section → `OK`;
-- `tracker:none` present → `OK` (exempted);
+- `tracker.none` present → `OK` (exempted);
 - recipe disabled → **no** `tracker-card` check emitted (silent);
 - marker absent → no check emitted;
 - archived change without a `## Tracker` section → ignored (grandfather).
@@ -763,7 +763,7 @@ only). Both read one parser (`trello_link.py` / its inline twin).
 
 - **[Risk] Dogfood self-block** on this change / retro SDD / archives.
   **→ Mitigation:** dogfood ships `warn` (Locked Decision #5); `openspec/**`
-  never blocked; `tracker:none` per-change escape; archives grandfathered
+  never blocked; `tracker.none` per-change escape; archives grandfathered
   (excluded from active enumeration); "no active change → allow."
 
 - **[Risk] Platform hook gaps → false security** (Cursor, OpenCode
@@ -795,7 +795,7 @@ only). Both read one parser (`trello_link.py` / its inline twin).
   locks list)"; this design locks exactly those two. Broader shell coverage is
   intentionally out (fail-open, precision-first) and can be added later without
   a contract change.
-- **`tracker:none` logging** is an agent/brief responsibility, not a gate
+- **`tracker.none` logging** is an agent/brief responsibility, not a gate
   side-effect (keeps the gate idempotent and fail-open). The proposal says
   "logged when used"; the logging surface is the agent per the brief rule, not
   the script.
