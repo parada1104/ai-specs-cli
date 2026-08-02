@@ -83,17 +83,31 @@ def command_word(seg, case_context=False):
                 i += 1
             if i < len(seg):
                 i += 1
-                if i < len(seg) and seg[i] != ")":
-                    i += 1
-                if i < len(seg) and seg[i] == ")":
-                    i += 1
+                if i < len(seg):
+                    pattern = seg[i]
+                    if ")" in pattern:
+                        remainder = pattern.split(")", 1)[1]
+                        if remainder:
+                            return i, remainder
+                    if pattern != ")":
+                        i += 1
+                    if i < len(seg) and seg[i] == ")":
+                        i += 1
             continue
         if t in {"in", "then", "do", "else", "{", "("}:
             i += 1
             continue
-        if case_context and t.endswith(")"):
-            i += 1
-            continue
+        if case_context and ")" in t:
+            remainder = t.split(")", 1)[1]
+            if not remainder:
+                i += 1
+                continue
+            t = remainder
+        if t.startswith("(") and t != "((":
+            t = t[1:]
+            if not t:
+                i += 1
+                continue
         if t == ")":
             i += 1
             continue
@@ -411,20 +425,22 @@ def detect_shell_actions(cmd: str):
             slug = rest[aidx + 1] if aidx + 1 < len(rest) else ""
             actions.append(("archive", slug))
             continue
-        # mv / git mv → openspec/changes/archive/
         if cw == "mv" or (cw == "git" and rest and rest[0] == "mv"):
             words = body[1:] if cw == "mv" else body[2:]
             nonflags = [t for t in words if not t.startswith("-")]
-            if len(nonflags) >= 1:
-                src = nonflags[0]
-                target_dirs = []
-                for wi, word in enumerate(words):
-                    if word in {"-t", "--target-directory"} and wi + 1 < len(words):
-                        target_dirs.append(words[wi + 1])
-                    elif word.startswith("--target-directory="):
-                        target_dirs.append(word.split("=", 1)[1])
+            target_dirs = []
+            for wi, word in enumerate(words):
+                if word in {"-t", "--target-directory"} and wi + 1 < len(words):
+                    target_dirs.append(words[wi + 1])
+                elif word.startswith("--target-directory="):
+                    target_dirs.append(word.split("=", 1)[1])
+                elif word.startswith("-t") and len(word) > 2 and not word.startswith("--"):
+                    target_dirs.append(word[2:])
+            sources = [t for t in nonflags if t not in target_dirs]
+            if sources:
+                src = sources[0]
                 if target_dirs:
-                    dest_candidates = nonflags + target_dirs
+                    dest_candidates = target_dirs
                 else:
                     dest_candidates = [nonflags[-1]]
                     trailing_redirect = any(ch in nonflags[-1] for ch in "<>&")
