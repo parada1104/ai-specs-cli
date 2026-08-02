@@ -240,6 +240,8 @@ class TrackerCardGateHookTests(unittest.TestCase):
         r = self._run(self._event("Edit", str(self.repo / "catalog" / "x.toml")), mode="always")
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("bad", r.stderr)
+        self.assertNotRegex(r.stderr, r"openspec/changes/[^/]*,[^/]*/tracker\.none")
+
 
     def test_paths_override_includes_ai_specs(self):
         self._seed_change(with_tracker=False)
@@ -256,6 +258,21 @@ class TrackerCardGateHookTests(unittest.TestCase):
             extra_env={"TRACKER_CARD_GATE_PATHS": "lib catalog bin src ai-specs"},
         )
         self.assertEqual(blocked.returncode, 2, blocked.stderr)
+    def test_shell_command_separators_are_detected(self):
+        self._seed_change("needs-card", with_tracker=False)
+        cases = (
+            "cd sub; gh pr create --fill",
+            "cd sub\ngh pr create --fill",
+            "set -e\nopenspec archive needs-card",
+            "git add -A; openspec archive needs-card",
+        )
+        for cmd in cases:
+            with self.subTest(cmd=cmd):
+                for mode, expected_rc in (("always", 2), ("warn", 0)):
+                    r = self._run(self._shell_event(cmd), mode=mode)
+                    self.assertEqual(r.returncode, expected_rc, f"{mode}: {cmd}\n{r.stderr}")
+                    if mode == "warn":
+                        self.assertTrue(r.stderr.strip())
 
     # --- Phase 4 shell-mode ---
 
@@ -334,6 +351,11 @@ class TrackerCardGateHookTests(unittest.TestCase):
                 "comment",
                 "## Tracker\n\n- **card_id**: `deadbeef` # note\n",
                 True,
+            ),
+            (
+                "fenced-inside",
+                "## Tracker\n\n```markdown\n- **card_id**: `6a622e6ad8dd4cefb8c09b81`\n```\n",
+                False,
             ),
         ]
         for name, body, expect in fixtures:
