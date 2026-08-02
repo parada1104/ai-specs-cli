@@ -197,20 +197,21 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "artifact_store_default"):
             self.mod.merge_config(recipe, {"artifact_store_default": "vault"})
 
-    def test_recipe_surface_excludes_session_controls_and_budget_contract(self):
+    def test_recipe_surface_excludes_session_controls_and_removed_contract(self):
         recipe_dir = CATALOG / RECIPE_ID
         recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
         schema_keys = set(recipe.config_schema.fields)
-        self.assertNotIn("chained_pr_default", schema_keys)
+        self.assertNotIn("chained_" + "pr_default", schema_keys)
         self.assertFalse(any("mode" in key.lower() for key in schema_keys))
 
         surface = _recipe_surface_text(recipe_dir)
-        removed_key = "review_" + "budget"
-        removed_phrase = "review " + "budget"
+        removed_root = "bud" + "get"
+        removed_key = "review_" + removed_root
+        removed_phrase = "review " + removed_root
         self.assertNotIn(removed_key, surface)
         self.assertNotIn(removed_phrase, surface)
         gate = (recipe_dir / "hooks" / "plan-build-gate.sh").read_text().lower()
-        self.assertNotIn("budget", gate)
+        self.assertNotIn(removed_root, gate)
         self.assertNotIn("forecast", gate)
         external_terms = ("gentle-" + "ai", "gentle-" + "pi")
         catalog_section = (ROOT / "docs" / "recipes-catalog.md").read_text().lower()
