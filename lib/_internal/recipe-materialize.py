@@ -385,8 +385,14 @@ def hook_script_rel_path(recipe_id: str, hook: Any) -> str:
     return f"ai-specs/recipes/{recipe_id}/hooks/{Path(hook.script).name}"
 
 
+GATE_MODE_PLACEHOLDERS = {
+    "__WORKTREE_GATE_MODE__": "always",
+    "__TRACKER_CARD_GATE_MODE__": "warn",
+}
+# Backward-compatible alias for older call sites / tests.
 GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
 REPO_TOPOLOGY_PLACEHOLDER = "__WORKTREE_REPO_TOPOLOGY__"
+TRACKER_CLI_HOME_PLACEHOLDER = "__TRACKER_CLI_HOME__"
 
 
 def materialize_hook_script(
@@ -395,6 +401,7 @@ def materialize_hook_script(
     project_root: Path,
     recipe_id: str,
     merged_cfg: dict[str, Any] | None = None,
+    cli_home: Path | None = None,
 ) -> str:
     """Copy a recipe hook script to the harness-neutral path and chmod +x.
 
@@ -408,11 +415,15 @@ def materialize_hook_script(
     dest = project_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     content = src.read_text()
-    if GATE_MODE_PLACEHOLDER in content:
-        mode = "always"
-        if merged_cfg is not None:
-            mode = str(merged_cfg.get("gate_mode", "always"))
-        content = content.replace(GATE_MODE_PLACEHOLDER, mode)
+    for token, default in GATE_MODE_PLACEHOLDERS.items():
+        if token in content:
+            mode = default
+            if merged_cfg is not None:
+                mode = str(merged_cfg.get("gate_mode", default))
+            content = content.replace(token, mode)
+    if TRACKER_CLI_HOME_PLACEHOLDER in content:
+        home_val = str(Path(cli_home).resolve()) if cli_home is not None else ""
+        content = content.replace(TRACKER_CLI_HOME_PLACEHOLDER, home_val)
     dest.write_text(content)
     os.chmod(dest, 0o755)
     print(f"    ✓ hook script {rel}")
@@ -884,7 +895,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # collect a resolved entry for downstream hooks-render.py. Tunable
         # config values ride along as env (resolved [config.*] overrides).
         for rhook in getattr(recipe, "runtime_hooks", []) or []:
-            script_path = materialize_hook_script(recipe_dir, rhook, project_root, rid, merged_cfg)
+            script_path = materialize_hook_script(recipe_dir, rhook, project_root, rid, merged_cfg, cli_home=cli_home)
             # Pass tunables to the hook as env vars. Only ENV-shaped config keys
             # (UPPER_SNAKE_CASE) are exported, so hook scripts can read them as
             # environment variables; other config keys (e.g. worktrees_dir) are

@@ -251,7 +251,7 @@ recipe tests as needed.
 **Reqs:** `tracker-card-gate` — hook declaration + dual-hook registration;
 `trello-card-linking` / state-sync / progress-comment brief rules.
 
-- [ ] 5.1 RED: materialize tests —
+- [x] 5.1 RED: materialize tests —
       - content with `__TRACKER_CARD_GATE_MODE__` stamped from
         `merged_cfg["gate_mode"]` (default `warn`)
       - `__WORKTREE_GATE_MODE__` still stamped (regression; map not a
@@ -259,11 +259,11 @@ recipe tests as needed.
       - `__TRACKER_CLI_HOME__` replaced with resolved `cli_home` when present;
         empty string when `cli_home is None`
       - worktree-gate script without `__TRACKER_CLI_HOME__` unaffected
-- [ ] 5.2 GREEN: replace `GATE_MODE_PLACEHOLDER` with
+- [x] 5.2 GREEN: replace `GATE_MODE_PLACEHOLDER` with
       `GATE_MODE_PLACEHOLDERS` map; add `cli_home: Path | None = None` to
       `materialize_hook_script`; pass `cli_home=cli_home` from
       `materialize_recipes` call site (~line 887). Pass 5.1.
-- [ ] 5.3 RED→GREEN `recipe.toml`:
+- [x] 5.3 RED→GREEN `recipe.toml`:
       - `[config.gate_mode]` enum `off|warn|always`, default `warn`,
         `required=false` (design 2a)
       - two `[[provides.hooks]]`:
@@ -274,7 +274,7 @@ recipe tests as needed.
       - `version = "1.3.0"` (from `1.2.0`)
       - append design 2d `workflow_rules` (link before apply; phase
         state-sync; progress comments; anti-bypass; `tracker.none` exemption)
-- [ ] 5.4 RED→GREEN render/recipe assertions (mirror worktree dual-hook tests):
+- [x] 5.4 RED→GREEN render/recipe assertions (mirror worktree dual-hook tests):
       - Claude: two PreToolUse managed entries, same script path
       - Cursor: file-write matcher skipped; shell id registers
         `beforeShellExecution` without Edit/Write tokens
