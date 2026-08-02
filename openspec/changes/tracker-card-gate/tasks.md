@@ -401,9 +401,9 @@ blurb.
 **Files:** `ai-specs/ai-specs.toml`.
 **Reqs:** `tracker-card-gate` — *Dogfood default warn*.
 
-- [ ] 9.1 Set under `[recipes.trello-mcp-workflow.config]`:
+- [x] 9.1 Set under `[recipes.trello-mcp-workflow.config]`:
       `gate_mode = "warn"` (keep existing `board_id`).
-- [ ] 9.2 Run `ai-specs sync` in this worktree; confirm materialized
+- [x] 9.2 Run `ai-specs sync` in this worktree; confirm materialized
       `ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh` stamps
       mode `warn` + CLI home; both hook ids wired for enabled harnesses.
       Revert/leave gitignored generated surface out of the commit per

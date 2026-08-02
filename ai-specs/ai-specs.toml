@@ -65,6 +65,7 @@ enabled = true
 enabled = true
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"
+gate_mode = "warn"
 
 [recipes.vault-canonical-store]
 enabled = true
