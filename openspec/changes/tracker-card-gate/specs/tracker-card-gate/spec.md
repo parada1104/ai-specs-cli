@@ -16,7 +16,7 @@ aliases as needed), exit `0` to allow, exit `2` to block, and fail open
 (exit `0`) on parse or lookup errors.
 
 The gate MUST NOT call Trello MCP. Presence of a valid
-`openspec/changes/<slug>/trello.md` (or `tracker.none`) is the proof.
+the `## Tracker` link section (or `tracker.none`) is the proof.
 
 #### Scenario: Hook is declared as pre-tool-use blocking
 
@@ -45,7 +45,7 @@ When inactive, the hook MUST exit `0` without blocking.
 
 - **GIVEN** `trello-mcp-workflow` is not enabled
 - **AND** a production-path `Write` targets `lib/foo.py` for an active change
-  without `trello.md`
+  without a `## Tracker` link section
 - **WHEN** `tracker-card-gate.sh` runs
 - **THEN** it MUST exit `0`
 
@@ -70,39 +70,39 @@ When inactive, the hook MUST exit `0` without blocking.
 When the gate is active, and a matched file-write tool targets a path under the
 configured production directory set (default includes at least `lib`, `catalog`,
 and `bin`; exact set locked in design / config), and the active non-archive
-change lacks both a valid `trello.md` and a `tracker.none` exemption:
+change lacks both a valid `## Tracker` link section and a `tracker.none` exemption:
 
-- mode=`always` → exit `2` and stderr remediation naming `trello.md` /
+- mode=`always` → exit `2` and stderr remediation naming the `## Tracker` link section /
   create-or-link card
 - mode=`warn` → exit `0` and emit a stderr warning (dogfood default)
 
-When a valid `trello.md` or `tracker.none` is present for the active change,
+When a valid `## Tracker` link section or `tracker.none` is present for the active change,
 production writes MUST be allowed (exit `0`) regardless of `warn`/`always`.
 
 #### Scenario: always blocks production write without card
 
 - **GIVEN** gate active with mode=`always`
-- **AND** an active change exists without valid `trello.md` and without
+- **AND** an active change exists without valid `## Tracker` link section and without
   `tracker.none`
 - **AND** a `Write`/`Edit` targets a production path (e.g. `lib/foo.py`)
 - **WHEN** the hook receives the normalized event
 - **THEN** it MUST exit `2`
-- **AND** stderr MUST mention remediation via `trello.md` / card create-or-link
+- **AND** stderr MUST mention remediation via the `## Tracker` link section / card create-or-link
 
 #### Scenario: warn allows production write with stderr warning
 
 - **GIVEN** gate active with mode=`warn`
-- **AND** an active change exists without valid `trello.md` and without
+- **AND** an active change exists without valid `## Tracker` link section and without
   `tracker.none`
 - **AND** a production-path `Write` is attempted
 - **WHEN** the hook runs
 - **THEN** it MUST exit `0`
 - **AND** stderr MUST include a warning about the missing card-link artifact
 
-#### Scenario: valid trello.md allows production write
+#### Scenario: valid Tracker link section allows production write
 
 - **GIVEN** gate active with mode=`always`
-- **AND** the active change has valid `trello.md` (`card_id` + `url`)
+- **AND** the active change has valid `## Tracker` link section (`card_id` + `url`)
 - **AND** a production-path `Write` is attempted
 - **WHEN** the hook runs
 - **THEN** it MUST exit `0`
@@ -110,7 +110,7 @@ production writes MUST be allowed (exit `0`) regardless of `warn`/`always`.
 #### Scenario: tracker:none allows production write
 
 - **GIVEN** gate active with mode=`always`
-- **AND** the active change has `tracker.none` and no `trello.md`
+- **AND** the active change has `tracker.none` and no `## Tracker` link section
 - **AND** a production-path `Write` is attempted
 - **WHEN** the hook runs
 - **THEN** it MUST exit `0`
@@ -118,21 +118,21 @@ production writes MUST be allowed (exit `0`) regardless of `warn`/`always`.
 ### Requirement: openspec paths never blocked
 
 Writes under `openspec/**` (including `openspec/changes/**` planning files and
-`trello.md` itself) MUST never be blocked by this gate, in any mode. Agents MUST
+the `## Tracker` section itself) MUST never be blocked by this gate, in any mode. Agents MUST
 be able to create the link artifact and planning files without deadlock.
 
 #### Scenario: Writing proposal without card is allowed
 
 - **GIVEN** gate active with mode=`always`
-- **AND** no `trello.md` exists for the active change
+- **AND** no `## Tracker` link section exists for the active change
 - **AND** a `Write` targets `openspec/changes/<slug>/proposal.md`
 - **WHEN** the hook runs
 - **THEN** it MUST exit `0`
 
-#### Scenario: Writing trello.md itself is allowed
+#### Scenario: Writing the Tracker link section itself is allowed
 
 - **GIVEN** gate active with mode=`always`
-- **AND** a `Write` targets `openspec/changes/<slug>/trello.md`
+- **AND** a `Write` targets the `## Tracker` link section
 - **WHEN** the hook runs
 - **THEN** it MUST exit `0`
 
@@ -171,16 +171,16 @@ open.
 #### Scenario: High-confidence gh pr create blocked without card in always
 
 - **GIVEN** gate active with mode=`always` and shell-mode coverage enabled
-- **AND** the active change lacks valid `trello.md` and `tracker.none`
+- **AND** the active change lacks valid `## Tracker` link section and `tracker.none`
 - **AND** stdin is a shell event whose command is high-confidence `gh pr create`
 - **WHEN** the hook runs
 - **THEN** it MUST exit `2`
-- **AND** stderr MUST name remediation via `trello.md`
+- **AND** stderr MUST name remediation via the `## Tracker` link section
 
 #### Scenario: Shell PR warn mode exits zero with warning
 
 - **GIVEN** gate active with mode=`warn` and shell-mode coverage enabled
-- **AND** the active change lacks valid `trello.md` and `tracker.none`
+- **AND** the active change lacks valid `## Tracker` link section and `tracker.none`
 - **AND** stdin is a high-confidence `gh pr create` shell event
 - **WHEN** the hook runs
 - **THEN** it MUST exit `0`
@@ -221,15 +221,15 @@ default.
 Recipe skill and `[provides.brief].workflow_rules` MUST state that a gate
 warn/block for a missing card-link artifact is never grounds to bypass via
 shell writes, skipping sync, or claiming "Trello unavailable" when the failure
-is a missing `trello.md`. The correct response is to create/link the card and
-write `trello.md` (or an explicit logged `tracker:none` exemption when
+is a missing `## Tracker` link section. The correct response is to create/link the card and
+write the `## Tracker` section (or an explicit logged `tracker:none` exemption when
 intentionally untracked).
 
 #### Scenario: Brief forbids unavailable excuse for missing artifact
 
 - **GIVEN** the catalog `trello-mcp-workflow` recipe after this change
 - **WHEN** skill and brief workflow rules are read
-- **THEN** they MUST forbid treating a missing `trello.md` as Trello
+- **THEN** they MUST forbid treating a missing `## Tracker` link section as Trello
   unavailability
-- **AND** MUST direct the agent to write `trello.md` (or `tracker:none`) instead
+- **AND** MUST direct the agent to write the `## Tracker` section (or `tracker:none`) instead
   of bypassing the gate

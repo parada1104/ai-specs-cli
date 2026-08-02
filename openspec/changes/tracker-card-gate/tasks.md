@@ -14,10 +14,11 @@ Plan refs: `explore.md`, `proposal.md`, `design.md`,
 script; materialize stamps `__TRACKER_CARD_GATE_MODE__` + `__TRACKER_CLI_HOME__`
 into the gitignored project copy under `ai-specs/recipes/…`).
 
-**Stop for human authorization before any further production code
-implementation.** This file is the implementation plan only — do not write
-production code, tests, or eval runners while authoring/editing it. Await
-maintainer go-ahead before RED/GREEN apply.
+**Stop for human authorization before any further production code implementation.**
+
+This file is the implementation plan only — do not write production code, tests,
+or eval runners while authoring/editing it. Await maintainer go-ahead before
+RED/GREEN apply.
 
 ---
 
@@ -56,8 +57,10 @@ Chain strategy: feature-branch-chain when over budget
 - **Delta coverage**: 6 change-scoped specs — every phase below cites the
   requirement / scenario(s) it closes (see Requirement → phase map).
 - **Accepted baselines** (from design.md Decisions 1–10):
-  - Canonical artifact = `openspec/changes/<slug>/trello.md`; validity =
-    non-empty `card_id` (shared predicate).
+  - Canonical link contract = `## Tracker` section in the change's
+    `proposal.md` (fallback `tasks.md`); validity = non-empty `card_id`
+    (shared predicate). Contract declared in `openspec/config.yaml`
+    `tracking:` (see Phase 8).
   - On-disk exemption marker = `openspec/changes/<slug>/tracker.none`
     (conceptual name `tracker:none` — see Flagged issues #1).
   - Gate semantic model = **plan-build-gate** (artifact before production), with
@@ -74,7 +77,7 @@ Chain strategy: feature-branch-chain when over budget
 
 - Intercept Trello MCP tools at the harness layer.
 - Introduce `.openspec.yaml` / folder-schema `trello_card_id`.
-- Migrate or fail the 68 archives lacking `trello.md` (grandfather).
+- Migrate or fail the 68 archives lacking a card link (grandfather).
 - Make doctor FAIL-by-default or add a project pre-commit hard-fail in v1.
 - Implement deferred sync hooks (`link-trello-card` / `sync-card-state` /
   `comment-verification`) as real sync-time MCP callers.
@@ -107,8 +110,8 @@ Chain strategy: feature-branch-chain when over budget
    `AGENTS.md` out of commits unless intentionally documenting a catalog
    change (see `dogfood-verification-isolation`).
 6. **This change already has Trello #56** (`card_id`
-   `6a6ebd5e2cd9a2fcd419e62c`, shortLink `WHZ3fLzD`). Write
-   `openspec/changes/tracker-card-gate/trello.md` in the close phase (P12)
+   `6a6ebd5e2cd9a2fcd419e62c`, shortLink `WHZ3fLzD`). Write the `## Tracker`
+   section in this change's `proposal.md` in the close phase (Phase 12)
    before archive / PR; do not invent a second card.
 
 ---
@@ -136,7 +139,7 @@ config-only, or verification.
 `tests/test_trello_link.py` (new; may later merge assertions into
 `test_doctor_tracker_card.py` / `test_tracker_card_gate_hook.py` via
 `parser_parity`, but a focused module test is preferred).
-**Reqs:** `trello-card-linking` — *Canonical trello.md link artifact*;
+**Reqs:** `trello-card-linking` — *Canonical `## Tracker` link section*;
 shared validity predicate used by doctor + gate.
 
 - [ ] 1.1 RED: `parse_trello_md` / `is_valid_link` / `card_id_looks_canonical`
@@ -169,11 +172,12 @@ never blocked, fail-open, dogfood-relevant warn semantics.
 - [ ] 2.1 RED scaffolding: helpers + failing placeholders for the explore
       matrix (script may be absent/stub — tests must fail for the right reason):
       - `missing_card_blocks_prod_write` (mode=`always`, marker, active change
-        w/o `trello.md`, `Edit lib/foo.py` → exit 2; stderr names tracker/card +
-        slug + `trello.md`)
-      - `with_card_allows_prod_write` (valid `trello.md` → exit 0)
+        w/o `## Tracker` section, `Edit lib/foo.py` → exit 2; stderr names
+        tracker/card + slug + link section)
+      - `with_card_allows_prod_write` (valid `## Tracker` section in
+        proposal.md → exit 0)
       - `openspec_paths_never_blocked` (`Write openspec/changes/x/proposal.md`
-        and `…/trello.md` → exit 0)
+        → exit 0)
       - `recipe_disabled_or_mode_off_allows` / `marker_absent_fail_open` /
         `mode_off_allows` (exit 0)
       - `warn_mode_allows_with_stderr` (mode=`warn` → exit 0 + non-empty stderr)
@@ -207,7 +211,8 @@ openspec never blocked; fail-open.
       - production dirs default `lib catalog bin src`;
         `TRACKER_CARD_GATE_PATHS` override
       - never block `openspec/changes/**` or gitignored agent config
-      - deficiency = no valid `trello.md` AND no `tracker.none`
+      - deficiency = no valid `## Tracker` section in proposal.md/tasks.md AND
+        no `tracker.none`
       - `warn` → stderr + exit 0; `always` → remediation stderr + exit 2
       - **no Trello MCP calls**
 - [ ] 3.2 GREEN: pass all Phase 2 path-mode tests via
@@ -281,13 +286,13 @@ recipe tests as needed.
 **Files:** `lib/_internal/doctor.py`; `tests/test_doctor_tracker_card.py` (new)
 (and/or extend `tests/test_doctor.py` if project convention prefers — dedicated
 file matches proposal Affected Areas).
-**Reqs:** `project-doctor` — *Active-change missing trello.md WARN* (all
-scenarios).
+**Reqs:** `project-doctor` — *Active-change missing Tracker link section WARN*
+(all scenarios).
 
 - [ ] 6.1 RED: Doctor on temp project —
-      - recipe enabled + marker + missing `trello.md` → `tracker-card` WARN;
-        doctor exit still 0
-      - valid `trello.md` → OK (no missing-card WARN)
+      - recipe enabled + marker + missing `## Tracker` section → `tracker-card`
+        WARN; doctor exit still 0
+      - valid `## Tracker` section → OK (no missing-card WARN)
       - `tracker.none` → no missing-card WARN
       - recipe disabled → silent (no `tracker-card` check)
       - marker absent → silent
@@ -317,8 +322,9 @@ mandatory consult; `tracker-card-gate` anti-bypass guidance.
 - [ ] 7.1 GREEN (skill):
       - `auto_invoke` triggers per design 8a (new structured change / missing
         card / stale or unknown card)
-      - new **"Card link artifact (`trello.md`)"** section (format + validity)
-      - replace mythical `trello_card_id` schema language with `trello.md`
+      - new **"Card link section (`## Tracker`)"** section (format + validity)
+      - replace mythical `trello_card_id` schema language with the
+        `## Tracker` section
       - remove skip hatch; document `tracker.none` (prose: `tracker:none`) +
         logged rare exemption
       - narrow Decision #7: availability degrades; missing artifact is not
@@ -326,8 +332,8 @@ mandatory consult; `tracker-card-gate` anti-bypass guidance.
       - fix bootstrap marker path docs to
         `<AI_SPECS_HOME>/cache/projects/<hash>-<name>/.recipe/trello-mcp-workflow/bootstrap-ready`
         (+ legacy project-local fallback note)
-- [ ] 7.2 GREEN (command): `trello-workflow.md` phase map references
-      `openspec/changes/<slug>/trello.md`.
+- [ ] 7.2 GREEN (command): `trello-workflow.md` phase map references the
+      `## Tracker` link section.
 - [ ] 7.3 GREEN (session-bootstrap): rewrite step 2c to mandatory tracker
       consult when a tracker capability is bound (new/ambiguous changes);
       keep memory-first order; unavailable tracker degrades without blocking.
@@ -357,6 +363,13 @@ blurb.
 - [ ] 8.3 `docs/recipes-catalog.md`: bump trello-mcp-workflow version /
       description for card-per-change gate + `gate_mode`. Touch catalog tests
       only if needed.
+- [ ] 8.4 `openspec/config.yaml`: add `tracking:` section declaring the global
+      contract — `tracker: trello`, `board_id` (this repo's dogfood board),
+      `artifact_section: "## Tracker"`, `required_fields: [card_id, url]`,
+      `gate_mode: warn`. Keep it declarative (doctor/gate still read the
+      operational `gate_mode` from the recipe config); do not duplicate other
+      top-level keys. Add a doc-content test if the repo asserts config.yaml
+      shape (else note the convention in the README/skill).
 
 ### Phase 9 — Dogfood config (Decision 10)
 
@@ -405,8 +418,9 @@ optional. Mirrors #165 / explore eval design.
       meta `wire_hooks = true`; assertion battery identical to worktree
       (`required_path_globs`, `required_content.contains_any`,
       `forbidden_path_globs`, `forbidden_phrases`); N-of-M via `EVALS_TRIALS`.
-- [ ] 11.3 Scenario `ac_new_change_writes_trello_md` — required
-      `openspec/changes/*/trello.md` with `card_id`; notes mention create/link.
+- [ ] 11.3 Scenario `ac_new_change_writes_tracker_section` — required: change
+      proposal.md contains a `## Tracker` section with `card_id`; notes mention
+      create/link.
 - [ ] 11.4 Scenario `ac_missing_card_gate_no_bash_skip` — `wire_hooks=true`;
       seeds card-less active change; notes say create/link first;
       `forbidden_phrases` reject `python3 -c`, `cat >`, `tee `, `sed -i`,
@@ -414,8 +428,8 @@ optional. Mirrors #165 / explore eval design.
 - [ ] 11.5 Scenario `ac_phase_transition_state_sync_plan` — notes include
       move/list/label/comment from the phase map.
 - [ ] 11.6 Scenario `ac_retro_change_without_card_triggers_link` — seeded
-      active change without `trello.md`; agent writes `trello.md` before
-      claiming done.
+      active change without a `## Tracker` section; agent writes the section
+      before claiming done.
 - [ ] 11.7 Optional expensive `ac_mcp_live_card_link` — tool evidence
       `trello_add_card_to_list` / `trello_add_comment`; disposable list +
       cleanup; board isolation. Not required for CI or for marking Phase 11
@@ -435,9 +449,8 @@ optional. Mirrors #165 / explore eval design.
       - **Changed**: trello-mcp-workflow `1.2.0` → `1.3.0`; skip hatch →
         `tracker.none`; Decision #7 narrowed; session-bootstrap consult when
         tracker bound
-- [ ] 12.2 Write this change's link artifact
-      `openspec/changes/tracker-card-gate/trello.md` for existing card #56
-      (`card_id` `6a6ebd5e2cd9a2fcd419e62c`, `url`
+- [ ] 12.2 Write the `## Tracker` section in this change's `proposal.md` for
+      existing card #56 (`card_id` `6a6ebd5e2cd9a2fcd419e62c`, `url`
       `https://trello.com/c/WHZ3fLzD/56-…`, optional shortLink/list/pr).
 - [ ] 12.3 Trello card sync (agent/MCP, not the gate): move/label for
       tasks→apply→verify phases; progress comment at milestones; keep card
@@ -469,13 +482,14 @@ optional. Mirrors #165 / explore eval design.
 | `catalog/recipes/trello-mcp-workflow/recipe.toml` | Modify — `gate_mode`, dual hooks, brief rules, version `1.3.0` |
 | `catalog/recipes/trello-mcp-workflow/skills/…/SKILL.md` | Modify — auto_invoke, artifact, exemption, Decision #7, marker path |
 | `catalog/recipes/trello-mcp-workflow/README.md` | Modify — contract, modes, gaps, live how-to |
-| `catalog/recipes/trello-mcp-workflow/commands/trello-workflow.md` | Modify — phase map → `trello.md` |
+| `catalog/recipes/trello-mcp-workflow/commands/trello-workflow.md` | Modify — phase map → `## Tracker` section |
 | `catalog/recipes/session-context/skills/session-bootstrap/SKILL.md` | Modify — step 2c mandatory when bound |
 | `lib/_internal/recipe-materialize.py` | Modify — `GATE_MODE_PLACEHOLDERS` + `cli_home` stamp |
 | `lib/_internal/doctor.py` | Modify — `_check_tracker_card_link` |
 | `docs/runtime-hooks.md` | Modify — dual-hook + mode stamp honesty |
 | `docs/recipes-catalog.md` | Modify — version/blurb |
 | `ai-specs/ai-specs.toml` | Modify — `gate_mode = "warn"` |
+| `openspec/config.yaml` | **Add** — `tracking:` section (tracker, board_id, section name, required fields, gate mode) |
 | `CHANGELOG.md` | Modify — Unreleased entry |
 | `tests/test_trello_link.py` | **Add** |
 | `tests/test_tracker_card_gate_hook.py` | **Add** |
@@ -484,7 +498,7 @@ optional. Mirrors #165 / explore eval design.
 | `tests/evals/run-live-trello.sh` | **Add** |
 | `tests/evals/eval_trello_mcp_workflow_live.py` | **Add** |
 | `tests/evals/scenarios/trello-mcp-workflow/ac_*` | **Add** (3–4 + optional MCP-live) |
-| `openspec/changes/tracker-card-gate/trello.md` | **Add** in close phase (card #56) |
+| `## Tracker` section in `openspec/changes/tracker-card-gate/proposal.md` | **Add** in close phase (card #56) |
 | Generated `ai-specs/recipes/**` shims | Via `ai-specs sync` only — never hand-edit / prefer not commit |
 
 ---
@@ -493,7 +507,7 @@ optional. Mirrors #165 / explore eval design.
 
 | Delta requirement | Spec | Kind | Phases |
 |-------------------|------|------|--------|
-| Canonical trello.md link artifact | trello-card-linking | ADDED | 1, 7, 12.2 |
+| Canonical `## Tracker` link section | trello-card-linking | ADDED | 1, 7, 8, 12.2 |
 | Narrow tracker:none exemption (`tracker.none` on disk) | trello-card-linking | ADDED | 2–4, 6, 7 |
 | Availability failure vs missing link artifact | trello-card-linking | ADDED | 7, 8 |
 | Brief rules require link artifact before apply | trello-card-linking | ADDED | 5.3, 7.4 |
@@ -516,14 +530,27 @@ optional. Mirrors #165 / explore eval design.
 
 ---
 
+## Notes
+
+- **Exemption on-disk name (apply alignment):** conceptual exemption is
+  `tracker:none`; delta specs lock the on-disk filename as **`tracker.none`**.
+  Design Decision 4f/6 still writes the colon form — apply does a **one-line
+  rename** of those path literals to `tracker.none` (do not create a
+  colon-named file). Tasks and tests already use `tracker.none`.
+- Dogfood default remains `gate_mode = "warn"`; promoting this repo to `always`
+  is a later config flip after evals prove the contract.
+- Live MCP-board scenario (`ac_mcp_live_card_link`) is optional/expensive and
+  not CI-gating; notes-file goldens land first.
+- Generated harness shims are sync-only artifacts — never hand-edit.
+
+---
+
 ## Flagged issues (non-blocking for planning; resolve at apply)
 
 1. **On-disk exemption filename contradiction (design vs specs).**
-   Design Decision 4f/6 uses the path `tracker:none`. Delta specs explicitly
-   lock **`tracker.none` as the on-disk form** of conceptual `tracker:none`
-   (`trello-card-linking` spec). **Tasks lock `tracker.none`.** Apply MUST
-   implement `tracker.none` and align design path literals when touching those
-   sites; do not create a colon-named file.
+   See Notes: design uses `tracker:none` path literals; specs/tasks lock
+   **`tracker.none`**. Apply aligns with a one-line rename; do not create a
+   colon-named file.
 2. **`ai-specs/` production-dir default (design §Proposal notes).** Excluded
    from default `TRACKER_CARD_GATE_PATHS` (`lib catalog bin src`). Product may
    flip later; Phase 2.3 covers opt-in. Not blocking.
