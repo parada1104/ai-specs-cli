@@ -245,9 +245,9 @@ board mutation stays optional/expensive with disposable-list hygiene.
 
 ### 7. Anti-bypass policy
 
-Brief + skill: if the gate warns/blocks, create/link the card and write
-`trello.md` — never bypass via shell writes, skipping sync, or claiming
-"Trello unavailable" when the failure is a missing artifact.
+Brief + skill: if the gate warns/blocks, create/link the card and write the
+`## Tracker` section — never bypass via shell writes, skipping sync, or
+claiming "Trello unavailable" when the failure is a missing link section.
 
 ## Affected Areas
 
@@ -257,7 +257,7 @@ Brief + skill: if the gate warns/blocks, create/link the card and write
 | `catalog/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh` | **Added** | Pre-tool gate script |
 | `catalog/recipes/trello-mcp-workflow/skills/…/SKILL.md` | Modified | auto_invoke; artifact contract; remove skip; Decision #7 narrow; path docs |
 | `catalog/recipes/trello-mcp-workflow/README.md` | Modified | Contract, modes, gaps, eval how-to |
-| `catalog/recipes/trello-mcp-workflow/commands/trello-workflow.md` | Modified | Phase map references `trello.md` |
+| `catalog/recipes/trello-mcp-workflow/commands/trello-workflow.md` | Modified | Phase map references the `## Tracker` link section |
 | `catalog/recipes/session-context/skills/session-bootstrap/SKILL.md` | Modified | Tracker consult when bound |
 | `lib/_internal/doctor.py` | Modified | Active-change missing-card WARN |
 | `docs/runtime-hooks.md` / `docs/recipes-catalog.md` | Modified as needed | Gate pattern + honesty about MCP non-interception |
@@ -282,7 +282,7 @@ Brief + skill: if the gate warns/blocks, create/link the card and write
 | bootstrap-ready path drift breaks activation detection | Medium | Fix docs; doctor/gate resolve cache marker the same way materialize writes it |
 | Shell PR heuristic false positives/negatives | Medium | High-precision patterns; fail-open; mode=`warn` first |
 | Live MCP evals pollute board | Medium | Notes-only scenarios first; optional MCP-live on disposable list + cleanup |
-| Dual vocabulary (`trello_card_id` vs `trello.md`) confuses agents | Low–Med | Skill/spec alignment; one artifact |
+| Dual vocabulary (`trello_card_id` vs the `## Tracker` link section) confuses agents | Low–Med | Skill/spec alignment; one canonical link contract |
 
 ## Rollback Plan
 
@@ -291,7 +291,8 @@ Brief + skill: if the gate warns/blocks, create/link the card and write
 2. Remove gate script + hermetic/live eval files (or leave tests disabled if
    mid-migrate).
 3. Run `ai-specs sync` so generated shims drop managed hook ids.
-4. No data migration; existing `trello.md` files remain harmless documentation.
+4. No data migration; existing `trello.md` files / `## Tracker` sections remain
+   harmless documentation.
 5. Partial deploy is safe: `warn`/fail-open never wedges editors; projects that
    never re-sync keep old soft behavior.
 
@@ -309,22 +310,24 @@ Brief + skill: if the gate warns/blocks, create/link the card and write
 
 ## Success Criteria
 
-- [ ] Canonical artifact documented and referenced consistently as
-      `openspec/changes/<slug>/trello.md` (`card_id` + `url` minimum); skill no
-      longer treats `trello_card_id` as a real schema field.
+- [ ] Canonical link contract documented and referenced consistently as the
+      `## Tracker` section of the change's `proposal.md` (fallback `tasks.md`),
+      with `card_id` + `url` minimum; skill no longer treats `trello_card_id`
+      as a real schema field.
 - [ ] Broad skip hatch removed; narrow `tracker:none` documented and logged.
 - [ ] Decision #7 narrowed in skill/design/spec: availability degrades; missing
       link artifact is enforceable under `always`.
 - [ ] session-bootstrap requires tracker consult when tracker is bound for
       new/ambiguous changes.
-- [ ] Doctor WARN fires for active changes missing valid `trello.md` when
-      recipe+marker present; silent when recipe disabled.
+- [ ] Doctor WARN fires for active changes missing a valid `## Tracker` link
+      section when recipe+marker present; silent when recipe disabled.
 - [ ] Gate inactive when recipe disabled, marker absent, or `gate_mode=off`.
 - [ ] Gate never blocks `openspec/changes/**` writes.
 - [ ] Gate `warn`: production write without card → exit 0 + stderr warning.
 - [ ] Gate `always`: production write / locked PR-archive shell without card →
-      exit 2 with remediation naming `trello.md`.
-- [ ] Valid `trello.md` (or `tracker:none`) allows production writes.
+      exit 2 with remediation naming the `## Tracker` link section.
+- [ ] Valid `## Tracker` link section (or `tracker.none`) allows production
+      writes.
 - [ ] Dogfood `ai-specs.toml` sets `gate_mode = "warn"` explicitly.
 - [ ] Hermetic tests cover explore cases: missing blocks (always), with card
       allows, openspec never blocked, mode off allows, shell PR case if shipped,
@@ -333,7 +336,7 @@ Brief + skill: if the gate warns/blocks, create/link the card and write
       isolated.
 - [ ] Docs state residual gaps (OpenCode MCP/subagent, Cursor file-write, child
       processes) and that MCP interception is explicitly not used.
-- [ ] Archives without `trello.md` are not migrated or failed.
+- [ ] Archives without a card link are not migrated or failed (grandfather).
 - [ ] `./tests/validate.sh` passes.
 
 ## Planning depth
@@ -366,14 +369,14 @@ planning-only (no production apply in this step).
 | Item | Why deferred |
 |------|----------------|
 | Abstract tracker package (Jira/Linear/…) | v1 stays Trello-specific; keep swappable seams only |
-| `.openspec.yaml` / schema field `trello_card_id` | Canonical file is `trello.md`; avoid dual sources |
+| `.openspec.yaml` / schema field `trello_card_id` | Canonical contract is the `## Tracker` link section; avoid dual sources |
 | Doctor FAIL / pre-commit hard fail by default | WARN first; opt-in FAIL later if needed |
 | Gate mode `always` as dogfood default | Promote after warn dogfood + evals green |
 | Implementing deferred sync hooks as real sync MCP | Sync remains agent-less; runtime agents own linking |
 | Auto-create card inside the gate script | Agents + MCP create; gate only checks artifact |
 | Closing OpenCode/Cursor/pi platform hook gaps | Platform limits; brief + evals mitigate |
 | MCP-live eval as required CI | Optional expensive scenario; notes-file goldens first |
-| Retro mass backfill of archive `trello.md` | Grandfather; no migration |
+| Retro mass backfill of archive card links | Grandfather; no migration |
 | Re-audit trigger automation for rescued changes | Soft/eval coverage via `ac_retro_change_without_card_triggers_link`; no separate product surface in v1 |
 
 ## Artifact path

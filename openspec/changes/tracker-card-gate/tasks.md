@@ -518,7 +518,7 @@ optional. Mirrors #165 / explore eval design.
 | Per-phase brief rules for progress comments | trello-progress-comment | ADDED | 5.3, 7 |
 | Degrade on availability failure only (progress) | trello-progress-comment | ADDED | 7, 8 |
 | Mandatory tracker consult when tracker is bound | session-bootstrap | ADDED | 7.3 |
-| Active-change missing trello.md WARN | project-doctor | ADDED | 6 |
+| Active-change missing Tracker link section WARN | project-doctor | ADDED | 6 |
 | Pre-tool-use tracker card gate hook | tracker-card-gate | ADDED | 3, 5 |
 | Gate activation predicate | tracker-card-gate | ADDED | 2, 3, 5 |
 | Production-path enforcement by mode | tracker-card-gate | ADDED | 2, 3 |
@@ -560,9 +560,9 @@ optional. Mirrors #165 / explore eval design.
 4. **`tracker:none` logging is agent/brief responsibility**, not a gate
    side-effect (design §Proposal notes). Gate honors `tracker.none` silently;
    skill/brief own the log.
-5. **This change folder currently lacks `trello.md`.** Card #56 already
-   exists. Phase 12.2 writes the artifact before archive/PR; dogfood stays on
-   `warn` so planning/apply does not self-deadlock.
+5. **This change's proposal.md currently lacks a `## Tracker` section.** Card
+   #56 already exists. Phase 12.2 writes the section before archive/PR;
+   dogfood stays on `warn` so planning/apply does not self-deadlock.
 6. **Platform residual gaps** (Cursor no pre-file-write; OpenCode
    MCP/subagent; pi/omp children) remain — documented in Phase 8; mitigated by
    dual-hook + brief anti-bypass + live evals. Do not overclaim in docs.
