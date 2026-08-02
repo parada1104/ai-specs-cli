@@ -344,6 +344,8 @@ class TrackerCardGateHookTests(unittest.TestCase):
             ("mv-trailing-redirect-archive", "mv openspec/changes/needs-card openspec/changes/archive/ 2>&1", 2),
             ("mv-trailing-output-redirect-archive", "mv openspec/changes/needs-card openspec/changes/archive/ 2>/dev/null", 2),
             ("mv-inline-output-redirect-archive", "mv openspec/changes/needs-card &> log openspec/changes/archive/", 2),
+            ("mv-target-directory-archive", "mv -t openspec/changes/archive/ openspec/changes/needs-card", 2),
+            ("mv-target-directory-equals-archive", "mv --target-directory=openspec/changes/archive/ openspec/changes/needs-card", 2),
             ("mv-source-archive-to-change", "mv openspec/changes/archive/old-change openspec/changes/old-change", 0),
             ("git-mv-source-archive-to-change", "git mv openspec/changes/archive/old-change openspec/changes/old-change", 0),
             ("mv-source-archive-to-tmp", "mv openspec/changes/archive/old-change /tmp/restore", 0),
