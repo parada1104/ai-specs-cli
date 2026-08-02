@@ -257,10 +257,6 @@ def _preprocess_command(cmd: str) -> str:
                                     delimiter.append(line[end + 1])
                                     end += 2
                                     continue
-                                if quote == '"' and line[end] == "\\":
-                                    delimiter.append(line[end])
-                                    end += 1
-                                    continue
                                 delimiter.append(line[end])
                                 end += 1
                             if end < len(line):
