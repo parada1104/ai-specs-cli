@@ -65,7 +65,7 @@ rules:
     - Use ./tests/run.sh for focused test feedback during implementation
     - Record RED/GREEN evidence when strict TDD applies
     - Update README when the change touches CLI commands, manifest schema, or user-facing docs
-    - Prefer git commits grouped by tasks.md phase (see ai-specs/skills/openspec-sdd-conventions/SKILL.md); avoid a single end-of-branch squash unless recovering history
+    - Prefer git commits grouped by tasks.md phase; avoid a single end-of-branch squash unless recovering history
   verify:
     - Run ./tests/validate.sh before final verification
     - Compare implementation against every spec scenario
@@ -73,6 +73,9 @@ rules:
 
 sdd:
   mode: adaptive
+  # Canonical ceremony levels from openspec/specs/sdd-adaptive-contract/spec.md.
+  # Informal practice aliases: light≈trivial/local_fix, standard≈behavior_change,
+  # full≈domain_change, tasks-only≈behavior_change without proposal/design.
   decision_matrix:
     trivial:
       artifacts: []
@@ -80,17 +83,24 @@ sdd:
       proposal_required: false
       design_required: false
     local_fix:
-      artifacts: []
+      artifacts: ["code", "tests"]
       worktree_required: false
       proposal_required: false
       design_required: false
     behavior_change:
-      artifacts: ["tasks.md"]
+      artifacts: ["specs", "tasks.md", "code", "tests"]
       worktree_required: true
       proposal_required: false
       design_required: false
     domain_change:
-      artifacts: ["proposal.md", "design.md", "tasks.md"]
+      artifacts:
+        - "proposal.md"
+        - "specs"
+        - "design.md"
+        - "tasks.md"
+        - "apply-report"
+        - "verify-report"
+        - "archive-report"
       worktree_required: true
       proposal_required: true
       design_required: true
@@ -107,3 +117,14 @@ ai_specs_guidance:
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas (large removals)
+
+# Declared tracking metadata; board_id and gate_mode are consistency-pinned
+# against operational recipe config in ai-specs/ai-specs.toml, not enforcement.
+# The tracking block is a declaration for SDD phase agents and file-format consumers.
+tracking:
+  tracker: trello
+  board_id: "69ec097f13e2d38ecd89a557"
+  artifact_section: "## Tracker"
+  # Fields recorded when linking; validity is non-empty card_id. Missing url is an INFO nudge, never a validity block.
+  required_fields: [card_id, url]
+  gate_mode: warn

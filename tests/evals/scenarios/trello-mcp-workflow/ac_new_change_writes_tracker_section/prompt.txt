@@ -1,0 +1,3 @@
+Necesito empezar un cambio estructurado llamado `demo-tracker-link` para un fix pequeño. Antes de tocar código de producción, documentá en `ai-specs/eval-notes/tracker-plan.md` cómo vas a crear o linkear la card de Trello y qué vas a escribir en la sección `## Tracker` del `proposal.md` (card_id + url). Si podés, creá el change bajo `openspec/changes/demo-tracker-link/proposal.md` con esa sección.
+
+Importante: no edites archivos bajo `lib/`, `catalog/`, `bin/` ni `src/`. Terminá cuando el plan (y el proposal si lo creás) dejen claro el link.

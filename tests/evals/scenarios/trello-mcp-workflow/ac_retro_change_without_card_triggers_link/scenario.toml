@@ -1,0 +1,11 @@
+id = "ac_retro_change_without_card_triggers_link"
+recipe_id = "trello-mcp-workflow"
+prompt_file = "prompt.txt"
+mode = "build"
+description = "Retro change without Tracker section gets linked before done"
+required_path_globs = ["openspec/changes/retro-demo/proposal.md"]
+required_content = [
+  { path = "openspec/changes/retro-demo/proposal.md", contains_any = ["## Tracker", "card_id"] },
+  { path = "ai-specs/eval-notes/retro-link.md", contains_any = ["## Tracker", "card_id", "link"] },
+]
+fixture = "retro_deficient"

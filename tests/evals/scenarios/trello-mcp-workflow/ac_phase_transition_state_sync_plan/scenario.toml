@@ -1,0 +1,10 @@
+id = "ac_phase_transition_state_sync_plan"
+recipe_id = "trello-mcp-workflow"
+prompt_file = "prompt.txt"
+mode = "plan"
+description = "Phase transition plan mentions move/list/label/comment"
+required_path_globs = ["ai-specs/eval-notes/phase-sync-plan.md"]
+required_content = [
+  { path = "ai-specs/eval-notes/phase-sync-plan.md", contains_any = ["move", "list", "label", "comment", "In Progress", "sdd:"] },
+]
+fixture = "carded_change"

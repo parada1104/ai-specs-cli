@@ -2,7 +2,7 @@
 id = "trello-mcp-workflow"
 name = "Trello MCP Workflow"
 description = "Automated Trello board integration for ai-specs SDD workflows"
-version = "1.2.0"
+version = "1.3.0"
 tags = ["tracker", "trello"]
 
 [[capabilities]]
@@ -70,6 +70,14 @@ forbidden_tools = ["trello_get_my_cards", "trello_list_boards"]
 restricted_tools = ["trello_set_active_board"]
 card_validation_required = true
 
+
+[config.gate_mode]
+required = false
+type = "string"
+default = "warn"
+enum = ["off", "warn", "always"]
+help_text = "Tracker card gate: off (disabled), warn (stderr warning, never blocks — default), or always (block production writes / PR-archive shell when an active change lacks the ## Tracker link section)."
+
 [init]
 prompt = "init.md"
 description = "Configure Trello board and list mappings before sync"
@@ -83,6 +91,10 @@ commands = [{ id = "trello-workflow", path = "commands/trello-workflow.md" }]
 [provides.brief]
 workflow_rules = [
     "Inspect the active Trello card before resuming work and keep card state in sync with actual progress.",
+    "Before apply/production work on a structured change, create or link a Trello card and record it in the ## Tracker section of the change's proposal.md (or tasks.md) — card_id + url. openspec/** writes are never gated — write the link section there first.",
+    "On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.",
+    "If the tracker gate warns or blocks, create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down.",
+    "Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare.",
 ]
 
 [[provides.brief.context_sources]]
@@ -99,6 +111,23 @@ command = "npx"
 args = ["-y", "@delorenj/mcp-server-trello"]
 env = { TRELLO_API_KEY = "$TRELLO_API_KEY", TRELLO_TOKEN = "$TRELLO_TOKEN" }
 timeout = 30000
+
+
+[[provides.hooks]]
+id = "tracker-card-gate"
+event = "pre-tool-use"
+script = "hooks/tracker-card-gate.sh"
+matcher = "Edit|Write|MultiEdit|NotebookEdit"
+blocking = true
+description = "Block production edits when an active change lacks the ## Tracker link section (mode=always); warn otherwise"
+
+[[provides.hooks]]
+id = "tracker-card-gate-shell"
+event = "pre-tool-use"
+script = "hooks/tracker-card-gate.sh"
+matcher = "Bash|Shell|Execute|Terminal"
+blocking = true
+description = "Best-effort block gh pr create / change-archive shell actions when an active change lacks the ## Tracker link section; does not gate shell writes"
 
 [[provides.templates]]
 source = "templates/card-feature.md"

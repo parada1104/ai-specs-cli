@@ -1,0 +1,3 @@
+El change `phase-demo` ya tiene `## Tracker` con card. Estamos pasando de tasks a apply. Documentá en `ai-specs/eval-notes/phase-sync-plan.md` qué harías en Trello: mover de lista, actualizar label de fase, y postear un progress comment.
+
+No ejecutes tools de Trello ni edites código. Solo el plan en ese archivo.
