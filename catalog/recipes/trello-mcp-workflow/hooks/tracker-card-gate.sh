@@ -58,7 +58,7 @@ parsed="$(python3 - "$input" "$stamped_cli_home" <<'PYEOF' 2>/dev/null
 import json, re, shlex, sys
 
 WRAPPERS = {"sudo", "env", "nice", "time", "nohup", "xargs", "command"}
-SEPS = {"|", "||", "&&", ";"}
+SEPS = {"|", "||", "&&", ";", "&"}
 
 def command_word(seg):
     i = 0
