@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import sys
+import re
+import tomllib
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -61,6 +63,16 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         self.assertIn("tracker.none", rules)
         self.assertIn("never bypass", rules.lower())
         self.assertIn("phase", rules.lower())
+    def test_tracking_declaration_matches_recipe_config(self):
+        config_text = (ROOT / "openspec" / "config.yaml").read_text()
+        board_match = re.search(r"^  board_id:\s*\"([^\"]+)\"", config_text, re.MULTILINE)
+        mode_match = re.search(r"^  gate_mode:\s*(\w+)", config_text, re.MULTILINE)
+        manifest = tomllib.loads((ROOT / "ai-specs" / "ai-specs.toml").read_text())
+        configured = manifest["recipes"]["trello-mcp-workflow"]["config"]
+        self.assertIsNotNone(board_match)
+        self.assertIsNotNone(mode_match)
+        self.assertEqual(board_match.group(1), configured["board_id"])
+        self.assertEqual(mode_match.group(1), configured["gate_mode"])
 
     def _make_project(self, config_block: str = "") -> Path:
         tmp = tempfile.TemporaryDirectory()

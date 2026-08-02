@@ -118,9 +118,9 @@ ai_specs_guidance:
   archive:
     - Warn before merging destructive deltas (large removals)
 
-# Soft guidance for SDD phase agents (file-format dependency only; not read by
-# ai-specs bin/lib). Doctor/gate keep reading operational gate_mode/board_id
-# from recipe config in ai-specs.toml.
+# Declared tracking metadata; board_id and gate_mode are consistency-pinned
+# against operational recipe config in ai-specs/ai-specs.toml, not enforcement.
+# The tracking block is a declaration for SDD phase agents and file-format consumers.
 tracking:
   tracker: trello
   board_id: "69ec097f13e2d38ecd89a557"

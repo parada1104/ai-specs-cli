@@ -31,8 +31,10 @@ the `## Tracker` link section (or `tracker.none`) is the proof.
 The gate is active only when **all** hold:
 
 1. `trello-mcp-workflow` is enabled for the project
-2. The bootstrap-ready marker is present at the runtime cache path
-   `cache/projects/<hash>-<name>/.recipe/trello-mcp-workflow/bootstrap-ready`
+2. The bootstrap-ready marker is present at the canonical runtime cache path
+   `cache/projects/<hash>-<name>/.recipe/trello-mcp-workflow/bootstrap-ready`,
+   or at the project-local fallback `.recipe/trello-mcp-workflow/bootstrap-ready`
+   used as the hermetic-test seam.
 3. Gate mode ≠ `off`
 
 Supported modes: `off` | `warn` | `always`, selected via recipe config and/or

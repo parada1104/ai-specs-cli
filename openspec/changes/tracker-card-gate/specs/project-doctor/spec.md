@@ -8,9 +8,10 @@ When all of the following hold, `ai-specs doctor` SHALL scan active OpenSpec
 change folders and WARN for missing/invalid card-link artifacts:
 
 1. The `trello-mcp-workflow` recipe is enabled in the project manifest.
-2. The recipe bootstrap-ready marker is present at the runtime cache path
+2. The recipe bootstrap-ready marker is present at the canonical runtime cache path
    `cache/projects/<hash>-<name>/.recipe/trello-mcp-workflow/bootstrap-ready`
-   (same location materialize writes; not a project-local `.recipe/` path).
+   (same location materialize writes), or at the project-local fallback
+   `.recipe/trello-mcp-workflow/bootstrap-ready` used by hermetic tests.
 
 For each directory matching `openspec/changes/<slug>/` that is **not** under
 `openspec/changes/archive/`:

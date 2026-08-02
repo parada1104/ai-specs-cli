@@ -127,7 +127,7 @@ event = "pre-tool-use"
 script = "hooks/tracker-card-gate.sh"
 matcher = "Bash|Shell|Execute|Terminal"
 blocking = true
-description = "Best-effort block gh pr create / change-archive shell actions when an active change lacks the ## Tracker link section (bash-bypass coverage)"
+description = "Best-effort block gh pr create / change-archive shell actions when an active change lacks the ## Tracker link section; does not gate shell writes"
 
 [[provides.templates]]
 source = "templates/card-feature.md"
