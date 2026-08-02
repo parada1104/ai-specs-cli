@@ -74,20 +74,62 @@ def command_word(seg):
     return None, None
 
 
+def _line_continuation_state(line, single, double):
+    """Return quote state and whether an unquoted trailing backslash joins lines."""
+    i = 0
+    while i < len(line):
+        char = line[i]
+        if single:
+            if char == "'":
+                single = False
+            i += 1
+            continue
+        if double:
+            if char == "\\" and i + 1 < len(line):
+                i += 2
+                continue
+            if char == '"':
+                double = False
+            i += 1
+            continue
+        if char == "'":
+            single = True
+        elif char == '"':
+            double = True
+        i += 1
+    trailing_backslashes = len(line) - len(line.rstrip("\\"))
+    return single, double, not single and trailing_backslashes % 2 == 1
+
+
 def _preprocess_command(cmd: str) -> str:
     """Remove shell comments and heredoc bodies without parsing quoted text."""
     output = []
     pending = []
     single = False
     double = False
-    for line in cmd.split("\n"):
+    physical_lines = cmd.split("\n")
+    index = 0
+    while index < len(physical_lines):
+        line = physical_lines[index]
         if pending:
-            delimiter, strip_tabs = pending[0]
+            delimiter, strip_tabs, quoted = pending[0]
             candidate = line.lstrip("\t") if strip_tabs else line
-            if candidate.rstrip("\r") == delimiter:
+            if (candidate == delimiter if quoted else
+                    candidate.rstrip("\r") == delimiter.rstrip("\r")):
                 pending.pop(0)
+            index += 1
             continue
 
+        logical_line = line
+        while True:
+            _next_single, _next_double, joins_next = _line_continuation_state(
+                logical_line, single, double
+            )
+            if not joins_next or index + 1 >= len(physical_lines):
+                break
+            logical_line = logical_line[:-1] + physical_lines[index + 1]
+            index += 1
+        line = logical_line
         visible = []
         at_word_start = not (single or double)
         i = 0
@@ -144,21 +186,22 @@ def _preprocess_command(cmd: str) -> str:
                         quote = line[delimiter_start]
                         end = line.find(quote, delimiter_start + 1)
                         if end >= 0:
-                            pending.append((line[delimiter_start + 1:end], strip_tabs))
+                            pending.append((line[delimiter_start + 1:end], strip_tabs, True))
                     else:
                         end = delimiter_start
                         while end < len(line) and line[end] not in " \t;|&<>":
                             end += 1
                         if end > delimiter_start:
-                            pending.append((line[delimiter_start:end], strip_tabs))
+                            pending.append((line[delimiter_start:end], strip_tabs, False))
                 visible.extend(line[i:i + 2])
                 i += 2
                 at_word_start = True
                 continue
             visible.append(char)
-            at_word_start = char.isspace() or char in ";|&()<>"
+            at_word_start = char in " \t;|&()<>"
             i += 1
         output.append("".join(visible))
+        index += 1
     return "\n".join(output)
 
 
