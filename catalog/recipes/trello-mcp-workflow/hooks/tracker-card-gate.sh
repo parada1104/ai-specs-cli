@@ -60,7 +60,7 @@ import json, re, shlex, sys
 WRAPPERS = {"sudo", "env", "nice", "time", "nohup", "xargs", "command", "coproc"}
 SEPS = {"|", "||", "&&", ";", "&", "|&", ";;", ";&", ";;&"}
 
-def command_word(seg):
+def command_word(seg, case_context=False):
     i = 0
     while i < len(seg):
         t = seg[i]
@@ -89,6 +89,9 @@ def command_word(seg):
                     i += 1
             continue
         if t in {"in", "then", "do", "else", "{", "("}:
+            i += 1
+            continue
+        if case_context and t.endswith(")"):
             i += 1
             continue
         if t == ")":
@@ -384,10 +387,11 @@ def nonflag_args(body):
 def detect_shell_actions(cmd: str):
     """Return list of (action, detail) with action in {pr_create, archive}."""
     actions = []
+    case_context = bool(re.search(r"(?:^|[;|&()\n])\s*case(?:\s|$)", cmd))
     for seg in segments(cmd):
         if not seg:
             continue
-        idx, cw = command_word(seg)
+        idx, cw = command_word(seg, case_context=case_context)
         if cw is None:
             continue
         body = seg[idx:]
