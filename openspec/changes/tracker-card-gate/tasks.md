@@ -123,7 +123,7 @@ Chain strategy: feature-branch-chain when over budget
 - [x] P0.3 `design.md` (Decisions 1–10 + apply order)
 - [x] P0.4 Delta specs under `specs/` (6 capabilities)
 - [x] P0.5 `tasks.md` (this file)
-- [ ] P0.6 **Human authorization to continue implementation**
+- [x] P0.6 **Human authorization to continue implementation**
 
 ---
 
@@ -142,7 +142,7 @@ config-only, or verification.
 **Reqs:** `trello-card-linking` — *Canonical `## Tracker` link section*;
 shared validity predicate used by doctor + gate.
 
-- [ ] 1.1 RED: `parse_trello_md` / `is_valid_link` / `card_id_looks_canonical`
+- [x] 1.1 RED: `parse_trello_md` / `is_valid_link` / `card_id_looks_canonical`
       matrix for fixtures:
       - bold-key list form (`- **card_id**: \`…\``) → keys lowercased
       - plain `key: value`
@@ -153,7 +153,7 @@ shared validity predicate used by doctor + gate.
       - empty `card_id` → invalid; non-empty → valid even if `url` absent
       - `card_id_looks_canonical` true only for `^[0-9a-fA-F]{24}$`
       No production module yet.
-- [ ] 1.2 GREEN: implement `lib/_internal/trello_link.py` exactly per design
+- [x] 1.2 GREEN: implement `lib/_internal/trello_link.py` exactly per design
       Decision 1 regex + cleaning rules. Pass 1.1 via
       `./tests/run.sh tests/test_trello_link.py`.
 
@@ -596,7 +596,7 @@ optional. Mirrors #165 / explore eval design.
 
 ## Authorization checkpoint
 
-**Status: PLANNING COMPLETE — apply NOT authorized by this artifact alone.**
+**Status: APPLY AUTHORIZED (P0.6) — Phases 1→12 in progress.**
 
 Await maintainer go-ahead (check P0.6) before any RED/GREEN implementation.
 After authorization, follow Phases 1→12 in order; hermetic suites must stay
