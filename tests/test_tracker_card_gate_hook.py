@@ -268,6 +268,33 @@ class TrackerCardGateHookTests(unittest.TestCase):
         r = self._run(self._shell_event(command), mode="always")
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_shell_preprocessing_matches_bash_truth_matrix(self):
+        self._seed_change("needs-card", with_tracker=False)
+        cases = (
+            ("comment-only-pr", "# create the PR\ngh pr create --fill", 2),
+            ("inline-comment-pr", "echo hi  # note\ngh pr create --fill", 2),
+            ("comment-only-archive", "set -e\n# archive\nopenspec archive needs-card", 2),
+            ("herestring", 'cat <<< "hello"\ngh pr create --fill', 2),
+            ("quoted-shift", 'echo "a << b"\ngh pr create --fill', 2),
+            ("python-shift", "python3 -c 'print(1 << 2)'\nopenspec archive needs-card", 2),
+            ("quoted-heredoc-text", "echo '<<EOF'\ngh pr create --fill\nEOF", 2),
+            ("comment-heredoc-text", "# heredoc note <<EOF\ngh pr create --fill", 2),
+            ("gated-opener-command", "gh pr create --fill --body-file - <<'EOF'\nbody\nEOF", 2),
+            ("docs-heredoc-pr-body", "cat > docs/x.md <<'EOF'\ngh pr create --fill\nEOF", 0),
+            ("docs-heredoc-shift-body", "cat > docs/x.md <<-EOF\n\tgh pr create --fill\n\tEOF", 0),
+            ("multiple-heredocs", "cat > docs/a <<'A'\ngh pr create --fill\nA\ncat > docs/b <<-B\n\topenspec archive needs-card\n\tB", 0),
+            ("inline-comment-semicolon", "echo hi  # note ; gh pr create --fill", 0),
+            ("inline-comment-and", "make test  # lint && gh pr create", 0),
+            ("inline-comment-pipe", "ls  # pipe | openspec archive x", 0),
+            ("comment-fallback", "echo a\n# fallback ; gh pr create", 0),
+            ("quoted-hash-gh", 'git commit -m "fix #123 and gh pr create"', 0),
+            ("quoted-gh", "echo 'gh pr create'", 0),
+        )
+        for label, command, expected_rc in cases:
+            with self.subTest(label=label):
+                result = self._run(self._shell_event(command), mode="always")
+                self.assertEqual(result.returncode, expected_rc, f"{label}: {command}\n{result.stderr}")
+
     def test_comments_do_not_bypass_shell_gate(self):
         self._seed_change("needs-card", with_tracker=False)
         cases = (
@@ -282,7 +309,6 @@ class TrackerCardGateHookTests(unittest.TestCase):
                 warning = self._run(self._shell_event(command), mode="warn")
                 self.assertEqual(warning.returncode, 0, f"{command}\n{warning.stderr}")
                 self.assertTrue(warning.stderr.strip())
-
 
     def test_paths_override_includes_ai_specs(self):
         self._seed_change(with_tracker=False)
