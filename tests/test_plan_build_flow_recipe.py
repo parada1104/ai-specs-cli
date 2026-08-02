@@ -209,7 +209,10 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         removed_key = "review_" + removed_root
         removed_phrase = "review " + removed_root
         self.assertNotIn(removed_key, surface)
-        self.assertNotIn(removed_phrase, surface)
+        skill = (recipe_dir / "skills" / RECIPE_ID / "SKILL.md").read_text()
+        self.assertNotRegex(skill, r"(?im)^#{1,6}\s*7\.5\b")
+        self.assertNotRegex(skill, r"(?im)^#{1,6}\s*Review workload budget\b")
+        self.assertNotRegex(skill, r"(?im)^\s*WARN:\s*review budget\b")
         gate = (recipe_dir / "hooks" / "plan-build-gate.sh").read_text().lower()
         self.assertNotIn(removed_root, gate)
         self.assertNotIn("forecast", gate)
