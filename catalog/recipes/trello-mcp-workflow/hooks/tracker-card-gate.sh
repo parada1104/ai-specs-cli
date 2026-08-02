@@ -292,6 +292,10 @@ def _unterminated_quote_line(prepared: str):
             line_no += 1
             escaped = False
             continue
+        if single:
+            if char == "'":
+                single = False
+            continue
         if escaped:
             escaped = False
             continue
