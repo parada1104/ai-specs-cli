@@ -55,153 +55,10 @@ input="$(cat)"
 #     action ∈ {pr_create, archive}\t<details may be slug or empty>
 # Fail-open: any python error → exit 0.
 parsed="$(python3 - "$input" "$stamped_cli_home" <<'PYEOF' 2>/dev/null
-import hashlib, json, os, re, shlex, sys
-from pathlib import Path
+import json, re, shlex, sys
 
-PAIR_RE = re.compile(
-    r"^\s*(?:[-*]\s+)?\*{0,2}(?P<key>[A-Za-z_][A-Za-z0-9_]*)\*{0,2}\s*:\s*(?P<value>.*)$"
-)
-RECOGNIZED = frozenset({"card_id", "shortlink", "url", "list", "pr"})
-TRACKER_HEADING = re.compile(r"^##\s+Tracker\s*$")
-H2 = re.compile(r"^##\s+")
-BASENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 WRAPPERS = {"sudo", "env", "nice", "time", "nohup", "xargs", "command"}
 SEPS = {"|", "||", "&&", ";"}
-
-
-def clean_value(raw: str) -> str:
-    value = raw.strip()
-    hash_at = value.find(" #")
-    if hash_at != -1:
-        before = value[:hash_at]
-        if before.count("`") % 2 == 0:
-            value = before.strip()
-    if len(value) >= 2 and value.startswith("`") and value.endswith("`"):
-        value = value[1:-1].strip()
-    return value
-
-
-def extract_body(text: str):
-    lines = text.splitlines()
-    start = None
-    in_fence = False
-    fence_marker = ""
-    for i, line in enumerate(lines):
-        stripped = line.lstrip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            if not in_fence:
-                in_fence = True
-                fence_marker = marker
-            elif stripped.startswith(fence_marker):
-                in_fence = False
-                fence_marker = ""
-            continue
-        if in_fence:
-            continue
-        if TRACKER_HEADING.match(line):
-            start = i + 1
-            break
-    if start is None:
-        return None
-    body = []
-    in_fence = False
-    fence_marker = ""
-    for line in lines[start:]:
-        stripped = line.lstrip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            if not in_fence:
-                in_fence = True
-                fence_marker = marker
-            elif stripped.startswith(fence_marker):
-                in_fence = False
-                fence_marker = ""
-            body.append(line)
-            continue
-        if not in_fence and H2.match(line):
-            break
-        body.append(line)
-    return "\n".join(body)
-
-
-def parse_section(paths):
-    for path in paths:
-        try:
-            p = Path(path)
-            if not p.is_file():
-                continue
-            text = p.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        body = extract_body(text)
-        if body is None:
-            continue
-        out = {}
-        for line in body.splitlines():
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            m = PAIR_RE.match(line)
-            if not m:
-                continue
-            key = m.group("key").lower()
-            if key not in RECOGNIZED or key in out:
-                continue
-            out[key] = clean_value(m.group("value"))
-        return out
-    return {}
-
-
-def is_valid_link(change_dir: Path) -> bool:
-    data = parse_section([change_dir / "proposal.md", change_dir / "tasks.md"])
-    return bool(data.get("card_id"))
-
-
-def sanitize_basename(name: str) -> str:
-    cleaned = BASENAME_SAFE.sub("-", name).strip("-._")
-    return cleaned or "project"
-
-
-def marker_present(repo_root: Path, stamped_home: str) -> bool:
-    local = repo_root / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
-    if local.is_file():
-        return True
-    home = os.environ.get("AI_SPECS_HOME") or stamped_home
-    if not home or home.startswith("__TRACKER_CLI_HOME"):
-        return False
-    try:
-        resolved = repo_root.resolve()
-    except OSError:
-        return False
-    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
-    key = f"{digest}-{sanitize_basename(resolved.name)}"
-    primary = Path(home) / "cache" / "projects" / key / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
-    return primary.is_file()
-
-
-def active_changes(repo_root: Path):
-    changes = repo_root / "openspec" / "changes"
-    if not changes.is_dir():
-        return []
-    out = []
-    for child in sorted(changes.iterdir()):
-        if not child.is_dir() or child.name == "archive":
-            continue
-        if any((child / f).is_file() for f in ("proposal.md", "tasks.md", "spec.md", "design.md")):
-            out.append(child)
-    return out
-
-
-def deficient_slugs(repo_root: Path):
-    bad = []
-    for change in active_changes(repo_root):
-        if (change / "tracker.none").is_file():
-            continue
-        if is_valid_link(change):
-            continue
-        bad.append(change.name)
-    return bad
-
 
 def command_word(seg):
     i = 0
@@ -219,7 +76,9 @@ def command_word(seg):
 
 def segments(cmd: str):
     try:
-        tokens = shlex.split(cmd, posix=True)
+        lexer = shlex.shlex(cmd.replace("\n", " ; "), posix=True, punctuation_chars=";|&")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
     except ValueError:
         return []
     segs, cur = [], []
@@ -282,26 +141,6 @@ def detect_shell_actions(cmd: str):
     return actions
 
 
-def find_repo_root(hint: str):
-    d = Path(hint) if hint else Path.cwd()
-    if d.is_file():
-        d = d.parent
-    while not d.exists() and d != d.parent:
-        d = d.parent
-    if not d.exists():
-        return None
-    import subprocess
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(d), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=False,
-        )
-    except OSError:
-        return None
-    if proc.returncode != 0:
-        return None
-    root = proc.stdout.strip()
-    return Path(root) if root else None
 
 
 try:
@@ -316,14 +155,11 @@ if not isinstance(ti, dict):
     ti = {}
 tool_name = d.get("tool_name") if isinstance(d.get("tool_name"), str) else ""
 cwd = d.get("cwd") if isinstance(d.get("cwd"), str) else ""
-stamped_home = sys.argv[2] if len(sys.argv) > 2 else ""
 
 fp = ti.get("file_path") or ti.get("notebook_path") or ""
 if isinstance(fp, str) and fp.strip():
     print(f"path\t{tool_name}\t{cwd}")
     print(fp.strip())
-    # Embed evaluation result for the bash side via a third channel?
-    # Bash will re-invoke evaluation — keep protocol simple; bash calls back.
     sys.exit(0)
 
 cmd = ""
@@ -443,8 +279,20 @@ def parse_section(paths):
         if body is None:
             continue
         out = {}
+        in_fence = False
+        fence_marker = ""
         for line in body.splitlines():
-            if not line.strip() or line.lstrip().startswith("#"):
+            stripped = line.lstrip()
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                marker = stripped[:3]
+                if not in_fence:
+                    in_fence = True
+                    fence_marker = marker
+                elif stripped.startswith(fence_marker):
+                    in_fence = False
+                    fence_marker = ""
+                continue
+            if in_fence or not line.strip() or stripped.startswith("#"):
                 continue
             m = PAIR_RE.match(line)
             if not m:
@@ -536,14 +384,21 @@ _emit_and_exit() {
   local action_desc="$1"
   local deficient="$2"
   local sample
-  sample="$(printf '%s' "$deficient" | tr ',' '\n' | head -n 3 | paste -sd ',' -)"
+  local path_hint
+  sample="$(printf '%s' "$deficient" | tr ',' '\n' | head -n 3 | paste -sd ', ' -)"
+  if [ "$(printf '%s' "$deficient" | tr ',' '\n' | wc -l | tr -d ' ')" = 1 ]; then
+    path_hint="or add openspec/changes/${sample}/tracker.none with a reason"
+  else
+    path_hint="or add a tracker.none exemption with a reason in each deficient change directory"
+  fi
   if [ "$gate_mode" = warn ]; then
-    echo "tracker-card-gate: warning — active change(s) missing ## Tracker link section: ${sample}. Create/link a Trello card and write the ## Tracker section (card_id + url), or add tracker.none. Writing under openspec/** is never blocked." >&2
+    echo "tracker-card-gate: warning — active change(s) missing ## Tracker link section: ${sample}. Create/link Trello cards and write the ## Tracker section (card_id + url), ${path_hint}. Writing under openspec/** is never blocked." >&2
     exit 0
   fi
-  echo "tracker-card-gate: refusing to ${action_desc} — active change '${sample}' has no ## Tracker link section in its proposal.md. Create/link a Trello card and write the ## Tracker section (card_id + url), or add openspec/changes/${sample}/tracker.none with a reason. Writing under openspec/** is never blocked." >&2
+  echo "tracker-card-gate: refusing to ${action_desc} — active change(s) '${sample}' have no ## Tracker link section in their proposal.md. Create/link Trello cards and write the ## Tracker section (card_id + url), ${path_hint}. Writing under openspec/** is never blocked." >&2
   exit 2
 }
+
 
 if [ "$kind" = path ]; then
   file_path="$(printf '%s\n' "$parsed" | sed -n '2p')"
@@ -581,12 +436,8 @@ fi
 if [ "$kind" = shell ]; then
   repo_root="$(_resolve_repo "${cwd:-$PWD}")" || exit 0
   [ -n "$repo_root" ] || exit 0
-  # Evaluate each action line.
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    action="${line%%$'\t'*}"
-    detail="${line#*$'\t'}"
-    [ "$action" = "$detail" ] && detail=""
+  while IFS=$'\t' read -r action detail; do
+    [ -n "$action" ] || continue
     case "$action" in
       pr_create)
         deficient="$(_eval_deficient "$repo_root")" || exit 0
@@ -598,8 +449,6 @@ if [ "$kind" = shell ]; then
         if [ -n "$detail" ] && [ -d "$repo_root/openspec/changes/$detail" ]; then
           deficient="$(_eval_deficient "$repo_root" "$detail")" || exit 0
         else
-          # An unresolved archive source cannot be evaluated in isolation;
-          # apply the design fallback and inspect every active change.
           deficient="$(_eval_deficient "$repo_root")" || exit 0
         fi
         [ "$deficient" = "__INACTIVE__" ] && exit 0
@@ -607,7 +456,6 @@ if [ "$kind" = shell ]; then
         _emit_and_exit "archive '$detail'" "$deficient"
         ;;
       *)
-        # unknown → fail-open
         ;;
     esac
   done < <(printf '%s\n' "$parsed" | tail -n +2)

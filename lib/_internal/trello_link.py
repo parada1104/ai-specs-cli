@@ -87,10 +87,20 @@ def _extract_tracker_body(text: str) -> str | None:
 
 def _parse_section_body(body: str) -> dict[str, str]:
     out: dict[str, str] = {}
+    in_fence = False
+    fence_marker = ""
     for line in body.splitlines():
-        if not line.strip():
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif stripped.startswith(fence_marker):
+                in_fence = False
+                fence_marker = ""
             continue
-        if line.lstrip().startswith("#"):
+        if in_fence or not line.strip() or stripped.startswith("#"):
             continue
         m = _PAIR_RE.match(line)
         if not m:
