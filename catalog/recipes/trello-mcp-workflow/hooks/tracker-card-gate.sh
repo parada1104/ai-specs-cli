@@ -595,9 +595,11 @@ if [ "$kind" = shell ]; then
         _emit_and_exit "gh pr create" "$deficient"
         ;;
       archive)
-        if [ -n "$detail" ]; then
+        if [ -n "$detail" ] && [ -d "$repo_root/openspec/changes/$detail" ]; then
           deficient="$(_eval_deficient "$repo_root" "$detail")" || exit 0
         else
+          # An unresolved archive source cannot be evaluated in isolation;
+          # apply the design fallback and inspect every active change.
           deficient="$(_eval_deficient "$repo_root")" || exit 0
         fi
         [ "$deficient" = "__INACTIVE__" ] && exit 0
