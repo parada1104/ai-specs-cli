@@ -337,6 +337,8 @@ class TrackerCardGateHookTests(unittest.TestCase):
             ("eol-and-pr", "echo hi &&\ngh pr create --fill", 2),
             ("eol-or-archive", "false ||\nopenspec archive needs-card", 2),
             ("eol-spaced-semicolon-archive", "echo a ;\nopenspec archive needs-card", 2),
+            ("bare-amp-inline-pr", "echo a & gh pr create --fill", 2),
+            ("bare-amp-inline-archive", "git add -A & openspec archive needs-card", 2),
             ("arith-shift-unquoted", "echo $((1<<2))\ngh pr create --fill", 2),
             ("arith-command-shift", "((1<<2))\ngh pr create --fill", 2),
             ("single-quote-backslash-pr", "echo 'a\\'\ngh pr create --fill\necho \"oops", 2),
