@@ -170,5 +170,19 @@ class TrelloLinkParserTests(unittest.TestCase):
         )
 
 
+    def test_fenced_sample_tracker_ignored(self):
+        p = self._write(
+            "proposal.md",
+            "# Title\n\n"
+            "Sample:\n\n"
+            "```markdown\n"
+            "## Tracker\n\n"
+            "- **card_id**: `<24-hex>`\n"
+            "```\n\n"
+            "## Scope\n\nNo real tracker yet.\n",
+        )
+        self.assertEqual(self.mod.parse_tracker_section([p]), {})
+        self.assertFalse(self.mod.is_valid_link([p]))
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,18 +37,49 @@ def _clean_value(raw: str) -> str:
 
 
 def _extract_tracker_body(text: str) -> str | None:
-    """Return body lines after ## Tracker until the next ## heading, or None."""
+    """Return body lines after ## Tracker until the next ## heading, or None.
+
+    Headings inside fenced code blocks (``` / ~~~) are ignored so documentation
+    samples do not count as a real link section.
+    """
     lines = text.splitlines()
     start = None
+    in_fence = False
+    fence_marker = ""
     for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif stripped.startswith(fence_marker):
+                in_fence = False
+                fence_marker = ""
+            continue
+        if in_fence:
+            continue
         if _TRACKER_HEADING_RE.match(line):
             start = i + 1
             break
     if start is None:
         return None
     body: list[str] = []
+    in_fence = False
+    fence_marker = ""
     for line in lines[start:]:
-        if _H2_RE.match(line):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif stripped.startswith(fence_marker):
+                in_fence = False
+                fence_marker = ""
+            body.append(line)
+            continue
+        if not in_fence and _H2_RE.match(line):
             break
         body.append(line)
     return "\n".join(body)

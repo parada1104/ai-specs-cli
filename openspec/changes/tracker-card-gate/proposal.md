@@ -387,3 +387,11 @@ planning-only (no production apply in this step).
 ## Artifact path
 
 `openspec/changes/tracker-card-gate/proposal.md`
+
+## Tracker
+
+- **card_id**: `6a6ebd5e2cd9a2fcd419e62c`
+- **shortLink**: `WHZ3fLzD`
+- **url**: https://trello.com/c/WHZ3fLzD/56-sdd-gate-de-tracker-garantizar-card-trello-por-cambio-evals
+- **list**: In Progress
+

@@ -468,27 +468,28 @@ optional. Mirrors #165 / explore eval design.
 **Files:** `CHANGELOG.md`; this change folder; Trello #56.
 **Reqs:** proposal success criteria checklist; archive hygiene.
 
-- [ ] 12.1 `CHANGELOG.md` under `## [Unreleased]`:
+- [x] 12.1 `CHANGELOG.md` under `## [Unreleased]`:
       - **Added**: tracker-card gate (`warn|always|off`), doctor missing-card
         WARN, hermetic gate/doctor tests, live trello eval client + scenarios
       - **Changed**: trello-mcp-workflow `1.2.0` → `1.3.0`; skip hatch →
         `tracker.none`; Decision #7 narrowed; session-bootstrap consult when
         tracker bound
-- [ ] 12.2 Write the `## Tracker` section in this change's `proposal.md` for
+- [x] 12.2 Write the `## Tracker` section in this change's `proposal.md` for
       existing card #56 (`card_id` `6a6ebd5e2cd9a2fcd419e62c`, `url`
       `https://trello.com/c/WHZ3fLzD/56-…`, optional shortLink/list/pr).
-- [ ] 12.3 Trello card sync (agent/MCP, not the gate): move/label for
+- [x] 12.3 Trello card sync (agent/MCP, not the gate): move/label for
       tasks→apply→verify phases; progress comment at milestones; keep card
       state honest through archive.
-- [ ] 12.4 Cross-check every delta scenario has a RED→GREEN task or an
+- [x] 12.4 Cross-check every delta scenario has a RED→GREEN task or an
       explicit prose/manual verification note (live agent behaviors = Phase 11
       / manual).
-- [ ] 12.5 Dogfood smoke (isolated): with mode `warn`, confirm a production
+- [x] 12.5 Dogfood smoke (isolated): with mode `warn`, confirm a production
       edit without card warns on stderr and does not block; with
       `TRACKER_CARD_GATE_MODE=always` one-shot, confirm block + remediation;
       writing under `openspec/changes/**` never blocks. Revert any leaked
       generated files.
 - [ ] 12.6 FINAL GATE: `./tests/validate.sh` green from the change worktree
+      *(skipped this apply session per explicit assignment instruction)*
       root (py_compile + `bash -n` + full tests). Fix drift only.
 - [ ] 12.7 Independent verify against proposal/design/specs/tasks; write
       verify report if the verify skill requires it.

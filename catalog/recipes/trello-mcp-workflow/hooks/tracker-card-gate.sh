@@ -84,15 +84,42 @@ def clean_value(raw: str) -> str:
 def extract_body(text: str):
     lines = text.splitlines()
     start = None
+    in_fence = False
+    fence_marker = ""
     for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif stripped.startswith(fence_marker):
+                in_fence = False
+                fence_marker = ""
+            continue
+        if in_fence:
+            continue
         if TRACKER_HEADING.match(line):
             start = i + 1
             break
     if start is None:
         return None
     body = []
+    in_fence = False
+    fence_marker = ""
     for line in lines[start:]:
-        if H2.match(line):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif stripped.startswith(fence_marker):
+                in_fence = False
+                fence_marker = ""
+            body.append(line)
+            continue
+        if not in_fence and H2.match(line):
             break
         body.append(line)
     return "\n".join(body)
@@ -363,15 +390,42 @@ def clean_value(raw: str) -> str:
 def extract_body(text: str):
     lines = text.splitlines()
     start = None
+    in_fence = False
+    fence_marker = ""
     for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif stripped.startswith(fence_marker):
+                in_fence = False
+                fence_marker = ""
+            continue
+        if in_fence:
+            continue
         if TRACKER_HEADING.match(line):
             start = i + 1
             break
     if start is None:
         return None
     body = []
+    in_fence = False
+    fence_marker = ""
     for line in lines[start:]:
-        if H2.match(line):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif stripped.startswith(fence_marker):
+                in_fence = False
+                fence_marker = ""
+            body.append(line)
+            continue
+        if not in_fence and H2.match(line):
             break
         body.append(line)
     return "\n".join(body)
