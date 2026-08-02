@@ -315,7 +315,8 @@ class TrackerCardGateHookTests(unittest.TestCase):
             ("paragraph-separator-word-hash-gated", "echo a\u2029#note; gh pr create --fill", 2),
             ("cr-word-hash-gated", "echo a\r#note; gh pr create --fill", 2),
             ("nbsp-word-hash-gated", "echo a\u00a0#note; gh pr create --fill", 2),
-            ("joined-mid-word-hash-gated", "echo foo\\\n#bar; gh pr create --fill", 2),
+            ("fold-midword-hash-continuation", "echo foo\\\\\n#bar \\\ngh pr create --fill", 0),
+            ("fold-midword-hash-continuation-archive", "echo foo\\\\\n#bar \\\nopenspec archive needs-card", 0),
             ("comment-continuation-inline", "echo hi # note \\\ngh pr create --fill", 2),
             ("comment-continuation-only", "# note \\\ngh pr create --fill", 2),
             ("comment-continuation-archive", "set -e\n# archive \\\nopenspec archive needs-card", 2),
@@ -323,8 +324,13 @@ class TrackerCardGateHookTests(unittest.TestCase):
             ("unquoted-heredoc-body-fold", "cat > docs/x <<EOF\nbody\\\nEOF\ngh pr create --fill", 0),
             ("quoted-heredoc-body-literal", "cat > docs/x <<'EOF'\nbody\\\nEOF\ngh pr create --fill", 2),
             ("joined-gated-command", "gh pr \\\ncreate --fill", 2),
-            ("joined-argv-not-command", "printf '%s\\n' \\\n  gh pr create --fill", 0),
-            ("single-quoted-backslash-newline", "echo 'a\\\nb'; gh pr create --fill", 2),
+            ("joined-argv-not-command", "printf '%s\n' \\\n  gh pr create --fill", 0),
+            ("single-quoted-backslash-newline-anti-over-fold", "echo 'a\\\nb'; gh pr create --fill", 2),
+            ("backslash-quoted-delimiter", "cat > docs/x <<\\EOF\nbody\nEOF\ngh pr create --fill", 2),
+            ("backslash-mid-delimiter", "cat > docs/x <<E\\OF\nbody\nEOF\ngh pr create --fill", 2),
+            ("arith-shift-unquoted", "echo $((1<<2))\ngh pr create --fill", 2),
+            ("trailing-backslash-gated", "gh pr create --fill \\", 2),
+            ("unbalanced-quote-after-gated", "gh pr create --fill\necho 'oops", 2),
         )
         for label, command, expected_rc in cases:
             with self.subTest(label=label):
