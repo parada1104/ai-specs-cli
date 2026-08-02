@@ -74,9 +74,30 @@ def command_word(seg):
     return None, None
 
 
+def _strip_heredoc_bodies(cmd: str) -> str:
+    lines = cmd.splitlines()
+    output = []
+    pending = []
+    for line in lines:
+        if pending:
+            delimiter, strip_tabs = pending[0]
+            candidate = line.lstrip("\t") if strip_tabs else line
+            if candidate == delimiter:
+                pending.pop(0)
+            continue
+        output.append(line)
+        for match in re.finditer(
+            r"<<(-?)\s*(?:'([^']+)'|\"([^\"]+)\"|([^\s;|&]+))", line
+        ):
+            delimiter = next(value for value in match.groups()[1:] if value is not None)
+            pending.append((delimiter, bool(match.group(1))))
+    return "\n".join(output)
+
+
 def segments(cmd: str):
     try:
-        lexer = shlex.shlex(cmd.replace("\n", " ; "), posix=True, punctuation_chars=";|&")
+        lexer = shlex.shlex(_strip_heredoc_bodies(cmd).replace("\n", " ; "), posix=True, punctuation_chars=";|&")
+        lexer.commenters = ""
         lexer.whitespace_split = True
         tokens = list(lexer)
     except ValueError:
@@ -383,10 +404,16 @@ _resolve_repo() {
 _emit_and_exit() {
   local action_desc="$1"
   local deficient="$2"
-  local sample
+  local sample=""
   local path_hint
-  sample="$(printf '%s' "$deficient" | tr ',' '\n' | head -n 3 | paste -sd ', ' -)"
-  if [ "$(printf '%s' "$deficient" | tr ',' '\n' | wc -l | tr -d ' ')" = 1 ]; then
+  local slug
+  local -a deficient_slugs
+  IFS=',' read -r -a deficient_slugs <<< "$deficient"
+  for slug in "${deficient_slugs[@]}"; do
+    [ -n "$sample" ] && sample+=", "
+    sample+="$slug"
+  done
+  if [ "${#deficient_slugs[@]}" = 1 ]; then
     path_hint="or add openspec/changes/${sample}/tracker.none with a reason"
   else
     path_hint="or add a tracker.none exemption with a reason in each deficient change directory"

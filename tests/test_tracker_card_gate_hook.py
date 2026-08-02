@@ -234,13 +234,54 @@ class TrackerCardGateHookTests(unittest.TestCase):
         r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")), mode="always")
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_one_deficient_among_several_blocks(self):
-        self._seed_change("good", with_tracker=True)
-        self._seed_change("bad", with_tracker=False)
+    def test_deficient_slug_remediation_has_clean_paths(self):
+        self._seed_change("aaa", with_tracker=False)
+        self._seed_change("bbb", with_tracker=False)
         r = self._run(self._event("Edit", str(self.repo / "catalog" / "x.toml")), mode="always")
         self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertIn("bad", r.stderr)
+        self.assertIn("aaa, bbb", r.stderr)
         self.assertNotRegex(r.stderr, r"openspec/changes/[^/]*,[^/]*/tracker\.none")
+
+    def test_single_deficient_slug_remediation_has_exact_path(self):
+        self._seed_change("only-one", with_tracker=False)
+        r = self._run(self._event("Edit", str(self.repo / "catalog" / "x.toml")), mode="always")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("openspec/changes/only-one/tracker.none", r.stderr)
+
+    def test_three_deficient_slugs_remediation_list_is_readable(self):
+        for slug in ("aaa", "bbb", "ccc"):
+            self._seed_change(slug, with_tracker=False)
+        r = self._run(self._event("Edit", str(self.repo / "catalog" / "x.toml")), mode="always")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("aaa, bbb, ccc", r.stderr)
+        self.assertNotIn("bbb ccc", r.stderr)
+
+    def test_heredoc_pr_create_body_is_not_gated(self):
+        self._seed_change(with_tracker=False)
+        command = "cat > docs/x.md <<'EOF'\ngh pr create --fill\nEOF"
+        r = self._run(self._shell_event(command), mode="always")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_heredoc_archive_body_is_not_gated(self):
+        self._seed_change(with_tracker=False)
+        command = "cat > docs/x.md <<'EOF'\nopenspec archive needs-card\nEOF"
+        r = self._run(self._shell_event(command), mode="always")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_comments_do_not_bypass_shell_gate(self):
+        self._seed_change("needs-card", with_tracker=False)
+        cases = (
+            "# create the PR\ngh pr create --fill",
+            "echo hi  # note\ngh pr create --fill",
+            "set -e\n# archive\nopenspec archive needs-card",
+        )
+        for command in cases:
+            with self.subTest(command=command):
+                blocked = self._run(self._shell_event(command), mode="always")
+                self.assertEqual(blocked.returncode, 2, f"{command}\n{blocked.stderr}")
+                warning = self._run(self._shell_event(command), mode="warn")
+                self.assertEqual(warning.returncode, 0, f"{command}\n{warning.stderr}")
+                self.assertTrue(warning.stderr.strip())
 
 
     def test_paths_override_includes_ai_specs(self):
