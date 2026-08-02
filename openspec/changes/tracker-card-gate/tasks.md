@@ -319,7 +319,7 @@ REMOVED skip free-pass); `trello-state-sync` / `trello-progress-comment`
 per-phase brief rules + degrade-on-availability; `session-bootstrap`
 mandatory consult; `tracker-card-gate` anti-bypass guidance.
 
-- [ ] 7.1 GREEN (skill):
+- [x] 7.1 GREEN (skill):
       - `auto_invoke` triggers per design 8a (new structured change / missing
         card / stale or unknown card)
       - new **"Card link section (`## Tracker`)"** section (format + validity)
@@ -332,12 +332,12 @@ mandatory consult; `tracker-card-gate` anti-bypass guidance.
       - fix bootstrap marker path docs to
         `<AI_SPECS_HOME>/cache/projects/<hash>-<name>/.recipe/trello-mcp-workflow/bootstrap-ready`
         (+ legacy project-local fallback note)
-- [ ] 7.2 GREEN (command): `trello-workflow.md` phase map references the
+- [x] 7.2 GREEN (command): `trello-workflow.md` phase map references the
       `## Tracker` link section.
-- [ ] 7.3 GREEN (session-bootstrap): rewrite step 2c to mandatory tracker
+- [x] 7.3 GREEN (session-bootstrap): rewrite step 2c to mandatory tracker
       consult when a tracker capability is bound (new/ambiguous changes);
       keep memory-first order; unavailable tracker degrades without blocking.
-- [ ] 7.4 RED→GREEN doc-content tests (prefer recipe test module): brief
+- [x] 7.4 RED→GREEN doc-content tests (prefer recipe test module): brief
       `workflow_rules` contain link-before-apply + anti-bypass + phase
       state-sync/progress-comment language; SKILL contains no "Allow the agent
       to skip card creation"; SKILL/brief forbid unavailable-excuse for missing

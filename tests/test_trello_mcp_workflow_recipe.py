@@ -273,5 +273,29 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         self.assertTrue("bash" in blob or "shell" in blob)
 
 
+    def test_skill_doc_content_contract(self):
+        skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
+        self.assertNotIn("Allow the agent to skip card creation", skill)
+        self.assertIn("## Tracker", skill)
+        self.assertIn("tracker.none", skill)
+        self.assertIn("missing link", skill.lower())
+        self.assertIn("cache/projects/", skill)
+        # auto_invoke triggers present
+        self.assertIn("New structured change or feature request", skill)
+        self.assertIn("missing a linked Trello card", skill)
+        # unavailable excuse forbidden for missing artifact
+        self.assertIn("availability failure", skill.lower())
+        self.assertIn("do not claim", skill.lower())
+        cmd = (RECIPE_DIR / "commands" / "trello-workflow.md").read_text()
+        self.assertIn("## Tracker", cmd)
+        boot = (
+            ROOT / "catalog" / "recipes" / "session-context" / "skills"
+            / "session-bootstrap" / "SKILL.md"
+        ).read_text()
+        self.assertIn("mandatory", boot.lower())
+        self.assertIn("## Tracker", boot)
+        self.assertNotIn("only if needed", boot)
+
+
 if __name__ == "__main__":
     unittest.main()
