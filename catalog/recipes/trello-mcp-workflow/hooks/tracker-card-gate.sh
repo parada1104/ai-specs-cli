@@ -411,10 +411,20 @@ def detect_shell_actions(cmd: str):
         if cw == "mv" or (cw == "git" and rest and rest[0] == "mv"):
             words = body[1:] if cw == "mv" else body[2:]
             nonflags = [t for t in words if not t.startswith("-")]
-            if len(nonflags) >= 2:
+            if len(nonflags) >= 1:
                 src = nonflags[0]
+                target_dirs = []
+                for wi, word in enumerate(words):
+                    if word in {"-t", "--target-directory"} and wi + 1 < len(words):
+                        target_dirs.append(words[wi + 1])
+                    elif word.startswith("--target-directory="):
+                        target_dirs.append(word.split("=", 1)[1])
+                if target_dirs:
+                    dest_candidates = nonflags + target_dirs
+                else:
+                    dest_candidates = nonflags[1:]
                 dest = next(
-                    (t for t in nonflags[1:] if "openspec/changes/archive/" in t.replace("\\", "/")),
+                    (t for t in dest_candidates if "openspec/changes/archive/" in t.replace("\\", "/")),
                     "",
                 )
                 if dest:
