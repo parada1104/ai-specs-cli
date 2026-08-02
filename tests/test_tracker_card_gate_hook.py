@@ -345,7 +345,8 @@ class TrackerCardGateHookTests(unittest.TestCase):
             ("mv-trailing-output-redirect-archive", "mv openspec/changes/needs-card openspec/changes/archive/ 2>/dev/null", 2),
             ("mv-inline-output-redirect-archive", "mv openspec/changes/needs-card &> log openspec/changes/archive/", 2),
             ("mv-target-directory-archive", "mv -t openspec/changes/archive/ openspec/changes/needs-card", 2),
-            ("mv-target-directory-equals-archive", "mv --target-directory=openspec/changes/archive/ openspec/changes/needs-card", 2),
+            ("mv-target-directory-attached-archive", "mv -topenspec/changes/archive/ openspec/changes/needs-card", 2),
+            ("mv-target-directory-out-archive", "mv -t /tmp/x openspec/changes/archive/a", 0),
             ("mv-multi-source-out-archive", "mv openspec/changes/archive/a openspec/changes/archive/b /tmp/", 0),
             ("mv-multi-source-into-archive", "mv openspec/changes/archive/a openspec/changes/needs-card openspec/changes/archive/", 2),
             ("mv-source-archive-to-change", "mv openspec/changes/archive/old-change openspec/changes/old-change", 0),
@@ -355,14 +356,16 @@ class TrackerCardGateHookTests(unittest.TestCase):
             ("compound-separator-case-amp", "case x in x) echo hit;& *) gh pr create --fill;; esac", 2),
             ("compound-separator-case-inline-double-semicolon", "case y in x) echo hit;; *) gh pr create --fill;; esac", 2),
             ("subshell-pr", "( gh pr create --fill )", 2),
+            ("subshell-unspaced-pr", "(gh pr create --fill)", 2),
             ("pipeline-subshell-archive", "echo x | ( openspec archive needs-card )", 2),
+            ("pipeline-subshell-unspaced-archive", "echo x|(openspec archive needs-card)", 2),
             ("coproc-named-subshell-pr", "coproc CO ( gh pr create --fill )", 2),
             ("compound-separator-inline-double-semicolon", "echo a ;; gh pr create --fill", 0),
             ("compound-separator-inline-semicolon-amp", "echo a ;& gh pr create --fill", 0),
             ("case-reserved-word-pr", "case x in x) gh pr create --fill;; esac", 2),
-            ("case-nonfirst-pattern-pr", "case x in y) echo n;; x) gh pr create --fill;; esac", 2),
-            ("case-alternation-pattern-pr", "case x in x|y) gh pr create --fill;; esac", 2),
-            ("case-alternation-pattern-archive", "case x in a|x) openspec archive needs-card;; esac", 2),
+            ("case-glued-pattern-pr", "case x in x)gh pr create --fill;; esac", 2),
+            ("case-glued-alternation-pr", "case x in x|y)gh pr create --fill;; esac", 2),
+            ("case-glued-pattern-archive", "case x in x)openspec archive needs-card;; esac", 2),
             ("if-reserved-word-pr", "if true; then gh pr create --fill; fi", 2),
             ("for-reserved-word-archive", "for f in a; do openspec archive needs-card; done", 2),
             ("coproc-named-pr", "coproc CO { gh pr create --fill; }", 2),
@@ -389,6 +392,19 @@ class TrackerCardGateHookTests(unittest.TestCase):
             with self.subTest(label=label):
                 result = self._run(self._shell_event(command), mode="always")
                 self.assertEqual(result.returncode, expected_rc, f"{label}: {command}\n{result.stderr}")
+
+    def test_mv_target_directory_preserves_source_slug_with_two_changes(self):
+        self._seed_change("carded", with_tracker=True)
+        self._seed_change("needs-card", with_tracker=False)
+        for source, expected in (("carded", 0), ("needs-card", 2)):
+            with self.subTest(source=source):
+                result = self._run(
+                    self._shell_event(
+                        f"mv -t openspec/changes/archive/ openspec/changes/{source}"
+                    ),
+                    mode="always",
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
 
     def test_comments_do_not_bypass_shell_gate(self):
         self._seed_change("needs-card", with_tracker=False)
