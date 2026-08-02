@@ -74,10 +74,11 @@ def command_word(seg):
     return None, None
 
 
-def _line_continuation_state(line, single, double):
-    """Return quote state and whether an unquoted trailing backslash joins lines."""
+def _line_continuation_state(line, single, double, at_word_start=None):
+    """Return quote state, word-start state, and whether an unquoted trailing backslash joins."""
     i = 0
-    at_word_start = not (single or double)
+    if at_word_start is None:
+        at_word_start = not (single or double)
     while i < len(line):
         char = line[i]
         if single:
@@ -99,16 +100,17 @@ def _line_continuation_state(line, single, double):
         elif char == '"':
             double = True
             at_word_start = False
-        elif char == "\\" and i + 1 < len(line):
-            i += 1
-            at_word_start = False
+        elif char == "\\":
+            if i + 1 < len(line):
+                i += 1
+                at_word_start = False
         elif char == "#" and at_word_start:
-            return single, double, False
+            return single, double, False, at_word_start
         else:
             at_word_start = char in " \t;|&()<>"
         i += 1
     trailing_backslashes = len(line) - len(line.rstrip("\\"))
-    return single, double, not single and trailing_backslashes % 2 == 1
+    return single, double, not single and trailing_backslashes % 2 == 1, at_word_start
 
 
 def _fold_unquoted_heredoc_line(line, physical_lines, index):
@@ -139,10 +141,11 @@ def _preprocess_command(cmd: str) -> str:
             continue
 
         entry_single, entry_double = single, double
+        fold_at_word_start = not (single or double)
         logical_line = line
         while True:
-            next_single, next_double, joins_next = _line_continuation_state(
-                physical_lines[index], single, double
+            next_single, next_double, joins_next, fold_at_word_start = _line_continuation_state(
+                physical_lines[index], single, double, fold_at_word_start
             )
             single, double = next_single, next_double
             if not joins_next or index + 1 >= len(physical_lines):
@@ -153,6 +156,7 @@ def _preprocess_command(cmd: str) -> str:
         visible = []
         single, double = entry_single, entry_double
         at_word_start = not (single or double)
+        arithmetic_depth = 0
         i = 0
         while i < len(line):
             char = line[i]
@@ -193,9 +197,21 @@ def _preprocess_command(cmd: str) -> str:
                     i += 1
                 at_word_start = False
                 continue
+            if char == "$" and line[i:i + 3] == "$((":
+                visible.extend(line[i:i + 3])
+                arithmetic_depth += 1
+                i += 3
+                at_word_start = False
+                continue
+            if char == ")" and line[i:i + 2] == "))" and arithmetic_depth:
+                visible.extend(line[i:i + 2])
+                arithmetic_depth -= 1
+                i += 2
+                at_word_start = False
+                continue
             if char == "#" and at_word_start:
                 break
-            if char == "<" and i + 1 < len(line) and line[i + 1] == "<":
+            if char == "<" and i + 1 < len(line) and line[i + 1] == "<" and not arithmetic_depth:
                 delimiter_start = i + 2
                 strip_tabs = delimiter_start < len(line) and line[delimiter_start] == "-"
                 if strip_tabs:
@@ -207,11 +223,19 @@ def _preprocess_command(cmd: str) -> str:
                     delimiter = []
                     quoted_delimiter = False
                     while end < len(line) and line[end] not in " \t;|&()<>":
-                        if line[end] in "'\"":
+                        if line[end] == "\\" and end + 1 < len(line):
+                            delimiter.append(line[end + 1])
+                            quoted_delimiter = True
+                            end += 2
+                        elif line[end] in "'\"":
                             quote = line[end]
                             quoted_delimiter = True
                             end += 1
                             while end < len(line) and line[end] != quote:
+                                if quote == '"' and line[end] == "\\" and end + 1 < len(line):
+                                    delimiter.append(line[end + 1])
+                                    end += 2
+                                    continue
                                 delimiter.append(line[end])
                                 end += 1
                             if end < len(line):
@@ -234,13 +258,20 @@ def _preprocess_command(cmd: str) -> str:
 
 
 def segments(cmd: str):
+    prepared = _preprocess_command(cmd)
+    if (len(prepared) - len(prepared.rstrip("\\"))) % 2 == 1:
+        prepared = prepared[:-1]
+    lexer = shlex.shlex(prepared.replace("\n", " ; "), posix=True, punctuation_chars=";|&")
+    lexer.commenters = ""
+    lexer.whitespace_split = True
+    tokens = []
     try:
-        lexer = shlex.shlex(_preprocess_command(cmd).replace("\n", " ; "), posix=True, punctuation_chars=";|&")
-        lexer.commenters = ""
-        lexer.whitespace_split = True
-        tokens = list(lexer)
+        while True:
+            tokens.append(next(lexer))
+    except StopIteration:
+        pass
     except ValueError:
-        return []
+        pass
     segs, cur = [], []
     for t in tokens:
         if t in SEPS:
