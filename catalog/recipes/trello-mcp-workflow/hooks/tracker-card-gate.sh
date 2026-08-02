@@ -210,7 +210,7 @@ def _preprocess_command(cmd: str) -> str:
                 i += 2
                 at_word_start = False
                 continue
-            if char == "$" and line[i:i + 2] == "$[" and at_word_start:
+            if char == "$" and line[i:i + 2] == "$[":
                 visible.extend(line[i:i + 2])
                 arithmetic_depth += 1
                 arithmetic_brackets += 1
