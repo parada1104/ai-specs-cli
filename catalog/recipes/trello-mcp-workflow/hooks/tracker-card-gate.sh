@@ -74,6 +74,22 @@ def command_word(seg):
                 i += 1
                 if flag in {"-n", "--max-args", "-I", "--replace", "-P", "--max-procs", "-d", "--delimiter"} and i < len(seg):
                     i += 1
+            if t == "coproc" and i + 1 < len(seg) and not seg[i].startswith("-") and seg[i + 1] in {"{", "("}:
+                i += 1
+            continue
+        if t == "case":
+            i += 1
+            while i < len(seg) and seg[i] != "in":
+                i += 1
+            if i < len(seg):
+                i += 1
+                if i < len(seg) and seg[i] != ")":
+                    i += 1
+                if i < len(seg) and seg[i] == ")":
+                    i += 1
+            continue
+        if t in {"in", "then", "do", "else", "{"}:
+            i += 1
             continue
         if t == ")":
             i += 1
@@ -343,13 +359,14 @@ def segments(cmd: str):
     if error_line is not None:
         tokens = [(line, token) for line, token in tokens if line < error_line]
     segs, cur = [], []
+    case_context = any(t in {"case", "esac"} for _, t in tokens)
     for pos, (_, t) in enumerate(tokens):
         previous = tokens[pos - 1][1] if pos else ""
         following = tokens[pos + 1][1] if pos + 1 < len(tokens) else ""
         if t == "&" and (previous.endswith(("<", ">")) or following.startswith(">")):
             cur.append(t)
             continue
-        if t in SEPS:
+        if t in SEPS and (t not in {";;", ";&", ";;&"} or case_context):
             if cur:
                 segs.append(cur)
             cur = []
@@ -397,7 +414,7 @@ def detect_shell_actions(cmd: str):
             if len(nonflags) >= 2:
                 src = nonflags[0]
                 dest = next(
-                    (t for t in nonflags if "openspec/changes/archive/" in t.replace("\\", "/")),
+                    (t for t in nonflags[1:] if "openspec/changes/archive/" in t.replace("\\", "/")),
                     "",
                 )
                 if dest:
