@@ -292,6 +292,12 @@ class TrackerCardGateHookTests(unittest.TestCase):
             ("mid-word-hash-allow", "echo foo#bar; echo ok", 0),
             ("quoted-hash-gh", 'git commit -m "fix #123 and gh pr create"', 0),
             ("quoted-gh", "echo 'gh pr create'", 0),
+            ("lone-cr-comment", "echo hi # note\rgh pr create --fill", 0),
+            ("vertical-tab-comment", "echo hi # note\vgh pr create --fill", 0),
+            ("form-feed-comment", "echo hi # note\fgh pr create --fill", 0),
+            ("next-line-comment", "echo hi # note\x85gh pr create --fill", 0),
+            ("line-separator-comment", "echo hi # note\u2028gh pr create --fill", 0),
+            ("paragraph-separator-comment", "echo hi # note\u2029gh pr create --fill", 0),
         )
         for label, command, expected_rc in cases:
             with self.subTest(label=label):
