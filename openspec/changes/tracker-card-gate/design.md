@@ -210,7 +210,7 @@ event = "pre-tool-use"
 script = "hooks/tracker-card-gate.sh"
 matcher = "Bash|Shell|Execute|Terminal"
 blocking = true
-description = "Best-effort block gh pr create / change-archive shell actions when an active change lacks the ## Tracker link section (bash-bypass coverage)"
+description = "Best-effort block gh pr create / change-archive shell actions when an active change lacks the ## Tracker link section; does not gate shell writes"
 ```
 
 **Locked matcher set.** The `matcher` field matches **tool names**, not paths.
@@ -413,8 +413,9 @@ opt-in" (flagged in §"Proposal notes").
 - `mode = warn`: on deficiency, print a one-line stderr warning and `exit 0`
   (dogfood default; never wedges editors).
 - `mode = always`: on deficiency, print remediation to stderr and `exit 2`.
-  Remediation text names the deficient slug(s) and the exact fix, e.g.:
-  `tracker-card-gate: refusing to Write 'lib/foo.py' — active change 'tracker-card-gate' has no ## Tracker link section in its proposal.md. Create/link a Trello card and write the ## Tracker section (card_id + url), or add openspec/changes/tracker-card-gate/tracker.none with a reason. Writing under openspec/** is never blocked.`
+  Remediation text names the deficient slug(s) and the exact fix. For one deficient
+  change it includes the exact exemption path, e.g.:
+  `tracker-card-gate: refusing to Write 'lib/foo.py' — active change(s) 'tracker-card-gate' have no ## Tracker link section in their proposal.md. Create/link Trello cards and write the ## Tracker section (card_id + url), or add openspec/changes/tracker-card-gate/tracker.none with a reason. Writing under openspec/** is never blocked.` For multiple deficient changes it lists slugs with comma separators and directs the agent to add a `tracker.none` exemption in each deficient change directory.
 
 **Do not call Trello MCP from the gate.** Presence of the `## Tracker` link
 section is the proof (proposal Approach §5).
