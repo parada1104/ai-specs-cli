@@ -57,8 +57,8 @@ input="$(cat)"
 parsed="$(python3 - "$input" "$stamped_cli_home" <<'PYEOF' 2>/dev/null
 import json, re, shlex, sys
 
-WRAPPERS = {"sudo", "env", "nice", "time", "nohup", "xargs", "command"}
-SEPS = {"|", "||", "&&", ";", "&"}
+WRAPPERS = {"sudo", "env", "nice", "time", "nohup", "xargs", "command", "coproc"}
+SEPS = {"|", "||", "&&", ";", "&", "|&", ";;", ";&", ";;&"}
 
 def command_word(seg):
     i = 0
@@ -68,6 +68,20 @@ def command_word(seg):
             i += 1
             continue
         if t in WRAPPERS:
+            i += 1
+            while i < len(seg) and seg[i].startswith("-"):
+                flag = seg[i]
+                i += 1
+                if flag in {"-n", "--max-args", "-I", "--replace", "-P", "--max-procs", "-d", "--delimiter"} and i < len(seg):
+                    i += 1
+            continue
+        if t == ")":
+            i += 1
+            continue
+        if t == "*" and i + 1 < len(seg) and seg[i + 1] == ")":
+            i += 2
+            continue
+        if t.startswith("*") and t.endswith(")"):
             i += 1
             continue
         return i, t
@@ -329,7 +343,12 @@ def segments(cmd: str):
     if error_line is not None:
         tokens = [(line, token) for line, token in tokens if line < error_line]
     segs, cur = [], []
-    for _, t in tokens:
+    for pos, (_, t) in enumerate(tokens):
+        previous = tokens[pos - 1][1] if pos else ""
+        following = tokens[pos + 1][1] if pos + 1 < len(tokens) else ""
+        if t == "&" and (previous.endswith(("<", ">")) or following.startswith(">")):
+            cur.append(t)
+            continue
         if t in SEPS:
             if cur:
                 segs.append(cur)
@@ -376,8 +395,12 @@ def detect_shell_actions(cmd: str):
             words = body[1:] if cw == "mv" else body[2:]
             nonflags = [t for t in words if not t.startswith("-")]
             if len(nonflags) >= 2:
-                src, dest = nonflags[0], nonflags[-1]
-                if "openspec/changes/archive/" in dest.replace("\\", "/"):
+                src = nonflags[0]
+                dest = next(
+                    (t for t in nonflags if "openspec/changes/archive/" in t.replace("\\", "/")),
+                    "",
+                )
+                if dest:
                     slug = ""
                     src_n = src.replace("\\", "/")
                     m = re.search(r"openspec/changes/([^/]+)/?", src_n)

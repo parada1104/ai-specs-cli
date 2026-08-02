@@ -348,7 +348,7 @@ class TrackerCardGateHookTests(unittest.TestCase):
             ("xargs-flag-archive", "echo needs-card | xargs -n1 openspec archive", 2),
             ("compound-separator-pipe-amp", "echo a |& gh pr create --fill", 2),
             ("compound-separator-case-amp", "case x in x) echo hit;& *) gh pr create --fill;; esac", 2),
-            ("compound-separator-case-inline-double-semicolon", "case x in x) echo hit;; *) gh pr create --fill;; esac", 2),
+            ("compound-separator-case-inline-double-semicolon", "case y in x) echo hit;; *) gh pr create --fill;; esac", 2),
             ("compound-separator-inline-double-semicolon", "echo a ;; gh pr create --fill", 2),
             ("compound-separator-inline-semicolon-amp", "echo a ;& gh pr create --fill", 2),
             ("arith-command-shift", "((1<<2))\ngh pr create --fill", 2),
