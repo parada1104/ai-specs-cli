@@ -103,6 +103,22 @@ class DoctorTrackerCardTests(unittest.TestCase):
         self.assertTrue(tc)
         self.assertEqual(tc[0].severity, self.doctor_mod.Severity.OK)
 
+    def test_valid_card_without_url_emits_one_info_and_terminal_ok(self):
+        root = self._project(changes=[("no-url", {"tracker": True, "url": False})])
+        rc, checks = self._run(root)
+        self.assertEqual(rc, 0)
+        tc = self._tracker_checks(checks)
+        self.assertEqual(sum(c.severity == self.doctor_mod.Severity.INFO for c in tc), 1)
+        self.assertIn("no-url", tc[0].message)
+        self.assertEqual(tc[-1].severity, self.doctor_mod.Severity.OK)
+
+    def test_noncanonical_card_id_emits_info_without_warn(self):
+        root = self._project(changes=[("short-id", {"tracker": True, "card_id": "short"})])
+        rc, checks = self._run(root)
+        self.assertEqual(rc, 0)
+        tc = self._tracker_checks(checks)
+        self.assertTrue(any(c.severity == self.doctor_mod.Severity.INFO and "non-canonical" in c.message for c in tc))
+        self.assertFalse(any(c.severity == self.doctor_mod.Severity.WARN for c in tc))
     def test_tracker_none_no_missing_warn(self):
         root = self._project(changes=[("exempt", {"tracker_none": True})])
         rc, checks = self._run(root)
