@@ -88,7 +88,7 @@ def command_word(seg):
                 if i < len(seg) and seg[i] == ")":
                     i += 1
             continue
-        if t in {"in", "then", "do", "else", "{"}:
+        if t in {"in", "then", "do", "else", "{", "("}:
             i += 1
             continue
         if t == ")":
