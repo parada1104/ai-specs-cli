@@ -488,14 +488,18 @@ optional. Mirrors #165 / explore eval design.
       `TRACKER_CARD_GATE_MODE=always` one-shot, confirm block + remediation;
       writing under `openspec/changes/**` never blocks. Revert any leaked
       generated files.
-- [ ] 12.6 FINAL GATE: `./tests/validate.sh` green from the change worktree
-      *(skipped this apply session per explicit assignment instruction)*
-      root (py_compile + `bash -n` + full tests). Fix drift only.
-- [ ] 12.7 Independent verify against proposal/design/specs/tasks; write
-      verify report if the verify skill requires it.
-- [ ] 12.8 Archive the change folder on the review branch after verify PASS
+- [x] 12.6 FINAL GATE: `./tests/validate.sh` green from the change worktree
+      root (py_compile + `bash -n` + full tests). Run by the orchestrator
+      pre-verify (1172 OK) and re-run post-Judgment-Day (1172 OK, exit 0).
+- [x] 12.7 Independent verify against proposal/design/specs/tasks; write
+      verify report if the verify skill requires it. `verify-report.md`:
+      needs_fixes → remediation (spec reconciliation, TDD evidence, archive
+      fallback) → re-verify PASS.
+- [x] 12.8 Archive the change folder on the review branch after verify PASS
       (and after Judgment Day / adversarial review if that gate is invoked);
-      open/attach PR with Trello card URL.
+      open/attach PR with Trello card URL. Judgment Day: 15 fix rounds,
+      68 ledger rows, all resolved (review-ledger.md); PR opened with card
+      #56 URL.
 
 ---
 
