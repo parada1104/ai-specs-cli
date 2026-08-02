@@ -287,6 +287,9 @@ class TrackerCardGateHookTests(unittest.TestCase):
             ("inline-comment-and", "make test  # lint && gh pr create", 0),
             ("inline-comment-pipe", "ls  # pipe | openspec archive x", 0),
             ("comment-fallback", "echo a\n# fallback ; gh pr create", 0),
+            ("mid-word-hash-gated", "echo foo#bar; gh pr create --fill", 2),
+            ("escaped-hash-gated", "echo foo\\#bar; gh pr create --fill", 2),
+            ("mid-word-hash-allow", "echo foo#bar; echo ok", 0),
             ("quoted-hash-gh", 'git commit -m "fix #123 and gh pr create"', 0),
             ("quoted-gh", "echo 'gh pr create'", 0),
         )
