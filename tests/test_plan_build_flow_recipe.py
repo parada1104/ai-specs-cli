@@ -88,6 +88,22 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             + extra_recipes
         )
         return root
+    def _render_agents(self, root: Path) -> str:
+        resolved = root / "resolved-config.json"
+        self.assertEqual(
+            self.mod.materialize_recipes(root, ROOT, resolved_config_out=resolved), 0
+        )
+        renderer = load_module(
+            ROOT / "lib" / "_internal" / "agents-render.py", "agents_render_pbf_e2e"
+        )
+        agents = root / "AGENTS.md"
+        renderer.render(
+            root / "ai-specs" / "ai-specs.toml",
+            agents,
+            preserve_if_marker=False,
+            resolved_config_path=resolved,
+        )
+        return agents.read_text()
 
     def test_recipe_materializes_skill_only(self):
         recipe_dir = CATALOG / RECIPE_ID
@@ -206,46 +222,24 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         root = self._make_project(
             "\n[recipes.plan-build-flow.config]\nartifact_store_default = 'both'\n"
         )
-        resolved = root / "resolved-config.json"
-        self.assertEqual(
-            self.mod.materialize_recipes(root, ROOT, resolved_config_out=resolved), 0
-        )
-        renderer = load_module(ROOT / "lib" / "_internal" / "agents-render.py", "agents_render_pbf_e2e")
-        agents = root / "AGENTS.md"
-        renderer.render(
-            root / "ai-specs" / "ai-specs.toml",
-            agents,
-            preserve_if_marker=False,
-            resolved_config_path=resolved,
-        )
-        content = agents.read_text()
+        content = self._render_agents(root)
         self.assertIn("Default artifact store", content)
         self.assertIn("`both`", content)
         self.assertNotIn("{config.artifact_store_default}", content)
         self.assertLess(content.index("Classify each substantial change"), content.index("Default artifact store"))
+
     def test_materialization_renders_default_store_into_agents(self):
-        root = self._make_project()
-        resolved = root / "resolved-config.json"
-        self.assertEqual(
-            self.mod.materialize_recipes(root, ROOT, resolved_config_out=resolved), 0
-        )
-        renderer = load_module(ROOT / "lib" / "_internal" / "agents-render.py", "agents_render_pbf_default_e2e")
-        agents = root / "AGENTS.md"
-        renderer.render(
-            root / "ai-specs" / "ai-specs.toml",
-            agents,
-            preserve_if_marker=False,
-            resolved_config_path=resolved,
-        )
-        content = agents.read_text()
+        content = self._render_agents(self._make_project())
         self.assertIn("`openspec`", content)
         self.assertNotIn("{config.artifact_store_default}", content)
 
     def test_validate_config_hook_accepts_each_store_enum(self):
         recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
         for value in STORE_ENUM:
             with self.subTest(value=value):
-                self.mod.execute_hooks(recipe, {"artifact_store_default": value}, Path(tempfile.mkdtemp()))
+                self.mod.execute_hooks(recipe, {"artifact_store_default": value}, Path(tmp.name))
 
     def test_version_and_catalog_documentation_use_current_contract(self):
         self.assertEqual(_recipe_version(), "1.3.0")
