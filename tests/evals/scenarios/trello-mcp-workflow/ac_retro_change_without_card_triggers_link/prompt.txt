@@ -1,0 +1,3 @@
+El change activo `retro-demo` no tiene sección `## Tracker`. Antes de dar el trabajo por terminado, escribí la sección `## Tracker` en su `proposal.md` (podés usar un card_id de ejemplo `6a6ebd5e2cd9a2fcd419e62c` y una url de ejemplo) y dejá una nota breve en `ai-specs/eval-notes/retro-link.md` explicando el link.
+
+No edites `lib/` ni otros paths de producción.

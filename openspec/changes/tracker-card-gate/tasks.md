@@ -416,9 +416,9 @@ blurb.
 `tests/evals/scenarios/trello-mcp-workflow/` load fixture; hermetic suites.
 **Reqs:** eval harness recognizes trello client; CI path stays hermetic.
 
-- [ ] 10.1 Optional but in-scope: harness-smoke / scenario.toml load assertion
+- [x] 10.1 Optional but in-scope: harness-smoke / scenario.toml load assertion
       so `eval_harness_smoke` recognizes `trello-mcp-workflow` (cheap, CI-safe).
-- [ ] 10.2 Run focused hermetic suites green:
+- [x] 10.2 Run focused hermetic suites green:
       `./tests/run.sh tests/test_trello_link.py tests/test_tracker_card_gate_hook.py tests/test_doctor_tracker_card.py`
       (+ materialize / hooks_render / recipe / doctor suites touched above).
 
@@ -432,34 +432,34 @@ blurb.
 **Reqs:** proposal success criteria — ≥3 notes-file scenarios; MCP-live
 optional. Mirrors #165 / explore eval design.
 
-- [ ] 11.1 Add `run-live-trello.sh` with `client=trello-mcp-workflow`,
+- [x] 11.1 Add `run-live-trello.sh` with `client=trello-mcp-workflow`,
       `python3 -m unittest tests.evals.eval_trello_mcp_workflow_live -v`, and
       the same env surface as worktree live
       (`EVALS_LIVE`, `EVALS_PREFER`, `EVALS_TRIALS`, `EVALS_TIMEOUT_SEC`,
       `EVALS_MAX_TURNS`, `EVALS_RUNTIMES`, `EVALS_SCENARIOS`).
-- [ ] 11.2 Add `eval_trello_mcp_workflow_live.py`: `RECIPE_ID =
+- [x] 11.2 Add `eval_trello_mcp_workflow_live.py`: `RECIPE_ID =
       "trello-mcp-workflow"`; skipUnless live+runtimes; materialize with
       `board_id` + `gate_mode="always"`; `wire_runtime_hooks` when scenario
       meta `wire_hooks = true`; assertion battery identical to worktree
       (`required_path_globs`, `required_content.contains_any`,
       `forbidden_path_globs`, `forbidden_phrases`); N-of-M via `EVALS_TRIALS`.
-- [ ] 11.3 Scenario `ac_new_change_writes_tracker_section` — required: change
+- [x] 11.3 Scenario `ac_new_change_writes_tracker_section` — required: change
       proposal.md contains a `## Tracker` section with `card_id`; notes mention
       create/link.
-- [ ] 11.4 Scenario `ac_missing_card_gate_no_bash_skip` — `wire_hooks=true`;
+- [x] 11.4 Scenario `ac_missing_card_gate_no_bash_skip` — `wire_hooks=true`;
       seeds card-less active change; notes say create/link first;
       `forbidden_phrases` reject `python3 -c`, `cat >`, `tee `, `sed -i`,
       `heredoc` (reuse worktree gate-plan phrase set).
-- [ ] 11.5 Scenario `ac_phase_transition_state_sync_plan` — notes include
+- [x] 11.5 Scenario `ac_phase_transition_state_sync_plan` — notes include
       move/list/label/comment from the phase map.
-- [ ] 11.6 Scenario `ac_retro_change_without_card_triggers_link` — seeded
+- [x] 11.6 Scenario `ac_retro_change_without_card_triggers_link` — seeded
       active change without a `## Tracker` section; agent writes the section
       before claiming done.
-- [ ] 11.7 Optional expensive `ac_mcp_live_card_link` — tool evidence
+- [x] 11.7 Optional expensive `ac_mcp_live_card_link` — tool evidence
       `trello_add_card_to_list` / `trello_add_comment`; disposable list +
       cleanup; board isolation. Not required for CI or for marking Phase 11
       done; document how to run it.
-- [ ] 11.8 Manual/nightly smoke note: document
+- [x] 11.8 Manual/nightly smoke note: document
       `EVALS_LIVE=1 ./tests/evals/run-live-trello.sh` in recipe README (or
       evals README pointer). Do **not** wire into `validate.sh`.
 
