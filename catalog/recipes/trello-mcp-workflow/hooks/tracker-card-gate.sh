@@ -157,6 +157,7 @@ def _preprocess_command(cmd: str) -> str:
         single, double = entry_single, entry_double
         at_word_start = not (single or double)
         arithmetic_depth = 0
+        arithmetic_brackets = 0
         i = 0
         while i < len(line):
             char = line[i]
@@ -197,13 +198,33 @@ def _preprocess_command(cmd: str) -> str:
                     i += 1
                 at_word_start = False
                 continue
-            if char == "$" and line[i:i + 3] == "$((":
+            if char == "$" and line[i:i + 3] == "$" + "((":
                 visible.extend(line[i:i + 3])
                 arithmetic_depth += 1
                 i += 3
                 at_word_start = False
                 continue
-            if char == ")" and line[i:i + 2] == "))" and arithmetic_depth:
+            if char == "(" and line[i:i + 2] == "((" and at_word_start:
+                visible.extend(line[i:i + 2])
+                arithmetic_depth += 1
+                i += 2
+                at_word_start = False
+                continue
+            if char == "$" and line[i:i + 2] == "$[" and at_word_start:
+                visible.extend(line[i:i + 2])
+                arithmetic_depth += 1
+                arithmetic_brackets += 1
+                i += 2
+                at_word_start = False
+                continue
+            if char == "]" and arithmetic_brackets:
+                visible.append(char)
+                arithmetic_brackets -= 1
+                arithmetic_depth -= 1
+                i += 1
+                at_word_start = False
+                continue
+            if char == ")" and line[i:i + 2] == "))" and arithmetic_depth > arithmetic_brackets:
                 visible.extend(line[i:i + 2])
                 arithmetic_depth -= 1
                 i += 2
@@ -232,9 +253,13 @@ def _preprocess_command(cmd: str) -> str:
                             quoted_delimiter = True
                             end += 1
                             while end < len(line) and line[end] != quote:
-                                if quote == '"' and line[end] == "\\" and end + 1 < len(line):
+                                if quote == '"' and line[end] == "\\" and end + 1 < len(line) and line[end + 1] in ("$", "`", '"', "\\", "\n"):
                                     delimiter.append(line[end + 1])
                                     end += 2
+                                    continue
+                                if quote == '"' and line[end] == "\\":
+                                    delimiter.append(line[end])
+                                    end += 1
                                     continue
                                 delimiter.append(line[end])
                                 end += 1
@@ -257,23 +282,54 @@ def _preprocess_command(cmd: str) -> str:
     return "\n".join(output)
 
 
+def _unterminated_quote_line(prepared: str):
+    single = double = False
+    escaped = False
+    opened_line = None
+    line_no = 1
+    for char in prepared:
+        if char == "\n":
+            line_no += 1
+            escaped = False
+            continue
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if not double and char == "'":
+            single = not single
+            if single:
+                opened_line = line_no
+        elif not single and char == '"':
+            double = not double
+            if double:
+                opened_line = line_no
+    return opened_line if (single or double) else None
+
+
 def segments(cmd: str):
     prepared = _preprocess_command(cmd)
     if (len(prepared) - len(prepared.rstrip("\\"))) % 2 == 1:
         prepared = prepared[:-1]
-    lexer = shlex.shlex(prepared.replace("\n", " ; "), posix=True, punctuation_chars=";|&")
+    lexer = shlex.shlex(prepared.replace("\n", ";\n"), posix=True, punctuation_chars=";|&")
     lexer.commenters = ""
     lexer.whitespace_split = True
     tokens = []
+    error_line = None
     try:
         while True:
-            tokens.append(next(lexer))
+            token_line = lexer.lineno
+            tokens.append((token_line, next(lexer)))
     except StopIteration:
         pass
     except ValueError:
-        pass
+        error_line = _unterminated_quote_line(prepared)
+    if error_line is not None:
+        tokens = [(line, token) for line, token in tokens if line < error_line]
     segs, cur = [], []
-    for t in tokens:
+    for _, t in tokens:
         if t in SEPS:
             if cur:
                 segs.append(cur)
