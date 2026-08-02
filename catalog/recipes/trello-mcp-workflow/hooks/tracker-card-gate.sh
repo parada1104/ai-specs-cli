@@ -89,6 +89,7 @@ def _preprocess_command(cmd: str) -> str:
             continue
 
         visible = []
+        at_word_start = not (single or double)
         i = 0
         while i < len(line):
             char = line[i]
@@ -110,15 +111,26 @@ def _preprocess_command(cmd: str) -> str:
                 continue
             if char == "'":
                 single = True
+                at_word_start = False
                 visible.append(char)
                 i += 1
                 continue
             if char == '"':
                 double = True
+                at_word_start = False
                 visible.append(char)
                 i += 1
                 continue
-            if char == "#":
+            if char == "\\":
+                visible.append(char)
+                if i + 1 < len(line):
+                    visible.append(line[i + 1])
+                    i += 2
+                else:
+                    i += 1
+                at_word_start = False
+                continue
+            if char == "#" and at_word_start:
                 break
             if char == "<" and i + 1 < len(line) and line[i + 1] == "<":
                 delimiter_start = i + 2
@@ -141,8 +153,10 @@ def _preprocess_command(cmd: str) -> str:
                             pending.append((line[delimiter_start:end], strip_tabs))
                 visible.extend(line[i:i + 2])
                 i += 2
+                at_word_start = True
                 continue
             visible.append(char)
+            at_word_start = char.isspace() or char in ";|&()<>"
             i += 1
         output.append("".join(visible))
     return "\n".join(output)
