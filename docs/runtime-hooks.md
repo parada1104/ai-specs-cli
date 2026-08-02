@@ -97,7 +97,10 @@ Some hooks also use a sync-stamped constant in the rendered script for values
 that should not be overwritten by env export order. `worktree-flow` uses this
 for `gate_mode`: `ai-specs sync` stamps the resolved mode into
 `worktree-gate.sh`, while `WORKTREE_GATE_MODE` remains a one-shot process
-override at dispatch time.
+override at dispatch time. `trello-mcp-workflow` likewise stamps
+`__TRACKER_CARD_GATE_MODE__` (default `warn`) and `__TRACKER_CLI_HOME__`
+into `tracker-card-gate.sh`; `TRACKER_CARD_GATE_MODE` is the one-shot env
+override.
 
 ## Idempotency
 
@@ -117,7 +120,18 @@ block are preserved.
 | opencode | ✅ (primary agent) | not subagent/MCP tool calls |
 | cursor | ⚠️ | no pre-file-write hook; shell/MCP gates only |
 
-## Shell write-bypass coverage (worktree-flow only)
+## Dual-hook gates (worktree-flow + trello-mcp-workflow)
+
+| Recipe | Path hook id | Shell hook id | Shell heuristic |
+|--------|--------------|---------------|-----------------|
+| `worktree-flow` | `worktree-gate` | `worktree-gate-shell` | shell writes into protected main |
+| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` + change-archive helpers |
+
+Both share one script per recipe with two `[[provides.hooks]]` ids so
+Cursor's file-write skip does not swallow shell coverage. Neither gate
+intercepts MCP tool calls.
+
+## Shell write-bypass coverage (worktree-flow)
 
 `worktree-flow`'s `worktree-gate.sh` also registers a second matcher
 (`worktree-gate-shell`, matcher `Bash|Shell|Execute|Terminal`) that
@@ -146,3 +160,7 @@ harness's subagent/MCP tool-call boundary), the mitigation is policy-level:
 agents that a blocked or errored Edit/Write on a protected branch is never
 grounds to retry the write via bash/shell — the correct response is to create
 a worktree first.
+
+`tracker-card-gate` does **not** intercept Trello MCP and does **not**
+claim uniform full prevention across harnesses — see Residual platform
+gaps in the trello-mcp-workflow README.

@@ -43,7 +43,7 @@ never touches the foundational layer.
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
 | [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
 | [`bitbucket-pr-flow`](#bitbucket-pr-flow) | Specific | Branch → PR → approval-gated merge (Bitbucket) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
-| [`trello-mcp-workflow`](#trello-mcp-workflow) | Specific | Trello board integration (tracker) | `tracker` (+ 4 trello-* capabilities) | `trello` | **`board_id` (required)**, `default_list`, `epic_list` |
+| [`trello-mcp-workflow`](#trello-mcp-workflow) | Specific | Trello board integration (tracker) + card-per-change gate | `tracker` (+ 4 trello-* capabilities) | `trello` | **`board_id` (required)**, `default_list`, `epic_list`, `gate_mode` |
 | [`vault-canonical-store`](#vault-canonical-store) | Specific | Durable decisions/handoffs in a vault MCP | `canonical-store` | `vault-canonical` | `vault_scope`, `decisions_folder`, `sessions_folder` |
 
 ---
@@ -335,11 +335,14 @@ integration: card linking, state sync, and progress comments, plus card
 templates (feature, bug, spike, epic, handoff, decision). Enforces board
 isolation — forbids cross-board tools and requires card validation against the
 configured board. Ships an MCP preset for `@delorenj/mcp-server-trello` (needs
-`TRELLO_API_KEY` / `TRELLO_TOKEN` in the environment) and a read-only
-`ai-specs recipe init` brief to confirm setup before sync.
+`TRELLO_API_KEY` / `TRELLO_TOKEN` in the environment), a read-only
+`ai-specs recipe init` brief to confirm setup before sync, and a phased
+`tracker-card-gate` (`gate_mode` = `off|warn|always`, default `warn`) that
+requires a `## Tracker` link section before production/PR-archive work.
 
 - **Provides:** skill `trello-mcp-workflow`, command `/trello-workflow`, 6 card
-  templates, an MCP preset; capability `tracker` (+ `trello-session-bootstrap`,
+  templates, an MCP preset, dual runtime hooks (`tracker-card-gate` +
+  `tracker-card-gate-shell`); capability `tracker` (+ `trello-session-bootstrap`,
   `trello-card-linking`, `trello-state-sync`, `trello-progress-comment`).
 - **Config:**
 
@@ -348,6 +351,7 @@ configured board. Ships an MCP preset for `@delorenj/mcp-server-trello` (needs
   | `board_id` | string | **yes** | — | Trello board ID. Validated against `^[0-9a-fA-F]{24}$`. |
   | `default_list` | string | no | `In Progress` | List where new cards are created. |
   | `epic_list` | string | no | `Epic` | List where epic-type cards are placed. |
+  | `gate_mode` | string | no | `warn` | Tracker card gate: `off` / `warn` / `always`. |
 
 - **Board isolation** (declared in `recipe.toml`, not overridden per project):
   `forbidden_tools` = `trello_get_my_cards`, `trello_list_boards`;
@@ -363,10 +367,11 @@ configured board. Ships an MCP preset for `@delorenj/mcp-server-trello` (needs
 ```toml
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.2.0"
+version = "1.3.0"
 
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"
+gate_mode = "warn"
 ```
 
 ## vault-canonical-store

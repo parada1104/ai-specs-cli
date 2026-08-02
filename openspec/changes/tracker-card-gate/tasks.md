@@ -351,19 +351,19 @@ mandatory consult; `tracker-card-gate` anti-bypass guidance.
 **Reqs:** residual platform gaps documentation; dual-hook honesty; version
 blurb.
 
-- [ ] 8.1 README: **"Card-per-change contract"**, **"Gate modes"**
+- [x] 8.1 README: **"Card-per-change contract"**, **"Gate modes"**
       (`off|warn|always`, `TRACKER_CARD_GATE_MODE`,
       `TRACKER_CARD_GATE_PATHS`, never blocks `openspec/**`, fail-open),
       **"Residual platform gaps"** (Cursor / OpenCode / pi-omp; MCP not
       intercepted).
-- [ ] 8.2 `docs/runtime-hooks.md`: add `tracker-card-gate` /
+- [x] 8.2 `docs/runtime-hooks.md`: add `tracker-card-gate` /
       `tracker-card-gate-shell` to the dual-hook table; note mode stamp + env
       override; shell matcher = PR/archive (not file writes). MUST NOT claim
       MCP interception or uniform full prevention.
-- [ ] 8.3 `docs/recipes-catalog.md`: bump trello-mcp-workflow version /
+- [x] 8.3 `docs/recipes-catalog.md`: bump trello-mcp-workflow version /
       description for card-per-change gate + `gate_mode`. Touch catalog tests
       only if needed.
-- [ ] 8.4 `openspec/config.yaml`: align `sdd.decision_matrix` with
+- [x] 8.4 `openspec/config.yaml`: align `sdd.decision_matrix` with
       `openspec/specs/sdd-adaptive-contract/spec.md` (the source of truth) and
       with the practice seen in recent change folders. Current matrix is
       stale: (a) vocabulary diverges (config `trivial/local_fix/
@@ -380,7 +380,7 @@ blurb.
       no longer exists in this repo). Add/extend a doc-content test only if
       the repo asserts config.yaml shape; otherwise record the aligned matrix
       in the recipe README/skill.
-- [ ] 8.5 `openspec/config.yaml`: add `tracking:` section declaring the global
+- [x] 8.5 `openspec/config.yaml`: add `tracking:` section declaring the global
       contract — `tracker: trello`, `board_id` (this repo's dogfood board),
       `artifact_section: "## Tracker"`, `required_fields: [card_id, url]`,
       `gate_mode: warn`. CONSUMER FACTS (verified): the SDD phase agents
