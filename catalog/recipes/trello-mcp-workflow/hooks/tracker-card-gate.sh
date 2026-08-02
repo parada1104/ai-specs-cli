@@ -77,6 +77,7 @@ def command_word(seg):
 def _line_continuation_state(line, single, double):
     """Return quote state and whether an unquoted trailing backslash joins lines."""
     i = 0
+    at_word_start = not (single or double)
     while i < len(line):
         char = line[i]
         if single:
@@ -94,11 +95,27 @@ def _line_continuation_state(line, single, double):
             continue
         if char == "'":
             single = True
+            at_word_start = False
         elif char == '"':
             double = True
+            at_word_start = False
+        elif char == "\\" and i + 1 < len(line):
+            i += 1
+            at_word_start = False
+        elif char == "#" and at_word_start:
+            return single, double, False
+        else:
+            at_word_start = char in " \t;|&()<>"
         i += 1
     trailing_backslashes = len(line) - len(line.rstrip("\\"))
     return single, double, not single and trailing_backslashes % 2 == 1
+
+
+def _fold_unquoted_heredoc_line(line, physical_lines, index):
+    while (len(line) - len(line.rstrip("\\"))) % 2 == 1 and index + 1 < len(physical_lines):
+        line = line[:-1] + physical_lines[index + 1]
+        index += 1
+    return line, index
 
 
 def _preprocess_command(cmd: str) -> str:
@@ -113,24 +130,28 @@ def _preprocess_command(cmd: str) -> str:
         line = physical_lines[index]
         if pending:
             delimiter, strip_tabs, quoted = pending[0]
+            if not quoted:
+                line, index = _fold_unquoted_heredoc_line(line, physical_lines, index)
             candidate = line.lstrip("\t") if strip_tabs else line
-            if (candidate == delimiter if quoted else
-                    candidate.rstrip("\r") == delimiter.rstrip("\r")):
+            if candidate == delimiter:
                 pending.pop(0)
             index += 1
             continue
 
+        entry_single, entry_double = single, double
         logical_line = line
         while True:
-            _next_single, _next_double, joins_next = _line_continuation_state(
-                logical_line, single, double
+            next_single, next_double, joins_next = _line_continuation_state(
+                physical_lines[index], single, double
             )
+            single, double = next_single, next_double
             if not joins_next or index + 1 >= len(physical_lines):
                 break
             logical_line = logical_line[:-1] + physical_lines[index + 1]
             index += 1
         line = logical_line
         visible = []
+        single, double = entry_single, entry_double
         at_word_start = not (single or double)
         i = 0
         while i < len(line):
@@ -180,19 +201,26 @@ def _preprocess_command(cmd: str) -> str:
                 if strip_tabs:
                     delimiter_start += 1
                 if delimiter_start >= len(line) or line[delimiter_start] != "<":
-                    while delimiter_start < len(line) and line[delimiter_start].isspace():
+                    while delimiter_start < len(line) and line[delimiter_start] in " \t":
                         delimiter_start += 1
-                    if delimiter_start < len(line) and line[delimiter_start] in "'\"":
-                        quote = line[delimiter_start]
-                        end = line.find(quote, delimiter_start + 1)
-                        if end >= 0:
-                            pending.append((line[delimiter_start + 1:end], strip_tabs, True))
-                    else:
-                        end = delimiter_start
-                        while end < len(line) and line[end] not in " \t;|&<>":
+                    end = delimiter_start
+                    delimiter = []
+                    quoted_delimiter = False
+                    while end < len(line) and line[end] not in " \t;|&()<>":
+                        if line[end] in "'\"":
+                            quote = line[end]
+                            quoted_delimiter = True
                             end += 1
-                        if end > delimiter_start:
-                            pending.append((line[delimiter_start:end], strip_tabs, False))
+                            while end < len(line) and line[end] != quote:
+                                delimiter.append(line[end])
+                                end += 1
+                            if end < len(line):
+                                end += 1
+                        else:
+                            delimiter.append(line[end])
+                            end += 1
+                    if delimiter:
+                        pending.append(("".join(delimiter), strip_tabs, quoted_delimiter))
                 visible.extend(line[i:i + 2])
                 i += 2
                 at_word_start = True
