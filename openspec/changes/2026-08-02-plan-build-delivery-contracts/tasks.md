@@ -176,16 +176,16 @@ changes; no migration is required.
 
 ## P5 — Verification and delivery boundary
 
-- [ ] **P5.1 Run focused unit verification first.** Execute the focused recipe, renderer, catalog,
+- [x] **P5.1 Run focused unit verification first.** Execute the focused recipe, renderer, catalog,
       baseline/policy, and gate tests listed in P0.2; capture RED/GREEN/TRIANGULATE evidence.
       **Acceptance:** All focused tests pass before full validation is attempted.
 
-- [ ] **P5.2 Run repository validation second.** Execute `./tests/validate.sh` after focused tests
+- [x] **P5.2 Run repository validation second.** Execute `./tests/validate.sh` after focused tests
       pass; this is the required final validation for Python compilation, shell syntax, and the
       configured unittest layer. **Acceptance:** Validation passes, or environmental failure is
       recorded precisely.
 
-- [ ] **P5.3 Final review and PR boundary.** Check worktree status, verify no commit, and review
+- [x] **P5.3 Final review and PR boundary.** Check worktree status, verify no commit, and review
       every acceptance item. **Acceptance:** Deliver the implementation as one PR after
       apply/verify, without archive/publish.
 
