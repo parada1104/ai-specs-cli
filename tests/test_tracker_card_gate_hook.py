@@ -298,6 +298,17 @@ class TrackerCardGateHookTests(unittest.TestCase):
             ("next-line-comment", "echo hi # note\x85gh pr create --fill", 0),
             ("line-separator-comment", "echo hi # note\u2028gh pr create --fill", 0),
             ("paragraph-separator-comment", "echo hi # note\u2029gh pr create --fill", 0),
+            ("crlf-heredoc-unquoted-then-gated", "cat > docs/x <<EOF\r\nbody\r\nEOF\r\ngh pr create --fill\r\n", 2),
+            ("crlf-heredoc-strip-tabs-then-gated", "cat > docs/x <<-EOF\r\n\tbody\r\n\tEOF\r\ngh pr create --fill\r\n", 2),
+            ("crlf-archive-heredoc-then-gated", "cat > docs/x <<EOF\r\nbody\r\nEOF\r\nopenspec archive needs-card\r\n", 2),
+            ("vertical-tab-word-hash-gated", "echo a\v#note; gh pr create --fill", 2),
+            ("form-feed-word-hash-gated", "echo a\f#note; gh pr create --fill", 2),
+            ("next-line-word-hash-gated", "echo a\x85#note; gh pr create --fill", 2),
+            ("line-separator-word-hash-gated", "echo a\u2028#note; gh pr create --fill", 2),
+            ("joined-mid-word-hash-gated", "echo foo\\\n#bar; gh pr create --fill", 2),
+            ("joined-gated-command", "gh pr \\\ncreate --fill", 2),
+            ("joined-argv-not-command", "printf '%s\\n' \\\n  gh pr create --fill", 0),
+            ("single-quoted-backslash-newline", "echo 'foo\\\nbar'", 0),
         )
         for label, command, expected_rc in cases:
             with self.subTest(label=label):
