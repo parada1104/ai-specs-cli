@@ -40,7 +40,12 @@ Exploration: `openspec/changes/tracker-card-gate/explore.md`.
    consumer token/friction low. Align skill text away from the mythical schema
    field `trello_card_id`. Declare the contract globally in
    `openspec/config.yaml` under a new `tracking:` section (tracker, board_id,
-   section name, required fields, gate mode).
+   section name, required fields, gate mode). While in `config.yaml`, also
+   align the stale `sdd.decision_matrix` with
+   `openspec/specs/sdd-adaptive-contract/spec.md` and recent practice (task
+   8.4): vocabulary divergence, `behavior_change` missing its spec artifact,
+   `domain_change` missing specs + apply/verify/archive reports, degenerate
+   `trivial`/`local_fix`, and the stale `rules.apply` skill reference.
 
 2. **Recipe hardening (`trello-mcp-workflow`)**
    - Turn on useful `auto_invoke` triggers for new/ambiguous structured changes.

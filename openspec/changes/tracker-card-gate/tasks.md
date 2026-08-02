@@ -363,7 +363,24 @@ blurb.
 - [ ] 8.3 `docs/recipes-catalog.md`: bump trello-mcp-workflow version /
       description for card-per-change gate + `gate_mode`. Touch catalog tests
       only if needed.
-- [ ] 8.4 `openspec/config.yaml`: add `tracking:` section declaring the global
+- [ ] 8.4 `openspec/config.yaml`: align `sdd.decision_matrix` with
+      `openspec/specs/sdd-adaptive-contract/spec.md` (the source of truth) and
+      with the practice seen in recent change folders. Current matrix is
+      stale: (a) vocabulary diverges (config `trivial/local_fix/
+      behavior_change/domain_change` vs practice `light/standard/full/
+      tasks-only` — decide one canonical set and record it), (b)
+      `behavior_change.artifacts` is `["tasks.md"]` but the spec requires
+      specs updated/extended (add the spec artifact — matches the real
+      `standard (spec + tasks)` tier used by compact-sync-output), (c)
+      `domain_change.artifacts` omits delta specs + apply/verify/archive
+      reports that the spec requires (add them), (d) `trivial` and
+      `local_fix` are degenerate-identical although the spec distinguishes
+      them (local_fix = code + tests). Also fix `rules.apply`'s stale
+      reference to `ai-specs/skills/openspec-sdd-conventions/SKILL.md` (skill
+      no longer exists in this repo). Add/extend a doc-content test only if
+      the repo asserts config.yaml shape; otherwise record the aligned matrix
+      in the recipe README/skill.
+- [ ] 8.5 `openspec/config.yaml`: add `tracking:` section declaring the global
       contract — `tracker: trello`, `board_id` (this repo's dogfood board),
       `artifact_section: "## Tracker"`, `required_fields: [card_id, url]`,
       `gate_mode: warn`. CONSUMER FACTS (verified): the SDD phase agents
