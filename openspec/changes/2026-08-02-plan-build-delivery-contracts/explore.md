@@ -5,22 +5,32 @@ Branch: `feat/plan-build-delivery-contracts` — Worktree: `/Users/robert/proyec
 Base: `development@312f985`
 Tracker: Trello #58 (`OdQPZZa3`)
 
+## Amendment note (authoritative)
+
+Per the user's amendment, this change was reduced to **only** the `artifact_store_default`
+delivery contract. The `review_budget_lines` idea was considered during exploration but removed
+from scope; review-budget handling remains entirely with the external session preflight and is
+tracked as enforcement follow-ups #59/#60. The historical exploration below is retained, but
+all budget discussion is reframed as considered-and-removed rather than delivered contract.
+
 ## Problem framing
 
 The `plan-build-flow` recipe currently declares the mechanics of planning and implementation,
 but not the project's delivery defaults. Its bundled skill can classify change depth and gate
 PR/archive transitions, while the generated project brief can carry ambient workflow rules.
-There is no declarative answer today for where SDD artifacts belong or how much review workload
-is acceptable. As a result, a runtime's session preflight has to fall back to its own defaults,
-even when a repository has a different policy.
+There is no declarative answer today for where SDD artifacts belong. As a result, a runtime's
+session preflight has to fall back to its own artifact-store default, even when a repository has
+a different policy.
 
-This change adds two repo-owned delivery contracts:
+The amended change adds one repo-owned delivery contract:
 
 - `artifact_store_default`: `openspec`, `engram`, or `both`.
-- `review_budget_lines`: an integer review-budget threshold.
 
-The recipe remains an orchestrator-agnostic spec/tool integration. It declares defaults and
-renders them into `AGENTS.md`; an external runtime may consume those rules during its own
+Review-budget configuration was considered as a possible second contract during exploration,
+then removed by user decision. It is not part of this recipe, its brief, or its skill surface.
+
+The recipe remains an orchestrator-agnostic spec/tool integration. It declares the artifact-store
+default and renders it into `AGENTS.md`; an external runtime may consume that rule during its own
 interactive preflight. The recipe does not invoke, import, or depend on that runtime.
 
 ## Findings by target
@@ -75,9 +85,10 @@ verbatim, leaves bare `{KEY}` untouched, supports `{{`/`}}` escapes, and does no
 unbalanced prose braces. `collect_recipe_brief_fragments` (`agents-render.py:96-143`) walks
 enabled recipes in manifest order, builds a namespace from each resolved recipe config as
 `config.<key>`, substitutes each fragment, then performs key and exact-text deduplication.
-Thus a recipe rule containing `{config.artifact_store_default}` or
-`{config.review_budget_lines}` will render with that recipe's merged values, without changing
-manifest prose or requiring special orchestrator code.
+Thus a recipe rule containing `{config.artifact_store_default}` renders with that recipe's
+merged value, without changing manifest prose or requiring special orchestrator code. The
+review-budget placeholder was considered during exploration but removed from scope; review
+budget handling remains an external session-preflight concern.
 
 `lib/_internal/recipe-materialize.py:488-529` merges schema defaults first, then overlays
 manifest values, warns and ignores unknown keys, checks required fields, and validates enum
@@ -90,7 +101,6 @@ The direct precedent is `catalog/recipes/git-pr-flow/recipe.toml:25-41`: `[confi
 has type `string`, default `main`, and explanatory `help_text`; its workflow rules interpolate
 `{config.base_branch}` at `:47-54`. The new fields should follow this shape rather than adding a
 new renderer or recipe-specific substitution mechanism.
-
 ### C. Config schema support
 
 `lib/_internal/recipe_schema.py:109-121` models a `ConfigField` with `required`, `type`,
@@ -99,10 +109,10 @@ parsed field map. `_parse_config` begins at `recipe_schema.py:441`; standard con
 `[config.<key>]` tables identified by `required`, while non-standard tables are retained in
 `extra`. The parser validates field shape and supported primitive types, parses defaults,
 validation, enum values, and `help_text` (the `help_text` extraction is at `:499`, construction
-at `:501-508`). Existing recipes demonstrate `string`, `bool`, and integer fields; the target
-fields need only the existing `string` and `int` types.
+at `:501-508`). Existing recipes demonstrate `string`, `bool`, and integer fields; the amended
+recipe needs only the existing `string` type.
 
-The proposed schema is:
+The amended schema retains only the artifact-store field:
 
 ```toml
 [config.artifact_store_default]
@@ -111,20 +121,13 @@ type = "string"
 default = "openspec"
 enum = ["openspec", "engram", "both"]
 help_text = "Default artifact store ..."
-
-[config.review_budget_lines]
-required = false
-type = "int"
-default = 400
-help_text = "Review workload budget in changed lines ..."
 ```
 
-The exact wording belongs to proposal/design, but defaults must preserve current behavior. An
-optional enum is preferable for the artifact-store contract because the allowed values are a
-closed vocabulary; the integer field must be validated as an integer by the existing schema
-parser and should reject malformed manifest values rather than silently stringifying them.
-Both fields are optional with defaults, so projects that add the recipe without configuration
-remain backwards compatible.
+The exact wording belongs to proposal/design, but the default must preserve current behavior. An
+optional enum is appropriate because the allowed artifact-store values are a closed vocabulary.
+The review-budget field and its integer validation were considered, then removed by user decision;
+projects must not declare them through this recipe. The remaining field is optional with a default,
+so projects that add the recipe without configuration remain backwards compatible.
 
 ### D. Affected test surface
 
@@ -140,9 +143,8 @@ contracts.
 `tests/test_agents_render_brief_fragments.py:37-86` already proves known-key interpolation,
 missing-key preservation, bare-key preservation, brace escaping, mixed substitutions, and
 unbalanced-brace safety. Its collection tests (`:90-183`) prove enabled-order behavior,
-key/exact-string deduplication, and empty/disabled recipe handling. Add focused coverage for
-both new keys (including an integer rendered as text) and an end-to-end resolved recipe
-fragment, rather than changing the renderer.
+key/exact-string deduplication, and empty/disabled recipe handling. Add focused coverage for the
+artifact-store key and an end-to-end resolved recipe fragment, rather than changing the renderer.
 
 `tests/test_brief_render_policy.py` exercises the policy for project and recipe brief fragments
 and should verify the new delivery rules are appended with the expected substituted values,
@@ -157,40 +159,38 @@ surface. No project-wide test suite is required for this exploration or apply ph
 
 ### E. External consumption context (not a recipe dependency)
 
-An external `gentle-ai` SDD runtime currently asks four interactive preflight questions. Its
-verified defaults are: artifact store `openspec`, review budget `400`, execution mode
-`interactive`, and chained PR strategy `auto-forecast` (session context, verified technical
-facts; external implementation is `~/.pi/agent/npm/node_modules/gentle-pi/lib/sdd-preflight.ts`).
-The runtime's preflight is session-interactive and remains outside this repository's ownership.
+An external SDD runtime asks interactive session-preflight questions, including the artifact
+store and review budget. The runtime's preflight is session-interactive and remains outside this
+repository's ownership. Review-budget handling is intentionally left there, not declared or
+rendered by this recipe; follow-ups #59/#60 track enforcement and discipline concerns.
 
 The intended consumption is simple: the generated project brief tells the orchestrator agent
-which per-project defaults to answer when that external preflight asks. The agent supplies the
-recipe's rendered `artifact_store_default` and `review_budget_lines`; an external runtime may
-then use those answers. This is external runtime behavior we do not control, not a dependency
-of `plan-build-flow`, and not a reason to modify gentle-pi/gentle-ai code. When no project
-configuration is declared, the recipe defaults reproduce the current external defaults.
+which per-project artifact-store default to answer when that external preflight asks. The agent
+supplies the recipe's rendered `artifact_store_default`; an external runtime may then use that
+answer. This is external runtime behavior we do not control, not a dependency of `plan-build-flow`,
+and not a reason to modify external runtime code. When no project configuration is declared, the
+recipe default reproduces the current artifact-store behavior.
 
-The contract deliberately excludes execution mode and chained PR strategy. The external
-preflight continues to ask those questions and owns their defaults and semantics. The recipe
-must not name or declare `chained_pr_default`, must not declare an execution-mode field, and
-must not implement preflight logic.
+The contract deliberately excludes review budget, execution mode, and chained PR strategy. The
+external preflight continues to ask those questions and owns their defaults and semantics. The
+recipe must not declare a review-budget field, `chained_pr_default`, or an execution-mode field,
+and must not implement preflight logic.
 
 ### F. Gap analysis
 
-The apply phase needs to add:
+The apply phase needed to add:
 
-1. Two optional recipe config fields in `catalog/recipes/plan-build-flow/recipe.toml`, with
-   defaults, supported types, artifact-store enum, and useful help text.
-2. Brief workflow rules using `{config.artifact_store_default}` and
-   `{config.review_budget_lines}`. Rules should state that the project defaults are the values
-   to provide when an external session preflight asks, while preserving the recipe's
-   orchestrator-agnostic language. They should also state how the review budget relates to
-   plan/build review forecasting or gates, if design confirms a budget warning contract.
-3. Recipe README documentation describing the fields, accepted values, defaults, and the fact
-   that `ai-specs sync` materializes the rules. Update the catalog documentation row similarly.
-4. Tests for schema parsing/defaults/enum rejection, manifest override and integer behavior,
-   rendered interpolation, generated brief policy/baseline expectations, and preservation of
-   existing plan-build vocabulary and gates.
+1. One optional recipe config field, `artifact_store_default`, in
+   `catalog/recipes/plan-build-flow/recipe.toml`, with its default, enum, and useful help text.
+2. A brief workflow rule using `{config.artifact_store_default}` that states the project default
+   to provide when an external session preflight asks, while preserving orchestrator-agnostic
+   language. Review-budget rules were considered during exploration and explicitly removed.
+3. Recipe README documentation describing the artifact-store field, accepted values, default, and
+   the fact that `ai-specs sync` materializes the rules. Update the catalog documentation row
+   similarly.
+4. Tests for schema parsing/defaults/enum rejection, manifest override, rendered interpolation,
+   generated brief policy/baseline expectations, and preservation of existing plan-build
+   vocabulary and gates.
 5. A recipe version decision and, if policy requires it, a version bump from `1.2.0` with
    corresponding test fixtures/docs updated consistently.
 
@@ -221,19 +221,16 @@ policy.
   bumping `recipe.version` beyond `1.2.0`; the repository currently has no decision in this
   context on whether catalog recipe versions are bumped for additive config. Proposal/design
   must settle the version and update manifest fixtures or docs that pin it.
-- **Default compatibility (medium):** `openspec`/`400` must remain defaults when a project has
-  no overrides. Incorrect merge ordering could make an absent key disappear or allow an unknown
+- **Default compatibility (medium):** `openspec` must remain the default when a project has no
+  override. Incorrect merge ordering could make an absent key disappear or allow an unknown
   manifest key to alter the brief; existing `merge_config` behavior should be preserved.
-- **Type and enum validation (medium):** TOML integer parsing and schema validation must remain
-  strict. A malformed budget or unsupported artifact-store value should fail predictably during
-  config handling, while omitted fields resolve to defaults.
-- **Budget semantics (medium/high):** the current plan-build gate only checks the existence of
-  `tasks.md`; it has no line forecast. Design must decide whether `review_budget_lines` is a
-  declarative brief-only threshold or also drives a warning/check in plan/build artifacts.
-  Adding an enforcement path without a clear observable contract would overreach this change.
-- **External runtime drift (medium):** the external preflight may change its questions or
-  defaults independently. This repository can guarantee rendered project rules, not runtime
-  consumption; no gentle-ai change should be coupled to this recipe.
+- **Enum validation (medium):** TOML enum parsing and schema validation must remain strict. An
+  unsupported artifact-store value should fail predictably during config handling, while an
+  omitted field resolves to the default. Review-budget validation is intentionally external and
+  out of scope for this change.
+- **Review-budget boundary (resolved):** the current plan-build gate has no line forecast. The
+  user decision leaves review-budget questions and any enforcement to the external session
+  preflight, with follow-ups #59/#60; this recipe adds no warning/check path.
 - **Tracker brief coexistence (low/medium):** enabled-order and keyed deduplication can alter
   generated rule order. Stable unique keys and additive rules reduce collisions; baseline tests
   must cover the combined enabled-recipe configuration if available.
@@ -244,8 +241,9 @@ policy.
 
 ## Ready for proposal
 
-**Yes.** Proposal/design must settle the exact brief wording and keys, whether the review budget
-is advisory or enforced by a plan/build forecast, the recipe version bump policy, and the precise
-baseline/catalog documentation updates. The implementation boundary is clear: schema defaults
-and overrides, generic existing interpolation, ambient brief rules, docs, and focused tests;
-no orchestrator or external-runtime code.
+**Yes.** Proposal/design must settle the exact brief wording and key, the recipe version bump
+policy, and the precise baseline/catalog documentation updates. Review-budget behavior is already
+settled by user decision as external-preflight-only and out of scope (follow-ups #59/#60). The
+implementation boundary is clear: artifact-store schema defaults and overrides, generic existing
+interpolation, ambient brief rules, docs, and focused tests; no orchestrator or external-runtime
+code.
