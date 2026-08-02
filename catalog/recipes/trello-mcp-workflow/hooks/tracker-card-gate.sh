@@ -1,0 +1,561 @@
+#!/usr/bin/env bash
+# tracker-card-gate.sh — pre-tool-use guard distributed by trello-mcp-workflow.
+#
+# Semantic model: plan-build-gate (artifact before production). Enforces that
+# every active OpenSpec change carries a ## Tracker link section (or
+# tracker.none) before production writes and high-confidence gh pr create /
+# change-archive shell actions.
+#
+# Dual-input contract (one script, every harness):
+#   PATH mode stdin = JSON { "event", "tool_name",
+#     "tool_input": {file_path|notebook_path}, "cwd" }
+#   SHELL mode stdin = JSON with tool_input.command (or script/cmd) OR Cursor
+#     native top-level { "command", "cwd", … }
+#   exit 0 → allow.   exit 2 → block (stderr surfaced to the agent).
+# Fail-open: any parse/lookup/git/python3/ambiguous error allows the action.
+#
+# Tokens stamped at sync (gitignored project copy):
+#   __TRACKER_CARD_GATE_MODE__   (default warn)
+#   __TRACKER_CLI_HOME__         (CLI install home for cache marker resolve)
+#
+# Config / env:
+#   TRACKER_CARD_GATE_MODE    env override beats stamp (off|warn|always)
+#   TRACKER_CARD_GATE_PATHS   space-separated production dirs
+#                             (default: "lib catalog bin src")
+#   AI_SPECS_HOME             preferred over stamped CLI home for marker
+
+stamped_gate_mode="__TRACKER_CARD_GATE_MODE__"
+stamped_cli_home="__TRACKER_CLI_HOME__"
+prod_dirs="${TRACKER_CARD_GATE_PATHS:-lib catalog bin src}"
+[ -n "${prod_dirs// /}" ] || prod_dirs="lib catalog bin src"
+
+_resolve_gate_mode() {
+  local candidate="${TRACKER_CARD_GATE_MODE:-$stamped_gate_mode}"
+  case "$candidate" in off|warn|always) echo "$candidate" ; return ;;
+  esac
+  if [ -n "${TRACKER_CARD_GATE_MODE:-}" ]; then
+    echo "tracker-card-gate: ignoring invalid TRACKER_CARD_GATE_MODE='${TRACKER_CARD_GATE_MODE}'; falling back to stamped mode." >&2
+  elif [ "$stamped_gate_mode" != off ] && [ "$stamped_gate_mode" != warn ] && [ "$stamped_gate_mode" != always ]; then
+    echo "tracker-card-gate: invalid stamped gate_mode='${stamped_gate_mode}'; falling back to warn." >&2
+  fi
+  case "$stamped_gate_mode" in off|warn|always) echo "$stamped_gate_mode" ;;
+  *) echo warn ;;
+  esac
+}
+gate_mode="$(_resolve_gate_mode)"
+[ "$gate_mode" = off ] && exit 0
+
+input="$(cat)"
+
+# Protocol on stdout from the embedded python:
+#   line 1: <kind>\t<tool_name>\t<repo_hint>
+#     kind ∈ {path, shell, none}
+#   path → line 2: <abs_or_rel_file_path>
+#   shell → line 2: <action>\t<details>
+#     action ∈ {pr_create, archive}\t<details may be slug or empty>
+# Fail-open: any python error → exit 0.
+parsed="$(python3 - "$input" "$stamped_cli_home" <<'PYEOF' 2>/dev/null
+import hashlib, json, os, re, shlex, sys
+from pathlib import Path
+
+PAIR_RE = re.compile(
+    r"^\s*(?:[-*]\s+)?\*{0,2}(?P<key>[A-Za-z_][A-Za-z0-9_]*)\*{0,2}\s*:\s*(?P<value>.*)$"
+)
+RECOGNIZED = frozenset({"card_id", "shortlink", "url", "list", "pr"})
+TRACKER_HEADING = re.compile(r"^##\s+Tracker\s*$")
+H2 = re.compile(r"^##\s+")
+BASENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
+WRAPPERS = {"sudo", "env", "nice", "time", "nohup", "xargs", "command"}
+SEPS = {"|", "||", "&&", ";"}
+
+
+def clean_value(raw: str) -> str:
+    value = raw.strip()
+    hash_at = value.find(" #")
+    if hash_at != -1:
+        before = value[:hash_at]
+        if before.count("`") % 2 == 0:
+            value = before.strip()
+    if len(value) >= 2 and value.startswith("`") and value.endswith("`"):
+        value = value[1:-1].strip()
+    return value
+
+
+def extract_body(text: str):
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if TRACKER_HEADING.match(line):
+            start = i + 1
+            break
+    if start is None:
+        return None
+    body = []
+    for line in lines[start:]:
+        if H2.match(line):
+            break
+        body.append(line)
+    return "\n".join(body)
+
+
+def parse_section(paths):
+    for path in paths:
+        try:
+            p = Path(path)
+            if not p.is_file():
+                continue
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        body = extract_body(text)
+        if body is None:
+            continue
+        out = {}
+        for line in body.splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            m = PAIR_RE.match(line)
+            if not m:
+                continue
+            key = m.group("key").lower()
+            if key not in RECOGNIZED or key in out:
+                continue
+            out[key] = clean_value(m.group("value"))
+        return out
+    return {}
+
+
+def is_valid_link(change_dir: Path) -> bool:
+    data = parse_section([change_dir / "proposal.md", change_dir / "tasks.md"])
+    return bool(data.get("card_id"))
+
+
+def sanitize_basename(name: str) -> str:
+    cleaned = BASENAME_SAFE.sub("-", name).strip("-._")
+    return cleaned or "project"
+
+
+def marker_present(repo_root: Path, stamped_home: str) -> bool:
+    local = repo_root / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
+    if local.is_file():
+        return True
+    home = os.environ.get("AI_SPECS_HOME") or stamped_home
+    if not home or home.startswith("__TRACKER_CLI_HOME"):
+        return False
+    try:
+        resolved = repo_root.resolve()
+    except OSError:
+        return False
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
+    key = f"{digest}-{sanitize_basename(resolved.name)}"
+    primary = Path(home) / "cache" / "projects" / key / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
+    return primary.is_file()
+
+
+def active_changes(repo_root: Path):
+    changes = repo_root / "openspec" / "changes"
+    if not changes.is_dir():
+        return []
+    out = []
+    for child in sorted(changes.iterdir()):
+        if not child.is_dir() or child.name == "archive":
+            continue
+        if any((child / f).is_file() for f in ("proposal.md", "tasks.md", "spec.md", "design.md")):
+            out.append(child)
+    return out
+
+
+def deficient_slugs(repo_root: Path):
+    bad = []
+    for change in active_changes(repo_root):
+        if (change / "tracker.none").is_file():
+            continue
+        if is_valid_link(change):
+            continue
+        bad.append(change.name)
+    return bad
+
+
+def command_word(seg):
+    i = 0
+    while i < len(seg):
+        t = seg[i]
+        if "=" in t and not t.startswith("=") and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t):
+            i += 1
+            continue
+        if t in WRAPPERS:
+            i += 1
+            continue
+        return i, t
+    return None, None
+
+
+def segments(cmd: str):
+    try:
+        tokens = shlex.split(cmd, posix=True)
+    except ValueError:
+        return []
+    segs, cur = [], []
+    for t in tokens:
+        if t in SEPS:
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        segs.append(cur)
+    return segs
+
+
+def nonflag_args(body):
+    return [t for t in body[1:] if not t.startswith("-")]
+
+
+def detect_shell_actions(cmd: str):
+    """Return list of (action, detail) with action in {pr_create, archive}."""
+    actions = []
+    for seg in segments(cmd):
+        if not seg:
+            continue
+        idx, cw = command_word(seg)
+        if cw is None:
+            continue
+        body = seg[idx:]
+        rest = nonflag_args(body)
+        # gh pr create
+        if cw == "gh" and len(rest) >= 2 and rest[0] == "pr" and rest[1] == "create":
+            actions.append(("pr_create", ""))
+            continue
+        # openspec archive <slug?>
+        if cw == "openspec" and rest and rest[0] == "archive":
+            slug = rest[1] if len(rest) >= 2 else ""
+            actions.append(("archive", slug))
+            continue
+        # ai-specs … archive …
+        if cw == "ai-specs" and "archive" in rest:
+            aidx = rest.index("archive")
+            slug = rest[aidx + 1] if aidx + 1 < len(rest) else ""
+            actions.append(("archive", slug))
+            continue
+        # mv / git mv → openspec/changes/archive/
+        if cw == "mv" or (cw == "git" and rest and rest[0] == "mv"):
+            words = body[1:] if cw == "mv" else body[2:]
+            nonflags = [t for t in words if not t.startswith("-")]
+            if len(nonflags) >= 2:
+                src, dest = nonflags[0], nonflags[-1]
+                if "openspec/changes/archive/" in dest.replace("\\", "/"):
+                    slug = ""
+                    src_n = src.replace("\\", "/")
+                    m = re.search(r"openspec/changes/([^/]+)/?", src_n)
+                    if m and m.group(1) != "archive":
+                        slug = m.group(1)
+                    actions.append(("archive", slug))
+            continue
+    return actions
+
+
+def find_repo_root(hint: str):
+    d = Path(hint) if hint else Path.cwd()
+    if d.is_file():
+        d = d.parent
+    while not d.exists() and d != d.parent:
+        d = d.parent
+    if not d.exists():
+        return None
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(d), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    root = proc.stdout.strip()
+    return Path(root) if root else None
+
+
+try:
+    d = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(0)
+if not isinstance(d, dict):
+    sys.exit(0)
+
+ti = d.get("tool_input") or {}
+if not isinstance(ti, dict):
+    ti = {}
+tool_name = d.get("tool_name") if isinstance(d.get("tool_name"), str) else ""
+cwd = d.get("cwd") if isinstance(d.get("cwd"), str) else ""
+stamped_home = sys.argv[2] if len(sys.argv) > 2 else ""
+
+fp = ti.get("file_path") or ti.get("notebook_path") or ""
+if isinstance(fp, str) and fp.strip():
+    print(f"path\t{tool_name}\t{cwd}")
+    print(fp.strip())
+    # Embed evaluation result for the bash side via a third channel?
+    # Bash will re-invoke evaluation — keep protocol simple; bash calls back.
+    sys.exit(0)
+
+cmd = ""
+for key_src in (
+    ("ti", "command"),
+    ("ti", "script"),
+    ("ti", "cmd"),
+    ("top", "command"),
+    ("top", "script"),
+):
+    val = ti.get(key_src[1]) if key_src[0] == "ti" else d.get(key_src[1])
+    if isinstance(val, str) and val.strip():
+        cmd = val
+        break
+if not cmd:
+    sys.exit(0)
+
+actions = detect_shell_actions(cmd)
+if not actions:
+    sys.exit(0)
+
+print(f"shell\t{tool_name or 'Bash'}\t{cwd}")
+for action, detail in actions:
+    print(f"{action}\t{detail}")
+PYEOF
+)" || exit 0
+
+[ -n "$parsed" ] || exit 0
+
+kind_line="$(printf '%s\n' "$parsed" | head -n 1)"
+kind="${kind_line%%$'\t'*}"
+rest_kl="${kind_line#*$'\t'}"
+tool_name="${rest_kl%%$'\t'*}"
+cwd="${rest_kl#*$'\t'}"
+
+# Shared evaluator: given repo_root + optional slug focus, print deficient list
+# or empty. Exit code unused; stdout = comma-separated deficient slugs.
+_eval_deficient() {
+  local repo_root="$1"
+  local focus_slug="${2:-}"
+  python3 - "$repo_root" "$focus_slug" "$stamped_cli_home" <<'PYEOF' 2>/dev/null
+import hashlib, os, re, sys
+from pathlib import Path
+
+PAIR_RE = re.compile(
+    r"^\s*(?:[-*]\s+)?\*{0,2}(?P<key>[A-Za-z_][A-Za-z0-9_]*)\*{0,2}\s*:\s*(?P<value>.*)$"
+)
+RECOGNIZED = frozenset({"card_id", "shortlink", "url", "list", "pr"})
+TRACKER_HEADING = re.compile(r"^##\s+Tracker\s*$")
+H2 = re.compile(r"^##\s+")
+BASENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+def clean_value(raw: str) -> str:
+    value = raw.strip()
+    hash_at = value.find(" #")
+    if hash_at != -1:
+        before = value[:hash_at]
+        if before.count("`") % 2 == 0:
+            value = before.strip()
+    if len(value) >= 2 and value.startswith("`") and value.endswith("`"):
+        value = value[1:-1].strip()
+    return value
+
+def extract_body(text: str):
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if TRACKER_HEADING.match(line):
+            start = i + 1
+            break
+    if start is None:
+        return None
+    body = []
+    for line in lines[start:]:
+        if H2.match(line):
+            break
+        body.append(line)
+    return "\n".join(body)
+
+def parse_section(paths):
+    for path in paths:
+        try:
+            p = Path(path)
+            if not p.is_file():
+                continue
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        body = extract_body(text)
+        if body is None:
+            continue
+        out = {}
+        for line in body.splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            m = PAIR_RE.match(line)
+            if not m:
+                continue
+            key = m.group("key").lower()
+            if key not in RECOGNIZED or key in out:
+                continue
+            out[key] = clean_value(m.group("value"))
+        return out
+    return {}
+
+def is_valid_link(change_dir: Path) -> bool:
+    data = parse_section([change_dir / "proposal.md", change_dir / "tasks.md"])
+    return bool(data.get("card_id"))
+
+def sanitize_basename(name: str) -> str:
+    cleaned = BASENAME_SAFE.sub("-", name).strip("-._")
+    return cleaned or "project"
+
+def marker_present(repo_root: Path, stamped_home: str) -> bool:
+    local = repo_root / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
+    if local.is_file():
+        return True
+    home = os.environ.get("AI_SPECS_HOME") or stamped_home
+    if not home or str(home).startswith("__TRACKER_CLI_HOME"):
+        return False
+    try:
+        resolved = repo_root.resolve()
+    except OSError:
+        return False
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
+    key = f"{digest}-{sanitize_basename(resolved.name)}"
+    primary = Path(home) / "cache" / "projects" / key / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
+    return primary.is_file()
+
+repo_root = Path(sys.argv[1])
+focus = sys.argv[2] if len(sys.argv) > 2 else ""
+stamped_home = sys.argv[3] if len(sys.argv) > 3 else ""
+
+if not marker_present(repo_root, stamped_home):
+    # inactive → print nothing special; bash treats empty+marker-miss via sentinel
+    print("__INACTIVE__")
+    sys.exit(0)
+
+changes_dir = repo_root / "openspec" / "changes"
+deficient = []
+if changes_dir.is_dir():
+    for child in sorted(changes_dir.iterdir()):
+        if not child.is_dir() or child.name == "archive":
+            continue
+        if not any((child / f).is_file() for f in ("proposal.md", "tasks.md", "spec.md", "design.md")):
+            continue
+        if focus and child.name != focus:
+            continue
+        if (child / "tracker.none").is_file():
+            continue
+        if is_valid_link(child):
+            continue
+        deficient.append(child.name)
+
+print(",".join(deficient))
+PYEOF
+}
+
+_resolve_repo() {
+  local hint="$1"
+  local dir
+  if [ -n "$hint" ]; then
+    case "$hint" in
+      /*) dir="$hint" ;;
+      *) dir="${cwd:-$PWD}/$hint" ;;
+    esac
+  else
+    dir="${cwd:-$PWD}"
+  fi
+  # If hint is a file path, use its dirname.
+  if [ -f "$dir" ]; then
+    dir="$(dirname "$dir")"
+  fi
+  while [ ! -d "$dir" ] && [ "$dir" != "/" ] && [ "$dir" != "." ]; do
+    dir="$(dirname "$dir")"
+  done
+  [ -d "$dir" ] || return 1
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+  git -C "$dir" rev-parse --show-toplevel 2>/dev/null
+}
+
+_emit_and_exit() {
+  local action_desc="$1"
+  local deficient="$2"
+  local sample
+  sample="$(printf '%s' "$deficient" | tr ',' '\n' | head -n 3 | paste -sd ',' -)"
+  if [ "$gate_mode" = warn ]; then
+    echo "tracker-card-gate: warning — active change(s) missing ## Tracker link section: ${sample}. Create/link a Trello card and write the ## Tracker section (card_id + url), or add tracker.none. Writing under openspec/** is never blocked." >&2
+    exit 0
+  fi
+  echo "tracker-card-gate: refusing to ${action_desc} — active change '${sample}' has no ## Tracker link section in its proposal.md. Create/link a Trello card and write the ## Tracker section (card_id + url), or add openspec/changes/${sample}/tracker.none with a reason. Writing under openspec/** is never blocked." >&2
+  exit 2
+}
+
+if [ "$kind" = path ]; then
+  file_path="$(printf '%s\n' "$parsed" | sed -n '2p')"
+  [ -n "$file_path" ] || exit 0
+  case "$file_path" in
+    /*) abs="$file_path" ;;
+    *)  abs="${cwd:-$PWD}/$file_path" ;;
+  esac
+  repo_root="$(_resolve_repo "$abs")" || exit 0
+  [ -n "$repo_root" ] || exit 0
+
+  rel="$(python3 -c 'import os,sys; print(os.path.relpath(os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])))' "$abs" "$repo_root" 2>/dev/null)" || exit 0
+  [ -n "$rel" ] || exit 0
+  case "$rel" in ..|../*) exit 0 ;; esac
+
+  # Never block openspec/changes/** or gitignored agent config.
+  case "$rel" in
+    openspec|openspec/*) exit 0 ;;
+    .claude/settings*.json|*/.claude/settings*.json|.claude/hooks/*|*/.claude/hooks/*) exit 0 ;;
+  esac
+
+  first="${rel%%/*}"
+  is_prod=0
+  for p in $prod_dirs; do
+    [ "$first" = "$p" ] && is_prod=1 && break
+  done
+  [ "$is_prod" -eq 1 ] || exit 0
+
+  deficient="$(_eval_deficient "$repo_root")" || exit 0
+  [ "$deficient" = "__INACTIVE__" ] && exit 0
+  [ -n "$deficient" ] || exit 0
+  _emit_and_exit "${tool_name:-edit} '$rel'" "$deficient"
+fi
+
+if [ "$kind" = shell ]; then
+  repo_root="$(_resolve_repo "${cwd:-$PWD}")" || exit 0
+  [ -n "$repo_root" ] || exit 0
+  # Evaluate each action line.
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    action="${line%%$'\t'*}"
+    detail="${line#*$'\t'}"
+    [ "$action" = "$detail" ] && detail=""
+    case "$action" in
+      pr_create)
+        deficient="$(_eval_deficient "$repo_root")" || exit 0
+        [ "$deficient" = "__INACTIVE__" ] && exit 0
+        [ -n "$deficient" ] || continue
+        _emit_and_exit "gh pr create" "$deficient"
+        ;;
+      archive)
+        if [ -n "$detail" ]; then
+          deficient="$(_eval_deficient "$repo_root" "$detail")" || exit 0
+        else
+          deficient="$(_eval_deficient "$repo_root")" || exit 0
+        fi
+        [ "$deficient" = "__INACTIVE__" ] && exit 0
+        [ -n "$deficient" ] || continue
+        _emit_and_exit "archive '$detail'" "$deficient"
+        ;;
+      *)
+        # unknown → fail-open
+        ;;
+    esac
+  done < <(printf '%s\n' "$parsed" | tail -n +2)
+  exit 0
+fi
+
+exit 0

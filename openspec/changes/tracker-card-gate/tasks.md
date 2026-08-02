@@ -201,7 +201,7 @@ heredoc (argv[1] JSON, not single-quoted stdin — worktree-gate lesson).
 **Reqs:** `tracker-card-gate` — Pre-tool-use hook; activation; production-path;
 openspec never blocked; fail-open.
 
-- [ ] 3.1 GREEN: implement path-mode algorithm (design Decision 4 steps 1–4, 4a,
+- [x] 3.1 GREEN: implement path-mode algorithm (design Decision 4 steps 1–4, 4a,
       4b, 4d, 4e, 4f):
       - tokens `__TRACKER_CARD_GATE_MODE__` (default stamp `warn`) and
         `__TRACKER_CLI_HOME__`
@@ -215,9 +215,9 @@ openspec never blocked; fail-open.
         no `tracker.none`
       - `warn` → stderr + exit 0; `always` → remediation stderr + exit 2
       - **no Trello MCP calls**
-- [ ] 3.2 GREEN: pass all Phase 2 path-mode tests via
+- [x] 3.2 GREEN: pass all Phase 2 path-mode tests via
       `./tests/run.sh tests/test_tracker_card_gate_hook.py`.
-- [ ] 3.3 TRIANGULATE: embed tolerant parser twin in the heredoc; add
+- [x] 3.3 TRIANGULATE: embed tolerant parser twin in the heredoc; add
       `parser_parity` asserting gate validity equals
       `trello_link.is_valid_link` on the Phase 1 fixture matrix.
 
@@ -227,7 +227,7 @@ openspec never blocked; fail-open.
 **Reqs:** `tracker-card-gate` — *Optional shell-mode PR and archive coverage*
 (shipping — design locks both shapes).
 
-- [ ] 4.1 RED:
+- [x] 4.1 RED:
       - `shell_gh_pr_create_blocked_without_card` (`always` → exit 2)
       - `shell_gh_pr_create_warn_allows` (`warn` → exit 0 + stderr)
       - `shell_gh_pr_create_allowed_when_carded` (valid card → exit 0)
@@ -235,7 +235,7 @@ openspec never blocked; fail-open.
         `ai-specs … archive` / `mv|git mv` into `openspec/changes/archive/`)
       - `ambiguous_shell_command_fail_open` (e.g. `gh pr view`, `git status`)
       - Cursor native top-level `{command,cwd}` PR-create block case
-- [ ] 4.2 GREEN: implement shell extraction (design 4c) — `shlex` segments;
+- [x] 4.2 GREEN: implement shell extraction (design 4c) — `shlex` segments;
       wrappers/`VAR=val` strip; triggers only:
       1. `gh` + non-flag args begin `pr` `create`
       2. archive helpers / `mv|git mv` → `openspec/changes/archive/`
