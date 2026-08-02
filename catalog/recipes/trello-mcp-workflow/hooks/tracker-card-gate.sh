@@ -426,7 +426,16 @@ def detect_shell_actions(cmd: str):
                 if target_dirs:
                     dest_candidates = nonflags + target_dirs
                 else:
-                    dest_candidates = nonflags[1:]
+                    dest_candidates = [nonflags[-1]]
+                    trailing_redirect = any(ch in nonflags[-1] for ch in "<>&")
+                    trailing_redirect = trailing_redirect or (
+                        len(nonflags) >= 3
+                        and nonflags[-2] == "&"
+                        and ">" in nonflags[-3]
+                        and nonflags[-1].isdigit()
+                    )
+                    if trailing_redirect:
+                        dest_candidates.extend(nonflags[1:-1])
                 dest = next(
                     (t for t in dest_candidates if "openspec/changes/archive/" in t.replace("\\", "/")),
                     "",
