@@ -313,7 +313,7 @@ def segments(cmd: str):
     prepared = _preprocess_command(cmd)
     if (len(prepared) - len(prepared.rstrip("\\"))) % 2 == 1:
         prepared = prepared[:-1]
-    lexer = shlex.shlex(prepared.replace("\n", ";\n"), posix=True, punctuation_chars=";|&")
+    lexer = shlex.shlex(prepared.replace("\n", " ;\n"), posix=True, punctuation_chars=";|&")
     lexer.commenters = ""
     lexer.whitespace_split = True
     tokens = []
