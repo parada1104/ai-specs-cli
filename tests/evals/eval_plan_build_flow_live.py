@@ -41,8 +41,8 @@ LIVE_SCENARIOS = (
     "ac5_archive_before_merge",
     "ac7_light_gitignore_file_store",
     "ac8_approval_verb_without_folder",
+    "ac_delivery_contract_artifact_store",
 )
-
 
 def _glob_exists(root: Path, pattern: str) -> bool:
     return any(root.glob(pattern))
@@ -102,7 +102,16 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         version = recipe_version(REPO_ROOT / "catalog", scenario.recipe_id)
-        materialize_project(root, scenario.recipe_id, version)
+        manifest_extra = str(meta.get("manifest_extra", ""))
+        materialize_project(root, scenario.recipe_id, version, extra=manifest_extra)
+        if meta.get("sync_before_prompt"):
+            sync = subprocess.run(
+                [str(REPO_ROOT / "bin" / "ai-specs"), "sync", str(root)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(sync.returncode, 0, sync.stderr)
         seed_project_files(root)
         setup_runtime_skills(
             root, runtime, scenario.recipe_id, catalog_root=REPO_ROOT / "catalog"
@@ -274,6 +283,37 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         if "ac8_approval_verb_without_folder" not in _selected_scenarios():
             self.skipTest("ac8 not selected via EVALS_SCENARIOS")
         self._run_named("ac8_approval_verb_without_folder")
+    def test_ac_delivery_contract_artifact_store(self):
+        if "ac_delivery_contract_artifact_store" not in _selected_scenarios():
+            self.skipTest("delivery contract not selected via EVALS_SCENARIOS")
+        self._run_named("ac_delivery_contract_artifact_store")
+
+
+class PlanBuildDeliveryContractHermetic(unittest.TestCase):
+    """Offline materialization eval for the repository-owned store contract."""
+
+    def test_both_override_is_injected_into_agents(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        version = recipe_version(REPO_ROOT / "catalog", "plan-build-flow")
+        materialize_project(
+            root,
+            "plan-build-flow",
+            version,
+            extra="\n[recipes.plan-build-flow.config]\nartifact_store_default = 'both'\n",
+        )
+        result = subprocess.run(
+            [str(REPO_ROOT / "bin" / "ai-specs"), "sync", str(root)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = (root / "AGENTS.md").read_text()
+        self.assertIn("Default artifact store", content)
+        self.assertIn("`both`", content)
+        self.assertNotIn("{config.artifact_store_default}", content)
 
 
 if __name__ == "__main__":

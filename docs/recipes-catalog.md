@@ -38,7 +38,7 @@ never touches the foundational layer.
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
 | [`playwright-ui-flow`](#playwright-ui-flow) | Specific | Playwright UI test/smoke discipline + CLI surface | `ui-browser-testing` | — | `ui_test_command`, `ui_smoke_command`, `playwright_config` |
 | [`playwright-mcp`](#playwright-mcp) | Specific | Exploratory browser automation via `@playwright/mcp` (add-on) | — (augments base) | `playwright` | — (override via `[mcp.playwright]`) |
-| [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | — |
+| [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | `artifact_store_default` |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup (standalone / monorepo-apps / monorepo-submodules) | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `repo_topology`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
 | [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
@@ -174,13 +174,24 @@ authorization, then implements, validates, and closes the change — without
 workflow when one is enabled, without hard-depending on it.
 
 - **Provides:** skill `plan-build-flow`; capability `plan-build-flow`.
-- **Config:** none — change slug and artifact store resolve per session.
+- **Config:**
+
+  | Key | Type | Required | Default | Accepted values | Description |
+  |-----|------|----------|---------|-----------------|-------------|
+  | `artifact_store_default` | string | no | `openspec` | `openspec`, `engram`, `both` | Repository planning-artifact store default; may be overridden in the project manifest and is materialized into the brief during sync. |
+
+  The generated rule is repository-declared guidance. An external session runtime may
+  consume it when asked where planning artifacts should live, but runtime session behavior
+  is outside this recipe.
 - **Full README:** [`catalog/recipes/plan-build-flow/README.md`](../catalog/recipes/plan-build-flow/README.md)
 
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.0.0"
+version = "1.3.0"
+
+[recipes.plan-build-flow.config]
+artifact_store_default = "both"
 ```
 
 ## worktree-flow
