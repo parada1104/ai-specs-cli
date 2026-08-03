@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-08-02
+
 ### Added
 - **Tracker card gate** (`trello-mcp-workflow` `gate_mode` = `off|warn|always`, default `warn`): dual pre-tool-use hooks (`tracker-card-gate` + `tracker-card-gate-shell`) require a `## Tracker` link section (or `tracker.none`) before production writes and high-confidence `gh pr create` / archive shell actions. Fail-open; never blocks `openspec/**`; does not intercept Trello MCP.
 - **Doctor WARN** for active changes missing a valid `## Tracker` section when the recipe is enabled and the bootstrap marker is present.
@@ -23,10 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-release regression was caught and restored so public-root fan-out still
   terminates after children finish.
 
+- **plan-build-flow delivery contract**: recipe declares a per-project
+  `artifact_store_default` (string, default `openspec`, enum
+  `[openspec, engram, both]`) that materializes as a brief workflow rule via
+  `{config.artifact_store_default}` interpolation — consumable by any runtime's
+  session preflight as the project default, with zero dependency on external
+  preflight packages. Live evals exercise the contract against real runtimes.
+
 ### Changed
 - `trello-mcp-workflow` `1.2.0` → `1.3.0`: `gate_mode` config, dual hooks, brief anti-bypass / link-before-apply rules; skip hatch replaced by `tracker.none`; Decision #7 narrowed to availability-only degrade.
 - `session-bootstrap`: tracker consult is mandatory for new/ambiguous changes when a tracker capability is bound.
 - `openspec/config.yaml`: aligned `sdd.decision_matrix` with `sdd-adaptive-contract`; added declarative `tracking:` section.
+- `plan-build-flow` `1.2.0` → `1.3.0`: declarative `artifact_store_default` delivery contract in the recipe brief.
 
 ## [0.18.0] — 2026-07-28
 
