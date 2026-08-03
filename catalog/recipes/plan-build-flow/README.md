@@ -39,14 +39,26 @@ folder exists yet.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.0.0"
+version = "1.3.0"
 ```
 
 Then run `ai-specs sync`.
 
-## Config
+## Delivery contracts
 
-None. Change slug, depth tier, and artifact store resolve per session.
+`artifact_store_default` is an optional string configuration that declares where this
+project's planning artifacts live by default. It accepts `openspec`, `engram`, or `both`,
+and defaults to `openspec` when the project manifest does not override it.
+
+```toml
+[recipes.plan-build-flow.config]
+artifact_store_default = "both"
+```
+
+During `ai-specs sync`, the resolved value is materialized into the generated brief as a
+workflow rule. An external session runtime may consume that rule when asked where planning
+artifacts should live; this recipe declares the repository default but does not control that
+runtime's session behavior.
 
 ## Worktree coexistence
 

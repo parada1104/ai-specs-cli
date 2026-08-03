@@ -331,17 +331,46 @@ def materialize_command(
     print(f"    ✓ command {cmd.id}")
 
 
-def materialize_template(recipe_dir: Path, tpl: Any, project_root: Path) -> None:
+def materialize_template(
+    recipe_dir: Path,
+    tpl: Any,
+    project_root: Path,
+    merged_cfg: dict[str, Any] | None = None,
+) -> None:
     src = recipe_dir / tpl.source
     dest = project_root / tpl.target
     if not src.is_file():
         raise RuntimeError(f"template source not found: {src}")
     if tpl.condition == "not_exists":
         if dest.exists():
+            util = _load_util()
+            if util.override_is_stale(src, dest):
+                warn(
+                    "worktree-flow: your override\n"
+                    f"  {tpl.target}\n"
+                    "differs from the current catalog template "
+                    "(condition=not_exists, not refreshed).\n"
+                    "Review upstream changes, then either re-apply your "
+                    "customizations or refresh with:\n"
+                    f"  rm {tpl.target} && ai-specs sync"
+                )
+            # Idempotent no-op when condition=not_exists and dest already exists —
+            # same class as sync-agent 'symlink ok', not a user-facing policy/absence
+            # notice like 'skipped AGENTS.md' / 'mcp skipped'.
+            # Noise (keep ·): filtered in compact mode via print_step_output.
             print(f"    · template skipped (exists) {tpl.target}")
             return
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    content = src.read_text()
+    if REPO_TOPOLOGY_PLACEHOLDER in content:
+        topo = "auto"
+        if merged_cfg is not None:
+            topo = str(merged_cfg.get("repo_topology", "auto"))
+        content = content.replace(REPO_TOPOLOGY_PLACEHOLDER, topo)
+        dest.write_text(content)
+        os.chmod(dest, src.stat().st_mode)
+    else:
+        shutil.copy2(src, dest)
     print(f"    ✓ template {tpl.target}")
 
 
@@ -360,7 +389,14 @@ def hook_script_rel_path(recipe_id: str, hook: Any) -> str:
     return f"ai-specs/recipes/{recipe_id}/hooks/{Path(hook.script).name}"
 
 
+GATE_MODE_PLACEHOLDERS = {
+    "__WORKTREE_GATE_MODE__": "always",
+    "__TRACKER_CARD_GATE_MODE__": "warn",
+}
+# Backward-compatible alias for older call sites / tests.
 GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
+REPO_TOPOLOGY_PLACEHOLDER = "__WORKTREE_REPO_TOPOLOGY__"
+TRACKER_CLI_HOME_PLACEHOLDER = "__TRACKER_CLI_HOME__"
 
 
 def materialize_hook_script(
@@ -369,6 +405,7 @@ def materialize_hook_script(
     project_root: Path,
     recipe_id: str,
     merged_cfg: dict[str, Any] | None = None,
+    cli_home: Path | None = None,
 ) -> str:
     """Copy a recipe hook script to the harness-neutral path and chmod +x.
 
@@ -382,11 +419,15 @@ def materialize_hook_script(
     dest = project_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     content = src.read_text()
-    if GATE_MODE_PLACEHOLDER in content:
-        mode = "always"
-        if merged_cfg is not None:
-            mode = str(merged_cfg.get("gate_mode", "always"))
-        content = content.replace(GATE_MODE_PLACEHOLDER, mode)
+    for token, default in GATE_MODE_PLACEHOLDERS.items():
+        if token in content:
+            mode = default
+            if merged_cfg is not None:
+                mode = str(merged_cfg.get("gate_mode", default))
+            content = content.replace(token, mode)
+    if TRACKER_CLI_HOME_PLACEHOLDER in content:
+        home_val = str(Path(cli_home).resolve()) if cli_home is not None else ""
+        content = content.replace(TRACKER_CLI_HOME_PLACEHOLDER, home_val)
     dest.write_text(content)
     os.chmod(dest, 0o755)
     print(f"    ✓ hook script {rel}")
@@ -845,7 +886,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
         # Templates
         for tpl in recipe.templates:
-            materialize_template(recipe_dir, tpl, project_root)
+            materialize_template(recipe_dir, tpl, project_root, merged_cfg)
 
         # Docs
         for doc in recipe.docs:
@@ -858,7 +899,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # collect a resolved entry for downstream hooks-render.py. Tunable
         # config values ride along as env (resolved [config.*] overrides).
         for rhook in getattr(recipe, "runtime_hooks", []) or []:
-            script_path = materialize_hook_script(recipe_dir, rhook, project_root, rid, merged_cfg)
+            script_path = materialize_hook_script(recipe_dir, rhook, project_root, rid, merged_cfg, cli_home=cli_home)
             # Pass tunables to the hook as env vars. Only ENV-shaped config keys
             # (UPPER_SNAKE_CASE) are exported, so hook scripts can read them as
             # environment variables; other config keys (e.g. worktrees_dir) are

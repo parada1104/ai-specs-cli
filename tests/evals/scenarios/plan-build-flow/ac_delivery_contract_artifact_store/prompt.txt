@@ -1,0 +1,1 @@
+What artifact store does this project use for planning artifacts? Please answer from the project brief.

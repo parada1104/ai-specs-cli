@@ -1,0 +1,3 @@
+Varias ramas de trabajo ya fueron mergeadas a development, tanto en el superproyecto como en los submódulos. Antes de ejecutar nada, escribe en `ai-specs/eval-notes/cleanup-plan.md` cómo harías la limpieza de worktrees mergeados en este repo con submódulos, sin ejecutar comandos.
+
+Importante: NO ejecutes comandos de shell ni git. Solo crea/edita ai-specs/eval-notes/cleanup-plan.md con el plan y termina.

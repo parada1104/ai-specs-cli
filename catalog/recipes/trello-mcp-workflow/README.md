@@ -29,14 +29,79 @@ Add configuration under `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-s
 | `board_id` | Yes | — | Trello board ID for the project. |
 | `default_list` | No | `In Progress` | List name where new cards are created. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
+| `gate_mode` | No | `warn` | Tracker card gate: `off` / `warn` / `always`. |
 
 ### Example
 
 ```toml
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.0.0"
+version = "1.3.0"
 
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"
 ```
+
+
+## Card-per-change contract
+
+Every active OpenSpec change must carry a `## Tracker` section in `proposal.md`
+(fallback `tasks.md`) with a non-empty `card_id` (and preferably `url`):
+
+```markdown
+## Tracker
+
+- **card_id**: `<24-hex>`
+- **url**: https://trello.com/c/...
+```
+
+Doctor and the `tracker-card-gate` hook share this validity predicate. The only
+documented exemption is `openspec/changes/<slug>/tracker.none` (conceptual name
+`tracker:none`) with a one-line reason — logged and rare. Archives are
+grandfathered.
+
+The global contract is also declared in `openspec/config.yaml` under `tracking:`
+(soft guidance for SDD agents). Operational `gate_mode` / `board_id` still come
+from recipe config in `ai-specs.toml`.
+
+## Gate modes
+
+| Mode | Behavior |
+|------|----------|
+| `off` | Gate inactive |
+| `warn` | stderr warning, never blocks (dogfood default) |
+| `always` | block production writes + high-confidence `gh pr create` / archive shell |
+
+Configured via `[recipes.trello-mcp-workflow.config] gate_mode`. One-shot env
+override: `TRACKER_CARD_GATE_MODE`. Production dirs override:
+`TRACKER_CARD_GATE_PATHS` (default `lib catalog bin src`). The gate **never**
+blocks `openspec/**` and **fails open** on parse/lookup errors. It does **not**
+call Trello MCP — presence of the `## Tracker` section is the proof.
+
+Dual hooks share one script: `tracker-card-gate` (Edit/Write/…) and
+`tracker-card-gate-shell` (Bash/Shell/…).
+
+## Residual platform gaps
+
+- **Cursor**: no pre-file-write hook — file-write matcher is skipped; shell id
+  registers as `beforeShellExecution`.
+- **OpenCode**: primary-agent pre-tool-use only — not subagent/MCP tool calls.
+- **pi / omp**: this-process only — child processes are not covered.
+- **MCP interception**: explicitly **not** implemented. Do not claim the gate
+  prevents Trello MCP misuse; brief + skill anti-bypass cover that surface.
+
+## Live evals (manual / nightly)
+
+```bash
+EVALS_LIVE=1 ./tests/evals/run-live-trello.sh
+```
+
+Not wired into `./tests/validate.sh`. See `tests/evals/scenarios/trello-mcp-workflow/`.
+
+## Ceremony vocabulary note
+
+`openspec/config.yaml` `sdd.decision_matrix` uses the adaptive-contract ceremony
+levels (`trivial` / `local_fix` / `behavior_change` / `domain_change`). Informal
+practice aliases (`light` / `standard` / `full` / `tasks-only`) map roughly as:
+light≈trivial/local_fix, standard≈behavior_change, full≈domain_change,
+tasks-only≈behavior_change without proposal/design.

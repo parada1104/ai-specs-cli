@@ -512,5 +512,48 @@ class TestWidgetHelpers(unittest.TestCase):
 
 
 
+
+class TestTopologySurfacing(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = _load()
+
+    def _write_wf_manifest(self, root: Path, topology: str = "auto") -> None:
+        ai = root / "ai-specs"
+        ai.mkdir(parents=True, exist_ok=True)
+        (ai / "ai-specs.toml").write_text(
+            "[project]\nname = 'topo'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            "[recipes.worktree-flow]\nenabled = true\n\n"
+            f"[recipes.worktree-flow.config]\nrepo_topology = \"{topology}\"\n"
+        )
+        (root / "AGENTS.md").write_text("# brief\n")
+
+    def test_topology_auto_monorepo_submodules(self):
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_repo_topology import make_super_with_submodule
+        with tempfile.TemporaryDirectory() as tmp:
+            super_repo = make_super_with_submodule(Path(tmp) / "a")
+            self._write_wf_manifest(super_repo, "auto")
+            summary = self.mod.status_summary(super_repo)
+            self.assertEqual(summary.topology, "monorepo-submodules")
+            self.assertEqual(summary.topology_via, "auto")
+            import io
+            from unittest import mock
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                self.mod._run_noninteractive(super_repo)
+            self.assertIn("topology: monorepo-submodules (auto)", buf.getvalue())
+
+    def test_topology_explicit_standalone_via_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "prj"
+            root.mkdir()
+            self._write_wf_manifest(root, "standalone")
+            summary = self.mod.status_summary(root)
+            self.assertEqual(summary.topology, "standalone")
+            self.assertEqual(summary.topology_via, "config")
+
 if __name__ == "__main__":
     unittest.main()

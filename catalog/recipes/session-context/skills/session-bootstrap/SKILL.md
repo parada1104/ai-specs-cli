@@ -38,9 +38,13 @@ project's manifest (see `docs/capabilities.md`).
       or session-close entries, and project-scoped context from the last ~48 h.
    b. **Read `AGENTS.md`** for runtime context: project id, integration branch,
       configured MCPs/capabilities, blockers, workflow rules, conflict policy.
-   c. **Cross-check the tracker capability only if needed:** memory has no
-      recent entry for the active card, names a card whose status may be stale,
-      or a card/state decision is required.
+   c. **Consult the tracker capability** — when a tracker capability is
+      bound in the manifest, this is **mandatory** for new or ambiguous changes:
+      resolve/confirm the active card before proceeding, and ensure a new
+      structured change has a linked card recorded in the `## Tracker` section of
+      its proposal.md (or tasks.md). When no tracker capability is bound,
+      cross-check only if memory is missing/stale. If the tracker is unavailable,
+      degrade (warn + continue) without blocking.
    d. **Read the latest handoff from the canonical-store capability** when one is
       configured and memory coverage is thin.
 

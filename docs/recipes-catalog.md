@@ -38,12 +38,12 @@ never touches the foundational layer.
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
 | [`playwright-ui-flow`](#playwright-ui-flow) | Specific | Playwright UI test/smoke discipline + CLI surface | `ui-browser-testing` | — | `ui_test_command`, `ui_smoke_command`, `playwright_config` |
 | [`playwright-mcp`](#playwright-mcp) | Specific | Exploratory browser automation via `@playwright/mcp` (add-on) | — (augments base) | `playwright` | — (override via `[mcp.playwright]`) |
-| [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | — |
-| [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `WORKTREE_GATE_PROTECTED` |
+| [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | `artifact_store_default` |
+| [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup (standalone / monorepo-apps / monorepo-submodules) | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `repo_topology`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
 | [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
 | [`bitbucket-pr-flow`](#bitbucket-pr-flow) | Specific | Branch → PR → approval-gated merge (Bitbucket) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
-| [`trello-mcp-workflow`](#trello-mcp-workflow) | Specific | Trello board integration (tracker) | `tracker` (+ 4 trello-* capabilities) | `trello` | **`board_id` (required)**, `default_list`, `epic_list` |
+| [`trello-mcp-workflow`](#trello-mcp-workflow) | Specific | Trello board integration (tracker) + card-per-change gate | `tracker` (+ 4 trello-* capabilities) | `trello` | **`board_id` (required)**, `default_list`, `epic_list`, `gate_mode` |
 | [`vault-canonical-store`](#vault-canonical-store) | Specific | Durable decisions/handoffs in a vault MCP | `canonical-store` | `vault-canonical` | `vault_scope`, `decisions_folder`, `sessions_folder` |
 
 ---
@@ -174,13 +174,24 @@ authorization, then implements, validates, and closes the change — without
 workflow when one is enabled, without hard-depending on it.
 
 - **Provides:** skill `plan-build-flow`; capability `plan-build-flow`.
-- **Config:** none — change slug and artifact store resolve per session.
+- **Config:**
+
+  | Key | Type | Required | Default | Accepted values | Description |
+  |-----|------|----------|---------|-----------------|-------------|
+  | `artifact_store_default` | string | no | `openspec` | `openspec`, `engram`, `both` | Repository planning-artifact store default; may be overridden in the project manifest and is materialized into the brief during sync. |
+
+  The generated rule is repository-declared guidance. An external session runtime may
+  consume it when asked where planning artifacts should live, but runtime session behavior
+  is outside this recipe.
 - **Full README:** [`catalog/recipes/plan-build-flow/README.md`](../catalog/recipes/plan-build-flow/README.md)
 
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.0.0"
+version = "1.3.0"
+
+[recipes.plan-build-flow.config]
+artifact_store_default = "both"
 ```
 
 ## worktree-flow
@@ -197,6 +208,9 @@ unmerged ones, and never touches the main worktree.
   a protected branch and supports `gate_mode` dispatch (`always` / `ask` /
   `off`) — see [`docs/runtime-hooks.md`](runtime-hooks.md);
   capabilities `worktree-isolation`, `worktree-cleanup`.
+- **Topologies:** `standalone`, `monorepo-apps` (naming-only), and
+  `monorepo-submodules` (per-submodule `git -C` create + cleanup enumeration
+  under a shared superproject `worktrees_dir`).
 - **Config:**
 
   | Key | Type | Default | Description |
@@ -205,6 +219,7 @@ unmerged ones, and never touches the main worktree.
   | `integration_branch` | string | `main` | Branch worktrees are created from and merged into. |
   | `auto_remove_merged` | boolean | `true` | Whether merged worktrees are eligible for cleanup. |
   | `gate_mode` | string | `always` | Main-worktree gate mode. `always` keeps the current block, `ask` blocks with a bypass hint, and `off` disables the gate. |
+  | `repo_topology` | string | `auto` | `auto` / `standalone` / `monorepo-apps` / `monorepo-submodules`. Auto detects initialized submodules; never auto-selects `monorepo-apps`. Shared `<worktrees_dir>/<subrepo>-<slug>` layout under submodules; cleanup enumerates per-module. |
   | `WORKTREE_GATE_PROTECTED` | string | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
 
 - **Full README:** [`catalog/recipes/worktree-flow/README.md`](../catalog/recipes/worktree-flow/README.md)
@@ -212,11 +227,12 @@ unmerged ones, and never touches the main worktree.
 ```toml
 [recipes.worktree-flow]
 enabled = true
-version = "1.2.0"
+version = "1.3.0"
 
 [recipes.worktree-flow.config]
 integration_branch = "development"
 gate_mode = "always"
+repo_topology = "auto"
 ```
 
 ## git-pr-flow
@@ -330,11 +346,14 @@ integration: card linking, state sync, and progress comments, plus card
 templates (feature, bug, spike, epic, handoff, decision). Enforces board
 isolation — forbids cross-board tools and requires card validation against the
 configured board. Ships an MCP preset for `@delorenj/mcp-server-trello` (needs
-`TRELLO_API_KEY` / `TRELLO_TOKEN` in the environment) and a read-only
-`ai-specs recipe init` brief to confirm setup before sync.
+`TRELLO_API_KEY` / `TRELLO_TOKEN` in the environment), a read-only
+`ai-specs recipe init` brief to confirm setup before sync, and a phased
+`tracker-card-gate` (`gate_mode` = `off|warn|always`, default `warn`) that
+requires a `## Tracker` link section before production/PR-archive work.
 
 - **Provides:** skill `trello-mcp-workflow`, command `/trello-workflow`, 6 card
-  templates, an MCP preset; capability `tracker` (+ `trello-session-bootstrap`,
+  templates, an MCP preset, dual runtime hooks (`tracker-card-gate` +
+  `tracker-card-gate-shell`); capability `tracker` (+ `trello-session-bootstrap`,
   `trello-card-linking`, `trello-state-sync`, `trello-progress-comment`).
 - **Config:**
 
@@ -343,6 +362,7 @@ configured board. Ships an MCP preset for `@delorenj/mcp-server-trello` (needs
   | `board_id` | string | **yes** | — | Trello board ID. Validated against `^[0-9a-fA-F]{24}$`. |
   | `default_list` | string | no | `In Progress` | List where new cards are created. |
   | `epic_list` | string | no | `Epic` | List where epic-type cards are placed. |
+  | `gate_mode` | string | no | `warn` | Tracker card gate: `off` / `warn` / `always`. |
 
 - **Board isolation** (declared in `recipe.toml`, not overridden per project):
   `forbidden_tools` = `trello_get_my_cards`, `trello_list_boards`;
@@ -358,10 +378,11 @@ configured board. Ships an MCP preset for `@delorenj/mcp-server-trello` (needs
 ```toml
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.2.0"
+version = "1.3.0"
 
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"
+gate_mode = "warn"
 ```
 
 ## vault-canonical-store

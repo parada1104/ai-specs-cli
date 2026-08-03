@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -14,6 +16,15 @@ RUNTIME_SKILL_DIRS = {
     "cursor-agent": ".cursor/skills",
     "pi": ".pi/skills",
     "omp": ".omp/skills",
+}
+
+RUNTIME_COMMAND_DIRS = {
+    "claude": ".claude/commands",
+    "opencode": ".opencode/commands",
+    "cursor": ".cursor/commands",
+    "cursor-agent": ".cursor/commands",
+    "pi": ".pi/commands",
+    "omp": ".omp/commands",
 }
 
 
@@ -128,6 +139,37 @@ def setup_runtime_skills(
     return dest
 
 
+def setup_runtime_commands(
+    root: Path,
+    runtime: str,
+    recipe_id: str,
+    *,
+    catalog_root: Path | None = None,
+) -> list[Path]:
+    """Copy recipe [[provides.commands]] .md files into the runtime discovery
+    path, mirroring the basename-preserving copy `sync-agent.sh` performs
+    (`cp "$src" "$dest/$(basename "$src")"`). Without this, a live eval agent
+    never sees the recipe's actual slash commands (e.g. `/worktree-new`) —
+    only whatever a SKILL.md happens to describe in prose."""
+    catalog = catalog_root or (Path(__file__).resolve().parents[3] / "catalog")
+    commands_src_dir = catalog / "recipes" / recipe_id / "commands"
+    if not commands_src_dir.is_dir():
+        return []
+
+    rel = RUNTIME_COMMAND_DIRS.get(runtime)
+    if not rel:
+        raise ValueError(f"no command dir mapping for runtime {runtime}")
+
+    dest_dir = root / rel
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[Path] = []
+    for src in sorted(commands_src_dir.glob("*.md")):
+        dest = dest_dir / src.name
+        shutil.copy2(src, dest)
+        copied.append(dest)
+    return copied
+
+
 def seed_authorized_plan(
     root: Path,
     *,
@@ -158,3 +200,138 @@ def seed_authorized_plan(
     if tier == "full":
         (change / "design.md").write_text("# Design\n\nInline validation in signup().\n")
     return change
+
+def seed_monorepo_apps(
+    root: Path,
+    apps: tuple[str, ...] = ("admin-dashboard", "api"),
+) -> None:
+    """Seed an ``apps/<name>/`` tree (monorepo-apps shape; no ``.gitmodules``)."""
+    for name in apps:
+        app_dir = root / "apps" / name
+        app_dir.mkdir(parents=True, exist_ok=True)
+        (app_dir / "README.md").write_text(f"{name}\n")
+
+
+def _git(repo: Path, *args: str) -> str:
+    env = dict(os.environ)
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": "eval",
+            "GIT_AUTHOR_EMAIL": "eval@ai-specs.local",
+            "GIT_COMMITTER_NAME": "eval",
+            "GIT_COMMITTER_EMAIL": "eval@ai-specs.local",
+        }
+    )
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def _make_bare_submodule_source(sources_dir: Path, *, label: str) -> Path:
+    """Create a bare repo suitable as a local ``git submodule add`` URL."""
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    src = sources_dir / f"{label}-src"
+    if src.exists():
+        shutil.rmtree(src)
+    src.mkdir()
+    _git(src, "init", "-q", "-b", "main")
+    (src / "README.md").write_text(f"{label}\n")
+    _git(src, "add", "-A")
+    _git(src, "commit", "-qm", f"init {label}")
+    bare = sources_dir / f"{label}.git"
+    if bare.exists():
+        shutil.rmtree(bare)
+    subprocess.run(
+        ["git", "clone", "-q", "--bare", str(src), str(bare)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return bare
+
+
+def add_initialized_submodule(
+    repo_root: Path,
+    *,
+    path: str,
+    name: str | None = None,
+    label: str | None = None,
+    sources_dir: Path | None = None,
+) -> Path:
+    """Add a real initialized submodule via a local file-path remote (no network).
+
+    Satisfies ``detect_submodules`` in ``lib/_internal/util.py``:
+    - ``.gitmodules`` is present and registers ``path``
+    - ``git submodule status`` reports the entry with a non-``-`` prefix
+      (``' '`` / ``'+'`` / ``'U'`` count as initialized; ``'-'`` does not)
+
+    Returns the submodule working-tree path under ``repo_root``.
+    """
+    if not (repo_root / ".git").exists():
+        raise ValueError(f"not a git repo: {repo_root}")
+
+    slug = label or Path(path).name.replace("/", "-")
+    remotes = sources_dir or (repo_root / "_eval_submodule_remotes")
+    bare = _make_bare_submodule_source(remotes, label=slug)
+
+    # Keep fixture remotes out of the project index when they live under root.
+    gi = repo_root / ".gitignore"
+    ignore_line = "_eval_submodule_remotes/"
+    existing = gi.read_text() if gi.is_file() else ""
+    if ignore_line not in existing.splitlines():
+        suffix = "" if not existing or existing.endswith("\n") else "\n"
+        gi.write_text(existing + suffix + ignore_line + "\n")
+        try:
+            _git(repo_root, "add", ".gitignore")
+            _git(repo_root, "commit", "-qm", "ignore eval submodule remotes")
+        except subprocess.CalledProcessError:
+            pass
+
+    add_args = ["-c", "protocol.file.allow=always", "submodule", "add"]
+    if name is not None:
+        add_args.extend(["--name", name])
+    add_args.extend([str(bare), path])
+    _git(repo_root, *add_args)
+    _git(repo_root, "commit", "-qm", f"add submodule {path}")
+
+    # Confirm initialized (non-'-') prefix — exact contract detect_submodules uses.
+    status = subprocess.run(
+        ["git", "-C", str(repo_root), "submodule", "status", "--", path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    line = next((ln for ln in status.stdout.splitlines() if ln.strip()), "")
+    if not line or line[0] == "-":
+        raise RuntimeError(
+            f"submodule {path!r} not initialized after add; status={status.stdout!r} "
+            f"stderr={status.stderr!r}"
+        )
+    return repo_root / path
+
+
+def add_initialized_submodules(
+    repo_root: Path,
+    modules: list[dict[str, str]],
+    *,
+    sources_dir: Path | None = None,
+) -> list[Path]:
+    """Add multiple initialized submodules. Each item: ``path`` + optional ``name``/``label``."""
+    remotes = sources_dir or (repo_root / "_eval_submodule_remotes")
+    out: list[Path] = []
+    for mod in modules:
+        out.append(
+            add_initialized_submodule(
+                repo_root,
+                path=mod["path"],
+                name=mod.get("name"),
+                label=mod.get("label") or Path(mod["path"]).name,
+                sources_dir=remotes,
+            )
+        )
+    return out

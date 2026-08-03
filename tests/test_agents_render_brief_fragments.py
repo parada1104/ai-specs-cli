@@ -47,6 +47,13 @@ class SubstituteConfigTests(unittest.TestCase):
             "Do not push to `{config.integration_branch}` without a PR.", cfg
         )
         self.assertEqual(result, "Do not push to `development` without a PR.")
+    def test_artifact_store_enum_value_resolves(self):
+        result = self.mod.substitute_config(
+            "Default artifact store: `{config.artifact_store_default}`.",
+            {"config.artifact_store_default": "both"},
+        )
+        self.assertEqual(result, "Default artifact store: `both`.")
+        self.assertNotIn("{config.artifact_store_default}", result)
 
     def test_missing_key_verbatim(self):
         cfg = {}
@@ -968,6 +975,68 @@ class VcsFragmentIsolationTests(unittest.TestCase):
         self.assertNotIn("Use GitHub PRs to merge.", content)
         # Non-VCS fragments MUST still appear
         self.assertIn("Create a worktree.", content)
+
+
+
+class RepoTopologyBriefTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(
+            ROOT / "lib" / "_internal" / "agents-render.py",
+            "agents_render_topology",
+        )
+
+    def test_repo_topology_line_in_project_section(self):
+        import tempfile
+        from pathlib import Path as P
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_repo_topology import make_super_with_submodule
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(P(tmp.name))
+        resolved = {
+            "bindings": {"worktree-isolation": "worktree-flow"},
+            "enabled": ["worktree-flow"],
+            "recipes": {
+                "worktree-flow": {
+                    "integration_branch": "main",
+                    "repo_topology": "auto",
+                }
+            },
+            "project_root": str(super_repo),
+        }
+        manifest = {"project": {"name": "topo"}, "agents": {"enabled": ["claude"]}}
+        lines = self.mod._section_project(manifest, resolved)
+        text = "\n".join(lines)
+        self.assertIn("- **Repo topology**: `monorepo-submodules` (via auto)", text)
+
+
+    def test_repo_topology_omitted_when_worktree_flow_disabled(self):
+        """Config dict alone must not surface Repo topology when recipe disabled."""
+        import tempfile
+        from pathlib import Path as P
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_repo_topology import make_super_with_submodule
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(P(tmp.name))
+        resolved = {
+            "bindings": {},
+            "enabled": [],  # worktree-flow NOT enabled
+            "recipes": {
+                "worktree-flow": {
+                    "integration_branch": "main",
+                    "repo_topology": "auto",
+                }
+            },
+            "project_root": str(super_repo),
+        }
+        manifest = {"project": {"name": "topo"}, "agents": {"enabled": ["claude"]}}
+        lines = self.mod._section_project(manifest, resolved)
+        text = "\n".join(lines)
+        self.assertNotIn("Repo topology", text)
 
 
 if __name__ == "__main__":

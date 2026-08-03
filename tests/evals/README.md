@@ -12,6 +12,7 @@ invocation. **Not** part of `./tests/run.sh` — uses `eval_*.py` naming so
   - plan-build: `./tests/evals/run-live.sh`
   - vcs-pr-flow: `./tests/evals/run-live-vcs.sh`
   - vault-canonical-store: `./tests/evals/run-live-vault.sh`
+  - worktree-flow: `./tests/evals/run-live-worktree.sh`
 
 ## Requirements
 
@@ -42,8 +43,9 @@ tests/evals/
   scenarios/        # per-recipe scenario folders
   eval_*.py         # unittest modules (dry + live)
   run.sh            # dry discover (all eval_*.py)
-  run-live.sh       # LIVE plan-build-flow only
-  run-live-vcs.sh   # LIVE vcs-pr-flow siblings only
+  run-live.sh            # LIVE plan-build-flow only
+  run-live-vcs.sh        # LIVE vcs-pr-flow siblings only
+  run-live-worktree.sh   # LIVE worktree-flow only
 ```
 
 ## Scenario contract
@@ -149,4 +151,25 @@ EVALS_RUNTIMES=claude,cursor-agent \
 # expensive MCP connect/scope proof
 EVALS_RUNTIMES=claude,cursor-agent \
   EVALS_SCENARIOS=ac_mcp_live_scope ./tests/evals/run-live-vault.sh
+```
+
+### `worktree-flow`
+
+Live: `./tests/evals/run-live-worktree.sh` → `eval_worktree_flow_live.py`  
+Agents write plans under `ai-specs/eval-notes/` (no real `git worktree` execution).
+
+| Scenario | Mode | Asserts |
+|----------|------|---------|
+| `ac_submodule_create_uses_subrepo_contract` | build | `git -C` + submodule path + `<subrepo>-<slug>` dest; no `.worktrees/` created |
+| `ac_monorepo_apps_no_subrepo_needed` | build | plain repo-root `git worktree add`; no affirmative `-C` / submodule / `.gitmodules` |
+| `ac_cleanup_scans_all_submodules` | build | scans all initialized submodules; root-only `worktree list` is not enough |
+| `ac_gate_blocked_write_creates_worktree_not_bash_fallback` | build | create worktree (`/worktree-new` / `git worktree add`); no bash write fallback |
+
+```bash
+EVALS_RUNTIMES=claude,cursor-agent \
+  EVALS_SCENARIOS=ac_submodule_create_uses_subrepo_contract \
+  ./tests/evals/run-live-worktree.sh
+
+# Cursor Agent subscription (composer)
+EVALS_RUNTIMES=cursor-agent EVALS_MODEL=composer-2.5 ./tests/evals/run-live-worktree.sh
 ```

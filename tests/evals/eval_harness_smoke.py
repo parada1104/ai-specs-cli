@@ -338,6 +338,30 @@ class HarnessSmokeTests(unittest.TestCase):
                 self.assertTrue(dest.is_file())
 
 
+    def test_trello_mcp_workflow_scenario_fixtures_load(self):
+        from tests.evals import eval_trello_mcp_workflow_live as trello
+
+        for scenario_id in trello.LIVE_SCENARIOS:
+            scenario_dir = (
+                REPO_ROOT
+                / "tests"
+                / "evals"
+                / "scenarios"
+                / "trello-mcp-workflow"
+                / scenario_id
+            )
+            scenario = load_scenario(scenario_dir)
+            self.assertEqual(scenario.recipe_id, "trello-mcp-workflow")
+            self.assertEqual(scenario.id, scenario_id)
+            assert_natural_prompt(scenario.prompt_path.read_text())
+
+    def test_run_live_trello_script_points_at_client(self):
+        script = (REPO_ROOT / "tests" / "evals" / "run-live-trello.sh").read_text()
+        self.assertIn("eval_trello_mcp_workflow_live", script)
+        self.assertIn("client=trello-mcp-workflow", script)
+        self.assertNotIn("eval_worktree_flow_live", script)
+
+
 class VaultMcpLiveHelperTests(unittest.TestCase):
     def test_create_scoped_vault_and_sync_mcp_config(self):
         from tests.evals.lib.vault_mcp_live import (
@@ -375,6 +399,7 @@ class HarnessPathTests(unittest.TestCase):
         if not shutil.which("claude"):
             self.skipTest("claude CLI not installed")
         self.assertTrue(claude_available())
+
 
 
 if __name__ == "__main__":

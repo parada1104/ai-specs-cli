@@ -2,8 +2,8 @@
 # sync-agent.sh — fan out skills + MCP + slash commands to per-agent locations.
 #
 # Usage:
-#   ai-specs sync-agent [path] [--all | --<agent>...]
-#   ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...]
+#   ai-specs sync-agent [path] [--all | --<agent>...] [-v|--verbose]
+#   ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...] [-v|--verbose]
 #
 # In multi-target mode the root manifest remains the source of truth, while the
 # target receives a fully local derived artifact set:
@@ -33,8 +33,8 @@ BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
 HOOKS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/hooks-render.py"
 usage() {
     cat <<'EOF'
-Usage: ai-specs sync-agent [path] [--all | --<agent>...]
-       ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...]
+Usage: ai-specs sync-agent [path] [--all | --<agent>...] [-v|--verbose]
+       ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...] [-v|--verbose]
 
 Render per-agent configs from the root manifest.
 
@@ -54,6 +54,7 @@ Flags:
   --gemini         Gemini CLI   (GEMINI.md, .gemini/skills, .gemini/settings.json)
   --pi             Pi (pi.dev)  (.pi/skills, .mcp.json)
   --omp            Oh My Pi     (.omp/skills, .omp/mcp.json, .omp/commands)
+  -v, --verbose    Print full per-step detail instead of compact summaries
 
 If no selector is given, defaults to --all.
 EOF
@@ -67,6 +68,7 @@ EXPLICIT_TARGET=0
 RECIPE_MCP_JSON=""
 RESOLVED_CONFIG_JSON=""
 RESOLVED_HOOKS_JSON=""
+VERBOSE=0
 declare -a SELECTED_AGENTS=()
 
 while [[ $# -gt 0 ]]; do
@@ -79,6 +81,7 @@ while [[ $# -gt 0 ]]; do
         --all)              SELECT_ALL=1; shift ;;
         --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi|--omp)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
+        -v|--verbose)  VERBOSE=1; shift ;;
         -h|--help)     usage; exit 0 ;;
         --)            shift; break ;;
         -*)
@@ -142,18 +145,23 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
                 FORWARD_ARGS+=("--$agent")
             done
         fi
+        [[ $VERBOSE -eq 1 ]] && FORWARD_ARGS+=("--verbose")
         # Forward resolved-config so subrepo AGENTS.md gets structured fields
         if [[ -f "$STANDALONE_RESOLVED_CONFIG_TEMP" ]]; then
             FORWARD_ARGS+=("--resolved-config" "$STANDALONE_RESOLVED_CONFIG_TEMP")
         fi
 
+        # Nest only the children — parent keeps framing (header above + footer below).
         for resolved_target in "${RESOLVED_TARGETS[@]}"; do
-            if ! bash "$0" --source-root "$ROOT_PATH" --target "$resolved_target" "${FORWARD_ARGS[@]}"; then
+            echo "  syncing $resolved_target"
+            if ! AI_SPECS_SYNC_NESTED=1 bash "$0" --source-root "$ROOT_PATH" --target "$resolved_target" "${FORWARD_ARGS[@]}"; then
                 echo "ERROR: sync-agent failed for target: $resolved_target" >&2
                 echo "       Stopped on first failure; no overall success reported." >&2
                 exit 1
             fi
         done
+        echo ""
+        echo "✓ sync-agent complete"
         exit 0
     fi
 fi
@@ -188,11 +196,67 @@ if [[ -z "$RECIPE_MCP_JSON" ]]; then
     RECIPE_MCP_JSON="$(grep '^RECIPE_MCP_TEMP:' "$_MATERIALIZE_OUT" | cut -d: -f2- || true)"
 fi
 
-# Flatten resolved skills into the per-project CLI cache; merge commands (local wins)
+shopt -s inherit_errexit
+
+# print_step_output FILE — print a step's captured stdout or stderr file.
+# Verbose mode: cat the file bytes as-is (byte-identical, including trailing
+# blank lines). Compact mode: drop lines whose first non-whitespace char is
+# one of the success/detail-noise markers (✓ · ⇢ ▸), keeping every other
+# non-blank line (warnings/notices: !, ✗, ℹ, ...) intact.
+# Takes a file path (not a string) so command substitution cannot strip
+# trailing newlines from the replayed output.
+print_step_output() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+    [[ -s "$file" ]] || return 0
+    if [[ $VERBOSE -eq 1 ]]; then
+        cat "$file"
+        return 0
+    fi
+    local line stripped
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        stripped="${line#"${line%%[![:space:]]*}"}"
+        [[ -z "$stripped" ]] && continue
+        case "$stripped" in
+            '✓'*|'·'*|'⇢'*|'▸'*) continue ;;
+        esac
+        printf '%s\n' "$line"
+    done < "$file"
+}
+
+# run_step LABEL CMD [ARGS...] — print "  syncing LABEL", run CMD capturing
+# its stdout and stderr separately (preserving which stream each line came
+# from), then print each through print_step_output on its original stream.
+# On failure, print the FULL unfiltered stdout/stderr before returning the
+# command's exit status so the caller's existing error handling still runs.
+run_step() {
+    local label="$1"; shift
+    echo "  syncing $label"
+    local out_file err_file rc=0
+    out_file="$(mktemp)"
+    err_file="$(mktemp)"
+    set +e
+    "$@" >"$out_file" 2>"$err_file"
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 ]]; then
+        [[ -s "$out_file" ]] && cat "$out_file"
+        [[ -s "$err_file" ]] && cat "$err_file" >&2
+        rm -f "$out_file" "$err_file"
+        return $rc
+    fi
+    print_step_output "$out_file"
+    print_step_output "$err_file" >&2
+    rm -f "$out_file" "$err_file"
+    return 0
+}
+
+# Flatten resolved skills into the per-project CLI cache; merge commands (local wins).
+# Both steps go through run_step so their ✓ detail lines respect compact/verbose.
 RESOLVED_SKILLS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path resolved-skills)"
-python3 "$FLATTEN_SKILLS_PY" "$SOURCE_ROOT" "$RESOLVED_SKILLS_DIR"
+run_step "flatten resolved skills" python3 "$FLATTEN_SKILLS_PY" "$SOURCE_ROOT" "$RESOLVED_SKILLS_DIR"
 MERGED_COMMANDS_DIR="$(python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" path root)/merged-commands"
-python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" merge-commands "$MERGED_COMMANDS_DIR"
+run_step "merge commands" python3 "$PROJECT_CACHE_PY" "$SOURCE_ROOT" merge-commands "$MERGED_COMMANDS_DIR"
 
 mirror_directory() {
     local src="$1"
@@ -220,6 +284,7 @@ make_skills_symlink() {
         local existing
         existing="$(readlink "$link_path")"
         if [[ "$existing" == "$abs" ]]; then
+            # Noise (keep ·): idempotent success detail; filtered in compact mode.
             echo "    · symlink ok      $link_path → $abs"
             return 0
         fi
@@ -247,6 +312,7 @@ make_relative_symlink() {
         local existing
         existing="$(readlink "$link_path")"
         if [[ "$existing" == "$rel" ]]; then
+            # Noise (keep ·): idempotent success detail; filtered in compact mode.
             echo "    · symlink ok      $link_path → $rel"
             return 0
         fi
@@ -269,7 +335,8 @@ ensure_target_workspace() {
     fi
 
     mkdir -p "$TARGET_AI_SPECS"
-    python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
+    # Subrepo/fan-out side-output: filter ✓ "wrote ..." via run_step like other steps.
+    run_step "ai-specs/.gitignore" python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$TARGET_AI_SPECS/.gitignore"
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$MERGED_COMMANDS_DIR" "$TARGET_AI_COMMANDS"
     if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
@@ -284,7 +351,7 @@ ensure_target_workspace() {
             echo "       Create AGENTS.md manually or set [brief].render = true." >&2
             exit 1
         }
-        echo "    · skipped AGENTS.md (brief.render = false)"
+        echo "    ℹ skipped AGENTS.md (brief.render = false)"
     fi
 }
 
@@ -322,16 +389,17 @@ print(len(manifest_mcp) + len(recipe_mcp))
 PY
 )"
 
-echo ""
-echo "ai-specs sync-agent"
-echo "  source root: $SOURCE_ROOT"
-echo "  target:      $TARGET_PATH"
-echo "  agents:      ${TARGETS[*]}"
-echo "  enabled:     ${ENABLED_AGENTS[*]:-(none)}"
-echo "  mcp:         $MCP_COUNT server(s)"
-echo ""
-
-echo "  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs"
+if [[ "${AI_SPECS_SYNC_NESTED:-0}" != "1" ]]; then
+    echo ""
+    echo "ai-specs sync-agent"
+    echo "  source root: $SOURCE_ROOT"
+    echo "  target:      $TARGET_PATH"
+    echo "  agents:      ${TARGETS[*]}"
+    echo "  enabled:     ${ENABLED_AGENTS[*]:-(none)}"
+    echo "  mcp:         $MCP_COUNT server(s)"
+    echo ""
+    echo "  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs"
+fi
 ensure_target_workspace
 
 # For root workspace, agents consume from cache flatten + merged commands
@@ -343,13 +411,14 @@ else
     COMMANDS_SOURCE="$TARGET_AI_COMMANDS"
 fi
 
-for agent in "${TARGETS[@]}"; do
+sync_one_agent() {
+    local agent="$1"
     if ! platform_get "$agent" native >/dev/null 2>&1; then
         echo "  ✗ unknown agent: $agent" >&2
-        continue
+        return 0
     fi
 
-    is_enabled=0
+    local is_enabled=0 e
     for e in "${ENABLED_AGENTS[@]}"; do
         [[ "$e" == "$agent" ]] && is_enabled=1 && break
     done
@@ -357,45 +426,49 @@ for agent in "${TARGETS[@]}"; do
         echo "  ! $agent not in [agents].enabled — syncing anyway"
     fi
 
-    echo "  ▸ $agent"
-
-    instr="$(platform_get "$agent" instructions_path)"
+    local instr
+    instr="$(platform_get "$agent" instructions_path)" || return $?
     if [[ -n "$instr" ]]; then
-        make_relative_symlink "$TARGET_AGENTS_MD" "$TARGET_PATH/$instr"
+        make_relative_symlink "$TARGET_AGENTS_MD" "$TARGET_PATH/$instr" || return $?
     fi
 
-    skills="$(platform_get "$agent" skills_dir)"
+    local skills skills_link
+    skills="$(platform_get "$agent" skills_dir)" || return $?
     if [[ -n "$skills" ]]; then
         skills_link="$TARGET_PATH/$skills"
         if [[ -e "$skills_link" && ! -L "$skills_link" ]]; then
             # Legacy installs may have a real skills directory; replace so
             # fan-out can reconcile to the canonical symlink.
-            rm -rf "$skills_link"
+            rm -rf "$skills_link" || return $?
         fi
-        make_skills_symlink "$SKILLS_SOURCE" "$skills_link"
+        make_skills_symlink "$SKILLS_SOURCE" "$skills_link" || return $?
     fi
 
-    mcp_path="$(platform_get "$agent" mcp_config_path)"
-    mcp_key="$(platform_get "$agent" mcp_key)"
+    local mcp_path mcp_key
+    mcp_path="$(platform_get "$agent" mcp_config_path)" || return $?
+    mcp_key="$(platform_get "$agent" mcp_key)" || return $?
     if [[ -n "$mcp_path" && -n "$mcp_key" ]]; then
         if [[ "$MCP_COUNT" -gt 0 ]]; then
             python3 "$MCP_RENDER" "$TOML_PATH" "$agent" \
                 "$TARGET_PATH/$mcp_path" "$mcp_key" \
-                --recipe-mcp "$RECIPE_MCP_JSON"
+                --recipe-mcp "$RECIPE_MCP_JSON" || return $?
         else
-            echo "    · mcp skipped (no [mcp.*] in manifest)"
+            # Notice (not noise): must survive compact mode — same class as
+            # "skipped AGENTS.md", which already uses ℹ.
+            echo "    ℹ mcp skipped (no [mcp.*] in manifest)"
         fi
     fi
 
-    cmd_dir="$(platform_get "$agent" commands_dir)"
+    local cmd_dir dest copied src
+    cmd_dir="$(platform_get "$agent" commands_dir)" || return $?
     if [[ -n "$cmd_dir" && -d "$COMMANDS_SOURCE" ]]; then
         dest="$TARGET_PATH/$cmd_dir"
-        rm -rf "$dest"
-        mkdir -p "$dest"
+        rm -rf "$dest" || return $?
+        mkdir -p "$dest" || return $?
         copied=0
         for src in "$COMMANDS_SOURCE"/*.md; do
             [[ -f "$src" ]] || continue
-            cp "$src" "$dest/$(basename "$src")"
+            cp "$src" "$dest/$(basename "$src")" || return $?
             copied=$((copied + 1))
         done
         if [[ $copied -gt 0 ]]; then
@@ -403,16 +476,20 @@ for agent in "${TARGETS[@]}"; do
         fi
     fi
 
-    # Runtime hooks ([[provides.hooks]]): render this agent's native wiring from
-    # the pre-resolved blob. hooks-render.py has no catalog access and skips
-    # agents without a runtime-hook target (warn-and-skip on unsupported pairs).
-    hooks_target="$(platform_get "$agent" runtime_hooks_target)"
+    local hooks_target
+    hooks_target="$(platform_get "$agent" runtime_hooks_target)" || return $?
     if [[ -n "$hooks_target" && -n "$RESOLVED_HOOKS_JSON" && -f "$RESOLVED_HOOKS_JSON" ]]; then
         if python3 "$HOOKS_RENDER_PY" "$RESOLVED_HOOKS_JSON" "$agent" "$TARGET_PATH"; then
             echo "    ✓ runtime hooks $hooks_target"
         fi
     fi
+}
+
+for agent in "${TARGETS[@]}"; do
+    run_step "$agent" sync_one_agent "$agent"
 done
 
-echo ""
-echo "✓ sync-agent complete"
+if [[ "${AI_SPECS_SYNC_NESTED:-0}" != "1" ]]; then
+    echo ""
+    echo "✓ sync-agent complete"
+fi

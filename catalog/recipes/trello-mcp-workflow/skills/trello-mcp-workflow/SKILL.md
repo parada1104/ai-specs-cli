@@ -9,7 +9,10 @@ metadata:
   author: ai-specs
   version: "1.0"
   scope: runtime
-  auto_invoke: false
+  auto_invoke:
+    - "New structured change or feature request"
+    - "Active change is missing a linked Trello card"
+    - "Resuming work on a change with a stale or unknown card"
 ---
 
 # Trello MCP Workflow
@@ -18,7 +21,7 @@ metadata:
 
 - Trello MCP server configured and reachable in the runtime environment.
 - On session start, read `board_id` from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`. The board ID is a 24-hex-character string (not the 8-character shortLink from the Trello URL).
-- Board ID available either in recipe config (`board_id`) or bootstrap marker file (`.recipe/trello-mcp-workflow/bootstrap-ready`).
+- Board ID available either in recipe config (`board_id`) or bootstrap marker file (`<AI_SPECS_HOME>/cache/projects/<hash>-<name>/.recipe/trello-mcp-workflow/bootstrap-ready`; legacy project-local fallback: `.recipe/trello-mcp-workflow/bootstrap-ready`).
 - Agent has access to Trello MCP tools: `trello_get_active_board_info`, `trello_get_lists`, `trello_get_cards_by_list_id`, `trello_add_card_to_list`, `trello_add_comment`, `trello_move_card`, `trello_update_card_details`, `trello_get_card`.
 - Forbidden tools: `trello_get_my_cards` and `trello_list_boards` MUST NOT be invoked. See Board Isolation section below.
 
@@ -29,6 +32,7 @@ metadata:
 | `board_id` | Yes | — | Trello board ID for the project. Example: `69ec097f13e2d38ecd89a557`. |
 | `default_list` | No | `In Progress` | List name where new cards are created when no phase-specific list applies. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
+| `gate_mode` | No | `warn` | Tracker card gate: `off` / `warn` / `always`. |
 
 Configuration is read from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`.
 
@@ -81,7 +85,7 @@ Detect the active card and recommend the next task for the session.
 
 ### Trigger
 
-Session start when the marker file `.recipe/trello-mcp-workflow/bootstrap-ready` exists, or when the agent explicitly invokes bootstrap.
+Session start when the bootstrap marker exists at `<AI_SPECS_HOME>/cache/projects/<hash>-<name>/.recipe/trello-mcp-workflow/bootstrap-ready` (legacy project-local fallback `.recipe/trello-mcp-workflow/bootstrap-ready`), or when the agent explicitly invokes bootstrap.
 
 ### Steps
 
@@ -101,6 +105,35 @@ Session start when the marker file `.recipe/trello-mcp-workflow/bootstrap-ready`
 
 ---
 
+
+## Card link section (`## Tracker`)
+
+The sole card-link contract for active changes is a `## Tracker` section inside
+the change's `proposal.md` (fallback: `tasks.md` for tasks-only changes). No
+separate artifact file and no folder-schema `trello_card_id` field.
+
+```markdown
+## Tracker
+
+- **card_id**: `<24-hex>`
+- **shortLink**: `<8-char>`          # optional
+- **url**: https://trello.com/c/...
+- **list**: <list name>              # optional
+- **pr**: https://github.com/...     # optional
+```
+
+**Validity** (shared by doctor and the tracker-card gate): the section exists
+and yields a non-empty `card_id`. `url` is expected; its absence is an INFO
+nudge, not a block. Vocabulary that still says `trello_card_id` means the
+`card_id` recorded in this section.
+
+After creating or linking a card, agents MUST write this section before
+apply/production work. The only documented exemption is
+`openspec/changes/<slug>/tracker.none` (conceptual name `tracker:none`) with a
+one-line reason — log it; this is rare.
+
+---
+
 ## Capability: trello-card-linking
 
 Link a structured change to a Trello card. Create a card from a template when no existing card matches.
@@ -113,7 +146,7 @@ New structured change or feature request.
 
 0. **Board guard**: Run the board guard precondition (see Board Isolation section above). If the guard fails and Trello operations are skipped, terminate this capability gracefully.
 1. Detect whether a Trello card is already linked:
-   - Check change metadata (e.g., `trello_card_id` field in the change folder).
+   - Check the `## Tracker` section of the change's `proposal.md` (fallback `tasks.md`).
    - Search recent comments on candidate cards for references to the change folder path.
    - Before calling `trello_get_card`, run card idBoard validation (see Card idBoard Validation above).
 2. **If a card exists**: Post a structured linking comment using `trello_add_comment` with:
@@ -125,8 +158,8 @@ New structured change or feature request.
    - Select template type: `feature`, `bug`, `spike`, `epic`, or `handoff`.
    - Create the card in `default_list` using `trello_add_card_to_list(..., boardId: <board_id>)`.
    - Post the initial linking comment (same structure as step 2) using `trello_add_comment` with card idBoard validation.
-4. **Allow the agent to skip card creation** if the change is exploratory or the agent determines linking is unnecessary.
-5. Store the card ID in change metadata for future reference.
+4. **Record the link** in the `## Tracker` section of the change's `proposal.md` (or `tasks.md`) with at least `card_id` + `url`.
+5. **Only omit a card** by writing `openspec/changes/<slug>/tracker.none` with a one-line reason; log the exemption (stderr and/or `.recipe/trello-mcp-workflow/warnings.log`). This is rare — declining card creation without `tracker.none` is not a free pass.
 
 ### Templates
 
@@ -197,10 +230,10 @@ If progress data files are unavailable, post the comment with available data and
 
 ## Graceful Degradation (General)
 
-- All runtime Trello failures emit warnings to stderr.
+- All runtime Trello **availability** failures (MCP/network/API down) emit warnings to stderr and continue — never block.
 - Optionally log warnings to `.recipe/trello-mcp-workflow/warnings.log` with timestamp, capability, and error detail.
-- Trello failures **never block agent progress**. The agent continues its work regardless of Trello availability.
-- If the Trello MCP server is unreachable, skip all Trello capabilities for the remainder of the session and log a single warning.
+- A **missing `## Tracker` link section** is **not** an availability failure. Do not claim 'Trello unavailable' to skip it; create/link the card and write the section (or write `tracker.none` with a logged reason). The tracker-card gate may warn or block production/PR-archive actions when the artifact is missing.
+- If the Trello MCP server is unreachable, skip Trello MCP calls for the remainder of the session and log a single warning — but still do not invent an availability excuse for a missing link section once MCP is back.
 
 ---
 

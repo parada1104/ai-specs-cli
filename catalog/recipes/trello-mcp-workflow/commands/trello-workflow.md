@@ -7,7 +7,7 @@ Quick reference for the Trello MCP Workflow skill capabilities.
 | Capability | When to Invoke |
 |---|---|
 | `trello-session-bootstrap` | Session start; detect active card and recommend next task. |
-| `trello-card-linking` | On OpenSpec change creation; link or create a Trello card. |
+| `trello-card-linking` | On OpenSpec change creation; link or create a Trello card and record it in the change's `## Tracker` section (`proposal.md` / `tasks.md`). |
 | `trello-state-sync` | On SDD phase transitions; move card and update labels. |
 | `trello-progress-comment` | After apply/verify phases; post structured progress update. |
 
@@ -35,6 +35,10 @@ The following tools have board isolation restrictions enforced at the skill leve
 | `trello_set_active_board` | **Restricted** — bootstrap only | Required once per session; later calls bypass guard. |
 
 See the Board Isolation section in `skills/trello-mcp-workflow/SKILL.md` for full details.
+
+## Card link section
+
+Every active change must carry a `## Tracker` section in `proposal.md` (fallback `tasks.md`) with non-empty `card_id` (+ `url`). Exemption: `openspec/changes/<slug>/tracker.none`. See the skill's **Card link section (`## Tracker`)** for the canonical shape.
 
 ## Phase Mappings
 

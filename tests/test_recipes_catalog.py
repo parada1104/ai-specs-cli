@@ -22,6 +22,7 @@ MCP_RECIPES: dict[str, str] = {
 # User-facing config keys that must be documented in the per-recipe section.
 CONFIG_KEYS_IN_CATALOG: dict[str, list[str]] = {
     "worktree-flow": ["WORKTREE_GATE_PROTECTED"],
+    "plan-build-flow": ["artifact_store_default"],
     "trello-mcp-workflow": [
         "board_id",
         "forbidden_tools",

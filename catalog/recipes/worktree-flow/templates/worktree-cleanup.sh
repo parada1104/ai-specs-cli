@@ -6,12 +6,21 @@
 # (dirty) or whose branch is not yet merged (unmerged). The main worktree and
 # detached-HEAD worktrees are never touched.
 #
+# Under monorepo-submodules, enumerates each initialized submodule (never the
+# superproject worktree list alone) and scans shared <worktrees_dir>/<module>-*
+# linked worktrees. standalone / monorepo-apps keep a single-repo pass.
+#
 # Usage:
-#   worktree-cleanup.sh [--dir <worktrees_dir>] [--base <integration_branch>] [--dry-run]
+#   worktree-cleanup.sh [--dir <worktrees_dir>] [--base <integration_branch>]
+#                       [--dry-run] [--topology <value>]
+#                       [--submodule <path>|--subrepo <path>]...
 #
 # Defaults:
 #   --dir   .worktrees
-#   --base  current branch of the main worktree
+#   --base  current branch of each scanned repo (or --base when provided)
+#   --topology  stamped sync value, else auto
+#               (auto|standalone|monorepo-apps|monorepo-submodules)
+#   --submodule / --subrepo  (none = all initialized submodules)
 #
 # Environment variables:
 #   WORKTREE_CLEANUP_DEBUG=1       print debug messages to stderr
@@ -27,9 +36,13 @@ set -euo pipefail
 WORKTREES_DIR=".worktrees"
 BASE_BRANCH=""
 DRY_RUN=0
+SUBMODULE_SCOPE=()
+# Stamped at sync (like worktree-gate.sh __WORKTREE_GATE_MODE__). Flag wins.
+stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"
+TOPOLOGY=""
 
 usage() {
-    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -37,20 +50,33 @@ while [[ $# -gt 0 ]]; do
         --dir) WORKTREES_DIR="${2:?--dir requires a value}"; shift 2 ;;
         --base) BASE_BRANCH="${2:?--base requires a value}"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --topology)
+            TOPOLOGY="${2:?--topology requires a value}"; shift 2 ;;
+        --submodule|--subrepo)
+            SUBMODULE_SCOPE+=("${2:?$1 requires a value}"); shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "worktree-cleanup: unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
 
-ROOT="$(git rev-parse --show-toplevel)"
-cd "$ROOT"
-
-if [[ -z "$BASE_BRANCH" ]]; then
-    BASE_BRANCH="$(git symbolic-ref --quiet --short HEAD || echo main)"
-fi
+SUPER_ROOT="$(git rev-parse --show-toplevel)"
+USER_BASE="$BASE_BRANCH"
+WT_ROOT="$SUPER_ROOT/${WORKTREES_DIR%/}"
 
 # Absolute directory that holds the worktrees we are allowed to clean.
-WT_PREFIX="$ROOT/${WORKTREES_DIR%/}/"
+# Shared across all modules (not recomputed per submodule).
+WT_PREFIX="$WT_ROOT/"
+
+# Resolve topology: --topology flag > sync-stamped value > auto.
+# Invalid/unstamped placeholder falls back to auto (self-detect).
+_resolve_repo_topology() {
+    local candidate="${TOPOLOGY:-$stamped_repo_topology}"
+    case "$candidate" in
+        auto|standalone|monorepo-apps|monorepo-submodules) echo "$candidate" ;;
+        *) echo "auto" ;;
+    esac
+}
+RESOLVED_TOPOLOGY="$(_resolve_repo_topology)"
 
 # Parse `git worktree list --porcelain` into (path, sha, branch) records.
 wt_path="" wt_sha="" wt_branch=""
@@ -227,6 +253,69 @@ is_merged() {
     return 1
 }
 
+
+_in_scope() {
+    local p="$1" s
+    ((${#SUBMODULE_SCOPE[@]})) || return 0
+    for s in "${SUBMODULE_SCOPE[@]}"; do
+        [[ "$s" == "$p" ]] && return 0
+    done
+    return 1
+}
+
+# Topology resolution (bash mirror of util.resolve_repo_topology):
+# Explicit standalone/monorepo-apps → SUPER_ROOT only (ignore .gitmodules).
+# auto → self-detect; monorepo-submodules → initialized modules (may be empty).
+enumerate_modules() {
+    # Explicit override: never misclassify vendored .gitmodules as submodules.
+    case "$RESOLVED_TOPOLOGY" in
+        standalone|monorepo-apps)
+            printf '%s\n' "$SUPER_ROOT"
+            return 0
+            ;;
+    esac
+    # Avoid `grep -q` under `set -o pipefail`: with 2+ initialized modules,
+    # grep -q exits early, SIGPIPEs git, and the pipeline fails → false
+    # standalone classification. Drain status in a while-read instead.
+    local has_init=0 line p
+    if [[ -f "$SUPER_ROOT/.gitmodules" ]]; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if [[ "${line:0:1}" != "-" ]]; then
+                has_init=1
+                break
+            fi
+        done < <(git -C "$SUPER_ROOT" submodule status 2>/dev/null || true)
+    fi
+    if [[ "$has_init" -eq 1 ]]; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            [[ "${line:0:1}" == "-" ]] && continue
+            p="$(awk '{print $2}' <<<"${line:1}")"
+            [[ -z "$p" ]] && continue
+            if ((${#SUBMODULE_SCOPE[@]})); then
+                _in_scope "$p" || continue
+            fi
+            printf '%s\n' "$SUPER_ROOT/$p"
+        done < <(git -C "$SUPER_ROOT" submodule status 2>/dev/null || true)
+    else
+        printf '%s\n' "$SUPER_ROOT"
+    fi
+}
+
+# One cleanup pass over the CURRENT cwd (unchanged inner scan→flush logic).
+_cleanup_one() {
+    while IFS= read -r line; do
+        case "$line" in
+            "worktree "*) flush; wt_path="${line#worktree }" ;;
+            "HEAD "*) wt_sha="${line#HEAD }" ;;
+            "branch refs/heads/"*) wt_branch="${line#branch refs/heads/}" ;;
+            "detached") wt_branch="" ;;
+        esac
+    done < <(git worktree list --porcelain)
+    flush
+}
+
 # Test-only hook: when sourced with WORKTREE_CLEANUP_SOURCE_ONLY=1, stop
 # right after the function definitions above and skip the worktree-scanning
 # loop below. This lets tests source the real script to exercise its
@@ -239,12 +328,14 @@ if [[ "${WORKTREE_CLEANUP_SOURCE_ONLY:-0}" == "1" ]]; then
     exit 0
 fi
 
-while IFS= read -r line; do
-    case "$line" in
-        "worktree "*) flush; wt_path="${line#worktree }" ;;
-        "HEAD "*) wt_sha="${line#HEAD }" ;;
-        "branch refs/heads/"*) wt_branch="${line#branch refs/heads/}" ;;
-        "detached") wt_branch="" ;;
-    esac
-done < <(git worktree list --porcelain)
-flush
+
+while IFS= read -r repo_dir; do
+    cd "$repo_dir"
+    WT_PREFIX="$WT_ROOT/"
+    if [[ -z "$USER_BASE" ]]; then
+        BASE_BRANCH="$(git symbolic-ref --quiet --short HEAD || echo main)"
+    else
+        BASE_BRANCH="$USER_BASE"
+    fi
+    _cleanup_one
+done < <(enumerate_modules)

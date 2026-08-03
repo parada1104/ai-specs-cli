@@ -147,7 +147,10 @@ class Doctor:
         self._check_tracked_bundled_leftovers()
         self._check_enabled_agents()
         self._check_recipe_cli_deps()
+        self._check_tracker_card_link()
         self._check_harness_env_layout()
+        self._check_repo_topology()
+        self._check_stale_template_overrides()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -554,6 +557,100 @@ class Doctor:
                     guidance=r.install_url,
                 ))
 
+
+    def _load_trello_link(self):
+        """Sibling-load lib/_internal/trello_link.py for the shared validity predicate."""
+        try:
+            path = Path(__file__).with_name("trello_link.py")
+            spec = importlib.util.spec_from_file_location("trello_link_doctor", path)
+            if spec is None or spec.loader is None:
+                return None
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            spec.loader.exec_module(mod)
+            return mod
+        except Exception:
+            return None
+
+    def _check_tracker_card_link(self) -> None:
+        """WARN when active changes lack a ## Tracker section (recipe+marker)."""
+        data = self._load_manifest()
+        recipes = data.get("recipes", {}) or {}
+        tr = recipes.get("trello-mcp-workflow") or {}
+        if not isinstance(tr, dict) or tr.get("enabled") is not True:
+            return
+
+        pc = self._load_project_cache()
+        marker = None
+        if pc is not None:
+            try:
+                marker = (
+                    pc.recipe_skills_root(self.root)
+                    / "trello-mcp-workflow"
+                    / "bootstrap-ready"
+                )
+            except Exception:
+                marker = None
+        local_marker = self.root / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
+        if not ((marker is not None and marker.is_file()) or local_marker.is_file()):
+            return
+
+        link = self._load_trello_link()
+        changes_dir = self.root / "openspec" / "changes"
+        deficient: list[str] = []
+        if changes_dir.is_dir():
+            for change in sorted(p for p in changes_dir.iterdir() if p.is_dir()):
+                if change.name == "archive":
+                    continue
+                if not any(
+                    (change / f).is_file()
+                    for f in ("proposal.md", "tasks.md", "spec.md", "design.md")
+                ):
+                    continue
+                if (change / "tracker.none").is_file():
+                    continue
+                if link is not None and link.is_valid_link(
+                    [change / "proposal.md", change / "tasks.md"]
+                ):
+                    try:
+                        parsed = link.parse_tracker_section(
+                            [change / "proposal.md", change / "tasks.md"]
+                        )
+                        card_id = parsed.get("card_id", "")
+                        if card_id and not link.card_id_looks_canonical(card_id):
+                            self.checks.append(Check(
+                                Severity.INFO, "tracker-card",
+                                f"{change.name}: card_id is non-canonical (not 24-hex)",
+                                guidance="prefer the 24-hex Trello card id",
+                            ))
+                        if "url" not in parsed or not parsed.get("url"):
+                            self.checks.append(Check(
+                                Severity.INFO, "tracker-card",
+                                f"{change.name}: ## Tracker section missing url",
+                                guidance="add url alongside card_id",
+                            ))
+                    except Exception:
+                        pass
+                    continue
+                deficient.append(change.name)
+
+        if deficient:
+            sample = ", ".join(deficient[:5])
+            more = f" (+{len(deficient) - 5})" if len(deficient) > 5 else ""
+            self.checks.append(Check(
+                Severity.WARN, "tracker-card",
+                f"{len(deficient)} active change(s) missing a valid ## Tracker link section: {sample}{more}",
+                guidance=(
+                    "create/link a Trello card and write the ## Tracker section "
+                    "of the change's proposal.md (card_id + url), or add tracker.none"
+                ),
+            ))
+        else:
+            self.checks.append(Check(
+                Severity.OK, "tracker-card",
+                "all active changes carry a valid ## Tracker link section (or tracker.none)",
+            ))
+
     def _load_env_scaffold(self):
         path = Path(__file__).with_name("env_scaffold.py")
         spec = importlib.util.spec_from_file_location("env_scaffold_doctor", path)
@@ -636,6 +733,100 @@ class Doctor:
         if not isinstance(mcp, dict):
             return 0
         return len(mcp)
+
+
+    def _load_util(self):
+        path = Path(__file__).with_name("util.py")
+        spec = importlib.util.spec_from_file_location("util_doctor", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _check_repo_topology(self) -> None:
+        """INFO: echo resolved worktree-flow topology + initialized submodule count."""
+        manifest = self.root / "ai-specs" / "ai-specs.toml"
+        if not manifest.is_file():
+            return
+        util = self._load_util()
+        if util is None:
+            return
+        try:
+            import tomllib
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        recipes = data.get("recipes") or {}
+        wf = recipes.get("worktree-flow") or {}
+        if not isinstance(wf, dict) or wf.get("enabled") is not True:
+            return
+        cfg = wf.get("config") or {}
+        configured = str(cfg.get("repo_topology") or "auto")
+        try:
+            res = util.resolve_repo_topology(self.root, configured)
+        except Exception:
+            return
+        n = len(res.submodules)
+        self.checks.append(Check(
+            Severity.INFO,
+            "repo-topology",
+            f"{res.resolved} (via {res.via}; {n} initialized submodule(s))",
+        ))
+
+    def _check_stale_template_overrides(self) -> None:
+        """WARN when enabled-recipe not_exists template overrides diverge from catalog."""
+        util = self._load_util()
+        if util is None:
+            return
+        catalog = AI_SPECS_HOME / "catalog" / "recipes"
+        if not catalog.is_dir():
+            return
+        manifest = self.root / "ai-specs" / "ai-specs.toml"
+        if not manifest.is_file():
+            return
+        try:
+            import tomllib
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        recipes = data.get("recipes") or {}
+        # Load recipe schema once
+        schema_path = Path(__file__).with_name("recipe_schema.py")
+        spec = importlib.util.spec_from_file_location("recipe_schema_doctor", schema_path)
+        if spec is None or spec.loader is None:
+            return
+        schema = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = schema
+        try:
+            spec.loader.exec_module(schema)
+        except Exception:
+            return
+
+        for rid, val in recipes.items():
+            if not isinstance(val, dict) or val.get("enabled") is not True:
+                continue
+            recipe_dir = catalog / rid
+            recipe_toml = recipe_dir / "recipe.toml"
+            if not recipe_toml.is_file():
+                continue
+            try:
+                recipe = schema.load_recipe_toml(recipe_toml)
+            except Exception:
+                continue
+            for tpl in getattr(recipe, "templates", []) or []:
+                if getattr(tpl, "condition", None) != "not_exists":
+                    continue
+                src = recipe_dir / tpl.source
+                dest = self.root / tpl.target
+                if util.override_is_stale(src, dest):
+                    self.checks.append(Check(
+                        Severity.WARN,
+                        "stale-override",
+                        f"{tpl.target} differs from catalog (condition=not_exists)",
+                        guidance=f"rm {tpl.target} && ai-specs sync",
+                    ))
 
     def _check_enabled_agents(self) -> None:
         data = self._load_manifest()
