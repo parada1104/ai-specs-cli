@@ -28,7 +28,10 @@ The file `recipe.toml` SHALL contain a `[recipe]` table with fields: `id` (strin
 - **THEN** validation SHALL fail with an explicit error
 
 ### Requirement: Primitive declarations in [provides]
-The `[provides]` table SHALL support: `skills` (array of objects with `id` and `source`), `commands` (array of objects with `id` and `path`), `mcp` (array of tables with `id` and MCP fields), `templates` (array of tables with `source`, `target`, and `condition`), `docs` (array of tables with `source` and `target`), and `hooks` (array of tables declaring agent-runtime lifecycle hooks).
+The `[provides]` table SHALL support: `skills` (array of objects with `id` and `source`), `commands` (array of objects with `id` and `path`), `mcp` (array of tables with `id` and MCP fields), `templates` (array of tables with `source`, `target`, `condition`, and optional `update_policy`), `docs` (array of tables with `source` and `target`), and `hooks` (array of tables declaring agent-runtime lifecycle hooks).
+
+Template `update_policy` MAY be `auto`, `confirm`, or `never-force`; absent values
+default to `auto`, and unknown values SHALL fail validation naming the field.
 
 Each `[[provides.hooks]]` entry SHALL contain `id` (string, required, unique within the recipe), `event` (string, required, one of the known abstract events), and `script` (string, required, a path inside the recipe directory). It MAY contain `matcher` (string), `blocking` (boolean, default `false`), and `description` (string). Runtime hooks are declared ONLY in `recipe.toml`; they are never declared in the project manifest.
 
