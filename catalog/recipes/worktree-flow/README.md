@@ -48,22 +48,24 @@ Default: `always`.
 
 `gate_scope` is independent from both `gate_mode` (whether enforcement runs)
 and `repo_topology` (where worktrees are created and cleaned). The hook stamps
-the validated value and accepts a per-invocation `WORKTREE_GATE_SCOPE` override;
-invalid overrides or stale stamps warn and fall back safely to `auto`.
+both values and accepts a per-invocation `WORKTREE_GATE_SCOPE` override; invalid
+overrides or stale stamps warn and fall back safely to `auto`.
 
-| Scope | Policy |
-|---|---|
-| `auto` | Prove the owning repository from Git topology; allow only the canonical superrepo planning subtree when proven, while protecting subrepo production paths. |
-| `superrepo` | Same proof and narrow exception; never grants arbitrary superrepo production writes or a subrepo bypass. |
-| `subrepo` | Preserve initialized-subrepo protected-branch safety; it does not create a superrepo bypass. |
-
-For a proven initialized-submodule topology, the only protected superrepo
-exception is the component-aware canonical descendant
-`<superrepo>/openspec/changes/**` (including archive and nonexistent descendants).
-Symlink escapes, prefix lookalikes, unrelated repositories, and ambiguous Git
-relationships remain blocked or fail open conservatively. Linked worktrees stay
-allowed before scope evaluation. Production authorization remains owned by the
-`plan-build-flow` gate; a central plan does not authorize subrepo code writes.
+| Scope | Protected owner enforced | Policy |
+|---|---|---|
+| `auto` | Proven superrepo and subrepo | Topology-derived behavior; canonical superrepo planning paths are the only exception. |
+| `superrepo` | Proven superrepo only | Subrepo writes are outside this selected enforcement scope; central planning remains the explicit superrepo exception. |
+| `subrepo` | Proven initialized subrepo only | Superrepo writes are outside this selected scope for the Melón workflow; this is intentional and explicit. |
+Topology classification requires effective `repo_topology=monorepo-submodules`.
+Explicit `standalone` or `monorepo-apps` never gains a central bypass merely
+because initialized modules are present. For a proven initialized-submodule
+topology, the only protected superrepo planning exception is the component-aware
+canonical descendant `<superrepo>/openspec/changes/**` (including archive and
+nonexistent descendants). Symlink escapes, prefix lookalikes, unrelated
+repositories, and ambiguous Git relationships remain blocked or fail open
+conservatively. Linked worktrees stay allowed before scope evaluation.
+Production authorization remains owned by the `plan-build-flow` gate; a central
+plan does not authorize subrepo code writes.
 
 **Delegation caveat:** the gate is a `pre-tool-use` hook. On opencode/pi/omp it
 may not see tool calls made inside a delegated subagent/task (separate process

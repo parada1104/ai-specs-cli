@@ -388,16 +388,12 @@ class WorktreeGateHookTests(unittest.TestCase):
 
 
     def test_scope_override_invalid_falls_back_to_stamp(self):
-        self._checkout("main")
-        gate = self._stamped_gate("always").read_text().replace(
-            'stamped_gate_mode="always"', 'stamped_gate_mode="always"\nstamped_gate_scope="superrepo"'
-        )
-        stamped = Path(self.tmp.name) / "scoped-hook.sh"
-        stamped.write_text(gate)
-        stamped.chmod(0o755)
-        r = self._run(self._event("Write", self._src()), gate=stamped,
+        superrepo, subrepo = self._make_superrepo_fixture()
+        gate = self._scope_gate("superrepo")
+        target = subrepo / "production.py"
+        r = self._run(self._path_event(target, subrepo), gate=gate,
                       extra_env={"WORKTREE_GATE_SCOPE": "repository"})
-        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.returncode, 0)
         self.assertIn("invalid WORKTREE_GATE_SCOPE", r.stderr)
 
     def test_missing_scope_stamp_warns_and_falls_back_to_auto(self):
@@ -446,11 +442,12 @@ class WorktreeGateHookTests(unittest.TestCase):
         sub_event = self._event("Write", str(subrepo / "src.py"))
         sub_event["cwd"] = str(subrepo)
         self.assertEqual(self._run(sub_event).returncode, 2)
-    def _scope_gate(self, scope: str) -> Path:
-        stamped = Path(self.tmp.name) / f"worktree-gate-{scope}.sh"
+    def _scope_gate(self, scope: str, topology: str = "monorepo-submodules") -> Path:
+        stamped = Path(self.tmp.name) / f"worktree-gate-{scope}-{topology}.sh"
         content = GATE.read_text()
         content = content.replace("__WORKTREE_GATE_MODE__", "always")
         content = content.replace("__WORKTREE_GATE_SCOPE__", scope)
+        content = content.replace("__WORKTREE_REPO_TOPOLOGY__", topology)
         stamped.write_text(content)
         stamped.chmod(0o755)
         return stamped
@@ -468,8 +465,8 @@ class WorktreeGateHookTests(unittest.TestCase):
         for scope in ("auto", "superrepo", "subrepo"):
             gate = self._scope_gate(scope)
             self.assertEqual(self._run(self._path_event(central, superrepo), gate=gate).returncode, 0)
-            self.assertEqual(self._run(self._path_event(super_production, superrepo), gate=gate).returncode, 2)
-            self.assertEqual(self._run(self._path_event(sub_production, subrepo), gate=gate).returncode, 2)
+            self.assertEqual(self._run(self._path_event(super_production, superrepo), gate=gate).returncode, 2 if scope != "subrepo" else 0)
+            self.assertEqual(self._run(self._path_event(sub_production, subrepo), gate=gate).returncode, 2 if scope != "superrepo" else 0)
 
     def test_uninitialized_module_does_not_prove_central_scope(self):
         superrepo, subrepo = self._make_superrepo_fixture()
@@ -533,5 +530,36 @@ class WorktreeGateHookTests(unittest.TestCase):
             extra_env={"PATH": str(fake_bin) + os.pathsep + os.environ["PATH"]},
         )
         self.assertEqual(result.returncode, 0)
+    def test_explicit_vendored_topology_disables_scope_classification(self):
+        superrepo, _ = self._make_superrepo_fixture()
+        target = superrepo / "openspec" / "changes" / "vendored" / "tasks.md"
+        for topology in ("standalone", "monorepo-apps"):
+            gate = self._scope_gate("auto", topology)
+            self.assertEqual(self._run(self._path_event(target, superrepo), gate=gate).returncode, 2)
+
+    def test_valid_scope_override_selects_subrepo_enforcement(self):
+        superrepo, _ = self._make_superrepo_fixture()
+        target = superrepo / "src" / "generated.py"
+        gate = self._scope_gate("superrepo")
+        result = self._run(self._path_event(target, superrepo), gate=gate,
+                           extra_env={"WORKTREE_GATE_SCOPE": "subrepo"})
+        self.assertEqual(result.returncode, 0)
+
+    def test_invalid_scope_override_uses_actually_stamped_superrepo(self):
+        superrepo, subrepo = self._make_superrepo_fixture()
+        gate = self._scope_gate("superrepo")
+        target = subrepo / "production.py"
+        result = self._run(self._path_event(target, subrepo), gate=gate,
+                           extra_env={"WORKTREE_GATE_SCOPE": "repository"})
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("invalid WORKTREE_GATE_SCOPE", result.stderr)
+
+    def test_shell_central_and_noncentral_share_scope_decision(self):
+        superrepo, _ = self._make_superrepo_fixture()
+        central = superrepo / "openspec" / "changes" / "shell" / "tasks.md"
+        noncentral = superrepo / "src" / "generated.py"
+        gate = self._scope_gate("auto")
+        self.assertEqual(self._run(self._shell_event(f"echo x > {central}", cwd=str(superrepo)), gate=gate).returncode, 0)
+        self.assertEqual(self._run(self._shell_event(f"echo x > {noncentral}", cwd=str(superrepo)), gate=gate).returncode, 2)
 if __name__ == "__main__":
     unittest.main()

@@ -259,6 +259,8 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
         content = hook.read_text()
         self.assertIn('stamped_gate_scope="superrepo"', content)
+        self.assertIn('stamped_repo_topology="auto"', content)
+        self.assertNotIn("__WORKTREE_REPO_TOPOLOGY__", content)
         self.assertNotIn("__WORKTREE_GATE_SCOPE__", content)
 
     def test_gate_scope_rejects_invalid_value(self):

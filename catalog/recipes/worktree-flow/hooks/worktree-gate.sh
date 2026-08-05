@@ -20,6 +20,7 @@
 # WORKTREE_GATE_SCOPE is stamped by sync and may be overridden per invocation.
 stamped_gate_mode="__WORKTREE_GATE_MODE__"
 stamped_gate_scope="__WORKTREE_GATE_SCOPE__"
+stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"
 protected="${WORKTREE_GATE_PROTECTED:-main development}"
 
 # Resolve gate mode: env override beats stamped sync value; invalid values warn and fall back.
@@ -55,6 +56,14 @@ _resolve_gate_scope() {
 # off → disable the gate entirely, before scope/topology evaluation.
 [ "$gate_mode" = off ] && exit 0
 gate_scope="$(_resolve_gate_scope)"
+_resolve_repo_topology() {
+  case "$stamped_repo_topology" in
+    auto|standalone|monorepo-apps|monorepo-submodules) echo "$stamped_repo_topology" ;;
+    *) echo "worktree-gate: missing or invalid stamped repo_topology='$stamped_repo_topology'; falling back to auto." >&2; echo auto ;;
+  esac
+}
+
+repo_topology="$(_resolve_repo_topology)"
 
 input="$(cat)"
 
@@ -308,7 +317,6 @@ resolve_and_check() {
     /*) abs="$candidate" ;;
     *) abs="$cwd/$candidate" ;;
   esac
-
   # Allow local, gitignored agent config (machine setup, never committed).
   case "$abs" in
     */.claude/settings*.json|.claude/settings*.json|*/.claude/hooks/*) return 1 ;;
@@ -317,14 +325,15 @@ resolve_and_check() {
     */.claude/settings*.json|.claude/settings*.json|*/.claude/hooks/*) return 1 ;;
   esac
 
-  decision="$(python3 - "$abs" "$gate_scope" "$protected" <<'PYEOF'
+  decision="$(python3 - "$abs" "$gate_scope" "$repo_topology" "$protected" <<'PYEOF'
 import os
 import subprocess
 import sys
 
 target = sys.argv[1]
 scope = sys.argv[2]
-protected = sys.argv[3].split()
+topology = sys.argv[3]
+protected = sys.argv[4].split()
 
 def git(cwd, *args):
     try:
@@ -403,6 +412,8 @@ def module_records(super_root):
     return entries
 
 def classify(repo_root, repo_common):
+    if topology in ("standalone", "monorepo-apps"):
+        return "unproven"
     repo_root = os.path.realpath(repo_root)
     repo_common = os.path.realpath(repo_common)
     # The containing superrepo must itself be a primary checkout. Walk all
@@ -456,7 +467,15 @@ try:
         raise SystemExit
     owner = classify(repo_root, common)
     central = os.path.realpath(os.path.join(repo_root, "openspec", "changes"))
-    if owner == "superrepo" and inside(canonical, central):
+    if owner == "superrepo":
+        # Explicit subrepo scope intentionally leaves superrepo writes to the
+        # caller (Melón central-planning workflow); central paths remain an
+        # explicit exception for the enforcing scopes.
+        if scope == "subrepo" or inside(canonical, central):
+            print("allow")
+        else:
+            print("block:" + branch)
+    elif owner == "subrepo" and scope == "superrepo":
         print("allow")
     else:
         print("block:" + branch)

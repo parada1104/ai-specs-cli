@@ -435,6 +435,7 @@ GATE_MODE_PLACEHOLDERS = {
 }
 GATE_SCOPE_PLACEHOLDER = "__WORKTREE_GATE_SCOPE__"
 GATE_SCOPE_VALUES = ("auto", "superrepo", "subrepo")
+REPO_TOPOLOGY_VALUES = ("auto", "standalone", "monorepo-apps", "monorepo-submodules")
 # Backward-compatible alias for older call sites / tests.
 GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
 _STALE_GATE_WARNED: set[Path] = set()
@@ -477,6 +478,15 @@ def materialize_hook_script(
                 f"invalid gate_scope '{scope}'; allowed: auto | superrepo | subrepo"
             )
         content = content.replace(GATE_SCOPE_PLACEHOLDER, scope)
+    if REPO_TOPOLOGY_PLACEHOLDER in content:
+        topology = "auto"
+        if merged_cfg is not None:
+            topology = str(merged_cfg.get("repo_topology") or "auto")
+        if topology not in REPO_TOPOLOGY_VALUES:
+            raise RuntimeError(
+                f"invalid repo_topology '{topology}'; allowed: auto | standalone | monorepo-apps | monorepo-submodules"
+            )
+        content = content.replace(REPO_TOPOLOGY_PLACEHOLDER, topology)
     if TRACKER_CLI_HOME_PLACEHOLDER in content:
         home_val = str(Path(cli_home).resolve()) if cli_home is not None else ""
         content = content.replace(TRACKER_CLI_HOME_PLACEHOLDER, home_val)

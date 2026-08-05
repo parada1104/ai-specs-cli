@@ -154,25 +154,35 @@ Under a resolved `monorepo-submodules` topology, `worktree-cleanup.sh` MUST iter
 `recipes.worktree-flow.config.gate_scope` MUST be `auto`, `superrepo`, or
 `subrepo`; absent or empty values resolve to `auto`, and invalid values MUST be
 rejected during sync with the exact allowed enum. The setting is independent of
-`gate_mode` and `repo_topology`. Sync MUST stamp the validated value into the
-materialized hook. A non-empty valid `WORKTREE_GATE_SCOPE` override wins for one
-invocation; invalid overrides warn and fall back to the stamp, while missing or
-invalid stamps warn and fall back to `auto`. `gate_mode=off` MUST exit before
-scope or topology evaluation.
+`gate_mode` and `repo_topology`. Sync MUST stamp the validated scope and
+`repo_topology` into the materialized hook.
+A non-empty valid `WORKTREE_GATE_SCOPE` override wins for one invocation;
+invalid overrides warn and fall back to the stamp, while missing or invalid
+stamps warn and fall back to `auto`. `gate_mode=off` MUST exit before scope or
+topology evaluation.
 
 The hook MUST classify repository ownership only from canonical nearest-existing
-paths and proven Git facts: a real superproject `.git` and `.gitmodules`, a
+paths and proven Git facts when effective `repo_topology` is
+`monorepo-submodules`: a real superproject `.git` and `.gitmodules`, a
 component-contained registered path, initialized `git submodule status`, and a
-matching module common Git directory. Ambiguous, nested, symlink-escaping,
-uninitialized, or unresolved relationships MUST NOT grant a scope exception.
-Linked worktrees remain allowed before scope evaluation.
+matching module common Git directory. Explicit `standalone` or `monorepo-apps`
+MUST disable scope classification even if vendored initialized modules exist.
+Ambiguous, nested, symlink-escaping, uninitialized, or unresolved relationships
+MUST NOT grant a scope exception. Linked worktrees remain allowed before scope
+evaluation.
+
+`gate_scope=auto` MUST enforce both proven superrepo and subrepo protected
+primaries. `gate_scope=superrepo` MUST enforce only proven superrepo primaries;
+proven subrepo writes are outside that selected enforcement scope.
+`gate_scope=subrepo` MUST enforce only proven initialized subrepo primaries;
+proven superrepo writes are outside that selected scope for the explicit Melón
+workflow.
 
 For a proven superproject primary checkout on an exact protected branch, the
-only scope exception is a component-aware descendant of the canonical
-`<superrepo>/openspec/changes/**` subtree, including archive and nonexistent
-descendants. All other superrepo paths and all subrepo production paths remain
-protected under every scope value. The worktree gate MUST remain separate from
-`plan-build-flow` production authorization.
+canonical `<superrepo>/openspec/changes/**` descendant (including archive and
+nonexistent descendants) is the explicit central planning exception for the
+enforcing scope. Component-aware containment is mandatory. The worktree gate
+MUST remain separate from `plan-build-flow` production authorization.
 
 #### Scenario: Missing scope defaults safely
 - GIVEN a manifest without `gate_scope`
@@ -185,11 +195,12 @@ protected under every scope value. The worktree gate MUST remain separate from
 - WHEN the worktree gate evaluates the write under any valid scope
 - THEN it MUST allow the write
 
-#### Scenario: Subrepo production remains protected
-- GIVEN an initialized subrepo primary checkout on an exact protected branch
-- AND a target is outside the canonical superrepo planning subtree
-- WHEN the worktree gate evaluates the write under any valid scope
-- THEN it MUST block with exit `2`
+#### Scenario: Scope selects the enforced owner
+- GIVEN a proven superrepo and initialized subrepo primary are both on protected branches
+- WHEN a superrepo production write is evaluated under `auto`, `superrepo`, and `subrepo`
+- THEN `auto` and `superrepo` MUST block while `subrepo` MUST allow
+- AND when a subrepo production write is evaluated under the same values
+- THEN `auto` and `subrepo` MUST block while `superrepo` MUST allow
 
 #### Scenario: Ambiguous topology receives no exception
 - GIVEN submodule registration or Git directory proof is missing, ambiguous, or symlink-escaping
@@ -424,9 +435,15 @@ the command string and collect candidate write paths from at least:
   close mode variants)
 
 Each confident candidate path MUST be resolved against the event `cwd` (when
-relative) and subjected to the **same** main-worktree + protected-branch check
-used for structured path events. When a candidate resolves inside the protected
-main worktree on a protected branch, the gate MUST block with exit `2`.
+relative) and routed through the same topology-aware `gate_mode`, `gate_scope`,
+`repo_topology`, linked-worktree, canonical-boundary, and exact protected-branch
+decision used for structured path events. In effective
+`monorepo-submodules`, `auto` enforces both proven owner classes, `superrepo`
+enforces only superrepo, and `subrepo` enforces only subrepo. Explicit
+`standalone`/`monorepo-apps` MUST not grant a topology-based central bypass.
+Central shell writes are allowed only beneath proven canonical
+`<superrepo>/openspec/changes/**`; protected candidates inside the selected
+enforcement scope MUST block with exit `2`.
 
 The gate MUST fail open (exit `0`) when confidence is insufficient, including:
 missing/empty command field, unparseable or ambiguous command text that yields

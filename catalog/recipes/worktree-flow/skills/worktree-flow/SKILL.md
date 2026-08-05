@@ -9,7 +9,7 @@ description: >
 license: MIT
 metadata:
   author: ai-specs
-  version: "1.1"
+  version: "1.2"
   scope: runtime
   auto_invoke:
     - "Starting a change that will write files or modify code"
@@ -44,13 +44,15 @@ writes nothing does not need a worktree.
 
 ## Gate scope and repository ownership
 
-`gate_scope` is separate from `gate_mode` and `repo_topology`:
+`gate_scope` is separate from `gate_mode` and `repo_topology`. Classification
+requires effective `repo_topology=monorepo-submodules`; explicit
+`standalone`/`monorepo-apps` never create a topology bypass:
 
-| Value | Runtime behavior |
-|---|---|
-| `auto` | Default; prove ownership from Git facts and allow only canonical superrepo planning artifacts. |
-| `superrepo` | Same proven relationship requirement; central `openspec/changes/**` is the only superrepo exception. |
-| `subrepo` | Keep initialized subrepo primary checkouts protected; never broaden superrepo or production access. |
+| Value | Protected owner enforced | Runtime behavior |
+|---|---|---|
+| `auto` | Proven superrepo and subrepo | Default topology-derived protection; only canonical superrepo planning is excepted. |
+| `superrepo` | Proven superrepo only | Subrepo writes are outside this selected enforcement scope. |
+| `subrepo` | Proven initialized subrepo only | Superrepo writes are outside this explicit Melón scope. |
 
 Before any write-capable delegation in a cross-repository layout, identify the
 owning repository and branch, not just the current directory:

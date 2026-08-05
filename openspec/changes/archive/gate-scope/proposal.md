@@ -69,9 +69,9 @@ The accepted values are exactly:
 
 | Value | Meaning |
 |---|---|
-| `auto` | Default. Resolve the candidate's owning Git repository and classify it as the superproject or an initialized subrepository from verified topology facts. Apply the topology-aware policy for that owner. |
-| `superrepo` | Explicitly select superproject scope for the policy. A proven superproject primary checkout remains protected on exact protected branches; only the explicit central planning allowlist below receives an exception. This value never grants a subrepository bypass. |
-| `subrepo` | Explicitly select initialized-submodule scope for the policy. A proven subrepository primary checkout remains protected on exact protected branches. This value never grants a broad superproject bypass. |
+| `auto` | Default. Resolve the candidate's owning repository and classify it from verified topology facts; in effective `monorepo-submodules`, enforce both proven superrepo and subrepo protected primaries. |
+| `superrepo` | Enforce only proven superrepo primaries. The canonical central planning subtree is the explicit exception; proven subrepo writes are outside this selected enforcement scope. |
+| `subrepo` | Enforce only proven initialized-submodule primaries. Proven superrepo writes are outside this selected scope for the Melón workflow; this is the only intentional broad superrepo bypass. |
 
 `gate_scope` is deliberately separate from the existing dimensions:
 
@@ -143,13 +143,12 @@ The next spec phase should encode this matrix as executable scenarios:
 
 | Candidate and topology | `auto` | `superrepo` | `subrepo` |
 |---|---|---|---|
-| Standalone primary checkout on a protected branch | Preserve current block | Preserve current block; no superrepo proof, so no exception | Preserve current block; no subrepo proof, so no exception |
-| `monorepo-apps` primary checkout on a protected branch | Preserve current block | Preserve current block; naming-only topology does not prove a superrepo relationship | Preserve current block; no initialized-submodule proof |
-| Proven superproject primary checkout, non-planning path | Block on exact protected branch | Block on exact protected branch | Do not create an allow; retain the conservative existing block |
-| Proven superproject primary checkout, `<superrepo>/openspec/changes/**` | Allow after independent proof of the canonical superrepo artifact path | Allow after independent proof of the canonical superrepo artifact path | Allow after independent proof of the canonical superrepo artifact path; `subrepo` never broadens this exception |
-| Proven initialized subrepository primary checkout on a protected branch | Block | Block; a superrepo selection cannot bypass subrepo protection | Block |
-| Proven linked feature worktree owned by a subrepository | Allow as today | Allow as today | Allow as today |
-| Uninitialized, unrelated, ambiguous, or unresolved relationship | No scope-based bypass; retain the conservative nearest-repository decision | No scope-based bypass | No scope-based bypass |
+| Standalone or explicit `monorepo-apps` primary on protected branch | Preserve current block; no scope proof | Preserve current block; no scope proof | Preserve current block; no scope proof |
+| Proven superproject primary, non-planning path | Block | Block | Allow (superrepo outside selected subrepo scope) |
+| Proven superproject primary, `<superrepo>/openspec/changes/**` | Allow after independent proof | Allow after independent proof | Allow, but only because superrepo is outside selected scope; central boundary remains the documented exception |
+| Proven initialized subrepository primary on protected branch | Block | Allow (subrepo outside selected superrepo scope) | Block |
+| Proven linked feature worktree | Allow as today | Allow as today | Allow as today |
+| Uninitialized, unrelated, ambiguous, or unresolved relationship | No scope-based bypass | No scope-based bypass | No scope-based bypass |
 
 The central planning row is intentionally limited to the exact canonical subtree.
 If product requirements later need protected-branch writes to `.gitmodules`,

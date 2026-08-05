@@ -8,15 +8,24 @@
 
 Add `[recipes.worktree-flow.config].gate_scope` with enum `auto | superrepo | subrepo`, default `auto`. Keep it orthogonal to `gate_mode` and `repo_topology`.
 
-- `auto`: preserve current behavior for standalone/ambiguous repositories; in a proven submodule topology apply the superrepo central-artifact exception while continuing to gate subrepo production paths.
-- `superrepo`: classify only the proven superproject repository; allow only its canonical `openspec/changes/**` planning subtree in addition to existing allowances. Do not make arbitrary superrepo production paths writable.
-- `subrepo`: apply protection to proven initialized subrepo repositories; no superrepo bypass is granted by this mode.
+- `auto`: preserve topology-derived behavior; in a proven `monorepo-submodules`
+  relationship gate both superrepo and subrepo protected primaries, with only
+  the canonical superrepo planning exception.
+- `superrepo`: enforce only proven superrepo protected primaries; proven subrepo
+  writes are outside this selected enforcement scope.
+- `subrepo`: enforce only proven initialized subrepo primaries; proven superrepo
+  writes are outside this selected enforcement scope for the Melón workflow.
+  Central planning remains explicitly documented, not a general inferred path.
 
 `gate_mode=off` resolves before scope and allows all events, preserving existing precedence. Environment `WORKTREE_GATE_SCOPE` overrides the stamped value only for the invocation; invalid overrides warn and fall back to the stamp, then `auto`.
 
 ## Materialization
 
-Extend `catalog/recipes/worktree-flow/hooks/worktree-gate.sh` with `__WORKTREE_GATE_SCOPE__` and a validated resolver. Extend `recipe-materialize.py` placeholder replacement using the merged validated config. The generated hook remains self-contained: it must not read the consumer manifest or import Python at runtime.
+Extend `catalog/recipes/worktree-flow/hooks/worktree-gate.sh` with
+`__WORKTREE_GATE_SCOPE__` and `__WORKTREE_REPO_TOPOLOGY__` plus validated
+resolvers. Extend `recipe-materialize.py` placeholder replacement using the
+merged validated config. The generated hook remains self-contained: it must
+not read the consumer manifest or import Python project internals at runtime.
 
 Bump the worktree recipe version and update schema/docs/specs. Existing `condition = "not_exists"` hook copies are not silently overwritten; doctor/sync must emit a migration warning with the exact remove-and-sync command when the old generated hook lacks the new stamp.
 
@@ -38,10 +47,18 @@ Classify the containing repository root as `superrepo` only when the superprojec
 2. Parse event and candidate paths; malformed/unrelated events fail open as today.
 3. Resolve nearest existing path and Git facts; non-Git/ambiguous lookup fails open as today.
 4. Allow existing generated-runtime configuration paths and linked worktrees.
-5. Resolve stamped/environment `gate_scope`.
-6. For `auto`/`superrepo`, allow only canonical `<superrepo>/openspec/changes/**` when the owning repository is the proven superrepo. Component-aware containment and symlink resolution are mandatory.
-7. For protected primary repositories, apply exact `WORKTREE_GATE_PROTECTED` branch matching. Subrepo production paths remain blocked under `auto` and `subrepo`; arbitrary superrepo paths remain blocked under `auto` and `superrepo`.
-8. Preserve existing `ask` remediation and shell/path parity.
+5. Resolve stamped/environment `gate_scope` and stamped `repo_topology`.
+6. Require effective `repo_topology=monorepo-submodules` before topology scope
+   classification; explicit `standalone`/`monorepo-apps` disables any central
+   scope proof even when vendored initialized modules exist.
+7. For `auto` and `superrepo`, allow only canonical
+   `<superrepo>/openspec/changes/**` when the owning repository is the proven
+   superrepo. For `subrepo`, superrepo enforcement is outside the selected
+   scope; component-aware containment and symlink resolution remain mandatory.
+8. For protected primary repositories inside the selected scope, apply exact
+   `WORKTREE_GATE_PROTECTED` matching. `auto` gates both proven owner classes;
+   `superrepo` gates only superrepo; `subrepo` gates only subrepo.
+9. Preserve existing `ask` remediation and shell/path parity.
 
 The worktree gate does not replace `plan-build-gate`: plan authorization and active-plan checks remain owned by plan-build-flow. `gate_scope` only controls worktree protection and the narrow central planning exception.
 

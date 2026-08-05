@@ -82,6 +82,10 @@ one-PR authorization. No commit, push, PR, merge, tag, or release was performed.
   superrepo production block, and subrepo production block across all three scope
   stamps, plus uninitialized module, symlink escape, ambiguous duplicate, and
   nested-registration fail-safe assertions.
+- Scope now has enforcement semantics: `auto` gates proven superrepo and subrepo,
+  `superrepo` gates only proven superrepo, and `subrepo` gates only proven
+  subrepo (explicit Melón workflow behavior). The hook stamps and validates
+  `repo_topology`; explicit `standalone`/`monorepo-apps` disables topology proof.
 - Added Git 2.20-compatible `--git-common-dir` fallback anchoring relative
   output to the owning repository root rather than the hook process cwd.
 - Promoted the accepted scope contract into the canonical worktree-flow spec and
@@ -92,8 +96,8 @@ one-PR authorization. No commit, push, PR, merge, tag, or release was performed.
 | Cycle | Evidence |
 |---|---|
 | RED | New recipe tests initially failed for missing config default, missing stamp, and invalid enum; new gate test initially failed on missing scope stamp behavior. |
-| GREEN | Added recipe schema/materializer and hook resolver; focused recipe suite passed 16 tests and gate suite passed 51 tests. |
-| TRIANGULATE | Real temporary superproject with local initialized submodule exercised all-scope central allow, superrepo/subrepo production blocks, uninitialized/ambiguous/nested/symlink fail-safe behavior, and a forced relative Git-common-dir fallback from an unrelated event cwd; structured and shell regression matrix passed. |
+| GREEN | Added recipe schema/materializer and hook resolver; focused recipe suite passed 16 tests and gate suite passed 55 tests. |
+| TRIANGULATE | Real temporary superproject with local initialized submodule exercised all-scope central/production matrix, explicit owner-scope enforcement, vendored topology disablement, uninitialized/ambiguous/nested/symlink fail-safe behavior, valid/invalid overrides, shell parity, and relative Git-common-dir fallback; structured and shell regression matrix passed. |
 | REFACTOR | Shared resolver retained one final decision path; scope enum constants and stale warning deduplication were centralized. |
 
 ## Verification evidence
@@ -102,15 +106,16 @@ Commands run:
 
 - `bash -n catalog/recipes/worktree-flow/hooks/worktree-gate.sh` — passed.
 - `python3 tests/test_worktree_flow_recipe.py` — **16 passed**.
-- `python3 tests/test_worktree_gate_hook.py` — **51 passed** (including explicit
-  all-scope central/production matrix, uninitialized, symlink escape, ambiguous,
-  nested topology, and relative Git-common-dir fallback cases).
+- `python3 tests/test_worktree_gate_hook.py` — **55 passed** (including explicit
+  scope enforcement matrix, repo-topology stamp/classification, uninitialized,
+  symlink escape, ambiguous/nested topology, shell parity, valid/invalid scope
+  overrides, and relative Git-common-dir fallback cases).
 - `bash tests/validate.sh` — py_compile and bash syntax checks passed; full
-  unittest run executed 1306 tests and had one failure in the pre-existing
+  unittest run executed 1306 tests and had one baseline failure in
   `test_trello_mcp_workflow_recipe.TrelloMcpWorkflowRecipeTests.test_tracking_declaration_matches_recipe_config`
-  assertion (`warn` vs `always`) unrelated to gate-scope files. Parent aligned
-  the dogfood manifest gate mode to `warn` for a validation rerun; no gate-scope
-  production change is needed for that baseline consistency issue.
+  because the dogfood manifest remains `gate_mode=always` while
+  `openspec/config.yaml` declares tracking `gate_mode=warn`. This unrelated
+  consistency mismatch is intentionally not changed by gate-scope.
 
 Unavailable quality signals per `openspec/config.yaml`: coverage, linter,
 type-checker, and formatter are not configured. Formatters/linters were not run,
