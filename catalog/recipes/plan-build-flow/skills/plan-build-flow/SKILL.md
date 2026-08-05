@@ -168,7 +168,22 @@ merged base branch as the archive boundary.
 - Plan artifacts may be written before a worktree exists when small.
 - Build **must** use a dedicated worktree when `worktree-flow` is enabled.
 
-## 10. Archive-tail graceful no-op
+## 10. Cross-repository planning boundaries
+
+- For a recognized initialized submodule linked worktree in the supported shared
+  layout, derive the planning root from repository **topology** and use the
+  containing **superproject** as the central source of truth.
+- The canonical `openspec/changes/<slug>/` tree belongs to that superproject.
+  Central active-plan lookup and planning-artifact writes are allowed only under
+  `openspec/changes/**`, including its archive subtree; this is not a bypass for
+  superproject production paths.
+- **Standalone** repositories and non-submodule worktrees retain nearest-root
+  behavior. If the relationship cannot be established, resolution is **fail-safe**
+  and falls back to that nearest repository rather than guessing a parent.
+- Keep one canonical plan: no duplication, synchronization, or orchestration
+  across subrepositories, and no worktree, branch, or pull-request side effects.
+
+## 11. Archive-tail graceful no-op
 
 Archive-tail runs at step 4 of Section 7.3 (before merge):
 

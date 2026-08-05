@@ -144,11 +144,11 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertEqual(raw.count("[config.artifact_store_default]"), 1)
         self.assertIn('enum = ["openspec", "engram", "both"]', raw)
 
-    def test_recipe_brief_rule_is_last_string_fragment_with_store_placeholder(self):
+    def test_recipe_brief_rules_preserve_store_and_add_topology_guidance(self):
         recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
         rules = recipe.brief_fragments.workflow_rules
-        self.assertEqual(len(rules), 6)
-        self.assertEqual([fragment.key for fragment in rules], [None] * 6)
+        self.assertEqual(len(rules), 7)
+        self.assertEqual([fragment.key for fragment in rules], [None] * 7)
         self.assertEqual(
             [fragment.text for fragment in rules[:5]],
             [
@@ -159,8 +159,10 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
                 "Archive the change folder on the review branch before merge; never defer archive until after merge.",
             ],
         )
-        self.assertIn("{config.artifact_store_default}", rules[-1].text)
-        self.assertEqual(rules[-1].text.count("{config.artifact_store_default}"), 1)
+        self.assertIn("{config.artifact_store_default}", rules[5].text)
+        self.assertEqual(rules[5].text.count("{config.artifact_store_default}"), 1)
+        self.assertIn("topology", rules[6].text.lower())
+        self.assertIn("superproject", rules[6].text.lower())
 
     def test_skill_has_ambient_auto_invoke(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
@@ -246,7 +248,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
                 self.mod.execute_hooks(recipe, {"artifact_store_default": value}, Path(tmp.name))
 
     def test_version_and_catalog_documentation_use_current_contract(self):
-        self.assertEqual(_recipe_version(), "1.3.0")
+        self.assertEqual(_recipe_version(), "1.4.0")
         readme = (CATALOG / RECIPE_ID / "README.md").read_text()
         catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
         for text in (readme, catalog):
@@ -254,7 +256,56 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             self.assertIn("openspec", text)
             self.assertIn("engram", text)
             self.assertIn("both", text)
-            self.assertIn("1.3.0", text)
+            self.assertIn("1.4.0", text)
+
+    def test_cross_repo_artifact_scope_recipe_contract(self):
+        recipe_dir = CATALOG / RECIPE_ID
+        readme = (recipe_dir / "README.md").read_text().lower()
+        skill = (recipe_dir / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
+        catalog = (ROOT / "docs" / "recipes-catalog.md").read_text().lower()
+        surface = "\n".join((readme, skill, catalog))
+
+        for text in (readme, skill, catalog):
+            self.assertIn("topology", text)
+            self.assertIn("central", text)
+            self.assertIn("superproject", text)
+        for text in (skill, catalog):
+            self.assertIn("openspec/changes", text)
+        self.assertIn("standalone", surface)
+        self.assertIn("fail-safe", surface)
+        self.assertIn("no duplication", surface)
+        self.assertIn("no orchestration", surface)
+        for forbidden in ("[sdd]", "decision matrix", "artifact_root", "per-subrepository"):
+            self.assertNotIn(forbidden, surface)
+
+        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+        self.assertEqual(
+            [(h.id, h.event, h.matcher, h.blocking) for h in recipe.runtime_hooks],
+            [("plan-build-gate", "pre-tool-use", "Edit|Write|MultiEdit|NotebookEdit", True)],
+        )
+        self.assertEqual(
+            [(h.event, h.action) for h in recipe.hooks],
+            [("on-sync", "validate-config")],
+        )
+
+    def test_materialization_preserves_cross_repo_guidance(self):
+        root = self._make_project()
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        generated_readme = (
+            root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
+        ).read_text().lower()
+        generated_skill = (
+            recipe_root(root, RECIPE_ID) / "skills" / RECIPE_ID / "SKILL.md"
+        ).read_text().lower()
+        for text in (generated_readme, generated_skill):
+            self.assertIn("topology", text)
+            self.assertIn("central", text)
+            self.assertIn("superproject", text)
+            self.assertIn("standalone", text)
+            self.assertIn("fail-safe", text)
+        self.assertIn("openspec/changes", generated_skill)
+        self.assertIn("no duplication", generated_skill)
+        self.assertIn("orchestration", generated_skill)
 
     def test_implementation_brief_references_worktree_flow(self):
         recipe_dir = CATALOG / RECIPE_ID

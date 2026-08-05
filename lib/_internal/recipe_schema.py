@@ -71,6 +71,7 @@ class TemplateRef:
     source: str
     target: str
     condition: str = "not_exists"
+    update_policy: str = "auto"
 
 
 @dataclass
@@ -280,13 +281,21 @@ def _parse_templates(raw: Any, context: str) -> list[TemplateRef]:
     if not isinstance(raw, list):
         return []
     out: list[TemplateRef] = []
+    allowed_policies = {"auto", "confirm", "never-force"}
     for idx, item in enumerate(raw):
         if not isinstance(item, dict):
             raise RecipeValidationError(f"{context}.templates[{idx}]: expected object, got {type(item).__name__}")
-        source = _require_string(item, "source", f"{context}.templates[{idx}]")
-        target = _require_string(item, "target", f"{context}.templates[{idx}]")
+        item_context = f"{context}.templates[{idx}]"
+        source = _require_string(item, "source", item_context)
+        target = _require_string(item, "target", item_context)
         condition = str(item.get("condition", "not_exists"))
-        out.append(TemplateRef(source=source, target=target, condition=condition))
+        policy = item.get("update_policy", "auto")
+        if not isinstance(policy, str) or policy not in allowed_policies:
+            raise RecipeValidationError(
+                f"{item_context}.update_policy: invalid value {policy!r}; "
+                "expected auto | confirm | never-force"
+            )
+        out.append(TemplateRef(source=source, target=target, condition=condition, update_policy=policy))
     return out
 
 

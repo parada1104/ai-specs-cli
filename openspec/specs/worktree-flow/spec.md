@@ -286,26 +286,44 @@ Under a resolved `monorepo-submodules` topology, `/worktree-new` MUST require or
 
 ### Requirement: Stale Cleanup Override Detection
 
-When a `[[provides.templates]]` entry with `condition = "not_exists"` already has a materialized target, sync (and optionally doctor) MUST compare catalog source bytes to the materialized file. If they differ, the system MUST emit a non-blocking WARN with refresh instructions and MUST NOT overwrite the override. An unmodified override MUST produce no stale warning. A missing target remains the normal fresh-copy path under `not_exists` and is not a warning case.
+When a `[[provides.templates]]` entry with `condition = "not_exists"` already
+has a materialized target, sync and doctor MUST classify it using
+override-ownership rules (lock-backed last-managed hash versus current
+would-write catalog bytes), not catalog-only comparison.
 
-#### Scenario: Unmodified override produces no warning
-- GIVEN a materialized `worktree-cleanup.sh` override whose bytes match the current catalog template
-- WHEN `ai-specs sync` runs
-- THEN it MUST NOT emit a stale-override WARN for that file
-- AND it MUST leave the override untouched
+- Managed current: no warning and no rewrite.
+- Managed stale with effective policy `auto`: overwrite with current catalog
+  content and update the managed lock record, without a user-modified warning.
+- User-modified or untracked diverged: warn with refresh instructions and never
+  overwrite.
+- Missing target: normal fresh-copy path and not a warning case.
 
-#### Scenario: Diverged override warns and sync succeeds
-- GIVEN a materialized `worktree-cleanup.sh` override whose content differs from the current catalog template
+#### Scenario: Managed stale override refreshes under auto policy
+- GIVEN a cleanup override whose bytes still match its managed lock hash
+- AND the current catalog would-write bytes differ
+- AND effective policy is `auto`
 - WHEN `ai-specs sync` runs
-- THEN it MUST emit a non-blocking WARN naming the override path
-- AND the WARN MUST include refresh instructions (`rm <target> && ai-specs sync` or equivalent)
+- THEN it MUST overwrite the override and update its managed lock hash
+- AND sync MUST exit successfully
+
+#### Scenario: User-modified override warns and sync succeeds
+- GIVEN a cleanup override whose content differs from its managed lock hash
+- WHEN `ai-specs sync` runs
+- THEN it MUST warn with the path and indicate user modification
+- AND the warning MUST include `rm <target> && ai-specs sync` guidance
 - AND sync MUST exit successfully without overwriting the override
+
+#### Scenario: Missing metadata migrates conservatively
+- GIVEN an existing cleanup override has no managed lock entry
+- WHEN its bytes match the current would-write catalog bytes
+- THEN sync MUST seed the managed entry without rewriting or warning
+- BUT when bytes differ, sync MUST preserve and warn without seeding ownership
 
 #### Scenario: Missing override gets a fresh copy
 - GIVEN no materialized cleanup override exists at the `not_exists` target
 - WHEN `ai-specs sync` runs
-- THEN it MUST copy the catalog template to the target as the normal `not_exists` path
-- AND it MUST NOT emit a stale-override WARN for that missing file
+- THEN it MUST copy/render the catalog template and record a managed lock entry
+- AND it MUST NOT emit a stale-override warning
 
 ### Requirement: Topology Surfacing
 
