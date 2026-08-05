@@ -118,6 +118,7 @@ def refresh(project: Path, cli_source: Path) -> int:
         project / "ai-specs", cli_source, lock.get("skills") or {}
     )
     pc.remove_bundled_command_leftovers(project / "ai-specs", cli_source)
+    pc.remove_recipe_command_leftovers(project, cli_source)
 
     write_lock(lock_path, lock)
 

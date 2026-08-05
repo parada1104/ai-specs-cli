@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import os
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from _fixture_catalog import allow_internal_test_recipes_env, populate_catalog  # noqa: E402
 
 CLI = ROOT / "bin" / "ai-specs"
+REFRESH_BUNDLED_PATH = ROOT / "lib" / "_internal" / "refresh-bundled.py"
 RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 VENDOR_SKILLS_PATH = ROOT / "lib" / "_internal" / "vendor-skills.py"
 SKILL_RESOLUTION_PATH = ROOT / "lib" / "_internal" / "skill-resolution.py"
@@ -545,6 +547,128 @@ class BundledCommandLeftoverCleanupTests(unittest.TestCase):
         only_local.write_text("# no bundled counterpart\n")
         _pc().remove_bundled_command_leftovers(root / "ai-specs", ROOT)
         self.assertTrue(only_local.exists())
+
+
+class RecipeCommandLeftoverCleanupTests(unittest.TestCase):
+    """Recipe-managed command copies migrate out of ai-specs/commands safely."""
+
+    def _project(self) -> tuple[Path, Path, Path]:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "project"
+        (root / "ai-specs" / "commands").mkdir(parents=True)
+        home = Path(tmp.name) / "home"
+        home.mkdir()
+        managed = _pc().commands_dir(root, cli_home=home)
+        managed.mkdir(parents=True)
+        return root, home, managed
+
+    def test_removes_untouched_recipe_copy_and_merge_stays_silent(self):
+        root, home, managed = self._project()
+        content = "# recipe command\n"
+        (managed / "pr-create.md").write_text(content)
+        local = root / "ai-specs" / "commands" / "pr-create.md"
+        local.write_text(content)
+
+        _pc().remove_recipe_command_leftovers(root, cli_home=home)
+        self.assertFalse(local.exists())
+
+        dest = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(dest, ignore_errors=True))
+        captured = io.StringIO()
+        old = sys.stderr
+        sys.stderr = captured
+        try:
+            self.assertEqual(_pc().merge_commands(root, dest, cli_home=home), 1)
+        finally:
+            sys.stderr = old
+        self.assertEqual(captured.getvalue(), "")
+
+    def test_preserves_customized_recipe_copy_with_local_warning(self):
+        root, home, managed = self._project()
+        (managed / "pr-create.md").write_text("# recipe command\n")
+        local = root / "ai-specs" / "commands" / "pr-create.md"
+        local.write_text("# customized locally\n")
+
+        captured = io.StringIO()
+        old = sys.stderr
+        sys.stderr = captured
+        try:
+            _pc().remove_recipe_command_leftovers(root, cli_home=home)
+        finally:
+            sys.stderr = old
+
+        self.assertTrue(local.exists())
+        self.assertIn("local/customized", captured.getvalue())
+
+    def test_refresh_migrates_cached_recipe_copy(self):
+        root = Path(tempfile.mkdtemp()) / "project"
+        self.addCleanup(lambda: shutil.rmtree(root.parent, ignore_errors=True))
+        (root / "ai-specs" / "commands").mkdir(parents=True)
+        (root / "ai-specs" / "ai-specs.toml").write_text(
+            '[project]\nname = "refresh-recipe-leftover"\n'
+        )
+        managed = _pc().commands_dir(root, cli_home=ROOT)
+        managed.mkdir(parents=True)
+        content = "# recipe-managed command\n"
+        (managed / "pr-create.md").write_text(content)
+        local = root / "ai-specs" / "commands" / "pr-create.md"
+        local.write_text(content)
+
+        result = subprocess.run(
+            [sys.executable, str(REFRESH_BUNDLED_PATH), str(root), str(ROOT)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertFalse(local.exists())
+        self.assertNotIn("local hand-authored wins", result.stdout + result.stderr)
+
+    def test_sync_migrates_first_recipe_copy_before_cache_exists(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "project"
+        root.mkdir()
+        init = subprocess.run(
+            [str(CLI), "init", str(root)], check=False, capture_output=True, text=True
+        )
+        self.assertEqual(init.returncode, 0, init.stderr or init.stdout)
+        (root / "ai-specs" / "ai-specs.toml").write_text(
+            '[project]\nname = "sync-recipe-leftover"\n\n'
+            '[agents]\nenabled = ["cursor"]\n\n'
+            '[recipes.tdd-flow]\nenabled = true\n\n'
+            '[recipes.tdd-flow.config]\ntest_command = "python3 -m unittest"\n'
+        )
+        local = root / "ai-specs" / "commands" / "tdd.md"
+        content = (ROOT / "catalog" / "recipes" / "tdd-flow" / "commands" / "tdd.md").read_text()
+        local.write_text(content)
+        managed = _pc().commands_dir(root, cli_home=ROOT)
+        self.assertFalse((managed / "tdd.md").exists())
+
+        result = subprocess.run(
+            [str(CLI), "sync", str(root)], check=False, capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertFalse(local.exists())
+        self.assertNotIn("local hand-authored wins", result.stdout + result.stderr)
+        self.assertEqual((managed / "tdd.md").read_text(), content)
+
+    def test_removes_untouched_recipe_copy_via_legacy_lock_hash(self):
+        import hashlib
+
+        root, home, managed = self._project()
+        local = root / "ai-specs" / "commands" / "pr-create.md"
+        content = "# older recipe command\n"
+        local.write_text(content)
+        managed.rmdir()
+        digest = hashlib.sha256(content.encode()).hexdigest()
+        (root / "ai-specs" / ".ai-specs.lock").write_text(
+            f'[commands]\n"pr-create.md" = "{digest}"\n'
+        )
+
+        _pc().remove_recipe_command_leftovers(root, cli_home=home)
+        self.assertFalse(local.exists())
 
 
 class TrackedBundledCommandLeftoverTests(unittest.TestCase):
