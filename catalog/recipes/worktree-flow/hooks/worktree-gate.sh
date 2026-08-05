@@ -17,7 +17,9 @@
 #   exit 0 → allow.   exit 2 → block (stderr is surfaced to the agent).
 # Fail-open: any parse/lookup error or ambiguous heuristic allows the action
 # (a buggy guard must never wedge all editing). Override protected branches via
-# WORKTREE_GATE_SCOPE is stamped by sync and may be overridden per invocation.
+# WORKTREE_GATE_PROTECTED. gate_mode off disables both path and shell gating.
+# gate_scope is stamped by sync and may be overridden per invocation.
+
 stamped_gate_mode="__WORKTREE_GATE_MODE__"
 stamped_gate_scope="__WORKTREE_GATE_SCOPE__"
 stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"
