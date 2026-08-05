@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-08-05
+
+### Added
+- **Cross-repo worktree artifact scope**: derives central planning artifacts from recognized repository topology while keeping production writes narrowly scoped to the change subtree.
+- **Override ownership and lock governance**: records managed provenance, classifies stale versus user-modified overrides, and applies `auto`, `confirm`, and `never-force` update policies with safe migration.
+
 ### Changed
 - **plan-build-flow 1.4.0**: derives the central planning root from recognized repository topology for submodule worktrees, while preserving standalone nearest-root behavior and narrowly scoped artifact writes.
 
