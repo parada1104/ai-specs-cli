@@ -776,7 +776,7 @@ class Doctor:
         ))
 
     def _check_stale_template_overrides(self) -> None:
-        """WARN when enabled-recipe not_exists template overrides diverge from catalog."""
+        """Diagnose governed templates using lock-backed ownership state."""
         util = self._load_util()
         if util is None:
             return
@@ -791,8 +791,21 @@ class Doctor:
             data = tomllib.loads(manifest.read_text(encoding="utf-8"))
         except Exception:
             return
+
+        lock_path = self.root / "ai-specs" / ".ai-specs.lock"
+        lock_mod_path = Path(__file__).with_name("lock.py")
+        lock_spec = importlib.util.spec_from_file_location("lock_doctor", lock_mod_path)
+        if lock_spec is None or lock_spec.loader is None:
+            return
+        lock_mod = importlib.util.module_from_spec(lock_spec)
+        sys.modules[lock_spec.name] = lock_mod
+        try:
+            lock_spec.loader.exec_module(lock_mod)
+            managed = lock_mod.load_lock(lock_path).get("managed", {})
+        except Exception:
+            managed = {}
+
         recipes = data.get("recipes") or {}
-        # Load recipe schema once
         schema_path = Path(__file__).with_name("recipe_schema.py")
         spec = importlib.util.spec_from_file_location("recipe_schema_doctor", schema_path)
         if spec is None or spec.loader is None:
@@ -815,18 +828,39 @@ class Doctor:
                 recipe = schema.load_recipe_toml(recipe_toml)
             except Exception:
                 continue
+            merged_cfg = val.get("config") if isinstance(val.get("config"), dict) else {}
             for tpl in getattr(recipe, "templates", []) or []:
                 if getattr(tpl, "condition", None) != "not_exists":
                     continue
                 src = recipe_dir / tpl.source
                 dest = self.root / tpl.target
-                if util.override_is_stale(src, dest):
-                    self.checks.append(Check(
-                        Severity.WARN,
-                        "stale-override",
-                        f"{tpl.target} differs from catalog (condition=not_exists)",
-                        guidance=f"rm {tpl.target} && ai-specs sync",
-                    ))
+                if not dest.is_file() or not src.is_file():
+                    continue
+                target = Path(tpl.target).as_posix()
+                state = util.classify_managed_override(
+                    dest,
+                    managed.get(target),
+                    would_write=util.render_override_bytes(src, merged_cfg),
+                )
+                policy = getattr(tpl, "update_policy", "auto") or "auto"
+                if state == "user_modified":
+                    message = f"{tpl.target} is user-modified; sync will preserve it"
+                elif state == "untracked":
+                    if util.sha256_bytes(dest.read_bytes()) == util.sha256_bytes(
+                        util.render_override_bytes(src, merged_cfg)
+                    ):
+                        continue
+                    message = f"{tpl.target} has missing ownership metadata; sync will preserve it"
+                elif state == "managed_stale" and policy != "auto":
+                    message = f"{tpl.target} is managed-stale and policy is {policy}; sync will preserve it"
+                else:
+                    continue
+                self.checks.append(Check(
+                    Severity.WARN,
+                    "stale-override",
+                    message,
+                    guidance=f"rm {tpl.target} && ai-specs sync",
+                ))
 
     def _check_enabled_agents(self) -> None:
         data = self._load_manifest()

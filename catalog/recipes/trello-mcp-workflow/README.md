@@ -20,6 +20,28 @@ This installs:
 `ai-specs recipe init trello-mcp-workflow` prints a read-only setup brief so the
 project can confirm `board_id`, list mappings, and MCP readiness before sync.
 
+## Template override ownership
+
+The card templates are governed `condition = "not_exists"` overrides. Sync records
+the last CLI-written bytes in `[managed.*]` in `ai-specs/.ai-specs.lock`:
+
+| State / policy | Behavior |
+|---|---|
+| Managed current | No rewrite and no warning. |
+| Managed stale + `auto` (default) | Refresh from the current catalog and update the lock. |
+| Managed stale + `confirm` or `never-force` | Preserve and warn; refresh explicitly when ready. |
+| User-modified or untracked custom | Preserve and warn; never force-overwrite. |
+
+To intentionally replace a customized template, delete that target and sync:
+
+```bash
+rm ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-feature.md
+ai-specs sync
+```
+
+Runtime hook scripts are not user overrides: they are always rewritten by the
+CLI during sync. The ownership policy applies to recipe templates only.
+
 ## Configuration
 
 Add configuration under `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`:

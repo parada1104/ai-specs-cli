@@ -407,3 +407,59 @@ def override_is_stale(catalog_src: Path, materialized_dest: Path) -> bool:
         sha256(catalog_src.read_bytes()).digest()
         != sha256(materialized_dest.read_bytes()).digest()
     )
+
+
+OVERRIDE_POLICIES = ("auto", "confirm", "never-force")
+REPO_TOPOLOGY_PLACEHOLDER = "__WORKTREE_REPO_TOPOLOGY__"
+
+
+def normalized_bytes(data: bytes) -> bytes:
+    return data.replace(b"\r\n", b"\n")
+
+
+def sha256_bytes(data: bytes) -> str:
+    return sha256(normalized_bytes(data)).hexdigest()
+
+
+def render_override_bytes(catalog_src: Path, merged_cfg: dict | None = None) -> bytes:
+    """Return the bytes the CLI would write for a template target."""
+    data = catalog_src.read_bytes()
+    token = REPO_TOPOLOGY_PLACEHOLDER.encode()
+    if token not in data:
+        return data
+    topology = "auto"
+    if merged_cfg is not None:
+        topology = str(merged_cfg.get("repo_topology", "auto"))
+    return data.replace(token, topology.encode())
+
+
+def classify_managed_override(
+    materialized_dest: Path,
+    managed_entry: dict | None = None,
+    catalog_src: Path | bytes | None = None,
+    would_write: bytes | str | None = None,
+) -> str:
+    """Classify a governed target from disk, lock metadata, and would-write bytes.
+
+    ``catalog_src`` accepts a source path for convenience; callers with rendered
+    placeholder content should pass ``would_write`` so comparison uses the exact
+    post-render bytes that sync would write.
+    """
+    if not materialized_dest.is_file():
+        return "missing"
+    disk_sha = sha256_bytes(materialized_dest.read_bytes())
+    if not isinstance(managed_entry, dict) or not managed_entry.get("sha256"):
+        return "untracked"
+    if disk_sha != str(managed_entry["sha256"]):
+        return "user_modified"
+
+    if would_write is None and isinstance(catalog_src, (bytes, str)):
+        would_write = catalog_src
+        catalog_src = None
+    if would_write is None and isinstance(catalog_src, Path) and catalog_src.is_file():
+        would_write = render_override_bytes(catalog_src)
+    if would_write is None:
+        return "managed_current"
+    if isinstance(would_write, str):
+        would_write = would_write.encode()
+    return "managed_current" if disk_sha == sha256_bytes(would_write) else "managed_stale"

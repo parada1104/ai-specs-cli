@@ -83,18 +83,29 @@ is `<subrepo>-<slug>`.
 
 ## Stale cleanup override
 
-The cleanup script uses `condition = "not_exists"`, so sync will not overwrite a
-hand-edited override. If your
-`ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` drifts from
-the catalog template, `ai-specs sync` (and doctor) emit a non-blocking WARN.
-Refresh with:
+The cleanup script uses `condition = "not_exists"` and is a governed template.
+Sync records the bytes it last wrote in `[managed.*]` in
+`ai-specs/.ai-specs.lock`, then classifies the target on later runs:
+
+| State / policy | Sync behavior |
+|---|---|
+| Managed current | Leave unchanged and stay quiet. |
+| Managed stale + `auto` (default) | Refresh from the catalog and update the lock. |
+| Managed stale + `confirm` or `never-force` | Preserve, warn, and defer to explicit refresh. |
+| User-modified or untracked custom | Preserve, warn, and never force an overwrite. |
+
+To explicitly discard local content and seed a fresh managed copy:
 
 ```bash
 rm ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh
 ai-specs sync
 ```
 
-Then re-apply any local customizations.
+Runtime hook scripts are outside the override surface and are always rewritten
+by the CLI during sync. The policy applies to governed template overrides only.
+
+After a user-modified warning, re-apply any local customizations to the refreshed
+template as needed.
 
 ## Cleanup contract
 

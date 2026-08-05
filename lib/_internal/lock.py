@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Shared lock file read/write helper for ai-specs.
-
-The lock lives at <project>/ai-specs/.ai-specs.lock and tracks SHA-256 hashes
-of managed files so the CLI can detect user customizations.
-"""
+"""Shared lock file read/write helper for ai-specs."""
 
 from __future__ import annotations
 
@@ -14,15 +10,30 @@ from pathlib import Path
 LOCK_HEADER = """\
 # Managed by ai-specs. Do not edit by hand.
 # Provenance stamp: [meta] records the CLI version and timestamp of the last
-# sync. It is the CLI-provenance signal that travels with a fresh clone (the
-# machine-local cache meta.toml does not). git covers integrity/diff of the
-# committed project surface; skill/recipe/dep content hashes are not tracked.
+# sync. [managed.*] records integrity only for CLI-owned override targets;
+# it is not a general content-integrity manifest. git covers the committed
+# project surface; skill/recipe/dep content hashes are not tracked.
 """
 
 
+def sha256_bytes(data: bytes) -> str:
+    """Hash normalized file bytes so CRLF/LF line endings are equivalent."""
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
 def sha256_of(path: Path) -> str:
-    data = path.read_bytes().replace(b"\r\n", b"\n")
-    return hashlib.sha256(data).hexdigest()
+    return sha256_bytes(path.read_bytes())
+
+
+def _load_skill_groups(section: dict | None) -> dict:
+    """Normalize recipes/deps to their legacy in-memory shape."""
+    result: dict = {}
+    for owner_id, owner in (section or {}).items():
+        skills = (owner or {}).get("skills") or {}
+        result[owner_id] = {
+            skill_name: dict(files) for skill_name, files in skills.items()
+        }
+    return result
 
 
 def load_lock(lock_path: Path) -> dict:
@@ -33,6 +44,7 @@ def load_lock(lock_path: Path) -> dict:
             "recipes": {},
             "deps": {},
             "agents": {},
+            "managed": {},
         }
     with lock_path.open("rb") as f:
         data = tomllib.load(f)
@@ -44,29 +56,29 @@ def load_lock(lock_path: Path) -> dict:
             if isinstance(value, str) and value.strip():
                 meta[key] = value.strip()
 
+    managed: dict[str, dict] = {}
+    raw_managed = data.get("managed") or {}
+    if isinstance(raw_managed, dict):
+        for path, entry in raw_managed.items():
+            if not isinstance(path, str) or not isinstance(entry, dict):
+                continue
+            normalized = dict(entry)
+            if isinstance(normalized.get("sha256"), str) and normalized["sha256"].strip():
+                normalized["sha256"] = normalized["sha256"].strip()
+                managed[path] = normalized
+
     return {
         "skills": {k: dict(v) for k, v in (data.get("skills") or {}).items()},
         "meta": meta,
-        # On disk recipe/dep skills live under a `.skills.` sub-table
-        # (`[recipes."<id>".skills."<skill>"]`). Unwrap that level so the
-        # in-memory shape is recipes[<id>][<skill>] = {rel: sha}, matching
-        # write_lock and set_recipe_skill_hashes. Reading it one level too
-        # shallow leaves a stray "skills" key that corrupts the next write.
         "recipes": _load_skill_groups(data.get("recipes")),
         "deps": _load_skill_groups(data.get("deps")),
         "agents": {k: dict(v) for k, v in (data.get("agents") or {}).items()},
+        "managed": managed,
     }
 
 
-def _load_skill_groups(section: dict | None) -> dict:
-    """Normalize a recipes/deps section to {<id>: {<skill>: {rel: sha}}}."""
-    result: dict = {}
-    for owner_id, owner in (section or {}).items():
-        skills = (owner or {}).get("skills") or {}
-        result[owner_id] = {
-            skill_name: dict(files) for skill_name, files in skills.items()
-        }
-    return result
+def _toml_string(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def write_lock(lock_path: Path, lock: dict) -> None:
@@ -76,30 +88,55 @@ def write_lock(lock_path: Path, lock: dict) -> None:
     if meta:
         out.append("[meta]")
         if meta.get("cli_version"):
-            out.append(f'cli_version = "{meta["cli_version"]}"')
+            out.append(f"cli_version = {_toml_string(str(meta['cli_version']))}")
         if meta.get("synced_at"):
-            out.append(f'synced_at = "{meta["synced_at"]}"')
+            out.append(f"synced_at = {_toml_string(str(meta['synced_at']))}")
         out.append("")
 
-    # Skill/recipe/dep content hashes are intentionally NOT serialized: the lock
-    # is a provenance stamp (see LOCK_HEADER), not an integrity manifest. git
-    # covers integrity/diff for the committed surface, and bundled/recipe skills
-    # resolve from the CLI cache. Any legacy [skills.*]/[recipes.*]/[deps.*]/
-    # [commands]/[opted-out] sections loaded from an older lock are dropped
-    # here on the next write — commands no longer materialize in-project, so
-    # no per-file hash or delete-memory bookkeeping is needed for them either.
+    managed = lock.get("managed") or {}
+    for path in sorted(managed):
+        entry = managed[path]
+        if not isinstance(entry, dict) or not entry.get("sha256"):
+            continue
+        out.append(f"[managed.{_toml_string(path)}]")
+        for key in ("sha256", "recipe", "source", "kind", "policy"):
+            value = entry.get(key)
+            if value is not None and value != "":
+                out.append(f"{key} = {_toml_string(str(value))}")
+        out.append("")
+
     agents = lock.get("agents") or {}
     for harness in sorted(agents):
         files = agents[harness]
         if not files:
             continue
-        out.append(f'[agents."{harness}"]')
+        out.append(f"[agents.{_toml_string(harness)}]")
         for name in sorted(files):
-            out.append(f'"{name}" = "{files[name]}"')
+            out.append(f"{_toml_string(name)} = {_toml_string(str(files[name]))}")
         out.append("")
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path.write_text("\n".join(out).rstrip("\n") + "\n")
+
+
+def set_managed_override(
+    lock: dict,
+    path: str,
+    sha256: str,
+    *,
+    recipe: str | None = None,
+    source: str | None = None,
+    kind: str | None = None,
+    policy: str | None = None,
+) -> None:
+    """Upsert the last CLI-written bytes for one governed override target."""
+    managed = lock.setdefault("managed", {})
+    entry = dict(managed.get(path) or {})
+    entry["sha256"] = sha256
+    for key, value in (("recipe", recipe), ("source", source), ("kind", kind), ("policy", policy)):
+        if value is not None:
+            entry[key] = value
+    managed[path] = entry
 
 
 def set_recipe_skill_hashes(lock: dict, recipe_id: str, skill_name: str, hashes: dict[str, str]) -> None:

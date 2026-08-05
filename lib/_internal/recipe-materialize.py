@@ -56,6 +56,7 @@ load_lock = _lock_mod.load_lock
 write_lock = _lock_mod.write_lock
 set_recipe_skill_hashes = _lock_mod.set_recipe_skill_hashes
 set_dep_skill_hashes = _lock_mod.set_dep_skill_hashes
+set_managed_override = _lock_mod.set_managed_override
 sha256_of = _lock_mod.sha256_of
 remove_recipe_lock_entries = _lock_mod.remove_recipe_lock_entries
 
@@ -336,41 +337,80 @@ def materialize_template(
     tpl: Any,
     project_root: Path,
     merged_cfg: dict[str, Any] | None = None,
+    recipe_id: str | None = None,
 ) -> None:
+    util = _load_util()
     src = recipe_dir / tpl.source
     dest = project_root / tpl.target
     if not src.is_file():
         raise RuntimeError(f"template source not found: {src}")
-    if tpl.condition == "not_exists":
-        if dest.exists():
-            util = _load_util()
-            if util.override_is_stale(src, dest):
+
+    content = util.render_override_bytes(src, merged_cfg)
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
+    target = Path(tpl.target).as_posix()
+    policy = getattr(tpl, "update_policy", "auto") or "auto"
+    if policy not in util.OVERRIDE_POLICIES:
+        raise RuntimeError(
+            f"invalid update policy '{policy}' for template '{tpl.target}'; "
+            "expected auto | confirm | never-force"
+        )
+
+    def record(written: bytes = content) -> None:
+        set_managed_override(
+            lock,
+            target,
+            util.sha256_bytes(written),
+            recipe=recipe_id,
+            source=tpl.source,
+            kind="template",
+            policy=policy,
+        )
+        write_lock(lock_path, lock)
+
+    def write_content() -> None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+        os.chmod(dest, src.stat().st_mode)
+
+    if tpl.condition == "not_exists" and dest.exists():
+        entry = (lock.get("managed") or {}).get(target)
+        state = util.classify_managed_override(dest, entry, would_write=content)
+        if state == "untracked":
+            disk_sha = util.sha256_bytes(dest.read_bytes())
+            rendered_sha = util.sha256_bytes(content)
+            legacy_catalog_sha = util.sha256_bytes(src.read_bytes())
+            if disk_sha in (rendered_sha, legacy_catalog_sha):
+                # Existing projects may contain a pre-render placeholder copy;
+                # seed its actual bytes and let the next sync reconcile it.
+                record(dest.read_bytes())
+            else:
                 warn(
-                    "worktree-flow: your override\n"
-                    f"  {tpl.target}\n"
-                    "differs from the current catalog template "
-                    "(condition=not_exists, not refreshed).\n"
-                    "Review upstream changes, then either re-apply your "
-                    "customizations or refresh with:\n"
+                    f"override metadata missing for {tpl.target}; preserving existing file "
+                    "and not refreshed. Refresh with:\n"
                     f"  rm {tpl.target} && ai-specs sync"
                 )
-            # Idempotent no-op when condition=not_exists and dest already exists —
-            # same class as sync-agent 'symlink ok', not a user-facing policy/absence
-            # notice like 'skipped AGENTS.md' / 'mcp skipped'.
-            # Noise (keep ·): filtered in compact mode via print_step_output.
-            print(f"    · template skipped (exists) {tpl.target}")
-            return
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    content = src.read_text()
-    if REPO_TOPOLOGY_PLACEHOLDER in content:
-        topo = "auto"
-        if merged_cfg is not None:
-            topo = str(merged_cfg.get("repo_topology", "auto"))
-        content = content.replace(REPO_TOPOLOGY_PLACEHOLDER, topo)
-        dest.write_text(content)
-        os.chmod(dest, src.stat().st_mode)
-    else:
-        shutil.copy2(src, dest)
+        elif state == "managed_stale" and policy == "auto":
+            write_content()
+            record()
+            info(f"refreshed managed template {tpl.target}")
+        elif state in ("user_modified", "managed_stale"):
+            label = "user-modified" if state == "user_modified" else f"managed-stale ({policy}-required)"
+            warn(
+                f"override {label}: {tpl.target} was not refreshed. "
+                "Refresh with:\n"
+                f"  rm {tpl.target} && ai-specs sync"
+            )
+        elif state == "managed_current":
+            # Backfill provenance fields without rewriting the target.
+            record()
+        # Idempotent existing-template detail is intentional compact noise.
+        # Noise (keep ·): filtered in compact mode via print_step_output.
+        print(f"    · template skipped (exists) {tpl.target}")
+        return
+
+    write_content()
+    record()
     print(f"    ✓ template {tpl.target}")
 
 
@@ -886,7 +926,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
         # Templates
         for tpl in recipe.templates:
-            materialize_template(recipe_dir, tpl, project_root, merged_cfg)
+            materialize_template(recipe_dir, tpl, project_root, merged_cfg, recipe_id=rid)
 
         # Docs
         for doc in recipe.docs:
