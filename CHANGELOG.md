@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-08-05
+
+### Added
+- **Topology-aware worktree gate scope**: `gate_scope = auto | superrepo | subrepo` separates superrepo central-planning writes from protected subrepo production worktrees in proven `monorepo-submodules` layouts, with fail-safe topology validation and stale-hook migration guidance.
+
 ## [0.20.1] — 2026-08-05
 
 ### Fixed
