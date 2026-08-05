@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -386,5 +387,127 @@ class WorktreeGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
 
 
+    def test_scope_override_invalid_falls_back_to_stamp(self):
+        self._checkout("main")
+        gate = self._stamped_gate("always").read_text().replace(
+            'stamped_gate_mode="always"', 'stamped_gate_mode="always"\nstamped_gate_scope="superrepo"'
+        )
+        stamped = Path(self.tmp.name) / "scoped-hook.sh"
+        stamped.write_text(gate)
+        stamped.chmod(0o755)
+        r = self._run(self._event("Write", self._src()), gate=stamped,
+                      extra_env={"WORKTREE_GATE_SCOPE": "repository"})
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("invalid WORKTREE_GATE_SCOPE", r.stderr)
+
+    def test_missing_scope_stamp_warns_and_falls_back_to_auto(self):
+        self._checkout("main")
+        gate = self._stamped_gate("always")
+        r = self._run(self._event("Write", self._src()), gate=gate)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("scope", r.stderr.lower())
+    def _make_superrepo_fixture(self):
+        module = Path(self.tmp.name) / "module-source"
+        module.mkdir()
+        _git(module, "init", "-q")
+        _git(module, "config", "user.email", "t@t.t")
+        _git(module, "config", "user.name", "t")
+        (module / "README.md").write_text("module\n")
+        _git(module, "add", "-A")
+        _git(module, "commit", "-qm", "init")
+        _git(module, "checkout", "-q", "-B", "main")
+        superrepo = Path(self.tmp.name) / "superrepo"
+        superrepo.mkdir()
+        _git(superrepo, "init", "-q")
+        _git(superrepo, "config", "user.email", "t@t.t")
+        _git(superrepo, "config", "user.name", "t")
+        (superrepo / "ROOT").write_text("super\n")
+        _git(superrepo, "add", "-A")
+        _git(superrepo, "commit", "-qm", "root")
+        subprocess.run(
+            ["git", "-C", str(superrepo), "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(module), "apps/api"],
+            check=True, capture_output=True, text=True,
+        )
+        _git(superrepo, "commit", "-qam", "add module")
+        _git(superrepo, "checkout", "-q", "-B", "main")
+        return superrepo, superrepo / "apps" / "api"
+
+    def test_proven_superrepo_central_path_allowed_and_production_blocked(self):
+        superrepo, subrepo = self._make_superrepo_fixture()
+        central = superrepo / "openspec" / "changes" / "demo" / "tasks.md"
+        event = self._event("Write", str(central))
+        event["cwd"] = str(superrepo)
+        result = self._run(event)
+        self.assertEqual(result.returncode, 0)
+        production = superrepo / "src" / "generated.py"
+        event = self._event("Write", str(production))
+        event["cwd"] = str(superrepo)
+        self.assertEqual(self._run(event).returncode, 2)
+        sub_event = self._event("Write", str(subrepo / "src.py"))
+        sub_event["cwd"] = str(subrepo)
+        self.assertEqual(self._run(sub_event).returncode, 2)
+    def _scope_gate(self, scope: str) -> Path:
+        stamped = Path(self.tmp.name) / f"worktree-gate-{scope}.sh"
+        content = GATE.read_text()
+        content = content.replace("__WORKTREE_GATE_MODE__", "always")
+        content = content.replace("__WORKTREE_GATE_SCOPE__", scope)
+        stamped.write_text(content)
+        stamped.chmod(0o755)
+        return stamped
+
+    def _path_event(self, target: Path, cwd: Path) -> dict:
+        event = self._event("Write", str(target))
+        event["cwd"] = str(cwd)
+        return event
+
+    def test_scope_matrix_all_values_preserves_central_and_production_floor(self):
+        superrepo, subrepo = self._make_superrepo_fixture()
+        central = superrepo / "openspec" / "changes" / "matrix" / "tasks.md"
+        super_production = superrepo / "src" / "generated.py"
+        sub_production = subrepo / "src.py"
+        for scope in ("auto", "superrepo", "subrepo"):
+            gate = self._scope_gate(scope)
+            self.assertEqual(self._run(self._path_event(central, superrepo), gate=gate).returncode, 0)
+            self.assertEqual(self._run(self._path_event(super_production, superrepo), gate=gate).returncode, 2)
+            self.assertEqual(self._run(self._path_event(sub_production, subrepo), gate=gate).returncode, 2)
+
+    def test_uninitialized_module_does_not_prove_central_scope(self):
+        superrepo, subrepo = self._make_superrepo_fixture()
+        _git(superrepo, "submodule", "deinit", "-f", "--", "apps/api")
+        if subrepo.exists():
+            shutil.rmtree(subrepo)
+        target = superrepo / "openspec" / "changes" / "uninitialized" / "tasks.md"
+        self.assertEqual(self._run(self._path_event(target, superrepo), gate=self._scope_gate("auto")).returncode, 2)
+
+    def test_symlink_escape_does_not_receive_central_exception(self):
+        superrepo, _ = self._make_superrepo_fixture()
+        outside = Path(self.tmp.name) / "outside"
+        outside.mkdir()
+        _git(outside, "init", "-q")
+        _git(outside, "config", "user.email", "t@t.t")
+        _git(outside, "config", "user.name", "t")
+        (outside / "README").write_text("outside\n")
+        _git(outside, "add", "-A")
+        _git(outside, "commit", "-qm", "init")
+        _git(outside, "checkout", "-q", "-B", "main")
+        central_root = superrepo / "openspec" / "changes"
+        central_root.mkdir(parents=True)
+        (central_root / "escape").symlink_to(outside, target_is_directory=True)
+        target = central_root / "escape" / "tasks.md"
+        self.assertEqual(self._run(self._path_event(target, superrepo), gate=self._scope_gate("auto")).returncode, 2)
+
+    def test_ambiguous_and_nested_registrations_fail_safe(self):
+        superrepo, _ = self._make_superrepo_fixture()
+        gm = superrepo / ".gitmodules"
+        gm.write_text(gm.read_text() + "\n[submodule.duplicate]\n\tpath = apps/api\n[submodule.nested]\n\tpath = apps/api/nested\n")
+        central = superrepo / "openspec" / "changes" / "ambiguous" / "tasks.md"
+        self.assertEqual(self._run(self._path_event(central, superrepo), gate=self._scope_gate("superrepo")).returncode, 2)
+
+    def test_nested_registration_fails_safe_even_when_outer_is_initialized(self):
+        superrepo, _ = self._make_superrepo_fixture()
+        gm = superrepo / ".gitmodules"
+        gm.write_text(gm.read_text() + "\n[submodule.nested]\n\tpath = apps/api/nested\n")
+        central = superrepo / "openspec" / "changes" / "nested" / "tasks.md"
+        self.assertEqual(self._run(self._path_event(central, superrepo), gate=self._scope_gate("auto")).returncode, 2)
 if __name__ == "__main__":
     unittest.main()

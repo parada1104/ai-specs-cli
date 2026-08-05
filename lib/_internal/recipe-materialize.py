@@ -433,8 +433,11 @@ GATE_MODE_PLACEHOLDERS = {
     "__WORKTREE_GATE_MODE__": "always",
     "__TRACKER_CARD_GATE_MODE__": "warn",
 }
+GATE_SCOPE_PLACEHOLDER = "__WORKTREE_GATE_SCOPE__"
+GATE_SCOPE_VALUES = ("auto", "superrepo", "subrepo")
 # Backward-compatible alias for older call sites / tests.
 GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
+_STALE_GATE_WARNED: set[Path] = set()
 REPO_TOPOLOGY_PLACEHOLDER = "__WORKTREE_REPO_TOPOLOGY__"
 TRACKER_CLI_HOME_PLACEHOLDER = "__TRACKER_CLI_HOME__"
 
@@ -465,9 +468,33 @@ def materialize_hook_script(
             if merged_cfg is not None:
                 mode = str(merged_cfg.get("gate_mode", default))
             content = content.replace(token, mode)
+    if GATE_SCOPE_PLACEHOLDER in content:
+        scope = "auto"
+        if merged_cfg is not None:
+            scope = str(merged_cfg.get("gate_scope") or "auto")
+        if scope not in GATE_SCOPE_VALUES:
+            raise RuntimeError(
+                f"invalid gate_scope '{scope}'; allowed: auto | superrepo | subrepo"
+            )
+        content = content.replace(GATE_SCOPE_PLACEHOLDER, scope)
     if TRACKER_CLI_HOME_PLACEHOLDER in content:
         home_val = str(Path(cli_home).resolve()) if cli_home is not None else ""
         content = content.replace(TRACKER_CLI_HOME_PLACEHOLDER, home_val)
+    if recipe_id == "worktree-flow" and dest.exists():
+        try:
+            existing = dest.read_text()
+        except OSError:
+            existing = ""
+        if 'stamped_gate_scope="' not in existing:
+            if dest not in _STALE_GATE_WARNED:
+                warn(
+                    f"stale materialized worktree gate lacks gate_scope contract at {dest}; "
+                    "preserving existing bytes. Refresh with:\n"
+                    f"  rm {dest} && ai-specs sync"
+                )
+                _STALE_GATE_WARNED.add(dest)
+            print(f"    · hook skipped (stale) {rel}")
+            return rel
     dest.write_text(content)
     os.chmod(dest, 0o755)
     print(f"    ✓ hook script {rel}")
@@ -545,6 +572,8 @@ def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]
             warn(f"recipe '{recipe.name}': unknown config key '{key}' in manifest (ignored)")
             continue
         result[key] = value
+    if "gate_scope" in schema_fields and not str(result.get("gate_scope") or "").strip():
+        result["gate_scope"] = "auto"
 
     # Validate required
     for key, field in schema_fields.items():

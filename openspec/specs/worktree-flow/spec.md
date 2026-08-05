@@ -149,6 +149,53 @@ Under a resolved `monorepo-submodules` topology, `worktree-cleanup.sh` MUST iter
 - THEN it MUST scan `apps/api`
 - AND it MUST NOT attempt to `git -C` / enumerate worktrees for `apps/legacy`
 
+### Requirement: Topology-aware `gate_scope` worktree protection
+
+`recipes.worktree-flow.config.gate_scope` MUST be `auto`, `superrepo`, or
+`subrepo`; absent or empty values resolve to `auto`, and invalid values MUST be
+rejected during sync with the exact allowed enum. The setting is independent of
+`gate_mode` and `repo_topology`. Sync MUST stamp the validated value into the
+materialized hook. A non-empty valid `WORKTREE_GATE_SCOPE` override wins for one
+invocation; invalid overrides warn and fall back to the stamp, while missing or
+invalid stamps warn and fall back to `auto`. `gate_mode=off` MUST exit before
+scope or topology evaluation.
+
+The hook MUST classify repository ownership only from canonical nearest-existing
+paths and proven Git facts: a real superproject `.git` and `.gitmodules`, a
+component-contained registered path, initialized `git submodule status`, and a
+matching module common Git directory. Ambiguous, nested, symlink-escaping,
+uninitialized, or unresolved relationships MUST NOT grant a scope exception.
+Linked worktrees remain allowed before scope evaluation.
+
+For a proven superproject primary checkout on an exact protected branch, the
+only scope exception is a component-aware descendant of the canonical
+`<superrepo>/openspec/changes/**` subtree, including archive and nonexistent
+descendants. All other superrepo paths and all subrepo production paths remain
+protected under every scope value. The worktree gate MUST remain separate from
+`plan-build-flow` production authorization.
+
+#### Scenario: Missing scope defaults safely
+- GIVEN a manifest without `gate_scope`
+- WHEN sync resolves worktree-flow
+- THEN the effective value and stamped hook value MUST be `auto`
+
+#### Scenario: Proven central planning path is allowed
+- GIVEN a proven initialized submodule relationship and protected superrepo branch
+- AND a target is a canonical descendant of `<superrepo>/openspec/changes/`
+- WHEN the worktree gate evaluates the write under any valid scope
+- THEN it MUST allow the write
+
+#### Scenario: Subrepo production remains protected
+- GIVEN an initialized subrepo primary checkout on an exact protected branch
+- AND a target is outside the canonical superrepo planning subtree
+- WHEN the worktree gate evaluates the write under any valid scope
+- THEN it MUST block with exit `2`
+
+#### Scenario: Ambiguous topology receives no exception
+- GIVEN submodule registration or Git directory proof is missing, ambiguous, or symlink-escaping
+- WHEN a protected primary write is evaluated
+- THEN the central exception MUST NOT apply
+
 ### Requirement: Repo Topology Configuration
 
 `recipes.worktree-flow.config.repo_topology` MUST be one of `auto`, `standalone`, `monorepo-apps`, `monorepo-submodules`; default `auto` when absent or empty. `ai-specs sync` MUST reject invalid values with non-zero exit and a diagnostic naming the value and the allowed enum, matching `gate_mode` validation. An explicit non-`auto` value SHALL bypass auto-detection and resolve to that topology.

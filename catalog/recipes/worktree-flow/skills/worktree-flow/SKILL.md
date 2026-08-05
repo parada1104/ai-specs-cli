@@ -4,8 +4,8 @@ description: >
   Isolated git worktree workflow for ai-specs change work. Create a dedicated
   worktree under .worktrees/ for any change that writes files, keep pure
   exploration outside a worktree, and clean up merged worktrees safely after
-  integration. Supports standalone, monorepo-apps, and monorepo-submodules
-  topologies via recipes.worktree-flow.config.repo_topology.
+  topologies via recipes.worktree-flow.config.repo_topology and topology-aware
+  gate scope via recipes.worktree-flow.config.gate_scope.
 license: MIT
 metadata:
   author: ai-specs
@@ -41,6 +41,34 @@ writes nothing does not need a worktree.
 
 `repo_topology = "auto"` (default) detects initialized `.gitmodules` entries →
 `monorepo-submodules`, else `standalone`. It never auto-selects `monorepo-apps`.
+
+## Gate scope and repository ownership
+
+`gate_scope` is separate from `gate_mode` and `repo_topology`:
+
+| Value | Runtime behavior |
+|---|---|
+| `auto` | Default; prove ownership from Git facts and allow only canonical superrepo planning artifacts. |
+| `superrepo` | Same proven relationship requirement; central `openspec/changes/**` is the only superrepo exception. |
+| `subrepo` | Keep initialized subrepo primary checkouts protected; never broaden superrepo or production access. |
+
+Before any write-capable delegation in a cross-repository layout, identify the
+owning repository and branch, not just the current directory:
+
+```bash
+git rev-parse --show-toplevel
+git rev-parse --absolute-git-dir
+git rev-parse --git-common-dir
+git branch --show-current
+```
+
+Central planning artifacts belong to the proven superrepo canonical subtree
+`<superrepo>/openspec/changes/**`; subrepo code remains subject to its own
+protected branch and the separate `plan-build-flow` authorization. If sync or
+doctor reports a stale materialized hook without the scope stamp, refresh it
+explicitly with `rm <hook-path> && ai-specs sync`; customized hook bytes are
+never silently overwritten. The runtime hook is a defense in depth, not the
+sole guard for delegated or subprocess writes.
 
 ## Conventions
 

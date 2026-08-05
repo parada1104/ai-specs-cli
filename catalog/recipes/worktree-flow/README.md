@@ -18,13 +18,14 @@ post-merge cleanup.
 ```toml
 [recipes.worktree-flow]
 enabled = true
-version = "1.3.0"
+version = "1.4.0"
 
 [recipes.worktree-flow.config]
 worktrees_dir = ".worktrees"
 integration_branch = "main"
 auto_remove_merged = true
 repo_topology = "auto"
+gate_scope = "auto"
 ```
 
 Then run `ai-specs sync`. The cleanup script materializes to
@@ -42,6 +43,27 @@ Then run `ai-specs sync`. The cleanup script materializes to
 | `off` | Disable the gate entirely; writes are allowed even on protected branches. |
 
 Default: `always`.
+
+## Topology-aware gate scope
+
+`gate_scope` is independent from both `gate_mode` (whether enforcement runs)
+and `repo_topology` (where worktrees are created and cleaned). The hook stamps
+the validated value and accepts a per-invocation `WORKTREE_GATE_SCOPE` override;
+invalid overrides or stale stamps warn and fall back safely to `auto`.
+
+| Scope | Policy |
+|---|---|
+| `auto` | Prove the owning repository from Git topology; allow only the canonical superrepo planning subtree when proven, while protecting subrepo production paths. |
+| `superrepo` | Same proof and narrow exception; never grants arbitrary superrepo production writes or a subrepo bypass. |
+| `subrepo` | Preserve initialized-subrepo protected-branch safety; it does not create a superrepo bypass. |
+
+For a proven initialized-submodule topology, the only protected superrepo
+exception is the component-aware canonical descendant
+`<superrepo>/openspec/changes/**` (including archive and nonexistent descendants).
+Symlink escapes, prefix lookalikes, unrelated repositories, and ambiguous Git
+relationships remain blocked or fail open conservatively. Linked worktrees stay
+allowed before scope evaluation. Production authorization remains owned by the
+`plan-build-flow` gate; a central plan does not authorize subrepo code writes.
 
 **Delegation caveat:** the gate is a `pre-tool-use` hook. On opencode/pi/omp it
 may not see tool calls made inside a delegated subagent/task (separate process
@@ -65,6 +87,8 @@ harness — see the coverage matrix in `docs/runtime-hooks.md`.
 | `integration_branch` | `main` | Branch worktrees are created from and merged into. |
 | `auto_remove_merged` | `true` | Whether merged worktrees are eligible for cleanup. |
 | `gate_mode` | `always` | Main-worktree gate mode: `always`, `ask`, or `off`. |
+| `gate_scope` | `auto` | Scope policy: `auto`, `superrepo`, or `subrepo`; only proven superrepo `openspec/changes/**` planning paths receive an exception. |
+| `WORKTREE_GATE_SCOPE` | — | Optional per-invocation override of the stamped scope; invalid values warn and fall back safely. |
 | `repo_topology` | `auto` | Repository topology: `auto` (initialized `.gitmodules` → `monorepo-submodules`, else `standalone`), `standalone`, `monorepo-apps` (naming-only; same mechanics as standalone), or `monorepo-submodules`. |
 | `WORKTREE_GATE_PROTECTED` | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
 

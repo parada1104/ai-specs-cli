@@ -238,6 +238,46 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertNotIn("$super_abs/.worktrees/", skill)
         self.assertNotIn("git worktree add .worktrees/", skill)
 
+    def test_gate_scope_defaults_to_auto_and_is_independent(self):
+        root = self._make_project_with_config(
+            '[recipes.worktree-flow.config]\ngate_mode = "always"\nrepo_topology = "monorepo-submodules"'
+        )
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        import tomllib
+        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
+            manifest = tomllib.load(fh)
+        merged = self.materialize.merge_config(recipe, manifest["recipes"]["worktree-flow"]["config"])
+        self.assertEqual(merged.get("gate_scope"), "auto")
+        self.assertEqual(merged.get("gate_mode"), "always")
+        self.assertEqual(merged.get("repo_topology"), "monorepo-submodules")
+
+    def test_gate_scope_materializes_stamp(self):
+        root = self._make_project_with_config(
+            '[recipes.worktree-flow.config]\ngate_scope = "superrepo"'
+        )
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+        content = hook.read_text()
+        self.assertIn('stamped_gate_scope="superrepo"', content)
+        self.assertNotIn("__WORKTREE_GATE_SCOPE__", content)
+
+    def test_gate_scope_rejects_invalid_value(self):
+        root = self._make_project_with_config(
+            '[recipes.worktree-flow.config]\ngate_scope = "super-repo"'
+        )
+        import subprocess
+        proc = subprocess.run(["python3", str(RECIPE_MATERIALIZE_PATH), str(root), str(ROOT)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 1)
+        combined = proc.stderr + proc.stdout
+        self.assertIn("super-repo", combined)
+        self.assertIn("auto | superrepo | subrepo", combined)
+    def test_stale_gate_hook_is_preserved_with_refresh_guidance(self):
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+        hook.write_text("custom legacy hook\n")
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(hook.read_text(), "custom legacy hook\n")
 
 if __name__ == "__main__":
     unittest.main()
