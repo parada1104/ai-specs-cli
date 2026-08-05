@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **plan-build-flow 1.4.0**: derives the central planning root from recognized repository topology for submodule worktrees, while preserving standalone nearest-root behavior and narrowly scoped artifact writes.
+
 ## [0.19.0] — 2026-08-02
 
 ### Added
