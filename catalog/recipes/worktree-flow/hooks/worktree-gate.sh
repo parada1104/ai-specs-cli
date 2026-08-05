@@ -18,8 +18,11 @@
 # Fail-open: any parse/lookup error or ambiguous heuristic allows the action
 # (a buggy guard must never wedge all editing). Override protected branches via
 # WORKTREE_GATE_PROTECTED. gate_mode off disables both path and shell gating.
+# gate_scope is stamped by sync and may be overridden per invocation.
 
 stamped_gate_mode="__WORKTREE_GATE_MODE__"
+stamped_gate_scope="__WORKTREE_GATE_SCOPE__"
+stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"
 protected="${WORKTREE_GATE_PROTECTED:-main development}"
 
 # Resolve gate mode: env override beats stamped sync value; invalid values warn and fall back.
@@ -38,8 +41,31 @@ _resolve_gate_mode() {
 }
 gate_mode="$(_resolve_gate_mode)"
 
-# off → disable the gate entirely.
+_resolve_gate_scope() {
+  local override="${WORKTREE_GATE_SCOPE:-}"
+  if [ -n "$override" ]; then
+    case "$override" in
+      auto|superrepo|subrepo) echo "$override"; return ;;
+      *) echo "worktree-gate: invalid WORKTREE_GATE_SCOPE='$override'; falling back to stamped scope." >&2 ;;
+    esac
+  fi
+  case "$stamped_gate_scope" in
+    auto|superrepo|subrepo) echo "$stamped_gate_scope" ;;
+    *) echo "worktree-gate: missing or invalid stamped gate_scope='$stamped_gate_scope'; falling back to auto." >&2; echo auto ;;
+  esac
+}
+
+# off → disable the gate entirely, before scope/topology evaluation.
 [ "$gate_mode" = off ] && exit 0
+gate_scope="$(_resolve_gate_scope)"
+_resolve_repo_topology() {
+  case "$stamped_repo_topology" in
+    auto|standalone|monorepo-apps|monorepo-submodules) echo "$stamped_repo_topology" ;;
+    *) echo "worktree-gate: missing or invalid stamped repo_topology='$stamped_repo_topology'; falling back to auto." >&2; echo auto ;;
+  esac
+}
+
+repo_topology="$(_resolve_repo_topology)"
 
 input="$(cat)"
 
@@ -282,57 +308,195 @@ done <<< "$parsed"
 
 [ "${#candidates[@]}" -gt 0 ] || exit 0
 
-# Shared resolution: PATH mode feeds one candidate; SHELL mode feeds N.
-# First protected-main hit blocks; otherwise fail-open.
+# Shared topology-aware decision for PATH and SHELL candidates. The helper is
+# deliberately self-contained: it uses only Git facts and canonical paths,
+# never the consumer manifest or project Python modules.
 resolve_and_check() {
   local candidate="$1"
-  local abs dir git_dir common_dir branch
+  local abs decision
 
   case "$candidate" in
     /*) abs="$candidate" ;;
     *) abs="$cwd/$candidate" ;;
   esac
-
   # Allow local, gitignored agent config (machine setup, never committed).
   case "$abs" in
     */.claude/settings*.json|.claude/settings*.json|*/.claude/hooks/*) return 1 ;;
   esac
-  # Also match relative-style allowlist paths (path mode historically matched file_path as given)
   case "$candidate" in
     */.claude/settings*.json|.claude/settings*.json|*/.claude/hooks/*) return 1 ;;
   esac
 
-  dir="$(dirname "$abs")"
-  while [ ! -d "$dir" ] && [ "$dir" != "/" ] && [ "$dir" != "." ]; do
-    dir="$(dirname "$dir")"
-  done
-  [ -d "$dir" ] || return 1
+  decision="$(python3 - "$abs" "$gate_scope" "$repo_topology" "$protected" <<'PYEOF'
+import os
+import subprocess
+import sys
 
-  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+target = sys.argv[1]
+scope = sys.argv[2]
+topology = sys.argv[3]
+protected = sys.argv[4].split()
 
-  git_dir="$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
-  common_dir="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+def git(cwd, *args):
+    try:
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
 
-  # Linked worktree (git_dir != common_dir) → allowed.
-  [ "$git_dir" != "$common_dir" ] && return 1
+def inside(path, root):
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
 
-  # Main worktree: gate on the current branch.
-  branch="$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null)" || return 1
-  local b
-  for b in $protected; do
-    if [ "$branch" = "$b" ]; then
-      if [ "$mode" = shell ]; then
-        echo "worktree-gate: refusing shell command that writes '$candidate' on protected branch '$branch' in the main worktree — using bash/shell to write here bypasses the worktree gate. Create a dedicated worktree first (e.g. /worktree-new) and run there — exploration ends at the first write." >&2
-      else
-        echo "worktree-gate: refusing to ${tool_name:-edit} '$candidate' on protected branch '$branch' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write." >&2
-      fi
-      if [ "$gate_mode" = ask ]; then
-        echo "worktree-gate: to bypass for this invocation, re-run with WORKTREE_GATE_MODE=off" >&2
-      fi
-      exit 2
-    fi
-  done
-  return 1
+def existing_ancestor(path):
+    path = os.path.abspath(path)
+    probe = path
+    while not os.path.exists(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return ""
+        probe = parent
+    return probe if os.path.isdir(probe) else os.path.dirname(probe)
+
+def git_common(root):
+    value = git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not value:
+        value = git(root, "rev-parse", "--git-common-dir")
+    if not value:
+        return ""
+    # Git versions without --path-format=absolute return a path relative to
+    # the repository passed with -C, not the hook process cwd.
+    if not os.path.isabs(value):
+        value = os.path.join(root, value)
+    return os.path.realpath(value)
+
+def module_records(super_root):
+    """Return proven initialized module tuples, or None on ambiguity."""
+    gm = os.path.join(super_root, ".gitmodules")
+    dotgit = os.path.join(super_root, ".git")
+    if not os.path.isfile(gm) or not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
+        return None
+    raw = git(super_root, "config", "--file", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$")
+    if not raw:
+        return None
+    entries = []
+    seen = set()
+    for line in raw.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        rel = parts[1].strip()
+        if not rel:
+            continue
+        module = os.path.realpath(os.path.join(super_root, rel))
+        if not inside(module, super_root) or module == super_root or module in seen:
+            return None
+        if any(inside(module, prior) or inside(prior, module) for prior in seen):
+            return None
+        seen.add(module)
+        status = git(super_root, "submodule", "status", "--", rel)
+        if not status:
+            continue
+        status_line = status.splitlines()[0]
+        if status_line[:1] == "-":
+            continue
+        common = git_common(module)
+        expected = os.path.realpath(os.path.join(super_root, ".git", "modules", rel))
+        owner = git(module, "rev-parse", "--show-toplevel")
+        owner = os.path.realpath(owner) if owner else ""
+        if owner != module or not common or common != expected:
+            continue
+        entries.append((module, common))
+    return entries
+
+def classify(repo_root, repo_common):
+    if topology in ("standalone", "monorepo-apps"):
+        return "unproven"
+    repo_root = os.path.realpath(repo_root)
+    repo_common = os.path.realpath(repo_common)
+    # The containing superrepo must itself be a primary checkout. Walk all
+    # ancestors and reject multiple matching relationships (nested/ambiguous).
+    matches = []
+    probe = repo_root
+    while True:
+        records = module_records(probe)
+        if records is not None:
+            for module, common in records:
+                if module == repo_root and common == repo_common:
+                    matches.append((probe, module, common))
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
+    if len(matches) > 1:
+        return "unproven"
+    if len(matches) == 1:
+        return "subrepo"
+    records = module_records(repo_root)
+    if records:
+        return "superrepo"
+    return "unproven"
+
+try:
+    canonical = os.path.realpath(target)
+    ancestor = existing_ancestor(target)
+    if not ancestor:
+        print("allow")
+        raise SystemExit
+    repo_root = git(ancestor, "rev-parse", "--show-toplevel")
+    if not repo_root:
+        print("allow")
+        raise SystemExit
+    repo_root = os.path.realpath(repo_root)
+    if not inside(canonical, repo_root):
+        print("allow")
+        raise SystemExit
+    git_dir = git(ancestor, "rev-parse", "--absolute-git-dir")
+    common = git_common(ancestor)
+    if not git_dir or not common:
+        print("allow")
+        raise SystemExit
+    if os.path.realpath(git_dir) != common:
+        print("allow")
+        raise SystemExit
+    branch = git(ancestor, "symbolic-ref", "--short", "HEAD")
+    if not branch or branch not in protected:
+        print("allow")
+        raise SystemExit
+    owner = classify(repo_root, common)
+    central = os.path.realpath(os.path.join(repo_root, "openspec", "changes"))
+    if owner == "superrepo":
+        # Explicit subrepo scope intentionally leaves superrepo writes to the
+        # caller (Melón central-planning workflow); central paths remain an
+        # explicit exception for the enforcing scopes.
+        if scope == "subrepo" or inside(canonical, central):
+            print("allow")
+        else:
+            print("block:" + branch)
+    elif owner == "subrepo" and scope == "superrepo":
+        print("allow")
+    else:
+        print("block:" + branch)
+except Exception:
+    # A topology or canonicalization failure must never wedge editing.
+    print("allow")
+PYEOF
+  )" || decision="allow"
+
+  case "$decision" in block:*) blocked_branch="${decision#block:}" ;; *) return 1 ;; esac
+  if [ "$mode" = shell ]; then
+    echo "worktree-gate: refusing shell command that writes '$candidate' on protected branch '$blocked_branch' in the main worktree — using bash/shell to write here bypasses the worktree gate. Create a dedicated worktree first (e.g. /worktree-new) and run there — exploration ends at the first write." >&2
+  else
+    echo "worktree-gate: refusing to ${tool_name:-edit} '$candidate' on protected branch '$blocked_branch' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write." >&2
+  fi
+  if [ "$gate_mode" = ask ]; then
+    echo "worktree-gate: to bypass for this invocation, re-run with WORKTREE_GATE_MODE=off" >&2
+  fi
+  exit 2
 }
 
 for cand in "${candidates[@]}"; do

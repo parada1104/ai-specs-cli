@@ -168,8 +168,20 @@ default_list = "In Progress"
 ```toml
 [recipes.worktree-flow.config]
 gate_mode = "ask"
+gate_scope = "auto"     # auto | superrepo | subrepo
 repo_topology = "auto"   # auto | standalone | monorepo-apps | monorepo-submodules
 ```
+
+`gate_scope` is independent from `gate_mode` and `repo_topology` and controls
+which proven repository owners the worktree gate protects:
+
+| `gate_scope` | Protected owner | Superrepo behavior |
+|---|---|---|
+| `auto` | Superrepo and initialized subrepos | Protects both; canonical superrepo `openspec/changes/**` is allowed |
+| `superrepo` | Proven superrepo | Protects superrepo; allows subrepo writes |
+| `subrepo` | Proven initialized subrepos | Protects subrepos; allows superrepo writes for the central workflow |
+
+The `superrepo`/`subrepo` classifications require `repo_topology = "monorepo-submodules"` (or `auto` resolving to it); standalone and monorepo-apps retain the original protected-primary behavior. `WORKTREE_GATE_SCOPE` may override the stamped value for one invocation; invalid values warn and fall back safely.
 
 `repo_topology` defaults to `auto` (initialized `.gitmodules` →
 `monorepo-submodules`, else `standalone`). `monorepo-apps` is naming-only.
