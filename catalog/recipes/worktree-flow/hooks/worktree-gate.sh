@@ -355,7 +355,13 @@ def git_common(root):
     value = git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if not value:
         value = git(root, "rev-parse", "--git-common-dir")
-    return os.path.realpath(value) if value else ""
+    if not value:
+        return ""
+    # Git versions without --path-format=absolute return a path relative to
+    # the repository passed with -C, not the hook process cwd.
+    if not os.path.isabs(value):
+        value = os.path.join(root, value)
+    return os.path.realpath(value)
 
 def module_records(super_root):
     """Return proven initialized module tuples, or None on ambiguity."""

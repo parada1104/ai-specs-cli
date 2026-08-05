@@ -509,5 +509,29 @@ class WorktreeGateHookTests(unittest.TestCase):
         gm.write_text(gm.read_text() + "\n[submodule.nested]\n\tpath = apps/api/nested\n")
         central = superrepo / "openspec" / "changes" / "nested" / "tasks.md"
         self.assertEqual(self._run(self._path_event(central, superrepo), gate=self._scope_gate("auto")).returncode, 2)
+    def test_relative_git_common_fallback_anchors_to_owner_root(self):
+        superrepo, _ = self._make_superrepo_fixture()
+        real_git = shutil.which("git")
+        self.assertIsNotNone(real_git)
+        fake_bin = Path(self.tmp.name) / "fake-bin"
+        fake_bin.mkdir()
+        fake_git = fake_bin / "git"
+        fake_git.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = \"-C\" ] && [ \"$3\" = \"rev-parse\" ] && [ \"$4\" = \"--path-format=absolute\" ]; then\n"
+            f"  root=\"$2\"; shift 4; exec {real_git} -C \"$root\" rev-parse \"$@\"\n"
+            "fi\n"
+            f"exec {real_git} \"$@\"\n"
+        )
+        fake_git.chmod(0o755)
+        other_cwd = Path(self.tmp.name) / "unrelated-cwd"
+        other_cwd.mkdir()
+        target = superrepo / "openspec" / "changes" / "legacy-git" / "tasks.md"
+        result = self._run(
+            self._path_event(target, other_cwd),
+            gate=self._scope_gate("auto"),
+            extra_env={"PATH": str(fake_bin) + os.pathsep + os.environ["PATH"]},
+        )
+        self.assertEqual(result.returncode, 0)
 if __name__ == "__main__":
     unittest.main()
