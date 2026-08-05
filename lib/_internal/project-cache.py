@@ -287,6 +287,56 @@ def remove_bundled_command_leftovers(
         )
 
 
+def remove_recipe_command_leftovers(
+    project_root: Path,
+    cli_home: Path | None = None,
+    lock_commands: dict[str, str] | None = None,
+    recipe_sources: dict[str, Path] | None = None,
+) -> None:
+    """Delete untouched recipe-managed commands left in ``ai-specs/commands``.
+
+    Recipe commands now materialize in the per-project cache. A project copy is
+    removed only when it matches the currently cached recipe command, a current
+    catalog recipe source, or its recorded hash in the legacy ``[commands]``
+    lock table. Files that differ from all available provenance are treated as
+    local/customized commands and are preserved.
+    """
+    root = Path(project_root)
+    ai_specs = root / "ai-specs"
+    local_commands_dir = ai_specs / "commands"
+    managed_commands_dir = commands_dir(root, cli_home=cli_home)
+    if not local_commands_dir.is_dir():
+        return
+    if lock_commands is None:
+        lock_commands = _legacy_lock_command_hashes(ai_specs)
+    recipe_sources = recipe_sources or {}
+
+    for child in sorted(local_commands_dir.iterdir()):
+        if not child.is_file() or child.suffix != ".md":
+            continue
+        managed = managed_commands_dir / child.name
+        source = recipe_sources.get(child.name)
+        lock_hash = lock_commands.get(child.name)
+        if not managed.is_file() and not (source and source.is_file()) and not lock_hash:
+            continue
+
+        project_bytes = _normalized_bytes(child)
+        matches_managed = managed.is_file() and project_bytes == _normalized_bytes(managed)
+        matches_source = source is not None and source.is_file() and project_bytes == _normalized_bytes(source)
+        matches_lock = bool(lock_hash) and hashlib.sha256(project_bytes).hexdigest() == lock_hash
+        if not (matches_managed or matches_source or matches_lock):
+            _warn(
+                f"keeping local/customized ai-specs/commands/{child.name} "
+                "(differs from recipe-managed cache/source and legacy provenance; resolve manually)"
+            )
+            continue
+        try:
+            child.unlink()
+            print(f"  ✓ removed leftover recipe command ai-specs/commands/{child.name}")
+        except OSError as exc:
+            _warn(f"failed to remove leftover ai-specs/commands/{child.name}: {exc}")
+
+
 def bundled_skill_ids(cli_home: Path | None = None) -> list[str]:
     """Directory names under ``bundled-skills/`` that ship a ``SKILL.md``."""
     home = Path(cli_home) if cli_home is not None else _ai_specs_home()

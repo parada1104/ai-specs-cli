@@ -773,10 +773,12 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     cli_home = Path(ai_specs_home)
     pc = _load_project_cache()
     pc.ensure_cache(project_root, cli_home=cli_home)
-    pc.remove_legacy_origin(project_root, cli_home=cli_home)
 
     recipes = load_recipes_from_manifest(project_root)
     enabled = {rid: cfg for rid, cfg in recipes.items() if cfg.get("enabled")}
+    # Legacy-origin cleanup must run after the manifest is loaded so recipe
+    # command cleanup can compare against current catalog sources.
+    pc.remove_legacy_origin(project_root, cli_home=cli_home)
 
     util = _load_util()
     allow_internal = os.environ.get("AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES") == "1"
@@ -795,6 +797,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     expected_dep_ids: set[str] = {d.get("id", "") for d in manifest_deps if d.get("id")}
 
     if not enabled:
+        pc.remove_recipe_command_leftovers(project_root, cli_home=cli_home)
         # Still clean up orphaned recipes (none expected) and deps not in manifest
         clean_orphans(project_root, set(), expected_dep_ids, cli_home=cli_home)
         print("  (no [recipes.*] enabled — skipping)")
@@ -873,14 +876,22 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
     recipe_mcp: dict[str, Any] = {sid: dict(cfg) for sid, cfg in manifest_mcp.items()}
 
-    # Collect dep IDs from enabled recipes' dep skills
+    # Build source provenance before materializing so first-time upgrades can
+    # remove an untouched project copy even when cache/commands is empty.
+    recipe_command_sources: dict[str, Path] = {}
     for rid, cfg in enabled.items():
         recipe = read_recipe(catalog_dir, rid)
+        recipe_dir = catalog_dir / rid
         for skill in recipe.skills:
             if skill.source == "dep":
                 expected_dep_ids.add(skill.id)
+        for cmd in recipe.commands:
+            recipe_command_sources[f"{cmd.id}.md"] = recipe_dir / cmd.path
 
     clean_orphans(project_root, set(enabled.keys()), expected_dep_ids, cli_home=cli_home)
+    pc.remove_recipe_command_leftovers(
+        project_root, cli_home=cli_home, recipe_sources=recipe_command_sources
+    )
 
     for rid, cfg in enabled.items():
         print(f"  ▸ recipe {rid}")
