@@ -386,8 +386,12 @@ def materialize_template(
                 record(dest.read_bytes())
             else:
                 warn(
-                    f"override metadata missing for {tpl.target}; preserving existing file "
-                    "and not refreshed. Refresh with:\n"
+                    f"declared recipe override has no ownership metadata: {tpl.target}; "
+                    "preserving it because the CLI cannot prove it is unmodified; "
+                    "the override was not refreshed. This is user-managed override "
+                    "content, not a failed sync. To keep this customized override, "
+                    "do nothing. To adopt the current recipe version, remove it and "
+                    "sync again:\n"
                     f"  rm {tpl.target} && ai-specs sync"
                 )
         elif state == "managed_stale" and policy == "auto":
