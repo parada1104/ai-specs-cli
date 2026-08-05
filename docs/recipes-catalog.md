@@ -183,16 +183,30 @@ workflow when one is enabled, without hard-depending on it.
   The generated rule is repository-declared guidance. An external session runtime may
   consume it when asked where planning artifacts should live, but runtime session behavior
   is outside this recipe.
+
 - **Full README:** [`catalog/recipes/plan-build-flow/README.md`](../catalog/recipes/plan-build-flow/README.md)
 
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.3.0"
+version = "1.4.0"
 
 [recipes.plan-build-flow.config]
 artifact_store_default = "both"
 ```
+
+### Cross-repository planning boundaries
+
+For a recognized initialized submodule linked worktree, repository **topology**
+derives the containing **superproject** as the **central** planning root. The
+central `openspec/changes/` tree is the single planning-artifact location for
+that cross-repository change: active plans are looked up there and writes remain
+limited to that subtree, never to arbitrary superproject production paths.
+**Standalone** and non-submodule worktrees retain nearest-root behavior. An
+unresolved relationship is **fail-safe** and does not guess an unrelated parent.
+There is **no duplication** and **no orchestration**: the recipe does not copy,
+synchronize, or create duplicate repository-local plans, worktrees, branches, or
+pull requests.
 
 ## worktree-flow
 

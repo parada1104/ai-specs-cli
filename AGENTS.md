@@ -10,6 +10,7 @@
 - **Purpose**: per-project AI harness for agent configuration, MCPs, recipes, memory, and tracker integration.
 - **Enabled runtimes**: `claude`, `cursor`, `opencode`, `pi`, `omp`
 - **Integration branch**: `development`
+- **Repo topology**: `standalone` (via auto)
 - **Vault scope**: `nnodes/proyectos/ai-specs`
 
 ## Runtime MCPs
@@ -58,7 +59,8 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.
 - Do not merge or push to `development` without a PR and explicit human instruction.
 - Preserve unrelated worktree changes; never revert changes you did not make.
-- Before dispatching a write-capable subagent or task, verify the current worktree and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.
+- Before dispatching a write-capable subagent or task, verify which git repository, worktree, and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Under monorepo-submodules, confirming which-repo via show-toplevel is mandatory. Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.
+- If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). Create a worktree first (e.g. `/worktree-new`) and write there instead.
 - Use a PR-based merge workflow; all changes to `development` go through a pull request.
 - VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations.
 - Do not push directly to `development`; always open a PR from a feature branch.
@@ -72,7 +74,13 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - Do not open a PR until the change folder on the branch contains the tier minimum planning files, committed.
 - After authorization, implement and validate in the change worktree when isolated worktrees are enabled.
 - Archive the change folder on the review branch before merge; never defer archive until after merge.
+- Default artifact store for this project's planning artifacts: `openspec`. When a session asks where planning artifacts should live, answer with this value unless the user overrides it.
+- For recognized submodule worktrees, use the topology-derived central planning tree in the superproject; standalone repositories keep their own planning tree.
 - Inspect the active Trello card before resuming work and keep card state in sync with actual progress.
+- Before apply/production work on a structured change, create or link a Trello card and record it in the ## Tracker section of the change's proposal.md (or tasks.md) — card_id + url. openspec/** writes are never gated — write the link section there first.
+- On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.
+- If the tracker gate warns or blocks, create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down.
+- Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare.
 - Follow the project's designated workflow for structured changes.
 - Direct `skill-sync` runs are allowed only for metadata validation.
 
