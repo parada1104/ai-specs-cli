@@ -23,6 +23,11 @@ def _git(cwd: Path, *args: str) -> None:
                    capture_output=True, text=True)
 
 
+def _git_output(cwd: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(cwd), *args], check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
 class PlanBuildGateHookTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -36,22 +41,67 @@ class PlanBuildGateHookTests(unittest.TestCase):
         _git(self.repo, "add", "-A")
         _git(self.repo, "commit", "-qm", "init")
 
+    def _seed_change_at(self, root: Path, slug: str = "demo-change") -> None:
+        d = root / "openspec" / "changes" / slug
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "tasks.md").write_text("# tasks\n")
+
     def _seed_change(self, slug: str = "demo-change") -> None:
-        d = self.repo / "openspec" / "changes" / slug
-        d.mkdir(parents=True)
+        self._seed_change_at(self.repo, slug)
+
+    def _seed_archived_change_at(self, root: Path, slug: str = "old-change") -> None:
+        d = root / "openspec" / "changes" / "archive" / slug
+        d.mkdir(parents=True, exist_ok=True)
         (d / "tasks.md").write_text("# tasks\n")
 
     def _seed_archived_change(self, slug: str = "old-change") -> None:
-        d = self.repo / "openspec" / "changes" / "archive" / slug
-        d.mkdir(parents=True)
-        (d / "tasks.md").write_text("# tasks\n")
+        self._seed_archived_change_at(self.repo, slug)
 
-    def _event(self, tool: str, file_path: str) -> dict:
+    def _make_super_with_submodule(
+        self,
+        label: str = "primary",
+        submodule_name: str | None = "api",
+        superproject_parent: str = "",
+    ) -> dict[str, Path]:
+        root = Path(os.path.realpath(self.tmp.name))
+        source = root / f"{label}-source"
+        superproject = root / superproject_parent / f"{label}-super"
+        source.mkdir()
+        _git(source, "init", "-q")
+        _git(source, "config", "user.email", "t@t.t")
+        _git(source, "config", "user.name", "t")
+        (source / "src").mkdir()
+        (source / "src" / "app.py").write_text("x\n")
+        _git(source, "add", "-A")
+        _git(source, "commit", "-qm", "init")
+
+        superproject.mkdir(parents=True)
+        _git(superproject, "init", "-q")
+        _git(superproject, "config", "user.email", "t@t.t")
+        _git(superproject, "config", "user.name", "t")
+        add_args = [
+            "-c", "protocol.file.allow=always", "submodule", "add",
+        ]
+        if submodule_name is not None:
+            add_args.extend(["--name", submodule_name])
+        add_args.extend([str(source), "apps/api"])
+        _git(superproject, *add_args)
+        _git(superproject, "commit", "-qm", "add submodule")
+
+        linked = superproject / ".worktrees" / f"apps-api-{label}"
+        linked.parent.mkdir(parents=True)
+        _git(superproject / "apps" / "api", "worktree", "add", "-b", f"feat-{label}", str(linked), "HEAD")
+        self.assertTrue((superproject / "apps" / "api" / ".git").exists())
+        self.assertEqual(_git_output(linked, "rev-parse", "--show-toplevel"), str(linked))
+        self.assertEqual(_git_output(linked, "rev-parse", "--show-superproject-working-tree"), "")
+        return {"source": source, "super": superproject, "sub": superproject / "apps" / "api", "linked": linked}
+
+    def _event(self, tool: str, file_path: str, *, cwd: Path | None = None) -> dict:
         return {
             "event": "pre-tool-use",
             "tool_name": tool,
             "tool_input": {"file_path": file_path},
-            "cwd": str(self.repo),
+            "cwd": str(cwd or self.repo),
         }
 
     def _run(
@@ -154,6 +204,134 @@ class PlanBuildGateHookTests(unittest.TestCase):
         })
         self.assertEqual(r.returncode, 0, r.stderr)
 
+
+    def test_submodule_worktree_allows_production_with_central_plan(self):
+        fx = self._make_super_with_submodule()
+        self._seed_change_at(fx["super"], "demo")
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_default_nested_submodule_name_resolves_central(self):
+        fx = self._make_super_with_submodule("default-name", None)
+        self.assertEqual(
+            _git_output(fx["super"], "config", "-f", ".gitmodules", "--get", "submodule.apps/api.path"),
+            "apps/api",
+        )
+        self._seed_change_at(fx["super"], "demo")
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_superproject_path_with_modules_component_resolves_central(self):
+        fx = self._make_super_with_submodule("modules-parent", "api", "modules")
+        self._seed_change_at(fx["super"], "demo")
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_submodule_worktree_blocks_without_central_plan(self):
+        fx = self._make_super_with_submodule()
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn(str(fx["super"] / "openspec" / "changes"), r.stderr)
+
+    def test_submodule_worktree_blocks_with_archived_only_central_plan(self):
+        fx = self._make_super_with_submodule()
+        self._seed_archived_change_at(fx["super"], "demo")
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_submodule_worktree_allows_central_plan_creation(self):
+        fx = self._make_super_with_submodule()
+        target = fx["super"] / "openspec" / "changes" / "new" / "tasks.md"
+        r = self._run(self._event("Write", str(target), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_submodule_worktree_allows_central_archive_write(self):
+        fx = self._make_super_with_submodule()
+        target = fx["super"] / "openspec" / "changes" / "archive" / "demo" / "tasks.md"
+        r = self._run(self._event("Write", str(target), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_submodule_worktree_blocks_superproject_production_path(self):
+        fx = self._make_super_with_submodule()
+        target = fx["super"] / "src" / "app.py"
+        r = self._run(self._event("Write", str(target), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_superproject_probe_empty_still_resolves_central(self):
+        fx = self._make_super_with_submodule()
+        self.assertEqual(_git_output(fx["linked"], "rev-parse", "--show-superproject-working-tree"), "")
+        self._seed_change_at(fx["super"], "demo")
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "new.py"), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_similar_submodule_names_do_not_select_wrong_parent(self):
+        first = self._make_super_with_submodule("first", "api")
+        second = self._make_super_with_submodule("second", "api")
+        self._seed_change_at(second["super"], "only-second")
+        r = self._run(self._event("Write", str(first["linked"] / "src" / "app.py"), cwd=first["linked"]))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn(str(first["super"] / "openspec" / "changes"), r.stderr)
+        self.assertNotIn(str(second["super"]), r.stderr)
+
+    def test_uninitialized_submodule_does_not_grant_production_access(self):
+        fx = self._make_super_with_submodule()
+        self._seed_change_at(fx["super"], "central")
+        _git(fx["super"], "submodule", "deinit", "-f", "--", "apps/api")
+        self.assertEqual(_git_output(fx["linked"], "rev-parse", "--show-toplevel"), str(fx["linked"]))
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_non_submodule_worktree_uses_own_root(self):
+        linked = Path(self.tmp.name) / "ordinary-worktree"
+        _git(self.repo, "worktree", "add", "-b", "ordinary", str(linked), "HEAD")
+        self._seed_change_at(linked, "local")
+        r = self._run(self._event("Write", str(linked / "src" / "app.py"), cwd=linked))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_central_nonexistent_tasks_path_allowed(self):
+        fx = self._make_super_with_submodule()
+        target = fx["super"] / "openspec" / "changes" / "brand-new" / "specs" / "spec.md"
+        r = self._run(self._event("Write", str(target), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_symlinked_central_path_cannot_escape(self):
+        fx = self._make_super_with_submodule()
+        changes = fx["super"] / "openspec" / "changes"
+        changes.mkdir(parents=True)
+        (changes / "escape").symlink_to(fx["super"] / "src", target_is_directory=True)
+        target = changes / "escape" / "evil.py"
+        blocked = self._run(self._event("Write", str(target), cwd=fx["linked"]))
+        self.assertEqual(blocked.returncode, 2, blocked.stderr)
+        self._seed_change_at(fx["super"], "central")
+        allowed = self._run(self._event("Write", str(target), cwd=fx["linked"]))
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
+    def test_changes_lookalike_prefix_is_not_artifact_root(self):
+        fx = self._make_super_with_submodule()
+        target = fx["super"] / "openspec" / "changes-archive" / "demo" / "tasks.md"
+        r = self._run(
+            self._event("Write", str(target), cwd=fx["linked"]),
+            extra_env={"PLAN_BUILD_GATE_PATHS": "openspec"},
+        )
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_outside_repository_path_not_broadened(self):
+        fx = self._make_super_with_submodule()
+        outside = Path(self.tmp.name) / "outside" / "openspec" / "changes" / "demo" / "tasks.md"
+        r = self._run(self._event("Write", str(outside), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_gate_evaluation_creates_nothing(self):
+        fx = self._make_super_with_submodule()
+        before_worktrees = _git_output(fx["sub"], "worktree", "list", "--porcelain")
+        before_branches = _git_output(fx["sub"], "for-each-ref", "--format=%(refname:short)", "refs/heads")
+        before_dirs = sorted(str(p.relative_to(fx["super"])) for p in fx["super"].rglob("*") if p.is_dir())
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(_git_output(fx["sub"], "worktree", "list", "--porcelain"), before_worktrees)
+        self.assertEqual(_git_output(fx["sub"], "for-each-ref", "--format=%(refname:short)", "refs/heads"), before_branches)
+        after_dirs = sorted(str(p.relative_to(fx["super"])) for p in fx["super"].rglob("*") if p.is_dir())
+        self.assertEqual(after_dirs, before_dirs)
 
 if __name__ == "__main__":
     unittest.main()

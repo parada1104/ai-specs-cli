@@ -75,6 +75,7 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - After authorization, implement and validate in the change worktree when isolated worktrees are enabled.
 - Archive the change folder on the review branch before merge; never defer archive until after merge.
 - Default artifact store for this project's planning artifacts: `openspec`. When a session asks where planning artifacts should live, answer with this value unless the user overrides it.
+- For recognized submodule worktrees, use the topology-derived central planning tree in the superproject; standalone repositories keep their own planning tree.
 - Inspect the active Trello card before resuming work and keep card state in sync with actual progress.
 - Before apply/production work on a structured change, create or link a Trello card and record it in the ## Tracker section of the change's proposal.md (or tasks.md) — card_id + url. openspec/** writes are never gated — write the link section there first.
 - On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.

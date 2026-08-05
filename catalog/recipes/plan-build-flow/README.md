@@ -39,7 +39,7 @@ folder exists yet.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.3.0"
+version = "1.4.0"
 ```
 
 Then run `ai-specs sync`.
@@ -64,3 +64,14 @@ runtime's session behavior.
 
 Implementation defers to `worktree-flow` when enabled. The recipe syncs
 standalone without a hard dependency.
+
+## Cross-repository planning boundaries
+
+When a recognized submodule code worktree is used, repository topology identifies
+the containing **superproject** and its **central** planning tree. Central active
+plan lookup and artifact writes stay within that planning tree; they never grant a
+superproject-wide production-write bypass. A **standalone** repository continues
+to use its own nearest planning root. If the topology cannot be proven, resolution
+is **fail-safe** and retains nearest-repository behavior. The recipe has **no
+duplication** and **no orchestration** boundary: it does not copy, synchronize, or
+create per-repository plans or change worktrees and branches.

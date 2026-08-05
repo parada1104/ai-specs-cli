@@ -2,7 +2,7 @@
 id = "plan-build-flow"
 name = "Plan / Build Flow"
 description = "Ambient change workflow: depth classifier, silent planning artifacts, PR/archive gates"
-version = "1.3.0"
+version = "1.4.0"
 author = "ai-specs"
 license = "MIT"
 tags = ["workflow"]
@@ -32,6 +32,7 @@ workflow_rules = [
     "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
     "Archive the change folder on the review branch before merge; never defer archive until after merge.",
     "Default artifact store for this project's planning artifacts: `{config.artifact_store_default}`. When a session asks where planning artifacts should live, answer with this value unless the user overrides it.",
+    "For recognized submodule worktrees, use the topology-derived central planning tree in the superproject; standalone repositories keep their own planning tree.",
 ]
 
 [[provides.hooks]]
