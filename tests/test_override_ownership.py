@@ -119,8 +119,43 @@ class OverrideOwnershipTests(unittest.TestCase):
             with patch("sys.stderr", stream):
                 self.materialize.materialize_template(recipe, tpl, root, recipe_id="example")
             self.assertEqual(dest.read_text(), "custom before migration")
-            self.assertIn("metadata", stream.getvalue())
+            warning = stream.getvalue()
+            self.assertIn("missing", warning)
+            self.assertIn("preserving existing file", warning)
+            self.assertIn("leave it unchanged", warning)
+            self.assertIn("remove it and run sync again", warning)
+            self.assertNotIn("user-managed", warning.lower())
+            self.assertNotIn("customized", warning.lower())
             self.assertNotIn(tpl.target, self.lock.load_lock(root / "ai-specs/.ai-specs.lock").get("managed", {}))
+
+    def test_doctor_describes_untracked_divergence_neutrally(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            catalog = Path(tmp) / "catalog" / "recipes" / "example"
+            catalog.mkdir(parents=True)
+            (catalog / "recipe.toml").write_text(
+                '[recipe]\nid="example"\nname="Example"\ndescription="D"\nversion="1"\n'
+                '[[provides.templates]]\nsource="template.md"\ntarget="out/template.md"\n'
+            )
+            (catalog / "template.md").write_text("catalog-v2")
+            (root / "ai-specs").mkdir(parents=True)
+            (root / "ai-specs/ai-specs.toml").write_text('[recipes.example]\nenabled = true\n')
+            dest = root / "out/template.md"
+            dest.parent.mkdir(parents=True)
+            dest.write_text("local bytes without metadata")
+
+            with patch.object(self.doctor, "AI_SPECS_HOME", Path(tmp)):
+                doctor = self.doctor.Doctor(root)
+                doctor._check_stale_template_overrides()
+
+            self.assertEqual(len(doctor.checks), 1)
+            warning = doctor.checks[0].message
+            self.assertIn("missing ownership metadata", warning)
+            self.assertIn("preserve", warning)
+            self.assertIn("remove", warning)
+            self.assertIn("sync", warning)
+            self.assertNotIn("user-managed", warning.lower())
+            self.assertNotIn("user-owned", warning.lower())
 
     def test_untracked_matching_catalog_seeds_without_rewrite(self):
         with tempfile.TemporaryDirectory() as tmp:

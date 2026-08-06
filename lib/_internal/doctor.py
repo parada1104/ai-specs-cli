@@ -850,7 +850,11 @@ class Doctor:
                         util.render_override_bytes(src, merged_cfg)
                     ):
                         continue
-                    message = f"{tpl.target} has missing ownership metadata; sync will preserve it"
+                    message = (
+                        f"{tpl.target} has missing ownership metadata; sync will preserve the existing file "
+                        "without assigning ownership. Leave it unchanged to preserve it, or remove it and "
+                        "rerun sync to restore the current recipe version"
+                    )
                 elif state == "managed_stale" and policy != "auto":
                     message = f"{tpl.target} is managed-stale and policy is {policy}; sync will preserve it"
                 else:

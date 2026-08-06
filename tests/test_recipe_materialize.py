@@ -1126,10 +1126,14 @@ class StaleCleanupOverrideTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(dest.read_bytes(), custom)
         err = buf.getvalue()
-        self.assertIn("not refreshed", err)
+        self.assertIn("preserving existing file", err)
+        self.assertIn("leave it unchanged", err)
+        self.assertIn("remove it and run sync again", err)
         self.assertIn("worktree-cleanup.sh", err)
         self.assertIn("rm ", err)
         self.assertIn("ai-specs sync", err)
+        self.assertNotIn("user-managed", err.lower())
+        self.assertNotIn("customized", err.lower())
 
     def test_missing_override_gets_fresh_copy(self):
         root = self._make_wf_project()
