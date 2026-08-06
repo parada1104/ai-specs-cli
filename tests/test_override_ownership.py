@@ -157,6 +157,33 @@ class OverrideOwnershipTests(unittest.TestCase):
             self.assertNotIn("user-managed", warning.lower())
             self.assertNotIn("user-owned", warning.lower())
 
+    def test_doctor_silences_legacy_catalog_seed_with_rendered_config(self):
+        """A raw catalog seed is adopted by sync even when rendering changes bytes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            catalog = Path(tmp) / "catalog" / "recipes" / "example"
+            catalog.mkdir(parents=True)
+            (catalog / "recipe.toml").write_text(
+                '[recipe]\nid="example"\nname="Example"\ndescription="D"\nversion="1"\n'
+                '[[provides.templates]]\nsource="template.md"\ntarget="out/template.md"\n'
+            )
+            legacy = "topology=__WORKTREE_REPO_TOPOLOGY__\n"
+            (catalog / "template.md").write_text(legacy)
+            (root / "ai-specs").mkdir(parents=True)
+            (root / "ai-specs/ai-specs.toml").write_text(
+                '[recipes.example]\nenabled = true\n'
+                '[recipes.example.config]\nrepo_topology = "worktree"\n'
+            )
+            dest = root / "out/template.md"
+            dest.parent.mkdir(parents=True)
+            dest.write_text(legacy)
+
+            with patch.object(self.doctor, "AI_SPECS_HOME", Path(tmp)):
+                doctor = self.doctor.Doctor(root)
+                doctor._check_stale_template_overrides()
+
+            self.assertEqual(doctor.checks, [])
+
     def test_untracked_matching_catalog_seeds_without_rewrite(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
