@@ -846,9 +846,12 @@ class Doctor:
                 if state == "user_modified":
                     message = f"{tpl.target} is user-modified; sync will preserve it"
                 elif state == "untracked":
-                    if util.sha256_bytes(dest.read_bytes()) == util.sha256_bytes(
+                    disk_sha = util.sha256_bytes(dest.read_bytes())
+                    rendered_sha = util.sha256_bytes(
                         util.render_override_bytes(src, merged_cfg)
-                    ):
+                    )
+                    legacy_catalog_sha = util.sha256_bytes(src.read_bytes())
+                    if disk_sha in (rendered_sha, legacy_catalog_sha):
                         continue
                     message = (
                         f"{tpl.target} has missing ownership metadata; sync will preserve the existing file "
