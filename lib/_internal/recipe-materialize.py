@@ -386,8 +386,9 @@ def materialize_template(
                 record(dest.read_bytes())
             else:
                 warn(
-                    f"override metadata missing for {tpl.target}; preserving existing file "
-                    "and not refreshed. Refresh with:\n"
+                    f"override metadata missing for {tpl.target}; preserving existing file without assigning ownership. "
+                    "To preserve this local file, leave it unchanged. To replace it with the current recipe version, "
+                    "remove it and run sync again:\n"
                     f"  rm {tpl.target} && ai-specs sync"
                 )
         elif state == "managed_stale" and policy == "auto":
