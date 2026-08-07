@@ -36,8 +36,11 @@ The bundled skill SHALL classify each substantial request into exactly one
 planning depth before production edits:
 
 - **Full** — explore → proposal → spec → design → tasks
-- **Standard** — spec → tasks (explore/proposal/design optional)
-- **Light** — tasks only
+- **Standard** — conditional explore → proposal → spec → tasks
+- **Light** — proposal → tasks
+
+Minimum artifacts per depth are normative in *Depth artifact minima*; this
+requirement names the chain order only and MUST NOT restate the minima.
 
 Classification SHALL compute a **signal** tier from size/scope heuristics AND
 separately detect an **explicit user depth request** when the user names a tier
@@ -63,7 +66,7 @@ planning.
 - **GIVEN** a one-file bug fix with an explicit file and expected edit
 - **AND** the user did not state a conflicting explicit depth
 - **WHEN** planning starts
-- **THEN** only `tasks.md` is required
+- **THEN** `proposal.md` and `tasks.md` are required, and nothing else
 - **AND** no production code is modified during planning
 
 #### Scenario: Direct implement still plans first
@@ -255,9 +258,15 @@ tier minimum planning files and those files are committed.
 
 #### Scenario: PR allowed with tier minimum files
 
-- GIVEN a standard-tier change with `tasks.md` and spec deltas under `specs/`
-- WHEN the artifact gate is evaluated before PR creation
-- THEN PR creation may proceed
+- **GIVEN** a standard-tier change with `proposal.md`, `tasks.md`, and spec deltas under `specs/`
+- **WHEN** the artifact gate is evaluated before PR creation
+- **THEN** PR creation may proceed
+
+#### Scenario: PR blocked for Light without proposal
+
+- **GIVEN** a light-tier change whose committed folder holds only `tasks.md`
+- **WHEN** the artifact gate is evaluated before PR creation
+- **THEN** the skill stops with a blocker naming `proposal.md`
 
 ### Requirement: Pre-merge archive gate
 
@@ -573,13 +582,116 @@ discovery.
 - AND the gate still resolves standalone or central roots from topology without new configuration
 
 
+### Requirement: Depth artifact minima
+
+The bundled skill SHALL require these minimum planning artifacts before build,
+and the pre-merge guardian SHALL enforce the same sets against the archived
+folder before merge:
+
+- **Light** — `proposal.md` and `tasks.md`; a short Why / What / Non-goals
+  proposal is sufficient and `design.md` is not required.
+- **Standard** — `proposal.md`, `tasks.md`, and at least one `specs/**/*.md`.
+  `explore.md` is additionally required at plan time when the explore criteria
+  match.
+- **Full** — `tasks.md`, plus `proposal.md` or `design.md`, plus at least one
+  `specs/**/*.md`; explore remains skill-enforced, not guardian-enforced.
+
+#### Scenario: Light requires proposal and tasks
+
+- **GIVEN** a one-file bug fix classified as Light
+- **WHEN** planning completes
+- **THEN** both `proposal.md` and `tasks.md` exist under the change folder
+
+#### Scenario: Standard requires proposal, tasks, and spec
+
+- **GIVEN** a scoped multi-file feature classified as Standard
+- **WHEN** planning completes
+- **THEN** `proposal.md`, `tasks.md`, and at least one `specs/**/*.md` exist
+- **AND** either `explore.md` exists or `tasks.md` contains `Explore: skipped —`
+
+#### Scenario: Full minima do not require explore on disk for merge
+
+- **GIVEN** Full minima and a conforming verify report exist without `explore.md`
+- **WHEN** the pre-merge guardian runs
+- **THEN** it reports OK and leaves explore enforcement to the skill
+
+### Requirement: Standard explore enforcement criteria
+
+For Standard depth, the skill SHALL require `explore.md` when any of these hold
+at plan start: two plausible approaches with material trade-offs, unknown
+concrete files, conflicting project guidance, user uncertainty, or a prior
+attempt that failed or was reverted. It SHALL skip explore only when concrete
+paths and expected behavior are known, one obvious approach exists, and no
+conflict, uncertainty, or retry signal applies. A skipped decision MUST be
+recorded as `Explore: skipped — <reason>` in `tasks.md`.
+
+Explore at Standard and Full is a plan-phase skill responsibility. No machine
+gate SHALL block PR creation, archive-tail, or merge for a missing `explore.md`.
+
+### Requirement: Staged verify gate
+
+After apply and before archive-tail, and again before merge, verification
+evidence SHALL be evaluated by decided depth:
+
+- **Light — advisory**: missing evidence MAY warn but MUST NOT block.
+- **Standard — enforcement**: dedicated `verify-report.md` is required with a
+  non-failing verdict, command, exit `0`, valid `YYYY-MM-DD` calendar date, and
+  7–40 hex commit SHA. Evidence in `tasks.md` does not count.
+- **Full — required**: dedicated `verify-report.md` requires strict `PASS`,
+  `ready_for_archive: true`, and deterministic mapping to every success
+  criterion.
+
+The canonical evidence block uses `Verdict`, `Command`, `Exit`, `Date`,
+`Commit`, and (for Full) `ready_for_archive: true`, followed by a
+`## Success-criteria mapping` block. The authoritative source is `proposal.md`
+when present, otherwise `design.md`. An existing proposal with a missing or
+empty `## Success Criteria` section MUST block rather than fall back to design;
+the authoritative source MUST contain exactly one non-empty heading, and
+duplicate `## Success Criteria` headings MUST be rejected. Each top-level bullet
+there is assigned a 1-based ordinal; Full reports MUST contain exactly one
+`- Criterion N: PASS` mapping row for each ordinal, with no duplicate, missing,
+unknown, or non-PASS rows. Accepted synonyms are `Status`/`Overall`, `Exit
+code`/`Exit status`, and `SHA`/`Revision`.
+
+#### Scenario: Standard archive-tail blocks without report
+
+- **GIVEN** Standard minima are present and no conforming `verify-report.md`
+- **WHEN** archive-tail is attempted
+- **THEN** the verify gate blocks before archiving
+
+#### Scenario: Light archive without evidence is allowed
+
+- **GIVEN** Light minima are present and no `verify-report.md` exists
+- **WHEN** archive-tail and the pre-merge guardian run
+- **THEN** neither adds a verify blocker
+
+#### Scenario: Full merge requires strict PASS, ready marker, and complete mapping
+
+- **GIVEN** Full minima are present and the report is missing, failing, lacks
+  `ready_for_archive: true`, or omits any success-criteria mapping row
+- **WHEN** the pre-merge guardian runs
+- **THEN** it blocks until the report conforms
+
+#### Scenario: Verify is checked at both enforcement points
+
+- **GIVEN** an authorized Standard or Full change
+- **WHEN** build runs
+- **THEN** verification is produced before archive-tail and rechecked after archive
+
 ### Requirement: Pre-merge merge guardian
 
-Before merge, missing tier artifacts or a still-active (non-archived) change
-folder is a hard stop. Agents MUST invoke
+Before merge, missing tier artifacts, missing staged verify evidence, or a
+still-active (non-archived) change folder is a hard stop. Agents MUST invoke
 `$AI_SPECS_HOME/lib/_internal/premerge_guardian.py` (defaulting
 `AI_SPECS_HOME` to `$HOME/.ai-specs` when unset). Sync MUST NOT materialize a
 per-project copy under `ai-specs/bin/`.
+
+Hard blockers are: active change folder; missing archive; Light missing
+`proposal.md` or `tasks.md`; Standard missing `proposal.md`, `tasks.md`, a
+`specs/**/*.md` delta, or a conforming `verify-report.md`; and Full missing
+`tasks.md`, `proposal.md` or `design.md`, a `specs/**/*.md` delta, or a
+conforming report with strict `PASS` and `ready_for_archive: true`. Missing
+`explore.md` is never a blocker, and only the requested slug is evaluated.
 
 #### Scenario: Merge blocked when change folder still active
 
@@ -593,7 +705,29 @@ per-project copy under `ai-specs/bin/`.
 - WHEN an agent runs the pre-merge guardian
 - THEN it uses `${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py`
 - AND the recipe does not target `ai-specs/bin/premerge_guardian.py`
+#### Scenario: Light archive requires proposal but not verify evidence
 
+- **GIVEN** Depth Light and an archive with `tasks.md` but no `proposal.md`
+- **WHEN** the pre-merge guardian runs
+- **THEN** it fails naming `proposal.md` but does not add a verify blocker
+
+#### Scenario: Standard archive requires proposal, spec, and verify report
+
+- **GIVEN** Depth Standard and the archive lacks a minimum or conforming report
+- **WHEN** the pre-merge guardian runs
+- **THEN** it fails with a tier-minima or verify-evidence blocker
+
+#### Scenario: Missing explore is never a guardian blocker
+
+- **GIVEN** Full minima and a conforming report exist without `explore.md`
+- **WHEN** the pre-merge guardian runs
+- **THEN** it reports OK
+
+#### Scenario: Guardian ignores unrelated archived changes
+
+- **GIVEN** unrelated archived folders predate this contract and are non-conforming
+- **WHEN** the guardian runs for one slug
+- **THEN** only that slug is evaluated
 ### Requirement: Pre-tool-use artifact gate hook
 
 The `plan-build-flow` recipe SHALL distribute a `pre-tool-use` runtime hook

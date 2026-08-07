@@ -154,15 +154,36 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             [
                 "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; compute the signal depth, compare any explicit requested depth, ask on conflicts, and annotate requested/signal/decided depth in tasks.md before authorization.",
                 "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
-                "Do not open a PR until the change folder on the branch contains the tier minimum planning files, committed.",
+                "Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed.",
                 "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
-                "Archive the change folder on the review branch before merge; never defer archive until after merge.",
+                "Before merge, run verify evidence before archive-tail (Standard/Full block without a conforming verify-report.md; Light is advisory), archive the change folder on the review branch, and run the pre-merge guardian again; never defer archive until after merge.",
             ],
         )
         self.assertIn("{config.artifact_store_default}", rules[5].text)
         self.assertEqual(rules[5].text.count("{config.artifact_store_default}"), 1)
         self.assertIn("topology", rules[6].text.lower())
         self.assertIn("superproject", rules[6].text.lower())
+
+    def test_skill_documents_minima_explore_and_staged_verify_modes(self):
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
+        for marker in (
+            "proposal.md", "explore.md", "multi-approach", "unknown surface",
+            "advisory", "enforcement", "required", "verify-report.md",
+            "pre-archive", "ready_for_archive: true", "grandfather",
+        ):
+            self.assertIn(marker, skill)
+
+    def test_readme_and_catalog_pin_recipe_1_6_0(self):
+        readme = (CATALOG / RECIPE_ID / "README.md").read_text()
+        catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
+        self.assertIn('version = "1.6.0"', readme)
+        self.assertIn('version = "1.6.0"', catalog)
+        changelog = (ROOT / "CHANGELOG.md").read_text()
+        unreleased = changelog.split("## [0.21.0]", 1)[0]
+        prior = "1." + "5.0"
+        self.assertIn(prior + "` → `1.6.0", unreleased)
+        self.assertIn("1.4.0` → `" + prior, unreleased)
+
 
     def test_skill_describes_adversarial_depth_conflicts(self):
         skill = CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md"
@@ -287,7 +308,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
                 self.mod.execute_hooks(recipe, {"artifact_store_default": value}, Path(tmp.name))
 
     def test_version_and_catalog_documentation_use_current_contract(self):
-        self.assertEqual(_recipe_version(), "1.5.0")
+        self.assertEqual(_recipe_version(), "1.6.0")
         readme = (CATALOG / RECIPE_ID / "README.md").read_text()
         catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
         for text in (readme, catalog):
@@ -295,7 +316,17 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             self.assertIn("openspec", text)
             self.assertIn("engram", text)
             self.assertIn("both", text)
-            self.assertIn("1.5.0", text)
+            self.assertIn("1.6.0", text)
+
+    def test_success_criteria_source_selection_contract_is_documented(self):
+        recipe_dir = CATALOG / RECIPE_ID
+        readme = (recipe_dir / "README.md").read_text()
+        skill = (recipe_dir / "skills" / RECIPE_ID / "SKILL.md").read_text()
+
+        self.assertIn("authoritative source", readme)
+        self.assertIn("when present, otherwise `design.md`", readme)
+        self.assertIn("does not fall back to `design.md`", skill)
+        self.assertIn("Duplicate `## Success Criteria` headings", skill)
 
     def test_cross_repo_artifact_scope_recipe_contract(self):
         recipe_dir = CATALOG / RECIPE_ID
@@ -401,6 +432,8 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertNotIn("ai-specs/bin/premerge_guardian.py", text)
         self.assertIn("gh pr create", text)
         self.assertIn("before merge", text)
+        self.assertIn("--stage pre-archive", text)
+        self.assertIn("before moving", text)
 
     def test_recipe_does_not_stage_premerge_guardian_into_project(self):
         recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
