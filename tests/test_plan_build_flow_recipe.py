@@ -152,7 +152,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertEqual(
             [fragment.text for fragment in rules[:5]],
             [
-                "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; record depth in tasks.md and stop for authorization.",
+                "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; compute the signal depth, compare any explicit requested depth, ask on conflicts, and annotate requested/signal/decided depth in tasks.md before authorization.",
                 "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
                 "Do not open a PR until the change folder on the branch contains the tier minimum planning files, committed.",
                 "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
@@ -163,6 +163,45 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertEqual(rules[5].text.count("{config.artifact_store_default}"), 1)
         self.assertIn("topology", rules[6].text.lower())
         self.assertIn("superproject", rules[6].text.lower())
+
+    def test_skill_describes_adversarial_depth_conflicts(self):
+        skill = CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md"
+        text = skill.read_text().lower()
+        for phrase in (
+            "depth conflict",
+            "requested depth",
+            "signal depth",
+            "decision source: user",
+            "same-turn",
+            "both directions",
+            "illustrative",
+            "exhaustive parser",
+            "fixed token whitelist",
+        ):
+            self.assertIn(phrase, text)
+
+    def test_skill_preserves_standalone_depth_annotation_contract(self):
+        skill = CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md"
+        text = skill.read_text()
+        self.assertRegex(text, r"(?m)^Depth: full$")
+        for label in (
+            "Requested depth: full",
+            "Signal depth: standard",
+            "Decided depth: full",
+            "Decision source: user",
+        ):
+            self.assertIn(label, text)
+        self.assertNotRegex(text, r"(?m)^Depth: (?:light|standard|full) \(")
+
+    def test_brief_describes_adversarial_depth_conflicts(self):
+        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
+        rules = [fragment.text for fragment in (recipe.brief_fragments.workflow_rules or [])]
+        combined = "\n".join(rules).lower()
+        self.assertIn("compare any explicit requested depth", combined)
+        self.assertIn("ask on conflicts", combined)
+        self.assertIn("annotate requested/signal/decided depth", combined)
+        self.assertIn("{config.artifact_store_default}", rules[5])
+        self.assertEqual(rules[5].count("{config.artifact_store_default}"), 1)
 
     def test_skill_has_ambient_auto_invoke(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
@@ -248,7 +287,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
                 self.mod.execute_hooks(recipe, {"artifact_store_default": value}, Path(tmp.name))
 
     def test_version_and_catalog_documentation_use_current_contract(self):
-        self.assertEqual(_recipe_version(), "1.4.0")
+        self.assertEqual(_recipe_version(), "1.5.0")
         readme = (CATALOG / RECIPE_ID / "README.md").read_text()
         catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
         for text in (readme, catalog):
@@ -256,7 +295,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             self.assertIn("openspec", text)
             self.assertIn("engram", text)
             self.assertIn("both", text)
-            self.assertIn("1.4.0", text)
+            self.assertIn("1.5.0", text)
 
     def test_cross_repo_artifact_scope_recipe_contract(self):
         recipe_dir = CATALOG / RECIPE_ID
@@ -306,6 +345,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertIn("openspec/changes", generated_skill)
         self.assertIn("no duplication", generated_skill)
         self.assertIn("orchestration", generated_skill)
+
 
     def test_implementation_brief_references_worktree_flow(self):
         recipe_dir = CATALOG / RECIPE_ID

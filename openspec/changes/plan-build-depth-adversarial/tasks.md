@@ -2,6 +2,42 @@
 
 Depth: standard
 
+Authorized: yes — human maintainer authorized #59 explicitly. Decisions D1–D9
+and resolved questions R1–R4 are recorded in `proposal.md`; they are settled
+inputs, not open items.
+
+## Annotation format (normative)
+
+When a depth conflict was detected, `tasks.md` records exactly this shape —
+`Depth:` stays a **standalone lowercase line** and the four annotation labels are
+**separate sibling lines**:
+
+```
+Depth: full
+
+Requested depth: full
+Signal depth: standard
+Decided depth: full
+Decision source: user
+```
+
+`Decided depth` and `Depth` MUST agree. `Decision source` is `user` when a human
+chose (including same-turn resolution). Never suffix the `Depth:` line (no
+`Depth: full (requested)`): `premerge_guardian.DEPTH_RE` is
+`(?im)^\s*Depth:\s*(light|standard|full)\s*$` and any trailing text makes tier
+inference silently fall back to `standard`.
+
+Verified against `lib/_internal/premerge_guardian.py` during planning:
+`infer_tier` on the block above returns `full` with exactly one `Depth:` match —
+the four annotation labels do **not** collide with the regex, because each is
+prefixed (`Requested `, `Signal `, `Decided `, `Decision source`). The suffixed
+variant `Depth: full (requested)` returns the `standard` fallback, which is the
+concrete hazard D6 prevents.
+
+Note for whoever edits this file: `infer_tier` takes the **first** match, so the
+illustrative block above MUST stay below this file's own `Depth: standard` line
+on line 3. Do not hoist the example to the top.
+
 ## Tracker
 
 - card_id: `LOb6pZLj`
@@ -17,17 +53,30 @@ in `tasks.md` — without touching sibling #60 artifact-minima / verify gates.
 
 ### 1. Skill: adversarial classifier loop
 
-- [ ] Update `catalog/recipes/plan-build-flow/skills/plan-build-flow/SKILL.md` §2
+- [x] Update `catalog/recipes/plan-build-flow/skills/plan-build-flow/SKILL.md` §2
       so classification always computes **signal**, detects **explicit user
       depth** when present, compares them, asks on mismatch, then records
       **decided**.
-- [ ] Document illustrative EN/ES request phrases (at least: full SDD / flujo
-      completo; standard / acotado con spec; solo tasks / tasks only / light)
-      without claiming an exhaustive parser.
-- [ ] State that silent adoption of either side on conflict is forbidden.
-- [ ] State that a deeper decided tier MUST complete that tier's planning chain
-      before build.
-- [ ] Keep existing tier tables, PR/archive gates, and non-classifier sections
+- [x] Document illustrative EN/ES request phrases (at least: full SDD / flujo
+      completo; standard / acotado con spec; solo tasks / tasks only / light),
+      stating explicitly that this is an illustrative set and **not** an
+      exhaustive parser or token whitelist (proposal D8 / R1).
+- [x] State that silent adoption of either side on conflict is forbidden, and
+      that the ask fires in **both** directions — including when the user asks
+      for a deeper tier than the signal suggests (R2). The ask MAY recommend a
+      tier; the user decides.
+- [x] Define same-turn behavior unambiguously: if the same user turn that
+      triggers the conflict already states which side wins (e.g. "use full even
+      if it looks standard"), adopt that resolution **without** a second ask and
+      annotate `Decision source: user`. Ask only when the turn leaves the
+      conflict unresolved.
+- [x] State that a deeper decided tier MUST complete that tier's **entire**
+      planning chain before build authorization counts as satisfied (R4) — an
+      upgrade to Full mid-plan requires the Full chain, not a retro-labelled
+      Standard set.
+- [x] Reproduce the normative annotation block from this file verbatim in the
+      skill so agents emit consumer-compatible lines.
+- [x] Keep existing tier tables, PR/archive gates, and non-classifier sections
       behaviorally intact except where brief cross-references need alignment.
 
 **Acceptance:** SKILL.md describes detect → ask → annotate; a reviewer can
@@ -37,31 +86,40 @@ follow the #58 incident path and see the required stop/ask.
 
 ### 2. Docs + recipe surface
 
-- [ ] Update `catalog/recipes/plan-build-flow/README.md` Planning depth section
+- [x] Update `catalog/recipes/plan-build-flow/README.md` Planning depth section
       to mention conflict detection, ask, and annotation.
-- [ ] Bump `catalog/recipes/plan-build-flow/recipe.toml` version
-      (`1.3.0` → `1.4.0` unless a parallel change already claims that bump —
-      reconcile at apply).
-- [ ] If the classify brief `workflow_rules` entry would otherwise omit conflict
-      handling, extend it in one concise sentence (no new config fields).
-- [ ] Do **not** add `depth_default` / `depth_override` (or similar) config
-      schema in this change (proposal D4).
+- [x] Bump `catalog/recipes/plan-build-flow/recipe.toml` version `1.4.0` →
+      `1.5.0` (line ~5). **#59 owns this bump** from development's 1.4.0
+      baseline (proposal D7); no "reconcile later" hedge. Preserve the
+      development topology rule as workflow rule 7.
+- [x] Sweep every stale `1.4.0` reference invalidated by the bump:
+      - `catalog/recipes/plan-build-flow/README.md` (line ~42, enable example)
+      - `docs/recipes-catalog.md` (line ~191, enable example)
+      - `CHANGELOG.md` — add an `[Unreleased] / Changed` entry for
+        `plan-build-flow` `1.4.0` → `1.5.0`; **do not** rewrite the historical
+        topology release entry that records `1.3.0` → `1.4.0`.
+      - version-pinned tests — see task 4.
 
-**Acceptance:** README + recipe version reflect adversarial policy; no new
-depth-* config keys in `recipe.toml`.
+**Acceptance:** README + recipe + catalog + changelog all advertise `1.5.0`;
+the seven workflow rules retain development's topology rule in position 7; no
+`1.4.0` reference remains that describes the current recipe; no new depth-*
+config keys in `recipe.toml`.
 
-**Evidence:** recipe.toml / README diff; `rg 'depth_default|depth_override'
-catalog/recipes/plan-build-flow` empty.
+**Evidence:** recipe.toml / README / catalog / CHANGELOG diff;
+`rg 'depth_default|depth_override' catalog/recipes/plan-build-flow` empty;
+`rg '1\.4\.0' catalog/recipes/plan-build-flow docs/recipes-catalog.md` empty.
 
 ### 3. Canonical spec promotion
 
-- [ ] After authorization, promote
+- [x] After authorization, promote
       `openspec/changes/plan-build-depth-adversarial/specs/plan-build-flow/spec.md`
       into `openspec/specs/plan-build-flow/spec.md` (merge MODIFIED/ADDED
       requirements; preserve unrelated requirements such as delivery contracts
       and gates).
-- [ ] Ensure adversarial requirements do not rewrite #60-owned artifact-minimum
-      or verify-gate language.
+- [x] Ensure adversarial requirements do not rewrite #60-owned artifact-minimum
+      or verify-gate language. Concretely: leave tier minimum artifact sets,
+      staged verify gates, and PR/archive guardian requirements byte-identical,
+      and do not touch `lib/_internal/premerge_guardian.py`.
 
 **Acceptance:** Canonical spec contains conflict detection, ask, and annotation
 scenarios; PR/archive/delivery requirements remain coherent.
@@ -70,14 +128,20 @@ scenarios; PR/archive/delivery requirements remain coherent.
 
 ### 4. Focused tests (+ optional eval)
 
-- [ ] Extend `tests/test_plan_build_flow_recipe.py` (or adjacent focused module)
-      so skill text assertions cover conflict / ask / annotation (and brief rule
-      if updated).
-- [ ] Optionally add
-      `tests/evals/scenarios/plan-build-flow/ac_depth_conflict_ask_annotate/`
-      with a prompt where user requests Full and signals look Standard; expect
-      ask + annotation guidance (eval harness conventions as existing ACs).
-- [ ] Keep tests from asserting #60 verify-gate or artifact-minima redesigns.
+- [x] Extend `tests/test_plan_build_flow_recipe.py` (or adjacent focused module)
+      so skill text assertions cover conflict detection, the ask, same-turn
+      resolution, and the four annotation labels (and the brief classify rule).
+- [x] Update the version-pinned assertions in
+      `tests/test_plan_build_flow_recipe.py::test_version_and_catalog_documentation_use_current_contract`:
+      line ~249 `assertEqual(_recipe_version(), "1.4.0")` → `"1.5.0"`, and line
+      ~257 `assertIn("1.4.0", text)` → `"1.5.0"` (that assertion loops over both
+      README and `docs/recipes-catalog.md`). These fail immediately on the
+      development-baseline bump, so they are in-scope for #59, not incidental
+      breakage.
+- [x] Add deterministic live runtime coverage under
+      `tests/evals/scenarios/plan-build-flow/` for unresolved conflict asks and
+      same-turn Full resolution with exact annotation and full-chain artifacts.
+- [x] Keep tests from asserting #60 verify-gate or artifact-minima redesigns.
 
 **Acceptance:** Focused recipe tests fail before skill/docs updates and pass
 after; no new failures in unrelated plan-build ACs.
@@ -87,24 +151,28 @@ runner if scenario added).
 
 ### 5. Verify / sync hygiene
 
-- [ ] Run focused plan-build recipe tests, then `./tests/run.sh` before commit
-      of implementation.
-- [ ] If recipe version/docs require generated brief refresh for this repo's
-      dogfood project, follow `dogfood-verification-isolation` — do not mix
-      dogfood sync churn into the product commit without isolation.
-- [ ] Record RED/GREEN evidence in apply notes when implementing (tdd-flow).
+- [x] Run the focused plan-build recipe tests, then the mandated
+      `./tests/validate.sh` validation before final handoff.
+- [x] Dogfood brief refresh is **N/A for #59**: recipe version/docs do not require
+      generated brief refresh for this product commit; any future dogfood sync is
+      verification-only and non-blocking (follow isolation if run).
 
-**Acceptance:** Implementation commit leaves focused + full unit suite green;
+**Acceptance:** Focused recipe tests and the full mandated validation are green;
 dogfood sync (if any) is isolated per skill.
 
-**Evidence:** test command output captured in apply/verify notes.
+**Evidence:** `python3 -m unittest discover -s .worktrees/plan-build-depth-adversarial/tests -p
+'test_plan_build_flow_recipe.py'` — 22 tests passed; `sh
+.worktrees/plan-build-depth-adversarial/tests/validate.sh` — 1319 tests passed.
 
 ## Non-goals (do not implement)
 
 - Artifact-tier minima changes or staged verify gates → card #60
-  (`plan-build-depth-artifacts-verify`).
+  (`plan-build-depth-artifacts-verify`), which is **serialized after** #59. If
+  #60 needs its own recipe bump it takes `1.5.0` → `1.6.0`; it does not re-claim
+  `1.5.0`.
 - Recipe config for depth defaults/overrides.
-- Changes to `hooks/plan-build-gate.sh` or `premerge_guardian.py`.
+- Changes to `hooks/plan-build-gate.sh`, `premerge_guardian.py`, or any
+  PR/archive guardian behavior.
 - New Engram observation types or Trello automation beyond normal card sync.
 
 ## Review workload (approx.)

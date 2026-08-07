@@ -23,6 +23,16 @@ or `/build` commands.
 Direct "implement this" requests still run the classifier first when no change
 folder exists yet.
 
+The classifier always computes a signal tier and separately checks for an
+explicit requested depth. Illustrative requests such as “full planning”,
+“acotado con spec”, or “solo tasks” are compared with that signal; this is
+guidance, not an exhaustive parser. A mismatch is a depth conflict: the agent
+must ask which tier wins in either direction before writing that planning chain.
+When the conflict is resolved, `tasks.md` records standalone `Depth: <tier>` plus
+the requested, signal, decided, and decision-source annotation lines. A same-turn
+preference may resolve the conflict without a repeat ask; a deeper decision still
+requires its complete planning chain.
+
 ## PR and merge gates
 
 - **No PR** until the change folder on the branch has the tier minimum files
@@ -39,7 +49,7 @@ folder exists yet.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.4.0"
+version = "1.5.0"
 ```
 
 Then run `ai-specs sync`.

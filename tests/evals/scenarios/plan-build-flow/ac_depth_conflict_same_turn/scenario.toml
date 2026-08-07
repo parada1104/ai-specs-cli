@@ -1,0 +1,35 @@
+id = "ac_depth_conflict_same_turn"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+ac = "AC10"
+tier = "full"
+slug = "signup-validation"
+description = "Same-turn Full resolution produces exact annotation and complete deeper planning chain"
+forbidden_path_globs = ["src/**", "lib/**", "catalog/**"]
+required_path_globs = [
+  "openspec/changes/signup-validation/tasks.md",
+  "openspec/changes/signup-validation/specs/**/*.md",
+  "openspec/changes/signup-validation/proposal.md",
+  "openspec/changes/signup-validation/design.md",
+]
+
+[[required_content]]
+path = "openspec/changes/signup-validation/tasks.md"
+contains_any = ["Depth: full"]
+
+[[required_content]]
+path = "openspec/changes/signup-validation/tasks.md"
+contains_any = ["Requested depth: full"]
+
+[[required_content]]
+path = "openspec/changes/signup-validation/tasks.md"
+contains_any = ["Signal depth: standard"]
+
+[[required_content]]
+path = "openspec/changes/signup-validation/tasks.md"
+contains_any = ["Decided depth: full"]
+
+[[required_content]]
+path = "openspec/changes/signup-validation/tasks.md"
+contains_any = ["Decision source: user"]

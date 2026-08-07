@@ -37,9 +37,56 @@ never expose internal phase names, tier names, or slash verbs.
 
 ## 2. Change depth classifier
 
-Before any production edit, classify the request into exactly one tier. Record
-the chosen tier in `tasks.md` (one line, e.g. `Depth: standard`). Downgrade is
-allowed when new facts appear; upgrade when scope grows.
+Before any production edit, classify the request into exactly one tier. Always
+compute the signal tier from size and scope, then separately detect an explicit
+depth request when the user names a tier or a clearly equivalent planning depth.
+Record the decided tier in `tasks.md` as one standalone lowercase line, for
+example `Depth: standard`. Downgrade is allowed when new facts appear; upgrade
+when scope grows.
+
+Illustrative request phrases include (this is an illustrative set, not an
+exhaustive parser or fixed token whitelist):
+
+- **Full** — "full SDD", "full planning", "flujo completo", or
+  "planificación completa".
+- **Standard** — "standard", "spec + tasks", or "acotado con spec".
+- **Light** — "light", "tasks only", "solo tasks", or "solo tareas".
+
+The explicit request is compared with the signal; it never replaces signal
+classification. If they match, proceed with that shared tier. If they differ,
+this is a **depth conflict**: do not silently adopt either side. Ask the user
+which value wins before writing planning artifacts for the decided tier. The ask
+must fire in both directions, including when the user requests a deeper tier
+than the signal suggests; it may recommend a tier, but the user decides.
+
+The ask is required unless the same user turn already states which side wins,
+such as "use full even if it looks standard". A same-turn resolution adopts the
+stated value without a second ask and records `Decision source: user`. Merely
+restating the requested tier or adding scope detail does not resolve the
+conflict. Until the conflict is resolved, do not implement production code or
+pretend that a tier is decided. With no explicit request, preserve signal-only
+classification and proceed without conflict handling.
+
+Whenever a conflict was detected, annotate `tasks.md` with the following labels
+on separate lines. Keep the `Depth:` line standalone; never append annotation to
+it:
+
+Depth: full
+
+Requested depth: full
+Signal depth: standard
+Decided depth: full
+Decision source: user
+
+`Decided depth` MUST equal the tier on the `Depth:` line. Use
+`Decision source: user` whenever a human chose, including same-turn resolution.
+When there is no conflict, the ordinary standalone `Depth:` line remains
+sufficient and no conflict annotation is required.
+The annotation labels are prefixed so existing tier inference sees exactly one
+`Depth:` line. If conflict resolution selects a deeper tier than the signal,
+complete the entire planning chain required by that decided tier before build
+authorization counts as satisfied; never relabel a shallower artifact set as a
+deeper chain.
 
 | Tier | When to use | Planning chain (private) | Minimum artifacts before build |
 |---|---|---|---|

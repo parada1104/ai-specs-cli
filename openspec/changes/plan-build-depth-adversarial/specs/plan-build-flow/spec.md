@@ -16,8 +16,11 @@ separately detect an **explicit user depth request** when the user names a tier
 or clearly equivalent planning depth (including common English and Spanish
 phrasings such as "full SDD", "flujo completo", "solo tasks", "tasks only").
 
-The **decided** depth MUST be recorded in `tasks.md`. Direct implementation
-verbs on a request with no existing change folder MUST NOT skip planning.
+The **decided** depth MUST be recorded in `tasks.md` as a standalone lowercase
+line of the exact form `Depth: <light|standard|full>`, with no trailing text on
+that line, so existing tier-inference consumers keep matching it. Direct
+implementation verbs on a request with no existing change folder MUST NOT skip
+planning.
 
 #### Scenario: Full depth for ambiguous scope
 
@@ -82,13 +85,19 @@ classification behavior.
 ### Requirement: Conflict ask before planning chain
 
 On a depth conflict, the skill MUST ask the user which depth to use (requested
-vs signal) before writing the planning artifacts for the decided tier, unless
-the same user turn already answered which side wins.
+vs signal) before writing the planning artifacts for the decided tier.
+
+The ask is REQUIRED unless the same user turn that produced the conflict also
+states which side wins. A turn resolves the conflict only when it names the
+winning depth or expresses an unambiguous preference over the mismatch (for
+example "use full even if it looks standard"); merely restating the requested
+depth, or adding scope detail, does NOT resolve it and the ask still fires.
 
 The ask SHOULD briefly state both values and MAY recommend one, but the user
-choice (or an explicit same-turn resolution) decides. Until resolution, the
-skill MUST NOT implement production code and MUST NOT pretend the conflict is
-settled.
+choice (or an explicit same-turn resolution) decides. The ask fires in both
+directions — requested deeper than signal and requested shallower than signal
+are equally conflicts. Until resolution, the skill MUST NOT implement production
+code and MUST NOT pretend the conflict is settled.
 
 #### Scenario: Ask fires on conflict
 
@@ -106,41 +115,75 @@ settled.
 - THEN it adopts the stated resolution without a second ask
 - AND records annotation as decided by user
 
+#### Scenario: Same-turn restatement does not count as resolution
+
+- GIVEN the user asks for full planning and adds more scope detail in the same
+  turn, without addressing the mismatch
+- WHEN the classifier detects requested ≠ signal
+- THEN the ask still fires
+- AND no tier artifacts are written until the user answers
+
+#### Scenario: Requested shallower than signal still asks
+
+- GIVEN the user asks for "solo tasks" / Light
+- AND size/scope signals indicate Full
+- WHEN the classifier runs
+- THEN a depth conflict is detected and the ask fires
+- AND the agent MAY recommend the deeper tier in the ask text
+
 ### Requirement: Depth resolution annotation
 
 Whenever a depth conflict was detected (including same-turn resolution),
-`tasks.md` MUST annotate at least:
+`tasks.md` MUST annotate the resolution using these four labels, each on its own
+line, separate from the `Depth:` line:
 
-- requested depth
-- signal depth
-- decided depth
-- decision source (`user` or equivalent wording)
+- `Requested depth: <tier>`
+- `Signal depth: <tier>`
+- `Decided depth: <tier>`
+- `Decision source: <user|signal>` — `user` whenever a human chose, including
+  same-turn resolution
 
-The decided depth MUST also appear in the ordinary `Depth: …` line (or
-equivalent single decided-tier record) used by existing plan-build consumers.
+Tier values MUST be lowercase `light`, `standard`, or `full`. `Decided depth`
+MUST equal the tier on the `Depth:` line.
+
+The decided depth MUST also appear in the ordinary standalone `Depth: <tier>`
+line used by existing plan-build consumers. Annotation MUST NOT be appended to
+that line as a suffix or parenthetical, because trailing text prevents existing
+tier inference from matching it.
 
 When there was no conflict, existing `Depth: <tier>` recording remains
 sufficient; optional confirmation annotation is allowed but not required.
 
 #### Scenario: Conflict annotated after user chooses requested
 
-- GIVEN requested=Full, signal=Standard, user chooses Full
+- GIVEN requested=full, signal=standard, user chooses full
 - WHEN `tasks.md` is written
-- THEN it records Depth as Full
-- AND it records requested, signal, decided, and that the user decided
+- THEN it contains a standalone line `Depth: full`
+- AND it contains `Requested depth: full`, `Signal depth: standard`,
+  `Decided depth: full`, and `Decision source: user` on separate lines
 
 #### Scenario: Conflict annotated after user chooses signal
 
-- GIVEN requested=Full, signal=Standard, user chooses Standard
+- GIVEN requested=full, signal=standard, user chooses standard
 - WHEN `tasks.md` is written
-- THEN it records Depth as Standard
-- AND it records requested, signal, decided, and that the user decided
+- THEN it contains a standalone line `Depth: standard`
+- AND it contains `Requested depth: full`, `Signal depth: standard`,
+  `Decided depth: standard`, and `Decision source: user` on separate lines
+
+#### Scenario: Annotation never suffixes the Depth line
+
+- GIVEN any conflict resolution
+- WHEN `tasks.md` is written
+- THEN the `Depth:` line carries only the decided tier
+- AND requested/signal/decided/source appear as separate lines
 
 ### Requirement: Higher decided tier completes its chain
 
 If conflict resolution selects a deeper tier than the signal, the skill MUST
-run (or complete) the planning chain required by the decided tier before build
-authorization is considered satisfied for that change.
+complete the entire planning chain required by the decided tier before build
+authorization is considered satisfied for that change. Artifacts already written
+for the shallower tier MUST NOT be relabelled as satisfying the deeper tier; the
+missing phases MUST actually run.
 
 #### Scenario: Upgrade from Standard signal to Full decision
 

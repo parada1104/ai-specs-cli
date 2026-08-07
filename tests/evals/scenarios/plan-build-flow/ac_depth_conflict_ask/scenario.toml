@@ -1,0 +1,10 @@
+id = "ac_depth_conflict_ask"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+ac = "AC9"
+tier = "standard"
+description = "Unresolved explicit Full versus Standard signal asks before writing artifacts"
+forbidden_path_globs = ["src/**", "lib/**", "catalog/**", "openspec/**"]
+required_transcript_all = ["full", "standard"]
+required_transcript_one_of = ["which", "choose", "elegir", "elegí", "qué"]
