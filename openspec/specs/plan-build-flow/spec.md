@@ -805,6 +805,7 @@ changes.
 - WHEN an agent runs the pre-merge guardian
 - THEN it uses `${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py`
 - AND the recipe does not target `ai-specs/bin/premerge_guardian.py`
+#### Scenario: Light archive requires proposal but not verify evidence
 
 #### Scenario: Light archive requires proposal
 

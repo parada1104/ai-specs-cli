@@ -2,6 +2,10 @@
 
 > Card #60 `lxv2WQ5g`. Sibling of #59 (adversarial classifier) — this explore
 > does **not** redesign depth classification conflict handling.
+>
+> **Historical artifact.** Written before #59 reached final PASS. Its option
+> leans are now settled decisions; read §"Post-#59 reconciliation" at the end,
+> then `proposal.md` and `design.md` §2 for the binding values.
 
 ## Problem restatement
 
@@ -110,9 +114,12 @@ many concerns — decide in design if C1 tests stay small.
 
 ## Dependency / sequencing
 
-- Same recipe surface as #59. **Apply serializes after #59 merges** to avoid
-  conflicting skill/spec edits. Planning may proceed in parallel.
-- Base: `development` @ `12afc3f`.
+- Same recipe surface as #59. **Apply serializes after #59 lands**; planning ran
+  in parallel.
+- Base at explore time: `development` @ `12afc3f` (**stale**). Measured
+  2026-08-07: branch `f248433` is 1 ahead / 9 behind `development` @ `604a441`;
+  the canonical `plan-build-flow` spec grew 14 → 20 requirements in that range.
+  Rebase is task 0.2.
 
 ## Risks surfaced
 
@@ -126,5 +133,33 @@ many concerns — decide in design if C1 tests stay small.
 
 ## Ready for proposal?
 
-Yes — directions A1 / B1 / C1 are the working hypothesis to validate in
-proposal + design, with open questions listed for auth.
+Yes — directions A1 / B1 / C1 were the working hypothesis; they were validated in
+proposal + design and are now authorized.
+
+## Post-#59 reconciliation (2026-08-07)
+
+#59 is verified **PASS** and lands as `plan-build-flow` `1.5.0`. What that changes
+for the material above:
+
+- The "Current surfaces" table describes the **pre-#59** canonical spec and SKILL
+  §2. Post-#59 the canonical spec additionally carries *Adversarial depth conflict
+  detection*, *Conflict ask before planning chain*, *Depth resolution annotation*,
+  and *Higher decided tier completes its chain*, and SKILL §2 carries the
+  explicit-depth phrasings plus the four annotation labels. All of it is
+  preserved, never overwritten, by #60.
+- Option leans are now closed decisions: **A1** minima, **B1** explore criteria,
+  **C1** guardian-extended verify — refined by the human decisions D8–D13 in
+  `design.md` §2:
+  - Standard evidence is a **dedicated `verify-report.md`** with command, exit,
+    date, and SHA — not "report *or* recorded validate PASS", and never a section
+    inside `tasks.md` (supersedes the C-table wording and the "accept either" risk
+    note above).
+  - Full evidence is strict global `PASS` **and** `ready_for_archive: true`,
+    mapped to every success criterion.
+  - Explore is skill-enforced at Standard **and** Full; no machine gate blocks on
+    `explore.md` (supersedes "guardian optional check" in option B1).
+  - Verify enforcement fires at **two** points: before archive-tail and again in
+    the pre-merge guardian; no bypass flag.
+  - Grandfathering covers in-flight plans only; historical archives and stale PRs
+    are not rewritten.
+- Version: `1.5.0` is #59's; #60 bumps to `1.6.0`.
