@@ -184,7 +184,6 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertIn(prior + "` → `1.6.0", unreleased)
         self.assertIn("1.4.0` → `" + prior, unreleased)
 
-
     def test_skill_describes_adversarial_depth_conflicts(self):
         skill = CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md"
         text = skill.read_text().lower()
@@ -223,6 +222,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertIn("annotate requested/signal/decided depth", combined)
         self.assertIn("{config.artifact_store_default}", rules[5])
         self.assertEqual(rules[5].count("{config.artifact_store_default}"), 1)
+
 
     def test_skill_has_ambient_auto_invoke(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"

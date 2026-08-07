@@ -41,7 +41,6 @@ planning depth before production edits:
 
 Minimum artifacts per depth are normative in *Depth artifact minima*; this
 requirement names the chain order only and MUST NOT restate the minima.
-
 Classification SHALL compute a **signal** tier from size/scope heuristics AND
 separately detect an **explicit user depth request** when the user names a tier
 or clearly equivalent planning depth (including common English and Spanish
