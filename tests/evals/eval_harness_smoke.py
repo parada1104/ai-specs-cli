@@ -51,6 +51,35 @@ class HarnessSmokeTests(unittest.TestCase):
         self.assertTrue(scenario.prompt_path.is_file())
         prompt = scenario.prompt_path.read_text()
         assert_natural_prompt(prompt)
+    def test_depth_conflict_scenarios_cover_runtime_contract(self):
+        root = REPO_ROOT / "tests" / "evals" / "scenarios" / "plan-build-flow"
+        ask = load_scenario(root / "ac_depth_conflict_ask")
+        same_turn = load_scenario(root / "ac_depth_conflict_same_turn")
+
+        self.assertEqual(ask.mode, "plan")
+        self.assertIn("openspec/**", ask.meta["forbidden_path_globs"])
+        self.assertEqual(ask.meta["required_transcript_all"], ["full", "standard"])
+        self.assertTrue(ask.meta["required_transcript_one_of"])
+
+        self.assertEqual(same_turn.mode, "plan")
+        self.assertIn("src/**", same_turn.meta["forbidden_path_globs"])
+        required = {rule["contains_any"][0] for rule in same_turn.meta["required_content"]}
+        self.assertTrue(
+            {
+                "Depth: full",
+                "Requested depth: full",
+                "Signal depth: standard",
+                "Decided depth: full",
+                "Decision source: user",
+            }.issubset(required)
+        )
+        self.assertTrue(
+            {
+                "openspec/changes/signup-validation/proposal.md",
+                "openspec/changes/signup-validation/design.md",
+            }.issubset(set(same_turn.meta["required_path_globs"]))
+        )
+
 
     def test_ac3_prompt_rejects_meta_coaching(self):
         with self.assertRaises(AssertionError):

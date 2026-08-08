@@ -14,21 +14,49 @@ or `/build` commands.
 
 ## Planning depth (classifier)
 
-| Tier | Typical use | Artifacts |
-|------|-------------|-----------|
-| **Full** | New capability, architecture, breaking or ambiguous scope | explore → proposal → spec → design → tasks |
-| **Standard** | Scoped feature or bounded multi-file work | spec → tasks |
-| **Light** | Small fix with clear file/symbol target | tasks only |
+| Tier | Typical use | Planning chain | Minimum artifacts before build |
+|------|-------------|----------------|-------------------------------|
+| **Full** | New capability, architecture, breaking or ambiguous scope | explore → proposal → spec → design → tasks | `tasks.md` plus `proposal.md` or `design.md`, and at least one `specs/**/*.md` |
+| **Standard** | Scoped feature or bounded multi-file work | conditional explore → proposal → spec → tasks | `proposal.md`, `tasks.md`, and at least one `specs/**/*.md` |
+| **Light** | Small fix with clear file/symbol target | proposal → tasks | `proposal.md` + `tasks.md` |
 
 Direct "implement this" requests still run the classifier first when no change
 folder exists yet.
 
+The classifier always computes a signal tier and separately checks for an
+explicit requested depth. Illustrative requests such as “full planning”,
+“acotado con spec”, or “solo tasks” are compared with that signal; this is
+guidance, not an exhaustive parser. A mismatch is a depth conflict: the agent
+must ask which tier wins in either direction before writing that planning chain.
+When the conflict is resolved, `tasks.md` records standalone `Depth: <tier>` plus
+the requested, signal, decided, and decision-source annotation lines. A same-turn
+preference may resolve the conflict without a repeat ask; a deeper decision still
+requires its complete planning chain.
+
 ## PR and merge gates
 
-- **No PR** until the change folder on the branch has the tier minimum files
-  (at least `tasks.md`) committed.
+- **No PR** until the change folder contains its tier minimum files committed:
+  Light requires `proposal.md` + `tasks.md`; Standard requires those plus a
+  spec delta; Full requires `tasks.md`, `proposal.md` or `design.md`, and a
+  spec delta.
+- **Verify before archive:** Standard requires a dedicated `verify-report.md`
+  with command, exit `0`, a valid calendar date, commit SHA, and a non-failing
+  verdict. Full additionally requires strict `PASS`, `ready_for_archive: true`,
+  and exactly one strict-PASS `Criterion N` mapping row for every top-level
+  bullet under `## Success Criteria` in the authoritative source: `proposal.md`
+  when present, otherwise `design.md`. A missing, empty, or duplicate heading
+  in the authoritative source blocks Full; it never falls back to `design.md`.
+  Light is advisory only.
+- **Two enforcement points:** run the verify gate before archive-tail and run
+  the pre-merge guardian again after archive. Missing `explore.md` is never a
+  guardian blocker.
 - **Archive before merge** on the review branch — never after merge lands on the
   base branch.
+
+Plans already in flight when this contract ships add missing `proposal.md` or
+verify evidence before their PR/archive; no replan or restart is needed.
+Historical archives are never rewritten. A stale PR is handled by its owning
+agent, which adds the missing artifacts when that change resumes.
 
 ## Capability
 
@@ -39,7 +67,7 @@ folder exists yet.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.4.0"
+version = "1.6.0"
 ```
 
 Then run `ai-specs sync`.
