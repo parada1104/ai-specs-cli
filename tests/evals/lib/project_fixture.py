@@ -138,6 +138,34 @@ def setup_runtime_skills(
         )
     return dest
 
+def setup_bundled_skills(
+    root: Path,
+    runtime: str,
+    names: list[str] | tuple[str, ...],
+    *,
+    bundled_root: Path | None = None,
+) -> list[Path]:
+    """Copy CLI-bundled literacy skills into a runtime discovery directory.
+
+    This is additive to ``setup_runtime_skills``: catalog recipe skills and
+    always-on bundled skills have different source trees.
+    """
+    source_root = bundled_root or (Path(__file__).resolve().parents[3] / "bundled-skills")
+    rel = RUNTIME_SKILL_DIRS.get(runtime)
+    if not rel:
+        raise ValueError(f"no skill dir mapping for runtime {runtime}")
+    copied: list[Path] = []
+    for name in sorted(names):
+        source = source_root / name / "SKILL.md"
+        if not source.is_file():
+            raise FileNotFoundError(f"bundled skill not found: {source}")
+        dest_dir = root / rel / name
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "SKILL.md"
+        shutil.copy2(source, dest)
+        copied.append(dest)
+    return copied
+
 
 def setup_runtime_commands(
     root: Path,

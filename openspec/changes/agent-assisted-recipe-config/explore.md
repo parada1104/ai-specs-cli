@@ -66,9 +66,10 @@ catalog recipes (tracker, VCS, vault, plan-build, etc.).
 | C | **Expand `init.md` + revise sync rule** — more contracts; allow sync under assisted-configure after user confirm | Reuses existing contract shape | Most recipes still lack contracts; sync-rule change is a spec amendment |
 | D | **Hybrid (leaning recommended)** — skill-orchestrated NL flow + thin **grounding/apply helpers** (reuse `update_recipe_config`, topology helper, doctor/sync) with explicit report schema; CLI flags only where evidence shows skill-only is insufficient | Matches acceptance; reuses primitives; keeps #63 boundary | Needs careful non-goals so apply does not invent lock format or MCP wrappers |
 
-## Decision lean (for proposal — still authorizable)
+## Decision lean, first pass (superseded — see "Open questions — resolved")
 
-Prefer **D (hybrid)** as the planning baseline:
+Preferred **D (hybrid)** as the planning baseline. Retained for provenance; the
+helper is now locked in rather than conditional:
 
 - Primary UX: agent skill/playbook driven by NL + repo inspection.
 - Apply path: surgical manifest updates via existing write helper (or a thin non-interactive wrapper around it) — never wholesale TOML rewrite.
@@ -76,14 +77,104 @@ Prefer **D (hybrid)** as the planning baseline:
 - Preserve: leave unknown keys, comments, and override files untouched; do not implement #63 lock governance.
 - Scenario: include Melón/Alquimia-style topology grounding as a **fixture/example**, not as hardcoding of Alquimia paths.
 
-## Open questions for proposal / auth
+## Second-pass grounding (post-evaluation, @ this worktree)
 
-1. Delivery: skill-only first vs ship a minimal non-interactive apply CLI in the same change?
-2. Sync: amend `recipe-init-contract` Post-write, or introduce a separate "assisted configure" contract that permits sync after explicit user approval?
-3. Recipe coverage MVP: all enabled recipes vs seed with `worktree-flow` + one MCP recipe (`trello-mcp-workflow`) as evidence?
-4. Recommendation artifact: ephemeral chat only vs optional machine-readable stdout for tests?
-5. How much of doctor/lock version drift is "good enough" vs new report fields?
+Findings that changed the plan. All verified in this worktree; none required
+production edits.
+
+### A runtime eval harness already exists — reuse it
+
+`tests/evals/` is a full slow-tier harness, deliberately excluded from
+`./tests/run.sh` by the `eval_*.py` naming (`unittest discover -p 'test_*.py'`
+never loads it):
+
+- `SUPPORTED_RUNTIMES = ("claude", "cursor-agent", "opencode", "pi", "omp")` —
+  **`omp` is already wired** (`omp -p --mode json --model <m> --no-session
+  --cwd <root> --no-extensions --approval-mode yolo`, NDJSON-parsed).
+- Per-capability opt-in runners (`run-live-worktree.sh`, `run-live-vcs.sh`, …)
+  plus a dry `run.sh`; `EVALS_LIVE`, `EVALS_RUNTIMES`, `EVALS_SCENARIOS`,
+  `EVALS_TRIALS` (N-of-M), `EVALS_TIMEOUT_SEC`, `EVALS_MAX_TURNS`.
+- Scenario contract: `scenario.toml` with `required_path_globs`,
+  `forbidden_path_globs`, `absent_path_globs`, `required_content`,
+  `forbidden_phrases`, `fixture`, `mode`; `assert_natural_prompt` rejects
+  meta-prompts so prompts stay real user sentences.
+- Isolation: `tempfile.TemporaryDirectory()` + `init_git_repo` + baseline
+  commit + `git_paths_changed` — fixtures live outside the repo entirely.
+- Everything is a CLI process. No browser, no UI automation anywhere.
+
+The corollary the plan takes seriously: this system is **canonical and stays
+unchanged**. The capability adds a client (module + runner + scenarios) exactly
+like every other capability, plus one strictly additive fixture helper. Any
+cross-runtime orchestration sits *above* the runners and changes none of the
+scenario, fixture, assertion, or isolation semantics.
+
+**Gap:** `setup_runtime_skills` resolves skills from `catalog/recipes/<id>/
+skills/` (or the materialized `.recipe` dir) only. The assisted flow ships in
+`bundled-skills/harness-recipes`, which that resolver cannot reach — a small
+additive `setup_bundled_skills` is required.
+
+### Two defects reproduced in the primitive this capability depends on
+
+Probe against `lib/_internal/recipe-config-write.py` on a temp manifest:
+
+1. **Inline comments are destroyed on key replacement.** Replacement rebuilds
+   the whole line as `f"{indent}{key} = {value}\n"`.
+   `integration_branch = "main"  # team decision` → `= "development"`, comment
+   gone. `tests/test_recipe_config_write.py::test_replace_existing_key` seeds
+   exactly such a comment and asserts only the *own-line* one survives, which
+   is how this shipped unnoticed.
+2. **A semantic no-op is not byte-identical.** Applying values already equal to
+   the effective config still rewrites the lines, normalizing
+   `worktrees_dir='.worktrees'` → `worktrees_dir = ".worktrees"`. Probe printed
+   `true no-op byte-identical: False`. Convergent re-apply (same values twice
+   in a row) *is* stable — a weaker property than the acceptance criterion.
+
+These are code properties; skill prose cannot fix them. They are the technical
+basis for the human's "helper, not skill-only" decision.
+
+### `worktree-flow` ships no `init.md`
+
+Only `playwright-mcp`, `playwright-ui-flow`, and `trello-mcp-workflow` do (3 of
+11). `worktree-flow` has `README.md`, `commands`, `hooks`, `recipe.toml`,
+`skills`, `templates`. Its `[config.repo_topology]` enum
+(`auto|standalone|monorepo-apps|monorepo-submodules`) plus `help_text`, and
+`util.resolve_repo_topology`, are therefore the grounding sources — an
+`init.md` must never be a precondition.
+
+Sharp edge: `resolve_repo_topology` documents that `auto` **never** resolves to
+`monorepo-apps`; without `.gitmodules` it returns `standalone`. An apps-style
+monorepo is indistinguishable from standalone by detection, so it has to be an
+explicit question rather than a silent default.
+
+### Sync and `cli_version` semantics are sharper than assumed
+
+From `lib/sync.sh` and `lib/_internal/cli_version.py`:
+
+- `cli_version.py check-sync` runs **before any write** and `|| exit 1`. A
+  `[tool]` pin violation aborts sync with zero side effects — so the assisted
+  flow must gate on it *before* apply, or it strands an edited manifest that
+  sync refuses to process.
+- Target-loop failure prints "Stopped on first failure; previous writes are not
+  rolled back" and exits 1; `stamp-meta` runs only after every step succeeds,
+  so a partial sync leaves the lock unstamped. Partial is a real third state.
+- Lock staleness (`[meta].cli_version` != installed) is a doctor **WARN** only;
+  sync proceeds and restamps. Distinct class from the pin violation.
+- `doctor.py` has no JSON mode; it is line-oriented with a final
+  `Summary: N OK, N INFO, N WARN, N ERROR`, and exits non-zero only on ERROR.
+
+## Open questions — resolved
+
+| Question | Resolution | Source |
+|---|---|---|
+| Skill-only vs non-interactive apply CLI | **Helper ships in this change** | Human decision + reproduced defects |
+| Amend `recipe-init-contract` vs separate contract | **Add-only** assisted-configure requirements; init posture untouched | Design |
+| Recipe coverage MVP | **Broader**: `worktree-flow` + `trello-mcp-workflow` + `plan-build-flow` | Human decision |
+| Recommendation artifact shape | **Machine-readable `--json`**, versioned and deterministic | Testability |
+| How much doctor/lock drift is enough | Two `cli_version` classes; doctor parsed not modified; `parsed: false` when unreadable | Grounded semantics above |
+| How to evidence runtime behavior | **New client on the existing, unchanged `tests/evals/` system**, 5 scenarios, any supported runtime (none mandated) | Human decision + harness discovery |
+| How to compare runtimes | **Optional** Orca/OMP orchestration skill that only invokes the existing runners and aggregates per runtime — not a runtime, not a runner, not required | Human correction |
 
 ## Ready for proposal
 
-Yes — problem and acceptance outcomes are clear; current surfaces and gaps are grounded; approach options are framed without locking file-level implementation.
+Yes — problem and acceptance outcomes are clear; current surfaces, defects, and
+harness capabilities are grounded; delivery mode and scope are human-locked.

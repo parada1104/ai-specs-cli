@@ -1,0 +1,6 @@
+id = "ac_blocked_cli_version_pin"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+manifest_extra = "\n[tool]\nversion = '999.0.0'\n"
+description = "Unsatisfied CLI pin blocks before any manifest write"

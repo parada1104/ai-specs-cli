@@ -1,0 +1,6 @@
+id = "ac_recommend_stops_before_apply"
+recipe_id = "worktree-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+description = "Recommendation is shown and approval is required before manifest mutation"
+forbidden_path_globs = ["ai-specs/ai-specs.toml"]

@@ -43,10 +43,17 @@ Do **not** invent a per-project `ai-specs/bin/ai-specs` shim.
    optional `.envrc.example` (also covered in `harness-recipes`).
 4. `ai-specs sync [path]` — vendor/refresh + regen AGENTS.md + fan-out agents.
 5. `ai-specs doctor [path]` — read-only health check after sync or when something
+
    looks wrong.
 
 Re-run **sync** after any meaningful manifest / recipe / skill change. Do not
 hand-edit generated agent instruction files when sync owns them.
+
+For agent-assisted recipe setup, prefer the deterministic
+`ai-specs recipe configure <id> [path] --inspect --json` → review and explicit
+approval → `--set KEY=VALUE --sync` path described by `harness-recipes`.
+Keep the interactive `configure-recipes` wizard available for human prompting;
+the assisted helper is additive and preserves existing config and overrides.
 
 ## Commands
 

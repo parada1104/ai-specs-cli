@@ -1,0 +1,7 @@
+id = "ac_apply_sync_verify_report"
+recipe_id = "trello-mcp-workflow"
+prompt_file = "prompt.txt"
+mode = "build"
+manifest_extra = "\n[recipes.trello-mcp-workflow.config]\nboard_id = '69ec097f13e2d38ecd89a557'\ngate_mode = 'off'\n"
+description = "Approved Trello MCP config applies, syncs, verifies, and reports"
+required_path_globs = ["ai-specs/ai-specs.toml"]

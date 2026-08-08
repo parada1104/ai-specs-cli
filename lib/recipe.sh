@@ -17,7 +17,8 @@ Usage: ai-specs recipe <subcommand> [args]
 Subcommands:
   list [path]      List available and installed recipes
   add <id> [path]  Add a recipe to the manifest
-  init <id> [path] Print a read-only initialization brief
+  init <id> [path]   Print a read-only initialization brief
+  configure <id> [path] [options]  Inspect or apply recipe config non-interactively
   remove <id> [path]  Remove a recipe from the manifest
 Path defaults to current directory.
 EOF
@@ -31,6 +32,7 @@ case "$subcmd" in
     list) bash "$LIB_DIR/recipe-list.sh" "$@" ;;
     add) bash "$LIB_DIR/recipe-add.sh" "$@" ;;
     init) bash "$LIB_DIR/recipe-init.sh" "$@" ;;
+    configure) python3 "$LIB_DIR/_internal/recipe-configure.py" "$@" ;;
     remove) bash "$LIB_DIR/recipe-remove.sh" "$@" ;;
     --help|-h|help) usage; exit 0 ;;
     "") usage >&2; exit 2 ;;

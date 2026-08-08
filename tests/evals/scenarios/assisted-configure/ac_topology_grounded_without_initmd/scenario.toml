@@ -1,0 +1,6 @@
+id = "ac_topology_grounded_without_initmd"
+recipe_id = "worktree-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+fixture = "submodule_one"
+description = "Topology recommendation uses initialized submodule evidence without init.md"

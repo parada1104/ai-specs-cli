@@ -148,6 +148,46 @@ class RecipeConfigWriteTests(unittest.TestCase):
         data = tomllib.loads(text)
         self.assertEqual(data["recipes"]["my.recipe"]["config"]["base_branch"], "main")
 
+    def test_inline_comment_survives_replacement(self):
+        path = self._manifest(
+            "[recipes.x]\nenabled = true\n\n[recipes.x.config]\n"
+            'branch = "main"  # team decision\n'
+        )
+        self.mod.update_recipe_config(path, "x", {"branch": "develop"})
+        text = path.read_text(encoding="utf-8")
+        self.assertIn('branch = "develop"  # team decision', text)
+
+    def test_hash_inside_string_is_not_comment(self):
+        path = self._manifest(
+            "[recipes.x]\nenabled = true\n\n[recipes.x.config]\n"
+            'url = "https://example.test/#fragment"\n'
+            'branch = "main"  # keep\n'
+        )
+        self.mod.update_recipe_config(path, "x", {"branch": "develop"})
+        text = path.read_text(encoding="utf-8")
+        self.assertIn('url = "https://example.test/#fragment"', text)
+        self.assertIn('branch = "develop"  # keep', text)
+
+    def test_semantic_noop_preserves_original_bytes(self):
+        path = self._manifest(
+            "[recipes.x]\nenabled = true\n\n[recipes.x.config]\n"
+            "branch='main' # formatted\n"
+        )
+        before = path.read_bytes()
+        self.mod.update_recipe_config(path, "x", {"branch": "main"})
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_multiline_value_is_rejected_without_rewrite(self):
+        path = self._manifest(
+            "[recipes.x]\nenabled = true\n\n[recipes.x.config]\n"
+            'branches = [\n  "main",\n  "develop",\n]\n'
+            'other = "keep"\n'
+        )
+        before = path.read_bytes()
+        with self.assertRaisesRegex(self.mod.RecipeConfigWriteError, "multiline"):
+            self.mod.update_recipe_config(path, "x", {"branches": ["release"]})
+        self.assertEqual(path.read_bytes(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

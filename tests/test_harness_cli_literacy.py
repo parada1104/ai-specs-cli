@@ -336,5 +336,15 @@ class HarnessCliLiteracyTests(unittest.TestCase):
         self.assertEqual(unknown, [], f"unknown CLI commands in literacy skills: {unknown}")
 
 
+    def test_harness_recipes_documents_assisted_configure_contract(self):
+        text = (BUNDLED / "harness-recipes" / "SKILL.md").read_text()
+        for needle in ("recipe configure", "inspect", "recommend", "approval", "--sync", "preserve", "report"):
+            self.assertIn(needle, text.lower(), needle)
+        self.assertIn("no-secret", text.lower())
+
+    def test_lifecycle_cross_links_noninteractive_helper(self):
+        text = (BUNDLED / "harness-lifecycle" / "SKILL.md").read_text().lower()
+        self.assertIn("recipe configure", text)
+
 if __name__ == "__main__":
     unittest.main()

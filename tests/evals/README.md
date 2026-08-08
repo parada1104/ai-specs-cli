@@ -173,3 +173,35 @@ EVALS_RUNTIMES=claude,cursor-agent \
 # Cursor Agent subscription (composer)
 EVALS_RUNTIMES=cursor-agent EVALS_MODEL=composer-2.5 ./tests/evals/run-live-worktree.sh
 ```
+
+### `assisted-configure`
+
+Live: `./tests/evals/run-live-assisted-configure.sh` →
+`eval_assisted_configure_live.py`. This is an additive client on the existing
+eval system; it is excluded from `./tests/run.sh` because it is named
+`eval_*.py` and requires an opt-in runtime.
+
+| Scenario | Recipe evidence | Asserts |
+|----------|-----------------|---------|
+| `ac_recommend_stops_before_apply` | worktree-flow | inspect/recommend and approval gate leave manifest bytes unchanged |
+| `ac_topology_grounded_without_initmd` | worktree-flow + initialized submodule | topology evidence is cited without consumer-specific paths or `init.md` |
+| `ac_apply_sync_verify_report` | trello-mcp-workflow | approved MCP config is applied, sync/doctor run, and report fields are surfaced |
+| `ac_noop_reapply_preserves_bytes` | plan-build-flow | equivalent re-apply is a byte-identical no-op |
+| `ac_blocked_cli_version_pin` | plan-build-flow + unsatisfied pin | preflight blocks before any write |
+
+Run directly from a shell (one runtime or several):
+
+```bash
+EVALS_RUNTIMES=claude,cursor-agent \
+  EVALS_SCENARIOS=ac_recommend_stops_before_apply \
+  ./tests/evals/run-live-assisted-configure.sh
+```
+
+The optional Orca/OMP orchestration layer may fan out this same runner with
+different `EVALS_RUNTIMES` values and aggregate provenance per runtime. It only
+invokes and collects existing runner results: it does not alter scenarios,
+prompts, fixtures, assertions, isolation, trials, pass criteria, or verdicts.
+Without orchestration, the direct shell command above remains the canonical
+execution path and has identical eval semantics. Runtime evidence records
+scenario, runtime, model, trial, CLI version, worktree SHA, exit/timed-out, and
+the helper report; it is evidence rather than a unit-suite merge gate.
