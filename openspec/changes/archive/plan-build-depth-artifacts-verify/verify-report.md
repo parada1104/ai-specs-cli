@@ -25,11 +25,24 @@
 ## Verification notes
 
 The report's `Commit` field identifies the consolidated snapshot used for the
-focused test and guardian runs before this note-only amendment. The final
-delivery commit hash is reported separately. The active-folder pre-archive
-guardian passed with `--tier full --stage pre-archive`. A pre-merge guardian
-run before archive-tail correctly blocked because the active change folder remains
-and its archive is absent. Archive-tail was not executed under
-this assignment, so `ready_for_archive: true` describes artifact readiness,
-not completed archival; task 5.2 remains unchecked. No archive, push, merge, or
-PR claim is made.
+focused test and guardian runs (b83fc047); the archive-tail delivery commit is
+reported separately in the archive run evidence.
+
+Archive-tail was executed on 2026-08-07 on this review branch
+(`change/plan-build-depth-artifacts-verify`):
+
+- The canonical sync was completed (archive-time fallback, parent-approved) —
+  see `sync-report.md`; all six delta requirements are byte-equal in
+  `openspec/specs/plan-build-flow/spec.md`, and the 21 non-delta requirements
+  are preserved.
+- The active change folder was moved to
+  `openspec/changes/archive/plan-build-depth-artifacts-verify/`.
+- The pre-merge guardian passed on the archived tree:
+  `python3 lib/_internal/premerge_guardian.py plan-build-depth-artifacts-verify
+  --root . --tier full --stage pre-merge` → `premerge-guardian: OK (full)`.
+- Task 5.2 was checked (stale-checkbox reconciliation, see `archive-report.md`);
+  no `- [ ]` implementation task boxes remain in `tasks.md`.
+
+`ready_for_archive: true` is now backed by completed archival, not only artifact
+readiness. The branch was committed and pushed so PR #185 reflects the archived
+state; no merge was performed (#59/#62 untouched).

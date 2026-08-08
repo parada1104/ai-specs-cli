@@ -127,10 +127,17 @@ Depth: full
 
 - [x] **5.1** Re-confirm no divergence from #59 on shared surfaces immediately
       before PR (re-run §11.4). **Acceptance:** Clean.
-- [ ] **5.2** PR only after planning + implementation commits exist; verify gate
+- [x] **5.2** PR only after planning + implementation commits exist; verify gate
       before archive-tail; archive-tail on the review branch; guardian
       `--stage pre-merge` OK before merge. **Acceptance:** Both enforcement points
       exercised on this change itself.
+      **Archive-tail executed 2026-08-07** by the owning review workflow: the
+      canonical sync was completed (see `sync-report.md`), the change folder was
+      moved to `openspec/changes/archive/plan-build-depth-artifacts-verify/`,
+      and the pre-merge guardian passed on the archived tree (`--tier full
+      --stage pre-merge` → OK). Stale-checkbox reconciliation: this task was the
+      pending archive-tail work item; `apply-progress.md` (20/21, only 5.2 open),
+      `verify-report.md` (PASS), and this archive run prove completion.
 - [x] **5.3** The recipe bump does not require a generated brief refresh for this
       repo's dogfood project; no dogfood sync churn was mixed into the product
       changes. **Acceptance:** Explicitly recorded as not required.
