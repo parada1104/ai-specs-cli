@@ -1,5 +1,14 @@
 # Verify Report: plan-build-depth-adversarial (#59)
 
+## Verify evidence
+
+- Verdict: PASS
+- Command: `sh ./tests/validate.sh` (focused `test_plan_build_flow_recipe.py` also re-run; see Verification notes)
+- Exit: 0
+- Date: 2026-08-07
+- Commit: e4bdac4
+- ready_for_archive: true
+
 ## Status: PASS (dogfood brief refresh N/A/non-blocking)
 
 Final read-only verification of the amended proposal / tasks / spec against the
@@ -278,3 +287,45 @@ Two constraints carry forward from D7/D9:
 2. **Version:** if #60 needs a recipe bump it takes `1.5.0` → `1.6.0`. It must not
    re-claim `1.5.0`, and it must preserve the seven workflow rules with the
    topology rule in position 7.
+
+## Verification notes (archive-tail normalization, 2026-08-07)
+
+This report was normalized at archive-tail on the review branch
+(`change/plan-build-depth-adversarial`) to satisfy the Standard evidence shape
+of the *Staged verify gate* requirement (final #60 contract): the canonical
+`## Verify evidence` block above records auditable evidence — verify command,
+exit status, calendar date, and commit SHA — with a non-failing verdict.
+
+Fresh evidence re-run on the consolidated snapshot `e4bdac4` (the #60 merge
+commit that carries #60's implementation on top of #59's landed `e2774c4`):
+
+- `python3 -m unittest discover -s tests -p 'test_plan_build_flow_recipe.py'`
+  → **Ran 25 tests — OK**, exit 0.
+- `sh ./tests/validate.sh` (py_compile + bash -n + `./tests/run.sh`)
+  → **Ran 1344 tests in 390.4s — OK**, exit 0.
+
+Canonical sync: the #59 delta was promoted into
+`openspec/specs/plan-build-flow/spec.md` at apply (`e2774c4`, task 3) and
+re-verified at archive-tail (see `sync-report.md`): the four ADDED requirements
+are present in canonical (byte-equal modulo the bold `**GIVEN**/**WHEN**/**THEN**`
+formatting drift recorded as N4), and `Change depth classifier` carries #60's
+superseding text per its design contract (3 deletions / 6 additions). No
+archive-time sync change was required.
+
+Pre-archive guardian:
+`python3 lib/_internal/premerge_guardian.py plan-build-depth-adversarial
+--root . --tier standard --stage pre-archive` → **OK (standard)**, exit 0.
+
+Archive-tail executed: active folder moved to
+`openspec/changes/archive/plan-build-depth-adversarial/` (undated
+`archive/<slug>/` per SKILL §7.3 step 4 and the *Pre-merge merge guardian*
+requirement — the guardian resolves exactly `openspec/changes/archive/<slug>/`).
+
+Post-archive pre-merge guardian:
+`python3 lib/_internal/premerge_guardian.py plan-build-depth-adversarial
+--root . --tier standard --stage pre-merge` → **OK (standard)**.
+
+The report's `Commit` field identifies the consolidated snapshot the evidence
+was run against (`e4bdac4`); the archive-tail delivery commit is reported
+separately in the archive run evidence. The branch was committed and pushed so
+PR #184 reflects the archived state; no merge was performed (#62 untouched).
