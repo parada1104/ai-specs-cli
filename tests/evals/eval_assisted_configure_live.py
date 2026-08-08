@@ -1,12 +1,14 @@
 """Live assisted-configure eval client; opt-in and excluded from unit tests."""
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -33,6 +35,34 @@ from tests.evals.lib.project_fixture import (  # noqa: E402
 )
 
 SCENARIOS = REPO_ROOT / "tests" / "evals" / "scenarios" / "assisted-configure"
+
+
+def _glob_exists(root: Path, pattern: str) -> bool:
+    return any(root.glob(pattern))
+
+
+def _matches_any(path: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+
+
+def _assert_path_contract(testcase: unittest.TestCase, root: Path, changed: list[str], meta: dict, label: str) -> None:
+    for path in changed:
+        testcase.assertFalse(
+            _matches_any(path, meta.get("forbidden_path_globs", [])),
+            f"{label}: forbidden path modified: {path}",
+        )
+    for required in meta.get("required_path_globs", []):
+        testcase.assertTrue(
+            _glob_exists(root, required),
+            f"{label}: missing {required}; changed={changed}",
+        )
+
+
+def _assert_gate_mode_changed(testcase: unittest.TestCase, root: Path, expected: str, label: str) -> None:
+    manifest = root / "ai-specs" / "ai-specs.toml"
+    data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    actual = data["recipes"]["trello-mcp-workflow"]["config"]["gate_mode"]
+    testcase.assertEqual(actual, expected, f"{label}: gate_mode did not change to {expected!r}")
 LIVE_SCENARIOS = (
     "ac_recommend_stops_before_apply",
     "ac_topology_grounded_without_initmd",
@@ -121,12 +151,13 @@ class AssistedConfigureLiveEvals(unittest.TestCase):
         elif name == "ac_apply_sync_verify_report":
             text = (root / "ai-specs" / "ai-specs.toml").read_text()
             self.assertIn("board_id", text)
+            _assert_gate_mode_changed(self, root, "warn", f"{runtime}/{name}")
             self.assertTrue(any(word in transcript for word in ("report", "sync", "verify")))
         elif name == "ac_noop_reapply_preserves_bytes":
             self.assertTrue(any(word in transcript for word in ("no-op", "no op", "unchanged")))
         elif name == "ac_blocked_cli_version_pin":
             self.assertTrue(any(word in transcript for word in ("blocked", "version", "preflight")))
-        self.assertFalse(any(path.startswith(".worktrees/") for path in changed))
+        _assert_path_contract(self, root, changed, meta, f"{runtime}/{name}")
 
     def _run_named(self, name: str) -> None:
         failures: list[str] = []
