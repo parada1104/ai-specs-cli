@@ -6,7 +6,7 @@
 - Command: `./tests/validate.sh`
 - Exit: 0
 - Date: 2026-08-07
-- Commit: d58c48c5c938c93aed5de23ecb7b83446aac4716
+- Commit: b83fc047
 - ready_for_archive: true
 
 ## Success-criteria mapping
@@ -17,10 +17,10 @@
 - Criterion 4: PASS — Verify enforcement is documented at pre-archive and pre-merge, with no bypass flag.
 - Criterion 5: PASS — #59 classifier, conflict, annotation, standalone `Depth:` contract, brief rules 1/7, and seven-rule topology are preserved by comparison checks and focused tests.
 - Criterion 6: PASS — Canonical PR minimum scenario requires Standard proposal/tasks/spec and includes the Light-without-proposal blocker.
-- Criterion 7: PASS — Grandfathering, historical archive preservation, and stale-PR owning-agent handling are documented.
-- Criterion 8: PASS — Recipe surfaces are versioned consistently at 1.6.0 while #59's 1.5.0 changelog entry remains unchanged.
-- Criterion 9: PASS — Vocabulary hygiene and recipe materialization checks pass.
-- Criterion 10: PASS — Focused guardian (30/30), focused recipe (25/25), and repository validation (1344/1344) pass.
+- Criterion 7: PASS — Recipe surfaces are versioned consistently at 1.6.0 while #59's 1.5.0 changelog entry remains unchanged.
+- Criterion 8: PASS — Grandfathering paragraph is present; historical archive preservation and stale-PR owning-agent handling are documented.
+- Criterion 9: PASS — Focused guardian (30/30), focused recipe (25/25), and repository validation (1344/1344) pass.
+- Criterion 10: PASS — Vocabulary hygiene and recipe materialization checks pass.
 
 ## Verification notes
 
