@@ -2,11 +2,11 @@
 
 ## Verdict
 
-**PARTIAL — deterministic implementation validation and one real-runtime scenario
-passed; the planned two-runtime evidence gate remains open.** The live PASS is
-preserved below exactly, including the fact that the agent transcript did not
-contain a serialized helper report (`helper_report_present: false`) even though
-the scenario's transcript assertions passed.
+**PASS — deterministic implementation validation and both required real-runtime
+scenarios passed; the multi-runtime evidence gate is complete.** Both runtime
+records are preserved below exactly, including
+`helper_report_present: false`; the scenario transcript assertions passed and
+that field is not upgraded to `true` by inference.
 
 ## Deterministic verification
 
@@ -26,20 +26,22 @@ five skipped tests, `OK`. This is harness/client validation, not live evidence.
 
 ## Live evidence
 
-Canonical wrapper command, executed from the #62 worktree:
+The canonical wrapper was executed from the #62 worktree with one trial, a
+16-turn cap, and a 420-second timeout for each runtime. Each run selected only
+`ac_apply_sync_verify_report`.
+
+### Claude / Opus
 
 ```text
 EVALS_LIVE=1 EVALS_RUNTIMES=claude \
 EVALS_SCENARIOS=ac_apply_sync_verify_report EVALS_TRIALS=1 \
 EVALS_MAX_TURNS=16 EVALS_TIMEOUT_SEC=420 \
 ./tests/evals/run-live-assisted-configure.sh
+
+Ran 5 tests in 103.673s
+OK
+EXIT:0
 ```
-
-Wrapper output: `Ran 5 tests in 103.673s`, `OK`; wrapper elapsed approximately
-104.00s; process exit `0`.
-
-The runner emitted this per-runtime evidence record (the SHA is the disposable
-fixture's baseline commit, not the source worktree's branch tip):
 
 ```json
 {
@@ -55,40 +57,61 @@ fixture's baseline commit, not the source worktree's branch tip):
 }
 ```
 
-**Interpretation:** PASS. The Claude/Opus agent completed the approved
-Trello/MCP configuration scenario; the scenario assertions passed, including
-canonical config application and transcript assertions for sync/verify/report
-language. `helper_report_present: false` is recorded as an exact observed field
-and is not upgraded to `true` by inference.
+**Interpretation:** PASS. Claude/Opus completed the approved Trello/MCP
+configuration scenario; canonical config application and transcript assertions
+for sync/verify/report language passed.
+
+### cursor-agent / Composer 2.5
+
+```text
+EVALS_LIVE=1 EVALS_RUNTIMES=cursor-agent \
+EVALS_SCENARIOS=ac_apply_sync_verify_report EVALS_TRIALS=1 \
+EVALS_MAX_TURNS=16 EVALS_TIMEOUT_SEC=420 \
+./tests/evals/run-live-assisted-configure.sh
+
+Ran 5 tests in 318.436s
+OK
+EXIT:0
+```
+
+```json
+{
+  "cli_version": "0.21.0",
+  "exit": 0,
+  "helper_report_present": false,
+  "model": "composer-2.5",
+  "runtime": "cursor-agent",
+  "scenario": "ac_apply_sync_verify_report",
+  "timed_out": false,
+  "trial": 1,
+  "worktree_sha": "36b68b9b6ab5d56318ef90454425ac5d1dfbc781"
+}
+```
+
+**Interpretation:** PASS. Cursor-agent/Composer 2.5 completed the approved
+Trello/MCP configuration scenario; canonical config application and transcript
+assertions for sync/verify/report language passed.
+
+The two SHA values above identify disposable fixture baseline commits, not the
+source worktree branch tip.
 
 ## Isolation evidence
 
-The live runner's source-worktree status before and after the run was identical:
+The Claude run's source-worktree status before and after was identical:
 15 modified tracked files and 7 untracked files, all pre-existing #62 branch
-artifacts. No source-worktree file was edited by the live eval, and no
-commit/push/merge/PR was performed. `git diff -- AGENTS.md` was empty. The
-fixture's temporary project was cleaned by the harness; the transient
-`RECIPE_MCP_TEMP` file was emitted under `/var/folders/...` and was not left in
-the repository.
-
-## Runtime coverage boundary
-
-No second runtime produced a trustworthy PASS. Earlier non-Claude attempts
-hung or were cancelled, and the bounded `EVALS_RUNTIMES=none` run is a SKIP
-rather than runtime evidence (five tests skipped, exit `0`, no scenario,
-model, SHA, or helper transcript). Therefore task 7.3 remains open: the
-required at-least-two-runtime comparison and a second per-runtime PASS are not
-claimed here. The Claude PASS above is still valid evidence for the available
-authenticated runtime.
+artifacts. `git diff -- AGENTS.md` was empty, and the fixture/temp state was
+cleaned. The cursor-agent target worktree had clean `git status --short` after
+the run; it also produced no source-worktree modifications or publication.
+The fixture's temporary project and transient `RECIPE_MCP_TEMP` files were
+cleaned by the harness.
 
 ## Task disposition
 
-- **7.3 — OPEN/PARTIAL:** Claude/Opus PASS recorded; second runtime PASS is
-  unavailable because other runtime attempts hung/cancelled.
-- **7.4 — COMPLETE:** source-worktree isolation confirmed; no `AGENTS.md` diff;
-  fixture/temp state cleaned.
-- **7.5 — COMPLETE:** evidence is transcribed per runtime with exact
-  `helper_report_present: false` field and the coverage caveat above.
+- **7.3 — COMPLETE:** Claude/Opus and cursor-agent/Composer 2.5 both produced
+  trustworthy PASS records for `ac_apply_sync_verify_report`.
+- **7.4 — COMPLETE:** post-run isolation and cleanup were confirmed.
+- **7.5 — COMPLETE:** exact evidence is transcribed per runtime, including
+  `helper_report_present: false` and disposable fixture SHAs.
 
 No canonical eval scenario contract, fixture isolation model, assertion rule, or
-#59/#60 inherited surface was intentionally changed by the live run.
+#59/#60 inherited surface was intentionally changed by the live runs.

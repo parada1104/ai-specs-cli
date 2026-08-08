@@ -17,25 +17,23 @@ artifactPaths:
   tasks: [openspec/changes/agent-assisted-recipe-config/tasks.md]
   applyProgress: [openspec/changes/agent-assisted-recipe-config/apply-progress.md]
   verifyReport: [openspec/changes/agent-assisted-recipe-config/verify-report.md]
-  syncReport: []
 artifacts:
   proposal: done
   specs: done
   design: done
   tasks: done
   applyProgress: done
-  verifyReport: partial
+  verifyReport: done
   syncReport: missing
 taskProgress:
   total: 49
-  complete: 48
-  remaining: 1
-  unchecked:
-    - "- [ ] 7.3 Live eval run across **at least two runtimes** (second runtime PASS unavailable)"
+  complete: 49
+  remaining: 0
+  unchecked: []
 applyState: all_done
 dependencies:
   apply: all_done
-  verify: partial
+  verify: all_done
   sync: blocked
   archive: blocked
 actionContext:
@@ -44,8 +42,7 @@ actionContext:
   allowedEditRoots: [/Users/robert/proyectos/nnodes/ai-specs-cli/.worktrees/agent-assisted-recipe-config]
   warnings:
     - "Parent session cwd is the protected development worktree; all edits were scoped to the assigned worktree."
-nextRecommended: "If a second authenticated runtime becomes available, rerun ac_apply_sync_verify_report; otherwise retain the explicit 7.3 partial gate and do not claim multi-runtime coverage."
-```
+nextRecommended: "Proceed to fresh review/Judgment Day before any sync or archive action."
 
 ## Completed implementation
 
@@ -98,29 +95,29 @@ nextRecommended: "If a second authenticated runtime becomes available, rerun ac_
   one trial, max turns 16, timeout 420 seconds, `Ran 5 tests in 103.673s`,
   process exit 0, `timed_out: false`, CLI version `0.21.0`, and disposable
   fixture SHA `4193277981c8052b5ac132f41685458f6e103131`.
-- The exact per-runtime record, including `helper_report_present: false`, is
-  transcribed in `verify-report.md`. Transcript assertions passed; the field
-  is not inferred true.
-- Isolation passed: source status before/after was identical (15 pre-existing
-  modified tracked files and 7 pre-existing untracked files), `git diff --
-  AGENTS.md` was empty, and the temporary fixture/MCP file was cleaned.
-- 7.3 remains open because no second runtime produced a trustworthy PASS;
-  earlier non-Claude attempts hung/cancelled. 7.4 and 7.5 are complete.
+- Cursor-agent/Composer 2.5 `ac_apply_sync_verify_report` passed through the
+  canonical wrapper with the same trial/turn/timeout settings: `Ran 5 tests in
+  318.436s`, process exit 0, `timed_out: false`, CLI version `0.21.0`, and
+  disposable fixture SHA `36b68b9b6ab5d56318ef90454425ac5d1dfbc781`.
+- Exact per-runtime records, including `helper_report_present: false`, are
+  transcribed in `verify-report.md`; that field is never inferred true.
+- Both runtime PASS records complete task 7.3. Tasks 7.4 and 7.5 remain
+  complete.
 
 ## Deviations
 
-- No new `init.md` was authored; topology grounding is schema/detection based and Trello `init.md` remains additional guidance.
-- Multi-runtime live coverage remains partial: only the Claude/Opus PASS is
-  available; no second-runtime PASS is claimed.
+- No new `init.md` was authored; topology grounding is schema/detection based
+  and Trello `init.md` remains additional guidance.
 - No override-lock governance or canonical eval semantics were changed.
 
 ## Remaining tasks
 
-- [ ] 7.3 Second-runtime live PASS and complete at-least-two-runtime evidence.
+- None for this apply/verify package; sync and archive remain separately gated.
 
 ## Workload / PR boundary
 
 The amended plan authorizes a high-risk broader MVP and recommends a three-PR
 feature-branch chain. This worktree contains the full assigned implementation
-slice; no commit, push, merge, or PR was performed. Parent should preserve the
-PR boundary and run fresh review/Judgment Day before publication.
+slice plus this evidence-only follow-up; no push, merge, or PR was performed.
+Parent should preserve the PR boundary and run fresh review/Judgment Day before
+publication.

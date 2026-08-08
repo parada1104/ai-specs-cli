@@ -233,19 +233,18 @@ and runner shape stay exactly as they are.
 
 - [x] 7.1 Focused tests green.
 - [x] 7.2 `./tests/run.sh` and `./tests/validate.sh` green before commit/PR.
-- [ ] 7.3 Live eval run across **at least two runtimes** so a runtime-specific
+- [x] 7.3 Live eval run across **at least two runtimes** so a runtime-specific
       approval-gate failure is visible; selection via `EVALS_RUNTIMES`.
-      Claude/Opus `ac_apply_sync_verify_report` passed and is recorded in
-      `verify-report.md`; no second-runtime PASS is claimed because other
-      attempts hung/cancelled. The bounded `EVALS_RUNTIMES=none` run was a
-      five-test SKIP, not live evidence.
+      Claude/Opus and cursor-agent/Composer 2.5 both passed
+      `ac_apply_sync_verify_report`; exact per-runtime evidence is recorded in
+      `verify-report.md`.
 - [x] 7.4 Post-run isolation check: source-worktree status before/after was
       identical (15 pre-existing modified tracked files and 7 pre-existing
-      untracked files); `git diff -- AGENTS.md` was empty and fixture/temp
-      state was cleaned.
+      untracked files for Claude; cursor-agent ended with clean status);
+      `git diff -- AGENTS.md` was empty and fixture/temp state was cleaned.
 - [x] 7.5 Transcribe eval evidence into `verify-report.md` in this change
       folder, attributed **per runtime** (including exact
-      `helper_report_present: false` and the open second-runtime boundary).
+      `helper_report_present: false` for both PASS records).
 - [x] 7.6 Promote the delta into canonical `openspec/specs/` per project norms.
 
 ---
