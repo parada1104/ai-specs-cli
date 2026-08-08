@@ -6,3 +6,6 @@ manifest_extra = "\n[recipes.trello-mcp-workflow.config]\nboard_id = '69ec097f13
 description = "Approved Trello MCP config applies, syncs, verifies, and reports"
 required_path_globs = ["ai-specs/ai-specs.toml"]
 forbidden_path_globs = [".worktrees/**"]
+
+helper_command = "ai-specs recipe configure"
+required_report_fields = ["status", "applied", "sync", "verify"]

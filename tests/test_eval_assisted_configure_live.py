@@ -7,7 +7,9 @@ from pathlib import Path
 
 from tests.evals.eval_assisted_configure_live import (
     _assert_gate_mode_changed,
+    _assert_helper_invocation,
     _assert_path_contract,
+    _assert_structured_report,
 )
 
 
@@ -37,6 +39,18 @@ class AssistedConfigureEvalContractTests(unittest.TestCase):
             _assert_gate_mode_changed(self, Path(tmp), "warn", "apply")
             with self.assertRaises(AssertionError):
                 _assert_gate_mode_changed(self, Path(tmp), "off", "apply")
+    def test_apply_oracle_requires_noninteractive_helper_invocation(self):
+        transcript = 'run: ai-specs recipe configure trello-mcp-workflow --set board_id=...'
+        _assert_helper_invocation(self, transcript, "ai-specs recipe configure trello-mcp-workflow", "apply")
+        with self.assertRaises(AssertionError):
+            _assert_helper_invocation(self, "I applied the config directly", "ai-specs recipe configure trello-mcp-workflow", "apply")
+
+    def test_apply_oracle_requires_structured_report_fields(self):
+        report = '{"report_version": 1, "status": "ok", "applied": {}, "sync": {}, "verify": {}}'
+        _assert_structured_report(self, report, ["status", "applied", "sync", "verify"], "apply")
+        with self.assertRaises(AssertionError):
+            _assert_structured_report(self, '{"status": "ok", "sync": {}}', ["status", "applied", "sync", "verify"], "apply")
+
 
 
 if __name__ == "__main__":

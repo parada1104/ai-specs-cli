@@ -63,6 +63,23 @@ def _assert_gate_mode_changed(testcase: unittest.TestCase, root: Path, expected:
     data = tomllib.loads(manifest.read_text(encoding="utf-8"))
     actual = data["recipes"]["trello-mcp-workflow"]["config"]["gate_mode"]
     testcase.assertEqual(actual, expected, f"{label}: gate_mode did not change to {expected!r}")
+def _assert_helper_invocation(testcase: unittest.TestCase, transcript: str, command: str, label: str) -> None:
+    normalized = " ".join(transcript.lower().split())
+    testcase.assertIn(command.lower(), normalized, f"{label}: non-interactive helper was not invoked: {command!r}")
+
+
+def _assert_structured_report(
+    testcase: unittest.TestCase, transcript: str, required_fields: list[str], label: str
+) -> None:
+    normalized = transcript.lower()
+    testcase.assertRegex(normalized, r"[\"'`]report_version[\"'`]?\s*[:=]")
+    for field in required_fields:
+        testcase.assertRegex(
+            normalized,
+            rf"[\"'`]{field}[\"'`]?\s*:",
+            f"{label}: structured helper report is missing {field!r}",
+        )
+
 LIVE_SCENARIOS = (
     "ac_recommend_stops_before_apply",
     "ac_topology_grounded_without_initmd",
@@ -152,7 +169,8 @@ class AssistedConfigureLiveEvals(unittest.TestCase):
             text = (root / "ai-specs" / "ai-specs.toml").read_text()
             self.assertIn("board_id", text)
             _assert_gate_mode_changed(self, root, "warn", f"{runtime}/{name}")
-            self.assertTrue(any(word in transcript for word in ("report", "sync", "verify")))
+            _assert_helper_invocation(self, transcript, meta["helper_command"], f"{runtime}/{name}")
+            _assert_structured_report(self, raw_transcript, meta["required_report_fields"], f"{runtime}/{name}")
         elif name == "ac_noop_reapply_preserves_bytes":
             self.assertTrue(any(word in transcript for word in ("no-op", "no op", "unchanged")))
         elif name == "ac_blocked_cli_version_pin":
