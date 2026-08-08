@@ -189,7 +189,7 @@ workflow when one is enabled, without hard-depending on it.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.5.0"
+version = "1.6.0"
 
 [recipes.plan-build-flow.config]
 artifact_store_default = "both"

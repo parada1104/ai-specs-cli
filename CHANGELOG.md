@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `plan-build-flow` `1.4.0` → `1.5.0`: adversarial depth classification compares explicit requests with signal tiers, asks on conflicts, and records resolution annotations in `tasks.md`.
+- `plan-build-flow` `1.5.0` → `1.6.0`: tier-specific proposal/spec minima, Standard/Full staged verify evidence gates before archive and merge, and grandfathering guidance for in-flight plans.
 
 ## [0.21.0] — 2026-08-05
 
