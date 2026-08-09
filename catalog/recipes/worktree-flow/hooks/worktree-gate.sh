@@ -19,6 +19,12 @@
 # (a buggy guard must never wedge all editing). Override protected branches via
 # WORKTREE_GATE_PROTECTED. gate_mode off disables both path and shell gating.
 # gate_scope is stamped by sync and may be overridden per invocation.
+#
+# Known internal harness URIs (xd://, skill://, artifact://, ...) are tool
+# interfaces, not Git destinations: they bypass filesystem classification in
+# PATH mode only, and never when they mask a traversal into the repo. Relative
+# candidates resolve against the event cwd when it is an absolute existing
+# directory; the process $PWD is fallback only.
 
 stamped_gate_mode="__WORKTREE_GATE_MODE__"
 stamped_gate_scope="__WORKTREE_GATE_SCOPE__"
@@ -277,9 +283,11 @@ PYEOF
 
 [ -n "$parsed" ] || exit 0
 
-# cwd from event (top-level); fallback to script PWD
+# cwd from event (top-level), the base for relative candidates; only an
+# absolute existing directory is usable. The hook process $PWD is fallback
+# when the event cwd is absent, relative, or nonexistent.
 event_cwd="$(python3 - "$input" <<'PYEOF' 2>/dev/null
-import json, sys
+import json, os, sys
 try:
     d = json.loads(sys.argv[1])
 except Exception:
@@ -288,7 +296,14 @@ except Exception:
 if not isinstance(d, dict):
     print("")
     sys.exit(0)
-print(d.get("cwd") or "")
+c = d.get("cwd")
+# Usable event cwd: non-empty, absolute, and an existing directory. A
+# relative or nonexistent cwd must not widen the resolution base, so it
+# falls back to the hook process $PWD.
+if isinstance(c, str) and c.strip() and os.path.isabs(c.strip()) and os.path.isdir(c.strip()):
+    print(c.strip())
+else:
+    print("")
 PYEOF
 )" || event_cwd=""
 cwd="${event_cwd:-$PWD}"
@@ -313,8 +328,28 @@ done <<< "$parsed"
 # never the consumer manifest or project Python modules.
 resolve_and_check() {
   local candidate="$1"
-  local abs decision
+  local abs decision rest
 
+  # Known non-filesystem internal harness URIs are tool interfaces, not Git
+  # destinations — but only in PATH mode, and only when they cannot resolve
+  # into the repository: candidates masked by ../ traversal or by an absolute
+  # path after the scheme are filesystem paths wearing a URI prefix and must
+  # be classified normally. In SHELL mode every candidate is a literal write
+  # target, so a URI prefix never bypasses classification.
+  case "$candidate" in
+    xd://*|skill://*|rule://*|agent://*|history://*|artifact://*|local://*|vault://*|mcp://*|issue://*|pr://*|omp://*)
+      if [ "$mode" = path ]; then
+        rest="${candidate#*://}"
+        case "$candidate" in
+          *"/../"*|*"/..") ;;  # traversal-masked path: classify normally
+          *) case "$rest" in
+               /*) ;;          # absolute-path-masked: classify normally
+               *) return 1 ;;  # genuine internal URI: bypass classification
+             esac ;;
+        esac
+      fi
+      ;;
+  esac
   case "$candidate" in
     /*) abs="$candidate" ;;
     *) abs="$cwd/$candidate" ;;

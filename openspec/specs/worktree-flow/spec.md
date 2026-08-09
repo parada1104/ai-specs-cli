@@ -644,3 +644,76 @@ branches.
 - AND MUST list residual heuristic and process-boundary gaps
 - AND MUST NOT claim that bash writes are fully or uniformly gated on every
   harness
+
+### Requirement: Internal URI allowlist and event-cwd precedence
+
+The worktree gate MUST allow only the project's known non-filesystem internal
+protocol URIs before Git path classification. Unknown URI schemes MUST remain
+subject to normal gating and MUST NOT receive a general URI bypass.
+
+For filesystem candidates, absolute paths MUST remain unchanged. Relative
+candidates MUST resolve against the tool event's `cwd` when it is present and
+usable; the hook process `$PWD` MAY be used only as fallback when event `cwd` is
+absent or unusable. Path parsing and classification failures MUST remain
+fail-open. The event cwd contract applies to the command invocation; the gate
+does not implement a shell interpreter for arbitrary dynamic `cd` control flow.
+The URI allowlist MUST apply in PATH mode only: a URI-looking token in a SHELL
+command is a literal write target and MUST NOT bypass classification. A known
+scheme that masks a filesystem path MUST be classified normally — candidates
+carrying `../` traversal or an absolute path after the scheme never receive the
+internal-URI bypass, even in PATH mode.
+
+#### Scenario: Shell-mode URI-looking literal is not allowlisted
+
+- GIVEN the main worktree is on a protected branch
+- AND a shell command writes to a bare URI-looking token such as `xd://out.txt`
+- WHEN `worktree-gate.sh` runs
+- THEN it MUST exit `2` because the candidate is a literal write target
+
+#### Scenario: Known scheme masking a filesystem path stays gated
+
+- GIVEN the main worktree is on a protected branch
+- AND a path-mode candidate is `xd://<abs-repo-path>` or carries `../` traversal
+  into the repository
+- WHEN `worktree-gate.sh` runs
+- THEN it MUST be classified like the filesystem path it masks and exit `2`
+
+#### Scenario: Known internal URI is allowed on protected branch
+
+- GIVEN the main worktree is on a protected branch
+- AND a path-mode event targets a known internal URI such as `xd://resolve`,
+  `artifact://id`, `local://name.md`, or `vault://path`
+- WHEN `worktree-gate.sh` runs
+- THEN it MUST exit `0`
+- AND it MUST NOT invoke Git filesystem classification for that candidate
+
+#### Scenario: Unknown URI is not allowlisted
+
+- GIVEN the main worktree is on a protected branch
+- AND a candidate uses `https://`, `file://`, or `custom://`
+- WHEN the candidate resolves inside the protected repository
+- THEN it MUST remain subject to the ordinary protected-path decision
+
+#### Scenario: Event cwd takes precedence over process cwd
+
+- GIVEN the hook process cwd is inside a protected repository
+- AND the event cwd is an external directory
+- AND a relative shell write targets a file under that external directory
+- WHEN `worktree-gate.sh` runs
+- THEN it MUST exit `0` because the resolved destination is outside the repository
+
+#### Scenario: Relative event-cwd path inside protected repository remains blocked
+
+- GIVEN the hook process cwd is unrelated to the repository
+- AND the event cwd is the protected repository primary checkout
+- AND a relative shell or path candidate resolves under that checkout
+- WHEN `worktree-gate.sh` runs
+- THEN it MUST exit `2`
+
+#### Scenario: Missing event cwd falls back to process cwd
+
+- GIVEN no usable event cwd is supplied
+- AND the process cwd is the protected repository primary checkout
+- AND a relative candidate targets a repository file
+- WHEN `worktree-gate.sh` runs
+- THEN the existing protected-branch decision MUST be preserved
