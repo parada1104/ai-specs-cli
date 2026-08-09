@@ -1,0 +1,15 @@
+[recipe]
+id = "live-test-recipe"
+name = "Live Test Recipe"
+description = "A test recipe for live-testing the dependency gate"
+version = "1.0.0"
+
+[config.board_id]
+required = true
+type = "string"
+question = "What board ID?"
+
+[config.card_id]
+required = true
+type = "string"
+question = "What card ID?"
