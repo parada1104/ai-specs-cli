@@ -100,12 +100,42 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
     except Exception:
         pass
 
-    # Append to manifest
+    # Interactive configuration needs the same vendor-aware dependency gate as
+    # the other TUI entry points. Run it before writing so an unavailable TUI
+    # dependency cannot leave a recipe declaration behind.
+    has_config = bool(recipe.config_schema.fields)
+    has_mcp_env = any(
+        bool((mcp.config or {}).get("env"))
+        for mcp in (recipe.mcp or [])
+    )
+    tty = sys.stdin.isatty() and sys.stdout.isatty()
+    interactive_questionary = None
+    if tty and (has_config or has_mcp_env):
+        dep_rc = util.ensure_deps(util.vendor_dir())
+        if dep_rc is not None:
+            print(
+                "No se agregó la recipe porque no están disponibles las "
+                "dependencias interactivas. Podés reintentar con: "
+                "ai-specs recipe add "
+                f"{recipe_id}",
+                file=sys.stderr,
+            )
+            return dep_rc
+        try:
+            import questionary as interactive_questionary
+        except ImportError as exc:
+            print(
+                "No se agregó la recipe porque questionary no está disponible "
+                f"({exc}). Instalá las dependencias del CLI y reintentá.",
+                file=sys.stderr,
+            )
+            return 3
+
     recipe_dict = recipe_read.recipe_to_dict(recipe)
     section = f"\n[recipes.{recipe_id}]\nenabled = true\n"
 
     # Append config placeholders so the user knows what needs configuration
-    if recipe.config_schema.fields:
+    if has_config:
         toml_write = _load_toml_write()
         section += f"\n[recipes.{recipe_id}.config]\n"
         for key in sorted(recipe.config_schema.fields):
@@ -164,18 +194,10 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
 
 
     # Guidance: what to do next
-    has_config = bool(recipe.config_schema.fields)
-    has_mcp_env = any(
-        bool((mcp.config or {}).get("env"))
-        for mcp in (recipe.mcp or [])
-    )
-
     # If interactive, run config wizard + env var prompts now
-    tty = sys.stdin.isatty() and sys.stdout.isatty()
     if tty and (has_config or has_mcp_env):
         print()
-        import questionary
-        if not questionary.confirm("¿Configurar ahora?", default=True).ask():
+        if not interactive_questionary.confirm("¿Configurar ahora?", default=True).ask():
             print("Podés configurar después con: ai-specs configure-recipes")
             return 0
         if has_config:
