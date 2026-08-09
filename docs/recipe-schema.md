@@ -476,28 +476,6 @@ MCP discovery output must redact secret-like literal values. Env references such
 
 Init is idempotent: rerunning it detects existing `[recipes.<id>]`, existing config keys, and existing template/override targets, then proposes updates or skips instead of duplicate declarations, duplicate keys, or silent overwrites.
 
-## `[sdd]` recipe metadata
-
-Recipes may declare optional SDD metadata used by the adaptive SDD contract.
-
-### `threshold`
-
-`[sdd].threshold` is an optional ceremony hint that tells agents the minimum
-SDD level expected for work involving the recipe.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `threshold` | string | no | Optional ceremony level: `trivial`, `local_fix`, `behavior_change`, or `domain_change` |
-
-Example:
-
-```toml
-[sdd]
-threshold = "behavior_change"
-```
-
-Invalid threshold values are rejected when the recipe is parsed.
-
 ---
 
 ## Reference recipe: `trello-mcp-workflow`

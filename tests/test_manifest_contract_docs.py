@@ -121,8 +121,6 @@ class ManifestContractDocsTests(unittest.TestCase):
             self.recipe_doc,
             [
                 "[`docs/ai-specs-toml.md`](ai-specs-toml.md)",
-                "## `[sdd]` recipe metadata",
-                "| `threshold` | string | no | Optional ceremony level: `trivial`, `local_fix`, `behavior_change`, or `domain_change` |",
                 "Missing `required` causes a validation error.",
                 "The current validator treats\n`type` as descriptive metadata",
                 "| `condition` | string | no | `\"not_exists\"` (default) — skip if target already exists |",
@@ -136,6 +134,51 @@ class ManifestContractDocsTests(unittest.TestCase):
         self.assertNotIn("## Manifest V2 Additions", self.recipe_doc)
         self.assertNotIn("## `[[bindings]]` table", self.recipe_doc)
         self.assertNotIn("## `[recipes.<id>.config]` override syntax", self.recipe_doc)
+
+    def test_recipe_doc_has_no_retired_sdd_surface(self):
+        # The legacy adaptive ceremony contract is retired; the recipe docs
+        # must not document the removed `[sdd]` metadata or `threshold` field.
+        self.assertNotIn("## `[sdd]` recipe metadata", self.recipe_doc)
+        self.assertNotIn("threshold", self.recipe_doc)
+
+    def test_legacy_ceremony_mapping_table(self):
+        # The plan-build delta spec codifies the migration mapping from the
+        # retired four-level ceremony vocabulary to the Light/Standard/Full
+        # depth tiers; every mapping row must be present.
+        delta = (
+            ROOT
+            / "openspec"
+            / "changes"
+            / "retire-decision-matrix"
+            / "specs"
+            / "plan-build-flow"
+            / "spec.md"
+        )
+        text = delta.read_text()
+        self.assertIn("- `trivial` and `local_fix` → **Light**", text)
+        self.assertIn("- `behavior_change` → **Standard**", text)
+        self.assertIn("- `domain_change` → **Full**", text)
+
+    def test_no_retired_ceremony_tokens_in_live_surfaces(self):
+        # The retired tokens must be absent from live config, docs, and the
+        # trello README. Archives and the changelog are exempt (historical).
+        retired = (
+            "sdd-adaptive-contract",
+            "openspec-sdd-decision",
+            "sdd.decision_matrix",
+            "sdd.threshold",
+        )
+        surfaces = [
+            ROOT / "openspec" / "config.yaml",
+            ROOT / "docs" / "recipe-schema.md",
+            ROOT / "docs" / "recipes-catalog.md",
+            ROOT / "catalog" / "recipes" / "trello-mcp-workflow" / "README.md",
+        ]
+        for surface in surfaces:
+            text = surface.read_text()
+            for token in retired:
+                with self.subTest(surface=surface.name, token=token):
+                    self.assertNotIn(token, text)
 
     def test_template_lists_same_surface_and_every_field_classification(self):
         self.assertContainsAll(
