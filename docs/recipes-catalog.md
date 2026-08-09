@@ -17,6 +17,36 @@ informational only — no per-recipe pin is required.
 Run `ai-specs recipe list` to see which catalog recipes are installed vs.
 available in a project.
 
+## Agent-assisted configuration
+
+For a non-interactive, reviewable setup flow, an agent can use the additive
+helper `ai-specs recipe configure <id> [path]`:
+
+1. Inspect with `--inspect --json` and ground the recommendation in the schema,
+   existing config, repository topology, MCP state, and CLI dependencies.
+2. Show proposed keys, preserved keys, assumptions, and planned verification;
+   wait for explicit user approval before applying.
+3. Apply approved values with repeatable `--set KEY=VALUE`; add `--sync` to run
+   synchronization and doctor verification. `--dry-run` never writes.
+4. Report `status`, changed/unchanged/preserved keys, preflight, sync, verify,
+   assumptions, drift, and version gaps. Exit 3 rejects input; exit 4 blocks a
+   CLI-version preflight before any write. Partial sync failures are not
+   reported as complete.
+
+The helper preserves unmentioned manifest keys, comments, and project override
+files. It never accepts secret-shaped literals; use `${env:VAR}` references or
+redaction. The interactive `ai-specs configure-recipes` wizard remains
+unchanged, and `ai-specs recipe init` remains read-only and does not sync.
+
+The broader evidence MVP covers `worktree-flow` topology grounding without an
+`init.md`, `trello-mcp-workflow` MCP/secrets/init guidance, and
+`plan-build-flow` plain config. Runtime evidence lives in the existing
+`tests/evals/` system as an additive client; deterministic helper tests remain
+the merge gate. An optional Orca/OMP orchestration skill may invoke the
+existing live runners across runtimes and aggregate per-runtime results, but it
+is not a runtime, runner, scoring service, or prerequisite. Running the shell
+runner directly produces the same scenario semantics and verdicts.
+
 ## Two tiers
 
 Recipes come in two tiers (see [`docs/capabilities.md`](capabilities.md)):

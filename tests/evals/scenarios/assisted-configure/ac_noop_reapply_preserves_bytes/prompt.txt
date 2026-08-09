@@ -1,0 +1,1 @@
+The plan-build-flow config already has artifact_store_default set to openspec. Re-apply that same approved value with the assisted helper, verify it is a byte-identical no-op, and report unchanged rather than claiming a new configuration.

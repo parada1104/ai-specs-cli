@@ -1,0 +1,6 @@
+id = "ac_noop_reapply_preserves_bytes"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+manifest_extra = "\n[recipes.plan-build-flow.config]\nartifact_store_default = 'openspec'\n"
+description = "Equivalent re-apply reports no-op and preserves manifest bytes"

@@ -46,6 +46,39 @@ ai-specs sync [path]                  # materialize skills, docs, brief fragment
 
 After any add/config change: `ai-specs sync` (see `harness-lifecycle`).
 
+## Assisted non-interactive configure
+
+Use `ai-specs recipe configure <id> [path]` for an agent-assisted flow; this is
+additive to (and does not replace) the interactive `configure-recipes` wizard.
+Follow the phases in order:
+
+1. **Inspect** — run `ai-specs recipe configure <id> [path] --inspect --json`.
+   Confirm the recipe id from `recipe list`, read the schema fields and current
+   config, and use the grounding signals (topology, MCP, and CLI dependencies).
+2. **Recommend** — show proposed schema-valid `KEY=VALUE` changes, keys left
+   unchanged, assumptions/questions (especially `monorepo-apps` versus
+   `standalone` when no `.gitmodules` exists), and the planned sync/doctor
+   verification. Do not mutate until the user gives explicit approval.
+3. **Apply** — after approval, run `--set KEY=VALUE` (repeatable), optionally
+   with `--dry-run`. The helper writes only `[recipes.<id>.config]`, preserves
+   comments and unmentioned keys, and leaves every `overrides/` file untouched.
+   Never put literal tokens, passwords, API keys, or other secrets in a
+   command or report; use `${env:VAR}` references and redaction.
+4. **Sync/verify** — add `--sync` after approval. The helper runs sync and
+  doctor, forwards `--ignore-cli-version` only when explicitly requested, and
+  reports partial failure without claiming the project is complete. This is
+  the no-secret-literal rule: use `${env:VAR}` references and redaction.
+5. **Report** — retain the JSON report fields `status`, `applied.changed`,
+   `applied.unchanged`, `applied.preserved`, `preflight`, `sync`, `verify`,
+   `assumptions`, `drift`, and `gaps`. Exit 0 is success/no-op, 1 is
+   apply/sync failure or partial, 2 is usage, 3 is rejected input, and 4 is a
+   preflight block. Codes 3 and 4 guarantee no manifest write.
+
+The deterministic helper is suitable for `worktree-flow` topology grounding
+without an `init.md`, `plan-build-flow` plain config, and
+`trello-mcp-workflow` MCP/secrets/init guidance. `recipe init` remains
+read-only and does not invoke sync.
+
 ## Mental model
 
 - Recipes declare **capabilities**, skills, docs, optional brief fragments, and

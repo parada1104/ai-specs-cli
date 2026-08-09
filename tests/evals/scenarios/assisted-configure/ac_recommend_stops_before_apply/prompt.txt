@@ -1,0 +1,1 @@
+Please configure worktree-flow for this repository. Inspect the current manifest and topology, recommend schema-valid changes, and stop for my explicit approval before writing anything.
