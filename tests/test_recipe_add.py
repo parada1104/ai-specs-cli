@@ -426,5 +426,101 @@ type = "string"
             project, ["my-recipe"], project / "ai-specs" / "ai-specs.toml"
         )
 
+    def test_non_tty_does_not_call_ensure_deps(self):
+        manifest = '[project]\nname = "test"\n'
+        recipe_toml = """[recipe]
+id = "my-recipe"
+name = "My Recipe"
+description = "Desc"
+version = "1.0.0"
+
+[config.board_id]
+required = true
+type = "string"
+"""
+        project = self._make_project(manifest)
+        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
+        manifest_path = project / "ai-specs" / "ai-specs.toml"
+        vendor = project / "cli-vendor"
+        fake_util = mock.Mock()
+        fake_util.is_internal_test_recipe.return_value = False
+        fake_util.ensure_deps.return_value = 3
+        fake_util.vendor_dir.return_value = vendor
+
+        with mock.patch.object(self.mod, "_load_sibling", return_value=fake_util), mock.patch.object(
+            self.mod.sys.stdin, "isatty", return_value=False
+        ), mock.patch.object(self.mod.sys.stdout, "isatty", return_value=False):
+            rc = self.mod.add_recipe(project, "my-recipe")
+
+        self.assertEqual(rc, 0)
+        self.assertIn("[recipes.my-recipe]", manifest_path.read_text(encoding="utf-8"))
+        fake_util.ensure_deps.assert_not_called()
+
+    def test_mcp_env_deps_gate(self):
+        manifest = '[project]\nname = "test"\n'
+        recipe_toml = """[recipe]
+id = "mcp-recipe"
+name = "MCP Recipe"
+description = "Desc"
+version = "1.0.0"
+
+[[provides.mcp]]
+id = "test-mcp"
+command = "test-cmd"
+env = { VAR1 = "$VAR1" }
+"""
+        project = self._make_project(manifest)
+        self._set_ai_specs_home(self._make_cli_home({"mcp-recipe": recipe_toml}))
+        manifest_path = project / "ai-specs" / "ai-specs.toml"
+        before = manifest_path.read_text(encoding="utf-8")
+        vendor = project / "cli-vendor"
+        fake_util = mock.Mock()
+        fake_util.is_internal_test_recipe.return_value = False
+        fake_util.ensure_deps.return_value = 3
+        fake_util.vendor_dir.return_value = vendor
+
+        with mock.patch.object(self.mod, "_load_sibling", return_value=fake_util), mock.patch.object(
+            self.mod.sys.stdin, "isatty", return_value=True
+        ), mock.patch.object(self.mod.sys.stdout, "isatty", return_value=True), mock.patch.object(
+            self.mod.sys, "stderr", new_callable=io.StringIO
+        ) as stderr:
+            rc = self.mod.add_recipe(project, "mcp-recipe")
+
+        self.assertEqual(rc, 3)
+        self.assertEqual(manifest_path.read_text(encoding="utf-8"), before)
+        fake_util.ensure_deps.assert_called_once_with(vendor)
+        self.assertIn("No se agreg\u00f3 la recipe", stderr.getvalue())
+
+    def test_mcp_env_non_tty_gate(self):
+        manifest = '[project]\nname = "test"\n'
+        recipe_toml = """[recipe]
+id = "mcp-recipe"
+name = "MCP Recipe"
+description = "Desc"
+version = "1.0.0"
+
+[[provides.mcp]]
+id = "test-mcp"
+command = "test-cmd"
+env = { VAR1 = "$VAR1" }
+"""
+        project = self._make_project(manifest)
+        self._set_ai_specs_home(self._make_cli_home({"mcp-recipe": recipe_toml}))
+        manifest_path = project / "ai-specs" / "ai-specs.toml"
+        vendor = project / "cli-vendor"
+        fake_util = mock.Mock()
+        fake_util.is_internal_test_recipe.return_value = False
+        fake_util.ensure_deps.return_value = 3
+        fake_util.vendor_dir.return_value = vendor
+
+        with mock.patch.object(self.mod, "_load_sibling", return_value=fake_util), mock.patch.object(
+            self.mod.sys.stdin, "isatty", return_value=False
+        ), mock.patch.object(self.mod.sys.stdout, "isatty", return_value=False):
+            rc = self.mod.add_recipe(project, "mcp-recipe")
+
+        self.assertEqual(rc, 0)
+        self.assertIn("[recipes.mcp-recipe]", manifest_path.read_text(encoding="utf-8"))
+        fake_util.ensure_deps.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()
