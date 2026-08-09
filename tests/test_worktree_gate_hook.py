@@ -66,6 +66,23 @@ class WorktreeGateHookTests(unittest.TestCase):
             input=json.dumps(event),
             capture_output=True, text=True, env=env,
         )
+    def _run_in(
+        self,
+        event: dict,
+        run_cwd: Path,
+        *,
+        event_cwd: Path | None = None,
+        protected: str = "main development",
+    ) -> subprocess.CompletedProcess:
+        """Run the hook with a controlled process cwd (for fallback tests)."""
+        if event_cwd is not None:
+            event["cwd"] = str(event_cwd)
+        env = dict(os.environ, WORKTREE_GATE_PROTECTED=protected)
+        return subprocess.run(
+            ["bash", str(GATE)],
+            input=json.dumps(event),
+            capture_output=True, text=True, env=env, cwd=str(run_cwd),
+        )
 
     def _checkout(self, branch: str) -> None:
         _git(self.repo, "checkout", "-q", "-B", branch)
@@ -561,5 +578,180 @@ class WorktreeGateHookTests(unittest.TestCase):
         gate = self._scope_gate("auto")
         self.assertEqual(self._run(self._shell_event(f"echo x > {central}", cwd=str(superrepo)), gate=gate).returncode, 0)
         self.assertEqual(self._run(self._shell_event(f"echo x > {noncentral}", cwd=str(superrepo)), gate=gate).returncode, 2)
+
+    # --- Internal URI allowlist ---
+
+    def test_uri_xd_resolve_allowed_on_protected_branch(self):
+        self._checkout("development")
+        r = self._run(self._event("Write", "xd://resolve"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_uri_artifact_allowed_on_protected_branch(self):
+        self._checkout("development")
+        r = self._run(self._event("Write", "artifact://abc123"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_uri_local_allowed_on_protected_branch(self):
+        self._checkout("main")
+        r = self._run(self._event("Write", "local://plan.md"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_uri_vault_allowed_on_protected_branch(self):
+        self._checkout("development")
+        r = self._run(self._event("Write", "vault://hermes-vault/doc.md"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_uri_skill_allowed_on_protected_branch(self):
+        self._checkout("main")
+        r = self._run(self._event("Write", "skill://testing/init"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_uri_representative_schemes_allowed_on_protected_branch(self):
+        self._checkout("main")
+        for uri in (
+            "rule://worktree-gate",
+            "agent://abc123",
+            "history://abc123",
+            "mcp://trello/get_health",
+            "issue://42",
+            "pr://42",
+            "omp://",
+        ):
+            r = self._run(self._event("Write", uri))
+            self.assertEqual(r.returncode, 0, uri)
+
+    def test_uri_shell_mode_literal_target_stays_gated(self):
+        # A URI-looking token in a shell command is a literal write target
+        # (redirection/argument), not a tool interface: it must be classified.
+        self._checkout("main")
+        event = self._shell_event(f"echo x > xd://{self.repo}/src.py")
+        r = self._run(event)
+        self.assertEqual(r.returncode, 2)
+    def test_uri_shell_mode_bare_uri_literal_stays_gated(self):
+        # Discriminator: the URI allowlist applies in PATH mode only. A bare
+        # URI-looking token (no absolute path after the scheme) in a shell
+        # command is a literal write target and must be classified — dropping
+        # the mode guard would allow it through the allowlist bypass.
+        self._checkout("main")
+        event = self._shell_event("echo x > xd://out.txt")
+        r = self._run(event)
+        self.assertEqual(r.returncode, 2)
+
+    def test_uri_traversal_masked_path_stays_gated(self):
+        # A known scheme with ../ traversal resolves into the repository and
+        # must be classified, not bypassed as a genuine internal URI.
+        self._checkout("main")
+        r = self._run(self._event("Write", f"xd://{self.repo.name}/../{self.repo.name}/src/app.py"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_uri_absolute_path_after_scheme_stays_gated(self):
+        # A known scheme followed by an absolute filesystem path must be
+        # classified like the raw absolute path it masks.
+        self._checkout("main")
+        r = self._run(self._event("Write", f"xd://{self.repo}/src/app.py"))
+        self.assertEqual(r.returncode, 2)
+
+    # --- Unknown URI schemes stay gated ---
+
+    def test_unknown_uri_https_stays_gated(self):
+        self._checkout("main")
+        r = self._run(self._event("Write", "https://example.com/src.py"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_unknown_uri_file_scheme_stays_gated(self):
+        self._checkout("main")
+        r = self._run(self._event("Write", "file:///etc/hosts"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_unknown_uri_custom_stays_gated(self):
+        self._checkout("main")
+        r = self._run(self._event("Write", "custom://thing"))
+        self.assertEqual(r.returncode, 2)
+
+    # --- Event cwd precedence ---
+
+    def test_relative_path_uses_event_cwd_not_process_pwd(self):
+        # Process PWD is inside the repo; the event cwd is external; the
+        # relative candidate resolves outside the repository and must be allowed.
+        self._checkout("main")
+        external = Path(self.tmp.name) / "external"
+        external.mkdir()
+        r = self._run_in(self._event("Write", "out.txt"), run_cwd=self.repo,
+                         event_cwd=external)
+        self.assertEqual(r.returncode, 0)
+
+    def test_relative_path_event_cwd_inside_protected_repo_blocks(self):
+        self._checkout("main")
+        r = self._run_in(self._event("Write", "src/app.py"), run_cwd=Path(self.tmp.name),
+                         event_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+
+    def test_missing_event_cwd_falls_back_to_process_pwd(self):
+        self._checkout("main")
+        event = self._event("Write", "src/app.py")
+        event.pop("cwd")
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+
+    def test_absolute_candidate_unchanged_by_event_cwd(self):
+        self._checkout("main")
+        external = Path(self.tmp.name) / "external"
+        external.mkdir()
+        r = self._run_in(self._event("Write", str(self.repo / "src.py")), run_cwd=self.repo,
+                         event_cwd=external)
+        self.assertEqual(r.returncode, 2)
+
+    def test_relative_shell_write_uses_event_cwd(self):
+        self._checkout("main")
+        external = Path(self.tmp.name) / "external"
+        external.mkdir()
+        event = self._shell_event("echo x > out.log")
+        r = self._run_in(event, run_cwd=self.repo, event_cwd=external)
+        self.assertEqual(r.returncode, 0)
+
+    def test_relative_shell_write_falls_back_to_process_pwd(self):
+        self._checkout("main")
+        event = self._shell_event("echo x > out.log")
+        event.pop("cwd")
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+
+    def test_relative_event_cwd_falls_back_to_process_pwd(self):
+        # A relative event cwd is unusable: resolution falls back to the
+        # process PWD (the protected repo), so a relative write blocks.
+        self._checkout("main")
+        event = self._event("Write", "src/app.py")
+        event["cwd"] = "relative/dir"
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+    def test_relative_event_cwd_traversal_falls_back_to_process_pwd(self):
+        # Discriminator: a relative event cwd is unusable even when it
+        # resolves (via ..) to an existing directory beside the process PWD.
+        # Resolution must fall back to the process PWD so the relative write
+        # still blocks; a mutant that accepts relative cwds resolved against
+        # the process PWD would resolve outside the repo and allow.
+        sibling = Path(self.tmp.name) / "outside"
+        sibling.mkdir(exist_ok=True)
+        self._checkout("main")
+        event = self._event("Write", "src/app.py")
+        event["cwd"] = "../outside"
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+
+    def test_nonexistent_event_cwd_falls_back_to_process_pwd(self):
+        # A nonexistent event cwd is unusable: resolution falls back to the
+        # process PWD (the protected repo), so a relative write blocks.
+        self._checkout("main")
+        event = self._event("Write", "src/app.py")
+        event["cwd"] = str(Path(self.tmp.name) / "does-not-exist")
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+
+    def test_relative_shell_write_falls_back_on_nonexistent_event_cwd(self):
+        self._checkout("main")
+        event = self._shell_event("echo x > out.log")
+        event["cwd"] = str(Path(self.tmp.name) / "does-not-exist")
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
 if __name__ == "__main__":
     unittest.main()
