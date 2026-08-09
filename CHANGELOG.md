@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (when present and usable) instead of the hook process `$PWD`, fixing false
   positives when a runtime writes external configuration from a repo-launched
   process; the process `$PWD` remains the fallback.
+- `tracker-card-gate.sh` no longer fails to parse under `/bin/bash` 3.2 (stock
+  macOS). Bash 3.2 mis-tracks backtick literals inside quoted heredocs that sit
+  directly inside command substitution, so the embedded Python's backtick
+  fence/quote strings broke the whole script at parse time (every gate
+  invocation exited 2 with "unexpected EOF while looking for matching
+  backtick"). The heredocs now build backticks via `chr(96)`, keeping the
+  literal out of the source; behavior is unchanged.
 
 ## [0.21.0] — 2026-08-05
 

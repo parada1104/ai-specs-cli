@@ -561,5 +561,123 @@ class TrackerCardGateHookTests(unittest.TestCase):
                     self.assertEqual(r.returncode, 2, r.stderr)
 
 
+class TrackerCardGateBash32CompatibilityTests(unittest.TestCase):
+    """Regression: the gate must parse and run under /bin/bash 3.2 (stock macOS).
+
+    Bash 3.2's parser mis-tracks backtick literals inside quoted heredocs that
+    sit directly inside command substitution, so the embedded Python used to
+    contain literal `` ` ``/`` ``` `` strings (fence detection, backtick
+    stripping) that broke the whole script at parse time. The fix keeps
+    backticks out of the source (``BT = chr(96)``); these tests pin that
+    contract by driving the script through /bin/bash when it is 3.2.
+    """
+
+    BASH32 = "/bin/bash"
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            ver = subprocess.run(
+                [cls.BASH32, "-c", "echo $BASH_VERSION"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            ver = ""
+        if not ver.startswith("3.2"):
+            raise unittest.SkipTest(f"{cls.BASH32} is not bash 3.2 (got {ver!r})")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        _git(self.repo, "init", "-q")
+        _git(self.repo, "config", "user.email", "t@t.t")
+        _git(self.repo, "config", "user.name", "t")
+        (self.repo / "README.md").write_text("x\n")
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-qm", "init")
+        marker = self.repo / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
+        marker.parent.mkdir(parents=True)
+        marker.write_text("ready\n")
+
+    def _run32(self, event: dict) -> subprocess.CompletedProcess:
+        stamped = Path(self.tmp.name) / "gate-bash32.sh"
+        stamped.write_text(
+            GATE.read_text()
+            .replace("__TRACKER_CARD_GATE_MODE__", "always")
+            .replace("__TRACKER_CLI_HOME__", "")
+        )
+        stamped.chmod(0o755)
+        env = dict(os.environ)
+        env.pop("TRACKER_CARD_GATE_MODE", None)
+        env.pop("TRACKER_CARD_GATE_PATHS", None)
+        env.pop("AI_SPECS_HOME", None)
+        return subprocess.run(
+            [self.BASH32, str(stamped)],
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    def test_script_parses_under_bash_3_2(self):
+        # `bash -n` is the exact failure mode: EOF while looking for matching backtick.
+        parsed = subprocess.run(
+            [self.BASH32, "-n", str(GATE)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(parsed.returncode, 0, parsed.stderr)
+
+    def test_deficient_change_blocks_prod_write_under_bash_3_2(self):
+        d = self.repo / "openspec" / "changes" / "demo-change"
+        d.mkdir(parents=True)
+        (d / "proposal.md").write_text("# proposal.md\n")
+        r = self._run32(
+            {
+                "event": "pre-tool-use",
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(self.repo / "lib" / "foo.py")},
+                "cwd": str(self.repo),
+            }
+        )
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("demo-change", r.stderr)
+
+    def test_carded_change_allows_prod_write_under_bash_3_2(self):
+        d = self.repo / "openspec" / "changes" / "carded-change"
+        d.mkdir(parents=True)
+        (d / "proposal.md").write_text(
+            "# proposal.md\n\n## Tracker\n\n- **card_id**: `6a622e6ad8dd4cefb8c09b81`\n"
+            "- **url**: https://trello.com/c/demo\n"
+        )
+        r = self._run32(
+            {
+                "event": "pre-tool-use",
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(self.repo / "lib" / "foo.py")},
+                "cwd": str(self.repo),
+            }
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_shell_pr_create_blocks_under_bash_3_2(self):
+        d = self.repo / "openspec" / "changes" / "needs-card"
+        d.mkdir(parents=True)
+        (d / "proposal.md").write_text("# proposal.md\n")
+        r = self._run32(
+            {
+                "event": "pre-tool-use",
+                "tool_name": "Bash",
+                "tool_input": {"command": "gh pr create --title t --body b"},
+                "cwd": str(self.repo),
+            }
+        )
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
