@@ -203,6 +203,9 @@ authorization, then implements, validates, and closes the change — without
 `/plan` or `/build` commands. Implementation defers to an isolated-worktree
 workflow when one is enabled, without hard-depending on it.
 
+It is the sole ceremony/depth classification source (`Light` / `Standard` /
+`Full`), replacing the retired ceremony contract.
+
 - **Provides:** skill `plan-build-flow`; capability `plan-build-flow`.
 - **Config:**
 

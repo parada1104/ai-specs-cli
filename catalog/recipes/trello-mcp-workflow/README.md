@@ -122,8 +122,7 @@ Not wired into `./tests/validate.sh`. See `tests/evals/scenarios/trello-mcp-work
 
 ## Ceremony vocabulary note
 
-`openspec/config.yaml` `sdd.decision_matrix` uses the adaptive-contract ceremony
-levels (`trivial` / `local_fix` / `behavior_change` / `domain_change`). Informal
-practice aliases (`light` / `standard` / `full` / `tasks-only`) map roughly as:
-light≈trivial/local_fix, standard≈behavior_change, full≈domain_change,
-tasks-only≈behavior_change without proposal/design.
+Ceremony/depth classification lives in `plan-build-flow` (depth tiers `Light` /
+`Standard` / `Full`). The legacy `trivial` / `local_fix` / `behavior_change` /
+`domain_change` vocabulary is retired; see the `plan-build-flow` spec for the
+retirement and migration mapping.

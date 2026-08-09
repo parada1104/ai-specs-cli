@@ -71,43 +71,7 @@ rules:
     - Compare implementation against every spec scenario
     - State unavailable quality signals explicitly, including coverage, linter, type-checker, and formatter
 
-sdd:
-  mode: adaptive
-  # Canonical ceremony levels from openspec/specs/sdd-adaptive-contract/spec.md.
-  # Informal practice aliases: light≈trivial/local_fix, standard≈behavior_change,
-  # full≈domain_change, tasks-only≈behavior_change without proposal/design.
-  decision_matrix:
-    trivial:
-      artifacts: []
-      worktree_required: false
-      proposal_required: false
-      design_required: false
-    local_fix:
-      artifacts: ["code", "tests"]
-      worktree_required: false
-      proposal_required: false
-      design_required: false
-    behavior_change:
-      artifacts: ["specs", "tasks.md", "code", "tests"]
-      worktree_required: true
-      proposal_required: false
-      design_required: false
-    domain_change:
-      artifacts:
-        - "proposal.md"
-        - "specs"
-        - "design.md"
-        - "tasks.md"
-        - "apply-report"
-        - "verify-report"
-        - "archive-report"
-      worktree_required: true
-      proposal_required: true
-      design_required: true
-
 ai_specs_guidance:
-  sdd:
-    use_subagents: true
   apply:
     tdd: true
     test_command: ./tests/run.sh
