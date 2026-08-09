@@ -60,7 +60,7 @@ count before and after this change's apply, with the delta attributable to
 - Command: `./tests/validate.sh`
 - Exit: 0
 - Date: 2026-08-09
-- Commit: <SHA>
+- Commit: b50dcc1
 - ready_for_archive: true
 
 ## Verification notes
