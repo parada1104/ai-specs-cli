@@ -91,6 +91,40 @@ def _load_util() -> Any:
     return _util_module
 
 
+_cli_version_module = None
+
+
+def _load_cli_version() -> Any:
+    """Load the sibling cli_version.py (lazy, cached)."""
+    global _cli_version_module
+    if _cli_version_module is None:
+        module_path = Path(__file__).with_name("cli_version.py")
+        spec = importlib.util.spec_from_file_location("cli_version_internal", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load cli_version.py at {module_path}")
+        _cli_version_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = _cli_version_module
+        spec.loader.exec_module(_cli_version_module)
+    return _cli_version_module
+
+
+_gate_binary_module = None
+
+
+def _load_gate_binary() -> Any:
+    """Load the sibling gate_binary.py acquisition module (lazy, cached)."""
+    global _gate_binary_module
+    if _gate_binary_module is None:
+        module_path = Path(__file__).with_name("gate_binary.py")
+        spec = importlib.util.spec_from_file_location("gate_binary_internal", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load gate_binary.py at {module_path}")
+        _gate_binary_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = _gate_binary_module
+        spec.loader.exec_module(_gate_binary_module)
+    return _gate_binary_module
+
+
 def load_recipes_from_manifest(project_root: Path) -> dict[str, dict[str, Any]]:
     mod = _load_toml_read()
     toml_path = project_root / "ai-specs" / "ai-specs.toml"
@@ -442,6 +476,13 @@ GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
 _STALE_GATE_WARNED: set[Path] = set()
 REPO_TOPOLOGY_PLACEHOLDER = "__WORKTREE_REPO_TOPOLOGY__"
 TRACKER_CLI_HOME_PLACEHOLDER = "__TRACKER_CLI_HOME__"
+GATE_IMPL_PLACEHOLDER = "__WORKTREE_GATE_IMPL__"
+GATE_IMPL_VALUES = ("auto", "go", "bash")
+GATE_VERSION_PLACEHOLDER = "__WORKTREE_GATE_VERSION__"
+# Project-relative path where the frozen Bash reference is materialized
+# alongside the launcher (task 3.9: gate_impl=bash works with no network and
+# no binary).
+LEGACY_HOOK_REL = "ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh"
 
 
 def materialize_hook_script(
@@ -488,6 +529,23 @@ def materialize_hook_script(
                 f"invalid repo_topology '{topology}'; allowed: auto | standalone | monorepo-apps | monorepo-submodules"
             )
         content = content.replace(REPO_TOPOLOGY_PLACEHOLDER, topology)
+    if GATE_IMPL_PLACEHOLDER in content:
+        impl = "auto"
+        if merged_cfg is not None:
+            impl = str(merged_cfg.get("gate_impl") or "auto")
+        if impl not in GATE_IMPL_VALUES:
+            raise RuntimeError(
+                f"invalid gate_impl '{impl}'; allowed: auto | go | bash"
+            )
+        content = content.replace(GATE_IMPL_PLACEHOLDER, impl)
+    if GATE_VERSION_PLACEHOLDER in content:
+        version = "dev"
+        if cli_home is not None:
+            try:
+                version = _load_cli_version().read_installed_version(Path(cli_home))
+            except Exception:
+                version = "dev"
+        content = content.replace(GATE_VERSION_PLACEHOLDER, version)
     if TRACKER_CLI_HOME_PLACEHOLDER in content:
         home_val = str(Path(cli_home).resolve()) if cli_home is not None else ""
         content = content.replace(TRACKER_CLI_HOME_PLACEHOLDER, home_val)
@@ -510,6 +568,29 @@ def materialize_hook_script(
     os.chmod(dest, 0o755)
     print(f"    ✓ hook script {rel}")
     return rel
+
+
+def materialize_legacy_gate(recipe_dir: Path, project_root: Path, recipe_id: str) -> None:
+    """Copy the frozen Bash reference alongside the launcher (task 3.9).
+
+    The launcher's legacy fallback (`gate_impl=bash`, or `auto` with no
+    usable binary) execs this file, so a rollback project works with no
+    network and no binary. The copy keeps its unstamped sentinels, exactly
+    like the catalog source: the legacy implementation resolves them itself
+    (invalid → warn + fallback), and the materialized file is never the
+    launcher's staleness probe.
+    """
+    if recipe_id != "worktree-flow":
+        return
+    src = recipe_dir / "hooks" / "worktree-gate-legacy.sh"
+    if not src.is_file():
+        warn(f"worktree-flow: legacy gate source missing at {src}; gate_impl=bash unavailable")
+        return
+    dest = project_root / LEGACY_HOOK_REL
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(src.read_text())
+    os.chmod(dest, 0o755)
+    print(f"    ✓ hook script {LEGACY_HOOK_REL}")
 
 
 # --- Binding resolution -------------------------------------------------------
@@ -1009,6 +1090,30 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
                 "script_path": script_path,
                 "env": hook_env,
             })
+
+        # Phase 3 distribution (worktree-flow only): materialize the frozen
+        # Bash reference alongside the launcher (rollback path, task 3.9) and
+        # acquire the Go binary when gate_impl wants it (tasks 3.10-3.13).
+        # Acquisition never fails sync: every failure warns and degrades.
+        if rid == "worktree-flow":
+            materialize_legacy_gate(recipe_dir, project_root, rid)
+            impl = str(merged_cfg.get("gate_impl") or "auto")
+            if impl in ("auto", "go"):
+                try:
+                    gb = _load_gate_binary()
+                    status = gb.acquire(
+                        gate_impl=impl,
+                        ai_specs_home=Path(ai_specs_home),
+                        offline=os.environ.get("AI_SPECS_GATE_OFFLINE") == "1",
+                    )
+                    if status.get("warn"):
+                        warn(f"worktree-flow: {status['warn']}")
+                except Exception as exc:  # noqa: BLE001
+                    warn(
+                        f"worktree-flow: gate binary acquisition failed "
+                        f"({type(exc).__name__}: {exc}); "
+                        "gate degrades per gate_impl (see 'ai-specs doctor')"
+                    )
 
     # Write merged MCP to a temp file for downstream mcp-render.py
     if recipe_mcp_out is not None:

@@ -15,9 +15,9 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+LEGACY_GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate-legacy.sh"
 GO_BINARY = ROOT / "dist" / "worktree-gate-current"
 
 
@@ -86,7 +86,10 @@ class WorktreeGateHookTests(unittest.TestCase):
                            scope="__WORKTREE_GATE_SCOPE__",
                            topology="__WORKTREE_REPO_TOPOLOGY__")
         stamped = Path(self.tmp.name) / f"worktree-gate-{mode}.sh"
-        stamped.write_text(GATE.read_text().replace("__WORKTREE_GATE_MODE__", mode))
+        # The Bash impl runs the frozen reference (the pre-launcher gate).
+        # Phase 3 rewrote hooks/worktree-gate.sh as a launcher; the reference
+        # contract the Bash parameterization pins lives in the legacy copy.
+        stamped.write_text(LEGACY_GATE.read_text().replace("__WORKTREE_GATE_MODE__", mode))
         stamped.chmod(0o755)
         return stamped
 
@@ -108,7 +111,8 @@ class WorktreeGateHookTests(unittest.TestCase):
                 "--repo-topology", gate.topology,
                 "--protected", "main development",
             ]
-        return ["bash", str(gate or GATE)]
+        # Bash impl: the frozen reference (the pre-launcher gate contract).
+        return ["bash", str(gate or LEGACY_GATE)]
 
     def _run(
         self,
@@ -524,7 +528,7 @@ class WorktreeGateHookTests(unittest.TestCase):
         if self.impl == "go":
             return _GoGate(scope=scope, topology=topology)
         stamped = Path(self.tmp.name) / f"worktree-gate-{scope}-{topology}.sh"
-        content = GATE.read_text()
+        content = LEGACY_GATE.read_text()
         content = content.replace("__WORKTREE_GATE_MODE__", "always")
         content = content.replace("__WORKTREE_GATE_SCOPE__", scope)
         content = content.replace("__WORKTREE_REPO_TOPOLOGY__", topology)
