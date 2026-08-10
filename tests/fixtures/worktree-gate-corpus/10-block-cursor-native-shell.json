@@ -1,0 +1,11 @@
+{
+  "label": "Cursor native top-level shell payload with write blocks",
+  "fixture": "protected-main",
+  "target": "{repo}src.py",
+  "event": {
+    "command": "echo x > {repo}/src.py",
+    "cwd": "{repo}"
+  },
+  "expected_exit": 2,
+  "expected_stderr": "worktree-gate: refusing shell command that writes '{repo}/src.py' on protected branch 'main' in the main worktree — using bash/shell to write here bypasses the worktree gate. Create a dedicated worktree first (e.g. /worktree-new) and run there — exploration ends at the first write."
+}

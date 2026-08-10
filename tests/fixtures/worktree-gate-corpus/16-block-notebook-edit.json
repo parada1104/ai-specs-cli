@@ -1,0 +1,13 @@
+{
+  "label": "NotebookEdit on a protected branch blocks via notebook_path",
+  "fixture": "protected-main",
+  "target": "{repo}notes.ipynb",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "NotebookEdit",
+    "tool_input": {"notebook_path": "{repo}notes.ipynb"},
+    "cwd": "{repo}"
+  },
+  "expected_exit": 2,
+  "expected_stderr": "worktree-gate: refusing to NotebookEdit '{repo}notes.ipynb' on protected branch 'main' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write."
+}

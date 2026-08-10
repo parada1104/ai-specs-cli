@@ -1,0 +1,11 @@
+# Placeholder — Phase 0 (PR 1) of the worktree-gate-go change.
+#
+# The expected digests for the published worktree-gate release assets are
+# committed here when the release workflow runs (task 0.7): one
+#   <sha256>  worktree-gate-<goos>-<goarch>
+# line per supported target (darwin/arm64, darwin/amd64, linux/amd64,
+# linux/arm64). No binaries are ever committed — this file is the trust root.
+#
+# Reproduce any digest locally with:
+#   scripts/build-gate.sh
+#   shasum -a 256 dist/worktree-gate-*

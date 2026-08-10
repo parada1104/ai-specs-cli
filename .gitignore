@@ -40,3 +40,4 @@ ai-specs/.env.bak
 ai-specs/.envrc.bak
 .venv/
 cache/
+dist/

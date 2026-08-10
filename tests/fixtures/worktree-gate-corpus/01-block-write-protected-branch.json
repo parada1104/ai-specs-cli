@@ -1,0 +1,13 @@
+{
+  "label": "Write on protected branch",
+  "fixture": "protected-main",
+  "target": "{repo}src.py",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "Write",
+    "tool_input": {"file_path": "{repo}src.py"},
+    "cwd": "{repo}"
+  },
+  "expected_exit": 2,
+  "expected_stderr": "worktree-gate: refusing to Write '{repo}src.py' on protected branch 'main' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write."
+}

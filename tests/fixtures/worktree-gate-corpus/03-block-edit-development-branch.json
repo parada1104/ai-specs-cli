@@ -1,0 +1,13 @@
+{
+  "label": "Edit on custom protected branch (development) blocks",
+  "fixture": "development-branch",
+  "target": "{repo}a.txt",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "Edit",
+    "tool_input": {"file_path": "{repo}a.txt"},
+    "cwd": "{repo}"
+  },
+  "expected_exit": 2,
+  "expected_stderr": "worktree-gate: refusing to Edit '{repo}a.txt' on protected branch 'development' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write."
+}
