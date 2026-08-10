@@ -1,0 +1,679 @@
+[
+  {
+    "cmd": "a b  c",
+    "tokens": [
+      "a",
+      "b",
+      "c"
+    ]
+  },
+  {
+    "cmd": "a\tb",
+    "tokens": [
+      "a",
+      "b"
+    ]
+  },
+  {
+    "cmd": "a\nb",
+    "tokens": [
+      "a",
+      "b"
+    ]
+  },
+  {
+    "cmd": "  lead  trail  ",
+    "tokens": [
+      "lead",
+      "trail"
+    ]
+  },
+  {
+    "cmd": "",
+    "tokens": []
+  },
+  {
+    "cmd": " ",
+    "tokens": []
+  },
+  {
+    "cmd": "\n",
+    "tokens": []
+  },
+  {
+    "cmd": "a",
+    "tokens": [
+      "a"
+    ]
+  },
+  {
+    "cmd": "a b",
+    "tokens": [
+      "a",
+      "b"
+    ]
+  },
+  {
+    "cmd": "\"\"",
+    "tokens": [
+      ""
+    ]
+  },
+  {
+    "cmd": "''",
+    "tokens": [
+      ""
+    ]
+  },
+  {
+    "cmd": "\"\" \"\"",
+    "tokens": [
+      "",
+      ""
+    ]
+  },
+  {
+    "cmd": "''x",
+    "tokens": [
+      "x"
+    ]
+  },
+  {
+    "cmd": "x\"\"",
+    "tokens": [
+      "x"
+    ]
+  },
+  {
+    "cmd": "\"\"x",
+    "tokens": [
+      "x"
+    ]
+  },
+  {
+    "cmd": "x''",
+    "tokens": [
+      "x"
+    ]
+  },
+  {
+    "cmd": "'a b'c",
+    "tokens": [
+      "a bc"
+    ]
+  },
+  {
+    "cmd": "\"a b\" c",
+    "tokens": [
+      "a b",
+      "c"
+    ]
+  },
+  {
+    "cmd": "a\"b\"c",
+    "tokens": [
+      "abc"
+    ]
+  },
+  {
+    "cmd": "\"a\"",
+    "tokens": [
+      "a"
+    ]
+  },
+  {
+    "cmd": "'a' 'b'",
+    "tokens": [
+      "a",
+      "b"
+    ]
+  },
+  {
+    "cmd": "a 'b c' d",
+    "tokens": [
+      "a",
+      "b c",
+      "d"
+    ]
+  },
+  {
+    "cmd": "\"a b\"c d",
+    "tokens": [
+      "a bc",
+      "d"
+    ]
+  },
+  {
+    "cmd": "a\"b c\"d",
+    "tokens": [
+      "ab cd"
+    ]
+  },
+  {
+    "cmd": "'' ''",
+    "tokens": [
+      "",
+      ""
+    ]
+  },
+  {
+    "cmd": "a\"\"b",
+    "tokens": [
+      "ab"
+    ]
+  },
+  {
+    "cmd": "''a''",
+    "tokens": [
+      "a"
+    ]
+  },
+  {
+    "cmd": "echo \"a b\" > \"c d\"",
+    "tokens": [
+      "echo",
+      "a b",
+      ">",
+      "c d"
+    ]
+  },
+  {
+    "cmd": "x=\"a b\"",
+    "tokens": [
+      "x=a b"
+    ]
+  },
+  {
+    "cmd": "'$x'",
+    "tokens": [
+      "$x"
+    ]
+  },
+  {
+    "cmd": "\"$x\"",
+    "tokens": [
+      "$x"
+    ]
+  },
+  {
+    "cmd": "$'a\\nb'",
+    "tokens": [
+      "$a\\nb"
+    ]
+  },
+  {
+    "cmd": "p = open(\"q\", \"w\")",
+    "tokens": [
+      "p",
+      "=",
+      "open(q,",
+      "w)"
+    ]
+  },
+  {
+    "cmd": "Path(\"r\").write_text(\"x\")",
+    "tokens": [
+      "Path(r).write_text(x)"
+    ]
+  },
+  {
+    "cmd": "o('f','w')",
+    "tokens": [
+      "o(f,w)"
+    ]
+  },
+  {
+    "cmd": "a\\ b",
+    "tokens": [
+      "a b"
+    ]
+  },
+  {
+    "cmd": "echo\\ a",
+    "tokens": [
+      "echo a"
+    ]
+  },
+  {
+    "cmd": "a\\\nb",
+    "tokens": [
+      "a\nb"
+    ]
+  },
+  {
+    "cmd": "a\\\tb",
+    "tokens": [
+      "a\tb"
+    ]
+  },
+  {
+    "cmd": "\\x\\y",
+    "tokens": [
+      "xy"
+    ]
+  },
+  {
+    "cmd": "a\\\"b",
+    "tokens": [
+      "a\"b"
+    ]
+  },
+  {
+    "cmd": "\"a\\b\"",
+    "tokens": [
+      "a\\b"
+    ]
+  },
+  {
+    "cmd": "\"a\\\\\"",
+    "tokens": [
+      "a\\"
+    ]
+  },
+  {
+    "cmd": "\"a\\\"\"",
+    "tokens": [
+      "a\""
+    ]
+  },
+  {
+    "cmd": "\"a\\$b\"",
+    "tokens": [
+      "a\\$b"
+    ]
+  },
+  {
+    "cmd": "\"a\\`b\"",
+    "tokens": [
+      "a\\`b"
+    ]
+  },
+  {
+    "cmd": "\"a\\\nb\"",
+    "tokens": [
+      "a\\\nb"
+    ]
+  },
+  {
+    "cmd": "a\\\\b",
+    "tokens": [
+      "a\\b"
+    ]
+  },
+  {
+    "cmd": "\"a\\\\\"x",
+    "tokens": [
+      "a\\x"
+    ]
+  },
+  {
+    "cmd": "x\\=y",
+    "tokens": [
+      "x=y"
+    ]
+  },
+  {
+    "cmd": "\\=x",
+    "tokens": [
+      "=x"
+    ]
+  },
+  {
+    "cmd": "a\\;b",
+    "tokens": [
+      "a;b"
+    ]
+  },
+  {
+    "cmd": "a;\\ b",
+    "tokens": [
+      "a; b"
+    ]
+  },
+  {
+    "cmd": "it\\'s",
+    "tokens": [
+      "it's"
+    ]
+  },
+  {
+    "cmd": "a\\'b",
+    "tokens": [
+      "a'b"
+    ]
+  },
+  {
+    "cmd": "a|b||c&&d;e",
+    "tokens": [
+      "a|b||c&&d;e"
+    ]
+  },
+  {
+    "cmd": "x;y",
+    "tokens": [
+      "x;y"
+    ]
+  },
+  {
+    "cmd": "x;;y",
+    "tokens": [
+      "x;;y"
+    ]
+  },
+  {
+    "cmd": "x|",
+    "tokens": [
+      "x|"
+    ]
+  },
+  {
+    "cmd": "|x",
+    "tokens": [
+      "|x"
+    ]
+  },
+  {
+    "cmd": "&&x",
+    "tokens": [
+      "&&x"
+    ]
+  },
+  {
+    "cmd": "x&&",
+    "tokens": [
+      "x&&"
+    ]
+  },
+  {
+    "cmd": "x&y",
+    "tokens": [
+      "x&y"
+    ]
+  },
+  {
+    "cmd": "x|y",
+    "tokens": [
+      "x|y"
+    ]
+  },
+  {
+    "cmd": "cmd > file",
+    "tokens": [
+      "cmd",
+      ">",
+      "file"
+    ]
+  },
+  {
+    "cmd": "cmd >> f",
+    "tokens": [
+      "cmd",
+      ">>",
+      "f"
+    ]
+  },
+  {
+    "cmd": "2>>f x",
+    "tokens": [
+      "2>>f",
+      "x"
+    ]
+  },
+  {
+    "cmd": "1>y",
+    "tokens": [
+      "1>y"
+    ]
+  },
+  {
+    "cmd": ">&2",
+    "tokens": [
+      ">&2"
+    ]
+  },
+  {
+    "cmd": "x>",
+    "tokens": [
+      "x>"
+    ]
+  },
+  {
+    "cmd": ">",
+    "tokens": [
+      ">"
+    ]
+  },
+  {
+    "cmd": "x >&2",
+    "tokens": [
+      "x",
+      ">&2"
+    ]
+  },
+  {
+    "cmd": "x &",
+    "tokens": [
+      "x",
+      "&"
+    ]
+  },
+  {
+    "cmd": "cmd &2",
+    "tokens": [
+      "cmd",
+      "&2"
+    ]
+  },
+  {
+    "cmd": ">file",
+    "tokens": [
+      ">file"
+    ]
+  },
+  {
+    "cmd": "2>file",
+    "tokens": [
+      "2>file"
+    ]
+  },
+  {
+    "cmd": "3 >>f",
+    "tokens": [
+      "3",
+      ">>f"
+    ]
+  },
+  {
+    "cmd": "cmd <<EOF",
+    "tokens": [
+      "cmd",
+      "<<EOF"
+    ]
+  },
+  {
+    "cmd": "cmd <<-EOF",
+    "tokens": [
+      "cmd",
+      "<<-EOF"
+    ]
+  },
+  {
+    "cmd": "cat <<EOF\nhi\nEOF",
+    "tokens": [
+      "cat",
+      "<<EOF",
+      "hi",
+      "EOF"
+    ]
+  },
+  {
+    "cmd": "cat > /dev/null",
+    "tokens": [
+      "cat",
+      ">",
+      "/dev/null"
+    ]
+  },
+  {
+    "cmd": "echo a>b",
+    "tokens": [
+      "echo",
+      "a>b"
+    ]
+  },
+  {
+    "cmd": "cmd 2>&1",
+    "tokens": [
+      "cmd",
+      "2>&1"
+    ]
+  },
+  {
+    "cmd": "echo a 1>&2",
+    "tokens": [
+      "echo",
+      "a",
+      "1>&2"
+    ]
+  },
+  {
+    "cmd": "echo a#b",
+    "tokens": [
+      "echo",
+      "a#b"
+    ]
+  },
+  {
+    "cmd": "# comment",
+    "tokens": [
+      "#",
+      "comment"
+    ]
+  },
+  {
+    "cmd": "echo #foo",
+    "tokens": [
+      "echo",
+      "#foo"
+    ]
+  },
+  {
+    "cmd": "a=1",
+    "tokens": [
+      "a=1"
+    ]
+  },
+  {
+    "cmd": "=x",
+    "tokens": [
+      "=x"
+    ]
+  },
+  {
+    "cmd": "a=b=c",
+    "tokens": [
+      "a=b=c"
+    ]
+  },
+  {
+    "cmd": "--flag=x",
+    "tokens": [
+      "--flag=x"
+    ]
+  },
+  {
+    "cmd": "-i file",
+    "tokens": [
+      "-i",
+      "file"
+    ]
+  },
+  {
+    "cmd": "sed -i.bak file",
+    "tokens": [
+      "sed",
+      "-i.bak",
+      "file"
+    ]
+  },
+  {
+    "cmd": "f.write(1)",
+    "tokens": [
+      "f.write(1)"
+    ]
+  },
+  {
+    "cmd": "sudo env X=1 tee -a f",
+    "tokens": [
+      "sudo",
+      "env",
+      "X=1",
+      "tee",
+      "-a",
+      "f"
+    ]
+  },
+  {
+    "cmd": "x=1 y=2 cmd arg",
+    "tokens": [
+      "x=1",
+      "y=2",
+      "cmd",
+      "arg"
+    ]
+  },
+  {
+    "cmd": "cmd \"a b\" c",
+    "tokens": [
+      "cmd",
+      "a b",
+      "c"
+    ]
+  },
+  {
+    "cmd": "...",
+    "tokens": [
+      "..."
+    ]
+  },
+  {
+    "cmd": "a'b",
+    "error": true
+  },
+  {
+    "cmd": "a\"b",
+    "error": true
+  },
+  {
+    "cmd": "trailing\\",
+    "error": true
+  },
+  {
+    "cmd": "\\",
+    "error": true
+  },
+  {
+    "cmd": "echo a\\",
+    "error": true
+  },
+  {
+    "cmd": "echo \"unterminated",
+    "error": true
+  },
+  {
+    "cmd": "echo 'unterminated",
+    "error": true
+  },
+  {
+    "cmd": "\"a\\",
+    "error": true
+  },
+  {
+    "cmd": "\"a\\\\",
+    "error": true
+  },
+  {
+    "cmd": "'a\\'b'",
+    "error": true
+  }
+]

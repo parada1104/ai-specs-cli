@@ -1,0 +1,12 @@
+{
+  "label": ".claude/settings.json is always allowed on a protected branch",
+  "fixture": "protected-main",
+  "target": "{repo}.claude/settings.json",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "Write",
+    "tool_input": {"file_path": "{repo}.claude/settings.json"},
+    "cwd": "{repo}"
+  },
+  "expected_exit": 0
+}

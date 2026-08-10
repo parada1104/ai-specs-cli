@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+GO_BINARY = ROOT / "dist" / "worktree-gate-current"
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -25,7 +26,34 @@ def _git(cwd: Path, *args: str) -> None:
                    capture_output=True, text=True)
 
 
+class _GoGate:
+    """Go-side stand-in for a stamped Bash gate.
+
+    The Bash stamp substitution (__WORKTREE_GATE_MODE__ etc.) maps 1:1 to the
+    binary's --gate-mode / --gate-scope / --repo-topology flags, so a stamped
+    gate materialized for the Bash implementation is represented for the Go
+    implementation by this value object (task 2.17).
+    """
+
+    def __init__(self, mode: str = "always", scope: str = "auto",
+                 topology: str = "auto") -> None:
+        self.mode = mode
+        self.scope = scope
+        self.topology = topology
+
+
 class WorktreeGateHookTests(unittest.TestCase):
+    """Integration suite for the worktree gate, parameterized over impl.
+
+    impl="bash" runs the frozen reference script (the pre-change behavior);
+    impl="go" runs the same scenarios against the Go binary through the
+    launcher-equivalent flags, so a behavioral differential (mode/scope
+    precedence, URI allowlist, extraction, messages) fails here first
+    (task 2.17). The Go half skips loudly when no binary is built yet.
+    """
+
+    impl = "bash"
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -44,25 +72,57 @@ class WorktreeGateHookTests(unittest.TestCase):
         except subprocess.CalledProcessError:
             pass
 
-    def _stamped_gate(self, mode: str) -> Path:
+    def _stamped_gate(self, mode: str):
+        """Materialize a gate stamped with the given mode for this impl.
+
+        The Bash path only replaces the mode sentinel; scope and topology stay
+        as the literal __WORKTREE_GATE_SCOPE__ / __WORKTREE_REPO_TOPOLOGY__
+        (invalid), which emits the fallback warnings. The Go path mirrors that
+        by passing the same invalid sentinels so the warning contract is
+        identical across impls.
+        """
+        if self.impl == "go":
+            return _GoGate(mode=mode,
+                           scope="__WORKTREE_GATE_SCOPE__",
+                           topology="__WORKTREE_REPO_TOPOLOGY__")
         stamped = Path(self.tmp.name) / f"worktree-gate-{mode}.sh"
         stamped.write_text(GATE.read_text().replace("__WORKTREE_GATE_MODE__", mode))
         stamped.chmod(0o755)
         return stamped
+
+    def _gate_command(self, gate=None) -> list[str]:
+        """Build the invocation for the active implementation.
+
+        Bash: ["bash", path] with stamped env. Go: the binary with explicit
+        flags carrying the stamped values (the Phase 3 launcher performs the
+        same mapping). A plain _GoGate or None means the effective defaults
+        (always / auto / auto).
+        """
+        if self.impl == "go":
+            if gate is None:
+                gate = _GoGate()
+            return [
+                str(GO_BINARY),
+                "--gate-mode", gate.mode,
+                "--gate-scope", gate.scope,
+                "--repo-topology", gate.topology,
+                "--protected", "main development",
+            ]
+        return ["bash", str(gate or GATE)]
 
     def _run(
         self,
         event: dict,
         *,
         protected: str = "main development",
-        gate: Path | None = None,
+        gate=None,
         extra_env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess:
         env = dict(os.environ, WORKTREE_GATE_PROTECTED=protected)
         if extra_env:
             env.update(extra_env)
         return subprocess.run(
-            ["bash", str(gate or GATE)],
+            self._gate_command(gate),
             input=json.dumps(event),
             capture_output=True, text=True, env=env,
         )
@@ -79,7 +139,7 @@ class WorktreeGateHookTests(unittest.TestCase):
             event["cwd"] = str(event_cwd)
         env = dict(os.environ, WORKTREE_GATE_PROTECTED=protected)
         return subprocess.run(
-            ["bash", str(GATE)],
+            self._gate_command(None),
             input=json.dumps(event),
             capture_output=True, text=True, env=env, cwd=str(run_cwd),
         )
@@ -148,7 +208,7 @@ class WorktreeGateHookTests(unittest.TestCase):
     # 6. Malformed JSON on stdin → fail-open allow.
     def test_malformed_stdin_fail_open(self):
         env = dict(os.environ, WORKTREE_GATE_PROTECTED="main")
-        r = subprocess.run(["bash", str(GATE)], input="not json",
+        r = subprocess.run(self._gate_command(None), input="not json",
                            capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0)
 
@@ -196,7 +256,7 @@ class WorktreeGateHookTests(unittest.TestCase):
         env = dict(os.environ, WORKTREE_GATE_PROTECTED="main development")
         env.pop("WORKTREE_GATE_MODE", None)
         r = subprocess.run(
-            ["bash", str(gate)],
+            self._gate_command(gate),
             input=json.dumps(self._event("Edit", str(self.repo / "a.txt"))),
             capture_output=True,
             text=True,
@@ -459,7 +519,10 @@ class WorktreeGateHookTests(unittest.TestCase):
         sub_event = self._event("Write", str(subrepo / "src.py"))
         sub_event["cwd"] = str(subrepo)
         self.assertEqual(self._run(sub_event).returncode, 2)
-    def _scope_gate(self, scope: str, topology: str = "monorepo-submodules") -> Path:
+    def _scope_gate(self, scope: str, topology: str = "monorepo-submodules"):
+        """Materialize a gate stamped with scope/topology for this impl."""
+        if self.impl == "go":
+            return _GoGate(scope=scope, topology=topology)
         stamped = Path(self.tmp.name) / f"worktree-gate-{scope}-{topology}.sh"
         content = GATE.read_text()
         content = content.replace("__WORKTREE_GATE_MODE__", "always")
@@ -755,3 +818,21 @@ class WorktreeGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorktreeGateGoHookTests(WorktreeGateHookTests):
+    """The same 78-scenario suite run against the Go binary.
+
+    Activates exactly when dist/worktree-gate-current exists (built by
+    scripts/build-gate.sh); skips loudly otherwise so a machine without Go
+    keeps the Bash half green (task 1.17 / 2.17).
+    """
+
+    impl = "go"
+
+    def setUp(self):
+        if not GO_BINARY.exists():
+            self.skipTest(
+                "no Go gate binary in dist/ (run scripts/build-gate.sh); "
+                "Bash parameterization still ran")
+        super().setUp()
