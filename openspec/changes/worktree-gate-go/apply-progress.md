@@ -147,7 +147,101 @@ python3 -m pytest tests/test_worktree_gate_tokenizer.py tests/test_worktree_gate
 
 ## Scope
 
-Phases 3-4 (launcher, distribution, doctor, docs, cutover) and the V.*
-verification checklist are NOT started — the assignment authorizes Phase 0-2
+Phases 0-3 (infrastructure, frozen reference + parity oracle, Go
+implementation, distribution + configuration) are implemented and covered by
+focused evidence. Phase 4 (harness coverage, docs, cutover) and the V.*
+verification checklist are NOT started — the assignment authorizes Phase 3
 only. No commit or push was performed; all persistent changes remain under the
-authorized worktree `.worktrees/worktree-gate-go`.
+authorized worktree `.worktrees/worktree-gate-go-phase-3`.
+
+
+## Phase 3 — Distribution and configuration (tasks 3.1-3.20)
+
+### Launcher (3.1-3.6)
+
+`catalog/recipes/worktree-flow/hooks/worktree-gate.sh` is now a thin launcher
+(~150 lines, bash 3.2 only): stamps mode/scope/topology/impl/version, resolves
+the implementation in order `$WORKTREE_GATE_BIN` → project-local
+`ai-specs/recipes/worktree-flow/bin/worktree-gate` → version-keyed cache →
+legacy Bash (when `gate_impl` permits) → one stderr warning + exit 0. Handoff
+is `exec` (stdin and exit code untouched); `WORKTREE_GATE_VERIFY=1` opts into a
+per-invocation `--selftest`. The literal `stamped_gate_scope="` sentinel is
+kept so the materializer upgrades existing projects. Platform detection maps
+`aarch64`→`arm64` and `x86_64|amd64`→`amd64`; unknown platform → empty target.
+`bash -n` clean; `test_launcher_keeps_literal_staleness_sentinel` scans
+non-comment lines for `mapfile`/`readarray`/`declare -A`/`,,`.
+
+### Config + materialization (3.7-3.9, 3.18-3.19)
+
+`recipe.toml` gains `[config.gate_impl]` (`enum = ["auto","go","bash"]`,
+`default = "auto"`, help text) and the recipe version bumps to `1.5.0`.
+`recipe-materialize.py` stamps `__WORKTREE_GATE_IMPL__` (validated at sync
+against the enum, invalid → `RuntimeError` listing `auto | go | bash`) and
+`__WORKTREE_GATE_VERSION__` (from the installed CLI `VERSION`), and
+materializes the frozen Bash reference to
+`ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh` so
+`gate_impl=bash` works offline with no binary. Sentinel-upgrade test proves a
+pre-Go materialized gate is replaced by the launcher, not preserved.
+
+### Acquisition + cache (3.10-3.13)
+
+New `lib/_internal/gate_binary.py`: `detect_platform()`, version-keyed cache
+path `$AI_SPECS_HOME/cache/bin/worktree-gate/<version>/<goos>-<goarch>/`,
+digest-verified download (temp file → SHA-256 vs committed `SHA256SUMS` →
+`chmod 0755` → atomic `os.replace` → `--selftest`), opt-in local build
+(`AI_SPECS_GATE_BUILD=1`, or offline with `go`), mismatch recording for
+doctor, and never-fails-sync degradation (`auto` → legacy fallback WARN;
+`go` → fail-open; unsupported platform → WARN). Wired into
+`materialize_recipes` after the hook materialization loop.
+
+### Doctor check (3.14)
+
+`doctor.py` gains `_check_worktree_gate` with the design §6.5 severity table:
+OK (binary + version match + selftest), INFO (`gate_impl=bash`), WARN
+(`auto` fallback / version mismatch), ERROR (`go` failing open / recorded
+digest mismatch), wired into `Doctor.run()`.
+
+### Tests (3.15-3.17, 3.20)
+
+- `tests/test_gate_binary_dist.py` (13 tests): uname mapping incl. Rosetta,
+  cache path, digest match → install, mismatch → no install + recorded,
+  partial download → never installed, offline/auto → legacy WARN, offline/go →
+  fail open, unsupported platform → WARN, bash skips acquisition,
+  never-raises.
+- `tests/test_worktree_gate_dist_config.py` (9 materialize + 1 rollback
+  corpus): gate_impl enum/default, stamping, legacy materialization, invalid
+  gate_impl rejection (with enum in message), sentinel upgrade, launcher
+  bash-3.2 cleanliness, rollback rehearsal (`gate_impl=bash` answers the full
+  16-case parity corpus through the materialized legacy copy).
+- `tests/test_doctor_worktree_gate.py` (7 tests): all five severity rows.
+- `tests/test_worktree_gate_hook.py`: the Bash parameterization now runs the
+  frozen reference (`worktree-gate-legacy.sh`) instead of the launcher —
+  the launcher delegates, so the reference contract is pinned on the legacy
+  copy. 78 Bash + 78 Go scenarios PASS.
+- Smoke (3.20): a scratch project synced with `AI_SPECS_GATE_BUILD=1`
+  materializes a stamped launcher (`always/auto/auto/auto/0.21.0`), builds the
+  cache binary, and the launcher blocks a protected-branch write (exit 2) via
+  the cache binary, `WORKTREE_GATE_BIN`, and the legacy fallback path.
+
+### Focused evidence (all green)
+
+```
+python3 -m pytest tests/test_worktree_gate_dist_config.py tests/test_gate_binary_dist.py \
+  tests/test_doctor_worktree_gate.py tests/test_worktree_flow_recipe.py
+  45 passed, 22 subtests
+python3 -m pytest tests/test_worktree_gate_hook.py
+  156 passed (78 Bash + 78 Go)
+python3 -m pytest tests/test_worktree_gate_parity.py tests/test_worktree_gate_tokenizer.py \
+  "tests/test_sync_pipeline.py::RuntimeHookSyncPipelineTests"
+  11 passed, 1 skipped (intentional skip-guard), 277 subtests
+python3 -m pytest tests/test_doctor.py
+  81 passed
+go -C catalog/recipes/worktree-flow/gate test ./...   PASS
+```
+
+## Scope
+
+Phase 4 (harness coverage, docs, cutover) and the V.* verification checklist
+are NOT started — the assignment authorizes Phase 3 only. No commit or push
+was performed; all persistent changes remain under the authorized worktree
+`.worktrees/worktree-gate-go-phase-3`.

@@ -174,49 +174,49 @@ the strict-TDD evidence, not an incomplete delivery.
 
 ## Phase 3 — Distribution and configuration (PR 4)
 
-- [ ] 3.1 Rewrite `catalog/recipes/worktree-flow/hooks/worktree-gate.sh` as the thin launcher:
+- [x] 3.1 Rewrite `catalog/recipes/worktree-flow/hooks/worktree-gate.sh` as the thin launcher:
       stamped `__WORKTREE_GATE_MODE__`, `__WORKTREE_GATE_SCOPE__`,
       `__WORKTREE_REPO_TOPOLOGY__`, `__WORKTREE_GATE_IMPL__`, `__WORKTREE_GATE_VERSION__`.
-- [ ] 3.2 Launcher keeps the literal sentinel `stamped_gate_scope="` so
+- [x] 3.2 Launcher keeps the literal sentinel `stamped_gate_scope="` so
       `recipe-materialize.py:494-508` upgrades existing projects instead of preserving the old
       gate.
-- [ ] 3.3 Launcher platform detection with `uname -s` / `uname -m`, bash 3.2 only, mapping
+- [x] 3.3 Launcher platform detection with `uname -s` / `uname -m`, bash 3.2 only, mapping
       `aarch64`→`arm64` and `x86_64|amd64`→`amd64`; unknown platform → empty target.
-- [ ] 3.4 Launcher resolution order: `$WORKTREE_GATE_BIN` → project-local
+- [x] 3.4 Launcher resolution order: `$WORKTREE_GATE_BIN` → project-local
       `ai-specs/recipes/worktree-flow/bin/worktree-gate` → version-keyed cache → legacy Bash
       (when `gate_impl` allows) → warn once on stderr and exit `0`.
-- [ ] 3.5 Launcher hands off with `exec` (stdin untouched, exit code untranslated); the legacy
+- [x] 3.5 Launcher hands off with `exec` (stdin untouched, exit code untranslated); the legacy
       path uses `exec bash "$legacy"`.
-- [ ] 3.6 `bash -n` clean, and a test asserting the launcher parses under bash 3.2 semantics
+- [x] 3.6 `bash -n` clean, and a test asserting the launcher parses under bash 3.2 semantics
       (no `mapfile`, no associative arrays, no `${v,,}`).
-- [ ] 3.7 Add `[config.gate_impl]` to `recipe.toml` — `enum = ["auto","go","bash"]`,
+- [x] 3.7 Add `[config.gate_impl]` to `recipe.toml` — `enum = ["auto","go","bash"]`,
       `default = "auto"`, help text; bump the recipe version.
-- [ ] 3.8 Extend `lib/_internal/recipe-materialize.py`: stamp the two new placeholders and
+- [x] 3.8 Extend `lib/_internal/recipe-materialize.py`: stamp the two new placeholders and
       validate `gate_impl` at sync exactly like `gate_scope` (invalid → `RuntimeError`).
-- [ ] 3.9 Materialize the legacy script alongside the launcher so `gate_impl=bash` works with
+- [x] 3.9 Materialize the legacy script alongside the launcher so `gate_impl=bash` works with
       no network and no binary.
-- [ ] 3.10 New `lib/_internal/gate_binary.py`: platform detection, cache path
+- [x] 3.10 New `lib/_internal/gate_binary.py`: platform detection, cache path
       `$AI_SPECS_HOME/cache/bin/worktree-gate/<version>/<goos>-<goarch>/`, download to a temp
       file in the destination directory, SHA-256 verify against the committed `SHA256SUMS`,
       `chmod 0755`, atomic `os.replace`, then `--selftest`.
-- [ ] 3.11 Digest mismatch → delete the temp file, warn, **never execute**, record the
+- [x] 3.11 Digest mismatch → delete the temp file, warn, **never execute**, record the
       mismatch for `doctor`.
-- [ ] 3.12 Opt-in local build: `AI_SPECS_GATE_BUILD=1`, or offline with `go` present, builds
+- [x] 3.12 Opt-in local build: `AI_SPECS_GATE_BUILD=1`, or offline with `go` present, builds
       into the same cache layout.
-- [ ] 3.13 Acquisition never fails `ai-specs sync`: every failure warns and degrades.
-- [ ] 3.14 Add the `worktree-gate` doctor check with the severity table from design §6.5
+- [x] 3.13 Acquisition never fails `ai-specs sync`: every failure warns and degrades.
+- [x] 3.14 Add the `worktree-gate` doctor check with the severity table from design §6.5
       (OK / INFO / WARN / ERROR), including the "gate is silently failing open" ERROR.
-- [ ] 3.15 `tests/test_gate_binary_dist.py`: `uname` mapping incl. Rosetta `x86_64` on Apple
+- [x] 3.15 `tests/test_gate_binary_dist.py`: `uname` mapping incl. Rosetta `x86_64` on Apple
       Silicon; cache path construction; digest match → install; mismatch → no install and no
       execution; partial download never installed.
-- [ ] 3.16 Distribution tests for degradation: offline + `gate_impl=auto` → legacy + WARN;
+- [x] 3.16 Distribution tests for degradation: offline + `gate_impl=auto` → legacy + WARN;
       offline + `gate_impl=go` → ERROR + gate fails open; unsupported platform → WARN.
-- [ ] 3.17 **Rollback rehearsal test**: set `gate_impl=bash`, sync, and assert the legacy
+- [x] 3.17 **Rollback rehearsal test**: set `gate_impl=bash`, sync, and assert the legacy
       implementation answers the full parity corpus.
-- [ ] 3.18 Sentinel-upgrade test: a project with a pre-Go materialized `worktree-gate.sh` is
+- [x] 3.18 Sentinel-upgrade test: a project with a pre-Go materialized `worktree-gate.sh` is
       **upgraded** to the launcher, not skipped as stale.
-- [ ] 3.19 Invalid `gate_impl` test: sync raises with the enum listed in the message.
-- [ ] 3.20 Smoke: fresh `ai-specs sync` in a scratch project on darwin/arm64 yields a working
+- [x] 3.19 Invalid `gate_impl` test: sync raises with the enum listed in the message.
+- [x] 3.20 Smoke: fresh `ai-specs sync` in a scratch project on darwin/arm64 yields a working
       Go gate — blocked write on a protected branch, allowed write inside a linked worktree.
 
 ## Phase 4 — Harness coverage, docs and cutover (PR 5)

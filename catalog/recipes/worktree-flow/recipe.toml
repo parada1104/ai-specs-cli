@@ -2,7 +2,7 @@
 id = "worktree-flow"
 name = "Worktree Flow"
 description = "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work"
-version = "1.4.0"
+version = "1.5.0"
 author = "ai-specs"
 license = "MIT"
 tags = ["infra", "worktree"]
@@ -65,6 +65,13 @@ type = "string"
 default = "auto"
 enum = ["auto", "superrepo", "subrepo"]
 help_text = "Repository scope for worktree-gate: auto (proven topology), superrepo (canonical central planning only), or subrepo (initialized submodule protection); independent from gate_mode and repo_topology."
+
+[config.gate_impl]
+required = false
+type = "string"
+default = "auto"
+enum = ["auto", "go", "bash"]
+help_text = "Worktree gate implementation: auto (prefer the Go binary, fall back to the frozen Bash reference), go (Go binary only; fails open when unusable), or bash (frozen Bash reference only; no binary, network, or Go toolchain required)."
 
 
 [config.repo_topology]
