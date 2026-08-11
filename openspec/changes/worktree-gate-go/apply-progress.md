@@ -130,12 +130,126 @@ development-branch, claude-settings), 5 runs each after warm-up:
 | Go binary | **48.5 ms** |
 | Bash reference | **145.3 ms** |
 
-Go is ~3× faster per invocation. Git call counts: `gitfacts.go` memoizes
+Go is ~3x faster per invocation. Git call counts: `gitfacts.go` memoizes
 git facts keyed by resolved directory (`gitMemo`); `gitfacts_test.go` pins the
 memoization contract. `tests/test_worktree_gate_metrics.py` records Go-side
 per-invocation measurements over the corpus — PASS.
 
-## Final focused evidence (all green)
+Measured 2026-08-10 (corpus cases 01-04, 3 runs each after warm-up):
+
+| Implementation | Per-invocation (median) | git calls on 4-candidate 2-submodule event |
+|---|---|---|
+| Go binary | **55.4 ms** | **11** |
+| Bash reference | **158.9 ms** | **72** |
+
+Both implementations reach the identical decision (exit 0) on the counted
+event; the git-call comparison is asserted by
+`test_go_issues_strictly_fewer_git_invocations_than_bash` (task 2.11) and the
+latency by `test_latency_recorded_for_both_implementations` (task 2.18).
+
+### TDD Cycle Evidence (strict_tdd, tasks.md:33-34, verify-report §F6)
+
+Phases 0-2 landed as a single commit (`e290efa`) because the RED->GREEN
+evidence is recoverable from the differential runners themselves, which were
+written first and failed until the Go implementation reached parity:
+
+| Cycle | RED | GREEN | Evidence |
+|-------|-----|-------|----------|
+| Tokenizer (2.3/2.4) | `tests/test_worktree_gate_tokenizer.py` failed on the Go side: `#` comment handling, backslash escaping, double-quote backslash retention, whitespace-only input | `test_worktree_gate_tokenizer.py` 3 passed, 226 subtests | `tokenize.go` state machine + differential corpus |
+| Internal-URI allowlist (1.12/2.16) | Go blocked `xd://`, `skill://` etc. (exit 2) where the Bash reference allows (exit 0) — parity runner RED | parity + hook suites GREEN (156 scenarios) | `uri.go` + `uri_test.go` mirror `worktree-gate-legacy.sh:339-352` |
+| Topology proof (2.12/2.16) | `moduleRecords` returned unproven where the reference proves submodules | topology tests prove against a `file://` clone-based submodule | `topology.go` mirror of `module_records()` (`:412-449`) |
+| Git memoization (2.11) | no call-count assertion existed | `TestGitMemoDerivesEachFactOnce` + `test_go_issues_strictly_fewer_git_invocations_than_bash` (shim-counted, Go < Bash) | `gitfacts.go` `gitMemo` |
+
+The RED states are not recoverable from git history (single commit); the
+verify report §F6 records this as a residual WARNING, mitigated by the
+differential runners above being written before the implementation.
+
+## Verify fixes (2026-08-10)
+
+Verified fix set applied in this worktree (no commit/push) addressing
+verify-report findings F1-F7:
+
+- **F1 (blocking)**: the stray 3.5 MB binary
+  `catalog/recipes/worktree-flow/gate/worktree-gate` is removed from the index
+  (`git rm --cached`) and ignored via `.gitignore`
+  (`catalog/recipes/worktree-flow/gate/worktree-gate`).
+- **F2 (blocking)**: task 2.11 implemented. `gitfacts_test.go` gains
+  `TestGitMemoDerivesEachFactOnce` (git shim on PATH, memoization call counts,
+  failure memoized); `tests/test_worktree_gate_metrics.py` gains
+  `test_go_issues_strictly_fewer_git_invocations_than_bash` (four-candidate
+  event, two-submodule superrepo, Go count < Bash count, identical decision).
+- **F3 (blocking)**: `tests/test_worktree_gate_metrics.py` latency test now
+  asserts the corpus-pinned `expected_exit` per run (replaces the
+  `returncode in (0, 2)` tautology) and records Bash + Go timing.
+- **F4**: the dead skip-test `test_go_comparison_is_explicitly_skipped_until_binary_exists`
+  is deleted from `tests/test_worktree_gate_parity.py`.
+- **F5**: `tests/test_worktree_gate_dist_config.py` gains
+  `WorktreeGateLauncherResolutionTests` (4 tests): `WORKTREE_GATE_BIN` wins
+  over the project pin, pin wins over cache, cache serves when nothing else,
+  non-executable override ignored with warning.
+- **F6**: `TDD Cycle Evidence` table above (RED/GREEN per differential).
+- **F7**: `Chain strategy` recorded and `size:exception` documented in
+  `tasks.md` (collapse of PRs 1-3 into `e290efa`, 11x budget overrun).
+- **Build/trust-root**: `scripts/build-gate.sh` now copies the native build to
+  `dist/worktree-gate-current` **after** building it (regression test
+  `test_build_script_refreshes_current_from_fresh_native_build` in
+  `tests/test_worktree_gate_release_phase4.py`); `SHA256SUMS` regenerated to
+  match the current source (all four targets).
+
+
+## Verify fixes round 2 (2026-08-10) — F8, F9
+
+Second fix round addressing verify-report findings F8 (CI checksum
+canonicalization) and F9 (stale binary history hygiene). Applied in this
+worktree (no commit/push).
+
+- **F8 (blocking) — CI checksum gate compared raw bytes**: the release
+  workflow's checksum job emitted `sha256sum worktree-gate-* > SHA256SUMS`
+  (bare, lexicographically ordered) and compared it to the committed trust
+  root with a byte-level `diff -u`. The committed file carries a 12-line
+  documentation header and a hand-maintained order (`darwin-arm64` first),
+  so **every tag push would fail the release even with correct digests**.
+  Fixed:
+  - new `scripts/verify-gate-sums.sh` — canonical comparison: drops
+    comments/blank lines, keeps only `<64-hex>  worktree-gate-<goos>-<goarch>`
+    entries, sorts by asset name; exit 1 on any real digest mismatch with the
+    "regenerate … and commit it" message;
+  - `.github/workflows/release-worktree-gate.yml` checksum job now calls
+    `bash scripts/verify-gate-sums.sh dist/SHA256SUMS
+    catalog/recipes/worktree-flow/bin/SHA256SUMS` (header comment updated);
+  - regression test `test_canonical_sums_comparison_ignores_header_and_order`
+    in `tests/test_worktree_gate_release_phase4.py`: builds the matrix,
+    emits a bare sorted sums file, asserts the canonical comparison passes
+    despite the header/order (the byte-diff would fail) and that a real
+    digest mismatch still fails.
+- **F9 (decision) — stale binary history hygiene, no rewrite**: the 3.5 MB
+  stray binary is committed only in `e290efa` (PR #191), which is an ancestor
+  of all three open PR branches (`change/worktree-gate-go`,
+  `change/worktree-gate-go-phase-3`, `change/worktree-gate-go-phase-4`) and
+  **not** of `development` or `main`. The tree fix (F1: `git rm --cached` +
+  `.gitignore`) removes the binary from the delivered content, but the blob
+  stays in the PR-chain history until those branches are merged or rewritten.
+  **Decision: do NOT rewrite history or force-push** — the branches are
+  pushed and the PR chain is open; rewriting all three heads and force-pushing
+  would require separate explicit authorization. The blob remains reachable
+  from the open PRs until they merge (then only from their now-merged commit
+  lineage), and a future `git filter-repo`/BFG cleanup of `e290efa` (before or
+  shortly after merge, while the PRs are still open) can drop it. No
+  functional risk: nothing reads or ships the binary (F1 removed it; all
+  suites key off `dist/` builds).
+
+### Focused evidence round 2 (all green)
+
+```
+bash -n scripts/verify-gate-sums.sh                      (clean)
+python3 -m pytest tests/test_worktree_gate_release_phase4.py tests/test_worktree_gate_dist_config.py tests/test_worktree_gate_parity.py tests/test_worktree_gate_metrics.py
+  32 passed, 79 subtests in 33.09s
+live CI simulation: sha256sum worktree-gate-* (glob order) → canonical
+  compare → "ok — 4 digest entries match the committed trust root" (exit 0);
+  corrupted digest → exit 1 with the regenerate message
+```
+
+### Focused evidence round 1 (all green)
 
 ```
 go -C catalog/recipes/worktree-flow/gate test ./...   PASS
@@ -143,6 +257,8 @@ go -C catalog/recipes/worktree-flow/gate vet ./...    PASS
 gofmt -l catalog/recipes/worktree-flow/gate           (clean)
 python3 -m pytest tests/test_worktree_gate_tokenizer.py tests/test_worktree_gate_parity.py tests/test_worktree_gate_metrics.py tests/test_worktree_gate_hook.py
   167 passed, 1 skipped (intentional skip-guard), 277 subtests
+python3 -m pytest tests/test_worktree_gate_release_phase4.py tests/test_worktree_gate_dist_config.py
+  19 passed, 28 subtests
 ```
 
 ## Scope

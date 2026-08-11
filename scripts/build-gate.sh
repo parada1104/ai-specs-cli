@@ -12,6 +12,14 @@
 # produce identical bytes for each target — the committed SHA256SUMS digests
 # are independently verifiable by any reviewer with a Go toolchain.
 #
+# CANONICAL TOOLCHAIN: the committed catalog/recipes/worktree-flow/bin/SHA256SUMS
+# is the release trust root, and Go compiles different stdlib bytes per Go
+# release. Digests MUST be regenerated with go1.24.13 — the same version the
+# release CI pins (.github/workflows/release-worktree-gate.yml). The script
+# warns (does not fail: contributors may build with go >= 1.22 for local
+# testing) when the active toolchain is not canonical, so a digest
+# regeneration with the wrong Go version is caught before it is committed.
+#
 # Usage:
 #   scripts/build-gate.sh [dist_dir]
 #     dist_dir   output directory; defaults to "$ROOT/dist".
@@ -40,6 +48,11 @@ if [[ -z "$VERSION" ]]; then
     echo "build-gate.sh: error: VERSION file is empty" >&2
     exit 1
 fi
+GO_VERSION="$(go version | awk '{print $3}')"
+if [[ "$GO_VERSION" != "go1.24.13" ]]; then
+    echo "build-gate.sh: warning: active toolchain is $GO_VERSION, not the canonical go1.24.13" >&2
+    echo "build-gate.sh: warning: SHA256SUMS regenerated with $GO_VERSION will NOT match the release CI or the committed trust root" >&2
+fi
 
 echo "build-gate.sh: building worktree-gate $VERSION into $DIST_DIR"
 mkdir -p "$DIST_DIR"
@@ -54,14 +67,6 @@ for target in "${targets[@]}"; do
     read -r goos goarch <<< "$target"
     out="$DIST_DIR/worktree-gate-$goos-$goarch"
     echo "build-gate.sh:   $goos/$goarch -> $out"
-    # The differential runners (parity, metrics, tokenizer) key off
-    # dist/worktree-gate-current. Copy the native-platform build output there
-    # so a stale binary can never pass as the current implementation
-    # (task 1.17 / 2.16).
-    if [ "$goos" = "$(uname -s | tr '[:upper:]' '[:lower:]')" ] && [ "$goarch" = "$(uname -m)" ]; then
-        cp "$out" "$DIST_DIR/worktree-gate-current"
-        echo "build-gate.sh:   native -> $DIST_DIR/worktree-gate-current"
-    fi
     (
         cd "$MODULE_DIR"
         CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
@@ -69,6 +74,15 @@ for target in "${targets[@]}"; do
             -ldflags "-s -w -X main.version=$VERSION" \
             -o "$out" .
     )
+    # The differential runners (parity, metrics, tokenizer) key off
+    # dist/worktree-gate-current. Copy the native-platform build output AFTER
+    # building it, so a clean checkout with no previous dist/ cannot carry a
+    # stale binary forward (task 1.17 / 2.16). Copying before the build would
+    # make worktree-gate-current a copy of the previous artifact.
+    if [ "$goos" = "$(uname -s | tr '[:upper:]' '[:lower:]')" ] && [ "$goarch" = "$(uname -m)" ]; then
+        cp "$out" "$DIST_DIR/worktree-gate-current"
+        echo "build-gate.sh:   native -> $DIST_DIR/worktree-gate-current"
+    fi
 done
 
 echo "build-gate.sh: done — 4 targets built"

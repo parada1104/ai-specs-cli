@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -93,6 +94,44 @@ class WorktreeGateReleaseTests(unittest.TestCase):
             self.assertTrue(out.is_file())
             assets[f"worktree-gate-{goos}-{goarch}"] = out
         return assets
+
+    def test_build_script_refreshes_current_from_fresh_native_build(self):
+        # Regression: build-gate.sh must copy the freshly built native artifact
+        # to dist/worktree-gate-current AFTER building it. Copying before the
+        # build would make "current" a copy of the previous artifact — on a
+        # clean checkout (no prior dist/) the copy would either fail or carry
+        # stale bytes, so the differential runners would test the wrong binary
+        # while reporting green.
+        import tempfile
+        fresh = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(fresh, ignore_errors=True))
+        # Plant a stale "current" that must be REPLACED by the fresh build.
+        stale = fresh / "worktree-gate-current"
+        stale.write_bytes(b"STALE-SENTINEL\n")
+        stale.chmod(0o755)
+        proc = subprocess.run(
+            [str(BUILD_SCRIPT), str(fresh)],
+            capture_output=True, text=True, timeout=600,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        rebuilt = fresh / "worktree-gate-current"
+        self.assertTrue(rebuilt.is_file())
+        self.assertNotEqual(
+            rebuilt.read_bytes(), b"STALE-SENTINEL\n",
+            "build-gate.sh must overwrite worktree-gate-current with the "
+            "fresh native build, not copy the previous artifact")
+        ver = subprocess.run(
+            [str(rebuilt), "--version"],
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+        self.assertEqual(ver.stdout.strip(), VERSION)
+        # And the native matrix asset is byte-identical to "current".
+        native = fresh / "worktree-gate-darwin-arm64"
+        self.assertTrue(native.is_file())
+        self.assertEqual(
+            _sha256(native), _sha256(rebuilt),
+            "worktree-gate-current must equal the native build output")
 
     def test_darwin_arm64_asset_executes_on_apple_silicon(self):
         # Task 4.8 release gate: the CI-produced darwin/arm64 asset must run on
@@ -186,6 +225,102 @@ class WorktreeGateReleaseTests(unittest.TestCase):
                 if committed_digest.startswith("0" * 64):
                     continue  # pre-release placeholder, covered by the other test
                 self.assertEqual(digest, committed_digest)
+
+    def test_canonical_sums_comparison_ignores_header_and_order(self):
+        # Regression (verify finding F8): the CI checksum gate must compare
+        # the CANONICAL digest entries of the generated and committed
+        # SHA256SUMS files, not raw bytes. The committed trust root carries a
+        # documentation header and a hand-maintained line order (darwin-arm64
+        # first); `sha256sum worktree-gate-*` emits a bare, lexicographically
+        # ordered file. A byte-level `diff -u` therefore fails every release
+        # even when every digest is correct — the previous workflow ran
+        # exactly that diff and would have blocked the first v0.22.0 tag.
+        # scripts/verify-gate-sums.sh drops comments/blank lines, keeps only
+        import tempfile
+
+        verify_script = ROOT / "scripts" / "verify-gate-sums.sh"
+        self.assertTrue(verify_script.is_file(), "scripts/verify-gate-sums.sh must exist")
+
+        assets = self._build()
+        generated_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(generated_dir, ignore_errors=True))
+        generated_lines = []
+        for name in sorted(assets):
+            generated_lines.append(f"{_sha256(assets[name])}  {name}")
+        generated = generated_dir / "SHA256SUMS"
+        generated.write_text("\n".join(generated_lines) + "\n", encoding="utf-8")
+
+        # Committed file, as it actually stands: header + darwin-arm64 first.
+        committed = SUMS_PATH.read_text(encoding="utf-8")
+        self.assertTrue(committed.startswith("#"), "committed SHA256SUMS carries a header")
+        header_and_order = committed
+
+        # A byte-level diff MUST fail (this is the F8 bug); the canonical
+        # comparison MUST pass.
+        proc = subprocess.run(
+            ["bash", str(verify_script), str(generated), str(SUMS_PATH)],
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(
+            proc.returncode, 0,
+            f"canonical comparison must pass despite header/order:\n"
+            f"stdout: {proc.stdout}\nstderr: {proc.stderr}")
+        self.assertIn("digest entries match", proc.stdout)
+
+        # Sanity: a real digest mismatch still fails.
+        bad = generated_dir / "SHA256SUMS-bad"
+        bad.write_text(
+            "0" * 64 + "  worktree-gate-darwin-arm64\n" +
+            "\n".join(generated_lines[1:]) + "\n",
+            encoding="utf-8",
+        )
+        proc_bad = subprocess.run(
+            ["bash", str(verify_script), str(bad), str(SUMS_PATH)],
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertNotEqual(proc_bad.returncode, 0, "a real digest mismatch must fail")
+        self.assertIn("regenerate", proc_bad.stderr)
+
+    def test_release_workflow_pins_canonical_toolchain_without_broken_cache(self):
+        # Regression (final-verification blockers): the release CI must (a)
+        # build with the same Go version that regenerated the committed
+        # SHA256SUMS trust root — a different Go release compiles different
+        # stdlib bytes, so the checksum gate would fail every tag push — and
+        # (b) not key setup-go's cache on a nonexistent go.sum (the module has
+        # zero third-party deps and intentionally no go.sum, D8).
+        workflow = (ROOT / ".github" / "workflows" / "release-worktree-gate.yml").read_text(
+            encoding="utf-8")
+        self.assertIn("go-version:", workflow)
+        match = re.search(r'go-version:\s*"([0-9]+\.[0-9]+\.[0-9]+)"', workflow)
+        self.assertIsNotNone(
+            match, "release workflow must pin an EXACT Go version (no .x), "
+                   "because digests are toolchain-specific")
+        self.assertIsNone(
+            re.search(r"^\s*cache-dependency-path:", workflow, re.MULTILINE),
+            "release workflow must not key setup-go's cache on a go.sum: the "
+            "module has zero third-party deps and no go.sum exists")
+
+    def test_local_toolchain_matches_pinned_release_toolchain(self):
+        # The committed digests were generated with the canonical toolchain
+        # and CI builds with the workflow pin, so the LOCAL toolchain that
+        # regenerates digests must equal the pinned one — otherwise the
+        # committed trust root and the release assets diverge. This test
+        # fails loudly until digests are regenerated with the pinned Go
+        # (or the pin and digests are moved together deliberately).
+        workflow = (ROOT / ".github" / "workflows" / "release-worktree-gate.yml").read_text(
+            encoding="utf-8")
+        match = re.search(r'go-version:\s*"([0-9]+\.[0-9]+\.[0-9]+)"', workflow)
+        self.assertIsNotNone(match, "workflow must pin an exact Go version")
+        pinned = match.group(1)
+        proc = subprocess.run(["go", "version"], capture_output=True, text=True,
+                              timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        local = re.search(r"go([0-9]+\.[0-9]+\.[0-9]+)", proc.stdout)
+        self.assertIsNotNone(local, f"cannot parse local go version: {proc.stdout!r}")
+        self.assertEqual(
+            local.group(1), pinned,
+            "local Go toolchain must match the release workflow pin; "
+            "regenerate SHA256SUMS with the pinned toolchain")
 
 
 if __name__ == "__main__":

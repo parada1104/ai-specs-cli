@@ -292,16 +292,6 @@ class WorktreeGateParityTests(unittest.TestCase):
                     self.assertEqual(go.stdout, legacy.stdout)
                     self.assertEqual(go.stderr, legacy.stderr)
 
-    def test_go_comparison_is_explicitly_skipped_until_binary_exists(self):
-        # scripts/build-gate.sh emits dist/worktree-gate-<goos>-<goarch>
-        # (e.g. worktree-gate-darwin-arm64); there is never a
-        # "worktree-gate-current" file. The skip guard must key off the real
-        # build outputs so the Go side of the differential runner activates
-        # exactly when a binary exists (task 1.17).
-        binaries = list(ROOT.glob("dist/worktree-gate-*"))
-        if binaries:
-            self.skipTest("Go gate binary present; comparison enabled in a later parity phase")
-        self.skipTest("no Go gate binary in dist/; Bash reference remains oracle")
 
     def test_malformed_input_cases_fail_open_silently(self):
         # Task 1.15 fail-open set: malformed input must allow (exit 0) with no
