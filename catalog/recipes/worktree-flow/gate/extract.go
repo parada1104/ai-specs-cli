@@ -142,14 +142,40 @@ func extractRedirects(tokens []string) []string {
 	}
 	return out
 }
+
+// scrub mirrors the reference dedupe() scrub step (worktree-gate-legacy.sh:90-100):
+// a candidate that is empty or whitespace-only, the literal ".", "-", any
+// "&"-prefixed token (fd duplication), or the /dev/null | /dev/stdout |
+// /dev/stderr | /dev/fd/* special files is not a real write target and is
+// dropped. Returns "" for scrubbed values so the dedupe loop discards them.
+func scrub(path string) string {
+	p := strings.TrimSpace(path)
+	if p == "" || p == "." || p == "-" {
+		return ""
+	}
+	if strings.HasPrefix(p, "&") {
+		return ""
+	}
+	if p == "/dev/null" || p == "/dev/stdout" || p == "/dev/stderr" ||
+		strings.HasPrefix(p, "/dev/fd/") {
+		return ""
+	}
+	return p
+}
+
+// dedupeStrings mirrors the reference dedupe() (worktree-gate-legacy.sh:102-110):
+// scrub every candidate first (dropping scrubbed values), then keep the first
+// occurrence order.
 func dedupeStrings(in []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, s := range in {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
+		s = scrub(s)
+		if s == "" || seen[s] {
+			continue
 		}
+		seen[s] = true
+		out = append(out, s)
 	}
 	return out
 }

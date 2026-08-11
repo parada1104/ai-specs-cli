@@ -256,6 +256,19 @@ unmerged ones, and never touches the main worktree.
   and applies the proven-topology `gate_scope` policy — see
   [`docs/runtime-hooks.md`](runtime-hooks.md); capabilities
   `worktree-isolation`, `worktree-cleanup`.
+- **Gate implementation:** the gate ships as a single zero-dependency Go
+  binary (implementation of record) plus a frozen Bash reference
+  (`worktree-gate-legacy.sh`) kept for one minor release as the rollback path.
+  `gate_impl` selects the implementation: `auto` (default — prefer the Go
+  binary, fall back to Bash), `go` (binary only; fails open when unusable, with
+  a `worktree-gate` doctor ERROR), or `bash` (frozen Bash reference; no binary,
+  network, or Go toolchain required). `ai-specs sync` materializes a thin
+  bash-3.2 launcher at the unchanged hook path, acquires the binary into
+  `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/`,
+  verifies SHA-256 against the committed `SHA256SUMS` trust root before install,
+  and degrades with a warning on any failure — acquisition never fails sync.
+  `ai-specs doctor` reports the resolved implementation, version, digest state,
+  and silent fallbacks.
 - **Topologies:** `standalone`, `monorepo-apps` (naming-only), and
   `monorepo-submodules` (per-submodule `git -C` create + cleanup enumeration
   under a shared superproject `worktrees_dir`).
@@ -268,6 +281,7 @@ unmerged ones, and never touches the main worktree.
   | `auto_remove_merged` | boolean | `true` | Whether merged worktrees are eligible for cleanup. |
   | `gate_mode` | string | `always` | Main-worktree gate mode. `always` keeps the current block, `ask` blocks with a bypass hint, and `off` disables the gate. |
   | `gate_scope` | string | `auto` | Scope policy: `auto` / `superrepo` / `subrepo`; only proven canonical `<superrepo>/openspec/changes/**` planning paths are excepted. |
+  | `gate_impl` | string | `auto` | Gate implementation: `auto` / `go` / `bash` (see "Gate implementation" above). |
   | `WORKTREE_GATE_SCOPE` | string | — | Optional invocation override; invalid values warn and fall back to the stamped scope. |
   | `repo_topology` | string | `auto` | `auto` / `standalone` / `monorepo-apps` / `monorepo-submodules`. Auto detects initialized submodules; never auto-selects `monorepo-apps`. Shared `<worktrees_dir>/<subrepo>-<slug>` layout under submodules; cleanup enumerates per-module. |
   | `WORKTREE_GATE_PROTECTED` | string | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
@@ -277,7 +291,7 @@ unmerged ones, and never touches the main worktree.
 ```toml
 [recipes.worktree-flow]
 enabled = true
-version = "1.4.0"
+version = "1.5.0"
 
 [recipes.worktree-flow.config]
 integration_branch = "development"

@@ -74,7 +74,7 @@ func moduleRecords(superRoot string) []moduleRecord {
 	if !isFile(gm) || !(isDir(dotgit) || isFile(dotgit)) {
 		return nil
 	}
-	status := git(superRoot, "config", "--file", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
+	status := gitMemo(superRoot, "config", "--file", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
 	if status == "" {
 		return nil
 	}
@@ -99,7 +99,7 @@ func moduleRecords(superRoot string) []moduleRecord {
 			}
 		}
 		seen[module] = true
-		subStatus := git(superRoot, "submodule", "status", "--", rel)
+		subStatus := gitMemo(superRoot, "submodule", "status", "--", rel)
 		if subStatus == "" {
 			continue
 		}
@@ -112,7 +112,7 @@ func moduleRecords(superRoot string) []moduleRecord {
 		}
 		common := gitCommon(module)
 		expected := RealPath(filepath.Join(superRoot, ".git", "modules", rel))
-		owner := git(module, "rev-parse", "--show-toplevel")
+		owner := gitMemo(module, "rev-parse", "--show-toplevel")
 		if owner != "" {
 			owner = RealPath(owner)
 		}
