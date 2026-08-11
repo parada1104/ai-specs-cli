@@ -221,31 +221,31 @@ the strict-TDD evidence, not an incomplete delivery.
 
 ## Phase 4 — Harness coverage, docs and cutover (PR 5)
 
-- [ ] 4.1 Test asserting `hooks-render.py` output is **byte-identical** to the pre-change
+- [x] 4.1 Test asserting `hooks-render.py` output is **byte-identical** to the pre-change
       output for claude, cursor, opencode, pi and omp (proves `script_path` stability rather
       than assuming it).
-- [ ] 4.2 Verify the Cursor wrapper still maps exit `2` → `{"permission":"deny"}` with the
+- [x] 4.2 Verify the Cursor wrapper still maps exit `2` → `{"permission":"deny"}` with the
       launcher, and that the binary's empty stdout does not degrade the deny message.
-- [ ] 4.3 Verify `spawnSync(SCRIPT, …)` works with the launcher on opencode/pi/omp (executed
+- [x] 4.3 Verify `spawnSync(SCRIPT, …)` works with the launcher on opencode/pi/omp (executed
       directly with no shell → shebang and mode 0755 required).
-- [ ] 4.4 Live smoke on at least one real harness: a blocked write on a protected branch and
+- [x] 4.4 Live smoke on at least one real harness: a blocked write on a protected branch and
       an allowed write inside a linked worktree.
-- [ ] 4.5 Update `docs/runtime-hooks.md`: the Go implementation, the launcher, `gate_impl`,
+- [x] 4.5 Update `docs/runtime-hooks.md`: the Go implementation, the launcher, `gate_impl`,
       the cache layout, the build matrix, and the unchanged pre-existing coverage gaps
       (Cursor has no pre-file-write hook; opencode `tool.execute.before` misses subagent and
       MCP calls).
-- [ ] 4.6 Update `catalog/recipes/worktree-flow/README.md`: `gate_impl`, offline behavior,
+- [x] 4.6 Update `catalog/recipes/worktree-flow/README.md`: `gate_impl`, offline behavior,
       rollback levers, `ai-specs doctor` guidance.
-- [ ] 4.7 Document the contributor build path (`scripts/build-gate.sh`, `go >= 1.22` for
+- [x] 4.7 Document the contributor build path (`scripts/build-gate.sh`, `go >= 1.22` for
       contributors only, never a user prerequisite).
-- [ ] 4.8 Release gate: run the CI-produced darwin/arm64 asset on real Apple Silicon to
+- [x] 4.8 Release gate: run the CI-produced darwin/arm64 asset on real Apple Silicon to
       confirm the ad-hoc signature; if it fails, build darwin targets on macOS runners or
       `codesign -s -`.
-- [ ] 4.9 Regenerate and commit `SHA256SUMS` for the release; assert the digests match the
+- [x] 4.9 Regenerate and commit `SHA256SUMS` for the release; assert the digests match the
       published assets.
-- [ ] 4.10 Cut over: default `gate_impl = "auto"`, so a synced project prefers the Go binary.
-- [ ] 4.11 Update `CHANGELOG.md` and `VERSION`.
-- [ ] 4.12 Record the follow-up change slug `worktree-gate-bash-retire` with its entry
+- [x] 4.10 Cut over: default `gate_impl = "auto"`, so a synced project prefers the Go binary.
+- [x] 4.11 Update `CHANGELOG.md` and `VERSION`.
+- [x] 4.12 Record the follow-up change slug `worktree-gate-bash-retire` with its entry
       criterion (one minor release with Go as default and no field regression).
 
 ## Verification

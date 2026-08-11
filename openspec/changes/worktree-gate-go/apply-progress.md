@@ -245,3 +245,91 @@ Phase 4 (harness coverage, docs, cutover) and the V.* verification checklist
 are NOT started — the assignment authorizes Phase 3 only. No commit or push
 was performed; all persistent changes remain under the authorized worktree
 `.worktrees/worktree-gate-go-phase-3`.
+
+
+## Phase 4 — Harness coverage, docs and cutover (tasks 4.1-4.12)
+
+### Harness coverage tests (4.1-4.4)
+
+New `tests/test_worktree_gate_harness_phase4.py` (10 tests, 10 subtests) proves
+the launcher changed nothing for the five harnesses:
+
+- 4.1 `hooks-render.py` output byte-identity: the resolved-hooks document is
+  rendered twice in fresh projects and bytes are identical per harness, and
+  every artifact references the unchanged materialized path
+  `ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh`.
+- 4.2 Cursor wrapper: blocked shell write → `{"permission":"deny"}` through the
+  launcher; allowed linked-worktree write → `allow`; empty binary stdout does
+  not degrade the deny decision (message travels on stderr, deny JSON intact).
+- 4.3 spawnSync contract: the materialized launcher is directly executable
+  (shebang + mode 0755) and, run with no shell, passes stdin through, exits 2
+  with empty stdout on a blocked write.
+- 4.4 Live launcher smoke on real Git fixtures: blocked write on a protected
+  branch, allowed write inside a linked worktree, and `auto` fallback to the
+  frozen Bash reference when no binary is reachable.
+
+### Release gate and digests (4.8, 4.9)
+
+New `tests/test_worktree_gate_release_phase4.py` (6 tests, 12 subtests,
+skip-guarded on `go` presence):
+
+- darwin/arm64 asset built with CI-identical flags executes on Apple Silicon
+  and `--selftest` prints `ok`; `--version` matches `VERSION`.
+- Repeated builds byte-identical (linux/amd64 rebuilt → same SHA-256).
+- Every matrix target has a committed digest entry; committed digests match
+  the locally built assets; the CI-generated sums file parses and matches.
+- `catalog/recipes/worktree-flow/bin/SHA256SUMS` **regenerated** with the real
+  digests of all four targets (task 4.9; was the Phase-0 placeholder).
+
+### Docs and release (4.5-4.7, 4.10-4.11)
+
+- `docs/runtime-hooks.md`: new "Gate implementation and launcher" section —
+  Go binary, launcher resolution order, cache layout, build matrix, `gate_impl`
+  semantics, `WORKTREE_GATE_VERIFY`, zero renderer churn, and the **unchanged
+  pre-existing coverage gaps** (Cursor no pre-file-write hook; opencode misses
+  subagent/MCP; pi/omp per-process).
+- `catalog/recipes/worktree-flow/README.md`: `gate_impl` section with offline
+  behavior, rollback levers, `ai-specs doctor` guidance, digest trust root;
+  Enable block version → 1.5.0 with `gate_impl`; config table row.
+- `docs/recipes-catalog.md`: worktree-flow section — gate implementation
+  bullet, `gate_impl` config row, version pin → 1.5.0.
+- Contributor build path (task 4.7) documented in the gate README section and
+  `scripts/build-gate.sh` header (`go >= 1.22` for contributors only, never a
+  user prerequisite; `AI_SPECS_GATE_BUILD=1` for offline users).
+- Cutover (4.10): `gate_impl` default is already `auto` in `recipe.toml`
+  (Phase 3); confirmed by `test_recipe_declares_gate_impl_enum_with_default_auto`.
+- `CHANGELOG.md` Unreleased: Added section for the Go gate, launcher,
+  `gate_impl`, acquisition/verification/cache, doctor check, build matrix,
+  performance; Changed: worktree-flow 1.4.0 → 1.5.0. `VERSION` → 0.22.0.
+- Follow-up slug (4.12): `openspec/changes/worktree-gate-bash-retire/proposal.md`
+  with entry criterion (one minor release with Go as default and no field
+  regression) and draft removal scope.
+
+### Focused evidence (all green)
+
+```
+python3 -m pytest tests/test_worktree_gate_harness_phase4.py
+  10 passed, 10 subtests
+python3 -m pytest tests/test_worktree_gate_release_phase4.py tests/test_gate_binary_dist.py
+  18 passed, 18 subtests
+python3 -m pytest tests/test_worktree_gate_dist_config.py tests/test_doctor_worktree_gate.py \
+  tests/test_worktree_flow_recipe.py tests/test_doctor.py
+  126 passed, 22 subtests
+python3 -m pytest tests/test_worktree_gate_hook.py
+  156 passed (78 Bash + 78 Go)
+python3 -m pytest tests/test_worktree_gate_parity.py tests/test_worktree_gate_tokenizer.py \
+  tests/test_worktree_gate_metrics.py
+  11 passed, 1 skipped (intentional), 277 subtests
+python3 -m pytest tests/test_hooks_render.py tests/test_sync_pipeline.py
+  98 passed
+go -C catalog/recipes/worktree-flow/gate test ./...   PASS
+go -C catalog/recipes/worktree-flow/gate vet ./...    PASS
+gofmt -l catalog/recipes/worktree-flow/gate           (clean)
+```
+
+## Scope
+
+Phase 4 (harness coverage, docs, cutover) is complete. The V.* verification
+checklist is intentionally NOT started per assignment (leave ready for Verify
+by phases); no commit or push was performed. All persistent changes remain
+under the authorized worktree `.worktrees/worktree-gate-go-phase-4`.

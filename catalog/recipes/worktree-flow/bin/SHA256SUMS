@@ -1,11 +1,16 @@
-# Placeholder — Phase 0 (PR 1) of the worktree-gate-go change.
-#
-# The expected digests for the published worktree-gate release assets are
-# committed here when the release workflow runs (task 0.7): one
-#   <sha256>  worktree-gate-<goos>-<goarch>
-# line per supported target (darwin/arm64, darwin/amd64, linux/amd64,
-# linux/arm64). No binaries are ever committed — this file is the trust root.
+# Expected SHA-256 digests of the published worktree-gate release assets
+# (v0.22.0). This file is the trust root (D5): the network supplies only
+# bytes, the repository supplies the expected digest. A downloaded asset
+# whose SHA-256 does not match is deleted and never executed.
 #
 # Reproduce any digest locally with:
 #   scripts/build-gate.sh
 #   shasum -a 256 dist/worktree-gate-*
+#
+# Regenerated as part of the release (task 4.9): digests MUST match the
+# published assets; the CI release workflow diffs its generated SHA256SUMS
+# against this file and fails the release on any mismatch.
+55d3a033f28435d0bf80b39d0eb34d9fbc08fc9d52ac41441812e2689a995767  worktree-gate-darwin-arm64
+ca1bac2708482a9f41393402c0a025da3a12a5c9a1f353b16ce9362122763a1e  worktree-gate-darwin-amd64
+ae43fdcfe8ccdf34771295ab380a717cce76f9ba35c3dd1b1f7ddd24ca70333a  worktree-gate-linux-amd64
+de86bd03dbd5e9fcf25ee64613521456d3d54bd619dedd29290d305baa563943  worktree-gate-linux-arm64
