@@ -145,3 +145,45 @@ func TestExtractPass2CombinedCommand(t *testing.T) {
 		t.Fatalf("got %#v want %#v", got, want)
 	}
 }
+
+// TestExtractPass2Scrub pins the reference dedupe() scrub step on the pass2
+// families: interpreter writers targeting ".", "-", "&"-prefixed tokens or the
+// /dev/null | /dev/stdout | /dev/stderr | /dev/fd/* special files are never
+// write candidates. The reference applies scrub in dedupe(pass1(cmd) +
+// pass2(cmd)) (worktree-gate-legacy.sh:90-100, 274), so the pass2 output is
+// asserted through the same dedupeStrings wrapper the event path uses.
+func TestExtractPass2Scrub(t *testing.T) {
+	cases := []struct {
+		name, cmd string
+		want      []string
+	}{
+		{"python open dot", `open(".", "w")`, nil},
+		{"python open dash", `open('-', 'w')`, nil},
+		{"python open amp-star", `open("&*", "w")`, nil},
+		{"python open dev-null", `open("/dev/null", "w")`, nil},
+		{"python open dev-stdout", `open("/dev/stdout", "w")`, nil},
+		{"python open dev-stderr", `open("/dev/stderr", "w")`, nil},
+		{"python open dev-fd", `open("/dev/fd/2", "w")`, nil},
+		{"path write_text dot", `Path(".").write_text("x")`, nil},
+		{"path write_bytes dash", `Path('-').write_bytes(b"x")`, nil},
+		{"path write_text dev-null", `Path("/dev/null").write_text("x")`, nil},
+		{"node writeFileSync dev-null", `fs.writeFileSync("/dev/null", x)`, nil},
+		{"node writeFileSync dot", `writeFileSync('.', x)`, nil},
+		{"node createWriteStream dev-fd", `fs.createWriteStream("/dev/fd/1")`, nil},
+		{"ruby File.write dash", `File.write('-', s)`, nil},
+		{"ruby File.write dev-null", `File.write("/dev/null", s)`, nil},
+		{"ruby File.open dev-stdout", `File.open("/dev/stdout", "w")`, nil},
+		{"ruby File.open dot", `File.open(".", "w")`, nil},
+		{"real python path kept", `open("out.txt", "w")`, []string{"out.txt"}},
+		{"real node path kept", `fs.writeFileSync("out.js", x)`, []string{"out.js"}},
+		{"real ruby path kept", `File.write("out.rb", s)`, []string{"out.rb"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := dedupeStrings(extractPass2(tc.cmd))
+			if !equalStrings(got, tc.want) {
+				t.Fatalf("cmd %q: got %#v want %#v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}

@@ -40,6 +40,20 @@ def recipe_version() -> str:
         return tomllib.load(fh)["recipe"]["version"]
 
 
+def _cache_platform() -> str:
+    """Host `<goos>-<goarch>` segment for the launcher's version-keyed cache,
+    computed the same way gate acquisition does (Rosetta-aware), so these
+    launcher-resolution tests stay portable off darwin-arm64."""
+    gb = load_module(
+        ROOT / "lib" / "_internal" / "gate_binary.py",
+        "gate_binary_dist_config_under_test",
+    )
+    goos, goarch = gb.detect_platform()
+    if not goos or not goarch:
+        raise unittest.SkipTest(f"unsupported platform {goos}/{goarch}")
+    return f"{goos}-{goarch}"
+
+
 class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -174,6 +188,154 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
+
+class WorktreeGateLauncherResolutionTests(unittest.TestCase):
+    """Task 3.4: launcher implementation resolution order.
+
+    Order: $WORKTREE_GATE_BIN -> project-local pin -> version-keyed cache ->
+    legacy Bash. Each step is exercised independently so a precedence
+    regression (e.g. the cache silently winning over the explicit override)
+    fails loudly.
+    """
+
+    GO_BINARY = ROOT / "dist" / "worktree-gate-current"
+
+    def _stamp(self, dest: Path, *, impl: str = "auto",
+               version: str = "0.21.0") -> Path:
+        content = (RECIPE_DIR / "hooks" / "worktree-gate.sh").read_text()
+        content = content.replace("__WORKTREE_GATE_MODE__", "always")
+        content = content.replace("__WORKTREE_GATE_SCOPE__", "auto")
+        content = content.replace("__WORKTREE_REPO_TOPOLOGY__", "auto")
+        content = content.replace("__WORKTREE_GATE_IMPL__", impl)
+        content = content.replace("__WORKTREE_GATE_VERSION__", version)
+        dest.write_text(content, encoding="utf-8")
+        dest.chmod(0o755)
+        return dest
+
+    def _fixture(self, root: Path) -> tuple[Path, str]:
+        repo = root / "repo"
+        repo.mkdir()
+        for args in (("init", "-q"), ("config", "user.email", "t@t.t"),
+                     ("config", "user.name", "t")):
+            subprocess.run(["git", "-C", str(repo), *args], check=True,
+                           capture_output=True, text=True)
+        (repo / "README.md").write_text("x\n")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True,
+                       capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init"],
+                       check=True, capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-B", "main"],
+                       check=True, capture_output=True, text=True)
+        event = json.dumps({
+            "event": "pre-tool-use",
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(repo / "src.py")},
+            "cwd": str(repo),
+        })
+        return repo, event
+
+    def _env(self, root: Path, **extra: str) -> dict:
+        env = dict(os.environ)
+        env["WORKTREE_GATE_PROTECTED"] = "main development"
+        env["AI_SPECS_HOME"] = str(root / "home")
+        env.pop("WORKTREE_GATE_BIN", None)
+        env.pop("WORKTREE_GATE_MODE", None)
+        env.pop("WORKTREE_GATE_SCOPE", None)
+        env.update(extra)
+        return env
+
+    def _run(self, launcher: Path, event: str, root: Path,
+             env: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(launcher)], input=event, capture_output=True,
+            text=True, cwd=str(root), env=env)
+
+    def test_bin_override_wins_over_project_pin(self):
+        """Spec 'Explicit binary override wins' (F5)."""
+        if not self.GO_BINARY.exists():
+            self.skipTest("no Go gate binary in dist/")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            launcher = self._stamp(root / "gate.sh")
+            repo, event = self._fixture(root)
+            # A project-local pin that would ALLOW the write if the launcher
+            # wrongly consulted it before the override.
+            pin = root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
+            pin.parent.mkdir(parents=True, exist_ok=True)
+            pin.write_bytes(b"#!/usr/bin/env bash\nexit 0\n")
+            pin.chmod(0o755)
+            override = root / "override-gate"
+            override.write_bytes(self.GO_BINARY.read_bytes())
+            override.chmod(0o755)
+            env = self._env(root, WORKTREE_GATE_BIN=str(override))
+            proc = self._run(launcher, event, root, env)
+            self.assertEqual(proc.returncode, 2,
+                             "WORKTREE_GATE_BIN must win over the project pin")
+            self.assertIn("refusing", proc.stderr)
+
+    def test_project_pin_wins_over_cache(self):
+        """Project-local pin outranks the version-keyed cache."""
+        if not self.GO_BINARY.exists():
+            self.skipTest("no Go gate binary in dist/")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            launcher = self._stamp(root / "gate.sh")
+            repo, event = self._fixture(root)
+            # Cache binary that would ALLOW (exit 0) if wrongly consulted.
+            cache_bin = (root / "home" / "cache" / "bin" / "worktree-gate" / "0.21.0" /
+                         _cache_platform() / "worktree-gate")
+            cache_bin.parent.mkdir(parents=True, exist_ok=True)
+            cache_bin.write_bytes(b"#!/usr/bin/env bash\nexit 0\n")
+            cache_bin.chmod(0o755)
+            # Project pin = the real gate (blocks).
+            pin = root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
+            pin.parent.mkdir(parents=True, exist_ok=True)
+            pin.write_bytes(self.GO_BINARY.read_bytes())
+            pin.chmod(0o755)
+            proc = self._run(launcher, event, root, self._env(root))
+            self.assertEqual(proc.returncode, 2,
+                             "project pin must win over the cache")
+            self.assertIn("refusing", proc.stderr)
+
+    def test_cache_binary_used_when_no_pin_or_override(self):
+        """Version-keyed cache serves when neither override nor pin exists."""
+        if not self.GO_BINARY.exists():
+            self.skipTest("no Go gate binary in dist/")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            launcher = self._stamp(root / "gate.sh")
+            repo, event = self._fixture(root)
+            cache_bin = (root / "home" / "cache" / "bin" / "worktree-gate" / "0.21.0" /
+                         _cache_platform() / "worktree-gate")
+            cache_bin.parent.mkdir(parents=True, exist_ok=True)
+            cache_bin.write_bytes(self.GO_BINARY.read_bytes())
+            cache_bin.chmod(0o755)
+            proc = self._run(launcher, event, root, self._env(root))
+            self.assertEqual(proc.returncode, 2,
+                             "cache binary must serve when no pin/override")
+            self.assertIn("refusing", proc.stderr)
+
+    def test_non_executable_override_ignored(self):
+        """A WORKTREE_GATE_BIN that is not executable is ignored with a warning."""
+        if not self.GO_BINARY.exists():
+            self.skipTest("no Go gate binary in dist/")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            launcher = self._stamp(root / "gate.sh")
+            repo, event = self._fixture(root)
+            # Project pin = real gate so the launcher still enforces after
+            # ignoring the broken override.
+            pin = root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
+            pin.parent.mkdir(parents=True, exist_ok=True)
+            pin.write_bytes(self.GO_BINARY.read_bytes())
+            pin.chmod(0o755)
+            broken = root / "broken"
+            broken.write_text("#!/usr/bin/env bash\nexit 0\n")
+            env = self._env(root, WORKTREE_GATE_BIN=str(broken))
+            proc = self._run(launcher, event, root, env)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("is not executable", proc.stderr)
+            self.assertIn("refusing", proc.stderr)
 
 class WorktreeGateRollbackTests(unittest.TestCase):
     """Task 3.17: rollback rehearsal — gate_impl=bash answers the corpus."""

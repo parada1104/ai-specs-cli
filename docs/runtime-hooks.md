@@ -102,6 +102,52 @@ override at dispatch time. `trello-mcp-workflow` likewise stamps
 into `tracker-card-gate.sh`; `TRACKER_CARD_GATE_MODE` is the one-shot env
 override.
 
+## Gate implementation and launcher (worktree-flow)
+
+`worktree-flow`'s `worktree-gate.sh` is a **thin launcher** (bash 3.2 only) that
+resolves the gate implementation and `exec`s it, so stdin and the exit code pass
+through untouched. The implementation of record is a single zero-dependency Go
+binary; a frozen Bash reference (`worktree-gate-legacy.sh`) is retained for one
+minor release as the rollback path.
+
+Resolution order (first hit wins):
+
+1. `$WORKTREE_GATE_BIN` — explicit per-invocation override (debugging/pinning).
+2. Project-local pin `ai-specs/recipes/worktree-flow/bin/worktree-gate`.
+3. Version-keyed cache
+   `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate`,
+   populated by `ai-specs sync` (digest-verified against the committed
+   `SHA256SUMS` trust root, mode 0755, self-tested, atomic install).
+4. Frozen Bash reference, when the stamped `gate_impl` is `bash`, or `auto`
+   with no usable binary.
+5. Otherwise one stderr warning naming the missing path and the
+   `ai-specs doctor` remedy, then exit `0` (fail open).
+
+The build matrix is `darwin/arm64`, `darwin/amd64`, `linux/amd64`,
+`linux/arm64` (reproducible: `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`,
+version stamped at link time). `gate_impl = auto` prefers the Go binary and
+falls back to Bash; `go` fails open when unusable (doctor ERROR); `bash` needs
+no binary, network, or Go toolchain. The gate never computes a digest on the
+invocation path unless `WORKTREE_GATE_VERIFY=1` requests it.
+
+Because every renderer references only `hook["script_path"]`, all five harnesses
+keep working with **zero renderer changes and zero re-render churn**: the
+launcher materializes at the unchanged path
+`ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh`, and the Cursor wrapper
+maps exit `2` → `{"permission":"deny"}` exactly as before (the binary's empty
+stdout does not degrade the deny decision — the gate message travels on stderr).
+
+**Unchanged pre-existing coverage gaps** (not introduced by the Go cutover):
+
+- **Cursor** has no generic "pre tool" event and **no pre-file-write hook**;
+  a file-write-matcher `pre-tool-use` hook has no Cursor target → warn-and-skip.
+  The shell matcher still renders as a genuine `beforeShellExecution` hook.
+- **OpenCode** `tool.execute.before` does **not** fire for **subagent** tool
+  calls (opencode#5894) or **MCP** tool calls (opencode#2319).
+- **Pi / omp** `tool_call` handlers apply to tool calls in **that agent
+  process**; subagent/task delegation spawns a separate process whose
+  `write`/`edit` calls the parent's handlers do not see.
+
 ## Idempotency
 
 All generated wiring lives in a managed block keyed by

@@ -406,6 +406,72 @@ class WorktreeGateHookTests(unittest.TestCase):
         r = self._run(self._shell_event("echo hi 2>&1"))
         self.assertEqual(r.returncode, 0)
 
+    # --- Scrub semantics (worktree-gate-legacy.sh:90-100) ---
+    # ".", "-", "&"-prefixed tokens and /dev/null|/dev/stdout|/dev/stderr|
+    # /dev/fd/* are never real write targets: the gate must allow them even on
+    # a protected branch, in both implementations (final-verification blocker:
+    # the Go gate blocked where the Bash reference scrubbed).
+
+    def test_shell_redirect_dot_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > ."))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dash_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > -"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_amp_star_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > &*"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_amp_one_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > &1"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dev_stdout_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > /dev/stdout"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dev_stderr_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > /dev/stderr"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dev_fd_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > /dev/fd/3"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_tee_dev_null_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x | tee /dev/null"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_tee_amp_star_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x | tee &*"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_python_open_dot_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("python3 -c \"open('.','w')\""))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_python_open_dev_fd_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("python3 -c \"open('/dev/fd/2','w')\""))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_python_open_amp_star_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("python3 -c \"open('&*','w')\""))
+        self.assertEqual(r.returncode, 0)
+
     def test_shell_ambiguous_python_variable_path_fail_open(self):
         self._checkout("main")
         r = self._run(self._shell_event("python3 -c \"open(dst,'w')\""))

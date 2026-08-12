@@ -9,8 +9,15 @@ name: Release worktree-gate
 #   - reproducible builds: CGO_ENABLED=0, -trimpath, -buildvcs=false,
 #     version stamped at link time (go test ./... then emits SHA256SUMS that
 #     must match the committed digests)
+#   - the toolchain is pinned to the CANONICAL version (go 1.24.13) that
+#     regenerated catalog/recipes/worktree-flow/bin/SHA256SUMS; a different
+#     Go release compiles different stdlib bytes, so the checksum gate
+#     requires CI and the digest generator to share one toolchain
 #   - the committed catalog/recipes/worktree-flow/bin/SHA256SUMS is the trust
 #     root; no binaries are ever committed
+#   - the checksum gate compares the CANONICAL digest entries only
+#     (scripts/verify-gate-sums.sh), so the header/order of the committed
+#     file never fails a release — only a real digest mismatch does
 
 on:
   push:
@@ -44,8 +51,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22.x"
-          cache-dependency-path: catalog/recipes/worktree-flow/gate/go.sum
+          # Canonical toolchain: the committed SHA256SUMS trust root is
+          # regenerated with exactly go1.24.13 (scripts/build-gate.sh
+          # documents this), and Go builds are deterministic for a given
+          # toolchain, so CI must compile with the same version or the
+          # checksum gate below fails every release. No `cache-dependency-path`
+          # is set: the module has zero third-party dependencies and there is
+          # intentionally no go.sum (D8), so a cache keyed on go.sum would
+          # reference a nonexistent file.
+          go-version: "1.24.13"
 
       - name: Run go vet
         working-directory: catalog/recipes/worktree-flow/gate
@@ -94,9 +108,15 @@ jobs:
         working-directory: dist
         run: sha256sum worktree-gate-* > SHA256SUMS
 
-      - name: Compare with committed digests
+      - name: Compare with committed digests (canonical)
+        # scripts/verify-gate-sums.sh compares the CANONICAL form of both
+        # files (one "<sha256>  <name>" line per entry, sorted by asset
+        # name), so the documentation header and hand-maintained line order
+        # of the committed trust root never fail the release by themselves.
+        # Only an actual digest mismatch fails.
         run: |
-          if ! diff -u catalog/recipes/worktree-flow/bin/SHA256SUMS dist/SHA256SUMS; then
+          if ! bash scripts/verify-gate-sums.sh dist/SHA256SUMS \
+              catalog/recipes/worktree-flow/bin/SHA256SUMS; then
             echo "error: built digests differ from the committed SHA256SUMS;" \
                  "regenerate catalog/recipes/worktree-flow/bin/SHA256SUMS and commit it" >&2
             exit 1

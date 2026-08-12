@@ -7,6 +7,14 @@ import (
 	"sync"
 )
 
+// gitMemo caches every git fact by (resolved dir, args): repository root, git
+// directory, common dir, current branch and submodule records are each derived
+// at most once per directory per invocation (spec "Git facts are memoized
+// within an invocation"). This is what lets a four-candidate event issue
+// strictly fewer git subprocess invocations than the frozen Bash reference,
+// which re-derives facts per candidate. A failed lookup caches "" so a
+// repeating failure is not re-invoked either.
+
 var gitCache = struct {
 	sync.Mutex
 	values map[string]string
