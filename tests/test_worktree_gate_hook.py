@@ -15,9 +15,9 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+LEGACY_GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate-legacy.sh"
 GO_BINARY = ROOT / "dist" / "worktree-gate-current"
 
 
@@ -86,7 +86,10 @@ class WorktreeGateHookTests(unittest.TestCase):
                            scope="__WORKTREE_GATE_SCOPE__",
                            topology="__WORKTREE_REPO_TOPOLOGY__")
         stamped = Path(self.tmp.name) / f"worktree-gate-{mode}.sh"
-        stamped.write_text(GATE.read_text().replace("__WORKTREE_GATE_MODE__", mode))
+        # The Bash impl runs the frozen reference (the pre-launcher gate).
+        # Phase 3 rewrote hooks/worktree-gate.sh as a launcher; the reference
+        # contract the Bash parameterization pins lives in the legacy copy.
+        stamped.write_text(LEGACY_GATE.read_text().replace("__WORKTREE_GATE_MODE__", mode))
         stamped.chmod(0o755)
         return stamped
 
@@ -108,7 +111,8 @@ class WorktreeGateHookTests(unittest.TestCase):
                 "--repo-topology", gate.topology,
                 "--protected", "main development",
             ]
-        return ["bash", str(gate or GATE)]
+        # Bash impl: the frozen reference (the pre-launcher gate contract).
+        return ["bash", str(gate or LEGACY_GATE)]
 
     def _run(
         self,
@@ -402,6 +406,72 @@ class WorktreeGateHookTests(unittest.TestCase):
         r = self._run(self._shell_event("echo hi 2>&1"))
         self.assertEqual(r.returncode, 0)
 
+    # --- Scrub semantics (worktree-gate-legacy.sh:90-100) ---
+    # ".", "-", "&"-prefixed tokens and /dev/null|/dev/stdout|/dev/stderr|
+    # /dev/fd/* are never real write targets: the gate must allow them even on
+    # a protected branch, in both implementations (final-verification blocker:
+    # the Go gate blocked where the Bash reference scrubbed).
+
+    def test_shell_redirect_dot_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > ."))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dash_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > -"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_amp_star_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > &*"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_amp_one_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > &1"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dev_stdout_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > /dev/stdout"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dev_stderr_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > /dev/stderr"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dev_fd_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > /dev/fd/3"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_tee_dev_null_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x | tee /dev/null"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_tee_amp_star_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x | tee &*"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_python_open_dot_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("python3 -c \"open('.','w')\""))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_python_open_dev_fd_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("python3 -c \"open('/dev/fd/2','w')\""))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_python_open_amp_star_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("python3 -c \"open('&*','w')\""))
+        self.assertEqual(r.returncode, 0)
+
     def test_shell_ambiguous_python_variable_path_fail_open(self):
         self._checkout("main")
         r = self._run(self._shell_event("python3 -c \"open(dst,'w')\""))
@@ -524,7 +594,7 @@ class WorktreeGateHookTests(unittest.TestCase):
         if self.impl == "go":
             return _GoGate(scope=scope, topology=topology)
         stamped = Path(self.tmp.name) / f"worktree-gate-{scope}-{topology}.sh"
-        content = GATE.read_text()
+        content = LEGACY_GATE.read_text()
         content = content.replace("__WORKTREE_GATE_MODE__", "always")
         content = content.replace("__WORKTREE_GATE_SCOPE__", scope)
         content = content.replace("__WORKTREE_REPO_TOPOLOGY__", topology)

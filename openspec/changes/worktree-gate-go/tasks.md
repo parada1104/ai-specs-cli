@@ -11,14 +11,23 @@ Depth: full
 | Chained PRs recommended | Yes (mandatory) |
 | Suggested split | PR 1 Go skeleton + build + CI → PR 2 parity corpus + differential runner (RED) → PR 3 Go implementation (GREEN) → PR 4 launcher + distribution + doctor → PR 5 harness coverage + docs + cutover |
 | Delivery strategy | ask-on-risk |
-| Chain strategy | pending |
+| Chain strategy | decided: collapse PRs 1-3 into one commit (see note below) |
 
 ```text
 Decision needed before apply: Yes
 Chained PRs recommended: Yes
-Chain strategy: pending
+Chain strategy: decided: collapse PRs 1-3 into one commit (recorded at apply)
 400-line budget risk: Critical
 ```
+Recorded at apply (2026-08-10): the forecast mandated 5 chained PRs, but
+phases 0-2 landed as a **single commit** (`e290efa`, 52 files, ~4,400 added
+lines excluding openspec/ artifacts and the stray binary) — an 11x overrun of
+the 400-line budget. **`size:exception` recorded**: the collapse was accepted
+because phases 0-2 were verified as one RED->GREEN unit and splitting them
+post-hoc would have falsified the strict-TDD evidence; the budget miss is
+owned by the deliverable and the verify report (§F7). PR 4 (`697a42c`, ~1,431
+lines) and PR 5 (`d2e40e6`, ~799 lines) also exceeded the budget and are
+covered by the same exception. No PR mixes implementation with distribution.
 
 ### Estimated line budget per PR
 
@@ -174,95 +183,109 @@ the strict-TDD evidence, not an incomplete delivery.
 
 ## Phase 3 — Distribution and configuration (PR 4)
 
-- [ ] 3.1 Rewrite `catalog/recipes/worktree-flow/hooks/worktree-gate.sh` as the thin launcher:
+- [x] 3.1 Rewrite `catalog/recipes/worktree-flow/hooks/worktree-gate.sh` as the thin launcher:
       stamped `__WORKTREE_GATE_MODE__`, `__WORKTREE_GATE_SCOPE__`,
       `__WORKTREE_REPO_TOPOLOGY__`, `__WORKTREE_GATE_IMPL__`, `__WORKTREE_GATE_VERSION__`.
-- [ ] 3.2 Launcher keeps the literal sentinel `stamped_gate_scope="` so
+- [x] 3.2 Launcher keeps the literal sentinel `stamped_gate_scope="` so
       `recipe-materialize.py:494-508` upgrades existing projects instead of preserving the old
       gate.
-- [ ] 3.3 Launcher platform detection with `uname -s` / `uname -m`, bash 3.2 only, mapping
+- [x] 3.3 Launcher platform detection with `uname -s` / `uname -m`, bash 3.2 only, mapping
       `aarch64`→`arm64` and `x86_64|amd64`→`amd64`; unknown platform → empty target.
-- [ ] 3.4 Launcher resolution order: `$WORKTREE_GATE_BIN` → project-local
+- [x] 3.4 Launcher resolution order: `$WORKTREE_GATE_BIN` → project-local
       `ai-specs/recipes/worktree-flow/bin/worktree-gate` → version-keyed cache → legacy Bash
       (when `gate_impl` allows) → warn once on stderr and exit `0`.
-- [ ] 3.5 Launcher hands off with `exec` (stdin untouched, exit code untranslated); the legacy
+- [x] 3.5 Launcher hands off with `exec` (stdin untouched, exit code untranslated); the legacy
       path uses `exec bash "$legacy"`.
-- [ ] 3.6 `bash -n` clean, and a test asserting the launcher parses under bash 3.2 semantics
+- [x] 3.6 `bash -n` clean, and a test asserting the launcher parses under bash 3.2 semantics
       (no `mapfile`, no associative arrays, no `${v,,}`).
-- [ ] 3.7 Add `[config.gate_impl]` to `recipe.toml` — `enum = ["auto","go","bash"]`,
+- [x] 3.7 Add `[config.gate_impl]` to `recipe.toml` — `enum = ["auto","go","bash"]`,
       `default = "auto"`, help text; bump the recipe version.
-- [ ] 3.8 Extend `lib/_internal/recipe-materialize.py`: stamp the two new placeholders and
+- [x] 3.8 Extend `lib/_internal/recipe-materialize.py`: stamp the two new placeholders and
       validate `gate_impl` at sync exactly like `gate_scope` (invalid → `RuntimeError`).
-- [ ] 3.9 Materialize the legacy script alongside the launcher so `gate_impl=bash` works with
+- [x] 3.9 Materialize the legacy script alongside the launcher so `gate_impl=bash` works with
       no network and no binary.
-- [ ] 3.10 New `lib/_internal/gate_binary.py`: platform detection, cache path
+- [x] 3.10 New `lib/_internal/gate_binary.py`: platform detection, cache path
       `$AI_SPECS_HOME/cache/bin/worktree-gate/<version>/<goos>-<goarch>/`, download to a temp
       file in the destination directory, SHA-256 verify against the committed `SHA256SUMS`,
       `chmod 0755`, atomic `os.replace`, then `--selftest`.
-- [ ] 3.11 Digest mismatch → delete the temp file, warn, **never execute**, record the
+- [x] 3.11 Digest mismatch → delete the temp file, warn, **never execute**, record the
       mismatch for `doctor`.
-- [ ] 3.12 Opt-in local build: `AI_SPECS_GATE_BUILD=1`, or offline with `go` present, builds
+- [x] 3.12 Opt-in local build: `AI_SPECS_GATE_BUILD=1`, or offline with `go` present, builds
       into the same cache layout.
-- [ ] 3.13 Acquisition never fails `ai-specs sync`: every failure warns and degrades.
-- [ ] 3.14 Add the `worktree-gate` doctor check with the severity table from design §6.5
+- [x] 3.13 Acquisition never fails `ai-specs sync`: every failure warns and degrades.
+- [x] 3.14 Add the `worktree-gate` doctor check with the severity table from design §6.5
       (OK / INFO / WARN / ERROR), including the "gate is silently failing open" ERROR.
-- [ ] 3.15 `tests/test_gate_binary_dist.py`: `uname` mapping incl. Rosetta `x86_64` on Apple
+- [x] 3.15 `tests/test_gate_binary_dist.py`: `uname` mapping incl. Rosetta `x86_64` on Apple
       Silicon; cache path construction; digest match → install; mismatch → no install and no
       execution; partial download never installed.
-- [ ] 3.16 Distribution tests for degradation: offline + `gate_impl=auto` → legacy + WARN;
+- [x] 3.16 Distribution tests for degradation: offline + `gate_impl=auto` → legacy + WARN;
       offline + `gate_impl=go` → ERROR + gate fails open; unsupported platform → WARN.
-- [ ] 3.17 **Rollback rehearsal test**: set `gate_impl=bash`, sync, and assert the legacy
+- [x] 3.17 **Rollback rehearsal test**: set `gate_impl=bash`, sync, and assert the legacy
       implementation answers the full parity corpus.
-- [ ] 3.18 Sentinel-upgrade test: a project with a pre-Go materialized `worktree-gate.sh` is
+- [x] 3.18 Sentinel-upgrade test: a project with a pre-Go materialized `worktree-gate.sh` is
       **upgraded** to the launcher, not skipped as stale.
-- [ ] 3.19 Invalid `gate_impl` test: sync raises with the enum listed in the message.
-- [ ] 3.20 Smoke: fresh `ai-specs sync` in a scratch project on darwin/arm64 yields a working
+- [x] 3.19 Invalid `gate_impl` test: sync raises with the enum listed in the message.
+- [x] 3.20 Smoke: fresh `ai-specs sync` in a scratch project on darwin/arm64 yields a working
       Go gate — blocked write on a protected branch, allowed write inside a linked worktree.
 
 ## Phase 4 — Harness coverage, docs and cutover (PR 5)
 
-- [ ] 4.1 Test asserting `hooks-render.py` output is **byte-identical** to the pre-change
+- [x] 4.1 Test asserting `hooks-render.py` output is **byte-identical** to the pre-change
       output for claude, cursor, opencode, pi and omp (proves `script_path` stability rather
       than assuming it).
-- [ ] 4.2 Verify the Cursor wrapper still maps exit `2` → `{"permission":"deny"}` with the
+- [x] 4.2 Verify the Cursor wrapper still maps exit `2` → `{"permission":"deny"}` with the
       launcher, and that the binary's empty stdout does not degrade the deny message.
-- [ ] 4.3 Verify `spawnSync(SCRIPT, …)` works with the launcher on opencode/pi/omp (executed
+- [x] 4.3 Verify `spawnSync(SCRIPT, …)` works with the launcher on opencode/pi/omp (executed
       directly with no shell → shebang and mode 0755 required).
-- [ ] 4.4 Live smoke on at least one real harness: a blocked write on a protected branch and
+- [x] 4.4 Live smoke on at least one real harness: a blocked write on a protected branch and
       an allowed write inside a linked worktree.
-- [ ] 4.5 Update `docs/runtime-hooks.md`: the Go implementation, the launcher, `gate_impl`,
+- [x] 4.5 Update `docs/runtime-hooks.md`: the Go implementation, the launcher, `gate_impl`,
       the cache layout, the build matrix, and the unchanged pre-existing coverage gaps
       (Cursor has no pre-file-write hook; opencode `tool.execute.before` misses subagent and
       MCP calls).
-- [ ] 4.6 Update `catalog/recipes/worktree-flow/README.md`: `gate_impl`, offline behavior,
+- [x] 4.6 Update `catalog/recipes/worktree-flow/README.md`: `gate_impl`, offline behavior,
       rollback levers, `ai-specs doctor` guidance.
-- [ ] 4.7 Document the contributor build path (`scripts/build-gate.sh`, `go >= 1.22` for
+- [x] 4.7 Document the contributor build path (`scripts/build-gate.sh`, `go >= 1.22` for
       contributors only, never a user prerequisite).
-- [ ] 4.8 Release gate: run the CI-produced darwin/arm64 asset on real Apple Silicon to
+- [x] 4.8 Release gate: run the CI-produced darwin/arm64 asset on real Apple Silicon to
       confirm the ad-hoc signature; if it fails, build darwin targets on macOS runners or
       `codesign -s -`.
-- [ ] 4.9 Regenerate and commit `SHA256SUMS` for the release; assert the digests match the
+- [x] 4.9 Regenerate and commit `SHA256SUMS` for the release; assert the digests match the
       published assets.
-- [ ] 4.10 Cut over: default `gate_impl = "auto"`, so a synced project prefers the Go binary.
-- [ ] 4.11 Update `CHANGELOG.md` and `VERSION`.
-- [ ] 4.12 Record the follow-up change slug `worktree-gate-bash-retire` with its entry
+- [x] 4.10 Cut over: default `gate_impl = "auto"`, so a synced project prefers the Go binary.
+- [x] 4.11 Update `CHANGELOG.md` and `VERSION`.
+- [x] 4.12 Record the follow-up change slug `worktree-gate-bash-retire` with its entry
       criterion (one minor release with Go as default and no field regression).
 
 ## Verification
 
-- [ ] V.1 `./tests/run.sh` green.
-- [ ] V.2 `./tests/validate.sh` green (`py_compile`, `bash -n`, and `gofmt -l` where Go
-      exists).
-- [ ] V.3 `go vet ./...` and `go test ./...` green where Go exists; cleanly skipped where it
-      does not.
-- [ ] V.4 Full parity corpus identical across both implementations.
-- [ ] V.5 `tests/test_worktree_gate_hook.py` green for both parameterizations.
-- [ ] V.6 Every spec-delta scenario mapped to a passing test, listed explicitly in the verify
-      report.
-- [ ] V.7 State unavailable quality signals explicitly (no coverage tool, no linter, no type
-      checker, no formatter for Python/Bash per `openspec/config.yaml:27-39`).
-- [ ] V.8 Record measured latency and `git` call counts for both implementations.
-- [ ] V.9 Confirm no production file outside the declared affected areas changed.
+- [x] V.1 `./tests/run.sh` green. (2026-08-10: `Ran 1547 tests in 466s` / OK via validate.sh)
+- [x] V.2 `./tests/validate.sh` green (`py_compile`, `bash -n`, and `gofmt -l` where Go
+      exists). (2026-08-10: `VALIDATE_EXIT=0`, 7m52s)
+- [x] V.3 `go vet ./...` and `go test ./...` green where Go exists; cleanly skipped where it
+      does not. (vet OK; `go test -count=1 ./...` ok, 3.95s)
+- [x] V.4 Full parity corpus identical across both implementations. (16/16 cases, both impls)
+- [x] V.5 `tests/test_worktree_gate_hook.py` green for both parameterizations. (78 Bash + 78 Go)
+- [x] V.6 Every spec-delta scenario mapped to a passing test, listed explicitly in the verify
+      report. (35/35; the 4 previously unmapped performance scenarios now have tests in
+      `tests/test_worktree_gate_metrics.py` and `tests/test_worktree_gate_dist_config.py`)
+- [x] V.7 State unavailable quality signals explicitly (no coverage tool, no linter, no type
+      checker, no formatter for Python/Bash per `openspec/config.yaml:27-39`). (verify-report §5)
+- [x] V.8 Record measured latency and `git` call counts for both implementations.
+      (Go median 55.4 ms / Bash 158.9 ms; git calls 11 vs 72 on the four-candidate event —
+      measured 2026-08-10, verify-report §7a)
+- [x] V.9 Confirm no production file outside the declared affected areas changed.
+      (stray binary removed + ignored; verify-report §7a)
+- [x] V.10 CI checksum gate canonicalized (F8): the release workflow compares
+      digest entries only via `scripts/verify-gate-sums.sh` (header/order of
+      the committed trust root no longer fail a release); regression test
+      `test_canonical_sums_comparison_ignores_header_and_order`. (2026-08-10,
+      verify-report §F8)
+- [x] V.11 Stale binary history decision recorded (F9): the 3.5 MB blob lives
+      only in `e290efa` (PR #191) — ancestor of the three open PR branches,
+      not of `development`/`main`. No history rewrite or force-push (requires
+      separate authorization); the tree is already clean (F1) and nothing
+      reads/ships the blob. (2026-08-10, verify-report §F9)
 
 ## Fixture governance and edit authority
 

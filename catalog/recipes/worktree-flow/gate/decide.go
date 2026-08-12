@@ -31,7 +31,7 @@ func Decide(candidate string, cwd string, scope, topology string, protected []st
 	if ancestor == "" {
 		return allow
 	}
-	repoRoot := git(ancestor, "rev-parse", "--show-toplevel")
+	repoRoot := gitMemo(ancestor, "rev-parse", "--show-toplevel")
 	if repoRoot == "" {
 		return allow
 	}
@@ -39,7 +39,7 @@ func Decide(candidate string, cwd string, scope, topology string, protected []st
 	if !Inside(canonical, repoRoot) {
 		return allow
 	}
-	gitDir := git(ancestor, "rev-parse", "--absolute-git-dir")
+	gitDir := gitMemo(ancestor, "rev-parse", "--absolute-git-dir")
 	common := gitCommon(ancestor)
 	if gitDir == "" || common == "" {
 		return allow
@@ -48,7 +48,7 @@ func Decide(candidate string, cwd string, scope, topology string, protected []st
 		// Linked worktree: writes there are always allowed.
 		return allow
 	}
-	branch := git(ancestor, "symbolic-ref", "--short", "HEAD")
+	branch := gitMemo(ancestor, "symbolic-ref", "--short", "HEAD")
 	if branch == "" || !containsString(protected, branch) {
 		return allow
 	}
