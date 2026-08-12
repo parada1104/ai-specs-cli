@@ -1,0 +1,145 @@
+name: Release worktree-gate
+
+# Builds the worktree gate binary for every supported target on tag push,
+# runs the Go checks, and attaches the artifacts to the GitHub release.
+#
+# The workflow follows the change's Phase 0/1 contracts
+# (openspec/changes/worktree-gate-go):
+#   - four supported targets: darwin/arm64, darwin/amd64, linux/amd64, linux/arm64
+#   - reproducible builds: CGO_ENABLED=0, -trimpath, -buildvcs=false,
+#     version stamped at link time (go test ./... then emits SHA256SUMS that
+#     must match the committed digests)
+#   - the toolchain is pinned to the CANONICAL version (go 1.24.13) that
+#     regenerated catalog/recipes/worktree-flow/bin/SHA256SUMS; a different
+#     Go release compiles different stdlib bytes, so the checksum gate
+#     requires CI and the digest generator to share one toolchain
+#   - the committed catalog/recipes/worktree-flow/bin/SHA256SUMS is the trust
+#     root; no binaries are ever committed
+#   - the checksum gate compares the CANONICAL digest entries only
+#     (scripts/verify-gate-sums.sh), so the header/order of the committed
+#     file never fails a release — only a real digest mismatch does
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build worktree-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Canonical toolchain: the committed SHA256SUMS trust root is
+          # regenerated with exactly go1.24.13 (scripts/build-gate.sh
+          # documents this), and Go builds are deterministic for a given
+          # toolchain, so CI must compile with the same version or the
+          # checksum gate below fails every release. No `cache-dependency-path`
+          # is set: the module has zero third-party dependencies and there is
+          # intentionally no go.sum (D8), so a cache keyed on go.sum would
+          # reference a nonexistent file.
+          go-version: "1.24.13"
+
+      - name: Run go vet
+        working-directory: catalog/recipes/worktree-flow/gate
+        run: go vet ./...
+
+      - name: Run go test
+        working-directory: catalog/recipes/worktree-flow/gate
+        run: go test ./...
+
+      - name: Build target
+        working-directory: catalog/recipes/worktree-flow/gate
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -X main.version=${VERSION#v}" \
+            -o "dist/worktree-gate-${{ matrix.goos }}-${{ matrix.goarch }}" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: worktree-gate-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: catalog/recipes/worktree-flow/gate/dist/worktree-gate-${{ matrix.goos }}-${{ matrix.goarch }}
+          if-no-files-found: error
+
+  checksum:
+    name: Emit and verify SHA256SUMS
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Emit SHA256SUMS
+        working-directory: dist
+        run: sha256sum worktree-gate-* > SHA256SUMS
+
+      - name: Compare with committed digests (canonical)
+        # scripts/verify-gate-sums.sh compares the CANONICAL form of both
+        # files (one "<sha256>  <name>" line per entry, sorted by asset
+        # name), so the documentation header and hand-maintained line order
+        # of the committed trust root never fail the release by themselves.
+        # Only an actual digest mismatch fails.
+        run: |
+          if ! bash scripts/verify-gate-sums.sh dist/SHA256SUMS \
+              catalog/recipes/worktree-flow/bin/SHA256SUMS; then
+            echo "error: built digests differ from the committed SHA256SUMS;" \
+                 "regenerate catalog/recipes/worktree-flow/bin/SHA256SUMS and commit it" >&2
+            exit 1
+          fi
+
+      - name: Attach assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/worktree-gate-*
+
+
+  parity:
+    name: Parity corpus against frozen reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Run parity corpus (Bash reference vs pinned expectations)
+        run: python3 -m pytest tests/test_worktree_gate_parity.py -q

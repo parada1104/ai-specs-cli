@@ -1,0 +1,13 @@
+{
+  "label": "Unbalanced quote in shell command fails open to allow",
+  "fixture": "protected-main",
+  "target": "{repo}src.py",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "Bash",
+    "tool_input": {"command": "echo x > \"{repo}/src.py"},
+    "cwd": "{repo}"
+  },
+  "malformed": true,
+  "expected_exit": 0
+}

@@ -1,0 +1,13 @@
+{
+  "label": "Write to an existing tracked file on protected branch blocks",
+  "fixture": "protected-main",
+  "target": "{repo}README.md",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "Write",
+    "tool_input": {"file_path": "{repo}README.md"},
+    "cwd": "{repo}"
+  },
+  "expected_exit": 2,
+  "expected_stderr": "worktree-gate: refusing to Write '{repo}README.md' on protected branch 'main' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write."
+}

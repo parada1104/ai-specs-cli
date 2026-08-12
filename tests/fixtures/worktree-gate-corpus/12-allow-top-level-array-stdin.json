@@ -1,0 +1,8 @@
+{
+  "label": "Top-level JSON array on stdin fails open to allow",
+  "fixture": "none",
+  "stdin": "[1, 2, 3]",
+  "event": null,
+  "malformed": true,
+  "expected_exit": 0
+}
