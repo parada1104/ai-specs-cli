@@ -19,7 +19,7 @@ required = false
 type = "string"
 default = "openspec"
 enum = ["openspec", "engram", "both"]
-help_text = "Where this project's planning artifacts live by default: openspec, engram, or both."
+help_text = "External-session persistence preference for this project's planning artifacts: openspec, engram, or both. Plan-build readiness is always proven by file-backed artifacts in the canonical change-folder tree."
 
 [provides]
 skills = [{ id = "plan-build-flow", source = "bundled" }]
@@ -31,7 +31,7 @@ workflow_rules = [
     "Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed.",
     "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
     "Before merge, run verify evidence before archive-tail (Standard/Full block without a conforming verify-report.md; Light is advisory), archive the change folder on the review branch, and run the pre-merge guardian again; never defer archive until after merge.",
-    "Default artifact store for this project's planning artifacts: `{config.artifact_store_default}`. When a session asks where planning artifacts should live, answer with this value unless the user overrides it.",
+    "Default artifact store for this project's planning artifacts: `{config.artifact_store_default}`. When a session asks where planning artifacts should live, answer with this value unless the user overrides it. The store is a persistence preference only: plan-build readiness is always proven by the file-backed canonical change-folder tree, never by a memory-only store.",
     "For recognized submodule worktrees, use the topology-derived central planning tree in the superproject; standalone repositories keep their own planning tree."
 ]
 

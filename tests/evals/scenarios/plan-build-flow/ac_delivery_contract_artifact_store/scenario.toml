@@ -2,8 +2,12 @@ id = "ac_delivery_contract_artifact_store"
 recipe_id = "plan-build-flow"
 prompt_file = "prompt.txt"
 mode = "plan"
-description = "Live brief consumption reports the project artifact store default"
+description = "Live brief consumption reports the store preference AND file-backed readiness invariant"
 manifest_extra = "\n[recipes.plan-build-flow.config]\nartifact_store_default = 'both'\n"
 sync_before_prompt = true
-required_content = [{ path = "AGENTS.md", contains_any = ["`both`"] }]
+required_content = [
+  { path = "AGENTS.md", contains_any = ["`both`"] },
+  { path = "AGENTS.md", contains_any = ["persistence preference"] },
+  { path = "AGENTS.md", contains_any = ["file-backed"] },
+]
 required_transcript_any = ["both"]

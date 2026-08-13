@@ -17,6 +17,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
 
+# The preflight-resolved store (config artifact_store_default) must never change
+# a gate decision. STORE_ENV_KEY is a test-only fixture naming the env a
+# store-aware preflight would set; the gate is store-blind and reads only the
+# filesystem planning tree, so every context must yield the baseline verdict.
+STORE_ENUM = ["openspec", "engram", "both"]
+STORE_ENV_KEY = "PLAN_BUILD_ARTIFACT_STORE"
+
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(cwd), *args], check=True,
@@ -204,6 +211,28 @@ class PlanBuildGateHookTests(unittest.TestCase):
         })
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    # 13. Store selection never changes readiness: a blocked production write
+    #     stays blocked under every preflight-resolved store value.
+    def test_store_env_does_not_change_block_decision(self):
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        baseline = self._run(event)
+        self.assertEqual(baseline.returncode, 2, baseline.stderr)
+        for value in STORE_ENUM:
+            with self.subTest(store=value):
+                r = self._run(event, extra_env={STORE_ENV_KEY: value})
+                self.assertEqual(r.returncode, baseline.returncode, r.stderr)
+
+    # 14. Store selection never changes readiness: an allowed production write
+    #     stays allowed under every preflight-resolved store value.
+    def test_store_env_does_not_change_allow_decision(self):
+        self._seed_change()
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        baseline = self._run(event)
+        self.assertEqual(baseline.returncode, 0, baseline.stderr)
+        for value in STORE_ENUM:
+            with self.subTest(store=value):
+                r = self._run(event, extra_env={STORE_ENV_KEY: value})
+                self.assertEqual(r.returncode, baseline.returncode, r.stderr)
 
     def test_submodule_worktree_allows_production_with_central_plan(self):
         fx = self._make_super_with_submodule()

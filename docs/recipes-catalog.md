@@ -211,11 +211,14 @@ It is the sole ceremony/depth classification source (`Light` / `Standard` /
 
   | Key | Type | Required | Default | Accepted values | Description |
   |-----|------|----------|---------|-----------------|-------------|
-  | `artifact_store_default` | string | no | `openspec` | `openspec`, `engram`, `both` | Repository planning-artifact store default; may be overridden in the project manifest and is materialized into the brief during sync. |
+  | `artifact_store_default` | string | no | `openspec` | `openspec`, `engram`, `both` | External-session persistence preference for planning artifacts; may be overridden in the project manifest and is materialized into the brief during sync. Plan-build readiness is always proven by file-backed artifacts, never by the store selection. |
 
   The generated rule is repository-declared guidance. An external session runtime may
   consume it when asked where planning artifacts should live, but runtime session behavior
-  is outside this recipe.
+  is outside this recipe. Plan-build readiness is always proven by file-backed artifacts
+  under the canonical `openspec/changes/<slug>/` tree — `tasks.md`, tier minimum planning
+  files, and `verify-report.md` — never by the store selection; Engram MAY mirror artifacts
+  but never replaces them.
 
 - **Full README:** [`catalog/recipes/plan-build-flow/README.md`](../catalog/recipes/plan-build-flow/README.md)
 
