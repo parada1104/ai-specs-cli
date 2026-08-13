@@ -307,6 +307,55 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.mod.execute_hooks(recipe, {"artifact_store_default": value}, Path(tmp.name))
 
+    def test_config_help_text_states_persistence_preference(self):
+        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
+        field = recipe.config_schema.fields["artifact_store_default"]
+        self.assertIn("persistence preference", field.help_text)
+        self.assertIn("readiness", field.help_text)
+
+    def test_brief_rule_six_states_persistence_preference_and_readiness_invariant(self):
+        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
+        rules = [fragment.text for fragment in recipe.brief_fragments.workflow_rules]
+        rule6 = rules[5]
+        self.assertEqual(rule6.count("{config.artifact_store_default}"), 1)
+        self.assertIn("persistence preference", rule6)
+        self.assertIn("readiness", rule6)
+        self.assertIn("file-backed", rule6)
+        self.assertIn("never", rule6)
+
+    def test_skill_separates_persistence_from_readiness(self):
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
+        for phrase in (
+            "persistence preference",
+            "readiness",
+            "file-backed",
+            "mirror",
+            "memory-only",
+            "never replaces",
+            "tier minimum",
+        ):
+            self.assertIn(phrase, skill)
+
+    def test_readme_delivery_contracts_state_file_backed_readiness(self):
+        readme = (CATALOG / RECIPE_ID / "README.md").read_text().lower()
+        for phrase in (
+            "persistence preference",
+            "file-backed",
+            "openspec/changes/<slug>/",
+            "memory-only",
+            "mirror",
+        ):
+            self.assertIn(phrase, readme)
+
+    def test_catalog_documents_store_preference_and_readiness_invariant(self):
+        catalog = (ROOT / "docs" / "recipes-catalog.md").read_text().lower()
+        for phrase in (
+            "persistence preference",
+            "file-backed",
+            "openspec/changes/<slug>/",
+        ):
+            self.assertIn(phrase, catalog)
+
     def test_version_and_catalog_documentation_use_current_contract(self):
         self.assertEqual(_recipe_version(), "1.6.0")
         readme = (CATALOG / RECIPE_ID / "README.md").read_text()

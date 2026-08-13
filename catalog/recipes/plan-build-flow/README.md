@@ -74,14 +74,21 @@ Then run `ai-specs sync`.
 
 ## Delivery contracts
 
-`artifact_store_default` is an optional string configuration that declares where this
-project's planning artifacts live by default. It accepts `openspec`, `engram`, or `both`,
-and defaults to `openspec` when the project manifest does not override it.
+`artifact_store_default` is an optional string configuration that declares the
+external-session persistence preference for this project's planning artifacts.
+It accepts `openspec`, `engram`, or `both`, and defaults to `openspec` when the
+project manifest does not override it.
 
 ```toml
 [recipes.plan-build-flow.config]
 artifact_store_default = "both"
 ```
+
+The value is a persistence preference only: plan-build readiness is always
+proven by file-backed artifacts under the canonical `openspec/changes/<slug>/`
+tree — `tasks.md`, tier minimum planning files, and `verify-report.md` — and
+never by the store selection. Engram MAY mirror artifacts but never replaces
+them; a memory-only presence cannot satisfy any readiness check.
 
 During `ai-specs sync`, the resolved value is materialized into the generated brief as a
 workflow rule. An external session runtime may consume that rule when asked where planning

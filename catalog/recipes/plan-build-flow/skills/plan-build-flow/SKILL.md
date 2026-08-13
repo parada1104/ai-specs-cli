@@ -148,10 +148,25 @@ planning.
 - **Orchestrator present** — let it drive phases via sub-agents.
 - **Orchestrator absent** — run equivalent phases inline in one conversation.
 
-## 6. Memory degradation policy
+## 6. Persistence and readiness
 
-- **Persistent memory present** — may persist cross-session facts.
-- **Absent** — default to file artifacts under `openspec/changes/<slug>/`.
+Persistence is separate from readiness. `artifact_store_default` is an
+external-session persistence preference rendered into the generated brief; it
+never proves readiness.
+
+- **Persistent memory present** — Engram MAY mirror planning artifacts, but a
+  memory-only presence never satisfies any readiness check.
+- **Absent** — fall back to file artifacts under `openspec/changes/<slug>/`.
+- **Default** — when Engram is available but no preflight resolved a store,
+  artifacts are written as files under `openspec/changes/<slug>/`, never
+  memory-only.
+
+Readiness is always proven by file-backed artifacts in the canonical
+change-folder tree — `tasks.md`, tier minimum planning files, and
+`verify-report.md`. The resolved store (`openspec|engram|both`) is never
+consulted for readiness and never alters any classifier, PR/archive gate,
+staged verify gate, or pre-merge guardian decision. Engram MAY mirror artifacts
+but never replaces them.
 
 ## 7. Artifact, PR, and merge gates
 

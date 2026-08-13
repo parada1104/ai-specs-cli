@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "lib" / "_internal" / "premerge_guardian.py"
+
+# The preflight-resolved store (config artifact_store_default) must never change
+# a guardian verdict. STORE_ENV_KEY is a test-only fixture naming the env a
+# store-aware preflight would set; the guardian is store-blind and reads only
+# the filesystem change tree, so every context must yield the baseline verdict.
+STORE_ENUM = ["openspec", "engram", "both"]
+STORE_ENV_KEY = "PLAN_BUILD_ARTIFACT_STORE"
 
 
 def load_module(path: Path, name: str):
@@ -573,6 +582,81 @@ class PremergeGuardianTests(unittest.TestCase):
         result = self.mod.check_premerge(root, "target", tier="light")
 
         self.assertTrue(result.ok, result.blockers)
+
+    def _assert_store_invariant(self, fn, *args, **kwargs):
+        """Run fn with no store env and with every store value; assert identical verdicts.
+
+        A store-aware preflight would set STORE_ENV_KEY before invoking the
+        guardian. The guardian must be store-blind: ok/blockers are identical
+        across baseline and `openspec|engram|both`. An Engram mirror cannot be
+        materialized inside this unit test; the invariant under test is that the
+        store selection never influences the verdict, so a memory-only presence
+        can never substitute for missing repository files.
+        """
+        baseline = fn(*args, **kwargs)
+        for value in STORE_ENUM:
+            with mock.patch.dict(os.environ, {STORE_ENV_KEY: value}):
+                context = fn(*args, **kwargs)
+            self.assertEqual(context.ok, baseline.ok, f"store={value}")
+            self.assertEqual(context.blockers, baseline.blockers, f"store={value}")
+        return baseline
+
+    def test_guardian_blocks_missing_tier_files_under_any_store(self):
+        """Engram memory-only cannot satisfy tier minima: verdict is store-blind."""
+        root = self._repo()
+        slug = "mem-only-tier"
+        archived = root / "openspec" / "changes" / "archive" / slug
+        archived.mkdir(parents=True)
+        (archived / "tasks.md").write_text("Depth: standard\n")
+
+        result = self._assert_store_invariant(
+            self.mod.check_premerge, root, slug, tier="standard"
+        )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(
+            any("proposal.md" in b or "spec" in b.lower() for b in result.blockers)
+        )
+
+    def test_guardian_blocks_missing_verify_evidence_under_any_store(self):
+        """Engram mirror cannot satisfy verify evidence: verdict is store-blind."""
+        root = self._repo()
+        slug = "mem-only-verify"
+        archived = root / "openspec" / "changes" / "archive" / slug
+        archived.mkdir(parents=True)
+        (archived / "tasks.md").write_text("Depth: standard\n")
+        (archived / "proposal.md").write_text("# proposal\n")
+        (archived / "specs" / "cap" / "spec.md").parent.mkdir(parents=True)
+        (archived / "specs" / "cap" / "spec.md").write_text("# cap\n")
+
+        result = self._assert_store_invariant(
+            self.mod.check_premerge, root, slug, tier="standard"
+        )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(any("verify-report.md" in b for b in result.blockers))
+
+    def test_guardian_verdict_invariant_across_stores_for_conforming_archive(self):
+        """A conforming archive passes identically under every store selection."""
+        root = self._repo()
+        slug = "ok-every-store"
+        archived = root / "openspec" / "changes" / "archive" / slug
+        archived.mkdir(parents=True)
+        (archived / "tasks.md").write_text("Depth: standard\n")
+        (archived / "proposal.md").write_text("# proposal\n")
+        (archived / "specs" / "cap" / "spec.md").parent.mkdir(parents=True)
+        (archived / "specs" / "cap" / "spec.md").write_text("# cap\n")
+        (archived / "verify-report.md").write_text(
+            "## Verify evidence\n- Verdict: PASS\n- Command: ./tests/run.sh\n"
+            "- Exit: 0\n- Date: 2026-08-07\n- Commit: 1234567\n"
+        )
+
+        result = self._assert_store_invariant(
+            self.mod.check_premerge, root, slug, tier="standard"
+        )
+
+        self.assertTrue(result.ok, result.blockers)
+        self.assertEqual(result.blockers, [])
 
     def test_cli_prearchive_stage_accepts_active_folder(self):
         root = self._repo()
