@@ -142,4 +142,9 @@ jobs:
           python-version: "3.x"
 
       - name: Run parity corpus (Bash reference vs pinned expectations)
-        run: python3 -m pytest tests/test_worktree_gate_parity.py -q
+        # Run the repository's actual unittest-based parity test exactly
+        # like ./tests/run.sh (python3 -m unittest discover). A previous
+        # run relied on an undeclared third-party test runner and failed on
+        # the stock GitHub runner; the canonical test suite is unittest with
+        # no third-party test dependencies.
+        run: python3 -m unittest tests/test_worktree_gate_parity.py -q

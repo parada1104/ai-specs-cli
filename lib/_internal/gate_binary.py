@@ -56,6 +56,14 @@ SUPPORTED_PLATFORMS = (
 # doctor run on the same CLI version reads them.
 MISMATCH_FILENAME = "last-digest-mismatch.txt"
 
+# Canonical GitHub repository owner of ai-specs-cli. This is the owner used
+# everywhere else in the product (the git remote, install.sh, bin/ai-specs,
+# catalog/README.md, and the release workflow); the released worktree-gate
+# assets are attached to this repository's GitHub Releases, so the download
+# URL must use it or every sync acquisition 404s.
+REPO_OWNER = "parada1104"
+REPO_NAME = "ai-specs-cli"
+
 
 def _ai_specs_home() -> Path:
     env = os.environ.get("AI_SPECS_HOME")
@@ -369,7 +377,7 @@ def _degradation_hint(gate_impl: str) -> str:
 
 def _asset_url(version: str, asset_name: str) -> str:
     return (
-        f"https://github.com/nnodes/ai-specs-cli/releases/download/"
+        f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/download/"
         f"v{version}/{asset_name}"
     )
 
