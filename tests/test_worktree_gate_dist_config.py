@@ -212,6 +212,19 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
         dest.chmod(0o755)
         return dest
 
+    def _launcher(self, root: Path, *, impl: str = "auto",
+                  version: str = "0.21.0") -> Path:
+        """Materialize the launcher at its standard synced location.
+
+        The launcher derives its installation root from BASH_SOURCE[0], so the
+        fixture must place it exactly where sync materializes it — under
+        ``<root>/ai-specs/recipes/worktree-flow/hooks/`` — for the derived
+        recipe root ``hooks/../`` to contain the project-local pin.
+        """
+        hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        return self._stamp(hook, impl=impl, version=version)
+
     def _fixture(self, root: Path) -> tuple[Path, str]:
         repo = root / "repo"
         repo.mkdir()
@@ -256,7 +269,7 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
             self.skipTest("no Go gate binary in dist/")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            launcher = self._stamp(root / "gate.sh")
+            launcher = self._launcher(root)
             repo, event = self._fixture(root)
             # A project-local pin that would ALLOW the write if the launcher
             # wrongly consulted it before the override.
@@ -279,7 +292,7 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
             self.skipTest("no Go gate binary in dist/")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            launcher = self._stamp(root / "gate.sh")
+            launcher = self._launcher(root)
             repo, event = self._fixture(root)
             # Cache binary that would ALLOW (exit 0) if wrongly consulted.
             cache_bin = (root / "home" / "cache" / "bin" / "worktree-gate" / "0.21.0" /
@@ -303,7 +316,7 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
             self.skipTest("no Go gate binary in dist/")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            launcher = self._stamp(root / "gate.sh")
+            launcher = self._launcher(root)
             repo, event = self._fixture(root)
             cache_bin = (root / "home" / "cache" / "bin" / "worktree-gate" / "0.21.0" /
                          _cache_platform() / "worktree-gate")
@@ -321,7 +334,7 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
             self.skipTest("no Go gate binary in dist/")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            launcher = self._stamp(root / "gate.sh")
+            launcher = self._launcher(root)
             repo, event = self._fixture(root)
             # Project pin = real gate so the launcher still enforces after
             # ignoring the broken override.

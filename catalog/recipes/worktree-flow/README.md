@@ -65,10 +65,15 @@ $AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-ga
 | `bash` | Frozen Bash reference only; no binary, network, or Go toolchain required. |
 
 The launcher resolves an implementation in order: `$WORKTREE_GATE_BIN` →
-project-local `ai-specs/recipes/worktree-flow/bin/worktree-gate` → version-keyed
+project-local `bin/worktree-gate` under the launcher's own `BASH_SOURCE[0]`
+physical installation root (the `hooks/../bin` layout, so relative and
+symlinked invocation resolve to the target installation) → version-keyed
 cache → frozen Bash reference (`auto`/`bash`) → one stderr warning and exit `0`
-(fail open). Handoff is `exec`, so stdin and the exit code pass through
-untouched; the gate never computes a digest on the invocation path unless
+(fail open). The process `$PWD` is the gate's invalid-event-cwd fallback, never
+a project-local asset root; an unresolvable `BASH_SOURCE[0]` root skips
+project-local and legacy lookup and continues through the explicit override or
+cache. Handoff is `exec`, so stdin and the exit code pass through untouched;
+the gate never computes a digest on the invocation path unless
 `WORKTREE_GATE_VERIFY=1` requests it.
 
 **Offline behavior:** with `gate_impl = auto` and no cached binary, `ai-specs

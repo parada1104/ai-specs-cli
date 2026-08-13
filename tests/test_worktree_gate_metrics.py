@@ -289,6 +289,7 @@ class WorktreeGateNoHashHotPathTests(unittest.TestCase):
         content = content.replace("__WORKTREE_REPO_TOPOLOGY__", "auto")
         content = content.replace("__WORKTREE_GATE_IMPL__", impl)
         content = content.replace("__WORKTREE_GATE_VERSION__", version)
+        dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         return dest
@@ -313,7 +314,8 @@ class WorktreeGateNoHashHotPathTests(unittest.TestCase):
                            check=True)
 
             # Launcher resolves the binary from the project-local pin.
-            launcher = self._stamp_launcher(root / "worktree-gate.sh")
+            launcher = self._stamp_launcher(
+                root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh")
             pin = root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
             pin.parent.mkdir(parents=True, exist_ok=True)
             pin.write_bytes(BINARY.read_bytes())
@@ -363,7 +365,8 @@ class WorktreeGateNoHashHotPathTests(unittest.TestCase):
                            check=True, capture_output=True, text=True)
             subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-B", "main"],
                            check=True)
-            launcher = self._stamp_launcher(root / "worktree-gate.sh")
+            launcher = self._stamp_launcher(
+                root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh")
             pin = root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
             pin.parent.mkdir(parents=True, exist_ok=True)
             pin.write_bytes(BINARY.read_bytes())

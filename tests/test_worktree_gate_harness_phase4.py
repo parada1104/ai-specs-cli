@@ -175,18 +175,21 @@ class HookRenderByteStabilityTests(unittest.TestCase):
         raise AssertionError(agent)
 
     def test_renderer_output_is_byte_identical_to_preexisting_shape(self):
-        # The resolved-hooks document is the same shape Phases 0-2 produced and
-        # hooks-render.py is untouched by Phases 0-3 (spec: "zero renderer
+        # The resolved-hooks document is the same shape Phases 0-2 produced
+        # and hooks-render.py is untouched by Phases 0-3 (spec: "zero renderer
         # changes and zero re-render churn"). Byte-identity is pinned by
-        # rendering the same document twice in fresh projects: if the launcher
-        # had changed script_path or the env contract, the emitted bytes would
-        # differ from the pre-change shape and the path assertions below fail.
+        # rendering the same document twice in fresh projects. The
+        # stabilize-workspace-context change then replaced the relative
+        # ``const SCRIPT = "..."`` with a runtime module-derived declaration
+        # for opencode/pi/omp; the pinned fragments below assert THAT shape,
+        # so a regression to a relative or machine-specific SCRIPT breaks
+        # here.
         expected_fragments = {
             "claude": MATERIALIZED_SCRIPT,
             "cursor": MATERIALIZED_SCRIPT,   # wrapper embeds script=...
-            "opencode": f'const SCRIPT = "{MATERIALIZED_SCRIPT}";',
-            "pi": f'const SCRIPT = "{MATERIALIZED_SCRIPT}";',
-            "omp": f'const SCRIPT = "{MATERIALIZED_SCRIPT}";',
+            "opencode": f'const SCRIPT = fileURLToPath(new URL("../../{MATERIALIZED_SCRIPT}", import.meta.url));',
+            "pi": f'const SCRIPT = fileURLToPath(new URL("../../{MATERIALIZED_SCRIPT}", import.meta.url));',
+            "omp": f'const SCRIPT = fileURLToPath(new URL("../../{MATERIALIZED_SCRIPT}", import.meta.url));',
         }
         for agent in ("claude", "cursor", "opencode", "pi", "omp"):
             with self.subTest(agent=agent):

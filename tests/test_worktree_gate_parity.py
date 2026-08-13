@@ -379,5 +379,119 @@ class WorktreeGateParityTests(unittest.TestCase):
                     self.assertIn("target", case, "fixture case must declare a target")
 
 
+class WorktreeCwdNormalizationParityTests(unittest.TestCase):
+    """Decision-differentiating whitespace-trim parity (stabilize-workspace-
+    context 2.3 / 2.8 / 2.9).
+
+    The process cwd is an ALLOWING context (linked worktree on a feature
+    branch) while the event cwd is a whitespace-wrapped PROTECTED main-checkout
+    path. Outer-trim normalization makes the gate block the protected path;
+    a non-trimming implementation would fall back to the allowing process cwd
+    and let the write through. Both the legacy Bash reference and the Go
+    binary must reach the same block decision after trimming.
+    """
+
+    GO_BINARY = ROOT / "dist" / "worktree-gate-current"
+
+    def _fixture(self, root: Path) -> tuple[Path, Path]:
+        """Protected main checkout + linked feature worktree (allowing
+        process-cwd context), reusing the shared corpus fixture builder."""
+        locations = build_fixture(root, "linked-worktree")
+        return locations["repo"], locations["worktree"]
+
+    def _run_gate(self, gate: Path, payload: str, cwd: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(["bash", str(gate)], input=payload,
+                              capture_output=True, text=True, cwd=str(cwd))
+
+    def _run_go(self, payload: str, cwd: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [str(self.GO_BINARY), "--gate-mode", STAMPED_MODE,
+             "--gate-scope", STAMPED_SCOPE, "--repo-topology", STAMPED_TOPOLOGY,
+             "--protected", "main development"],
+            input=payload, capture_output=True, text=True, cwd=str(cwd))
+
+    def test_trimmed_protected_event_cwd_blocks_both_implementations(self):
+        """Process cwd allows (worktree); trimmed event cwd blocks (main)."""
+        # RELATIVE candidates force resolution against the event cwd: a trim
+        # makes the gate evaluate the protected main checkout and block; a
+        # non-trimming implementation falls back to the allowing process cwd
+        # and lets the write through. Decision-differentiating by design.
+        cases = [
+            ("path", {
+                "event": "pre-tool-use", "tool_name": "Write",
+                "tool_input": {"file_path": "src.py"},
+            }),
+            ("shell", {
+                "event": "pre-tool-use", "tool_name": "Bash",
+                "tool_input": {"command": "echo x > src.py"},
+            }),
+        ]
+        for mode, event in cases:
+            with self.subTest(mode=mode):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    repo, worktree = self._fixture(root)
+                    gate = materialize_legacy(root / "gate.sh")
+                    event["cwd"] = f"   {repo}   "  # outer-whitespace wrapped
+                    payload = json.dumps(event)
+                    legacy = self._run_gate(gate, payload, worktree)
+                    self.assertEqual(legacy.returncode, 2,
+                                     f"legacy must block after trim: {legacy.stderr}")
+                    if self.GO_BINARY.exists():
+                        go = self._run_go(payload, worktree)
+                        self.assertEqual(go.returncode, 2,
+                                         f"go must block after trim: {go.stderr}")
+                    else:
+                        self.skipTest("no Go gate binary in dist/")
+
+    def test_invalid_cwd_falls_back_to_allowing_process_cwd_both_implementations(self):
+        """Whitespace-only / relative / nonexistent cwd falls back to the
+        allowing worktree process cwd: both implementations allow."""
+        bad_cwds = [
+            ("whitespace-only", "     "),
+            ("relative", "relative/dir"),
+            ("nonexistent", "{repo}/does-not-exist"),
+        ]
+        for label, raw_cwd in bad_cwds:
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    repo, worktree = self._fixture(root)
+                    gate = materialize_legacy(root / "gate.sh")
+                    event = {
+                        "event": "pre-tool-use", "tool_name": "Write",
+                        "tool_input": {"file_path": "src.py"},
+                        "cwd": substitute(raw_cwd, {"repo": repo}),
+                    }
+                    payload = json.dumps(event)
+                    legacy = self._run_gate(gate, payload, worktree)
+                    self.assertEqual(legacy.returncode, 0, legacy.stderr)
+                    if self.GO_BINARY.exists():
+                        go = self._run_go(payload, worktree)
+                        self.assertEqual(go.returncode, 0, go.stderr)
+                    else:
+                        self.skipTest("no Go gate binary in dist/")
+
+    def test_shell_event_trim_parity_blocks_protected(self):
+        """Shell events go through the same trim; a whitespace-wrapped
+        protected cwd must block even when the process runs from the worktree."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, worktree = self._fixture(root)
+            gate = materialize_legacy(root / "gate.sh")
+            payload = json.dumps({
+                "event": "pre-tool-use", "tool_name": "Bash",
+                "tool_input": {"command": "echo x > out.log"},
+                "cwd": f"  {repo}  ",
+            })
+            legacy = self._run_gate(gate, payload, worktree)
+            self.assertEqual(legacy.returncode, 2, legacy.stderr)
+            if self.GO_BINARY.exists():
+                go = self._run_go(payload, worktree)
+                self.assertEqual(go.returncode, 2, go.stderr)
+            else:
+                self.skipTest("no Go gate binary in dist/")
+
+
 if __name__ == "__main__":
     unittest.main()

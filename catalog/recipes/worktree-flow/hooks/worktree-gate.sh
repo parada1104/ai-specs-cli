@@ -21,8 +21,9 @@
 # Resolution order (first hit wins, design §5):
 #   1. $WORKTREE_GATE_BIN if executable — the debugging and pinning escape
 #      hatch.
-#   2. <project>/ai-specs/recipes/worktree-flow/bin/worktree-gate — an
-#      optional project-local pin for air-gapped repos.
+#   2. Project-local <recipe_root>/bin/worktree-gate — the optional air-gapped
+#      pin, where <recipe_root> is derived from THIS launcher's physical
+#      BASH_SOURCE[0] location (hooks/../), never from $PWD.
 #   3. ${AI_SPECS_HOME:-$HOME/.ai-specs}/cache/bin/worktree-gate/
 #      <stamped_version>/<os>-<arch>/worktree-gate — the version-keyed cache
 #      populated by ai-specs sync (lib/_internal/gate_binary.py).
@@ -88,6 +89,43 @@ _resolve_gate_scope() {
 [ "$gate_mode" = off ] && exit 0
 gate_scope="$(_resolve_gate_scope)"
 
+# Derive the physical installation root from BASH_SOURCE[0]. Prints the recipe
+# root (launcher_dir/..) or nothing when the reference cannot be resolved.
+# $PWD participates exactly once: anchoring a relative BASH_SOURCE reference.
+# It is never used to locate project-local assets (design §4).
+_launcher_root() {
+  local src="${BASH_SOURCE[0]:-}"
+  [ -n "$src" ] || return 1
+  if [ ! -e "$src" ]; then
+    # Relative reference: anchor to the invocation process cwd once.
+    case "$src" in
+      /*) return 1 ;;
+      *) src="$PWD/$src" ;;
+    esac
+    [ -e "$src" ] || return 1
+  fi
+  # Follow the final launcher symlink (and any chain) to a physical path.
+  local current="$src"
+  local n=0
+  while [ -L "$current" ]; do
+    local target
+    target="$(readlink "$current" 2>/dev/null)" || break
+    [ -n "$target" ] || break
+    case "$target" in
+      /*) current="$target" ;;
+      *) current="$(dirname "$current")/$target" ;;
+    esac
+    n=$((n+1))
+    if [ "$n" -gt 40 ]; then return 1; fi
+  done
+  local dir
+  dir="$(cd "$(dirname "$current")" 2>/dev/null && pwd -P)" || return 1
+  local root
+  root="$(cd "$dir/.." 2>/dev/null && pwd -P)" || return 1
+  printf '%s\n' "$root"
+  return 0
+}
+
 # Resolve an implementation. Prints the command to exec, or nothing when the
 # legacy path applies (the legacy file carries its own stamped values).
 _resolve_binary() {
@@ -99,16 +137,15 @@ _resolve_binary() {
     fi
     echo "worktree-gate: WORKTREE_GATE_BIN='$WORKTREE_GATE_BIN' is not executable; ignoring." >&2
   fi
-  bin="$PWD/ai-specs/recipes/worktree-flow/bin/worktree-gate"
-  # The materialized hook runs from the project root in every harness, but be
-  # defensive: also try a resolved project root via the parent of ai-specs/.
-  if [ ! -x "$bin" ]; then
-    local probe="$PWD/ai-specs"
-    [ -d "$probe" ] && bin="$(cd "$probe/.." 2>/dev/null && pwd)/ai-specs/recipes/worktree-flow/bin/worktree-gate"
-  fi
-  if [ -x "$bin" ]; then
-    echo "$bin"
-    return 0
+  # Project-local pin under the derived physical installation root. The
+  # launcher's own BASH_SOURCE[0] location decides — never $PWD.
+  local recipe_root=""
+  if recipe_root="$(_launcher_root)"; then
+    bin="$recipe_root/bin/worktree-gate"
+    if [ -x "$bin" ]; then
+      echo "$bin"
+      return 0
+    fi
   fi
   if [ -n "$_goos" ] && [ -n "$_goarch" ]; then
     local home="${AI_SPECS_HOME:-$HOME/.ai-specs}"
@@ -138,9 +175,12 @@ fi
 # stamped gate_impl permits it (bash explicitly, or auto with no binary).
 case "$stamped_gate_impl" in
   bash|auto)
-    legacy="$PWD/ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh"
-    if [ -f "$legacy" ]; then
-      exec bash "$legacy"
+    local_legacy=""
+    if recipe_root="$(_launcher_root)"; then
+      local_legacy="$recipe_root/hooks/worktree-gate-legacy.sh"
+    fi
+    if [ -n "$local_legacy" ] && [ -f "$local_legacy" ]; then
+      exec bash "$local_legacy"
     fi
     ;;
 esac
