@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strings"
 )
 
 type Event struct {
@@ -59,8 +60,13 @@ func ParseEvent(r io.Reader, processCwd string) Event {
 }
 
 func eventCwd(raw map[string]interface{}, fallback string) string {
-	if c, ok := raw["cwd"].(string); ok && IsExistingDirectory(c) {
-		return c
+	if c, ok := raw["cwd"].(string); ok {
+		// Trim outer whitespace only, then require an absolute existing
+		// directory. Internal path bytes are preserved (parity with the
+		// legacy Bash c.strip() reference).
+		if trimmed := strings.TrimSpace(c); IsExistingDirectory(trimmed) {
+			return trimmed
+		}
 	}
 	return fallback
 }

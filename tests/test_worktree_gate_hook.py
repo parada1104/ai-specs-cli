@@ -886,6 +886,195 @@ class WorktreeGateHookTests(unittest.TestCase):
         event["cwd"] = str(Path(self.tmp.name) / "does-not-exist")
         r = self._run_in(event, run_cwd=self.repo)
         self.assertEqual(r.returncode, 2)
+class WorktreeGateLauncherRootTests(unittest.TestCase):
+    """BASH_SOURCE[0] installation-root resolution (stabilize-workspace-context
+    2.1 / 2.6 / 2.7).
+
+    Drives the real launcher materialized into a temporary installation and
+    proves which implementation candidate was selected with executable
+    markers: physical root from BASH_SOURCE[0], ``hooks/../bin`` project-local
+    lookup, symlinked and relative invocation, unrelated process cwd, override
+    and cache precedence, legacy fallback, and the rule that a missing root
+    never lets ``$PWD`` become a project root.
+    """
+
+    STAMP_TOKENS = (
+        ("__WORKTREE_GATE_MODE__", "always"),
+        ("__WORKTREE_GATE_SCOPE__", "auto"),
+        ("__WORKTREE_REPO_TOPOLOGY__", "auto"),
+        ("__WORKTREE_GATE_IMPL__", "go"),
+        ("__WORKTREE_GATE_VERSION__", "1.0.0"),
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.install = Path(self.tmp.name) / "install"
+        hooks = self.install / "hooks"
+        bins = self.install / "bin"
+        hooks.mkdir(parents=True)
+        bins.mkdir(parents=True)
+        self.launcher = hooks / "worktree-gate.sh"
+        self.launcher.write_text(self._stamped_launcher())
+        self.launcher.chmod(0o755)
+        self.bin_marker = bins / "worktree-gate"
+        self._write_marker(self.bin_marker, "MARKER:project-local")
+        # A scratch AI_SPECS_HOME so cache lookups are hermetic.
+        self.home = self.install / "home"
+
+    def _stamped_launcher(self, **overrides) -> str:
+        content = (ROOT / "catalog" / "recipes" / "worktree-flow" /
+                   "hooks" / "worktree-gate.sh").read_text()
+        for token, value in self.STAMP_TOKENS:
+            content = content.replace(token, overrides.get(token, value))
+        return content
+
+    def _write_marker(self, path: Path, tag: str) -> None:
+        path.write_text(f"#!/usr/bin/env bash\necho '{tag}' >&2\nexit 0\n")
+        path.chmod(0o755)
+
+    def _gate_env(self, **extra) -> dict:
+        env = dict(os.environ, WORKTREE_GATE_PROTECTED="main",
+                   AI_SPECS_HOME=str(self.home))
+        env.pop("WORKTREE_GATE_BIN", None)
+        env.pop("WORKTREE_GATE_MODE", None)
+        env.pop("WORKTREE_GATE_SCOPE", None)
+        env.update(extra)
+        return env
+
+    def _run(self, launcher: Path, cwd: Path, *, stdin="{}",
+             env: dict | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(launcher)], input=stdin, capture_output=True,
+            text=True, cwd=str(cwd), env=env or self._gate_env(),
+        )
+
+    def _elsewhere(self) -> Path:
+        d = self.install / "unrelated-cwd"
+        d.mkdir(exist_ok=True)
+        return d
+
+    def test_relative_invocation_selects_project_local_bin_from_physical_root(self):
+        cwd = self._elsewhere()
+        rel = os.path.relpath(self.launcher, cwd)
+        r = self._run(Path(rel), cwd)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:project-local", r.stderr)
+        self.assertNotIn("MARKER:legacy", r.stderr)
+
+    def test_symlink_invocation_resolves_physical_installation(self):
+        link_dir = self.install / "linked"
+        link_dir.mkdir()
+        link = link_dir / "gate-link.sh"
+        link.symlink_to(self.launcher)
+        r = self._run(link, self._elsewhere())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:project-local", r.stderr,
+                      "symlinked invocation must resolve to the physical install")
+
+    def test_unrelated_process_cwd_finds_launcher_beside_itself(self):
+        r = self._run(self.launcher, self._elsewhere())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:project-local", r.stderr)
+
+    def test_worktree_gate_bin_override_wins(self):
+        override = self.install / "override-bin"
+        self._write_marker(override, "MARKER:override")
+        r = self._run(self.launcher, self._elsewhere(),
+                      env=self._gate_env(WORKTREE_GATE_BIN=str(override)))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:override", r.stderr)
+        self.assertNotIn("MARKER:project-local", r.stderr)
+
+    def test_cache_precedence_when_project_local_missing(self):
+        self.bin_marker.unlink()
+        platform = self._host_platform()
+        cache_bin = (self.home / "cache" / "bin" / "worktree-gate" / "1.0.0" /
+                     platform / "worktree-gate")
+        cache_bin.parent.mkdir(parents=True)
+        self._write_marker(cache_bin, "MARKER:cache")
+        r = self._run(self.launcher, self._elsewhere())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:cache", r.stderr)
+
+    def test_legacy_fallback_under_derived_root(self):
+        # No project-local bin and no cache: with gate_impl=auto the launcher
+        # falls back to the frozen Bash reference under its OWN root.
+        self.bin_marker.unlink()
+        self.launcher.write_text(
+            self._stamped_launcher(**{"__WORKTREE_GATE_IMPL__": "auto"}))
+        self.launcher.chmod(0o755)
+        legacy = self.install / "hooks" / "worktree-gate-legacy.sh"
+        content = (ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" /
+                   "worktree-gate-legacy.sh").read_text()
+        content = content.replace('stamped_gate_mode="__WORKTREE_GATE_MODE__"',
+                                  'stamped_gate_mode="always"')
+        content = content.replace('stamped_gate_scope="__WORKTREE_GATE_SCOPE__"',
+                                  'stamped_gate_scope="auto"')
+        content = content.replace('stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"',
+                                  'stamped_repo_topology="auto"')
+        legacy.write_text(content)
+        legacy.chmod(0o755)
+
+        repo = Path(self.tmp.name) / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t.t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "README.md").write_text("x\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+        _git(repo, "checkout", "-q", "-B", "main")
+        event = json.dumps({
+            "event": "pre-tool-use", "tool_name": "Write",
+            "tool_input": {"file_path": str(repo / "src.py")},
+            "cwd": str(repo),
+        })
+        r = self._run(self.launcher, self._elsewhere(), stdin=event)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("worktree-gate", r.stderr)
+
+    def test_missing_root_never_makes_pwd_a_project_root(self):
+        # PATH-style bare-name invocation: when BASH_SOURCE[0] cannot be
+        # anchored, project-local and legacy lookup must be SKIPPED — a decoy
+        # ai-specs tree under $PWD must never be selected. (bash 5 resolves
+        # PATH lookups to the full script path, in which case the root derives
+        # from the PATH directory; either way the $PWD decoy is never used.)
+        self.bin_marker.unlink()
+        path_bin = self.install / "pathbin"
+        path_bin.mkdir()
+        copied = path_bin / "worktree-gate.sh"
+        copied.write_text(self._stamped_launcher())
+        copied.chmod(0o755)
+        cwd = self.install / "pwd-decoy"
+        decoy = cwd / "ai-specs" / "recipes" / "worktree-flow" / "bin"
+        decoy.mkdir(parents=True)
+        self._write_marker(decoy / "worktree-gate", "MARKER:decoy")
+        env = self._gate_env(PATH=str(path_bin) + os.pathsep + os.environ["PATH"])
+        r = subprocess.run(
+            ["bash", "worktree-gate.sh"], input="{}", capture_output=True,
+            text=True, cwd=str(cwd), env=env,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("MARKER:decoy", r.stderr,
+                         "$PWD must never become a project-local asset root")
+        self.assertIn("no usable gate implementation", r.stderr)
+
+    def _host_platform(self) -> str:
+        uname_s = os.uname().sysname
+        uname_m = os.uname().machine
+        goos = {"Darwin": "darwin", "Linux": "linux"}.get(uname_s)
+        if uname_m in ("arm64", "aarch64"):
+            goarch = "arm64"
+        elif uname_m in ("x86_64", "amd64"):
+            goarch = "amd64"
+        else:
+            goarch = None
+        if not goos or not goarch:
+            self.skipTest(f"unsupported launcher platform {uname_s}/{uname_m}")
+        return f"{goos}-{goarch}"
+
+
 if __name__ == "__main__":
     unittest.main()
 

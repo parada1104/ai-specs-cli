@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +16,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOKS_RENDER_PATH = ROOT / "lib" / "_internal" / "hooks-render.py"
+
+NODE_HARNESS = (
+    ROOT / "tests" / "fixtures" / "workspace-context" / "opencode_process_boundary.mjs"
+)
+NODE = shutil.which("node")
 
 
 def load_module(path: Path, name: str):
@@ -202,6 +210,325 @@ class HooksRenderTests(unittest.TestCase):
         matchers = [e.get("matcher") for e in settings["hooks"]["PreToolUse"]]
         self.assertIn("UserOwned", matchers)  # user hook preserved
         self.assertIn("Bash", matchers)       # managed hook added
+
+
+@unittest.skipUnless(NODE and NODE_HARNESS.is_file(),
+                     "node and the process-boundary harness fixture are required")
+class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
+    """Deterministic Node process-boundary tests for generated adapters.
+
+    Render the generated adapter for a real hook, relocate it into a temporary
+    installation (as sync would materialize it), and execute it through the
+    Node harness with a recording ``spawnSync`` double. The assertions observe
+    the actual process boundary: executable path, event cwd, options cwd, and
+    fail-open behavior — never generated source text.
+
+    Covers OpenCode directory normalization and child cwd (1.2), Pi/OMP
+    module-location launcher paths with process-cwd events (1.3), and the
+    preserved Claude/Cursor project-directory wiring (1.4).
+    """
+
+    RUNTIME_DIRS = {
+        "opencode": Path(".opencode") / "plugin",
+        "pi": Path(".pi") / "extensions",
+        "omp": Path(".omp") / "extensions",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(HOOKS_RENDER_PATH, "hooks_render_internal")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.unrelated = self.root / "unrelated-cwd"
+        self.unrelated.mkdir()
+        # Node's chdir resolves symlinks (macOS /var -> /private/var), so the
+        # process-cwd value the adapter sees is the real path.
+        self.unrelated_real = str(self.unrelated.resolve())
+        self.valid_dir = self.root / "valid-dir"
+        self.valid_dir.mkdir()
+
+    def _project(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name)
+
+    def _write_resolved(self, project: Path, agents, hooks) -> Path:
+        p = project / "resolved-hooks.json"
+        p.write_text(json.dumps({"enabled_agents": agents, "hooks": hooks}))
+        return p
+
+    # --- helpers -----------------------------------------------------------
+
+    def _render(self, agent: str, hook: dict, project: Path) -> Path:
+        resolved = project / "resolved-hooks.json"
+        resolved.write_text(json.dumps({"enabled_agents": [agent], "hooks": [hook]}))
+        self.mod.render(resolved, agent, project)
+        base = f"{hook['recipe']}-{hook['id']}"
+        if agent == "opencode":
+            return project / ".opencode" / "plugin" / f"{base}.ts"
+        return project / f".{agent}" / "extensions" / f"{base}.ts"
+
+    def _install(self) -> tuple[Path, Path]:
+        """Temporary materialized installation: launcher + relocated adapter."""
+        install = self.root / "install"
+        launcher = install / SHELL_HOOK["script_path"]
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        launcher.write_text("#!/usr/bin/env bash\n# launcher marker\nexit 0\n")
+        launcher.chmod(0o755)
+        return install, launcher
+
+    def _relocate(self, agent: str, generated: Path, install: Path) -> Path:
+        target = install / self.RUNTIME_DIRS[agent] / generated.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(generated, target)
+        return target
+
+    def _run_harness(self, kind: str, plugin: Path, *,
+                     directory=None, directory_json=None, tool=None,
+                     input_json=None, args_json=None, status=None,
+                     stderr=None, error=None, throw=None) -> dict:
+        cmd = [NODE, str(NODE_HARNESS), "--kind", kind,
+               "--plugin", str(plugin), "--cwd", str(self.unrelated)]
+        if directory is not None:
+            cmd += ["--directory", str(directory)]
+        if directory_json is not None:
+            cmd += ["--directory-json", json.dumps(directory_json)]
+        if tool is not None:
+            cmd += ["--tool", tool]
+        if input_json is not None:
+            cmd += ["--input-json", json.dumps(input_json)]
+        if args_json is not None:
+            cmd += ["--args-json", json.dumps(args_json)]
+        if status is not None:
+            cmd += ["--status", str(status)]
+        if stderr is not None:
+            cmd += ["--stderr", stderr]
+        if error is not None:
+            cmd += ["--error", error]
+        if throw is not None:
+            cmd += ["--throw", throw]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0,
+                         f"harness failed: {proc.stderr}\nstdout: {proc.stdout}")
+        return json.loads(proc.stdout)
+
+    def _assert_single_record(self, res: dict) -> dict:
+        self.assertEqual(len(res["records"]), 1, res)
+        return res["records"][0]
+
+    # --- OpenCode directory normalization and child cwd (1.2) --------------
+
+    def test_opencode_valid_directory_trimmed_for_event_and_child_cwd(self):
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, launcher = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        # Directory carries outer whitespace; the normalized value must drive
+        # both the event cwd and the spawnSync child cwd.
+        res = self._run_harness(
+            "opencode", relocated,
+            directory=f"  {self.valid_dir}  ",
+            args_json={"file_path": "x.py"},
+        )
+        rec = self._assert_single_record(res)
+        self.assertEqual(rec["command"], str(launcher.resolve()),
+                         "launcher path must be module-derived and absolute")
+        self.assertEqual(rec["input"]["cwd"], str(self.valid_dir),
+                         "event cwd must be the outer-trimmed directory")
+        self.assertEqual(rec["optionsCwd"], str(self.valid_dir),
+                         "child spawnSync cwd must equal the trimmed directory")
+        self.assertFalse(res["outcome"]["threw"], res)
+
+    def test_opencode_unrelated_process_cwd_still_finds_launcher(self):
+        # Harness runs from unrelated-cwd; the valid directory is the event
+        # target. The launcher must come from module location, not $PWD.
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, launcher = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        res = self._run_harness(
+            "opencode", relocated,
+            directory=str(self.valid_dir),
+            args_json={"file_path": "x.py"},
+        )
+        rec = self._assert_single_record(res)
+        self.assertEqual(rec["command"], str(launcher.resolve()))
+        self.assertEqual(rec["optionsCwd"], str(self.valid_dir))
+
+    def test_opencode_absent_directory_falls_back_to_process_cwd(self):
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, _ = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        res = self._run_harness("opencode", relocated, args_json={"file_path": "x.py"})
+        rec = self._assert_single_record(res)
+        self.assertEqual(rec["input"]["cwd"], self.unrelated_real)
+        self.assertEqual(rec["optionsCwd"], self.unrelated_real)
+
+    def test_opencode_non_string_directory_falls_back(self):
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, _ = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        res = self._run_harness(
+            "opencode", relocated, directory_json=123,
+            args_json={"file_path": "x.py"})
+        rec = self._assert_single_record(res)
+        self.assertEqual(rec["input"]["cwd"], self.unrelated_real)
+        self.assertEqual(rec["optionsCwd"], self.unrelated_real)
+
+    def test_opencode_whitespace_only_directory_falls_back(self):
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, _ = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        res = self._run_harness(
+            "opencode", relocated, directory="   ",
+            args_json={"file_path": "x.py"})
+        rec = self._assert_single_record(res)
+        self.assertEqual(rec["input"]["cwd"], self.unrelated_real)
+        self.assertEqual(rec["optionsCwd"], self.unrelated_real)
+
+    def test_opencode_relative_directory_falls_back(self):
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, _ = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        res = self._run_harness(
+            "opencode", relocated, directory="relative/path",
+            args_json={"file_path": "x.py"})
+        rec = self._assert_single_record(res)
+        self.assertEqual(rec["input"]["cwd"], self.unrelated_real)
+        self.assertEqual(rec["optionsCwd"], self.unrelated_real)
+
+    def test_opencode_nonexistent_directory_falls_back(self):
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, _ = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        res = self._run_harness(
+            "opencode", relocated,
+            directory=str(self.root / "does-not-exist"),
+            args_json={"file_path": "x.py"})
+        rec = self._assert_single_record(res)
+        self.assertEqual(rec["input"]["cwd"], self.unrelated_real)
+        self.assertEqual(rec["optionsCwd"], self.unrelated_real)
+
+    def test_opencode_non_directory_value_falls_back(self):
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, _ = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        plain_file = self.root / "plain-file.txt"
+        plain_file.write_text("x")
+        res = self._run_harness(
+            "opencode", relocated, directory=str(plain_file),
+            args_json={"file_path": "x.py"})
+        rec = self._assert_single_record(res)
+        self.assertEqual(rec["input"]["cwd"], self.unrelated_real)
+        self.assertEqual(rec["optionsCwd"], self.unrelated_real)
+
+    def test_opencode_status_two_is_the_only_block(self):
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, _ = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        res = self._run_harness(
+            "opencode", relocated, directory=str(self.valid_dir),
+            status=2, stderr="blocked by fixture",
+            args_json={"file_path": "x.py"})
+        self.assertTrue(res["outcome"]["threw"], res)
+        self.assertIn("blocked by fixture", res["outcome"]["error"])
+
+    def test_opencode_child_error_fails_open(self):
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, _ = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        res = self._run_harness(
+            "opencode", relocated, directory=str(self.valid_dir),
+            error="spawn failed", args_json={"file_path": "x.py"})
+        self.assertFalse(res["outcome"]["threw"],
+                         "a child spawn error must fail open, not throw")
+
+    def test_opencode_child_throw_fails_open(self):
+        project = self._project()
+        generated = self._render("opencode", SHELL_HOOK, project)
+        install, _ = self._install()
+        relocated = self._relocate("opencode", generated, install)
+        res = self._run_harness(
+            "opencode", relocated, directory=str(self.valid_dir),
+            throw="child threw", args_json={"file_path": "x.py"})
+        self.assertFalse(res["outcome"]["threw"],
+                         "a thrown child-process exception must fail open")
+
+    # --- Pi/OMP module-location launcher paths (1.3) -----------------------
+
+    def _assert_process_cwd_event(self, res: dict, launcher: Path) -> None:
+        rec = self._assert_single_record(res)
+        self.assertEqual(rec["command"], str(launcher.resolve()),
+                         "pi/omp launcher must be module-derived and absolute")
+        self.assertEqual(rec["input"]["cwd"], self.unrelated_real,
+                         "pi/omp event cwd must stay process.cwd()")
+        self.assertEqual(rec["optionsCwd"], None,
+                         "pi/omp child process must keep inheriting process cwd")
+        self.assertFalse(res["outcome"]["block"], res)
+
+    def test_pi_relocated_extension_finds_launcher_from_module_location(self):
+        project = self._project()
+        generated = self._render("pi", SHELL_HOOK, project)
+        install, launcher = self._install()
+        relocated = self._relocate("pi", generated, install)
+        res = self._run_harness("pi", relocated, tool="bash",
+                                input_json={"path": "x.py"})
+        self._assert_process_cwd_event(res, launcher)
+        self.assertEqual(res["outcome"]["block"], False)
+        # No workspace root may be claimed: the event cwd must not be the
+        # installation root.
+        self.assertNotEqual(res["records"][0]["input"]["cwd"], str(install))
+
+    def test_omp_relocated_extension_finds_launcher_from_module_location(self):
+        project = self._project()
+        generated = self._render("omp", SHELL_HOOK, project)
+        install, launcher = self._install()
+        relocated = self._relocate("omp", generated, install)
+        res = self._run_harness("omp", relocated, tool="bash",
+                                input_json={"path": "x.py"})
+        self._assert_process_cwd_event(res, launcher)
+        self.assertNotEqual(res["records"][0]["input"]["cwd"], str(install))
+
+    # --- preserved Claude/Cursor wiring (1.4) ------------------------------
+
+    def test_claude_script_keeps_project_dir_variable(self):
+        project = self._project()
+        resolved = self._write_resolved(project, ["claude"], [SHELL_HOOK])
+        self.mod.render(resolved, "claude", project)
+        settings = json.loads((project / ".claude" / "settings.json").read_text())
+        entry = next(e for e in settings["hooks"]["PreToolUse"]
+                     if e.get("matcher") == "Bash")
+        cmd = entry["hooks"][0]["command"]
+        self.assertIn("$CLAUDE_PROJECT_DIR/", cmd)
+        self.assertIn(SHELL_HOOK["script_path"], cmd)
+
+    def test_cursor_wrapper_keeps_project_dir_variable(self):
+        project = self._project()
+        resolved = self._write_resolved(project, ["cursor"], [SHELL_HOOK])
+        self.mod.render(resolved, "cursor", project)
+        wrapper = project / ".cursor" / "hooks" / "demo-shell-gate.sh"
+        self.assertIn("$CURSOR_PROJECT_DIR/", wrapper.read_text())
+
+    def test_cursor_filewrite_limitation_preserved(self):
+        # The adapter change must not replace Cursor's missing pre-file-write
+        # hook: a file-write matcher still warns and skips for cursor.
+        project = self._project()
+        resolved = self._write_resolved(project, ["cursor"], [FILEWRITE_HOOK])
+        warnings = self.mod.render(resolved, "cursor", project)
+        wrapper = project / ".cursor" / "hooks" / "worktree-flow-worktree-gate.sh"
+        self.assertFalse(wrapper.exists())
+        self.assertIn("no pre-file-write hook", " ".join(warnings))
 
 
 if __name__ == "__main__":
