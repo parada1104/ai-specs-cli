@@ -322,6 +322,23 @@ class WorktreeGateReleaseTests(unittest.TestCase):
             "local Go toolchain must match the release workflow pin; "
             "regenerate SHA256SUMS with the pinned toolchain")
 
+    def test_release_workflow_parity_job_runs_unittest_not_pytest(self):
+        # Release blocker regression: the parity CI job must run the
+        # repository's actual unittest-based parity test
+        # (tests/test_worktree_gate_parity.py) exactly like ./tests/run.sh.
+        # The previous `python3 -m pytest ...` relied on an undeclared
+        # pytest dependency and failed on the stock GitHub runner.
+        workflow = (ROOT / ".github" / "workflows" / "release-worktree-gate.yml").read_text(
+            encoding="utf-8")
+        parity_tail = workflow.split("parity:", 1)[1]
+        self.assertIn(
+            "python3 -m unittest", parity_tail,
+            "parity job must run the unittest runner")
+        self.assertIn("test_worktree_gate_parity.py", parity_tail)
+        self.assertNotIn(
+            "pytest", parity_tail,
+            "parity job must not depend on the undeclared pytest dependency")
+
 
 if __name__ == "__main__":
     unittest.main()

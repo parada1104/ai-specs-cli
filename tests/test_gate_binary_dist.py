@@ -189,6 +189,31 @@ class GateBinaryDistTests(unittest.TestCase):
         self.assertIsInstance(status, dict)
         self.assertIn("warn", status)
 
+    # --- release blocker: canonical asset URL owner -------------------------
+
+    def test_asset_url_uses_canonical_repository_owner(self):
+        # Release blocker regression: the download URL must target the
+        # canonical repository owner used by the remote, install.sh, and
+        # the release workflow (parada1104). The previous hardcoded
+        # `nnodes` owner would 404 every `ai-specs sync` binary
+        # acquisition.
+        url = self.gb._asset_url("9.9.9", "worktree-gate-darwin-arm64")
+        self.assertEqual(
+            url,
+            "https://github.com/parada1104/ai-specs-cli/releases/download/"
+            "v9.9.9/worktree-gate-darwin-arm64",
+        )
+
+    def test_gate_binary_module_has_no_divergent_repository_owner(self):
+        # Guard against reintroducing the divergent `nnodes` owner
+        # anywhere else in the module (not only in _asset_url).
+        source = GATE_BINARY_PY.read_text(encoding="utf-8")
+        self.assertNotIn(
+            "nnodes", source,
+            "gate_binary.py must not reference the divergent 'nnodes' "
+            "repository owner",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
