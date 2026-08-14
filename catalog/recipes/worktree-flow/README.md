@@ -180,11 +180,30 @@ rm ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh
 ai-specs sync
 ```
 
-Runtime hook scripts are outside the override surface and are always rewritten
-by the CLI during sync. The policy applies to governed template overrides only.
+Runtime hook scripts follow gate provenance instead of template policy. Sync
+records a baseline of the exact bytes the CLI last rendered for each generated
+hook (`ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh`):
+
+- baseline matches current bytes → unmodified; sync may force-update the gate
+  and re-record the baseline;
+- bytes differ from the baseline → user-modified; sync preserves the gate and
+  warns;
+- no baseline → unknown provenance; sync preserves the gate and warns, and
+  records a baseline only when the CLI itself renders the gate.
+
+Runtime hook scripts are no longer rewritten unconditionally.
+
+To explicitly replace a customized gate (after its exact pre-refresh bytes are
+saved to a cache-only immutable backup):
+
+```bash
+ai-specs sync --refresh-gates
+```
+
+or remove the gate and resync: `rm <gate-path> && ai-specs sync`.
 
 After a user-modified warning, re-apply any local customizations to the refreshed
-template as needed.
+gate as needed.
 
 ## Cleanup contract
 

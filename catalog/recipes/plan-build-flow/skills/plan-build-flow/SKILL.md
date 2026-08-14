@@ -237,11 +237,13 @@ Sequence on the review branch:
 2. Commit and push implementation **and** planning files.
 3. Open a PR (artifact gate satisfied).
 Before moving the change folder, run the executable pre-archive gate and stop
-if it exits nonzero:
+if it exits nonzero. `--root` is the resolved planning root from the request
+context — required, never the process cwd; a subrepo request passes the proven
+superproject root:
 
 ```bash
 python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
-  <slug> --root <repo-root> --stage pre-archive
+  <slug> --root <planning-root> --stage pre-archive
 ```
 
 The command must pass for Standard and Full; do not archive or continue when it
@@ -256,11 +258,15 @@ pre-archive check; the pre-merge guardian below remains required after archive.
 ### 7.4 Pre-merge merge guardian (hard stop)
 
 Before `gh pr merge` / `glab mr merge` / Bitbucket merge (or equivalent), verify
-the archive is complete. Prefer the shared helper when available:
+the archive is complete. Prefer the shared helper when available. `--root` is
+the propagated planning root from the request context (required, never the
+process cwd): for a subrepo-context change whose planning root is the proven
+superproject, pass `<super>/openspec`'s parent — the superproject root — so the
+guardian inspects the canonical tree and never a subrepo-local change folder.
 
 ```bash
 python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
-  <slug> --root <repo-root>
+  <slug> --root <planning-root>
 # optional: --tier light|standard|full
 ```
 

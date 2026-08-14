@@ -304,11 +304,15 @@ integrations are absent, while still completing the change-folder close.
 When no gentle-ai orchestrator is available, the bundled skill SHALL instruct
 the single agent to run mapped phases inline as one conversation.
 
+Absent and disabled external orchestration MUST behave identically and MUST NOT
+introduce a new provider prerequisite.
+
 #### Scenario: Inline execution without orchestrator
 
-- GIVEN gentle-ai is not present
+- GIVEN gentle-ai is not present or is disabled
 - WHEN planning or build phases run
 - THEN the skill runs equivalent phases inline and no phase is silently skipped
+- AND no new external provider prerequisite is introduced
 
 ### Requirement: Artifact store degradation and default
 
@@ -411,6 +415,15 @@ repositories and non-submodule worktrees, the artifact root MUST remain the
 nearest repository root used by the existing gate. The resolver MUST use the
 recognized submodule relationship and path layout, not a user-configured root.
 
+The resolved planning root MUST be propagated as explicit request context to
+artifact writers, renderers, and the pre-merge guardian. Artifact phases MUST
+resolve `openspec/changes/<slug>/` against that propagated root; they MUST NOT
+resolve it relative to the process cwd or a subrepo primary checkout (no relative
+subrepo plan leakage). When the planning root cannot be resolved — missing,
+ambiguous, detached, or uninitialized topology — the system MUST fail safe to
+nearest-root behavior and MUST NOT grant production access on the strength of a
+possible parent directory.
+
 #### Scenario: Linked submodule worktree uses the central superproject root
 
 - GIVEN a superproject has an initialized submodule
@@ -443,6 +456,22 @@ recognized submodule relationship and path layout, not a user-configured root.
 - WHEN the gate resolves the artifact root
 - THEN it MUST derive the root from repository topology
 - AND it MUST NOT require, create, or read a new `[sdd]` configuration, decision matrix, or `artifact_root` setting
+
+#### Scenario: Subrepo-context artifact write lands on the canonical superrepo path
+
+- GIVEN a subrepo request whose planning root is the proven superrepo
+- AND an artifact phase writes `openspec/changes/<slug>/tasks.md`
+- WHEN the write resolves the artifact path
+- THEN the artifact exists only under `<super>/openspec/changes/<slug>/`
+- AND no relative `openspec/changes/...` artifact appears inside the subrepo checkout
+
+#### Scenario: Unresolvable planning root fails safe
+
+- GIVEN a detached or uninitialized target state
+- AND the request context cannot establish owner or planning root
+- WHEN an artifact write or gate evaluation occurs
+- THEN it falls back to the safe nearest-root behavior
+- AND it MUST NOT grant production access merely because a possible parent directory contains a plan
 
 ### Requirement: Robust submodule root discovery
 
@@ -829,6 +858,12 @@ gate is a hard stop. Agents MUST invoke
 `AI_SPECS_HOME` to `$HOME/.ai-specs` when unset). Sync MUST NOT materialize a
 per-project copy under `ai-specs/bin/`.
 
+The guardian MUST accept the resolved planning root from the propagated request
+context (an explicit root argument or equivalent context) and MUST NOT depend on
+the process cwd to locate the canonical change tree. When the planning root
+cannot be resolved, the guardian MUST fail safe: it MUST NOT skip tier-minima or
+verify checks.
+
 Hard blockers (do **not** merge):
 
 1. `openspec/changes/<slug>/` still exists (active, not archived).
@@ -888,6 +923,20 @@ changes.
 - WHEN the pre-merge guardian runs for the slug under merge
 - THEN only that slug is evaluated
 - AND no blocker mentions the older archived changes
+
+#### Scenario: Guardian consumes the propagated planning root
+
+- GIVEN a subrepo-context change whose planning root is the proven superrepo
+- AND the guardian runs with the propagated planning root context
+- WHEN the archive and verify checks evaluate
+- THEN it inspects `<super>/openspec/changes/archive/<slug>/`
+- AND it MUST NOT consult a subrepo-local change folder in place of the canonical tree
+
+#### Scenario: Guardian without a resolvable planning root fails safe
+
+- GIVEN the planning root context is missing or ambiguous
+- WHEN the pre-merge guardian runs
+- THEN it fails safe and MUST NOT skip tier-minima or verify blockers
 
 ### Requirement: Pre-tool-use artifact gate hook
 

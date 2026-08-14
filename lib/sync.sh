@@ -32,17 +32,22 @@ Arguments:
 
 Flags:
   --ignore-cli-version  Skip [tool] CLI version policy check (warns on stderr)
+  --refresh-gates       Explicitly refresh customized gate hooks: save exact
+                        pre-refresh bytes to a cache-only immutable backup,
+                        then replace (never set by an ordinary sync)
   -v, --verbose         Print full per-step detail instead of compact summaries
 EOF
 }
 
 TARGET_PATH=""
 IGNORE_CLI_VERSION=""
+REFRESH_GATES=""
 VERBOSE=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
         --ignore-cli-version) IGNORE_CLI_VERSION="--ignore-cli-version"; shift ;;
+        --refresh-gates) REFRESH_GATES="--refresh-gates"; shift ;;
         -v|--verbose) VERBOSE=1; shift ;;
         --)        shift; break ;;
         -*)
@@ -139,6 +144,7 @@ PLAN_JSON="$(python3 "$TARGET_RESOLVE_PY" "$TARGET_PATH")" || {
 }
 
 ROOT_PATH="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["root"])' <<<"$PLAN_JSON")"
+IFS=$'\t' read -r PLANNING_ROOT TOPOLOGY_RESOLVED TOPOLOGY_VIA <<< "$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print("\t".join([d["planning_root"], d["topology"]["resolved"], d["topology"]["via"]]))' <<<"$PLAN_JSON")"
 TOML_PATH="$ROOT_PATH/ai-specs/ai-specs.toml"
 AI_GITIGNORE="$ROOT_PATH/ai-specs/.gitignore"
 if [[ ! -f "$TOML_PATH" ]]; then
@@ -161,9 +167,11 @@ done < <(python3 -c 'import json,sys; [print("{}:{}".format(t["kind"], t["rel"])
 echo ""
 echo "ai-specs sync"
 echo "  root:    $ROOT_PATH"
+echo "  planning: $PLANNING_ROOT"
+echo "  topology: $TOPOLOGY_RESOLVED (via $TOPOLOGY_VIA)"
 echo "  targets: ${RESOLVED_TARGET_LABELS[*]}"
+echo "  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)"
 echo "  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs"
-echo "  note:    .gitmodules is advisory-only in V1"
 echo ""
 
 run_step "ai-specs/.gitignore" python3 "$GITIGNORE_RENDER" "$TOML_PATH" "$AI_GITIGNORE"
@@ -181,7 +189,7 @@ trap 'rm -f "$RECIPE_MCP_TEMP" "$RESOLVED_CONFIG_TEMP" "$RESOLVED_HOOKS_TEMP"' E
 RECIPE_OUT_FILE="$(mktemp)"
 RECIPE_ERR_FILE="$(mktemp)"
 set +e
-python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP" --resolved-hooks-out "$RESOLVED_HOOKS_TEMP" >"$RECIPE_OUT_FILE" 2>"$RECIPE_ERR_FILE"
+python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP" --resolved-hooks-out "$RESOLVED_HOOKS_TEMP" $REFRESH_GATES >"$RECIPE_OUT_FILE" 2>"$RECIPE_ERR_FILE"
 RECIPE_RC=$?
 set -e
 RECIPE_NAMES="$( { grep -oE '▸ recipe [^ ]+' "$RECIPE_OUT_FILE" | sed -E 's/.*recipe //' | paste -sd, - ; } 2>/dev/null || true)"

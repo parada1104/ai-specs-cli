@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -115,8 +117,23 @@ def write_lock(lock_path: Path, lock: dict) -> None:
             out.append(f"{_toml_string(name)} = {_toml_string(str(files[name]))}")
         out.append("")
 
+    text = "\n".join(out).rstrip("\n") + "\n"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path.write_text("\n".join(out).rstrip("\n") + "\n")
+    # Atomic replace: a failed write never leaves a partially updated lock, so
+    # refresh rollback can promise all-or-nothing lock state.
+    fd, tmp = tempfile.mkstemp(
+        dir=str(lock_path.parent), prefix=".ai-specs.lock.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.replace(tmp, lock_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def set_managed_override(
@@ -137,6 +154,31 @@ def set_managed_override(
         if value is not None:
             entry[key] = value
     managed[path] = entry
+
+
+def set_gate_baseline(
+    lock: dict,
+    path: str,
+    sha256: str,
+    *,
+    recipe: str | None = None,
+    source: str | None = None,
+) -> None:
+    """Record the last CLI-rendered bytes for a generated runtime hook (gate).
+
+    Gates follow the ``auto`` update policy: a baseline matching current bytes
+    is treated as unmodified and may be force-updated; a mismatch or missing
+    baseline is preserved with a warning.
+    """
+    set_managed_override(
+        lock,
+        path,
+        sha256,
+        recipe=recipe,
+        source=source,
+        kind="gate",
+        policy="auto",
+    )
 
 
 def set_recipe_skill_hashes(lock: dict, recipe_id: str, skill_name: str, hashes: dict[str, str]) -> None:

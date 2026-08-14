@@ -272,6 +272,13 @@ unmerged ones, and never touches the main worktree.
   and degrades with a warning on any failure — acquisition never fails sync.
   `ai-specs doctor` reports the resolved implementation, version, digest state,
   and silent fallbacks.
+- **Gate provenance:** sync records a baseline of the exact bytes the CLI last
+  rendered for the generated gate hook. A baseline match means unmodified and
+  may be force-updated; a byte mismatch or missing baseline is preserved with a
+  warning (no seeding). An explicit refresh (`ai-specs sync --refresh-gates`)
+  saves the exact pre-refresh bytes to a cache-only immutable backup before
+  replacing a customized gate; `ai-specs doctor` warns on customized gates and
+  stays quiet on matching baselines.
 - **Topologies:** `standalone`, `monorepo-apps` (naming-only), and
   `monorepo-submodules` (per-submodule `git -C` create + cleanup enumeration
   under a shared superproject `worktrees_dir`).

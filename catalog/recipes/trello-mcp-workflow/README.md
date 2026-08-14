@@ -39,8 +39,12 @@ rm ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-feature.md
 ai-specs sync
 ```
 
-Runtime hook scripts are not user overrides: they are always rewritten by the
-CLI during sync. The ownership policy applies to recipe templates only.
+Runtime hook scripts follow gate provenance instead of template policy. Sync
+records a baseline of the exact bytes the CLI last rendered for each generated
+hook; a byte mismatch or missing baseline is preserved with a warning, and an
+explicit refresh (`ai-specs sync --refresh-gates`, or `rm <hook> && ai-specs sync`)
+replaces a customized hook only after its exact pre-refresh bytes are saved to a
+cache-only immutable backup. The ownership policy for templates is separate.
 
 ## Configuration
 

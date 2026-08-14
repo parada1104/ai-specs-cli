@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # doctor.sh — read-only diagnostic for ai-specs projects.
 #
+# Diagnostics include template-override ownership and generated gate-hook
+# provenance (baseline match → quiet; byte mismatch or missing provenance →
+# WARN with refresh guidance). The command is read-only and never modifies files.
+#
 # Usage:
 # ai-specs doctor [path] [--help]
 set -euo pipefail

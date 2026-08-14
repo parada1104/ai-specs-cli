@@ -350,6 +350,22 @@ class PlanBuildGateHookTests(unittest.TestCase):
         r = self._run(self._event("Write", str(outside), cwd=fx["linked"]))
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_gate_behavior_identical_without_external_orchestration(self):
+        """3.3 — RED: absent/disabled external orchestration never changes verdicts."""
+        event = self._event("Write", "src/app.py")
+        clean = self._run(event)
+        self.assertEqual(clean.returncode, 2, clean.stderr)
+        for extra in (
+            {"GENTLE_AI_MODE": "disabled", "GENTLE_AI_ABSENT": "1"},
+            {"PLAN_BUILD_ORCHESTRATOR": "absent"},
+        ):
+            alt = self._run(event, extra_env=extra)
+            self.assertEqual(alt.returncode, clean.returncode)
+            self.assertEqual(alt.stderr, clean.stderr)
+        script = GATE.read_text()
+        self.assertNotIn("gentle", script.lower(),
+                         "the gate must never invoke an external provider")
+
     def test_gate_evaluation_creates_nothing(self):
         fx = self._make_super_with_submodule()
         before_worktrees = _git_output(fx["sub"], "worktree", "list", "--porcelain")

@@ -792,6 +792,57 @@ class RecipeMaterializeTests(unittest.TestCase):
         self.assertFalse(skill.exists())
 
 
+class ResolvedConfigContextTests(unittest.TestCase):
+    """2.3 — RED: resolved-config carries project_root and topology context."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_ctx")
+
+    def _project(self, *, topology: str | None = None) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        ai_specs = root / "ai-specs"
+        ai_specs.mkdir()
+        (ai_specs / "skills").mkdir()
+        (ai_specs / "commands").mkdir()
+        text = "[project]\nname='ctx'\n\n[agents]\nenabled=['claude']\n"
+        if topology is not None:
+            text += (
+                "[recipes.worktree-flow]\nenabled = true\n"
+                "[recipes.worktree-flow.config]\n"
+                f"repo_topology = '{topology}'\n"
+            )
+        (ai_specs / "ai-specs.toml").write_text(text)
+        return root
+
+    def test_resolved_config_carries_project_root(self):
+        root = self._project()
+        out = root / "resolved.json"
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT, resolved_config_out=out), 0)
+        data = json.loads(out.read_text())
+        self.assertEqual(data["project_root"], str(root.resolve()))
+
+    def test_resolved_config_carries_stable_monorepo_apps_topology(self):
+        root = self._project(topology="monorepo-apps")
+        out = root / "resolved.json"
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT, resolved_config_out=out), 0)
+        data = json.loads(out.read_text())
+        self.assertEqual(data["topology"]["resolved"], "monorepo-apps")
+        self.assertEqual(data["topology"]["via"], "config")
+
+    def test_resolved_config_only_also_carries_context(self):
+        root = self._project()
+        out = root / "resolved-only.json"
+        self.assertEqual(
+            self.mod.build_resolved_config_only(root, out, ROOT), 0
+        )
+        data = json.loads(out.read_text())
+        self.assertEqual(data["project_root"], str(root.resolve()))
+        self.assertIn("topology", data)
+
+
 class RuntimeHookMaterializeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

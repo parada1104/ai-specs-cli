@@ -88,6 +88,71 @@ class TargetResolveTests(unittest.TestCase):
             self.assertEqual(payload["error"]["path"], "packages/missing")
             self.assertIn("does not exist", payload["error"]["reason"])
 
+    def test_plan_emits_declared_only_topology_and_planning_root(self):
+        """1.3 — RED: plan carries declared_only, topology, and one planning root."""
+        plan = self.mod.resolve_target_plan(FIXTURES / "multi-target")
+        self.assertIs(plan["declared_only"], True)
+        self.assertEqual(plan["fanout_targets"], ["packages/a", "packages/b"])
+        self.assertEqual(plan["planning_root"], str(Path(plan["root"]).resolve()))
+        self.assertIn(plan["topology"]["resolved"], (
+            "standalone", "monorepo-apps", "monorepo-submodules"
+        ))
+        self.assertIn(plan["topology"]["via"], ("auto", "config"))
+        self.assertEqual(plan["worktrees_dir"], ".worktrees")
+
+    def test_all_targets_share_one_planning_root(self):
+        """1.3 — RED: every fan-out target shares the root planning root."""
+        plan = self.mod.resolve_target_plan(FIXTURES / "multi-target")
+        roots = {t["planning_root"] for t in plan["targets"]}
+        self.assertEqual(len(roots), 1)
+        self.assertEqual(roots.pop(), plan["planning_root"])
+
+    def test_empty_subrepos_emit_empty_fanout_with_gitmodules_present(self):
+        """1.3 — RED: empty project.subrepos means no fan-out, never expansion."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ai-specs").mkdir()
+            (root / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname='empty'\nsubrepos=[]\n\n[agents]\nenabled=['claude']\n"
+            )
+            (root / ".gitmodules").write_text(
+                '[submodule "apps/api"]\n\tpath = apps/api\n\turl = ../api.git\n'
+            )
+            plan = self.mod.resolve_target_plan(root)
+            self.assertEqual(plan["fanout_targets"], [])
+            self.assertIs(plan["declared_only"], True)
+            self.assertEqual([t["rel"] for t in plan["targets"]], ["."])
+
+    def test_gitmodules_never_expands_the_target_set(self):
+        """1.3 — RED: .gitmodules entries not declared stay out of fan-out."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "packages" / "a").mkdir(parents=True)
+            (root / "ai-specs").mkdir()
+            (root / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname='x'\nsubrepos=['packages/a']\n\n[agents]\nenabled=['claude']\n"
+            )
+            (root / ".gitmodules").write_text(
+                '[submodule "packages/b"]\n\tpath = packages/b\n\turl = ../b.git\n'
+            )
+            plan = self.mod.resolve_target_plan(root)
+            self.assertEqual(plan["fanout_targets"], ["packages/a"])
+            self.assertEqual([t["rel"] for t in plan["targets"]], [".", "packages/a"])
+
+    def test_plan_topology_reflects_configured_repo_topology(self):
+        """1.3 — RED: explicit monorepo-apps stays stable, never reclassified."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ai-specs").mkdir()
+            (root / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname='apps'\nsubrepos=[]\n\n[agents]\nenabled=['claude']\n"
+                "[recipes.worktree-flow]\nenabled = true\n"
+                "[recipes.worktree-flow.config]\nrepo_topology = 'monorepo-apps'\n"
+            )
+            plan = self.mod.resolve_target_plan(root)
+            self.assertEqual(plan["topology"]["resolved"], "monorepo-apps")
+            self.assertEqual(plan["topology"]["via"], "config")
+
 
 if __name__ == "__main__":
     unittest.main()

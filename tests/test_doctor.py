@@ -1509,5 +1509,115 @@ class RepoTopologyDoctorTests(unittest.TestCase):
             self.assertEqual(dest.read_text(), "# customized\n")
 
 
+class GateProvenanceDoctorTests(unittest.TestCase):
+    """3.3 — RED: doctor warns on customized/missing gate provenance, stays
+    quiet on matching baselines."""
+
+    def _fake_home(self) -> tuple[Path, Path]:
+        """Fake CLI home (catalog) + project enabling a runtime-hook recipe."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        recipe_dir = home / "catalog" / "recipes" / "wt-hook"
+        (recipe_dir / "hooks").mkdir(parents=True)
+        (recipe_dir / "hooks" / "gate.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+        (recipe_dir / "recipe.toml").write_text(
+            '[recipe]\n'
+            'id = "wt-hook"\n'
+            'name = "WT Hook"\n'
+            'description = "D"\n'
+            'version = "1.0"\n'
+            '[[provides.hooks]]\n'
+            'id = "gate"\n'
+            'event = "pre-tool-use"\n'
+            'script = "hooks/gate.sh"\n'
+            'matcher = "Edit|Write"\n'
+            'blocking = true\n'
+        )
+        proj_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(proj_tmp.cleanup)
+        project = Path(proj_tmp.name)
+        (project / "ai-specs").mkdir(parents=True)
+        (project / "ai-specs" / "ai-specs.toml").write_text(
+            "[project]\nname = 'p'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            "[recipes.wt-hook]\nenabled = true\nversion = '1.0'\n"
+        )
+        return project, home
+
+    def _gate(self, project: Path) -> Path:
+        return project / "ai-specs" / "recipes" / "wt-hook" / "hooks" / "gate.sh"
+
+    def _record_baseline(self, project: Path, sha: str) -> None:
+        lock_mod = load_module(ROOT / "lib/_internal/lock.py", "lock_doctor_gate")
+        lock_path = project / "ai-specs" / ".ai-specs.lock"
+        lock = lock_mod.load_lock(lock_path)
+        lock_mod.set_managed_override(
+            lock, "ai-specs/recipes/wt-hook/hooks/gate.sh", sha,
+            recipe="wt-hook", source="hooks/gate.sh", kind="gate", policy="auto",
+        )
+        lock_mod.write_lock(lock_path, lock)
+
+    def _doctor_gate_check(self, project: Path, home: Path):
+        doctor = load_module(DOCTOR_PY, "doctor_gate_prov")
+        with patch.object(doctor, "AI_SPECS_HOME", home):
+            d = doctor.Doctor(project)
+            d._check_gate_provenance()
+        return d.checks
+
+    def test_doctor_warns_on_customized_gate(self):
+        project, home = self._fake_home()
+        gate = self._gate(project)
+        gate.parent.mkdir(parents=True, exist_ok=True)
+        gate.write_text("#!/usr/bin/env bash\nexit 0\n")
+        self._record_baseline(project, "0" * 64)  # baseline != disk
+        checks = self._doctor_gate_check(project, home)
+        gate_checks = [c for c in checks if c.name == "gate-provenance"]
+        self.assertEqual(len(gate_checks), 1)
+        self.assertEqual(gate_checks[0].severity.name, "WARN")
+        self.assertIn("gate.sh", gate_checks[0].message)
+        self.assertIn("user-modified", gate_checks[0].message)
+
+    def test_doctor_quiet_when_gate_baseline_matches(self):
+        project, home = self._fake_home()
+        gate = self._gate(project)
+        gate.parent.mkdir(parents=True, exist_ok=True)
+        payload = "#!/usr/bin/env bash\nexit 0\n"
+        gate.write_text(payload)
+        import hashlib
+        baseline = hashlib.sha256(payload.replace("\r\n", "\n").encode()).hexdigest()
+        self._record_baseline(project, baseline)
+        checks = self._doctor_gate_check(project, home)
+        self.assertEqual(
+            [c for c in checks if c.name == "gate-provenance"], [],
+            "doctor must stay quiet for gates whose baseline matches",
+        )
+
+    def test_doctor_warns_on_missing_gate_provenance(self):
+        project, home = self._fake_home()
+        gate = self._gate(project)
+        gate.parent.mkdir(parents=True, exist_ok=True)
+        gate.write_text("#!/usr/bin/env bash\nexit 0\n")
+        checks = self._doctor_gate_check(project, home)
+        gate_checks = [c for c in checks if c.name == "gate-provenance"]
+        self.assertEqual(len(gate_checks), 1)
+        self.assertEqual(gate_checks[0].severity.name, "WARN")
+        self.assertIn("provenance", gate_checks[0].message.lower())
+
+    def test_doctor_no_hook_recipes_quiet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "prj"
+            (project / "ai-specs").mkdir(parents=True)
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n"
+            )
+            home = Path(tmp) / "home"
+            home.mkdir()
+            checks = self._doctor_gate_check(project, home)
+            self.assertEqual(
+                [c for c in checks if c.name == "gate-provenance"], []
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

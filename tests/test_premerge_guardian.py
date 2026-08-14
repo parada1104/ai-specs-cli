@@ -667,6 +667,28 @@ class PremergeGuardianTests(unittest.TestCase):
         (active / "proposal.md").write_text("# proposal\n")
 
         self.assertEqual(self.mod.main([slug, "--root", str(root), "--stage", "pre-archive"]), 0)
+
+    def test_cli_requires_explicit_root_and_never_falls_back_to_cwd(self):
+        """2.3 — RED: the guardian must not depend on the process cwd."""
+        root = self._repo()
+        slug = "no-root"
+        active = root / "openspec" / "changes" / slug
+        active.mkdir(parents=True)
+        (active / "tasks.md").write_text("Depth: light\n")
+        (active / "proposal.md").write_text("# proposal\n")
+        with mock.patch("os.chdir", return_value=None), mock.patch.object(
+            self.mod, "check_premerge", side_effect=AssertionError("must not resolve cwd")
+        ) as check:
+            with self.assertRaises(SystemExit) as ctx:
+                self.mod.main([slug])
+        self.assertEqual(ctx.exception.code, 2)
+        check.assert_not_called()
+        # A valid explicit root still evaluates normally (archived light change).
+        archive = root / "openspec" / "changes" / "archive" / slug
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        active.rename(archive)
+        self.assertEqual(self.mod.main([slug, "--root", str(root)]), 0)
+
     def test_cli_prearchive_stage_blocks_standard_before_archive(self):
         root = self._repo()
         slug = "cli-standard-prearchive"

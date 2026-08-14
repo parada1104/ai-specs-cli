@@ -207,6 +207,40 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertIn("longest", text.lower())
         self.assertIn("submodule update --init", text)
 
+    def test_worktree_new_documents_superrepo_context_requires_explicit_subrepo(self):
+        """1.2 — RED: a superrepo-context request must not infer a subrepo."""
+        text = (RECIPE_DIR / "commands" / "worktree-new.md").read_text()
+        self.assertIn("explicit", text)
+        self.assertIn("hard-error", text.lower().replace("hard error", "hard-error"))
+        self.assertIn("not infer", text.lower())
+        self.assertIn("git worktree add", text)
+
+    def test_worktree_new_documents_owner_vs_planning_root(self):
+        """1.2 — RED: owner root and planning root are distinct request facts."""
+        text = (RECIPE_DIR / "commands" / "worktree-new.md").read_text()
+        self.assertIn("planning root", text.lower())
+        self.assertIn("owner", text.lower())
+        self.assertIn("superproject", text)
+        self.assertIn("planning", text.lower())
+
+    def test_worktree_new_is_generated_markdown_not_executable_helper(self):
+        """1.2 — RED: /worktree-new is generated Markdown; no executable helper."""
+        cmd = RECIPE_DIR / "commands" / "worktree-new.md"
+        self.assertTrue(cmd.is_file())
+        self.assertNotIn("#!/", cmd.read_text(), "command must stay Markdown, not a script")
+        self.assertFalse(
+            (RECIPE_DIR / "bin" / "worktree-new").exists(),
+            "no executable /worktree-new helper may be added",
+        )
+
+    def test_skill_md_documents_request_context_and_no_helper(self):
+        """1.2 — RED: SKILL.md create block pins request-context + no helper."""
+        skill = (RECIPE_DIR / "skills" / "worktree-flow" / "SKILL.md").read_text()
+        self.assertIn("resolve_request_context", skill)
+        self.assertIn("planning_root", skill)
+        self.assertIn("explicit", skill)
+        self.assertNotIn("bin/worktree-new", skill)
+
     def test_brief_workflow_rules_require_which_repo_check(self):
         recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
         frags = recipe.brief_fragments

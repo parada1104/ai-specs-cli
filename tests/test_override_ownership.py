@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
 import sys
 import tempfile
 import unittest
@@ -263,17 +264,229 @@ class OverrideOwnershipTests(unittest.TestCase):
             self.assertEqual(len(doctor.checks), 1)
             self.assertIn("user-modified", doctor.checks[0].message)
 
-    def test_hook_materialization_remains_unconditional(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            recipe = root / "recipe"
-            (recipe / "hooks").mkdir(parents=True)
-            (recipe / "hooks/gate.sh").write_text("v1")
-            hook = SimpleNamespace(script="hooks/gate.sh")
-            self.materialize.materialize_hook_script(recipe, hook, root, "example")
-            (recipe / "hooks/gate.sh").write_text("v2")
-            self.materialize.materialize_hook_script(recipe, hook, root, "example")
-            self.assertEqual((root / "ai-specs/recipes/example/hooks/gate.sh").read_text(), "v2")
+    def _hook(self, script: str = "hooks/gate.sh"):
+        return SimpleNamespace(script=script)
+
+    def _hook_project(self, gate_bytes: bytes = b"v1\n") -> tuple[Path, Path]:
+        """Fake home (catalog) + project enabling a runtime-hook recipe."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        recipe_dir = home / "catalog" / "recipes" / "wt-hook"
+        (recipe_dir / "hooks").mkdir(parents=True)
+        (recipe_dir / "hooks" / "gate.sh").write_bytes(gate_bytes)
+        (recipe_dir / "recipe.toml").write_text(
+            '[recipe]\n'
+            'id = "wt-hook"\n'
+            'name = "WT Hook"\n'
+            'description = "D"\n'
+            'version = "1.0"\n'
+            '[[provides.hooks]]\n'
+            'id = "gate"\n'
+            'event = "pre-tool-use"\n'
+            'script = "hooks/gate.sh"\n'
+            'matcher = "Edit|Write"\n'
+            'blocking = true\n'
+        )
+        proj_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(proj_tmp.cleanup)
+        project_root = Path(proj_tmp.name)
+        ai_specs = project_root / "ai-specs"
+        ai_specs.mkdir(parents=True)
+        (ai_specs / "ai-specs.toml").write_text(
+            "[project]\nname = 'p'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            "[recipes.wt-hook]\nenabled = true\nversion = '1.0'\n"
+        )
+        return project_root, home
+
+    def _hook_lock_entry(self, project_root: Path) -> dict | None:
+        lock = self.lock.load_lock(project_root / "ai-specs/.ai-specs.lock")
+        return (lock.get("managed") or {}).get(
+            "ai-specs/recipes/wt-hook/hooks/gate.sh"
+        )
+
+    def test_gate_baseline_match_refreshes_and_records_baseline(self):
+        """3.1 — RED: baseline match refreshes the generated gate."""
+        project_root, home = self._hook_project(gate_bytes=b"v1\n")
+        self.materialize.materialize_recipes(project_root, home)
+        gate = project_root / "ai-specs/recipes/wt-hook/hooks/gate.sh"
+        entry = self._hook_lock_entry(project_root)
+        self.assertEqual(entry["kind"], "gate")
+        self.assertEqual(entry["policy"], "auto")
+        self.assertEqual(entry["sha256"], self.lock.sha256_of(gate))
+        self.assertEqual(gate.read_bytes(), b"v1\n")
+
+        # Catalog evolves to v2; a matching baseline force-refreshes.
+        (home / "catalog/recipes/wt-hook/hooks/gate.sh").write_bytes(b"v2\n")
+        stream = io.StringIO()
+        with patch("sys.stderr", stream):
+            self.materialize.materialize_recipes(project_root, home)
+        self.assertEqual(gate.read_bytes(), b"v2\n")
+        self.assertNotIn("user-modified", stream.getvalue())
+        self.assertEqual(
+            self._hook_lock_entry(project_root)["sha256"], self.lock.sha256_of(gate)
+        )
+
+    def test_gate_byte_mismatch_preserves_with_warning(self):
+        """3.1 — RED: byte mismatch preserves the customized gate."""
+        project_root, home = self._hook_project(gate_bytes=b"v1\n")
+        self.materialize.materialize_recipes(project_root, home)
+        gate = project_root / "ai-specs/recipes/wt-hook/hooks/gate.sh"
+        gate.write_bytes(b"# custom user gate\n")
+        (home / "catalog/recipes/wt-hook/hooks/gate.sh").write_bytes(b"v2\n")
+        stream = io.StringIO()
+        with patch("sys.stderr", stream):
+            self.materialize.materialize_recipes(project_root, home)
+        self.assertEqual(gate.read_bytes(), b"# custom user gate\n")
+        warning = stream.getvalue()
+        self.assertIn("gate.sh", warning)
+        self.assertIn("user-modified", warning)
+        self.assertIn("refresh", warning.lower())
+
+    def test_gate_missing_provenance_preserves_without_seeding(self):
+        """3.1 — RED: no baseline means preserve + warn, no seeding."""
+        project_root, home = self._hook_project(gate_bytes=b"v1\n")
+        gate = project_root / "ai-specs/recipes/wt-hook/hooks/gate.sh"
+        gate.parent.mkdir(parents=True, exist_ok=True)
+        gate.write_bytes(b"# pre-existing without provenance\n")
+        stream = io.StringIO()
+        with patch("sys.stderr", stream):
+            self.materialize.materialize_recipes(project_root, home)
+        self.assertEqual(gate.read_bytes(), b"# pre-existing without provenance\n")
+        warning = stream.getvalue()
+        self.assertIn("gate.sh", warning)
+        self.assertIn("provenance", warning.lower())
+        self.assertIsNone(self._hook_lock_entry(project_root),
+                          "a baseline must not be seeded when the CLI did not "
+                          "render the gate")
+
+    def _customize_then_refresh(
+        self, project_root: Path, home: Path, custom: bytes, gate_bytes: bytes = b"v2\n"
+    ) -> tuple[Path, bytes]:
+        """Customize the gate, run an explicit refresh, return (gate, new_bytes)."""
+        gate = project_root / "ai-specs/recipes/wt-hook/hooks/gate.sh"
+        gate.write_bytes(custom)
+        (home / "catalog/recipes/wt-hook/hooks/gate.sh").write_bytes(gate_bytes)
+        self.materialize.materialize_recipes(project_root, home, refresh_gates=True)
+        return gate, gate_bytes
+
+    def test_explicit_refresh_backs_up_pre_refresh_bytes_immutably(self):
+        """3.2 — RED: refresh saves exact pre-refresh bytes to the cache backup."""
+        project_root, home = self._hook_project(gate_bytes=b"v1\n")
+        self.materialize.materialize_recipes(project_root, home)
+        custom = b"# customized user gate\n"
+        gate, _ = self._customize_then_refresh(project_root, home, custom)
+        self.assertEqual(gate.read_bytes(), b"v2\n")
+        self.assertEqual(self._hook_lock_entry(project_root)["sha256"],
+                         self.lock.sha256_of(gate))
+        pc = load_module(ROOT / "lib/_internal/project-cache.py", "project_cache_oo")
+        rel = "ai-specs/recipes/wt-hook/hooks/gate.sh"
+        backup = pc.gate_backup_path(project_root, rel, self.lock.sha256_bytes(custom), cli_home=home)
+        self.assertTrue(backup.is_file(), f"backup missing at {backup}")
+        self.assertEqual(backup.read_bytes(), custom)
+        self.assertNotIn("cache", str(project_root),
+                         "backup must live in the CLI cache, not the project")
+
+    def test_repeated_refresh_is_collision_safe(self):
+        """3.2 — RED: repeated refreshes keep the original snapshot intact."""
+        project_root, home = self._hook_project(gate_bytes=b"v1\n")
+        self.materialize.materialize_recipes(project_root, home)
+        pc = load_module(ROOT / "lib/_internal/project-cache.py", "project_cache_oo2")
+        rel = "ai-specs/recipes/wt-hook/hooks/gate.sh"
+        custom_a = b"# custom A\n"
+        _, _ = self._customize_then_refresh(project_root, home, custom_a)
+        backup_a = pc.gate_backup_path(project_root, rel, self.lock.sha256_bytes(custom_a), cli_home=home)
+        self.assertTrue(backup_a.is_file())
+        custom_b = b"# custom B\n"
+        self._customize_then_refresh(project_root, home, custom_b)
+        backup_b = pc.gate_backup_path(project_root, rel, self.lock.sha256_bytes(custom_b), cli_home=home)
+        self.assertNotEqual(backup_a, backup_b, "distinct content must not collide")
+        self.assertTrue(backup_a.is_file(), "original snapshot must remain intact")
+        self.assertTrue(backup_b.is_file())
+        self.assertEqual(backup_a.read_bytes(), custom_a)
+
+    def test_failed_backup_write_leaves_gate_unchanged(self):
+        """3.2 — RED: a failed backup aborts the refresh atomically."""
+        project_root, home = self._hook_project(gate_bytes=b"v1\n")
+        self.materialize.materialize_recipes(project_root, home)
+        gate = project_root / "ai-specs/recipes/wt-hook/hooks/gate.sh"
+        custom = b"# custom gate\n"
+        gate.write_bytes(custom)
+        before_lock = (project_root / "ai-specs/.ai-specs.lock").read_bytes()
+        (home / "catalog/recipes/wt-hook/hooks/gate.sh").write_bytes(b"v9\n")
+
+        pc = load_module(ROOT / "lib/_internal/project-cache.py", "project_cache_oo3")
+        # Force the backup target to collide with an existing FILE so mkdir fails.
+        rel = "ai-specs/recipes/wt-hook/hooks/gate.sh"
+        bad = pc.gate_backup_path(project_root, rel, self.lock.sha256_bytes(custom), cli_home=home)
+        bad.parent.parent.mkdir(parents=True, exist_ok=True)
+        bad.parent.write_text("blocking file\n")  # rel-key dir position is a file
+
+        with patch.object(self.materialize._load_project_cache(), "gate_backup_path",
+                          return_value=bad):
+            with self.assertRaises(Exception):
+                self.materialize.materialize_recipes(project_root, home, refresh_gates=True)
+        self.assertEqual(gate.read_bytes(), custom,
+                         "gate must remain unchanged when the backup write fails")
+        self.assertEqual(
+            (project_root / "ai-specs/.ai-specs.lock").read_bytes(), before_lock,
+            "lock must not be partially updated on refresh failure",
+        )
+
+    def test_refresh_absent_or_disabled_provider_parity(self):
+        """3.2 — RED: refresh behaves identically with external orchestration
+        absent or disabled."""
+        import subprocess
+        outcomes = []
+        for extra_env in ({}, {"GENTLE_AI_MODE": "disabled", "GENTLE_AI_ABSENT": "1"}):
+            project_root, home = self._hook_project(gate_bytes=b"v1\n")
+            env = dict(os.environ, AI_SPECS_HOME=str(home))
+            env.update(extra_env)
+            proc = subprocess.run(
+                [
+                    "python3", str(ROOT / "lib/_internal/recipe-materialize.py"),
+                    str(project_root), str(home),
+                ],
+                capture_output=True, text=True, env=env, check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            gate = project_root / "ai-specs/recipes/wt-hook/hooks/gate.sh"
+            gate.write_bytes(b"# custom\n")
+            (home / "catalog/recipes/wt-hook/hooks/gate.sh").write_bytes(b"v3\n")
+            proc = subprocess.run(
+                [
+                    "python3", str(ROOT / "lib/_internal/recipe-materialize.py"),
+                    str(project_root), str(home), "--refresh-gates",
+                ],
+                capture_output=True, text=True, env=env, check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            outcomes.append(gate.read_bytes())
+        self.assertEqual(len(set(outcomes)), 1,
+                         "absent and disabled external orchestration must behave "
+                         "identically")
+
+    def test_gate_provenance_policy_is_documented(self):
+        """The changed recipe docs preserve the gate provenance contract."""
+        docs = (
+            ROOT / "catalog/recipes/worktree-flow/README.md",
+            ROOT / "catalog/recipes/trello-mcp-workflow/README.md",
+            ROOT / "docs/recipes-catalog.md",
+        )
+        surface = "\n".join(path.read_text().lower() for path in docs)
+        for phrase in (
+            "gate provenance",
+            "records a baseline",
+            "byte mismatch",
+            "missing baseline",
+            "ai-specs sync --refresh-gates",
+            "cache-only immutable backup",
+            "runtime hook scripts are no longer rewritten unconditionally",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, surface)
+        self.assertNotIn("always rewritten", surface)
 
 
 if __name__ == "__main__":

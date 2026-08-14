@@ -152,6 +152,7 @@ class Doctor:
         self._check_worktree_gate()
         self._check_repo_topology()
         self._check_stale_template_overrides()
+        self._check_gate_provenance()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -988,6 +989,90 @@ class Doctor:
                     "stale-override",
                     message,
                     guidance=f"rm {tpl.target} && ai-specs sync",
+                ))
+
+    def _check_gate_provenance(self) -> None:
+        """Diagnose generated runtime hook (gate) provenance from lock baselines.
+
+        Warns when a materialized gate's current bytes differ from its recorded
+        baseline (user-modified) or when no baseline exists (unknown
+        provenance); stays quiet for gates whose baseline matches. Mirrors the
+        sync-side classifier exactly; never rewrites anything.
+        """
+        util = self._load_util()
+        if util is None:
+            return
+        catalog = AI_SPECS_HOME / "catalog" / "recipes"
+        if not catalog.is_dir():
+            return
+        manifest = self.root / "ai-specs" / "ai-specs.toml"
+        if not manifest.is_file():
+            return
+        try:
+            import tomllib
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        lock_path = self.root / "ai-specs" / ".ai-specs.lock"
+        lock_mod_path = Path(__file__).with_name("lock.py")
+        lock_spec = importlib.util.spec_from_file_location("lock_doctor_gate", lock_mod_path)
+        if lock_spec is None or lock_spec.loader is None:
+            return
+        lock_mod = importlib.util.module_from_spec(lock_spec)
+        sys.modules[lock_spec.name] = lock_mod
+        try:
+            lock_spec.loader.exec_module(lock_mod)
+            managed = lock_mod.load_lock(lock_path).get("managed", {})
+        except Exception:
+            managed = {}
+
+        recipes = data.get("recipes") or {}
+        schema_path = Path(__file__).with_name("recipe_schema.py")
+        spec = importlib.util.spec_from_file_location("recipe_schema_doctor_gate", schema_path)
+        if spec is None or spec.loader is None:
+            return
+        schema = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = schema
+        try:
+            spec.loader.exec_module(schema)
+        except Exception:
+            return
+
+        for rid, val in recipes.items():
+            if not isinstance(val, dict) or val.get("enabled") is not True:
+                continue
+            recipe_dir = catalog / rid
+            recipe_toml = recipe_dir / "recipe.toml"
+            if not recipe_toml.is_file():
+                continue
+            try:
+                recipe = schema.load_recipe_toml(recipe_toml)
+            except Exception:
+                continue
+            for hook in getattr(recipe, "runtime_hooks", []) or []:
+                rel = (
+                    f"ai-specs/recipes/{rid}/hooks/"
+                    f"{Path(hook.script).name}"
+                )
+                dest = self.root / rel
+                if not dest.is_file():
+                    continue
+                state = util.classify_managed_override(dest, managed.get(rel))
+                if state == "user_modified":
+                    message = f"{rel} is user-modified; sync will preserve it"
+                elif state == "untracked":
+                    message = (
+                        f"{rel} has no recorded provenance; sync will preserve it "
+                        "and record a baseline only when the CLI renders the gate"
+                    )
+                else:
+                    continue
+                self.checks.append(Check(
+                    Severity.WARN,
+                    "gate-provenance",
+                    message,
+                    guidance=f"rm {rel} && ai-specs sync (or ai-specs sync --refresh-gates)",
                 ))
 
     def _check_enabled_agents(self) -> None:
