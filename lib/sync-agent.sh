@@ -122,8 +122,9 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
         echo ""
         echo "ai-specs sync-agent"
         echo "  source root: $ROOT_PATH"
+        echo "  planning:    $ROOT_PATH"
         echo "  targets:     ${RESOLVED_TARGETS[*]}"
-        echo "  mode:        public root fan-out"
+        echo "  mode:        public root fan-out (declared-only)"
         echo ""
 
         # Generate resolved-config for subrepo AGENTS.md enrichment.

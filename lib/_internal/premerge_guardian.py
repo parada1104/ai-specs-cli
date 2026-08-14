@@ -395,7 +395,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check pre-merge archive/artifact gates")
     parser.add_argument("slug", help="change slug under openspec/changes/")
     parser.add_argument(
-        "--root", type=Path, default=Path.cwd(), help="repository root (default: cwd)"
+        "--root", type=Path, required=True,
+        help="resolved planning root (never the process cwd; a subrepo request "
+             "passes the proven superproject root)",
     )
     parser.add_argument(
         "--tier", choices=["light", "standard", "full"], default=None,

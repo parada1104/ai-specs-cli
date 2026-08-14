@@ -116,6 +116,32 @@ def commands_dir(project_root: Path, cli_home: Path | None = None) -> Path:
     return cache_root(project_root, cli_home=cli_home) / "commands"
 
 
+def backups_root(project_root: Path, cli_home: Path | None = None) -> Path:
+    """Cache-only immutable backup namespace for gate refresh snapshots.
+
+    Lives under the CLI cache, never inside the user project. Backup files are
+    named by content hash so repeated refreshes cannot overwrite an earlier
+    snapshot (collision-safe by construction).
+    """
+    return cache_root(project_root, cli_home=cli_home) / "backups"
+
+
+def gate_backup_path(
+    project_root: Path,
+    rel_path: str,
+    content_sha: str,
+    cli_home: Path | None = None,
+) -> Path:
+    """Deterministic immutable backup path for one gate hook snapshot.
+
+    ``backups/<sha256(rel_path)>/<content_sha>.sh`` — keyed by the
+    project-relative target and the exact pre-refresh bytes, so identical
+    refreshes reuse the path and distinct content never collides.
+    """
+    rel_key = hashlib.sha256(str(rel_path).encode("utf-8")).hexdigest()
+    return backups_root(project_root, cli_home=cli_home) / rel_key / f"{content_sha}.sh"
+
+
 def resolved_skills_dir(project_root: Path, cli_home: Path | None = None) -> Path:
     return cache_root(project_root, cli_home=cli_home) / "resolved-skills"
 

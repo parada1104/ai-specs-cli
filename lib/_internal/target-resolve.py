@@ -57,6 +57,30 @@ def _load_toml_read_module():
     return module
 
 
+def _load_util_module():
+    module_path = Path(__file__).with_name("util.py")
+    spec = importlib.util.spec_from_file_location("util_target_resolve", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load helper module at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _worktree_flow_config(data: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort [recipes.worktree-flow.config] from raw manifest data."""
+    recipes = data.get("recipes") or {}
+    wf = recipes.get("worktree-flow")
+    if not isinstance(wf, dict):
+        return {}
+    cfg = wf.get("config")
+    if isinstance(cfg, dict):
+        return cfg
+    # Flat style: key=value directly in [recipes.worktree-flow].
+    return {k: v for k, v in wf.items() if k not in ("enabled", "version")}
+
+
 def _normalize_declared_relpath(raw: Any) -> str:
     if not isinstance(raw, str):
         raise ResolutionError(repr(raw), "must be a string")
@@ -108,6 +132,7 @@ def resolve_target_plan(project_root: str | Path) -> dict[str, Any]:
                 "kind": kind,
                 "path": str(path),
                 "rel": rel,
+                "planning_root": str(root),
                 "derived_ai_specs": str(path / "ai-specs"),
                 "manifest_source": str(toml_path),
                 "derived_artifacts": list(DERIVED_ARTIFACTS),
@@ -126,9 +151,27 @@ def resolve_target_plan(project_root: str | Path) -> dict[str, Any]:
         seen.add(rel)
         append_target(rel, "subrepo", rel, path)
 
+    # One shared planning root and declared-only fan-out semantics. The root
+    # manifest is the canonical planning tree for every target; .gitmodules is
+    # advisory-only and never expands the declared target set.
+    wf_cfg = _worktree_flow_config(data)
+    configured_topology = str(wf_cfg.get("repo_topology") or "auto")
+    worktrees_dir = str(wf_cfg.get("worktrees_dir") or ".worktrees") or ".worktrees"
+    util = _load_util_module()
+    topology = util.resolve_repo_topology(root, configured_topology)
+    fanout_targets = [t["rel"] for t in targets if t["kind"] == "subrepo"]
+
     return {
         "root": str(root),
         "manifest": str(toml_path),
+        "planning_root": str(root),
+        "topology": {
+            "resolved": topology.resolved,
+            "via": topology.via,
+        },
+        "declared_only": True,
+        "fanout_targets": fanout_targets,
+        "worktrees_dir": worktrees_dir,
         "gitmodules": {
             "path": str(root / ".gitmodules"),
             "mode": "advisory-only",

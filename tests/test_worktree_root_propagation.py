@@ -341,5 +341,118 @@ class WorktreeEventCwdPropagationTests(unittest.TestCase):
         self.assertEqual(diag["decision"], "block")
 
 
+class SubmoduleRequestContextIntegrationTests(unittest.TestCase):
+    """1.1 — RED: real-git subrepo request context + worktree ownership.
+
+    Uses a real superproject with an initialized submodule: the subrepo cwd
+    resolves to subrepo ownership with the proven superrepo planning root, a
+    ``git -C <subrepo> worktree add`` creates a subrepo-owned worktree under
+    the shared superproject layout, and a superrepo-context request without an
+    explicit subrepo hard-errors before any ``git worktree add``.
+    """
+
+    def _load_util(self) -> object:
+        spec = importlib.util.spec_from_file_location(
+            "wtr_req_ctx_util", ROOT / "lib" / "_internal" / "util.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="wtr-sub-")
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(os.path.realpath(self.tmp.name))
+
+        source = root / "api-source"
+        source.mkdir()
+        _git(source, "init", "-q")
+        _git(source, "config", "user.email", "t@t.t")
+        _git(source, "config", "user.name", "t")
+        (source / "README.md").write_text("api\n")
+        _git(source, "add", "-A")
+        _git(source, "commit", "-qm", "init")
+
+        super_repo = root / "super"
+        super_repo.mkdir()
+        _git(super_repo, "init", "-q")
+        _git(super_repo, "config", "user.email", "t@t.t")
+        _git(super_repo, "config", "user.name", "t")
+        (super_repo / "README.md").write_text("super\n")
+        _git(super_repo, "add", "-A")
+        _git(super_repo, "commit", "-qm", "init")
+        _git(
+            super_repo,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "--name",
+            "api",
+            str(source),
+            "apps/api",
+        )
+        _git(super_repo, "commit", "-qm", "add submodule")
+        self.super_repo = super_repo
+        self.subrepo = super_repo / "apps" / "api"
+        self.util = self._load_util()
+
+    def test_subrepo_cwd_resolves_subrepo_owner_and_super_planning_root(self):
+        ctx = self.util.resolve_request_context(self.subrepo)
+        self.assertEqual(ctx.owner_root, self.subrepo.resolve())
+        self.assertEqual(ctx.subrepo_path, "apps/api")
+        self.assertEqual(ctx.planning_root, self.super_repo.resolve())
+        self.assertEqual(ctx.topology.resolved, "monorepo-submodules")
+
+    def test_git_dash_c_create_yields_subrepo_owned_worktree(self):
+        dest = self.super_repo / ".worktrees" / "apps-api-feat-x"
+        _git(
+            self.subrepo,
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat-x",
+            str(dest.resolve()),
+            "main",
+        )
+        sub_list = subprocess.run(
+            ["git", "-C", str(self.subrepo), "worktree", "list"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertIn(str(dest.resolve()), sub_list,
+                      "subrepo worktree list must register the linked worktree")
+        super_list = subprocess.run(
+            ["git", "-C", str(self.super_repo), "worktree", "list"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertNotIn(str(dest.resolve()), super_list,
+                         "the linked worktree is owned by the submodule, not the "
+                         "superproject")
+
+    def test_superrepo_cwd_without_subrepo_hard_errors_before_any_create(self):
+        before = subprocess.run(
+            ["git", "-C", str(self.super_repo), "worktree", "list"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        with self.assertRaises(self.util.SubrepoResolutionError):
+            self.util.resolve_request_context(self.super_repo)
+        after = subprocess.run(
+            ["git", "-C", str(self.super_repo), "worktree", "list"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertEqual(before, after,
+                         "hard error must precede any git worktree add")
+
+    def test_superrepo_cwd_with_explicit_subrepo_keeps_super_planning_root(self):
+        ctx = self.util.resolve_request_context(
+            self.super_repo, explicit_subrepo="apps/api"
+        )
+        self.assertEqual(ctx.subrepo_path, "apps/api")
+        self.assertEqual(ctx.planning_root, self.super_repo.resolve())
+
+
 if __name__ == "__main__":
     unittest.main()

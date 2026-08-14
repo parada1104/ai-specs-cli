@@ -57,6 +57,7 @@ write_lock = _lock_mod.write_lock
 set_recipe_skill_hashes = _lock_mod.set_recipe_skill_hashes
 set_dep_skill_hashes = _lock_mod.set_dep_skill_hashes
 set_managed_override = _lock_mod.set_managed_override
+set_gate_baseline = _lock_mod.set_gate_baseline
 sha256_of = _lock_mod.sha256_of
 remove_recipe_lock_entries = _lock_mod.remove_recipe_lock_entries
 
@@ -473,7 +474,6 @@ GATE_SCOPE_VALUES = ("auto", "superrepo", "subrepo")
 REPO_TOPOLOGY_VALUES = ("auto", "standalone", "monorepo-apps", "monorepo-submodules")
 # Backward-compatible alias for older call sites / tests.
 GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
-_STALE_GATE_WARNED: set[Path] = set()
 REPO_TOPOLOGY_PLACEHOLDER = "__WORKTREE_REPO_TOPOLOGY__"
 TRACKER_CLI_HOME_PLACEHOLDER = "__TRACKER_CLI_HOME__"
 GATE_IMPL_PLACEHOLDER = "__WORKTREE_GATE_IMPL__"
@@ -485,6 +485,72 @@ GATE_VERSION_PLACEHOLDER = "__WORKTREE_GATE_VERSION__"
 LEGACY_HOOK_REL = "ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh"
 
 
+def _write_gate_backup(
+    project_root: Path,
+    rel: str,
+    prior_bytes: bytes,
+    cli_home: Path | None,
+) -> Path:
+    """Persist one immutable pre-refresh snapshot in the CLI cache.
+
+    The backup path is keyed by the project-relative target and the exact
+    content hash, so repeated refreshes never overwrite an earlier snapshot.
+    """
+    util = _load_util()
+    pc = _load_project_cache()
+    path = pc.gate_backup_path(
+        project_root, rel, util.sha256_bytes(prior_bytes), cli_home=cli_home
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_bytes(prior_bytes)
+    return path
+
+
+def _refresh_gate(
+    project_root: Path,
+    dest: Path,
+    rel: str,
+    content: str,
+    lock: dict,
+    lock_path: Path,
+    recipe_id: str,
+    hook: Any,
+    cli_home: Path | None,
+) -> None:
+    """Explicit gate refresh: cache backup → gate write → lock (all-or-nothing).
+
+    On any failure the new backup is deleted and the gate is restored to its
+    prior bytes; the lock is never partially updated (atomic write_lock).
+    """
+    util = _load_util()
+    prior = dest.read_bytes() if dest.exists() else None
+    created_backup: Path | None = None
+    try:
+        if prior is not None:
+            created_backup = _write_gate_backup(project_root, rel, prior, cli_home)
+        dest.write_text(content)
+        os.chmod(dest, 0o755)
+        set_gate_baseline(
+            lock, rel, util.sha256_bytes(content.encode()),
+            recipe=recipe_id, source=hook.script,
+        )
+        write_lock(lock_path, lock)
+    except BaseException:
+        if prior is not None:
+            try:
+                dest.write_bytes(prior)
+                os.chmod(dest, 0o755)
+            except OSError:
+                pass
+        if created_backup is not None and created_backup.exists():
+            try:
+                created_backup.unlink()
+            except OSError:
+                pass
+        raise
+
+
 def materialize_hook_script(
     recipe_dir: Path,
     hook: Any,
@@ -492,11 +558,20 @@ def materialize_hook_script(
     recipe_id: str,
     merged_cfg: dict[str, Any] | None = None,
     cli_home: Path | None = None,
+    refresh: bool = False,
 ) -> str:
-    """Copy a recipe hook script to the harness-neutral path and chmod +x.
+    """Materialize a generated runtime hook script with gate provenance.
 
-    Returns the project-relative materialized path so every harness's wiring
-    can reference the single copy.
+    Records a lock baseline of the exact bytes the CLI last rendered
+    (``kind="gate"``, ``policy="auto"``) and classifies before writing:
+
+    - baseline match + catalog drift → refresh and re-record (unmodified gate);
+    - byte mismatch (user-modified) → preserve + warn with refresh guidance;
+    - no baseline (unknown provenance) → preserve + warn, never seed.
+
+    ``refresh=True`` (the ``--refresh-gates`` flag, never set by ordinary sync)
+    replaces a customized gate only after its exact pre-refresh bytes are saved
+    to the cache-only immutable backup. Returns the project-relative path.
     """
     src = recipe_dir / hook.script
     if not src.is_file():
@@ -549,24 +624,60 @@ def materialize_hook_script(
     if TRACKER_CLI_HOME_PLACEHOLDER in content:
         home_val = str(Path(cli_home).resolve()) if cli_home is not None else ""
         content = content.replace(TRACKER_CLI_HOME_PLACEHOLDER, home_val)
-    if recipe_id == "worktree-flow" and dest.exists():
-        try:
-            existing = dest.read_text()
-        except OSError:
-            existing = ""
-        if 'stamped_gate_scope="' not in existing:
-            if dest not in _STALE_GATE_WARNED:
-                warn(
-                    f"stale materialized worktree gate lacks gate_scope contract at {dest}; "
-                    "preserving existing bytes. Refresh with:\n"
-                    f"  rm {dest} && ai-specs sync"
-                )
-                _STALE_GATE_WARNED.add(dest)
-            print(f"    · hook skipped (stale) {rel}")
-            return rel
-    dest.write_text(content)
-    os.chmod(dest, 0o755)
-    print(f"    ✓ hook script {rel}")
+
+    util = _load_util()
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
+    target = rel
+    entry = (lock.get("managed") or {}).get(target)
+
+    def record(written: bytes = content.encode()) -> None:
+        set_gate_baseline(
+            lock, target, util.sha256_bytes(written),
+            recipe=recipe_id, source=hook.script,
+        )
+        write_lock(lock_path, lock)
+
+    if refresh:
+        _refresh_gate(
+            project_root, dest, target, content, lock, lock_path,
+            recipe_id, hook, cli_home,
+        )
+        print(f"    ✓ hook refreshed {rel}")
+        return rel
+
+    state = util.classify_managed_override(dest, entry, would_write=content)
+    if state == "missing":
+        dest.write_text(content)
+        os.chmod(dest, 0o755)
+        record()
+        print(f"    ✓ hook script {rel}")
+        return rel
+    if state == "managed_current":
+        record()
+        print(f"    · hook skipped (current) {rel}")
+        return rel
+    if state == "managed_stale":
+        # Baseline matches current bytes: the CLI rendered this gate, so an
+        # ordinary sync may force-update it and re-record the baseline.
+        dest.write_text(content)
+        os.chmod(dest, 0o755)
+        record()
+        print(f"    ✓ hook refreshed (baseline matched) {rel}")
+        return rel
+    if state == "user_modified":
+        warn(
+            f"hook {rel} is user-modified; preserving existing bytes. Refresh with:\n"
+            f"  rm {rel} && ai-specs sync  (or: ai-specs sync --refresh-gates)"
+        )
+        print(f"    · hook skipped (user-modified) {rel}")
+        return rel
+    warn(
+        f"hook {rel} has no recorded provenance; preserving existing bytes. "
+        "A baseline is recorded only when the CLI renders the gate. Refresh with:\n"
+        f"  rm {rel} && ai-specs sync  (or: ai-specs sync --refresh-gates)"
+    )
+    print(f"    · hook skipped (no provenance) {rel}")
     return rel
 
 
@@ -868,11 +979,28 @@ def build_resolved_config(project_root: Path) -> dict[str, Any]:
                 if cap and rec:
                     bindings_out[cap] = rec
 
-    return {
+    # Request-context propagation: the root manifest project is the canonical
+    # planning root for every fan-out target, and the resolved topology is
+    # stamped so downstream renderers never re-derive it from a subrepo cwd.
+    resolved: dict[str, Any] = {
         "bindings": bindings_out,
         "recipes": recipes_out,
         "enabled": enabled_ids,
+        "project_root": str(Path(project_root).resolve()),
     }
+    wf_cfg: dict[str, Any] = {}
+    wf_raw = raw_recipes.get("worktree-flow")
+    if isinstance(wf_raw, dict):
+        wf_cfg = wf_raw.get("config") if isinstance(wf_raw.get("config"), dict) else {
+            k: v for k, v in wf_raw.items() if k not in ("enabled", "version")
+        }
+    configured_topology = str(wf_cfg.get("repo_topology") or "auto")
+    try:
+        topo = _load_util().resolve_repo_topology(project_root, configured_topology)
+        resolved["topology"] = {"resolved": topo.resolved, "via": topo.via}
+    except Exception:
+        resolved["topology"] = {"resolved": "standalone", "via": "auto"}
+    return resolved
 
 
 def _enabled_agents(project_root: Path) -> list[str]:
@@ -888,7 +1016,7 @@ def _enabled_agents(project_root: Path) -> list[str]:
     return [str(a) for a in enabled if a]
 
 
-def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None, resolved_config_out: Path | None = None, resolved_hooks_out: Path | None = None) -> int:
+def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None, resolved_config_out: Path | None = None, resolved_hooks_out: Path | None = None, refresh_gates: bool = False) -> int:
     catalog_dir = ai_specs_home / "catalog" / "recipes"
     toml_path = project_root / "ai-specs" / "ai-specs.toml"
     cli_home = Path(ai_specs_home)
@@ -1071,7 +1199,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # collect a resolved entry for downstream hooks-render.py. Tunable
         # config values ride along as env (resolved [config.*] overrides).
         for rhook in getattr(recipe, "runtime_hooks", []) or []:
-            script_path = materialize_hook_script(recipe_dir, rhook, project_root, rid, merged_cfg, cli_home=cli_home)
+            script_path = materialize_hook_script(recipe_dir, rhook, project_root, rid, merged_cfg, cli_home=cli_home, refresh=refresh_gates)
             # Pass tunables to the hook as env vars. Only ENV-shaped config keys
             # (UPPER_SNAKE_CASE) are exported, so hook scripts can read them as
             # environment variables; other config keys (e.g. worktrees_dir) are
@@ -1226,6 +1354,7 @@ def main() -> int:
     resolved_config_out = None
     resolved_hooks_out = None
     resolved_config_only = False
+    refresh_gates = False
     if "--recipe-mcp-out" in args:
         idx = args.index("--recipe-mcp-out")
         if idx + 1 < len(args):
@@ -1245,11 +1374,16 @@ def main() -> int:
         idx = args.index("--resolved-config-only")
         resolved_config_only = True
         args = args[:idx] + args[idx + 1:]
+    if "--refresh-gates" in args:
+        idx = args.index("--refresh-gates")
+        refresh_gates = True
+        args = args[:idx] + args[idx + 1:]
     if len(args) != 2:
         print(
             f"Usage: {sys.argv[0]} <project_root> <ai_specs_home>"
             " [--recipe-mcp-out <path>] [--resolved-config-out <path>]"
-            " [--resolved-hooks-out <path>] [--resolved-config-only]",
+            " [--resolved-hooks-out <path>] [--resolved-config-only]"
+            " [--refresh-gates]",
             file=sys.stderr,
         )
         return 2
@@ -1264,7 +1398,10 @@ def main() -> int:
         return build_resolved_config_only(project_root, resolved_config_out, ai_specs_home)
 
     try:
-        return materialize_recipes(project_root, ai_specs_home, recipe_mcp_out, resolved_config_out, resolved_hooks_out)
+        return materialize_recipes(
+            project_root, ai_specs_home, recipe_mcp_out, resolved_config_out,
+            resolved_hooks_out, refresh_gates=refresh_gates,
+        )
     except Exception as exc:
         fail(str(exc))
         return 1

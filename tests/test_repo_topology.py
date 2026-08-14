@@ -320,6 +320,134 @@ class ResolveRepoTopologyTests(unittest.TestCase):
         self.assertEqual(res2.resolved, "standalone")
 
 
+class RequestContextTests(unittest.TestCase):
+    """1.1 — RED: resolve_request_context owner/planning-root separation.
+
+    Covers the worktree-flow "Request context owner and planning root
+    separation" requirement: subrepo cwd owns the subrepo with the proven
+    superrepo as planning root; a superrepo-context request cannot infer a
+    subrepo and hard-errors before any create; detached/uninitialized/
+    ambiguous topology fails safe with no planning-root exception.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.util = _load_util()
+
+    def test_subrepo_cwd_owns_subrepo_with_super_planning_root(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name), path="apps/api", name="api"
+        )
+        cwd = super_repo / "apps" / "api"
+        ctx = self.util.resolve_request_context(cwd)
+        self.assertEqual(ctx.owner_root, cwd.resolve())
+        self.assertEqual(ctx.subrepo_path, "apps/api")
+        self.assertEqual(ctx.planning_root, super_repo.resolve())
+        self.assertEqual(ctx.topology.resolved, "monorepo-submodules")
+        self.assertEqual(ctx.worktrees_dir, ".worktrees")
+
+    def test_superrepo_cwd_without_explicit_subrepo_hard_errors(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(Path(tmp.name), path="apps/api")
+        with self.assertRaises(self.util.SubrepoResolutionError) as ctx:
+            self.util.resolve_request_context(super_repo)
+        self.assertIn("subrepo", str(ctx.exception).lower())
+
+    def test_superrepo_cwd_with_explicit_subrepo_uses_super_planning_root(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name), path="apps/api", name="api"
+        )
+        ctx = self.util.resolve_request_context(
+            super_repo, explicit_subrepo="apps/api"
+        )
+        self.assertEqual(ctx.owner_root, super_repo.resolve())
+        self.assertEqual(ctx.subrepo_path, "apps/api")
+        self.assertEqual(ctx.planning_root, super_repo.resolve())
+
+    def test_standalone_request_planning_root_is_owner_root(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name) / "repo"
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "main")
+        (repo / "README.md").write_text("x\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "init")
+        ctx = self.util.resolve_request_context(repo)
+        self.assertEqual(ctx.owner_root, repo.resolve())
+        self.assertEqual(ctx.planning_root, repo.resolve())
+        self.assertIsNone(ctx.subrepo_path)
+        self.assertEqual(ctx.topology.resolved, "standalone")
+
+    def test_uninitialized_submodule_fails_safe_without_planning_exception(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name), path="apps/api", initialized=False
+        )
+        ctx = self.util.resolve_request_context(super_repo)
+        self.assertIsNone(ctx.subrepo_path)
+        self.assertEqual(ctx.planning_root, ctx.owner_root)
+
+    def test_non_git_cwd_fails_safe_to_owner_root(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        plain = Path(tmp.name) / "plain"
+        plain.mkdir()
+        ctx = self.util.resolve_request_context(plain)
+        self.assertEqual(ctx.owner_root, plain.resolve())
+        self.assertEqual(ctx.planning_root, plain.resolve())
+        self.assertIsNone(ctx.subrepo_path)
+        self.assertEqual(ctx.topology.resolved, "standalone")
+
+    def test_explicit_inferred_mismatch_names_both_values(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name),
+            path="apps/api",
+            name="api",
+            second={"path": "apps/web", "name": "web"},
+        )
+        cwd = super_repo / "apps" / "api"
+        with self.assertRaises(self.util.SubrepoResolutionError) as ctx:
+            self.util.resolve_request_context(cwd, explicit_subrepo="apps/web")
+        msg = str(ctx.exception)
+        self.assertIn("apps/api", msg)
+        self.assertIn("apps/web", msg)
+
+    def test_linked_submodule_worktree_longest_prefix_inference(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(
+            Path(tmp.name),
+            path="alquimia-front",
+            name="alquimia-front",
+            second={"path": "alquimia-front-web", "name": "alquimia-front-web"},
+        )
+        wt = super_repo / ".worktrees" / "alquimia-front-web-feat-x"
+        wt.parent.mkdir(parents=True, exist_ok=True)
+        git(
+            super_repo / "alquimia-front-web",
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat-x",
+            str(wt.resolve()),
+            "main",
+        )
+        ctx = self.util.resolve_request_context(wt)
+        self.assertEqual(ctx.subrepo_path, "alquimia-front-web")
+        self.assertEqual(ctx.planning_root, super_repo.resolve())
+        self.assertNotEqual(ctx.subrepo_path, "alquimia-front")
+
+
 class OverrideIsStaleTests(unittest.TestCase):
     """1.4 — override_is_stale unit tests."""
 

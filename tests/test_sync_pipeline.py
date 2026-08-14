@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -554,6 +555,31 @@ class SyncPipelineTests(unittest.TestCase):
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
             self.assertTrue((workspace / "AGENTS.md").is_file())
             self.assertFalse((workspace / "packages" / "a" / "AGENTS.md").exists())
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def test_empty_subrepos_with_gitmodules_entries_do_not_fan_out(self):
+        """1.3 — RED: .gitmodules never expands an empty declared target set."""
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-sync'\n"
+                "subrepos = []\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n"
+            )
+            (workspace / ".gitmodules").write_text(
+                '[submodule "packages/a"]\n\tpath = packages/a\n\turl = ../a.git\n'
+                '[submodule "packages/b"]\n\tpath = packages/b\n\turl = ../b.git\n'
+            )
+            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            for subrepo in ("packages/a", "packages/b"):
+                self.assertFalse(
+                    (workspace / subrepo / "AGENTS.md").exists(),
+                    f"{subrepo} must NOT receive fan-out (empty declared set)",
+                )
         finally:
             shutil.rmtree(workspace.parent)
 
@@ -2879,6 +2905,75 @@ class TestCustomVcsWarning(unittest.TestCase):
             f"Warning must appear exactly once, but found {warning_count} times.\n"
             f"stderr: {stderr}",
         )
+
+
+class GateRefreshCliTests(unittest.TestCase):
+    """4.3 — E2E: `ai-specs sync --refresh-gates` refreshes a customized gate
+    after a cache-only immutable backup, while ordinary sync preserves it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="gate-refresh-")
+        self.addCleanup(self.tmp.cleanup)
+        self.workspace = Path(self.tmp.name) / "workspace"
+        self.workspace.mkdir()
+
+    def _env(self, home: Path) -> dict:
+        env = dict(os.environ, AI_SPECS_HOME=str(home), AI_SPECS_GATE_OFFLINE="1")
+        env.pop("AI_SPECS_GATE_BUILD", None)
+        return env
+
+    def test_ordinary_sync_preserves_customized_gate_refresh_flag_updates(self):
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "gate_refresh_pc", ROOT / "lib/_internal/project-cache.py"
+        )
+        pc = _ilu.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = pc
+        spec.loader.exec_module(pc)
+
+        subprocess.run([str(CLI), "init", str(self.workspace)], check=True, text=True)
+        (self.workspace / "ai-specs" / "ai-specs.toml").write_text(
+            "[project]\nname = 'gate-refresh'\nsubrepos = []\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            "[recipes.worktree-flow]\nenabled = true\n\n"
+            "[recipes.worktree-flow.config]\ngate_mode = 'always'\n"
+        )
+        env = self._env(ROOT)
+        proc = subprocess.run(
+            [str(CLI), "sync", str(self.workspace)], capture_output=True, text=True,
+            env=env, check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        gate = self.workspace / "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
+        self.assertTrue(gate.is_file(), "gate launcher must materialize")
+        rendered = gate.read_bytes()
+
+        # Customize; ordinary sync must preserve with a warning.
+        gate.write_bytes(b"# customized gate\n")
+        proc = subprocess.run(
+            [str(CLI), "sync", str(self.workspace)], capture_output=True, text=True,
+            env=env, check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(gate.read_bytes(), b"# customized gate\n")
+        self.assertIn("user-modified", proc.stderr + proc.stdout)
+
+        # Explicit refresh replaces and backs up the exact pre-refresh bytes.
+        proc = subprocess.run(
+            [str(CLI), "sync", str(self.workspace), "--refresh-gates"],
+            capture_output=True, text=True, env=env, check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(gate.read_bytes(), rendered,
+                         "refresh must restore the CLI-rendered gate bytes")
+        rel = "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
+        backup = pc.gate_backup_path(
+            self.workspace, rel,
+            hashlib.sha256(b"# customized gate\n").hexdigest(),
+        )
+        self.assertTrue(backup.is_file(), f"immutable backup missing at {backup}")
+        self.assertEqual(backup.read_bytes(), b"# customized gate\n")
 
 
 class FanOutDriftTests(unittest.TestCase):

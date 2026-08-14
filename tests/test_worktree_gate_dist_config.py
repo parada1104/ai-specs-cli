@@ -8,6 +8,7 @@ answers the parity corpus through the materialized legacy copy).
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -16,6 +17,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow"
@@ -149,21 +151,33 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
             self.materialize.merge_config(recipe, {"gate_impl": "rust"})
 
     def test_sentinel_upgrade_replaces_pre_go_gate(self):
-        # Task 3.18: a project with a pre-Go materialized gate (the e080483
-        # gate, which already carries the stamped_gate_scope sentinel) must be
-        # UPGRADED to the launcher, not skipped as stale. The launcher keeps
-        # the literal sentinel so the staleness probe passes.
+        # A pre-Go materialized gate (the e080483 gate, which already carries
+        # the stamped_gate_scope sentinel) has NO lock baseline under the gate
+        # provenance model: ordinary sync preserves it with a warning (unknown
+        # provenance, no seeding), and an explicit refresh upgrades it to the
+        # launcher after backing up the pre-refresh bytes.
         proj = self._project()
         hook = self._hook(proj)
         hook.parent.mkdir(parents=True, exist_ok=True)
-        hook.write_text(
+        pre_go = (
             '#!/usr/bin/env bash\n'
             'stamped_gate_mode="always"\n'
             'stamped_gate_scope="auto"\n'
             'stamped_repo_topology="auto"\n'
             'exit 0\n'
         )
-        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+        hook.write_text(pre_go)
+        stream = io.StringIO()
+        with patch("sys.stderr", stream):
+            self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+        self.assertEqual(hook.read_text(), pre_go,
+                         "unknown provenance must preserve the pre-Go gate")
+        self.assertIn("no recorded provenance", stream.getvalue())
+
+        self.assertEqual(
+            self.materialize.materialize_recipes(proj, self.home, refresh_gates=True),
+            0,
+        )
         content = hook.read_text()
         self.assertIn('stamped_gate_scope="', content, "launcher must keep the sentinel")
         self.assertIn("_resolve_gate_mode", content, "must be replaced by the launcher")

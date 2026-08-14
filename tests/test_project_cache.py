@@ -96,6 +96,42 @@ class ProjectCacheTests(unittest.TestCase):
             self.mod.cache_root(root, cli_home=home) / "resolved-skills",
         )
 
+    def test_backups_root_is_cache_scoped_outside_project(self):
+        """3.2 — RED: gate backups live under the CLI cache, never the project."""
+        root = self._tmp_project()
+        home = self._tmp_home()
+        self.mod.ensure_cache(root, cli_home=home)
+        backups = self.mod.backups_root(root, cli_home=home)
+        self.assertEqual(
+            backups, self.mod.cache_root(root, cli_home=home) / "backups"
+        )
+        self.assertTrue(str(backups).startswith(str(home.resolve())),
+                        "backups must be cache-scoped to the CLI home")
+        self.assertNotIn(str(root), str(backups),
+                         "backups must never land inside the project")
+
+    def test_gate_backup_path_content_hash_collision_safe(self):
+        """3.2 — RED: backup naming is deterministic, immutable, collision-safe."""
+        import hashlib
+        root = self._tmp_project()
+        home = self._tmp_home()
+        self.mod.ensure_cache(root, cli_home=home)
+        rel = "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
+        sha_a = hashlib.sha256(b"# custom A\n").hexdigest()
+        sha_b = hashlib.sha256(b"# custom B\n").hexdigest()
+        p1 = self.mod.gate_backup_path(root, rel, sha_a, cli_home=home)
+        p2 = self.mod.gate_backup_path(root, rel, sha_a, cli_home=home)
+        p3 = self.mod.gate_backup_path(root, rel, sha_b, cli_home=home)
+        p4 = self.mod.gate_backup_path(
+            root, "ai-specs/recipes/worktree-flow/hooks/other-gate.sh", sha_a, cli_home=home
+        )
+        self.assertEqual(p1, p2, "same content + rel must be immutable/stable")
+        self.assertNotEqual(p1, p3, "different content must not collide")
+        self.assertNotEqual(p1, p4, "different rel must not collide")
+        self.assertEqual(p1.suffix, ".sh")
+        self.assertEqual(p1.parent.parent, self.mod.backups_root(root, cli_home=home))
+        self.assertEqual(p1.stem, sha_a)
+
     def test_remove_legacy_origin_migrates_overrides_then_deletes(self):
         root = self._tmp_project()
         legacy_overrides = (
