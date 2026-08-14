@@ -76,7 +76,9 @@ AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
 BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
 SYNC_AGENT_SH="$AI_SPECS_HOME/lib/sync-agent.sh"
 
-shopt -s inherit_errexit
+if [[ -n "$(shopt -p inherit_errexit 2>/dev/null)" ]]; then
+    shopt -s inherit_errexit
+fi
 
 # print_step_output FILE — print a step's captured stdout or stderr file.
 # Verbose mode: cat the file bytes as-is (byte-identical, including trailing
