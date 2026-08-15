@@ -9,9 +9,11 @@ post-merge cleanup.
   stay outside one (pure exploration), naming conventions, and cleanup rules.
 - **Commands `/worktree-new`, `/worktree-clean`** — agent-facing flows to create
   a worktree for a change and to reclaim merged worktrees.
-- **Script `bin/worktree-cleanup.sh`** — conservative cleanup: removes only
-  merged + clean worktrees, preserves dirty and unmerged ones, never touches the
-  main worktree.
+- **Cleanup source `templates/worktree-cleanup.sh`** — authoritative Bash
+  implementation. Sync materializes it at
+  `ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh`.
+  Cleanup removes only merged + clean worktrees, preserves dirty and unmerged
+  ones, and never touches the main worktree.
 
 ## Enable
 
@@ -56,11 +58,12 @@ wanted, acquires it into the version-keyed cache:
 
 ```
 $AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate
+$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate.verified
 ```
 
 | `gate_impl` | Behavior |
 |---|---|
-| `auto` (default) | Prefer the Go binary; fall back to the frozen Bash reference when no binary is usable. |
+| `auto` (default) | Prefer the Go binary with a current verification receipt; fall back to the frozen Bash reference when no verified binary is usable. |
 | `go` | Go binary only; when none is usable the gate fails open and `ai-specs doctor` reports an ERROR. |
 | `bash` | Frozen Bash reference only; no binary, network, or Go toolchain required. |
 
@@ -72,9 +75,11 @@ cache → frozen Bash reference (`auto`/`bash`) → one stderr warning and exit 
 (fail open). The process `$PWD` is the gate's invalid-event-cwd fallback, never
 a project-local asset root; an unresolvable `BASH_SOURCE[0]` root skips
 project-local and legacy lookup and continues through the explicit override or
-cache. Handoff is `exec`, so stdin and the exit code pass through untouched;
-the gate never computes a digest on the invocation path unless
-`WORKTREE_GATE_VERIFY=1` requests it.
+cache with a current verification receipt. Handoff is `exec`, so stdin and the
+exit code pass through untouched; the gate never computes a digest on the
+invocation path unless `WORKTREE_GATE_VERIFY=1` requests it. A cache candidate
+without the receipt is rejected before `exec`; sync revalidates its digest,
+stamped version, and self-test before writing the receipt.
 
 **Offline behavior:** with `gate_impl = auto` and no cached binary, `ai-specs
 sync` warns and the launcher falls back to the frozen Bash reference — the gate
@@ -94,7 +99,9 @@ surfaces it as an ERROR.
 **Digest trust root:** the expected SHA-256 of every published asset is
 committed at `catalog/recipes/worktree-flow/bin/SHA256SUMS`; a downloaded
 binary is verified against it before install and is deleted (never executed) on
-mismatch. Binaries are never committed to the repository.
+mismatch. Executable cache hits are revalidated against the current trust root,
+`--version`, and `--selftest`; stale or unknown bytes are quarantined and force
+re-acquisition. Binaries are never committed to the repository.
 
 ## Topology-aware gate scope
 
@@ -160,50 +167,46 @@ Shared layout: worktrees always live under the **superproject**
 `<worktrees_dir>/` (default `.worktrees/`). Under submodules the directory name
 is `<subrepo>-<slug>`.
 
-## Stale cleanup override
+## Governed asset freshness
 
-The cleanup script uses `condition = "not_exists"` and is a governed template.
-Sync records the bytes it last wrote in `[managed.*]` in
-`ai-specs/.ai-specs.lock`, then classifies the target on later runs:
+The cleanup template uses `condition = "not_exists"` but is a forced worktree-
+flow asset. The catalog template is the source of truth; the generated override
+is never hand-edited as a second source. Sync records the exact bytes it wrote
+in `[managed.*]` in `ai-specs/.ai-specs.lock`, then classifies the target:
 
-| State / policy | Sync behavior |
+| State | Sync behavior |
 |---|---|
 | Managed current | Leave unchanged and stay quiet. |
-| Managed stale + `auto` (default) | Refresh from the catalog and update the lock. |
-| Managed stale + `confirm` or `never-force` | Preserve, warn, and defer to explicit refresh. |
-| User-modified or untracked custom | Preserve, warn, and never force an overwrite. |
+| Managed stale | Atomically replace with the latest verified catalog bytes, update the lock after verification, and report the prior digest. |
+| User-modified or untracked | Back up prior bytes in the CLI cache where supported, atomically replace with the latest verified canonical bytes, then seed/update provenance. |
+| Missing | Materialize and record the verified canonical bytes. |
 
-To explicitly discard local content and seed a fresh managed copy:
+Ordinary sync is the repair path; it does not require removing a customized
+override. Failed verification, backup, replacement, rollback, or lock update
+fails closed and restores the prior target/lock state where possible. Use
+`ai-specs sync --refresh-gates` to explicitly retry the same transaction.
 
-```bash
-rm ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh
-ai-specs sync
-```
-
-Runtime hook scripts follow gate provenance instead of template policy. Sync
-records a baseline of the exact bytes the CLI last rendered for each generated
-hook (`ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh`):
+The generated worktree-flow launcher and frozen Bash fallback are separate
+governed assets and use the same forced policy. Other recipes retain their
+existing ownership semantics. For the worktree-flow launcher, sync records a
+baseline of the exact bytes the CLI last rendered:
 
 - baseline matches current bytes → unmodified; sync may force-update the gate
   and re-record the baseline;
-- bytes differ from the baseline → user-modified; sync preserves the gate and
-  warns;
-- no baseline → unknown provenance; sync preserves the gate and warns, and
-  records a baseline only when the CLI itself renders the gate.
+- bytes differ from the baseline → user-modified; worktree-flow sync backs up
+  and force-replaces the gate;
+- no baseline → unknown provenance; worktree-flow sync force-replaces the gate
+  and seeds a baseline only after replacement verifies.
 
-Runtime hook scripts are no longer rewritten unconditionally.
-
-To explicitly replace a customized gate (after its exact pre-refresh bytes are
+To explicitly retry a customized gate (after its exact pre-refresh bytes are
 saved to a cache-only immutable backup):
 
 ```bash
 ai-specs sync --refresh-gates
 ```
 
-or remove the gate and resync: `rm <gate-path> && ai-specs sync`.
-
-After a user-modified warning, re-apply any local customizations to the refreshed
-gate as needed.
+The legacy Bash fallback is refreshed through the same transaction at
+`ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh`.
 
 ## Cleanup contract
 
@@ -215,6 +218,20 @@ gate as needed.
 | Main / detached HEAD | never touched |
 
 Squash/rebase merges are detected by patch-id (`git cherry`), since the squashed
-commit is not an ancestor of the base branch.
+commit is not an ancestor of the base branch. A complete multi-commit squash is
+also checked as one combined branch delta; a partial squash or later revert is
+preserved as unmerged.
 
 Run with `--dry-run` to preview before removing anything.
+
+## Freshness diagnostics
+
+`ai-specs sync` runs a read-only worktree-flow canonical-source preflight before
+consumer-project writes, then repeats classification and verification at each
+replacement boundary. `ai-specs doctor` is read-only and reports the exact
+target, state, observed/desired digest, cache receipt/version/self-test status,
+and the sync or re-acquisition remedy. `.ai-specs.lock [meta].cli_version`, the
+launcher stamp, the version-keyed cache directory, `VERSION`, and
+`SHA256SUMS` are evidence of one sync state; doctor reports drift rather than
+silently rewriting the lock. Generic template and hook ownership policies are
+unchanged outside worktree-flow.

@@ -12,7 +12,12 @@ channel; binaries in git would cost every user ~15-25 MB per release forever).
 
 The committed digests are the trust root (D5): the network supplies only bytes,
 the repository supplies the expected digest. A downloaded asset whose SHA-256
-does not match this file is deleted and never executed.
+does not match this file is deleted and never executed. Existing executable
+cache hits are revalidated against this trust root, the current `VERSION`, and
+`--selftest`; stale or unknown candidates are quarantined before re-acquisition.
+A successful cache install also writes an atomic `<binary>.verified` receipt
+containing the verified version, digest, and self-test result. The launcher
+rejects a cache binary without that receipt.
 
 The supported matrix (spec "Multi-arch build matrix and reproducibility") is
 `darwin/arm64`, `darwin/amd64`, `linux/amd64` and `linux/arm64`. Builds are

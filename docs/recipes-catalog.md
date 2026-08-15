@@ -249,8 +249,9 @@ pull requests.
 **Isolated git worktrees under `.worktrees/` with safe post-merge cleanup.**
 File-writing change work runs in a dedicated worktree; pure exploration stays
 outside one. The bundled cleanup script removes only merged + clean worktrees
-(detecting regular, squash, and rebase merges by patch-id), preserves dirty and
-unmerged ones, and never touches the main worktree.
+(detecting regular, squash, and rebase merges by patch-id, including complete
+multi-commit squash deltas), preserves dirty and unmerged ones, and never
+touches the main worktree.
 
 - **Provides:** skill `worktree-flow`, commands `/worktree-new`,
   `/worktree-clean`, script `bin/worktree-cleanup.sh`, and a `worktree-gate`
@@ -268,17 +269,20 @@ unmerged ones, and never touches the main worktree.
   network, or Go toolchain required). `ai-specs sync` materializes a thin
   bash-3.2 launcher at the unchanged hook path, acquires the binary into
   `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/`,
-  verifies SHA-256 against the committed `SHA256SUMS` trust root before install,
-  and degrades with a warning on any failure — acquisition never fails sync.
-  `ai-specs doctor` reports the resolved implementation, version, digest state,
-  and silent fallbacks.
-- **Gate provenance:** sync records a baseline of the exact bytes the CLI last
-  rendered for the generated gate hook. A baseline match means unmodified and
-  may be force-updated; a byte mismatch or missing baseline is preserved with a
-  warning (no seeding). An explicit refresh (`ai-specs sync --refresh-gates`)
-  saves the exact pre-refresh bytes to a cache-only immutable backup before
-  replacing a customized gate; `ai-specs doctor` warns on customized gates and
-  stays quiet on matching baselines.
+  verifies SHA-256 against the committed `SHA256SUMS` trust root, checks the
+  binary version and self-test before install, atomically writes the binary and
+  a `.verified` receipt, and never executes a stale/unknown cache candidate. On
+  acquisition/verification failure no unverified candidate is selected; `auto`
+  may fall back to the canonical Bash gate. `ai-specs doctor` reports the
+  resolved implementation, version, digest, receipt state, and silent fallbacks.
+- **Gate and cleanup freshness:** the cleanup source remains the Bash template at
+  `catalog/recipes/worktree-flow/templates/worktree-cleanup.sh`; the Go binary
+  does not own cleanup. Ordinary sync force-replaces managed-stale,
+  user-modified, and unknown worktree-flow cleanup, launcher, and legacy-gate
+  assets with the latest verified canonical bytes. Existing cache-only immutable
+  backups are used where supported, replacement is atomic, and lock provenance
+  is updated only after verification. `ai-specs sync --refresh-gates` uses the
+  same transaction; unrelated recipe ownership policies are unchanged.
 - **Topologies:** `standalone`, `monorepo-apps` (naming-only), and
   `monorepo-submodules` (per-submodule `git -C` create + cleanup enumeration
   under a shared superproject `worktrees_dir`).
