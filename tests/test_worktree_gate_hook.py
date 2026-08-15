@@ -9,6 +9,7 @@ Covers path-mode (Edit/Write) regression and shell-mode write-bypass heuristics
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -993,6 +994,12 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
                      platform / "worktree-gate")
         cache_bin.parent.mkdir(parents=True)
         self._write_marker(cache_bin, "MARKER:cache")
+        cache_bin.with_name(cache_bin.name + ".verified").write_text(
+            "status=verified\n"
+            "version=1.0.0\n"
+            f"digest={hashlib.sha256(cache_bin.read_bytes()).hexdigest()}\n"
+            "selftest=passed\n"
+        )
         r = self._run(self.launcher, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("MARKER:cache", r.stderr)
@@ -1015,6 +1022,14 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
                                   'stamped_repo_topology="auto"')
         legacy.write_text(content)
         legacy.chmod(0o755)
+        # JD-B-002 contract: the Bash fallback only execs legacy bytes with
+        # current verified provenance. Provide a matching sidecar so this
+        # valid-fallback scenario keeps executing the reference gate.
+        legacy.with_name(legacy.name + ".verified").write_text(
+            "status=verified\n"
+            f"digest={hashlib.sha256(legacy.read_bytes()).hexdigest()}\n"
+            "recipe=worktree-flow\n"
+        )
 
         repo = Path(self.tmp.name) / "repo"
         repo.mkdir()
@@ -1033,6 +1048,27 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         r = self._run(self.launcher, self._elsewhere(), stdin=event)
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("worktree-gate", r.stderr)
+
+    def test_legacy_fallback_fails_closed_without_valid_provenance(self):
+        # JD-B-002: an unverified legacy target (e.g. prior bytes left behind
+        # by a failed materialization of the verified replacement) must NOT be
+        # executed by the Bash fallback. The launcher fails closed: it refuses
+        # to exec and reports the missing/stale provenance receipt instead.
+        self.bin_marker.unlink()
+        self.launcher.write_text(
+            self._stamped_launcher(**{"__WORKTREE_GATE_IMPL__": "auto"}))
+        self.launcher.chmod(0o755)
+        legacy = self.install / "hooks" / "worktree-gate-legacy.sh"
+        legacy.write_text(
+            "#!/usr/bin/env bash\necho 'MARKER:legacy' >&2\nexit 0\n")
+        legacy.chmod(0o755)
+        # Deliberately NO <legacy>.verified sidecar: provenance unverified.
+        r = self._run(self.launcher, self._elsewhere())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(
+            "MARKER:legacy", r.stderr,
+            "unverified legacy bytes must never be executed by the fallback")
+        self.assertIn("provenance", r.stderr.lower())
 
     def test_missing_root_never_makes_pwd_a_project_root(self):
         # PATH-style bare-name invocation: when BASH_SOURCE[0] cannot be

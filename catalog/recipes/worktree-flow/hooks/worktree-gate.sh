@@ -26,7 +26,8 @@
 #      BASH_SOURCE[0] location (hooks/../), never from $PWD.
 #   3. ${AI_SPECS_HOME:-$HOME/.ai-specs}/cache/bin/worktree-gate/
 #      <stamped_version>/<os>-<arch>/worktree-gate — the version-keyed cache
-#      populated by ai-specs sync (lib/_internal/gate_binary.py).
+#      populated by ai-specs sync (lib/_internal/gate_binary.py), only when its
+#      current verification receipt is present.
 #   4. Legacy Bash implementation — only when stamped gate_impl is "bash", or
 #      it is "auto" and no binary resolved.
 #   5. Nothing usable → one line to stderr naming the missing path and the
@@ -151,11 +152,62 @@ _resolve_binary() {
     local home="${AI_SPECS_HOME:-$HOME/.ai-specs}"
     bin="$home/cache/bin/worktree-gate/$stamped_gate_version/$_goos-$_goarch/worktree-gate"
     if [ -x "$bin" ]; then
-      echo "$bin"
-      return 0
+      if _cache_candidate_verified "$bin"; then
+        echo "$bin"
+        return 0
+      fi
+      echo "worktree-gate: rejecting unverified cache candidate '$bin'; verification receipt is missing or stale; run 'ai-specs sync' to re-acquire." >&2
     fi
   fi
   return 1
+}
+
+_cache_candidate_verified() {
+  local bin="$1" receipt status_line version_line digest_line selftest_line
+  receipt="${bin}.verified"
+  [ -f "$receipt" ] || return 1
+  status_line="$(grep '^status=verified$' "$receipt" 2>/dev/null | head -n 1)"
+  version_line="$(grep '^version=' "$receipt" 2>/dev/null | head -n 1)"
+  digest_line="$(grep -E '^digest=[0-9a-fA-F]{64}$' "$receipt" 2>/dev/null | head -n 1)"
+  selftest_line="$(grep '^selftest=passed$' "$receipt" 2>/dev/null | head -n 1)"
+  [ -n "$status_line" ] || return 1
+  [ "$version_line" = "version=$stamped_gate_version" ] || return 1
+  [ -n "$digest_line" ] || return 1
+  [ -n "$selftest_line" ] || return 1
+  return 0
+}
+
+# Portable sha256 of a file, used to verify the legacy fallback's current bytes.
+_sha256() {
+  local file="$1" hex
+  if command -v shasum >/dev/null 2>&1; then
+    hex="$(shasum -a 256 "$file" 2>/dev/null | awk '{print $1}')"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    hex="$(sha256sum "$file" 2>/dev/null | awk '{print $1}')"
+  else
+    return 1
+  fi
+  [ -n "$hex" ] || return 1
+  printf '%s\n' "$hex"
+}
+
+# JD-B-002: the Bash fallback only execs legacy bytes with current verified
+# provenance. A recipe materializes a digest sidecar next to the legacy hook
+# after writing the exact catalog reference bytes; the launcher recomputes the
+# sha256 of the on-disk legacy file and requires it to match. This makes a
+# failed/partial legacy materialization fail closed (an unverified prior legacy
+# target is never executed) while preserving the normal verified fallback.
+_legacy_verified() {
+  local file="$1" receipt status_line digest_line expected actual
+  receipt="${file}.verified"
+  [ -f "$receipt" ] || return 1
+  status_line="$(grep '^status=verified$' "$receipt" 2>/dev/null | head -n 1)"
+  digest_line="$(grep -E '^digest=[0-9a-fA-F]{64}$' "$receipt" 2>/dev/null | head -n 1)"
+  [ -n "$status_line" ] || return 1
+  [ -n "$digest_line" ] || return 1
+  expected="${digest_line#digest=}"
+  actual="$(_sha256 "$file")" || return 1
+  [ -n "$actual" ] && [ "$actual" = "$expected" ]
 }
 
 bin="$(_resolve_binary)"
@@ -180,7 +232,10 @@ case "$stamped_gate_impl" in
       local_legacy="$recipe_root/hooks/worktree-gate-legacy.sh"
     fi
     if [ -n "$local_legacy" ] && [ -f "$local_legacy" ]; then
-      exec bash "$local_legacy"
+      if _legacy_verified "$local_legacy"; then
+        exec bash "$local_legacy"
+      fi
+      echo "worktree-gate: rejecting unverified legacy fallback '$local_legacy'; provenance receipt is missing or stale. Run 'ai-specs sync' to re-acquire." >&2
     fi
     ;;
 esac
