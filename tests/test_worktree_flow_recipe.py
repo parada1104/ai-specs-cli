@@ -1,10 +1,12 @@
 """Validation + materialization tests for the worktree-flow catalog recipe."""
 
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -137,6 +139,22 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
             / "worktree-cleanup.sh"
         )
         self.assertTrue(script.is_file(), "cleanup script should materialize")
+
+    def test_worktree_flow_freshness_preflight_is_read_only(self):
+        root = self._make_project()
+        with mock.patch.dict(os.environ, {"AI_SPECS_GATE_OFFLINE": "1"}, clear=False):
+            self.assertEqual(self.materialize.preflight_worktree_flow(root, ROOT), 0)
+        self.assertFalse(
+            (root / "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh").exists()
+        )
+        self.assertFalse((root / "ai-specs/.ai-specs.lock").exists())
+
+    def test_sync_runs_worktree_flow_preflight_before_project_writes(self):
+        sync = (ROOT / "lib" / "sync.sh").read_text()
+        self.assertLess(
+            sync.index("--preflight"),
+            sync.index('run_step "ai-specs/.gitignore"'),
+        )
 
 
     def test_skill_mentions_sdd_artifact_phases(self):
@@ -307,13 +325,13 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         combined = proc.stderr + proc.stdout
         self.assertIn("super-repo", combined)
         self.assertIn("auto | superrepo | subrepo", combined)
-    def test_stale_gate_hook_is_preserved_with_refresh_guidance(self):
+    def test_stale_gate_hook_is_force_replaced_during_ordinary_sync(self):
         root = self._make_project()
         self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
         hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
         hook.write_text("custom legacy hook\n")
         self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        self.assertEqual(hook.read_text(), "custom legacy hook\n")
+        self.assertIn("_resolve_binary", hook.read_text())
 
 if __name__ == "__main__":
     unittest.main()

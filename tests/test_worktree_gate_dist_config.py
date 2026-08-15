@@ -8,6 +8,7 @@ answers the parity corpus through the materialized legacy copy).
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import io
 import json
 import os
@@ -121,6 +122,82 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         self.assertEqual(legacy.read_bytes(), src.read_bytes())
         self.assertTrue(os.access(legacy, os.X_OK))
 
+    def test_legacy_gate_materialization_writes_verified_sidecar(self):
+        # JD-B-002: materialization must ship a provenance sidecar next to the
+        # legacy hook so the launcher's Bash fallback can verify the exact
+        # bytes before exec. Without it the fallback refuses to run (fail
+        # closed), so a valid materialization MUST carry the receipt.
+        proj = self._project('[recipes.worktree-flow.config]\ngate_impl = "bash"')
+        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+        legacy = self._legacy_hook(proj)
+
+        receipt = legacy.with_name(legacy.name + ".verified")
+        self.assertTrue(receipt.is_file(), "legacy provenance sidecar must materialize")
+        text = receipt.read_text()
+        self.assertIn("status=verified", text)
+        source = RECIPE_DIR / "hooks" / "worktree-gate-legacy.sh"
+        digest = self.materialize._load_util().sha256_bytes(source.read_bytes())
+        self.assertIn(f"digest={digest}", text)
+
+    def test_legacy_gate_user_modification_is_force_replaced_and_recorded(self):
+        proj = self._project('[recipes.worktree-flow.config]\ngate_impl = "bash"')
+        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+        legacy = self._legacy_hook(proj)
+        legacy.write_bytes(b"custom legacy gate\n")
+
+        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+
+        source = RECIPE_DIR / "hooks" / "worktree-gate-legacy.sh"
+        self.assertEqual(legacy.read_bytes(), source.read_bytes())
+        lock = self.materialize.load_lock(proj / "ai-specs/.ai-specs.lock")
+        entry = lock["managed"]["ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh"]
+        self.assertEqual(entry["kind"], "gate")
+        self.assertEqual(entry["sha256"], self.materialize._load_util().sha256_bytes(source.read_bytes()))
+
+    def test_failed_legacy_refresh_invalidates_stale_receipt(self):
+        # JD-B-002 (round 2): a failed refresh that rolls the legacy target
+        # back to its prior bytes must NOT leave an old matching .verified
+        # receipt behind. If it did, the launcher would accept and execute
+        # stale legacy bytes as current, defeating the fail-closed rule.
+        proj = self._project('[recipes.worktree-flow.config]\ngate_impl = "bash"')
+        recipe_dir = Path(self.tmp.name) / "recipe"
+        hooks = recipe_dir / "hooks"
+        hooks.mkdir(parents=True)
+        src = hooks / "worktree-gate-legacy.sh"
+        old = b"#!/usr/bin/env bash\necho OLD\nexit 0\n"
+        new = b"#!/usr/bin/env bash\necho NEW\nexit 0\n"
+        src.write_bytes(old)
+        legacy = proj / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate-legacy.sh"
+        receipt = legacy.with_name(legacy.name + ".verified")
+
+        # First successful materialization with old bytes -> sidecar matches.
+        self.materialize.materialize_legacy_gate(recipe_dir, proj, "worktree-flow", cli_home=self.home)
+        self.assertTrue(receipt.is_file())
+        self.assertEqual(legacy.read_bytes(), old)
+
+        # Source drifts; the refresh transaction fails before replacement and
+        # rolls the target back to its prior (old) bytes.
+        src.write_bytes(new)
+        real_atomic_replace = self.materialize._atomic_replace
+
+        def flaky_after_old(path: Path, content: bytes, mode: int) -> None:
+            if content == new:
+                raise RuntimeError("injected refresh failure")
+            return real_atomic_replace(path, content, mode)
+
+        with patch.object(self.materialize, "_atomic_replace", side_effect=flaky_after_old):
+            with self.assertRaises(RuntimeError):
+                self.materialize.materialize_legacy_gate(recipe_dir, proj, "worktree-flow", cli_home=self.home)
+
+        # Target rolled back to prior bytes; the stale receipt must be gone so
+        # the launcher fails closed instead of executing old bytes as current.
+        self.assertEqual(legacy.read_bytes(), old, "target must roll back to prior bytes")
+        self.assertFalse(
+            receipt.exists(),
+            "a failed refresh must invalidate the stale .verified receipt so "
+            "stale legacy bytes cannot authorize fallback execution",
+        )
+
     def test_gate_impl_go_stamps(self):
         proj = self._project(
             '[recipes.worktree-flow.config]\ngate_impl = "go"'
@@ -152,10 +229,9 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
 
     def test_sentinel_upgrade_replaces_pre_go_gate(self):
         # A pre-Go materialized gate (the e080483 gate, which already carries
-        # the stamped_gate_scope sentinel) has NO lock baseline under the gate
-        # provenance model: ordinary sync preserves it with a warning (unknown
-        # provenance, no seeding), and an explicit refresh upgrades it to the
-        # launcher after backing up the pre-refresh bytes.
+        # the stamped_gate_scope sentinel) has no lock baseline. Worktree-flow
+        # ordinary sync now force-refreshes unknown bytes; the explicit flag
+        # must use the same transaction if the target changes again.
         proj = self._project()
         hook = self._hook(proj)
         hook.parent.mkdir(parents=True, exist_ok=True)
@@ -167,21 +243,18 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
             'exit 0\n'
         )
         hook.write_text(pre_go)
-        stream = io.StringIO()
-        with patch("sys.stderr", stream):
-            self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
-        self.assertEqual(hook.read_text(), pre_go,
-                         "unknown provenance must preserve the pre-Go gate")
-        self.assertIn("no recorded provenance", stream.getvalue())
-
-        self.assertEqual(
-            self.materialize.materialize_recipes(proj, self.home, refresh_gates=True),
-            0,
-        )
+        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
         content = hook.read_text()
         self.assertIn('stamped_gate_scope="', content, "launcher must keep the sentinel")
         self.assertIn("_resolve_gate_mode", content, "must be replaced by the launcher")
         self.assertIn("stamped_gate_impl=", content, "launcher must carry gate_impl")
+
+        hook.write_text(pre_go)
+        self.assertEqual(
+            self.materialize.materialize_recipes(proj, self.home, refresh_gates=True),
+            0,
+        )
+        self.assertIn("_resolve_gate_mode", hook.read_text())
 
     def test_launcher_keeps_literal_staleness_sentinel(self):
         # Task 3.2: recipe-materialize.py:494-508 upgrades existing projects
@@ -238,6 +311,14 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
         hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
         hook.parent.mkdir(parents=True, exist_ok=True)
         return self._stamp(hook, impl=impl, version=version)
+
+    def _write_cache_receipt(self, binary: Path, version: str = "0.21.0") -> None:
+        binary.with_name(binary.name + ".verified").write_text(
+            "status=verified\n"
+            f"version={version}\n"
+            f"digest={hashlib.sha256(binary.read_bytes()).hexdigest()}\n"
+            "selftest=passed\n"
+        )
 
     def _fixture(self, root: Path) -> tuple[Path, str]:
         repo = root / "repo"
@@ -337,10 +418,29 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
             cache_bin.parent.mkdir(parents=True, exist_ok=True)
             cache_bin.write_bytes(self.GO_BINARY.read_bytes())
             cache_bin.chmod(0o755)
+            self._write_cache_receipt(cache_bin)
             proc = self._run(launcher, event, root, self._env(root))
             self.assertEqual(proc.returncode, 2,
                              "cache binary must serve when no pin/override")
             self.assertIn("refusing", proc.stderr)
+
+    def test_unverified_cache_binary_is_not_executed(self):
+        """A cache executable without current acquisition evidence is rejected."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            launcher = self._launcher(root)
+            repo, event = self._fixture(root)
+            cache_bin = (root / "home" / "cache" / "bin" / "worktree-gate" / "0.21.0" /
+                         _cache_platform() / "worktree-gate")
+            cache_bin.parent.mkdir(parents=True, exist_ok=True)
+            cache_bin.write_text("#!/usr/bin/env bash\nexit 2\n")
+            cache_bin.chmod(0o755)
+
+            proc = self._run(launcher, event, root, self._env(root))
+
+            self.assertEqual(proc.returncode, 0,
+                             "an unverified cache candidate must not execute")
+            self.assertIn("verification", proc.stderr)
 
     def test_non_executable_override_ignored(self):
         """A WORKTREE_GATE_BIN that is not executable is ignored with a warning."""
