@@ -2908,8 +2908,7 @@ class TestCustomVcsWarning(unittest.TestCase):
 
 
 class GateRefreshCliTests(unittest.TestCase):
-    """4.3 — E2E: `ai-specs sync --refresh-gates` refreshes a customized gate
-    after a cache-only immutable backup, while ordinary sync preserves it."""
+    """E2E: ordinary sync and `--refresh-gates` share forced gate refresh."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="gate-refresh-")
@@ -2949,17 +2948,19 @@ class GateRefreshCliTests(unittest.TestCase):
         self.assertTrue(gate.is_file(), "gate launcher must materialize")
         rendered = gate.read_bytes()
 
-        # Customize; ordinary sync must preserve with a warning.
+        # Customize; ordinary sync must force the latest canonical launcher and
+        # retain the exact prior bytes in the cache-only backup.
         gate.write_bytes(b"# customized gate\n")
         proc = subprocess.run(
             [str(CLI), "sync", str(self.workspace)], capture_output=True, text=True,
             env=env, check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(gate.read_bytes(), b"# customized gate\n")
-        self.assertIn("user-modified", proc.stderr + proc.stdout)
+        self.assertEqual(gate.read_bytes(), rendered)
+        self.assertIn("forced replacement", proc.stderr + proc.stdout)
 
-        # Explicit refresh replaces and backs up the exact pre-refresh bytes.
+        # Explicit refresh uses the same transaction for a subsequent change.
+        gate.write_bytes(b"# customized again\n")
         proc = subprocess.run(
             [str(CLI), "sync", str(self.workspace), "--refresh-gates"],
             capture_output=True, text=True, env=env, check=False,
@@ -2970,10 +2971,10 @@ class GateRefreshCliTests(unittest.TestCase):
         rel = "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
         backup = pc.gate_backup_path(
             self.workspace, rel,
-            hashlib.sha256(b"# customized gate\n").hexdigest(),
+            hashlib.sha256(b"# customized again\n").hexdigest(),
         )
         self.assertTrue(backup.is_file(), f"immutable backup missing at {backup}")
-        self.assertEqual(backup.read_bytes(), b"# customized gate\n")
+        self.assertEqual(backup.read_bytes(), b"# customized again\n")
 
 
 class FanOutDriftTests(unittest.TestCase):
