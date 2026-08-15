@@ -367,12 +367,144 @@ def materialize_command(
     print(f"    ✓ command {cmd.id}")
 
 
+def _snapshot_file(path: Path) -> bytes | None:
+    """Return file bytes, distinguishing a missing target from an empty file."""
+    if not path.exists():
+        return None
+    if not path.is_file():
+        raise RuntimeError(f"governed target is not a file: {path}")
+    return path.read_bytes()
+
+
+def _atomic_replace(path: Path, content: bytes, mode: int) -> None:
+    """Replace one governed file atomically and verify the installed bytes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(content)
+            fh.flush()
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+        if path.read_bytes() != content:
+            raise RuntimeError(f"atomic replacement verification failed for {path}")
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _restore_file(path: Path, prior: bytes | None, mode: int) -> None:
+    """Restore a target snapshot or remove a target created by a failed write."""
+    if prior is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
+        return
+    _atomic_replace(path, prior, mode)
+
+
+def _restore_lock(lock_path: Path, prior: bytes | None) -> None:
+    """Restore lock bytes without going through the possibly failing writer."""
+    if prior is None:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            return
+        return
+    _atomic_replace(lock_path, prior, 0o644)
+
+
+def _replace_governed_asset(
+    *,
+    project_root: Path,
+    dest: Path,
+    rel: str,
+    content: bytes,
+    lock: dict,
+    lock_path: Path,
+    record,
+    cli_home: Path | None,
+    mode: int,
+) -> Path | None:
+    """Apply a verified worktree-flow asset replacement as one transaction.
+
+    The lock entry is written only after the target readback verifies. If any
+    step fails, both target and lock snapshots are restored and a newly-created
+    immutable backup is removed.
+    """
+    prior = _snapshot_file(dest)
+    prior_lock = _snapshot_file(lock_path)
+    backup: Path | None = None
+    backup_preexisted = False
+    try:
+        if prior is not None:
+            util = _load_util()
+            backup = _load_project_cache().gate_backup_path(
+                project_root,
+                rel,
+                util.sha256_bytes(prior),
+                cli_home=cli_home,
+            )
+            backup_preexisted = backup.exists()
+            _write_gate_backup(project_root, rel, prior, cli_home)
+        _atomic_replace(dest, content, mode)
+        record()
+        return backup
+    except BaseException as exc:
+        rollback_errors: list[str] = []
+        try:
+            _restore_file(dest, prior, mode)
+        except BaseException as rollback_exc:  # noqa: BLE001
+            rollback_errors.append(f"target rollback failed: {rollback_exc}")
+        try:
+            _restore_lock(lock_path, prior_lock)
+        except BaseException as rollback_exc:  # noqa: BLE001
+            rollback_errors.append(f"lock rollback failed: {rollback_exc}")
+        if backup is not None and not backup_preexisted and backup.exists():
+            try:
+                backup.unlink()
+            except OSError as rollback_exc:
+                rollback_errors.append(f"backup rollback failed: {rollback_exc}")
+        if rollback_errors:
+            raise RuntimeError(
+                f"governed asset transaction failed for {rel}: {exc}; "
+                + "; ".join(rollback_errors)
+            ) from exc
+        raise
+
+
+def _forced_replacement_message(
+    *,
+    rel: str,
+    state: str,
+    prior: bytes | None,
+    desired: bytes,
+    backup: Path | None,
+) -> str:
+    util = _load_util()
+    observed = "missing" if prior is None else util.sha256_bytes(prior)
+    recovery = str(backup) if backup is not None else "none"
+    return (
+        f"worktree-flow: forced replacement target={rel} state={state} "
+        f"observed_digest={observed} desired_digest={util.sha256_bytes(desired)} "
+        f"verified=true backup={recovery}"
+    )
+
+
 def materialize_template(
     recipe_dir: Path,
     tpl: Any,
     project_root: Path,
     merged_cfg: dict[str, Any] | None = None,
     recipe_id: str | None = None,
+    cli_home: Path | None = None,
 ) -> None:
     util = _load_util()
     src = recipe_dir / tpl.source
@@ -391,6 +523,11 @@ def materialize_template(
             "expected auto | confirm | never-force"
         )
 
+    force_worktree_asset = (
+        recipe_id == "worktree-flow"
+        and target == "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"
+    )
+
     def record(written: bytes = content) -> None:
         set_managed_override(
             lock,
@@ -407,6 +544,32 @@ def materialize_template(
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(content)
         os.chmod(dest, src.stat().st_mode)
+
+    if force_worktree_asset:
+        state = util.classify_managed_override(
+            dest, (lock.get("managed") or {}).get(target), would_write=content
+        )
+        if state == "managed_current":
+            record()
+            print(f"    · template skipped (current) {tpl.target}")
+            return
+        prior = _snapshot_file(dest)
+        backup = _replace_governed_asset(
+            project_root=project_root,
+            dest=dest,
+            rel=target,
+            content=content,
+            lock=lock,
+            lock_path=lock_path,
+            record=record,
+            cli_home=cli_home,
+            mode=src.stat().st_mode & 0o777,
+        )
+        info(_forced_replacement_message(
+            rel=target, state=state, prior=prior, desired=content, backup=backup
+        ))
+        print(f"    ✓ template refreshed {tpl.target}")
+        return
 
     if tpl.condition == "not_exists" and dest.exists():
         entry = (lock.get("managed") or {}).get(target)
@@ -483,6 +646,11 @@ GATE_VERSION_PLACEHOLDER = "__WORKTREE_GATE_VERSION__"
 # alongside the launcher (task 3.9: gate_impl=bash works with no network and
 # no binary).
 LEGACY_HOOK_REL = "ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh"
+# Suffix of the provenance sidecar written next to the materialized legacy
+# hook. The launcher's Bash fallback refuses to exec the legacy target unless
+# this receipt is present and its digest matches the current bytes, so prior
+# (possibly unverified) legacy bytes are never executed (JD-B-002).
+LEGACY_VERIFICATION_SUFFIX = ".verified"
 
 
 def _write_gate_backup(
@@ -518,37 +686,27 @@ def _refresh_gate(
     hook: Any,
     cli_home: Path | None,
 ) -> None:
-    """Explicit gate refresh: cache backup → gate write → lock (all-or-nothing).
-
-    On any failure the new backup is deleted and the gate is restored to its
-    prior bytes; the lock is never partially updated (atomic write_lock).
-    """
+    """Refresh a gate through the atomic governed-asset transaction."""
     util = _load_util()
-    prior = dest.read_bytes() if dest.exists() else None
-    created_backup: Path | None = None
-    try:
-        if prior is not None:
-            created_backup = _write_gate_backup(project_root, rel, prior, cli_home)
-        dest.write_text(content)
-        os.chmod(dest, 0o755)
+
+    def record() -> None:
         set_gate_baseline(
             lock, rel, util.sha256_bytes(content.encode()),
             recipe=recipe_id, source=hook.script,
         )
         write_lock(lock_path, lock)
-    except BaseException:
-        if prior is not None:
-            try:
-                dest.write_bytes(prior)
-                os.chmod(dest, 0o755)
-            except OSError:
-                pass
-        if created_backup is not None and created_backup.exists():
-            try:
-                created_backup.unlink()
-            except OSError:
-                pass
-        raise
+
+    _replace_governed_asset(
+        project_root=project_root,
+        dest=dest,
+        rel=rel,
+        content=content.encode(),
+        lock=lock,
+        lock_path=lock_path,
+        record=record,
+        cli_home=cli_home,
+        mode=0o755,
+    )
 
 
 def materialize_hook_script(
@@ -638,6 +796,34 @@ def materialize_hook_script(
         )
         write_lock(lock_path, lock)
 
+    state = util.classify_managed_override(dest, entry, would_write=content)
+    if recipe_id == "worktree-flow":
+        if state == "managed_current":
+            record()
+            print(f"    · hook skipped (current) {rel}")
+            return rel
+        prior = _snapshot_file(dest)
+        backup = _replace_governed_asset(
+            project_root=project_root,
+            dest=dest,
+            rel=target,
+            content=content.encode(),
+            lock=lock,
+            lock_path=lock_path,
+            record=record,
+            cli_home=cli_home,
+            mode=0o755,
+        )
+        info(_forced_replacement_message(
+            rel=target,
+            state=state,
+            prior=prior,
+            desired=content.encode(),
+            backup=backup,
+        ))
+        print(f"    ✓ hook refreshed {rel}")
+        return rel
+
     if refresh:
         _refresh_gate(
             project_root, dest, target, content, lock, lock_path,
@@ -646,10 +832,8 @@ def materialize_hook_script(
         print(f"    ✓ hook refreshed {rel}")
         return rel
 
-    state = util.classify_managed_override(dest, entry, would_write=content)
     if state == "missing":
-        dest.write_text(content)
-        os.chmod(dest, 0o755)
+        _atomic_replace(dest, content.encode(), 0o755)
         record()
         print(f"    ✓ hook script {rel}")
         return rel
@@ -660,8 +844,7 @@ def materialize_hook_script(
     if state == "managed_stale":
         # Baseline matches current bytes: the CLI rendered this gate, so an
         # ordinary sync may force-update it and re-record the baseline.
-        dest.write_text(content)
-        os.chmod(dest, 0o755)
+        _atomic_replace(dest, content.encode(), 0o755)
         record()
         print(f"    ✓ hook refreshed (baseline matched) {rel}")
         return rel
@@ -681,7 +864,60 @@ def materialize_hook_script(
     return rel
 
 
-def materialize_legacy_gate(recipe_dir: Path, project_root: Path, recipe_id: str) -> None:
+def _write_legacy_verification(dest: Path, content: bytes) -> None:
+    """Write a provenance sidecar next to the materialized legacy hook.
+
+    The launcher's Bash fallback only execs legacy bytes it can independently
+    verify: it recomputes the sha256 of the on-disk legacy file and compares it
+    against this receipt's digest. This call runs only after the legacy target
+    is on disk with the exact catalog reference bytes, so a failed or partial
+    materialization never leaves a verifiable target behind and the launcher
+    fails closed (JD-B-002). If the sidecar itself cannot be written, the
+    caller leaves the launcher failing closed, which is the safe direction.
+    """
+    receipt = dest.with_name(dest.name + LEGACY_VERIFICATION_SUFFIX)
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    util = _load_util()
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(receipt.parent), prefix=f".{receipt.name}.", suffix=".tmp"
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("status=verified\n")
+            fh.write(f"digest={util.sha256_bytes(content)}\n")
+            fh.write("recipe=worktree-flow\n")
+        os.replace(tmp, receipt)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _invalidate_legacy_verification(dest: Path) -> None:
+    """Remove the legacy provenance sidecar so stale bytes fail closed.
+
+    Called after a failed refresh rolls the target back to prior (non-current)
+    bytes. A leftover prior receipt would certify those stale bytes as current
+    and let the launcher execute them; removing it leaves the launcher failing
+    closed (JD-B-002, round 2). Best-effort: absence of an already-missing
+    receipt is not an error.
+    """
+    receipt = dest.with_name(dest.name + LEGACY_VERIFICATION_SUFFIX)
+    try:
+        receipt.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def materialize_legacy_gate(
+    recipe_dir: Path,
+    project_root: Path,
+    recipe_id: str,
+    cli_home: Path | None = None,
+) -> None:
     """Copy the frozen Bash reference alongside the launcher (task 3.9).
 
     The launcher's legacy fallback (`gate_impl=bash`, or `auto` with no
@@ -699,9 +935,59 @@ def materialize_legacy_gate(recipe_dir: Path, project_root: Path, recipe_id: str
         return
     dest = project_root / LEGACY_HOOK_REL
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(src.read_text())
-    os.chmod(dest, 0o755)
-    print(f"    ✓ hook script {LEGACY_HOOK_REL}")
+    content = src.read_bytes()
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
+    entry = (lock.get("managed") or {}).get(LEGACY_HOOK_REL)
+    util = _load_util()
+    state = util.classify_managed_override(dest, entry, would_write=content)
+
+    def record() -> None:
+        set_gate_baseline(
+            lock,
+            LEGACY_HOOK_REL,
+            util.sha256_bytes(content),
+            recipe=recipe_id,
+            source="hooks/worktree-gate-legacy.sh",
+        )
+        write_lock(lock_path, lock)
+
+    if state == "managed_current":
+        record()
+        _write_legacy_verification(dest, content)
+        print(f"    · hook skipped (current) {LEGACY_HOOK_REL}")
+        return
+
+    prior = _snapshot_file(dest)
+    try:
+        backup = _replace_governed_asset(
+            project_root=project_root,
+            dest=dest,
+            rel=LEGACY_HOOK_REL,
+            content=content,
+            lock=lock,
+            lock_path=lock_path,
+            record=record,
+            cli_home=cli_home,
+            mode=0o755,
+        )
+    except BaseException:
+        # JD-B-002 (round 2): a failed refresh rolled the target back to its
+        # prior bytes. A pre-existing .verified sidecar would then certify
+        # those stale (non-current) bytes as current, letting the launcher
+        # execute them. Invalidate the receipt so the launcher fails closed
+        # instead of running a stale target/receipt pair.
+        _invalidate_legacy_verification(dest)
+        raise
+    _write_legacy_verification(dest, content)
+    info(_forced_replacement_message(
+        rel=LEGACY_HOOK_REL,
+        state=state,
+        prior=prior,
+        desired=content,
+        backup=backup,
+    ))
+    print(f"    ✓ hook refreshed {LEGACY_HOOK_REL}")
 
 
 # --- Binding resolution -------------------------------------------------------
@@ -1016,6 +1302,84 @@ def _enabled_agents(project_root: Path) -> list[str]:
     return [str(a) for a in enabled if a]
 
 
+def preflight_worktree_flow(project_root: Path, ai_specs_home: Path) -> int:
+    """Verify canonical worktree-flow inputs without mutating the project."""
+    recipes = load_recipes_from_manifest(project_root)
+    cfg = recipes.get("worktree-flow") or {}
+    if not isinstance(cfg, dict) or not cfg.get("enabled"):
+        print("  · worktree-flow freshness preflight skipped (recipe disabled)")
+        return 0
+
+    catalog_dir = ai_specs_home / "catalog" / "recipes"
+    recipe = read_recipe(catalog_dir, "worktree-flow")
+    merged_cfg = merge_config(recipe, cfg.get("config") or {})
+    recipe_dir = catalog_dir / "worktree-flow"
+
+    required: list[tuple[str, Path]] = []
+    required_paths: set[Path] = set()
+    for tpl in getattr(recipe, "templates", []) or []:
+        if Path(tpl.target).as_posix() == "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh":
+            source = recipe_dir / tpl.source
+            if source not in required_paths:
+                required.append(("cleanup template", source))
+                required_paths.add(source)
+    for hook in getattr(recipe, "runtime_hooks", []) or []:
+        if Path(hook.script).name == "worktree-gate.sh":
+            source = recipe_dir / hook.script
+            if source not in required_paths:
+                required.append(("Go launcher", source))
+                required_paths.add(source)
+    legacy_source = recipe_dir / "hooks" / "worktree-gate-legacy.sh"
+    if legacy_source not in required_paths:
+        required.append(("legacy Bash gate", legacy_source))
+
+    for label, source in required:
+        if not source.is_file():
+            raise RuntimeError(f"worktree-flow freshness preflight: {label} missing at {source}")
+        if not source.read_bytes():
+            raise RuntimeError(f"worktree-flow freshness preflight: {label} is empty at {source}")
+        check = subprocess.run(
+            ["bash", "-n", str(source)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if check.returncode != 0:
+            detail = (check.stderr or check.stdout or "syntax check failed").strip()
+            raise RuntimeError(
+                f"worktree-flow freshness preflight: {label} verification failed at "
+                f"{source}: {detail}"
+            )
+
+    gb = _load_gate_binary()
+    impl = str(merged_cfg.get("gate_impl") or "auto")
+    if impl in ("auto", "go"):
+        goos, goarch = gb.detect_platform()
+        if (goos, goarch) in gb.SUPPORTED_PLATFORMS:
+            cache = gb.cache_bin_path(ai_specs_home, goos=goos, goarch=goarch)
+            status = gb.acquire(
+                gate_impl=impl,
+                ai_specs_home=ai_specs_home,
+                offline=os.environ.get("AI_SPECS_GATE_OFFLINE") == "1",
+            )
+            if status.get("installed"):
+                info(
+                    f"worktree-flow: freshness preflight cache verified path={cache} "
+                    f"evidence={status.get('verification', {})}"
+                )
+            elif status.get("warn"):
+                warn(
+                    f"worktree-flow: freshness preflight cache unavailable path={cache} "
+                    f"reason={status['warn']}"
+                )
+
+    info(
+        "worktree-flow: freshness preflight verified canonical sources "
+        + ", ".join(f"{label}={source}" for label, source in required)
+    )
+    return 0
+
+
 def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out: Path | None = None, resolved_config_out: Path | None = None, resolved_hooks_out: Path | None = None, refresh_gates: bool = False) -> int:
     catalog_dir = ai_specs_home / "catalog" / "recipes"
     toml_path = project_root / "ai-specs" / "ai-specs.toml"
@@ -1186,7 +1550,14 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
         # Templates
         for tpl in recipe.templates:
-            materialize_template(recipe_dir, tpl, project_root, merged_cfg, recipe_id=rid)
+            materialize_template(
+                recipe_dir,
+                tpl,
+                project_root,
+                merged_cfg,
+                recipe_id=rid,
+                cli_home=cli_home,
+            )
 
         # Docs
         for doc in recipe.docs:
@@ -1224,7 +1595,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # acquire the Go binary when gate_impl wants it (tasks 3.10-3.13).
         # Acquisition never fails sync: every failure warns and degrades.
         if rid == "worktree-flow":
-            materialize_legacy_gate(recipe_dir, project_root, rid)
+            materialize_legacy_gate(recipe_dir, project_root, rid, cli_home=cli_home)
             impl = str(merged_cfg.get("gate_impl") or "auto")
             if impl in ("auto", "go"):
                 try:
@@ -1355,6 +1726,7 @@ def main() -> int:
     resolved_hooks_out = None
     resolved_config_only = False
     refresh_gates = False
+    preflight = False
     if "--recipe-mcp-out" in args:
         idx = args.index("--recipe-mcp-out")
         if idx + 1 < len(args):
@@ -1378,18 +1750,29 @@ def main() -> int:
         idx = args.index("--refresh-gates")
         refresh_gates = True
         args = args[:idx] + args[idx + 1:]
+    if "--preflight" in args:
+        idx = args.index("--preflight")
+        preflight = True
+        args = args[:idx] + args[idx + 1:]
     if len(args) != 2:
         print(
             f"Usage: {sys.argv[0]} <project_root> <ai_specs_home>"
             " [--recipe-mcp-out <path>] [--resolved-config-out <path>]"
             " [--resolved-hooks-out <path>] [--resolved-config-only]"
-            " [--refresh-gates]",
+            " [--refresh-gates] [--preflight]",
             file=sys.stderr,
         )
         return 2
 
     project_root = Path(args[0]).resolve()
     ai_specs_home = Path(args[1]).resolve()
+
+    if preflight:
+        try:
+            return preflight_worktree_flow(project_root, ai_specs_home)
+        except Exception as exc:  # noqa: BLE001
+            fail(str(exc))
+            return 1
 
     if resolved_config_only:
         if resolved_config_out is None:

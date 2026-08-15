@@ -2,11 +2,13 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1161,11 +1163,12 @@ class StaleCleanupOverrideTests(unittest.TestCase):
         with mock.patch.object(self.mod.sys, "stderr", buf):
             rc = self.mod.materialize_recipes(root, ROOT)
         self.assertEqual(rc, 0)
-        self.assertEqual(dest.read_bytes(), payload)
+        expected = payload.replace(b"__WORKTREE_REPO_TOPOLOGY__", b"auto")
+        self.assertEqual(dest.read_bytes(), expected)
         self.assertNotIn("not refreshed", buf.getvalue())
         self.assertNotIn("condition=not_exists", buf.getvalue())
 
-    def test_divergent_override_warns_and_sync_succeeds(self):
+    def test_divergent_worktree_override_is_force_replaced_and_sync_succeeds(self):
         root = self._make_wf_project()
         dest = self._cleanup_target(root)
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1175,16 +1178,60 @@ class StaleCleanupOverrideTests(unittest.TestCase):
         with mock.patch.object(self.mod.sys, "stderr", buf):
             rc = self.mod.materialize_recipes(root, ROOT)
         self.assertEqual(rc, 0)
-        self.assertEqual(dest.read_bytes(), custom)
+        expected = (
+            self._catalog_src()
+            .read_text()
+            .replace("__WORKTREE_REPO_TOPOLOGY__", "auto")
+        )
+        self.assertEqual(dest.read_text(), expected)
         err = buf.getvalue()
-        self.assertIn("preserving existing file", err)
-        self.assertIn("leave it unchanged", err)
-        self.assertIn("remove it and run sync again", err)
-        self.assertIn("worktree-cleanup.sh", err)
-        self.assertIn("rm ", err)
-        self.assertIn("ai-specs sync", err)
-        self.assertNotIn("user-managed", err.lower())
-        self.assertNotIn("customized", err.lower())
+        self.assertNotIn("preserving existing file", err)
+        self.assertNotIn("remove it and run sync again", err)
+
+    def test_worktree_flow_user_modified_cleanup_is_force_replaced(self):
+        root = self._make_wf_project()
+        dest = self._cleanup_target(root)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"# customized override\n")
+
+        with mock.patch.dict(os.environ, {"AI_SPECS_GATE_OFFLINE": "1"}, clear=False):
+            rc = self.mod.materialize_recipes(root, ROOT)
+
+        self.assertEqual(rc, 0)
+        expected = (
+            self._catalog_src()
+            .read_text()
+            .replace("__WORKTREE_REPO_TOPOLOGY__", "auto")
+        )
+        self.assertEqual(dest.read_text(), expected)
+
+    def test_worktree_flow_managed_stale_cleanup_is_force_replaced(self):
+        root = self._make_wf_project()
+        dest = self._cleanup_target(root)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        stale = b"previous canonical cleanup\n"
+        dest.write_bytes(stale)
+        lock_path = root / "ai-specs/.ai-specs.lock"
+        lock = self.mod.load_lock(lock_path)
+        self.mod.set_managed_override(
+            lock,
+            dest.relative_to(root).as_posix(),
+            self.mod._load_util().sha256_bytes(stale),
+            recipe="worktree-flow",
+            source="templates/worktree-cleanup.sh",
+            kind="template",
+            policy="auto",
+        )
+        self.mod.write_lock(lock_path, lock)
+
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+
+        expected = (
+            self._catalog_src()
+            .read_text()
+            .replace("__WORKTREE_REPO_TOPOLOGY__", "auto")
+        )
+        self.assertEqual(dest.read_text(), expected)
 
     def test_missing_override_gets_fresh_copy(self):
         root = self._make_wf_project()
@@ -1204,6 +1251,52 @@ class StaleCleanupOverrideTests(unittest.TestCase):
         self.assertEqual(dest.read_text(), expected)
         self.assertNotIn("__WORKTREE_REPO_TOPOLOGY__", dest.read_text())
         self.assertNotIn("not refreshed", buf.getvalue())
+
+    def test_failed_worktree_lock_update_rolls_back_target_and_backup(self):
+        root = self._make_wf_project()
+        home = Path(tempfile.mkdtemp(prefix="wf-home-"))
+        self.addCleanup(lambda: shutil.rmtree(home, ignore_errors=True))
+        tpl = SimpleNamespace(
+            source="templates/worktree-cleanup.sh",
+            target="ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh",
+            condition="not_exists",
+            update_policy="auto",
+        )
+        recipe_dir = ROOT / "catalog" / "recipes" / "worktree-flow"
+        self.mod.materialize_template(
+            recipe_dir,
+            tpl,
+            root,
+            {"repo_topology": "auto"},
+            recipe_id="worktree-flow",
+            cli_home=home,
+        )
+        dest = root / tpl.target
+        custom = b"custom before failed lock\n"
+        dest.write_bytes(custom)
+        lock_path = root / "ai-specs/.ai-specs.lock"
+        before_lock = lock_path.read_bytes()
+
+        with mock.patch.object(self.mod, "write_lock", side_effect=OSError("lock denied")):
+            with self.assertRaises(OSError):
+                self.mod.materialize_template(
+                    recipe_dir,
+                    tpl,
+                    root,
+                    {"repo_topology": "auto"},
+                    recipe_id="worktree-flow",
+                    cli_home=home,
+                )
+
+        self.assertEqual(dest.read_bytes(), custom)
+        self.assertEqual(lock_path.read_bytes(), before_lock)
+        backup = _cache_mod().gate_backup_path(
+            root,
+            tpl.target,
+            self.mod._load_util().sha256_bytes(custom),
+            cli_home=home,
+        )
+        self.assertFalse(backup.exists(), "failed transaction must remove its new backup")
 
 if __name__ == "__main__":
     unittest.main()
