@@ -60,6 +60,16 @@ class FakeGateBinary:
     def cache_size(self, _home):
         return 4096
 
+    def verify_cached_binary(self, *_args, **_kwargs):
+        return {
+            "verified": True,
+            "expected_digest": "e" * 64,
+            "observed_digest": "e" * 64,
+            "version": self.version_out,
+            "selftest": "passed",
+            "reason": "digest, version, and self-test verified",
+        }
+
 
 class WorktreeGateDoctorTests(unittest.TestCase):
     @classmethod
@@ -162,6 +172,31 @@ class WorktreeGateDoctorTests(unittest.TestCase):
         self.assertEqual(checks[0].severity, self.doctor.Severity.ERROR)
         self.assertIn("digest mismatch", checks[0].message)
         self.assertIn("never executed", checks[0].message)
+
+    def test_unverified_cache_evidence_reports_error(self):
+        root = self._project()
+        launcher = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text('stamped_gate_version="9.9.9"\n')
+        fake = FakeGateBinary(root)
+        fake._binary.parent.mkdir(parents=True)
+        fake._binary.write_bytes(b"bin")
+        os.chmod(fake._binary, 0o755)
+        fake.verify_cached_binary = lambda *_args, **_kwargs: {
+            "verified": False,
+            "expected_digest": "a" * 64,
+            "observed_digest": "b" * 64,
+            "version": "9.9.9",
+            "selftest": "passed",
+            "reason": "digest mismatch: expected " + "a" * 64,
+        }
+
+        checks = self._checks(root, fake)
+
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0].severity, self.doctor.Severity.ERROR)
+        self.assertIn("digest mismatch", checks[0].message)
+        self.assertIn("sync", checks[0].guidance)
 
 
 if __name__ == "__main__":

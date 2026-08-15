@@ -264,6 +264,31 @@ class OverrideOwnershipTests(unittest.TestCase):
             self.assertEqual(len(doctor.checks), 1)
             self.assertIn("user-modified", doctor.checks[0].message)
 
+    def test_doctor_reports_worktree_flow_cleanup_as_force_refreshable_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            (root / "ai-specs").mkdir(parents=True)
+            (root / "ai-specs/ai-specs.toml").write_text(
+                "[recipes.worktree-flow]\nenabled = true\n"
+            )
+            target = root / "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"
+            target.parent.mkdir(parents=True)
+            target.write_text("custom cleanup\n")
+
+            with patch.object(self.doctor, "AI_SPECS_HOME", ROOT):
+                doctor = self.doctor.Doctor(root)
+                doctor._check_worktree_flow_assets()
+
+            checks = [
+                c for c in doctor.checks if c.name == "worktree-flow-freshness"
+            ]
+            cleanup_check = next(c for c in checks if "worktree-cleanup.sh" in c.message)
+            self.assertEqual(cleanup_check.severity, self.doctor.Severity.ERROR)
+            self.assertIn("untracked", cleanup_check.message)
+            self.assertIn("ordinary sync will force", cleanup_check.message)
+            self.assertIn("ai-specs sync", cleanup_check.guidance)
+            self.assertFalse((root / "ai-specs/.ai-specs.lock").exists())
+
     def _hook(self, script: str = "hooks/gate.sh"):
         return SimpleNamespace(script=script)
 
@@ -476,17 +501,17 @@ class OverrideOwnershipTests(unittest.TestCase):
         )
         surface = "\n".join(path.read_text().lower() for path in docs)
         for phrase in (
-            "gate provenance",
             "records a baseline",
             "byte mismatch",
             "missing baseline",
             "ai-specs sync --refresh-gates",
             "cache-only immutable backup",
-            "runtime hook scripts are no longer rewritten unconditionally",
+            "force-replaces",
+            "latest verified",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, surface)
-        self.assertNotIn("always rewritten", surface)
+        self.assertNotIn("preserve, warn, and never force", surface)
 
 
 if __name__ == "__main__":

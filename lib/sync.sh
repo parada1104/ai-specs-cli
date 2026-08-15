@@ -33,8 +33,8 @@ Arguments:
 Flags:
   --ignore-cli-version  Skip [tool] CLI version policy check (warns on stderr)
   --refresh-gates       Explicitly refresh customized gate hooks: save exact
-                        pre-refresh bytes to a cache-only immutable backup,
-                        then replace (never set by an ordinary sync)
+                         pre-refresh bytes to a cache-only immutable backup,
+                         then replace (ordinary sync uses the same transaction)
   -v, --verbose         Print full per-step detail instead of compact summaries
 EOF
 }
@@ -154,6 +154,12 @@ if [[ ! -f "$TOML_PATH" ]]; then
 fi
 
 python3 "$CLI_VERSION_PY" check-sync "$ROOT_PATH" "$AI_SPECS_HOME" $IGNORE_CLI_VERSION || exit 1
+
+# Verify worktree-flow canonical inputs before any consumer-project writes.
+# Materialization repeats the state and verification checks at each governed
+# replacement boundary, so this preflight is advisory for cache freshness but
+# hard for missing or invalid canonical sources.
+run_step "worktree-flow freshness preflight" python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --preflight
 
 RESOLVED_TARGETS=()
 while IFS= read -r target; do

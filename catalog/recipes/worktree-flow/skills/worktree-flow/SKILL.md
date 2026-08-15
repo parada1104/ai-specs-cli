@@ -66,11 +66,11 @@ git branch --show-current
 
 Central planning artifacts belong to the proven superrepo canonical subtree
 `<superrepo>/openspec/changes/**`; subrepo code remains subject to its own
-protected branch and the separate `plan-build-flow` authorization. If sync or
-doctor reports a stale materialized hook without the scope stamp, refresh it
-explicitly with `rm <hook-path> && ai-specs sync`; customized hook bytes are
-never silently overwritten. The runtime hook is a defense in depth, not the
-sole guard for delegated or subprocess writes.
+protected branch and the separate `plan-build-flow` authorization. Worktree-flow
+cleanup and gate assets are refreshed by ordinary sync from the latest verified
+catalog bytes; customized bytes are backed up where supported and are not a
+freshness blocker. The runtime hook is a defense in depth, not the sole guard
+for delegated or subprocess writes.
 
 ## Request context
 
@@ -165,10 +165,11 @@ initialized. Run with `--dry-run` first to preview removals.
 The script is conservative by design:
 
 - **Removes** a worktree only when its branch is fully merged into the base —
-  detecting both regular/fast-forward merges (ancestry) and squash/rebase merges
-  (all of the branch's changes already present in base by patch-id).
+  detecting regular/fast-forward merges by ancestry and squash/rebase merges by
+  complete patch/tree equivalence, including multi-commit squash changes.
 - **Preserves** worktrees with uncommitted changes (reported as `dirty`).
 - **Preserves** worktrees whose branch is not yet merged (`unmerged`).
+- **Preserves** partial squash and later-reverted changes as `unmerged`.
 - **Never touches** the main worktree or detached-HEAD worktrees.
 - Under submodules, enumerates per-module lists; uninitialized modules are
   skipped.

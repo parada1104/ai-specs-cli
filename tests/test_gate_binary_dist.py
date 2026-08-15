@@ -90,6 +90,7 @@ class GateBinaryDistTests(unittest.TestCase):
             f"{digest}  worktree-gate-darwin-arm64\n"
         )
         with mock.patch.object(self.gb, "_run_selftest", return_value=None), \
+             mock.patch.object(self.gb, "binary_version", return_value="9.9.9"), \
              mock.patch.object(urllib.request, "urlretrieve", side_effect=lambda url, tmp: Path(tmp).write_bytes(asset)), \
              mock.patch.object(self.gb, "detect_platform", return_value=("darwin", "arm64")):
             status = self.gb.acquire(gate_impl="auto", ai_specs_home=home)
@@ -98,6 +99,117 @@ class GateBinaryDistTests(unittest.TestCase):
         self.assertTrue(installed.is_file())
         self.assertTrue(os.access(installed, os.X_OK))
         self.assertEqual(installed.read_bytes(), asset)
+
+    def test_stale_executable_cache_is_revalidated_and_reacquired(self):
+        home = self._home()
+        stale = b"stale cache bytes"
+        fresh = b"fresh verified bytes"
+        digest = hashlib.sha256(fresh).hexdigest()
+        (home / "catalog" / "recipes" / "worktree-flow" / "bin" / "SHA256SUMS").write_text(
+            f"{digest}  worktree-gate-darwin-arm64\n"
+        )
+        cache = self.gb.cache_bin_path(home, version="9.9.9", goos="darwin", goarch="arm64")
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(stale)
+        cache.chmod(0o755)
+
+        with mock.patch.object(self.gb, "detect_platform", return_value=("darwin", "arm64")), \
+             mock.patch.object(self.gb, "binary_version", return_value="9.9.9"), \
+             mock.patch.object(self.gb, "_run_selftest", return_value=None), \
+             mock.patch.object(
+                 urllib.request,
+                 "urlretrieve",
+                 side_effect=lambda url, tmp: Path(tmp).write_bytes(fresh),
+             ) as download:
+            status = self.gb.acquire(gate_impl="auto", ai_specs_home=home)
+
+        self.assertTrue(status["installed"], status)
+        self.assertEqual(cache.read_bytes(), fresh)
+        download.assert_called_once()
+        self.assertTrue(
+            self.gb.verification_record_path(cache).is_file(),
+            "a successful cache refresh must leave current verification evidence",
+        )
+        self.assertIn("re-acquired", status["verification"]["reason"])
+
+    def test_cache_version_mismatch_is_not_executed_before_reacquisition(self):
+        home = self._home()
+        fresh = b"fresh after version mismatch"
+        digest = hashlib.sha256(fresh).hexdigest()
+        (home / "catalog" / "recipes" / "worktree-flow" / "bin" / "SHA256SUMS").write_text(
+            f"{digest}  worktree-gate-darwin-arm64\n"
+        )
+        cache = self.gb.cache_bin_path(home, version="9.9.9", goos="darwin", goarch="arm64")
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(fresh)
+        cache.chmod(0o755)
+
+        versions = iter(("8.8.8", "9.9.9"))
+        with mock.patch.object(self.gb, "detect_platform", return_value=("darwin", "arm64")), \
+             mock.patch.object(self.gb, "binary_version", side_effect=lambda path: next(versions)), \
+             mock.patch.object(self.gb, "_run_selftest", return_value=None), \
+             mock.patch.object(
+                 urllib.request,
+                 "urlretrieve",
+                 side_effect=lambda url, tmp: Path(tmp).write_bytes(fresh),
+             ):
+            status = self.gb.acquire(gate_impl="auto", ai_specs_home=home)
+
+        self.assertTrue(status["installed"], status)
+        self.assertEqual(cache.read_bytes(), fresh)
+        self.assertIn("version", status["verification"]["reason"])
+
+    def test_cache_selftest_failure_forces_reacquisition(self):
+        home = self._home()
+        fresh = b"fresh after selftest failure"
+        digest = hashlib.sha256(fresh).hexdigest()
+        (home / "catalog" / "recipes" / "worktree-flow" / "bin" / "SHA256SUMS").write_text(
+            f"{digest}  worktree-gate-darwin-arm64\n"
+        )
+        cache = self.gb.cache_bin_path(home, version="9.9.9", goos="darwin", goarch="arm64")
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(fresh)
+        cache.chmod(0o755)
+
+        selftests = iter(("selftest failed", None, None))
+        with mock.patch.object(self.gb, "detect_platform", return_value=("darwin", "arm64")), \
+             mock.patch.object(self.gb, "binary_version", return_value="9.9.9"), \
+             mock.patch.object(self.gb, "_run_selftest", side_effect=lambda path: next(selftests)) as selftest, \
+             mock.patch.object(
+                 urllib.request,
+                 "urlretrieve",
+                 side_effect=lambda url, tmp: Path(tmp).write_bytes(fresh),
+             ) as download:
+            status = self.gb.acquire(gate_impl="auto", ai_specs_home=home)
+
+        self.assertTrue(status["installed"], status)
+        self.assertEqual(cache.read_bytes(), fresh)
+        self.assertEqual(selftest.call_count, 2)
+        download.assert_called_once()
+
+    def test_verification_receipt_failure_leaves_cache_unselected(self):
+        home = self._home()
+        asset = b"asset with receipt failure"
+        digest = hashlib.sha256(asset).hexdigest()
+        (home / "catalog" / "recipes" / "worktree-flow" / "bin" / "SHA256SUMS").write_text(
+            f"{digest}  worktree-gate-darwin-arm64\n"
+        )
+        with mock.patch.object(self.gb, "detect_platform", return_value=("darwin", "arm64")), \
+             mock.patch.object(self.gb, "binary_version", return_value="9.9.9"), \
+             mock.patch.object(self.gb, "_run_selftest", return_value=None), \
+             mock.patch.object(
+                 urllib.request,
+                 "urlretrieve",
+                 side_effect=lambda url, tmp: Path(tmp).write_bytes(asset),
+             ), \
+             mock.patch.object(self.gb, "_write_verification_record", side_effect=OSError("receipt denied")):
+            status = self.gb.acquire(gate_impl="auto", ai_specs_home=home)
+
+        self.assertFalse(status["installed"], status)
+        cache = Path(status["cache_path"])
+        self.assertFalse(cache.exists())
+        self.assertFalse(self.gb.verification_record_path(cache).exists())
+        self.assertIn("receipt write failed", status["warn"])
 
     def test_digest_mismatch_never_installs_and_records(self):
         home = self._home()

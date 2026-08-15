@@ -138,7 +138,18 @@ class CliVersionLockMetaTests(unittest.TestCase):
             )
             meta = self.mod.read_lock_meta(path)
             self.assertEqual(meta["cli_version"], "0.12.2")
-            self.assertEqual(meta["synced_at"], "2026-06-23T12:00:00Z")
+        self.assertEqual(meta["synced_at"], "2026-06-23T12:00:00Z")
+
+    def test_version_lock_drift_is_reported_without_rewriting_metadata(self):
+        manifest = {"tool": {}}
+        severity, name, message = self.mod.evaluate_cli_version(
+            installed="0.22.0",
+            manifest=manifest,
+            lock_meta={"cli_version": "0.21.0", "synced_at": "2026-08-01T00:00:00Z"},
+        )
+        self.assertEqual((severity, name), ("WARN", "cli-version"))
+        self.assertIn("last sync 0.21.0", message)
+        self.assertIn("installed 0.22.0", message)
 
 
 if __name__ == "__main__":

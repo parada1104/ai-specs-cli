@@ -118,7 +118,9 @@ Resolution order (first hit wins):
 3. Version-keyed cache
    `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate`,
    populated by `ai-specs sync` (digest-verified against the committed
-   `SHA256SUMS` trust root, mode 0755, self-tested, atomic install).
+   `SHA256SUMS` trust root, version-verified, self-tested, atomically installed,
+   and accompanied by `<binary>.verified`). A cache executable without a current
+   receipt is rejected before `exec`.
 4. Frozen Bash reference, when the stamped `gate_impl` is `bash`, or `auto`
    with no usable binary.
 5. Otherwise one stderr warning naming the missing path and the
@@ -129,7 +131,26 @@ The build matrix is `darwin/arm64`, `darwin/amd64`, `linux/amd64`,
 version stamped at link time). `gate_impl = auto` prefers the Go binary and
 falls back to Bash; `go` fails open when unusable (doctor ERROR); `bash` needs
 no binary, network, or Go toolchain. The gate never computes a digest on the
-invocation path unless `WORKTREE_GATE_VERIFY=1` requests it.
+invocation path unless `WORKTREE_GATE_VERIFY=1` requests it; sync is the
+revalidation boundary for cache digest, version, and self-test evidence.
+
+## Worktree-flow freshness
+
+The cleanup source remains Bash at
+`catalog/recipes/worktree-flow/templates/worktree-cleanup.sh`; the Go migration
+does not port cleanup into `worktree-gate`. During sync, the cleanup override,
+Go launcher, and `worktree-gate-legacy.sh` are classified from `[managed.*]`
+provenance and would-write bytes. Managed-stale, user-modified, and unknown
+worktree-flow assets are backed up where supported and atomically replaced with
+the latest verified canonical bytes during ordinary sync. The explicit
+`ai-specs sync --refresh-gates` flag uses that same transaction.
+
+The transaction verifies the installed bytes before updating the lock. Backup,
+replacement, rollback, or lock failures fail closed and restore the prior
+target/lock state where possible. `ai-specs sync` runs a read-only canonical
+source preflight before consumer-project writes, while `ai-specs doctor` reports
+target, state, digest/version/self-test evidence, and the sync or re-acquisition
+remedy without mutating the project.
 
 Because every renderer references only `hook["script_path"]`, all five harnesses
 keep working without re-render churn: the launcher materializes at the unchanged

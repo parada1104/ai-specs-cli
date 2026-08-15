@@ -153,6 +153,7 @@ class Doctor:
         self._check_repo_topology()
         self._check_stale_template_overrides()
         self._check_gate_provenance()
+        self._check_worktree_flow_assets()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -749,6 +750,38 @@ class Doctor:
                 ))
             return
 
+        verify = getattr(gb, "verify_cached_binary", None)
+        if callable(verify):
+            version_key = stamped_version
+            version_reader = getattr(gb, "cli_version", None)
+            if callable(version_reader):
+                version_key = version_reader(AI_SPECS_HOME)
+            evidence = verify(
+                binary,
+                AI_SPECS_HOME,
+                version_key,
+                goos,
+                goarch,
+                require_receipt=True,
+            )
+            if not evidence.get("verified"):
+                self.checks.append(Check(
+                    Severity.ERROR,
+                    "worktree-gate",
+                    f"cached Go gate at {binary} is unverified: "
+                    f"{evidence.get('reason', 'verification failed')} "
+                    f"(expected_digest={evidence.get('expected_digest', 'unknown')}, "
+                    f"observed_digest={evidence.get('observed_digest', 'unknown')}, "
+                    f"version={evidence.get('version', 'unknown')}, "
+                    f"selftest={evidence.get('selftest', 'unknown')}, "
+                    f"receipt={evidence.get('receipt', 'unknown')})",
+                    guidance=(
+                        "run ai-specs sync to force re-acquisition; the unverified "
+                        "candidate is never executed"
+                    ),
+                ))
+                return
+
         version = gb.binary_version(binary)
         selftest = gb._run_selftest(binary)
         if selftest is not None:
@@ -959,6 +992,12 @@ class Doctor:
                 if not dest.is_file() or not src.is_file():
                     continue
                 target = Path(tpl.target).as_posix()
+                if (
+                    rid == "worktree-flow"
+                    and target
+                    == "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"
+                ):
+                    continue
                 state = util.classify_managed_override(
                     dest,
                     managed.get(target),
@@ -1050,6 +1089,8 @@ class Doctor:
                 recipe = schema.load_recipe_toml(recipe_toml)
             except Exception:
                 continue
+            if rid == "worktree-flow":
+                continue
             for hook in getattr(recipe, "runtime_hooks", []) or []:
                 rel = (
                     f"ai-specs/recipes/{rid}/hooks/"
@@ -1074,6 +1115,104 @@ class Doctor:
                     message,
                     guidance=f"rm {rel} && ai-specs sync (or ai-specs sync --refresh-gates)",
                 ))
+
+    def _check_worktree_flow_assets(self) -> None:
+        """Report governed worktree-flow freshness without repairing anything."""
+        util = self._load_util()
+        if util is None:
+            return
+        manifest = self.root / "ai-specs" / "ai-specs.toml"
+        if not manifest.is_file():
+            return
+        try:
+            import tomllib
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        wf = (data.get("recipes") or {}).get("worktree-flow") or {}
+        if not isinstance(wf, dict) or wf.get("enabled") is not True:
+            return
+        cfg = wf.get("config") if isinstance(wf.get("config"), dict) else {}
+
+        lock_mod_path = Path(__file__).with_name("lock.py")
+        lock_spec = importlib.util.spec_from_file_location("lock_doctor_wf_assets", lock_mod_path)
+        if lock_spec is None or lock_spec.loader is None:
+            return
+        lock_mod = importlib.util.module_from_spec(lock_spec)
+        sys.modules[lock_spec.name] = lock_mod
+        try:
+            lock_spec.loader.exec_module(lock_mod)
+            managed = lock_mod.load_lock(
+                self.root / "ai-specs" / ".ai-specs.lock"
+            ).get("managed", {})
+        except Exception:
+            managed = {}
+
+        recipe_dir = AI_SPECS_HOME / "catalog" / "recipes" / "worktree-flow"
+        version_path = AI_SPECS_HOME / "VERSION"
+        version = version_path.read_text(encoding="utf-8").strip() if version_path.is_file() else "dev"
+        values = {
+            "__WORKTREE_GATE_MODE__": str(cfg.get("gate_mode") or "always"),
+            "__WORKTREE_GATE_SCOPE__": str(cfg.get("gate_scope") or "auto"),
+            "__WORKTREE_REPO_TOPOLOGY__": str(cfg.get("repo_topology") or "auto"),
+            "__WORKTREE_GATE_IMPL__": str(cfg.get("gate_impl") or "auto"),
+            "__WORKTREE_GATE_VERSION__": version,
+        }
+        assets = (
+            (
+                "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh",
+                recipe_dir / "templates" / "worktree-cleanup.sh",
+                "template",
+            ),
+            (
+                "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh",
+                recipe_dir / "hooks" / "worktree-gate.sh",
+                "launcher",
+            ),
+            (
+                "ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh",
+                recipe_dir / "hooks" / "worktree-gate-legacy.sh",
+                "legacy gate",
+            ),
+        )
+        for rel, source, kind in assets:
+            if not source.is_file():
+                self.checks.append(Check(
+                    Severity.ERROR,
+                    "worktree-flow-freshness",
+                    f"canonical {kind} source is missing at {source}",
+                    guidance="run ai-specs upgrade, then ai-specs sync",
+                ))
+                continue
+            desired = source.read_bytes()
+            if kind == "template":
+                desired = desired.replace(
+                    b"__WORKTREE_REPO_TOPOLOGY__",
+                    values["__WORKTREE_REPO_TOPOLOGY__"].encode(),
+                )
+            elif kind == "launcher":
+                text = desired.decode("utf-8")
+                for token, value in values.items():
+                    text = text.replace(token, value)
+                desired = text.encode("utf-8")
+            dest = self.root / rel
+            state = util.classify_managed_override(
+                dest,
+                managed.get(rel),
+                would_write=desired,
+            )
+            if state == "managed_current":
+                continue
+            observed = "missing" if not dest.is_file() else util.sha256_bytes(dest.read_bytes())
+            desired_sha = util.sha256_bytes(desired)
+            self.checks.append(Check(
+                Severity.ERROR,
+                "worktree-flow-freshness",
+                f"{rel} state={state} observed_digest={observed} "
+                f"desired_digest={desired_sha}; ordinary sync will force the "
+                "latest verified replacement (cache-only backup where supported)",
+                guidance="run ai-specs sync (or ai-specs sync --refresh-gates)",
+            ))
 
     def _check_enabled_agents(self) -> None:
         data = self._load_manifest()

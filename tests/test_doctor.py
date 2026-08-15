@@ -1487,7 +1487,7 @@ class RepoTopologyDoctorTests(unittest.TestCase):
             self.assertIn("repo-topology", result.stdout)
             self.assertIn("INFO", result.stdout)
 
-    def test_stale_override_warns(self):
+    def test_stale_worktree_override_is_error_and_sync_remains_repair_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
@@ -1503,8 +1503,9 @@ class RepoTopologyDoctorTests(unittest.TestCase):
                 [str(CLI), "doctor", str(target)],
                 capture_output=True, text=True, check=False,
             )
-            self.assertIn("stale-override", result.stdout)
-            self.assertIn("WARN", result.stdout)
+            self.assertIn("worktree-flow-freshness", result.stdout)
+            self.assertIn("ERROR", result.stdout)
+            self.assertIn("ordinary sync will force", result.stdout)
             # read-only: file unchanged
             self.assertEqual(dest.read_text(), "# customized\n")
 
