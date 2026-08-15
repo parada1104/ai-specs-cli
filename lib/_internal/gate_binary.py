@@ -13,12 +13,13 @@ Invariants (spec "Binary acquisition, verification and cache layout"):
 
 - Digest before execution, always. The expected SHA-256 comes from the
   committed `catalog/recipes/worktree-flow/bin/SHA256SUMS` — the trust root
-  (D5). A mismatched asset is deleted, warned about, never executed, and the
-  mismatch is recorded for `doctor`.
+  (D5). A mismatched asset is quarantined (or deleted when no prior candidate
+  exists), warned about, never executed, and the mismatch is recorded for
+  `doctor`.
 - Atomic install. Download to a temp file in the destination directory,
   verify, `chmod 0755`, then `os.replace` into place. A partial download can
   never be executed.
-- Never fatal to `ai-specs sync`. Every failure warns and degrades; the gate
+- Never selects unverified bytes. Every failure warns and degrades; the gate
   falls back to the frozen Bash implementation (`gate_impl=auto`) or fails
   open (`gate_impl=go`) with a recorded `doctor` ERROR.
 - Opt-in local build. `AI_SPECS_GATE_BUILD=1`, or offline with a Go toolchain
@@ -35,6 +36,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -55,6 +57,7 @@ SUPPORTED_PLATFORMS = (
 # Mismatch records live under the same version-keyed cache directory so a
 # doctor run on the same CLI version reads them.
 MISMATCH_FILENAME = "last-digest-mismatch.txt"
+VERIFICATION_SUFFIX = ".verified"
 
 # Canonical GitHub repository owner of ai-specs-cli. This is the owner used
 # everywhere else in the product (the git remote, install.sh, bin/ai-specs,
@@ -153,6 +156,17 @@ def record_digest_mismatch(message: str, cli_home: Path | None = None, version: 
         pass
 
 
+def clear_digest_mismatch(cli_home: Path | None = None, version: str | None = None) -> None:
+    """Clear a prior rejection once a replacement is fully verified."""
+    try:
+        digest_mismatch_record_path(cli_home, version).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        # A stale diagnostic must not make a verified asset executable failure.
+        pass
+
+
 def load_expected_digests(ai_specs_home: Path) -> dict[str, str]:
     """Parse the committed SHA256SUMS trust root.
 
@@ -178,6 +192,138 @@ def load_expected_digests(ai_specs_home: Path) -> dict[str, str]:
 
 def _sha256_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def verification_record_path(binary_path: Path) -> Path:
+    """Sidecar carrying the latest acquisition verification receipt."""
+    return binary_path.with_name(binary_path.name + VERIFICATION_SUFFIX)
+
+
+def _write_verification_record(binary_path: Path, version: str, digest: str) -> None:
+    """Atomically write the evidence consumed by the launcher hot path."""
+    path = verification_record_path(binary_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("status=verified\n")
+            fh.write(f"version={version}\n")
+            fh.write(f"digest={digest}\n")
+            fh.write("selftest=passed\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def read_verification_record(binary_path: Path) -> dict[str, str]:
+    """Read a sidecar receipt without treating malformed data as evidence."""
+    path = verification_record_path(binary_path)
+    if not path.is_file():
+        return {}
+    result: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key and value:
+                result[key] = value
+    except OSError:
+        return {}
+    return result
+
+
+def verify_cached_binary(
+    binary_path: Path,
+    ai_specs_home: Path,
+    version: str,
+    goos: str,
+    goarch: str,
+    *,
+    require_receipt: bool = False,
+    allow_missing_digest: bool = False,
+) -> dict[str, object]:
+    """Revalidate cache bytes against digest, version, self-test, and receipt."""
+    asset_name = f"worktree-gate-{goos}-{goarch}"
+    expected = load_expected_digests(ai_specs_home).get(asset_name)
+    evidence: dict[str, object] = {
+        "verified": False,
+        "expected_digest": expected or "",
+        "observed_digest": "",
+        "version": "",
+        "selftest": "not_run",
+        "receipt": str(verification_record_path(binary_path)),
+        "reason": "",
+    }
+    reasons: list[str] = []
+    if not binary_path.is_file() or not os.access(binary_path, os.X_OK):
+        evidence["reason"] = "cache candidate is missing or not executable"
+        return evidence
+    try:
+        observed = _sha256_of(binary_path)
+    except OSError as exc:
+        evidence["reason"] = f"cache digest read failed: {exc}"
+        return evidence
+    evidence["observed_digest"] = observed
+    if expected is None and not allow_missing_digest:
+        evidence["reason"] = f"no committed digest for {asset_name}"
+        return evidence
+    if expected is not None and observed != expected:
+        evidence["reason"] = f"digest mismatch: expected {expected}, got {observed}"
+        return evidence
+
+    # Only execute version/self-test after the trust-root digest matches. A
+    # stale or unknown executable must never be run merely to inspect it.
+    reported_version = binary_version(binary_path)
+    selftest = _run_selftest(binary_path)
+    evidence["version"] = reported_version
+    evidence["selftest"] = "passed" if selftest is None else selftest
+    if expected is None and not allow_missing_digest:
+        reasons.append(f"no committed digest for {asset_name}")
+    elif expected is not None and observed != expected:
+        reasons.append(f"digest mismatch: expected {expected}, got {observed}")
+    if reported_version != version:
+        reasons.append(
+            f"version mismatch: expected {version}, got {reported_version or 'unknown'}"
+        )
+    if selftest is not None:
+        reasons.append(f"self-test failed: {selftest}")
+    receipt = read_verification_record(binary_path)
+    if require_receipt:
+        if receipt.get("status") != "verified":
+            reasons.append("verification receipt is missing a verified status")
+        if receipt.get("version") != version:
+            reasons.append("verification receipt version is missing or stale")
+        if receipt.get("digest") != observed:
+            reasons.append("verification receipt digest is missing or stale")
+        if receipt.get("selftest") != "passed":
+            reasons.append("verification receipt does not record a passing self-test")
+    evidence["reason"] = "; ".join(reasons) if reasons else "digest, version, and self-test verified"
+    evidence["verified"] = not reasons
+    return evidence
+
+
+def _quarantine_cached_candidate(binary_path: Path) -> Path | None:
+    """Move rejected cache bytes aside so the executable path is never selected."""
+    if not binary_path.exists():
+        return None
+    try:
+        digest = _sha256_of(binary_path)
+    except OSError:
+        digest = "unknown"
+    rejected_dir = binary_path.parent / "rejected"
+    rejected_dir.mkdir(parents=True, exist_ok=True)
+    rejected = rejected_dir / f"{binary_path.name}-{digest}"
+    os.replace(binary_path, rejected)
+    receipt = verification_record_path(binary_path)
+    if receipt.exists():
+        os.replace(receipt, verification_record_path(rejected))
+    return rejected
 
 
 def _local_build(binary_path: Path, ai_specs_home: Path, version: str, goos: str, goarch: str) -> tuple[bool, str]:
@@ -262,15 +408,6 @@ def acquire(
     if gate_impl == "bash":
         return out
 
-    binary_path = cache_bin_path(home, version, goos, goarch)
-    out["cache_path"] = str(binary_path)
-
-    # Cache hit: already installed and usable (verified at install time).
-    if binary_path.is_file() and os.access(binary_path, os.X_OK):
-        out["attempted"] = True
-        out["installed"] = True
-        return out
-
     # Platform outside the published matrix (or unknown) → no binary target.
     if not goos or not goarch or (goos, goarch) not in SUPPORTED_PLATFORMS:
         out["attempted"] = True
@@ -281,24 +418,95 @@ def acquire(
         )
         return out
 
+    binary_path = cache_bin_path(home, version, goos, goarch)
+    out["cache_path"] = str(binary_path)
     out["attempted"] = True
 
     asset_name = f"worktree-gate-{goos}-{goarch}"
     expected = load_expected_digests(home).get(asset_name)
+    cache_rejection: str | None = None
+
+    # Cache hits are evidence candidates, not acceptance. Revalidate every
+    # current digest/version/self-test before writing a launcher receipt.
+    if binary_path.is_file() and os.access(binary_path, os.X_OK):
+        evidence = verify_cached_binary(
+            binary_path, home, version, goos, goarch, require_receipt=False
+        )
+        out["verification"] = evidence
+        if evidence["verified"]:
+            try:
+                _write_verification_record(
+                    binary_path, version, str(evidence["observed_digest"])
+                )
+            except Exception as exc:  # noqa: BLE001
+                mismatch = (
+                    f"worktree-gate: verification receipt write failed for {binary_path}: "
+                    f"{type(exc).__name__}: {exc}; candidate never executed"
+                )
+                record_digest_mismatch(mismatch, home, version)
+                out["mismatch"] = mismatch
+                out["warn"] = mismatch
+                return out
+            clear_digest_mismatch(home, version)
+            out["mismatch"] = None
+            out["installed"] = True
+            return out
+
+        reason = str(evidence.get("reason") or "verification failed")
+        recovery = _quarantine_cached_candidate(binary_path)
+        recovery_text = str(recovery) if recovery is not None else "none"
+        cache_rejection = (
+            f"worktree-gate: rejected cached candidate at {binary_path}: {reason}; "
+            f"recovery={recovery_text}; candidate never executed"
+        )
+        record_digest_mismatch(cache_rejection, home, version)
+        out["mismatch"] = cache_rejection
 
     # Opt-in local build: AI_SPECS_GATE_BUILD=1, or offline with go present.
     want_build = os.environ.get("AI_SPECS_GATE_BUILD") == "1"
     if want_build or (offline and shutil.which("go") is not None):
         ok, detail = _local_build(binary_path, home, version, goos, goarch)
         if ok:
-            selftest = _run_selftest(binary_path)
-            if selftest is None:
-                out["installed"] = True
-                return out
-            out["warn"] = (
-                f"worktree-gate: locally built binary failed --selftest at {binary_path}; "
-                "gate is not enforcing (run 'ai-specs doctor')"
+            evidence = verify_cached_binary(
+                binary_path,
+                home,
+                version,
+                goos,
+                goarch,
+                require_receipt=False,
+                allow_missing_digest=True,
             )
+            local_digest_ok = expected is None or evidence["observed_digest"] == expected
+            local_version_ok = evidence["version"] == version
+            local_selftest_ok = evidence["selftest"] == "passed"
+            if local_digest_ok and local_version_ok and local_selftest_ok:
+                try:
+                    _write_verification_record(
+                        binary_path, version, str(evidence["observed_digest"])
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    mismatch = (
+                        f"worktree-gate: local verification receipt write failed at {binary_path}: "
+                        f"{type(exc).__name__}: {exc}; candidate never executed"
+                    )
+                    record_digest_mismatch(mismatch, home, version)
+                    out["mismatch"] = mismatch
+                    out["warn"] = mismatch
+                    return out
+                clear_digest_mismatch(home, version)
+                out["mismatch"] = None
+                out["installed"] = True
+                out["verification"] = evidence
+                return out
+            reason = str(evidence.get("reason") or "local build verification failed")
+            recovery = _quarantine_cached_candidate(binary_path)
+            mismatch = (
+                f"worktree-gate: locally built binary rejected at {binary_path}: {reason}; "
+                f"recovery={recovery or 'none'}; candidate never executed"
+            )
+            record_digest_mismatch(mismatch, home, version)
+            out["mismatch"] = mismatch
+            out["warn"] = mismatch
             return out
         out["warn"] = (
             f"worktree-gate: local build failed ({detail}); "
@@ -308,7 +516,8 @@ def acquire(
 
     if offline:
         out["warn"] = (
-            "worktree-gate: offline with no cached binary; "
+            (cache_rejection + "; " if cache_rejection else "")
+            + "worktree-gate: offline with no cached binary; "
             + _degradation_hint(gate_impl)
         )
         return out
@@ -348,18 +557,58 @@ def acquire(
             out["warn"] = mismatch
             return out
         os.chmod(tmp, 0o755)
-        os.replace(tmp, binary_path)
-        selftest = _run_selftest(binary_path)
-        if selftest is None:
-            out["installed"] = True
+        selftest = _run_selftest(tmp)
+        reported_version = binary_version(tmp)
+        if selftest is not None or reported_version != version:
+            mismatch = (
+                f"worktree-gate: downloaded binary rejected for {asset_name}: "
+                f"version={reported_version or 'unknown'} expected_version={version}; "
+                f"selftest={'passed' if selftest is None else selftest}; "
+                "artifact never installed"
+            )
+            record_digest_mismatch(mismatch, home, version)
+            out["mismatch"] = mismatch
+            out["warn"] = mismatch
+            out["verification"] = {
+                "verified": False,
+                "expected_digest": expected,
+                "observed_digest": actual,
+                "version": reported_version,
+                "selftest": "passed" if selftest is None else selftest,
+                "reason": mismatch,
+            }
             return out
-        mismatch = (
-            f"worktree-gate: downloaded binary failed --selftest at {binary_path}; "
-            "gate is not enforcing"
-        )
-        record_digest_mismatch(mismatch, home, version)
-        out["mismatch"] = mismatch
-        out["warn"] = mismatch
+        os.replace(tmp, binary_path)
+        try:
+            _write_verification_record(binary_path, version, actual)
+        except Exception as exc:  # noqa: BLE001
+            try:
+                binary_path.unlink()
+            except OSError:
+                pass
+            mismatch = (
+                f"worktree-gate: verification receipt write failed for {binary_path}: "
+                f"{type(exc).__name__}: {exc}; candidate never executed"
+            )
+            record_digest_mismatch(mismatch, home, version)
+            out["mismatch"] = mismatch
+            out["warn"] = mismatch
+            return out
+        out["installed"] = True
+        clear_digest_mismatch(home, version)
+        out["mismatch"] = None
+        out["verification"] = {
+            "verified": True,
+            "expected_digest": expected,
+            "observed_digest": actual,
+            "version": reported_version,
+            "selftest": "passed",
+            "receipt": str(verification_record_path(binary_path)),
+            "reason": (
+                "re-acquired after " + cache_rejection
+                if cache_rejection else "acquired and verified"
+            ),
+        }
         return out
     finally:
         try:
