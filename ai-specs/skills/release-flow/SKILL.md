@@ -40,6 +40,12 @@ this skill owns product release policy (VERSION, CHANGELOG, promote, tag).
 6. After merge, delete only **feature** heads (`chore/release-*`, `release/v*`).
    Never delete protected heads.
 
+Before the version bump (step 1 of the ritual), the isolated
+clean-materialization gate must pass. Evidence is
+`tests/test_release_materialization.py` (isolated temp consumer project
++ in-tree CLI), not this repo's dogfood `ai-specs/.ai-specs.lock`. Do
+**not** treat a stale dogfood lock as release evidence.
+
 ## Ritual
 
 ```text
