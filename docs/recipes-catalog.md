@@ -203,6 +203,20 @@ authorization, then implements, validates, and closes the change — without
 `/plan` or `/build` commands. Implementation defers to an isolated-worktree
 workflow when one is enabled, without hard-depending on it.
 
+Full planning follows `explore -> proposal -> spec/design -> tasks`: spec and
+design may run in parallel after proposal, and tasks waits for both. A
+host-advertised executor may handle the current phase; absent or unavailable
+execution falls back inline, while malformed, partial, or blocked results stop
+and preserve state. Standard and Light remain collapsed and unchanged.
+
+One session-level preflight owns execution mode, artifact store, review budget,
+delivery strategy, and chain strategy. Plan-build consumes those values without
+recollecting or overriding them. Final plan review derives intent, scope, key
+decisions, affected areas, risks, open questions, and labeled
+recommendations/assumptions from the available artifacts, then requires
+explicit accept, adjust, or stop. Automatic mode blocks unresolved product
+decisions.
+
 It is the sole ceremony/depth classification source (`Light` / `Standard` /
 `Full`), replacing the retired ceremony contract.
 
@@ -232,7 +246,7 @@ dated-plus-undated candidates.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.6.0"
+version = "1.7.0"
 
 [recipes.plan-build-flow.config]
 artifact_store_default = "both"
