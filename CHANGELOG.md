@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`plan-build-flow` Full phase compatibility**: documents provider-neutral
+  logical phase dispatch with inline availability fallback, stop-and-preserve
+  semantics for malformed results, single-session preflight composition, and
+  artifact-derived accept/adjust/stop plan presentation. Standard and Light
+  behavior remains unchanged.
+
 ## [0.22.0] — 2026-08-17
 
 ### Added
@@ -85,6 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distribution, legacy reference materialization.
 - `plan-build-flow` `1.4.0` → `1.5.0`: adversarial depth classification compares explicit requests with signal tiers, asks on conflicts, and records resolution annotations in `tasks.md`.
 - `plan-build-flow` `1.5.0` → `1.6.0`: tier-specific proposal/spec minima, Standard/Full staged verify evidence gates before archive and merge, and grandfathering guidance for in-flight plans.
+- `plan-build-flow` `1.6.0` → `1.7.0`: Full logical phase compatibility,
+  composed preflight values, and artifact-derived plan presentation contracts.
 - Removed the retired `sdd-adaptive-contract` ceremony contract: deleted the
   canonical spec, the `sdd.decision_matrix` section in `openspec/config.yaml`,
   and the `[sdd]` recipe metadata in `docs/recipe-schema.md`; `plan-build-flow`
