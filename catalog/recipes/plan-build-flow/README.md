@@ -23,6 +23,28 @@ or `/build` commands.
 Direct "implement this" requests still run the classifier first when no change
 folder exists yet.
 
+## Full phase compatibility
+
+Full planning uses the logical chain `explore -> proposal -> spec/design ->
+tasks`. Proposal follows explore; spec and design may run in parallel only after
+proposal; tasks waits for both. Each phase has explicit file-backed inputs and
+outputs, and a host-advertised executor may implement only the current phase.
+When no executor is advertised, the phase runs inline. An unavailable executor
+may use that same fallback; malformed, partial, or blocked results stop and
+preserve state rather than silently rerunning or skipping a phase.
+
+Standard and Light behavior remains collapsed and unchanged. The recipe stays
+provider-neutral and adds no runtime or model configuration.
+
+Preflight is one session-level authority for execution mode, artifact store,
+review budget, delivery strategy, and chain strategy. Plan-build consumes those
+values without recollecting or overriding them. Its final artifact-derived
+presentation covers intent, scope, key decisions, affected areas, risks, open
+questions, and labeled recommendations/assumptions. Interactive mode asks
+questions after the phase that exposed them; automatic mode records assumptions
+and blocks unresolved product decisions. The final review requires explicit
+accept, adjust, or stop.
+
 The classifier always computes a signal tier and separately checks for an
 explicit requested depth. Illustrative requests such as “full planning”,
 “acotado con spec”, or “solo tasks” are compared with that signal; this is
@@ -72,7 +94,7 @@ agent, which adds the missing artifacts when that change resumes.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.6.0"
+version = "1.7.0"
 ```
 
 Then run `ai-specs sync`.

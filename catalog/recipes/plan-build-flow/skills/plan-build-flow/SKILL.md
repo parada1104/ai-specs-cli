@@ -121,10 +121,85 @@ the archive and merge guardians never block on it.
 
 Trivial read-only questions skip the classifier entirely.
 
-## 3. Phase mapping (private)
+## 3. Full phase compatibility (private)
+
+Full planning runs these logical phases in order:
+
+`explore -> proposal -> spec/design -> tasks`
+
+| Phase | Required inputs | Output artifact | Dependency |
+|---|---|---|---|
+| **explore** | User intent, repository context, and known constraints | `explore.md` | None |
+| **proposal** | `explore.md` plus the original intent | `proposal.md` | After explore |
+| **spec** | `proposal.md` | `specs/**/*.md` | After proposal |
+| **design** | `proposal.md` | `design.md` | After proposal |
+| **tasks** | `proposal.md`, the spec delta, and `design.md` | `tasks.md` | After both spec and design |
+
+Spec and design may run in parallel only after proposal is complete. Tasks waits
+for both outputs. Each phase owns its output artifact and must leave prior
+artifacts intact.
+
+The host may advertise a **host-advertised executor** for the **current** logical phase. The
+advertisement is an optional capability boundary consisting of the phase name,
+the required input artifacts, and the output artifact it can produce. The
+recipe remains provider-neutral: it does not select a runtime, model, or
+external execution service.
+
+Dispatch one phase at a time. If no phase executor is advertised, run the
+current phase inline. An advertised executor that is unavailable may also use
+the inline fallback. A complete result is accepted only after its output is
+present and matches the current phase contract.
+
+Malformed, partial, or blocked executor results are a stop condition. Stop and
+preserve all existing artifacts and state, report the blocked phase and result status,
+and wait for a decision. Do not silently rerun the executor, accept an
+incomplete artifact, or skip the phase. Do not skip phases because an earlier
+executor was unavailable; inline fallback still completes that phase.
+
+This phase compatibility applies only to Full. Standard and Light remain
+collapsed and unchanged; they do not acquire Full's phase dispatch.
+
+## 3.1 Preflight composition
+
+Preflight is one session-level authority for **execution mode**, **artifact
+store**, **review budget**, **delivery strategy**, and **chain strategy**.
+Plan-build consumes those resolved values and passes them through the flow; it
+must never recollect or override them, and phase executors cannot replace them.
+
+Interactive mode asks once for unresolved preflight choices, then asks only
+phase-specific product questions. Automatic mode does not duplicate those
+prompts; it records the resolved values and proceeds according to them. The
+artifact store remains a persistence preference, while file-backed readiness and
+the existing worktree, verify, archive, topology, and PR gates remain
+authoritative.
+
+## 3.2 Artifact-derived plan presentation
+
+At each review point, derive a concise technical presentation from the
+artifacts available so far:
+
+| Field | Evidence |
+|---|---|
+| **Intent** | Original request and `proposal.md` |
+| **Scope** | `proposal.md` in-scope and out-of-scope boundaries |
+| **Key decisions** | Proposal, spec, design, and task choices |
+| **Affected areas** | Proposal/design paths and task work units |
+| **Risks** | `explore.md`, design trade-offs, and unresolved constraints |
+| **Open questions** | Questions recorded by the phase that exposed them |
+| **Recommendations / assumptions** | Explicitly labeled conclusions derived from the artifacts |
+
+Interactive mode asks open questions after the phase that exposed them,
+especially after explore, and then offers **accept**, **adjust**, or **stop**.
+Automatic mode records recommendations as labeled assumptions or decision notes;
+unresolved product decisions block rather than being silently decided. The final
+plan always requires an explicit **accept**, **adjust**, or **stop**. A
+recommendation may be accepted or adjusted; it is never treated as an implicit
+product decision.
+
+## 3.3 Plan/build lifecycle
 
 - **Plan** runs the chain for the classified tier (Section 2), then **stops**.
-- **Build** runs: apply → verify → artifact/PR gates → archive-tail (pre-merge).
+- **Build** runs: apply -> verify -> artifact/PR gates -> archive-tail (pre-merge).
 
 ## 4. When to invoke
 
