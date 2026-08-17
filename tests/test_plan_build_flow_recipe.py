@@ -19,8 +19,8 @@ from pathlib import Path as _P
 sys.path.insert(0, str(_P(__file__).resolve().parent))
 from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 
-FORBIDDEN_TERMS = ("sdd", "openspec", "spec-driven")
-FORBIDDEN_SLASH = ("/plan", "/build", "/archive")
+FORBIDDEN_TERMS = ("sdd", "spec-driven")
+FORBIDDEN_SLASH = ("/plan", "/build")
 STORE_ENUM = ["openspec", "engram", "both"]
 
 
@@ -156,7 +156,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
                 "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
                 "Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed.",
                 "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
-                "Before merge, run verify evidence before archive-tail (Standard/Full block without a conforming verify-report.md; Light is advisory), archive the change folder on the review branch, and run the pre-merge guardian again; never defer archive until after merge.",
+                "Before merge, run verify evidence before archive-tail (Standard/Full block without a conforming verify-report.md; Light is advisory), archive the change folder on the review branch at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, and run the pre-merge guardian again; exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.",
             ],
         )
         self.assertIn("{config.artifact_store_default}", rules[5].text)

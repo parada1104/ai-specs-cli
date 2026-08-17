@@ -206,6 +206,13 @@ workflow when one is enabled, without hard-depending on it.
 It is the sole ceremony/depth classification source (`Light` / `Standard` /
 `Full`), replacing the retired ceremony contract.
 
+OpenSpec archive-tail uses the canonical dated destination
+`openspec/changes/archive/YYYY-MM-DD-<slug>/` with a valid ISO calendar date.
+The exact undated `archive/<slug>/` form remains a legacy fallback only when no
+dated candidate exists. The pre-merge guardian inspects only direct children,
+rejects invalid or near-match names, and fails closed for multiple dated or
+dated-plus-undated candidates.
+
 - **Provides:** skill `plan-build-flow`; capability `plan-build-flow`.
 - **Config:**
 

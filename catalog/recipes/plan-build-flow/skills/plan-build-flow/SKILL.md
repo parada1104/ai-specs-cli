@@ -251,8 +251,13 @@ reports missing or failed evidence. Light remains advisory. This is the
 pre-archive check; the pre-merge guardian below remains required after archive.
 
 4. After the pre-archive gate passes, run archive-tail — move
-   `openspec/changes/<slug>/` → `openspec/changes/archive/<slug>/`, commit, and
-   push to the review branch.
+   `openspec/changes/<slug>/` → `openspec/changes/archive/YYYY-MM-DD-<slug>/`,
+   using a valid ISO calendar date, then commit and push to the review branch.
+   The exact undated `openspec/changes/archive/<slug>/` form remains readable
+   only as a legacy fallback for historical archives; new archives use the
+   dated provider form. The guardian fails closed when multiple dated
+   candidates, dated-plus-undated candidates, invalid dates, or near-match
+   names are present.
 5. Run the pre-merge guardian; merge only after explicit user approval.
 
 ### 7.4 Pre-merge merge guardian (hard stop)
@@ -276,7 +281,10 @@ consumer projects).
 Hard blockers (do **not** merge):
 
 1. `openspec/changes/<slug>/` still exists (active, not archived).
-2. `openspec/changes/archive/<slug>/` is missing.
+2. No exact valid archive candidate exists at
+   `openspec/changes/archive/YYYY-MM-DD-<slug>/`; the exact undated
+   `openspec/changes/archive/<slug>/` form is accepted only as a legacy
+   fallback when no dated candidate exists.
 3. Archived folder lacks the tier minimum files (Light: `proposal.md` +
    `tasks.md`; Standard: `proposal.md` + `tasks.md` + `specs/**/*.md`; Full:
    `tasks.md` + `proposal.md` or `design.md` + `specs/**/*.md`).
@@ -328,6 +336,8 @@ merged base branch as the archive boundary.
 Archive-tail runs at step 4 of Section 7.3 (before merge):
 
 - **Change-folder close** — move `openspec/changes/<slug>/` →
-  `openspec/changes/archive/<slug>/` (required).
+  `openspec/changes/archive/YYYY-MM-DD-<slug>/` using a valid ISO calendar date
+  (required for new archives). The exact undated
+  `openspec/changes/archive/<slug>/` form is a legacy fallback only.
 - **Vault summary** — no-op with note if canonical store absent.
 - **Tracker comment** — no-op with note if tracker absent.

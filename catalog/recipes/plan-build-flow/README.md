@@ -51,7 +51,12 @@ requires its complete planning chain.
   the pre-merge guardian again after archive. Missing `explore.md` is never a
   guardian blocker.
 - **Archive before merge** on the review branch — never after merge lands on the
-  base branch.
+  base branch. OpenSpec's canonical destination is
+  `openspec/changes/archive/YYYY-MM-DD-<slug>/` with a valid ISO calendar date.
+  The exact undated `archive/<slug>/` directory remains a legacy fallback only
+  when no dated candidate exists. Multiple dated candidates, dated-plus-undated
+  candidates, invalid dates, and near-match names fail closed with named
+  blockers.
 
 Plans already in flight when this contract ships add missing `proposal.md` or
 verify evidence before their PR/archive; no replan or restart is needed.
