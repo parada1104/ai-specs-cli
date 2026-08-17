@@ -315,6 +315,15 @@ elif [[ $VERBOSE -eq 1 ]]; then
     echo "  TUI deps (rich + questionary) already available"
 fi
 
+# --- narrow the checkout (best effort) ---------------------------------------
+# Drops subtrees the CLI never reads at runtime. Never a precondition: the
+# helper warns and exits 0 on every failure path, so `|| true` here documents
+# intent rather than masking one.
+NARROW_SH="$AI_SPECS_HOME/lib/_internal/narrow-checkout.sh"
+if [[ -f "$NARROW_SH" ]]; then
+    bash "$NARROW_SH" "$AI_SPECS_HOME" || true
+fi
+
 # --- post-upgrade verification -----------------------------------------------
 NEW_VERSION=""
 if [[ -f "$AI_SPECS_HOME/VERSION" ]]; then

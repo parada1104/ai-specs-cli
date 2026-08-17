@@ -85,7 +85,20 @@ elif [ -e "$AI_SPECS_HOME" ]; then
     exit 1
 else
     echo -e "${YELLOW}[1/3]${NC} Cloning $AI_SPECS_REPO → $AI_SPECS_HOME"
-    git clone --branch "$AI_SPECS_REF" "$AI_SPECS_REPO" "$AI_SPECS_HOME"
+    # Partial clone (blobs on demand) keeps the full commit graph, which
+    # `ai-specs upgrade` needs for its `merge-base --is-ancestor` divergence
+    # guard. A shallow clone would break that check, so it is not used here.
+    # Older git has no --filter: fall back to a plain clone.
+    if ! git clone --filter=blob:none --branch "$AI_SPECS_REF" \
+            "$AI_SPECS_REPO" "$AI_SPECS_HOME" 2>/dev/null; then
+        git clone --branch "$AI_SPECS_REF" "$AI_SPECS_REPO" "$AI_SPECS_HOME"
+    fi
+fi
+
+# Drop subtrees the CLI never reads at runtime. Best effort by contract: the
+# helper warns and exits 0 on any failure, leaving a usable full checkout.
+if [ -f "$AI_SPECS_HOME/lib/_internal/narrow-checkout.sh" ]; then
+    bash "$AI_SPECS_HOME/lib/_internal/narrow-checkout.sh" "$AI_SPECS_HOME" || true
 fi
 
 chmod +x "$AI_SPECS_HOME/bin/ai-specs"
