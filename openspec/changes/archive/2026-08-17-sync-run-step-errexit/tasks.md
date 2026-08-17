@@ -50,13 +50,13 @@ Added **after** judgment day round one, with this plan updated before any code.
 Both judges confirmed `lib/sync.sh:210-234` carries the identical defect, and
 it is pre-existing (0 lines of it were touched by WU2).
 
-- [ ] RED: a failing `cat` while printing the block's captured output does not
+- [x] RED: a failing `cat` while printing the block's captured output does not
       abort before cleanup, and the step's own status survives
-- [ ] RED: neither `RECIPE_OUT_FILE` nor `RECIPE_ERR_FILE` is stranded on any
+- [x] RED: neither `RECIPE_OUT_FILE` nor `RECIPE_ERR_FILE` is stranded on any
       exit path — the `trap … EXIT` at line 213 currently omits both
-- [ ] GREEN: restore errexit only after the block's own cleanup
-- [ ] GREEN: bring both temp files under a cleanup safety net
-- [ ] Re-enter judgment day against the new target
+- [x] GREEN: restore errexit only after the block's own cleanup
+- [x] GREEN: bring both temp files under a cleanup safety net
+- [x] Re-enter judgment day against the new target
 
 ## WU3 — Prove no regression on the hottest path
 
@@ -69,3 +69,11 @@ it is pre-existing (0 lines of it were touched by WU2).
 
 - Any change to which steps abort a sync, or to sync's output format
 - `lib/upgrade.sh` — already corrected under card #80
+
+## Discovered, not fixed (out of scope)
+
+- `lib/_internal/recipe-materialize.py:1251` creates `ai-specs-recipe-mcp-*`
+  via `mkstemp` and only prints the path (1258) — no cleanup. Accounts for the
+  1 remaining leaked temp file per sync (down from 3).
+- `lib/sync-agent.sh:134` and `:191` register EXIT traps with bare `$VAR`
+  references, the same `set -u` clobber class hardened in `lib/sync.sh`.

@@ -215,13 +215,24 @@ run_step "vendored skills" python3 "$VENDOR_SKILLS_PY" "$ROOT_PATH"
 RECIPE_MCP_TEMP="$(mktemp -t ai-specs-recipe-mcp-XXXXXX.json)"
 RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
 RESOLVED_HOOKS_TEMP="$(mktemp -t ai-specs-resolved-hooks-XXXXXX.json)"
-trap 'rm -f "$RECIPE_MCP_TEMP" "$RESOLVED_CONFIG_TEMP" "$RESOLVED_HOOKS_TEMP"' EXIT
 RECIPE_OUT_FILE="$(mktemp)"
 RECIPE_ERR_FILE="$(mktemp)"
+# The capture files belong in the trap too. They used to sit outside it, so
+# unlike every other temporary file here they had no safety net: any abort
+# between their creation and the explicit `rm -f` below stranded both.
+#
+# Every name is expanded with `:-` because this script runs under `set -u`: an
+# EXIT trap that references an unset variable dies mid-cleanup and REPLACES the
+# script's exit status with its own, silently turning a meaningful failure code
+# into 1.
+trap 'rm -f "${RECIPE_MCP_TEMP:-}" "${RESOLVED_CONFIG_TEMP:-}" "${RESOLVED_HOOKS_TEMP:-}" "${RECIPE_OUT_FILE:-}" "${RECIPE_ERR_FILE:-}"' EXIT
 set +e
 python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP" --resolved-hooks-out "$RESOLVED_HOOKS_TEMP" $REFRESH_GATES >"$RECIPE_OUT_FILE" 2>"$RECIPE_ERR_FILE"
 RECIPE_RC=$?
-set -e
+# errexit stays OFF until this block has printed its captured output and
+# cleaned up — the same rule run_step follows. Restoring it here meant a
+# failing `cat` below (SIGPIPE, full disk) aborted mid-block, stranding both
+# capture files and replacing RECIPE_RC with cat's status.
 RECIPE_NAMES="$( { grep -oE '▸ recipe [^ ]+' "$RECIPE_OUT_FILE" | sed -E 's/.*recipe //' | paste -sd, - ; } 2>/dev/null || true)"
 if [[ -n "$RECIPE_NAMES" ]]; then
     echo "  syncing recipes → ${RECIPE_NAMES//,/, }"
@@ -232,11 +243,13 @@ if [[ $RECIPE_RC -ne 0 ]]; then
     [[ -s "$RECIPE_OUT_FILE" ]] && cat "$RECIPE_OUT_FILE"
     [[ -s "$RECIPE_ERR_FILE" ]] && cat "$RECIPE_ERR_FILE" >&2
     rm -f "$RECIPE_OUT_FILE" "$RECIPE_ERR_FILE"
+    set -e
     exit $RECIPE_RC
 fi
 print_step_output "$RECIPE_OUT_FILE"
 print_step_output "$RECIPE_ERR_FILE" >&2
 rm -f "$RECIPE_OUT_FILE" "$RECIPE_ERR_FILE"
+set -e
 
 sync_agents_render() {
     if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
