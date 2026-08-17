@@ -44,6 +44,20 @@ failing `cat` triggers the defect.
       wrapped command's abort message; the step still runs
 - [x] Keep both helpers byte-comparable in shape — they are intentionally twins
 
+## WU4 — Scope extension: the recipe-materialize capture block
+
+Added **after** judgment day round one, with this plan updated before any code.
+Both judges confirmed `lib/sync.sh:210-234` carries the identical defect, and
+it is pre-existing (0 lines of it were touched by WU2).
+
+- [ ] RED: a failing `cat` while printing the block's captured output does not
+      abort before cleanup, and the step's own status survives
+- [ ] RED: neither `RECIPE_OUT_FILE` nor `RECIPE_ERR_FILE` is stranded on any
+      exit path — the `trap … EXIT` at line 213 currently omits both
+- [ ] GREEN: restore errexit only after the block's own cleanup
+- [ ] GREEN: bring both temp files under a cleanup safety net
+- [ ] Re-enter judgment day against the new target
+
 ## WU3 — Prove no regression on the hottest path
 
 - [x] `./tests/validate.sh` green

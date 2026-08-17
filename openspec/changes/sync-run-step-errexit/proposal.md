@@ -52,8 +52,34 @@ the fix:
 1. Move the errexit restore in both `run_step` helpers to after the temporary
    files are removed, in both the success and failure branches.
 2. Detect a `mktemp` failure and name it, instead of letting it surface later
-   as the wrapped command's abort message. The step still runs, unbuffered.
+   as the wrapped command's abort message. The step still runs, with its output
+   unfiltered — compact mode cannot apply when nothing is captured, and the
+   warning says so.
 3. Keep the two helpers identical in shape — they are intentional twins.
+4. **Scope extension after judgment day**: apply the same correction to the
+   hand-rolled capture block at `lib/sync.sh:210-234`.
+
+### Scope extension: the recipe-materialize block
+
+Both judges independently found that `lib/sync.sh:210-234` — a hand-rolled
+capture around `recipe-materialize.py`, not a `run_step` call — carries the
+identical defect: errexit restored at line 219, before its own `cat` (227-228)
+and `print_step_output` (232-233) calls.
+
+It is **pre-existing**: this change's diff touched 0 lines of it, and the same
+code is present verbatim on `development`.
+
+One judge found a detail the author had missed: the `trap … EXIT` registered at
+line 213 covers only `RECIPE_MCP_TEMP`, `RESOLVED_CONFIG_TEMP` and
+`RESOLVED_HOOKS_TEMP`. `RECIPE_OUT_FILE` and `RECIPE_ERR_FILE` are **not in the
+trap**, so unlike every other temp file in this script they have no cleanup
+safety net if that path aborts.
+
+It is folded in here rather than deferred because it is the same defect, in the
+same file, in a block that exists precisely because it predates `run_step`.
+Leaving one instance fixed and its neighbour broken would be worse than either
+outcome. This proposal was updated **before** the code, and the change re-enters
+judgment day against the new target.
 
 ## Success criteria
 
@@ -63,9 +89,13 @@ the fix:
 2. Errexit is enabled after `run_step` returns, on both the success and failure
    paths, so a bare failing step still aborts the sync with the command's own
    status.
-3. A `mktemp` failure names itself and the step still runs.
+3. A `mktemp` failure names itself and the step still runs; when its output
+   cannot be captured, the warning states that the output is unfiltered.
 4. The compact/verbose output contract and every existing sync behavior are
    unchanged.
+5. The recipe-materialize capture block restores errexit only after its own
+   cleanup, and its two temporary files are covered by a cleanup safety net
+   rather than relying on the abort path never being taken.
 
 ## Non-goals
 

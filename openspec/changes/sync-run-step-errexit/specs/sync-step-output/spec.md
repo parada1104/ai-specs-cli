@@ -45,6 +45,28 @@ does not restore it silently disables it for the remainder of the script.
 - **WHEN** `run_step` returns, for either a successful or a failing command
 - **THEN** neither of its temporary files remains on disk
 
+### Requirement: every capture block restores errexit after its own cleanup
+
+The rule above SHALL apply to every block in `lib/sync.sh` and
+`lib/sync-agent.sh` that disables errexit to capture a command's output — not
+only to `run_step`. The hand-rolled `recipe-materialize` capture
+(`lib/sync.sh:210-234`) predates `run_step` and is subject to the same
+requirement.
+
+Temporary files created by such a block SHALL be covered by a cleanup safety
+net, so that an abort on any path cannot strand them.
+
+#### Scenario: a failing `cat` in the recipe-materialize block
+- **WHEN** the recipe-materialize step fails and printing its captured output
+  fails as well
+- **THEN** the script does not abort from inside the block before its cleanup
+- **AND** the exit status reflects the step's own failure, not `cat`'s
+
+#### Scenario: recipe-materialize temporary files are never stranded
+- **WHEN** the script exits on any path after the recipe-materialize capture
+  files are created
+- **THEN** neither file remains on disk
+
 ### Requirement: a temporary-file failure names itself
 
 `run_step` SHALL detect a `mktemp` failure and report it as such rather than
