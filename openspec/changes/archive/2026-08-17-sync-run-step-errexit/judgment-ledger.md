@@ -106,9 +106,77 @@ corrected anyway; the out-of-scope one was not.
 - `tests/test_sync_run_step_errexit.py` — 13 cases, each against both helpers.
 - `bash -n` clean on both helpers.
 
+## Round two — re-judgment after the scope extension
+
+C1 was folded in (plan updated first, commit `6a5acfa`, code in `319e42f`), so
+the target changed and the change re-entered judgment against `319e42f`.
+
+### R2-C1 — the fix introduced a regression (both judges)
+`lib/sync.sh:215-228` — Judge A: **CRITICAL**, Judge B: WARNING.
+
+Moving the trap registration below all five `mktemp` calls left the first three
+temporaries unprotected across two further fallible calls. Under errexit, a
+failure at the fourth aborts before the trap exists.
+
+**Verified by execution** — and only on the third attempt. The first two probes
+used a counter inside the stub, which never increments across
+`VAR="$(mktemp)"` because command substitution runs in a subshell, so no call
+ever reached the failing branch and both shapes reported 0 stranded. With a
+file-backed counter:
+
+| trap placement | stranded |
+|---|---|
+| late (as written in `319e42f`) | **3** |
+| registered up front | **0** |
+
+A regression I introduced while fixing something else. Corrected by registering
+the trap immediately after the first three temporaries and naming all five up
+front — safe because every name is `:-` expanded, which was already required
+for `set -u`.
+
+**The new test is falsifiable**: reverting to the late-trap shape fails it with
+`['tempPth8yb', 'temprmP8AU', 'tempv4Re2T'] != []`; restoring passes.
+
+### R2-C2 — the suite could not have caught it (both judges)
+`tests/test_sync_recipe_capture.py` — both WARNING.
+
+`capture_block()` sliced from `RECIPE_OUT_FILE=`, excluding the three earlier
+temporaries, so their trap references always expanded to empty strings. Neither
+a late trap nor a typo in those three names could fail any assertion. The slice
+now starts at the first temp file.
+
+### R2-S1 — the anti-pattern was left live one test below (Judge B only)
+`tests/test_sync_recipe_capture.py` — WARNING.
+
+`test_errexit_survives_the_block` rebuilt its own prelude and reintroduced the
+counter-in-a-subshell stub **documented as invalid in a comment 70 lines
+above**, so both capture files resolved to the same path. Now driven through
+`_harness` via a `trailer` parameter, with
+`test_capture_files_are_distinct_paths` guarding the fixture itself.
+
+Fixing it exposed a second fixture bug: the assertion used marker `REACHED`,
+which is a substring of the block's own `REACHED_END`, so it could never pass.
+Marker changed, and falsifiability confirmed — dropping the `set -e` restore
+makes `ERREXIT_LEAKED` appear.
+
+### R2-S2 — stale module docstring (Judge A only)
+Rewritten to describe the current contract.
+
+## Verification after round two
+
+- `./tests/validate.sh` — **exit 0, 1808 tests, 0 failures**.
+- Every new assertion checked for falsifiability by reverting the fix.
+
+## Discovered, recorded, not fixed
+
+- `lib/_internal/recipe-materialize.py:1251` creates `ai-specs-recipe-mcp-*`
+  with `mkstemp`, prints the path at 1258, and never removes it — the one
+  remaining leaked temp per sync (down from three).
+- `lib/sync-agent.sh:134` and `:191` register EXIT traps with bare `$VAR`
+  references, the same `set -u` clobber class hardened here.
+
 ## Disposition
 
-Round one complete, no round two required. One finding (C1) remains open by
-design: it is a pre-existing defect outside this change's scope.
+Two rounds used; the budget is exhausted and no finding remains open.
 
 `JUDGMENT: APPROVED ✅`

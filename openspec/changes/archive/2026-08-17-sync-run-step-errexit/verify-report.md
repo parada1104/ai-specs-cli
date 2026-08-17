@@ -11,7 +11,7 @@ corrected identically, and the full suite is green on the CLI's hottest path.
 - Command: `./tests/validate.sh`
 - Exit: 0
 - Date: 2026-08-17
-- Commit: 6a5acfa
+- Commit: 319e42f
 
 ## Scope extension (WU4) — the recipe-materialize capture block
 
@@ -55,8 +55,8 @@ recorded, not fixed.
 
 ## Verification summary
 
-- `./tests/validate.sh` — exit 0; **1806 tests**, 0 failures (1787 on
-  `development`).
+- `./tests/validate.sh` — exit 0; **1808 tests**, 0 failures (1787 on
+  `development`), after two judgment rounds.
 - `tests/test_sync_run_step_errexit.py` — 10 tests, each run against **both**
   `lib/sync.sh` and `lib/sync-agent.sh`.
 - `bash -n` clean on both helpers.

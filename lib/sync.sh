@@ -215,17 +215,26 @@ run_step "vendored skills" python3 "$VENDOR_SKILLS_PY" "$ROOT_PATH"
 RECIPE_MCP_TEMP="$(mktemp -t ai-specs-recipe-mcp-XXXXXX.json)"
 RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
 RESOLVED_HOOKS_TEMP="$(mktemp -t ai-specs-resolved-hooks-XXXXXX.json)"
+# Register the trap as early as possible — before the remaining temp files
+# exist — and name all five up front.
+#
+# Two reasons the ordering is load-bearing:
+#
+# 1. Every temp file must be covered from the moment it exists. Registering
+#    after all five `mktemp` calls leaves the first three unprotected across
+#    two more fallible calls: a failure at the fourth aborts under errexit
+#    before the trap exists, stranding all three. Measured: 3 stranded with a
+#    late trap, 0 with this one.
+# 2. `:-` expansion is what makes early registration safe, and is required
+#    anyway — this script runs under `set -u`, and an EXIT trap naming an unset
+#    variable dies mid-cleanup and REPLACES the script's exit status with its
+#    own, silently turning a meaningful failure code into 1.
+#
+# The two capture files are named here as well: they used to sit outside the
+# trap entirely, so unlike every other temporary here they had no safety net.
+trap 'rm -f "${RECIPE_MCP_TEMP:-}" "${RESOLVED_CONFIG_TEMP:-}" "${RESOLVED_HOOKS_TEMP:-}" "${RECIPE_OUT_FILE:-}" "${RECIPE_ERR_FILE:-}"' EXIT
 RECIPE_OUT_FILE="$(mktemp)"
 RECIPE_ERR_FILE="$(mktemp)"
-# The capture files belong in the trap too. They used to sit outside it, so
-# unlike every other temporary file here they had no safety net: any abort
-# between their creation and the explicit `rm -f` below stranded both.
-#
-# Every name is expanded with `:-` because this script runs under `set -u`: an
-# EXIT trap that references an unset variable dies mid-cleanup and REPLACES the
-# script's exit status with its own, silently turning a meaningful failure code
-# into 1.
-trap 'rm -f "${RECIPE_MCP_TEMP:-}" "${RESOLVED_CONFIG_TEMP:-}" "${RESOLVED_HOOKS_TEMP:-}" "${RECIPE_OUT_FILE:-}" "${RECIPE_ERR_FILE:-}"' EXIT
 set +e
 python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP" --resolved-hooks-out "$RESOLVED_HOOKS_TEMP" $REFRESH_GATES >"$RECIPE_OUT_FILE" 2>"$RECIPE_ERR_FILE"
 RECIPE_RC=$?

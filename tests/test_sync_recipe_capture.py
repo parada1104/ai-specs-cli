@@ -1,15 +1,22 @@
 """Errexit and cleanup contract for the recipe-materialize capture block.
 
-`lib/sync.sh:210-234` captures `recipe-materialize.py` with hand-rolled code
-that predates `run_step`. It carries the same defect `run_step` was fixed for:
-errexit restored before the block prints its own captured output.
+`lib/sync.sh` captures `recipe-materialize.py` with hand-rolled code that
+predates `run_step`, and carried the same defect `run_step` was fixed for:
+errexit restored before the block printed its own captured output.
 
-It also has a gap `run_step` never had — its two temporary files are outside
-the `trap … EXIT` registered a few lines above, so an abort strands them.
+Two cleanup properties matter here and are easy to break in opposite
+directions:
+
+- every temporary must be covered by the `trap … EXIT` from the moment it
+  exists — registering the trap after the last `mktemp` leaves the earlier
+  files unprotected across further fallible calls;
+- the trap must survive `set -u`, since a trap naming an unset variable dies
+  mid-cleanup and replaces the script's exit status with its own.
 
 The block is inline top-level script, not a function, so it cannot be extracted
-the way `run_step` is. These tests reproduce its exact shape instead, driven by
-the real source so the fixture cannot silently drift from production.
+the way `run_step` is. These tests slice it out of the real source — starting
+at the FIRST temp file, so every name the trap references exists in the harness
+— and drive it with a stubbed materialize command.
 """
 
 from __future__ import annotations
@@ -27,9 +34,15 @@ SYNC_SH = ROOT / "lib" / "sync.sh"
 
 
 def capture_block() -> str:
-    """The real block, from `RECIPE_OUT_FILE=` through its final `rm -f`."""
+    """The real block, from the FIRST temp file through its final cleanup.
+
+    Starting at `RECIPE_OUT_FILE=` would exclude the three temporaries created
+    before it, leaving those trap references to expand to empty strings — the
+    suite could then not detect a trap registered too late, nor a typo in any
+    of those three names.
+    """
     text = SYNC_SH.read_text(encoding="utf-8")
-    start = text.index('RECIPE_OUT_FILE="$(mktemp')
+    start = text.index('RECIPE_MCP_TEMP="$(mktemp')
     end = text.index("sync_agents_render()", start)
     return text[start:end]
 
@@ -40,7 +53,9 @@ class RecipeCaptureContractTests(unittest.TestCase):
             ["bash", "-c", body], text=True, capture_output=True, check=False
         )
 
-    def _harness(self, *, sabotage: str, rc: int = 0) -> subprocess.CompletedProcess:
+    def _harness(
+        self, *, sabotage: str, rc: int = 0, trailer: str = ""
+    ) -> subprocess.CompletedProcess:
         """Drive the real block with a stubbed materialize command."""
         probe = tempfile.mkdtemp()
         block = capture_block()
@@ -66,12 +81,57 @@ class RecipeCaptureContractTests(unittest.TestCase):
             {sabotage}
             {block}
             echo "REACHED_END"
+            {trailer}
             """
         )
         result = self._run(script)
         survivors = sorted(p.name for p in Path(probe).iterdir())
         result.survivors = survivors  # type: ignore[attr-defined]
         return result
+
+    def test_trap_covers_every_temp_file_from_the_moment_it_exists(self):
+        """JD re-judgment: a late trap strands the temporaries created before it.
+
+        Registering the trap only after ALL the `mktemp` calls leaves the
+        earlier files unprotected across the remaining fallible calls. Under
+        errexit, a failure at the fourth aborts before the trap exists.
+
+        Measured on the two shapes: 3 stranded with a late trap, 0 with the
+        trap registered up front.
+        """
+        probe = tempfile.mkdtemp()
+        counter = Path(probe) / ".count"
+        counter.write_text("0")
+        block = capture_block()
+        script = textwrap.dedent(
+            f"""
+            set -euo pipefail
+            VERBOSE=0
+            print_step_output() {{ :; }}
+            PROBE_DIR="{probe}"
+            CNT="{counter}"
+            # A counter must live in a file: `VAR="$(mktemp)"` runs the stub in
+            # a command-substitution subshell, so a shell variable never
+            # escapes and no call would ever reach the failing branch.
+            mktemp() {{
+                n=$(( $(cat "$CNT") + 1 ))
+                echo $n > "$CNT"
+                [ $n -ge 4 ] && return 1
+                command mktemp "$PROBE_DIR/tempXXXXXX"
+            }}
+            {block}
+            echo "REACHED_END"
+            """
+        )
+        self._run(script)
+        stranded = sorted(
+            p.name for p in Path(probe).iterdir() if p.name != ".count"
+        )
+        self.assertEqual(
+            stranded,
+            [],
+            f"temp files created before the trap were stranded: {stranded}",
+        )
 
     def test_exit_trap_cannot_clobber_the_exit_status(self):
         """A `set -u` trap referencing an unset name replaces the exit code.
@@ -122,26 +182,41 @@ class RecipeCaptureContractTests(unittest.TestCase):
         )
 
     def test_errexit_survives_the_block(self):
-        result = self._harness(sabotage="", rc=0)
-        self.assertIn("REACHED_END", result.stdout)
-        # Nothing after the block may run with errexit silently disabled.
-        follow = self._run(
-            "set -euo pipefail\n"
-            "VERBOSE=0\n"
-            "print_step_output() { :; }\n"
-            f"PROBE_DIR={tempfile.mkdtemp()}\n"
-            "_n=0\n"
-            'mktemp() { _n=$((_n+1)); : > "$PROBE_DIR/t$_n"; echo "$PROBE_DIR/t$_n"; }\n'
-            + re.sub(
-                r"python3 \"\$RECIPE_MATERIALIZE_PY\".*?2>\"\$RECIPE_ERR_FILE\"",
-                'bash -c \'true\' >"$RECIPE_OUT_FILE" 2>"$RECIPE_ERR_FILE"',
-                capture_block(),
-                flags=re.S,
-            )
-            + "\nfalse\necho REACHED\n"
+        """Nothing after the block may run with errexit silently disabled.
+
+        Driven through `_harness` rather than a hand-built script: an earlier
+        version rebuilt the prelude here and reintroduced the very
+        counter-in-a-subshell stub this file warns about, so both capture files
+        resolved to the same path — production always has two distinct ones.
+        """
+        # A marker that is not a substring of REACHED_END — an earlier version
+        # used "REACHED", which the block's own "REACHED_END" always matched,
+        # so the assertion could never pass regardless of behavior.
+        result = self._harness(
+            sabotage="", rc=0, trailer="false\necho ERREXIT_LEAKED"
         )
+        self.assertIn("REACHED_END", result.stdout)
         self.assertNotIn(
-            "REACHED", follow.stdout, "errexit was left disabled after the block"
+            "ERREXIT_LEAKED",
+            result.stdout,
+            "errexit was left disabled after the block",
+        )
+
+    def test_capture_files_are_distinct_paths(self):
+        """Guards the fixture itself against the same-path regression."""
+        result = self._harness(
+            sabotage="",
+            rc=0,
+            trailer='echo "OUT=$RECIPE_OUT_FILE"; echo "ERR=$RECIPE_ERR_FILE"',
+        )
+        paths = dict(
+            line.split("=", 1)
+            for line in result.stdout.splitlines()
+            if line.startswith(("OUT=", "ERR="))
+        )
+        self.assertEqual(len(paths), 2, result.stdout)
+        self.assertNotEqual(
+            paths["OUT"], paths["ERR"], "both capture files got the same path"
         )
 
 
