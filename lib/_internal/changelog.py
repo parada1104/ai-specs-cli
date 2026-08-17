@@ -156,6 +156,87 @@ def upgrade_notice(section: Section) -> str | None:
     return notice or None
 
 
+def _summary_bullets_all(section: Section) -> list[str]:
+    """Every bullet under a summary-worthy subsection, as plain text.
+
+    `### Upgrade notes` is excluded: it is an instruction, not a change, and it
+    is rendered separately with more prominence.
+    """
+    lines = section.body.splitlines()
+    bullets: list[str] = []
+    in_summary = False
+    current: list[str] = []
+
+    def flush() -> None:
+        if current:
+            bullets.append(_condense(_plain(" ".join(current))))
+            current.clear()
+
+    for line in lines:
+        if _ANY_H3.match(line):
+            flush()
+            in_summary = not _NOTICE_HEADING.match(line)
+            continue
+        if not in_summary:
+            continue
+        stripped = line.strip()
+        if stripped.startswith(("- ", "* ")):
+            flush()
+            current.append(stripped[2:].strip())
+        elif current and stripped:
+            # A wrapped continuation line belongs to the bullet above it.
+            current.append(stripped)
+        elif not stripped:
+            flush()
+    flush()
+    return [bullet for bullet in bullets if bullet]
+
+
+MAX_BULLET = 100
+
+
+def _plain(text: str) -> str:
+    """Strip the inline markup that reads as noise in a terminal."""
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _condense(text: str, limit: int = MAX_BULLET) -> str:
+    """Reduce a changelog bullet to one scannable line.
+
+    Changelog entries are written for readers who want the full story; an
+    upgrade summary is read while waiting for a prompt. Prefer the first
+    sentence, and truncate on a word boundary when there is no sentence break.
+    """
+    first = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].strip()
+    if first and len(first) <= limit:
+        return first
+
+    candidate = first or text
+    if len(candidate) <= limit:
+        return candidate
+
+    clipped = candidate[: limit - 1]
+    if " " in clipped:
+        clipped = clipped[: clipped.rindex(" ")]
+    return clipped.rstrip(" ,;:.") + "…"
+
+
+def summary_bullets(section: Section, limit: int = 3) -> list[str]:
+    """Up to `limit` plain-text bullets describing what changed."""
+    return _summary_bullets_all(section)[:limit]
+
+
+def remaining_count(section: Section, limit: int = 3) -> int:
+    """How many bullets `summary_bullets` dropped.
+
+    Reported rather than silently truncated: a summary that hides how much it
+    hid is worse than one that admits it.
+    """
+    return max(0, len(_summary_bullets_all(section)) - limit)
+
+
 def crossed_notices(text: str, current: str, new: str) -> list[tuple[str, str]]:
     """(version, notice) for each crossed version declaring one, oldest first.
 
@@ -170,12 +251,17 @@ def crossed_notices(text: str, current: str, new: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def _emit_summary(sections: list[Section]) -> None:
+def _emit_summary(sections: list[Section], limit: int = 3) -> None:
     for section in sections:
         header = section.version
         if section.date:
             header = f"{header} — {section.date}"
         print(f"  {header}")
+        for bullet in summary_bullets(section, limit=limit):
+            print(f"    · {bullet}")
+        dropped = remaining_count(section, limit=limit)
+        if dropped:
+            print(f"    · and {dropped} more")
 
 
 def _emit_notices(pairs: list[tuple[str, str]]) -> None:

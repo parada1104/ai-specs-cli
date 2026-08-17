@@ -87,6 +87,44 @@ run_step() {
     return $rc
 }
 
+# print_release_report — summarize the crossed versions and replay their
+# upgrade notices.
+#
+# Everything here is best-effort. The fast-forward has already landed by the
+# time this runs, so a missing or malformed CHANGELOG.md must degrade to the
+# plain "Upgraded: X -> Y" line rather than turn a successful upgrade into a
+# failed one.
+#
+# Notices are displayed, never evaluated or executed: `upgrade` operates on the
+# global installation and has no consumer project in scope, so it cannot judge
+# project-dependent conditions. Anything conditional belongs to `ai-specs
+# doctor`, which has that state.
+print_release_report() {
+    local changelog="$AI_SPECS_HOME/CHANGELOG.md"
+    local parser="$AI_SPECS_HOME/lib/_internal/changelog.py"
+    [[ -f "$changelog" && -f "$parser" ]] || return 0
+
+    local summary notices
+    summary="$(python3 "$parser" "$changelog" "$CURRENT_VERSION" "$NEW_VERSION" 2>/dev/null || true)"
+    if [[ -n "$summary" ]]; then
+        echo ""
+        echo "What changed"
+        printf '%s\n' "$summary"
+    fi
+
+    notices="$(python3 "$parser" "$changelog" "$CURRENT_VERSION" "$NEW_VERSION" --notices 2>/dev/null || true)"
+    if [[ -n "$notices" ]]; then
+        echo ""
+        echo "Action required"
+        printf '%s\n' "$notices"
+    fi
+
+    # Separate the report from whatever the caller prints next.
+    if [[ -n "$summary" || -n "$notices" ]]; then
+        echo ""
+    fi
+}
+
 # Resolve the real path of the running ai-specs binary by walking symlinks.
 # This is used to verify the install channel.
 resolve_binary() {
@@ -287,6 +325,7 @@ if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
     echo "Already up to date (version $CURRENT_VERSION)."
 else
     echo "Upgraded: $CURRENT_VERSION -> $NEW_VERSION"
+    print_release_report
 fi
 
 # Symlink integrity check.

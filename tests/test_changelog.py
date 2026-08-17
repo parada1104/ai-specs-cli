@@ -180,6 +180,87 @@ class ChangelogParseTests(unittest.TestCase):
         self.assertEqual(sections[0].version, "0.22.0")
         self.assertIsNone(sections[0].date)
 
+    # --- summary bullets ----------------------------------------------------
+
+    def test_bullets_come_from_added_and_changed(self):
+        sections = self.mod.parse_sections(SAMPLE)
+        bullets = self.mod.summary_bullets(sections[0])
+        self.assertIn("Autocontained Go worktree gate.", bullets)
+        self.assertIn("Subrepo planning context propagation.", bullets)
+
+    def test_bullets_exclude_the_upgrade_notice_prose(self):
+        sections = self.mod.parse_sections(SAMPLE)
+        bullets = self.mod.summary_bullets(sections[0])
+        joined = " ".join(bullets)
+        self.assertNotIn("falls back to Bash", joined)
+
+    def test_bullets_are_capped(self):
+        body = "### Added\n" + "".join(f"- item {i}.\n" for i in range(10))
+        section = self.mod.Section(version="1.0.0", date=None, body=body)
+        bullets = self.mod.summary_bullets(section, limit=3)
+        self.assertEqual(len(bullets), 3)
+
+    def test_bullet_markup_is_stripped_to_plain_text(self):
+        body = "### Added\n- **Bold thing**: does `stuff`.\n"
+        section = self.mod.Section(version="1.0.0", date=None, body=body)
+        self.assertEqual(self.mod.summary_bullets(section), ["Bold thing: does stuff."])
+
+    def test_multiline_bullet_is_joined(self):
+        body = "### Added\n- a thing that wraps\n  onto a second line.\n"
+        section = self.mod.Section(version="1.0.0", date=None, body=body)
+        self.assertEqual(
+            self.mod.summary_bullets(section), ["a thing that wraps onto a second line."]
+        )
+
+    def test_remaining_count_reports_what_was_dropped(self):
+        body = "### Added\n" + "".join(f"- item {i}.\n" for i in range(10))
+        section = self.mod.Section(version="1.0.0", date=None, body=body)
+        self.assertEqual(self.mod.remaining_count(section, limit=3), 7)
+
+    def test_remaining_count_is_zero_when_nothing_dropped(self):
+        sections = self.mod.parse_sections(SAMPLE)
+        self.assertEqual(self.mod.remaining_count(sections[0], limit=50), 0)
+
+    def test_bullet_is_cut_at_the_first_sentence(self):
+        body = (
+            "### Added\n"
+            "- **Thing**: the short claim. Then a long elaboration that a user "
+            "scanning an upgrade does not need to read right now.\n"
+        )
+        section = self.mod.Section(version="1.0.0", date=None, body=body)
+        self.assertEqual(self.mod.summary_bullets(section), ["Thing: the short claim."])
+
+    def test_long_bullet_without_a_sentence_break_is_truncated(self):
+        body = "### Added\n- " + ("word " * 60) + "\n"
+        section = self.mod.Section(version="1.0.0", date=None, body=body)
+        bullet = self.mod.summary_bullets(section)[0]
+        self.assertLessEqual(len(bullet), 100)
+        self.assertTrue(bullet.endswith("…"), msg=bullet)
+
+    def test_truncation_does_not_split_a_word(self):
+        body = "### Added\n- " + ("alpha " * 60) + "\n"
+        section = self.mod.Section(version="1.0.0", date=None, body=body)
+        bullet = self.mod.summary_bullets(section)[0]
+        self.assertNotIn("alph…", bullet)
+
+    def test_short_bullet_is_left_alone(self):
+        body = "### Added\n- A short one.\n"
+        section = self.mod.Section(version="1.0.0", date=None, body=body)
+        self.assertEqual(self.mod.summary_bullets(section), ["A short one."])
+
+    def test_real_changelog_bullets_stay_scannable(self):
+        real = ROOT / "CHANGELOG.md"
+        sections = self.mod.read_sections(real)
+        for section in sections:
+            for bullet in self.mod.summary_bullets(section):
+                self.assertLessEqual(
+                    len(bullet), 100, msg=f"{section.version}: {bullet!r}"
+                )
+
+    def test_section_without_bullets_returns_empty(self):
+        section = self.mod.Section(version="1.0.0", date=None, body="prose only\n")
+        self.assertEqual(self.mod.summary_bullets(section), [])
+
     # --- against the real changelog ----------------------------------------
 
     def test_parses_the_repository_changelog(self):

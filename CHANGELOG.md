@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.22.0] — 2026-08-17
 
+### Upgrade notes
+Run `ai-specs sync` in each project to acquire the verified Go worktree-gate
+binary. Until you do, the gate keeps falling back to the Bash implementation.
+Run `ai-specs doctor` to confirm the resolved implementation; if it reports a
+preserved customized gate, use `ai-specs sync --refresh-gates`.
+
 ### Added
 - **Autocontained Go worktree gate**: the `worktree-flow` gate is now a single
   zero-dependency Go binary (`catalog/recipes/worktree-flow/gate`) with
