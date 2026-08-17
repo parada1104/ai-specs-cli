@@ -123,8 +123,13 @@ run_step() {
 
     # A mktemp failure (unwritable or full TMPDIR) must name itself instead of
     # surfacing later as whatever abort message the wrapped command produces.
+    #
+    # Compact mode cannot apply here: filtering happens on captured files, and
+    # there are none. The step runs straight through, so its detail lines reach
+    # the terminal. The warning says so rather than leaving raw output
+    # unexplained.
     if ! out_file="$(mktemp 2>/dev/null)" || ! err_file="$(mktemp 2>/dev/null)"; then
-        echo "  ! cannot create temporary files (check TMPDIR); running unbuffered" >&2
+        echo "  ! cannot create temporary files (check TMPDIR); running this step with unfiltered output" >&2
         rm -f "${out_file:-}" 2>/dev/null || true
         set +e
         "$@"

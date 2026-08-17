@@ -15,7 +15,9 @@ Both helpers are intentionally twins, so every case runs against both.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import tempfile
 import textwrap
 import unittest
 from pathlib import Path
@@ -31,9 +33,23 @@ SCRIPTS = (SYNC_SH, SYNC_AGENT_SH)
 
 
 def run_harness(script: Path, body: str, *, verbose: int = 0):
-    """Run run_step + print_step_output from `script` against `body`."""
+    """Run run_step + print_step_output from `script` against `body`.
+
+    The prelude mirrors the real scripts: both guard `shopt -s inherit_errexit`
+    behind a support check before defining `run_step` (sync.sh:84, sync-agent.sh
+    :200). Omitting it here would let an inherit_errexit-dependent regression
+    pass unnoticed in the harness while failing in production.
+    """
     fns = _extract_bash_functions(script, ("print_step_output", "run_step"))
-    bash = "set -euo pipefail\n" f"VERBOSE={verbose}\n" f"{fns}\n" f"{body}\n"
+    bash = (
+        "set -euo pipefail\n"
+        'if [[ -n "$(shopt -p inherit_errexit 2>/dev/null)" ]]; then\n'
+        "    shopt -s inherit_errexit\n"
+        "fi\n"
+        f"VERBOSE={verbose}\n"
+        f"{fns}\n"
+        f"{body}\n"
+    )
     return subprocess.run(
         ["bash", "-c", bash], text=True, capture_output=True, check=False
     )
@@ -106,33 +122,116 @@ class RunStepErrexitTests(unittest.TestCase):
                 result = run_harness(script, body)
                 self.assertIn("RC=42", result.stdout)
 
-    def test_no_temporary_files_survive_a_successful_step(self):
+    def _leak_probe(self, script: Path, step: str, *, extra: str = "") -> str:
+        """Track the exact temp paths run_step creates, not a directory count.
+
+        A `ls "$TMPDIR" | wc -l` delta is a shared-directory oracle: any other
+        process writing to the same TMPDIR at that instant flips the result.
+        Shadowing `mktemp` to hand out known paths makes the assertion exact.
+        """
+        probe_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, probe_dir, True)
         body = textwrap.dedent(
-            """
-            before="$(ls "${TMPDIR:-/tmp}" | wc -l)"
-            run_step "ok" bash -c 'echo hello'
-            after="$(ls "${TMPDIR:-/tmp}" | wc -l)"
-            echo "DELTA=$(( after - before ))"
+            f"""
+            PROBE_DIR="{probe_dir}"
+            _n=0
+            mktemp() {{
+                _n=$((_n+1))
+                {extra}
+                : > "$PROBE_DIR/temp$_n"
+                echo "$PROBE_DIR/temp$_n"
+            }}
+            {step}
+            for f in "$PROBE_DIR"/temp*; do
+                [[ -e "$f" ]] && echo "SURVIVED=$(basename "$f")"
+            done
+            echo "PROBE_DONE"
             """
         )
+        return run_harness(script, body).stdout
+
+    def test_no_temporary_files_survive_a_successful_step(self):
         for script in SCRIPTS:
             with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                self.assertIn("DELTA=0", result.stdout)
+                out = self._leak_probe(script, 'run_step "ok" bash -c \'echo hello\'')
+                self.assertIn("PROBE_DONE", out)
+                self.assertNotIn("SURVIVED", out)
 
     def test_no_temporary_files_survive_a_failing_step(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script.name):
+                out = self._leak_probe(
+                    script,
+                    "run_step \"boom\" bash -c 'echo out; echo err >&2; exit 5' || true",
+                )
+                self.assertIn("PROBE_DONE", out)
+                self.assertNotIn("SURVIVED", out)
+
+    def test_partial_mktemp_failure_does_not_leak_the_first_file(self):
+        """JD: the branch where the FIRST mktemp succeeds and the second fails.
+
+        `! A || ! B` short-circuits, so a stub that always fails never reaches
+        the second call — that asymmetric branch, the only one where a real
+        temp file must be cleaned up by `rm -f "${out_file:-}"`, was untested.
+        """
+        for script in SCRIPTS:
+            with self.subTest(script=script.name):
+                out = self._leak_probe(
+                    script,
+                    "run_step \"step\" bash -c 'echo RAN' || true",
+                    extra='[[ $_n -ge 2 ]] && return 1',
+                )
+                self.assertIn("RAN", out, "the step must still run")
+                self.assertIn("PROBE_DONE", out)
+                self.assertNotIn(
+                    "SURVIVED", out, "the first temp file leaked when the second failed"
+                )
+
+    def test_mktemp_failure_still_forwards_a_failing_status(self):
+        """The degraded path must not swallow the wrapped command's failure."""
         body = textwrap.dedent(
             """
-            before="$(ls "${TMPDIR:-/tmp}" | wc -l)"
-            run_step "boom" bash -c 'echo out; echo err >&2; exit 5' || true
-            after="$(ls "${TMPDIR:-/tmp}" | wc -l)"
-            echo "DELTA=$(( after - before ))"
+            mktemp() { return 1; }
+            rc=0
+            run_step "boom" bash -c 'exit 17' || rc=$?
+            echo "RC=$rc"
+            false
+            echo "REACHED"
             """
         )
         for script in SCRIPTS:
             with self.subTest(script=script.name):
                 result = run_harness(script, body)
-                self.assertIn("DELTA=0", result.stdout)
+                self.assertIn("RC=17", result.stdout)
+                self.assertNotIn(
+                    "REACHED",
+                    result.stdout,
+                    "errexit was not restored on the degraded path",
+                )
+
+    def test_degraded_path_output_is_documented_as_unfiltered(self):
+        """Compact filtering cannot apply to output that is never captured.
+
+        When temp files are unavailable the step runs unbuffered, so detail
+        markers reach the terminal. That is a deliberate trade — the warning
+        must say so rather than leaving the raw output unexplained.
+        """
+        body = textwrap.dedent(
+            """
+            mktemp() { return 1; }
+            run_step "step" bash -c 'echo "  ✓ detail line"' || true
+            """
+        )
+        for script in SCRIPTS:
+            with self.subTest(script=script.name):
+                result = run_harness(script, body)
+                combined = result.stdout + result.stderr
+                self.assertIn("✓ detail line", combined, "output must not be lost")
+                self.assertIn(
+                    "unfiltered",
+                    combined.lower(),
+                    "the warning must state that output is unfiltered",
+                )
 
     def test_a_failing_step_still_prints_its_full_output(self):
         """The existing contract must not regress while moving the restore."""

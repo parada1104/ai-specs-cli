@@ -239,8 +239,10 @@ run_step() {
 
     # A mktemp failure (unwritable or full TMPDIR) must name itself instead of
     # surfacing later as whatever abort message the wrapped command produces.
+    # Compact mode cannot apply with nothing captured, so the step's detail
+    # lines reach the terminal — the warning says so. See lib/sync.sh.
     if ! out_file="$(mktemp 2>/dev/null)" || ! err_file="$(mktemp 2>/dev/null)"; then
-        echo "  ! cannot create temporary files (check TMPDIR); running unbuffered" >&2
+        echo "  ! cannot create temporary files (check TMPDIR); running this step with unfiltered output" >&2
         rm -f "${out_file:-}" 2>/dev/null || true
         set +e
         "$@"
