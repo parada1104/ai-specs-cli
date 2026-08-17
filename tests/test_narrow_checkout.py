@@ -1,0 +1,374 @@
+"""Narrowing the global install checkout.
+
+`~/.ai-specs` carries subtrees the CLI never reads at runtime. Narrowing removes
+them from the working tree. It is an optimization, never a precondition: any
+failure warns and leaves a usable full checkout.
+
+Shallow cloning is deliberately NOT used — `ai-specs upgrade` depends on
+`git merge-base --is-ancestor` for its divergence guard, and truncated history
+makes that check unreliable.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+NARROW = ROOT / "lib" / "_internal" / "narrow-checkout.sh"
+
+EXCLUDED = ("openspec", "tests", ".github", "tmp")
+
+
+def _production_keep_dirs() -> tuple[str, ...]:
+    """Read KEEP_DIRS out of the script itself.
+
+    Hardcoding a subset here let three of the eight production entries go
+    untested (JD S1). Deriving the list means the allowlist and its coverage
+    cannot drift apart.
+    """
+    text = NARROW.read_text()
+    block = text.split("KEEP_DIRS=(", 1)[1].split(")", 1)[0]
+    names = [
+        line.strip()
+        for line in block.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    return tuple(names)
+
+
+RUNTIME = _production_keep_dirs()
+
+
+def run(args, cwd=None, env=None, check=True):
+    result = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True)
+    if check and result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, args, output=result.stdout, stderr=result.stderr
+        )
+    return result
+
+
+class NarrowCheckoutTests(unittest.TestCase):
+    def tmpdir(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name)
+
+    def make_repo(self) -> tuple[Path, Path]:
+        """A repo shaped like the CLI install, with an origin. (repo, bare)."""
+        base = self.tmpdir()
+        repo = base / "ai-specs"
+        repo.mkdir()
+        for name in RUNTIME + EXCLUDED:
+            directory = repo / name
+            directory.mkdir(parents=True)
+            (directory / "file.txt").write_text(f"content of {name}\n")
+        (repo / "VERSION").write_text("0.22.0\n")
+        (repo / "CHANGELOG.md").write_text("# Changelog\n")
+
+        run(["git", "init", "-b", "main"], cwd=repo)
+        run(["git", "config", "user.email", "t@t.com"], cwd=repo)
+        run(["git", "config", "user.name", "T"], cwd=repo)
+        run(["git", "add", "-A"], cwd=repo)
+        run(["git", "commit", "-m", "init"], cwd=repo)
+
+        bare = base / "origin.git"
+        bare.mkdir()
+        run(["git", "init", "--bare"], cwd=bare)
+        run(["git", "remote", "add", "origin", str(bare)], cwd=repo)
+        run(["git", "push", "-u", "origin", "main"], cwd=repo)
+        return repo, bare
+
+    def narrow(self, repo: Path, env=None, check=False):
+        return run(["bash", str(NARROW), str(repo)], env=env, check=check)
+
+    # --- happy path ---------------------------------------------------------
+
+    def test_excluded_subtrees_leave_the_working_tree(self):
+        repo, _ = self.make_repo()
+        result = self.narrow(repo)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        for name in EXCLUDED:
+            self.assertFalse(
+                (repo / name).exists(), msg=f"{name}/ should have been excluded"
+            )
+
+    def test_runtime_subtrees_survive(self):
+        repo, _ = self.make_repo()
+        self.narrow(repo)
+        for name in RUNTIME:
+            self.assertTrue((repo / name / "file.txt").is_file(), msg=f"{name}/ missing")
+
+    def test_root_files_survive(self):
+        repo, _ = self.make_repo()
+        self.narrow(repo)
+        self.assertTrue((repo / "VERSION").is_file())
+        self.assertTrue((repo / "CHANGELOG.md").is_file())
+
+    def test_tree_is_not_left_dirty(self):
+        """A narrowed checkout must not look dirty to the upgrade guard."""
+        repo, _ = self.make_repo()
+        self.narrow(repo)
+        status = run(["git", "status", "--porcelain"], cwd=repo)
+        self.assertEqual(status.stdout.strip(), "")
+
+    def test_history_and_ancestry_are_intact(self):
+        """The divergence guard must keep working — this is why not --depth."""
+        repo, _ = self.make_repo()
+        self.narrow(repo)
+        run(["git", "fetch", "origin", "main"], cwd=repo)
+        ancestry = run(
+            ["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"],
+            cwd=repo,
+            check=False,
+        )
+        self.assertEqual(ancestry.returncode, 0)
+
+    # --- idempotence --------------------------------------------------------
+
+    def test_second_run_is_a_noop(self):
+        repo, _ = self.make_repo()
+        self.narrow(repo)
+        second = self.narrow(repo)
+        self.assertEqual(second.returncode, 0)
+        for name in EXCLUDED:
+            self.assertFalse((repo / name).exists())
+        for name in RUNTIME:
+            self.assertTrue((repo / name / "file.txt").is_file())
+
+    def test_second_run_reports_nothing_to_do(self):
+        repo, _ = self.make_repo()
+        self.narrow(repo)
+        second = self.narrow(repo)
+        self.assertIn("already", (second.stdout + second.stderr).lower())
+
+    # --- degradation --------------------------------------------------------
+
+    def _git_without_sparse(self, base: Path) -> dict:
+        """PATH shim whose `git` rejects `sparse-checkout` in any position.
+
+        The subcommand is not necessarily $1 — real calls look like
+        `git -C <dir> sparse-checkout set ...` — so scan every argument.
+        """
+        real_git = subprocess.run(
+            ["which", "git"], capture_output=True, text=True
+        ).stdout.strip()
+        self.assertTrue(real_git, "git not found on PATH")
+
+        shim_dir = base / "shim"
+        shim_dir.mkdir()
+        shim = shim_dir / "git"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            'for arg in "$@"; do\n'
+            '  if [[ "$arg" == "sparse-checkout" ]]; then\n'
+            "    echo \"git: 'sparse-checkout' is not a git command\" >&2\n"
+            "    exit 1\n"
+            "  fi\n"
+            "done\n"
+            f'exec {real_git} "$@"\n'
+        )
+        shim.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(shim_dir) + ":" + env.get("PATH", "")
+        return env
+
+    def test_git_without_sparse_checkout_falls_back(self):
+        repo, _ = self.make_repo()
+        base = repo.parent
+        env = self._git_without_sparse(base)
+
+        result = self.narrow(repo, env=env)
+        self.assertEqual(
+            result.returncode, 0, msg="narrowing must never fail the caller"
+        )
+        # Nothing was removed: a full checkout is a valid outcome.
+        for name in EXCLUDED:
+            self.assertTrue((repo / name).exists())
+
+    def test_fallback_warns_rather_than_failing_silently(self):
+        repo, _ = self.make_repo()
+        env = self._git_without_sparse(repo.parent)
+        result = self.narrow(repo, env=env)
+        self.assertTrue(
+            (result.stdout + result.stderr).strip(),
+            msg="degradation must say something",
+        )
+
+    # --- judgment-day round 1 -----------------------------------------------
+
+    def test_allowlist_covers_every_production_keep_dir(self):
+        """JD S1: the coverage list must not be a subset of production."""
+        self.assertGreaterEqual(len(RUNTIME), 8, f"KEEP_DIRS parsed as {RUNTIME}")
+        for name in ("lib", "bin", "catalog", "bundled-skills", "bundled-commands",
+                     "templates", "scripts", "docs"):
+            self.assertIn(name, RUNTIME)
+
+    def test_a_stale_allowlist_is_reconciled(self):
+        """JD C2: an install narrowed by an older release must pick up new dirs.
+
+        Simulates a previous version whose allowlist knew only lib/ and bin/.
+        Re-running the current script must materialize the rest.
+        """
+        repo, _ = self.make_repo()
+        run(["git", "sparse-checkout", "set", "--cone", "lib", "bin"], cwd=repo)
+        self.assertFalse((repo / "docs").exists(), "fixture precondition")
+
+        result = self.narrow(repo)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        for name in RUNTIME:
+            self.assertTrue(
+                (repo / name / "file.txt").is_file(),
+                msg=f"{name}/ was not restored by reconciliation",
+            )
+        for name in EXCLUDED:
+            self.assertFalse((repo / name).exists())
+
+    def test_reconciliation_leaves_the_tree_clean(self):
+        repo, _ = self.make_repo()
+        run(["git", "sparse-checkout", "set", "--cone", "lib", "bin"], cwd=repo)
+        self.narrow(repo)
+        status = run(["git", "status", "--porcelain"], cwd=repo)
+        self.assertEqual(status.stdout.strip(), "")
+
+    def _git_failing_on(self, base: Path, failing_args: tuple[str, ...]) -> dict:
+        """PATH shim whose `git` fails when every token in `failing_args` appears."""
+        real_git = subprocess.run(
+            ["which", "git"], capture_output=True, text=True
+        ).stdout.strip()
+        shim_dir = base / "shim-fail"
+        shim_dir.mkdir(exist_ok=True)
+        shim = shim_dir / "git"
+        conditions = " && ".join(
+            f'[[ " $* " == *" {token} "* ]]' for token in failing_args
+        )
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            f"if {conditions}; then\n"
+            '  echo "fatal: simulated failure" >&2\n'
+            "  exit 1\n"
+            "fi\n"
+            f'exec {real_git} "$@"\n'
+        )
+        shim.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(shim_dir) + ":" + env.get("PATH", "")
+        return env
+
+    def test_a_failed_apply_never_leaves_the_tree_collapsed(self):
+        """JD C1: runtime dirs must survive a failure while applying the allowlist.
+
+        `sparse-checkout init --cone` prunes the tree to root-level files before
+        any allowlist is applied, so an init/set split loses lib/ and bin/ if
+        `set` fails. Whatever the implementation, the observable contract is
+        that a failure leaves a usable checkout.
+        """
+        repo, _ = self.make_repo()
+        env = self._git_failing_on(repo.parent, ("sparse-checkout", "set"))
+
+        result = self.narrow(repo, env=env)
+        self.assertEqual(result.returncode, 0, "narrowing must never fail the caller")
+        for name in RUNTIME:
+            self.assertTrue(
+                (repo / name / "file.txt").is_file(),
+                msg=f"{name}/ vanished after a failed apply — checkout collapsed",
+            )
+
+    def test_collapsed_tree_is_never_reported_as_success(self):
+        """JD C1, compound failure: apply fails AND recovery fails.
+
+        With an init/set split this is the destructive case — `init --cone`
+        already pruned lib/ and bin/, `set` fails, `disable` fails too, and the
+        script still prints "restoring the full checkout" and exits 0. The
+        caller then proceeds against a checkout with no CLI in it.
+
+        Either the runtime directories survive, or the script must refuse to
+        report success. Silently claiming recovery is the defect.
+        """
+        repo, _ = self.make_repo()
+        # `init` and the `-h` probe must still work, otherwise the destructive
+        # prune never happens and the test proves nothing. Only the apply and
+        # the recovery fail.
+        real_git = subprocess.run(
+            ["which", "git"], capture_output=True, text=True
+        ).stdout.strip()
+        shim_dir = repo.parent / "shim-compound"
+        shim_dir.mkdir(exist_ok=True)
+        shim = shim_dir / "git"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [[ " $* " == *" sparse-checkout "* ]] && '
+            '{ [[ " $* " == *" set "* ]] || [[ " $* " == *" disable "* ]]; }; then\n'
+            '  echo "fatal: simulated failure" >&2\n'
+            "  exit 1\n"
+            "fi\n"
+            f'exec {real_git} "$@"\n'
+        )
+        shim.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(shim_dir) + ":" + env.get("PATH", "")
+
+        result = self.narrow(repo, env=env)
+        combined = result.stdout + result.stderr
+        runtime_intact = all(
+            (repo / name / "file.txt").is_file() for name in RUNTIME
+        )
+        if not runtime_intact:
+            self.fail(
+                "runtime directories were destroyed while the script reported:\n"
+                f"{combined}"
+            )
+
+    def test_capability_probe_has_no_side_effects(self):
+        """The probe must never invoke git's man/web help path.
+
+        `git <cmd> --help` honors `help.format`. A user with `help.format=web`
+        would have a browser launched mid-install by a capability check, which
+        is an unacceptable side effect for a probe. `-h` prints short usage and
+        never reaches man or a browser.
+        """
+        repo, _ = self.make_repo()
+        sentinel = repo.parent / "browser-was-launched"
+        run(["git", "config", "help.format", "web"], cwd=repo)
+        run(["git", "config", "web.browser", "probe"], cwd=repo)
+        run(
+            ["git", "config", "browser.probe.cmd", f"touch {sentinel}; true"],
+            cwd=repo,
+        )
+
+        result = self.narrow(repo)
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(
+            sentinel.exists(), "capability probe launched the configured browser"
+        )
+        # And narrowing still did its job.
+        for name in EXCLUDED:
+            self.assertFalse((repo / name).exists())
+
+    def test_missing_target_is_not_fatal(self):
+        result = self.narrow(Path("/nonexistent/ai-specs"))
+        self.assertEqual(result.returncode, 0)
+
+    def test_non_git_target_is_not_fatal(self):
+        plain = self.tmpdir() / "plain"
+        plain.mkdir()
+        result = self.narrow(plain)
+        self.assertEqual(result.returncode, 0)
+
+    def test_dirty_excluded_path_is_left_alone(self):
+        """Never discard uncommitted work, even in an excluded subtree."""
+        repo, _ = self.make_repo()
+        (repo / "openspec" / "scratch.md").write_text("unsaved work\n")
+
+        result = self.narrow(repo)
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue((repo / "openspec" / "scratch.md").is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()
