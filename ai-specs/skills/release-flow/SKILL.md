@@ -34,7 +34,8 @@ this skill owns product release policy (VERSION, CHANGELOG, promote, tag).
 2. **Never** push directly to `main` or `development` — PR + explicit approval.
 3. Bump only `VERSION` and `CHANGELOG.md` on the bump branch (no feature work).
 4. Hard stop for explicit user approval before: promote merge, tag push, and
-   `gh release create`.
+   publishing release notes. The tag push is the irreversible step — it is what
+   builds and attaches the gate binaries.
 5. Before promote, run the VCS `delete_branch_on_merge` preflight (GitHub). If
    it is `true`, warn — long-lived heads can be wiped when used as a PR head.
 6. After merge, delete only **feature** heads (`chore/release-*`, `release/v*`).
@@ -84,7 +85,34 @@ In that worktree:
 1. Set `VERSION` to `X.Y.Z` (no `v` prefix).
 2. Move `CHANGELOG.md` `[Unreleased]` notes into `## [X.Y.Z] — YYYY-MM-DD`.
 3. Leave a fresh empty `## [Unreleased]` section at the top.
-4. Commit: `chore(release): bump to X.Y.Z`.
+4. **Decide whether this release needs an upgrade notice** (see below).
+5. Commit: `chore(release): bump to X.Y.Z`.
+
+#### Upgrade notes (post-upgrade actions)
+
+If a user must *do* something after upgrading, say so in an `### Upgrade notes`
+subsection under the new version heading. `ai-specs upgrade` replays it for
+everyone who crosses this version, oldest release first.
+
+```markdown
+## [X.Y.Z] — YYYY-MM-DD
+
+### Upgrade notes
+Run `ai-specs sync` in each project to acquire the verified Go worktree-gate
+binary. Until you do, the gate keeps falling back to the Bash implementation.
+```
+
+Rules:
+
+- **Prose only.** `upgrade` runs against `~/.ai-specs` and has no consumer
+  project in scope, so it cannot evaluate project-dependent conditions. Name
+  the command; let `ai-specs doctor` handle anything conditional.
+- **Nothing is executed.** A notice is displayed verbatim.
+- Write one only when an action is genuinely required. A notice on every
+  release trains users to skip them.
+
+Ask: *would a user who upgrades and does nothing else be silently worse off?*
+If yes, write the notice.
 
 ### 3. PR into development
 
@@ -128,7 +156,8 @@ Promote development tip (includes VERSION X.Y.Z) to main for release.
 ## Test plan
 - [ ] Merge with merge commit (not squash)
 - [ ] Tag vX.Y.Z on main
-- [ ] gh release create
+- [ ] Release workflow green and 4 gate assets attached
+- [ ] gh release edit — title and notes
 
 EOF
 )"
@@ -152,7 +181,23 @@ git fetch origin main
 git checkout -B main origin/main
 git tag -a "vX.Y.Z" -m "vX.Y.Z"
 git push origin "vX.Y.Z"
-gh release create "vX.Y.Z" --title "vX.Y.Z — <short summary>" \
+```
+
+**The tag push creates the release — you do not.** Pushing `v*` triggers
+`.github/workflows/release-worktree-gate.yml`, which builds the four gate
+binaries, verifies them against the committed
+`catalog/recipes/worktree-flow/bin/SHA256SUMS`, and attaches them via
+`softprops/action-gh-release`. That action creates the GitHub Release for the
+tag, with an empty body and the bare tag as its title.
+
+So `gh release create` **fails with "already exists"**. Wait for the workflow,
+then fill in the release:
+
+```bash
+gh run watch <run-id> --exit-status          # 6 jobs, all must pass
+gh release view vX.Y.Z --json assets          # expect 4 worktree-gate-* assets
+
+gh release edit "vX.Y.Z" --title "vX.Y.Z — <short summary>" \
   --notes-file - <<'EOF'
 ## Highlights
 - <from CHANGELOG>
@@ -161,6 +206,21 @@ gh release create "vX.Y.Z" --title "vX.Y.Z — <short summary>" \
 curl -fsSL https://raw.githubusercontent.com/parada1104/ai-specs-cli/main/install.sh | bash
 EOF
 ```
+
+Verify the published assets match the trust root without downloading them —
+useful when a sandbox blocks the asset CDN:
+
+```bash
+gh api repos/parada1104/ai-specs-cli/releases/tags/vX.Y.Z \
+  --jq '.assets[] | "\(.digest)  \(.name)"'
+```
+
+Before tagging, reproduce the digests locally with the CANONICAL toolchain
+(`go1.24.13`): run `scripts/build-gate.sh`, then compare `shasum -a 256` of the
+four `dist/worktree-gate-<os>-<arch>` files against the committed `SHA256SUMS`.
+Exclude `dist/worktree-gate-current` — CI does not build it. A mismatch means
+the release workflow will fail and publish **no** assets, leaving every user on
+the Bash fallback.
 
 Installer default ref is `main` (`AI_SPECS_REF=main`). Point release notes at
 repo-root `install.sh`, not a nested path.

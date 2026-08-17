@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Version-keyed upgrade notices**: a release can declare a required
+  post-upgrade action in an `### Upgrade notes` subsection under its
+  `CHANGELOG.md` heading. `ai-specs upgrade` replays the notices of every
+  version the user crossed, oldest release first, under **Action required**.
+  Notices are prose and are never evaluated or executed: `upgrade` runs against
+  `~/.ai-specs` and has no consumer project in scope, so anything
+  project-dependent stays with `ai-specs doctor`, which has that state.
+- **Version crossing summary**: after a successful upgrade, the versions
+  crossed are summarized with up to three condensed bullets each (first
+  sentence, capped at 100 characters) and an explicit "and N more" rather than
+  a silent truncation.
+- **Narrowed global install**: `~/.ai-specs` is now a partial clone
+  (`--filter=blob:none`) with a cone-mode sparse checkout that excludes
+  `openspec/`, `tests/`, `.github/` and `tmp/` — 1842 tracked files down to 958,
+  with every runtime path intact. Full commit history is preserved, because
+  `ai-specs upgrade` needs `git merge-base --is-ancestor` for its divergence
+  guard and a shallow clone would break it. Narrowing is best effort: an
+  unsupported git, a dirty tree, or any failure leaves a usable full checkout
+  and the upgrade still succeeds. `git -C ~/.ai-specs sparse-checkout disable`
+  restores every file.
+
+### Changed
+- `ai-specs upgrade` no longer forwards raw `git` output. It prints one labelled
+  line per step, adopting the `run_step` contract already used by `ai-specs
+  sync`. `-v`/`--verbose` restores the full detail, and a failing step always
+  prints everything it produced. Upgrading `0.20.0` to `0.22.0` went from ~250
+  lines to 21. No safety check, abort condition, or exit code changed.
+- `release-flow` skill: authoring an upgrade notice is now part of the version
+  bump, and the tag/release step reflects that CI creates the GitHub Release
+  (`softprops/action-gh-release`), so `gh release create` fails with "already
+  exists" — the ritual now uses `gh release edit`.
+
 ## [0.22.0] — 2026-08-17
+
+### Upgrade notes
+Run `ai-specs sync` in each project to acquire the verified Go worktree-gate
+binary. Until you do, the gate keeps falling back to the Bash implementation.
+Run `ai-specs doctor` to confirm the resolved implementation; if it reports a
+preserved customized gate, use `ai-specs sync --refresh-gates`.
 
 ### Added
 - **Autocontained Go worktree gate**: the `worktree-flow` gate is now a single
@@ -336,7 +375,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Acciones separadas "Configure recipes" y "Remove recipe" del menu principal del hub — ahora integradas en submenu Recipes.
 
-## [0.12.4] — 2026-07-12
 ### Changed
 
 - **TUI upgraded to Questionary interactive prompts** — agent and recipe

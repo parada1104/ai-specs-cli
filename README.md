@@ -79,7 +79,7 @@ Missing interactive deps (`rich` + `questionary`) yield exit **3** with install 
 | `ai-specs recipe list [path]` | List available recipes |
 | `ai-specs recipe add <id> [path]` | Add a recipe declaration |
 | `ai-specs recipe init <id> [path]` | View recipe initialization brief |
-| `ai-specs upgrade [--dry-run] [--force]` | Upgrade global installation |
+| `ai-specs upgrade [--dry-run] [--force] [-v]` | Upgrade global installation |
 | `ai-specs version` | Print version |
 
 Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
@@ -164,10 +164,32 @@ native format (Claude `PreToolUse`, generated Cursor/OpenCode/Pi adapters). See
 ```bash
 ai-specs upgrade                     # fast-forward global install
 ai-specs upgrade --dry-run           # preview only
+ai-specs upgrade -v                  # show the full git output
 ```
+
+The upgrade prints one line per step, then summarizes the versions you crossed.
+When a release requires a post-upgrade action, it prints that under
+**Action required** — read it, because nothing else will tell you.
 
 After upgrading, run `ai-specs sync` in each project to refresh generated
 artifacts.
+
+### Install footprint
+
+`~/.ai-specs` is a partial clone with a sparse checkout: `openspec/`, `tests/`,
+`.github/` and `tmp/` are not materialized, since nothing reads them at runtime.
+The full commit history is kept — `ai-specs upgrade` needs it to verify your
+install has not diverged, which a shallow clone would break.
+
+To restore every file (for example to run the test suite from the install):
+
+```bash
+git -C ~/.ai-specs sparse-checkout disable
+```
+
+Narrowing is best effort. On a git without sparse-checkout support, or if
+anything fails, you keep an ordinary full checkout and the upgrade still
+succeeds.
 
 ## Project layout (this repo)
 
