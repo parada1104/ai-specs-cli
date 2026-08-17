@@ -2,11 +2,12 @@
 # upgrade.sh — safely upgrade the global ai-specs installation.
 #
 # Usage:
-#   ai-specs upgrade [--dry-run] [--force]
+#   ai-specs upgrade [--dry-run] [--force] [-v|--verbose]
 #
 # Flags:
 #   --dry-run   Preview the upgrade without modifying the repository.
 #   --force     Proceed even if the working tree is dirty.
+#   --verbose   Show the full git output instead of one line per step.
 
 set -euo pipefail
 
@@ -21,14 +22,15 @@ RESOLVED_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: ai-specs upgrade [--dry-run] [--force]
+Usage: ai-specs upgrade [--dry-run] [--force] [-v|--verbose]
 
 Safely upgrade the global ai-specs installation to the latest origin/main.
 
 Flags:
-  --dry-run   Show what would change without modifying the repository.
-  --force     Proceed even if the working tree has uncommitted changes.
-  -h, --help  Show this help.
+  --dry-run       Show what would change without modifying the repository.
+  --force         Proceed even if the working tree has uncommitted changes.
+  -v, --verbose   Show the full git output instead of one line per step.
+  -h, --help      Show this help.
 
 Exit codes:
   0   Success or dry-run completed.
@@ -43,10 +45,12 @@ EOF
 # --- argument parsing --------------------------------------------------------
 DRY_RUN=false
 FORCE=false
+VERBOSE=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
         --force) FORCE=true ;;
+        -v|--verbose) VERBOSE=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown argument: $arg" >&2; usage >&2; exit 1 ;;
     esac
@@ -56,6 +60,31 @@ done
 abort() {
     echo "ai-specs upgrade: $1" >&2
     exit "${2:-1}"
+}
+
+# run_step LABEL CMD [ARGS...] — print one progress line, run CMD with its
+# output captured, and surface that output only when it matters.
+#
+# Mirrors the contract established for sync in lib/sync.sh: compact by default,
+# full detail under --verbose, and a failing step always prints everything it
+# produced so a diagnosis is never hidden. The caller keeps ownership of the
+# exit code, so every existing abort path and its code survive unchanged.
+run_step() {
+    local label="$1"; shift
+    echo "  $label"
+    local out_file err_file rc=0
+    out_file="$(mktemp)"
+    err_file="$(mktemp)"
+    set +e
+    "$@" >"$out_file" 2>"$err_file"
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 || $VERBOSE -eq 1 ]]; then
+        [[ -s "$out_file" ]] && cat "$out_file"
+        [[ -s "$err_file" ]] && cat "$err_file" >&2
+    fi
+    rm -f "$out_file" "$err_file"
+    return $rc
 }
 
 # Resolve the real path of the running ai-specs binary by walking symlinks.
@@ -203,7 +232,7 @@ if [[ "$DRY_RUN" == true ]]; then
 fi
 
 # --- fetch & merge -----------------------------------------------------------
-if ! git fetch origin main; then
+if ! run_step "fetching origin/main" git fetch origin main; then
     abort "Failed to fetch from origin. Check your network connection." 4
 fi
 
@@ -221,7 +250,12 @@ else
 fi
 
 if [[ "$UP_TO_DATE" == false ]]; then
-    if ! git merge --ff-only origin/main; then
+    TARGET_VERSION="$(git show origin/main:VERSION 2>/dev/null | tr -d '[:space:]' || true)"
+    MERGE_LABEL="fast-forwarding to origin/main"
+    if [[ -n "$CURRENT_VERSION" && -n "$TARGET_VERSION" ]]; then
+        MERGE_LABEL="fast-forwarding $CURRENT_VERSION -> $TARGET_VERSION"
+    fi
+    if ! run_step "$MERGE_LABEL" git merge --ff-only origin/main; then
         abort "Fast-forward merge failed. The local branch may have diverged. Resolve manually or re-run install.sh." 4
     fi
 fi
@@ -234,12 +268,13 @@ _tui_deps_ok() {
     return 1
 }
 if ! _tui_deps_ok; then
-    echo "Installing TUI dependencies (rich + questionary)..."
-    python3 -m pip install --upgrade --quiet --target "$VENDOR_DIR" 'rich>=13.0.0,<15' 'questionary>=2.0.0,<2.1' || {
+    run_step "installing TUI dependencies (rich + questionary)" \
+        python3 -m pip install --upgrade --quiet --target "$VENDOR_DIR" \
+        'rich>=13.0.0,<15' 'questionary>=2.0.0,<2.1' || {
         echo "warning: could not install TUI deps; init will prompt on first use" >&2
     }
-else
-    echo "TUI deps (rich + questionary) already available."
+elif [[ $VERBOSE -eq 1 ]]; then
+    echo "  TUI deps (rich + questionary) already available"
 fi
 
 # --- post-upgrade verification -----------------------------------------------
