@@ -120,21 +120,46 @@ run_step() {
     local label="$1"; shift
     echo "  syncing $label"
     local out_file err_file rc=0
-    out_file="$(mktemp)"
-    err_file="$(mktemp)"
+
+    # A mktemp failure (unwritable or full TMPDIR) must name itself instead of
+    # surfacing later as whatever abort message the wrapped command produces.
+    if ! out_file="$(mktemp 2>/dev/null)" || ! err_file="$(mktemp 2>/dev/null)"; then
+        echo "  ! cannot create temporary files (check TMPDIR); running unbuffered" >&2
+        rm -f "${out_file:-}" 2>/dev/null || true
+        set +e
+        "$@"
+        rc=$?
+        set -e
+        return $rc
+    fi
+
     set +e
     "$@" >"$out_file" 2>"$err_file"
     rc=$?
-    set -e
+    # errexit stays OFF until this helper has finished its own cleanup.
+    #
+    # `[[ -s f ]] && cat f` is exempt from errexit when `[[` fails (a non-final
+    # command in an && list), but NOT when `cat` itself fails — reachable via
+    # SIGPIPE on an early-closed stdout, or a full disk. Restoring errexit
+    # before these lines meant such a failure aborted the script from inside
+    # run_step: both temp files leaked and the wrapped command's status was
+    # replaced by cat's. Only bare call sites are affected, which is 5 of the 6
+    # here, so this is the common path rather than the exotic one.
+    #
+    # The restore itself is mandatory: `set` options are shell-global, not
+    # function-local, so dropping it would silently disable errexit for the
+    # remainder of the script.
     if [[ $rc -ne 0 ]]; then
         [[ -s "$out_file" ]] && cat "$out_file"
         [[ -s "$err_file" ]] && cat "$err_file" >&2
         rm -f "$out_file" "$err_file"
+        set -e
         return $rc
     fi
     print_step_output "$out_file"
     print_step_output "$err_file" >&2
     rm -f "$out_file" "$err_file"
+    set -e
     return 0
 }
 
