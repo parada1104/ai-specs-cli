@@ -46,6 +46,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   artifact-derived accept/adjust/stop plan presentation. Standard and Light
   behavior remains unchanged.
 
+### Fixed
+- **`ai-specs sync` no longer loses a failing step's exit status.** `run_step`
+  in `lib/sync.sh` and `lib/sync-agent.sh`, and the hand-rolled
+  recipe-materialize capture block, all restored `errexit` *before* printing
+  the output they had captured. A failure while printing — a `cat` hitting
+  SIGPIPE on an early-closed stdout, or a full disk — aborted the script from
+  inside the helper, so the wrapped command's exit status was replaced by
+  `cat`'s and the temporary files leaked. Measured on the capture block: exit 1
+  with 2 stranded files before, exit 3 with none after. Only bare call sites
+  were affected, which is 5 of 6 in `sync.sh` and all 4 in `sync-agent.sh`; a
+  guarded `if ! run_step …` was never exposed.
+- **Sync no longer strands temporary files.** The recipe-materialize `EXIT`
+  trap covers its two capture files, which previously sat outside it entirely,
+  and is registered before the temporaries it guards rather than after. Every
+  name is `:-` expanded: under `set -u` a trap referencing an unset variable
+  dies mid-cleanup and replaces the script's exit status with its own. Leaked
+  temporary files per `ai-specs sync` dropped from three to one; the remainder
+  comes from `recipe-materialize.py`, tracked separately.
+- **A `mktemp` failure now names itself** instead of surfacing later as
+  whatever abort message the wrapped command produces. The step still runs, and
+  the warning states that its output is unfiltered — compact mode cannot apply
+  when nothing is captured.
+
 ## [0.22.0] — 2026-08-17
 
 ### Upgrade notes

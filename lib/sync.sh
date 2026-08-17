@@ -120,21 +120,51 @@ run_step() {
     local label="$1"; shift
     echo "  syncing $label"
     local out_file err_file rc=0
-    out_file="$(mktemp)"
-    err_file="$(mktemp)"
+
+    # A mktemp failure (unwritable or full TMPDIR) must name itself instead of
+    # surfacing later as whatever abort message the wrapped command produces.
+    #
+    # Compact mode cannot apply here: filtering happens on captured files, and
+    # there are none. The step runs straight through, so its detail lines reach
+    # the terminal. The warning says so rather than leaving raw output
+    # unexplained.
+    if ! out_file="$(mktemp 2>/dev/null)" || ! err_file="$(mktemp 2>/dev/null)"; then
+        echo "  ! cannot create temporary files (check TMPDIR); running this step with unfiltered output" >&2
+        rm -f "${out_file:-}" 2>/dev/null || true
+        set +e
+        "$@"
+        rc=$?
+        set -e
+        return $rc
+    fi
+
     set +e
     "$@" >"$out_file" 2>"$err_file"
     rc=$?
-    set -e
+    # errexit stays OFF until this helper has finished its own cleanup.
+    #
+    # `[[ -s f ]] && cat f` is exempt from errexit when `[[` fails (a non-final
+    # command in an && list), but NOT when `cat` itself fails — reachable via
+    # SIGPIPE on an early-closed stdout, or a full disk. Restoring errexit
+    # before these lines meant such a failure aborted the script from inside
+    # run_step: both temp files leaked and the wrapped command's status was
+    # replaced by cat's. Only bare call sites are affected, which is 5 of the 6
+    # here, so this is the common path rather than the exotic one.
+    #
+    # The restore itself is mandatory: `set` options are shell-global, not
+    # function-local, so dropping it would silently disable errexit for the
+    # remainder of the script.
     if [[ $rc -ne 0 ]]; then
         [[ -s "$out_file" ]] && cat "$out_file"
         [[ -s "$err_file" ]] && cat "$err_file" >&2
         rm -f "$out_file" "$err_file"
+        set -e
         return $rc
     fi
     print_step_output "$out_file"
     print_step_output "$err_file" >&2
     rm -f "$out_file" "$err_file"
+    set -e
     return 0
 }
 
@@ -185,13 +215,33 @@ run_step "vendored skills" python3 "$VENDOR_SKILLS_PY" "$ROOT_PATH"
 RECIPE_MCP_TEMP="$(mktemp -t ai-specs-recipe-mcp-XXXXXX.json)"
 RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
 RESOLVED_HOOKS_TEMP="$(mktemp -t ai-specs-resolved-hooks-XXXXXX.json)"
-trap 'rm -f "$RECIPE_MCP_TEMP" "$RESOLVED_CONFIG_TEMP" "$RESOLVED_HOOKS_TEMP"' EXIT
+# Register the trap as early as possible — before the remaining temp files
+# exist — and name all five up front.
+#
+# Two reasons the ordering is load-bearing:
+#
+# 1. Every temp file must be covered from the moment it exists. Registering
+#    after all five `mktemp` calls leaves the first three unprotected across
+#    two more fallible calls: a failure at the fourth aborts under errexit
+#    before the trap exists, stranding all three. Measured: 3 stranded with a
+#    late trap, 0 with this one.
+# 2. `:-` expansion is what makes early registration safe, and is required
+#    anyway — this script runs under `set -u`, and an EXIT trap naming an unset
+#    variable dies mid-cleanup and REPLACES the script's exit status with its
+#    own, silently turning a meaningful failure code into 1.
+#
+# The two capture files are named here as well: they used to sit outside the
+# trap entirely, so unlike every other temporary here they had no safety net.
+trap 'rm -f "${RECIPE_MCP_TEMP:-}" "${RESOLVED_CONFIG_TEMP:-}" "${RESOLVED_HOOKS_TEMP:-}" "${RECIPE_OUT_FILE:-}" "${RECIPE_ERR_FILE:-}"' EXIT
 RECIPE_OUT_FILE="$(mktemp)"
 RECIPE_ERR_FILE="$(mktemp)"
 set +e
 python3 "$RECIPE_MATERIALIZE_PY" "$ROOT_PATH" "$AI_SPECS_HOME" --recipe-mcp-out "$RECIPE_MCP_TEMP" --resolved-config-out "$RESOLVED_CONFIG_TEMP" --resolved-hooks-out "$RESOLVED_HOOKS_TEMP" $REFRESH_GATES >"$RECIPE_OUT_FILE" 2>"$RECIPE_ERR_FILE"
 RECIPE_RC=$?
-set -e
+# errexit stays OFF until this block has printed its captured output and
+# cleaned up — the same rule run_step follows. Restoring it here meant a
+# failing `cat` below (SIGPIPE, full disk) aborted mid-block, stranding both
+# capture files and replacing RECIPE_RC with cat's status.
 RECIPE_NAMES="$( { grep -oE '▸ recipe [^ ]+' "$RECIPE_OUT_FILE" | sed -E 's/.*recipe //' | paste -sd, - ; } 2>/dev/null || true)"
 if [[ -n "$RECIPE_NAMES" ]]; then
     echo "  syncing recipes → ${RECIPE_NAMES//,/, }"
@@ -202,11 +252,13 @@ if [[ $RECIPE_RC -ne 0 ]]; then
     [[ -s "$RECIPE_OUT_FILE" ]] && cat "$RECIPE_OUT_FILE"
     [[ -s "$RECIPE_ERR_FILE" ]] && cat "$RECIPE_ERR_FILE" >&2
     rm -f "$RECIPE_OUT_FILE" "$RECIPE_ERR_FILE"
+    set -e
     exit $RECIPE_RC
 fi
 print_step_output "$RECIPE_OUT_FILE"
 print_step_output "$RECIPE_ERR_FILE" >&2
 rm -f "$RECIPE_OUT_FILE" "$RECIPE_ERR_FILE"
+set -e
 
 sync_agents_render() {
     if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then

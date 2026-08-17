@@ -236,21 +236,43 @@ run_step() {
     local label="$1"; shift
     echo "  syncing $label"
     local out_file err_file rc=0
-    out_file="$(mktemp)"
-    err_file="$(mktemp)"
+
+    # A mktemp failure (unwritable or full TMPDIR) must name itself instead of
+    # surfacing later as whatever abort message the wrapped command produces.
+    # Compact mode cannot apply with nothing captured, so the step's detail
+    # lines reach the terminal — the warning says so. See lib/sync.sh.
+    if ! out_file="$(mktemp 2>/dev/null)" || ! err_file="$(mktemp 2>/dev/null)"; then
+        echo "  ! cannot create temporary files (check TMPDIR); running this step with unfiltered output" >&2
+        rm -f "${out_file:-}" 2>/dev/null || true
+        set +e
+        "$@"
+        rc=$?
+        set -e
+        return $rc
+    fi
+
     set +e
     "$@" >"$out_file" 2>"$err_file"
     rc=$?
-    set -e
+    # errexit stays OFF until this helper has finished its own cleanup — see
+    # the matching comment in lib/sync.sh. A failing `cat` (SIGPIPE, full disk)
+    # would otherwise abort the script from inside run_step, leaking both temp
+    # files and replacing the wrapped command's status with cat's. Every call
+    # site here is bare, so nothing suspends errexit on our behalf.
+    #
+    # The restore is mandatory: `set` options are shell-global, not
+    # function-local.
     if [[ $rc -ne 0 ]]; then
         [[ -s "$out_file" ]] && cat "$out_file"
         [[ -s "$err_file" ]] && cat "$err_file" >&2
         rm -f "$out_file" "$err_file"
+        set -e
         return $rc
     fi
     print_step_output "$out_file"
     print_step_output "$err_file" >&2
     rm -f "$out_file" "$err_file"
+    set -e
     return 0
 }
 
