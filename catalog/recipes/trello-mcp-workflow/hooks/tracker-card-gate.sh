@@ -56,6 +56,7 @@ input="$(cat)"
 # Fail-open: any python error → exit 0.
 parsed="$(python3 - "$input" "$stamped_cli_home" <<'PYEOF' 2>/dev/null
 import json, re, shlex, sys
+BT = chr(96)  # backtick literal kept out of source: bash 3.2 misparses it inside heredocs in command substitution
 
 WRAPPERS = {"sudo", "env", "nice", "time", "nohup", "xargs", "command", "coproc"}
 SEPS = {"|", "||", "&&", ";", "&", "|&", ";;", ";&", ";;&"}
@@ -300,7 +301,7 @@ def _preprocess_command(cmd: str) -> str:
                             quoted_delimiter = True
                             end += 1
                             while end < len(line) and line[end] != quote:
-                                if quote == '"' and line[end] == "\\" and end + 1 < len(line) and line[end + 1] in ("$", "`", '"', "\\", "\n"):
+                                if quote == '"' and line[end] == "\\" and end + 1 < len(line) and line[end + 1] in ("$", BT, '"', "\\", "\n"):
                                     delimiter.append(line[end + 1])
                                     end += 2
                                     continue
@@ -529,6 +530,8 @@ _eval_deficient() {
   python3 - "$repo_root" "$focus_slug" "$stamped_cli_home" <<'PYEOF' 2>/dev/null
 import hashlib, os, re, sys
 from pathlib import Path
+BT = chr(96)  # backtick literal kept out of source: bash 3.2 misparses it inside heredocs in command substitution
+FENCE = BT * 3
 
 PAIR_RE = re.compile(
     r"^\s*(?:[-*]\s+)?\*{0,2}(?P<key>[A-Za-z_][A-Za-z0-9_]*)\*{0,2}\s*:\s*(?P<value>.*)$"
@@ -543,9 +546,9 @@ def clean_value(raw: str) -> str:
     hash_at = value.find(" #")
     if hash_at != -1:
         before = value[:hash_at]
-        if before.count("`") % 2 == 0:
+        if before.count(BT) % 2 == 0:
             value = before.strip()
-    if len(value) >= 2 and value.startswith("`") and value.endswith("`"):
+    if len(value) >= 2 and value.startswith(BT) and value.endswith(BT):
         value = value[1:-1].strip()
     return value
 
@@ -556,7 +559,7 @@ def extract_body(text: str):
     fence_marker = ""
     for i, line in enumerate(lines):
         stripped = line.lstrip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
+        if stripped.startswith(FENCE) or stripped.startswith("~~~"):
             marker = stripped[:3]
             if not in_fence:
                 in_fence = True
@@ -577,7 +580,7 @@ def extract_body(text: str):
     fence_marker = ""
     for line in lines[start:]:
         stripped = line.lstrip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
+        if stripped.startswith(FENCE) or stripped.startswith("~~~"):
             marker = stripped[:3]
             if not in_fence:
                 in_fence = True
@@ -609,7 +612,7 @@ def parse_section(paths):
         fence_marker = ""
         for line in body.splitlines():
             stripped = line.lstrip()
-            if stripped.startswith("```") or stripped.startswith("~~~"):
+            if stripped.startswith(FENCE) or stripped.startswith("~~~"):
                 marker = stripped[:3]
                 if not in_fence:
                     in_fence = True

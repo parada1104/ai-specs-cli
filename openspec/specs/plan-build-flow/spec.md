@@ -36,32 +36,189 @@ The bundled skill SHALL classify each substantial request into exactly one
 planning depth before production edits:
 
 - **Full** — explore → proposal → spec → design → tasks
-- **Standard** — spec → tasks (explore/proposal/design optional)
-- **Light** — tasks only
+- **Standard** — conditional explore → proposal → spec → tasks
+- **Light** — proposal → tasks
 
-The chosen depth MUST be recorded in `tasks.md`. Direct implementation verbs on
-a request with no existing change folder MUST NOT skip planning.
+Minimum artifacts per depth are normative in *Depth artifact minima*; this
+requirement names the chain order only and MUST NOT restate the minima.
+Classification SHALL compute a **signal** tier from size/scope heuristics AND
+separately detect an **explicit user depth request** when the user names a tier
+or clearly equivalent planning depth (including common English and Spanish
+phrasings such as "full SDD", "flujo completo", "solo tasks", "tasks only").
+
+The **decided** depth MUST be recorded in `tasks.md` as a standalone lowercase
+line of the exact form `Depth: <light|standard|full>`, with no trailing text on
+that line, so existing tier-inference consumers keep matching it. Direct
+implementation verbs on a request with no existing change folder MUST NOT skip
+planning.
 
 #### Scenario: Full depth for ambiguous scope
 
-- GIVEN a request for a new cross-cutting capability with unclear boundaries
-- WHEN planning starts
-- THEN the full planning chain runs
-- AND tier minimum artifacts exist before build
+- **GIVEN** a request for a new cross-cutting capability with unclear boundaries
+- **AND** the user did not state a conflicting explicit depth
+- **WHEN** planning starts
+- **THEN** the full planning chain runs
+- **AND** tier minimum artifacts exist before build
 
 #### Scenario: Light depth for scoped fix
 
-- GIVEN a one-file bugfix with an explicit file and expected edit
-- WHEN planning starts
-- THEN only `tasks.md` is required
-- AND no production code is modified during planning
+- **GIVEN** a one-file bug fix with an explicit file and expected edit
+- **AND** the user did not state a conflicting explicit depth
+- **WHEN** planning starts
+- **THEN** `proposal.md` and `tasks.md` are required, and nothing else
+- **AND** no production code is modified during planning
 
 #### Scenario: Direct implement still plans first
 
-- GIVEN the user says "implement X" with no `openspec/changes/<slug>/` folder
-- WHEN the skill evaluates the request
-- THEN it classifies depth and runs the plan phase before build
-- AND stops for authorization unless the tier is trivially light and inline build is allowed
+- **GIVEN** the user says "implement X" with no `openspec/changes/<slug>/` folder
+- **WHEN** the skill evaluates the request
+- **THEN** it classifies depth and runs the plan phase before build
+- **AND** stops for authorization unless the tier is trivially light and inline build is allowed
+
+### Requirement: Adversarial depth conflict detection
+
+When an explicit user depth request is present, the skill MUST compare it to the
+signal tier. If they differ, the skill MUST treat the situation as a **depth
+conflict** and MUST NOT silently adopt either value as decided.
+
+Matching request and signal is not a conflict; the skill MAY proceed with that
+shared tier.
+
+Absence of an explicit user depth request MUST preserve today's signal-only
+classification behavior.
+
+#### Scenario: Explicit request conflicts with signal
+
+- **GIVEN** the user asks for full planning ("flujo completo SDD" or equivalent)
+- **AND** size/scope signals indicate Standard
+- **WHEN** the classifier runs
+- **THEN** a depth conflict is detected
+- **AND** neither Full nor Standard is silently recorded as decided without resolution
+
+#### Scenario: Explicit request matches signal
+
+- **GIVEN** the user asks for Light / "solo tasks"
+- **AND** size/scope signals also indicate Light
+- **WHEN** the classifier runs
+- **THEN** no conflict ask is required
+- **AND** planning proceeds at Light
+
+#### Scenario: No explicit request
+
+- **GIVEN** the user describes work without naming a depth tier
+- **WHEN** the classifier runs
+- **THEN** the signal tier is used as decided
+- **AND** adversarial conflict handling does not block planning
+
+### Requirement: Conflict ask before planning chain
+
+On a depth conflict, the skill MUST ask the user which depth to use (requested
+vs signal) before writing the planning artifacts for the decided tier.
+
+The ask is REQUIRED unless the same user turn that produced the conflict also
+states which side wins. A turn resolves the conflict only when it names the
+winning depth or expresses an unambiguous preference over the mismatch (for
+example "use full even if it looks standard"); merely restating the requested
+depth, or adding scope detail, does NOT resolve it and the ask still fires.
+
+The ask SHOULD briefly state both values and MAY recommend one, but the user
+choice (or an explicit same-turn resolution) decides. The ask fires in both
+directions — requested deeper than signal and requested shallower than signal
+are equally conflicts. Until resolution, the skill MUST NOT implement production
+code and MUST NOT pretend the conflict is settled.
+
+#### Scenario: Ask fires on conflict
+
+- **GIVEN** a depth conflict is detected
+- **AND** the user has not yet chosen requested vs signal
+- **WHEN** planning would otherwise start writing tier artifacts
+- **THEN** the agent asks which depth to use
+- **AND** stops until the user answers
+
+#### Scenario: Same-turn resolution skips repeat ask
+
+- **GIVEN** the user says both the work description and which depth wins
+  (e.g. "use full even if it looks standard")
+- **WHEN** the classifier detects requested ≠ signal
+- **THEN** it adopts the stated resolution without a second ask
+- **AND** records annotation as decided by user
+
+#### Scenario: Same-turn restatement does not count as resolution
+
+- **GIVEN** the user asks for full planning and adds more scope detail in the same
+  turn, without addressing the mismatch
+- **WHEN** the classifier detects requested ≠ signal
+- **THEN** the ask still fires
+- **AND** no tier artifacts are written until the user answers
+
+#### Scenario: Requested shallower than signal still asks
+
+- **GIVEN** the user asks for "solo tasks" / Light
+- **AND** size/scope signals indicate Full
+- **WHEN** the classifier runs
+- **THEN** a depth conflict is detected and the ask fires
+- **AND** the agent MAY recommend the deeper tier in the ask text
+
+### Requirement: Depth resolution annotation
+
+Whenever a depth conflict was detected (including same-turn resolution),
+`tasks.md` MUST annotate the resolution using these four labels, each on its own
+line, separate from the `Depth:` line:
+
+- `Requested depth: <tier>`
+- `Signal depth: <tier>`
+- `Decided depth: <tier>`
+- `Decision source: <user|signal>` — `user` whenever a human chose, including
+  same-turn resolution
+
+Tier values MUST be lowercase `light`, `standard`, or `full`. `Decided depth`
+MUST equal the tier on the `Depth:` line.
+
+The decided depth MUST also appear in the ordinary standalone `Depth: <tier>`
+line used by existing plan-build consumers. Annotation MUST NOT be appended to
+that line as a suffix or parenthetical, because trailing text prevents existing
+tier inference from matching it.
+
+When there was no conflict, existing `Depth: <tier>` recording remains
+sufficient; optional confirmation annotation is allowed but not required.
+
+#### Scenario: Conflict annotated after user chooses requested
+
+- **GIVEN** requested=full, signal=standard, user chooses full
+- **WHEN** `tasks.md` is written
+- **THEN** it contains a standalone line `Depth: full`
+- **AND** it contains `Requested depth: full`, `Signal depth: standard`,
+  `Decided depth: full`, and `Decision source: user` on separate lines
+
+#### Scenario: Conflict annotated after user chooses signal
+
+- **GIVEN** requested=full, signal=standard, user chooses standard
+- **WHEN** `tasks.md` is written
+- **THEN** it contains a standalone line `Depth: standard`
+- **AND** it contains `Requested depth: full`, `Signal depth: standard`,
+  `Decided depth: standard`, and `Decision source: user` on separate lines
+
+#### Scenario: Annotation never suffixes the Depth line
+
+- **GIVEN** any conflict resolution
+- **WHEN** `tasks.md` is written
+- **THEN** the `Depth:` line carries only the decided tier
+- **AND** requested/signal/decided/source appear as separate lines
+
+### Requirement: Higher decided tier completes its chain
+
+If conflict resolution selects a deeper tier than the signal, the skill MUST
+complete the entire planning chain required by the decided tier before build
+authorization is considered satisfied for that change. Artifacts already written
+for the shallower tier MUST NOT be relabelled as satisfying the deeper tier; the
+missing phases MUST actually run.
+
+#### Scenario: Upgrade from Standard signal to Full decision
+
+- **GIVEN** signal was Standard but decided depth is Full
+- **WHEN** planning continues after resolution
+- **THEN** Full-tier minimum artifacts are produced before build
+- **AND** production code remains unmodified during planning
 
 ### Requirement: Ambient planning trigger
 
@@ -90,7 +247,8 @@ archive-tail (pre-merge) without exposing slash commands.
 
 The skill and generated brief fragments SHALL block PR/MR creation until the
 matching `openspec/changes/<slug>/` folder on the review branch contains the
-tier minimum planning files and those files are committed.
+tier minimum planning files defined by *Depth artifact minima* and those files
+are committed.
 
 #### Scenario: PR blocked without change folder
 
@@ -100,21 +258,51 @@ tier minimum planning files and those files are committed.
 
 #### Scenario: PR allowed with tier minimum files
 
-- GIVEN a standard-tier change with `tasks.md` and spec deltas under `specs/`
+- GIVEN a standard-tier change with `proposal.md`, `tasks.md`, and spec deltas
+  under `specs/`
 - WHEN the artifact gate is evaluated before PR creation
 - THEN PR creation may proceed
 
+#### Scenario: PR blocked for Light without proposal
+
+- GIVEN a light-tier change whose committed folder holds only `tasks.md`
+- WHEN the artifact gate is evaluated before PR creation
+- THEN the skill stops with a blocker naming `proposal.md`
+
 ### Requirement: Pre-merge archive gate
 
-Archive-tail MUST run on the review branch before merge. Post-merge archive as
-the boundary MUST be rejected. This aligns with the bound `vcs-pr-flow` contract.
+Archive-tail MUST run on the review branch before merge. The canonical OpenSpec
+archive destination is:
 
-#### Scenario: Archive before merge on review branch
+```text
+openspec/changes/archive/YYYY-MM-DD-<slug>/
+```
 
-- GIVEN a PR is ready to merge
-- WHEN archive-tail runs
-- THEN `openspec/changes/<slug>/` moves to `openspec/changes/archive/<slug>/` on the review branch
-- AND merge proceeds only after that commit is pushed
+where the date is a valid ISO calendar date selected by the archive operation
+and `<slug>` is the exact change slug. Post-merge archive as the change boundary
+MUST remain rejected. This aligns with the bound `vcs-pr-flow` contract.
+
+An exact undated destination,
+`openspec/changes/archive/<slug>/`, remains a legacy compatibility form for
+historical archives. New archive operations MUST use the dated form. Historical
+archive directories MUST NOT be renamed, moved, or rewritten to satisfy this
+contract.
+
+#### Scenario: OpenSpec archive-tail uses the dated provider path
+
+- **GIVEN** a change is ready to close on the review branch
+- **WHEN** archive-tail moves the active change folder
+- **THEN** it creates `openspec/changes/archive/YYYY-MM-DD-<slug>/`
+- **AND** the date prefix is a valid calendar date
+- **AND** the active `openspec/changes/<slug>/` folder is removed on that review branch
+
+#### Scenario: Historical undated archive remains readable
+
+- **GIVEN** an existing historical archive is exactly
+  `openspec/changes/archive/<slug>/`
+- **WHEN** the pre-merge flow evaluates that change
+- **THEN** the exact undated path remains a valid legacy archive destination
+- **AND** no historical directory is renamed or rewritten
 
 #### Scenario: Post-merge archive rejected
 
@@ -139,23 +327,82 @@ integrations are absent, while still completing the change-folder close.
 When no gentle-ai orchestrator is available, the bundled skill SHALL instruct
 the single agent to run mapped phases inline as one conversation.
 
+Absent and disabled external orchestration MUST behave identically and MUST NOT
+introduce a new provider prerequisite.
+
 #### Scenario: Inline execution without orchestrator
 
-- GIVEN gentle-ai is not present
+- GIVEN gentle-ai is not present or is disabled
 - WHEN planning or build phases run
 - THEN the skill runs equivalent phases inline and no phase is silently skipped
+- AND no new external provider prerequisite is introduced
 
 ### Requirement: Artifact store degradation and default
 
-When Engram is unavailable, the skill SHALL fall back to file artifacts. When
-Engram is present but no preflight resolved a store, the default SHALL be file
-artifacts under `openspec/changes/<slug>/`.
+The recipe SHALL separate persistence from readiness. Plan-build readiness
+SHALL be proven exclusively by file-backed artifacts under the canonical
+`openspec/changes/<slug>/` tree — `tasks.md`, committed tier-minimum planning
+files, and `verify-report.md` where the staged verify gate requires it. The
+preflight-resolved store (`openspec|engram|both`) MUST NOT be consulted for
+readiness and MUST NOT alter any classifier, PR/archive gate, staged verify
+gate, or pre-merge guardian decision.
+
+The store SHALL act only as an external-session persistence preference. When
+Engram is unavailable, the skill SHALL fall back to file artifacts. When Engram
+is present but no preflight resolved a store, the default SHALL be file
+artifacts under `openspec/changes/<slug>/`. Engram MAY mirror artifacts but MUST
+NOT replace them; a memory-only presence MUST NOT satisfy any readiness check.
 
 #### Scenario: Default store with Engram but no preflight
 
 - GIVEN Engram is available and no artifact-store preflight ran
 - WHEN planning starts producing artifacts
 - THEN artifacts are written as files, not memory-only
+
+#### Scenario: Store selection never changes readiness
+
+- GIVEN a store of `openspec`, `engram`, or `both` is resolved
+- AND the same change folder state exists in each case
+- WHEN the PR artifact gate or pre-merge guardian runs
+- THEN the decision is identical across all three selections
+
+#### Scenario: Openspec store keeps file-backed enforcement
+
+- GIVEN the store resolves to `openspec`
+- WHEN planning and gates run
+- THEN artifacts are written under `openspec/changes/<slug>/`
+- AND gate decisions follow the file-backed readiness invariant
+
+#### Scenario: Engram memory-only cannot satisfy tier minima
+
+- GIVEN the store resolves to `engram`
+- AND `openspec/changes/<slug>/` lacks the tier minimum files while an Engram
+  mirror holds them
+- WHEN the PR artifact gate or pre-merge guardian runs
+- THEN it blocks on the missing repository artifacts
+- AND the Engram mirror does not change the decision
+
+#### Scenario: Engram mirror cannot satisfy verify evidence
+
+- GIVEN the store resolves to `engram`
+- AND `verify-report.md` exists only in Engram, not in the change folder
+- WHEN the staged verify gate or pre-merge guardian runs for a Standard or Full change
+- THEN the verify evidence is treated as missing
+- AND the change is blocked until the file exists
+
+#### Scenario: Both store mirrors but never replaces canonical files
+
+- GIVEN the store resolves to `both`
+- WHEN planning produces artifacts
+- THEN `openspec/changes/<slug>/` remains the canonical readiness source
+- AND the Engram mirror never substitutes for a missing artifact
+
+#### Scenario: No preflight and no Engram fall back to files
+
+- GIVEN Engram is unavailable and no preflight resolved a store
+- WHEN planning starts producing artifacts
+- THEN file artifacts under `openspec/changes/<slug>/` are used
+- AND no readiness check is skipped or relaxed
 
 ### Requirement: Vocabulary hygiene in generated output
 
@@ -191,6 +438,15 @@ repositories and non-submodule worktrees, the artifact root MUST remain the
 nearest repository root used by the existing gate. The resolver MUST use the
 recognized submodule relationship and path layout, not a user-configured root.
 
+The resolved planning root MUST be propagated as explicit request context to
+artifact writers, renderers, and the pre-merge guardian. Artifact phases MUST
+resolve `openspec/changes/<slug>/` against that propagated root; they MUST NOT
+resolve it relative to the process cwd or a subrepo primary checkout (no relative
+subrepo plan leakage). When the planning root cannot be resolved — missing,
+ambiguous, detached, or uninitialized topology — the system MUST fail safe to
+nearest-root behavior and MUST NOT grant production access on the strength of a
+possible parent directory.
+
 #### Scenario: Linked submodule worktree uses the central superproject root
 
 - GIVEN a superproject has an initialized submodule
@@ -223,6 +479,22 @@ recognized submodule relationship and path layout, not a user-configured root.
 - WHEN the gate resolves the artifact root
 - THEN it MUST derive the root from repository topology
 - AND it MUST NOT require, create, or read a new `[sdd]` configuration, decision matrix, or `artifact_root` setting
+
+#### Scenario: Subrepo-context artifact write lands on the canonical superrepo path
+
+- GIVEN a subrepo request whose planning root is the proven superrepo
+- AND an artifact phase writes `openspec/changes/<slug>/tasks.md`
+- WHEN the write resolves the artifact path
+- THEN the artifact exists only under `<super>/openspec/changes/<slug>/`
+- AND no relative `openspec/changes/...` artifact appears inside the subrepo checkout
+
+#### Scenario: Unresolvable planning root fails safe
+
+- GIVEN a detached or uninitialized target state
+- AND the request context cannot establish owner or planning root
+- WHEN an artifact write or gate evaluation occurs
+- THEN it falls back to the safe nearest-root behavior
+- AND it MUST NOT grant production access merely because a possible parent directory contains a plan
 
 ### Requirement: Robust submodule root discovery
 
@@ -418,13 +690,304 @@ discovery.
 - AND the gate still resolves standalone or central roots from topology without new configuration
 
 
+### Requirement: Depth artifact minima
+
+The bundled skill SHALL require these minimum planning artifacts before build,
+and the pre-merge guardian SHALL enforce the same sets against the archived
+folder before merge:
+
+- **Light** — `proposal.md` and `tasks.md`. A short proposal (Why / What /
+  Non-goals) satisfies Light; `design.md` is not required.
+- **Standard** — `proposal.md`, `tasks.md`, and at least one spec delta under
+  `specs/`. `explore.md` is additionally required at plan time when the Standard
+  explore criteria match.
+- **Full** — `tasks.md`, plus `proposal.md` or `design.md`, plus at least one
+  spec delta under `specs/`. `explore.md` is expected as the first chain
+  artifact and is enforced by the skill, not by the guardian.
+
+These minima define the "tier minimum planning files" referenced by the PR
+artifact gate and the pre-merge merge guardian. They do not change how a depth
+is decided, and they do not alter adversarial depth conflict handling.
+
+#### Scenario: Light requires proposal and tasks
+
+- GIVEN a one-file bug fix classified as Light
+- WHEN planning completes
+- THEN both `proposal.md` and `tasks.md` exist under the change folder
+- AND no production code was modified during planning
+
+#### Scenario: Standard requires proposal, tasks, and spec
+
+- GIVEN a scoped multi-file feature classified as Standard
+- WHEN planning completes
+- THEN `proposal.md`, `tasks.md`, and at least one `specs/**/*.md` exist
+- AND either `explore.md` exists or `tasks.md` contains `Explore: skipped —`
+
+#### Scenario: Full minima unchanged by this contract
+
+- GIVEN a change classified as Full
+- WHEN planning completes
+- THEN `tasks.md`, `proposal.md` or `design.md`, and at least one
+  `specs/**/*.md` exist
+- AND the guardian does not require `explore.md` on disk
+
+#### Scenario: Decided deeper tier uses the deeper minima
+
+- GIVEN a depth conflict resolved in favour of a deeper tier
+- WHEN planning continues
+- THEN the minima of the decided tier apply
+- AND artifacts already written for the shallower tier are not relabelled as
+  satisfying the deeper tier
+
+### Requirement: Standard explore enforcement criteria
+
+For Standard depth, the skill SHALL require `explore.md` when any of the
+following hold at plan start:
+
+1. Two or more plausible approaches with material trade-offs.
+2. Concrete files to edit cannot yet be named.
+3. Project docs or skills conflict on the approach.
+4. The user signals uncertainty about approach or location.
+5. A prior attempt at the same intent failed or was reverted.
+
+The skill SHALL skip `explore.md` only when all of the following hold:
+
+1. Concrete file path(s) and expected behavior are known.
+2. A single obvious approach exists in a known area.
+3. None of the require-explore signals above apply.
+
+When explore is skipped, `tasks.md` MUST include a one-line
+`Explore: skipped — <reason>` record before authorization.
+
+Explore enforcement — at Standard and at Full — is a plan-phase skill
+responsibility. No machine gate SHALL block PR creation, archive-tail, or merge
+for a missing `explore.md`. These criteria decide whether explore runs; they do
+not decide which depth wins when an explicit request conflicts with the signal
+tier.
+
+#### Scenario: Explore required for multi-approach Standard change
+
+- GIVEN Standard depth and two plausible approaches
+- WHEN planning runs
+- THEN `explore.md` is written before authorization
+- AND the plan does not rely on an Explore skipped line alone
+
+#### Scenario: Explore skipped with recorded reason
+
+- GIVEN Standard depth, named files, and a single obvious approach
+- WHEN planning runs
+- THEN `explore.md` MAY be omitted
+- AND `tasks.md` contains `Explore: skipped —` with a short reason
+
+#### Scenario: Explore stays skill-enforced at Full
+
+- GIVEN Full depth and no `explore.md`
+- WHEN the skill runs the plan phase
+- THEN it treats the missing explore as a plan-phase gap to fix
+- AND no machine gate blocks PR, archive, or merge for it
+
+### Requirement: Staged verify gate
+
+After apply and before archive-tail, and again before merge, the verification
+evidence for a change SHALL be evaluated according to its decided depth:
+
+- **Light — advisory**: warn when verify evidence is missing; MUST NOT block
+  archive-tail or merge solely for missing verify evidence.
+- **Standard — enforcement**: a dedicated `verify-report.md` MUST exist in the
+  change folder and MUST satisfy the Standard evidence shape below.
+- **Full — required**: a dedicated `verify-report.md` MUST exist and MUST
+  satisfy the Full evidence shape below.
+
+**Standard evidence shape.** `verify-report.md` MUST record auditable evidence:
+the verify command that was run, its exit status, a valid calendar date in
+`YYYY-MM-DD` form, and the commit SHA it was run against; and its overall
+verdict MUST NOT be a failing verdict. Recording the evidence as a section
+inside `tasks.md`, or in any file other than `verify-report.md`, does NOT
+satisfy Standard.
+
+**Full evidence shape.** `verify-report.md` MUST state a strict global `PASS`
+verdict, MUST carry an explicit `ready_for_archive: true` marker, and MUST
+contain a `## Success-criteria mapping` block. The authoritative source is
+`proposal.md` when present, otherwise `design.md`. An existing proposal with a
+missing or empty `## Success Criteria` section MUST block rather than fall back
+to design. The authoritative source MUST contain exactly one non-empty heading;
+duplicate `## Success Criteria` headings MUST be rejected. Each top-level bullet
+is assigned a 1-based ordinal, and the report MUST contain exactly one
+`- Criterion N: PASS` row for every ordinal. Duplicate, missing, unknown, or
+non-PASS mapping rows fail Full.
+
+Enforcement applies at two points: the skill MUST NOT complete archive-tail for
+a Standard or Full change whose evidence does not satisfy its shape, and the
+pre-merge guardian MUST re-check the archived folder and block the merge on the
+same rule. Light MUST NOT be blocked at either point for missing evidence.
+There is no bypass flag.
+
+#### Scenario: Light archive without verify evidence is allowed
+
+- GIVEN Depth light and minima (`proposal.md`, `tasks.md`) are present
+- AND no `verify-report.md` exists
+- WHEN archive-tail runs and the pre-merge guardian runs
+- THEN neither step adds a verify-evidence blocker
+- AND the skill may still warn that evidence is missing
+
+#### Scenario: Standard archive-tail blocked without a verify report
+
+- GIVEN Depth standard, tier minima present, and no `verify-report.md`
+- WHEN the agent attempts archive-tail on the review branch
+- THEN it stops with a plain-language verify-evidence blocker before archiving
+
+#### Scenario: Standard merge blocked without a verify report
+
+- GIVEN Depth standard and archived tier minima are present
+- AND no `verify-report.md` is archived, or its verdict is failing
+- WHEN the pre-merge guardian runs
+- THEN it fails with a plain-language verify-evidence blocker
+
+#### Scenario: Standard evidence in tasks.md is rejected
+
+- GIVEN Depth standard and a verify evidence section written inside `tasks.md`
+- AND no `verify-report.md` exists
+- WHEN the staged verify gate is evaluated
+- THEN the change is treated as missing verify evidence
+
+#### Scenario: Standard report needs command, exit, date, and SHA
+
+- GIVEN Depth standard and a `verify-report.md` that claims success without
+  naming a command, exit status, date, and commit SHA
+- WHEN the staged verify gate is evaluated
+- THEN it fails with a blocker naming the missing auditable fields
+
+#### Scenario: Full merge requires strict PASS, ready marker, and complete mapping
+
+- GIVEN Depth full and archived tier minima are present
+- AND `verify-report.md` is missing, or its global verdict is not `PASS`, or it
+  lacks `ready_for_archive: true`, or omits any success-criteria mapping row
+- WHEN the pre-merge guardian runs
+- THEN it fails until a conforming `verify-report.md` is archived
+
+#### Scenario: Build sequence keeps verify before archive
+
+- GIVEN an authorized Standard or Full change
+- WHEN build runs
+- THEN verify evidence is produced before archive-tail on the review branch
+- AND the pre-merge guardian re-checks the same evidence after archive
+
 ### Requirement: Pre-merge merge guardian
 
-Before merge, missing tier artifacts or a still-active (non-archived) change
-folder is a hard stop. Agents MUST invoke
+Before merge, missing tier artifacts, a still-active change folder, an
+unresolvable archive, or (for Standard and Full) missing verify evidence per the
+staged verify gate is a hard stop. Agents MUST invoke
 `$AI_SPECS_HOME/lib/_internal/premerge_guardian.py` (defaulting
-`AI_SPECS_HOME` to `$HOME/.ai-specs` when unset). Sync MUST NOT materialize a
-per-project copy under `ai-specs/bin/`.
+`AI_SPECS_HOME` to `$HOME/.ai-specs` when unset) with the propagated planning
+root as defined by this requirement. Sync MUST NOT materialize a per-project
+copy under `ai-specs/bin/`.
+
+The guardian MUST accept the resolved planning root from the propagated request
+context (an explicit root argument or equivalent context) and MUST NOT depend on
+the process cwd to locate the canonical change tree. When the planning root
+cannot be resolved, the guardian MUST fail safe: it MUST NOT skip tier-minima or
+verify checks.
+
+For the slug under check, the guardian MUST resolve the archive using only
+direct child directories of `openspec/changes/archive/` and these exact forms:
+
+1. One dated candidate named `YYYY-MM-DD-<slug>` whose prefix is a valid ISO
+   calendar date.
+2. One exact undated `<slug>` candidate as legacy compatibility, when no dated
+   candidate exists.
+
+The guardian MUST fail closed when two or more dated candidates exist, when a
+dated and undated candidate both exist, when a candidate-shaped directory has an
+invalid calendar-date prefix, or when a near-match name would otherwise be
+accepted by substring, wildcard, or directory-order matching. It MUST report a
+missing-archive blocker when no valid candidate exists. Unrelated archive
+directories that are not candidate-shaped for the requested slug remain out of
+scope.
+
+Candidate inspection is limited to direct child directories of
+`openspec/changes/archive/`. Candidate names and blockers MUST be reported
+explicitly when resolution fails; the guardian MUST NOT inspect an archive
+through a recursive search or infer a candidate from a partial slug match.
+
+After resolution, the guardian MUST apply the existing tier-minimum and
+verification checks without changing their rules. A valid archive MUST NOT
+override the active-folder (still-active change folder) blocker.
+
+Hard blockers (do **not** merge):
+
+1. `openspec/changes/<slug>/` still exists (active, not archived).
+2. The archive cannot be resolved: no valid dated
+   `openspec/changes/archive/YYYY-MM-DD-<slug>/` nor an exact legacy
+   `openspec/changes/archive/<slug>/` candidate exists.
+3. Archived folder lacks the tier minimum files from *Depth artifact minima*:
+   - Light: `tasks.md` and `proposal.md`
+   - Standard: `tasks.md`, `proposal.md`, and at least one `specs/**/*.md`
+   - Full: `tasks.md`, `proposal.md` or `design.md`, and at least one
+     `specs/**/*.md`
+4. Standard: archived folder lacks a `verify-report.md` that satisfies the
+   Standard evidence shape in *Staged verify gate*.
+5. Full: archived folder lacks a `verify-report.md` that satisfies the Full
+   evidence shape in *Staged verify gate*.
+
+The guardian MUST NOT add a blocker for a missing `explore.md` at any depth, and
+MUST NOT add a verify blocker at Light. The guardian SHALL evaluate only the
+slug under check; it MUST NOT inspect or require changes to other archived
+changes.
+
+#### Scenario: Single dated archive passes the path gate
+
+- **GIVEN** the active change folder is absent
+- **AND** exactly one valid `openspec/changes/archive/YYYY-MM-DD-<slug>/`
+  directory exists with the required artifacts and evidence
+- **WHEN** the pre-merge guardian runs
+- **THEN** it evaluates that dated directory
+- **AND** it reports OK when the existing artifact and verification gates pass
+
+#### Scenario: Exact undated archive uses legacy fallback
+
+- **GIVEN** no dated candidate exists
+- **AND** exactly `openspec/changes/archive/<slug>/` exists with the required
+  artifacts and evidence
+- **WHEN** the pre-merge guardian runs
+- **THEN** it evaluates the exact undated directory as legacy compatibility
+
+#### Scenario: Multiple dated candidates are ambiguous
+
+- **GIVEN** two or more dated directories match the requested slug
+- **WHEN** the pre-merge guardian runs
+- **THEN** it blocks with an ambiguity error
+- **AND** it names the candidate paths
+- **AND** it does not select the newest, oldest, or filesystem-first directory
+
+#### Scenario: Dated and undated candidates are ambiguous
+
+- **GIVEN** both `archive/<slug>/` and one valid dated archive for the slug exist
+- **WHEN** the pre-merge guardian runs
+- **THEN** it blocks with an ambiguity error
+- **AND** it does not silently prefer the dated or undated path
+
+#### Scenario: Invalid date and near-match names are rejected
+
+- **GIVEN** an archive directory resembles the dated provider form but has an
+  invalid calendar date or does not match the exact `<slug>` name
+- **WHEN** the pre-merge guardian runs
+- **THEN** it blocks rather than accepting the directory through a broad match
+- **AND** the blocker identifies the invalid or near-match archive name
+
+#### Scenario: Active folder still blocks with a valid dated archive
+
+- **GIVEN** `openspec/changes/<slug>/` still exists
+- **AND** a valid dated archive also exists
+- **WHEN** the pre-merge guardian runs
+- **THEN** it reports the existing active-folder blocker
+- **AND** archive resolution does not bypass the requirement to run archive-tail
+
+#### Scenario: Existing artifact and verification gates remain unchanged
+
+- **GIVEN** a single archive path is resolved successfully
+- **WHEN** the guardian inspects the archive
+- **THEN** the existing tier minima and Standard/Full verification checks apply
+- **AND** unrelated archived changes are not inspected
 
 #### Scenario: Merge blocked when change folder still active
 
@@ -438,6 +1001,48 @@ per-project copy under `ai-specs/bin/`.
 - WHEN an agent runs the pre-merge guardian
 - THEN it uses `${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py`
 - AND the recipe does not target `ai-specs/bin/premerge_guardian.py`
+
+#### Scenario: Light archive requires proposal
+
+- GIVEN Depth light and the archive contains `tasks.md` but not `proposal.md`
+- WHEN the pre-merge guardian runs
+- THEN it fails with a tier-minima blocker naming `proposal.md`
+
+#### Scenario: Standard archive requires proposal and spec
+
+- GIVEN Depth standard and the archive lacks `proposal.md` or any `specs/**/*.md`
+- WHEN the pre-merge guardian runs
+- THEN it fails with a tier-minima blocker
+
+#### Scenario: Missing explore is never a guardian blocker
+
+- GIVEN Depth full and an archive with tier minima and a passing `verify-report.md`
+- AND no `explore.md` in the archived folder
+- WHEN the pre-merge guardian runs
+- THEN it reports OK
+- AND explore enforcement remains a plan-phase skill responsibility
+
+#### Scenario: Guardian ignores unrelated archived changes
+
+- GIVEN other folders under `openspec/changes/archive/` predate this contract and
+  lack `proposal.md` or verify evidence
+- WHEN the pre-merge guardian runs for the slug under merge
+- THEN only that slug is evaluated
+- AND no blocker mentions the older archived changes
+
+#### Scenario: Guardian consumes the propagated planning root
+
+- GIVEN a subrepo-context change whose planning root is the proven superrepo
+- AND the guardian runs with the propagated planning root context
+- WHEN the archive and verify checks evaluate
+- THEN it inspects `<super>/openspec/changes/archive/<slug>/`
+- AND it MUST NOT consult a subrepo-local change folder in place of the canonical tree
+
+#### Scenario: Guardian without a resolvable planning root fails safe
+
+- GIVEN the planning root context is missing or ambiguous
+- WHEN the pre-merge guardian runs
+- THEN it fails safe and MUST NOT skip tier-minima or verify blockers
 
 ### Requirement: Pre-tool-use artifact gate hook
 

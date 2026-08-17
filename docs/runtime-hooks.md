@@ -102,6 +102,86 @@ override at dispatch time. `trello-mcp-workflow` likewise stamps
 into `tracker-card-gate.sh`; `TRACKER_CARD_GATE_MODE` is the one-shot env
 override.
 
+## Gate implementation and launcher (worktree-flow)
+
+`worktree-flow`'s `worktree-gate.sh` is a **thin launcher** (bash 3.2 only) that
+resolves the gate implementation and `exec`s it, so stdin and the exit code pass
+through untouched. The implementation of record is a single zero-dependency Go
+binary; a frozen Bash reference (`worktree-gate-legacy.sh`) is retained for one
+minor release as the rollback path.
+
+Resolution order (first hit wins):
+
+1. `$WORKTREE_GATE_BIN` — explicit per-invocation override (debugging/pinning).
+2. Project-local pin `bin/worktree-gate` under the launcher's `BASH_SOURCE[0]`
+   physical installation root (the `hooks/../bin` layout) — never `$PWD`.
+3. Version-keyed cache
+   `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate`,
+   populated by `ai-specs sync` (digest-verified against the committed
+   `SHA256SUMS` trust root, mode 0755, self-tested, atomic install).
+4. Frozen Bash reference, when the stamped `gate_impl` is `bash`, or `auto`
+   with no usable binary.
+5. Otherwise one stderr warning naming the missing path and the
+   `ai-specs doctor` remedy, then exit `0` (fail open).
+
+The build matrix is `darwin/arm64`, `darwin/amd64`, `linux/amd64`,
+`linux/arm64` (reproducible: `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`,
+version stamped at link time). `gate_impl = auto` prefers the Go binary and
+falls back to Bash; `go` fails open when unusable (doctor ERROR); `bash` needs
+no binary, network, or Go toolchain. The gate never computes a digest on the
+invocation path unless `WORKTREE_GATE_VERIFY=1` requests it.
+
+Because every renderer references only `hook["script_path"]`, all five harnesses
+keep working without re-render churn: the launcher materializes at the unchanged
+path `ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh`, and the Cursor
+wrapper maps exit `2` → `{"permission":"deny"}` exactly as before (the binary's
+empty stdout does not degrade the deny decision — the gate message travels on
+stderr).
+
+### Workspace context model
+
+The hook keeps three distinct contexts, and no adapter or launcher conflates
+them:
+
+| Context | Producer | Meaning | Fallback |
+|---------|----------|---------|----------|
+| Event cwd | Runtime adapter + normalized event | Directory whose repository/worktree context the gate evaluates | Gate process cwd when the event value is unusable |
+| Installation root | Materialized launcher / generated module | Root used to find project-local hook assets | No process-cwd substitution for project-local assets |
+| Process cwd | Actual hook child process | Fallback context when the event cwd is unusable | The OS/runtime process cwd |
+
+- **Adapter launcher paths are module-derived.** The generated OpenCode plugin
+  and Pi/OMP extensions resolve the materialized launcher at runtime from
+  `import.meta.url` (`../../` from `.opencode/plugin`, `.pi/extensions`, or
+  `.omp/extensions` up to the project root), so a relocated extension keeps
+  working from any process cwd. No generated adapter emits a relative `SCRIPT`
+  or a sync-time machine-specific absolute path.
+- **OpenCode validates the explicit directory.** `directory` is outer-trimmed
+  and accepted only as a string, absolute, existing directory; the one
+  normalized value drives both the event `cwd` and the child `spawnSync` cwd.
+  Absent, non-string, whitespace-only, relative, nonexistent, or non-directory
+  values fall back to the process cwd for both. Child `spawnSync` errors and
+  thrown child-process exceptions fail open; status `2` remains the only block.
+- **The launcher derives its installation root from `BASH_SOURCE[0]`.** A
+  relative reference is anchored to the invocation cwd exactly once, the final
+  launcher symlink (and parent symlinks) resolve to the physical launcher, and
+  project-local and legacy assets resolve as `hooks/../bin` under that root —
+  never from `$PWD`. An unresolvable root skips project-local and legacy lookup
+  and continues through the explicit override or cache, or fails open.
+- **Pi/OMP keep process-cwd-only events** and claim no workspace root; Cursor's
+  missing pre-file-write hook and OpenCode's subagent/MCP coverage gap are
+  unchanged (see below).
+
+**Unchanged pre-existing coverage gaps** (not introduced by the Go cutover):
+
+- **Cursor** has no generic "pre tool" event and **no pre-file-write hook**;
+  a file-write-matcher `pre-tool-use` hook has no Cursor target → warn-and-skip.
+  The shell matcher still renders as a genuine `beforeShellExecution` hook.
+- **OpenCode** `tool.execute.before` does **not** fire for **subagent** tool
+  calls (opencode#5894) or **MCP** tool calls (opencode#2319).
+- **Pi / omp** `tool_call` handlers apply to tool calls in **that agent
+  process**; subagent/task delegation spawns a separate process whose
+  `write`/`edit` calls the parent's handlers do not see.
+
 ## Idempotency
 
 All generated wiring lives in a managed block keyed by

@@ -237,6 +237,122 @@ class SubrepoResolutionError(ValueError):
     """Raised when ``resolve_subrepo`` cannot pick a valid submodule path."""
 
 
+def _superproject_root(owner_root: Path) -> Path | None:
+    """Prove the superproject root of a submodule-owned repository.
+
+    Reads the ``.git`` **file** (absorbed layouts: submodule primaries and
+    linked worktrees) and walks the recorded gitdir for a ``.git/modules`` or
+    ``.git/worktrees`` marker whose prefix is the superproject's ``.git``
+    directory. Returns None when the owner is a regular repo (``.git`` dir),
+    the marker is absent, or the candidate superproject cannot be proven
+    (missing ``.git`` dir or ``.gitmodules``).
+    """
+    git_file = owner_root / ".git"
+    if not git_file.is_file():
+        return None
+    try:
+        content = git_file.read_text().strip()
+    except OSError:
+        return None
+    if not content.startswith("gitdir:"):
+        return None
+    gitdir = content[len("gitdir:"):].strip()
+    gitdir_path = Path(gitdir)
+    if not gitdir_path.is_absolute():
+        gitdir_path = owner_root / gitdir_path
+    gitdir_path = gitdir_path.resolve()
+
+    parts = gitdir_path.parts
+    candidate: Path | None = None
+    for index in range(len(parts) - 1):
+        if parts[index] == ".git" and parts[index + 1] in ("modules", "worktrees"):
+            candidate = Path(*parts[:index])
+    if candidate is None:
+        return None
+    if not candidate.is_dir():
+        return None
+    if not (candidate / ".git").is_dir():
+        return None
+    if not (candidate / ".gitmodules").is_file():
+        return None
+    return candidate
+
+
+@dataclass(frozen=True)
+class RequestContext:
+    """One explicit ai-specs request context (owner, topology, planning root).
+
+    Separates the code/VCS owner from the canonical planning-artifact root:
+    a subrepo request owns the submodule but plans under the proven
+    superproject; a superrepo request owns and plans under the superproject.
+    """
+
+    owner_root: Path
+    topology: TopologyResolution
+    subrepo_path: str | None
+    planning_root: Path
+    worktrees_dir: str
+
+    def as_dict(self) -> dict:
+        return {
+            "owner_root": str(self.owner_root),
+            "topology": {
+                "resolved": self.topology.resolved,
+                "via": self.topology.via,
+            },
+            "subrepo_path": self.subrepo_path,
+            "planning_root": str(self.planning_root),
+            "worktrees_dir": self.worktrees_dir,
+        }
+
+
+def resolve_request_context(
+    cwd: Path | str,
+    explicit_subrepo: str | None = None,
+    worktrees_dir: str = ".worktrees",
+    configured_topology: str = "auto",
+) -> RequestContext:
+    """Resolve one ai-specs request context from proven Git facts.
+
+    ``owner_root`` is the repository owning code/VCS work for the request
+    (``git rev-parse --show-toplevel`` of ``cwd``). Under a proven
+    ``monorepo-submodules`` topology, ``subrepo_path`` is validated via
+    ``resolve_subrepo`` (path-first, then unique name, initialized) and the
+    planning root is the proven superproject; every rejection hard-errors
+    with a diagnostic before any create. Missing, uninitialized, or
+    unprovable topology fails safe: no owner inference beyond the toplevel,
+    no planning-root exception (planning root stays the owner root).
+    """
+    base = Path(cwd).resolve()
+    top = _git_show_toplevel(base)
+    owner_root = (top or base).resolve()
+
+    super_root = _superproject_root(owner_root) or owner_root
+    topology = resolve_repo_topology(super_root, configured_topology)
+
+    subrepo_path: str | None = None
+    planning_root = owner_root
+    if topology.resolved == "monorepo-submodules":
+        subrepo_path = resolve_subrepo(
+            super_root,
+            worktrees_dir,
+            topology.submodules,
+            base,
+            explicit_subrepo,
+            parse_gitmodules_entries(super_root),
+        )
+        planning_root = super_root
+
+    return RequestContext(
+        owner_root=owner_root,
+        topology=topology,
+        subrepo_path=subrepo_path,
+        planning_root=planning_root,
+        worktrees_dir=worktrees_dir,
+    )
+
+
+
 def parse_gitmodules_entries(repo_root: Path) -> tuple[tuple[str, str], ...]:
     """Return ``(name, path)`` pairs registered in ``.gitmodules``.
 

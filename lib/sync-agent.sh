@@ -122,8 +122,9 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
         echo ""
         echo "ai-specs sync-agent"
         echo "  source root: $ROOT_PATH"
+        echo "  planning:    $ROOT_PATH"
         echo "  targets:     ${RESOLVED_TARGETS[*]}"
-        echo "  mode:        public root fan-out"
+        echo "  mode:        public root fan-out (declared-only)"
         echo ""
 
         # Generate resolved-config for subrepo AGENTS.md enrichment.
@@ -196,7 +197,9 @@ if [[ -z "$RECIPE_MCP_JSON" ]]; then
     RECIPE_MCP_JSON="$(grep '^RECIPE_MCP_TEMP:' "$_MATERIALIZE_OUT" | cut -d: -f2- || true)"
 fi
 
-shopt -s inherit_errexit
+if [[ -n "$(shopt -p inherit_errexit 2>/dev/null)" ]]; then
+    shopt -s inherit_errexit
+fi
 
 # print_step_output FILE — print a step's captured stdout or stderr file.
 # Verbose mode: cat the file bytes as-is (byte-identical, including trailing

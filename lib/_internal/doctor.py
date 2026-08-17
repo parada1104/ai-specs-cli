@@ -149,8 +149,10 @@ class Doctor:
         self._check_recipe_cli_deps()
         self._check_tracker_card_link()
         self._check_harness_env_layout()
+        self._check_worktree_gate()
         self._check_repo_topology()
         self._check_stale_template_overrides()
+        self._check_gate_provenance()
         return 1 if any(c.severity == Severity.ERROR for c in self.checks) else 0
 
     def report(self) -> None:
@@ -651,6 +653,126 @@ class Doctor:
                 "all active changes carry a valid ## Tracker link section (or tracker.none)",
             ))
 
+    def _load_gate_binary(self):
+        """Sibling-load lib/_internal/gate_binary.py for the gate check."""
+        try:
+            path = Path(__file__).with_name("gate_binary.py")
+            spec = importlib.util.spec_from_file_location("gate_binary_doctor", path)
+            if spec is None or spec.loader is None:
+                return None
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            spec.loader.exec_module(mod)
+            return mod
+        except Exception:
+            return None
+
+    def _check_worktree_gate(self) -> None:
+        """Diagnose the worktree-gate implementation (design §6.5).
+
+        Severity table:
+          OK    Go binary resolved, version matches the stamp, selftest passes
+          INFO  gate_impl=bash configured explicitly (rollback lever)
+          WARN  gate_impl=auto silently falling back to Bash
+          WARN  binary version does not match the stamped version
+          ERROR gate_impl=go with no usable binary (gate failing open)
+          ERROR digest mismatch recorded at the last acquisition
+
+        A fail-open gate is invisible by construction, so this ERROR is the
+        only place a user can discover it.
+        """
+        manifest = self.root / "ai-specs" / "ai-specs.toml"
+        if not manifest.is_file():
+            return
+        try:
+            import tomllib
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        recipes = data.get("recipes") or {}
+        wf = recipes.get("worktree-flow") or {}
+        if not isinstance(wf, dict) or wf.get("enabled") is not True:
+            return
+        cfg = wf.get("config") or {}
+        impl = str(cfg.get("gate_impl") or "auto")
+
+        launcher = self.root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+        stamped_version = ""
+        if launcher.is_file():
+            for line in launcher.read_text(encoding="utf-8").splitlines():
+                if line.startswith('stamped_gate_version="'):
+                    stamped_version = line.split('"', 2)[1]
+                    break
+
+        gb = self._load_gate_binary()
+        if gb is None:
+            return
+
+        # Recorded digest mismatch from the last acquisition → ERROR.
+        mismatch_path = gb.digest_mismatch_record_path(AI_SPECS_HOME)
+        if mismatch_path.is_file():
+            try:
+                mismatch_text = mismatch_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                mismatch_text = ""
+            self.checks.append(Check(
+                Severity.ERROR, "worktree-gate",
+                mismatch_text or "gate binary digest mismatch recorded at last acquisition",
+                guidance="run ai-specs sync to re-acquire; the rejected artifact was never executed",
+            ))
+            return
+
+        if impl == "bash":
+            self.checks.append(Check(
+                Severity.INFO, "worktree-gate",
+                "gate_impl=bash configured explicitly; frozen Bash reference in effect (rollback lever)",
+            ))
+            return
+
+        goos, goarch = gb.detect_platform()
+        binary = gb.cache_bin_path(AI_SPECS_HOME, goos=goos, goarch=goarch)
+        usable = binary.is_file() and os.access(binary, os.X_OK)
+
+        if not usable:
+            expected = str(binary)
+            if impl == "go":
+                self.checks.append(Check(
+                    Severity.ERROR, "worktree-gate",
+                    f"gate_impl=go and no usable binary at {expected}; the gate is failing open",
+                    guidance="run ai-specs sync (network) or AI_SPECS_GATE_BUILD=1 ai-specs sync (local build)",
+                ))
+            else:
+                self.checks.append(Check(
+                    Severity.WARN, "worktree-gate",
+                    f"gate_impl=auto and no usable binary at {expected}; falling back to the Bash implementation",
+                    guidance="run ai-specs sync to acquire the Go binary",
+                ))
+            return
+
+        version = gb.binary_version(binary)
+        selftest = gb._run_selftest(binary)
+        if selftest is not None:
+            self.checks.append(Check(
+                Severity.ERROR, "worktree-gate",
+                f"gate binary at {binary} failed --selftest: {selftest}; the gate is not enforcing",
+                guidance="run ai-specs sync to re-acquire or re-build",
+            ))
+            return
+
+        if stamped_version and version != stamped_version:
+            self.checks.append(Check(
+                Severity.WARN, "worktree-gate",
+                f"gate binary version {version} does not match the stamped version {stamped_version}",
+                guidance="run ai-specs sync to re-acquire for the installed CLI version",
+            ))
+            return
+
+        size_kb = gb.cache_size(AI_SPECS_HOME) // 1024
+        self.checks.append(Check(
+            Severity.OK, "worktree-gate",
+            f"Go binary {version} at {binary}; selftest passed (cache {size_kb} KiB)",
+        ))
+
     def _load_env_scaffold(self):
         path = Path(__file__).with_name("env_scaffold.py")
         spec = importlib.util.spec_from_file_location("env_scaffold_doctor", path)
@@ -846,11 +968,18 @@ class Doctor:
                 if state == "user_modified":
                     message = f"{tpl.target} is user-modified; sync will preserve it"
                 elif state == "untracked":
-                    if util.sha256_bytes(dest.read_bytes()) == util.sha256_bytes(
+                    disk_sha = util.sha256_bytes(dest.read_bytes())
+                    rendered_sha = util.sha256_bytes(
                         util.render_override_bytes(src, merged_cfg)
-                    ):
+                    )
+                    legacy_catalog_sha = util.sha256_bytes(src.read_bytes())
+                    if disk_sha in (rendered_sha, legacy_catalog_sha):
                         continue
-                    message = f"{tpl.target} has missing ownership metadata; sync will preserve it"
+                    message = (
+                        f"{tpl.target} has missing ownership metadata; sync will preserve the existing file "
+                        "without assigning ownership. Leave it unchanged to preserve it, or remove it and "
+                        "rerun sync to restore the current recipe version"
+                    )
                 elif state == "managed_stale" and policy != "auto":
                     message = f"{tpl.target} is managed-stale and policy is {policy}; sync will preserve it"
                 else:
@@ -860,6 +989,90 @@ class Doctor:
                     "stale-override",
                     message,
                     guidance=f"rm {tpl.target} && ai-specs sync",
+                ))
+
+    def _check_gate_provenance(self) -> None:
+        """Diagnose generated runtime hook (gate) provenance from lock baselines.
+
+        Warns when a materialized gate's current bytes differ from its recorded
+        baseline (user-modified) or when no baseline exists (unknown
+        provenance); stays quiet for gates whose baseline matches. Mirrors the
+        sync-side classifier exactly; never rewrites anything.
+        """
+        util = self._load_util()
+        if util is None:
+            return
+        catalog = AI_SPECS_HOME / "catalog" / "recipes"
+        if not catalog.is_dir():
+            return
+        manifest = self.root / "ai-specs" / "ai-specs.toml"
+        if not manifest.is_file():
+            return
+        try:
+            import tomllib
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        lock_path = self.root / "ai-specs" / ".ai-specs.lock"
+        lock_mod_path = Path(__file__).with_name("lock.py")
+        lock_spec = importlib.util.spec_from_file_location("lock_doctor_gate", lock_mod_path)
+        if lock_spec is None or lock_spec.loader is None:
+            return
+        lock_mod = importlib.util.module_from_spec(lock_spec)
+        sys.modules[lock_spec.name] = lock_mod
+        try:
+            lock_spec.loader.exec_module(lock_mod)
+            managed = lock_mod.load_lock(lock_path).get("managed", {})
+        except Exception:
+            managed = {}
+
+        recipes = data.get("recipes") or {}
+        schema_path = Path(__file__).with_name("recipe_schema.py")
+        spec = importlib.util.spec_from_file_location("recipe_schema_doctor_gate", schema_path)
+        if spec is None or spec.loader is None:
+            return
+        schema = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = schema
+        try:
+            spec.loader.exec_module(schema)
+        except Exception:
+            return
+
+        for rid, val in recipes.items():
+            if not isinstance(val, dict) or val.get("enabled") is not True:
+                continue
+            recipe_dir = catalog / rid
+            recipe_toml = recipe_dir / "recipe.toml"
+            if not recipe_toml.is_file():
+                continue
+            try:
+                recipe = schema.load_recipe_toml(recipe_toml)
+            except Exception:
+                continue
+            for hook in getattr(recipe, "runtime_hooks", []) or []:
+                rel = (
+                    f"ai-specs/recipes/{rid}/hooks/"
+                    f"{Path(hook.script).name}"
+                )
+                dest = self.root / rel
+                if not dest.is_file():
+                    continue
+                state = util.classify_managed_override(dest, managed.get(rel))
+                if state == "user_modified":
+                    message = f"{rel} is user-modified; sync will preserve it"
+                elif state == "untracked":
+                    message = (
+                        f"{rel} has no recorded provenance; sync will preserve it "
+                        "and record a baseline only when the CLI renders the gate"
+                    )
+                else:
+                    continue
+                self.checks.append(Check(
+                    Severity.WARN,
+                    "gate-provenance",
+                    message,
+                    guidance=f"rm {rel} && ai-specs sync (or ai-specs sync --refresh-gates)",
                 ))
 
     def _check_enabled_agents(self) -> None:

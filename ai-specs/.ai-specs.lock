@@ -1,9 +1,65 @@
 # Managed by ai-specs. Do not edit by hand.
 # Provenance stamp: [meta] records the CLI version and timestamp of the last
-# sync. It is the CLI-provenance signal that travels with a fresh clone (the
-# machine-local cache meta.toml does not). git covers integrity/diff of the
-# committed project surface; skill/recipe/dep content hashes are not tracked.
+# sync. [managed.*] records integrity only for CLI-owned override targets;
+# it is not a general content-integrity manifest. git covers the committed
+# project surface; skill/recipe/dep content hashes are not tracked.
 
 [meta]
-cli_version = "0.19.0"
-synced_at = "2026-08-05T06:01:32Z"
+cli_version = "0.21.0"
+synced_at = "2026-08-05T20:43:48Z"
+
+[managed."ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-bug.md"]
+sha256 = "222842253e6dcfa7901acb73e7a78a43b1344d509d3fdd71b184967cfc530f2b"
+recipe = "trello-mcp-workflow"
+source = "templates/card-bug.md"
+kind = "template"
+policy = "auto"
+
+[managed."ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-decision.md"]
+sha256 = "2de581c322c8439b6be09267523c6a4c3624839f38c4fbda075c240b491f15e4"
+recipe = "trello-mcp-workflow"
+source = "templates/card-decision.md"
+kind = "template"
+policy = "auto"
+
+[managed."ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-epic.md"]
+sha256 = "8520408e4a94a8b0df4ab5d4b4e302e28f9837af0ee6e1440c17be6b0c8e0e8b"
+recipe = "trello-mcp-workflow"
+source = "templates/card-epic.md"
+kind = "template"
+policy = "auto"
+
+[managed."ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-feature.md"]
+sha256 = "6a307a12a73eac14a630f32a77eb4044094f6095991a1ff0842143c39ce8bb96"
+recipe = "trello-mcp-workflow"
+source = "templates/card-feature.md"
+kind = "template"
+policy = "auto"
+
+[managed."ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-handoff.md"]
+sha256 = "ddd3826553a5f38e889834f60f8acc6383ab55096e5edcd7f8da21cf7a969df2"
+recipe = "trello-mcp-workflow"
+source = "templates/card-handoff.md"
+kind = "template"
+policy = "auto"
+
+[managed."ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-spike.md"]
+sha256 = "ec7b485f7fea2297b966d60f34fb46db58d14564b6fedf514442719d18147230"
+recipe = "trello-mcp-workflow"
+source = "templates/card-spike.md"
+kind = "template"
+policy = "auto"
+
+[managed."ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"]
+sha256 = "22929454cf9c504c97cba5e94654d97cffde04104d539b1aafae5f35a8c20dfc"
+recipe = "vault-canonical-store"
+source = "templates/vault-fs-mcp.sh"
+kind = "template"
+policy = "auto"
+
+[managed."ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"]
+sha256 = "3e413d6374b0687f392e1ed0483ac200e6a8918df78f57324da550e53ccfd5b4"
+recipe = "worktree-flow"
+source = "templates/worktree-cleanup.sh"
+kind = "template"
+policy = "auto"

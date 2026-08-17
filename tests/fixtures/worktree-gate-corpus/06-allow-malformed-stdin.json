@@ -1,0 +1,7 @@
+{
+  "label": "Malformed JSON on stdin fails open to allow",
+  "fixture": "none",
+  "stdin": "not json",
+  "event": null,
+  "expected_exit": 0
+}

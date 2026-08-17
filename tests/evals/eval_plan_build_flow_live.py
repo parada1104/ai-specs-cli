@@ -42,6 +42,8 @@ LIVE_SCENARIOS = (
     "ac7_light_gitignore_file_store",
     "ac8_approval_verb_without_folder",
     "ac_delivery_contract_artifact_store",
+    "ac_depth_conflict_ask",
+    "ac_depth_conflict_same_turn",
 )
 
 def _glob_exists(root: Path, pattern: str) -> bool:
@@ -218,6 +220,21 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 )
 
         transcript = (result.get("result_text") or result.get("stdout") or "").lower()
+        for needle in meta.get("required_transcript_all", []):
+            # Soft: only enforce when no required_content path was written.
+            if meta.get("required_content"):
+                break
+            self.assertIn(
+                str(needle).lower(),
+                transcript,
+                f"{runtime}/{name}: transcript missing required {needle!r}",
+            )
+        one_of = [str(needle).lower() for needle in meta.get("required_transcript_one_of", [])]
+        if one_of and not meta.get("required_content"):
+            self.assertTrue(
+                any(needle in transcript for needle in one_of),
+                f"{runtime}/{name}: transcript missing any of {one_of!r}",
+            )
         for needle in meta.get("required_transcript_any", []):
             # Soft: only enforce when no required_content path was written
             if meta.get("required_content"):
@@ -225,7 +242,7 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
             self.assertIn(
                 str(needle).lower(),
                 transcript,
-                f"{runtime}/{name}: transcript missing {needle!r}",
+                f"{runtime}/{name}: transcript missing required {needle!r}",
             )
 
         if meta.get("assert_active_change_gone"):
@@ -234,6 +251,17 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 active.exists(),
                 f"{runtime}/{name}: active change folder still present at {active}",
             )
+
+    def test_ac_depth_conflict_ask(self):
+        if "ac_depth_conflict_ask" not in _selected_scenarios():
+            self.skipTest("depth conflict ask not selected via EVALS_SCENARIOS")
+        self._run_named("ac_depth_conflict_ask")
+
+    def test_ac_depth_conflict_same_turn(self):
+        if "ac_depth_conflict_same_turn" not in _selected_scenarios():
+            self.skipTest("depth same-turn resolution not selected via EVALS_SCENARIOS")
+        self._run_named("ac_depth_conflict_same_turn")
+
 
     def _run_named(self, name: str):
         trials = int(os.environ.get("EVALS_TRIALS", "1"))

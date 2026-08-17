@@ -1,0 +1,12 @@
+{
+  "label": "Edit inside a linked worktree under a protected branch allows",
+  "fixture": "linked-worktree",
+  "target": "{worktree}x.py",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "Write",
+    "tool_input": {"file_path": "{worktree}x.py"},
+    "cwd": "{repo}"
+  },
+  "expected_exit": 0
+}

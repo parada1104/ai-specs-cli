@@ -1,0 +1,26 @@
+# Expected SHA-256 digests of the published worktree-gate release assets
+# (v0.22.0). This file is the trust root (D5): the network supplies only
+# bytes, the repository supplies the expected digest. A downloaded asset
+# whose SHA-256 does not match is deleted and never executed.
+#
+# Reproduce any digest locally with:
+#   scripts/build-gate.sh
+#   shasum -a 256 dist/worktree-gate-*
+#
+# CANONICAL TOOLCHAIN: Go builds are deterministic for a given toolchain, but
+# different Go releases compile different stdlib bytes. These digests were
+# generated with go1.24.13 — the same version the release CI pins
+# (.github/workflows/release-worktree-gate.yml) — and MUST be regenerated with
+# exactly that version, or the CI checksum gate fails the release.
+#
+# Regenerated as part of the release (task 4.9): digests MUST match the
+# published assets; the CI release workflow diffs its generated SHA256SUMS
+# against this file and fails the release on any mismatch.
+#
+# Regenerated for stabilize-workspace-context (event-cwd whitespace trim in
+# gate/event.go) with the canonical go1.24.13 toolchain via:
+#   scripts/build-gate.sh && shasum -a 256 dist/worktree-gate-* | grep -v current
+075aff9f0ae1853b1b477b9f6e5e6bd5df65f63c99abe1ad941ae5ac8abd322a  worktree-gate-darwin-arm64
+a6f85bd3d359ab1a5f183c8376169dd4e65be33035f7a0e21453af0fd5975c58  worktree-gate-darwin-amd64
+295888b12d11e768e934cb1d52e6c123a13418165096043dde485499a0d63d18  worktree-gate-linux-amd64
+4cc5bbd6f14e6f7ca00774aa44a4c4db6bac17c68ea268e874a9b180a4ed7cbc  worktree-gate-linux-arm64

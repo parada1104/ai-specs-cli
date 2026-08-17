@@ -7,6 +7,151 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-08-17
+
+### Added
+- **Autocontained Go worktree gate**: the `worktree-flow` gate is now a single
+  zero-dependency Go binary (`catalog/recipes/worktree-flow/gate`) with
+  byte-for-byte behavioral parity against the frozen Bash reference
+  (`hooks/worktree-gate-legacy.sh`), proven by a hermetic 16-case parity corpus
+  that runs **both** implementations and asserts identical exit code, stderr
+  and candidates. The frozen Bash reference remains the rollback path for one
+  minor release (`gate_impl = "bash"`).
+- **Thin launcher with a stable materialized path**: `hooks/worktree-gate.sh`
+  is now a bash-3.2-safe resolver that keeps the materialized path
+  `ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh` unchanged, so all
+  five harnesses (claude, cursor, opencode, pi, omp) keep working with zero
+  renderer changes and zero re-render churn. Resolution order:
+  `$WORKTREE_GATE_BIN` → project-local pin → version-keyed cache → frozen Bash
+  reference → one stderr warning + fail open. Handoff is `exec` (stdin and
+  exit code untouched).
+- **`gate_impl` configuration** (`auto | go | bash`, default `auto`) on the
+  `worktree-flow` recipe: `auto` prefers the Go binary and falls back to Bash;
+  `go` uses only the binary and fails open when unusable; `bash` needs no
+  binary, network, or Go toolchain. The resolved value is validated and
+  stamped at sync like `gate_scope` / `repo_topology`.
+- **Binary acquisition, verification and cache**: `ai-specs sync` acquires the
+  host-platform gate binary into
+  `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/`,
+  verifying SHA-256 against the committed
+  `catalog/recipes/worktree-flow/bin/SHA256SUMS` trust root before install
+  (atomic `os.replace`, mode 0755, self-test), and degrading with a warning on
+  any failure — acquisition never fails sync. An opt-in local build
+  (`AI_SPECS_GATE_BUILD=1`, or offline with a Go toolchain) writes into the
+  same cache layout; a Go toolchain is never a user prerequisite.
+- **`worktree-gate` doctor check**: reports the resolved implementation,
+  binary version, digest state, and any silent fallback (OK / INFO / WARN /
+  ERROR per design §6.5), including the "gate is silently failing open" ERROR.
+- **Multi-arch build matrix and reproducibility**: `scripts/build-gate.sh`
+  builds `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64` with
+  `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false` and the CLI version injected
+  at link time; repeated builds are byte-identical. A CI release workflow
+  builds all four targets on tag push, runs `go vet` + `go test ./...`, emits
+  `SHA256SUMS`, diffs it against the committed digests, and attaches the
+  assets to the release.
+- **Performance**: the Go gate runs a single process per invocation with
+  memoized Git facts (~3× faster than the Bash reference; measured 48.5 ms vs
+  145.3 ms median over the corpus) and issues strictly fewer `git` invocations
+  for multi-candidate events.
+- **Subrepo planning context propagation**: one ai-specs request context
+  (code/VCS owner, explicit fan-out target set, canonical superrepo planning
+  root) now flows through `target-resolve.py`, `sync.sh` / `sync-agent.sh`,
+  render metadata, `plan-build-flow`, and `premerge_guardian.py`. A subrepo
+  request resolves via `show-toplevel` / validated `.gitmodules`, owns its
+  worktree at `<super>/.worktrees/<subrepo>-<slug>`, and keeps planning under
+  `<super>/openspec/changes/<slug>/`; `project.subrepos` stays authoritative
+  and `monorepo-apps` stays explicit.
+- **Conservative, reversible gate refresh**: the last CLI-rendered gate bytes
+  are recorded as provenance in the lock/cache. A baseline match updates in
+  place; a mismatch or missing provenance preserves the on-disk gate during
+  sync. An explicit refresh of a customized gate first saves the exact
+  pre-refresh bytes to a cache-only immutable backup, then updates lock and
+  cache atomically.
+- **Latest-canonical asset freshness for `worktree-flow`**: stale, unknown, and
+  user-modified governed assets are replaced by ordinary sync/materialization
+  with the latest verified canonical bytes. Replacements are atomic, report the
+  prior and new state, and fail closed on any digest, version, self-test,
+  backup, write, or lock failure — an unverified asset is never accepted or
+  executed. The explicit refresh flag remains a retry/diagnostic path, not a
+  prerequisite.
+- **Release clean-materialization gate**: `tests/test_release_materialization.py`
+  proves an isolated temporary consumer project materializes cleanly through
+  init/sync/doctor against the in-tree CLI, and that `SHA256SUMS` declares the
+  candidate version and all four platforms. This repository's dogfood
+  `ai-specs/.ai-specs.lock` is explicitly not release evidence.
+
+### Changed
+- `worktree-flow` recipe `1.4.0` → `1.5.0`: `gate_impl` config, launcher
+  distribution, legacy reference materialization.
+- `plan-build-flow` `1.4.0` → `1.5.0`: adversarial depth classification compares explicit requests with signal tiers, asks on conflicts, and records resolution annotations in `tasks.md`.
+- `plan-build-flow` `1.5.0` → `1.6.0`: tier-specific proposal/spec minima, Standard/Full staged verify evidence gates before archive and merge, and grandfathering guidance for in-flight plans.
+- Removed the retired `sdd-adaptive-contract` ceremony contract: deleted the
+  canonical spec, the `sdd.decision_matrix` section in `openspec/config.yaml`,
+  and the `[sdd]` recipe metadata in `docs/recipe-schema.md`; `plan-build-flow`
+  (Light/Standard/Full) is now the sole ceremony contract.
+- **`plan-build-flow` readiness is decoupled from the artifact store**:
+  `artifact_store_default` is now defined as an external-session persistence
+  preference only — Engram may mirror planning artifacts, never replace them.
+  Readiness enforced by the gate and the pre-merge guardian is always proven by
+  the file-backed `openspec/changes/<slug>/` artifacts (`tasks.md`, tier
+  minima, committed planning files, `verify-report.md`). Cross-store invariance
+  tests assert gate and guardian decisions are identical across
+  `openspec | engram | both`.
+
+### Fixed
+- Recipe add no longer mutates the manifest when interactive dependencies are unavailable; the dependency gate now runs before writing.
+- Worktree gate no longer misclassifies known internal harness URIs (`xd://`,
+  `skill://`, `artifact://`, `local://`, `vault://`, `mcp://`, and others) as
+  filesystem destinations in PATH mode — they are tool interfaces, not Git
+  targets. The bypass applies only to genuine internal URIs in PATH mode:
+  SHELL-mode URI-looking literals and candidates masking `../` traversal or an
+  absolute path stay fully gated, and unknown schemes (`https://`, `file://`,
+  `custom://`) keep normal classification.
+- Worktree gate resolves relative candidates against the tool event `cwd`
+  (when present and usable) instead of the hook process `$PWD`, fixing false
+  positives when a runtime writes external configuration from a repo-launched
+  process; the process `$PWD` remains the fallback.
+- `tracker-card-gate.sh` no longer fails to parse under `/bin/bash` 3.2 (stock
+  macOS). Bash 3.2 mis-tracks backtick literals inside quoted heredocs that sit
+  directly inside command substitution, so the embedded Python's backtick
+  fence/quote strings broke the whole script at parse time (every gate
+  invocation exited 2 with "unexpected EOF while looking for matching
+  backtick"). The heredocs now build backticks via `chr(96)`, keeping the
+  literal out of the source; behavior is unchanged.
+- Gate binary acquisition no longer 404s: `lib/_internal/gate_binary.py` built
+  the asset download URL from a hardcoded `nnodes` repository owner while the
+  released assets are attached to `parada1104/ai-specs-cli`. The URL is now
+  built from canonical `REPO_OWNER` / `REPO_NAME` constants.
+- The release workflow parity job no longer depends on undeclared third-party
+  `pytest`, which is absent from stock GitHub runners and failed every release.
+  It now runs the repository's canonical `unittest` runner.
+- Explicit workspace context is preserved across runtimes. The launcher derives
+  its installation root from `BASH_SOURCE[0]` (safe under relative and
+  symlinked invocation) and resolves project-local and legacy assets through
+  the `hooks/../bin` layout instead of process `$PWD`, so a hook started from
+  an unrelated directory no longer misses assets sitting beside it. OpenCode
+  normalizes an explicit `directory` (outer trim, absolute and existing) rather
+  than silently describing one workspace while resolving assets from another,
+  and the Go `event.go` now trims outer whitespace on the event cwd so it
+  classifies identically to the frozen Bash reference.
+- `ai-specs sync` and `ai-specs sync-agent` run under `/bin/bash` 3.2 (stock
+  macOS): the unconditional `shopt -s inherit_errexit` is now applied only when
+  the running shell supports that option.
+- `worktree-cleanup.sh` now detects squash merges for branches with more than
+  one commit. The per-commit `git cherry` patch-id proof cannot match a commit
+  that combines several branch patches, so cleanup adds two conservative
+  second proofs — combined patch-id equivalence from the common ancestor, and
+  final tree-entry equivalence for every path the branch changed (NUL-delimited
+  paths, so pathnames containing newlines are compared verbatim). A squash that
+  was later reverted, and a partial change set, both stay unmerged.
+- The pre-merge guardian accepts the OpenSpec provider's canonical dated
+  archive path `openspec/changes/archive/YYYY-MM-DD-<slug>/`, which valid
+  changes were being blocked for. Exact undated archives remain supported as
+  legacy compatibility; the resolver never guesses among multiple candidates
+  and never accepts malformed or near-match names. Active folder,
+  artifact-minimum, verification, tier, and planning-root gates are unchanged
+  once a path resolves.
+
 ## [0.21.0] — 2026-08-05
 
 ### Added

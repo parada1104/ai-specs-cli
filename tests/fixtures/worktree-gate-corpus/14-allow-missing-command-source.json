@@ -1,0 +1,13 @@
+{
+  "label": "Shell event with no command source fails open to allow",
+  "fixture": "protected-main",
+  "target": "{repo}src.py",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "Bash",
+    "tool_input": {},
+    "cwd": "{repo}"
+  },
+  "malformed": true,
+  "expected_exit": 0
+}

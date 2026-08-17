@@ -37,6 +37,38 @@ def _sync_env(extra: dict | None = None) -> dict:
     return env
 
 
+def _bash_version(binary: Path) -> tuple[int, int] | None:
+    proc = subprocess.run(
+        [
+            str(binary),
+            "-c",
+            'printf "%s.%s\\n" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"',
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    parts = proc.stdout.strip().split(".")
+    if len(parts) != 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
+
+def _supports_inherit_errexit(binary: Path) -> bool:
+    proc = subprocess.run(
+        [str(binary), "-c", "shopt -s inherit_errexit"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
 def _extract_bash_functions(script: Path, names: tuple[str, ...]) -> str:
     """Extract named function bodies from a bash script (brace-counted)."""
     text = script.read_text()
@@ -1001,8 +1033,106 @@ class TemplateSkippedClassificationTests(unittest.TestCase):
 class ErrexitInteractionTests(_WorkspaceMixin, unittest.TestCase):
     """P4 — inherit_errexit + sync_one_agent || return $? failure propagation."""
 
+    def test_t4_0_bash_3_2_runs_both_sync_entry_points(self):
+        """T4.0: stock macOS Bash reaches both sync activation paths."""
+        interpreter = Path("/bin/bash")
+        version = _bash_version(interpreter) if interpreter.is_file() else None
+        if version != (3, 2):
+            self.skipTest(
+                "legacy Bash 3.2 matrix leg omitted: /bin/bash is unavailable "
+                f"or reports {version!r}"
+            )
+
+        for script in (SYNC_SH, SYNC_AGENT_SH):
+            with self.subTest(script=script.name):
+                workspace = self.make_workspace()
+                try:
+                    self.init_workspace(workspace, agents=["claude"], subrepos=[])
+                    command = [str(interpreter), str(script), str(workspace)]
+                    command.append(
+                        "--ignore-cli-version"
+                        if script == SYNC_SH
+                        else "--claude"
+                    )
+                    proc = subprocess.run(
+                        command,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                        env=_sync_env(),
+                    )
+                    combined = proc.stdout + proc.stderr
+                    self.assertEqual(
+                        proc.returncode,
+                        0,
+                        f"{script.name} under /bin/bash 3.2 failed:\n{combined}",
+                    )
+                    self.assertNotIn("invalid shell option name", combined)
+                finally:
+                    shutil.rmtree(workspace.parent, ignore_errors=True)
+
     def test_t4_1_command_substitution_failure_hard_fails_under_inherit_errexit(self):
         """T4.1: failing $(...) below inherit_errexit is not silently swallowed."""
+        modern_binary = shutil.which("bash")
+        modern = Path(modern_binary) if modern_binary else None
+        version = _bash_version(modern) if modern else None
+        if version is None or version < (4, 4) or not _supports_inherit_errexit(modern):
+            self.skipTest(
+                "modern Bash >=4.4 matrix leg omitted: interpreter unavailable "
+                f"or lacks inherit_errexit (detected {version!r})"
+            )
+
+        harness_dir = Path(tempfile.mkdtemp(prefix="ai-specs-errexit-env-"))
+        self.addCleanup(shutil.rmtree, harness_dir, ignore_errors=True)
+        bash_env = harness_dir / "bash-env"
+        bash_env.write_text(
+            textwrap.dedent(
+                r"""
+                python3() {
+                    case "${2:-}" in
+                        *'["root"]'*) printf 'ERREXIT_PROBE\n' >&2; false ;;
+                    esac
+                    case "${1:-}:${3:-}" in
+                        *project-cache.py:path) printf 'ERREXIT_PROBE\n' >&2; false ;;
+                    esac
+                    command python3 "$@"
+                }
+                """
+            )
+        )
+
+        # The actual scripts must still inherit errexit on a modern Bash. The
+        # injected helper fails inside an unguarded command substitution; with
+        # inherit_errexit enabled, the scripts stop before their success marker.
+        for script in (SYNC_SH, SYNC_AGENT_SH):
+            with self.subTest(script=f"{script.name}:modern-runtime"):
+                workspace = self.make_workspace()
+                try:
+                    self.init_workspace(workspace, agents=["claude"], subrepos=[])
+                    command = [str(modern), str(script), str(workspace)]
+                    command.append(
+                        "--ignore-cli-version"
+                        if script == SYNC_SH
+                        else "--claude"
+                    )
+                    proc = subprocess.run(
+                        command,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                        env=_sync_env({"BASH_ENV": str(bash_env)}),
+                    )
+                    combined = proc.stdout + proc.stderr
+                    self.assertNotEqual(
+                        proc.returncode,
+                        0,
+                        f"{script.name} did not preserve inherited errexit:\n{combined}",
+                    )
+                    self.assertIn("ERREXIT_PROBE", combined)
+                    self.assertNotIn("complete", combined)
+                finally:
+                    shutil.rmtree(workspace.parent, ignore_errors=True)
+
         # Mirror the scripts' shell options and the sync_one_agent pattern:
         #   local x; x="$(cmd)" || return $?
         bash = textwrap.dedent(
@@ -1021,7 +1151,7 @@ class ErrexitInteractionTests(_WorkspaceMixin, unittest.TestCase):
             """
         )
         proc = subprocess.run(
-            ["bash", "-c", bash], text=True, capture_output=True, check=False
+            [str(modern), "-c", bash], text=True, capture_output=True, check=False
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout, "STATUS:1\n")
@@ -1032,8 +1162,6 @@ class ErrexitInteractionTests(_WorkspaceMixin, unittest.TestCase):
         # the failure (not continue as success).
         for script in (SYNC_SH, SYNC_AGENT_SH):
             with self.subTest(script=script.name):
-                # Confirm the production scripts enable inherit_errexit.
-                self.assertIn("shopt -s inherit_errexit", script.read_text())
                 fns = _extract_bash_functions(
                     script, ("print_step_output", "run_step")
                 )
@@ -1059,7 +1187,7 @@ class ErrexitInteractionTests(_WorkspaceMixin, unittest.TestCase):
                     + body_tail
                 )
                 proc = subprocess.run(
-                    ["bash", "-c", body],
+                    [str(modern), "-c", body],
                     text=True,
                     capture_output=True,
                     check=False,

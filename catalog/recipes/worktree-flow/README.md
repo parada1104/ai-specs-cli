@@ -18,7 +18,7 @@ post-merge cleanup.
 ```toml
 [recipes.worktree-flow]
 enabled = true
-version = "1.4.0"
+version = "1.5.0"
 
 [recipes.worktree-flow.config]
 worktrees_dir = ".worktrees"
@@ -26,6 +26,7 @@ integration_branch = "main"
 auto_remove_merged = true
 repo_topology = "auto"
 gate_scope = "auto"
+gate_impl = "auto"
 ```
 
 Then run `ai-specs sync`. The cleanup script materializes to
@@ -43,6 +44,57 @@ Then run `ai-specs sync`. The cleanup script materializes to
 | `off` | Disable the gate entirely; writes are allowed even on protected branches. |
 
 Default: `always`.
+
+## Gate implementation (`gate_impl`)
+
+The gate ships as a **single zero-dependency Go binary** (the implementation of
+record) plus a **frozen Bash reference** (`worktree-gate-legacy.sh`) kept for
+one minor release as the rollback path. `ai-specs sync` materializes a thin
+bash-3.2 launcher at the unchanged path
+`ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh` and, when the binary is
+wanted, acquires it into the version-keyed cache:
+
+```
+$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate
+```
+
+| `gate_impl` | Behavior |
+|---|---|
+| `auto` (default) | Prefer the Go binary; fall back to the frozen Bash reference when no binary is usable. |
+| `go` | Go binary only; when none is usable the gate fails open and `ai-specs doctor` reports an ERROR. |
+| `bash` | Frozen Bash reference only; no binary, network, or Go toolchain required. |
+
+The launcher resolves an implementation in order: `$WORKTREE_GATE_BIN` →
+project-local `bin/worktree-gate` under the launcher's own `BASH_SOURCE[0]`
+physical installation root (the `hooks/../bin` layout, so relative and
+symlinked invocation resolve to the target installation) → version-keyed
+cache → frozen Bash reference (`auto`/`bash`) → one stderr warning and exit `0`
+(fail open). The process `$PWD` is the gate's invalid-event-cwd fallback, never
+a project-local asset root; an unresolvable `BASH_SOURCE[0]` root skips
+project-local and legacy lookup and continues through the explicit override or
+cache. Handoff is `exec`, so stdin and the exit code pass through untouched;
+the gate never computes a digest on the invocation path unless
+`WORKTREE_GATE_VERIFY=1` requests it.
+
+**Offline behavior:** with `gate_impl = auto` and no cached binary, `ai-specs
+sync` warns and the launcher falls back to the frozen Bash reference — the gate
+keeps enforcing with no network. With a Go toolchain present, set
+`AI_SPECS_GATE_BUILD=1 ai-specs sync` (or run offline with `go` installed) to
+build the binary from the in-repo source into the same cache layout; a Go
+toolchain is a contributor prerequisite only, never a user prerequisite.
+
+**Rollback levers:** set `gate_impl = "bash"` and sync to pin the frozen Bash
+reference (works fully offline); or set `WORKTREE_GATE_BIN=/path/to/binary` per
+invocation to force a specific binary. `ai-specs doctor` reports the resolved
+implementation, binary version, digest state, and any silent fallback
+(`worktree-gate` check; OK / INFO / WARN / ERROR per the severity table in
+`docs/runtime-hooks.md`). If the gate is not enforcing, `ai-specs doctor`
+surfaces it as an ERROR.
+
+**Digest trust root:** the expected SHA-256 of every published asset is
+committed at `catalog/recipes/worktree-flow/bin/SHA256SUMS`; a downloaded
+binary is verified against it before install and is deleted (never executed) on
+mismatch. Binaries are never committed to the repository.
 
 ## Topology-aware gate scope
 
@@ -90,6 +142,7 @@ harness — see the coverage matrix in `docs/runtime-hooks.md`.
 | `auto_remove_merged` | `true` | Whether merged worktrees are eligible for cleanup. |
 | `gate_mode` | `always` | Main-worktree gate mode: `always`, `ask`, or `off`. |
 | `gate_scope` | `auto` | Scope policy: `auto`, `superrepo`, or `subrepo`; only proven superrepo `openspec/changes/**` planning paths receive an exception. |
+| `gate_impl` | `auto` | Gate implementation: `auto` (prefer Go binary, fall back to Bash), `go` (binary only, fail open when unusable), or `bash` (frozen Bash reference; no binary/network/Go required). |
 | `WORKTREE_GATE_SCOPE` | — | Optional per-invocation override of the stamped scope; invalid values warn and fall back safely. |
 | `repo_topology` | `auto` | Repository topology: `auto` (initialized `.gitmodules` → `monorepo-submodules`, else `standalone`), `standalone`, `monorepo-apps` (naming-only; same mechanics as standalone), or `monorepo-submodules`. |
 | `WORKTREE_GATE_PROTECTED` | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
@@ -127,11 +180,30 @@ rm ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh
 ai-specs sync
 ```
 
-Runtime hook scripts are outside the override surface and are always rewritten
-by the CLI during sync. The policy applies to governed template overrides only.
+Runtime hook scripts follow gate provenance instead of template policy. Sync
+records a baseline of the exact bytes the CLI last rendered for each generated
+hook (`ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh`):
+
+- baseline matches current bytes → unmodified; sync may force-update the gate
+  and re-record the baseline;
+- bytes differ from the baseline → user-modified; sync preserves the gate and
+  warns;
+- no baseline → unknown provenance; sync preserves the gate and warns, and
+  records a baseline only when the CLI itself renders the gate.
+
+Runtime hook scripts are no longer rewritten unconditionally.
+
+To explicitly replace a customized gate (after its exact pre-refresh bytes are
+saved to a cache-only immutable backup):
+
+```bash
+ai-specs sync --refresh-gates
+```
+
+or remove the gate and resync: `rm <gate-path> && ai-specs sync`.
 
 After a user-modified warning, re-apply any local customizations to the refreshed
-template as needed.
+gate as needed.
 
 ## Cleanup contract
 

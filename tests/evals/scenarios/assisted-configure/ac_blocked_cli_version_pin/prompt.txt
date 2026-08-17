@@ -1,0 +1,1 @@
+Configure plan-build-flow and set artifact_store_default to both. Respect the project's CLI version policy: inspect and report a preflight block before writing if the installed version does not satisfy the pin.

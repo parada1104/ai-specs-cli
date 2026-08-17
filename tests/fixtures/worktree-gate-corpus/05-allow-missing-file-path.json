@@ -1,0 +1,10 @@
+{
+  "label": "Empty or missing file_path fails open to allow",
+  "fixture": "none",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "Write",
+    "tool_input": {}
+  },
+  "expected_exit": 0
+}

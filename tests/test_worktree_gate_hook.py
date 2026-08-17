@@ -15,9 +15,10 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+LEGACY_GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate-legacy.sh"
+GO_BINARY = ROOT / "dist" / "worktree-gate-current"
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -25,7 +26,34 @@ def _git(cwd: Path, *args: str) -> None:
                    capture_output=True, text=True)
 
 
+class _GoGate:
+    """Go-side stand-in for a stamped Bash gate.
+
+    The Bash stamp substitution (__WORKTREE_GATE_MODE__ etc.) maps 1:1 to the
+    binary's --gate-mode / --gate-scope / --repo-topology flags, so a stamped
+    gate materialized for the Bash implementation is represented for the Go
+    implementation by this value object (task 2.17).
+    """
+
+    def __init__(self, mode: str = "always", scope: str = "auto",
+                 topology: str = "auto") -> None:
+        self.mode = mode
+        self.scope = scope
+        self.topology = topology
+
+
 class WorktreeGateHookTests(unittest.TestCase):
+    """Integration suite for the worktree gate, parameterized over impl.
+
+    impl="bash" runs the frozen reference script (the pre-change behavior);
+    impl="go" runs the same scenarios against the Go binary through the
+    launcher-equivalent flags, so a behavioral differential (mode/scope
+    precedence, URI allowlist, extraction, messages) fails here first
+    (task 2.17). The Go half skips loudly when no binary is built yet.
+    """
+
+    impl = "bash"
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -44,27 +72,80 @@ class WorktreeGateHookTests(unittest.TestCase):
         except subprocess.CalledProcessError:
             pass
 
-    def _stamped_gate(self, mode: str) -> Path:
+    def _stamped_gate(self, mode: str):
+        """Materialize a gate stamped with the given mode for this impl.
+
+        The Bash path only replaces the mode sentinel; scope and topology stay
+        as the literal __WORKTREE_GATE_SCOPE__ / __WORKTREE_REPO_TOPOLOGY__
+        (invalid), which emits the fallback warnings. The Go path mirrors that
+        by passing the same invalid sentinels so the warning contract is
+        identical across impls.
+        """
+        if self.impl == "go":
+            return _GoGate(mode=mode,
+                           scope="__WORKTREE_GATE_SCOPE__",
+                           topology="__WORKTREE_REPO_TOPOLOGY__")
         stamped = Path(self.tmp.name) / f"worktree-gate-{mode}.sh"
-        stamped.write_text(GATE.read_text().replace("__WORKTREE_GATE_MODE__", mode))
+        # The Bash impl runs the frozen reference (the pre-launcher gate).
+        # Phase 3 rewrote hooks/worktree-gate.sh as a launcher; the reference
+        # contract the Bash parameterization pins lives in the legacy copy.
+        stamped.write_text(LEGACY_GATE.read_text().replace("__WORKTREE_GATE_MODE__", mode))
         stamped.chmod(0o755)
         return stamped
+
+    def _gate_command(self, gate=None) -> list[str]:
+        """Build the invocation for the active implementation.
+
+        Bash: ["bash", path] with stamped env. Go: the binary with explicit
+        flags carrying the stamped values (the Phase 3 launcher performs the
+        same mapping). A plain _GoGate or None means the effective defaults
+        (always / auto / auto).
+        """
+        if self.impl == "go":
+            if gate is None:
+                gate = _GoGate()
+            return [
+                str(GO_BINARY),
+                "--gate-mode", gate.mode,
+                "--gate-scope", gate.scope,
+                "--repo-topology", gate.topology,
+                "--protected", "main development",
+            ]
+        # Bash impl: the frozen reference (the pre-launcher gate contract).
+        return ["bash", str(gate or LEGACY_GATE)]
 
     def _run(
         self,
         event: dict,
         *,
         protected: str = "main development",
-        gate: Path | None = None,
+        gate=None,
         extra_env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess:
         env = dict(os.environ, WORKTREE_GATE_PROTECTED=protected)
         if extra_env:
             env.update(extra_env)
         return subprocess.run(
-            ["bash", str(gate or GATE)],
+            self._gate_command(gate),
             input=json.dumps(event),
             capture_output=True, text=True, env=env,
+        )
+    def _run_in(
+        self,
+        event: dict,
+        run_cwd: Path,
+        *,
+        event_cwd: Path | None = None,
+        protected: str = "main development",
+    ) -> subprocess.CompletedProcess:
+        """Run the hook with a controlled process cwd (for fallback tests)."""
+        if event_cwd is not None:
+            event["cwd"] = str(event_cwd)
+        env = dict(os.environ, WORKTREE_GATE_PROTECTED=protected)
+        return subprocess.run(
+            self._gate_command(None),
+            input=json.dumps(event),
+            capture_output=True, text=True, env=env, cwd=str(run_cwd),
         )
 
     def _checkout(self, branch: str) -> None:
@@ -131,7 +212,7 @@ class WorktreeGateHookTests(unittest.TestCase):
     # 6. Malformed JSON on stdin → fail-open allow.
     def test_malformed_stdin_fail_open(self):
         env = dict(os.environ, WORKTREE_GATE_PROTECTED="main")
-        r = subprocess.run(["bash", str(GATE)], input="not json",
+        r = subprocess.run(self._gate_command(None), input="not json",
                            capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0)
 
@@ -179,7 +260,7 @@ class WorktreeGateHookTests(unittest.TestCase):
         env = dict(os.environ, WORKTREE_GATE_PROTECTED="main development")
         env.pop("WORKTREE_GATE_MODE", None)
         r = subprocess.run(
-            ["bash", str(gate)],
+            self._gate_command(gate),
             input=json.dumps(self._event("Edit", str(self.repo / "a.txt"))),
             capture_output=True,
             text=True,
@@ -325,6 +406,72 @@ class WorktreeGateHookTests(unittest.TestCase):
         r = self._run(self._shell_event("echo hi 2>&1"))
         self.assertEqual(r.returncode, 0)
 
+    # --- Scrub semantics (worktree-gate-legacy.sh:90-100) ---
+    # ".", "-", "&"-prefixed tokens and /dev/null|/dev/stdout|/dev/stderr|
+    # /dev/fd/* are never real write targets: the gate must allow them even on
+    # a protected branch, in both implementations (final-verification blocker:
+    # the Go gate blocked where the Bash reference scrubbed).
+
+    def test_shell_redirect_dot_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > ."))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dash_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > -"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_amp_star_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > &*"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_amp_one_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > &1"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dev_stdout_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > /dev/stdout"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dev_stderr_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > /dev/stderr"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_redirect_dev_fd_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x > /dev/fd/3"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_tee_dev_null_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x | tee /dev/null"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_tee_amp_star_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("echo x | tee &*"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_python_open_dot_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("python3 -c \"open('.','w')\""))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_python_open_dev_fd_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("python3 -c \"open('/dev/fd/2','w')\""))
+        self.assertEqual(r.returncode, 0)
+
+    def test_shell_python_open_amp_star_fail_open(self):
+        self._checkout("main")
+        r = self._run(self._shell_event("python3 -c \"open('&*','w')\""))
+        self.assertEqual(r.returncode, 0)
+
     def test_shell_ambiguous_python_variable_path_fail_open(self):
         self._checkout("main")
         r = self._run(self._shell_event("python3 -c \"open(dst,'w')\""))
@@ -442,9 +589,12 @@ class WorktreeGateHookTests(unittest.TestCase):
         sub_event = self._event("Write", str(subrepo / "src.py"))
         sub_event["cwd"] = str(subrepo)
         self.assertEqual(self._run(sub_event).returncode, 2)
-    def _scope_gate(self, scope: str, topology: str = "monorepo-submodules") -> Path:
+    def _scope_gate(self, scope: str, topology: str = "monorepo-submodules"):
+        """Materialize a gate stamped with scope/topology for this impl."""
+        if self.impl == "go":
+            return _GoGate(scope=scope, topology=topology)
         stamped = Path(self.tmp.name) / f"worktree-gate-{scope}-{topology}.sh"
-        content = GATE.read_text()
+        content = LEGACY_GATE.read_text()
         content = content.replace("__WORKTREE_GATE_MODE__", "always")
         content = content.replace("__WORKTREE_GATE_SCOPE__", scope)
         content = content.replace("__WORKTREE_REPO_TOPOLOGY__", topology)
@@ -561,5 +711,387 @@ class WorktreeGateHookTests(unittest.TestCase):
         gate = self._scope_gate("auto")
         self.assertEqual(self._run(self._shell_event(f"echo x > {central}", cwd=str(superrepo)), gate=gate).returncode, 0)
         self.assertEqual(self._run(self._shell_event(f"echo x > {noncentral}", cwd=str(superrepo)), gate=gate).returncode, 2)
+
+    # --- Internal URI allowlist ---
+
+    def test_uri_xd_resolve_allowed_on_protected_branch(self):
+        self._checkout("development")
+        r = self._run(self._event("Write", "xd://resolve"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_uri_artifact_allowed_on_protected_branch(self):
+        self._checkout("development")
+        r = self._run(self._event("Write", "artifact://abc123"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_uri_local_allowed_on_protected_branch(self):
+        self._checkout("main")
+        r = self._run(self._event("Write", "local://plan.md"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_uri_vault_allowed_on_protected_branch(self):
+        self._checkout("development")
+        r = self._run(self._event("Write", "vault://hermes-vault/doc.md"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_uri_skill_allowed_on_protected_branch(self):
+        self._checkout("main")
+        r = self._run(self._event("Write", "skill://testing/init"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_uri_representative_schemes_allowed_on_protected_branch(self):
+        self._checkout("main")
+        for uri in (
+            "rule://worktree-gate",
+            "agent://abc123",
+            "history://abc123",
+            "mcp://trello/get_health",
+            "issue://42",
+            "pr://42",
+            "omp://",
+        ):
+            r = self._run(self._event("Write", uri))
+            self.assertEqual(r.returncode, 0, uri)
+
+    def test_uri_shell_mode_literal_target_stays_gated(self):
+        # A URI-looking token in a shell command is a literal write target
+        # (redirection/argument), not a tool interface: it must be classified.
+        self._checkout("main")
+        event = self._shell_event(f"echo x > xd://{self.repo}/src.py")
+        r = self._run(event)
+        self.assertEqual(r.returncode, 2)
+    def test_uri_shell_mode_bare_uri_literal_stays_gated(self):
+        # Discriminator: the URI allowlist applies in PATH mode only. A bare
+        # URI-looking token (no absolute path after the scheme) in a shell
+        # command is a literal write target and must be classified — dropping
+        # the mode guard would allow it through the allowlist bypass.
+        self._checkout("main")
+        event = self._shell_event("echo x > xd://out.txt")
+        r = self._run(event)
+        self.assertEqual(r.returncode, 2)
+
+    def test_uri_traversal_masked_path_stays_gated(self):
+        # A known scheme with ../ traversal resolves into the repository and
+        # must be classified, not bypassed as a genuine internal URI.
+        self._checkout("main")
+        r = self._run(self._event("Write", f"xd://{self.repo.name}/../{self.repo.name}/src/app.py"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_uri_absolute_path_after_scheme_stays_gated(self):
+        # A known scheme followed by an absolute filesystem path must be
+        # classified like the raw absolute path it masks.
+        self._checkout("main")
+        r = self._run(self._event("Write", f"xd://{self.repo}/src/app.py"))
+        self.assertEqual(r.returncode, 2)
+
+    # --- Unknown URI schemes stay gated ---
+
+    def test_unknown_uri_https_stays_gated(self):
+        self._checkout("main")
+        r = self._run(self._event("Write", "https://example.com/src.py"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_unknown_uri_file_scheme_stays_gated(self):
+        self._checkout("main")
+        r = self._run(self._event("Write", "file:///etc/hosts"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_unknown_uri_custom_stays_gated(self):
+        self._checkout("main")
+        r = self._run(self._event("Write", "custom://thing"))
+        self.assertEqual(r.returncode, 2)
+
+    # --- Event cwd precedence ---
+
+    def test_relative_path_uses_event_cwd_not_process_pwd(self):
+        # Process PWD is inside the repo; the event cwd is external; the
+        # relative candidate resolves outside the repository and must be allowed.
+        self._checkout("main")
+        external = Path(self.tmp.name) / "external"
+        external.mkdir()
+        r = self._run_in(self._event("Write", "out.txt"), run_cwd=self.repo,
+                         event_cwd=external)
+        self.assertEqual(r.returncode, 0)
+
+    def test_relative_path_event_cwd_inside_protected_repo_blocks(self):
+        self._checkout("main")
+        r = self._run_in(self._event("Write", "src/app.py"), run_cwd=Path(self.tmp.name),
+                         event_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+
+    def test_missing_event_cwd_falls_back_to_process_pwd(self):
+        self._checkout("main")
+        event = self._event("Write", "src/app.py")
+        event.pop("cwd")
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+
+    def test_absolute_candidate_unchanged_by_event_cwd(self):
+        self._checkout("main")
+        external = Path(self.tmp.name) / "external"
+        external.mkdir()
+        r = self._run_in(self._event("Write", str(self.repo / "src.py")), run_cwd=self.repo,
+                         event_cwd=external)
+        self.assertEqual(r.returncode, 2)
+
+    def test_relative_shell_write_uses_event_cwd(self):
+        self._checkout("main")
+        external = Path(self.tmp.name) / "external"
+        external.mkdir()
+        event = self._shell_event("echo x > out.log")
+        r = self._run_in(event, run_cwd=self.repo, event_cwd=external)
+        self.assertEqual(r.returncode, 0)
+
+    def test_relative_shell_write_falls_back_to_process_pwd(self):
+        self._checkout("main")
+        event = self._shell_event("echo x > out.log")
+        event.pop("cwd")
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+
+    def test_relative_event_cwd_falls_back_to_process_pwd(self):
+        # A relative event cwd is unusable: resolution falls back to the
+        # process PWD (the protected repo), so a relative write blocks.
+        self._checkout("main")
+        event = self._event("Write", "src/app.py")
+        event["cwd"] = "relative/dir"
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+    def test_relative_event_cwd_traversal_falls_back_to_process_pwd(self):
+        # Discriminator: a relative event cwd is unusable even when it
+        # resolves (via ..) to an existing directory beside the process PWD.
+        # Resolution must fall back to the process PWD so the relative write
+        # still blocks; a mutant that accepts relative cwds resolved against
+        # the process PWD would resolve outside the repo and allow.
+        sibling = Path(self.tmp.name) / "outside"
+        sibling.mkdir(exist_ok=True)
+        self._checkout("main")
+        event = self._event("Write", "src/app.py")
+        event["cwd"] = "../outside"
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+
+    def test_nonexistent_event_cwd_falls_back_to_process_pwd(self):
+        # A nonexistent event cwd is unusable: resolution falls back to the
+        # process PWD (the protected repo), so a relative write blocks.
+        self._checkout("main")
+        event = self._event("Write", "src/app.py")
+        event["cwd"] = str(Path(self.tmp.name) / "does-not-exist")
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+
+    def test_relative_shell_write_falls_back_on_nonexistent_event_cwd(self):
+        self._checkout("main")
+        event = self._shell_event("echo x > out.log")
+        event["cwd"] = str(Path(self.tmp.name) / "does-not-exist")
+        r = self._run_in(event, run_cwd=self.repo)
+        self.assertEqual(r.returncode, 2)
+class WorktreeGateLauncherRootTests(unittest.TestCase):
+    """BASH_SOURCE[0] installation-root resolution (stabilize-workspace-context
+    2.1 / 2.6 / 2.7).
+
+    Drives the real launcher materialized into a temporary installation and
+    proves which implementation candidate was selected with executable
+    markers: physical root from BASH_SOURCE[0], ``hooks/../bin`` project-local
+    lookup, symlinked and relative invocation, unrelated process cwd, override
+    and cache precedence, legacy fallback, and the rule that a missing root
+    never lets ``$PWD`` become a project root.
+    """
+
+    STAMP_TOKENS = (
+        ("__WORKTREE_GATE_MODE__", "always"),
+        ("__WORKTREE_GATE_SCOPE__", "auto"),
+        ("__WORKTREE_REPO_TOPOLOGY__", "auto"),
+        ("__WORKTREE_GATE_IMPL__", "go"),
+        ("__WORKTREE_GATE_VERSION__", "1.0.0"),
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.install = Path(self.tmp.name) / "install"
+        hooks = self.install / "hooks"
+        bins = self.install / "bin"
+        hooks.mkdir(parents=True)
+        bins.mkdir(parents=True)
+        self.launcher = hooks / "worktree-gate.sh"
+        self.launcher.write_text(self._stamped_launcher())
+        self.launcher.chmod(0o755)
+        self.bin_marker = bins / "worktree-gate"
+        self._write_marker(self.bin_marker, "MARKER:project-local")
+        # A scratch AI_SPECS_HOME so cache lookups are hermetic.
+        self.home = self.install / "home"
+
+    def _stamped_launcher(self, **overrides) -> str:
+        content = (ROOT / "catalog" / "recipes" / "worktree-flow" /
+                   "hooks" / "worktree-gate.sh").read_text()
+        for token, value in self.STAMP_TOKENS:
+            content = content.replace(token, overrides.get(token, value))
+        return content
+
+    def _write_marker(self, path: Path, tag: str) -> None:
+        path.write_text(f"#!/usr/bin/env bash\necho '{tag}' >&2\nexit 0\n")
+        path.chmod(0o755)
+
+    def _gate_env(self, **extra) -> dict:
+        env = dict(os.environ, WORKTREE_GATE_PROTECTED="main",
+                   AI_SPECS_HOME=str(self.home))
+        env.pop("WORKTREE_GATE_BIN", None)
+        env.pop("WORKTREE_GATE_MODE", None)
+        env.pop("WORKTREE_GATE_SCOPE", None)
+        env.update(extra)
+        return env
+
+    def _run(self, launcher: Path, cwd: Path, *, stdin="{}",
+             env: dict | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(launcher)], input=stdin, capture_output=True,
+            text=True, cwd=str(cwd), env=env or self._gate_env(),
+        )
+
+    def _elsewhere(self) -> Path:
+        d = self.install / "unrelated-cwd"
+        d.mkdir(exist_ok=True)
+        return d
+
+    def test_relative_invocation_selects_project_local_bin_from_physical_root(self):
+        cwd = self._elsewhere()
+        rel = os.path.relpath(self.launcher, cwd)
+        r = self._run(Path(rel), cwd)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:project-local", r.stderr)
+        self.assertNotIn("MARKER:legacy", r.stderr)
+
+    def test_symlink_invocation_resolves_physical_installation(self):
+        link_dir = self.install / "linked"
+        link_dir.mkdir()
+        link = link_dir / "gate-link.sh"
+        link.symlink_to(self.launcher)
+        r = self._run(link, self._elsewhere())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:project-local", r.stderr,
+                      "symlinked invocation must resolve to the physical install")
+
+    def test_unrelated_process_cwd_finds_launcher_beside_itself(self):
+        r = self._run(self.launcher, self._elsewhere())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:project-local", r.stderr)
+
+    def test_worktree_gate_bin_override_wins(self):
+        override = self.install / "override-bin"
+        self._write_marker(override, "MARKER:override")
+        r = self._run(self.launcher, self._elsewhere(),
+                      env=self._gate_env(WORKTREE_GATE_BIN=str(override)))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:override", r.stderr)
+        self.assertNotIn("MARKER:project-local", r.stderr)
+
+    def test_cache_precedence_when_project_local_missing(self):
+        self.bin_marker.unlink()
+        platform = self._host_platform()
+        cache_bin = (self.home / "cache" / "bin" / "worktree-gate" / "1.0.0" /
+                     platform / "worktree-gate")
+        cache_bin.parent.mkdir(parents=True)
+        self._write_marker(cache_bin, "MARKER:cache")
+        r = self._run(self.launcher, self._elsewhere())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:cache", r.stderr)
+
+    def test_legacy_fallback_under_derived_root(self):
+        # No project-local bin and no cache: with gate_impl=auto the launcher
+        # falls back to the frozen Bash reference under its OWN root.
+        self.bin_marker.unlink()
+        self.launcher.write_text(
+            self._stamped_launcher(**{"__WORKTREE_GATE_IMPL__": "auto"}))
+        self.launcher.chmod(0o755)
+        legacy = self.install / "hooks" / "worktree-gate-legacy.sh"
+        content = (ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" /
+                   "worktree-gate-legacy.sh").read_text()
+        content = content.replace('stamped_gate_mode="__WORKTREE_GATE_MODE__"',
+                                  'stamped_gate_mode="always"')
+        content = content.replace('stamped_gate_scope="__WORKTREE_GATE_SCOPE__"',
+                                  'stamped_gate_scope="auto"')
+        content = content.replace('stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"',
+                                  'stamped_repo_topology="auto"')
+        legacy.write_text(content)
+        legacy.chmod(0o755)
+
+        repo = Path(self.tmp.name) / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t.t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "README.md").write_text("x\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+        _git(repo, "checkout", "-q", "-B", "main")
+        event = json.dumps({
+            "event": "pre-tool-use", "tool_name": "Write",
+            "tool_input": {"file_path": str(repo / "src.py")},
+            "cwd": str(repo),
+        })
+        r = self._run(self.launcher, self._elsewhere(), stdin=event)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("worktree-gate", r.stderr)
+
+    def test_missing_root_never_makes_pwd_a_project_root(self):
+        # PATH-style bare-name invocation: when BASH_SOURCE[0] cannot be
+        # anchored, project-local and legacy lookup must be SKIPPED — a decoy
+        # ai-specs tree under $PWD must never be selected. (bash 5 resolves
+        # PATH lookups to the full script path, in which case the root derives
+        # from the PATH directory; either way the $PWD decoy is never used.)
+        self.bin_marker.unlink()
+        path_bin = self.install / "pathbin"
+        path_bin.mkdir()
+        copied = path_bin / "worktree-gate.sh"
+        copied.write_text(self._stamped_launcher())
+        copied.chmod(0o755)
+        cwd = self.install / "pwd-decoy"
+        decoy = cwd / "ai-specs" / "recipes" / "worktree-flow" / "bin"
+        decoy.mkdir(parents=True)
+        self._write_marker(decoy / "worktree-gate", "MARKER:decoy")
+        env = self._gate_env(PATH=str(path_bin) + os.pathsep + os.environ["PATH"])
+        r = subprocess.run(
+            ["bash", "worktree-gate.sh"], input="{}", capture_output=True,
+            text=True, cwd=str(cwd), env=env,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("MARKER:decoy", r.stderr,
+                         "$PWD must never become a project-local asset root")
+        self.assertIn("no usable gate implementation", r.stderr)
+
+    def _host_platform(self) -> str:
+        uname_s = os.uname().sysname
+        uname_m = os.uname().machine
+        goos = {"Darwin": "darwin", "Linux": "linux"}.get(uname_s)
+        if uname_m in ("arm64", "aarch64"):
+            goarch = "arm64"
+        elif uname_m in ("x86_64", "amd64"):
+            goarch = "amd64"
+        else:
+            goarch = None
+        if not goos or not goarch:
+            self.skipTest(f"unsupported launcher platform {uname_s}/{uname_m}")
+        return f"{goos}-{goarch}"
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorktreeGateGoHookTests(WorktreeGateHookTests):
+    """The same 78-scenario suite run against the Go binary.
+
+    Activates exactly when dist/worktree-gate-current exists (built by
+    scripts/build-gate.sh); skips loudly otherwise so a machine without Go
+    keeps the Bash half green (task 1.17 / 2.17).
+    """
+
+    impl = "go"
+
+    def setUp(self):
+        if not GO_BINARY.exists():
+            self.skipTest(
+                "no Go gate binary in dist/ (run scripts/build-gate.sh); "
+                "Bash parameterization still ran")
+        super().setUp()

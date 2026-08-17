@@ -17,6 +17,36 @@ informational only — no per-recipe pin is required.
 Run `ai-specs recipe list` to see which catalog recipes are installed vs.
 available in a project.
 
+## Agent-assisted configuration
+
+For a non-interactive, reviewable setup flow, an agent can use the additive
+helper `ai-specs recipe configure <id> [path]`:
+
+1. Inspect with `--inspect --json` and ground the recommendation in the schema,
+   existing config, repository topology, MCP state, and CLI dependencies.
+2. Show proposed keys, preserved keys, assumptions, and planned verification;
+   wait for explicit user approval before applying.
+3. Apply approved values with repeatable `--set KEY=VALUE`; add `--sync` to run
+   synchronization and doctor verification. `--dry-run` never writes.
+4. Report `status`, changed/unchanged/preserved keys, preflight, sync, verify,
+   assumptions, drift, and version gaps. Exit 3 rejects input; exit 4 blocks a
+   CLI-version preflight before any write. Partial sync failures are not
+   reported as complete.
+
+The helper preserves unmentioned manifest keys, comments, and project override
+files. It never accepts secret-shaped literals; use `${env:VAR}` references or
+redaction. The interactive `ai-specs configure-recipes` wizard remains
+unchanged, and `ai-specs recipe init` remains read-only and does not sync.
+
+The broader evidence MVP covers `worktree-flow` topology grounding without an
+`init.md`, `trello-mcp-workflow` MCP/secrets/init guidance, and
+`plan-build-flow` plain config. Runtime evidence lives in the existing
+`tests/evals/` system as an additive client; deterministic helper tests remain
+the merge gate. An optional Orca/OMP orchestration skill may invoke the
+existing live runners across runtimes and aggregate per-runtime results, but it
+is not a runtime, runner, scoring service, or prerequisite. Running the shell
+runner directly produces the same scenario semantics and verdicts.
+
 ## Two tiers
 
 Recipes come in two tiers (see [`docs/capabilities.md`](capabilities.md)):
@@ -173,23 +203,36 @@ authorization, then implements, validates, and closes the change — without
 `/plan` or `/build` commands. Implementation defers to an isolated-worktree
 workflow when one is enabled, without hard-depending on it.
 
+It is the sole ceremony/depth classification source (`Light` / `Standard` /
+`Full`), replacing the retired ceremony contract.
+
+OpenSpec archive-tail uses the canonical dated destination
+`openspec/changes/archive/YYYY-MM-DD-<slug>/` with a valid ISO calendar date.
+The exact undated `archive/<slug>/` form remains a legacy fallback only when no
+dated candidate exists. The pre-merge guardian inspects only direct children,
+rejects invalid or near-match names, and fails closed for multiple dated or
+dated-plus-undated candidates.
+
 - **Provides:** skill `plan-build-flow`; capability `plan-build-flow`.
 - **Config:**
 
   | Key | Type | Required | Default | Accepted values | Description |
   |-----|------|----------|---------|-----------------|-------------|
-  | `artifact_store_default` | string | no | `openspec` | `openspec`, `engram`, `both` | Repository planning-artifact store default; may be overridden in the project manifest and is materialized into the brief during sync. |
+  | `artifact_store_default` | string | no | `openspec` | `openspec`, `engram`, `both` | External-session persistence preference for planning artifacts; may be overridden in the project manifest and is materialized into the brief during sync. Plan-build readiness is always proven by file-backed artifacts, never by the store selection. |
 
   The generated rule is repository-declared guidance. An external session runtime may
   consume it when asked where planning artifacts should live, but runtime session behavior
-  is outside this recipe.
+  is outside this recipe. Plan-build readiness is always proven by file-backed artifacts
+  under the canonical `openspec/changes/<slug>/` tree — `tasks.md`, tier minimum planning
+  files, and `verify-report.md` — never by the store selection; Engram MAY mirror artifacts
+  but never replaces them.
 
 - **Full README:** [`catalog/recipes/plan-build-flow/README.md`](../catalog/recipes/plan-build-flow/README.md)
 
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.4.0"
+version = "1.6.0"
 
 [recipes.plan-build-flow.config]
 artifact_store_default = "both"
@@ -223,6 +266,26 @@ unmerged ones, and never touches the main worktree.
   and applies the proven-topology `gate_scope` policy — see
   [`docs/runtime-hooks.md`](runtime-hooks.md); capabilities
   `worktree-isolation`, `worktree-cleanup`.
+- **Gate implementation:** the gate ships as a single zero-dependency Go
+  binary (implementation of record) plus a frozen Bash reference
+  (`worktree-gate-legacy.sh`) kept for one minor release as the rollback path.
+  `gate_impl` selects the implementation: `auto` (default — prefer the Go
+  binary, fall back to Bash), `go` (binary only; fails open when unusable, with
+  a `worktree-gate` doctor ERROR), or `bash` (frozen Bash reference; no binary,
+  network, or Go toolchain required). `ai-specs sync` materializes a thin
+  bash-3.2 launcher at the unchanged hook path, acquires the binary into
+  `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/`,
+  verifies SHA-256 against the committed `SHA256SUMS` trust root before install,
+  and degrades with a warning on any failure — acquisition never fails sync.
+  `ai-specs doctor` reports the resolved implementation, version, digest state,
+  and silent fallbacks.
+- **Gate provenance:** sync records a baseline of the exact bytes the CLI last
+  rendered for the generated gate hook. A baseline match means unmodified and
+  may be force-updated; a byte mismatch or missing baseline is preserved with a
+  warning (no seeding). An explicit refresh (`ai-specs sync --refresh-gates`)
+  saves the exact pre-refresh bytes to a cache-only immutable backup before
+  replacing a customized gate; `ai-specs doctor` warns on customized gates and
+  stays quiet on matching baselines.
 - **Topologies:** `standalone`, `monorepo-apps` (naming-only), and
   `monorepo-submodules` (per-submodule `git -C` create + cleanup enumeration
   under a shared superproject `worktrees_dir`).
@@ -235,6 +298,7 @@ unmerged ones, and never touches the main worktree.
   | `auto_remove_merged` | boolean | `true` | Whether merged worktrees are eligible for cleanup. |
   | `gate_mode` | string | `always` | Main-worktree gate mode. `always` keeps the current block, `ask` blocks with a bypass hint, and `off` disables the gate. |
   | `gate_scope` | string | `auto` | Scope policy: `auto` / `superrepo` / `subrepo`; only proven canonical `<superrepo>/openspec/changes/**` planning paths are excepted. |
+  | `gate_impl` | string | `auto` | Gate implementation: `auto` / `go` / `bash` (see "Gate implementation" above). |
   | `WORKTREE_GATE_SCOPE` | string | — | Optional invocation override; invalid values warn and fall back to the stamped scope. |
   | `repo_topology` | string | `auto` | `auto` / `standalone` / `monorepo-apps` / `monorepo-submodules`. Auto detects initialized submodules; never auto-selects `monorepo-apps`. Shared `<worktrees_dir>/<subrepo>-<slug>` layout under submodules; cleanup enumerates per-module. |
   | `WORKTREE_GATE_PROTECTED` | string | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
@@ -244,7 +308,7 @@ unmerged ones, and never touches the main worktree.
 ```toml
 [recipes.worktree-flow]
 enabled = true
-version = "1.4.0"
+version = "1.5.0"
 
 [recipes.worktree-flow.config]
 integration_branch = "development"

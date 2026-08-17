@@ -1,0 +1,12 @@
+{
+  "label": "Write to a path outside any repository allows",
+  "fixture": "external-path",
+  "target": "{external}out.txt",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "Write",
+    "tool_input": {"file_path": "{external}out.txt"},
+    "cwd": "{repo}"
+  },
+  "expected_exit": 0
+}

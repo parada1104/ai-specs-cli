@@ -1,0 +1,12 @@
+{
+  "label": "Write on non-protected feature branch allows",
+  "fixture": "feature-branch",
+  "target": "{repo}src.py",
+  "event": {
+    "event": "pre-tool-use",
+    "tool_name": "Write",
+    "tool_input": {"file_path": "{repo}src.py"},
+    "cwd": "{repo}"
+  },
+  "expected_exit": 0
+}

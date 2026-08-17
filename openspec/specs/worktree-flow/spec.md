@@ -11,66 +11,87 @@ accurate merge detection, conservative safety checks, and topology-aware create/
 ## Requirements
 
 ### Requirement: Positive Base Candidate Resolution for Merge Detection
-The system MUST treat a worktree branch as merged when any local candidate ref proves ancestry or patch-id equivalence for the branch tip. Candidates are evaluated in order: the exact `--base` ref, the base branch's configured upstream ref, and the remote-tracking ref for the base branch's configured remote (`branch.<base>.remote`, or `origin` when no remote is configured). The remote-tracking ref `origin/<base>` is a conditional last-resort candidate: it is consulted ONLY when the configured remote-tracking ref above did not resolve. If a different, valid configured remote resolves, `origin/<base>` MUST NOT be consulted, even if it exists and points elsewhere (dual-remote safety). If no candidate proves merge, the system MUST fall back to existing `git cherry` patch-id equivalence.
 
-#### Scenario: Regular merge on origin/base with stale local base
-- GIVEN a temp repo with clean worktree `feat-regular`
-- AND `origin/main` contains a merge commit that includes `feat-regular`
-- AND local `main` still points before that merge
-- WHEN `worktree-cleanup.sh --base main --dry-run` runs
-- THEN it MUST report `would remove feat-regular`
+The system MUST treat a worktree branch as removable only when an ordered local
+base candidate proves either ancestry or complete patch-id equivalence for the
+branch's unique commits. Complete patch-id equivalence MUST account for every
+commit on a multi-commit branch. A base that represents only a subset of the
+branch changes MUST remain unmerged. A later revert of the branch changes MUST
+not be treated as proof that the branch is merged.
 
-#### Scenario: Configured remote resolving blocks the origin fallback
-- GIVEN a temp repo where `branch.main.remote` is set to `upstream`
-- AND `refs/remotes/upstream/main` exists locally but does NOT contain `feat-dual-remote`
-- AND `refs/remotes/origin/main` exists and DOES contain `feat-dual-remote` (e.g. a personal fork)
-- WHEN `worktree-cleanup.sh --base main --dry-run` runs
-- THEN it MUST report `skipped feat-dual-remote (unmerged)`
-- AND it MUST NOT consult `refs/remotes/origin/main` as proof of merge
+The existing candidate order remains authoritative: exact `--base`, configured
+upstream, configured remote-tracking ref, and the conditional `origin/<base>`
+fallback only when the configured remote-tracking ref does not resolve. The
+cleanup MUST use only local refs and MUST NOT fetch. The implementation MUST
+preserve the current ancestry-first and `git cherry` patch-id decision points;
+this requirement does not authorize a new merge heuristic.
 
-#### Scenario: Squash merge still resolves by patch-id
-- GIVEN a temp repo where `feat-squash` was squash-merged into `main`
-- AND local `main` does not contain the branch tip by ancestry
-- WHEN cleanup runs
-- THEN it MUST report `would remove feat-squash`
+#### Scenario: Multi-commit regular merge is eligible
 
-#### Scenario: Rebase merge still resolves by patch-id
-- GIVEN a temp repo where `feat-rebase` was rebased onto `main`
-- AND the branch commits are already present by patch-id
-- WHEN cleanup runs
-- THEN it MUST report `would remove feat-rebase`
+- GIVEN a clean feature worktree whose branch contains at least two commits
+- AND the complete branch tip is integrated into the selected base by a regular
+  merge or fast-forward
+- WHEN `worktree-cleanup.sh --base <base> --dry-run` runs
+- THEN it MUST report `would remove <name>`
+- AND the branch and worktree MUST be removable in normal mode
 
-#### Scenario: Fast-forward merge remains merged
-- GIVEN a temp repo where local `main` already contains the tip of `feat-ff`
-- WHEN cleanup runs
-- THEN it MUST report `would remove feat-ff`
+#### Scenario: Multi-commit squash merge is eligible
 
-#### Scenario: Local-only branch with no match stays unmerged
-- GIVEN a temp repo where `feat-local` has no remote ref and no upstream ref
-- AND its changes are not patch-equivalent to `main`
-- WHEN cleanup runs
-- THEN it MUST report `skipped feat-local (unmerged)`
+- GIVEN a clean feature worktree whose branch contains at least two commits
+- AND the feature changes are integrated into the selected base as one or more
+  new squash commits
+- AND the original branch tip is not an ancestor of the base
+- WHEN cleanup evaluates the branch
+- THEN complete patch-id equivalence MUST prove the branch as merged
+- AND dry-run MUST report `would remove <name>`
 
-#### Scenario: Branch ahead of base stays unmerged
-- GIVEN a temp repo where `feat-ahead` has commits not present in `main`
-- WHEN cleanup runs
-- THEN it MUST report `skipped feat-ahead (unmerged)`
+#### Scenario: Partial squash is preserved
 
-#### Scenario: Remote-deleted branch still merges from local base
-- GIVEN a temp repo where `feat-gone` was deleted on the remote
-- AND local `main` already contains the branch tip
-- WHEN cleanup runs
-- THEN it MUST report `would remove feat-gone`
+- GIVEN a feature branch contains at least two commits
+- AND the selected base represents only a strict subset of those changes
+- WHEN cleanup evaluates the branch
+- THEN it MUST report `skipped <name> (unmerged)`
+- AND it MUST preserve both the worktree and branch
+
+#### Scenario: Reverted change is preserved
+
+- GIVEN a feature branch's changes were integrated into the base and later
+  reverted so the branch's complete patch is no longer present
+- WHEN cleanup evaluates the branch
+- THEN it MUST report `skipped <name> (unmerged)`
+- AND it MUST preserve both the worktree and branch
 
 ### Requirement: Conservative Skip for Dirty Worktrees
-The system MUST still skip worktrees with uncommitted changes, blocking untracked files, or active in-progress merges before any merge detection.
 
-#### Scenario: Dirty worktree overrides merged verdict
-- GIVEN a temp repo where `feat-dirty` is otherwise merged into `main`
-- AND the worktree has uncommitted changes
+The system MUST preserve dirty, main, detached, unmerged, and topology-protected
+worktrees before any removal. Dirty status MUST be checked before merge proof.
+The main worktree MUST never be removed even when its branch is fully merged.
+Detached worktrees under the configured directory MUST be reported as detached
+and preserved. Under topology-aware cleanup, uninitialized modules, explicit
+out-of-scope modules, and unproven relationships MUST not become removal
+candidates.
+
+#### Scenario: Detached worktree is preserved
+
+- GIVEN a detached worktree exists under the configured worktree directory
 - WHEN cleanup runs
-- THEN it MUST report `skipped feat-dirty (dirty)`
-- AND it MUST not remove the worktree even if merge evidence exists
+- THEN it MUST report `skipped <name> (detached)`
+- AND it MUST not remove the worktree or any branch
+
+#### Scenario: Main worktree is never removed
+
+- GIVEN the main repository worktree is on a protected or integration branch
+- WHEN cleanup runs from the repository root
+- THEN it MUST not report the main worktree as removable
+- AND it MUST leave the main worktree unchanged
+
+#### Scenario: Topology-protected worktree is preserved
+
+- GIVEN a worktree belongs to an uninitialized, unproven, or explicitly
+  out-of-scope submodule topology
+- WHEN cleanup runs from the superproject or with a different module scope
+- THEN it MUST not scan that worktree as an eligible candidate
+- AND it MUST preserve the worktree and branch
 
 ### Requirement: Bounded Candidate Resolution
 Candidate-base resolution MUST use only refs already present in the local repository. It MUST NOT trigger `git fetch` or any network operation.
@@ -184,6 +205,12 @@ nonexistent descendants) is the explicit central planning exception for the
 enforcing scope. Component-aware containment is mandatory. The worktree gate
 MUST remain separate from `plan-build-flow` production authorization.
 
+The hook MUST treat owner root and planning root as distinct request-context
+facts: owner primaries are enforced per the selected scope, while only the
+canonical superrepo `openspec/changes/**` descendant is excepted as the central
+planning boundary. A subrepo request whose planning root is the superrepo keeps
+its subrepo production primaries protected under the enforcing scope.
+
 #### Scenario: Missing scope defaults safely
 - GIVEN a manifest without `gate_scope`
 - WHEN sync resolves worktree-flow
@@ -207,9 +234,18 @@ MUST remain separate from `plan-build-flow` production authorization.
 - WHEN a protected primary write is evaluated
 - THEN the central exception MUST NOT apply
 
+#### Scenario: Subrepo owner stays protected under a central planning root
+- GIVEN a proven initialized submodule primary on a protected branch
+- AND the request planning root is the superrepo
+- WHEN a production write to the subrepo primary is evaluated under `gate_scope=auto`
+- THEN it MUST block
+- AND the central planning exception MUST NOT extend to subrepo production paths
+
 ### Requirement: Repo Topology Configuration
 
 `recipes.worktree-flow.config.repo_topology` MUST be one of `auto`, `standalone`, `monorepo-apps`, `monorepo-submodules`; default `auto` when absent or empty. `ai-specs sync` MUST reject invalid values with non-zero exit and a diagnostic naming the value and the allowed enum, matching `gate_mode` validation. An explicit non-`auto` value SHALL bypass auto-detection and resolve to that topology.
+
+An explicit topology MUST remain stable: `monorepo-apps` MUST NOT be silently reclassified to `standalone` or `monorepo-submodules` without an explicit manifest change and evidence.
 
 #### Scenario: Default when unset is auto
 - GIVEN a manifest with no `repo_topology` under `recipes.worktree-flow.config`
@@ -244,6 +280,12 @@ MUST remain separate from `plan-build-flow` production authorization.
 - WHEN topology is resolved
 - THEN the resolved topology is `monorepo-submodules`
 - AND absence of `.gitmodules` MUST NOT force `standalone`
+
+#### Scenario: monorepo-apps is never silently reclassified
+- GIVEN `repo_topology = "monorepo-apps"` and initialized `.gitmodules` entries appear later
+- WHEN topology is resolved
+- THEN the resolved topology remains `monorepo-apps`
+- AND no reclassification to `standalone` or `monorepo-submodules` occurs without an explicit manifest change
 
 ### Requirement: Auto Topology Detection
 
@@ -281,6 +323,8 @@ When `repo_topology` is `auto` (including the default), the system MUST resolve 
 ### Requirement: Submodule Worktree Creation Contract
 
 Under a resolved `monorepo-submodules` topology, `/worktree-new` MUST require or infer a `<subrepo>`, validate it against `.gitmodules` (path first, then unique name), and reject uninitialized, unknown, or ambiguous names before any create. Creation MUST use `git -C <subrepo_path> worktree add <absolute-destination> -b <branch> <integration_branch>` with a mandatory absolute destination under the shared superproject `<worktrees_dir>/<subrepo>-<slug>`. Cwd inference MUST use `git rev-parse --show-toplevel`: a toplevel that is an initialized submodule path yields that path; a linked feature worktree under `worktrees_dir` yields the longest initialized-path prefix match on the basename (`<path>-<slug>`). Explicit and inferred values that disagree MUST hard-error.
+
+A request whose context is the superrepo MUST NOT infer a subrepo: creation requires an explicit, validated `<subrepo>`; without it, `/worktree-new` MUST hard-error before any `git worktree add`.
 
 #### Scenario: Cwd inference from submodule primary checkout
 - GIVEN resolved topology `monorepo-submodules` with initialized submodule path `apps/api`
@@ -644,3 +688,320 @@ branches.
 - AND MUST list residual heuristic and process-boundary gaps
 - AND MUST NOT claim that bash writes are fully or uniformly gated on every
   harness
+
+### Requirement: Internal URI allowlist and event-cwd precedence
+
+The worktree gate MUST allow only the project's known non-filesystem internal
+protocol URIs before Git path classification. Unknown URI schemes MUST remain
+subject to normal gating and MUST NOT receive a general URI bypass.
+
+For filesystem candidates, absolute paths MUST remain unchanged. Relative
+candidates MUST resolve against the tool event's `cwd` when it is present and
+usable; the hook process `$PWD` MAY be used only as fallback when event `cwd` is
+absent or unusable. Path parsing and classification failures MUST remain
+fail-open. The event cwd contract applies to the command invocation; the gate
+does not implement a shell interpreter for arbitrary dynamic `cd` control flow.
+The URI allowlist MUST apply in PATH mode only: a URI-looking token in a SHELL
+command is a literal write target and MUST NOT bypass classification. A known
+scheme that masks a filesystem path MUST be classified normally — candidates
+carrying `../` traversal or an absolute path after the scheme never receive the
+internal-URI bypass, even in PATH mode.
+
+#### Scenario: Shell-mode URI-looking literal is not allowlisted
+
+- GIVEN the main worktree is on a protected branch
+- AND a shell command writes to a bare URI-looking token such as `xd://out.txt`
+- WHEN `worktree-gate.sh` runs
+- THEN it MUST exit `2` because the candidate is a literal write target
+
+#### Scenario: Known scheme masking a filesystem path stays gated
+
+- GIVEN the main worktree is on a protected branch
+- AND a path-mode candidate is `xd://<abs-repo-path>` or carries `../` traversal
+  into the repository
+- WHEN `worktree-gate.sh` runs
+- THEN it MUST be classified like the filesystem path it masks and exit `2`
+
+#### Scenario: Known internal URI is allowed on protected branch
+
+- GIVEN the main worktree is on a protected branch
+- AND a path-mode event targets a known internal URI such as `xd://resolve`,
+  `artifact://id`, `local://name.md`, or `vault://path`
+- WHEN `worktree-gate.sh` runs
+- THEN it MUST exit `0`
+- AND it MUST NOT invoke Git filesystem classification for that candidate
+
+#### Scenario: Unknown URI is not allowlisted
+
+- GIVEN the main worktree is on a protected branch
+- AND a candidate uses `https://`, `file://`, or `custom://`
+- WHEN the candidate resolves inside the protected repository
+- THEN it MUST remain subject to the ordinary protected-path decision
+
+#### Scenario: Event cwd takes precedence over process cwd
+
+- GIVEN the hook process cwd is inside a protected repository
+- AND the event cwd is an external directory
+- AND a relative shell write targets a file under that external directory
+- WHEN `worktree-gate.sh` runs
+- THEN it MUST exit `0` because the resolved destination is outside the repository
+
+#### Scenario: Relative event-cwd path inside protected repository remains blocked
+
+- GIVEN the hook process cwd is unrelated to the repository
+- AND the event cwd is the protected repository primary checkout
+- AND a relative shell or path candidate resolves under that checkout
+- WHEN `worktree-gate.sh` runs
+- THEN it MUST exit `2`
+
+#### Scenario: Missing event cwd falls back to process cwd
+
+- GIVEN no usable event cwd is supplied
+- AND the process cwd is the protected repository primary checkout
+- AND a relative candidate targets a repository file
+- WHEN `worktree-gate.sh` runs
+- THEN the existing protected-branch decision MUST be preserved
+
+### Requirement: Request context owner and planning root separation
+
+The system MUST resolve one explicit ai-specs request context carrying an `owner_root` (the repository that owns code and VCS work for the request) and a `planning_root` (the canonical planning-artifact tree). A subrepo request MUST resolve its owner from `git rev-parse --show-toplevel` plus validated `.gitmodules` (path-first, then unique name, initialized) and MUST use a subrepo-owned worktree at the absolute `<super>/.worktrees/<subrepo>-<slug>`; its planning root MUST be the proven superrepo. A superrepo request MUST own the superrepo, create its worktree at `<super>/.worktrees/<slug>`, and use the superrepo as its planning root. A superrepo-context request MUST NOT infer a subrepo; an explicit subrepo is required. Missing, ambiguous, detached, or uninitialized topology MUST fail safe: no owner inference, no worktree creation, and no planning-root exception.
+
+#### Scenario: Subrepo request owns subrepo worktree with central planning root
+
+- GIVEN a proven initialized submodule and a request from its primary checkout
+- WHEN `/worktree-new` runs for that request
+- THEN the worktree is created through the subrepo at the absolute `<super>/.worktrees/<subrepo>-<slug>`
+- AND the request planning root resolves to the proven superrepo
+
+#### Scenario: Superrepo request owns its own worktree and planning root
+
+- GIVEN a request whose context is the superrepo
+- WHEN `/worktree-new` runs
+- THEN the worktree is created at `<super>/.worktrees/<slug>` owned by the superrepo
+- AND the superrepo is the planning root
+
+#### Scenario: Superrepo context cannot infer a subrepo
+
+- GIVEN resolved topology `monorepo-submodules` and a request from the superrepo primary
+- AND no explicit `<subrepo>` argument is passed
+- WHEN `/worktree-new` runs
+- THEN it MUST hard-error requiring an explicit submodule
+- AND it MUST NOT run `git worktree add`
+
+#### Scenario: Ambiguous, detached, or uninitialized topology fails safe
+
+- GIVEN a request context whose owner cannot be proven (detached HEAD, uninitialized submodule, or ambiguous `.gitmodules` match)
+- WHEN the request context is resolved
+- THEN no owner is inferred and no worktree is created
+- AND no planning-root exception is granted
+
+### Requirement: Explicit fan-out target semantics
+
+`project.subrepos` in the root manifest MUST remain the sole authoritative fan-out target set. The system MUST NOT auto-expand fan-out from `.gitmodules` entries or any other discovery, regardless of how many initialized submodules exist. An empty `project.subrepos` list MUST mean no fan-out and MUST NOT be treated as "fan out to every initialized submodule". Fan-out MUST preserve each declared target owner and one shared planning root, MUST NOT duplicate planning artifacts per target, and MUST stop at the first incompatible target.
+
+#### Scenario: Declared targets fan out with one planning root
+
+- GIVEN a root manifest declares explicit `project.subrepos` targets
+- WHEN sync fans out derived artifacts
+- THEN exactly the declared targets are updated with the owning-target context
+- AND all targets share one central planning root with no per-target plan duplication
+
+#### Scenario: Empty subrepos list produces no fan-out
+
+- GIVEN a root manifest with `project.subrepos = []` and many initialized `.gitmodules` entries
+- WHEN sync fans out derived artifacts
+- THEN no subrepo target is updated
+- AND the empty list is honored as an intentional no-fan-out decision
+
+#### Scenario: .gitmodules never expands the target set
+
+- GIVEN initialized `.gitmodules` entries not listed in `project.subrepos`
+- WHEN sync fans out derived artifacts
+- THEN those entries are NOT added to the fan-out set
+- AND the manifest list remains authoritative
+
+#### Scenario: First incompatible target stops fan-out
+
+- GIVEN multiple declared fan-out targets and one target that is incompatible
+- WHEN sync processes the targets
+- THEN it stops at the first incompatible target
+- AND it does not partially continue past it
+
+### Requirement: Forced Latest-Canonical Refresh for Governed Worktree-Flow Assets
+
+The worktree-flow cleanup override, generated Go launcher, and materialized
+legacy gate MUST be classified using the existing lock-backed provenance and
+current would-write bytes before replacement or execution. A managed-current
+asset MAY be used without rewriting after its current bytes remain verified. A
+missing asset MAY be materialized and recorded. A managed-stale,
+user-modified, or unknown/untracked governed asset MUST be force-replaced by
+the latest verified canonical bytes during ordinary sync/materialization.
+
+The operation MUST use an existing immutable cache-only backup and rollback
+mechanism where supported, write the replacement atomically, verify the
+installed bytes, and update provenance only after replacement succeeds. It MUST
+report the exact project-relative target, prior classified state, observed and
+desired digests when available, relevant recipe/source, replacement result, and
+backup/recovery location when one exists. Unknown or user-modified bytes are
+recoverable evidence, not a reason to block or defer the canonical update.
+
+If canonical verification, backup, replacement, rollback, or lock update fails,
+the operation MUST fail closed, leave the target and lock consistent, and MUST
+NOT accept or execute an unverified asset. `ai-specs sync --refresh-gates` MUST
+use the same forced replacement transaction as ordinary sync; it is an
+explicit retry/diagnostic path, not the only replacement path. Doctor MUST use
+the same read-only classification and verification evidence without mutating
+the project.
+
+This requirement applies only to worktree-flow assets. It MUST NOT change
+generic template ownership policies for unrelated recipes.
+
+#### Scenario: Stale cleanup override forces verified replacement
+
+- GIVEN the materialized cleanup override matches its recorded managed digest
+- AND the catalog would-write bytes have changed
+- WHEN ordinary sync or materialization runs
+- THEN the materializer MUST back up the prior bytes where the existing cache
+  mechanism supports it
+- AND it MUST atomically replace the override with the verified catalog bytes
+- AND it MUST update the managed lock entry only after the replacement verifies
+- AND the operation MUST report the prior state/digest, desired digest, and
+  replacement/backup result
+
+#### Scenario: Unknown cleanup override forces canonical ownership replacement
+
+- GIVEN a cleanup override exists with no managed lock entry
+- AND its bytes diverge from the current catalog would-write bytes
+- WHEN ordinary sync runs
+- THEN ordinary sync MUST replace it with the verified catalog bytes
+- AND it MUST seed the managed entry from the installed canonical bytes only
+  after successful replacement
+- AND the result MUST identify unknown provenance, the observed digest, and the
+  replacement/backup result
+- AND doctor MUST remain read-only and report that ordinary sync will perform
+  the forced replacement
+
+#### Scenario: Customized gate is force-replaced by ordinary sync
+
+- GIVEN a materialized `worktree-gate.sh` or legacy gate differs from its
+  recorded baseline or has no baseline
+- WHEN ordinary sync or `ai-specs sync --refresh-gates` runs
+- THEN the pre-refresh bytes MUST be saved through the existing cache-only
+  immutable backup mechanism where that mechanism applies
+- AND the gate or legacy fallback MUST be atomically replaced with verified
+  canonical bytes
+- AND its baseline/lock evidence MUST be updated only after replacement succeeds
+- AND the operation MUST report the replacement rather than block on the local
+  customization
+
+#### Scenario: Current worktree-flow assets remain idempotent
+
+- GIVEN the cleanup override and gate assets match their current recorded
+  provenance and expected bytes
+- WHEN ordinary sync or doctor runs
+- THEN no freshness warning or hard failure MUST be emitted
+- AND no asset MUST be rewritten
+
+#### Scenario: Failed canonical verification fails closed
+
+- GIVEN a worktree-flow asset or version-keyed Go cache candidate is stale,
+  mismatched, or unknown
+- AND the latest canonical bytes fail digest, version, or self-test verification
+- WHEN ordinary sync, materialization, or acquisition evaluates it
+- THEN no unverified bytes MUST be accepted or executed
+- AND the operation MUST report the target/cache path and expected/observed
+  verification evidence
+- AND any prior bytes MUST remain recoverable or quarantined without being
+  selected as the current verified asset
+
+#### Scenario: Failed replacement rolls back governed state
+
+- GIVEN a stale, user-modified, or unknown governed asset is selected for forced
+  canonical replacement
+- AND its backup, atomic write, verification, or lock update fails
+- WHEN the replacement transaction runs
+- THEN the operation MUST fail closed
+- AND the prior target bytes and lock state MUST be restored or remain
+  internally consistent
+- AND no partial temporary file or unverified asset MUST become executable
+
+#### Scenario: Canonical preflight precedes project writes
+
+- GIVEN worktree-flow is enabled in a project manifest
+- AND the catalog cleanup template, launcher, legacy gate, and supported gate
+  trust-root inputs are available
+- WHEN ordinary `ai-specs sync` starts
+- THEN a read-only worktree-flow freshness preflight MUST verify those canonical
+  inputs before the first consumer-project write
+- AND materialization MUST repeat classification and verification immediately
+  before each governed replacement
+- AND the preflight MUST NOT create or rewrite the project's materialized assets
+  or lock
+
+### Requirement: Current Gate Asset and Release Freshness
+
+The version-keyed Go gate cache MUST not treat an executable file as current
+solely because it exists. For the current platform and CLI version, acceptance
+MUST be based on the existing committed `SHA256SUMS` trust root plus the
+current binary version and self-test checks. A missing, stale, mismatched, or
+unknown cached asset MUST trigger forced re-acquisition during ordinary
+acquisition/materialization or the explicit gate-refresh path. It MUST not be
+executed as a verified current gate before those checks pass. If verification
+or replacement fails, the operation MUST fail closed and the stale/unknown
+candidate MUST remain unselected. The diagnostic MUST name the attempted
+replacement or failure and its recovery evidence.
+
+The normal launcher invocation MUST retain the existing no-digest hot-path
+contract except for the bounded pre-exec rejection required to avoid executing
+an unverified cache candidate. Release build flags, exact toolchain pin, asset
+names, tag/version stamp, canonical digest comparison, and `ai-specs doctor`
+evidence MUST remain consistent with the committed trust root. The legacy Bash
+fallback remains a distinct governed asset and MUST not be used to bless an
+unverified Go cache file. A successful cache acquisition MUST leave an atomic
+`<binary>.verified` receipt containing the accepted version, digest, and passing
+self-test; the launcher MUST reject a cache executable without a current
+receipt. Sync and doctor MUST revalidate the trust-root digest before running
+version or self-test commands, so stale bytes are never executed merely for
+diagnostics.
+
+#### Scenario: Stale cache binary is not accepted as current
+
+- GIVEN the version-keyed cache contains an executable gate binary
+- AND its observed digest, reported version, or self-test does not match the
+  current accepted asset state
+- WHEN acquisition or materialization evaluates the cache
+- THEN it MUST force re-acquisition of the latest canonical asset
+- AND it MUST report the cache path, expected/observed digest, version, and
+  self-test evidence
+- AND it MUST not execute the stale/unknown bytes before the replacement is
+  verified
+- AND if re-acquisition or replacement fails, it MUST fail closed and leave the
+  candidate unselected
+
+#### Scenario: Committed release digest remains authoritative
+
+- GIVEN a release matrix artifact differs from the committed
+  `catalog/recipes/worktree-flow/bin/SHA256SUMS` entry
+- WHEN the release checksum gate runs
+- THEN the release MUST fail with the existing regeneration guidance
+- AND no mismatched artifact MUST become an accepted cache asset
+
+#### Scenario: Doctor exposes actionable freshness evidence
+
+- GIVEN a worktree-flow cleanup, launcher, legacy gate, or cached Go asset is
+  stale, unknown, or digest-invalid
+- WHEN `ai-specs doctor` runs
+- THEN it MUST report an ERROR naming the asset state and evidence
+- AND it MUST state that ordinary sync will force the latest verified
+  replacement, plus the explicit retry/re-acquisition action where applicable
+- AND doctor MUST not mutate the project or lock
+- AND the diagnostic MUST NOT turn the ordinary sync replacement into a
+  preserve-and-defer requirement
+
+#### Scenario: Version and lock drift is distinguishable
+
+- GIVEN the repository `VERSION`, stamped gate version, cache key, and
+  `.ai-specs.lock [meta].cli_version` do not describe the same sync state
+- WHEN the freshness checks run
+- THEN the result MUST identify which version relationship is stale or unknown
+- AND it MUST not silently rewrite the lock as part of reporting

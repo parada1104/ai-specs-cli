@@ -1,0 +1,1 @@
+Necesito agregar una validación de email y password en src/forms/signup.py; es un cambio acotado que parece requerir solo una spec y tasks. Quiero full SDD para este cambio, pero todavía no decidí si debe ganar Full o Standard: preguntame cuál usar antes de crear cualquier archivo o tocar producción.

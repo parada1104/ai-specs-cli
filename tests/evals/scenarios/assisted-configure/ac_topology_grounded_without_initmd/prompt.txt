@@ -1,0 +1,1 @@
+Configure worktree-flow for this repository. Inspect the repository topology and give me a grounded recommendation using the initialized submodule evidence; do not apply changes until I approve.

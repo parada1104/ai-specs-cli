@@ -72,6 +72,17 @@ explicitly with `rm <hook-path> && ai-specs sync`; customized hook bytes are
 never silently overwritten. The runtime hook is a defense in depth, not the
 sole guard for delegated or subprocess writes.
 
+## Request context
+
+Resolve one ai-specs request context with `util.resolve_request_context` before
+any create or artifact write: `owner_root` (the repository owning code/VCS for
+the request) is distinct from `planning_root` (the canonical planning tree). A
+subrepo request owns the submodule but plans under the proven superproject; a
+superrepo request owns and plans under the superproject. Missing, ambiguous,
+detached, or uninitialized topology fails safe — no owner inference beyond the
+toplevel, no planning-root exception. `/worktree-new` is generated Markdown
+executed by the agent; there is NO executable `/worktree-new` helper.
+
 ## Conventions
 
 - Shared layout: worktrees live under the **superproject**
@@ -108,7 +119,10 @@ git worktree add <worktrees_dir>/<slug> -b <branch> <integration_branch>
 
 Destination MUST be absolute. Infer or require `<subrepo>`; validate path-then
 unique name; reject uninitialized (`git submodule update --init <path>`).
-`<subrepo>` selection is validated by `util.resolve_subrepo`.
+`<subrepo>` selection and the owner/planning-root split are validated by
+`util.resolve_request_context` / `util.resolve_subrepo`. A request whose
+context is the **superrepo** MUST NOT infer a subrepo: an explicit, validated
+`<subrepo>` is required, otherwise hard-error **before any `git worktree add`**.
 
 ```bash
 super_abs="$(git -C "$super_root" rev-parse --show-toplevel)"
