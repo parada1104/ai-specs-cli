@@ -85,10 +85,10 @@ Without this, the capability silently rots.
 
 ## WU6 — Close out
 
-- [ ] `./tests/validate.sh` green
-- [ ] Manual check: real upgrade against a scratch clone, compact and verbose
-- [ ] `verify-report.md` with RED/GREEN evidence per work unit
-- [ ] Archive the change folder on the review branch before merge
+- [x] `./tests/validate.sh` green — exit 0, 1787 tests, 0 failures
+- [x] Manual check: real upgrade against a scratch clone, compact and verbose
+- [x] `verify-report.md` with RED/GREEN evidence per work unit
+- [x] Archive the change folder on the review branch before merge
 
 ## Deliberately excluded
 
@@ -96,3 +96,9 @@ Without this, the capability silently rots.
 - Shallow clone (breaks the divergence guard — see design D4)
 - Conditional or executable notices (see design D2)
 - Runtime-brief / `AGENTS.md` ownership — card #81
+
+## Judgment day
+
+- [x] Two blind judges, round one: 3 confirmed, 6 suspect, 0 contradictions
+- [x] All 9 findings corrected — see `judgment-ledger.md`
+- [x] Verdict: APPROVED

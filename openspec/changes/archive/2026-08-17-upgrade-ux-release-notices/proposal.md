@@ -70,6 +70,22 @@ Existing full installs narrow idempotently on upgrade. Narrowing is best-effort:
 on any unsupported Git, failure, or ambiguity it falls back to today's full
 checkout and the upgrade still succeeds.
 
+## Success criteria
+
+1. A successful upgrade prints no raw git output by default; `-v`/`--verbose`
+   restores it, and a failing step prints everything it produced.
+2. Every existing upgrade safety check, abort condition, and exit code (1–5)
+   behaves exactly as before.
+3. A successful upgrade summarizes the CHANGELOG versions crossed, and an
+   unreadable or malformed CHANGELOG degrades to the plain version line without
+   failing the upgrade.
+4. A release can declare an `### Upgrade notes` action that is replayed for
+   every crossed version, oldest first, displayed and never executed.
+5. The global install excludes `openspec/`, `tests/`, `.github/` and `tmp/`
+   while retaining every runtime path and the full commit history.
+6. Narrowing is best effort: an unsupported git, a dirty tree, or any failure
+   leaves a usable checkout and never blocks install or upgrade.
+
 ## Non-goals
 
 - Changing any upgrade safety check, exit code, or abort condition.

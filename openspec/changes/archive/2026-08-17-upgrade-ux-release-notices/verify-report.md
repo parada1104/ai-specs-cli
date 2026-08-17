@@ -2,6 +2,29 @@
 
 Depth: full. Discipline: red-green-refactor, RED evidence recorded per work unit.
 
+## Verdict
+
+**PASS** — every success criterion is met, judgment day returned APPROVED after
+a single bounded correction round, and the full suite is green.
+
+## Verify evidence
+
+- Verdict: PASS
+- Command: `./tests/validate.sh`
+- Exit: 0
+- Date: 2026-08-17
+- Commit: 7e4ffb4
+- ready_for_archive: true
+
+## Success-criteria mapping
+
+- Criterion 1: PASS — `test_successful_upgrade_hides_git_output`, `test_verbose_restores_git_output`, `test_fetch_failure_dumps_output_and_keeps_exit_code`
+- Criterion 2: PASS — all 15 pre-existing `test_upgrade.py` tests plus `test_dirty_tree_still_blocks_with_exit_3` and `test_dry_run_output_is_unchanged`
+- Criterion 3: PASS — `test_summary_covers_every_crossed_version`, `test_unreadable_changelog_still_upgrades`, `test_malformed_changelog_degrades_to_plain_line`
+- Criterion 4: PASS — `test_notices_replay_oldest_first`, `test_notice_command_is_displayed_not_executed`, `test_notice_survives_compact_mode`
+- Criterion 5: PASS — `test_excluded_subtrees_leave_the_working_tree`, `test_runtime_subtrees_survive`, `test_history_and_ancestry_are_intact`; measured 1842 to 958 files with `init`/`sync`/`doctor` driven end to end
+- Criterion 6: PASS — `test_git_without_sparse_checkout_falls_back`, `test_collapsed_tree_is_never_reported_as_success`, `test_dirty_excluded_path_is_left_alone`
+
 ## Suite
 
 | Check | Result |
