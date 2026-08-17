@@ -181,6 +181,32 @@ class NarrowCheckoutTests(unittest.TestCase):
             msg="degradation must say something",
         )
 
+    def test_capability_probe_has_no_side_effects(self):
+        """The probe must never invoke git's man/web help path.
+
+        `git <cmd> --help` honors `help.format`. A user with `help.format=web`
+        would have a browser launched mid-install by a capability check, which
+        is an unacceptable side effect for a probe. `-h` prints short usage and
+        never reaches man or a browser.
+        """
+        repo, _ = self.make_repo()
+        sentinel = repo.parent / "browser-was-launched"
+        run(["git", "config", "help.format", "web"], cwd=repo)
+        run(["git", "config", "web.browser", "probe"], cwd=repo)
+        run(
+            ["git", "config", "browser.probe.cmd", f"touch {sentinel}; true"],
+            cwd=repo,
+        )
+
+        result = self.narrow(repo)
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(
+            sentinel.exists(), "capability probe launched the configured browser"
+        )
+        # And narrowing still did its job.
+        for name in EXCLUDED:
+            self.assertFalse((repo / name).exists())
+
     def test_missing_target_is_not_fatal(self):
         result = self.narrow(Path("/nonexistent/ai-specs"))
         self.assertEqual(result.returncode, 0)

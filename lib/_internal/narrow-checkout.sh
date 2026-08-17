@@ -63,13 +63,24 @@ if [[ "$(git -C "$TARGET" config --get core.sparseCheckout 2>/dev/null)" == "tru
     exit 0
 fi
 
-if ! git -C "$TARGET" sparse-checkout list >/dev/null 2>&1; then
-    # `list` fails on a repo that has never been narrowed too, so distinguish
-    # "unsupported command" from "not yet configured" before giving up.
-    if ! git -C "$TARGET" sparse-checkout --help >/dev/null 2>&1; then
-        warn "this git has no sparse-checkout support; keeping the full checkout"
-        exit 0
-    fi
+# Probe for sparse-checkout support.
+#
+# `list` is not a usable probe on its own: it also fails on a supported git
+# whose worktree is simply not sparse yet ("fatal: this worktree is not
+# sparse"), which is exactly the state we are about to fix.
+#
+# `-h` is used rather than `--help` deliberately. `--help` routes through `git
+# help`, which honors `help.format`; a user with `help.format = web` would have
+# a browser launched by a capability check. `-h` prints short usage and never
+# reaches man or a browser.
+#
+# Exit codes are not comparable across versions here (129 for a known
+# subcommand, 1 for an unknown one), so match on the message git prints when a
+# subcommand does not exist.
+PROBE="$(git -C "$TARGET" sparse-checkout -h 2>&1 || true)"
+if [[ "$PROBE" == *"is not a git command"* || -z "$PROBE" ]]; then
+    warn "this git has no sparse-checkout support; keeping the full checkout"
+    exit 0
 fi
 
 # Uncommitted work inside an excluded subtree would be discarded by the

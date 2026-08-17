@@ -66,15 +66,47 @@ Narrowed checkout driven end-to-end — `--version`, `help`, `init`, `sync`,
 | Changes to safety checks or exit codes | Out of scope; the upgrade logic was never the defect |
 | Runtime-brief / `AGENTS.md` ownership | Card #81 |
 
+## Defect found while reviewing the limitations (fixed)
+
+Re-reading the "old git fallback is only proven with a shim" note surfaced a
+real bug in the capability probe, not just a missing test.
+
+The probe was `git sparse-checkout --help`. That routes through `git help`,
+which honors `help.format`. A user with `help.format = web` and a browser
+configured would have **a browser launched during install or upgrade** by a
+check that is supposed to observe and change nothing.
+
+Reproduced by `test_capability_probe_has_no_side_effects`, which configures
+`help.format=web` with a browser command that touches a sentinel file. The
+sentinel was created — RED — before the fix.
+
+The probe is now `git sparse-checkout -h`, which prints short usage and never
+reaches man or a browser. Exit codes turned out to be unusable for this check
+(**129** for a known subcommand, **1** for an unknown one, not comparable
+across versions), so the probe matches on the `is not a git command` message
+git prints for a missing subcommand. That is also what the old-git shim emits,
+so both paths agree.
+
+Two measurement errors were made while chasing this, both worth recording:
+
+1. `timeout 10 git …` returned 127 and looked like a git failure. macOS ships
+   no `timeout`; the 127 was the missing wrapper. Re-measured directly:
+   `--help` returns 0 in ~167ms.
+2. `git … | head -1; echo $?` reports `head`'s exit code, not git's.
+
 ## Honest limitations
 
 - **`install.sh` clone path is not covered by an automated test.** The
-  `--filter=blob:none` fallback is exercised by reasoning and by the shared
-  helper's tests, not by a network clone in CI. The helper it delegates to is
-  fully tested; the two-line clone fallback in `install.sh` is not.
+  two-line `--filter=blob:none` fallback is not exercised by a network clone in
+  CI; the helper it then calls is fully tested. Its one dangerous assumption
+  *was* verified by hand: a failed `git clone` removes the destination
+  directory, so the retry cannot hit "destination path already exists".
+  Confirmed for both a bad ref and an unreachable remote.
 - **`test_upgrade_notices.py` inherits `UpgradeOutputTests`,** so 11 output
-  tests re-run under a notice-bearing changelog. That is real extra signal but
-  costs roughly 35s of duplicate runtime.
+  tests re-run under a notice-bearing changelog — roughly 35s of the 557s
+  suite. Kept deliberately: it proves compact mode still holds when a notice is
+  present. The cost is real and the coupling is a maintenance smell.
 - **Narrowing has not been exercised against a git older than 2.25** on real
-  hardware; the fallback is proven with a PATH shim that rejects
-  `sparse-checkout`.
+  hardware; the fallback is proven with a PATH shim. The probe is now
+  message-based rather than exit-code-based, which makes it more robust across
+  versions than it was.
