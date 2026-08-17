@@ -153,9 +153,11 @@ class PremergeGuardianTests(unittest.TestCase):
 
     def _archive_with(self, slug: str, tasks: str, *, proposal: bool = False,
                       design: bool = False, spec: bool = False,
-                      report: str | None = None, root: Path | None = None) -> Path:
+                      report: str | None = None, root: Path | None = None,
+                      archive_name: str | None = None) -> Path:
         root = root or self._repo()
-        archived = root / "openspec" / "changes" / "archive" / slug
+        archive_name = archive_name or slug
+        archived = root / "openspec" / "changes" / "archive" / archive_name
         archived.mkdir(parents=True)
         (archived / "tasks.md").write_text(tasks)
         if proposal:
@@ -170,6 +172,178 @@ class PremergeGuardianTests(unittest.TestCase):
         if report is not None:
             (archived / "verify-report.md").write_text(report)
         return archived
+
+    def test_passes_when_archived_with_canonical_dated_openspec_name(self):
+        root = self._repo()
+        slug = "dated-change"
+        archived = self._archive_with(
+            slug,
+            "Depth: standard\n",
+            proposal=True,
+            spec=True,
+            report=(
+                "## Verify evidence\n- Verdict: PASS\n- Command: ./tests/run.sh\n"
+                "- Exit: 0\n- Date: 2026-08-16\n- Commit: 1234567\n"
+            ),
+            root=root,
+            archive_name="2026-08-16-" + slug,
+        )
+
+        result = self.mod.check_premerge(root, slug, tier="standard")
+
+        self.assertTrue(result.ok, result.blockers)
+        self.assertEqual(result.archive_path, archived)
+
+    def test_undated_archive_remains_legacy_compatible(self):
+        root = self._repo()
+        slug = "legacy-change"
+        archived = self._archive_with(
+            slug,
+            "Depth: light\n",
+            proposal=True,
+            root=root,
+        )
+
+        result = self.mod.check_premerge(root, slug, tier="light")
+
+        self.assertTrue(result.ok, result.blockers)
+        self.assertEqual(result.archive_path, archived)
+
+    def test_multiple_dated_archives_block_as_ambiguous(self):
+        root = self._repo()
+        slug = "ambiguous-change"
+        for archive_name in ("2026-08-15-" + slug, "2026-08-16-" + slug):
+            self._archive_with(slug, "Depth: light\n", proposal=True, root=root, archive_name=archive_name)
+
+        result = self.mod.check_premerge(root, slug, tier="light")
+
+        self.assertFalse(result.ok)
+        joined = " ".join(result.blockers).lower()
+        self.assertIn("ambiguous", joined)
+        self.assertIn("2026-08-15-" + slug, joined)
+        self.assertIn("2026-08-16-" + slug, joined)
+
+    def test_dated_and_undated_archives_block_as_ambiguous(self):
+        root = self._repo()
+        slug = "mixed-change"
+        self._archive_with(slug, "Depth: light\n", proposal=True, root=root)
+        self._archive_with(
+            slug,
+            "Depth: light\n",
+            proposal=True,
+            root=root,
+            archive_name="2026-08-16-" + slug,
+        )
+
+        result = self.mod.check_premerge(root, slug, tier="light")
+
+        self.assertFalse(result.ok)
+        self.assertTrue(any("ambiguous" in blocker.lower() for blocker in result.blockers))
+
+    def test_dated_archive_requires_valid_calendar_date(self):
+        root = self._repo()
+        slug = "invalid-date-change"
+        self._archive_with(
+            slug,
+            "Depth: light\n",
+            proposal=True,
+            root=root,
+            archive_name="2026-02-30-" + slug,
+        )
+
+        result = self.mod.check_premerge(root, slug, tier="light")
+
+        self.assertFalse(result.ok)
+        self.assertTrue(any("archive" in blocker.lower() for blocker in result.blockers))
+
+    def test_dated_near_match_is_rejected(self):
+        root = self._repo()
+        slug = "near-match-change"
+        candidate = self._archive_with(
+            slug,
+            "Depth: light\n",
+            proposal=True,
+            root=root,
+            archive_name="2026-08-16-" + slug + "-extra",
+        )
+
+        result = self.mod.check_premerge(root, slug, tier="light")
+
+        self.assertFalse(result.ok)
+        joined = " ".join(result.blockers).lower()
+        self.assertIn("near-match", joined)
+        self.assertIn(candidate.name, joined)
+
+    def test_blocks_when_dated_archive_is_symlink_to_external_dir(self):
+        """A dated archive symlink must not let external files satisfy gates."""
+        root = self._repo()
+        slug = "symlink-change"
+        # A well-formed archive living OUTSIDE the planning tree.
+        external = root / "outside-planning-tree"
+        external.mkdir()
+        (external / "tasks.md").write_text("Depth: light\n")
+        (external / "proposal.md").write_text("# proposal\n")
+
+        archive = root / "openspec" / "changes" / "archive"
+        link = archive / ("2026-08-16-" + slug)
+        os.symlink(external, link)
+
+        result = self.mod.check_premerge(root, slug, tier="light")
+
+        self.assertFalse(result.ok)
+        joined = " ".join(result.blockers).lower()
+        self.assertIn("symlink", joined)
+        self.assertIn(slug, joined)
+
+    def test_blocks_when_legacy_archive_is_symlink_to_external_dir(self):
+        """The undated legacy archive must also reject a symlinked directory."""
+        root = self._repo()
+        slug = "legacy-symlink-change"
+        external = root / "outside-planning-tree"
+        external.mkdir()
+        (external / "tasks.md").write_text("Depth: light\n")
+        (external / "proposal.md").write_text("# proposal\n")
+
+        archive = root / "openspec" / "changes" / "archive"
+        link = archive / slug
+        os.symlink(external, link)
+
+        result = self.mod.check_premerge(root, slug, tier="light")
+
+        self.assertFalse(result.ok)
+        joined = " ".join(result.blockers).lower()
+        self.assertIn("symlink", joined)
+
+    def test_unrelated_dated_symlink_does_not_poison_requested_slug(self):
+        """A dated symlink for a different slug must not block the requested slug.
+
+        The guardian evaluates only the requested slug: an unrelated date-shaped
+        symlink to external content must not poison resolution of a slug that has
+        a valid real dated archive of its own.
+        """
+        root = self._repo()
+        slug = "target-change"
+        other = "other-change"
+        archived = self._archive_with(
+            slug,
+            "Depth: light\n",
+            proposal=True,
+            root=root,
+            archive_name="2026-08-16-" + slug,
+        )
+
+        external = root / "outside-planning-tree"
+        external.mkdir()
+        (external / "tasks.md").write_text("Depth: light\n")
+        (external / "proposal.md").write_text("# proposal\n")
+
+        archive = root / "openspec" / "changes" / "archive"
+        os.symlink(external, archive / ("2026-08-16-" + other))
+
+        result = self.mod.check_premerge(root, slug, tier="light")
+
+        self.assertTrue(result.ok, result.blockers)
+        self.assertEqual(result.archive_path, archived)
 
     def test_light_minimum_requires_proposal_but_not_verify_evidence(self):
         root = self._repo()

@@ -18,6 +18,7 @@ Stage = Literal["pre-archive", "pre-merge"]
 # Keep this exact standalone-line contract: plan annotations must not suffix it.
 DEPTH_RE = re.compile(r"(?im)^\s*Depth:\s*(light|standard|full)\s*$")
 DATE_RE = re.compile(r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$")
+DATED_ARCHIVE_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})-(?P<suffix>.+)$")
 SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 FAILURE_VERDICTS = {"FAIL", "FAILED", "BLOCKED", "ERROR", "FAILURE"}
 
@@ -186,6 +187,98 @@ def _valid_date(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _resolve_archive(archive_root: Path, slug: str) -> tuple[Path | None, list[str]]:
+    """Resolve one exact dated archive, or the exact undated legacy fallback.
+
+    Symlinked roots and candidates are rejected outright: ``is_dir()`` follows
+    symlinks, so a dated archive symlink to content outside the planning tree
+    could otherwise have its external files satisfy artifact/verification gates.
+    """
+    missing = (
+        f"missing archive at openspec/changes/archive/{slug}/ or a valid dated "
+        f"archive named YYYY-MM-DD-{slug}/"
+    )
+    symlink_blockers: list[str] = []
+    if archive_root.is_symlink():
+        symlink_blockers.append(
+            f"archive root {archive_root} is a symlink and is rejected — "
+            "the archive tree must be a real directory inside the planning tree"
+        )
+    if not archive_root.is_dir():
+        return None, symlink_blockers or [missing]
+
+    dated: list[Path] = []
+    invalid_dates: list[Path] = []
+    near_matches: list[Path] = []
+    legacy = archive_root / slug
+
+    if legacy.is_symlink():
+        symlink_blockers.append(
+            f"archive candidate {legacy} is a symlink and is rejected — "
+            "an archive must be a real directory inside the planning tree"
+        )
+
+    for child in sorted(archive_root.iterdir(), key=lambda path: path.name):
+        if child.name == slug:
+            continue
+        if child.is_symlink():
+            match = DATED_ARCHIVE_RE.fullmatch(child.name)
+            if match:
+                suffix = match.group("suffix")
+                # Scope dated symlink blockers to the requested slug, mirroring the
+                # real-directory candidates: an unrelated dated symlink must not
+                # poison resolution for this slug.
+                if suffix == slug or suffix.startswith(f"{slug}-"):
+                    symlink_blockers.append(
+                        f"archive candidate {child} is a symlink and is rejected — "
+                        "an archive must be a real directory inside the planning tree"
+                    )
+            continue
+        if not child.is_dir():
+            continue
+        match = DATED_ARCHIVE_RE.fullmatch(child.name)
+        if not match:
+            continue
+        suffix = match.group("suffix")
+        if suffix == slug:
+            if _valid_date(match.group("date")):
+                dated.append(child)
+            else:
+                invalid_dates.append(child)
+        elif suffix.startswith(f"{slug}-"):
+            near_matches.append(child)
+
+    blockers: list[str] = []
+    for candidate in sorted(invalid_dates, key=lambda path: path.name):
+        blockers.append(
+            f"invalid dated archive candidate {candidate} — date prefix must be "
+            "a valid ISO calendar date"
+        )
+    for candidate in sorted(near_matches, key=lambda path: path.name):
+        blockers.append(
+            f"near-match archive candidate {candidate} does not exactly match "
+            f"YYYY-MM-DD-{slug}"
+        )
+
+    dated = sorted(dated, key=lambda path: path.name)
+    if len(dated) > 1 or (dated and legacy.is_dir()):
+        candidates = dated + ([legacy] if legacy.is_dir() else [])
+        blockers.append(
+            f"ambiguous archives for slug '{slug}': "
+            f"{', '.join(str(path) for path in candidates)}"
+        )
+
+    if symlink_blockers:
+        return None, symlink_blockers + blockers
+    if blockers:
+        return None, blockers
+    if len(dated) == 1:
+        return dated[0], []
+    if legacy.is_dir():
+        return legacy, []
+    return None, [missing]
 
 
 def _parse_success_criteria(folder: Path) -> tuple[tuple[int, str] | None, str | None]:
@@ -369,7 +462,7 @@ def check_premerge(
     root = Path(repo_root)
     changes = root / "openspec" / "changes"
     active = changes / slug
-    archive = changes / "archive" / slug
+    archive_root = changes / "archive"
     blockers: list[str] = []
 
     if active.is_dir():
@@ -377,14 +470,12 @@ def check_premerge(
             f"active change folder still present at openspec/changes/{slug}/ — "
             "run archive-tail on the review branch before merge"
         )
-    if not archive.is_dir():
-        blockers.append(
-            f"missing archive at openspec/changes/archive/{slug}/ — "
-            "archive planning artifacts on the review branch before merge"
-        )
+    archive, archive_blockers = _resolve_archive(archive_root, slug)
+    blockers.extend(archive_blockers)
+    if archive is None:
         return GuardianResult(ok=False, blockers=blockers, tier=str(tier) if tier else None)
 
-    result = _inspect_folder(archive, tier, f"archive/{slug}")
+    result = _inspect_folder(archive, tier, f"archive/{archive.name}")
     result.blockers = blockers + result.blockers
     result.ok = not result.blockers
     result.archive_path = archive
