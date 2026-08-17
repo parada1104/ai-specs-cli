@@ -22,7 +22,26 @@ ROOT = Path(__file__).resolve().parents[1]
 NARROW = ROOT / "lib" / "_internal" / "narrow-checkout.sh"
 
 EXCLUDED = ("openspec", "tests", ".github", "tmp")
-RUNTIME = ("lib", "bin", "catalog", "bundled-skills", "templates")
+
+
+def _production_keep_dirs() -> tuple[str, ...]:
+    """Read KEEP_DIRS out of the script itself.
+
+    Hardcoding a subset here let three of the eight production entries go
+    untested (JD S1). Deriving the list means the allowlist and its coverage
+    cannot drift apart.
+    """
+    text = NARROW.read_text()
+    block = text.split("KEEP_DIRS=(", 1)[1].split(")", 1)[0]
+    names = [
+        line.strip()
+        for line in block.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    return tuple(names)
+
+
+RUNTIME = _production_keep_dirs()
 
 
 def run(args, cwd=None, env=None, check=True):
@@ -180,6 +199,130 @@ class NarrowCheckoutTests(unittest.TestCase):
             (result.stdout + result.stderr).strip(),
             msg="degradation must say something",
         )
+
+    # --- judgment-day round 1 -----------------------------------------------
+
+    def test_allowlist_covers_every_production_keep_dir(self):
+        """JD S1: the coverage list must not be a subset of production."""
+        self.assertGreaterEqual(len(RUNTIME), 8, f"KEEP_DIRS parsed as {RUNTIME}")
+        for name in ("lib", "bin", "catalog", "bundled-skills", "bundled-commands",
+                     "templates", "scripts", "docs"):
+            self.assertIn(name, RUNTIME)
+
+    def test_a_stale_allowlist_is_reconciled(self):
+        """JD C2: an install narrowed by an older release must pick up new dirs.
+
+        Simulates a previous version whose allowlist knew only lib/ and bin/.
+        Re-running the current script must materialize the rest.
+        """
+        repo, _ = self.make_repo()
+        run(["git", "sparse-checkout", "set", "--cone", "lib", "bin"], cwd=repo)
+        self.assertFalse((repo / "docs").exists(), "fixture precondition")
+
+        result = self.narrow(repo)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        for name in RUNTIME:
+            self.assertTrue(
+                (repo / name / "file.txt").is_file(),
+                msg=f"{name}/ was not restored by reconciliation",
+            )
+        for name in EXCLUDED:
+            self.assertFalse((repo / name).exists())
+
+    def test_reconciliation_leaves_the_tree_clean(self):
+        repo, _ = self.make_repo()
+        run(["git", "sparse-checkout", "set", "--cone", "lib", "bin"], cwd=repo)
+        self.narrow(repo)
+        status = run(["git", "status", "--porcelain"], cwd=repo)
+        self.assertEqual(status.stdout.strip(), "")
+
+    def _git_failing_on(self, base: Path, failing_args: tuple[str, ...]) -> dict:
+        """PATH shim whose `git` fails when every token in `failing_args` appears."""
+        real_git = subprocess.run(
+            ["which", "git"], capture_output=True, text=True
+        ).stdout.strip()
+        shim_dir = base / "shim-fail"
+        shim_dir.mkdir(exist_ok=True)
+        shim = shim_dir / "git"
+        conditions = " && ".join(
+            f'[[ " $* " == *" {token} "* ]]' for token in failing_args
+        )
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            f"if {conditions}; then\n"
+            '  echo "fatal: simulated failure" >&2\n'
+            "  exit 1\n"
+            "fi\n"
+            f'exec {real_git} "$@"\n'
+        )
+        shim.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(shim_dir) + ":" + env.get("PATH", "")
+        return env
+
+    def test_a_failed_apply_never_leaves_the_tree_collapsed(self):
+        """JD C1: runtime dirs must survive a failure while applying the allowlist.
+
+        `sparse-checkout init --cone` prunes the tree to root-level files before
+        any allowlist is applied, so an init/set split loses lib/ and bin/ if
+        `set` fails. Whatever the implementation, the observable contract is
+        that a failure leaves a usable checkout.
+        """
+        repo, _ = self.make_repo()
+        env = self._git_failing_on(repo.parent, ("sparse-checkout", "set"))
+
+        result = self.narrow(repo, env=env)
+        self.assertEqual(result.returncode, 0, "narrowing must never fail the caller")
+        for name in RUNTIME:
+            self.assertTrue(
+                (repo / name / "file.txt").is_file(),
+                msg=f"{name}/ vanished after a failed apply — checkout collapsed",
+            )
+
+    def test_collapsed_tree_is_never_reported_as_success(self):
+        """JD C1, compound failure: apply fails AND recovery fails.
+
+        With an init/set split this is the destructive case — `init --cone`
+        already pruned lib/ and bin/, `set` fails, `disable` fails too, and the
+        script still prints "restoring the full checkout" and exits 0. The
+        caller then proceeds against a checkout with no CLI in it.
+
+        Either the runtime directories survive, or the script must refuse to
+        report success. Silently claiming recovery is the defect.
+        """
+        repo, _ = self.make_repo()
+        # `init` and the `-h` probe must still work, otherwise the destructive
+        # prune never happens and the test proves nothing. Only the apply and
+        # the recovery fail.
+        real_git = subprocess.run(
+            ["which", "git"], capture_output=True, text=True
+        ).stdout.strip()
+        shim_dir = repo.parent / "shim-compound"
+        shim_dir.mkdir(exist_ok=True)
+        shim = shim_dir / "git"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [[ " $* " == *" sparse-checkout "* ]] && '
+            '{ [[ " $* " == *" set "* ]] || [[ " $* " == *" disable "* ]]; }; then\n'
+            '  echo "fatal: simulated failure" >&2\n'
+            "  exit 1\n"
+            "fi\n"
+            f'exec {real_git} "$@"\n'
+        )
+        shim.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(shim_dir) + ":" + env.get("PATH", "")
+
+        result = self.narrow(repo, env=env)
+        combined = result.stdout + result.stderr
+        runtime_intact = all(
+            (repo / name / "file.txt").is_file() for name in RUNTIME
+        )
+        if not runtime_intact:
+            self.fail(
+                "runtime directories were destroyed while the script reported:\n"
+                f"{combined}"
+            )
 
     def test_capability_probe_has_no_side_effects(self):
         """The probe must never invoke git's man/web help path.

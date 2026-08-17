@@ -72,18 +72,37 @@ abort() {
 run_step() {
     local label="$1"; shift
     echo "  $label"
+
+    # A mktemp failure (unwritable or full TMPDIR) must name itself. Left
+    # unchecked it surfaces as whatever the wrapped command's abort message
+    # happens to be — e.g. "Failed to fetch from origin. Check your network
+    # connection." for a disk problem.
     local out_file err_file rc=0
-    out_file="$(mktemp)"
-    err_file="$(mktemp)"
+    if ! out_file="$(mktemp 2>/dev/null)" || ! err_file="$(mktemp 2>/dev/null)"; then
+        echo "  ! cannot create temporary files (check TMPDIR); running unbuffered" >&2
+        rm -f "${out_file:-}" 2>/dev/null || true
+        set +e
+        "$@"
+        rc=$?
+        set -e
+        return $rc
+    fi
+
     set +e
     "$@" >"$out_file" 2>"$err_file"
     rc=$?
-    set -e
+    # errexit stays OFF for the rest of the function on purpose. This function
+    # is always invoked from an `if !` / `||` context, so bash has suspended
+    # errexit for the call anyway; re-enabling it here meant a failing `cat`
+    # (SIGPIPE on an early-closed stdout, a full disk) would abort the whole
+    # script from inside the helper, leak both temp files, and return bash's
+    # status instead of the wrapped command's real rc.
     if [[ $rc -ne 0 || $VERBOSE -eq 1 ]]; then
         [[ -s "$out_file" ]] && cat "$out_file"
         [[ -s "$err_file" ]] && cat "$err_file" >&2
     fi
     rm -f "$out_file" "$err_file"
+    set -e
     return $rc
 }
 

@@ -261,6 +261,100 @@ class ChangelogParseTests(unittest.TestCase):
         section = self.mod.Section(version="1.0.0", date=None, body="prose only\n")
         self.assertEqual(self.mod.summary_bullets(section), [])
 
+    # --- judgment-day round 1 -----------------------------------------------
+
+    def test_en_dash_separator_is_accepted(self):
+        """JD S3: an en dash (U+2013) must not silently drop a whole section."""
+        text = "## [0.22.0] – 2026-08-17\n\n### Added\n- a thing.\n"
+        sections = self.mod.parse_sections(text)
+        self.assertEqual([s.version for s in sections], ["0.22.0"])
+        self.assertEqual(sections[0].date, "2026-08-17")
+
+    def test_all_dash_separators_are_accepted(self):
+        for dash in ("—", "–", "-"):
+            with self.subTest(dash=dash):
+                text = f"## [1.2.3] {dash} 2026-01-01\n\n### Added\n- x.\n"
+                sections = self.mod.parse_sections(text)
+                self.assertEqual([s.version for s in sections], ["1.2.3"])
+
+    def test_duplicate_version_headings_are_collapsed(self):
+        """JD S2: the real CHANGELOG has a duplicated 0.12.4 heading."""
+        text = (
+            "## [1.0.0] — 2026-01-02\n\n### Added\n- second copy.\n\n"
+            "## [1.0.0] — 2026-01-02\n\n### Added\n- first copy.\n"
+        )
+        sections = self.mod.parse_sections(text)
+        self.assertEqual([s.version for s in sections], ["1.0.0"])
+
+    def test_duplicate_version_is_rendered_once_in_a_range(self):
+        text = (
+            "## [1.1.0] — 2026-01-03\n\n### Added\n- newer.\n\n"
+            "## [1.0.0] — 2026-01-02\n\n### Added\n- dup a.\n\n"
+            "## [1.0.0] — 2026-01-02\n\n### Added\n- dup b.\n"
+        )
+        crossed = self.mod.crossed_versions(text, "0.9.0", "1.1.0")
+        self.assertEqual([s.version for s in crossed], ["1.1.0", "1.0.0"])
+
+    def test_real_changelog_has_no_duplicate_versions_after_parsing(self):
+        real = ROOT / "CHANGELOG.md"
+        versions = [s.version for s in self.mod.read_sections(real)]
+        self.assertEqual(len(versions), len(set(versions)), f"duplicates: {versions}")
+
+    def test_heading_inside_a_code_fence_is_not_a_section_boundary(self):
+        """JD S5: a '##' line inside a fence must not truncate the section."""
+        text = (
+            "## [1.0.0] — 2026-01-01\n\n"
+            "### Added\n"
+            "- documented a markdown sample.\n\n"
+            "```markdown\n"
+            "## [9.9.9] — not a real release\n"
+            "```\n\n"
+            "### Fixed\n"
+            "- a real fix.\n"
+        )
+        sections = self.mod.parse_sections(text)
+        self.assertEqual([s.version for s in sections], ["1.0.0"])
+        self.assertIn("a real fix", sections[0].body)
+
+    def test_notice_is_not_truncated_by_a_fenced_heading(self):
+        text = (
+            "## [1.0.0] — 2026-01-01\n\n"
+            "### Upgrade notes\n"
+            "Run this:\n\n"
+            "```sh\n"
+            "### not a heading\n"
+            "```\n\n"
+            "Then you are done.\n\n"
+            "### Fixed\n"
+            "- unrelated.\n"
+        )
+        section = self.mod.parse_sections(text)[0]
+        notice = self.mod.upgrade_notice(section)
+        self.assertIn("Then you are done.", notice)
+        self.assertNotIn("unrelated", notice)
+
+    def test_cli_notices_branch_uses_the_shared_helper(self):
+        """JD S7: main() must delegate, not re-derive the notice pairs."""
+        import inspect
+
+        source = inspect.getsource(self.mod.main)
+        self.assertTrue(
+            "_notices_for" in source or "crossed_notices" in source,
+            msg="main() should call the shared helper",
+        )
+        self.assertNotIn(
+            "upgrade_notice(", source, "main() re-derives notices instead of delegating"
+        )
+
+    def test_cli_and_helper_agree(self):
+        """The delegation must actually produce the same pairs."""
+        sections = self.mod.parse_sections(SAMPLE)
+        selected = self.mod.select_range(sections, "0.20.0", "0.22.0")
+        self.assertEqual(
+            self.mod._notices_for(selected),
+            self.mod.crossed_notices(SAMPLE, "0.20.0", "0.22.0"),
+        )
+
     # --- against the real changelog ----------------------------------------
 
     def test_parses_the_repository_changelog(self):

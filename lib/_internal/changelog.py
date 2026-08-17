@@ -25,12 +25,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # "## [0.22.0] — 2026-08-17", "## [0.22.0] - 2026-08-17", or "## [0.22.0]".
-# The separator may be an em dash or a hyphen; the date is optional.
+# The separator may be an em dash (U+2014), an en dash (U+2013), or a plain
+# hyphen; the date is optional. The en dash was originally missing, which made
+# such a heading fail the match and silently drop that version's whole section.
 _HEADING = re.compile(
     r"^##\s+\[(?P<version>\d+\.\d+\.\d+)\]"
-    r"(?:\s*[—-]\s*(?P<date>\S+))?\s*$"
+    r"(?:\s*[—–-]\s*(?P<date>\S+))?\s*$"
 )
 _ANY_H2 = re.compile(r"^##\s+")
+_FENCE = re.compile(r"^\s*(?:```|~~~)")
 _NOTICE_HEADING = re.compile(r"^###\s+Upgrade notes\s*$", re.IGNORECASE)
 _ANY_H3 = re.compile(r"^###\s+")
 _SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
@@ -73,26 +76,59 @@ def parse_sections(text: str) -> list[Section]:
         return []
 
     lines = text.splitlines()
+    # A '##' or '###' line inside a fenced code block is sample content, not a
+    # heading. Without this, a changelog documenting markdown would truncate
+    # its own section.
+    fenced = _fenced_lines(lines)
+
     starts: list[tuple[int, str, str | None]] = []
     for index, line in enumerate(lines):
+        if fenced[index]:
+            continue
         match = _HEADING.match(line)
         if match:
             starts.append((index, match.group("version"), match.group("date")))
 
     sections: list[Section] = []
-    for position, (index, version, date) in enumerate(starts):
+    for index, version, date in starts:
         # The body ends at the next H2 of any kind, not merely the next
         # released one, so an "[Unreleased]" heading cannot absorb a body.
         end = len(lines)
         for cursor in range(index + 1, len(lines)):
-            if _ANY_H2.match(lines[cursor]):
+            if not fenced[cursor] and _ANY_H2.match(lines[cursor]):
                 end = cursor
                 break
         body = "\n".join(lines[index + 1 : end]).strip("\n")
         sections.append(Section(version=version, date=date, body=body))
 
     sections.sort(key=lambda section: section.key, reverse=True)
-    return sections
+
+    # Collapse duplicate version headings, keeping the first (newest-first
+    # order means that is the topmost occurrence). The repository's own
+    # CHANGELOG carries a duplicated 0.12.4 entry, which would otherwise render
+    # that version twice in the upgrade summary.
+    deduped: list[Section] = []
+    seen: set[str] = set()
+    for section in sections:
+        if section.version in seen:
+            continue
+        seen.add(section.version)
+        deduped.append(section)
+    return deduped
+
+
+def _fenced_lines(lines: list[str]) -> list[bool]:
+    """Mark which lines sit inside a fenced code block."""
+    inside = False
+    flags: list[bool] = []
+    for line in lines:
+        if _FENCE.match(line):
+            # The fence delimiter itself is never a heading either way.
+            flags.append(True)
+            inside = not inside
+            continue
+        flags.append(inside)
+    return flags
 
 
 def read_sections(path: Path | str) -> list[Section]:
@@ -138,9 +174,11 @@ def upgrade_notice(section: Section) -> str | None:
     The notice ends at the next H3 so a following subsection cannot bleed in.
     """
     lines = section.body.splitlines()
+    fenced = _fenced_lines(lines)
+
     start = None
     for index, line in enumerate(lines):
-        if _NOTICE_HEADING.match(line):
+        if not fenced[index] and _NOTICE_HEADING.match(line):
             start = index + 1
             break
     if start is None:
@@ -148,7 +186,7 @@ def upgrade_notice(section: Section) -> str | None:
 
     end = len(lines)
     for cursor in range(start, len(lines)):
-        if _ANY_H3.match(lines[cursor]):
+        if not fenced[cursor] and _ANY_H3.match(lines[cursor]):
             end = cursor
             break
 
@@ -237,18 +275,23 @@ def remaining_count(section: Section, limit: int = 3) -> int:
     return max(0, len(_summary_bullets_all(section)) - limit)
 
 
+def _notices_for(sections: list[Section]) -> list[tuple[str, str]]:
+    """(version, notice) pairs, oldest first, for already-selected sections."""
+    pairs: list[tuple[str, str]] = []
+    for section in reversed(sections):
+        notice = upgrade_notice(section)
+        if notice:
+            pairs.append((section.version, notice))
+    return pairs
+
+
 def crossed_notices(text: str, current: str, new: str) -> list[tuple[str, str]]:
     """(version, notice) for each crossed version declaring one, oldest first.
 
     Oldest first is deliberate and differs from the summary order: notices are
     instructions, and instructions apply in release order.
     """
-    pairs: list[tuple[str, str]] = []
-    for section in reversed(crossed_versions(text, current, new)):
-        notice = upgrade_notice(section)
-        if notice:
-            pairs.append((section.version, notice))
-    return pairs
+    return _notices_for(crossed_versions(text, current, new))
 
 
 def _emit_summary(sections: list[Section], limit: int = 3) -> None:
@@ -296,12 +339,9 @@ def main(argv: list[str]) -> int:
         return 0
 
     if want_notices:
-        pairs: list[tuple[str, str]] = []
-        for section in reversed(selected):
-            notice = upgrade_notice(section)
-            if notice:
-                pairs.append((section.version, notice))
-        _emit_notices(pairs)
+        # Reuse the unit-tested helper rather than re-deriving the pairs here;
+        # the two implementations would otherwise be free to drift.
+        _emit_notices(_notices_for(selected))
     else:
         _emit_summary(selected)
     return 0

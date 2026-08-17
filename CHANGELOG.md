@@ -375,7 +375,6 @@ preserved customized gate, use `ai-specs sync --refresh-gates`.
 ### Removed
 - Acciones separadas "Configure recipes" y "Remove recipe" del menu principal del hub — ahora integradas en submenu Recipes.
 
-## [0.12.4] — 2026-07-12
 ### Changed
 
 - **TUI upgraded to Questionary interactive prompts** — agent and recipe

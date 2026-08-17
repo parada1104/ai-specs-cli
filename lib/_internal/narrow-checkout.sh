@@ -57,8 +57,17 @@ if ! git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1; then
     exit 0
 fi
 
-# Already narrowed? Cone mode leaves core.sparseCheckout set.
-if [[ "$(git -C "$TARGET" config --get core.sparseCheckout 2>/dev/null)" == "true" ]]; then
+# Reconcile against the CURRENT allowlist rather than short-circuiting on
+# "is it sparse at all".
+#
+# Checking only `core.sparseCheckout == true` meant an install narrowed by an
+# older release kept that release's allowlist forever: a top-level runtime
+# directory added in a later version would never be materialized, silently, on
+# every machine that had already upgraded once (JD C2).
+DESIRED="$(printf '%s\n' "${KEEP_DIRS[@]}" | LC_ALL=C sort)"
+CURRENT="$(git -C "$TARGET" sparse-checkout list 2>/dev/null | LC_ALL=C sort || true)"
+
+if [[ -n "$CURRENT" && "$CURRENT" == "$DESIRED" ]]; then
     echo "  checkout already narrowed ($EXCLUDED_LABEL excluded)"
     exit 0
 fi
@@ -92,14 +101,40 @@ if [[ -n "$DIRTY" ]]; then
     exit 0
 fi
 
-if ! git -C "$TARGET" sparse-checkout init --cone >/dev/null 2>&1; then
-    warn "could not enable sparse checkout; keeping the full checkout"
+# Apply the allowlist in ONE call.
+#
+# The previous `init --cone` + `set` split had a destructive window: `init`
+# immediately prunes the working tree to root-level files (measured: 20
+# top-level entries down to 8, with lib/ and bin/ gone), and only the later
+# `set` puts the kept directories back. A failure between them left the install
+# without its own CLI (JD C1). `set --cone` initializes and applies together,
+# so a failure leaves the tree untouched instead of half-pruned.
+if ! git -C "$TARGET" sparse-checkout set --cone "${KEEP_DIRS[@]}" >/dev/null 2>&1; then
+    warn "could not apply the sparse checkout; keeping the full checkout"
     exit 0
 fi
 
-if ! git -C "$TARGET" sparse-checkout set "${KEEP_DIRS[@]}" >/dev/null 2>&1; then
-    warn "could not apply the sparse checkout; restoring the full checkout"
-    git -C "$TARGET" sparse-checkout disable >/dev/null 2>&1 || true
+# Defense in depth: a partial failure inside `set` could still leave the tree
+# short of a directory the CLI needs. Verify before claiming success, and never
+# report a recovery that did not happen.
+MISSING=""
+for dir in "${KEEP_DIRS[@]}"; do
+    # Only require directories that actually exist at HEAD.
+    if git -C "$TARGET" cat-file -e "HEAD:$dir" 2>/dev/null; then
+        [[ -d "$TARGET/$dir" ]] || MISSING="$MISSING $dir"
+    fi
+done
+
+if [[ -n "$MISSING" ]]; then
+    warn "sparse checkout left these directories missing:$MISSING"
+    if git -C "$TARGET" sparse-checkout disable >/dev/null 2>&1; then
+        warn "restored the full checkout"
+    else
+        # Do not claim a recovery that failed. The install is unusable and the
+        # user needs the exact command, not a reassuring message.
+        warn "COULD NOT RESTORE the checkout — the installation is incomplete."
+        warn "run: git -C $TARGET sparse-checkout disable"
+    fi
     exit 0
 fi
 
