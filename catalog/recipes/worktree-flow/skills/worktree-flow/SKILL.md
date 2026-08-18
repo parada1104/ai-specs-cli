@@ -151,8 +151,10 @@ cd <main-repo-root>
 
 ### Script-first (preferred)
 
-Prefer the materialized cleanup script (or `/worktree-clean`) over ad-hoc
-remove sequences:
+Prefer the materialized verified-Go cleanup launcher (or `/worktree-clean`) over
+ad-hoc remove sequences. Run it from the main repository worktree; it owns
+post-merge remote deletion and independently verifies remote absence:
+
 
 ```bash
 bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
@@ -162,7 +164,7 @@ bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
 Optional `--submodule` / `--subrepo` scopes to one module; default = all
 initialized. Run with `--dry-run` first to preview removals.
 
-The script is conservative by design:
+The launcher is conservative by design:
 
 - **Removes** a worktree only when its branch is fully merged into the base —
   detecting both regular/fast-forward merges (ancestry) and squash/rebase merges
@@ -170,6 +172,11 @@ The script is conservative by design:
 - **Preserves** worktrees with uncommitted changes (reported as `dirty`).
 - **Preserves** worktrees whose branch is not yet merged (`unmerged`).
 - **Never touches** the main worktree or detached-HEAD worktrees.
+- Refuses loudly before every worktree, local-branch, or remote-branch delete
+  when the branch is protected (`main`, `master`, `development`, `staging`,
+  or configured base/integration names).
+- Deletes the remote branch only after local cleanup and verifies absence with
+  `git ls-remote --heads`; failure is not reported as success.
 - Under submodules, enumerates per-module lists; uninitialized modules are
   skipped.
 

@@ -9,9 +9,10 @@ post-merge cleanup.
   stay outside one (pure exploration), naming conventions, and cleanup rules.
 - **Commands `/worktree-new`, `/worktree-clean`** — agent-facing flows to create
   a worktree for a change and to reclaim merged worktrees.
-- **Script `bin/worktree-cleanup.sh`** — conservative cleanup: removes only
-  merged + clean worktrees, preserves dirty and unmerged ones, never touches the
-  main worktree.
+- **Script `bin/worktree-cleanup.sh`** — verified Go cleanup launcher: removes
+  only merged + clean worktrees, preserves dirty and unmerged ones, never touches
+  protected heads, deletes merged remote branches from the main worktree, and
+  verifies remote absence with `git ls-remote --heads`.
 
 ## Enable
 
@@ -29,8 +30,11 @@ gate_scope = "auto"
 gate_impl = "auto"
 ```
 
-Then run `ai-specs sync`. The cleanup script materializes to
-`ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh`.
+Then run `ai-specs sync`. The cleanup launcher materializes to
+`ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` and uses the
+same version-keyed, digest-verified Go binary as the worktree gate. Cleanup
+fails closed when no verified binary is available; it never silently falls back
+to an unverified or legacy destructive implementation.
 
 ## Worktree-gate modes
 
@@ -204,6 +208,29 @@ or remove the gate and resync: `rm <gate-path> && ai-specs sync`.
 
 After a user-modified warning, re-apply any local customizations to the refreshed
 gate as needed.
+
+## Post-merge remote cleanup
+
+GitHub's `delete_branch_on_merge` setting is intentionally false because it is
+repo-wide and cannot exempt the long-lived `development` branch. GitHub exposes
+no per-PR override. Likewise, `gh pr merge --delete-branch` cannot delete the
+local head in this multi-worktree layout when the base branch is already checked
+out in the main worktree. Run cleanup as a separate step from the main worktree:
+
+```bash
+cd <main-repository-root>
+bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \\
+  --dir <worktrees_dir> --base <integration_branch>
+```
+
+The Go cleanup command repeats the protected-name check immediately before
+worktree removal, local branch deletion, and remote branch deletion. It deletes
+a remote only after merge proof and worktree release, then verifies the remote
+ref is absent with `git ls-remote --heads <remote> <branch>`. A surviving ref or
+verification failure is reported as a non-success; cleanup never claims remote
+removal without this proof.
+
+The catalog source remains the authoritative launcher template.
 
 ## Cleanup contract
 
