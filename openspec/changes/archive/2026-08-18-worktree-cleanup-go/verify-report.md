@@ -6,7 +6,7 @@
 - Command: `./tests/validate.sh`
 - Exit: 0
 - Date: 2026-08-18
-- Commit: 0511c51
+- Commit: 58b42df
 - ready_for_archive: true
 
 ## Focused evidence
@@ -99,3 +99,17 @@ entire batch because the repository's requested worker boundary prohibits
 commits/rollback history manipulation; the RED failures are recorded by the
 initial focused runs and are reproducible by removing the corresponding Go
 implementation/wrapper.
+
+
+## Post-review verification
+
+`development` moved while this change was open (PR #226 landed), so the branch
+was integrated and the suite re-run against the state that actually lands, not
+the state it was written against:
+
+**`./tests/validate.sh` — exit 0, 1868 tests, 0 failures** on `58b42df`.
+
+The merge-proof parity correction (see `judgment-ledger.md`, S4) is included:
+the tree-equivalence gate the Go port had added inside patch-equivalence is
+removed, restoring exact parity with the Bash reference. `SHA256SUMS` was
+regenerated a third time, because the gate binary changed again.
