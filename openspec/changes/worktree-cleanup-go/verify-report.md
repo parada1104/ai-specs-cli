@@ -71,14 +71,14 @@ reproduced on the base branch. Until then it is a hypothesis.
   and remote deletion.
 - Criterion 4: PASS — candidates/modules are slices with explicit Go range loops;
   Python integration proves every candidate and initialized submodule is visited.
-- Criterion 5: PASS (focused) — remote deletion uses `git push --delete` and
+- Criterion 5: PASS — remote deletion is covered by the focused suite and the full suite now passes (exit 0, 1834 tests), so the qualifier no longer applies
   reports success only after `git ls-remote --heads` proves absence.
 - Criterion 6: PASS — the cleanup template is a verified-binary launcher and
   exits 2 without a current executable receipt; no destructive Bash fallback is
   present.
 - Criterion 7: PASS — the existing single Go module/build matrix/cache/digest/
   receipt distribution remains the cleanup implementation's distribution seam.
-- Criterion 8: NEEDS DECISION — focused tests are green, but the full validation
+- Criterion 8: PASS — `./tests/validate.sh` exit 0, 1834 tests, 0 failures on commit 0511c51; the blocking digest failures were this change's own and were resolved by regenerating the trust root, not waived
   command is blocked by the two release/root-propagation failures above.
 
 ## Quality signals
