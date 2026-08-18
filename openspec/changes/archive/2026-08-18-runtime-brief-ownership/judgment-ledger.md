@@ -101,10 +101,17 @@ forbids. Now delegates to `brief_effective_state`.
 rather than the true no-baseline `untracked` path. They pass because the remedy
 text is state-agnostic.
 
-**Recorded, deliberately not fixed this round.** The true first-sight path is
-covered directly by the new ownership suite, and rewriting those two end-to-end
-fixtures is a larger change than a correction round should carry. Flagged here
-so the next person does not mistake their names for coverage.
+**Fixed after review.** Both tests are renamed to name the state they actually
+drive (`user_modified`), each carrying the reason inline so nobody reads the old
+names as coverage again.
+
+The review also exposed a real gap behind the mislabel: the genuine no-baseline
+`untracked` path — the repository-predates-ai-specs case this whole change
+exists for — had **no end-to-end coverage at all**, because every sibling test
+ran `init` first and therefore recorded a baseline.
+`test_sync_preserves_a_truly_untracked_agents_md` now strips the baseline from
+the lock and drives that path. It self-verifies: it asserts the reported state
+names `untracked`, which cannot appear for any other state.
 
 ## Verification after correction
 
@@ -117,7 +124,9 @@ so the next person does not mistake their names for coverage.
 
 ## Disposition
 
-Round one complete. One finding (S5) is recorded with its reason; nothing else
-remains open.
+Round one complete. All findings addressed, including S5 after review.
+
+Post-round verification: `./tests/validate.sh` — **exit 0, 1865 tests, 0
+failures**.
 
 `JUDGMENT: APPROVED ✅`

@@ -54,7 +54,12 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
         self.assertEqual(agents_md.read_text(), manual)
         self.assertIn("skipped AGENTS.md (brief.render = false)", result.stdout)
 
-    def test_sync_default_render_true_preserves_divergent_untracked_brief(self):
+    def test_sync_default_render_true_preserves_divergent_brief(self):
+        """`init` records a baseline first, so this exercises `user_modified`,
+        not `untracked` as the name previously claimed. The assertions passed
+        either way because the remedy text is state-agnostic. The true
+        no-baseline path is covered in test_runtime_brief_baseline.py.
+        """
         target = self._make_target()
         self._init(target)
         agents_md = target / "AGENTS.md"
