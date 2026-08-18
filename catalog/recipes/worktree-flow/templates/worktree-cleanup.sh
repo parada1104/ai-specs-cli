@@ -73,7 +73,10 @@ resolve_cleanup_binary() {
     verified_candidate "$cache"
 }
 
-bin="$(resolve_cleanup_binary 2>/dev/null || true)"
+# Keep the resolver's stderr: it distinguishes "your WORKTREE_CLEANUP_BIN
+# override was rejected as unverified" from "no binary was ever acquired".
+# Discarding it left only a generic message for two different problems.
+bin="$(resolve_cleanup_binary || true)"
 if [ -z "$bin" ]; then
     echo "worktree-cleanup: no verified Go implementation available; no destructive action taken" >&2
     echo "worktree-cleanup: run ai-specs sync (or provide WORKTREE_CLEANUP_BIN with a verified receipt)" >&2

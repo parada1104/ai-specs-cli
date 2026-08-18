@@ -575,10 +575,11 @@ class WorktreeCleanupTests(unittest.TestCase):
         return git(repo, "rev-parse", branch).strip()
 
     def test_bash_loop_avoids_sigpipe_false_positive(self):
-        """`candidate_has_patch_equivalence` (the real, shipped function)
-        must correctly report "not patch-equivalent" via its bash while-read
-        loop, even when `git cherry` output exceeds the OS pipe buffer
-        (~16KB macOS, ~64KB Linux).
+        """The shipped implementation must still report "not patch-equivalent"
+        when `git cherry` output exceeds the OS pipe buffer (~16KB macOS,
+        ~64KB Linux). The logic now lives in the Go binary rather than a bash
+        while-read loop, so this drives the binary directly; the SIGPIPE
+        false-positive it guards against is the same one either way.
 
         This locks down against a regression to a `printf | grep -q`
         pipeline: under `set -o pipefail`, `grep -q` exits on the first

@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // cleanupConfig is intentionally independent from the pre-tool-use gate config.
@@ -226,7 +227,35 @@ func directPatchID(repoRoot, from, to string) string {
 	return pid
 }
 
+// treeEquivCache memoizes combined-tree-equivalence per (repo, sha, candidate).
+//
+// isMergedCleanup can reach this twice for one candidate: once inside
+// candidateHasPatchEquivalenceCleanup, and again as the third term of its OR
+// chain. Both calls are load-bearing — the third term can be true when patch
+// equivalence is false — so the chain is deliberately left alone rather than
+// restructured. The merge proof is the part of this file that must not shift;
+// caching removes the duplicate git subprocesses without touching it.
+var treeEquivCache = struct {
+	sync.Mutex
+	values map[string]bool
+}{values: map[string]bool{}}
+
 func candidateHasCombinedTreeEquivalenceCleanup(repoRoot, sha, candidate string) bool {
+	key := repoRoot + "\x00" + sha + "\x00" + candidate
+	treeEquivCache.Lock()
+	if v, ok := treeEquivCache.values[key]; ok {
+		treeEquivCache.Unlock()
+		return v
+	}
+	treeEquivCache.Unlock()
+	result := computeCombinedTreeEquivalenceCleanup(repoRoot, sha, candidate)
+	treeEquivCache.Lock()
+	treeEquivCache.values[key] = result
+	treeEquivCache.Unlock()
+	return result
+}
+
+func computeCombinedTreeEquivalenceCleanup(repoRoot, sha, candidate string) bool {
 	common := git(repoRoot, "merge-base", candidate, sha)
 	if common == "" {
 		return false
@@ -380,6 +409,13 @@ func removeRemoteBranchCleanup(repoRoot string, record worktreeRecord, remote st
 	if err := assertDeletable("remote branch deletion", record.branch, cfg.protected); err != nil {
 		return err
 	}
+	// A remote branch that is already gone is the goal state, not a failure.
+	// Someone deleting it through the host's UI is ordinary, and treating that
+	// as an error used to abort the entire cleanup pass.
+	if exists, err := remoteRefExists(repoRoot, remote, record.branch); err == nil && !exists {
+		formatCleanupStatus(out, "remote %s/%s already absent", remote, record.branch)
+		return nil
+	}
 	if err := runGit(repoRoot, "push", remote, "--delete", record.branch); err != nil {
 		return fmt.Errorf("worktree-cleanup: remote deletion %s/%s failed: %w", remote, record.branch, err)
 	}
@@ -400,6 +436,7 @@ func removeRemoteBranchCleanup(repoRoot string, record worktreeRecord, remote st
 func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer) error {
 	prefix := filepath.Clean(cleanupPath(superRoot, cfg.worktreesDir)) + string(filepath.Separator)
 	records := worktreeRecords(repoRoot)
+	var failures []error
 	for _, record := range records {
 		recordPath := filepath.Clean(record.path)
 		if !strings.HasPrefix(recordPath+string(filepath.Separator), prefix) {
@@ -423,19 +460,37 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 			continue
 		}
 		remote := remoteForBranch(repoRoot, record.branch)
+		// One candidate's failure must never abandon the rest of the pass.
+		// spec.md: "it MUST not stop after the first candidate". Returning here
+		// left every remaining eligible worktree unattempted and unreported —
+		// no output line, no status, nothing to tell the caller they were
+		// skipped. Record the failure, say so, and move on.
 		if err := removeWorktreeCleanup(repoRoot, record, name, cfg, records, out); err != nil {
-			return err
+			formatCleanupStatus(out, "failed %s (%v)", name, err)
+			failures = append(failures, err)
+			continue
 		}
 		if cfg.dryRun {
 			continue
 		}
 		if err := removeLocalBranchCleanup(repoRoot, record, cfg, out); err != nil {
-			return err
+			formatCleanupStatus(out, "failed %s (%v)", name, err)
+			failures = append(failures, err)
+			continue
 		}
 		if err := removeRemoteBranchCleanup(repoRoot, record, remote, cfg, out); err != nil {
-			return err
+			formatCleanupStatus(out, "failed %s (%v)", name, err)
+			failures = append(failures, err)
+			continue
 		}
 		formatCleanupStatus(out, "removed %s", name)
+	}
+	if len(failures) > 0 {
+		msgs := make([]string, 0, len(failures))
+		for _, err := range failures {
+			msgs = append(msgs, err.Error())
+		}
+		return fmt.Errorf("%s", strings.Join(msgs, "; "))
 	}
 	return nil
 }

@@ -9,17 +9,52 @@ import (
 	"testing"
 )
 
+// TestCleanupModeIsRegistered proves the --cleanup flag reaches its dispatch.
+//
+// It must not depend on where the test process happens to run. An earlier
+// version asserted exit 2, which only held because the dev checkout is a linked
+// worktree: requirePrimaryCleanupCheckout refuses only when absolute-git-dir
+// differs from git-common-dir, and in a plain clone they are equal. Release CI
+// uses actions/checkout@v4 (a plain clone), so that assertion failed there on
+// every tag push and broke the release build before any binary was produced.
+//
+// Registration is what this test is for, so it asserts only registration.
+// The main-worktree boundary has its own hermetic test
+// (TestCleanupRequiresPrimaryMainWorktree).
 func TestCleanupModeIsRegistered(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--cleanup", "--dry-run", "--base", "main", "--dir", t.TempDir()}, strings.NewReader(""), &stdout, &stderr)
 	if strings.Contains(stderr.String(), "unknown flag") {
 		t.Fatalf("cleanup mode was rejected by the gate flag parser: %s", stderr.String())
 	}
-	// This test executes from the assigned linked worktree. Cleanup is required
-	// to reject linked-worktree invocation, proving registration without
-	// weakening the main-worktree boundary.
-	if code != 2 {
-		t.Fatalf("cleanup from linked worktree exit = %d, want 2; stderr: %s", code, stderr.String())
+	// Either outcome proves the flag was recognized and dispatched: 0 when the
+	// checkout is primary and no candidate matches, 2 when it is a linked
+	// worktree and the boundary refuses. Anything else means it never reached
+	// the cleanup path.
+	if code != 0 && code != 2 {
+		t.Fatalf("cleanup dispatch exit = %d, want 0 or 2; stderr: %s", code, stderr.String())
+	}
+}
+
+// TestCleanupFailsClosedOnFlagError: the gate fails OPEN on a flag-parse error
+// because it is non-destructive and must never wedge editing. Cleanup is
+// destructive and must NOT inherit that. A version-skewed binary that does not
+// recognize a cleanup flag has to say so, not report success while doing
+// nothing — those two outcomes are indistinguishable to the caller.
+func TestCleanupFailsClosedOnFlagError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--cleanup", "--not-a-real-cleanup-flag"}, strings.NewReader(""), &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("destructive cleanup failed open on a flag error (exit 0); stderr: %s", stderr.String())
+	}
+}
+
+// A flag error without --cleanup must still fail open: that is the gate's
+// deliberate contract and this change must not tighten it.
+func TestGateStillFailsOpenOnFlagError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--not-a-real-gate-flag"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("gate flag error should fail open, got exit %d", code)
 	}
 }
 
@@ -132,6 +167,45 @@ func TestCleanupPreservesNewlinePathInTreeProof(t *testing.T) {
 	}
 }
 
+// TestCleanupContinuesAfterOneCandidateFails covers spec.md:198 — "it MUST not
+// stop after the first candidate".
+//
+// Both worktrees are merged and eligible. The first one's remote branch is
+// already gone (the ordinary case where someone deleted it through the GitHub
+// UI), which used to surface as a hard error and abandon the entire pass, so
+// the second worktree was never even attempted — no output line, no status.
+func TestCleanupContinuesAfterOneCandidateFails(t *testing.T) {
+	root := makeCleanupRepo(t)
+	remote := t.TempDir()
+	cleanupGitTest(t, remote, "init", "-q", "--bare")
+	cleanupGitTest(t, root, "remote", "add", "origin", remote)
+
+	for _, branch := range []string{"feat-alpha", "feat-beta"} {
+		wt := addCleanupWorktree(t, root, branch)
+		if err := os.WriteFile(filepath.Join(wt, branch+".txt"), []byte(branch+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cleanupGitTest(t, wt, "add", ".")
+		cleanupGitTest(t, wt, "commit", "-qm", branch)
+		cleanupGitTest(t, wt, "push", "-q", "origin", branch)
+		cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge "+branch, branch)
+	}
+	// The first candidate's remote ref disappears out from under cleanup.
+	cleanupGitTest(t, root, "push", "-q", "origin", "--delete", "feat-alpha")
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", false, nil)
+	code := runCleanup(root, cfg, &stdout, &stderr)
+	got := stdout.String() + stderr.String()
+
+	if !strings.Contains(got, "feat-beta") {
+		t.Fatalf("second candidate was never reported — the pass aborted on the first.\ncode=%d\n%s", code, got)
+	}
+	if strings.Contains(got, "feat-alpha") && !strings.Contains(got, "feat-beta") {
+		t.Fatalf("only the failing candidate was reported: %s", got)
+	}
+}
+
 func TestCleanupDryRunVisitsEveryCandidate(t *testing.T) {
 	root := makeCleanupRepo(t)
 	for _, branch := range []string{"feat-one", "feat-two"} {
@@ -214,10 +288,10 @@ func TestRemoteBranchDeletionIsVerified(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt, "remote.txt"), []byte("remote\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	gitTest(t, wt, "add", ".")
-	gitTest(t, wt, "commit", "-qm", "remote")
-	gitTest(t, wt, "push", "-q", "-u", "origin", "feat-remote")
-	gitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge remote", "feat-remote")
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "remote")
+	cleanupGitTest(t, wt, "push", "-q", "-u", "origin", "feat-remote")
+	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge remote", "feat-remote")
 	var stdout, stderr bytes.Buffer
 	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", false, nil)
 	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {

@@ -64,9 +64,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if err := fs.Parse(args); err != nil {
-		// A usage error MUST NOT abort: warn on stderr and fail open (exit 0).
-		// A gate that refuses to run because of a launcher-flag mismatch after
-		// a partial upgrade would wedge every edit.
+		// The gate is non-destructive, so a usage error MUST NOT abort: warn on
+		// stderr and fail open (exit 0). A gate that refuses to run because of a
+		// launcher-flag mismatch after a partial upgrade would wedge every edit.
+		//
+		// Cleanup is destructive and must NOT inherit that. A version-skewed
+		// binary that does not recognize a cleanup flag has to say so: exiting 0
+		// would report success while deleting nothing, which the caller cannot
+		// tell apart from a legitimate no-op run.
+		//
+		// `fs.Parse` stops at the offending flag, so *cleanup is unreliable
+		// here; scan the raw arguments instead.
+		for _, arg := range args {
+			if arg == "--cleanup" || arg == "-cleanup" {
+				fmt.Fprintf(stderr, "worktree-cleanup: %v (refusing destructive run)\n", err)
+				return 2
+			}
+		}
 		fmt.Fprintf(stderr, "worktree-gate: warning: %v (failing open)\n", err)
 		return 0
 	}
