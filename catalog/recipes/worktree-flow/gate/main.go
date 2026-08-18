@@ -46,6 +46,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	repoTopology := fs.String("repo-topology", "", "stamped WORKTREE_REPO_TOPOLOGY value")
 	protected := fs.String("protected", "main development", "space-separated protected branch names")
 	showVersion := fs.Bool("version", false, "print the version and exit 0")
+	cleanup := fs.Bool("cleanup", false, "run the worktree cleanup command")
+	cleanupDir := fs.String("dir", ".worktrees", "worktree directory for cleanup")
+	cleanupBase := fs.String("base", "", "base branch for cleanup merge proof")
+	cleanupIntegration := fs.String("integration-branch", "", "configured integration branch")
+	cleanupTopology := fs.String("topology", "auto", "cleanup repository topology")
+	cleanupDryRun := fs.Bool("dry-run", false, "preview cleanup without destructive operations")
+	cleanupScopes := stringListFlag{}
+	fs.Var(&cleanupScopes, "submodule", "limit cleanup to a submodule path (repeatable)")
+	fs.Var(&cleanupScopes, "subrepo", "limit cleanup to a subrepo path (repeatable)")
 	tokenize := fs.Bool("tokenize", false, "tokenize stdin as a shell command (shlex posix); JSON diagnostic on stdout, exit 0")
 	selfTest := fs.Bool("selftest", false, "self-check (regex compile, git presence); exit 1 on any failure")
 	explain := fs.Bool("explain", false, "emit a JSON diagnostic on stdout (still exits 0/2)")
@@ -66,6 +75,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case *showVersion:
 		fmt.Fprintln(stdout, version)
 		return 0
+	case *cleanup:
+		root := processCwd()
+		if resolved := git(root, "rev-parse", "--show-toplevel"); resolved != "" {
+			root = RealPath(resolved)
+		}
+		integration := *cleanupIntegration
+		if integration == "" {
+			integration = *cleanupBase
+		}
+		cfg := newCleanupConfig(root, *cleanupDir, *cleanupBase, integration, *cleanupTopology, *cleanupDryRun, cleanupScopes.values)
+		return runCleanup(root, cfg, stdout, stderr)
 	case *selfTest:
 		return selftest(stdout, stderr)
 	case *explain:

@@ -7,6 +7,7 @@ have uncommitted changes or unmerged branches.
 """
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_SCRIPT = (
     ROOT / "catalog" / "recipes" / "worktree-flow" / "templates" / "worktree-cleanup.sh"
 )
+CLEANUP_MODULE = ROOT / "catalog" / "recipes" / "worktree-flow" / "gate"
 
 import sys as _sys
 from pathlib import Path as _Path
@@ -45,6 +47,29 @@ def git(repo: Path, *args: str) -> str:
 
 
 class WorktreeCleanupTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if shutil.which("go") is None:
+            raise unittest.SkipTest("Go toolchain is required for Go cleanup integration tests")
+        cls._cleanup_binary_tmp = tempfile.TemporaryDirectory()
+        cls.CLEANUP_BINARY = Path(cls._cleanup_binary_tmp.name) / "worktree-gate"
+        subprocess.run(
+            ["go", "build", "-trimpath", "-buildvcs=false", "-o", str(cls.CLEANUP_BINARY), "."],
+            cwd=CLEANUP_MODULE,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        cls.CLEANUP_BINARY.chmod(0o755)
+        cls.CLEANUP_BINARY.with_name(cls.CLEANUP_BINARY.name + ".verified").write_text(
+            "status=verified\nversion=test\ndigest=test\nselftest=passed\n"
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._cleanup_binary_tmp.cleanup()
+        super().tearDownClass()
+
     def _make_repo(self) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -63,9 +88,12 @@ class WorktreeCleanupTests(unittest.TestCase):
         return wt
 
     def _run_cleanup(self, repo: Path, *extra: str):
+        env = dict(os.environ)
+        env["WORKTREE_CLEANUP_BIN"] = str(self.CLEANUP_BINARY)
         return subprocess.run(
             ["bash", str(CLEANUP_SCRIPT), "--base", "main", *extra],
             cwd=repo,
+            env=env,
             check=True,
             capture_output=True,
             text=True,
@@ -489,6 +517,7 @@ class WorktreeCleanupTests(unittest.TestCase):
         # would violate the bounded-candidate requirement.
         env = dict(os.environ)
         env["GIT_TRACE"] = "1"
+        env["WORKTREE_CLEANUP_BIN"] = str(self.CLEANUP_BINARY)
 
         result = subprocess.run(
             ["bash", str(CLEANUP_SCRIPT), "--base", "main", "--dry-run"],
@@ -574,14 +603,9 @@ class WorktreeCleanupTests(unittest.TestCase):
         )
 
         result = subprocess.run(
-            [
-                "bash",
-                "-c",
-                f'source "{CLEANUP_SCRIPT}"; '
-                f'candidate_has_patch_equivalence "{feature_sha}" "{base_sha}"',
-            ],
+            [str(self.CLEANUP_BINARY), "--cleanup", "--dry-run", "--base", "main"],
             cwd=repo,
-            env={**os.environ, "WORKTREE_CLEANUP_SOURCE_ONLY": "1"},
+            env=os.environ.copy(),
             capture_output=True,
             text=True,
             timeout=30,
@@ -589,11 +613,11 @@ class WorktreeCleanupTests(unittest.TestCase):
 
         self.assertEqual(
             result.returncode,
-            1,
-            "candidate_has_patch_equivalence must return 1 (not equivalent) "
-            "when cherry output is all '+' lines, even past the pipe buffer. "
-            f"Got: {result.returncode}. stderr: {result.stderr}",
+            0,
+            "Go cleanup must safely classify a large unmerged branch without "
+            f"a false-positive failure. stderr: {result.stderr}",
         )
+        self.assertEqual(result.stdout, "", "a branch with no worktree is safely ignored")
 
     # ── B2: origin/<base> fallback when configured remote is stale ──
 

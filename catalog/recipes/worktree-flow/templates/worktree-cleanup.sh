@@ -1,402 +1,83 @@
 #!/usr/bin/env bash
-# worktree-cleanup.sh — remove merged git worktrees under a configured directory.
+# worktree-cleanup.sh — verified Go launcher for post-merge worktree cleanup.
 #
-# Removes each worktree located under <dir> whose branch is fully merged into
-# the integration branch. Preserves worktrees that have uncommitted changes
-# (dirty) or whose branch is not yet merged (unmerged). The main worktree and
-# detached-HEAD worktrees are never touched.
+# Cleanup MUST run from the main repository worktree. The Go implementation owns
+# the existing merge proof, protected-branch checks, local removal, remote
+# deletion, and `git ls-remote --heads` verification. There is deliberately no
+# destructive Bash fallback: an unavailable or unverified binary fails closed.
 #
-# Under monorepo-submodules, enumerates each initialized submodule (never the
-# superproject worktree list alone) and scans shared <worktrees_dir>/<module>-*
-# linked worktrees. standalone / monorepo-apps keep a single-repo pass.
-#
-# Usage:
-#   worktree-cleanup.sh [--dir <worktrees_dir>] [--base <integration_branch>]
-#                       [--dry-run] [--topology <value>]
-#                       [--submodule <path>|--subrepo <path>]...
-#
-# Defaults:
-#   --dir   .worktrees
-#   --base  current branch of each scanned repo (or --base when provided)
-#   --topology  stamped sync value, else auto
-#               (auto|standalone|monorepo-apps|monorepo-submodules)
-#   --submodule / --subrepo  (none = all initialized submodules)
-#
-# Environment variables:
-#   WORKTREE_CLEANUP_DEBUG=1       print debug messages to stderr
-#   WORKTREE_CLEANUP_SOURCE_ONLY=1  (test helper) skip execution loop when sourced
-# Output lines (stable, greppable):
-#   removed <name>
-#   would remove <name>            (with --dry-run)
-#   skipped <name> (dirty)
-#   skipped <name> (unmerged)
-#   skipped <name> (detached)
+# The path and flags remain stable for materialized projects:
+#   --dir <worktrees_dir> --base <integration_branch> --dry-run
+#   --topology <value> --submodule/--subrepo <path> (repeatable)
 set -euo pipefail
 
-WORKTREES_DIR=".worktrees"
-BASE_BRANCH=""
-DRY_RUN=0
-SUBMODULE_SCOPE=()
-# Stamped at sync (like worktree-gate.sh __WORKTREE_GATE_MODE__). Flag wins.
+stamped_gate_version="__WORKTREE_GATE_VERSION__"
 stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"
-TOPOLOGY=""
 
-usage() {
-    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
-}
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --dir) WORKTREES_DIR="${2:?--dir requires a value}"; shift 2 ;;
-        --base) BASE_BRANCH="${2:?--base requires a value}"; shift 2 ;;
-        --dry-run) DRY_RUN=1; shift ;;
-        --topology)
-            TOPOLOGY="${2:?--topology requires a value}"; shift 2 ;;
-        --submodule|--subrepo)
-            SUBMODULE_SCOPE+=("${2:?$1 requires a value}"); shift 2 ;;
-        -h|--help) usage; exit 0 ;;
-        *) echo "worktree-cleanup: unknown argument '$1'" >&2; exit 2 ;;
+recipe_root() {
+    local src="${BASH_SOURCE[0]:-}"
+    [ -n "$src" ] || return 1
+    case "$src" in
+        /*) ;;
+        *) src="$PWD/$src" ;;
     esac
-done
-
-SUPER_ROOT="$(git rev-parse --show-toplevel)"
-USER_BASE="$BASE_BRANCH"
-WT_ROOT="$SUPER_ROOT/${WORKTREES_DIR%/}"
-
-# Absolute directory that holds the worktrees we are allowed to clean.
-# Shared across all modules (not recomputed per submodule).
-WT_PREFIX="$WT_ROOT/"
-
-# Resolve topology: --topology flag > sync-stamped value > auto.
-# Invalid/unstamped placeholder falls back to auto (self-detect).
-_resolve_repo_topology() {
-    local candidate="${TOPOLOGY:-$stamped_repo_topology}"
-    case "$candidate" in
-        auto|standalone|monorepo-apps|monorepo-submodules) echo "$candidate" ;;
-        *) echo "auto" ;;
-    esac
-}
-RESOLVED_TOPOLOGY="$(_resolve_repo_topology)"
-
-# Parse `git worktree list --porcelain` into (path, sha, branch) records.
-wt_path="" wt_sha="" wt_branch=""
-
-flush() {
-    [[ -z "$wt_path" ]] && return 0
-    local path="$wt_path" sha="$wt_sha" branch="$wt_branch"
-    wt_path="" wt_sha="" wt_branch=""
-
-    # Only consider worktrees under the configured directory.
-    case "$path/" in
-        "$WT_PREFIX"*) ;;
-        *) return 0 ;;
-    esac
-
-    local name="${path#"$WT_PREFIX"}"
-
-    if [[ -z "$branch" ]]; then
-        echo "skipped $name (detached)"
-        return 0
-    fi
-
-    if [[ -n "$(git -C "$path" status --porcelain)" ]]; then
-        echo "skipped $name (dirty)"
-        return 0
-    fi
-
-    if ! is_merged "$sha" "$BASE_BRANCH"; then
-        echo "skipped $name (unmerged)"
-        return 0
-    fi
-
-    if [[ "$DRY_RUN" -eq 1 ]]; then
-        echo "would remove $name"
-        return 0
-    fi
-
-    git worktree remove "$path"
-    # -d refuses squash/rebase-merged branches (not ancestors); -D is safe here
-    # because is_merged already confirmed the branch's changes are in base.
-    git branch -d "$branch" >/dev/null 2>&1 || git branch -D "$branch" >/dev/null 2>&1 || true
-    echo "removed $name"
+    local dir
+    dir="$(cd "$(dirname "$src")" 2>/dev/null && pwd -P)" || return 1
+    # Catalog source lives in templates/; materialized copies live in
+    # overrides/bin/. Both reach the recipe root by walking two parents.
+    cd "$dir/../.." 2>/dev/null && pwd -P
 }
 
-# Print a debug message to stderr when WORKTREE_CLEANUP_DEBUG=1.
-debug_log() {
-    if [[ "${WORKTREE_CLEANUP_DEBUG:-0}" == "1" ]]; then
-        echo "[debug] $*" >&2
-    fi
-    return 0
+verified_candidate() {
+    local candidate="$1"
+    [ -x "$candidate" ] || return 1
+    # The receipt is written atomically by gate_binary.py after digest, version,
+    # and self-test verification. Cleanup never trusts an executable alone.
+    [ -f "$candidate.verified" ] || return 1
+    printf '%s\n' "$candidate"
 }
 
-# Resolve ordered base candidate refs for merge detection.
-# Prints one candidate per line: exact --base, configured upstream,
-# configured remote-tracking ref, conditional origin/<base> fallback.
-resolve_base_candidates() {
-    local base="$1"
-    local seen=" "
-
-    # Emit a candidate ref if it resolves to a real object and hasn't been
-    # emitted yet under this exact spelling. Every emission still goes
-    # through `git rev-parse --verify --quiet` so only positively-proven
-    # refs are ever printed (positive-proof-only semantics).
-    #
-    # Returns non-zero when the ref is a duplicate or does not resolve —
-    # NEVER use this return value to decide whether a ref resolves (a
-    # deduplicated ref resolves but returns 1). Callers under `set -e` are
-    # safe here only because these functions run in conditional contexts
-    # (`if ! is_merged ...`); guard any future unconditional call sites.
-    emit_candidate() {
-        local ref="$1"
-        case "$seen" in
-            *" $ref "*) return 1 ;;
-        esac
-        if git rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
-            printf '%s\n' "$ref"
-            seen="$seen$ref "
+resolve_cleanup_binary() {
+    local candidate=""
+    local root=""
+    if root="$(recipe_root 2>/dev/null)"; then
+        if candidate="$(verified_candidate "$root/bin/worktree-gate")"; then
+            printf '%s\n' "$candidate"
             return 0
         fi
+    fi
+    if [ -n "${WORKTREE_CLEANUP_BIN:-}" ]; then
+        if candidate="$(verified_candidate "$WORKTREE_CLEANUP_BIN")"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+        echo "worktree-cleanup: WORKTREE_CLEANUP_BIN is not a verified executable; ignoring" >&2
+    fi
+
+    if [ -n "${WORKTREE_CLEANUP_BIN:-}" ]; then
+        # An explicit but invalid override must not silently select another
+        # implementation: it is a diagnostic pin and its failure is actionable.
         return 1
-    }
-
-    # 1. Exact base ref
-    emit_candidate "$base"
-
-    # 2. Configured upstream of the base branch, normalized to its full ref
-    # name (refs/remotes/<remote>/<base>) via --symbolic-full-name rather
-    # than --abbrev-ref. --abbrev-ref would print the short form
-    # (e.g. "origin/main"), which does not match the "refs/remotes/..."
-    # spelling used by candidates 3/4 and would defeat the dedup below.
-    local upstream
-    upstream="$(git rev-parse --verify --quiet --symbolic-full-name "${base}@{u}" 2>/dev/null)" || true
-    [[ -n "$upstream" ]] && emit_candidate "$upstream"
-
-    # 3. Remote-tracking ref for the base's configured remote. The
-    # "resolved" flag is decided by a direct rev-parse check, NOT by
-    # emit_candidate's return value: with full upstream tracking, candidate
-    # 2 already emitted this exact ref, so emit_candidate would return
-    # non-zero (dedup) even though the ref resolves — conflating the two
-    # would wrongly re-enable the origin fallback below.
-    local configured_remote configured_remote_resolved=0
-    configured_remote="$(git config --get "branch.${base}.remote" 2>/dev/null)" || true
-    if [[ -n "$configured_remote" ]]; then
-        if git rev-parse --verify --quiet "refs/remotes/${configured_remote}/${base}" >/dev/null 2>&1; then
-            configured_remote_resolved=1
-            emit_candidate "refs/remotes/${configured_remote}/${base}" || true
-        fi
     fi
 
-    # 4. Conditional last-resort fallback to origin/<base>. This only runs
-    # when the configured remote-tracking ref above did NOT resolve (no
-    # branch.${base}.remote configured, or it points at a ref that doesn't
-    # exist locally). If branch.${base}.remote already resolved to a
-    # different, valid remote (e.g. "upstream"), that remote's ref is
-    # authoritative and origin/<base> — which may belong to an unrelated
-    # fork — must not be consulted (dual-remote safety).
-    if [[ "$configured_remote_resolved" -eq 0 ]] && git config --get "remote.origin.url" >/dev/null 2>&1; then
-        emit_candidate "refs/remotes/origin/${base}"
+    local home="${AI_SPECS_HOME:-$HOME/.ai-specs}"
+    local version="$stamped_gate_version"
+    if [ -z "$version" ] || [ "$version" = "__WORKTREE_GATE_VERSION__" ]; then
+        [ -f "$home/VERSION" ] || return 1
+        version="$(tr -d '[:space:]' < "$home/VERSION")"
     fi
+    local goos goarch
+    case "$(uname -s)" in Darwin) goos=darwin ;; Linux) goos=linux ;; *) return 1 ;; esac
+    case "$(uname -m)" in arm64|aarch64) goarch=arm64 ;; x86_64|amd64) goarch=amd64 ;; *) return 1 ;; esac
+    local cache="$home/cache/bin/worktree-gate/$version/$goos-$goarch/worktree-gate"
+    verified_candidate "$cache"
 }
 
-# Check if sha is an ancestor of candidate (regular / fast-forward merge).
-candidate_has_merged_tip() {
-    local sha="$1" candidate="$2"
-    git merge-base --is-ancestor "$sha" "$candidate" 2>/dev/null
-}
-
-# Check if all unique commits in sha are present in candidate by patch-id.
-candidate_has_patch_equivalence() {
-    local sha="$1" candidate="$2"
-    if [[ -n "$(git rev-list "${candidate}..${sha}" 2>/dev/null)" ]]; then
-        local cherry
-        cherry="$(git cherry "$candidate" "$sha" 2>/dev/null)"
-        # Avoid `printf | grep -q` here: under `set -o pipefail`, grep -q
-        # exits early on the first match, SIGPIPE kills printf (exit 141),
-        # and pipefail propagates that as a pipeline failure — a false positive.
-        if [[ -n "$cherry" ]]; then
-            local line
-            while IFS= read -r line; do
-                [[ "$line" == +* ]] && return 1
-            done <<< "$cherry"
-            return 0
-        fi
-    fi
-    return 1
-}
-
-# A squash commit can combine the patches from several branch commits, so the
-# per-commit `git cherry` proof above cannot match it. Compare the complete
-# branch delta with the selected candidate delta from their common ancestor as
-# a conservative second proof. This intentionally does not inspect historical
-# candidate commits: a squash that was later reverted must remain unmerged.
-candidate_has_combined_patch_equivalence() {
-    local sha="$1" candidate="$2" common branch_patch candidate_patch
-    common="$(git merge-base "$candidate" "$sha" 2>/dev/null)" || return 1
-    [[ -n "$common" ]] || return 1
-
-    branch_patch="$(
-        git diff --no-ext-diff --binary "$common" "$sha" 2>/dev/null \
-            | git patch-id --stable 2>/dev/null \
-            | awk 'NR == 1 {print $1}'
-    )" || true
-    candidate_patch="$(
-        git diff --no-ext-diff --binary "$common" "$candidate" 2>/dev/null \
-            | git patch-id --stable 2>/dev/null \
-            | awk 'NR == 1 {print $1}'
-    )" || true
-
-    [[ -n "$branch_patch" && "$branch_patch" == "$candidate_patch" ]]
-}
-
-# A complete squash may share the base with unrelated commits. In that case
-# the candidate's combined patch is larger, but every path changed by the
-# branch must still have the branch's final tree entry. Comparing final tree
-# entries handles that case while still rejecting partial and reverted changes.
-candidate_has_combined_tree_equivalence() {
-    local sha="$1" candidate="$2" common path branch_entry candidate_entry count=0
-    common="$(git merge-base "$candidate" "$sha" 2>/dev/null)" || return 1
-    [[ -n "$common" ]] || return 1
-
-    # NUL-delimited `--name-only -z` output keeps pathnames that contain
-    # newlines (or other Git-quoted characters) verbatim, so each changed path
-    # is passed to `git ls-tree` exactly as stored. A quoted literal (the
-    # non-NUL form) would resolve to no entry on both sides and falsely look
-    # equivalent, wrongly classifying an unmerged branch as merged (JD-B-001).
-    # The read loop runs in THIS shell (process substitution, not a pipe) so
-    # `count` and `return` propagate back under `set -euo pipefail`.
-    while IFS= read -r -d '' path; do
-        [[ -n "$path" ]] || continue
-        count=$((count + 1))
-        branch_entry="$(git ls-tree "$sha" -- "$path" 2>/dev/null)" || return 1
-        candidate_entry="$(git ls-tree "$candidate" -- "$path" 2>/dev/null)" || return 1
-        [[ "$branch_entry" == "$candidate_entry" ]] || return 1
-    done < <(git diff --no-ext-diff --name-only -z --no-renames "$common" "$sha" 2>/dev/null)
-
-    # No changed path between common and sha proves nothing; stay conservative
-    # and treat the branch as unmerged.
-    [[ "$count" -gt 0 ]]
-}
-
-# Decide whether a branch is fully merged into base, covering both regular
-# (fast-forward / merge-commit) integration and squash/rebase merges.
-# Evaluates ordered base candidates (exact base, upstream, remote-tracking).
-is_merged() {
-    local sha="$1" base="$2"
-    local candidate candidates
-    candidates="$(resolve_base_candidates "$base")"
-
-    [[ -z "$candidates" ]] && return 1
-
-    # First pass: ancestry check across all candidates
-    while IFS= read -r candidate; do
-        if candidate_has_merged_tip "$sha" "$candidate"; then
-            debug_log "merged by ancestry: $candidate"
-            return 0
-        fi
-    done <<< "$candidates"
-
-    # Second pass: patch-id equivalence across all candidates
-    while IFS= read -r candidate; do
-        if candidate_has_patch_equivalence "$sha" "$candidate"; then
-            debug_log "merged by patch-id: $candidate"
-            return 0
-        fi
-        if candidate_has_combined_patch_equivalence "$sha" "$candidate"; then
-            debug_log "merged by combined patch-id: $candidate"
-            return 0
-        fi
-        if candidate_has_combined_tree_equivalence "$sha" "$candidate"; then
-            debug_log "merged by combined tree state: $candidate"
-            return 0
-        fi
-    done <<< "$candidates"
-
-    return 1
-}
-
-
-_in_scope() {
-    local p="$1" s
-    ((${#SUBMODULE_SCOPE[@]})) || return 0
-    for s in "${SUBMODULE_SCOPE[@]}"; do
-        [[ "$s" == "$p" ]] && return 0
-    done
-    return 1
-}
-
-# Topology resolution (bash mirror of util.resolve_repo_topology):
-# Explicit standalone/monorepo-apps → SUPER_ROOT only (ignore .gitmodules).
-# auto → self-detect; monorepo-submodules → initialized modules (may be empty).
-enumerate_modules() {
-    # Explicit override: never misclassify vendored .gitmodules as submodules.
-    case "$RESOLVED_TOPOLOGY" in
-        standalone|monorepo-apps)
-            printf '%s\n' "$SUPER_ROOT"
-            return 0
-            ;;
-    esac
-    # Avoid `grep -q` under `set -o pipefail`: with 2+ initialized modules,
-    # grep -q exits early, SIGPIPEs git, and the pipeline fails → false
-    # standalone classification. Drain status in a while-read instead.
-    local has_init=0 line p
-    if [[ -f "$SUPER_ROOT/.gitmodules" ]]; then
-        while IFS= read -r line; do
-            [[ -z "$line" ]] && continue
-            if [[ "${line:0:1}" != "-" ]]; then
-                has_init=1
-                break
-            fi
-        done < <(git -C "$SUPER_ROOT" submodule status 2>/dev/null || true)
-    fi
-    if [[ "$has_init" -eq 1 ]]; then
-        while IFS= read -r line; do
-            [[ -z "$line" ]] && continue
-            [[ "${line:0:1}" == "-" ]] && continue
-            p="$(awk '{print $2}' <<<"${line:1}")"
-            [[ -z "$p" ]] && continue
-            if ((${#SUBMODULE_SCOPE[@]})); then
-                _in_scope "$p" || continue
-            fi
-            printf '%s\n' "$SUPER_ROOT/$p"
-        done < <(git -C "$SUPER_ROOT" submodule status 2>/dev/null || true)
-    else
-        printf '%s\n' "$SUPER_ROOT"
-    fi
-}
-
-# One cleanup pass over the CURRENT cwd (unchanged inner scan→flush logic).
-_cleanup_one() {
-    while IFS= read -r line; do
-        case "$line" in
-            "worktree "*) flush; wt_path="${line#worktree }" ;;
-            "HEAD "*) wt_sha="${line#HEAD }" ;;
-            "branch refs/heads/"*) wt_branch="${line#branch refs/heads/}" ;;
-            "detached") wt_branch="" ;;
-        esac
-    done < <(git worktree list --porcelain)
-    flush
-}
-
-# Test-only hook: when sourced with WORKTREE_CLEANUP_SOURCE_ONLY=1, stop
-# right after the function definitions above and skip the worktree-scanning
-# loop below. This lets tests source the real script to exercise its
-# functions directly (e.g. candidate_has_patch_equivalence) without running
-# a full cleanup pass as a side effect. Never set in normal usage.
-if [[ "${WORKTREE_CLEANUP_SOURCE_ONLY:-0}" == "1" ]]; then
-    if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
-        return 0
-    fi
-    exit 0
+bin="$(resolve_cleanup_binary 2>/dev/null || true)"
+if [ -z "$bin" ]; then
+    echo "worktree-cleanup: no verified Go implementation available; no destructive action taken" >&2
+    echo "worktree-cleanup: run ai-specs sync (or provide WORKTREE_CLEANUP_BIN with a verified receipt)" >&2
+    exit 2
 fi
 
-
-while IFS= read -r repo_dir; do
-    cd "$repo_dir"
-    WT_PREFIX="$WT_ROOT/"
-    if [[ -z "$USER_BASE" ]]; then
-        BASE_BRANCH="$(git symbolic-ref --quiet --short HEAD || echo main)"
-    else
-        BASE_BRANCH="$USER_BASE"
-    fi
-    _cleanup_one
-done < <(enumerate_modules)
+exec "$bin" --cleanup --topology "${TOPOLOGY:-$stamped_repo_topology}" "$@"

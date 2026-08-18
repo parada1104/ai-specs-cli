@@ -68,13 +68,26 @@ func classify(repoRoot, common, topology string) ownerKind {
 // whole set unproven: nil means "no proven records" (ambiguity and absence are
 // indistinguishable downstream, exactly like the reference returning None).
 func moduleRecords(superRoot string) []moduleRecord {
+	return moduleRecordsWithGit(superRoot, gitMemo)
+}
+
+// moduleRecordsFresh bypasses the gate's per-invocation memo cache. Cleanup can
+// run after another repository operation in the same Go process, so topology
+// discovery must observe the current initialized-module set.
+func moduleRecordsFresh(superRoot string) []moduleRecord {
+	return moduleRecordsWithGit(superRoot, func(dir string, args ...string) string {
+		return git(dir, args...)
+	})
+}
+
+func moduleRecordsWithGit(superRoot string, gitFact func(string, ...string) string) []moduleRecord {
 	superRoot = RealPath(superRoot)
 	gm := filepath.Join(superRoot, ".gitmodules")
 	dotgit := filepath.Join(superRoot, ".git")
 	if !isFile(gm) || !(isDir(dotgit) || isFile(dotgit)) {
 		return nil
 	}
-	status := gitMemo(superRoot, "config", "--file", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
+	status := gitFact(superRoot, "config", "--file", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
 	if status == "" {
 		return nil
 	}
@@ -99,7 +112,7 @@ func moduleRecords(superRoot string) []moduleRecord {
 			}
 		}
 		seen[module] = true
-		subStatus := gitMemo(superRoot, "submodule", "status", "--", rel)
+		subStatus := gitFact(superRoot, "submodule", "status", "--", rel)
 		if subStatus == "" {
 			continue
 		}
@@ -110,9 +123,12 @@ func moduleRecords(superRoot string) []moduleRecord {
 		if strings.HasPrefix(statusLine, "-") {
 			continue
 		}
-		common := gitCommon(module)
+		common := gitCommonFresh(module, gitFact)
+		// Git may normalize the module common dir through /private on macOS,
+		// while the expected path is constructed lexically. Canonicalize both
+		// sides before comparing the proven module ownership.
 		expected := RealPath(filepath.Join(superRoot, ".git", "modules", rel))
-		owner := gitMemo(module, "rev-parse", "--show-toplevel")
+		owner := gitFact(module, "rev-parse", "--show-toplevel")
 		if owner != "" {
 			owner = RealPath(owner)
 		}
