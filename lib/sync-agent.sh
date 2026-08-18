@@ -33,8 +33,8 @@ BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
 HOOKS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/hooks-render.py"
 usage() {
     cat <<'EOF'
-Usage: ai-specs sync-agent [path] [--all | --<agent>...] [-v|--verbose]
-       ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...] [-v|--verbose]
+Usage: ai-specs sync-agent [path] [--all | --<agent>...] [--adopt-brief] [-v|--verbose]
+       ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...] [--adopt-brief] [-v|--verbose]
 
 Render per-agent configs from the root manifest.
 
@@ -45,6 +45,7 @@ Flags:
   --source-root    Root project that owns ai-specs/ai-specs.toml (default: target)
   --target         Target directory receiving derived local artifacts
   --resolved-hooks Pre-resolved runtime-hooks JSON (from recipe-materialize)
+  --adopt-brief   Explicitly adopt the current AGENTS.md as the managed runtime-brief baseline
   --all            All agents listed under [agents].enabled in ai-specs.toml
   --claude         Claude Code  (CLAUDE.md, .claude/skills, .mcp.json)
   --cursor         Cursor       (.cursor/mcp.json)
@@ -68,6 +69,7 @@ EXPLICIT_TARGET=0
 RECIPE_MCP_JSON=""
 RESOLVED_CONFIG_JSON=""
 RESOLVED_HOOKS_JSON=""
+ADOPT_BRIEF=""
 VERBOSE=0
 declare -a SELECTED_AGENTS=()
 
@@ -78,6 +80,7 @@ while [[ $# -gt 0 ]]; do
         --recipe-mcp)       RECIPE_MCP_JSON="${2:-}"; shift 2 ;;
         --resolved-config)  RESOLVED_CONFIG_JSON="${2:-}"; shift 2 ;;
         --resolved-hooks)   RESOLVED_HOOKS_JSON="${2:-}"; shift 2 ;;
+        --adopt-brief)      ADOPT_BRIEF="--adopt-brief"; shift ;;
         --all)              SELECT_ALL=1; shift ;;
         --claude|--cursor|--opencode|--codex|--copilot|--gemini|--pi|--omp)
             SELECTED_AGENTS+=("${1#--}"); shift ;;
@@ -151,6 +154,7 @@ if [[ $EXPLICIT_SOURCE_ROOT -eq 0 && $EXPLICIT_TARGET -eq 0 ]]; then
         if [[ -f "$STANDALONE_RESOLVED_CONFIG_TEMP" ]]; then
             FORWARD_ARGS+=("--resolved-config" "$STANDALONE_RESOLVED_CONFIG_TEMP")
         fi
+        [[ -n "$ADOPT_BRIEF" ]] && FORWARD_ARGS+=("$ADOPT_BRIEF")
 
         # Nest only the children — parent keeps framing (header above + footer below).
         for resolved_target in "${RESOLVED_TARGETS[@]}"; do
@@ -365,10 +369,11 @@ ensure_target_workspace() {
     mirror_directory "$RESOLVED_SKILLS_DIR" "$TARGET_AI_SKILLS"
     mirror_directory "$MERGED_COMMANDS_DIR" "$TARGET_AI_COMMANDS"
     if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
-        local render_args=("$TOML_PATH" "$TARGET_AGENTS_MD")
+        local render_args=("$TOML_PATH" "$TARGET_AGENTS_MD" "--preserve-if-runtime-brief")
         if [[ -n "$RESOLVED_CONFIG_JSON" && -f "$RESOLVED_CONFIG_JSON" ]]; then
             render_args+=("--resolved-config" "$RESOLVED_CONFIG_JSON")
         fi
+        [[ -n "$ADOPT_BRIEF" ]] && render_args+=("$ADOPT_BRIEF")
         python3 "$AGENTS_RENDER_PY" "${render_args[@]}"
     else
         [[ -f "$TARGET_AGENTS_MD" ]] || {

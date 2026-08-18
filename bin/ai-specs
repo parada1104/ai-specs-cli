@@ -53,6 +53,7 @@ Usage: ai-specs <command> [args]
 Commands:
   init [path] Bootstrap ai-specs/ in a project (TTY opens onboarding)
   sync [path] Refresh bundled + vendor deps + regen AGENTS.md + sync agents
+               use --adopt-brief for an explicit existing-brief handoff
   sync-agent [path] [--all | --<agent>] Fan out per-agent configs only
   refresh-bundled [path] Flatten CLI-bundled skills/commands into the cache (no in-project writes)
   add-dep <url> [path] Register a vendored skill (alias for 'skills add')

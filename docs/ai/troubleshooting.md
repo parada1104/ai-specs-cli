@@ -27,6 +27,19 @@ A path listed in `project.subrepos` does not exist relative to the project root.
 
 **Fix:** Remove the invalid entry or create the target directory.
 
+## Runtime brief ownership
+
+If sync reports that `AGENTS.md` was left unchanged as `untracked` or
+`user_modified`, ai-specs preserved the existing bytes because it cannot prove
+that it owns them. To hand the current file to ai-specs explicitly, run
+`ai-specs sync --adopt-brief`; to keep it permanently user-owned, add
+`<!-- ai-specs:runtime-brief -->` at the top. `ai-specs doctor` reports the
+same state and remedies. See [`runtime-brief-ownership.md`](runtime-brief-ownership.md).
+
+A regular `CLAUDE.md` is not overwritten: it is a relative symlink target and
+`make_relative_symlink` refuses to replace a pre-existing regular file. The
+runtime-brief ownership decision applies to `AGENTS.md`.
+
 ## Sync warnings
 
 ### `Multiple recipes provide the same capability`

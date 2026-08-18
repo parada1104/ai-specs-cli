@@ -181,6 +181,21 @@ def set_gate_baseline(
     )
 
 
+def set_brief_baseline(lock: dict, path: str, sha256: str) -> None:
+    """Record the last CLI-rendered bytes for the runtime brief.
+
+    Runtime briefs are never force-refreshed after a user edit: the baseline
+    is provenance only, and the renderer uses the ``never-force`` policy.
+    """
+    set_managed_override(
+        lock,
+        path,
+        sha256,
+        kind="runtime-brief",
+        policy="never-force",
+    )
+
+
 def set_recipe_skill_hashes(lock: dict, recipe_id: str, skill_name: str, hashes: dict[str, str]) -> None:
     lock.setdefault("recipes", {}).setdefault(recipe_id, {})[skill_name] = dict(hashes)
 

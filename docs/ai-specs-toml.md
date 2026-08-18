@@ -55,6 +55,7 @@ Conservative compatibility rules in V1:
 | `[recipes.<id>.config]` | `<key> = <value>` | optional per-recipe overrides; unknown keys warn and are ignored |
 | `[[bindings]]` | `capability`, `recipe` | optional explicit capability binding |
 | `[brief]` | `render` | optional; boolean; default `true` — when `false`, `ai-specs sync`/`init` do not write `AGENTS.md` (manual brief; recipe fragments not merged) |
+| CLI | `--adopt-brief` | explicit one-time handoff; records the existing `AGENTS.md` bytes as the managed baseline |
 | `[brief]` | `intro` | optional; multi-line string; rendered as a `>` blockquote after H1 |
 | `[brief]` | `purpose` | optional; string; one-line project description in `## Project` |
 | `[brief]` | `runtime_flow` | optional; array of strings; bullets **appended after** recipe-contributed fragments in `## Runtime Flow` |
@@ -364,10 +365,21 @@ match, but near-identical entries may both appear.
    managed `AGENTS.md` generation entirely. Preferred when the project curates the brief
    in version control and does not want recipe fragments merged on each sync.
 
-4. **Use the `<!-- ai-specs:runtime-brief -->` marker** — file-level opt-out when
-   `render` is not `false`. If the marker is present, `ai-specs sync` will not regenerate
-   that file. Precedence when `render = true`: marker suppresses overwrite; otherwise
-   normal render runs. When `render = false`, the marker is redundant (renderer is not invoked).
+4. **Use `ai-specs sync --adopt-brief`** — explicit one-time handoff when an existing
+   `AGENTS.md` should become managed. This records the current bytes as the provenance
+   baseline; future syncs refresh only when those bytes are unchanged.
+
+5. **Use the `<!-- ai-specs:runtime-brief -->` marker** — permanent file-level opt-out when
+   `render` is not `false`. If the marker is present, `ai-specs sync`, `init`, and
+   `sync-agent` preserve that file regardless of its lock state. When `render = false`,
+   the marker is redundant because the renderer is not invoked.
+
+A pre-existing `AGENTS.md` without a baseline is never adopted from its shape or headings:
+only an exact byte match with the would-be output is adopted silently. A divergent file is
+preserved and the command reports both remedies. `ai-specs doctor` reports the ownership
+state and the same guidance. `CLAUDE.md` is a relative symlink to `AGENTS.md`; its helper
+refuses to replace a regular file, so this ownership policy applies to `AGENTS.md`, not
+`CLAUDE.md`.
 
 Subrepos inherit the root manifest's `[brief].render` policy — there is no per-subrepo
 override in V1.
