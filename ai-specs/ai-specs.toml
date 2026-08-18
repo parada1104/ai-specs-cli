@@ -46,7 +46,12 @@ integration_branch = "development"
 [recipes.git-pr-flow]
 enabled = true
 [recipes.git-pr-flow.config]
-base_branch = "development"
+# Scoped to this branch: every card of the Go single-binary migration targets the
+# epic integration branch, never development. The value travels with the branch,
+# so a hotfix cut from development still resolves base_branch = "development".
+base_branch = "epic/go-single-binary"
+expected_owner = "parada1104"
+auto_switch_account = true
 
 [recipes.session-context]
 enabled = true
