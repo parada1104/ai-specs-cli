@@ -71,9 +71,18 @@ Explore: completed — multi-file migration, safety-critical merge proof, and di
 - [x] 5.4 Update `catalog/recipes/worktree-flow/README.md` and `commands/worktree-clean.md` with main-worktree remote cleanup instructions and failure semantics.
 - [x] 5.5 Update the recipe skill/spec references if they still describe the removed Bash algorithm as implementation of record.
 - [x] 5.6 Run `go test ./catalog/recipes/worktree-flow/gate/...`, `go vet ./...`, and focused cleanup tests.
-- [ ] 5.7 Run `./tests/validate.sh` and record exit code, date, and revision evidence. Current run: exit 1 due to pre-existing release digest/root-propagation failures after the new focused suites passed.
+- [x] 5.7 Run `./tests/validate.sh` and record exit code, date, and revision evidence. **exit 0, 1834 tests, 0 failures.**
+      Correction to an earlier note in this file: those release digest and
+      root-propagation failures were NOT pre-existing. Baseline on clean
+      `development`: `test_worktree_gate_release_phase4` 10 OK and
+      `test_worktree_root_propagation` 10 OK; in this worktree they were 9 and 1
+      failures. This change caused them: migrating cleanup into the gate Go
+      module changes the built binary, so the committed `SHA256SUMS` trust root
+      described the previous binary. Regenerating it with the canonical
+      go1.24.13 restored both suites to 10 OK. Left unregenerated, the release
+      workflow's checksum gate fails and publishes zero gate assets.
 - [x] 5.8 Cross-check every success criterion and spec scenario; state unavailable coverage/linter/type-checker/formatter signals honestly.
-- [ ] 5.9 Produce `verify-report.md` with strict PASS, command evidence, and one mapping row per proposal success criterion.
+- [x] 5.9 Produce `verify-report.md` with strict PASS, command evidence, and one mapping row per proposal success criterion.
 
 ## Affected paths
 

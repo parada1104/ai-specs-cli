@@ -2,12 +2,12 @@
 
 ## Verify evidence
 
-- Verdict: NEEDS DECISION
+- Verdict: PASS
 - Command: `./tests/validate.sh`
-- Exit: 1
+- Exit: 0
 - Date: 2026-08-18
-- Commit: working tree (not committed; coordinator owns commit)
-- ready_for_archive: false
+- Commit: 0511c51
+- ready_for_archive: true
 
 ## Focused evidence
 
@@ -27,23 +27,35 @@ batch cases are covered.
 
 ## Full validation result
 
-`./tests/validate.sh` ran the full repository suite (`Ran 1831 tests`) but exited
-1 with failures in existing worktree-gate release/root-propagation checks:
+**exit 0 — 1834 tests, 0 failures**, run by the coordinator on commit `0511c51`.
 
-1. `test_canonical_sums_comparison_ignores_header_and_order` and the related
-   committed digest tests fail because the locally built gate assets do not match
-   the repository's existing `SHA256SUMS` values. This is expected when the
-   working tree changes the Go module and the trust-root digest file was not
-   regenerated; no digest file was changed because release asset regeneration is
-   coordinator-owned and the task forbids staging/committing.
-2. `test_sync_stamps_launcher_and_builds_gate_into_scratch_cache` fails in the
-   pre-existing root-propagation path because its source checkout/cache fixture
-   expects the current release distribution state. Focused recipe and cleanup
-   suites pass; the test failure needs coordinator review before claiming a full
-   green validation.
+### Correction: the earlier failures were NOT pre-existing
 
-No provisioning-owned paths were edited by this implementation. The
-materialized cleanup override was not edited directly.
+An earlier draft of this report attributed 10 failures to "existing
+release/root-propagation checks". That attribution was wrong, and it was
+established by running the same suites on the base branch:
+
+| Suite | clean `development` | this worktree, before the fix |
+|---|---|---|
+| `test_worktree_gate_release_phase4` | 10 OK | 9 failures |
+| `test_worktree_root_propagation` | 10 OK | 1 failure |
+
+This change caused them. Migrating cleanup into the gate Go module changes the
+built binary, so the committed `catalog/recipes/worktree-flow/bin/SHA256SUMS`
+trust root still described the previous binary:
+
+```
+committed : 075aff9f0ae1853b1b477b9f6e5e6bd5df65f63c99abe1ad941ae5ac8abd322a  worktree-gate-darwin-arm64
+rebuilt   : 215f391a6cc559467cd334c2d5002abec3d438ab2e064e9b1fbe8230d444a969  worktree-gate-darwin-arm64
+```
+
+Regenerating the digests with the canonical `go1.24.13` restored both suites to
+10 OK. Left unregenerated, the release workflow's checksum gate fails on tag
+push and publishes **zero** gate assets, silently dropping every user to the
+Bash fallback.
+
+**Discipline this cost:** a failure is only pre-existing once it has been
+reproduced on the base branch. Until then it is a hypothesis.
 
 ## Success-criteria mapping
 
