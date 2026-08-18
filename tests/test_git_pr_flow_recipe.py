@@ -141,20 +141,25 @@ class GitPrFlowGoldenContentTests(unittest.TestCase):
         self.assertGreater(merge_pos, 0)
         self.assertLess(archive_pos, merge_pos)
 
-    def test_skill_requires_post_merge_branch_cleanup(self):
-        """Skill force-deletes local branch and removes worktree after merge."""
-        self.assertIn("git branch -D", self.skill_text)
-        self.assertIn("git worktree remove", self.skill_text)
-        self.assertIn("git push origin --delete", self.skill_text)
+    def test_skill_requires_native_post_merge_cleanup_sequence(self):
+        """Skill delegates ordered branch/worktree cleanup to the Go command."""
+        self.assertIn("worktree-cleanup.sh", self.skill_text)
+        self.assertIn("git pull --ff-only", self.skill_text)
+        self.assertIn("base sync is deliberately LAST", self.skill_text)
+        self.assertIn("remote branch deletion", self.skill_text)
+        self.assertIn("local branch", self.skill_text)
+
+    def test_skill_never_recommends_delete_branch(self):
+        """Provider-side source deletion is forbidden in this worktree layout."""
+        self.assertNotIn("--delete-branch", self.skill_text)
+        self.assertIn("without asking the hosting provider to delete", self.skill_text)
 
     def test_skill_classifies_protected_heads(self):
-        """Skill skips delete/cleanup for protected long-lived heads."""
+        """Skill retains protected-head classification and guardrails."""
         self.assertIn("Head branch class", self.skill_text)
         self.assertIn("development", self.skill_text)
         self.assertIn("staging", self.skill_text)
-        self.assertIn("Protected head", self.skill_text)
-        self.assertIn("--delete-branch", self.skill_text)
-        self.assertIn("never pass --delete-branch", self.skill_text.lower())
+        self.assertIn("Protected heads", self.skill_text)
 
     def test_skill_preflight_checks_delete_branch_on_merge(self):
         """Skill warns when GitHub auto-deletes heads on merge."""

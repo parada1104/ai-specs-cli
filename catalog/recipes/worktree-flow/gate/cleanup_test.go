@@ -316,6 +316,82 @@ func TestCleanupRequiresPrimaryMainWorktree(t *testing.T) {
 	}
 }
 
+func TestCleanupDiscoversStaleLocalBranchWithNoWorktree(t *testing.T) {
+	root := makeCleanupRepo(t)
+	cleanupGitTest(t, root, "checkout", "-qb", "stale-existing")
+	if err := os.WriteFile(filepath.Join(root, "shared.txt"), []byte("branch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", "shared.txt")
+	cleanupGitTest(t, root, "commit", "-qm", "stale branch")
+	cleanupGitTest(t, root, "checkout", "-q", "main")
+	if err := os.WriteFile(filepath.Join(root, "shared.txt"), []byte("landed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", "shared.txt")
+	cleanupGitTest(t, root, "commit", "-qm", "landed")
+
+	gh := filepath.Join(t.TempDir(), "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\n[ \"$1\" = pr ] && [ \"$2\" = list ] && printf '%s\\n' '[]'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+oldPath)
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "would remove stale-existing") {
+		t.Fatalf("stale local branch was not discovered: %q", stdout.String())
+	}
+}
+
+func TestCleanupRefusesStaleBranchWithAbsentTouchedPath(t *testing.T) {
+	root := makeCleanupRepo(t)
+	cleanupGitTest(t, root, "checkout", "-qb", "stale-missing")
+	if err := os.WriteFile(filepath.Join(root, "missing.txt"), []byte("not landed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", "missing.txt")
+	cleanupGitTest(t, root, "commit", "-qm", "stale missing")
+	cleanupGitTest(t, root, "checkout", "-q", "main")
+
+	gh := filepath.Join(t.TempDir(), "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\n[ \"$1\" = pr ] && [ \"$2\" = list ] && printf '%s\\n' '[]'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sha := git(root, "rev-parse", "stale-missing")
+	if sha == "" {
+		t.Fatal("stale branch tip is unavailable")
+	}
+	if isMergedCleanup(root, sha, "main") {
+		t.Fatal("unmerged stale branch passed existing merge proof")
+	}
+	if noPRPathPresenceCleanup(root, sha, "main") {
+		t.Fatal("stale branch with absent path passed no-PR path proof")
+	}
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "skipped stale-missing (unmerged)") {
+		t.Fatalf("stale branch with absent path was not preserved: %q", stdout.String())
+	}
+	if got := cleanupGitTest(t, root, "show-ref", "--verify", "--quiet", "refs/heads/stale-missing"); got != "" {
+		// show-ref --verify intentionally emits no output; reaching this branch is
+		// impossible for a successful command, so use rev-parse below as oracle.
+		t.Logf("unexpected show-ref output: %q", got)
+	}
+	if got := git(root, "rev-parse", "--verify", "refs/heads/stale-missing"); got == "" {
+		t.Fatal("stale branch with absent path was deleted")
+	}
+}
+
 func TestCleanupPreservesUnmergedAndDirty(t *testing.T) {
 	root := makeCleanupRepo(t)
 	unmerged := addCleanupWorktree(t, root, "feat-unmerged")

@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -277,7 +279,11 @@ func treeEntry(repoRoot, revision, path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return string(bytes.TrimSpace(out)), true
+	entry := bytes.TrimSpace(out)
+	if len(entry) == 0 {
+		return "", false
+	}
+	return string(entry), true
 }
 
 func branchHeldByWorktree(records []worktreeRecord, branch, except string) bool {
@@ -363,6 +369,99 @@ func remoteRefExists(repoRoot, remote, branch string) (bool, error) {
 	return strings.TrimSpace(string(out)) != "", nil
 }
 
+type localBranchRecord struct {
+	branch string
+	sha    string
+}
+
+// localBranchRecordsCleanup enumerates every local branch explicitly. The NUL
+// delimiters keep branch names and object ids independent of line splitting.
+func localBranchRecordsCleanup(repoRoot string) []localBranchRecord {
+	raw := gitRawBytes(repoRoot, "for-each-ref", "--format=%(refname:short)%00%(objectname)%00", "refs/heads/")
+	fields := bytes.Split(raw, []byte{0})
+	var records []localBranchRecord
+	for i := 0; i+1 < len(fields); i += 2 {
+		branch := strings.TrimSpace(string(fields[i]))
+		sha := strings.TrimSpace(string(fields[i+1]))
+		if branch == "" || sha == "" {
+			continue
+		}
+		records = append(records, localBranchRecord{branch: branch, sha: sha})
+	}
+	return records
+}
+
+// noPRPathPresenceCleanup is the deliberately narrow fallback for a local
+// branch with no pull request. It proves every source path is represented in
+// the selected base tree. Binary-only artifacts absent from the base are not
+// treated as lost source: Git's numstat marks those paths with '-' counts.
+func noPRPathPresenceCleanup(repoRoot, sha, candidate string) bool {
+	common := git(repoRoot, "merge-base", candidate, sha)
+	if common == "" {
+		return false
+	}
+	paths := gitRawBytes(repoRoot, "diff", "--no-ext-diff", "--name-only", "-z", "--no-renames", common, sha)
+	if len(paths) == 0 {
+		return false
+	}
+	count := 0
+	for _, pathBytes := range bytes.Split(paths, []byte{0}) {
+		if len(pathBytes) == 0 {
+			continue
+		}
+		count++
+		path := string(pathBytes)
+		if _, ok := treeEntry(repoRoot, candidate, path); ok {
+			continue
+		}
+		numstat := gitRawBytes(repoRoot, "diff", "--no-ext-diff", "--numstat", "--no-renames", common, sha, "--", path)
+		if bytes.HasPrefix(numstat, []byte("-\t-\t")) {
+			continue
+		}
+		return false
+	}
+	return count > 0
+}
+
+type ghPRRecord struct {
+	MergeCommit *struct {
+		OID string `json:"oid"`
+	} `json:"mergeCommit"`
+}
+
+// staleBranchEvidenceCleanup distinguishes a positive merged PR from an
+// explicit no-PR path-presence conclusion. Missing, open, or malformed PR
+// evidence refuses cleanup rather than guessing.
+func staleBranchEvidenceCleanup(repoRoot string, record localBranchRecord, base string) (bool, string) {
+	if isMergedCleanup(repoRoot, record.sha, base) {
+		return true, "merged"
+	}
+	cmd := exec.Command("gh", "pr", "list", "--head", record.branch, "--state", "all", "--json", "mergeCommit")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, "unmerged"
+	}
+	var prs []ghPRRecord
+	if err := json.Unmarshal(output, &prs); err != nil {
+		return false, "unmerged"
+	}
+	if len(prs) > 0 {
+		for _, pr := range prs {
+			if pr.MergeCommit == nil || pr.MergeCommit.OID == "" {
+				return false, "unmerged"
+			}
+			if runGit(repoRoot, "merge-base", "--is-ancestor", pr.MergeCommit.OID, base) == nil {
+				return true, "merged"
+			}
+		}
+		return false, "unmerged"
+	}
+	if noPRPathPresenceCleanup(repoRoot, record.sha, base) {
+		return true, "merged"
+	}
+	return false, "unmerged"
+}
+
 func removeRemoteBranchCleanup(repoRoot string, record worktreeRecord, remote string, cfg cleanupConfig, out io.Writer) error {
 	if err := assertDeletable("remote branch deletion", record.branch, cfg.protected); err != nil {
 		return err
@@ -408,6 +507,10 @@ func removeRemoteBranchCleanup(repoRoot string, record worktreeRecord, remote st
 func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer) error {
 	prefix := filepath.Clean(cleanupPath(superRoot, cfg.worktreesDir)) + string(filepath.Separator)
 	records := worktreeRecords(repoRoot)
+	base := cfg.baseBranch
+	if base == "" {
+		base = git(repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
+	}
 	var failures []error
 	for _, record := range records {
 		recordPath := filepath.Clean(record.path)
@@ -422,10 +525,6 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 		if strings.TrimSpace(git(record.path, "status", "--porcelain")) != "" {
 			formatCleanupStatus(out, "skipped %s (dirty)", name)
 			continue
-		}
-		base := cfg.baseBranch
-		if base == "" {
-			base = git(repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
 		}
 		if !isMergedCleanup(repoRoot, record.sha, base) {
 			formatCleanupStatus(out, "skipped %s (unmerged)", name)
@@ -457,6 +556,42 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 		}
 		formatCleanupStatus(out, "removed %s", name)
 	}
+	// A local branch can outlive its linked worktree (for example after a
+	// manually removed worktree). Reconcile those branches in the same pass,
+	// but only after the linked candidates have been handled.
+	held := worktreeRecords(repoRoot)
+	for _, local := range localBranchRecordsCleanup(repoRoot) {
+		// The base itself is never a stale feature candidate, even when the
+		// configured protected set is incomplete.
+		if local.branch == base {
+			continue
+		}
+		if isProtectedBranch(cfg.protected, local.branch) || branchHeldByWorktree(held, local.branch, "") {
+			continue
+		}
+		merged, reason := staleBranchEvidenceCleanup(repoRoot, local, base)
+		if !merged {
+			formatCleanupStatus(out, "skipped %s (%s)", local.branch, reason)
+			continue
+		}
+		if cfg.dryRun {
+			formatCleanupStatus(out, "would remove %s", local.branch)
+			continue
+		}
+		record := worktreeRecord{branch: local.branch, sha: local.sha}
+		remote := remoteForBranch(repoRoot, local.branch)
+		if err := removeLocalBranchCleanup(repoRoot, record, cfg, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", local.branch, err)
+			failures = append(failures, err)
+			continue
+		}
+		if err := removeRemoteBranchCleanup(repoRoot, record, remote, cfg, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", local.branch, err)
+			failures = append(failures, err)
+			continue
+		}
+		formatCleanupStatus(out, "removed %s", local.branch)
+	}
 	if len(failures) > 0 {
 		msgs := make([]string, 0, len(failures))
 		for _, err := range failures {
@@ -464,6 +599,44 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 		}
 		return fmt.Errorf("%s", strings.Join(msgs, "; "))
 	}
+	return nil
+}
+
+// syncBaseCleanup is intentionally separate from candidate deletion. It is
+// called only after every pass completes successfully, making base sync the
+// final operation in the post-merge sequence.
+func syncBaseCleanup(repoRoot string, cfg cleanupConfig, out io.Writer) error {
+	if cfg.dryRun {
+		return nil
+	}
+	base := cfg.baseBranch
+	if base == "" {
+		base = git(repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
+	}
+	if base == "" {
+		return fmt.Errorf("worktree-cleanup: base branch is unavailable; refusing final sync")
+	}
+	current := git(repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if current != base {
+		return fmt.Errorf("worktree-cleanup: base branch %q is not checked out in the primary worktree; refusing final sync", base)
+	}
+	remote := remoteForBranch(repoRoot, base)
+	if remote == "" {
+		formatCleanupStatus(out, "skipped base sync %s (no remote)", base)
+		return nil
+	}
+	exists, err := remoteRefExists(repoRoot, remote, base)
+	if err != nil {
+		return fmt.Errorf("worktree-cleanup: base remote verification %s/%s failed: %w", remote, base, err)
+	}
+	if !exists {
+		formatCleanupStatus(out, "skipped base sync %s (remote ref absent)", base)
+		return nil
+	}
+	if err := runGit(repoRoot, "pull", "--ff-only", remote, base); err != nil {
+		return fmt.Errorf("worktree-cleanup: final base sync %s/%s failed: %w", remote, base, err)
+	}
+	formatCleanupStatus(out, "synced base %s/%s", remote, base)
 	return nil
 }
 
@@ -534,6 +707,13 @@ func runCleanup(superRoot string, cfg cleanupConfig, out, errOut io.Writer) int 
 	for _, pass := range passes {
 		if err := cleanupOnePass(pass.root, superRoot, cfg, out); err != nil {
 			failures = append(failures, err.Error())
+		}
+	}
+	if len(failures) == 0 && !cfg.dryRun {
+		for _, pass := range passes {
+			if err := syncBaseCleanup(pass.root, cfg, out); err != nil {
+				failures = append(failures, err.Error())
+			}
 		}
 	}
 	if len(failures) > 0 {
