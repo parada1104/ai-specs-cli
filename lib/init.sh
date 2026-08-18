@@ -40,7 +40,7 @@ AI_SPECS_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: ai-specs init [path] [--name <project-name>] [--force] [--tui|--no-tui]
+Usage: ai-specs init [path] [--name <project-name>] [--force] [--adopt-brief] [--tui|--no-tui]
 
 Bootstrap the ai-specs standard in a project (idempotent by default).
 
@@ -51,6 +51,8 @@ Flags:
   --name <name>     Project name in ai-specs.toml (default: basename of path)
   --force           Re-render templates even if present (CLI-bundled
                     skills/commands never copy into the project either way)
+  --adopt-brief     Explicitly adopt the current AGENTS.md as the managed
+                    runtime-brief baseline
   --tui             Force interactive onboarding (Rich prompts)
   --no-tui          Skip interactive onboarding (scriptable / CI)
   -h, --help        Show this help
@@ -73,6 +75,7 @@ EOF
 TARGET_PATH=""
 PROJECT_NAME=""
 FORCE=0
+ADOPT_BRIEF=""
 TUI_MODE="auto"   # auto | on | off
 TUI_TOML=""       # staged manifest from init_tui.py when set
 NAME_EXPLICIT=0   # 1 when --name was passed (disables auto-TUI)
@@ -82,6 +85,7 @@ while [[ $# -gt 0 ]]; do
         --name)        PROJECT_NAME="${2:-}"; NAME_EXPLICIT=1; shift 2 ;;
         --name=*)      PROJECT_NAME="${1#*=}"; NAME_EXPLICIT=1; shift ;;
         --force)       FORCE=1; shift ;;
+        --adopt-brief) ADOPT_BRIEF="--adopt-brief"; shift ;;
         --tui)         TUI_MODE="on"; shift ;;
         --no-tui)      TUI_MODE="off"; shift ;;
         -h|--help)     usage; exit 0 ;;
@@ -239,7 +243,7 @@ if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
     if python3 "$RECIPE_MATERIALIZE_PY" "$TARGET_PATH" "$AI_SPECS_HOME" \
            --resolved-config-out "$RESOLVED_CONFIG_TEMP" \
        && python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$AGENTS_PATH" \
-           --preserve-if-runtime-brief --resolved-config "$RESOLVED_CONFIG_TEMP"; then
+           --preserve-if-runtime-brief $ADOPT_BRIEF --resolved-config "$RESOLVED_CONFIG_TEMP"; then
         echo "  ✓ render AGENTS.md (baseline brief)"
     else
         # Fallback: if render failed, write a one-line placeholder.
