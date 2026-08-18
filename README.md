@@ -28,6 +28,7 @@ cd my-project
 ai-specs init                        # scaffold ai-specs/ + AGENTS.md + .gitignore
 # edit ai-specs/ai-specs.toml — set [agents].enabled, add [[deps]], add [mcp.*]
 ai-specs sync                        # vendor deps + regen AGENTS.md + fan out per agent
+ai-specs sync --adopt-brief           # explicitly hand an existing AGENTS.md to ai-specs
 ```
 
 Your agent configs are now generated from the manifest. Re-run `ai-specs sync`

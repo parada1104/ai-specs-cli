@@ -143,6 +143,7 @@ class Doctor:
         self._check_legacy_recipe_versions()
         self._check_agents_md()
         self._check_brief_render_policy()
+        self._check_brief_provenance()
         self._check_bundled_assets()
         self._check_tracked_bundled_leftovers()
         self._check_enabled_agents()
@@ -454,6 +455,106 @@ class Doctor:
             return not brief_render_enabled(self._load_manifest())
         except ValueError:
             return False
+
+    def _check_brief_provenance(self) -> None:
+        """Report the runtime brief's lock-backed ownership state."""
+        manifest_path = self.root / "ai-specs" / "ai-specs.toml"
+        agents_path = self.root / "AGENTS.md"
+        if not manifest_path.is_file():
+            return
+        if self._brief_render_disabled():
+            self.checks.append(Check(
+                Severity.INFO,
+                "brief-provenance",
+                "runtime brief ownership: disabled ([brief].render = false)",
+                guidance="set [brief].render = true when ai-specs should render AGENTS.md",
+            ))
+            return
+        try:
+            import tomllib
+
+            with manifest_path.open("rb") as fh:
+                manifest = tomllib.load(fh)
+            renderer_path = Path(__file__).with_name("agents-render.py")
+            renderer_spec = importlib.util.spec_from_file_location(
+                "agents_render_doctor", renderer_path
+            )
+            if renderer_spec is None or renderer_spec.loader is None:
+                raise RuntimeError("unable to load agents-render.py")
+            renderer = importlib.util.module_from_spec(renderer_spec)
+            sys.modules[renderer_spec.name] = renderer
+            renderer_spec.loader.exec_module(renderer)
+
+            # Rebuild the same resolved recipe data that the sync pipeline passes
+            # to agents-render.py. If it cannot be built, report undetermined
+            # rather than guessing ownership from a partial brief.
+            materialize_path = Path(__file__).with_name("recipe-materialize.py")
+            materialize_spec = importlib.util.spec_from_file_location(
+                "recipe_materialize_doctor_brief", materialize_path
+            )
+            if materialize_spec is None or materialize_spec.loader is None:
+                raise RuntimeError("unable to load recipe-materialize.py")
+            materialize = importlib.util.module_from_spec(materialize_spec)
+            sys.modules[materialize_spec.name] = materialize
+            materialize_spec.loader.exec_module(materialize)
+            resolved = materialize.build_resolved_config(self.root)
+            materialize.merge_catalog_defaults_into_resolved(resolved, AI_SPECS_HOME)
+            materialize.attach_brief_fragments_to_resolved(resolved, AI_SPECS_HOME)
+            # Match materialize_recipes() auto-binding so doctor renders the
+            # same structured brief bytes as sync, including recipe-provided
+            # capability bindings that are not explicit in the manifest.
+            enabled_ids = list(resolved.get("enabled") or [])
+            if enabled_ids:
+                catalog_dir = AI_SPECS_HOME / "catalog" / "recipes"
+                manifest_bindings = materialize.load_bindings_from_manifest(self.root)
+                auto_bindings = materialize.resolve_bindings(
+                    catalog_dir, enabled_ids, manifest_bindings
+                )
+                if auto_bindings:
+                    resolved["bindings"] = auto_bindings
+            resolved.setdefault("project_root", str(self.root.resolve()))
+            would_write = "\n".join(
+                renderer._render_lines(manifest, resolved)
+            ).encode()
+            # Ask for the state sync would ACT on. classify_brief returns the
+            # raw classification, which reports "untracked" for a brief sync
+            # would silently adopt — a diagnostic that contradicts the tool.
+            state = renderer.brief_effective_state(
+                manifest_path,
+                agents_path,
+                would_write,
+            )
+        except Exception:
+            state = "undetermined"
+        if state == "missing":
+            message = "runtime brief ownership: missing"
+            severity = Severity.INFO
+            guidance = "ai-specs sync will create AGENTS.md"
+        elif state == "managed_current":
+            message = "runtime brief ownership: managed_current"
+            severity = Severity.OK
+            guidance = ""
+        elif state == "managed_stale":
+            message = "runtime brief ownership: managed_stale"
+            severity = Severity.INFO
+            guidance = "ai-specs sync will refresh the untouched brief"
+        elif state == "marker":
+            message = "runtime brief ownership: marker (user-owned)"
+            severity = Severity.INFO
+            guidance = "remove the marker only if ai-specs should manage AGENTS.md"
+        elif state == "user_modified":
+            message = "runtime brief ownership: user_modified; preserving existing file"
+            severity = Severity.WARN
+            guidance = "ai-specs sync --adopt-brief or add the runtime-brief marker"
+        elif state == "untracked":
+            message = "runtime brief ownership: untracked; preserving existing file"
+            severity = Severity.WARN
+            guidance = "ai-specs sync --adopt-brief or add the runtime-brief marker"
+        else:
+            message = f"runtime brief ownership: {state}; preserving existing file"
+            severity = Severity.WARN
+            guidance = "inspect the lock and target, or add the runtime-brief marker"
+        self.checks.append(Check(severity, "brief-provenance", message, guidance=guidance))
 
     def _check_brief_render_policy(self) -> None:
         manifest = self._load_manifest()

@@ -35,6 +35,8 @@ Flags:
   --refresh-gates       Explicitly refresh customized gate hooks: save exact
                         pre-refresh bytes to a cache-only immutable backup,
                         then replace (never set by an ordinary sync)
+  --adopt-brief         Explicitly adopt the current AGENTS.md as the managed
+                        runtime-brief baseline
   -v, --verbose         Print full per-step detail instead of compact summaries
 EOF
 }
@@ -42,12 +44,14 @@ EOF
 TARGET_PATH=""
 IGNORE_CLI_VERSION=""
 REFRESH_GATES=""
+ADOPT_BRIEF=""
 VERBOSE=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
         --ignore-cli-version) IGNORE_CLI_VERSION="--ignore-cli-version"; shift ;;
         --refresh-gates) REFRESH_GATES="--refresh-gates"; shift ;;
+        --adopt-brief) ADOPT_BRIEF="--adopt-brief"; shift ;;
         -v|--verbose) VERBOSE=1; shift ;;
         --)        shift; break ;;
         -*)
@@ -262,7 +266,7 @@ set -e
 
 sync_agents_render() {
     if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
-        python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$ROOT_PATH/AGENTS.md" --preserve-if-runtime-brief --resolved-config "$RESOLVED_CONFIG_TEMP"
+        python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$ROOT_PATH/AGENTS.md" --preserve-if-runtime-brief $ADOPT_BRIEF --resolved-config "$RESOLVED_CONFIG_TEMP"
     else
         echo "  ℹ skipped AGENTS.md (brief.render = false)"
     fi
@@ -274,6 +278,7 @@ for idx in "${!RESOLVED_TARGETS[@]}"; do
     target="${RESOLVED_TARGETS[$idx]}"
     label="${RESOLVED_TARGET_LABELS[$idx]}"
     SYNC_AGENT_ARGS=(--source-root "$ROOT_PATH" --target "$target" --all --recipe-mcp "$RECIPE_MCP_TEMP" --resolved-config "$RESOLVED_CONFIG_TEMP" --resolved-hooks "$RESOLVED_HOOKS_TEMP")
+    [[ -n "$ADOPT_BRIEF" ]] && SYNC_AGENT_ARGS+=("$ADOPT_BRIEF")
     [[ $VERBOSE -eq 1 ]] && SYNC_AGENT_ARGS+=(--verbose)
     if ! run_step "$label → $target" bash "$SYNC_AGENT_SH" "${SYNC_AGENT_ARGS[@]}"; then
         echo "ERROR: sync failed for target $target ($label). Stopped on first failure; previous writes are not rolled back." >&2
