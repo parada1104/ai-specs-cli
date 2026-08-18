@@ -100,7 +100,40 @@ S3 is the coordinator's own edit and should be corrected regardless.
 | S1 | The launcher no longer discards `resolve_cleanup_binary`'s stderr, so a rejected `WORKTREE_CLEANUP_BIN` override is distinguishable from a binary that was never acquired. | |
 | S2 | `TestRemoteBranchDeletionIsVerified` uses the hermetic `cleanupGitTest` helper instead of the ambient-identity `gitTest`. | |
 | S3 | Trust-root header now names this change. It was the coordinator's own edit. | |
-| S4 | **Deliberately not restructured.** Both terms of the OR chain are load-bearing — the third can be true when patch equivalence is false — and that chain is the merge proof both judges confirmed faithful. Memoized per (repo, sha, candidate) instead: same result, no semantic risk. | |
+| S4 | **Corrected after review — the first answer defended the wrong thing.** See below. | |
+
+### S4 in full: a port deviation hiding behind a duplication
+
+The first response to this finding was to memoize rather than restructure, on
+the grounds that "both terms are load-bearing". That conflated two different
+call sites, and only one of the claims was true.
+
+Comparing against the Bash reference on `development` settled it:
+
+- **The OR chain's third term IS load-bearing and IS faithful.** The reference's
+  second pass has the same three independent early-returns, and the third is
+  reachable: whenever `git cherry` shows `+` but the final trees agree — the
+  ordinary squash case — term one is false and term three is true.
+- **The call inside `candidateHasPatchEquivalenceCleanup` is NOT in the
+  reference.** The Bash returns directly after the cherry check. The Go port
+  added a tree-equivalence gate there, and that addition — not the third term —
+  was the duplicated computation.
+
+Its own comment claimed it "preserves the reference's conservative
+reverted-squash contract". It does not: removing it and re-running
+`TestCleanupPatchProofRejectsRevertedSquash` and
+`TestCleanupPreservesNewlinePathInTreeProof` passes. A reverted squash is
+already rejected at the cherry step.
+
+The gate made cleanup stricter than the reference, which is the safe direction —
+it preserves more worktrees rather than deleting more. But this change was
+presented, reviewed, and approved as a faithful port, and an undocumented
+behavioural deviation on a destructive path is worse than the extra caution it
+bought.
+
+**Resolution**: the gate is removed, restoring exact parity with the reference.
+The memo went with it — a cache justifying a duplication that no longer exists
+would only mislead the next reader.
 | S5 | Docstring now describes what the test does (drives the Go binary) rather than the bash function it used to source. | |
 
 The gate binary changed twice during this round, so

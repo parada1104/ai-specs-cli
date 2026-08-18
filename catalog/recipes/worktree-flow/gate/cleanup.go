@@ -6,7 +6,6 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 // cleanupConfig is intentionally independent from the pre-tool-use gate config.
@@ -190,11 +189,12 @@ func candidateHasPatchEquivalenceCleanup(repoRoot, sha, candidate string) bool {
 			return false
 		}
 	}
-	// `git cherry` can match a historical squash commit even when that squash
-	// was subsequently reverted. Require the current final tree entries to
-	// agree before accepting the patch-id proof; this preserves the reference's
-	// conservative reverted-squash contract.
-	return candidateHasCombinedTreeEquivalenceCleanup(repoRoot, sha, candidate)
+	// Matches the Bash reference exactly: the per-commit `git cherry` proof
+	// stands on its own here. A reverted squash is already rejected at the
+	// cherry step, because the individual commits' patch-ids no longer match
+	// anything reachable. Standalone tree equivalence remains the third,
+	// independent term of isMergedCleanup's chain, as in the reference.
+	return true
 }
 
 func candidateHasCombinedPatchEquivalenceCleanup(repoRoot, sha, candidate string) bool {
@@ -227,35 +227,7 @@ func directPatchID(repoRoot, from, to string) string {
 	return pid
 }
 
-// treeEquivCache memoizes combined-tree-equivalence per (repo, sha, candidate).
-//
-// isMergedCleanup can reach this twice for one candidate: once inside
-// candidateHasPatchEquivalenceCleanup, and again as the third term of its OR
-// chain. Both calls are load-bearing — the third term can be true when patch
-// equivalence is false — so the chain is deliberately left alone rather than
-// restructured. The merge proof is the part of this file that must not shift;
-// caching removes the duplicate git subprocesses without touching it.
-var treeEquivCache = struct {
-	sync.Mutex
-	values map[string]bool
-}{values: map[string]bool{}}
-
 func candidateHasCombinedTreeEquivalenceCleanup(repoRoot, sha, candidate string) bool {
-	key := repoRoot + "\x00" + sha + "\x00" + candidate
-	treeEquivCache.Lock()
-	if v, ok := treeEquivCache.values[key]; ok {
-		treeEquivCache.Unlock()
-		return v
-	}
-	treeEquivCache.Unlock()
-	result := computeCombinedTreeEquivalenceCleanup(repoRoot, sha, candidate)
-	treeEquivCache.Lock()
-	treeEquivCache.values[key] = result
-	treeEquivCache.Unlock()
-	return result
-}
-
-func computeCombinedTreeEquivalenceCleanup(repoRoot, sha, candidate string) bool {
 	common := git(repoRoot, "merge-base", candidate, sha)
 	if common == "" {
 		return false

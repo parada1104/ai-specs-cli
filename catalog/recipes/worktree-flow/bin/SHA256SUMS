@@ -20,7 +20,7 @@
 # Regenerated for worktree-cleanup-go (cleanup.go/flags.go added to the gate module) (event-cwd whitespace trim in
 # gate/event.go) with the canonical go1.24.13 toolchain via:
 #   scripts/build-gate.sh && shasum -a 256 dist/worktree-gate-* | grep -v current
-9f7028694d04a45bed1bd5dddecc7e450cf50bdb009d91f86ea07993e96c155f  worktree-gate-darwin-arm64
-13903cd21633ed165995a4f42d8b5563a542a30aa1ea406bae823494342ba0c0  worktree-gate-darwin-amd64
-c61351b20071f7adde8e3ee7053b55f8990aa874d4706c1c4a096a8453b35ce1  worktree-gate-linux-amd64
-4ebfe4fe0b0aa6f1edf59ea6c93bcc55e1dc11e1c1c6d122dddc1a2e58f2947c  worktree-gate-linux-arm64
+a7e0d8fe4d61c7b7f5f555a4c158a46f8bf79acd1964a3a40d188553a12a55d2  worktree-gate-darwin-arm64
+caa92e545b0bbe6086c834dbc95b7bbd7d1aca63f8a494d618bb56b67148ce1e  worktree-gate-darwin-amd64
+f2f2daf3080c3e99dcdc0db2ea23e00169144f83d928b543832f9d323fa971bf  worktree-gate-linux-amd64
+b47c22153aea100bd228e949db20498624d68b5d5eaee4efd59bd31c90987727  worktree-gate-linux-arm64
