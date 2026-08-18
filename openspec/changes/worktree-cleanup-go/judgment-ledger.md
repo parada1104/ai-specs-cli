@@ -90,7 +90,30 @@ legitimate no-op.
 
 S3 is the coordinator's own edit and should be corrected regardless.
 
+## Round-one correction — all 8 addressed
+
+| ID | Fix | Evidence |
+|---|---|---|
+| C1 | The test no longer depends on the ambient checkout. It accepts 0 or 2, because **both** prove the flag was recognized and dispatched; the main-worktree boundary keeps its own hermetic test. | Re-verified by cloning the corrected branch into a plain checkout (what `actions/checkout@v4` produces): the whole Go module passes, where it previously failed deterministically. |
+| C2 | Two fixes. An already-absent remote ref is now the goal state, not an error — deleting a branch through the host UI is ordinary. And the records loop records the failure, reports `failed <name> (<err>)`, and **continues**, honouring spec.md:198. | RED first: `feat-beta` was never reported before the fix. |
+| C3 | A flag-parse error with `--cleanup` present now exits 2 instead of 0. `fs.Parse` stops at the offending flag so the parsed `*cleanup` is unreliable — the raw args are scanned instead. | `TestCleanupFailsClosedOnFlagError`, plus `TestGateStillFailsOpenOnFlagError` proving the gate's deliberate fail-open is **not** tightened. |
+| S1 | The launcher no longer discards `resolve_cleanup_binary`'s stderr, so a rejected `WORKTREE_CLEANUP_BIN` override is distinguishable from a binary that was never acquired. | |
+| S2 | `TestRemoteBranchDeletionIsVerified` uses the hermetic `cleanupGitTest` helper instead of the ambient-identity `gitTest`. | |
+| S3 | Trust-root header now names this change. It was the coordinator's own edit. | |
+| S4 | **Deliberately not restructured.** Both terms of the OR chain are load-bearing — the third can be true when patch equivalence is false — and that chain is the merge proof both judges confirmed faithful. Memoized per (repo, sha, candidate) instead: same result, no semantic risk. | |
+| S5 | Docstring now describes what the test does (drives the Go binary) rather than the bash function it used to source. | |
+
+The gate binary changed twice during this round, so
+`catalog/recipes/worktree-flow/bin/SHA256SUMS` was regenerated twice. Leaving it
+stale is what caused the 10 failures this change was first blamed for.
+
+## Verification after correction
+
+- `./tests/validate.sh` — **exit 0, 1834 tests, 0 failures**.
+- Go module green in a CI-shaped plain clone, which is where C1 actually bit.
+
 ## Disposition
 
-C1, C2, C3 go to a bounded round-one correction, pending explicit human
-approval. S1–S5 recorded; S3 and S5 are documentation accuracy and cheap.
+Round one complete. No finding remains open.
+
+`JUDGMENT: APPROVED ✅`
