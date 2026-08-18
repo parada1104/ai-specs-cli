@@ -7,6 +7,10 @@ Usage:
 
 Rules:
   - A file containing '<!-- ai-specs:runtime-brief -->' is always preserved.
+    --preserve-if-runtime-brief is accepted for compatibility and is
+    deliberately inert: design D5 makes the marker unconditional, so the
+    flag cannot turn preservation off. It is kept so existing callers and
+    materialized scripts keep working.
   - Otherwise, classify the target from its bytes, the lock baseline, and the
     bytes this invocation would write. Unknown or user-owned files are preserved.
   - --adopt-brief is an explicit one-time declaration that adopts an existing
@@ -666,31 +670,49 @@ def classify_brief(
         return "undetermined"
 
 
-def brief_ownership_state(
-    toml_path: Path,
-    output_path: Path,
-    *,
-    lock_path: Path | None = None,
-    lock_key: str | None = None,
-) -> str:
-    """Classify a brief target without rendering or mutating it."""
-    if lock_key is None:
-        return classify_brief(toml_path, output_path, lock_path=lock_path)
-    try:
-        lock_mod = _load_lock()
-        lock = lock_mod.load_lock(lock_path or _brief_lock_path(toml_path))
-        if output_path.exists() and RUNTIME_BRIEF_MARKER in output_path.read_text(encoding="utf-8"):
-            return "marker"
-        entry = (lock.get("managed") or {}).get(lock_key)
-        return _load_util().classify_managed_override(output_path, entry)
-    except Exception:
-        return "undetermined"
+def brief_ownership_state(toml_path, output_path, would_write=None, *, lock_path=None, lock=None) -> str:
+    """Ownership state of the runtime brief, as sync would act on it.
 
+    Delegates to brief_effective_state. It used to re-implement the marker
+    check inline, which is a second definition of "who owns this" — the exact
+    thing design D1 forbids, and the defect this change exists to remove.
+    """
+    return brief_effective_state(
+        toml_path, output_path, would_write, lock_path=lock_path, lock=lock
+    )
 
 def _brief_preserve(state: str) -> str:
     message = BRIEF_PRESERVE_MESSAGE.format(state=state)
     print(message, file=sys.stderr)
     return "preserved"
+
+
+def _brief_is_our_output(output_path: Path, content: bytes) -> bool:
+    """True when the file on disk is byte-identical to what we would write.
+
+    Compared through normalized_bytes so this agrees with
+    classify_managed_override, which hashes the same way. A raw comparison
+    disagreed with the classifier on CRLF checkouts.
+    """
+    util_mod = _load_util()
+    disk = output_path.read_bytes() if output_path.is_file() else b""
+    return util_mod.normalized_bytes(disk) == util_mod.normalized_bytes(content)
+
+
+def brief_effective_state(toml_path, output_path, would_write, *, lock_path=None, lock=None) -> str:
+    """The state a sync would ACT on, not the raw classification.
+
+    doctor must not report a state sync would never reach. A brief with no
+    baseline whose bytes are already ours is silently adopted by sync, so
+    reporting it as "untracked, run --adopt-brief" contradicts what the tool
+    actually does. One decision, asked twice — never two decisions (design D1).
+    """
+    state = classify_brief(
+        toml_path, output_path, would_write, lock_path=lock_path, lock=lock
+    )
+    if state in ("untracked", "user_modified") and _brief_is_our_output(output_path, would_write):
+        return "managed_current"
+    return state
 
 
 def _brief_decision(
@@ -721,13 +743,37 @@ def _brief_decision(
             return "preserved", lock
         if state == "missing":
             return "write", lock
+        # "Provably ours" means byte-identical to what we would write, compared
+        # the same way the classifier compares — normalized. A raw `==` here
+        # disagreed with classify_managed_override, which hashes through
+        # normalized_bytes: a CRLF checkout of our own output was called
+        # divergent and preserved, hitting exactly the no-regression cohort the
+        # migration rule exists to protect.
+        is_our_output = _brief_is_our_output(output_path, content)
+
         if state == "untracked":
-            if output_path.read_bytes() == content:
+            if is_our_output:
                 return "adopt", lock
             if adopt_brief:
                 return "adopt", lock
             return "preserve-untracked", lock
         if state == "user_modified":
+            # Self-heal an interrupted write. The bytes are written before the
+            # baseline is recorded, so a crash between the two leaves disk ahead
+            # of the lock and an ordinary never-edited brief classifies as
+            # user_modified — preserved forever. Re-recording is safe here
+            # precisely because the content is byte-identical to our own output,
+            # so this can never adopt something a human wrote.
+            if is_our_output:
+                return "adopt", lock
+            # The preserve message, doctor guidance and troubleshooting doc all
+            # name `--adopt-brief` as the remedy for this state. It has to work:
+            # design D3 forbids AUTOMATIC updates of user_modified, not an
+            # explicit user-issued handoff (D6 — safe because the user issues
+            # it). Adoption keeps the user's bytes and records them; it does not
+            # overwrite.
+            if adopt_brief:
+                return "adopt", lock
             return "preserve-user_modified", lock
         if state == "managed_current":
             return "current", lock

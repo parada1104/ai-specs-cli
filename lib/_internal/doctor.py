@@ -516,10 +516,13 @@ class Doctor:
             would_write = "\n".join(
                 renderer._render_lines(manifest, resolved)
             ).encode()
-            state = renderer.classify_brief(
+            # Ask for the state sync would ACT on. classify_brief returns the
+            # raw classification, which reports "untracked" for a brief sync
+            # would silently adopt — a diagnostic that contradicts the tool.
+            state = renderer.brief_effective_state(
                 manifest_path,
                 agents_path,
-                would_write=would_write,
+                would_write,
             )
         except Exception:
             state = "undetermined"

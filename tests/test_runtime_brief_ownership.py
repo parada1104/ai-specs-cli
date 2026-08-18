@@ -275,5 +275,94 @@ class RuntimeBriefOwnershipTests(unittest.TestCase):
             self.assertIn("undetermined", stderr.getvalue())
 
 
-if __name__ == "__main__":
-    unittest.main()
+
+class BriefRecoveryTests(RuntimeBriefOwnershipTests):
+    """Judgment-day round one: the documented remedy must actually work."""
+
+    def test_adopt_brief_works_for_user_modified(self):
+        """JD C1 (both judges): the preserve message, doctor guidance and the
+        troubleshooting doc all tell the user to run `ai-specs sync
+        --adopt-brief`. The user_modified branch never inspected the flag, so
+        the documented remedy silently did nothing — forever.
+
+        Design D3 forbids AUTOMATIC updates of user_modified. It does not
+        forbid an explicit user-issued handoff; D6 says --adopt-brief is safe
+        precisely because the user issues it.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            project, toml, output = self._project(Path(tmp))
+            self._render(toml, output)                       # now managed
+            edited = output.read_bytes() + b"\nmy own section\n"
+            output.write_bytes(edited)
+
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr):
+                state = self._render(toml, output)
+            self.assertEqual(state, "preserved", "fixture precondition")
+
+            state = self._render(toml, output, adopt=True)
+            self.assertEqual(
+                state, "adopted",
+                "--adopt-brief did nothing for user_modified; the remedy the "
+                "tool prints is a dead end",
+            )
+            self.assertEqual(
+                output.read_bytes(), edited,
+                "adoption must keep the user's bytes, never overwrite them",
+            )
+            lock = self.lock.load_lock(project / "ai-specs/.ai-specs.lock")
+            self.assertEqual(
+                lock["managed"]["AGENTS.md"]["sha256"], self.lock.sha256_of(output)
+            )
+
+    def test_interrupted_write_self_heals(self):
+        """JD (judge B): write_bytes runs before set_brief_baseline. A crash
+        between them leaves disk ahead of the lock, so the next sync classifies
+        an ordinary never-edited brief as user_modified and preserves it
+        forever — with no working recovery, since --adopt-brief was dead for
+        that state.
+
+        Content byte-identical to what we would write is provably ours, so
+        re-recording the baseline is safe: it can never adopt foreign content.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            project, toml, output = self._project(Path(tmp))
+            self._render(toml, output)
+            lock_path = project / "ai-specs/.ai-specs.lock"
+            lock = self.lock.load_lock(lock_path)
+            lock["managed"]["AGENTS.md"]["sha256"] = "0" * 64   # crash before record
+            self.lock.write_lock(lock_path, lock)
+
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr):
+                state = self._render(toml, output)
+            self.assertNotEqual(
+                state, "preserved",
+                "an unmodified brief stayed stuck after an interrupted write: "
+                + stderr.getvalue(),
+            )
+
+    def test_adopt_gate_agrees_with_the_classifier_on_line_endings(self):
+        """JD (judge A): the classifier normalizes CRLF before hashing, the
+        adopt gate compared raw bytes. A CRLF checkout of our own output was
+        therefore called divergent and preserved — hitting exactly the
+        no-regression cohort the migration rule exists to protect.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            project, toml, output = self._project(Path(tmp))
+            self._render(toml, output)
+            rendered = output.read_bytes()
+            lock_path = project / "ai-specs/.ai-specs.lock"
+            lock = self.lock.load_lock(lock_path)
+            lock.pop("managed", None)                       # no baseline: first sight
+            self.lock.write_lock(lock_path, lock)
+            output.write_bytes(rendered.replace(b"\n", b"\r\n"))
+
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr):
+                state = self._render(toml, output)
+            self.assertEqual(
+                state, "adopted",
+                "a CRLF checkout of our own output was not adopted: "
+                + stderr.getvalue(),
+            )
