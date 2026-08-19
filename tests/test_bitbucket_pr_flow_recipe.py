@@ -1,4 +1,4 @@
-import importlib.util
+import json
 import sys
 import tempfile
 import tomllib
@@ -7,86 +7,156 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 CATALOG = ROOT / "catalog" / "recipes"
 RECIPE_ID = "bitbucket-pr-flow"
-import sys
-from pathlib import Path as _P
-sys.path.insert(0, str(_P(__file__).resolve().parent))
-from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import isolated_home, invoke, temp_project
+from _cache_paths import cache_command, recipe_skill_dir, recipe_root
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _recipe_toml() -> dict:
+    with (CATALOG / RECIPE_ID / "recipe.toml").open("rb") as fh:
+        return tomllib.load(fh)
+
+
+def _version() -> str:
+    return _recipe_toml()["recipe"]["version"]
+
+
+def _recipe_version(rid: str) -> str:
+    with (CATALOG / rid / "recipe.toml").open("rb") as fh:
+        return tomllib.load(fh)["recipe"]["version"]
+
+
+def _enable_recipes(root: Path, *recipe_ids: str) -> Path:
+    """Append the given recipes to an isolated project manifest (version pinned)."""
+    manifest = root / "ai-specs" / "ai-specs.toml"
+    for rid in recipe_ids:
+        with manifest.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f'\n[recipes.{rid}]\nenabled = true\nversion = "{_recipe_version(rid)}"\n'
+            )
+    return root
 
 
 class BitbucketPrFlowRecipeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_bitbucket")
-        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_bitbucket")
+    """Phase 1/2: manifest declarations and materialization via the CLI."""
+
+    def setUp(self):
+        self.home_td = tempfile.TemporaryDirectory(prefix="bbprf-home-")
+        self.addCleanup(self.home_td.cleanup)
+        self.home = isolated_home(Path(self.home_td.name))
+
+    def _invoke(self, root: Path, *args: str):
+        return invoke(root, *args, cli_home=self.home)
+
+    def _sync(self, root: Path):
+        r = self._invoke(root, "sync")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r
+
+    def _project(self) -> Path:
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        return _enable_recipes(root, RECIPE_ID)
+
+    def _agents(self, root: Path) -> str:
+        return (root / "AGENTS.md").read_text()
 
     # --- Phase 1: Manifest and Binding ---
 
     def test_recipe_validates_and_declares_vcs_pr_flow(self):
         """Recipe is valid and declares vcs-pr-flow capability."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        self.assertEqual(recipe.id, RECIPE_ID)
-        cap_ids = [c.id for c in recipe.capabilities]
+        root = self._project()
+        result = self._invoke(root, "recipe", "list")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(RECIPE_ID, result.stdout)
+        self.assertIn(_version(), result.stdout)
+
+        self._sync(root)
+        agents = self._agents(root)
+        self.assertIn(
+            "VCS/PR provider: Bitbucket (`bb` CLI); base branch: `development`",
+            agents,
+        )
+
+        data = _recipe_toml()
+        cap_ids = [c["id"] for c in data.get("capabilities", [])]
         self.assertIn("vcs-pr-flow", cap_ids)
 
     def test_recipe_has_no_provider_config(self):
         """Config must not declare provider — recipe id is the provider identity."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+        root = self._project()
+        result = self._invoke(root, "recipe", "list")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(RECIPE_ID, result.stdout)
+
+        cfg = self._invoke(root, "recipe", "configure", RECIPE_ID, "--inspect", "--json")
+        self.assertEqual(cfg.returncode, 0, cfg.stderr)
+        inspect = json.loads(cfg.stdout)
+        field_keys = [f["key"] for f in inspect["schema"]["fields"]]
         self.assertNotIn(
             "provider",
-            recipe.config_schema.fields,
+            field_keys,
             "provider config field must not exist on sibling VCS recipes",
         )
 
     def test_recipe_declares_development_base_branch_default(self):
         """Config declares base_branch=development as default."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        base_field = recipe.config_schema.fields.get("base_branch")
-        self.assertIsNotNone(base_field, "base_branch config field must exist")
-        self.assertFalse(base_field.required)
-        self.assertEqual(base_field.default, "development")
+        root = self._project()
+        cfg = self._invoke(root, "recipe", "configure", RECIPE_ID, "--inspect", "--json")
+        self.assertEqual(cfg.returncode, 0, cfg.stderr)
+        inspect = json.loads(cfg.stdout)
+        base = next(f for f in inspect["schema"]["fields"] if f["key"] == "base_branch")
+        self.assertFalse(base["required"])
+        self.assertEqual(base["default"], "development")
+
+        self._sync(root)
+        self.assertIn("base branch: `development`", self._agents(root))
 
     def test_recipe_declares_validate_config_hook(self):
-        """Recipe declares on-sync validate-config hook."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        hook_pairs = [(h.event, h.action) for h in recipe.hooks]
+        """Recipe declares on-sync validate-config hook; hook executes on sync."""
+        data = _recipe_toml()
+        hook_pairs = [(h["event"], h["action"]) for h in data.get("hooks", [])]
         self.assertIn(("on-sync", "validate-config"), hook_pairs)
+
+        root = self._project()
+        self._sync(root)
 
     def test_recipe_declares_bundled_skill(self):
         """Recipe declares bundled bitbucket-merge-workflow skill."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        skill_ids = [(s.id, s.source) for s in recipe.skills]
+        root = self._project()
+        self._sync(root)
+        skill = (
+            recipe_skill_dir(root, RECIPE_ID, "bitbucket-merge-workflow", cli_home=self.home)
+            / "SKILL.md"
+        )
+        self.assertTrue(skill.is_file(), f"missing bundled skill at {skill}")
+
+        data = _recipe_toml()
+        skill_ids = [(s["id"], s.get("source")) for s in data["provides"]["skills"]]
         self.assertIn(("bitbucket-merge-workflow", "bundled"), skill_ids)
 
     def test_recipe_declares_bb_pr_create_command(self):
         """Recipe declares bb-pr-create command."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        cmd_ids = [c.id for c in recipe.commands]
+        root = self._project()
+        self._sync(root)
+        cmd = cache_command(root, "bb-pr-create", cli_home=self.home)
+        self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
+
+        data = _recipe_toml()
+        cmd_ids = [c["id"] for c in data["provides"]["commands"]]
         self.assertIn("bb-pr-create", cmd_ids)
 
     def test_recipe_declares_readme_doc(self):
         """Recipe declares README.md doc provision."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        doc_targets = [d.target for d in recipe.docs]
+        root = self._project()
+        self._sync(root)
+        doc = root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
+        self.assertTrue(doc.is_file(), f"missing doc at {doc}")
+
+        data = _recipe_toml()
+        doc_targets = [d["target"] for d in data["provides"]["docs"]]
         self.assertIn("ai-specs/recipes/bitbucket-pr-flow/README.md", doc_targets)
 
     # --- Phase 2: Materialization ---
@@ -94,10 +164,19 @@ class BitbucketPrFlowRecipeTests(unittest.TestCase):
     def test_brief_surfaces_postmerge_sync_and_cleanup(self):
         """The always-on brief must surface both a post-merge base-sync rule
         (git pull --ff-only) and a post-merge cleanup rule."""
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        brief = recipe.brief_fragments
+        root = self._project()
+        self._sync(root)
+        agents = self._agents(root)
+        self.assertIn("git pull --ff-only", agents)
+        self.assertTrue(
+            any("worktree" in line and "merged" in line for line in agents.splitlines()),
+            "post-merge cleanup workflow_rule missing",
+        )
+
+        data = _recipe_toml()
+        brief = data["provides"].get("brief")
         self.assertIsNotNone(brief)
-        rules = [f.text for f in (brief.workflow_rules or [])]
+        rules = brief.get("workflow_rules") or []
         self.assertTrue(
             any("ff-only" in r.lower() for r in rules),
             "post-merge base-sync workflow_rule missing (git pull --ff-only)",
@@ -107,101 +186,96 @@ class BitbucketPrFlowRecipeTests(unittest.TestCase):
             "post-merge cleanup workflow_rule missing",
         )
 
-    def _make_project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-        with (CATALOG / RECIPE_ID / "recipe.toml").open("rb") as fh:
-            recipe_version = tomllib.load(fh)["recipe"]["version"]
-        manifest = ai_specs / "ai-specs.toml"
-        manifest.write_text(
-            "[project]\nname = 'fixture'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            f'[recipes.{RECIPE_ID}]\nenabled = true\nversion = "{recipe_version}"\n'
-        )
-        return root
-
     def test_materialize_produces_skill(self):
         """Sync materializes the bundled bitbucket-merge-workflow skill."""
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        root = self._project()
+        self._sync(root)
         skill = (
-            recipe_root(root, RECIPE_ID)
-            / "skills" / "bitbucket-merge-workflow" / "SKILL.md"
+            recipe_skill_dir(root, RECIPE_ID, "bitbucket-merge-workflow", cli_home=self.home)
+            / "SKILL.md"
         )
         self.assertTrue(skill.is_file(), f"missing bundled skill at {skill}")
 
     def test_materialize_produces_command(self):
         """Sync materializes the bb-pr-create command."""
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        cmd = cache_command(root, "bb-pr-create")
+        root = self._project()
+        self._sync(root)
+        cmd = cache_command(root, "bb-pr-create", cli_home=self.home)
         self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
     def test_materialize_produces_readme(self):
         """Sync materializes the README doc."""
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        root = self._project()
+        self._sync(root)
         doc = root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
         self.assertTrue(doc.is_file(), f"missing doc at {doc}")
 
     def test_materialize_does_not_touch_github_assets(self):
         """Sync does not modify git-pr-flow recipe assets."""
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        root = self._project()
+        self._sync(root)
         github_skill = (
-            recipe_root(root, "git-pr-flow")
+            recipe_root(root, "git-pr-flow", cli_home=self.home)
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
         self.assertFalse(
             github_skill.exists(),
-            "git-pr-flow assets must not be materialized when only bitbucket-pr-flow is enabled"
+            "git-pr-flow assets must not be materialized when only bitbucket-pr-flow is enabled",
         )
 
 
 class BitbucketPrFlowBindingTests(unittest.TestCase):
     """Provider binding semantics: ambiguity and explicit binding."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_bitbucket_binding")
+    AMBIGUITY = (
+        "capability ambiguity: capability.id='vcs-pr-flow' declared by "
+        "bitbucket-pr-flow, git-pr-flow. Add an explicit [[bindings]] entry to resolve."
+    )
 
-    def _make_v2_recipe(self, tmp: str, rid: str, caps: list[str] = None):
-        recipe_dir = Path(tmp) / rid
-        recipe_dir.mkdir(parents=True, exist_ok=True)
-        cap_lines = "".join(f'[[capabilities]]\nid = "{c}"\n' for c in (caps or []))
-        (recipe_dir / "recipe.toml").write_text(
-            f'[recipe]\nid = "{rid}"\nname = "{rid.title()}"\ndescription = "D"\nversion = "1.0"\n'
-            + cap_lines
-        )
+    def setUp(self):
+        self.home_td = tempfile.TemporaryDirectory(prefix="bbprf-bind-home-")
+        self.addCleanup(self.home_td.cleanup)
+        self.home = isolated_home(Path(self.home_td.name))
+
+    def _invoke(self, root: Path, *args: str):
+        return invoke(root, *args, cli_home=self.home)
+
+    def _sync(self, root: Path):
+        r = self._invoke(root, "sync")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r
+
+    def _dual_project(self, binding: str | None = None) -> Path:
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = _enable_recipes(root, "git-pr-flow", RECIPE_ID)
+        if binding:
+            manifest = root / "ai-specs" / "ai-specs.toml"
+            with manifest.open("a", encoding="utf-8") as fh:
+                fh.write(
+                    f'\n[[bindings]]\ncapability = "vcs-pr-flow"\nrecipe = "{binding}"\n'
+                )
+        return root
 
     def test_dual_vcs_pr_flow_providers_stay_unbound_without_binding(self):
-        """When both git-pr-flow and bitbucket-pr-flow are enabled without bindings, vcs-pr-flow stays unbound."""
-        with tempfile.TemporaryDirectory() as tmp:
-            catalog = Path(tmp)
-            self._make_v2_recipe(tmp, "git-pr-flow", caps=["vcs-pr-flow"])
-            self._make_v2_recipe(tmp, "bitbucket-pr-flow", caps=["vcs-pr-flow"])
-            bindings = self.mod.resolve_bindings(
-                catalog, ["git-pr-flow", "bitbucket-pr-flow"], []
-            )
-            self.assertNotIn("vcs-pr-flow", bindings)
+        """When both git-pr-flow and bitbucket-pr-flow are enabled without bindings,
+        vcs-pr-flow stays unbound (non-fatal ambiguity) and no provider is selected."""
+        root = self._dual_project()
+        r = self._sync(root)
+        self.assertIn(self.AMBIGUITY, r.stderr)
+        agents = (root / "AGENTS.md").read_text()
+        self.assertNotIn("VCS/PR provider", agents)
 
     def test_explicit_binding_selects_bitbucket(self):
         """Explicit binding to bitbucket-pr-flow selects it for vcs-pr-flow."""
-        with tempfile.TemporaryDirectory() as tmp:
-            catalog = Path(tmp)
-            self._make_v2_recipe(tmp, "git-pr-flow", caps=["vcs-pr-flow"])
-            self._make_v2_recipe(tmp, "bitbucket-pr-flow", caps=["vcs-pr-flow"])
-            bindings = self.mod.resolve_bindings(
-                catalog,
-                ["git-pr-flow", "bitbucket-pr-flow"],
-                [{"capability": "vcs-pr-flow", "recipe": "bitbucket-pr-flow"}],
-            )
-            self.assertEqual(bindings.get("vcs-pr-flow"), "bitbucket-pr-flow")
+        root = self._dual_project(binding=RECIPE_ID)
+        r = self._sync(root)
+        self.assertNotIn("capability ambiguity", r.stderr)
+        agents = (root / "AGENTS.md").read_text()
+        self.assertIn(
+            "VCS/PR provider: Bitbucket (`bb` CLI); base branch: `development`",
+            agents,
+        )
 
 
 class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
@@ -467,75 +541,70 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
 class BitbucketPrFlowDualProviderTests(unittest.TestCase):
     """End-to-end dual provider materialization with explicit bindings."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_bitbucket_dual")
-        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_bitbucket_dual")
+    def setUp(self):
+        self.home_td = tempfile.TemporaryDirectory(prefix="bbprf-dual-home-")
+        self.addCleanup(self.home_td.cleanup)
+        self.home = isolated_home(Path(self.home_td.name))
+
+    def _invoke(self, root: Path, *args: str):
+        return invoke(root, *args, cli_home=self.home)
+
+    def _sync(self, root: Path):
+        r = self._invoke(root, "sync")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r
 
     def _make_dual_project(self, binding_recipe: str) -> Path:
         """Create a project with both git-pr-flow and bitbucket-pr-flow enabled, with explicit binding."""
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-
-        with (CATALOG / "git-pr-flow" / "recipe.toml").open("rb") as fh:
-            github_version = tomllib.load(fh)["recipe"]["version"]
-        with (CATALOG / RECIPE_ID / "recipe.toml").open("rb") as fh:
-            bitbucket_version = tomllib.load(fh)["recipe"]["version"]
-
-        manifest = ai_specs / "ai-specs.toml"
-        manifest.write_text(
-            "[project]\nname = 'dual-fixture'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            f'[recipes.git-pr-flow]\nenabled = true\nversion = "{github_version}"\n\n'
-            f'[recipes.{RECIPE_ID}]\nenabled = true\nversion = "{bitbucket_version}"\n\n'
-            f'[[bindings]]\ncapability = "vcs-pr-flow"\nrecipe = "{binding_recipe}"\n'
-        )
+        td, root = temp_project(name="dual-fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = _enable_recipes(root, "git-pr-flow", RECIPE_ID)
+        manifest = root / "ai-specs" / "ai-specs.toml"
+        with manifest.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f'\n[[bindings]]\ncapability = "vcs-pr-flow"\nrecipe = "{binding_recipe}"\n'
+            )
         return root
 
     def test_dual_provider_bitbucket_bound_materializes_both(self):
         """When bound to bitbucket-pr-flow, both recipes materialize their assets (different IDs)."""
-        root = self._make_dual_project("bitbucket-pr-flow")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        root = self._make_dual_project(RECIPE_ID)
+        self._sync(root)
 
         bitbucket_skill = (
-            recipe_root(root, RECIPE_ID)
+            recipe_root(root, RECIPE_ID, cli_home=self.home)
             / "skills" / "bitbucket-merge-workflow" / "SKILL.md"
         )
-        bitbucket_cmd = cache_command(root, "bb-pr-create")
+        bitbucket_cmd = cache_command(root, "bb-pr-create", cli_home=self.home)
         self.assertTrue(bitbucket_skill.is_file(), f"missing bitbucket skill at {bitbucket_skill}")
         self.assertTrue(bitbucket_cmd.is_file(), f"missing bitbucket command at {bitbucket_cmd}")
 
         github_skill = (
-            recipe_root(root, "git-pr-flow")
+            recipe_root(root, "git-pr-flow", cli_home=self.home)
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
-        github_cmd = cache_command(root, "pr-create")
+        github_cmd = cache_command(root, "pr-create", cli_home=self.home)
         self.assertTrue(github_skill.is_file(), f"missing github skill at {github_skill}")
         self.assertTrue(github_cmd.is_file(), f"missing github command at {github_cmd}")
 
     def test_dual_provider_github_bound_materializes_both(self):
         """When bound to git-pr-flow, both recipes materialize their assets (different IDs)."""
         root = self._make_dual_project("git-pr-flow")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        self._sync(root)
 
         github_skill = (
-            recipe_root(root, "git-pr-flow")
+            recipe_root(root, "git-pr-flow", cli_home=self.home)
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
-        github_cmd = cache_command(root, "pr-create")
+        github_cmd = cache_command(root, "pr-create", cli_home=self.home)
         self.assertTrue(github_skill.is_file(), f"missing github skill at {github_skill}")
         self.assertTrue(github_cmd.is_file(), f"missing github command at {github_cmd}")
 
         bitbucket_skill = (
-            recipe_root(root, RECIPE_ID)
+            recipe_root(root, RECIPE_ID, cli_home=self.home)
             / "skills" / "bitbucket-merge-workflow" / "SKILL.md"
         )
-        bitbucket_cmd = cache_command(root, "bb-pr-create")
+        bitbucket_cmd = cache_command(root, "bb-pr-create", cli_home=self.home)
         self.assertTrue(bitbucket_skill.is_file(), f"missing bitbucket skill at {bitbucket_skill}")
         self.assertTrue(bitbucket_cmd.is_file(), f"missing bitbucket command at {bitbucket_cmd}")
 

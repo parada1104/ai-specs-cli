@@ -1,4 +1,4 @@
-import importlib.util
+import json
 import sys
 import tempfile
 import tomllib
@@ -7,97 +7,168 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 CATALOG = ROOT / "catalog" / "recipes"
 RECIPE_ID = "gitlab-mr-flow"
-import sys
-from pathlib import Path as _P
-sys.path.insert(0, str(_P(__file__).resolve().parent))
-from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import isolated_home, invoke, temp_project
+from _cache_paths import cache_command, recipe_skill_dir, recipe_root
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _recipe_toml() -> dict:
+    with (CATALOG / RECIPE_ID / "recipe.toml").open("rb") as fh:
+        return tomllib.load(fh)
 
 
 class GitlabMrFlowRecipeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_gitlab")
-        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_gitlab")
+    def _enable_recipe(self, root: Path) -> Path:
+        """Append the gitlab-mr-flow recipe to an isolated project manifest."""
+        manifest = root / "ai-specs" / "ai-specs.toml"
+        recipe_version = _recipe_toml()["recipe"]["version"]
+        with manifest.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"\n[recipes.{RECIPE_ID}]\nenabled = true\nversion = \"{recipe_version}\"\n"
+            )
+        return root
+
+    def _recipe_list(self, root: Path) -> str:
+        """Rendered `ai-specs recipe list` output (process-boundary anchor)."""
+        result = invoke(root, "recipe", "list", cli_home=self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(RECIPE_ID, result.stdout)
+        return result.stdout
+
+    def _recipe_config_inspect(self, root: Path) -> dict:
+        """`ai-specs recipe configure --inspect` JSON (schema fields anchor)."""
+        result = invoke(root, "recipe", "configure", RECIPE_ID, "--inspect", cli_home=self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def _sync(self, root: Path):
+        r = invoke(root, "sync", cli_home=self.home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r
+
+    def setUp(self):
+        self.home_td = tempfile.TemporaryDirectory(prefix="gmlr-home-")
+        self.addCleanup(self.home_td.cleanup)
+        self.home = isolated_home(Path(self.home_td.name))
 
     # --- Phase 1: Manifest and Binding ---
 
     def test_recipe_validates_and_declares_vcs_pr_flow(self):
         """Recipe is valid and declares vcs-pr-flow capability."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        self.assertEqual(recipe.id, RECIPE_ID)
-        cap_ids = [c.id for c in recipe.capabilities]
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        stdout = self._recipe_list(root)
+        self.assertIn(_recipe_toml()["recipe"]["version"], stdout)
+
+        data = _recipe_toml()
+        cap_ids = [c["id"] for c in data.get("capabilities", [])]
         self.assertIn("vcs-pr-flow", cap_ids)
+
+        # Auto-bind: with only gitlab-mr-flow enabled, sync resolves the
+        # vcs-pr-flow capability to GitLab — proving the declared capability.
+        self._sync(root)
+        agents = (root / "AGENTS.md").read_text()
+        self.assertIn(
+            "- VCS/PR provider: GitLab (`glab` CLI); base branch: `development`",
+            agents,
+        )
 
     def test_recipe_has_no_provider_config(self):
         """Config must not declare provider — recipe id is the provider identity."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        self._recipe_list(root)
+
+        inspect = self._recipe_config_inspect(root)
+        field_keys = [f["key"] for f in inspect["schema"]["fields"]]
         self.assertNotIn(
             "provider",
-            recipe.config_schema.fields,
+            field_keys,
             "provider config field must not exist on sibling VCS recipes",
         )
 
     def test_recipe_declares_development_base_branch_default(self):
         """Config declares base_branch=development as default."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        base_field = recipe.config_schema.fields.get("base_branch")
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+
+        inspect = self._recipe_config_inspect(root)
+        fields = {f["key"]: f for f in inspect["schema"]["fields"]}
+        base_field = fields.get("base_branch")
         self.assertIsNotNone(base_field, "base_branch config field must exist")
-        self.assertFalse(base_field.required)
-        self.assertEqual(base_field.default, "development")
+        self.assertFalse(base_field["required"])
+        self.assertEqual(base_field["default"], "development")
+
+        # Sync renders the base-branch default in the brief.
+        self._sync(root)
+        agents = (root / "AGENTS.md").read_text()
+        self.assertIn("base branch: `development`", agents)
 
     def test_recipe_declares_validate_config_hook(self):
         """Recipe declares on-sync validate-config hook."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        hook_pairs = [(h.event, h.action) for h in recipe.hooks]
+        data = _recipe_toml()
+        hook_pairs = [(h["event"], h["action"]) for h in data.get("hooks", [])]
         self.assertIn(("on-sync", "validate-config"), hook_pairs)
+
+        # Sync anchor: the on-sync hook executes without erroring.
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        self._sync(root)
 
     def test_recipe_declares_bundled_skill(self):
         """Recipe declares bundled gitlab-merge-workflow skill."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        skill_ids = [(s.id, s.source) for s in recipe.skills]
-        self.assertIn(("gitlab-merge-workflow", "bundled"), skill_ids)
+        data = _recipe_toml()
+        skills = [(s["id"], s.get("source")) for s in data["provides"]["skills"]]
+        self.assertIn(("gitlab-merge-workflow", "bundled"), skills)
+
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        self._sync(root)
+        skill = recipe_skill_dir(root, RECIPE_ID, "gitlab-merge-workflow", cli_home=self.home) / "SKILL.md"
+        self.assertTrue(skill.is_file(), f"missing bundled skill at {skill}")
 
     def test_recipe_declares_mr_create_command(self):
         """Recipe declares mr-create command."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        cmd_ids = [c.id for c in recipe.commands]
+        data = _recipe_toml()
+        cmd_ids = [c["id"] for c in data["provides"]["commands"]]
         self.assertIn("mr-create", cmd_ids)
+
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        self._sync(root)
+        cmd = cache_command(root, "mr-create", cli_home=self.home)
+        self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
     def test_recipe_declares_readme_doc(self):
         """Recipe declares README.md doc provision."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        doc_targets = [d.target for d in recipe.docs]
+        data = _recipe_toml()
+        doc_targets = [d["target"] for d in data["provides"]["docs"]]
         self.assertIn("ai-specs/recipes/gitlab-mr-flow/README.md", doc_targets)
+
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        self._sync(root)
+        doc = root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
+        self.assertTrue(doc.is_file(), f"missing doc at {doc}")
 
     # --- Phase 2: Materialization ---
 
     def test_brief_surfaces_postmerge_sync_and_cleanup(self):
         """The always-on brief must surface both a post-merge base-sync rule
         (git pull --ff-only) and a post-merge cleanup rule."""
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        brief = recipe.brief_fragments
+        data = _recipe_toml()
+        brief = data["provides"].get("brief")
         self.assertIsNotNone(brief)
-        rules = [f.text for f in (brief.workflow_rules or [])]
+        rules = brief.get("workflow_rules") or []
         self.assertTrue(
             any("ff-only" in r.lower() for r in rules),
             "post-merge base-sync workflow_rule missing (git pull --ff-only)",
@@ -107,54 +178,51 @@ class GitlabMrFlowRecipeTests(unittest.TestCase):
             "post-merge cleanup workflow_rule missing",
         )
 
-    def _make_project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-        with (CATALOG / RECIPE_ID / "recipe.toml").open("rb") as fh:
-            recipe_version = tomllib.load(fh)["recipe"]["version"]
-        manifest = ai_specs / "ai-specs.toml"
-        manifest.write_text(
-            "[project]\nname = 'fixture'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            f'[recipes.{RECIPE_ID}]\nenabled = true\nversion = "{recipe_version}"\n'
-        )
-        return root
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        self._recipe_list(root)
+        self._sync(root)
+        agents = (root / "AGENTS.md").read_text()
+        self.assertIn("git pull --ff-only", agents)
+        self.assertIn("worktree", agents)
+        self.assertIn("merged", agents)
 
     def test_materialize_produces_skill(self):
         """Sync materializes the bundled gitlab-merge-workflow skill."""
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        skill = (
-            recipe_root(root, RECIPE_ID)
-            / "skills" / "gitlab-merge-workflow" / "SKILL.md"
-        )
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        self._sync(root)
+        skill = recipe_skill_dir(root, RECIPE_ID, "gitlab-merge-workflow", cli_home=self.home) / "SKILL.md"
         self.assertTrue(skill.is_file(), f"missing bundled skill at {skill}")
 
     def test_materialize_produces_command(self):
         """Sync materializes the mr-create command."""
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        cmd = cache_command(root, "mr-create")
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        self._sync(root)
+        cmd = cache_command(root, "mr-create", cli_home=self.home)
         self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
     def test_materialize_produces_readme(self):
         """Sync materializes the README doc."""
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        self._sync(root)
         doc = root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
         self.assertTrue(doc.is_file(), f"missing doc at {doc}")
 
     def test_materialize_does_not_touch_github_assets(self):
         """Sync does not modify git-pr-flow recipe assets."""
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_recipe(root)
+        self._sync(root)
         github_skill = (
-            recipe_root(root, "git-pr-flow")
+            recipe_root(root, "git-pr-flow", cli_home=self.home)
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
         self.assertFalse(
@@ -166,42 +234,59 @@ class GitlabMrFlowRecipeTests(unittest.TestCase):
 class GitlabMrFlowBindingTests(unittest.TestCase):
     """Provider binding semantics: ambiguity and explicit binding."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_gitlab_binding")
-
-    def _make_v2_recipe(self, tmp: str, rid: str, caps: list[str] = None):
-        recipe_dir = Path(tmp) / rid
-        recipe_dir.mkdir(parents=True, exist_ok=True)
-        cap_lines = "".join(f'[[capabilities]]\nid = "{c}"\n' for c in (caps or []))
-        (recipe_dir / "recipe.toml").write_text(
-            f'[recipe]\nid = "{rid}"\nname = "{rid.title()}"\ndescription = "D"\nversion = "1.0"\n'
-            + cap_lines
+    def _enable_dual(self, root: Path, binding: str | None = None) -> Path:
+        """Enable both git-pr-flow and gitlab-mr-flow, optionally binding."""
+        manifest = root / "ai-specs" / "ai-specs.toml"
+        with (CATALOG / "git-pr-flow" / "recipe.toml").open("rb") as fh:
+            github_version = tomllib.load(fh)["recipe"]["version"]
+        with (CATALOG / RECIPE_ID / "recipe.toml").open("rb") as fh:
+            gitlab_version = tomllib.load(fh)["recipe"]["version"]
+        text = (
+            f"\n[recipes.git-pr-flow]\nenabled = true\nversion = \"{github_version}\"\n\n"
+            f"[recipes.{RECIPE_ID}]\nenabled = true\nversion = \"{gitlab_version}\"\n"
         )
+        if binding is not None:
+            text += f'\n[[bindings]]\ncapability = "vcs-pr-flow"\nrecipe = "{binding}"\n'
+        with manifest.open("a", encoding="utf-8") as fh:
+            fh.write(text)
+        return root
+
+    def _sync(self, root: Path):
+        r = invoke(root, "sync", cli_home=self.home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r
+
+    def setUp(self):
+        self.home_td = tempfile.TemporaryDirectory(prefix="gmlb-home-")
+        self.addCleanup(self.home_td.cleanup)
+        self.home = isolated_home(Path(self.home_td.name))
 
     def test_dual_vcs_pr_flow_providers_stay_unbound_without_binding(self):
         """When both git-pr-flow and gitlab-mr-flow are enabled without bindings, vcs-pr-flow stays unbound."""
-        with tempfile.TemporaryDirectory() as tmp:
-            catalog = Path(tmp)
-            self._make_v2_recipe(tmp, "git-pr-flow", caps=["vcs-pr-flow"])
-            self._make_v2_recipe(tmp, "gitlab-mr-flow", caps=["vcs-pr-flow"])
-            bindings = self.mod.resolve_bindings(
-                catalog, ["git-pr-flow", "gitlab-mr-flow"], []
-            )
-            self.assertNotIn("vcs-pr-flow", bindings)
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_dual(root)
+        r = self._sync(root)
+        self.assertIn(
+            "capability ambiguity: capability.id='vcs-pr-flow' declared by "
+            "git-pr-flow, gitlab-mr-flow. Add an explicit [[bindings]] entry to resolve.",
+            r.stderr,
+        )
+        agents = (root / "AGENTS.md").read_text()
+        self.assertNotIn("VCS/PR provider", agents)
 
     def test_explicit_binding_selects_gitlab(self):
         """Explicit binding to gitlab-mr-flow selects it for vcs-pr-flow."""
-        with tempfile.TemporaryDirectory() as tmp:
-            catalog = Path(tmp)
-            self._make_v2_recipe(tmp, "git-pr-flow", caps=["vcs-pr-flow"])
-            self._make_v2_recipe(tmp, "gitlab-mr-flow", caps=["vcs-pr-flow"])
-            bindings = self.mod.resolve_bindings(
-                catalog,
-                ["git-pr-flow", "gitlab-mr-flow"],
-                [{"capability": "vcs-pr-flow", "recipe": "gitlab-mr-flow"}],
-            )
-            self.assertEqual(bindings.get("vcs-pr-flow"), "gitlab-mr-flow")
+        td, root = temp_project(name="fixture", agents=("claude",))
+        self.addCleanup(td.cleanup)
+        root = self._enable_dual(root, binding="gitlab-mr-flow")
+        r = self._sync(root)
+        self.assertNotIn("capability ambiguity", r.stderr)
+        agents = (root / "AGENTS.md").read_text()
+        self.assertIn(
+            "- VCS/PR provider: GitLab (`glab` CLI); base branch: `development`",
+            agents,
+        )
 
 
 class GitlabMrFlowGoldenContentTests(unittest.TestCase):
@@ -537,11 +622,6 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
 class GitlabMrFlowDualProviderTests(unittest.TestCase):
     """End-to-end dual provider materialization with explicit bindings."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_gitlab_dual")
-        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_gitlab_dual")
-
     def _make_dual_project(self, binding_recipe: str) -> Path:
         """Create a project with both git-pr-flow and gitlab-mr-flow enabled, with explicit binding."""
         tmp = tempfile.TemporaryDirectory()
@@ -551,13 +631,13 @@ class GitlabMrFlowDualProviderTests(unittest.TestCase):
         ai_specs.mkdir()
         (ai_specs / "skills").mkdir()
         (ai_specs / "commands").mkdir()
-        
+
         # Read versions from both recipes
         with (CATALOG / "git-pr-flow" / "recipe.toml").open("rb") as fh:
             github_version = tomllib.load(fh)["recipe"]["version"]
         with (CATALOG / "gitlab-mr-flow" / "recipe.toml").open("rb") as fh:
             gitlab_version = tomllib.load(fh)["recipe"]["version"]
-        
+
         manifest = ai_specs / "ai-specs.toml"
         manifest.write_text(
             "[project]\nname = 'dual-fixture'\n\n"
@@ -568,49 +648,59 @@ class GitlabMrFlowDualProviderTests(unittest.TestCase):
         )
         return root
 
+    def _sync(self, root: Path):
+        r = invoke(root, "sync", cli_home=self.home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r
+
+    def setUp(self):
+        self.home_td = tempfile.TemporaryDirectory(prefix="gmdp-home-")
+        self.addCleanup(self.home_td.cleanup)
+        self.home = isolated_home(Path(self.home_td.name))
+
     def test_dual_provider_gitlab_bound_materializes_both(self):
         """When bound to gitlab-mr-flow, both recipes materialize their assets (different IDs)."""
         root = self._make_dual_project("gitlab-mr-flow")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        
+        self._sync(root)
+
         # GitLab assets should exist
         gitlab_skill = (
-            recipe_root(root, "gitlab-mr-flow")
+            recipe_root(root, "gitlab-mr-flow", cli_home=self.home)
             / "skills" / "gitlab-merge-workflow" / "SKILL.md"
         )
-        gitlab_cmd = cache_command(root, "mr-create")
+        gitlab_cmd = cache_command(root, "mr-create", cli_home=self.home)
         self.assertTrue(gitlab_skill.is_file(), f"missing gitlab skill at {gitlab_skill}")
         self.assertTrue(gitlab_cmd.is_file(), f"missing gitlab command at {gitlab_cmd}")
-        
+
         # GitHub assets should also exist (different IDs, no conflict)
         github_skill = (
-            recipe_root(root, "git-pr-flow")
+            recipe_root(root, "git-pr-flow", cli_home=self.home)
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
-        github_cmd = cache_command(root, "pr-create")
+        github_cmd = cache_command(root, "pr-create", cli_home=self.home)
         self.assertTrue(github_skill.is_file(), f"missing github skill at {github_skill}")
         self.assertTrue(github_cmd.is_file(), f"missing github command at {github_cmd}")
 
     def test_dual_provider_github_bound_materializes_both(self):
         """When bound to git-pr-flow, both recipes materialize their assets (different IDs)."""
         root = self._make_dual_project("git-pr-flow")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        
+        self._sync(root)
+
         # GitHub assets should exist
         github_skill = (
-            recipe_root(root, "git-pr-flow")
+            recipe_root(root, "git-pr-flow", cli_home=self.home)
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
-        github_cmd = cache_command(root, "pr-create")
+        github_cmd = cache_command(root, "pr-create", cli_home=self.home)
         self.assertTrue(github_skill.is_file(), f"missing github skill at {github_skill}")
         self.assertTrue(github_cmd.is_file(), f"missing github command at {github_cmd}")
-        
+
         # GitLab assets should also exist (different IDs, no conflict)
         gitlab_skill = (
-            recipe_root(root, "gitlab-mr-flow")
+            recipe_root(root, "gitlab-mr-flow", cli_home=self.home)
             / "skills" / "gitlab-merge-workflow" / "SKILL.md"
         )
-        gitlab_cmd = cache_command(root, "mr-create")
+        gitlab_cmd = cache_command(root, "mr-create", cli_home=self.home)
         self.assertTrue(gitlab_skill.is_file(), f"missing gitlab skill at {gitlab_skill}")
         self.assertTrue(gitlab_cmd.is_file(), f"missing gitlab command at {gitlab_cmd}")
 
