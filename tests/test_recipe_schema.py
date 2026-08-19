@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
+# # TRIAGE: Schema dataclass normalization and field-level diagnostics have no stable CLI representation; sync exposes only aggregate recipe outcomes, so these assertions remain coupled.
 RECIPE_READ_PATH = ROOT / "lib" / "_internal" / "recipe-read.py"
 
 
