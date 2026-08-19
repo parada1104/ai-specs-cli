@@ -3,6 +3,13 @@
 > This is the project's director de orquesta: canonical runtime context for agents.
 > It covers project identity, MCPs, context sources, safety rules, and workflow conventions.
 > It does NOT track day-to-day work state — that lives in Trello and Engram.
+>
+> **YOU ARE ON THE GO SINGLE-BINARY MIGRATION BRANCH, NOT development.**
+> This branch and every branch cut from it operate under the epic contract below.
+> Rules you may know from `development` do not all apply here: the integration
+> target is `epic/go-single-binary`, and nothing from this epic reaches
+> `development` until the whole migration is verified. Epic:
+> https://trello.com/c/qwlHQ7Xa
 
 ## Project
 
@@ -31,8 +38,7 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - A session works on one explicit user request or Trello card.
 - The orchestrator coordinates work inline using project skills and the runtime brief.
 - `explore` can run without a worktree when it only produces thinking.
-- VCS/PR provider: GitHub (`gh` CLI); base branch: `development`
-
+- VCS/PR provider: GitHub (`gh` CLI); base branch: `epic/go-single-binary`
 ## Trello Tracking
 
 - **Board**: `69ec097f13e2d38ecd89a557`
@@ -60,11 +66,10 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - Preserve unrelated worktree changes; never revert changes you did not make.
 - Before dispatching a write-capable subagent or task, verify which git repository, worktree, and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Under monorepo-submodules, confirming which-repo via show-toplevel is mandatory. Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.
 - If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). With `gate_mode = always`, create a dedicated worktree first (e.g. `/worktree-new`) and write there instead; with `gate_mode = ask`, ask the user which destination to use — worktree (recommended), feature branch in place, or explicit protected-branch override — and wait; with `gate_mode = off`, the gate does not block.
-- Use a PR-based merge workflow; all changes to `development` go through a pull request.
-- VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations.
-- Do not push directly to `development`; always open a PR from a feature branch.
+- Use a PR-based merge workflow; all changes to `epic/go-single-binary` go through a pull request.- VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations.
+- Do not push directly to `epic/go-single-binary`; always open a PR from a feature branch.
 - After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists.
-- After a merged PR, sync `development` in the main worktree before further work: `git checkout development` then `git pull --ff-only`.
+- After a merged PR, sync `epic/go-single-binary` in the main worktree before further work: `git checkout epic/go-single-binary` then `git pull --ff-only`.
 - A session works on one explicit user request or tracker card; resolve focus from memory and tracker before starting.
 - Follow red-green-refactor discipline: write a failing test first, then implement, then clean up.
 - Run the full test suite before committing; do not leave the suite in a failing state.
@@ -81,7 +86,14 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - When touching Python on the active path, migrate the behavior/dependency being touched to Go where practical; Python may remain only as a thin compatibility/acquisition/JSON bridge during the transition.
 - Keep one authoritative grader per behavior and add parity/contract tests at each migrated seam.
 - Do not perform unrelated drive-by rewrites; the policy is incremental.
-
+- EPIC CONTRACT — Go single-binary migration (https://trello.com/c/qwlHQ7Xa). This branch is the integration target for that epic. Card branches are cut FROM `epic/go-single-binary` and their PRs target it. No PR from this epic ever targets `development` or `main`.
+- EPIC CONTRACT — Nothing from this epic reaches `development` while the epic is open. After all 16 cards are verified, ONE promotion PR is opened from card 16 (Cutover). Unrelated feature work continues on `development` in parallel and must not be disturbed.
+- EPIC CONTRACT — `[recipes.git-pr-flow.config].base_branch` is deliberately scoped to this branch. It MUST be reverted to `development` before the promotion PR, or every PR flow in the project starts targeting a deleted branch. Tracked as a blocking step on card 16.
+- EPIC CONTRACT — New development moves toward the migration: no new Python modules under `lib/_internal/`, no new Bash logic in `lib/`, no new vendored Python under `lib/_vendor/`. New behavior in an already-ported area is written in Go; in a not-yet-ported area it must not deepen the Bash/Python surface.
+- EPIC CONTRACT — Ported behavior is verified against `docs/go-migration-parity-contract.md`, which classifies every CLI surface FROZEN / TOLERANT / FREE. Do not 'fix' behavior recorded there as FROZEN, even when it looks wrong; recorded defects (D1-D35) are separate cards.
+- DELEGATION — Orca workers own change content inside their assigned worktree only. A worker never stages, commits, pushes, merges, or manages worktree lifecycle; the canonical orchestrator owns those. See the `orca-aware-delegation` skill.
+- DELEGATION — Never launch a worker headless (`pi -p`, `claude -p`, `opencode run`, provider API calls). Orca workers launch as visible interactive TUI sessions via `worker-start`.
+- DELEGATION — `worker_done` never implies terminal closure. Never call `worker-release` automatically as the default; the retain-or-close decision belongs to the human.
 ## Useful Commands
 
 - Full validation: `./tests/validate.sh`
