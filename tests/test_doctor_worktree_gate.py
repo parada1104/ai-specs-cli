@@ -10,62 +10,47 @@ health"):
 """
 from __future__ import annotations
 
-import importlib.util
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+from _blackbox import isolated_home, invoke
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCTOR_PY = ROOT / "lib" / "_internal" / "doctor.py"
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+def _uname_platform() -> tuple[str, str]:
+    sysname = os.uname().sysname
+    machine = os.uname().machine
+    goos = "darwin" if sysname == "Darwin" else "linux" if sysname == "Linux" else ""
+    if machine in ("arm64", "aarch64"):
+        goarch = "arm64"
+    elif machine in ("x86_64", "amd64"):
+        goarch = "amd64"
+    else:
+        goarch = ""
+    return goos, goarch
 
 
-class FakeGateBinary:
-    """Stand-in for lib/_internal/gate_binary.py (doctor's sibling load)."""
+def _cli_version() -> str:
+    text = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    return text or "dev"
 
-    def __init__(self, root: Path):
-        self.root = root
-        self._binary = root / "cache" / "worktree-gate"
-        self._mismatch = root / "no-mismatch.txt"
-        self.version_out = "9.9.9"
-        self.selftest_out = None  # None = pass
-        self.platform = ("darwin", "arm64")
 
-    def detect_platform(self):
-        return self.platform
+def _gate_bin_path() -> Path:
+    goos, goarch = _uname_platform()
+    return (
+        ROOT / "cache" / "bin" / "worktree-gate" / _cli_version()
+        / f"{goos}-{goarch}" / "worktree-gate"
+    )
 
-    def cache_bin_path(self, _home, goos=None, goarch=None):
-        return self._binary
 
-    def digest_mismatch_record_path(self, _home):
-        return self._mismatch
-
-    def binary_version(self, _path):
-        return self.version_out
-
-    def _run_selftest(self, _path):
-        return self.selftest_out
-
-    def cache_size(self, _home):
-        return 4096
+def _mismatch_path() -> Path:
+    return ROOT / "cache" / "bin" / "worktree-gate" / _cli_version() / "last-digest-mismatch.txt"
 
 
 class WorktreeGateDoctorTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.doctor = load_module(DOCTOR_PY, "doctor_worktree_gate_under_test")
-
     def _project(self, *, gate_impl: str | None = None, enabled: bool = True) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -82,86 +67,130 @@ class WorktreeGateDoctorTests(unittest.TestCase):
             f"[recipes.worktree-flow]\nenabled = {'true' if enabled else 'false'}\n"
             + cfg
         )
+        (root / "AGENTS.md").write_text("# agents\n")
         return root
 
-    def _checks(self, root: Path, fake: FakeGateBinary):
-        doc = self.doctor.Doctor(root)
-        with mock.patch.object(self.doctor, "AI_SPECS_HOME", root), \
-             mock.patch.object(doc, "_load_gate_binary", return_value=fake):
-            doc._check_worktree_gate()
-        return [c for c in doc.checks if c.name == "worktree-gate"]
+    def _doctor(self, root: Path):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        home = isolated_home(Path(td.name))
+        invoke(root, "refresh-bundled", cli_home=home)
+        return invoke(root, "doctor", cli_home=home)
+
+    def _checks(self, root: Path) -> list[str]:
+        result = self._doctor(root)
+        return [
+            ln for ln in result.stdout.splitlines()
+            if "worktree-gate  " in ln
+        ]
+
+    def _plant_fake_binary(self, version: str = "9.9.9") -> Path:
+        path = _gate_bin_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existed = path.exists()
+        previous = path.read_bytes() if existed else None
+        previous_mode = path.stat().st_mode if existed else None
+
+        def _restore() -> None:
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(previous)
+                if previous_mode is not None:
+                    os.chmod(path, previous_mode)
+
+        self.addCleanup(_restore)
+        path.write_text(
+            "#!/bin/sh\n"
+            f'case "$1" in --version) echo {version};; --selftest) exit 0;; esac\n'
+            "exit 0\n"
+        )
+        os.chmod(path, 0o755)
+        return path
+
+    def _hide_gate_binary(self) -> None:
+        """Reconstruct the no-usable-binary state against the live CLI cache."""
+        path = _gate_bin_path()
+        if not path.exists():
+            return
+        hidden = path.with_name(path.name + ".hidden-by-bb-doctor-test")
+        path.rename(hidden)
+        self.addCleanup(lambda: hidden.rename(path) if hidden.exists() else None)
 
     def test_recipe_disabled_skips_check(self):
         root = self._project(enabled=False)
-        self.assertEqual(self._checks(root, FakeGateBinary(root)), [])
+        self.assertEqual(self._checks(root), [])
 
     def test_gate_impl_bash_reports_info(self):
         root = self._project(gate_impl="bash")
-        checks = self._checks(root, FakeGateBinary(root))
+        checks = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.INFO)
-        self.assertIn("bash", checks[0].message)
+        self.assertIn("INFO", checks[0])
+        self.assertIn("bash", checks[0])
 
     def test_go_without_binary_reports_error_failing_open(self):
         root = self._project(gate_impl="go")
-        fake = FakeGateBinary(root)
-        fake._binary = root / "no" / "binary"  # never created
-        checks = self._checks(root, fake)
+        self._hide_gate_binary()
+        expected = _gate_bin_path()
+        checks = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.ERROR)
-        self.assertIn("failing open", checks[0].message)
-        self.assertIn(str(root / "no" / "binary"), checks[0].message)
+        self.assertIn("ERROR", checks[0])
+        self.assertIn("failing open", checks[0])
+        self.assertIn(str(expected), checks[0])
 
     def test_auto_without_binary_reports_warn_fallback(self):
         root = self._project(gate_impl="auto")
-        fake = FakeGateBinary(root)
-        fake._binary = root / "no" / "binary"
-        checks = self._checks(root, fake)
+        self._hide_gate_binary()
+        checks = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.WARN)
-        self.assertIn("Bash", checks[0].message)
+        self.assertIn("WARN", checks[0])
+        self.assertIn("Bash", checks[0])
 
     def test_healthy_binary_reports_ok(self):
         root = self._project()
         launcher = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
         launcher.parent.mkdir(parents=True)
         launcher.write_text('stamped_gate_version="9.9.9"\n')
-        fake = FakeGateBinary(root)
-        fake._binary.parent.mkdir(parents=True)
-        fake._binary.write_bytes(b"bin")
-        os.chmod(fake._binary, 0o755)
-        checks = self._checks(root, fake)
+        self._plant_fake_binary("9.9.9")
+        checks = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.OK)
-        self.assertIn("9.9.9", checks[0].message)
+        self.assertIn("OK", checks[0])
+        self.assertIn("9.9.9", checks[0])
 
     def test_version_mismatch_reports_warn(self):
         root = self._project()
         launcher = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
         launcher.parent.mkdir(parents=True)
         launcher.write_text('stamped_gate_version="8.8.8"\n')
-        fake = FakeGateBinary(root)
-        fake._binary.parent.mkdir(parents=True)
-        fake._binary.write_bytes(b"bin")
-        os.chmod(fake._binary, 0o755)
-        checks = self._checks(root, fake)
+        self._plant_fake_binary("9.9.9")
+        checks = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.WARN)
-        self.assertIn("8.8.8", checks[0].message)
+        self.assertIn("WARN", checks[0])
+        self.assertIn("8.8.8", checks[0])
 
     def test_digest_mismatch_record_reports_error(self):
         root = self._project()
-        fake = FakeGateBinary(root)
-        fake._mismatch.parent.mkdir(parents=True, exist_ok=True)
-        fake._mismatch.write_text(
+        mismatch = _mismatch_path()
+        mismatch.parent.mkdir(parents=True, exist_ok=True)
+        existed = mismatch.exists()
+        previous = mismatch.read_text(encoding="utf-8") if existed else None
+
+        def _restore() -> None:
+            if previous is None:
+                mismatch.unlink(missing_ok=True)
+            else:
+                mismatch.write_text(previous, encoding="utf-8")
+
+        self.addCleanup(_restore)
+        mismatch.write_text(
             "worktree-gate: digest mismatch for worktree-gate-darwin-arm64; "
             "artifact deleted and never executed"
         )
-        checks = self._checks(root, fake)
+        checks = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.ERROR)
-        self.assertIn("digest mismatch", checks[0].message)
-        self.assertIn("never executed", checks[0].message)
+        self.assertIn("ERROR", checks[0])
+        self.assertIn("digest mismatch", checks[0])
+        self.assertIn("never executed", checks[0])
 
 
 if __name__ == "__main__":

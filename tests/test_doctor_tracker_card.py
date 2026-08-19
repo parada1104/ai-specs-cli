@@ -1,30 +1,14 @@
 """Doctor WARN for active changes missing a ## Tracker link section."""
 from __future__ import annotations
 
-import importlib.util
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-DOCTOR_PY = ROOT / "lib" / "_internal" / "doctor.py"
-
-
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+from _blackbox import isolated_home, invoke
 
 
 class DoctorTrackerCardTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.doctor_mod = load_module(DOCTOR_PY, "doctor_tracker_card_under_test")
-
     def _project(
         self,
         *,
@@ -73,91 +57,97 @@ class DoctorTrackerCardTests(unittest.TestCase):
                 )
         return root
 
-    def _run(self, root: Path):
-        """Run only the tracker-card check (isolate from bundled-asset ERRORs)."""
-        doc = self.doctor_mod.Doctor(root)
-        doc._check_tracker_card_link()
-        # Doctor exit is ERROR-only; WARN must keep exit 0.
-        rc = 1 if any(
-            c.severity == self.doctor_mod.Severity.ERROR for c in doc.checks
-        ) else 0
-        return rc, doc.checks
+    def _cli_home(self, root: Path):
+        """One shared CLI home; refresh-bundled so doctor is not poisoned by an empty cache."""
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        home = isolated_home(Path(td.name))
+        invoke(root, "refresh-bundled", cli_home=home)
+        return home
 
-    def _tracker_checks(self, checks):
-        return [c for c in checks if c.name == "tracker-card"]
+    def _run(self, root: Path):
+        """Doctor through bin/ai-specs with one shared CLI home."""
+        home = self._cli_home(root)
+        result = invoke(root, "doctor", cli_home=home)
+        return result.returncode, result.stdout
+
+    def _tracker_checks(self, stdout: str) -> list[str]:
+        return [ln for ln in stdout.splitlines() if "tracker-card" in ln]
 
     def test_missing_tracker_warns_exit_zero(self):
         root = self._project(changes=[("no-card", {})])
-        rc, checks = self._run(root)
+        rc, stdout = self._run(root)
         self.assertEqual(rc, 0)
-        tc = self._tracker_checks(checks)
+        tc = self._tracker_checks(stdout)
         self.assertTrue(tc)
-        self.assertEqual(tc[0].severity, self.doctor_mod.Severity.WARN)
-        self.assertIn("no-card", tc[0].message)
+        self.assertIn("WARN", tc[0])
+        self.assertIn("no-card", tc[0])
 
     def test_valid_tracker_ok(self):
         root = self._project(changes=[("good", {"tracker": True})])
-        rc, checks = self._run(root)
+        rc, stdout = self._run(root)
         self.assertEqual(rc, 0)
-        tc = self._tracker_checks(checks)
+        tc = self._tracker_checks(stdout)
         self.assertTrue(tc)
-        self.assertEqual(tc[0].severity, self.doctor_mod.Severity.OK)
+        self.assertIn("OK", tc[0])
 
     def test_valid_card_without_url_emits_one_info_and_terminal_ok(self):
         root = self._project(changes=[("no-url", {"tracker": True, "url": False})])
-        rc, checks = self._run(root)
+        rc, stdout = self._run(root)
         self.assertEqual(rc, 0)
-        tc = self._tracker_checks(checks)
-        self.assertEqual(sum(c.severity == self.doctor_mod.Severity.INFO for c in tc), 1)
-        self.assertIn("no-url", tc[0].message)
-        self.assertEqual(tc[-1].severity, self.doctor_mod.Severity.OK)
+        tc = self._tracker_checks(stdout)
+        self.assertEqual(sum("INFO" in ln for ln in tc), 1)
+        self.assertIn("no-url", tc[0])
+        self.assertIn("OK", tc[-1])
 
     def test_noncanonical_card_id_emits_info_without_warn(self):
         root = self._project(changes=[("short-id", {"tracker": True, "card_id": "short"})])
-        rc, checks = self._run(root)
+        rc, stdout = self._run(root)
         self.assertEqual(rc, 0)
-        tc = self._tracker_checks(checks)
-        self.assertTrue(any(c.severity == self.doctor_mod.Severity.INFO and "non-canonical" in c.message for c in tc))
-        self.assertFalse(any(c.severity == self.doctor_mod.Severity.WARN for c in tc))
+        tc = self._tracker_checks(stdout)
+        self.assertTrue(any("INFO" in ln and "non-canonical" in ln for ln in tc))
+        self.assertFalse(any("WARN" in ln for ln in tc))
+
     def test_tracker_none_no_missing_warn(self):
         root = self._project(changes=[("exempt", {"tracker_none": True})])
-        rc, checks = self._run(root)
+        rc, stdout = self._run(root)
         self.assertEqual(rc, 0)
-        tc = self._tracker_checks(checks)
+        tc = self._tracker_checks(stdout)
         self.assertTrue(tc)
-        self.assertEqual(tc[0].severity, self.doctor_mod.Severity.OK)
+        self.assertIn("OK", tc[0])
 
     def test_recipe_disabled_silent(self):
         root = self._project(recipe_enabled=False, changes=[("no-card", {})])
-        rc, checks = self._run(root)
+        rc, stdout = self._run(root)
         self.assertEqual(rc, 0)
-        self.assertEqual(self._tracker_checks(checks), [])
+        self.assertEqual(self._tracker_checks(stdout), [])
 
     def test_marker_absent_silent(self):
         root = self._project(marker=False, changes=[("no-card", {})])
-        rc, checks = self._run(root)
+        rc, stdout = self._run(root)
         self.assertEqual(rc, 0)
-        self.assertEqual(self._tracker_checks(checks), [])
+        self.assertEqual(self._tracker_checks(stdout), [])
 
     def test_archive_only_ignored(self):
         root = self._project(changes=[("old", {"archive": True})])
-        rc, checks = self._run(root)
+        rc, stdout = self._run(root)
         self.assertEqual(rc, 0)
-        tc = self._tracker_checks(checks)
+        tc = self._tracker_checks(stdout)
         self.assertTrue(tc)
-        self.assertEqual(tc[0].severity, self.doctor_mod.Severity.OK)
+        self.assertIn("OK", tc[0])
 
     def test_empty_card_id_warns(self):
         root = self._project(changes=[("bad", {"empty_card": True})])
-        rc, checks = self._run(root)
+        rc, stdout = self._run(root)
         self.assertEqual(rc, 0)
-        tc = self._tracker_checks(checks)
+        tc = self._tracker_checks(stdout)
         self.assertTrue(tc)
-        self.assertEqual(tc[0].severity, self.doctor_mod.Severity.WARN)
-        self.assertIn("bad", tc[0].message)
+        self.assertIn("WARN", tc[0])
+        self.assertIn("bad", tc[0])
 
     def test_doctor_is_read_only(self):
         root = self._project(changes=[("no-card", {})])
+        home = self._cli_home(root)
 
         def walk(base: Path):
             return sorted(
@@ -167,7 +157,7 @@ class DoctorTrackerCardTests(unittest.TestCase):
             )
 
         before = walk(root)
-        self._run(root)
+        invoke(root, "doctor", cli_home=home)
         after = walk(root)
         self.assertEqual(before, after)
 
