@@ -110,6 +110,12 @@ Verified working. Orca 1.4.184, orchestration enabled, `orca` on PATH (macOS —
 
 ### 1. Hydrate a worktree per card — before any Orca call
 
+**No card worktrees exist yet, deliberately.** You create and hydrate every one of them
+yourself. The skill puts worktree lifecycle under the canonical orchestrator, so a worktree
+created by someone else leaves you governing something you did not provision — and you would be
+reading a handed-down baseline instead of the one you captured. The only worktrees that exist
+are this one (your home) and `go-parity-contract` (card 01, already in PR #227).
+
 ```bash
 # from the canonical checkout, NOT from inside a worktree
 git worktree add .worktrees/<card-slug> -b change/<card-slug> epic/go-single-binary
@@ -118,6 +124,9 @@ git status --short                      # PRE-SYNC baseline — capture it
 ai-specs sync .                         # full sync, never sync-agent
 git status --short                      # POST-SYNC baseline — capture it
 ```
+
+Suggested slugs for tranche 1, not created: `fix-manifest-lock-writes`, `fix-false-success`,
+`fix-deps-layer`, `fix-docs-drift`.
 
 The diff between the two baselines is **provisioning output**, not worker content. On this repo
 it is reliably `AGENTS.md`, `ai-specs/.ai-specs.lock`, and
