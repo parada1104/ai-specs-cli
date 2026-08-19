@@ -369,23 +369,157 @@ class RecipeMaterializeTests(unittest.TestCase):
         self.assertIn("ignored", result.stderr)
 
     def test_execute_hooks_validate_config_success(self):
-        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
-        recipe = Recipe(id="r", name="R", description="D", version="1.0",
-            config_schema=ConfigSchema(fields={"key": ConfigField(required=True)}),
-            hooks=[Hook(event="on-sync", action="validate-config")]
+        root = self._make_project(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = '69ec097f13e2d38ecd89a557'\n"
         )
-        # Should not raise
-        self.mod.execute_hooks(recipe, {"key": "value"}, Path(tempfile.gettempdir()))
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_execute_hooks_validate_config_fails(self):
-        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
-        recipe = Recipe(id="r", name="R", description="D", version="1.0",
-            config_schema=ConfigSchema(fields={"key": ConfigField(required=True)}),
-            hooks=[Hook(event="on-sync", action="validate-config")]
+        root = self._make_project(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
         )
-        with self.assertRaises(RuntimeError) as ctx:
-            self.mod.execute_hooks(recipe, {}, Path(tempfile.gettempdir()))
-        self.assertIn("validate-config", str(ctx.exception))
+        _, result = self._sync(root)
+        self.assertNotEqual(result.returncode, 0)
+        # TRIAGE: sync exposes the recipe and missing field but not the internal
+        # hook action name; the command run was `ai-specs sync <project>`.
+        self.assertIn("Trello MCP Workflow", result.stderr)
+        self.assertIn("missing required config field", result.stderr)
+        self.assertIn("board_id", result.stderr)
+
+    def test_execute_hooks_bootstrap_board_creates_marker(self):
+        root = self._make_project(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = '69ec097f13e2d38ecd89a557'\n"
+            "default_list = 'In Progress'\n"
+            "epic_list = 'Epic'\n"
+        )
+        home, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        marker_dir = cache_project_dir(root, home) / ".recipe" / "trello-mcp-workflow"
+        self.assertTrue(marker_dir.is_dir())
+        marker_file = marker_dir / "bootstrap-ready"
+        self.assertTrue(marker_file.is_file())
+        content = marker_file.read_text()
+        self.assertIn("board_id=69ec097f13e2d38ecd89a557", content)
+        self.assertIn("default_list=In Progress", content)
+        self.assertIn("epic_list=Epic", content)
+
+    def test_execute_hooks_bootstrap_board_marker_content(self):
+        root = self._make_project(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = '69ec097f13e2d38ecd89a557'\n"
+            "default_list = 'Todo'\n"
+            "epic_list = 'Backlog'\n"
+        )
+        home, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        marker_file = (
+            cache_project_dir(root, home)
+            / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
+        )
+        content = marker_file.read_text()
+        self.assertEqual(
+            content,
+            "board_id=69ec097f13e2d38ecd89a557\n"
+            "default_list=Todo\n"
+            "epic_list=Backlog\n",
+        )
+
+    def test_execute_hooks_bootstrap_board_missing_board_id(self):
+        root = self._make_project(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+        )
+        _, result = self._sync(root)
+        self.assertNotEqual(result.returncode, 0)
+        # TRIAGE: sync exposes the recipe and missing field but not the internal
+        # hook action name; the command run was `ai-specs sync <project>`.
+        self.assertIn("Trello MCP Workflow", result.stderr)
+        self.assertIn("missing required config field", result.stderr)
+        self.assertIn("board_id", result.stderr)
+
+    def test_execute_hooks_deferred_link_trello_card(self):
+        root = self._make_project(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = '69ec097f13e2d38ecd89a557'\n"
+        )
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("link-trello-card", result.stdout)
+        self.assertIn("deferred", result.stdout)
+
+    def test_execute_hooks_deferred_sync_card_state(self):
+        root = self._make_project(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = '69ec097f13e2d38ecd89a557'\n"
+        )
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("sync-card-state", result.stdout)
+        self.assertIn("deferred", result.stdout)
+
+    def test_execute_hooks_deferred_comment_verification(self):
+        root = self._make_project(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = '69ec097f13e2d38ecd89a557'\n"
+        )
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("comment-verification", result.stdout)
+        self.assertIn("deferred", result.stdout)
+
+    def test_mcp_preset_manifest_precedence_on_conflict(self):
+        root = self._make_project_with_mcp(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = '69ec097f13e2d38ecd89a557'\n",
+            "[mcp.trello]\ncommand = 'custom-cmd'\nargs = ['--flag']\n",
+        )
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        mcp_path = root / ".mcp.json"
+        self.assertTrue(mcp_path.is_file())
+        data = json.loads(mcp_path.read_text())
+        self.assertIn("trello", data["mcpServers"])
+        self.assertEqual(data["mcpServers"]["trello"]["command"], "custom-cmd")
+        self.assertEqual(data["mcpServers"]["trello"]["args"], ["--flag"])
+
+    def test_mcp_preset_recipe_creates_when_not_in_manifest(self):
+        root = self._make_project_with_mcp(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = '69ec097f13e2d38ecd89a557'\n",
+            "",
+        )
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        mcp_path = root / ".mcp.json"
+        self.assertTrue(mcp_path.is_file())
+        data = json.loads(mcp_path.read_text())
+        self.assertIn("trello", data["mcpServers"])
+        self.assertEqual(data["mcpServers"]["trello"]["command"], "npx")
+        self.assertEqual(
+            data["mcpServers"]["trello"]["args"],
+            ["-y", "@delorenj/mcp-server-trello"],
+        )
+
+    def test_mcp_preset_merge_warns_on_conflict(self):
+        root = self._make_project_with_mcp(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = '69ec097f13e2d38ecd89a557'\n",
+            "[mcp.trello]\ncommand = 'custom-cmd'\n",
+        )
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("conflicts with project manifest", result.stderr)
 
     def test_execute_hooks_unknown_action_warns(self):
         from lib._internal.recipe_schema import Recipe, Hook
@@ -454,157 +588,8 @@ class RecipeMaterializeTests(unittest.TestCase):
         )
         return root
 
-    def test_mcp_preset_manifest_precedence_on_conflict(self):
-        root = self._make_project_with_mcp(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n',
-            '[mcp.test-mcp]\ncommand = "custom-cmd"\nargs = ["--flag"]\n'
-        )
-        mcp_path = root / "ai-specs" / ".tmp" / "recipe-mcp.json"
-        mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        self.assertEqual(self.mod.materialize_recipes(root, _home(), mcp_path), 0)
-        self.assertTrue(mcp_path.is_file())
-        data = json.loads(mcp_path.read_text())
-        self.assertIn("test-mcp", data)
-        # Manifest value must win
-        self.assertEqual(data["test-mcp"]["command"], "custom-cmd")
-        self.assertEqual(data["test-mcp"]["args"], ["--flag"])
-        # Recipe value for key not in manifest is added
-        # (args is present in both, so manifest wins; but the recipe does not add new keys here)
-
-    def test_mcp_preset_recipe_creates_when_not_in_manifest(self):
-        root = self._make_project_with_mcp(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n',
-            ''  # no mcp section
-        )
-        mcp_path = root / "ai-specs" / ".tmp" / "recipe-mcp.json"
-        mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        self.assertEqual(self.mod.materialize_recipes(root, _home(), mcp_path), 0)
-        self.assertTrue(mcp_path.is_file())
-        data = json.loads(mcp_path.read_text())
-        self.assertIn("test-mcp", data)
-        self.assertEqual(data["test-mcp"]["command"], "npx")
-        self.assertEqual(data["test-mcp"]["args"], ["-y", "@test/mcp-server"])
-
-    def test_mcp_preset_merge_warns_on_conflict(self):
-        import io
-        root = self._make_project_with_mcp(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n',
-            '[mcp.test-mcp]\ncommand = "custom-cmd"\n'
-        )
-        captured = io.StringIO()
-        real_stderr = sys.stderr
-        sys.stderr = captured
-        try:
-            self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
-        finally:
-            sys.stderr = real_stderr
-        stderr_output = captured.getvalue()
-        self.assertIn("conflicts with project manifest", stderr_output)
 
     # --- Hook execution: bootstrap-board --------------------------------------
-
-    def test_execute_hooks_bootstrap_board_creates_marker(self):
-        import tempfile
-        from lib._internal.recipe_schema import Recipe, Hook
-        recipe = Recipe(id="r", name="R", description="D", version="1.0",
-            hooks=[Hook(event="on-sync", action="bootstrap-board")]
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            project_root = Path(tmp)
-            self.mod.execute_hooks(recipe, {"board_id": "test-board-123", "default_list": "In Progress", "epic_list": "Epic"}, project_root)
-            marker_dir = _cache_mod().recipe_skills_root(project_root, cli_home=ROOT) / "r"
-            self.assertTrue(marker_dir.is_dir())
-            marker_file = marker_dir / "bootstrap-ready"
-            self.assertTrue(marker_file.is_file())
-            content = marker_file.read_text()
-            self.assertIn("board_id=test-board-123", content)
-            self.assertIn("default_list=In Progress", content)
-            self.assertIn("epic_list=Epic", content)
-
-    def test_execute_hooks_bootstrap_board_marker_content(self):
-        import tempfile
-        from lib._internal.recipe_schema import Recipe, Hook
-        recipe = Recipe(id="myrecipe", name="MyRecipe", description="D", version="1.0",
-            hooks=[Hook(event="on-sync", action="bootstrap-board")]
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            project_root = Path(tmp)
-            self.mod.execute_hooks(recipe, {"board_id": "b1", "default_list": "Todo", "epic_list": "Backlog"}, project_root)
-            marker_file = _cache_mod().recipe_skills_root(project_root, cli_home=ROOT) / "myrecipe" / "bootstrap-ready"
-            content = marker_file.read_text()
-            self.assertEqual(content, "board_id=b1\ndefault_list=Todo\nepic_list=Backlog\n")
-
-    def test_execute_hooks_bootstrap_board_missing_board_id(self):
-        import tempfile
-        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
-        recipe = Recipe(id="r", name="R", description="D", version="1.0",
-            config_schema=ConfigSchema(fields={"board_id": ConfigField(required=True)}),
-            hooks=[
-                Hook(event="on-sync", action="validate-config"),
-                Hook(event="on-sync", action="bootstrap-board"),
-            ]
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            project_root = Path(tmp)
-            with self.assertRaises(RuntimeError) as ctx:
-                self.mod.execute_hooks(recipe, {}, project_root)
-            self.assertIn("validate-config", str(ctx.exception))
-
-    # --- Hook execution: deferred hooks --------------------------------------
-
-    def test_execute_hooks_deferred_link_trello_card(self):
-        import io
-        import tempfile
-        from lib._internal.recipe_schema import Recipe, Hook
-        recipe = Recipe(id="r", name="R", description="D", version="1.0",
-            hooks=[Hook(event="on-sync", action="link-trello-card")]
-        )
-        captured = io.StringIO()
-        real_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            self.mod.execute_hooks(recipe, {}, Path(tempfile.gettempdir()))
-        finally:
-            sys.stdout = real_stdout
-        output = captured.getvalue()
-        self.assertIn("link-trello-card", output)
-        self.assertIn("deferred", output)
-
-    def test_execute_hooks_deferred_sync_card_state(self):
-        import io
-        import tempfile
-        from lib._internal.recipe_schema import Recipe, Hook
-        recipe = Recipe(id="r", name="R", description="D", version="1.0",
-            hooks=[Hook(event="on-sync", action="sync-card-state")]
-        )
-        captured = io.StringIO()
-        real_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            self.mod.execute_hooks(recipe, {}, Path(tempfile.gettempdir()))
-        finally:
-            sys.stdout = real_stdout
-        output = captured.getvalue()
-        self.assertIn("sync-card-state", output)
-        self.assertIn("deferred", output)
-
-    def test_execute_hooks_deferred_comment_verification(self):
-        import io
-        import tempfile
-        from lib._internal.recipe_schema import Recipe, Hook
-        recipe = Recipe(id="r", name="R", description="D", version="1.0",
-            hooks=[Hook(event="on-sync", action="comment-verification")]
-        )
-        captured = io.StringIO()
-        real_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            self.mod.execute_hooks(recipe, {}, Path(tempfile.gettempdir()))
-        finally:
-            sys.stdout = real_stdout
-        output = captured.getvalue()
-        self.assertIn("comment-verification", output)
-        self.assertIn("deferred", output)
 
     # --- Hook execution: project_root parameter ------------------------------
 
