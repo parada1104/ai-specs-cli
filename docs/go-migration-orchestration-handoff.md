@@ -60,7 +60,45 @@ The unit suite takes several minutes. Run it in the background rather than block
 
 ## The work queue
 
-### Tranche 1 — 4 defect cards, parallel, auto-merge to the epic
+### Card 02 — test conversion — **START HERE, ahead of the defect cards**
+
+https://trello.com/c/POh1vmd6
+
+The user reordered this ahead of tranche 1: convert the tests first, so the defect fixes are
+verified against a behavioral harness rather than the other way round.
+
+73 of 103 test files are coupled to Python via `spec_from_file_location`. Every assertion in
+them falls into one of three categories, and only the first is safely automatable:
+
+1. **Direct observable equivalent** — e.g. a test calling `doctor._check_manifest()` and
+   asserting severity `ERROR` becomes: run `ai-specs doctor`, assert `ERROR manifest` in output
+   and exit 1. Mechanical. **Automate fully.**
+2. **Indirect equivalent** — e.g. a test asserting `_resolve_order()` returns `[a, b, c]`. That
+   order is never printed, but it does determine the order files are materialized in. Requires
+   inferring which observable effect captures it. **Needs judgement.**
+3. **No observable equivalent** — e.g. a test that mocks a function and asserts it was called.
+   Nothing about it is visible from outside the process. Options are delete it or approximate
+   it. **Needs judgement.**
+
+**The risk is category 3.** Aggressively deleting everything without an observable equivalent
+leaves the harness with less coverage than it claims, and cards 07–13 then verify against that
+weaker harness. Nobody finds out until something breaks in production weeks later, by which
+point the harness is no longer evidence of anything.
+
+**Required protocol, agreed with the user:**
+
+- Convert every category-1 file autonomously. No approval needed.
+- Collect categories 2 and 3 into **one single list**, with a per-file justification for the
+  proposed treatment (which observable effect replaces it, or why it should be deleted).
+- Present that list to the user **once**. They approve it in one pass. Do not drip-feed
+  approvals file by file — the user explicitly agreed to one list, not a stream.
+- Only after approval, apply the category 2 and 3 decisions.
+
+Success criterion for the card: `./tests/validate.sh` passes against the **unmodified**
+Bash/Python implementation, and zero test files still import `lib/_internal` modules via
+`spec_from_file_location` or `load_module`.
+
+### Tranche 2 — 4 defect cards, parallel, auto-merge to the epic
 
 Discovered by card 01. Two of them **must** land before card 03, or the parity harness will
 freeze the defect as correct baseline behavior.
@@ -82,16 +120,9 @@ test adapts to the fix instead of to correct behavior. Mitigation, required in e
 **the worker writes the failing test first, runs it, and reports the RED output before
 implementing.** You verify the RED is genuine before accepting the GREEN.
 
-### Tranche 2 — card 03, parity harness
+### Tranche 3 — card 03, parity harness
 
-https://trello.com/c/jV2WUOGq — after tranche 1. Single worker.
-
-### Tranche 3 — card 02, test conversion — **needs the human**
-
-https://trello.com/c/POh1vmd6 — 73 of 103 test files are coupled to Python via
-`spec_from_file_location`. Converting them requires deciding *what intention each assert was
-capturing*. This is the one place where getting it wrong poisons the harness everything else
-depends on. Do not fully automate it.
+https://trello.com/c/jV2WUOGq — after the defect cards. Single worker.
 
 ### Tranche 4 — cards 04–15, the bulk
 
@@ -217,4 +248,4 @@ the receipt. Never substitute `terminal close`.
 | Auto-merge to the epic | **Authorized** by the user |
 | PRs to `development` | Stay open; the user reviews them |
 | Retain-or-close per worker | **Decided**: release on completed change cycle; PR lifecycle is the coordinator's |
-| Card 02 automation depth | Unresolved — needs the user |
+| Card 02 automation depth | **Decided**: category 1 fully automated; categories 2+3 in ONE list for a single user approval |
