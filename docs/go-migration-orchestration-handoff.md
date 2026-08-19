@@ -170,14 +170,27 @@ orca orchestration worker-read --dispatch <dispatch_id> --limit 50 --json
 Then you — not the worker — revert provisioning paths, stage only worker-owned paths, commit,
 open the PR against `epic/go-single-binary`, verify, and merge.
 
-### 5. Retain or release — ask the human
+### 5. Release on completion — standing human decision
+
+The human has decided this in advance, as policy: **close the worker once it finishes the
+change cycle.** The PR lifecycle — create, verify, merge — is yours, not the worker's, and it
+does not need the worker's terminal alive.
 
 ```bash
-orca orchestration worker-retain --dispatch <dispatch_id> --json    # human said keep it
-orca orchestration worker-release --dispatch <dispatch_id> --json   # human said close it
+orca orchestration worker-release --dispatch <dispatch_id> --json
 ```
 
-Never release as an automatic consequence of `worker_done`.
+This is not the agent defaulting to release, which the skill forbids. It is the human's
+standing answer to the retain-or-close question. Two limits still apply:
+
+- Release only after an accepted `worker_done`. Never release on a timeout, TUI idle state,
+  heartbeat, status, question, escalation, or a rejected/stale report.
+- If the worker escalated, asked a question, or failed in a way you have not finished
+  inspecting, keep it and use `worker-retain` — the standing decision covers a completed change
+  cycle, not an unfinished one.
+
+If release returns `release_pending` or `release_unknown`, follow the exact recovery action in
+the receipt. Never substitute `terminal close`.
 
 ## What every worker brief must contain
 
@@ -203,5 +216,5 @@ Never release as an automatic consequence of `worker_done`.
 |---|---|
 | Auto-merge to the epic | **Authorized** by the user |
 | PRs to `development` | Stay open; the user reviews them |
-| Retain-or-close per worker | **The user's**, every time |
+| Retain-or-close per worker | **Decided**: release on completed change cycle; PR lifecycle is the coordinator's |
 | Card 02 automation depth | Unresolved — needs the user |
