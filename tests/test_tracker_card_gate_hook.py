@@ -513,6 +513,11 @@ class TrackerCardGateHookTests(unittest.TestCase):
 
     def test_parser_parity_with_trello_link(self):
         """Gate validity equals trello_link.is_valid_link on the Phase 1 matrix."""
+        # TRIAGE: This is the permitted cache-key-style parity assertion —
+        # it compares the Python trello_link.is_valid_link() parser output
+        # against the bash gate's exit code for the same fixture inputs.
+        # The comparison against the Python implementation IS the assertion;
+        # removing it would leave no equivalent check.
         self.assertTrue(GATE.is_file(), "gate script required for parity")
         link = _load_trello_link()
         fixtures = [
