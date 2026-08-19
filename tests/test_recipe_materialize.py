@@ -17,6 +17,8 @@ from _fixture_catalog import (  # noqa: E402
     populate_catalog,
     unit_catalog,
 )
+from _blackbox import cache_project_dir, invoke, isolated_home
+
 
 RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 CATALOG = unit_catalog()
@@ -79,6 +81,27 @@ class RecipeMaterializeTests(unittest.TestCase):
         self._allow.start()
         self.addCleanup(self._allow.stop)
 
+    def _cli_home(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return isolated_home(Path(tmp.name))
+
+    def _sync(self, root: Path):
+        home = self._cli_home()
+        return home, invoke(root, "sync", cli_home=home)
+
+    @staticmethod
+    def _recipe_skill_path(root: Path, home: Path, recipe_id: str, skill_id: str) -> Path:
+        return (
+            cache_project_dir(root, home)
+            / ".recipe" / recipe_id / "skills" / skill_id
+        )
+
+    @staticmethod
+    def _command_path(root: Path, home: Path, command_id: str) -> Path:
+        return cache_project_dir(root, home) / "commands" / f"{command_id}.md"
+
+
     def _make_project(self, recipe_section: str) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -98,116 +121,139 @@ class RecipeMaterializeTests(unittest.TestCase):
 
     def test_materializes_bundled_skill(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+            "[recipes.worktree-flow]\nenabled = true\n"
         )
-        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
-        skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
+        home, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        skill_dir = self._recipe_skill_path(root, home, "worktree-flow", "worktree-flow")
         self.assertTrue(skill_dir.is_dir())
         self.assertTrue((skill_dir / "SKILL.md").is_file())
 
+
     def test_materializes_command(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+            "[recipes.worktree-flow]\nenabled = true\n"
         )
-        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
-        cmd = cache_command(root, "test-command")
-        self.assertTrue(cmd.is_file())
+        home, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = self._command_path(root, home, "worktree-new")
+        self.assertTrue(command.is_file())
+
 
     def test_materializes_doc(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+            "[recipes.worktree-flow]\nenabled = true\n"
         )
-        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
-        doc = root / "docs" / "test-doc-output.md"
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        doc = root / "ai-specs" / "recipes" / "worktree-flow" / "README.md"
         self.assertTrue(doc.is_file())
+
 
     def test_materializes_template_not_exists(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+            "[recipes.worktree-flow]\nenabled = true\n"
         )
-        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
-        tpl = root / "docs" / "test-template-output.md"
-        self.assertTrue(tpl.is_file())
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        template = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides"
+            / "bin" / "worktree-cleanup.sh"
+        )
+        self.assertTrue(template.is_file())
+
 
     def test_skips_template_when_target_exists(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+            "[recipes.worktree-flow]\nenabled = true\n"
         )
-        existing = root / "docs" / "test-template-output.md"
+        existing = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides"
+            / "bin" / "worktree-cleanup.sh"
+        )
         existing.parent.mkdir(parents=True, exist_ok=True)
         existing.write_text("existing")
-        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(existing.read_text(), "existing")
+
 
     def test_writes_recipe_mcp_json(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = \"69ec097f13e2d38ecd89a557\"\n"
         )
-        mcp_path = root / "ai-specs" / ".tmp" / "recipe-mcp.json"
-        mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        self.assertEqual(self.mod.materialize_recipes(root, _home(), mcp_path), 0)
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        mcp_path = root / ".mcp.json"
         self.assertTrue(mcp_path.is_file())
         data = json.loads(mcp_path.read_text())
-        self.assertIn("test-mcp", data)
-        self.assertEqual(data["test-mcp"]["command"], "npx")
+        self.assertIn("trello", data["mcpServers"])
+        self.assertEqual(data["mcpServers"]["trello"]["command"], "npx")
 
     def test_disabled_recipe_skips_materialization(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = false\nversion = "1.0.0"\n'
+            "[recipes.worktree-flow]\nenabled = false\n"
         )
-        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
-        self.assertFalse((cache_recipe_skill(root, "test-fixture", "test-skill")).exists())
+        home, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        skill_dir = self._recipe_skill_path(root, home, "worktree-flow", "worktree-flow")
+        self.assertFalse(skill_dir.exists())
+
 
     def test_sync_without_version_succeeds(self):
         root = self._make_project(
-            "[recipes.test-fixture]\nenabled = true\n"
+            "[recipes.worktree-flow]\nenabled = true\n"
         )
-        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
-        skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
+        home, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        skill_dir = self._recipe_skill_path(root, home, "worktree-flow", "worktree-flow")
         self.assertTrue(skill_dir.is_dir())
+
 
     def test_legacy_version_warns_and_succeeds(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "2.0.0"\n'
+            "[recipes.worktree-flow]\nenabled = true\nversion = \"2.0.0\"\n"
         )
-        captured = io.StringIO()
-        real_stderr = sys.stderr
-        sys.stderr = captured
-        try:
-            rc = self.mod.materialize_recipes(root, _home())
-        finally:
-            sys.stderr = real_stderr
-        self.assertEqual(rc, 0)
-        stderr_output = captured.getvalue()
-        self.assertIn("legacy", stderr_output.lower())
-        self.assertIn("version", stderr_output.lower())
-        skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
+        home, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("legacy", result.stderr.lower())
+        self.assertIn("version", result.stderr.lower())
+        skill_dir = self._recipe_skill_path(root, home, "worktree-flow", "worktree-flow")
         self.assertTrue(skill_dir.is_dir())
+
 
     def test_unknown_recipe_fails(self):
         root = self._make_project(
-            '[recipes.nonexistent]\nenabled = true\nversion = "1.0.0"\n'
+            "[recipes.nonexistent]\nenabled = true\n"
         )
-        with self.assertRaises(Exception):
-            self.mod.materialize_recipes(root, _home())
+        _, result = self._sync(root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("recipe directory not found", result.stderr)
+        self.assertIn("nonexistent", result.stderr)
+
 
     def test_no_recipes_section_succeeds(self):
         root = self._make_project("")
-        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("sync complete", result.stdout)
+
 
     def test_recipe_does_not_overwrite_user_local_skill(self):
         root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+            "[recipes.worktree-flow]\nenabled = true\n"
         )
-        # Pre-create a user-local skill with the same ID
-        user_skill = root / "ai-specs" / "skills" / "test-skill"
+        user_skill = root / "ai-specs" / "skills" / "worktree-flow"
         user_skill.mkdir(parents=True)
         (user_skill / "SKILL.md").write_text("user local")
-        self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
-        # Recipe version goes to .recipe/ and local skill is preserved
+        home, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((user_skill / "SKILL.md").read_text(), "user local")
-        recipe_skill = cache_recipe_skill(root, "test-fixture", "test-skill")
+        recipe_skill = self._recipe_skill_path(root, home, "worktree-flow", "worktree-flow")
         self.assertTrue(recipe_skill.is_dir())
+
 
     # --- V2 materialize tests -----------------------------------------------
 
