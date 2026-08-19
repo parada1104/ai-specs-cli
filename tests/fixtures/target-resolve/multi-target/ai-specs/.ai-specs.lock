@@ -1,0 +1,24 @@
+# Managed by ai-specs. Do not edit by hand.
+# Provenance stamp: [meta] records the CLI version and timestamp of the last
+# sync. [managed.*] records integrity only for CLI-owned override targets;
+# it is not a general content-integrity manifest. git covers the committed
+# project surface; skill/recipe/dep content hashes are not tracked.
+
+[meta]
+cli_version = "0.22.0"
+synced_at = "2026-08-19T16:01:40Z"
+
+[managed."AGENTS.md"]
+sha256 = "6e20e35cbe1753777df90991c139265f1b9de60b4c71694b641afee631e95a9b"
+kind = "runtime-brief"
+policy = "never-force"
+
+[managed."packages/a/AGENTS.md"]
+sha256 = "6e20e35cbe1753777df90991c139265f1b9de60b4c71694b641afee631e95a9b"
+kind = "runtime-brief"
+policy = "never-force"
+
+[managed."packages/b/AGENTS.md"]
+sha256 = "6e20e35cbe1753777df90991c139265f1b9de60b4c71694b641afee631e95a9b"
+kind = "runtime-brief"
+policy = "never-force"

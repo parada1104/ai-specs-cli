@@ -1,6 +1,4 @@
-import importlib.util
-import os
-import subprocess
+import re
 import sys
 import tempfile
 import unittest
@@ -8,93 +6,85 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RECIPE_LIST_PATH = ROOT / "lib" / "_internal" / "recipe-list.py"
-RECIPE_READ_PATH = ROOT / "lib" / "_internal" / "recipe-read.py"
-RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
-TOML_READ_PATH = ROOT / "lib" / "_internal" / "toml-read.py"
 CATALOG = ROOT / "catalog" / "recipes"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+_RECIPE_ID_RE = re.compile(r"\]\s+(\S+)")
+
+
+def _extract_ids(output: str) -> list[str]:
+    """Extract recipe IDs from `recipe list` output lines."""
+    ids = []
+    for line in output.strip().splitlines():
+        m = _RECIPE_ID_RE.search(line)
+        if m:
+            ids.append(m.group(1))
+    return ids
 
 
 class RecipeListTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_LIST_PATH, "recipe_list_internal")
+    def setUp(self):
+        self._home_td = tempfile.TemporaryDirectory(prefix="recipe-list-home-")
+        self.addCleanup(self._home_td.cleanup)
 
-    def _make_project(self, manifest_content: str, catalog_recipes: dict | None = None) -> Path:
-        """Create a temporary project with ai-specs.toml and optional catalog."""
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        project = Path(tmp.name)
-        ai_specs_dir = project / "ai-specs"
-        ai_specs_dir.mkdir()
-        (ai_specs_dir / "ai-specs.toml").write_text(manifest_content, encoding="utf-8")
-        if catalog_recipes:
-            catalog_dir = project / "catalog" / "recipes"
+    def _cli_home(self, catalog_recipes: dict[str, str] | None = None) -> Path:
+        home = isolated_home(Path(self._home_td.name))
+        if catalog_recipes is not None:
+            catalog_link = home / "catalog"
+            catalog_link.unlink()
+            catalog_dir = home / "catalog" / "recipes"
             catalog_dir.mkdir(parents=True)
             for rid, content in catalog_recipes.items():
                 rdir = catalog_dir / rid
                 rdir.mkdir()
                 (rdir / "recipe.toml").write_text(content, encoding="utf-8")
-        return project
-
-    def _make_cli_home(self, catalog_recipes: dict[str, str]) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        home = Path(tmp.name)
-        catalog_dir = home / "catalog" / "recipes"
-        catalog_dir.mkdir(parents=True)
-        for rid, content in catalog_recipes.items():
-            rdir = catalog_dir / rid
-            rdir.mkdir()
-            (rdir / "recipe.toml").write_text(content, encoding="utf-8")
         return home
 
-    def _set_ai_specs_home(self, home: Path) -> None:
-        old_home = os.environ.get("AI_SPECS_HOME")
-        os.environ["AI_SPECS_HOME"] = str(home)
+    def _make_project(self, manifest_content: str) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        project = Path(tmp.name)
+        ai_specs_dir = project / "ai-specs"
+        ai_specs_dir.mkdir()
+        (ai_specs_dir / "skills").mkdir()
+        (ai_specs_dir / "commands").mkdir()
+        (ai_specs_dir / "ai-specs.toml").write_text(manifest_content, encoding="utf-8")
+        return project
 
-        def restore() -> None:
-            if old_home is None:
-                os.environ.pop("AI_SPECS_HOME", None)
-            else:
-                os.environ["AI_SPECS_HOME"] = old_home
-
-        self.addCleanup(restore)
+    def _invoke(self, project: Path, home: Path):
+        return invoke(project, "recipe", "list", cli_home=home)
 
     def test_list_shows_available_when_not_in_manifest(self):
-        manifest = '[project]\nname = "test"\n'
+        manifest = '[project]\nname = "test"\n\n[agents]\nenabled = ["claude"]\n'
         recipe_toml = '[recipe]\nid = "my-recipe"\nname = "My Recipe"\ndescription = "Desc"\nversion = "1.0.0"\n'
         project = self._make_project(manifest)
-        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
-        results = self.mod.list_recipes(project)
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["id"], "my-recipe")
-        self.assertEqual(results[0]["status"], "available")
+        home = self._cli_home({"my-recipe": recipe_toml})
+        r = self._invoke(project, home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ids = _extract_ids(r.stdout)
+        self.assertEqual(len(ids), 1)
+        self.assertEqual(ids[0], "my-recipe")
+        self.assertIn("available", r.stdout)
 
     def test_list_shows_installed_when_enabled_true(self):
         manifest = (
-            '[project]\nname = "test"\n'
-            "[recipes.my-recipe]\nenabled = true\nversion = \"1.0.0\"\n"
+            '[project]\nname = "test"\n\n[agents]\nenabled = ["claude"]\n'
+            "[recipes.my-recipe]\nenabled = true\n"
         )
         recipe_toml = '[recipe]\nid = "my-recipe"\nname = "My Recipe"\ndescription = "Desc"\nversion = "1.0.0"\n'
         project = self._make_project(manifest)
-        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
-        results = self.mod.list_recipes(project)
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["status"], "installed")
+        home = self._cli_home({"my-recipe": recipe_toml})
+        r = self._invoke(project, home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = [l for l in r.stdout.splitlines() if "my-recipe" in l]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("installed", lines[0])
 
     def test_list_catalog_version_info_only_not_outdated(self):
         manifest = (
-            '[project]\nname = "test"\n'
+            '[project]\nname = "test"\n\n[agents]\nenabled = ["claude"]\n'
             "[recipes.my-recipe]\nenabled = true\n"
         )
         recipe_toml = (
@@ -102,36 +92,40 @@ class RecipeListTests(unittest.TestCase):
             'description = "Desc"\nversion = "3.1.4"\n'
         )
         project = self._make_project(manifest)
-        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
-        results = self.mod.list_recipes(project)
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["version"], "3.1.4")
-        self.assertEqual(results[0]["status"], "installed")
-        self.assertNotEqual(results[0]["status"], "outdated")
-        statuses = {r["status"] for r in results}
-        self.assertNotIn("outdated", statuses)
+        home = self._cli_home({"my-recipe": recipe_toml})
+        r = self._invoke(project, home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = [l for l in r.stdout.splitlines() if "my-recipe" in l]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("3.1.4", lines[0])
+        self.assertIn("installed", lines[0])
+        self.assertNotIn("outdated", lines[0])
+        self.assertNotIn("outdated", r.stdout)
 
     def test_list_shows_disabled_when_enabled_false(self):
         manifest = (
-            '[project]\nname = "test"\n'
-            "[recipes.my-recipe]\nenabled = false\nversion = \"1.0.0\"\n"
+            '[project]\nname = "test"\n\n[agents]\nenabled = ["claude"]\n'
+            "[recipes.my-recipe]\nenabled = false\n"
         )
         recipe_toml = '[recipe]\nid = "my-recipe"\nname = "My Recipe"\ndescription = "Desc"\nversion = "1.0.0"\n'
         project = self._make_project(manifest)
-        self._set_ai_specs_home(self._make_cli_home({"my-recipe": recipe_toml}))
-        results = self.mod.list_recipes(project)
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["status"], "disabled")
+        home = self._cli_home({"my-recipe": recipe_toml})
+        r = self._invoke(project, home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = [l for l in r.stdout.splitlines() if "my-recipe" in l]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("disabled", lines[0])
 
     def test_empty_catalog(self):
-        manifest = '[project]\nname = "test"\n'
+        manifest = '[project]\nname = "test"\n\n[agents]\nenabled = ["claude"]\n'
         project = self._make_project(manifest)
-        self._set_ai_specs_home(self._make_cli_home({}))
-        results = self.mod.list_recipes(project)
-        self.assertEqual(results, [])
+        home = self._cli_home({})
+        r = self._invoke(project, home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(_extract_ids(r.stdout), [])
 
     def test_list_hides_internal_test_recipes(self):
-        manifest = '[project]\nname = "test"\n'
+        manifest = '[project]\nname = "test"\n\n[agents]\nenabled = ["claude"]\n'
         public = (
             '[recipe]\nid = "public-recipe"\nname = "Public"\n'
             'description = "Desc"\nversion = "1.0.0"\n'
@@ -141,66 +135,74 @@ class RecipeListTests(unittest.TestCase):
             'description = "internal"\nversion = "1.0.0"\n'
         )
         project = self._make_project(manifest)
-        self._set_ai_specs_home(
-            self._make_cli_home({"public-recipe": public, "test-fixture": internal})
-        )
-        results = self.mod.list_recipes(project)
-        ids = [r["id"] for r in results]
+        home = self._cli_home({"public-recipe": public, "test-fixture": internal})
+        r = self._invoke(project, home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ids = _extract_ids(r.stdout)
         self.assertEqual(ids, ["public-recipe"])
         self.assertFalse(any(rid.startswith("test-") for rid in ids))
 
     def test_list_uses_cli_catalog_when_project_has_no_local_catalog(self):
-        manifest = '[project]\nname = "test"\n'
+        manifest = '[project]\nname = "test"\n\n[agents]\nenabled = ["claude"]\n'
         project = self._make_project(manifest)
-        self._set_ai_specs_home(ROOT)
-        results = self.mod.list_recipes(project)
-        self.assertTrue(any(r["id"] == "trello-mcp-workflow" for r in results))
-        self.assertFalse(any(r["id"].startswith("test-") for r in results))
+        home = self._cli_home()
+        r = self._invoke(project, home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("trello-mcp-workflow", r.stdout)
+        ids = _extract_ids(r.stdout)
+        self.assertFalse(any(r.startswith("test-") for r in ids))
 
     def test_invalid_recipe_toml_shows_error(self):
-        manifest = '[project]\nname = "test"\n'
+        manifest = '[project]\nname = "test"\n\n[agents]\nenabled = ["claude"]\n'
         bad_toml = '[recipe]\nname = "Bad"\ndescription = "Missing id"\n'
         project = self._make_project(manifest)
-        self._set_ai_specs_home(self._make_cli_home({"bad-recipe": bad_toml}))
-        results = self.mod.list_recipes(project)
-        self.assertEqual(len(results), 1)
-        self.assertIn("error", results[0]["status"])
+        home = self._cli_home({"bad-recipe": bad_toml})
+        r = self._invoke(project, home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = [l for l in r.stdout.splitlines() if "bad-recipe" in l]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("error", lines[0])
 
     def test_list_ignores_project_local_catalog_in_favor_of_cli_catalog(self):
-        manifest = '[project]\nname = "test"\n'
+        manifest = '[project]\nname = "test"\n\n[agents]\nenabled = ["claude"]\n'
         cli_recipe = '[recipe]\nid = "shared-recipe"\nname = "CLI Recipe"\ndescription = "Desc"\nversion = "2.0.0"\n'
-        local_recipe = '[recipe]\nid = "shared-recipe"\nname = "Local Recipe"\ndescription = "Desc"\nversion = "9.9.9"\n'
-        project = self._make_project(manifest, {"shared-recipe": local_recipe})
-        self._set_ai_specs_home(self._make_cli_home({"shared-recipe": cli_recipe}))
-        results = self.mod.list_recipes(project)
-        self.assertEqual(results[0]["name"], "CLI Recipe")
-        self.assertEqual(results[0]["version"], "2.0.0")
+        project = self._make_project(manifest)
+        local_catalog = project / "catalog" / "recipes" / "shared-recipe"
+        local_catalog.mkdir(parents=True)
+        (local_catalog / "recipe.toml").write_text(
+            '[recipe]\nid = "shared-recipe"\nname = "Local Recipe"\ndescription = "Desc"\nversion = "9.9.9"\n'
+        )
+        home = self._cli_home({"shared-recipe": cli_recipe})
+        r = self._invoke(project, home)
+        lines = [l for l in r.stdout.splitlines() if "shared-recipe" in l]
+        self.assertIn("CLI Recipe", lines[0])
+        self.assertIn("2.0.0", lines[0])
 
     def test_cli_uninitialized_project(self):
         with tempfile.TemporaryDirectory() as tmp:
-            proc = subprocess.run(
-                ["python3", str(RECIPE_LIST_PATH), tmp],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(proc.returncode, 1)
-            self.assertIn("Proyecto no inicializado", proc.stderr)
+            home = self._cli_home()
+            r = invoke(Path(tmp), "recipe", "list", cli_home=home)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("Proyecto no inicializado", r.stderr)
 
     def test_cli_produces_output(self):
-        proc = subprocess.run(
-            ["python3", str(RECIPE_LIST_PATH), str(ROOT)],
-            capture_output=True,
-            text=True,
-            check=False,
+        home = self._cli_home()
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        root = Path(td.name)
+        (root / "ai-specs").mkdir()
+        (root / "ai-specs" / "skills").mkdir()
+        (root / "ai-specs" / "commands").mkdir()
+        (root / "ai-specs" / "ai-specs.toml").write_text(
+            '[project]\nname = "test"\n\n[agents]\nenabled = ["claude"]\n'
         )
-        self.assertEqual(proc.returncode, 0)
-        self.assertIn("trello-mcp-workflow", proc.stdout)
-        self.assertNotIn("test-fixture", proc.stdout)
-        for line in proc.stdout.splitlines():
-            # status column then id — reject any catalog id starting with test-
+        r = invoke(root, "recipe", "list", cli_home=home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("trello-mcp-workflow", r.stdout)
+        self.assertNotIn("test-fixture", r.stdout)
+        for line in r.stdout.splitlines():
             parts = line.split()
-            if len(parts) >= 2 and parts[1].startswith("test-"):
+            if len(parts) >= 3 and parts[2].startswith("test-"):
                 self.fail(f"internal test recipe leaked into CLI list: {line!r}")
 
 

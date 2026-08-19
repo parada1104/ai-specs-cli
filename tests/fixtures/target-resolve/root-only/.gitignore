@@ -1,0 +1,21 @@
+# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---
+.claude/
+.cursor/
+.opencode/
+opencode.json
+.pi/
+.omp/
+.codex/
+.gemini/
+.github/copilot-instructions.md
+CLAUDE.md
+**/CLAUDE.md
+GEMINI.md
+.mcp.json
+.env
+.envrc
+ai-specs.env
+ai-specs/.env
+ai-specs/.env.bak
+ai-specs/.envrc.bak
+# --- end ai-specs ---

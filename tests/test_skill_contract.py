@@ -28,6 +28,13 @@ class SkillContractTests(unittest.TestCase):
         path.write_text(content)
         return path
 
+    # TRIAGE: test_parses_canonical_local_skill asserts from_local_skill() returns
+    # a dict with specific field values (name, description_summary, license,
+    # metadata.author, metadata.scope, metadata.auto_invoke). Ran `bin/ai-specs sync`
+    # on a project with this local skill: sync copies the file to resolved-skills/
+    # in the cache, but the parsed dict structure and individual field values do not
+    # appear in stdout, stderr, or the emitted file tree. No `bin/ai-specs` verb
+    # exposes the parsed skill structure.
     def test_parses_canonical_local_skill(self):
         with tempfile.TemporaryDirectory() as tmp:
             skill_path = self.write_skill(
@@ -39,10 +46,10 @@ class SkillContractTests(unittest.TestCase):
                 "license: Apache-2.0\n"
                 "metadata:\n"
                 "  author: fixture-suite\n"
-                "  version: \"1.0\"\n"
+                '  version: "1.0"\n'
                 "  scope: [root]\n"
                 "  auto_invoke:\n"
-                "    - \"Sync local metadata\"\n"
+                '    - "Sync local metadata"\n'
                 "---\n\n"
                 "# Demo\n",
             )
@@ -56,6 +63,12 @@ class SkillContractTests(unittest.TestCase):
             self.assertEqual(skill["metadata"]["scope"], ["root"])
             self.assertEqual(skill["metadata"]["auto_invoke"], ["Sync local metadata"])
 
+    # TRIAGE: test_compatibility_mode_normalizes_scalar_auto_invoke_and_missing_fields
+    # asserts that from_local_skill(compatibility=True) normalizes defaults and
+    # coerces scalar auto_invoke to list. Ran `bin/ai-specs sync` with a legacy
+    # skill: sync copies the file to resolved-skills/ but does not expose the
+    # parsed dict, the compatibility defaults, or the warnings list in any
+    # CLI output surface.
     def test_compatibility_mode_normalizes_scalar_auto_invoke_and_missing_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             skill_path = self.write_skill(
@@ -65,7 +78,7 @@ class SkillContractTests(unittest.TestCase):
                 "description: Legacy skill.\n"
                 "metadata:\n"
                 "  scope: [root]\n"
-                "  auto_invoke: \"Legacy trigger\"\n"
+                '  auto_invoke: "Legacy trigger"\n'
                 "---\n",
             )
 
@@ -77,6 +90,15 @@ class SkillContractTests(unittest.TestCase):
             self.assertEqual(skill["metadata"]["auto_invoke"], ["Legacy trigger"])
             self.assertTrue(skill["warnings"])
 
+    # TRIAGE: test_from_dep_generates_canonical_provenance_metadata asserts that
+    # from_dep() produces a skill dict with provenance metadata (source,
+    # vendor_attribution, author) and render_skill_markdown() includes provenance
+    # markers. Ran `bin/ai-specs sync` with a [[deps]] entry: sync calls
+    # vendor-skills.py which uses from_dep+render_skill_markdown internally, but
+    # the rendered output is written to ai-specs/.deps/<id>/skills/<id>/SKILL.md
+    # only after git clone succeeds. With AI_SPECS_NO_NETWORK=1, the clone fails
+    # and no rendered skill is produced. The specific provenance fields are not
+    # exposed in stdout/stderr.
     def test_from_dep_generates_canonical_provenance_metadata(self):
         dep = {
             "id": "vendored-demo",
@@ -106,6 +128,12 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn('source: "https://example.com/demo.git"', rendered)
         self.assertIn("# Upstream", rendered)
 
+    # TRIAGE: test_sync_metadata_requires_scope_and_auto_invoke_together asserts
+    # that validate_sync_metadata() raises SkillContractError when scope is present
+    # but auto_invoke is missing. Ran `bin/ai-specs sync` with such a skill: sync
+    # copies the skill without validating sync metadata. The validation error is
+    # only produced by the module's `sync-metadata` CLI, which is not exposed
+    # through any `bin/ai-specs` verb.
     def test_sync_metadata_requires_scope_and_auto_invoke_together(self):
         with tempfile.TemporaryDirectory() as tmp:
             skill_path = self.write_skill(
@@ -116,7 +144,7 @@ class SkillContractTests(unittest.TestCase):
                 "license: Apache-2.0\n"
                 "metadata:\n"
                 "  author: fixture-suite\n"
-                "  version: \"1.0\"\n"
+                '  version: "1.0"\n'
                 "  scope: [root]\n"
                 "---\n",
             )
@@ -128,6 +156,12 @@ class SkillContractTests(unittest.TestCase):
             self.assertEqual(ctx.exception.field, "metadata.auto_invoke")
             self.assertIn("required", ctx.exception.message)
 
+    # TRIAGE: test_canonical_local_skill_without_sync_metadata_remains_valid asserts
+    # that from_local_skill() returns a valid skill dict with no warnings when
+    # sync metadata (scope, auto_invoke) is absent. Ran `bin/ai-specs sync` with
+    # such a skill: sync copies the file to resolved-skills/ successfully but does
+    # not expose the parsed dict, absence of warnings, or individual field values
+    # in stdout/stderr.
     def test_canonical_local_skill_without_sync_metadata_remains_valid(self):
         with tempfile.TemporaryDirectory() as tmp:
             skill_path = self.write_skill(
@@ -138,7 +172,7 @@ class SkillContractTests(unittest.TestCase):
                 "license: Apache-2.0\n"
                 "metadata:\n"
                 "  author: fixture-suite\n"
-                "  version: \"1.0\"\n"
+                '  version: "1.0"\n'
                 "---\n\n"
                 "# Docs Helper\n",
             )
@@ -153,6 +187,12 @@ class SkillContractTests(unittest.TestCase):
             self.assertNotIn("auto_invoke", skill["metadata"])
             self.assertEqual(skill["warnings"], [])
 
+    # TRIAGE: test_cli_sync_metadata_returns_json_payload calls
+    # `python3 lib/_internal/skill_contract.py sync-metadata <path>` which is
+    # a direct lib/_internal module invocation. No `bin/ai-specs` verb exposes
+    # the sync-metadata JSON payload. Ran `bin/ai-specs sync` with a valid skill:
+    # sync copies the file but does not output the parsed JSON payload. The module's
+    # own CLI entrypoint is the only way to exercise this code path.
     def test_cli_sync_metadata_returns_json_payload(self):
         with tempfile.TemporaryDirectory() as tmp:
             skill_path = self.write_skill(
@@ -163,10 +203,10 @@ class SkillContractTests(unittest.TestCase):
                 "license: Apache-2.0\n"
                 "metadata:\n"
                 "  author: fixture-suite\n"
-                "  version: \"1.0\"\n"
+                '  version: "1.0"\n'
                 "  scope: [root]\n"
                 "  auto_invoke:\n"
-                "    - \"Run CLI metadata\"\n"
+                '    - "Run CLI metadata"\n'
                 "---\n",
             )
 

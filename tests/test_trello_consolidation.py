@@ -8,35 +8,22 @@ recipe's bundled skill. After consolidation:
   - no catalog recipe template points at `ai-specs/skills/**` (no dangling refs).
 """
 
-import importlib.util
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "trello-mcp-workflow"
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 CATALOG_RECIPES = ROOT / "catalog" / "recipes"
 
-
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home
 
 
 class TrelloConsolidationTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.materialize = load_module(
-            RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal_trello"
-        )
-
     def test_card_feature_has_no_external_skill_path(self):
         text = (RECIPE_DIR / "templates" / "card-feature.md").read_text()
         self.assertNotIn("ai-specs/skills/trello-pm-workflow", text)
@@ -59,6 +46,15 @@ class TrelloConsolidationTests(unittest.TestCase):
                 offenders.append(str(tpl.relative_to(ROOT)))
         self.assertEqual(offenders, [], f"templates with dangling skill paths: {offenders}")
 
+    def _cli_home(self):
+        td = tempfile.TemporaryDirectory(prefix="trello-home-")
+        self.addCleanup(td.cleanup)
+        return isolated_home(Path(td.name))
+
+    def _recipe_version(self) -> str:
+        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
+            return tomllib.load(fh)["recipe"]["version"]
+
     def _make_project(self) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -77,15 +73,11 @@ class TrelloConsolidationTests(unittest.TestCase):
         )
         return root
 
-    def _recipe_version(self) -> str:
-        import tomllib
-
-        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
-            return tomllib.load(fh)["recipe"]["version"]
-
     def test_card_decision_template_materializes(self):
         root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        home = self._cli_home()
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stderr)
         dest = (
             root / "ai-specs" / "recipes" / "trello-mcp-workflow"
             / "overrides" / "templates" / "card-decision.md"

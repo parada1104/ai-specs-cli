@@ -1,0 +1,12 @@
+# --- ai-specs: managed by `ai-specs init`/`sync` — do not edit ---
+
+.internal/
+.deps/
+
+# Recipe materialization is CLI-owned; only declared overrides are committed.
+recipes/**
+!recipes/*/
+!recipes/*/overrides/
+!recipes/*/overrides/**
+
+# --- end ai-specs ---
