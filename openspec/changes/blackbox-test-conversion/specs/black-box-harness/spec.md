@@ -157,3 +157,36 @@ built from it will certify a Go port that broke the behavior.
 - **WHEN** the orchestrator validates it
 - **THEN** removed and added assertion counts are compared per file
 - **AND** any net reduction without per-assertion justification blocks acceptance
+
+### Requirement: Executed test count is the primary acceptance metric
+
+A converted file MUST NOT run fewer tests than it ran before conversion.
+
+Skipping is not converting. `unittest` reports a skipped test as success, so a
+module that skips everything reports `Ran 0 tests ... OK` and exits 0. Coupling
+counts, assertion counts, and the exit code can all pass while coverage is
+entirely gone.
+
+`@unittest.skip`, `self.skipTest`, `raise unittest.SkipTest`, and module-level
+skip guards are therefore treated as coverage deletion, and coverage deletion
+needs the same human approval as deleting a test.
+
+Where a test cannot yet be converted, the correct action is to LEAVE IT COUPLED
+and unconverted, carrying a `# TRIAGE:` comment. A coupled test that still runs
+is strictly better than a black-box test that does not: it keeps its coverage
+until a real conversion replaces it.
+
+#### Scenario: A conversion skips what it cannot convert
+
+- **GIVEN** `test_recipe_materialize.py` running 65 tests before conversion
+- **WHEN** conversion removes every loader reference but skips the module
+- **THEN** the file reports `Ran 0 tests ... OK` and exits 0
+- **AND** coupled references read 0 and assertion count is unchanged
+- **AND** the conversion is REJECTED, because 65 tests became 0
+
+#### Scenario: Acceptance is measured before a conversion is merged
+
+- **GIVEN** a work unit reporting converted files
+- **WHEN** the orchestrator validates it
+- **THEN** the executed test count per file is compared against its pre-conversion count
+- **AND** any decrease blocks acceptance regardless of the other three metrics
