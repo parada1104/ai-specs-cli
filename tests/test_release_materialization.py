@@ -6,10 +6,7 @@ Evidence comes from init + sync of a temporary consumer project with
 """
 from __future__ import annotations
 
-import importlib.util
-import os
 import re
-import subprocess
 import sys
 import tempfile
 import tomllib
@@ -18,8 +15,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
-DOCTOR_PY = ROOT / "lib" / "_internal" / "doctor.py"
 SHA256SUMS = ROOT / "catalog" / "recipes" / "worktree-flow" / "bin" / "SHA256SUMS"
 DOGFOOD_LOCK = ROOT / "ai-specs" / ".ai-specs.lock"
 
@@ -75,14 +70,25 @@ test_command = "./tests/validate.sh"
 enabled = true
 """
 
+# FROZEN platform output paths for the five enabled agents.
+# Derived from Doctor.PLATFORM (instructions_path, skills_dir, commands_dir)
+# for claude, cursor, opencode, pi, omp — order and dedup preserved.
+_EXPECTED_OUTPUT_RELPATHS = [
+    "CLAUDE.md",
+    ".claude/skills",
+    ".claude/commands",
+    ".cursor/skills",
+    ".cursor/commands",
+    ".opencode/skills",
+    ".opencode/commands",
+    ".pi/skills",
+    ".omp/AGENTS.md",
+    ".omp/skills",
+    ".omp/commands",
+]
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home
 
 
 def candidate_version() -> str:
@@ -95,46 +101,20 @@ def snapshot_dogfood_lock() -> bytes:
     return b""
 
 
-def platform_output_relpaths(platform: dict, agents: tuple[str, ...]) -> list[str]:
-    # No [mcp.*] in the representative manifest: doctor WARNs and sync
-    # does not materialize MCP adapter files. Do not require them.
-    keys = ("instructions_path", "skills_dir", "commands_dir")
-    seen: list[str] = []
-    for agent in agents:
-        plat = platform[agent]
-        for key in keys:
-            value = plat.get(key) or ""
-            if value and value not in seen:
-                seen.append(value)
-    return seen
-
-
 class ReleaseMaterializationTests(unittest.TestCase):
     """Hermetic gate: isolated consumer project is the evidence surface."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.doctor = load_module(DOCTOR_PY, "doctor_release_materialization")
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="release-materialization-")
         self.addCleanup(self.tmp.cleanup)
         self.workspace = Path(self.tmp.name) / "workspace"
         self.workspace.mkdir()
+        self._home_td = tempfile.TemporaryDirectory(prefix="release-home-")
+        self.addCleanup(self._home_td.cleanup)
+        self._home = isolated_home(Path(self._home_td.name))
 
-    def _env(self) -> dict:
-        env = dict(os.environ, AI_SPECS_HOME=str(ROOT), AI_SPECS_GATE_OFFLINE="1")
-        env.pop("AI_SPECS_GATE_BUILD", None)
-        return env
-
-    def _run_cli(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [str(CLI), *args, str(self.workspace)],
-            capture_output=True,
-            text=True,
-            env=self._env(),
-            check=False,
-        )
+    def _invoke(self, *args: str):
+        return invoke(self.workspace, *args, cli_home=self._home)
 
     def test_sha256sums_declares_candidate_version_and_four_platforms(self):
         version = candidate_version()
@@ -153,13 +133,13 @@ class ReleaseMaterializationTests(unittest.TestCase):
         version = candidate_version()
         lock_before = snapshot_dogfood_lock()
 
-        proc = self._run_cli("init")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+        r = self._invoke("init")
+        self.assertEqual(r.returncode, 0, r.stderr)
 
         (self.workspace / "ai-specs" / "ai-specs.toml").write_text(CONSUMER_MANIFEST)
 
-        proc = self._run_cli("sync")
-        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        r = self._invoke("sync")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
 
         lock_path = self.workspace / "ai-specs" / ".ai-specs.lock"
         self.assertTrue(lock_path.is_file(), "temporary lock missing after sync")
@@ -167,9 +147,9 @@ class ReleaseMaterializationTests(unittest.TestCase):
             lock = tomllib.load(fh)
         self.assertEqual(lock["meta"]["cli_version"], version)
 
-        proc = self._run_cli("doctor")
-        combined = proc.stdout + proc.stderr
-        self.assertEqual(proc.returncode, 0, combined)
+        r = self._invoke("doctor")
+        combined = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, combined)
         error_lines = [ln for ln in combined.splitlines() if DOCTOR_ERROR_LINE.match(ln)]
         self.assertEqual(
             error_lines,
@@ -179,8 +159,7 @@ class ReleaseMaterializationTests(unittest.TestCase):
 
         self.assertTrue((self.workspace / "AGENTS.md").exists())
 
-        platform = self.doctor.Doctor.PLATFORM
-        for rel in platform_output_relpaths(platform, ENABLED_AGENTS):
+        for rel in _EXPECTED_OUTPUT_RELPATHS:
             path = self.workspace / rel
             self.assertTrue(path.exists(), f"missing generated output: {rel}")
 
@@ -200,3 +179,7 @@ class ReleaseMaterializationTests(unittest.TestCase):
             lock_before,
             "clean-materialization gate must not rewrite the candidate dogfood lock",
         )
+
+
+if __name__ == "__main__":
+    unittest.main()
