@@ -285,83 +285,88 @@ class RecipeMaterializeTests(unittest.TestCase):
             (recipe_dir / "skills" / sid / "SKILL.md").write_text("skill")
 
     def test_resolve_bindings_explicit(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            catalog = Path(tmp)
-            self._make_v2_recipe(tmp, "recipe-a", caps=["tracker"])
-            bindings = self.mod.resolve_bindings(catalog, ["recipe-a"], [{"capability": "tracker", "recipe": "recipe-a"}])
-            self.assertEqual(bindings, {"tracker": "recipe-a"})
+        root = self._make_project(
+            "[recipes.git-pr-flow]\nenabled = true\n"
+            "[recipes.gitlab-mr-flow]\nenabled = true\n"
+            "[[bindings]]\ncapability = 'vcs-pr-flow'\nrecipe = 'git-pr-flow'\n"
+        )
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        agents = (root / "AGENTS.md").read_text()
+        self.assertIn("VCS/PR provider: GitHub", agents)
+        self.assertNotIn("VCS/PR provider: GitLab", agents)
 
     def test_resolve_bindings_auto_bind_single_provider(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            catalog = Path(tmp)
-            self._make_v2_recipe(tmp, "recipe-a", caps=["tracker"])
-            bindings = self.mod.resolve_bindings(catalog, ["recipe-a"], [])
-            self.assertEqual(bindings, {"tracker": "recipe-a"})
+        root = self._make_project(
+            "[recipes.git-pr-flow]\nenabled = true\n"
+        )
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        agents = (root / "AGENTS.md").read_text()
+        self.assertIn("VCS/PR provider: GitHub", agents)
+        self.assertIn("base branch: `main`", agents)
 
     def test_resolve_bindings_auto_bind_skips_ambiguity(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            catalog = Path(tmp)
-            self._make_v2_recipe(tmp, "recipe-a", caps=["tracker"])
-            self._make_v2_recipe(tmp, "recipe-b", caps=["tracker"])
-            bindings = self.mod.resolve_bindings(catalog, ["recipe-a", "recipe-b"], [])
-            self.assertNotIn("tracker", bindings)
+        root = self._make_project(
+            "[recipes.git-pr-flow]\nenabled = true\n"
+            "[recipes.gitlab-mr-flow]\nenabled = true\n"
+        )
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("capability ambiguity", result.stderr)
+        agents = (root / "AGENTS.md").read_text()
+        self.assertNotIn("VCS/PR provider:", agents)
 
     def test_resolve_bindings_explicit_disabled_fails(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            catalog = Path(tmp)
-            self._make_v2_recipe(tmp, "recipe-a", caps=["tracker"])
-            with self.assertRaises(RuntimeError) as ctx:
-                self.mod.resolve_bindings(catalog, ["recipe-a"], [{"capability": "tracker", "recipe": "recipe-b"}])
-            self.assertIn("disabled/unknown", str(ctx.exception))
+        root = self._make_project(
+            "[recipes.git-pr-flow]\nenabled = true\n"
+            "[[bindings]]\ncapability = 'vcs-pr-flow'\nrecipe = 'gitlab-mr-flow'\n"
+        )
+        _, result = self._sync(root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("disabled/unknown", result.stderr)
+        self.assertIn("vcs-pr-flow", result.stderr)
 
     def test_resolve_bindings_duplicate_explicit_fails(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            catalog = Path(tmp)
-            self._make_v2_recipe(tmp, "recipe-a", caps=["tracker"])
-            self._make_v2_recipe(tmp, "recipe-b", caps=["tracker"])
-            with self.assertRaises(RuntimeError) as ctx:
-                self.mod.resolve_bindings(catalog, ["recipe-a", "recipe-b"], [
-                    {"capability": "tracker", "recipe": "recipe-a"},
-                    {"capability": "tracker", "recipe": "recipe-b"},
-                ])
-            self.assertIn("duplicate explicit binding", str(ctx.exception))
+        root = self._make_project(
+            "[recipes.git-pr-flow]\nenabled = true\n"
+            "[recipes.gitlab-mr-flow]\nenabled = true\n"
+            "[[bindings]]\ncapability = 'vcs-pr-flow'\nrecipe = 'git-pr-flow'\n"
+            "[[bindings]]\ncapability = 'vcs-pr-flow'\nrecipe = 'gitlab-mr-flow'\n"
+        )
+        _, result = self._sync(root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("duplicate explicit binding", result.stderr)
+        self.assertIn("vcs-pr-flow", result.stderr)
 
     def test_merge_config_defaults_and_override(self):
-        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField
-        recipe = Recipe(id="r", name="R", description="D", version="1.0",
-            config_schema=ConfigSchema(fields={
-                "timeout": ConfigField(required=False, type="integer", default=30),
-                "board_id": ConfigField(required=True, type="string"),
-            })
+        root = self._make_project(
+            "[recipes.git-pr-flow]\nenabled = true\n"
+            "[recipes.git-pr-flow.config]\nbase_branch = 'development'\n"
         )
-        cfg = self.mod.merge_config(recipe, {"board_id": "abc"})
-        self.assertEqual(cfg["timeout"], 30)
-        self.assertEqual(cfg["board_id"], "abc")
+        _, result = self._sync(root)
+        agents = (root / "AGENTS.md").read_text()
+        self.assertIn("**Integration branch**: `development`", agents)
+        self.assertIn("base branch: `development`", agents)
 
     def test_merge_config_missing_required_fails(self):
-        from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField
-        recipe = Recipe(id="r", name="R", description="D", version="1.0",
-            config_schema=ConfigSchema(fields={
-                "board_id": ConfigField(required=True, type="string"),
-            })
+        root = self._make_project(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
         )
-        with self.assertRaises(RuntimeError) as ctx:
-            self.mod.merge_config(recipe, {})
-        self.assertIn("missing required config field", str(ctx.exception))
+        _, result = self._sync(root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing required config field", result.stderr)
+        self.assertIn("board_id", result.stderr)
 
     def test_merge_config_warns_on_unknown_key(self):
-        from lib._internal.recipe_schema import Recipe, ConfigSchema
-        recipe = Recipe(id="r", name="R", description="D", version="1.0",
-            config_schema=ConfigSchema(fields={})
+        root = self._make_project(
+            "[recipes.git-pr-flow]\nenabled = true\n"
+            "[recipes.git-pr-flow.config]\nunknown = 1\n"
         )
-        # Should warn but not fail
-        cfg = self.mod.merge_config(recipe, {"unknown": 1})
-        self.assertEqual(cfg, {})
+        _, result = self._sync(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("unknown config key", result.stderr)
+        self.assertIn("ignored", result.stderr)
 
     def test_execute_hooks_validate_config_success(self):
         from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
