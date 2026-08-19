@@ -519,12 +519,20 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 		if cfg.dryRun {
 			continue
 		}
-		if err := removeLocalBranchCleanup(repoRoot, record, cfg, out); err != nil {
+		// Remote deletion runs before local deletion, and the order is load
+		// bearing. The remote step is the one that fails for reasons outside
+		// this machine — an outage, a revoked token, a protected-branch rule.
+		// Deleting the local branch first would destroy the only handle a
+		// rerun has: worktree gone, branch gone, and the surviving remote
+		// branch invisible to every later pass. Keeping the local branch
+		// until the remote is provably gone makes the failure recoverable —
+		// the stale-branch sweep below rediscovers it on the next run.
+		if err := removeRemoteBranchCleanup(repoRoot, record, remote, cfg, out); err != nil {
 			formatCleanupStatus(out, "failed %s (%v)", name, err)
 			failures = append(failures, err)
 			continue
 		}
-		if err := removeRemoteBranchCleanup(repoRoot, record, remote, cfg, out); err != nil {
+		if err := removeLocalBranchCleanup(repoRoot, record, cfg, out); err != nil {
 			formatCleanupStatus(out, "failed %s (%v)", name, err)
 			failures = append(failures, err)
 			continue
@@ -555,12 +563,14 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 		}
 		record := worktreeRecord{branch: local.branch, sha: local.sha}
 		remote := remoteForBranch(repoRoot, local.branch)
-		if err := removeLocalBranchCleanup(repoRoot, record, cfg, out); err != nil {
+		// Same ordering rule as the linked-worktree loop above: the local
+		// branch is the retry handle, so it outlives the remote deletion.
+		if err := removeRemoteBranchCleanup(repoRoot, record, remote, cfg, out); err != nil {
 			formatCleanupStatus(out, "failed %s (%v)", local.branch, err)
 			failures = append(failures, err)
 			continue
 		}
-		if err := removeRemoteBranchCleanup(repoRoot, record, remote, cfg, out); err != nil {
+		if err := removeLocalBranchCleanup(repoRoot, record, cfg, out); err != nil {
 			formatCleanupStatus(out, "failed %s (%v)", local.branch, err)
 			failures = append(failures, err)
 			continue

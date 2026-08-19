@@ -2,15 +2,24 @@
 
 ## Requirement: ordered cleanup and final base synchronization
 
-The native cleanup command MUST own post-merge cleanup from the primary worktree. The merge workflow MUST merge without `--delete-branch`. Cleanup MUST remove a proven linked worktree, delete its local branch, delete and verify its remote branch, and ONLY THEN synchronize the configured base with `git pull --ff-only`. It MUST NOT pull while a candidate worktree still holds a branch.
+The native cleanup command MUST own post-merge cleanup from the primary worktree. The merge workflow MUST merge without `--delete-branch`. Cleanup MUST remove a proven linked worktree, delete and verify its remote branch, delete its local branch, and ONLY THEN synchronize the configured base with `git pull --ff-only`. It MUST NOT pull while a candidate worktree still holds a branch.
+
+The local branch MUST outlive remote deletion. Remote deletion is the step that fails for reasons outside the machine, and the local branch is the only handle a later run has for rediscovering the candidate. Deleting it first would leave a surviving remote branch that no subsequent pass can find.
 
 ### Scenario: complete feature cleanup precedes base sync
 
 - GIVEN a merged feature worktree and local/remote branch
 - WHEN cleanup runs normally from the main worktree
-- THEN worktree removal precedes local branch deletion
-- AND local deletion precedes remote deletion and verification
+- THEN worktree removal precedes remote deletion and verification
+- AND remote deletion precedes local branch deletion
 - AND base synchronization is the final Git mutation
+
+### Scenario: failed remote deletion stays recoverable
+
+- GIVEN a merged candidate whose remote is unreachable
+- WHEN cleanup attempts remote deletion and fails
+- THEN the local branch remains and the pass reports the failure
+- AND a later run with a reachable remote completes both deletions
 
 ### Scenario: dry run has no mutations
 
@@ -21,7 +30,9 @@ The native cleanup command MUST own post-merge cleanup from the primary worktree
 
 ## Requirement: stale local branch classification
 
-Cleanup MUST inspect local branches not held by any worktree. A stale branch MAY be deleted only when its PR merge commit is proven an ancestor of the selected base, its cumulative diff is patch-identical to the landed squash, or it has no PR and every Git path it touched exists in the selected base tree. Open, missing, failed, or ambiguous PR evidence MUST refuse cleanup. A branch with an absent touched path MUST be preserved as unmerged/lost-work evidence.
+Cleanup MUST inspect local branches not held by any worktree. A stale branch MAY be deleted only on content evidence: a merged tip, patch equivalence with the landed squash, identical tree content for every path it touched, or a pull-request merge commit proven an ancestor of the selected base. Every pull request for that head MUST be examined, so a head closed unmerged once and later reused for a merged pull request is still classified correctly.
+
+Path existence MUST NOT count as merge evidence. Two commits can touch the same path with entirely different content and never meet, so a matching name proves nothing about whether the work landed. Open, missing, failed, or ambiguous evidence MUST refuse cleanup and preserve the branch.
 
 ### Scenario: local branch with removed worktree is cleaned
 
@@ -30,9 +41,10 @@ Cleanup MUST inspect local branches not held by any worktree. A stale branch MAY
 - WHEN cleanup runs
 - THEN the branch is considered and removed safely
 
-### Scenario: branch with absent touched path is preserved
+### Scenario: same-named path is not merge evidence
 
-- GIVEN a local branch has no PR and touches a path absent from the base tree
+- GIVEN a local branch has no pull request
+- AND the base tree holds the same paths with different content
 - WHEN cleanup runs
 - THEN the branch remains and cleanup reports an unmerged/refusal result
 

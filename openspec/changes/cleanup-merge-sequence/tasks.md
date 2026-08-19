@@ -24,10 +24,19 @@ Explore: completed — existing Go proof, stale branch evidence, ordering, and r
 
 ## Implementation
 
-- [ ] Add RED tests for cleanup order and final base sync.
-- [ ] Add RED tests for stale local branch enumeration, no-PR path presence, absent-path refusal, and structural exact-path iteration.
-- [ ] Implement stale local branch classification without weakening existing merge proof.
-- [ ] Implement ordered deletion and final base sync with fail-closed behavior.
-- [ ] Update Git merge workflow skill to remove `--delete-branch` guidance and encode cleanup sequence.
-- [ ] Regenerate four published Go asset checksums if the module changes.
-- [ ] Run focused Go tests and full `./tests/validate.sh`; record RED/GREEN evidence and falsifiability.
+- [x] Add RED tests for cleanup order and final base sync.
+- [x] Add RED tests for stale local branch enumeration, absent-path refusal, and structural exact-path iteration.
+- [x] Implement stale local branch classification without weakening existing merge proof.
+- [x] Implement ordered deletion and final base sync with fail-closed behavior.
+- [x] Update Git merge workflow skill to remove `--delete-branch` guidance and encode cleanup sequence.
+- [x] Regenerate four published Go asset checksums if the module changes.
+- [x] Run focused Go tests and full `./tests/validate.sh`; record RED/GREEN evidence and falsifiability.
+
+## Round-one judgment corrections
+
+- [x] Remove the no-PR path-presence fallback; path existence is not merge evidence.
+- [x] Scan every pull request for a head instead of returning on the first without a merge commit.
+- [x] Delete the remote branch before the local one so a remote failure stays recoverable.
+- [x] Add the falsifying positive test for the NUL-delimited newline path.
+- [x] Replace the skill's presence assertions with an order-sensitive one and correct the stale prose.
+- [x] Update the spec delta to match the implemented order and evidence rules.

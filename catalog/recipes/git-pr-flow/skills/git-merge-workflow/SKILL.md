@@ -173,8 +173,8 @@ gh pr merge --squash
 
 9. After the PR is merged, run the complete cleanup sequence from the main
    repository worktree. Do not switch the base checkout first: the cleanup
-   command must release every feature worktree before deleting its local branch,
-   and must delete and verify its remote branch before synchronizing the base.
+   command must release every feature worktree before touching its branches,
+   and must delete and verify the remote branch before deleting the local one.
    The base sync is deliberately LAST:
 
 ```bash
@@ -183,17 +183,22 @@ bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
   --dir .worktrees --base <integration-branch>
 ```
 
-The cleanup command owns, in this order, merged-worktree removal, local branch
-removal, remote branch deletion plus independent verification, and finally:
+The cleanup command owns, in this order, merged-worktree removal, remote branch
+deletion plus independent verification, local branch removal, and finally:
 
 ```bash
 git pull --ff-only origin <integration-branch>
 ```
 
 It checks protected names immediately before every destructive operation and
-refuses any branch still held by a worktree. It also inspects local branches
-left without worktrees; it deletes those only when positive merge evidence or
-an explicit no-PR path-presence proof exists. Ambiguous evidence is preserved.
+refuses any branch still held by a worktree. The local branch is deleted only
+after the remote one is provably gone, so an unreachable remote leaves a branch
+a rerun can retry instead of an orphaned remote nothing can find again. It also
+inspects local branches left without worktrees; it deletes those only when
+positive merge evidence exists — a merged tip, patch equivalence, or identical
+tree content. A same-named path existing on the base is not evidence, because
+two commits can touch one path with entirely different content and never meet.
+Ambiguous evidence is preserved.
 The command must be run from the main worktree, never from a feature worktree.
 
 Do not use hosting-provider source-branch deletion for this layout: the base
