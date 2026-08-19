@@ -23,7 +23,7 @@ Per the `orca-aware-delegation` skill (local, resolved in `.claude/skills/`), th
 
 1. **Never launch a worker headless.** No `pi -p`, no `claude -p`, no `opencode run`, no provider API calls. Workers launch as **visible interactive TUI sessions** through `orca orchestration worker-start`. This is an explicit user instruction and a hard rule in the skill.
 2. **`pi` is the worker agent.** It is the one the user has confirmed works reliably and has headroom. Claude has usage limits here.
-3. **`worker_done` never implies terminal closure.** Never call `worker-release` automatically. Ask the human retain-or-close, and use `worker-retain` when they choose retain.
+3. **`worker_done` never implies terminal closure by itself.** The human has answered retain-or-close in advance as standing policy: release once the worker completes its change cycle. Release only after an accepted `worker_done` — never on a timeout, idle TUI, heartbeat, question, escalation, or stale report. Retain anything that escalated, asked, or failed pending inspection. See §5 of the delegation procedure.
 4. **Nothing reaches `development`.** Card PRs target `epic/go-single-binary`. Auto-merge to the epic is authorized. Any PR to `development` stays open for the human to review.
 5. **Never "fix" behavior classified FROZEN** in `docs/go-migration-parity-contract.md`, even when it looks wrong. Recorded defects are separate cards.
 
@@ -42,21 +42,21 @@ Per the `orca-aware-delegation` skill (local, resolved in `.claude/skills/`), th
 | Epic contract encoded in the brief | `9960745` — `AGENTS.md` opens with the branch warning |
 | Harness provisioned | 22 skills fanned out to claude/cursor/opencode/pi/omp |
 
-### Blocking, unresolved
+### Baseline — GREEN
 
-**The baseline test run has not completed.** Do not dispatch workers until you have a green
-baseline of `./tests/run.sh` on this branch. Without it you cannot tell a test a worker broke
-from one that was already broken, and the entire auto-merge criterion rests on that distinction.
+`./tests/run.sh` exits **0** on this branch at `cf973d2`. That is the reference every worker's
+result is judged against: a failure after a worker's change is that worker's, not pre-existing.
+The whole auto-merge criterion rests on this distinction.
 
-Run it and capture the real exit code — do not pipe to `tail`, which masks it:
+Re-establish it yourself if you doubt it, and capture the real exit code — do not pipe to
+`tail`, which makes `$?` report tail's status instead of the suite's:
 
 ```bash
 cd .worktrees/epic-go-single-binary
 ./tests/run.sh > /tmp/baseline.log 2>&1; echo "EXIT: $?"
 ```
 
-If it is red, the failures are pre-existing. Record which ones, and treat that list as the
-known-bad set rather than blocking the epic on them.
+The unit suite takes several minutes. Run it in the background rather than blocking on it.
 
 ## The work queue
 

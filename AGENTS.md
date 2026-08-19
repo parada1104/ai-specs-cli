@@ -16,7 +16,7 @@
 - **Project**: `ai-specs-cli`
 - **Purpose**: per-project AI harness for agent configuration, MCPs, recipes, memory, and tracker integration.
 - **Enabled runtimes**: `claude`, `cursor`, `opencode`, `pi`, `omp`
-- **Integration branch**: `development`
+- **Integration branch**: `epic/go-single-binary`
 - **Repo topology**: `standalone` (via auto)
 - **Vault scope**: `nnodes/proyectos/ai-specs`
 
@@ -64,7 +64,7 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 ## Workflow Rules
 
 - Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.
-- Do not merge or push to `development` without a PR and explicit human instruction.
+- Do not merge or push to `epic/go-single-binary` without a PR and explicit human instruction.
 - Preserve unrelated worktree changes; never revert changes you did not make.
 - Before dispatching a write-capable subagent or task, verify which git repository, worktree, and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Under monorepo-submodules, confirming which-repo via show-toplevel is mandatory. Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.
 - If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). Create a worktree first (e.g. `/worktree-new`) and write there instead.
@@ -92,12 +92,12 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - Direct `skill-sync` runs are allowed only for metadata validation.
 - EPIC CONTRACT — Go single-binary migration (https://trello.com/c/qwlHQ7Xa). This branch is the integration target for that epic. Card branches are cut FROM `epic/go-single-binary` and their PRs target it. No PR from this epic ever targets `development` or `main`.
 - EPIC CONTRACT — Nothing from this epic reaches `development` while the epic is open. After all 16 cards are verified, ONE promotion PR is opened from card 16 (Cutover). Unrelated feature work continues on `development` in parallel and must not be disturbed.
-- EPIC CONTRACT — `[recipes.git-pr-flow.config].base_branch` is deliberately scoped to this branch. It MUST be reverted to `development` before the promotion PR, or every PR flow in the project starts targeting a deleted branch. Tracked as a blocking step on card 16.
+- EPIC CONTRACT — TWO config values are deliberately scoped to this branch: `[recipes.git-pr-flow.config].base_branch` and `[recipes.worktree-flow.config].integration_branch`. BOTH MUST be reverted to `development` before the promotion PR, or every PR and worktree flow in the project starts targeting a deleted branch. Tracked as a blocking step on card 16.
 - EPIC CONTRACT — New development moves toward the migration: no new Python modules under `lib/_internal/`, no new Bash logic in `lib/`, no new vendored Python under `lib/_vendor/`. New behavior in an already-ported area is written in Go; in a not-yet-ported area it must not deepen the Bash/Python surface.
 - EPIC CONTRACT — Ported behavior is verified against `docs/go-migration-parity-contract.md`, which classifies every CLI surface FROZEN / TOLERANT / FREE. Do not 'fix' behavior recorded there as FROZEN, even when it looks wrong; recorded defects (D1-D35) are separate cards.
 - DELEGATION — Orca workers own change content inside their assigned worktree only. A worker never stages, commits, pushes, merges, or manages worktree lifecycle; the canonical orchestrator owns those. See the `orca-aware-delegation` skill.
 - DELEGATION — Never launch a worker headless (`pi -p`, `claude -p`, `opencode run`, provider API calls). Orca workers launch as visible interactive TUI sessions via `worker-start`.
-- DELEGATION — `worker_done` never implies terminal closure. Never call `worker-release` automatically as the default; the retain-or-close decision belongs to the human.
+- DELEGATION — `worker_done` never implies terminal closure by itself. Standing human decision for this epic: release once a worker completes its change cycle, since the PR lifecycle belongs to the orchestrator. Release only after an accepted `worker_done` — never on a timeout, idle TUI, heartbeat, question, escalation, or stale report — and retain anything that escalated, asked, or failed pending inspection.
 
 ## Useful Commands
 
