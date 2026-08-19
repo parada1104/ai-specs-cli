@@ -343,19 +343,59 @@ func TestCleanupDiscoversStaleLocalBranchWithNoWorktree(t *testing.T) {
 	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
 		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "would remove stale-existing") {
-		t.Fatalf("stale local branch was not discovered: %q", stdout.String())
+	// The branch wrote shared.txt="branch\n"; main independently wrote
+	// shared.txt="landed\n". Same path, different content, NO merge. The
+	// branch's work never landed, so it must be preserved. An earlier version
+	// of this test asserted "would remove", encoding the defect as the
+	// contract: path presence alone was accepted as proof of merge.
+	out := stdout.String()
+	if strings.Contains(out, "would remove stale-existing") {
+		t.Fatalf("a never-merged branch was scheduled for deletion because a "+
+			"same-named path exists on the base: %q", out)
+	}
+	if !strings.Contains(out, "stale-existing") {
+		t.Fatalf("stale local branch was not discovered at all: %q", out)
 	}
 }
 
-func TestCleanupRefusesStaleBranchWithAbsentTouchedPath(t *testing.T) {
+// TestStaleBranchWithLandedContentIsStillRemovable keeps the feature honest:
+// preserving everything would be safe and useless. A stale branch whose commit
+// genuinely landed must still be cleaned up.
+func TestStaleBranchWithLandedContentIsStillRemovable(t *testing.T) {
 	root := makeCleanupRepo(t)
-	cleanupGitTest(t, root, "checkout", "-qb", "stale-missing")
-	if err := os.WriteFile(filepath.Join(root, "missing.txt"), []byte("not landed\n"), 0600); err != nil {
+	cleanupGitTest(t, root, "checkout", "-qb", "stale-landed")
+	if err := os.WriteFile(filepath.Join(root, "landed.txt"), []byte("landed\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cleanupGitTest(t, root, "add", "missing.txt")
-	cleanupGitTest(t, root, "commit", "-qm", "stale missing")
+	cleanupGitTest(t, root, "add", "landed.txt")
+	cleanupGitTest(t, root, "commit", "-qm", "stale landed")
+	cleanupGitTest(t, root, "checkout", "-q", "main")
+	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge stale-landed", "stale-landed")
+
+	gh := filepath.Join(t.TempDir(), "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\n[ \"$1\" = pr ] && [ \"$2\" = list ] && printf '%s\\n' '[]'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "would remove stale-landed") {
+		t.Fatalf("a genuinely merged stale branch was not cleaned up: %q", stdout.String())
+	}
+}
+
+func TestCleanupRefusesStaleBranchWhoseMergeCannotBeProven(t *testing.T) {
+	root := makeCleanupRepo(t)
+	cleanupGitTest(t, root, "checkout", "-qb", "stale-unproven")
+	if err := os.WriteFile(filepath.Join(root, "only-here.txt"), []byte("never landed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", ".")
+	cleanupGitTest(t, root, "commit", "-qm", "unproven work")
 	cleanupGitTest(t, root, "checkout", "-q", "main")
 
 	gh := filepath.Join(t.TempDir(), "gh")
@@ -363,35 +403,16 @@ func TestCleanupRefusesStaleBranchWithAbsentTouchedPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	sha := git(root, "rev-parse", "stale-missing")
-	if sha == "" {
-		t.Fatal("stale branch tip is unavailable")
-	}
-	if isMergedCleanup(root, sha, "main") {
-		t.Fatal("unmerged stale branch passed existing merge proof")
-	}
-	if noPRPathPresenceCleanup(root, sha, "main") {
-		t.Fatal("stale branch with absent path passed no-PR path proof")
-	}
 
 	var stdout, stderr bytes.Buffer
 	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
 	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
 		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "skipped stale-missing (unmerged)") {
-		t.Fatalf("stale branch with absent path was not preserved: %q", stdout.String())
-	}
-	if got := cleanupGitTest(t, root, "show-ref", "--verify", "--quiet", "refs/heads/stale-missing"); got != "" {
-		// show-ref --verify intentionally emits no output; reaching this branch is
-		// impossible for a successful command, so use rev-parse below as oracle.
-		t.Logf("unexpected show-ref output: %q", got)
-	}
-	if got := git(root, "rev-parse", "--verify", "refs/heads/stale-missing"); got == "" {
-		t.Fatal("stale branch with absent path was deleted")
+	if strings.Contains(stdout.String(), "would remove stale-unproven") {
+		t.Fatalf("a branch with no provable merge was scheduled for deletion: %q", stdout.String())
 	}
 }
-
 func TestCleanupPreservesUnmergedAndDirty(t *testing.T) {
 	root := makeCleanupRepo(t)
 	unmerged := addCleanupWorktree(t, root, "feat-unmerged")

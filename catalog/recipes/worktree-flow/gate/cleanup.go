@@ -391,47 +391,16 @@ func localBranchRecordsCleanup(repoRoot string) []localBranchRecord {
 	return records
 }
 
-// noPRPathPresenceCleanup is the deliberately narrow fallback for a local
-// branch with no pull request. It proves every source path is represented in
-// the selected base tree. Binary-only artifacts absent from the base are not
-// treated as lost source: Git's numstat marks those paths with '-' counts.
-func noPRPathPresenceCleanup(repoRoot, sha, candidate string) bool {
-	common := git(repoRoot, "merge-base", candidate, sha)
-	if common == "" {
-		return false
-	}
-	paths := gitRawBytes(repoRoot, "diff", "--no-ext-diff", "--name-only", "-z", "--no-renames", common, sha)
-	if len(paths) == 0 {
-		return false
-	}
-	count := 0
-	for _, pathBytes := range bytes.Split(paths, []byte{0}) {
-		if len(pathBytes) == 0 {
-			continue
-		}
-		count++
-		path := string(pathBytes)
-		if _, ok := treeEntry(repoRoot, candidate, path); ok {
-			continue
-		}
-		numstat := gitRawBytes(repoRoot, "diff", "--no-ext-diff", "--numstat", "--no-renames", common, sha, "--", path)
-		if bytes.HasPrefix(numstat, []byte("-\t-\t")) {
-			continue
-		}
-		return false
-	}
-	return count > 0
-}
-
+// ghPRRecord is the minimal shape read from `gh pr list --json mergeCommit`.
 type ghPRRecord struct {
 	MergeCommit *struct {
 		OID string `json:"oid"`
 	} `json:"mergeCommit"`
 }
 
-// staleBranchEvidenceCleanup distinguishes a positive merged PR from an
-// explicit no-PR path-presence conclusion. Missing, open, or malformed PR
-// evidence refuses cleanup rather than guessing.
+// staleBranchEvidenceCleanup decides whether a local branch with no worktree is
+// provably merged. Missing, open, or malformed pull-request evidence preserves
+// the branch rather than guessing.
 func staleBranchEvidenceCleanup(repoRoot string, record localBranchRecord, base string) (bool, string) {
 	if isMergedCleanup(repoRoot, record.sha, base) {
 		return true, "merged"
@@ -445,20 +414,26 @@ func staleBranchEvidenceCleanup(repoRoot string, record localBranchRecord, base 
 	if err := json.Unmarshal(output, &prs); err != nil {
 		return false, "unmerged"
 	}
-	if len(prs) > 0 {
-		for _, pr := range prs {
-			if pr.MergeCommit == nil || pr.MergeCommit.OID == "" {
-				return false, "unmerged"
-			}
-			if runGit(repoRoot, "merge-base", "--is-ancestor", pr.MergeCommit.OID, base) == nil {
-				return true, "merged"
-			}
+	// Scan EVERY pull request for this head. Returning on the first entry that
+	// lacks a merge commit misses the case of a branch closed unmerged once and
+	// later reused for a pull request that did merge.
+	for _, pr := range prs {
+		if pr.MergeCommit == nil || pr.MergeCommit.OID == "" {
+			continue
 		}
-		return false, "unmerged"
+		if runGit(repoRoot, "merge-base", "--is-ancestor", pr.MergeCommit.OID, base) == nil {
+			return true, "merged"
+		}
 	}
-	if noPRPathPresenceCleanup(repoRoot, record.sha, base) {
-		return true, "merged"
-	}
+	// No path-presence fallback. Proving that a same-named file exists on the
+	// base is not proof that this branch's work landed: two commits can touch
+	// the same path with entirely different content and never meet.
+	//
+	// Making that check sound would mean comparing blob content — which is
+	// exactly candidateHasCombinedTreeEquivalenceCleanup, already run above by
+	// isMergedCleanup. So the fallback was either unsound or redundant. A
+	// branch whose merge cannot be proven is preserved, per the contract:
+	// refuse rather than guess.
 	return false, "unmerged"
 }
 
