@@ -33,6 +33,12 @@ class TestRenderManifest(unittest.TestCase):
         cls.mod = _load()
         cls.tw = cls.mod._load_toml_write()
 
+    # TRIAGE: test_roundtrip_toml — asserts _render_manifest() TOML structure
+    # (project name, agents, recipe enabled flags, no version pins).
+    # Ran: bin/ai-specs init <dir> --name demo → writes ai-specs.toml via shell
+    # template, not _render_manifest(). The TUI wizard path uses _render_manifest
+    # but is only reachable interactively. No CLI flag accepts (name, agents, recipes)
+    # arguments to exercise this function.
     def test_roundtrip_toml(self):
         text = self.mod._render_manifest(
             self.tw,
@@ -47,6 +53,11 @@ class TestRenderManifest(unittest.TestCase):
         self.assertNotIn("version", data["recipes"]["tdd-flow"])
         self.assertNotIn("version =", text)
 
+    # TRIAGE: test_dotted_recipe_id_is_quoted_literal_key — asserts _render_manifest()
+    # quotes dotted recipe IDs as TOML literal keys (e.g. [recipes."foo.bar"]).
+    # Ran: bin/ai-specs init --no-tui; bin/ai-specs recipe list — neither path
+    # exercises dotted ID quoting because the shell template hardcodes recipe blocks
+    # without dots, and recipe list reads already-written TOML.
     def test_dotted_recipe_id_is_quoted_literal_key(self):
         text = self.mod._render_manifest(
             self.tw,
@@ -61,6 +72,11 @@ class TestRenderManifest(unittest.TestCase):
         self.assertNotIn("version", data["recipes"]["foo.bar"])
 
 
+    # TRIAGE: test_render_manifest_writes_config_block — asserts _render_manifest()
+    # writes [recipes.worktree-flow.config] with auto_remove_merged and gate_mode.
+    # Ran: bin/ai-specs init --no-tui → does not write config blocks (shell template).
+    # The TUI wizard writes config blocks via _configure_recipes → _render_manifest,
+    # reachable only interactively.
     def test_render_manifest_writes_config_block(self):
         text = self.mod._render_manifest(
             self.tw,
@@ -81,6 +97,9 @@ class TestRenderManifest(unittest.TestCase):
         self.assertEqual(data["recipes"]["worktree-flow"]["config"]["gate_mode"], "always")
         self.assertIs(data["recipes"]["worktree-flow"]["config"]["auto_remove_merged"], True)
 
+    # TRIAGE: test_render_manifest_no_config_backward_compat — asserts
+    # _render_manifest(configured=None) produces identical output to no kwarg.
+    # Same internal function as above; no CLI path exercises this backward compat.
     def test_render_manifest_no_config_backward_compat(self):
         recipes = [{"id": "session-context", "version": "2.0.0"}]
         legacy = self.mod._render_manifest(self.tw, "demo", ["claude"], recipes)
@@ -97,6 +116,11 @@ class TestConfigureRecipesStep(unittest.TestCase):
             __import__("sys").path.insert(0, str(vendor))
         cls.mod = _load()
 
+    # TRIAGE: test_configure_recipes_skip_later — asserts _configure_recipes()
+    # returns {} when questionary.confirm("Configure now?") returns False.
+    # Ran: bin/ai-specs init --no-tui — does not invoke _configure_recipes (shell
+    # template). The TUI wizard calls _configure_recipes after recipe selection,
+    # reachable only interactively. No piped CLI flag triggers this path.
     def test_configure_recipes_skip_later(self):
         from unittest import mock
         from rich.console import Console
@@ -128,6 +152,11 @@ class TestConfigureRecipesStep(unittest.TestCase):
         self.assertEqual(configured, {})
         wizard.run_config_wizard.assert_not_called()
 
+    # TRIAGE: test_configure_recipes_uses_dep_gate_for_cli_deps — asserts
+    # _configure_recipes() calls wizard._dep_gate() when recipe.cli_deps is non-empty.
+    # Ran: bin/ai-specs init --no-tui — shell template. The dep-gate logic runs
+    # inside the TUI wizard only, driven by questionary prompts. No piped CLI verb
+    # exposes the dep-gate call or its side effects.
     def test_configure_recipes_uses_dep_gate_for_cli_deps(self):
         """JD-3: init must offer TTY install via _dep_gate, not panel-only."""
         from rich.console import Console
@@ -170,6 +199,12 @@ class TestRunWizardHarnessEnv(unittest.TestCase):
             sys.path.insert(0, str(vendor))
         cls.mod = _load()
 
+    # TRIAGE: test_fresh_init_writes_real_toml_and_offers_harness_env — asserts
+    # run_wizard() calls env_scaffold.offer_harness_env(target) after writing
+    # ai-specs/ai-specs.toml. Ran: bin/ai-specs init --no-tui — the shell path
+    # does not call offer_harness_env. The TUI wizard mocks 6 questionary prompts
+    # and 3 internal siblings; the harness-env offer is an internal side-effect
+    # not exposed in exit code, stdout, or file tree.
     def test_fresh_init_writes_real_toml_and_offers_harness_env(self):
         import questionary
         from rich.console import Console
@@ -245,6 +280,11 @@ class TestCatalogRecipes(unittest.TestCase):
     def setUpClass(cls):
         cls.mod = _load()
 
+    # TRIAGE: test_skips_broken_recipe_toml — asserts _catalog_recipes()
+    # excludes entries with unparseable recipe.toml. Ran: bin/ai-specs recipe list
+    # with a broken recipe.toml → shows "[error (...)]" prefix but still lists it.
+    # recipe list uses lib/recipe.sh, not init_tui._catalog_recipes(). The TUI
+    # wizard code path is separate and only reachable interactively.
     def test_skips_broken_recipe_toml(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -264,6 +304,11 @@ class TestCatalogRecipes(unittest.TestCase):
             ids = [r["id"] for r in recipes]
             self.assertEqual(ids, ["good-one"])
 
+    # TRIAGE: test_hides_internal_test_recipes — asserts _catalog_recipes()
+    # excludes recipes whose id starts with "test-". Ran: bin/ai-specs recipe list
+    # with a test-fixture recipe → recipe list also hides it, but via recipe.sh
+    # filtering. init_tui._catalog_recipes() is a separate Python code path used
+    # only by the TUI wizard during interactive init.
     def test_hides_internal_test_recipes(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -294,6 +339,12 @@ class TestEnsureDepsAndMain(unittest.TestCase):
     def setUpClass(cls):
         cls.mod = _load()
 
+    # TRIAGE: test_run_wizard_returns_3_on_non_tty — asserts run_wizard() returns 3
+    # when stdin is not a TTY. Ran: bin/ai-specs init --tui (piped) — init.sh
+    # catches rc=3 from the TUI subprocess and falls back to classic init, printing
+    # "falling back to classic init" to stderr. This is already tested by
+    # TestInitShellGating.test_tui_unavailable_falls_back_to_classic. The Python-level
+    # assertion on the internal rc=3 value is not directly observable.
     def test_run_wizard_returns_3_on_non_tty(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
@@ -305,6 +356,11 @@ class TestEnsureDepsAndMain(unittest.TestCase):
             self.assertEqual(rc, 3)
             self.assertFalse(out.exists())
 
+    # TRIAGE: test_main_unexpected_exception_returns_3_not_1 — asserts main()
+    # returns 3 (not 1) when run_wizard raises RuntimeError. Ran: bin/ai-specs init
+    # --tui with a failing stub → init.sh reports the TUI exit code. But forcing
+    # a RuntimeError inside run_wizard requires mocking; the internal rc=3 vs rc=1
+    # distinction is not observable without controlling the Python internals.
     def test_main_unexpected_exception_returns_3_not_1(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
@@ -315,6 +371,11 @@ class TestEnsureDepsAndMain(unittest.TestCase):
                 rc = self.mod.main()
             self.assertEqual(rc, 3)
 
+    # TRIAGE: test_ensure_deps_mkdir_failure_returns_3 — asserts _ensure_deps()
+    # returns 3 when vendor mkdir raises PermissionError. Ran: bin/ai-specs init
+    # --tui — the _ensure_deps failure path requires a PermissionError on mkdir,
+    # which requires mocking builtins.__import__ and the vendor Path object.
+    # No CLI invocation can reliably trigger this specific failure mode.
     def test_ensure_deps_mkdir_failure_returns_3(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -867,6 +928,11 @@ class TopologyWizardNodeTests(unittest.TestCase):
         cls.mod = _load()
         cls.tw = cls.mod._load_toml_write()
 
+    # TRIAGE: test_topology_merged_into_configured_when_worktree_flow_enabled —
+    # asserts _render_manifest() writes repo_topology into [recipes.worktree-flow.config]
+    # when worktree-flow is enabled. Ran: bin/ai-specs init --no-tui → shell template
+    # does not write config blocks. The TUI wizard writes topology via _render_manifest
+    # only when interactively selecting worktree-flow + topology prompt.
     def test_topology_merged_into_configured_when_worktree_flow_enabled(self):
         text = self.mod._render_manifest(
             self.tw,
@@ -878,6 +944,12 @@ class TopologyWizardNodeTests(unittest.TestCase):
         self.assertIn("[recipes.worktree-flow.config]", text)
         self.assertIn('repo_topology = "standalone"', text)
 
+    # TRIAGE: test_run_wizard_asks_topology_and_writes_override — asserts
+    # run_wizard() produces repo_topology="standalone" in staged TOML after mocking
+    # 4 questionary widgets and 3 rich modules. The topology prompt is inside the
+    # interactive TUI wizard only. Ran: bin/ai-specs init --tui (PTY E2E) — the
+    # PTY tests already cover the observable flow; this test isolates the internal
+    # mock seams.
     def test_run_wizard_asks_topology_and_writes_override(self):
         """Mock questionary select after project name; write repo_topology when wf enabled."""
         tmp = tempfile.TemporaryDirectory()
@@ -974,6 +1046,12 @@ class TopologyWizardNodeTests(unittest.TestCase):
 
 
 
+    # TRIAGE: test_configure_recipes_topology_wins_over_identity_prompt — asserts
+    # that _configure_recipes returning repo_topology="standalone" overrides the
+    # identity topology prompt answer "monorepo-submodules" in the final staged TOML.
+    # This precedence rule operates inside run_wizard after two mock seams (identity
+    # prompt vs configure_recipes). No CLI flag or output surface exposes which
+    # source won.
     def test_configure_recipes_topology_wins_over_identity_prompt(self):
         """Later explicit recipe-config answer must not be clobbered by identity."""
         tmp = tempfile.TemporaryDirectory()

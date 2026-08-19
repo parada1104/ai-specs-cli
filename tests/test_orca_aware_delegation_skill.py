@@ -26,6 +26,10 @@ class OrcaAwareDelegationSkillTests(unittest.TestCase):
         cls.contract = load_contract_module()
 
     def test_skill_has_complete_metadata_and_explicit_triggers(self):
+        # TRIAGE: from_local_skill() parses SKILL.md frontmatter into a dict
+        # with metadata.scope and metadata.auto_invoke.  No CLI verb exposes
+        # these parsed fields — `ai-specs skills list .` prints only
+        # name + description, no scope/auto_invoke array.  Keeping coupled.
         skill = self.contract.from_local_skill(SKILL_PATH, compatibility=False)
 
         self.assertEqual(skill["name"], "orca-aware-delegation")
