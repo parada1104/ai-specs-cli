@@ -44,6 +44,14 @@ class PremergeGuardianTests(unittest.TestCase):
         (root / "openspec" / "changes" / "archive").mkdir(parents=True)
         return root
 
+# TRIAGE: test_blocks_when_active_change_folder_exists asserts result.ok is False with an
+# "active"/"archive" blocker from check_premerge(). Ran `grep -n guardian bin/ai-specs` (empty,
+# exit 1), `bin/ai-specs help` (14-verb surface, no guardian verb), and
+# `AI_SPECS_NO_NETWORK=1 LC_ALL=C bin/ai-specs doctor /tmp/gtest` on fixture /tmp/gtest holding
+# openspec/changes/demo-change (ERROR lines only manifest/agents-md/bundled-skill, exit 1). None
+# exposed the ok/blockers verdict; the only reachable surface is the direct
+# `python3 lib/_internal/premerge_guardian.py <slug> --root <root>` call, which is the coupling
+# being removed.
     def test_blocks_when_active_change_folder_exists(self):
         root = self._repo()
         slug = "demo-change"
@@ -127,6 +135,13 @@ class PremergeGuardianTests(unittest.TestCase):
         ok = self.mod.check_premerge(root, slug, tier="full")
         self.assertTrue(ok.ok, ok.blockers)
 
+# TRIAGE: test_infer_tier_from_tasks_depth_line asserts result.ok True after tier=None infers
+# "Depth: light" from tasks.md. Ran `bin/ai-specs help` (no verb computes tiering) and
+# `AI_SPECS_NO_NETWORK=1 LC_ALL=C bin/ai-specs doctor /tmp/gtest` (checks are
+# manifest/cli-version/agents-md/bundled-skill only, no Depth tier inference), and
+# `AI_SPECS_NO_NETWORK=1 LC_ALL=C < /dev/null bin/ai-specs hub /tmp/hubtest` (exits 2 with
+# "no ai-specs project", never reaches tier logic). Tier inference surfaced nowhere; only
+# `python3 lib/_internal/premerge_guardian.py` exposes it.
     def test_infer_tier_from_tasks_depth_line(self):
         root = self._repo()
         slug = "infer"
@@ -209,6 +224,12 @@ class PremergeGuardianTests(unittest.TestCase):
         self.assertTrue(result.ok, result.blockers)
         self.assertEqual(result.archive_path, archived)
 
+# TRIAGE: test_multiple_dated_archives_block_as_ambiguous asserts result.ok False with
+# "ambiguous" and both "2026-08-15-"/"2026-08-16-" archive names in the joined blockers. Ran
+# `bin/ai-specs help` (no verb resolves dated archives or selects a slug) and
+# `AI_SPECS_NO_NETWORK=1 LC_ALL=C bin/ai-specs doctor /tmp/gtest` (no archive-resolution or
+# ambiguity check in its ERROR lines). The dated-archive ambiguity verdict surfaced in neither;
+# it exists only on `python3 lib/_internal/premerge_guardian.py`.
     def test_multiple_dated_archives_block_as_ambiguous(self):
         root = self._repo()
         slug = "ambiguous-change"
@@ -399,6 +420,12 @@ class PremergeGuardianTests(unittest.TestCase):
         self.assertTrue(any("verify-report.md" in blocker for blocker in result.blockers))
         self.assertFalse((archived / "verify-report.md").exists())
 
+# TRIAGE: test_standard_report_requires_all_auditable_fields_and_zero_exit asserts ok False
+# with "exit"/"date"/"commit" blockers when verify-report.md lacks canonical fields. Ran
+# `bin/ai-specs help` (no report-parsing verb) and
+# `AI_SPECS_NO_NETWORK=1 LC_ALL=C bin/ai-specs doctor /tmp/gtest` (ERROR output is
+# manifest/agents-md/bundled-skill only). report-field validation surfaced in neither surface;
+# it is reachable only via `python3 lib/_internal/premerge_guardian.py`.
     def test_standard_report_requires_all_auditable_fields_and_zero_exit(self):
         root = self._repo()
         slug = "bad-report"
@@ -611,6 +638,11 @@ class PremergeGuardianTests(unittest.TestCase):
                 result = self.mod.check_premerge(root, slug, tier="full")
                 self.assertTrue(result.ok, result.blockers)
 
+# TRIAGE: test_full_requires_deterministic_mapping_for_every_success_criterion asserts ok False
+# with a "criterion 2" blocker when a success criterion is unmapped, then ok True once mapped.
+# Ran `bin/ai-specs help` and `AI_SPECS_NO_NETWORK=1 LC_ALL=C bin/ai-specs doctor /tmp/gtest`;
+# neither surfaces success-criteria mapping validation, so that full-tier gate exists only in
+# `python3 lib/_internal/premerge_guardian.py`.
     def test_full_requires_deterministic_mapping_for_every_success_criterion(self):
         root = self._repo()
         slug = "full-mapping"
@@ -775,6 +807,12 @@ class PremergeGuardianTests(unittest.TestCase):
             self.assertEqual(context.blockers, baseline.blockers, f"store={value}")
         return baseline
 
+# TRIAGE: test_guardian_blocks_missing_tier_files_under_any_store asserts result.ok False with
+# proposal.md/spec blockers invariant across PLAN_BUILD_ARTIFACT_STORE=openspec|engram|both via
+# mock.patch.dict. Ran `bin/ai-specs help` (no verb reads that env or offers a store-blind
+# verdict) and `AI_SPECS_NO_NETWORK=1 LC_ALL=C bin/ai-specs doctor /tmp/gtest` (no
+# store-selection surface in its output). The store-blind invariant surfaced in neither surface;
+# it is testable only by importing `python3 lib/_internal/premerge_guardian.py` directly.
     def test_guardian_blocks_missing_tier_files_under_any_store(self):
         """Engram memory-only cannot satisfy tier minima: verdict is store-blind."""
         root = self._repo()
@@ -842,6 +880,12 @@ class PremergeGuardianTests(unittest.TestCase):
 
         self.assertEqual(self.mod.main([slug, "--root", str(root), "--stage", "pre-archive"]), 0)
 
+# TRIAGE: test_cli_requires_explicit_root_and_never_falls_back_to_cwd asserts SystemExit code 2
+# when --root is omitted and code 0 with --root, exercising the guardian module's own argparse
+# main(). Ran `grep -rn premerge_guardian lib/*.sh ai-specs/ catalog/recipes/*/hooks/` (only
+# ai-specs/.deps/BRIEF.md doc lines, no lib/*.sh caller) and `bin/ai-specs help` (no premerge
+# verb). This exit-code contract surfaced in neither surface; it is reachable only by invoking
+# `python3 lib/_internal/premerge_guardian.py <slug>` directly, which is the coupling removed.
     def test_cli_requires_explicit_root_and_never_falls_back_to_cwd(self):
         """2.3 — RED: the guardian must not depend on the process cwd."""
         root = self._repo()

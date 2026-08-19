@@ -1,40 +1,31 @@
-"""Unit tests for root .gitignore managed agent-block refresh."""
+"""Black-box tests for root .gitignore managed agent-block refresh via `bin/ai-specs sync`."""
 
 from __future__ import annotations
 
-import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "lib" / "_internal" / "gitignore-root-refresh.py"
-TEMPLATE = ROOT / "templates" / "gitignore-root.tmpl"
-
-
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+from _blackbox import invoke, isolated_home, temp_project
 
 
 class GitignoreRootRefreshTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(MODULE_PATH, "gitignore_root_refresh")
+    """Drive the root .gitignore agent-block step through `bin/ai-specs sync`."""
 
-    def _tmp_root(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name) / "proj"
-        root.mkdir()
-        return root
+    def setUp(self):
+        # ONE shared cli_home per test: AI_SPECS_HOME is both install and cache
+        # root, and sync writes the project cache beneath it.
+        home_tmp = tempfile.TemporaryDirectory(prefix="ai-specs-home-")
+        self.addCleanup(home_tmp.cleanup)
+        self._cli_home = isolated_home(Path(home_tmp.name))
+
+    def _sync(self, root: Path):
+        """Sync a project against the shared cli_home."""
+        return invoke(root, "sync", cli_home=self._cli_home)
 
     def test_refresh_updates_stale_agent_block_with_pi(self):
-        root = self._tmp_root()
+        td, root = temp_project(agents=("claude",))
+        self.addCleanup(td.cleanup)
         gitignore = root / ".gitignore"
         gitignore.write_text(
             "node_modules/\n"
@@ -47,8 +38,8 @@ class GitignoreRootRefreshTests(unittest.TestCase):
             "dist/\n"
         )
 
-        action = self.mod.refresh_root_gitignore(root, TEMPLATE)
-        self.assertEqual(action, "refreshed")
+        result = self._sync(root)
+        self.assertEqual(result.returncode, 0)
         text = gitignore.read_text()
         self.assertIn(".pi/", text)
         self.assertIn(".omp/", text)
@@ -57,12 +48,13 @@ class GitignoreRootRefreshTests(unittest.TestCase):
         self.assertEqual(text.count("# --- end ai-specs ---"), 1)
 
     def test_refresh_appends_block_when_missing(self):
-        root = self._tmp_root()
+        td, root = temp_project(agents=("claude",))
+        self.addCleanup(td.cleanup)
         gitignore = root / ".gitignore"
         gitignore.write_text("*.log\n")
 
-        action = self.mod.refresh_root_gitignore(root, TEMPLATE)
-        self.assertEqual(action, "appended")
+        result = self._sync(root)
+        self.assertEqual(result.returncode, 0)
         text = gitignore.read_text()
         self.assertTrue(text.startswith("*.log\n"))
         self.assertIn(".pi/", text)
@@ -73,7 +65,14 @@ class GitignoreRootRefreshTests(unittest.TestCase):
 
     def test_root_template_ignores_harness_env_secrets(self):
         """JD-2/JD-7: consumer root gitignore must ignore harness env + migration bak."""
-        text = TEMPLATE.read_text(encoding="utf-8")
+        td, root = temp_project(agents=("claude",))
+        self.addCleanup(td.cleanup)
+        gitignore = root / ".gitignore"
+        gitignore.write_text("*.log\n")
+        result = self._sync(root)
+        self.assertEqual(result.returncode, 0)
+        text = gitignore.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("*.log\n"))
         self.assertIn("ai-specs.env", text)
         self.assertIn("ai-specs/.env", text)
         self.assertIn("ai-specs/.env.bak", text)
@@ -82,10 +81,14 @@ class GitignoreRootRefreshTests(unittest.TestCase):
         self.assertIn(".envrc", text.splitlines())
 
     def test_refresh_appends_ai_specs_env_ignore(self):
-        root = self._tmp_root()
-        action = self.mod.refresh_root_gitignore(root, TEMPLATE)
-        self.assertEqual(action, "appended")
-        text = (root / ".gitignore").read_text(encoding="utf-8")
+        td, root = temp_project(agents=("claude",))
+        self.addCleanup(td.cleanup)
+        gitignore = root / ".gitignore"
+        gitignore.write_text("*.log\n")
+
+        result = self._sync(root)
+        self.assertEqual(result.returncode, 0)
+        text = gitignore.read_text(encoding="utf-8")
         self.assertIn("ai-specs.env", text)
         self.assertIn("ai-specs/.env", text)
         self.assertIn("ai-specs/.env.bak", text)
