@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE_READ_PATH = ROOT / "lib" / "_internal" / "recipe-read.py"
+# # TRIAGE: Recipe parsing and validation failures are not independently observable through a stable public CLI surface; recipe add only exposes aggregate acceptance, so private assertions remain coupled.
 RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 sys.path.insert(0, str(ROOT / "tests"))
 from _fixture_catalog import unit_catalog  # noqa: E402
