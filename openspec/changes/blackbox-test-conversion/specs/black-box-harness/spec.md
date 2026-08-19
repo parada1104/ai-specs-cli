@@ -190,3 +190,37 @@ until a real conversion replaces it.
 - **WHEN** the orchestrator validates it
 - **THEN** the executed test count per file is compared against its pre-conversion count
 - **AND** any decrease blocks acceptance regardless of the other three metrics
+
+### Requirement: A no-observable-equivalent claim requires named evidence
+
+Declaring that a test has no observable equivalent is a claim about the CLI, and
+it MUST be supported by evidence, not asserted. It is the cheapest possible exit
+from this work and, left unchecked, it converts nothing while appearing to
+comply: the tests stay coupled, they die on the Go port, and the harness silently
+loses the coverage it was built to protect.
+
+A `# TRIAGE:` justification MUST name the specific assertion it covers and the
+specific CLI surface it searched — the command run and what the command did not
+expose. A module-level blanket claim is rejected. Two files MUST NOT share a
+justification sentence.
+
+Before any such claim, the three observable surfaces MUST be checked: the
+process exit code, the emitted file tree (`snapshot()` / `tree_diff()`), and
+stdout/stderr including `!` warning lines.
+
+#### Scenario: A blanket claim is made across several modules
+
+- **GIVEN** three files left coupled with the identical justification
+      "Internal API tests have no equivalent public CLI subcommand"
+- **WHEN** the orchestrator validates it
+- **THEN** the claim is rejected as boilerplate
+- **AND** it is additionally false: parity contract §5 records that `sync.sh`
+      extracts structured data from `recipe-materialize.py` stdout, so
+      materialize behaviour is observable by construction
+
+#### Scenario: An internal writer module is claimed unobservable
+
+- **GIVEN** `test_lock.py` claimed to need "new CLI observability"
+- **WHEN** `ai-specs sync` is run against a fixture project
+- **THEN** `ai-specs/.ai-specs.lock` is emitted with `[meta]` and `[managed."<path>"]` sections
+- **AND** the module's output is therefore observable, and the claim is rejected
