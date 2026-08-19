@@ -7,6 +7,7 @@
 - Exit: 0
 - Result: **1871 tests, OK**
 - Date: 2026-08-18
+- Commit: 873b003
 - ready_for_archive: true
 
 The exit code was captured from a direct run, not from a pipeline. An earlier
@@ -66,12 +67,25 @@ designed.
 
 ## Success-criteria mapping
 
-| Criterion | Evidence |
-|---|---|
-| Cleanup owns the whole post-merge sequence from the primary worktree | `cleanupOnePass` + `syncBaseCleanup`; `requirePrimaryCleanupCheckout` refuses linked worktrees |
-| Base sync is the final Git mutation and only after every pass succeeds | `syncBaseCleanup` is called after the pass loop and is a no-op under `--dry-run` |
-| The merge step never asks the provider to delete the source branch | `test_skill_never_recommends_delete_branch` |
-| Stale local branches are reconciled without weakening the merge proof | `isMergedCleanup` is unchanged; only the unsound fallback was removed |
-| A branch whose merge cannot be proven is preserved | `TestCleanupRefusesStaleBranchWhoseMergeCannotBeProven` |
-| A branch that genuinely landed is still cleaned | `TestStaleBranchWithLandedContentIsStillRemovable` |
-| A remote failure remains recoverable | `TestRemoteDeletionFailureLeavesLocalBranchForRetry` |
+- Criterion 1: PASS — `cleanupOnePass` removes the worktree, deletes and verifies
+  the remote branch, then deletes the local branch; `syncBaseCleanup` runs
+  `git pull --ff-only` only after every pass returns without failures, and is a
+  no-op under `--dry-run`.
+- Criterion 2: PASS — `test_skill_never_recommends_delete_branch` asserts the
+  flag is absent, and `test_skill_documents_the_implemented_cleanup_order`
+  asserts the documented sequence matches the implemented one rather than merely
+  containing the right words.
+- Criterion 3: PASS — the path-presence fallback is removed.
+  `TestCleanupRefusesStaleBranchWhoseMergeCannotBeProven` proves an unprovable
+  branch survives; `TestStaleBranchWithLandedContentIsStillRemovable` proves the
+  feature still works for a branch that genuinely landed.
+- Criterion 4: PASS — `isMergedCleanup` and its three-term OR chain are
+  unchanged; `assertDeletable` still guards every destructive call and
+  `branchHeldByWorktree` still refuses a branch a worktree holds.
+- Criterion 5: PASS — candidates are iterated with explicit Go range loops over
+  NUL-delimited fields; `TestCleanupProvesMergeForNewlinePathInTree` proves exact
+  path reassembly, and `TestCleanupContinuesAfterOneCandidateFails` proves one
+  failure does not abandon the rest of the pass.
+- Criterion 6: PASS — `./tests/validate.sh` exit 0, 1871 tests, OK, on commit
+  `873b003`. `catalog/recipes/worktree-flow/bin/SHA256SUMS` regenerated with the
+  canonical go1.24.13 toolchain after the final `cleanup.go` edit.

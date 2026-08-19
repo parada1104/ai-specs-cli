@@ -39,9 +39,16 @@ The merge workflow recommends `gh pr merge --delete-branch`, but GitHub cannot d
 
 ## Success Criteria
 
-- [ ] Cleanup removes eligible worktree, local branch, and remote branch in that order, then performs the final base fast-forward-only sync.
-- [ ] `gh pr merge --delete-branch` is not recommended anywhere in the Git merge workflow; documentation describes the explicit cleanup sequence.
-- [ ] Stale local branches without worktrees are classified by positive merge evidence or the explicit no-PR path-presence proof and ambiguous branches are preserved.
-- [ ] Existing merge proof and protected-name/worktree-held safety behavior remain intact.
-- [ ] Structural batch tests prove exact candidates are visited and no unrelated branch/path is removed.
-- [ ] Go tests and `./tests/validate.sh` pass, with release checksums regenerated for any changed Go module.
+- [x] Cleanup removes the eligible worktree, then the remote branch, then the local branch, and only then performs the final base fast-forward-only sync.
+- [x] `gh pr merge --delete-branch` is not recommended anywhere in the Git merge workflow; documentation describes the explicit cleanup sequence in the implemented order.
+- [x] Stale local branches without worktrees are classified by positive content evidence only; path existence is never accepted as proof and ambiguous branches are preserved.
+- [x] Existing merge proof and protected-name/worktree-held safety behavior remain intact.
+- [x] Structural batch tests prove exact candidates are visited and no unrelated branch/path is removed.
+- [x] Go tests and `./tests/validate.sh` pass, with release checksums regenerated for any changed Go module.
+
+Criterion 1 and criterion 3 were reworded during judgment-day round one. The
+original wording described local-before-remote deletion and offered a no-PR
+path-presence proof; both were found defective under review and corrected in the
+implementation, so the criteria were corrected to match rather than left
+describing behaviour the change deliberately does not have. See
+`judgment-ledger.md` C1 and S1.
