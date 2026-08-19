@@ -1,20 +1,39 @@
-"""Provenance ownership tests for the generated runtime brief."""
+"""Black-box CLI tests for runtime brief ownership (provenance) decisions.
+
+Converted from the coupled agents-render.py/lock.py unit tests: every test
+drives `bin/ai-specs <verb>` as a subprocess via `_blackbox.invoke` against a
+hermetic project and an isolated CLI home. The original render-level state
+machine ("preserved" / "adopted" / "current" / "undetermined") is observed
+through its CLI effects: exit codes, stderr messages, byte preservation, and
+the `ai-specs/.ai-specs.lock` managed baseline.
+"""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
-import os
-import subprocess
+import re
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from _blackbox import invoke, isolated_home
+
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS_RENDER = ROOT / "lib/_internal/agents-render.py"
-LOCK = ROOT / "lib/_internal/lock.py"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _sha(data: bytes) -> str:
+    """sha256 over LF-normalized bytes — the baseline recorded by the lock."""
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
 
 
 def load_module(path: Path, name: str):
@@ -26,100 +45,140 @@ def load_module(path: Path, name: str):
     return module
 
 
+_RENDER_MODULE = None
+
+
+def _coupled_renderer():
+    global _RENDER_MODULE
+    if _RENDER_MODULE is None:
+        _RENDER_MODULE = load_module(AGENTS_RENDER, "agents_render_ownership_triage")
+    return _RENDER_MODULE
+
+
+def _render_coupled(toml: Path, output: Path, *, adopt: bool = False) -> str:
+    resolved = toml.parent / "resolved.json"
+    resolved.write_text(json.dumps({"enabled": [], "recipes": {}, "bindings": {}}))
+    return _coupled_renderer().render(
+        toml,
+        output,
+        preserve_if_marker=False,
+        resolved_config_path=resolved,
+        adopt_brief=adopt,
+    )
+
+
 class RuntimeBriefOwnershipTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.render = load_module(AGENTS_RENDER, "agents_render_runtime_brief_ownership")
-        cls.lock = load_module(LOCK, "lock_runtime_brief_ownership")
-        cls.doctor = load_module(ROOT / "lib/_internal/doctor.py", "doctor_runtime_brief_ownership")
+    """Every test drives the real CLI subprocess against a hermetic project."""
+
+    def _home(self) -> Path:
+        if not hasattr(self, "_cli_home"):
+            td = tempfile.TemporaryDirectory(prefix="bb-own-home-")
+            self.addCleanup(td.cleanup)
+            self._cli_home = isolated_home(Path(td.name))
+        return self._cli_home
+
+    def _cli(self, project: Path, verb: str, *args: str):
+        """Single shared wrapper: every test in this class invokes through here."""
+        return invoke(project, verb, *args, cli_home=self._home())
 
     def _project(self, root: Path, name: str = "demo") -> tuple[Path, Path, Path]:
         project = root / "project"
         ai_specs = project / "ai-specs"
         ai_specs.mkdir(parents=True)
         toml = ai_specs / "ai-specs.toml"
-        toml.write_text(f"[project]\nname = '{name}'\n")
+        toml.write_text(
+            f"[project]\nname = '{name}'\n\n[agents]\nenabled = ['claude']\n"
+        )
         return project, toml, project / "AGENTS.md"
 
-    def _render(self, toml: Path, output: Path, *, adopt: bool = False) -> str:
-        resolved = toml.parent / "resolved.json"
-        resolved.write_text(json.dumps({"enabled": [], "recipes": {}, "bindings": {}}))
-        return self.render.render(
-            toml,
-            output,
-            preserve_if_marker=False,
-            resolved_config_path=resolved,
-            adopt_brief=adopt,
-        )
+    def _sync(self, project: Path, *, adopt: bool = False):
+        args = ("--adopt-brief",) if adopt else ()
+        return self._cli(project, "sync", *args)
+
+    def _lock_path(self, project: Path) -> Path:
+        return project / "ai-specs" / ".ai-specs.lock"
+
+    def _read_lock(self, project: Path) -> dict:
+        lock_path = self._lock_path(project)
+        if not lock_path.exists():
+            return {}
+        return tomllib.loads(lock_path.read_text())
+
+    def _clear_lock_managed(self, project: Path) -> None:
+        """Rewrite the lock with an empty [managed] table (no baseline)."""
+        self._lock_path(project).write_text("[managed]\n")
+
+    def _corrupt_lock_sha(self, project: Path, new_sha: str) -> None:
+        """Replace the single sha256 baseline line (interrupted-write fixture)."""
+        lock_path = self._lock_path(project)
+        text = lock_path.read_text()
+        text, n = re.subn(r'sha256 = "[0-9a-f]{64}"', f'sha256 = "{new_sha}"', text)
+        assert n == 1, "expected exactly one sha256 baseline line"
+        lock_path.write_text(text)
 
     def test_untracked_brief_is_preserved_with_both_remedies(self):
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
             original = b"# hand-written instructions\n"
             output.write_bytes(original)
-            stderr = io.StringIO()
-            with patch("sys.stderr", stderr):
-                state = self._render(toml, output)
-            self.assertEqual(state, "preserved")
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_bytes(), original)
-            message = stderr.getvalue()
-            self.assertIn("untracked", message)
-            self.assertIn("--adopt-brief", message)
-            self.assertIn("ai-specs:runtime-brief", message)
+            self.assertIn("untracked", result.stderr)
+            self.assertIn("--adopt-brief", result.stderr)
+            self.assertIn("ai-specs:runtime-brief", result.stderr)
 
     def test_missing_brief_is_written_and_baseline_recorded(self):
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
-            self._render(toml, output)
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(output.is_file())
-            lock = self.lock.load_lock(project / "ai-specs/.ai-specs.lock")
-            entry = lock["managed"]["AGENTS.md"]
+            entry = self._read_lock(project)["managed"]["AGENTS.md"]
             self.assertEqual(entry["kind"], "runtime-brief")
             self.assertEqual(entry["policy"], "never-force")
-            self.assertEqual(entry["sha256"], self.lock.sha256_of(output))
+            self.assertEqual(entry["sha256"], _sha(output.read_bytes()))
 
     def test_user_modified_brief_is_preserved(self):
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
-            self._render(toml, output)
+            self._sync(project)
             original = output.read_bytes()
             output.write_bytes(original + b"\n# local context\n")
             edited = output.read_bytes()
-            toml.write_text("[project]\nname = 'changed'\n")
-            stderr = io.StringIO()
-            with patch("sys.stderr", stderr):
-                self._render(toml, output)
+            toml.write_text("[project]\nname = 'changed'\n\n[agents]\nenabled = ['claude']\n")
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_bytes(), edited)
-            self.assertIn("user_modified", stderr.getvalue())
+            self.assertIn("user_modified", result.stderr)
 
     def test_managed_stale_brief_updates_and_records_new_baseline(self):
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
-            self._render(toml, output)
+            self._sync(project)
             old = output.read_bytes()
-            toml.write_text("[project]\nname = 'changed'\n")
-            stderr = io.StringIO()
-            with patch("sys.stderr", stderr):
-                self._render(toml, output)
+            toml.write_text("[project]\nname = 'changed'\n\n[agents]\nenabled = ['claude']\n")
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotEqual(output.read_bytes(), old)
             self.assertIn("# changed Runtime Brief", output.read_text())
-            self.assertEqual(stderr.getvalue(), "")
-            lock = self.lock.load_lock(project / "ai-specs/.ai-specs.lock")
-            self.assertEqual(lock["managed"]["AGENTS.md"]["sha256"], self.lock.sha256_of(output))
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(
+                self._read_lock(project)["managed"]["AGENTS.md"]["sha256"],
+                _sha(output.read_bytes()),
+            )
 
     def test_exact_match_without_baseline_adopts_silently(self):
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
-            expected = "\n".join(self.render._render_lines({"project": {"name": "demo"}}, {"enabled": [], "recipes": {}, "bindings": {}})).encode()
-            output.write_bytes(expected)
-            stderr = io.StringIO()
-            with patch("sys.stderr", stderr):
-                state = self._render(toml, output)
-            self.assertEqual(state, "adopted")
-            self.assertEqual(stderr.getvalue(), "")
+            self._sync(project)
+            self._clear_lock_managed(project)
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, "")
             self.assertEqual(
-                self.lock.load_lock(project / "ai-specs/.ai-specs.lock")["managed"]["AGENTS.md"]["sha256"],
-                self.lock.sha256_of(output),
+                self._read_lock(project)["managed"]["AGENTS.md"]["sha256"],
+                _sha(output.read_bytes()),
             )
 
     def test_divergent_brief_without_baseline_is_preserved_without_adoption(self):
@@ -127,23 +186,23 @@ class RuntimeBriefOwnershipTests(unittest.TestCase):
             project, toml, output = self._project(Path(tmp))
             original = b"# stale generated-looking text\n"
             output.write_bytes(original)
-            stderr = io.StringIO()
-            with patch("sys.stderr", stderr):
-                self._render(toml, output)
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_bytes(), original)
-            self.assertNotIn("AGENTS.md", self.lock.load_lock(project / "ai-specs/.ai-specs.lock").get("managed", {}))
-            self.assertIn("untracked", stderr.getvalue())
+            self.assertNotIn("AGENTS.md", self._read_lock(project).get("managed", {}))
+            self.assertIn("untracked", result.stderr)
 
     def test_explicit_adoption_records_current_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
             original = b"# intentionally adopted brief\n"
             output.write_bytes(original)
-            self._render(toml, output, adopt=True)
+            result = self._sync(project, adopt=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_bytes(), original)
             self.assertEqual(
-                self.lock.load_lock(project / "ai-specs/.ai-specs.lock")["managed"]["AGENTS.md"]["sha256"],
-                self.lock.sha256_bytes(original),
+                self._read_lock(project)["managed"]["AGENTS.md"]["sha256"],
+                _sha(original),
             )
 
     def test_marker_is_unconditional_even_without_legacy_flag(self):
@@ -151,21 +210,19 @@ class RuntimeBriefOwnershipTests(unittest.TestCase):
             project, toml, output = self._project(Path(tmp))
             original = b"# mine\n<!-- ai-specs:runtime-brief -->\n"
             output.write_bytes(original)
-            state = self._render(toml, output)
-            self.assertEqual(state, "preserved")
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_bytes(), original)
 
     def test_managed_current_is_a_silent_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
-            self._render(toml, output)
-            before_lock = (project / "ai-specs/.ai-specs.lock").read_bytes()
-            stderr = io.StringIO()
-            with patch("sys.stderr", stderr):
-                state = self._render(toml, output)
-            self.assertEqual(state, "current")
-            self.assertEqual(stderr.getvalue(), "")
-            self.assertEqual((project / "ai-specs/.ai-specs.lock").read_bytes(), before_lock)
+            self._sync(project)
+            before_lock = self._lock_path(project).read_bytes()
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(self._lock_path(project).read_bytes(), before_lock)
 
     def test_sync_agent_fanout_uses_same_preservation_decision(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -178,14 +235,7 @@ class RuntimeBriefOwnershipTests(unittest.TestCase):
                 "[project]\nname = 'demo'\nsubrepos = ['packages/a']\n\n"
                 "[agents]\nenabled = ['claude']\n"
             )
-            env = {**os.environ, "AI_SPECS_HOME": str(ROOT)}
-            result = subprocess.run(
-                [str(ROOT / "bin/ai-specs"), "sync-agent", str(project), "--all"],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = self._cli(project, "sync-agent", "--all")
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(child.read_bytes(), b"# child instructions\n")
             combined = result.stdout + result.stderr
@@ -196,13 +246,11 @@ class RuntimeBriefOwnershipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
             output.write_bytes(b"# hand-written instructions\n")
-            doctor = self.doctor.Doctor(project)
-            doctor._check_brief_provenance()
-            checks = [c for c in doctor.checks if c.name == "brief-provenance"]
-            self.assertEqual(len(checks), 1)
-            self.assertIn("untracked", checks[0].message)
-            self.assertIn("--adopt-brief", checks[0].guidance)
-            self.assertIn("runtime-brief", checks[0].guidance)
+            result = self._cli(project, "doctor")
+            combined = result.stdout + result.stderr
+            self.assertIn("untracked", combined)
+            self.assertIn("--adopt-brief", combined)
+            self.assertIn("runtime-brief", combined)
 
     def test_init_preserves_pre_existing_brief_without_marker(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -210,13 +258,7 @@ class RuntimeBriefOwnershipTests(unittest.TestCase):
             project.mkdir()
             original = b"# written before ai-specs\n"
             (project / "AGENTS.md").write_bytes(original)
-            result = subprocess.run(
-                [str(ROOT / "bin/ai-specs"), "init", str(project)],
-                env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = self._cli(project, "init")
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((project / "AGENTS.md").read_bytes(), original)
             self.assertIn("--adopt-brief", result.stdout + result.stderr)
@@ -227,30 +269,35 @@ class RuntimeBriefOwnershipTests(unittest.TestCase):
             project.mkdir()
             original = b"# written before ai-specs\n"
             (project / "AGENTS.md").write_bytes(original)
-            env = {**os.environ, "AI_SPECS_HOME": str(ROOT)}
-            subprocess.run([str(ROOT / "bin/ai-specs"), "init", str(project)], env=env, check=True)
-            lock_path = project / "ai-specs/.ai-specs.lock"
-            self.assertNotIn("AGENTS.md", self.lock.load_lock(lock_path).get("managed", {}))
-            result = subprocess.run(
-                [str(ROOT / "bin/ai-specs"), "sync", str(project), "--adopt-brief"],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            init = self._cli(project, "init")
+            self.assertEqual(init.returncode, 0, init.stderr)
+            self.assertNotIn("AGENTS.md", self._read_lock(project).get("managed", {}))
+            result = self._sync(project, adopt=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((project / "AGENTS.md").read_bytes(), original)
-            self.assertIn("AGENTS.md", self.lock.load_lock(lock_path)["managed"])
+            self.assertIn("AGENTS.md", self._read_lock(project)["managed"])
 
     def test_unreadable_lock_preserves_without_traceback(self):
+        # TRIAGE: coupled to lib/_internal/agents-render.py.
+        # (1) Specific assertion: render() returns "preserved", leaves the brief
+        #     bytes untouched, and reports a "preserv*" message when the lock
+        #     file is unparseable.
+        # (2) Exact command run: `bin/ai-specs sync <project>` with an invalid
+        #     ai-specs/.ai-specs.lock exits 1 with a Traceback
+        #     (refresh-bundled.py → load_lock) — the CLI treats a corrupt lock
+        #     as a hard error, so no render-level preserve path is reachable.
+        #     That actual behavior is frozen by the companion test
+        #     test_invalid_lock_fails_sync_loudly_and_preserves_brief.
+        # (3) What it did not expose: the renderer's tolerant
+        #     "preserved + preserve-message" fallback for an unreadable lock.
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
             original = b"# keep this\n"
             output.write_bytes(original)
-            (project / "ai-specs/.ai-specs.lock").write_text("not = [valid\n")
+            self._lock_path(project).write_text("not = [valid\n")
             stderr = io.StringIO()
             with patch("sys.stderr", stderr):
-                state = self._render(toml, output)
+                state = _render_coupled(toml, output)
             self.assertEqual(state, "preserved")
             self.assertEqual(output.read_bytes(), original)
             self.assertIn("preserv", stderr.getvalue().lower())
@@ -260,20 +307,26 @@ class RuntimeBriefOwnershipTests(unittest.TestCase):
             project, toml, output = self._project(Path(tmp))
             original = b"# keep this\n"
             output.write_bytes(original)
-            real_read_text = Path.read_text
-
-            def unreadable_target(path, *args, **kwargs):
-                if path == output:
-                    raise OSError("permission denied")
-                return real_read_text(path, *args, **kwargs)
-
-            stderr = io.StringIO()
-            with patch.object(Path, "read_text", unreadable_target), patch("sys.stderr", stderr):
-                state = self._render(toml, output)
-            self.assertEqual(state, "preserved")
+            self._sync(project)
+            output.chmod(0o000)
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            output.chmod(0o644)
             self.assertEqual(output.read_bytes(), original)
-            self.assertIn("undetermined", stderr.getvalue())
+            self.assertIn("undetermined", result.stderr)
 
+    def test_invalid_lock_fails_sync_loudly_and_preserves_brief(self):
+        # CLI-observable behavior behind the TRIAGE case above: a corrupt lock
+        # is a hard sync failure (Traceback), never a silent preserve.
+        with tempfile.TemporaryDirectory() as tmp:
+            project, toml, output = self._project(Path(tmp))
+            original = b"# keep this\n"
+            output.write_bytes(original)
+            self._lock_path(project).write_text("not = [valid\n")
+            result = self._sync(project)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Traceback", result.stderr)
+            self.assertEqual(output.read_bytes(), original)
 
 
 class BriefRecoveryTests(RuntimeBriefOwnershipTests):
@@ -291,28 +344,26 @@ class BriefRecoveryTests(RuntimeBriefOwnershipTests):
         """
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
-            self._render(toml, output)                       # now managed
+            self._sync(project)  # now managed
             edited = output.read_bytes() + b"\nmy own section\n"
             output.write_bytes(edited)
 
-            stderr = io.StringIO()
-            with patch("sys.stderr", stderr):
-                state = self._render(toml, output)
-            self.assertEqual(state, "preserved", "fixture precondition")
-
-            state = self._render(toml, output, adopt=True)
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
-                state, "adopted",
-                "--adopt-brief did nothing for user_modified; the remedy the "
-                "tool prints is a dead end",
+                output.read_bytes(), edited, "fixture precondition: preserved"
             )
+            self.assertIn("user_modified", result.stderr)
+
+            adopt = self._sync(project, adopt=True)
+            self.assertEqual(adopt.returncode, 0, adopt.stderr)
             self.assertEqual(
                 output.read_bytes(), edited,
                 "adoption must keep the user's bytes, never overwrite them",
             )
-            lock = self.lock.load_lock(project / "ai-specs/.ai-specs.lock")
             self.assertEqual(
-                lock["managed"]["AGENTS.md"]["sha256"], self.lock.sha256_of(output)
+                self._read_lock(project)["managed"]["AGENTS.md"]["sha256"],
+                _sha(edited),
             )
 
     def test_interrupted_write_self_heals(self):
@@ -327,19 +378,15 @@ class BriefRecoveryTests(RuntimeBriefOwnershipTests):
         """
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
-            self._render(toml, output)
-            lock_path = project / "ai-specs/.ai-specs.lock"
-            lock = self.lock.load_lock(lock_path)
-            lock["managed"]["AGENTS.md"]["sha256"] = "0" * 64   # crash before record
-            self.lock.write_lock(lock_path, lock)
+            self._sync(project)
+            self._corrupt_lock_sha(project, "0" * 64)  # crash before record
 
-            stderr = io.StringIO()
-            with patch("sys.stderr", stderr):
-                state = self._render(toml, output)
-            self.assertNotEqual(
-                state, "preserved",
-                "an unmodified brief stayed stuck after an interrupted write: "
-                + stderr.getvalue(),
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                self._read_lock(project)["managed"]["AGENTS.md"]["sha256"],
+                _sha(output.read_bytes()),
+                "an unmodified brief stayed stuck after an interrupted write",
             )
 
     def test_adopt_gate_agrees_with_the_classifier_on_line_endings(self):
@@ -350,19 +397,21 @@ class BriefRecoveryTests(RuntimeBriefOwnershipTests):
         """
         with tempfile.TemporaryDirectory() as tmp:
             project, toml, output = self._project(Path(tmp))
-            self._render(toml, output)
+            self._sync(project)
             rendered = output.read_bytes()
-            lock_path = project / "ai-specs/.ai-specs.lock"
-            lock = self.lock.load_lock(lock_path)
-            lock.pop("managed", None)                       # no baseline: first sight
-            self.lock.write_lock(lock_path, lock)
+            self._clear_lock_managed(project)  # no baseline: first sight
             output.write_bytes(rendered.replace(b"\n", b"\r\n"))
 
-            stderr = io.StringIO()
-            with patch("sys.stderr", stderr):
-                state = self._render(toml, output)
+            result = self._sync(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, "")
             self.assertEqual(
-                state, "adopted",
+                self._read_lock(project)["managed"]["AGENTS.md"]["sha256"],
+                _sha(output.read_bytes()),
                 "a CRLF checkout of our own output was not adopted: "
-                + stderr.getvalue(),
+                + result.stderr,
             )
+
+
+if __name__ == "__main__":
+    unittest.main()
