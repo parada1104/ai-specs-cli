@@ -1,23 +1,15 @@
-import importlib.util
 import json
+import shutil
 import subprocess
-import sys
+import tempfile
 import unittest
 from pathlib import Path
+
+from _blackbox import invoke, isolated_home, cache_project_dir, temp_project
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
 RULES_AUDIT_PY = ROOT / "lib" / "_internal" / "rules-inventory.py"
-REFRESH_BUNDLED_PY = ROOT / "lib" / "_internal" / "refresh-bundled.py"
-
-
-def load_rules_inventory():
-    spec = importlib.util.spec_from_file_location("rules_inventory", RULES_AUDIT_PY)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def snapshot_fs(root: Path) -> dict[str, tuple[int, int]]:
@@ -31,21 +23,9 @@ def snapshot_fs(root: Path) -> dict[str, tuple[int, int]]:
 
 
 class RulesAuditTests(unittest.TestCase):
-    def setUp(self):
-        if not RULES_AUDIT_PY.is_file():
-            self.skipTest("rules-inventory.py not implemented yet")
-        self.mod = load_rules_inventory()
-
     def _scan(self, root: Path) -> dict:
-        return self.mod.RulesInventory(root).scan()
-
-    def _scan_stdout(self, root: Path) -> dict:
-        result = subprocess.run(
-            [sys.executable, str(RULES_AUDIT_PY), str(root)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        """Run bin/ai-specs rules-audit as a black box and parse its JSON inventory."""
+        result = invoke(root, "rules-audit")
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
@@ -85,7 +65,7 @@ class RulesAuditTests(unittest.TestCase):
     def test_json_shape(self):
         root = Path(self._fixture_dir())
         self._write_mode_a_fixture(root)
-        data = self._scan_stdout(root)
+        data = self._scan(root)
         for key in (
             "schema_version",
             "mode",
@@ -252,27 +232,16 @@ class RulesAuditTests(unittest.TestCase):
         self.assertIn("rules-audit", result.stdout)
 
     def test_bundled_commands_distribution_after_refresh(self):
-        import shutil
-        import tempfile
-
-        pc_spec = importlib.util.spec_from_file_location(
-            "pc_rules_audit_cmd_dist", ROOT / "lib" / "_internal" / "project-cache.py"
-        )
-        pc = importlib.util.module_from_spec(pc_spec)
-        assert pc_spec.loader is not None
-        pc_spec.loader.exec_module(pc)
-
-        project = Path(tempfile.mkdtemp())
+        home_holder = tempfile.TemporaryDirectory(prefix="ai-specs-dist-")
+        self._home_holder = home_holder
+        home = isolated_home(Path(home_holder.name))
+        project_holder, project = temp_project(agents=("cursor", "opencode"))
+        self._project_holder = project_holder
         try:
-            (project / "ai-specs").mkdir()
-            subprocess.run(
-                [sys.executable, str(REFRESH_BUNDLED_PY), str(project), str(ROOT), "--init"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            result = invoke(project, "refresh-bundled", "--init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stderr)
             # Bundled commands flatten into the cache — never the project surface.
-            bundled_commands_root = pc.bundled_commands_root(project, cli_home=ROOT)
+            bundled_commands_root = cache_project_dir(project, home) / ".bundled" / "commands"
             self.assertTrue((bundled_commands_root / "rules-audit.md").is_file())
             skills_text = (bundled_commands_root / "skills-as-rules.md").read_text(encoding="utf-8")
             self.assertNotIn("auto-invoke table", skills_text.lower())
@@ -286,11 +255,13 @@ class RulesAuditTests(unittest.TestCase):
                 "bundled commands must not be materialized into ai-specs/commands/",
             )
 
-            subprocess.run([str(CLI), "init", str(project)], check=True, text=True)
+            result = invoke(project, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stderr)
             (project / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\nname = 'fixture'\n\n[agents]\nenabled = ['cursor', 'opencode']\n"
             )
-            subprocess.run([str(CLI), "sync", str(project)], check=True, text=True)
+            result = invoke(project, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
             # A project with no local commands still has an empty/absent
             # ai-specs/commands/ after init+sync — bundled commands never land there.
@@ -311,16 +282,15 @@ class RulesAuditTests(unittest.TestCase):
                     self.assertNotIn("auto-invoke table", path.read_text(encoding="utf-8").lower())
         finally:
             shutil.rmtree(project)
+            home_holder.cleanup()
+            project_holder.cleanup()
 
     def test_cli_missing_path_exits_nonzero(self):
-        result = subprocess.run(
-            [str(CLI), "rules-audit", "/nonexistent-path-rules-audit"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertTrue(result.stderr.strip())
+        base = Path(self._fixture_dir())
+        missing = base / "does-not-exist"
+        result = invoke(missing, "rules-audit")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("ERROR: not a directory:", result.stderr)
 
     # ------------------------------------------------------------------ N1
     def test_agents_md_no_headings_still_produces_section(self):
@@ -361,7 +331,6 @@ class RulesAuditTests(unittest.TestCase):
         item = data["sources"]["cursor_rules"][0]
         self.assertIn("tdd-flow", item["candidate_recipes"])
 
-    # ------------------------------------------------------------------ keep_in_brief word-boundary
     def test_reproject_heading_does_not_match_project_token(self):
         """_classify keep_in_brief guard must use word boundary, not substring match."""
         root = Path(self._fixture_dir())
@@ -504,8 +473,6 @@ class RulesAuditTests(unittest.TestCase):
         self.assertIn("Real Section", headings)
 
     def _fixture_dir(self):
-        import tempfile
-
         return tempfile.mkdtemp()
 
 
