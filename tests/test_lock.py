@@ -15,6 +15,8 @@ import tomllib
 import unittest
 from pathlib import Path
 
+from _blackbox import invoke, isolated_home, temp_project
+
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = ROOT / "lib" / "_internal" / "lock.py"
@@ -39,6 +41,22 @@ class LockRoundTripTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         return Path(tmp.name) / ".ai-specs.lock"
 
+    def test_sync_writes_observable_lock_provenance(self):
+        td, root = temp_project()
+        self.addCleanup(td.cleanup)
+        with tempfile.TemporaryDirectory() as home:
+            home_path = isolated_home(Path(home))
+            result = invoke(root, "sync", cli_home=home_path)
+            self.assertEqual(result.returncode, 0)
+            lock_path = root / "ai-specs" / ".ai-specs.lock"
+            self.assertTrue(lock_path.is_file())
+            lock = tomllib.loads(lock_path.read_text())
+            self.assertIn("meta", lock)
+            self.assertIn("managed", lock)
+            self.assertIn("AGENTS.md", lock["managed"])
+            self.assertEqual(lock["managed"]["AGENTS.md"]["kind"], "runtime-brief")
+            self.assertEqual(lock["managed"]["AGENTS.md"]["policy"], "never-force")
+
     def test_skill_recipe_dep_hashes_not_emitted(self):
         """The lock is a provenance stamp: content hashes are no longer tracked."""
         path = self._lock_path()
@@ -60,6 +78,7 @@ class LockRoundTripTests(unittest.TestCase):
         self.assertEqual(reloaded["recipes"], {})
         self.assertEqual(reloaded["deps"], {})
 
+    # TRIAGE: direct legacy lock fixtures exercise normalization that has no CLI command to create.
     def test_legacy_hash_sections_dropped_on_rewrite(self):
         """A lock written by an older CLI (with hash sections) is normalized."""
         path = self._lock_path()
@@ -100,6 +119,7 @@ class LockRoundTripTests(unittest.TestCase):
         self.assertNotIn("commands", reloaded)
         self.assertNotIn("opted_out", reloaded)
 
+    # TRIAGE: direct legacy lock fixtures exercise normalization that has no CLI command to create.
     def test_legacy_lock_with_commands_opted_out_sections_normalized(self):
         """A lock written by a prior CLI version (with [commands]/[opted-out])
         is normalized on the next write — sections silently dropped, no crash."""
@@ -117,6 +137,7 @@ class LockRoundTripTests(unittest.TestCase):
         self.assertNotIn("[opted-out]", text)
         self.assertIn('cli_version = "0.14.0"', text)
 
+    # TRIAGE: direct legacy lock fixtures exercise normalization that has no CLI command to create.
     def test_legacy_commands_opted_out_dropped_agents_preserved(self):
         """Combined legacy case: [commands]/[opted-out] dropped, [agents.*] kept.
 
