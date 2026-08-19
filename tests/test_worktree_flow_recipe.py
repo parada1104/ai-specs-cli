@@ -1,6 +1,11 @@
-"""Validation + materialization tests for the worktree-flow catalog recipe."""
+"""Validation + materialization tests for the worktree-flow catalog recipe.
 
-import importlib.util
+Materialization is exercised through the `bin/ai-specs sync` subprocess (via
+the `_blackbox` helpers) against an isolated `cli_home`, so every command in a
+scenario shares one `AI_SPECS_HOME`. Purely catalog-content checks (documents,
+SKILL.md, recipe.toml) read the golden sources directly.
+"""
+
 import sys
 import tempfile
 import unittest
@@ -8,36 +13,24 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-import sys
-from pathlib import Path as _P
-sys.path.insert(0, str(_P(__file__).resolve().parent))
-from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home
+from _cache_paths import cache_command, recipe_skill_dir
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow"
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
-
-
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 class WorktreeFlowRecipeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_internal")
-        cls.materialize = load_module(
-            RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal_wtf"
-        )
+    def _home(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return isolated_home(Path(tmp.name))
 
     def test_recipe_validates(self):
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        self.assertEqual(recipe.id, "worktree-flow")
-        cap_ids = {c.id for c in recipe.capabilities}
+        import tomllib
+        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
+            data = tomllib.load(fh)
+        self.assertEqual(data["recipe"]["id"], "worktree-flow")
+        cap_ids = {c.get("id") for c in data.get("capabilities", [])}
         self.assertIn("worktree-isolation", cap_ids)
 
     def _make_project(self) -> Path:
@@ -70,7 +63,8 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
 
     def test_sync_defaults_to_always(self):
         root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        result = invoke(root, "sync", cli_home=self._home())
+        self.assertEqual(result.returncode, 0)
         hook = (
             root / "ai-specs" / "recipes" / "worktree-flow" / "hooks"
             / "worktree-gate.sh"
@@ -83,7 +77,8 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         root = self._make_project_with_config(
             '[recipes.worktree-flow.config]\ngate_mode = "ask"'
         )
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        result = invoke(root, "sync", cli_home=self._home())
+        self.assertEqual(result.returncode, 0)
         hook = (
             root / "ai-specs" / "recipes" / "worktree-flow" / "hooks"
             / "worktree-gate.sh"
@@ -96,40 +91,27 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         root = self._make_project_with_config(
             '[recipes.worktree-flow.config]\ngate_mode = "bogus"'
         )
-        with self.assertRaises(SystemExit) as ctx:
-            self.materialize.materialize_recipes(root, ROOT)
-        self.assertEqual(ctx.exception.code, 1)
-        combined = ""
-        # materialize_recipes calls fail() which prints to stderr then exits
-        # Re-run via subprocess to capture diagnostic text.
-        import subprocess
-        proc = subprocess.run(
-            [
-                "python3",
-                str(RECIPE_MATERIALIZE_PATH),
-                str(root),
-                str(ROOT),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(proc.returncode, 1)
-        combined = proc.stderr + proc.stdout
+        result = invoke(root, "sync", cli_home=self._home())
+        self.assertEqual(result.returncode, 1)
+        combined = result.stderr + result.stdout
+        self.assertIn("bogus", result.stderr)
         self.assertIn("bogus", combined)
         self.assertRegex(combined, r"always.*ask.*off|always \| ask \| off")
 
     def test_materializes_skill_commands_and_script(self):
         root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        home = self._home()
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0)
 
         skill = (
-            recipe_root(root, "worktree-flow") / "skills"
-            / "worktree-flow" / "SKILL.md"
+            recipe_skill_dir(root, "worktree-flow", "worktree-flow", cli_home=home)
+            / "SKILL.md"
         )
         self.assertTrue(skill.is_file(), "bundled skill should materialize")
 
         for cmd in ("worktree-new", "worktree-clean"):
-            path = cache_command(root, cmd)
+            path = cache_command(root, cmd, cli_home=home)
             self.assertTrue(path.is_file(), f"command {cmd} should materialize")
 
         script = (
@@ -147,32 +129,21 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
 
     def test_sync_defaults_repo_topology_to_auto(self):
         root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        import tomllib
-        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
-            manifest = tomllib.load(fh)
-        user_cfg = (manifest.get("recipes") or {}).get("worktree-flow", {}).get("config") or {}
-        merged = self.materialize.merge_config(recipe, user_cfg)
-        self.assertEqual(merged.get("repo_topology"), "auto")
+        result = invoke(root, "sync", cli_home=self._home())
+        self.assertEqual(result.returncode, 0)
+        hook = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "hooks"
+            / "worktree-gate.sh"
+        )
+        self.assertIn('stamped_repo_topology="auto"', hook.read_text())
 
     def test_sync_rejects_invalid_repo_topology(self):
         root = self._make_project_with_config(
             '[recipes.worktree-flow.config]\nrepo_topology = "nested"'
         )
-        import subprocess
-        proc = subprocess.run(
-            [
-                "python3",
-                str(RECIPE_MATERIALIZE_PATH),
-                str(root),
-                str(ROOT),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(proc.returncode, 1)
-        combined = proc.stderr + proc.stdout
+        result = invoke(root, "sync", cli_home=self._home())
+        self.assertEqual(result.returncode, 1)
+        combined = result.stderr + result.stdout
         self.assertIn("nested", combined)
         self.assertRegex(
             combined,
@@ -182,13 +153,16 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
 
     def test_sync_materializes_with_repo_topology_default(self):
         root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        home = self._home()
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0)
         skill = (
-            recipe_skill_dir(root, "worktree-flow", "worktree-flow") / "SKILL.md"
+            recipe_skill_dir(root, "worktree-flow", "worktree-flow", cli_home=home)
+            / "SKILL.md"
         )
         self.assertTrue(skill.is_file(), "skill should materialize with default topology")
         for cmd in ("worktree-new", "worktree-clean"):
-            path = cache_command(root, cmd)
+            path = cache_command(root, cmd, cli_home=home)
             self.assertTrue(path.is_file(), f"command {cmd} should materialize")
         script = (
             root / "ai-specs" / "recipes" / "worktree-flow" / "overrides" / "bin"
@@ -242,18 +216,13 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertNotIn("bin/worktree-new", skill)
 
     def test_brief_workflow_rules_require_which_repo_check(self):
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        frags = recipe.brief_fragments
-        self.assertIsNotNone(frags)
-        rules = " ".join(
-            f.text if hasattr(f, "text") else str(f)
-            for f in (frags.workflow_rules or [])
-        )
-        if not rules:
-            # fragments may be plain strings depending on schema version
-            raw = (RECIPE_DIR / "recipe.toml").read_text()
-            start = raw.index("workflow_rules")
-            rules = raw[start:start + 800]
+        import tomllib
+        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
+            data = tomllib.load(fh)
+        brief = (data.get("provides") or {}).get("brief") or {}
+        workflow_rules = brief.get("workflow_rules") or []
+        self.assertTrue(workflow_rules)
+        rules = " ".join(workflow_rules)
         self.assertIn("which", rules.lower())
         self.assertIn("show-toplevel", rules)
         self.assertIn("monorepo-submodules", rules)
@@ -276,20 +245,20 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         root = self._make_project_with_config(
             '[recipes.worktree-flow.config]\ngate_mode = "always"\nrepo_topology = "monorepo-submodules"'
         )
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        import tomllib
-        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
-            manifest = tomllib.load(fh)
-        merged = self.materialize.merge_config(recipe, manifest["recipes"]["worktree-flow"]["config"])
-        self.assertEqual(merged.get("gate_scope"), "auto")
-        self.assertEqual(merged.get("gate_mode"), "always")
-        self.assertEqual(merged.get("repo_topology"), "monorepo-submodules")
+        result = invoke(root, "sync", cli_home=self._home())
+        self.assertEqual(result.returncode, 0)
+        hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+        content = hook.read_text()
+        self.assertIn('stamped_gate_scope="auto"', content)
+        self.assertIn('stamped_gate_mode="always"', content)
+        self.assertIn('stamped_repo_topology="monorepo-submodules"', content)
 
     def test_gate_scope_materializes_stamp(self):
         root = self._make_project_with_config(
             '[recipes.worktree-flow.config]\ngate_scope = "superrepo"'
         )
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        result = invoke(root, "sync", cli_home=self._home())
+        self.assertEqual(result.returncode, 0)
         hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
         content = hook.read_text()
         self.assertIn('stamped_gate_scope="superrepo"', content)
@@ -301,18 +270,21 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         root = self._make_project_with_config(
             '[recipes.worktree-flow.config]\ngate_scope = "super-repo"'
         )
-        import subprocess
-        proc = subprocess.run(["python3", str(RECIPE_MATERIALIZE_PATH), str(root), str(ROOT)], capture_output=True, text=True)
-        self.assertEqual(proc.returncode, 1)
-        combined = proc.stderr + proc.stdout
+        result = invoke(root, "sync", cli_home=self._home())
+        self.assertEqual(result.returncode, 1)
+        combined = result.stderr + result.stdout
         self.assertIn("super-repo", combined)
         self.assertIn("auto | superrepo | subrepo", combined)
+
     def test_stale_gate_hook_is_preserved_with_refresh_guidance(self):
         root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        home = self._home()
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0)
         hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
         hook.write_text("custom legacy hook\n")
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        result2 = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result2.returncode, 0)
         self.assertEqual(hook.read_text(), "custom legacy hook\n")
 
 if __name__ == "__main__":
