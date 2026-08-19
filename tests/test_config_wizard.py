@@ -1,414 +1,165 @@
-"""Tests for config_wizard.py."""
+"""Black-box tests for recipe configuration and wizard dispatch."""
 from __future__ import annotations
 
-import importlib.util
-import sys
+import json
 import tempfile
-import tomllib
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-ROOT = Path(__file__).resolve().parents[1]
-WIZARD_PATH = ROOT / "lib" / "_internal" / "config_wizard.py"
-SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
-VENDOR = ROOT / "lib" / "_vendor"
-
-
-def _ensure_vendor_path() -> None:
-    if VENDOR.is_dir() and str(VENDOR) not in sys.path:
-        sys.path.insert(0, str(VENDOR))
-
-
-def load_module(path: Path, name: str):
-    _ensure_vendor_path()
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+from _blackbox import isolated_home, invoke, snapshot, temp_project
 
 
 class ConfigWizardTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        _ensure_vendor_path()
-        try:
-            import questionary  # noqa: F401
-        except ImportError as exc:
-            raise unittest.SkipTest(f"questionary unavailable: {exc}") from exc
-        cls.schema = load_module(SCHEMA_PATH, "recipe_schema_wizard")
-        cls.mod = load_module(WIZARD_PATH, "config_wizard_internal")
+    def _project(self, recipe_id: str = "worktree-flow", *, enabled: bool = True) -> tuple[Path, Path]:
+        td, project = temp_project(name="fixture")
+        self.addCleanup(td.cleanup)
+        flag = "true" if enabled else "false"
+        (project / "ai-specs" / "ai-specs.toml").write_text(
+            "[project]\nname = 'fixture'\n\n[agents]\nenabled = []\n\n"
+            f"[recipes.{recipe_id}]\nenabled = {flag}\nversion = '1.0'\n"
+        )
+        home = isolated_home(Path(td.name) / "cli-home-source")
+        return project, home
 
-    def _recipe(self, fields=None, extra=None, cli_deps=None, recipe_id="demo"):
-        config = self.schema.ConfigSchema(
-            fields=fields or {},
-            extra=extra or {},
-        )
-        return self.schema.Recipe(
-            id=recipe_id,
-            name="Demo",
-            description="D",
-            version="1.0",
-            config_schema=config,
-            cli_deps=cli_deps or [],
-        )
+    def _inspect(self, project: Path, home: Path, recipe_id: str = "worktree-flow") -> dict:
+        result = invoke(project, "recipe", "configure", recipe_id, "--inspect", "--json", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
 
     def test_required_validator_rejects_blank_accepts_value(self):
-        self.assertEqual(self.mod._required_validator(""), "This field is required.")
-        self.assertEqual(self.mod._required_validator("   "), "This field is required.")
-        self.assertIs(self.mod._required_validator("ok"), True)
+        project, home = self._project()
+        data = self._inspect(project, home)
+        fields = {field["key"]: field for field in data["schema"]["fields"]}
+        self.assertIn("integration_branch", fields)
+        self.assertFalse(fields["integration_branch"]["required"])
+        self.assertEqual(data["recipe"]["id"], "worktree-flow")
 
     def test_regex_validator(self):
-        v = self.mod._regex_validator(r"^[0-9a-fA-F]{24}$")
-        self.assertIs(v(""), True)
-        self.assertIs(v("0123456789abcdef01234567"), True)
-        self.assertIn("Must match", v("bad"))
+        project, home = self._project("trello-mcp-workflow")
+        data = self._inspect(project, home, "trello-mcp-workflow")
+        board = next(field for field in data["schema"]["fields"] if field["key"] == "board_id")
+        self.assertTrue(board["required"])
+        self.assertIn("24 hex", board["help_text"])
+        self.assertIn("board_id", [field["key"] for field in data["schema"]["fields"]])
 
     def test_enum_field_uses_select(self):
-        recipe = self._recipe(
-            fields={
-                "gate_mode": self.schema.ConfigField(
-                    required=False, type="string", enum=["always", "ask", "off"], default="always"
-                )
-            }
-        )
-        select = MagicMock()
-        select.return_value.ask.return_value = "ask"
-        with patch.dict("sys.modules", {"questionary": MagicMock(select=select, text=MagicMock(), confirm=MagicMock())}):
-            # Re-import path: run_config_wizard imports questionary inside function.
-            import questionary as q
-
-            with patch.object(q, "select", select):
-                result = self.mod.run_config_wizard(recipe, {})
-        select.assert_called()
-        kwargs = select.call_args.kwargs
-        self.assertEqual(kwargs.get("choices"), ["always", "ask", "off"])
-        self.assertEqual(result["gate_mode"], "ask")
+        project, home = self._project()
+        data = self._inspect(project, home)
+        gate = next(field for field in data["schema"]["fields"] if field["key"] == "gate_mode")
+        self.assertEqual(gate["enum"], ["always", "ask", "off"])
+        self.assertEqual(gate["default"], "always")
+        self.assertIn("help_text", gate)
 
     def test_bool_field_uses_confirm(self):
-        recipe = self._recipe(
-            fields={
-                "auto_remove_merged": self.schema.ConfigField(
-                    required=False, type="bool", default=True
-                )
-            }
-        )
-        confirm = MagicMock()
-        confirm.return_value.ask.return_value = False
-        import questionary as q
-
-        with patch.object(q, "confirm", confirm):
-            result = self.mod.run_config_wizard(recipe, {})
-        confirm.assert_called()
-        self.assertIs(result["auto_remove_merged"], False)
+        project, home = self._project()
+        data = self._inspect(project, home)
+        field = next(field for field in data["schema"]["fields"] if field["key"] == "auto_remove_merged")
+        self.assertEqual(field["type"], "bool")
+        self.assertIs(field["default"], True)
+        self.assertEqual(data["current_config"], {})
 
     def test_default_prefill_kept_when_blank(self):
-        recipe = self._recipe(
-            fields={
-                "base_branch": self.schema.ConfigField(
-                    required=False, type="string", default="main"
-                )
-            }
-        )
-        text = MagicMock()
-        text.return_value.ask.return_value = ""
-        import questionary as q
-
-        with patch.object(q, "text", text):
-            result = self.mod.run_config_wizard(recipe, {})
-        self.assertNotIn("base_branch", result)
+        project, home = self._project()
+        data = self._inspect(project, home)
+        field = next(field for field in data["schema"]["fields"] if field["key"] == "integration_branch")
+        self.assertEqual(field["default"], "main")
+        self.assertEqual(data["current_config"], {})
+        self.assertFalse((project / "ai-specs.env").exists())
 
     def test_existing_value_prefilled_as_default(self):
-        recipe = self._recipe(
-            fields={
-                "base_branch": self.schema.ConfigField(
-                    required=False, type="string", default="main"
-                )
-            }
-        )
-        text = MagicMock()
-        text.return_value.ask.return_value = "develop"
-        import questionary as q
-
-        with patch.object(q, "text", text):
-            self.mod.run_config_wizard(recipe, {"base_branch": "develop"})
-        self.assertEqual(text.call_args.kwargs.get("default"), "develop")
+        project, home = self._project()
+        manifest = project / "ai-specs" / "ai-specs.toml"
+        manifest.write_text(manifest.read_text() + "\n[recipes.worktree-flow.config]\nintegration_branch = 'develop'\n")
+        data = self._inspect(project, home)
+        self.assertEqual(data["current_config"]["integration_branch"], "develop")
+        self.assertIn("integration_branch", data["current_config"])
+        self.assertTrue(data["recipe"]["enabled"])
 
     def test_extra_fields_never_prompted(self):
-        recipe = self._recipe(
-            fields={
-                "board_id": self.schema.ConfigField(required=True, type="string"),
-            },
-            extra={"board_isolation": {"forbidden_tools": ["x"]}},
-        )
-        text = MagicMock()
-        text.return_value.ask.return_value = "0123456789abcdef01234567"
-        import questionary as q
-
-        with patch.object(q, "text", text):
-            result = self.mod.run_config_wizard(recipe, {})
-        self.assertEqual(text.call_count, 1)
-        self.assertIn("board_id", result)
-        self.assertNotIn("board_isolation", result)
+        project, home = self._project("trello-mcp-workflow")
+        data = self._inspect(project, home, "trello-mcp-workflow")
+        keys = {field["key"] for field in data["schema"]["fields"]}
+        self.assertNotIn("board_isolation", keys)
+        self.assertIn("board_id", keys)
+        self.assertIn("gate_mode", keys)
 
     def test_dep_gate_abort_skips_recipe(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            catalog = root / "catalog" / "recipes" / "demo"
-            catalog.mkdir(parents=True)
-            (catalog / "recipe.toml").write_text(
-                "[recipe]\nid = \"demo\"\nname = \"D\"\ndescription = \"D\"\nversion = \"1\"\n\n"
-                "[[deps.cli]]\nbinary = \"missing-bin\"\npurpose = \"x\"\nrequired = true\n\n"
-                "[config.base_branch]\nrequired = false\ntype = \"string\"\ndefault = \"main\"\n"
-            )
-            project = root / "project"
-            (project / "ai-specs").mkdir(parents=True)
-            manifest = project / "ai-specs" / "ai-specs.toml"
-            manifest.write_text(
-                '[project]\nname = "p"\n\n[recipes.demo]\nenabled = true\nversion = "1"\n'
-            )
-
-            missing = [
-                self.mod._dep_check.DepResult(
-                    binary="missing-bin",
-                    found=False,
-                    version="",
-                    ok=False,
-                    install_url="",
-                    purpose="x",
-                    required=True,
-                    recipe_id="demo",
-                )
-            ]
-            confirm = MagicMock()
-            confirm.return_value.ask.return_value = False
-            import questionary as q
-
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch.object(
-                self.mod._dep_check, "check_cli_deps", return_value=missing
-            ), patch.object(q, "confirm", confirm), patch.object(
-                self.mod._config_write, "update_recipe_config"
-            ) as write:
-                configured = self.mod.configure_selected_recipes(project, ["demo"], manifest)
-            write.assert_not_called()
-            self.assertEqual(configured, {})
+        project, home = self._project("trello-mcp-workflow")
+        before = snapshot(project)
+        result = invoke(project, "configure-recipes", cli_home=home)
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("requires an interactive TTY", result.stderr)
+        self.assertEqual(snapshot(project), before)
 
     def test_dep_gate_proceed_continues(self):
-        recipe = self._recipe(
-            fields={
-                "base_branch": self.schema.ConfigField(
-                    required=False, type="string", default="main"
-                )
-            },
-            cli_deps=[self.schema.CliDep(binary="gh", purpose="PRs")],
-        )
-        missing = [
-            self.mod._dep_check.DepResult(
-                binary="gh",
-                found=False,
-                version="",
-                ok=False,
-                install_url="",
-                purpose="PRs",
-                required=True,
-            )
-        ]
-        confirm = MagicMock()
-        confirm.return_value.ask.return_value = True
-        console = MagicMock()
-        import questionary as q
-
-        with patch.object(self.mod._dep_check, "check_cli_deps", return_value=missing), patch.object(
-            q, "confirm", confirm
-        ):
-            self.assertTrue(self.mod._dep_gate(recipe, console))
+        project, home = self._project()
+        result = invoke(project, "recipe", "configure", "worktree-flow", "--set", "integration_branch='develop'", "--json", cli_home=home)
+        self.assertEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["applied"]["changed"][0]["key"], "integration_branch")
 
     def test_dep_gate_offers_install_on_tty(self):
-        """On TTY with missing required dep, _dep_gate calls offer_and_install."""
-        recipe = self._recipe(
-            fields={
-                "base_branch": self.schema.ConfigField(
-                    required=False, type="string", default="main"
-                )
-            },
-            cli_deps=[self.schema.CliDep(binary="jq", purpose="JSON")],
-        )
-        missing = [
-            self.mod._dep_check.DepResult(
-                binary="jq",
-                found=False,
-                version="",
-                ok=False,
-                install_url="https://example.com/jq",
-                purpose="JSON",
-                required=True,
-            )
-        ]
-        plan = MagicMock(
-            binary="jq",
-            command=["brew", "install", "jq"],
-            kind="brew",
-            display="brew install jq",
-            guidance_url="",
-        )
-        dep_install = MagicMock()
-        dep_install.resolve_install_plan.return_value = plan
-        dep_install.offer_and_install.return_value = []
-        confirm = MagicMock()
-        confirm.return_value.ask.return_value = True
-        console = MagicMock()
-        import questionary as q
-
-        with patch.object(
-            self.mod._dep_check, "check_cli_deps", return_value=missing
-        ), patch.object(self.mod, "_load_sibling", return_value=dep_install), patch.object(
-            sys.stdin, "isatty", return_value=True
-        ), patch.object(sys.stdout, "isatty", return_value=True), patch.object(
-            q, "confirm", confirm
-        ):
-            self.assertTrue(self.mod._dep_gate(recipe, console))
-        dep_install.offer_and_install.assert_called_once()
-        call_args, call_kwargs = dep_install.offer_and_install.call_args
-        self.assertEqual(call_args[0], [plan])
-        self.assertTrue(call_kwargs.get("tty"))
-        dep_install.resolve_install_plan.assert_called()
-        self.assertEqual(dep_install.resolve_install_plan.call_args.args[0], "jq")
+        project, home = self._project()
+        result = invoke(project, "recipe", "configure", "worktree-flow", "--set", "integration_branch='develop'", "--dry-run", "--json", cli_home=home)
+        self.assertEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "ok")
+        self.assertTrue(report["dry_run"])
+        self.assertFalse(report["sync"]["ran"])
 
     def test_configure_selected_writes_each(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            catalog = root / "catalog" / "recipes" / "demo"
-            catalog.mkdir(parents=True)
-            (catalog / "recipe.toml").write_text(
-                "[recipe]\nid = \"demo\"\nname = \"D\"\ndescription = \"D\"\nversion = \"1\"\n\n"
-                "[config.base_branch]\nrequired = false\ntype = \"string\"\ndefault = \"main\"\n"
-            )
-            project = root / "project"
-            (project / "ai-specs").mkdir(parents=True)
-            manifest = project / "ai-specs" / "ai-specs.toml"
-            manifest.write_text(
-                '[project]\nname = "p"\n\n[recipes.demo]\nenabled = true\nversion = "1"\n'
-            )
-
-            text = MagicMock()
-            text.return_value.ask.return_value = "develop"
-            import questionary as q
-
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch.object(
-                q, "text", text
-            ):
-                configured = self.mod.configure_selected_recipes(project, ["demo"], manifest)
-            self.assertEqual(configured["demo"]["base_branch"], "develop")
-            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
-            self.assertEqual(data["recipes"]["demo"]["config"]["base_branch"], "develop")
-
-
+        project, home = self._project()
+        result = invoke(project, "recipe", "configure", "worktree-flow", "--set", "integration_branch='develop'", "--json", cli_home=home)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("integration_branch", result.stdout)
+        self.assertIn("develop", (project / "ai-specs" / "ai-specs.toml").read_text())
 
     def test_main_offers_envrc_generation(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = root / "project"
-            (project / "ai-specs").mkdir(parents=True)
-            (project / "ai-specs" / "ai-specs.toml").write_text(
-                '[project]\nname = "p"\n\n[recipes.demo]\nenabled = true\nversion = "1"\n'
-            )
-            env = MagicMock()
-            with patch.object(self.mod, "_enabled_recipe_ids", return_value=["demo"]), patch.object(
-                self.mod, "configure_selected_recipes", return_value={}
-            ), patch.object(
-                self.mod, "_load_sibling", return_value=env
-            ), patch.object(
-                self.mod._util, "ensure_deps", return_value=None
-            ), patch("sys.stdin.isatty", return_value=True), patch(
-                "sys.stdout.isatty", return_value=True
-            ):
-                rc = self.mod.main([str(project)])
-            self.assertEqual(rc, 0)
-            env.offer_harness_env.assert_called()
-            self.assertEqual(env.offer_harness_env.call_args.args[0], project.resolve())
+        project, home = self._project("trello-mcp-workflow")
+        result = invoke(project, "configure-recipes", cli_home=home)
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("requires an interactive TTY", result.stderr)
+        self.assertFalse((project / "ai-specs.env").exists())
 
     def test_main_skips_envrc_when_no_mcp_recipes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = root / "project"
-            (project / "ai-specs").mkdir(parents=True)
-            (project / "ai-specs" / "ai-specs.toml").write_text(
-                '[project]\nname = "p"\n\n[recipes.demo]\nenabled = true\nversion = "1"\n'
-            )
-            env = MagicMock()
-            # offer_harness_env itself no-ops when collect is empty; still invoked.
-            with patch.object(self.mod, "_enabled_recipe_ids", return_value=["demo"]), patch.object(
-                self.mod, "configure_selected_recipes", return_value={}
-            ), patch.object(
-                self.mod, "_load_sibling", return_value=env
-            ), patch.object(
-                self.mod._util, "ensure_deps", return_value=None
-            ), patch("sys.stdin.isatty", return_value=True), patch(
-                "sys.stdout.isatty", return_value=True
-            ):
-                rc = self.mod.main([str(project)])
-            self.assertEqual(rc, 0)
-            env.offer_harness_env.assert_called()
+        project, home = self._project()
+        result = invoke(project, "configure-recipes", cli_home=home)
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("requires an interactive TTY", result.stderr)
+        self.assertFalse((project / "ai-specs.env").exists())
 
     def test_offer_envrc_soft_fails_on_prompt_error(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp) / "project"
-            (project / "ai-specs").mkdir(parents=True)
-            env = MagicMock()
-            env.offer_harness_env.side_effect = TypeError(
-                "PromptSession.__init__() got an unexpected keyword argument 'password'"
-            )
-            with patch.object(self.mod, "_load_sibling", return_value=env):
-                # Must not raise — soft-fail path.
-                self.mod._offer_envrc(project)
-            env.offer_harness_env.assert_called()
+        project, home = self._project("trello-mcp-workflow")
+        result = invoke(project, "configure-recipes", cli_home=home)
+        self.assertEqual(result.returncode, 3)
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+        self.assertFalse((project / ".envrc").exists())
 
     def test_boolean_type_alias_uses_confirm(self):
-        recipe = self._recipe(
-            fields={
-                "auto_switch_account": self.schema.ConfigField(
-                    required=False, type="bool", default=False
-                )
-            }
-        )
-        confirm = MagicMock()
-        confirm.return_value.ask.return_value = True
-        text = MagicMock()
-        with patch.dict(
-            "sys.modules",
-            {"questionary": MagicMock(select=MagicMock(), text=text, confirm=confirm)},
-        ):
-            result = self.mod.run_config_wizard(recipe, {})
-        self.assertEqual(result["auto_switch_account"], True)
-        confirm.assert_called()
-        text.assert_not_called()
+        project, home = self._project()
+        result = invoke(project, "recipe", "configure", "worktree-flow", "--set", "auto_remove_merged=false", "--json", cli_home=home)
+        self.assertEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "ok")
+        self.assertFalse(report["applied"]["changed"][0]["to"])
 
 
 class ConfigureRecipesDispatchTests(unittest.TestCase):
     def test_configure_recipes_dispatch(self):
-        import subprocess
-
-        proc = subprocess.run(
-            [str(ROOT / "bin" / "ai-specs"), "configure-recipes", "/nonexistent-ai-specs-path"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertNotEqual(proc.returncode, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = invoke(root, "configure-recipes")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Proyecto no inicializado", result.stderr)
+            self.assertFalse((root / "ai-specs").exists())
 
     def test_recipe_config_sh_help(self):
-        import subprocess
-
-        proc = subprocess.run(
-            ["bash", str(ROOT / "lib" / "recipe-config.sh"), "--help"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(proc.returncode, 0)
-        self.assertIn("configure-recipes", proc.stdout)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = invoke(root, "configure-recipes", "--help")
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("configure-recipes", result.stdout)
 
 
 
