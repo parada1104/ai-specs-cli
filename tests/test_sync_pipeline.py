@@ -1,4 +1,3 @@
-import importlib.util
 import sys
 import json
 import hashlib
@@ -2923,15 +2922,6 @@ class GateRefreshCliTests(unittest.TestCase):
         return env
 
     def test_ordinary_sync_preserves_customized_gate_refresh_flag_updates(self):
-        import importlib.util as _ilu
-        spec = _ilu.spec_from_file_location(
-            "gate_refresh_pc", ROOT / "lib/_internal/project-cache.py"
-        )
-        pc = _ilu.module_from_spec(spec)
-        assert spec.loader is not None
-        sys.modules[spec.name] = pc
-        spec.loader.exec_module(pc)
-
         subprocess.run([str(CLI), "init", str(self.workspace)], check=True, text=True)
         (self.workspace / "ai-specs" / "ai-specs.toml").write_text(
             "[project]\nname = 'gate-refresh'\nsubrepos = []\n\n"
@@ -2968,9 +2958,10 @@ class GateRefreshCliTests(unittest.TestCase):
         self.assertEqual(gate.read_bytes(), rendered,
                          "refresh must restore the CLI-rendered gate bytes")
         rel = "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
-        backup = pc.gate_backup_path(
-            self.workspace, rel,
-            hashlib.sha256(b"# customized gate\n").hexdigest(),
+        backup = ROOT / "cache" / "projects" / (
+            hashlib.sha256(str(self.workspace.resolve()).encode()).hexdigest()[:12] + "-" + self.workspace.name
+        ) / "backups" / hashlib.sha256(rel.encode("utf-8")).hexdigest() / (
+            hashlib.sha256(b"# customized gate\n").hexdigest() + ".sh"
         )
         self.assertTrue(backup.is_file(), f"immutable backup missing at {backup}")
         self.assertEqual(backup.read_bytes(), b"# customized gate\n")
