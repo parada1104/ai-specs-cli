@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+Run `ai-specs sync` in each project: the tracker command, the worktree command,
+and the three recipe skills only change once they are re-materialized, and the
+`tracker-card-gate` hook has to be re-stamped to pick up the new `off` default.
+Where those files are tracked in git, one person syncs and commits the result and
+everyone else pulls — but each developer still runs `ai-specs sync` locally,
+because the resolved-skills cache is per machine.
+
+Two settings are NOT migrated for you. A project that pinned
+`gate_mode = "warn"` under `[recipes.trello-mcp-workflow.config]` keeps warning:
+delete the line to take the new `off` default. A project that wants the old
+always-create-a-worktree behavior must now say so explicitly with
+`creation_mode = "always"` under `[recipes.worktree-flow.config]`; the default is
+`ask`.
+
+Projects with `[brief] render = false` need one manual step: the new workflow
+rules are brief fragments, so a hand-maintained `AGENTS.md` will keep serving the
+old ones — including the tracker rules this release exists to silence — and will
+now contradict the refreshed skills. Re-enable rendering, or copy the three
+changed rules into `AGENTS.md` by hand.
+
 ### Added
 - **Version-keyed upgrade notices**: a release can declare a required
   post-upgrade action in an `### Upgrade notes` subsection under its
@@ -30,6 +51,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restores every file.
 
 ### Changed
+- **Commit consent (`plan-build-flow` `1.7.0` → `1.8.0`)**: the flow no longer
+  commits or pushes on its own. Every gate that requires committed files is now
+  satisfied by *proposing* the commit — file list, branch, message — and waiting
+  for the user to accept, never by committing to unblock the gate. A declined or
+  unanswered proposal leaves the work uncommitted, which is a valid resting
+  state. Earlier approvals never carry over to the next commit. The archive-tail
+  step still moves the change folder, but publishing that move needs approval
+  like any other commit.
+- **Worktree creation is opt-in (`worktree-flow` `1.5.0` → `1.6.0`)**: new
+  `creation_mode` config (`ask` | `always` | `never`, default `ask`). Under `ask`
+  a worktree is offered, not imposed: writing files is no longer a reason on its
+  own. The only triggers are an explicit request, unclear intent about which
+  branch the work belongs on, or a current branch that conflicts with the work
+  (protected branch, unrelated uncommitted changes, or a branch named for a
+  different change) — and each of those asks and waits. SDD artifact phases
+  follow the same triggers. `always` restores the previous behavior.
+  `creation_mode` is independent from `gate_mode`, which still protects writes on
+  a protected branch.
+- **Tracker surface is silent when unconfigured (`trello-mcp-workflow` `1.3.0` →
+  `1.4.0`)**: the brief, the skill, and the `/trello-workflow` command now open
+  with a hard precondition — when the tracker MCP is not reachable for the
+  session (no credentials, server not declared, or failing tool calls) the agent
+  must not mention the tracker, offer to connect it, propose creating or linking
+  a card, write a `## Tracker` section or `tracker.none`, or gate any work on
+  one. Previously a project that merely had the recipe enabled in its committed
+  manifest got the full tracker prose regardless of whether anyone had
+  configured credentials, so agents offered to link cards on boards the user had
+  never set up. `gate_mode` also now defaults to `off` instead of `warn`: the
+  card gate is opt-in, and a tracker nobody configured never gates a write.
 - `ai-specs upgrade` no longer forwards raw `git` output. It prints one labelled
   line per step, adopting the `run_step` contract already used by `ai-specs
   sync`. `-v`/`--verbose` restores the full detail, and a failing step always

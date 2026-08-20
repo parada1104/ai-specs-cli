@@ -62,7 +62,7 @@ Add configuration under `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-s
 ```toml
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.3.0"
+version = "1.4.0"
 
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"

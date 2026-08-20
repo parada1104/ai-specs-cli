@@ -42,10 +42,10 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
     def test_recipe_validates_with_dual_hooks_and_gate_mode(self):
         recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
         self.assertEqual(recipe.id, "trello-mcp-workflow")
-        self.assertEqual(recipe.version, "1.3.0")
+        self.assertEqual(recipe.version, "1.4.0")
         fields = recipe.config_schema.fields
         self.assertIn("gate_mode", fields)
-        self.assertEqual(fields["gate_mode"].default, "warn")
+        self.assertEqual(fields["gate_mode"].default, "off")
         self.assertEqual(set(fields["gate_mode"].enum or []), {"off", "warn", "always"})
         ids = {h.id for h in recipe.runtime_hooks}
         self.assertEqual(ids, {"tracker-card-gate", "tracker-card-gate-shell"})
@@ -63,6 +63,19 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         self.assertIn("tracker.none", rules)
         self.assertIn("never bypass", rules.lower())
         self.assertIn("phase", rules.lower())
+        # The tracker surface must announce itself as inert when unconfigured, so an
+        # agent in a project without tracker credentials never brings it up.
+        self.assertIn("HAS NO TRACKER", rules)
+        self.assertIn("do not mention it", rules)
+    def test_surface_is_silent_when_the_tracker_is_unconfigured(self):
+        skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
+        self.assertIn("Silence when unconfigured", skill)
+        self.assertIn("say nothing about the tracker", skill)
+        self.assertIn("do not offer to connect or configure it", skill)
+        command = (RECIPE_DIR / "commands" / "trello-workflow.md").read_text()
+        self.assertIn("not configured", command)
+        self.assertIn("do not offer to configure it", command)
+
     def test_tracking_declaration_matches_recipe_config(self):
         config_text = (ROOT / "openspec" / "config.yaml").read_text()
         board_match = re.search(r"^  board_id:\s*\"([^\"]+)\"", config_text, re.MULTILINE)
@@ -98,7 +111,7 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         (ai_specs / "ai-specs.toml").write_text(text)
         return root
 
-    def test_sync_stamps_tracker_gate_mode_default_warn(self):
+    def test_sync_stamps_tracker_gate_mode_default_off(self):
         root = self._make_project()
         self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
         hook = (
@@ -107,7 +120,8 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         )
         self.assertTrue(hook.is_file())
         content = hook.read_text()
-        self.assertIn('stamped_gate_mode="warn"', content)
+        # Default is off: a tracker nobody configured must not gate any write.
+        self.assertIn('stamped_gate_mode="off"', content)
         self.assertNotIn("__TRACKER_CARD_GATE_MODE__", content)
         # CLI home stamped to resolved ROOT
         self.assertIn(f'stamped_cli_home="{ROOT.resolve()}"', content)

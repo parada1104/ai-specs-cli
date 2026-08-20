@@ -19,7 +19,7 @@ post-merge cleanup.
 ```toml
 [recipes.worktree-flow]
 enabled = true
-version = "1.5.0"
+version = "1.6.0"
 
 [recipes.worktree-flow.config]
 worktrees_dir = ".worktrees"

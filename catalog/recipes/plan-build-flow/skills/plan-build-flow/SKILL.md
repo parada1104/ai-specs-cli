@@ -252,6 +252,23 @@ Every non-trivial change MUST have a slug folder at `openspec/changes/<slug>/`
 jumps straight to "implement X", create the folder and run the classified plan
 first.
 
+## Commit consent (hard rule)
+
+The flow never commits or pushes on its own. `git commit`, `git push`, `git
+merge`, and any command that writes history are **user-authorized actions**, not
+steps the flow performs to satisfy its own gates.
+
+Whenever a step below says files must be committed, that means: **propose** the
+commit and wait. Present what would be committed — the file list, the branch, and
+the message you intend to use — as a proposal, then stop. Only run it after the
+user accepts. If the user does not answer, the work stays uncommitted; that is a
+valid resting state, and reporting "committed" for anything they did not approve
+is a false report.
+
+This applies even when a gate is blocking. A gate that requires committed files
+is satisfied by asking the user, never by committing to unblock yourself. Never
+infer standing consent from an earlier approval: each commit is its own ask.
+
 ### 7.2 PR creation gate (hard stop)
 
 Do **not** run `gh pr create`, `glab mr create`, or equivalent until:
@@ -263,7 +280,8 @@ Do **not** run `gh pr create`, `glab mr create`, or equivalent until:
    requires the tier minimum files).
 
 If the gate fails, stop with a plain-language blocker: complete planning for
-the classified depth, commit the files, then retry PR creation.
+the classified depth, ask the user to authorize committing those files, and retry
+PR creation only after they accept.
 
 ### 7.3 Pre-merge archive gate (hard stop)
 
@@ -309,8 +327,10 @@ required for Full at both stages.
 Sequence on the review branch:
 
 1. Implement and verify.
-2. Commit and push implementation **and** planning files.
-3. Open a PR (artifact gate satisfied).
+2. Propose committing and pushing implementation **and** planning files, and wait
+   for the user to accept. Do not proceed to step 3 on your own if they decline —
+   the change simply stays local.
+3. Open a PR (artifact gate satisfied), once the user has authorized the push.
 Before moving the change folder, run the executable pre-archive gate and stop
 if it exits nonzero. `--root` is the resolved planning root from the request
 context — required, never the process cwd; a subrepo request passes the proven
@@ -327,7 +347,8 @@ pre-archive check; the pre-merge guardian below remains required after archive.
 
 4. After the pre-archive gate passes, run archive-tail — move
    `openspec/changes/<slug>/` → `openspec/changes/archive/YYYY-MM-DD-<slug>/`,
-   using a valid ISO calendar date, then commit and push to the review branch.
+   using a valid ISO calendar date. The move itself is a working-tree change; the
+   commit and push that publish it need the user's approval like any other.
    The exact undated `openspec/changes/archive/<slug>/` form remains readable
    only as a legacy fallback for historical archives; new archives use the
    dated provider form. The guardian fails closed when multiple dated

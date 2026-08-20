@@ -147,14 +147,14 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
     def test_recipe_brief_rules_preserve_store_and_add_phase_guidance(self):
         recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
         rules = recipe.brief_fragments.workflow_rules
-        self.assertEqual(len(rules), 11)
-        self.assertEqual([fragment.key for fragment in rules], [None] * 11)
+        self.assertEqual(len(rules), 12)
+        self.assertEqual([fragment.key for fragment in rules], [None] * 12)
         self.assertEqual(
             [fragment.text for fragment in rules[:5]],
             [
                 "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; compute the signal depth, compare any explicit requested depth, ask on conflicts, and annotate requested/signal/decided depth in tasks.md before authorization.",
                 "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
-                "Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed.",
+                "Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed with the user's approval.",
                 "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
                 "Before merge, run verify evidence before archive-tail (Standard/Full block without a conforming verify-report.md; Light is advisory), archive the change folder on the review branch at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, and run the pre-merge guardian again; exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.",
             ],
@@ -169,6 +169,18 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertIn("Standard and Light", rules[8].text)
         self.assertIn("session-level preflight", rules[9].text)
         self.assertIn("artifact-derived plan", rules[10].text)
+        # Commit consent is the tail rule: the flow proposes commits, never performs
+        # them to satisfy its own gates.
+        self.assertIn("Never commit, push, or merge without explicit user approval", rules[11].text)
+        self.assertIn("satisfied by asking", rules[11].text)
+
+    def test_skill_requires_consent_before_any_commit(self):
+        text = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
+        self.assertIn("Commit consent (hard rule)", text)
+        self.assertIn("user-authorized actions", text)
+        # A gate that wants committed files is satisfied by asking, not by committing.
+        self.assertIn("satisfied by asking the user, never by committing to unblock", text)
+        self.assertNotIn("2. Commit and push implementation", text)
 
     def test_skill_documents_minima_explore_and_staged_verify_modes(self):
         skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
@@ -179,14 +191,14 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         ):
             self.assertIn(marker, skill)
 
-    def test_readme_and_catalog_pin_recipe_1_7_0(self):
+    def test_readme_and_catalog_pin_recipe_1_8_0(self):
         readme = (CATALOG / RECIPE_ID / "README.md").read_text()
         catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
-        self.assertIn('version = "1.7.0"', readme)
-        self.assertIn('version = "1.7.0"', catalog)
+        self.assertIn('version = "1.8.0"', readme)
+        self.assertIn('version = "1.8.0"', catalog)
         changelog = (ROOT / "CHANGELOG.md").read_text()
         unreleased = changelog.split("## [0.21.0]", 1)[0]
-        self.assertIn("1.6.0` → `1.7.0", unreleased)
+        self.assertIn("1.7.0` → `1.8.0", unreleased)
         self.assertIn("1.5.0` → `1.6.0", unreleased)
 
     def test_skill_describes_adversarial_depth_conflicts(self):
@@ -364,7 +376,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             self.assertIn(phrase, catalog)
 
     def test_version_and_catalog_documentation_use_current_contract(self):
-        self.assertEqual(_recipe_version(), "1.7.0")
+        self.assertEqual(_recipe_version(), "1.8.0")
         readme = (CATALOG / RECIPE_ID / "README.md").read_text()
         catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
         for text in (readme, catalog):
@@ -372,7 +384,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             self.assertIn("openspec", text)
             self.assertIn("engram", text)
             self.assertIn("both", text)
-            self.assertIn("1.7.0", text)
+            self.assertIn("1.8.0", text)
 
     def test_success_criteria_source_selection_contract_is_documented(self):
         recipe_dir = CATALOG / RECIPE_ID

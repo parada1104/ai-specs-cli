@@ -1,35 +1,58 @@
 ---
 name: worktree-flow
 description: >
-  Isolated git worktree workflow for ai-specs change work. Create a dedicated
-  worktree under .worktrees/ for any change that writes files, keep pure
-  exploration outside a worktree, and clean up merged worktrees safely after
-  topologies via recipes.worktree-flow.config.repo_topology and topology-aware
-  gate scope via recipes.worktree-flow.config.gate_scope.
+  Optional isolated git worktree workflow for ai-specs change work. Worktree
+  creation is opt-in via recipes.worktree-flow.config.creation_mode (default
+  ask): offer one when intent is unclear or the current branch conflicts, never
+  by default, and clean up merged worktrees safely after topologies via
+  recipes.worktree-flow.config.repo_topology and topology-aware gate scope via
+  recipes.worktree-flow.config.gate_scope.
 license: MIT
 metadata:
   author: ai-specs
   version: "1.2"
   scope: runtime
   auto_invoke:
-    - "Starting a change that will write files or modify code"
+    - "Deciding whether a change needs its own worktree"
+    - "The user asked for an isolated worktree"
     - "Cleaning up worktrees after a branch is merged"
 ---
 
 # Worktree Flow
 
-Run file-writing change work in an isolated git worktree under `.worktrees/`,
-and remove worktrees safely once their branch is merged. Pure exploration that
-writes nothing does not need a worktree.
+Isolate change work in a git worktree under `.worktrees/` **when isolation is
+actually warranted**, and remove worktrees safely once their branch is merged.
+Creating one is not a default step of the flow: writing files is not by itself a
+reason to branch off. Ask when the user's intent is unclear or the current branch
+conflicts with the work, and otherwise stay in the current checkout.
 
 ## When to create a worktree
 
-| Situation | Worktree? |
+A worktree is **offered, not imposed**. `creation_mode` decides how the flow
+behaves (default `ask`):
+
+| `creation_mode` | Behavior |
 |---|---|
-| Exploration / reading / answering a question (no files written) | No |
-| Implementing a change, writing artifacts, editing code | Yes |
-| Planning or SDD artifact phases that write files | Yes |
-| Any phase that produces committed output | Yes |
+| `ask` (default) | Never create one silently. Work in the current checkout unless a trigger below fires, and when one does, ask and wait. |
+| `always` | Create one for any change that writes files (the previous default). |
+| `never` | Never create one; the user manages checkouts themselves. |
+
+Under `ask`, these are the only triggers — a change writing files is **not** one
+of them by itself:
+
+| Trigger | What to do |
+|---|---|
+| The user's intent is unclear — you cannot tell whether this belongs on the current branch or on a new one | Ask: current branch, or a new worktree? Wait for the answer. |
+| The current branch conflicts with the work — it is a protected branch, it already carries unrelated uncommitted changes, or the work belongs to a different change than the branch is named for | Explain the conflict, propose a worktree, and wait. |
+| The user asked for one (`/worktree-new`, "hacelo en un worktree") | Create it. |
+| None of the above — intent is clear and the current branch fits | Do **not** create one. Work where you are. |
+
+Never create a worktree to satisfy a gate. A blocking write gate means the
+branch is wrong for this work: surface that to the user and let them choose.
+
+SDD artifact phases are no exception. Writing `proposal.md`, `spec.md`,
+`design.md`, or `tasks.md` does not itself justify a new worktree — those phases
+follow the same triggers as any other work.
 
 ## Topology matrix
 
@@ -102,8 +125,9 @@ executed by the agent; there is NO executable `/worktree-new` helper.
 - If a structured Edit/Write/MultiEdit call is blocked or errors for any
   reason while on a protected branch, that is never grounds to retry the
   write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`) —
-  using bash to write bypasses the worktree gate entirely. Create a worktree
-  first (`/worktree-new`) and write there instead.
+  using bash to write bypasses the worktree gate entirely. Stop, say the branch
+  is protected, and let the user choose the destination: another branch, or a
+  worktree they approve. Creating one unasked is not the fix.
 
 ## Creating a worktree
 

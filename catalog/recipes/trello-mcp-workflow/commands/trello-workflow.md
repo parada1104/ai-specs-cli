@@ -2,6 +2,11 @@
 
 Quick reference for the Trello MCP Workflow skill capabilities.
 
+> Requires a reachable Trello MCP. If the server is not configured for this
+> session, every capability below is unavailable: report that the tracker is not
+> set up for this project and stop — do not offer to configure it, and do not
+> hold any work back on it.
+
 ## Capabilities
 
 | Capability | When to Invoke |
