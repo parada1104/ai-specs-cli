@@ -17,6 +17,19 @@ metadata:
 
 # Trello MCP Workflow
 
+## Silence when unconfigured
+
+This skill is inert unless the Trello MCP is reachable. Check that first: if the
+server is not declared for the session, its credentials are missing, or a probe
+tool call fails, STOP here and say nothing about the tracker. Do not name Trello,
+do not offer to connect or configure it, do not propose creating or linking a
+card, do not write a `## Tracker` section or `tracker.none`, and never gate,
+delay, or block the user's work on a tracker that was never set up. An
+unconfigured tracker is not an error to report — it is a tracker the project
+chose not to use.
+
+Everything below assumes that check passed.
+
 ## Prerequisites
 
 - Trello MCP server configured and reachable in the runtime environment.
@@ -32,7 +45,7 @@ metadata:
 | `board_id` | Yes | — | Trello board ID for the project. Example: `69ec097f13e2d38ecd89a557`. |
 | `default_list` | No | `In Progress` | List name where new cards are created when no phase-specific list applies. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
-| `gate_mode` | No | `warn` | Tracker card gate: `off` / `warn` / `always`. |
+| `gate_mode` | No | `off` | Tracker card gate: `off` / `warn` / `always`. Opt in explicitly. |
 
 Configuration is read from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`.
 

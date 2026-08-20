@@ -94,7 +94,7 @@ agent, which adds the missing artifacts when that change resumes.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.7.0"
+version = "1.8.0"
 ```
 
 Then run `ai-specs sync`.

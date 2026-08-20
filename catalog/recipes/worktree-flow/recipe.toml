@@ -2,7 +2,7 @@
 id = "worktree-flow"
 name = "Worktree Flow"
 description = "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work"
-version = "1.5.0"
+version = "1.6.0"
 author = "ai-specs"
 license = "MIT"
 tags = ["infra", "worktree"]
@@ -52,6 +52,13 @@ type = "string"
 default = "main development"
 help_text = "Space-separated branch names the worktree gate protects in the main worktree (writes blocked unless gate_mode allows)."
 
+[config.creation_mode]
+required = false
+type = "string"
+default = "ask"
+enum = ["ask", "always", "never"]
+help_text = "When the flow creates a worktree: ask (default — only when the user asks, or when intent is unclear or the current branch conflicts), always (any change that writes files), or never (the user manages checkouts). Independent from gate_mode, which only protects writes on a protected branch."
+
 [config.gate_mode]
 required = false
 type = "string"
@@ -91,11 +98,11 @@ commands = [
 
 [provides.brief]
 workflow_rules = [
-    "Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.",
+    "Worktree creation mode for this project: `{config.creation_mode}`. Under `ask` (the default) creating a worktree is NOT a default step: work in the current checkout, and only offer one — then wait for the answer — when the user asks for it, when their intent is unclear, or when the current branch conflicts with the work (protected branch, unrelated uncommitted changes, or a branch belonging to a different change). Never create one just because a change writes files, and never to satisfy a blocking gate.",
     "Do not merge or push to `{config.integration_branch}` without a PR and explicit human instruction.",
     "Preserve unrelated worktree changes; never revert changes you did not make.",
     "Before dispatching a write-capable subagent or task, verify which git repository, worktree, and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Under monorepo-submodules, confirming which-repo via show-toplevel is mandatory. Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.",
-    "If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). Create a worktree first (e.g. `/worktree-new`) and write there instead.",
+    "If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`) — that bypasses the gate entirely. Stop and tell the user the branch is protected, then let them choose where the work goes (a different branch, or a worktree they approve).",
 ]
 
 [[provides.hooks]]

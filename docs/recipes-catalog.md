@@ -246,7 +246,7 @@ dated-plus-undated candidates.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.7.0"
+version = "1.8.0"
 
 [recipes.plan-build-flow.config]
 artifact_store_default = "both"
@@ -310,6 +310,7 @@ unmerged ones, and never touches the main worktree.
   | `worktrees_dir` | string | `.worktrees` | Directory holding per-change worktrees. |
   | `integration_branch` | string | `main` | Branch worktrees are created from and merged into. |
   | `auto_remove_merged` | boolean | `true` | Whether merged worktrees are eligible for cleanup. |
+  | `creation_mode` | string | `ask` | When the flow creates a worktree: `ask` (only on request, unclear intent, or a conflicting current branch), `always` (any file-writing change), `never`. Independent from `gate_mode`. |
   | `gate_mode` | string | `always` | Main-worktree gate mode. `always` keeps the current block, `ask` blocks with a bypass hint, and `off` disables the gate. |
   | `gate_scope` | string | `auto` | Scope policy: `auto` / `superrepo` / `subrepo`; only proven canonical `<superrepo>/openspec/changes/**` planning paths are excepted. |
   | `gate_impl` | string | `auto` | Gate implementation: `auto` / `go` / `bash` (see "Gate implementation" above). |
@@ -322,10 +323,11 @@ unmerged ones, and never touches the main worktree.
 ```toml
 [recipes.worktree-flow]
 enabled = true
-version = "1.5.0"
+version = "1.6.0"
 
 [recipes.worktree-flow.config]
 integration_branch = "development"
+creation_mode = "ask"
 gate_mode = "always"
 gate_scope = "auto"
 repo_topology = "auto"
@@ -444,8 +446,11 @@ isolation — forbids cross-board tools and requires card validation against the
 configured board. Ships an MCP preset for `@delorenj/mcp-server-trello` (needs
 `TRELLO_API_KEY` / `TRELLO_TOKEN` in the environment), a read-only
 `ai-specs recipe init` brief to confirm setup before sync, and a phased
-`tracker-card-gate` (`gate_mode` = `off|warn|always`, default `warn`) that
-requires a `## Tracker` link section before production/PR-archive work.
+`tracker-card-gate` (`gate_mode` = `off|warn|always`, default `off`) that
+requires a `## Tracker` link section before production/PR-archive work. The
+tracker surface is inert unless its MCP is reachable: with no credentials
+configured, the agent does not mention the tracker, does not offer to connect
+it, and never holds work back on a card.
 
 - **Provides:** skill `trello-mcp-workflow`, command `/trello-workflow`, 6 card
   templates, an MCP preset, dual runtime hooks (`tracker-card-gate` +
@@ -458,7 +463,7 @@ requires a `## Tracker` link section before production/PR-archive work.
   | `board_id` | string | **yes** | — | Trello board ID. Validated against `^[0-9a-fA-F]{24}$`. |
   | `default_list` | string | no | `In Progress` | List where new cards are created. |
   | `epic_list` | string | no | `Epic` | List where epic-type cards are placed. |
-  | `gate_mode` | string | no | `warn` | Tracker card gate: `off` / `warn` / `always`. |
+  | `gate_mode` | string | no | `off` | Tracker card gate: `off` / `warn` / `always`. Opt in explicitly. |
 
 - **Board isolation** (declared in `recipe.toml`, not overridden per project):
   `forbidden_tools` = `trello_get_my_cards`, `trello_list_boards`;
@@ -474,11 +479,11 @@ requires a `## Tracker` link section before production/PR-archive work.
 ```toml
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.3.0"
+version = "1.4.0"
 
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"
-gate_mode = "warn"
+gate_mode = "warn"   # opt in; the default is off
 ```
 
 ## vault-canonical-store

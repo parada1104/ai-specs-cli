@@ -2,7 +2,7 @@
 id = "trello-mcp-workflow"
 name = "Trello MCP Workflow"
 description = "Automated Trello board integration for ai-specs SDD workflows"
-version = "1.3.0"
+version = "1.4.0"
 tags = ["tracker", "trello"]
 
 [[capabilities]]
@@ -74,9 +74,9 @@ card_validation_required = true
 [config.gate_mode]
 required = false
 type = "string"
-default = "warn"
+default = "off"
 enum = ["off", "warn", "always"]
-help_text = "Tracker card gate: off (disabled), warn (stderr warning, never blocks — default), or always (block production writes / PR-archive shell when an active change lacks the ## Tracker link section)."
+help_text = "Tracker card gate: off (disabled — default), warn (stderr warning, never blocks), or always (block production writes / PR-archive shell when an active change lacks the ## Tracker link section). Opt in explicitly; an unconfigured tracker must never gate work."
 
 [init]
 prompt = "init.md"
@@ -90,6 +90,7 @@ commands = [{ id = "trello-workflow", path = "commands/trello-workflow.md" }]
 
 [provides.brief]
 workflow_rules = [
+    "The tracker rules below apply ONLY while the tracker MCP is actually reachable. When it is not configured for this session — credentials absent, server not declared, or its tool calls failing — the session HAS NO TRACKER: do not mention it, do not offer to connect or configure it, do not propose creating or linking a card, do not write a ## Tracker section or tracker.none, and never gate, delay, or block work on one. Proceed without it and say nothing about it.",
     "Inspect the active Trello card before resuming work and keep card state in sync with actual progress.",
     "Before apply/production work on a structured change, create or link a Trello card and record it in the ## Tracker section of the change's proposal.md (or tasks.md) — card_id + url. openspec/** writes are never gated — write the link section there first.",
     "On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.",
@@ -99,7 +100,7 @@ workflow_rules = [
 
 [[provides.brief.context_sources]]
 key = "trello-source-of-truth"
-text = "Trello is the source of truth for work state and dependencies."
+text = "Trello is the source of truth for work state and dependencies while its MCP is reachable. When the tracker is not configured, this session has no tracker and does not refer to one."
 
 [[provides.brief.mcp_descriptions]]
 key = "trello"

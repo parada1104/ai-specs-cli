@@ -139,6 +139,27 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertTrue(script.is_file(), "cleanup script should materialize")
 
 
+    def test_creation_mode_defaults_to_ask_and_is_opt_in(self):
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        field = recipe.config_schema.fields["creation_mode"]
+        self.assertEqual(field.default, "ask")
+        self.assertEqual(set(field.enum or []), {"ask", "always", "never"})
+        rules = " ".join(
+            f.text for f in (recipe.brief_fragments.workflow_rules or [])
+        )
+        # Writing files must no longer be a reason on its own, and the flow must
+        # never create a worktree to get past a blocking gate.
+        self.assertIn("{config.creation_mode}", rules)
+        self.assertIn("NOT a default step", rules)
+        self.assertIn("never to satisfy a blocking gate", rules)
+
+    def test_skill_offers_a_worktree_instead_of_imposing_one(self):
+        text = (RECIPE_DIR / "skills" / "worktree-flow" / "SKILL.md").read_text()
+        self.assertIn("offered, not imposed", text)
+        self.assertIn("intent is unclear", text)
+        self.assertIn("conflicts with the work", text)
+        self.assertNotIn("| Implementing a change, writing artifacts, editing code | Yes |", text)
+
     def test_skill_mentions_sdd_artifact_phases(self):
         skill = RECIPE_DIR / "skills" / "worktree-flow" / "SKILL.md"
         text = skill.read_text()

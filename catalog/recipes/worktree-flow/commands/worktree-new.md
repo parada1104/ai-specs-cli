@@ -9,8 +9,12 @@ Create an isolated git worktree for a change that will write files.
 
 ## When to use
 
-Before implementing a change, writing artifacts, or editing code. Skip it for
-pure exploration that writes nothing.
+When the user asks for an isolated worktree, or when they accept one you offered.
+Writing files is not a reason on its own — see `creation_mode` in the
+`worktree-flow` skill. Under the default `ask` mode, offer a worktree only when
+the user's intent is unclear or the current branch conflicts with the work
+(protected branch, unrelated uncommitted changes, or a branch that belongs to a
+different change), and wait for their answer before creating anything.
 
 ## Request context: owner vs planning root
 
