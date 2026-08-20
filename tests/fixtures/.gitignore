@@ -1,0 +1,7 @@
+# CLI-materialized artifacts inside project-tree fixtures.
+# `ai-specs sync` writes these when it runs against a project root; they carry
+# machine-specific absolute paths and must never be committed. Tests must copy a
+# fixture to a temp dir before invoking the CLI (see test_target_resolve.py).
+target-resolve/**/.claude/
+target-resolve/**/CLAUDE.md
+target-resolve/**/.ai-specs.lock

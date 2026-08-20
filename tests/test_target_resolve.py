@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,13 +49,28 @@ class TargetResolveTests(unittest.TestCase):
     def _invoke(self, root: Path, *args: str):
         return invoke(root, *args, cli_home=self._home)
 
+    def _fixture(self, name: str) -> Path:
+        """Copy a committed fixture to a temp dir before the CLI touches it.
+
+        `ai-specs sync` mutates its target: it writes .ai-specs.lock and
+        materializes .claude/skills as an ABSOLUTE symlink into the cache
+        (parity contract §4). Running it against the committed fixture leaves
+        that symlink behind pointing at a temp cache that is then deleted, and
+        every later test that copies the fixture tree dies on the dead link.
+        """
+        td = tempfile.TemporaryDirectory(prefix=f"target-fixture-{name}-")
+        self.addCleanup(td.cleanup)
+        dest = Path(td.name) / name
+        shutil.copytree(FIXTURES / name, dest, symlinks=True)
+        return dest
+
     def test_multi_target_fixture_contains_declared_package_directories(self):
         fixture = FIXTURES / "multi-target"
         self.assertTrue((fixture / "packages" / "a").is_dir())
         self.assertTrue((fixture / "packages" / "b").is_dir())
 
     def test_resolves_root_and_subrepos_in_manifest_order_with_dedup(self):
-        r = self._invoke(FIXTURES / "multi-target", "sync")
+        r = self._invoke(self._fixture("multi-target"), "sync")
         self.assertEqual(r.returncode, 0, r.stderr)
         targets = _parse_targets(r.stdout)
         self.assertEqual([t["rel"] for t in targets], [".", "packages/a", "packages/b"])
@@ -66,7 +82,7 @@ class TargetResolveTests(unittest.TestCase):
         )
 
     def test_root_only_manifest_keeps_single_target(self):
-        r = self._invoke(FIXTURES / "root-only", "sync")
+        r = self._invoke(self._fixture("root-only"), "sync")
         self.assertEqual(r.returncode, 0, r.stderr)
         targets = _parse_targets(r.stdout)
         self.assertEqual(len(targets), 1)
@@ -122,7 +138,7 @@ class TargetResolveTests(unittest.TestCase):
 
     def test_plan_emits_declared_only_topology_and_planning_root(self):
         """1.3 — RED: plan carries declared_only, topology, and one planning root."""
-        r = self._invoke(FIXTURES / "multi-target", "sync")
+        r = self._invoke(self._fixture("multi-target"), "sync")
         self.assertEqual(r.returncode, 0, r.stderr)
         targets = _parse_targets(r.stdout)
         self.assertEqual([t["rel"] for t in targets[1:]], ["packages/a", "packages/b"])
@@ -135,7 +151,7 @@ class TargetResolveTests(unittest.TestCase):
 
     def test_all_targets_share_one_planning_root(self):
         """1.3 — RED: every fan-out target shares the root planning root."""
-        r = self._invoke(FIXTURES / "multi-target", "sync")
+        r = self._invoke(self._fixture("multi-target"), "sync")
         self.assertEqual(r.returncode, 0, r.stderr)
         planning_lines = [l for l in r.stdout.splitlines() if "planning:" in l]
         self.assertEqual(len(planning_lines), 1)
