@@ -174,9 +174,12 @@ class EnvScaffoldTests(unittest.TestCase):
             self.assertIn("TRELLO_TOKEN=keep-tok", text)
 
     # TRIAGE: asserts generate_env_example writes ai-specs.env.example (plus deprecated stubs) with
-    # the trello keys and no `export`; the generator is only reachable through the TTY
-    # configure-recipes/init wizard — `ai-specs configure-recipes <proj>` exits 3 non-TTY (no example
-    # emitted, snapshot {}) and `ai-specs doctor <proj>` only reads ai-specs.env, never the example.
+    # the trello keys and no `export`; only the TTY configure-recipes/init wizard emits the file —
+    # `ai-specs configure-recipes <proj>` exits 3 non-TTY (stderr 'configure-recipes requires an
+    # interactive TTY', snapshot {}: no example/stub appears), `ai-specs doctor <proj>` only reads
+    # ai-specs.env (never the .example), and `ai-specs recipe configure trello-mcp-workflow
+    # --inspect --json` returns rc 0 but surfaces just the collected env-var NAMES (TRELLO_API_KEY)
+    # — never the example body, the trello.com/power-ups/admin URL, or the DEPRECATED stubs.
     def test_generate_env_example(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
