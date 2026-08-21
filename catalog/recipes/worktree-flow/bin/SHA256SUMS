@@ -17,10 +17,11 @@
 # published assets; the CI release workflow diffs its generated SHA256SUMS
 # against this file and fails the release on any mismatch.
 #
-# Regenerated for worktree-cleanup-go (cleanup.go/flags.go added to the gate module) (event-cwd whitespace trim in
-# gate/event.go) with the canonical go1.24.13 toolchain via:
+# Regenerated for worktree-gate-ask-user (ask consults the user: message.go
+# AskHint -> AskMessage, main.go ask branch) with the canonical go1.24.13
+# toolchain via:
 #   scripts/build-gate.sh && shasum -a 256 dist/worktree-gate-* | grep -v current
-a7e0d8fe4d61c7b7f5f555a4c158a46f8bf79acd1964a3a40d188553a12a55d2  worktree-gate-darwin-arm64
-caa92e545b0bbe6086c834dbc95b7bbd7d1aca63f8a494d618bb56b67148ce1e  worktree-gate-darwin-amd64
-f2f2daf3080c3e99dcdc0db2ea23e00169144f83d928b543832f9d323fa971bf  worktree-gate-linux-amd64
-b47c22153aea100bd228e949db20498624d68b5d5eaee4efd59bd31c90987727  worktree-gate-linux-arm64
+602758140710761d5e1e494e51b1a77f5e8fa8cff61ac860e8c77f26e9050bc4  worktree-gate-darwin-arm64
+fab9f7b33bb5b4845e11edf0a871719e87186ef1aadddc613535bc705efaa883  worktree-gate-darwin-amd64
+57fc7ad66d3f5fa0059d7d9c14df6efe0653c7955ccf317e080f22991ac40c53  worktree-gate-linux-amd64
+0242d7c456f9192eaa67d1ff604bb0ea699f9c258985044be018eb6ae2075485  worktree-gate-linux-arm64

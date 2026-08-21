@@ -133,9 +133,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		d := Decide(candidate, event.Cwd, scope, topology, protectedBranches)
 		if !d.Allow {
-			fmt.Fprintln(stderr, BlockMessage(event.Mode == "shell", event.Tool, candidate, d.Branch))
 			if mode == "ask" {
-				fmt.Fprintln(stderr, AskHint())
+				fmt.Fprintln(stderr, AskMessage(event.Mode == "shell", event.Tool, candidate, d.Branch))
+			} else {
+				fmt.Fprintln(stderr, BlockMessage(event.Mode == "shell", event.Tool, candidate, d.Branch))
 			}
 			return 2
 		}

@@ -17,8 +17,25 @@ func BlockMessage(shell bool, toolName, candidate, branch string) string {
 	return fmt.Sprintf("worktree-gate: refusing to %s '%s' on protected branch '%s' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write.", toolName, candidate, branch)
 }
 
-// AskHint mirrors worktree-gate-legacy.sh:531-533: in ask mode the block
-// message is followed by a hint that the invocation can be bypassed.
-func AskHint() string {
-	return "worktree-gate: to bypass for this invocation, re-run with WORKTREE_GATE_MODE=off"
+// AskMessage builds the stderr guidance for gate_mode=ask. The write is still
+// refused (exit 2) but the agent is directed to ask the user which destination
+// to use, never to self-bypass. Unlike the legacy AskHint it does NOT advertise
+// the WORKTREE_GATE_MODE=off escape hatch: option 3 (write on the protected
+// branch) is regulated by the skill, not by the gate message.
+func AskMessage(shell bool, toolName, candidate, branch string) string {
+	prefix := fmt.Sprintf("refusing to %s '%s' on protected branch '%s' in the main worktree", defaultTool(toolName), candidate, branch)
+	if shell {
+		prefix = fmt.Sprintf("refusing shell command that writes '%s' on protected branch '%s' in the main worktree", candidate, branch)
+	}
+	return fmt.Sprintf(
+		"worktree-gate: %s. Ask the user where to put this work: (1) create a dedicated worktree (recommended), (2) create a feature branch here, or (3) write on the protected branch with the user's explicit override.",
+		prefix,
+	)
+}
+
+func defaultTool(toolName string) string {
+	if toolName == "" {
+		return "edit"
+	}
+	return toolName
 }

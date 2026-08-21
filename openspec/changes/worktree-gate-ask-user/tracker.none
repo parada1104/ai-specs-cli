@@ -1,0 +1,2 @@
+tracker.none
+reason: Trello MCP unreachable from this session's gateway (mcp connect trello fails: "configured but not connected") although the mcp-server-trello process is running; card to be created and linked on merge.

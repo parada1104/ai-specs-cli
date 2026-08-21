@@ -57,7 +57,7 @@ required = false
 type = "string"
 default = "always"
 enum = ["always", "ask", "off"]
-help_text = "Worktree gate behavior: always (block), ask (prompt), or off (disabled)."
+help_text = "Worktree gate behavior: always (block + worktree guidance), ask (block and ask the user for a destination: worktree / feature branch / explicit protected-branch override), or off (disabled)."
 
 [config.gate_scope]
 required = false
@@ -95,7 +95,7 @@ workflow_rules = [
     "Do not merge or push to `{config.integration_branch}` without a PR and explicit human instruction.",
     "Preserve unrelated worktree changes; never revert changes you did not make.",
     "Before dispatching a write-capable subagent or task, verify which git repository, worktree, and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Under monorepo-submodules, confirming which-repo via show-toplevel is mandatory. Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.",
-    "If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). Create a worktree first (e.g. `/worktree-new`) and write there instead.",
+    "If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). With `gate_mode = always`, create a dedicated worktree first (e.g. `/worktree-new`) and write there instead; with `gate_mode = ask`, ask the user which destination to use — worktree (recommended), feature branch in place, or explicit protected-branch override — and wait; never self-bypass with `WORKTREE_GATE_MODE=off`. With `gate_mode = off`, the gate does not block.",
 ]
 
 [[provides.hooks]]
