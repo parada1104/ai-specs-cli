@@ -402,7 +402,8 @@ Installs no MCP server.
   | `expected_owner` | string | no | `""` | Account username this repo expects; activates auth preflight when set. |
   | `auto_switch_account` | boolean | no | `false` | Reserved for API parity; bb has no auth switch — mismatch blocks with guidance. |
 
-- **Auth note:** Bitbucket CLI uses `bb auth show` (not `bb auth status`) to verify authentication.
+- **Auth note:** Bitbucket CLI verifies authentication with `bb auth status`, the same subcommand as
+  `gh` and `glab`. There is no `bb auth show` (bb 1.23.2 answers `unknown command 'show'`).
 
 - **Full README:** [`catalog/recipes/bitbucket-pr-flow/README.md`](../catalog/recipes/bitbucket-pr-flow/README.md)
 

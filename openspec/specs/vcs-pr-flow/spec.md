@@ -282,13 +282,17 @@ guidance (glab has no `auth switch`).
 ### Requirement: Bitbucket (bb) Auth Preflight
 
 When the bound provider is `bitbucket-pr-flow` and `expected_owner` is set, the preflight MUST
-detect active account via `bb auth show` (NOT `bb auth status`), compare to `expected_owner`,
-and block with guidance (bb has no `auth switch`).
+detect active account via `bb auth status`, compare to `expected_owner`, and block with
+guidance (bb has no `auth switch`).
 
-#### Scenario: bb auth show replaces bb auth status
+#### Scenario: bb uses the same auth subcommand as gh and glab
 - GIVEN the `bitbucket-pr-flow` recipe's bb-pr-create.md command
 - WHEN the authentication verification step is reviewed
-- THEN the command used is `bb auth show` (not `bb auth status`)
+- THEN the command used is `bb auth status`
+- AND it is NOT `bb auth show`, which the bb CLI does not implement
+- NOTE verified on bb 1.23.2: `bb auth show` answers `unknown command 'show'`. An earlier
+  revision of this spec asserted the opposite and shipped a preflight that could never
+  succeed — the mismatch branch was unreachable because the command always errored.
 
 #### Scenario: bb account mismatch — block
 - GIVEN `expected_owner = "myworkspace"` and the active bb account is `other`
@@ -331,7 +335,7 @@ existing authentication check and the push step.
 #### Scenario: bb-pr-create.md includes account match step
 - GIVEN the `bitbucket-pr-flow` command `bb-pr-create.md`
 - WHEN the command is read
-- THEN it contains a "Runtime Preflight: Account Match" section using `bb auth show`
+- THEN it contains a "Runtime Preflight: Account Match" section using `bb auth status`
 
 ### Requirement: Skill Runtime Preflight Updates
 
@@ -343,10 +347,10 @@ Each provider merge-workflow skill MUST include the account-match preflight in i
 - WHEN the skill is read
 - THEN its Runtime Preflight section includes account-match check with gh auth switch support
 
-#### Scenario: bitbucket-merge-workflow uses bb auth show
+#### Scenario: bitbucket-merge-workflow uses bb auth status
 - GIVEN the `bitbucket-merge-workflow` skill
 - WHEN the skill is read
-- THEN its Runtime Preflight authentication check uses `bb auth show` (not `bb auth status`)
+- THEN its Runtime Preflight authentication check uses `bb auth status`
 
 ### Requirement: No Regression When Config Unset
 

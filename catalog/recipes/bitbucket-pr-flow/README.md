@@ -24,7 +24,7 @@ GitLab ([`gitlab-mr-flow`](../gitlab-mr-flow/README.md)).
 
 ## Prerequisites
 
-- **`bb` CLI** installed and authenticated (`bb auth show` — not `bb auth status`). Install from
+- **`bb` CLI** installed and authenticated (`bb auth status` — there is no `bb auth show`). Install from
   https://bitbucket-cli.paulvanderlei.com/getting-started/installation/
 
 ## Enable in `ai-specs.toml`
