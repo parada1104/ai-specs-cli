@@ -237,12 +237,17 @@ class WorktreeGateHookTests(unittest.TestCase):
         r = self._run(self._event("Write", str(self.repo / "src.py")), gate=gate)
         self.assertEqual(r.returncode, 0)
 
-    def test_gate_ask_blocks_with_bypass_hint(self):
+    def test_gate_ask_blocks_and_offers_user_destinations(self):
         self._checkout("development")
         gate = self._stamped_gate("ask")
         r = self._run(self._event("Edit", str(self.repo / "a.txt")), gate=gate)
         self.assertEqual(r.returncode, 2)
-        self.assertIn("WORKTREE_GATE_MODE=off", r.stderr)
+        self.assertIn("development", r.stderr)
+        self.assertIn("create a dedicated worktree (recommended)", r.stderr)
+        self.assertIn("create a feature branch here", r.stderr)
+        self.assertIn("explicit override", r.stderr)
+        self.assertNotIn("WORKTREE_GATE_MODE=off", r.stderr)
+        self.assertNotIn("to bypass", r.stderr)
 
     def test_env_override_beats_stamped(self):
         self._checkout("main")
@@ -267,7 +272,8 @@ class WorktreeGateHookTests(unittest.TestCase):
             env=env,
         )
         self.assertEqual(r.returncode, 2)
-        self.assertIn("WORKTREE_GATE_MODE=off", r.stderr)
+        self.assertIn("Ask the user where to put this work", r.stderr)
+        self.assertNotIn("WORKTREE_GATE_MODE=off", r.stderr)
 
     def test_linked_worktree_always_allowed_in_always(self):
         self._checkout("main")
@@ -515,12 +521,14 @@ class WorktreeGateHookTests(unittest.TestCase):
         self.assertIn("bash/shell", r.stderr)
         self.assertIn("/worktree-new", r.stderr)
 
-    def test_shell_gate_ask_includes_bypass_hint(self):
+    def test_shell_gate_ask_offers_user_destinations_no_bypass(self):
         self._checkout("main")
         gate = self._stamped_gate("ask")
         r = self._run(self._shell_event(f"echo x > {self._src()}"), gate=gate)
         self.assertEqual(r.returncode, 2)
-        self.assertIn("WORKTREE_GATE_MODE=off", r.stderr)
+        self.assertIn("Ask the user where to put this work", r.stderr)
+        self.assertIn("create a dedicated worktree (recommended)", r.stderr)
+        self.assertNotIn("WORKTREE_GATE_MODE=off", r.stderr)
 
     def test_shell_gate_off_disables_shell_gating(self):
         self._checkout("main")
