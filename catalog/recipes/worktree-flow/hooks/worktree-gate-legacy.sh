@@ -529,7 +529,7 @@ PYEOF
     echo "worktree-gate: refusing to ${tool_name:-edit} '$candidate' on protected branch '$blocked_branch' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write." >&2
   fi
   if [ "$gate_mode" = ask ]; then
-    echo "worktree-gate: to bypass for this invocation, re-run with WORKTREE_GATE_MODE=off" >&2
+    echo "worktree-gate: to bypass, set WORKTREE_GATE_MODE=off in the environment that launches the agent, then retry. An inline `WORKTREE_GATE_MODE=off <command>` prefix does NOT work: this hook runs before <command> and reads its own environment." >&2
   fi
   exit 2
 }

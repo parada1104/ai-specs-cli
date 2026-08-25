@@ -4,6 +4,7 @@ import importlib.util
 import sys
 import tempfile
 import unittest
+import re
 from pathlib import Path
 
 
@@ -91,6 +92,26 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         content = hook.read_text()
         self.assertIn('stamped_gate_mode="ask"', content)
         self.assertNotIn("__WORKTREE_GATE_MODE__", content)
+
+    def test_ask_hint_does_not_suggest_an_inline_prefix(self):
+        """The gate reads WORKTREE_GATE_MODE from its own environment (main.go
+        calls os.Getenv), and a PreToolUse hook runs BEFORE the command it
+        inspects. An inline `WORKTREE_GATE_MODE=off <cmd>` prefix therefore
+        never reaches it. The hint must say WHERE to set the variable.
+
+        Asserts on the emitted literal, not the file: the surrounding comments
+        quote the old wording on purpose, to explain why it was wrong.
+        """
+        go_src = (ROOT / "catalog/recipes/worktree-flow/gate/message.go").read_text(encoding="utf-8")
+        sh_src = (ROOT / "catalog/recipes/worktree-flow/hooks/worktree-gate-legacy.sh").read_text(encoding="utf-8")
+        go_hint = re.search(r'func AskHint\(\) string \{\n\treturn "(.*?)"\n\}', go_src, re.S).group(1)
+        sh_hint = re.search(r'echo "(worktree-gate: to bypass.*?)" >&2', sh_src, re.S).group(1)
+
+        # The two implementations must stay byte-identical, as message.go states.
+        self.assertEqual(go_hint, sh_hint)
+        for hint in (go_hint, sh_hint):
+            self.assertNotIn("re-run with WORKTREE_GATE_MODE=off", hint)
+            self.assertIn("in the environment that launches the agent", hint)
 
     def test_sync_rejects_invalid_gate_mode(self):
         root = self._make_project_with_config(

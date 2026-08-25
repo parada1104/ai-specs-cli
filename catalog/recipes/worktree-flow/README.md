@@ -40,7 +40,7 @@ Then run `ai-specs sync`. The cleanup script materializes to
 | Mode | Behavior |
 |---|---|
 | `always` | Current strict behavior: block writes to the main worktree on protected branches. |
-| `ask` | Block, but surface a bypass hint: rerun with `WORKTREE_GATE_MODE=off` for that one invocation. |
+| `ask` | Block, but surface a bypass hint. `WORKTREE_GATE_MODE=off` must be set in the environment that launches the agent — the gate reads it from its own environment, so an inline `WORKTREE_GATE_MODE=off <command>` prefix has no effect. |
 | `off` | Disable the gate entirely; writes are allowed even on protected branches. |
 
 Default: `always`.
