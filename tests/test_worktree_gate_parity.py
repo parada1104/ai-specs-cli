@@ -186,7 +186,10 @@ class WorktreeGateParityTests(unittest.TestCase):
         # copy means any later change to either file breaks here and forces
         # an explicit, reviewed re-freeze. This is the drift guard for the
         # parity oracle: the corpus asserts behavior, this asserts identity.
-        expected = "1ee9da4a53777334c8e9e0e3dd046d3cc1c8ad2225e823123bdeb65c6eeabe76"
+        # Re-frozen deliberately: the ask-mode bypass hint was corrected (it used to
+        # suggest an inline `WORKTREE_GATE_MODE=off <cmd>` prefix, which the gate can
+        # never see). Message text only; no classification logic changed.
+        expected = "ffc9629cb983abeb2e17c7c15628aaf73ad08ab09c2a3fec8443a545a1ce781f"
         self.assertEqual(sha256(LEGACY), expected)
 
     def test_protected_main_reference_blocks_real_fixture(self):

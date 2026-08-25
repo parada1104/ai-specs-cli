@@ -223,8 +223,12 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("command -v bb", self.skill_text)
 
     def test_skill_checks_bb_auth(self):
-        """Skill checks bb authentication via bb auth show."""
-        self.assertIn("bb auth show", self.skill_text)
+        """Skill checks bb authentication via bb auth status."""
+        self.assertIn("bb auth status", self.skill_text)
+
+    def test_skill_does_not_use_nonexistent_bb_auth_show(self):
+        """bb has no `auth show` subcommand; bb 1.23.2 answers unknown command 'show'."""
+        self.assertNotIn("bb auth show 2>", self.skill_text)
 
     def test_skill_uses_explicit_push(self):
         """Skill uses explicit git push -u $REMOTE before PR creation."""
@@ -279,8 +283,12 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("command -v bb", self.command_text)
 
     def test_command_checks_bb_auth(self):
-        """Command checks bb authentication via bb auth show."""
-        self.assertIn("bb auth show", self.command_text)
+        """Command checks bb authentication via bb auth status."""
+        self.assertIn("bb auth status", self.command_text)
+
+    def test_command_does_not_use_nonexistent_bb_auth_show(self):
+        """bb has no `auth show` subcommand; bb 1.23.2 answers unknown command 'show'."""
+        self.assertNotIn("bb auth show 2>", self.command_text)
 
 
 
@@ -362,7 +370,7 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
     def test_skill_preflight_before_push_order(self):
         """Skill checks bb install and auth BEFORE git push."""
         install_check_pos = self.skill_text.find("command -v bb")
-        auth_check_pos = self.skill_text.find("bb auth show")
+        auth_check_pos = self.skill_text.find("bb auth status")
         push_pos = self.skill_text.find("git push -u $REMOTE")
         self.assertGreater(
             push_pos, install_check_pos,
@@ -370,7 +378,7 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         )
         self.assertGreater(
             push_pos, auth_check_pos,
-            "git push must appear AFTER bb auth show in the skill"
+            "git push must appear AFTER bb auth status in the skill"
         )
 
     def test_skill_stops_after_pr_create_reports_url(self):
@@ -421,7 +429,7 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
     def test_command_preflight_before_push_order(self):
         """Command checks bb install and auth BEFORE git push."""
         install_check_pos = self.command_text.find("command -v bb")
-        auth_check_pos = self.command_text.find("bb auth show")
+        auth_check_pos = self.command_text.find("bb auth status")
         push_pos = self.command_text.find("git push -u $REMOTE")
         self.assertGreater(
             push_pos, install_check_pos,
@@ -429,7 +437,7 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         )
         self.assertGreater(
             push_pos, auth_check_pos,
-            "git push must appear AFTER bb auth show in the command"
+            "git push must appear AFTER bb auth status in the command"
         )
 
     def test_command_stops_after_pr_create_reports_url(self):

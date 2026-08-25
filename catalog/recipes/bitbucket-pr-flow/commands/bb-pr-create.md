@@ -42,7 +42,7 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 3. Verify authentication:
 
    ```bash
-   bb auth show
+   bb auth status
    ```
 
    If authentication fails (output includes "Not logged in"), stop and report:
@@ -60,10 +60,11 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 
    ```bash
    # Runtime Preflight: Account Match (Bitbucket)
-   # Fix: bb has no `bb auth status`; the correct command is `bb auth show`.
+   # Note: the bb CLI has no `bb auth show` (verified on bb 1.23.2, which answers
+   # `unknown command 'show'`). The subcommand is `bb auth status`, like gh and glab.
    EXPECTED_OWNER="{config.expected_owner}"
    if [ -n "$EXPECTED_OWNER" ]; then
-     ACTIVE=$(bb auth show 2>&1 | awk '/Username|username/ {print $2}' | head -1)
+     ACTIVE=$(bb auth status 2>&1 | awk '/Username|username/ {print $2}' | head -1)
      if [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
        echo "**Blocker**: active bb account is '$ACTIVE'; expected '$EXPECTED_OWNER'."
        echo "bb has no 'auth switch'. Run: bb auth login"
