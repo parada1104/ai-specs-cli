@@ -141,20 +141,62 @@ class GitPrFlowGoldenContentTests(unittest.TestCase):
         self.assertGreater(merge_pos, 0)
         self.assertLess(archive_pos, merge_pos)
 
-    def test_skill_requires_post_merge_branch_cleanup(self):
-        """Skill force-deletes local branch and removes worktree after merge."""
-        self.assertIn("git branch -D", self.skill_text)
-        self.assertIn("git worktree remove", self.skill_text)
-        self.assertIn("git push origin --delete", self.skill_text)
+    def test_skill_requires_native_post_merge_cleanup_sequence(self):
+        """Skill delegates ordered branch/worktree cleanup to the Go command."""
+        self.assertIn("worktree-cleanup.sh", self.skill_text)
+        self.assertIn("git pull --ff-only", self.skill_text)
+        self.assertIn("base sync is deliberately LAST", self.skill_text)
+
+    def test_skill_documents_the_implemented_cleanup_order(self):
+        """The prose order must match what the Go command actually does.
+
+        Asserting that each phrase merely appears somewhere cannot catch a
+        reordered sequence, and the order is the whole point of this step: the
+        remote branch is deleted before the local one so an unreachable remote
+        leaves a retry handle behind, and the base sync runs last.
+        """
+        owns = self.skill_text.find("The cleanup command owns, in this order,")
+        self.assertGreater(owns, 0, "cleanup ownership sentence is missing")
+        # The prose is hard-wrapped, so phrases straddle line breaks.
+        sentence = " ".join(self.skill_text[owns : owns + 400].split())
+        steps = [
+            "merged-worktree removal",
+            "remote branch deletion",
+            "local branch removal",
+        ]
+        positions = [sentence.find(step) for step in steps]
+        for step, pos in zip(steps, positions):
+            self.assertGreater(pos, -1, f"cleanup step not documented: {step}")
+        self.assertEqual(
+            positions,
+            sorted(positions),
+            f"documented cleanup order does not match the implementation: {steps}",
+        )
+        self.assertLess(
+            self.skill_text.find("local branch removal"),
+            self.skill_text.find("git pull --ff-only"),
+            "base sync must be documented after branch cleanup",
+        )
+
+    def test_skill_rejects_path_presence_as_merge_evidence(self):
+        """Stale-branch deletion needs content proof, never a matching name."""
+        self.assertNotIn("path-presence proof", self.skill_text)
+        self.assertIn(
+            "A same-named path existing on the base is not evidence",
+            self.skill_text,
+        )
+
+    def test_skill_never_recommends_delete_branch(self):
+        """Provider-side source deletion is forbidden in this worktree layout."""
+        self.assertNotIn("--delete-branch", self.skill_text)
+        self.assertIn("without asking the hosting provider to delete", self.skill_text)
 
     def test_skill_classifies_protected_heads(self):
-        """Skill skips delete/cleanup for protected long-lived heads."""
+        """Skill retains protected-head classification and guardrails."""
         self.assertIn("Head branch class", self.skill_text)
         self.assertIn("development", self.skill_text)
         self.assertIn("staging", self.skill_text)
-        self.assertIn("Protected head", self.skill_text)
-        self.assertIn("--delete-branch", self.skill_text)
-        self.assertIn("never pass --delete-branch", self.skill_text.lower())
+        self.assertIn("Protected heads", self.skill_text)
 
     def test_skill_preflight_checks_delete_branch_on_merge(self):
         """Skill warns when GitHub auto-deletes heads on merge."""

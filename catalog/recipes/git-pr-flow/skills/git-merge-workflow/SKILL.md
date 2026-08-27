@@ -164,29 +164,18 @@ Do **not** merge if `openspec/changes/<slug>/` still exists, or if
 
 8. Classify `HEAD_BRANCH` (see **Head branch class**). Merge only after explicit
    user approval, required checks/review, archive on the review branch, and a
-   clean guardian result:
+   clean guardian result. Merge without asking the hosting provider to delete
+   the source branch:
 
 ```bash
-# Feature head — delete remote source via gh
-gh pr merge --squash --delete-branch
-
-# Protected head — never pass --delete-branch
 gh pr merge --squash
 ```
 
-9. After the PR is merged, sync the integration branch. **Post-merge worktree /
-   local / remote branch cleanup runs only for feature heads.** For a protected
-   head, skip worktree remove, `git branch -D`, and `git push origin --delete`
-   for that head — only sync the base:
-
-```bash
-git checkout <integration-branch>
-git pull --ff-only origin <integration-branch>
-```
-
-For a **feature** head, leave the worktree first (`cd` to the main repo root —
-never remove while `$PWD` is inside the worktree). Prefer the worktree-flow
-cleanup script:
+9. After the PR is merged, run the complete cleanup sequence from the main
+   repository worktree. Do not switch the base checkout first: the cleanup
+   command must release every feature worktree before touching its branches,
+   and must delete and verify the remote branch before deleting the local one.
+   The base sync is deliberately LAST:
 
 ```bash
 cd <main-repo-root>
@@ -194,25 +183,28 @@ bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
   --dir .worktrees --base <integration-branch>
 ```
 
-Manual fallback only if the script is unavailable:
+The cleanup command owns, in this order, merged-worktree removal, remote branch
+deletion plus independent verification, local branch removal, and finally:
 
 ```bash
-git worktree remove <absolute-path-to-worktree>
-git branch -D <branch-name>
+git pull --ff-only origin <integration-branch>
 ```
 
-> **Note**: `git branch -D` (capital D) is required because `gh pr merge --squash`
-> rewrites history — the feature branch commits are not ancestors of the target
-> branch, so `git branch -d` would refuse with "not fully merged". Force-delete
-> is safe here because the PR was already merged. Stop without deleting if the
-> worktree is dirty.
+It checks protected names immediately before every destructive operation and
+refuses any branch still held by a worktree. The local branch is deleted only
+after the remote one is provably gone, so an unreachable remote leaves a branch
+a rerun can retry instead of an orphaned remote nothing can find again. It also
+inspects local branches left without worktrees; it deletes those only when
+positive merge evidence exists — a merged tip, patch equivalence, or identical
+tree content. A same-named path existing on the base is not evidence, because
+two commits can touch one path with entirely different content and never meet.
+Ambiguous evidence is preserved.
+The command must be run from the main worktree, never from a feature worktree.
 
-If the remote feature branch still exists after merge (e.g. merge without
-`--delete-branch`), delete it explicitly — **feature heads only**:
-
-```bash
-git push origin --delete <branch-name>
-```
+Do not use hosting-provider source-branch deletion for this layout: the base
+branch is checked out in the main worktree, so provider-side local deletion is
+structurally unable to complete the required local/remote cleanup sequence.
+Manual deletion is not a substitute for the verified cleanup command.
 
 ## Guardrails
 
@@ -220,7 +212,7 @@ git push origin --delete <branch-name>
 - Never push, merge, delete branches, or remove worktrees without explicit user instruction.
 - Never remove a worktree before confirming the PR is merged and no uncommitted work remains.
 - Never delete a protected head (`main` / `master` / `development` / `staging` /
-  configured base or integration branch) via `--delete-branch`, worktree cleanup,
-  or `git push --delete`.
+  configured base or integration branch) via hosting-provider branch deletion,
+  worktree cleanup, or `git push --delete`.
 - Preserve unrelated changes; stop and ask if cleanup would touch them.
 - If `gh` is unavailable or unauthenticated, stop with the exact blocker.

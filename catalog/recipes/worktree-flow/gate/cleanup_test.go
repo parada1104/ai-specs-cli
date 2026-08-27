@@ -316,6 +316,103 @@ func TestCleanupRequiresPrimaryMainWorktree(t *testing.T) {
 	}
 }
 
+func TestCleanupDiscoversStaleLocalBranchWithNoWorktree(t *testing.T) {
+	root := makeCleanupRepo(t)
+	cleanupGitTest(t, root, "checkout", "-qb", "stale-existing")
+	if err := os.WriteFile(filepath.Join(root, "shared.txt"), []byte("branch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", "shared.txt")
+	cleanupGitTest(t, root, "commit", "-qm", "stale branch")
+	cleanupGitTest(t, root, "checkout", "-q", "main")
+	if err := os.WriteFile(filepath.Join(root, "shared.txt"), []byte("landed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", "shared.txt")
+	cleanupGitTest(t, root, "commit", "-qm", "landed")
+
+	gh := filepath.Join(t.TempDir(), "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\n[ \"$1\" = pr ] && [ \"$2\" = list ] && printf '%s\\n' '[]'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+oldPath)
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	// The branch wrote shared.txt="branch\n"; main independently wrote
+	// shared.txt="landed\n". Same path, different content, NO merge. The
+	// branch's work never landed, so it must be preserved. An earlier version
+	// of this test asserted "would remove", encoding the defect as the
+	// contract: path presence alone was accepted as proof of merge.
+	out := stdout.String()
+	if strings.Contains(out, "would remove stale-existing") {
+		t.Fatalf("a never-merged branch was scheduled for deletion because a "+
+			"same-named path exists on the base: %q", out)
+	}
+	if !strings.Contains(out, "stale-existing") {
+		t.Fatalf("stale local branch was not discovered at all: %q", out)
+	}
+}
+
+// TestStaleBranchWithLandedContentIsStillRemovable keeps the feature honest:
+// preserving everything would be safe and useless. A stale branch whose commit
+// genuinely landed must still be cleaned up.
+func TestStaleBranchWithLandedContentIsStillRemovable(t *testing.T) {
+	root := makeCleanupRepo(t)
+	cleanupGitTest(t, root, "checkout", "-qb", "stale-landed")
+	if err := os.WriteFile(filepath.Join(root, "landed.txt"), []byte("landed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", "landed.txt")
+	cleanupGitTest(t, root, "commit", "-qm", "stale landed")
+	cleanupGitTest(t, root, "checkout", "-q", "main")
+	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge stale-landed", "stale-landed")
+
+	gh := filepath.Join(t.TempDir(), "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\n[ \"$1\" = pr ] && [ \"$2\" = list ] && printf '%s\\n' '[]'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "would remove stale-landed") {
+		t.Fatalf("a genuinely merged stale branch was not cleaned up: %q", stdout.String())
+	}
+}
+
+func TestCleanupRefusesStaleBranchWhoseMergeCannotBeProven(t *testing.T) {
+	root := makeCleanupRepo(t)
+	cleanupGitTest(t, root, "checkout", "-qb", "stale-unproven")
+	if err := os.WriteFile(filepath.Join(root, "only-here.txt"), []byte("never landed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", ".")
+	cleanupGitTest(t, root, "commit", "-qm", "unproven work")
+	cleanupGitTest(t, root, "checkout", "-q", "main")
+
+	gh := filepath.Join(t.TempDir(), "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\n[ \"$1\" = pr ] && [ \"$2\" = list ] && printf '%s\\n' '[]'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "would remove stale-unproven") {
+		t.Fatalf("a branch with no provable merge was scheduled for deletion: %q", stdout.String())
+	}
+}
 func TestCleanupPreservesUnmergedAndDirty(t *testing.T) {
 	root := makeCleanupRepo(t)
 	unmerged := addCleanupWorktree(t, root, "feat-unmerged")
@@ -344,5 +441,104 @@ func TestCleanupPreservesUnmergedAndDirty(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "skipped feat-dirty (dirty)") {
 		t.Fatalf("output=%q missing dirty refusal", stdout.String())
+	}
+}
+
+// TestCleanupProvesMergeForNewlinePathInTree is the falsifying half of the
+// NUL-delimiter contract.
+//
+// TestCleanupPreservesNewlinePathInTreeProof only asserts that an unmerged
+// newline path stays preserved — but "unmerged" is the outcome for ANY failed
+// proof, so a regression from -z to line splitting would mangle the path,
+// fail the proof, and still produce the expected output. That test cannot
+// detect the bug it documents.
+//
+// Here the newline path IS genuinely landed on the base with identical
+// content, so only a correctly reassembled path can prove it. Splitting the
+// diff output on newlines yields "line" and "break.txt", neither of which is a
+// tree entry, and the branch would be wrongly preserved.
+func TestCleanupProvesMergeForNewlinePathInTree(t *testing.T) {
+	root := makeCleanupRepo(t)
+	wt := addCleanupWorktree(t, root, "feat-newline-landed")
+	name := "line\nbreak.txt"
+	if err := os.WriteFile(filepath.Join(wt, name), []byte("branch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "newline")
+	// The base lands the same content plus an unrelated file. The extra file
+	// makes the combined patch id differ, so the tree-entry proof — the only
+	// one that reads the path back — is what has to decide.
+	if err := os.WriteFile(filepath.Join(root, name), []byte("branch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "base-extra.txt"), []byte("base\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", ".")
+	cleanupGitTest(t, root, "commit", "-qm", "land newline path plus unrelated work")
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "would remove feat-newline-landed") {
+		t.Fatalf("newline path was not reassembled from the NUL-delimited diff: %q", stdout.String())
+	}
+}
+
+// TestRemoteDeletionFailureLeavesLocalBranchForRetry pins the recovery order.
+//
+// Deleting the local branch before the remote one destroys the only handle a
+// rerun has. Worktree and local branch are both gone, so the surviving remote
+// branch is invisible to every later pass and the failure is unrecoverable
+// without manual intervention. The remote must go first: it is the step that
+// can fail for reasons outside this machine.
+func TestRemoteDeletionFailureLeavesLocalBranchForRetry(t *testing.T) {
+	root := makeCleanupRepo(t)
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	if out, err := exec.Command("git", "init", "--bare", "-q", remote).CombinedOutput(); err != nil {
+		t.Fatalf("git init bare: %v\n%s", err, out)
+	}
+	cleanupGitTest(t, root, "remote", "add", "origin", remote)
+	cleanupGitTest(t, root, "push", "-q", "-u", "origin", "main")
+	wt := addCleanupWorktree(t, root, "feat-orphan")
+	if err := os.WriteFile(filepath.Join(wt, "orphan.txt"), []byte("orphan\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "orphan")
+	cleanupGitTest(t, wt, "push", "-q", "-u", "origin", "feat-orphan")
+	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge orphan", "feat-orphan")
+	// The remote becomes unreachable between the merge and the cleanup — a
+	// network outage, a revoked token, a protected-branch rule.
+	if err := os.RemoveAll(remote); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", false, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code == 0 {
+		t.Fatalf("unreachable remote reported success: stdout=%q", stdout.String())
+	}
+	if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/feat-orphan").Run(); err != nil {
+		t.Fatalf("local branch was deleted before the remote failure, leaving nothing for a rerun to retry: stdout=%q", stdout.String())
+	}
+	// Surviving is only half the contract. Prove the rerun actually finishes
+	// the job once the remote is reachable again: the stale-branch sweep has
+	// to rediscover a branch whose worktree is already gone.
+	if out, err := exec.Command("git", "init", "--bare", "-q", remote).CombinedOutput(); err != nil {
+		t.Fatalf("git init bare: %v\n%s", err, out)
+	}
+	cleanupGitTest(t, root, "push", "-q", "origin", "main")
+	cleanupGitTest(t, root, "push", "-q", "origin", "feat-orphan")
+	var rerunOut, rerunErr bytes.Buffer
+	if code := runCleanup(root, cfg, &rerunOut, &rerunErr); code != 0 {
+		t.Fatalf("rerun exit=%d stdout=%q stderr=%q", code, rerunOut.String(), rerunErr.String())
+	}
+	if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/feat-orphan").Run(); err == nil {
+		t.Fatalf("rerun left the local branch behind: %q", rerunOut.String())
+	}
+	if got := cleanupGitTest(t, root, "ls-remote", "--heads", "origin", "feat-orphan"); got != "" {
+		t.Fatalf("rerun left the remote branch behind: %q", got)
 	}
 }

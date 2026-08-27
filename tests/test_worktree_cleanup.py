@@ -618,7 +618,11 @@ class WorktreeCleanupTests(unittest.TestCase):
             "Go cleanup must safely classify a large unmerged branch without "
             f"a false-positive failure. stderr: {result.stderr}",
         )
-        self.assertEqual(result.stdout, "", "a branch with no worktree is safely ignored")
+        self.assertIn(
+            "skipped feat-huge (unmerged)",
+            result.stdout,
+            "a stale unmerged branch must be reported and preserved",
+        )
 
     # ── B2: origin/<base> fallback when configured remote is stale ──
 
