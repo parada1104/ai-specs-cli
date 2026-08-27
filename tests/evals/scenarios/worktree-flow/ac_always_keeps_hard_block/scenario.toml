@@ -1,0 +1,16 @@
+id = "ac_always_keeps_hard_block"
+recipe_id = "worktree-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+tier = "standard"
+description = "always mode keeps protected writes blocked and points to a dedicated worktree"
+fixture = "protected_main"
+gate_mode = "always"
+forbidden_path_globs = ["src/**"]
+required_path_globs = [".worktrees/**"]
+required_transcript_one_of = [
+  "/worktree-new",
+  "dedicated worktree",
+  "git worktree add",
+]
+forbidden_transcript = ["WORKTREE_GATE_MODE=off"]
