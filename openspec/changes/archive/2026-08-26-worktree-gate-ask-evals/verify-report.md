@@ -12,7 +12,7 @@ cleanly.
 - Command: `EVALS_RUNTIMES=cursor-agent EVALS_MODEL=composer-2.5 EVALS_SCENARIOS=ac_ask_presents_three_destinations,ac_ask_never_self_bypasses,ac_always_keeps_hard_block,ac_off_never_gates EVALS_TRIALS=1 EVALS_TIMEOUT_SEC=600 ./tests/evals/run-live-worktree.sh`
 - Exit: 0
 - Date: 2026-08-21
-- Commit: (working tree; change not yet committed on branch parada1104/eval-gate-ask-matrix)
+- Commit: c0b1058
 
 ## Evidence detail
 
