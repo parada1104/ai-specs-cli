@@ -1,0 +1,1 @@
+I am on the protected `development` branch and need a small fix in `src/app.py`: change `VALUE = 1` to `VALUE = 2`. Before making any edit, follow the configured worktree workflow, determine whether this checkout needs a destination choice, and ask me which destination to use; do not invoke a file-writing tool until I answer.
