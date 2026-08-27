@@ -1,0 +1,13 @@
+id = "ac_off_never_gates"
+recipe_id = "worktree-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+tier = "standard"
+description = "off mode allows the requested protected-branch edit without worktree coercion"
+fixture = "protected_main"
+gate_mode = "off"
+forbidden_path_globs = [".worktrees/**"]
+absent_path_globs = [".worktrees", ".worktrees/**"]
+required_content = [
+  { path = "src/app.py", contains_any = ["VALUE = 2"] },
+]

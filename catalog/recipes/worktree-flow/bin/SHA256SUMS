@@ -17,11 +17,12 @@
 # published assets; the CI release workflow diffs its generated SHA256SUMS
 # against this file and fails the release on any mismatch.
 #
-# Regenerated for cleanup-merge-sequence (post-merge cleanup order, stale-branch
-# merge proof, and base sync in gate/cleanup.go) with the canonical go1.24.13
-# toolchain via:
+# Regenerated after merging development (cleanup-merge-sequence post-merge
+# cleanup order, stale-branch merge proof, and base sync in gate/cleanup.go,
+# plus worktree-gate-ask-user ask-mode in message.go/main.go) with the
+# canonical go1.24.13 toolchain via:
 #   scripts/build-gate.sh && shasum -a 256 dist/worktree-gate-* | grep -v current
-0a258db907d9099c166d03a55b2c189a32222adfc71dd9185eb41cc741aba3f6  worktree-gate-darwin-arm64
-9abf689407e42593d5da643cb4484810ab7978475d365ea45ea2573c10b82f93  worktree-gate-darwin-amd64
-5312ae6f886d0a9fa9fb73222f4339101e7d8a929609f88d2f07f940a6dcae80  worktree-gate-linux-amd64
-7d78e54bb4ef34addd7cd10d7cd3684c22e924118f364c0a2c3359fd6e2fcbce  worktree-gate-linux-arm64
+98f53727876263464a194703c55ffd5b54ccbe7bb5f686640a4ed75a0c718be0  worktree-gate-darwin-arm64
+75abaeb0210015a54cd152a82ee2d519cbf1af8248bba1918556843aeea2fe53  worktree-gate-darwin-amd64
+c49080b4b785f176d76b4f428328bf6540caf52bb84569af26cae0d0ab5bc214  worktree-gate-linux-amd64
+795cd7635d1218150bd609861c3c715f795385edd9178b00b732fa19dfe9284b  worktree-gate-linux-arm64

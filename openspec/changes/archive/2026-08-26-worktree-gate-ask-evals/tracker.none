@@ -1,0 +1,2 @@
+tracker.none
+reason: Trello MCP unavailable this session (mcp connect trello fails: "configured but not connected"); card to be created/linked on merge via the review branch.

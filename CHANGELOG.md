@@ -155,6 +155,13 @@ preserved customized gate, use `ai-specs sync --refresh-gates`.
 - `plan-build-flow` `1.5.0` → `1.6.0`: tier-specific proposal/spec minima, Standard/Full staged verify evidence gates before archive and merge, and grandfathering guidance for in-flight plans.
 - `plan-build-flow` `1.6.0` → `1.7.0`: Full logical phase compatibility,
   composed preflight values, and artifact-derived plan presentation contracts.
+    - **`worktree-flow` `gate_mode=ask` consults the user**: a blocked write on a
+      protected branch now stops and asks the user for a destination — create a
+      dedicated worktree (recommended), create a feature branch in place, or write
+      on the protected branch with their explicit override — instead of telling
+      the agent to self-bypass with `WORKTREE_GATE_MODE=off`. `always` keeps its
+      hard block; `off` stays fully disabled. Version bump for `worktree-flow`
+      `1.6.0` and `creation_mode` lands with PR #230, not here.
 - Removed the retired `sdd-adaptive-contract` ceremony contract: deleted the
   canonical spec, the `sdd.decision_matrix` section in `openspec/config.yaml`,
   and the `[sdd]` recipe metadata in `docs/recipe-schema.md`; `plan-build-flow`

@@ -139,3 +139,56 @@ func TestBlockMessageDefaultTool(t *testing.T) {
 		t.Fatalf("default-tool message = %q, want 'edit' fallback", got)
 	}
 }
+
+func TestAskMessagePresentsThreeDestinationsAndNoSelfBypass(t *testing.T) {
+	got := AskMessage(false, "Write", "/repo/src.py", "development")
+	// The ask message lists the three destinations for the user.
+	for _, want := range []string{
+		"worktree-gate: refusing to Write '/repo/src.py' on protected branch 'development' in the main worktree.",
+		"(1) create a dedicated worktree (recommended)",
+		"(2) create a feature branch here",
+		"(3) write on the protected branch with the user's explicit override",
+		"Ask the user where to put this work",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ask message missing %q:\n%s", want, got)
+		}
+	}
+	// The self-bypass escape hatch must never be advertised to the agent.
+	if strings.Contains(got, "WORKTREE_GATE_MODE=off") || strings.Contains(got, "to bypass") {
+		t.Fatalf("ask message must not advertise a self-bypass: %q", got)
+	}
+	// The hard block still says no — ask is not a silent allow.
+	if !strings.Contains(got, "refusing") {
+		t.Fatalf("ask message must refuse the write: %q", got)
+	}
+}
+
+func TestAskMessageShellVariant(t *testing.T) {
+	got := AskMessage(true, "Bash", "/repo/out.log", "main")
+	if !strings.HasPrefix(got, "worktree-gate: refusing shell command that writes '/repo/out.log' on protected branch 'main'") {
+		t.Fatalf("shell ask message prefix = %q", got)
+	}
+	if !strings.Contains(got, "Ask the user where to put this work") {
+		t.Fatalf("shell ask message missing the user prompt: %q", got)
+	}
+	if strings.Contains(got, "WORKTREE_GATE_MODE=off") {
+		t.Fatalf("shell ask message must not advertise self-bypass: %q", got)
+	}
+}
+
+func TestAskMessageDefaultTool(t *testing.T) {
+	got := AskMessage(false, "", "/repo/x", "main")
+	if !strings.HasPrefix(got, "worktree-gate: refusing to edit '/repo/x' on protected branch 'main'") {
+		t.Fatalf("default-tool ask message = %q, want 'edit' fallback", got)
+	}
+}
+
+func TestDefaultTool(t *testing.T) {
+	if got := defaultTool(""); got != "edit" {
+		t.Fatalf("defaultTool(empty) = %q, want edit", got)
+	}
+	if got := defaultTool("Write"); got != "Write" {
+		t.Fatalf("defaultTool(Write) = %q, want Write", got)
+	}
+}

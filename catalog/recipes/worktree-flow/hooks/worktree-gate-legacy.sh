@@ -523,13 +523,19 @@ PYEOF
   )" || decision="allow"
 
   case "$decision" in block:*) blocked_branch="${decision#block:}" ;; *) return 1 ;; esac
-  if [ "$mode" = shell ]; then
+  if [ "$gate_mode" = ask ]; then
+    # ask: refuse the write but present a real user decision among three
+    # destinations. Never advertise the WORKTREE_GATE_MODE=off self-bypass
+    # here; option 3 is regulated by the skill, not by the gate message.
+    if [ "$mode" = shell ]; then
+      echo "worktree-gate: refusing shell command that writes '$candidate' on protected branch '$blocked_branch' in the main worktree. Ask the user where to put this work: (1) create a dedicated worktree (recommended), (2) create a feature branch here, or (3) write on the protected branch with the user's explicit override." >&2
+    else
+      echo "worktree-gate: refusing to ${tool_name:-edit} '$candidate' on protected branch '$blocked_branch' in the main worktree. Ask the user where to put this work: (1) create a dedicated worktree (recommended), (2) create a feature branch here, or (3) write on the protected branch with the user's explicit override." >&2
+    fi
+  elif [ "$mode" = shell ]; then
     echo "worktree-gate: refusing shell command that writes '$candidate' on protected branch '$blocked_branch' in the main worktree — using bash/shell to write here bypasses the worktree gate. Create a dedicated worktree first (e.g. /worktree-new) and run there — exploration ends at the first write." >&2
   else
     echo "worktree-gate: refusing to ${tool_name:-edit} '$candidate' on protected branch '$blocked_branch' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write." >&2
-  fi
-  if [ "$gate_mode" = ask ]; then
-    echo "worktree-gate: to bypass for this invocation, re-run with WORKTREE_GATE_MODE=off" >&2
   fi
   exit 2
 }
