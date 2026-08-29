@@ -1,12 +1,27 @@
 # Verify report: worktree-gate-bash-retire
 
+## Verify evidence
+
+- Verdict: PASS
+- Command: ./tests/validate.sh
+- Exit code: 0
+- Date: 2026-08-29
+- Commit: c3a867f
+- ready_for_archive: true
+
 - **Change**: `worktree-gate-bash-retire`
 - **Workspace**: `.worktrees/worktree-gate-bash-retire`
 - **Branch**: `change/worktree-gate-bash-retire`
-- **HEAD verified**: `4f77415`
+- **HEAD verified**: `4f77415` (validate re-run by verify on `c3a867f` tree)
 - **Artifact store**: openspec
 - **Strict TDD**: active (`openspec/config.yaml` `strict_tdd: true`)
-- **Verdict**: **PASS**
+
+## Success-criteria mapping
+
+- Criterion 1: PASS — dist/gate-binary/doctor suites reject `bash` and accept only `auto | go` (see R1/R2 table below)
+- Criterion 2: PASS — launcher fail-open single warning, planted legacy sentinel never exec'd (`tests/test_worktree_gate_hook.py:990,1013,1031`)
+- Criterion 3: PASS — sync materializes no legacy gate; corpus pins `mv a b 2>&1` as Go-only (`harness_phase4.py:412`, tokenizer corpus:525-531)
+- Criterion 4: PASS — full suite exit 0, 1785 tests, zero skips, reproduced twice (apply 602.9s, verify 530.1s)
 
 Verification was performed against the tree, not against the apply report's
 claims. Every assertion below was re-derived by reading the named files and by
