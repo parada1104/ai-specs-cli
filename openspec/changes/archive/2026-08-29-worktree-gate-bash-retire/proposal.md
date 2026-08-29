@@ -29,3 +29,22 @@ window (`gate_impl = "bash"` stays usable) before any removal.
 - The launcher fails open with one stderr warning when no binary resolves.
 - All parity, tokenizer, hook, dist and doctor suites pass with the Go binary
   as the only implementation.
+
+## Success Criteria
+
+1. `gate_impl` accepts only `auto | go` — the value `bash` is rejected with an
+   actionable error by config validation, acquisition, doctor, and the
+   launcher stamp (verified by `tests/test_worktree_gate_dist_config.py`,
+   `tests/test_gate_binary_dist.py`, `tests/test_doctor_worktree_gate.py`).
+2. The launcher fails open with exactly one stderr warning when no Go binary
+   resolves, and never executes a legacy Bash fallback (verified by
+   `tests/test_worktree_gate_hook.py` single-warning and planted-sentinel
+   scenarios).
+3. Ordinary sync never materializes a Bash gate: no legacy reference in the
+   catalog, no `materialize_legacy_gate` call path, and the parity corpus
+   pins the `mv a b 2>&1` tokenizer regression as Go-only behavior
+   (verified by `tests/test_worktree_gate_parity.py`,
+   `tests/test_worktree_gate_tokenizer.py`,
+   `tests/test_worktree_gate_harness_phase4.py`).
+4. Full suite green on the final tree: `./tests/validate.sh` exit 0 with
+   1785 tests and zero skips, reproduced independently by apply and verify.

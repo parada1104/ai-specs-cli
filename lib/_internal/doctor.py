@@ -773,11 +773,11 @@ class Doctor:
 
         Severity table:
           OK    Go binary resolved, version matches the stamp, selftest passes
-          INFO  gate_impl=bash configured explicitly (rollback lever)
-          WARN  gate_impl=auto silently falling back to Bash
+          ERROR gate_impl=bash configured (retired value)
+          ERROR no usable binary (auto and go both fail open)
           WARN  binary version does not match the stamped version
-          ERROR gate_impl=go with no usable binary (gate failing open)
           ERROR digest mismatch recorded at the last acquisition
+          INFO  leftover worktree-gate-legacy.sh on disk (inert; manual rm)
 
         A fail-open gate is invisible by construction, so this ERROR is the
         only place a user can discover it.
@@ -799,11 +799,13 @@ class Doctor:
 
         launcher = self.root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
         stamped_version = ""
+        stamped_impl = ""
         if launcher.is_file():
             for line in launcher.read_text(encoding="utf-8").splitlines():
                 if line.startswith('stamped_gate_version="'):
                     stamped_version = line.split('"', 2)[1]
-                    break
+                elif line.startswith('stamped_gate_impl="'):
+                    stamped_impl = line.split('"', 2)[1]
 
         gb = self._load_gate_binary()
         if gb is None:
@@ -823,10 +825,22 @@ class Doctor:
             ))
             return
 
-        if impl == "bash":
+        leftover = (
+            self.root / "ai-specs" / "recipes" / "worktree-flow"
+            / "hooks" / "worktree-gate-legacy.sh"
+        )
+        if leftover.is_file():
             self.checks.append(Check(
                 Severity.INFO, "worktree-gate",
-                "gate_impl=bash configured explicitly; frozen Bash reference in effect (rollback lever)",
+                "leftover worktree-gate-legacy.sh is inert and is not a governed asset",
+                guidance="rm ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh",
+            ))
+
+        if impl == "bash" or stamped_impl == "bash":
+            self.checks.append(Check(
+                Severity.ERROR, "worktree-gate",
+                "gate_impl=bash is retired; set auto or go, then ai-specs sync",
+                guidance="doctor is read-only; set gate_impl to auto or go, then run ai-specs sync",
             ))
             return
 
@@ -836,18 +850,11 @@ class Doctor:
 
         if not usable:
             expected = str(binary)
-            if impl == "go":
-                self.checks.append(Check(
-                    Severity.ERROR, "worktree-gate",
-                    f"gate_impl=go and no usable binary at {expected}; the gate is failing open",
-                    guidance="run ai-specs sync (network) or AI_SPECS_GATE_BUILD=1 ai-specs sync (local build)",
-                ))
-            else:
-                self.checks.append(Check(
-                    Severity.WARN, "worktree-gate",
-                    f"gate_impl=auto and no usable binary at {expected}; falling back to the Bash implementation",
-                    guidance="run ai-specs sync to acquire the Go binary",
-                ))
+            self.checks.append(Check(
+                Severity.ERROR, "worktree-gate",
+                f"gate_impl={impl} and no usable binary at {expected}; the gate is failing open",
+                guidance="run ai-specs sync or ai-specs sync --refresh-gates",
+            ))
             return
 
         version = gb.binary_version(binary)

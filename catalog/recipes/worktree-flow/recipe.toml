@@ -2,7 +2,7 @@
 id = "worktree-flow"
 name = "Worktree Flow"
 description = "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work"
-version = "1.5.0"
+version = "1.6.0"
 author = "ai-specs"
 license = "MIT"
 tags = ["infra", "worktree"]
@@ -70,8 +70,8 @@ help_text = "Repository scope for worktree-gate: auto (proven topology), superre
 required = false
 type = "string"
 default = "auto"
-enum = ["auto", "go", "bash"]
-help_text = "Worktree gate implementation: auto (prefer the Go binary, fall back to the frozen Bash reference), go (Go binary only; fails open when unusable), or bash (frozen Bash reference only; no binary, network, or Go toolchain required)."
+enum = ["auto", "go"]
+help_text = "Worktree gate implementation: auto (use the Go binary when the CLI can provide it) or go (explicit Go pin). Both acquire the verified binary and fail open with a doctor ERROR when none resolves. The bash value has been removed."
 
 
 [config.repo_topology]

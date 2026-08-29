@@ -129,22 +129,35 @@ jobs:
 
 
   parity:
-    name: Parity corpus against frozen reference
+    name: Parity corpus against Go gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.13"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
-      - name: Run parity corpus (Bash reference vs pinned expectations)
+      - name: Build host-native Go gate
+        # ubuntu-latest is linux/amd64. Independent of the matrix build job
+        # so a checksum failure cannot skip behavioral proof. Copy the
+        # linux/amd64 artifact to worktree-gate-current because uname -m
+        # reports x86_64 while the matrix name is amd64.
+        run: |
+          bash scripts/build-gate.sh
+          cp dist/worktree-gate-linux-amd64 dist/worktree-gate-current
+          chmod +x dist/worktree-gate-current
+
+      - name: Run parity corpus (Go gate vs pinned expectations)
         # Run the repository's actual unittest-based parity test exactly
-        # like ./tests/run.sh (python3 -m unittest discover). A previous
-        # run relied on an undeclared third-party test runner and failed on
-        # the stock GitHub runner; the canonical test suite is unittest with
-        # no third-party test dependencies.
+        # like ./tests/run.sh (python3 -m unittest discover). Canonical
+        # suite is unittest with no third-party test dependencies.
         run: python3 -m unittest tests/test_worktree_gate_parity.py -q

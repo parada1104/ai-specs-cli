@@ -3,8 +3,8 @@
 Covers lib/_internal/gate_binary.py: platform detection (incl. Rosetta
 mapping), version-keyed cache path construction, digest-verified install,
 digest mismatch (no install, no execution, recorded for doctor), partial
-download (never installed), and the degradation matrix (offline/auto → legacy
-fallback WARN; offline/go → gate fails open; unsupported platform → WARN).
+download (never installed), and the degradation matrix (offline auto and go both fail open with no
+Bash fallback; unsupported platform → WARN).
 """
 from __future__ import annotations
 
@@ -262,21 +262,31 @@ class GateBinaryDistTests(unittest.TestCase):
 
     # --- 3.16 degradation matrix -------------------------------------------
 
-    def test_offline_auto_without_go_or_cache_warns_legacy_fallback(self):
+    def test_offline_auto_and_go_degrade_without_bash_fallback(self):
         home = self._home()
-        with mock.patch.object(self.gb, "detect_platform", return_value=("darwin", "arm64")), \
-             mock.patch("shutil.which", return_value=None):
-            status = self.gb.acquire(gate_impl="auto", ai_specs_home=home, offline=True)
-        self.assertFalse(status["installed"])
-        self.assertIn("falling back to the Bash implementation", status["warn"])
+        for impl in ("auto", "go"):
+            with self.subTest(impl=impl):
+                with mock.patch.object(self.gb, "detect_platform", return_value=("darwin", "arm64")), \
+                     mock.patch("shutil.which", return_value=None):
+                    status = self.gb.acquire(gate_impl=impl, ai_specs_home=home, offline=True)
+                self.assertTrue(status["attempted"], status)
+                self.assertFalse(status["installed"])
+                warn = status["warn"] or ""
+                self.assertIn("failing open", warn)
+                self.assertNotIn("Bash", warn)
+                blob = str(status).lower()
+                self.assertNotIn("bash fallback", blob)
+                self.assertNotIn("falling back to the bash", blob)
 
-    def test_offline_go_without_cache_fails_open(self):
+    def test_acquire_runs_for_auto_and_go_no_bash_early_return(self):
         home = self._home()
-        with mock.patch.object(self.gb, "detect_platform", return_value=("darwin", "arm64")), \
-             mock.patch("shutil.which", return_value=None):
-            status = self.gb.acquire(gate_impl="go", ai_specs_home=home, offline=True)
-        self.assertFalse(status["installed"])
-        self.assertIn("failing open", status["warn"])
+        for impl in ("auto", "go"):
+            with self.subTest(impl=impl):
+                with mock.patch.object(self.gb, "detect_platform", return_value=("darwin", "arm64")), \
+                     mock.patch("shutil.which", return_value=None):
+                    status = self.gb.acquire(gate_impl=impl, ai_specs_home=home, offline=True)
+                self.assertTrue(status["attempted"])
+                self.assertFalse(status["installed"])
 
     def test_unsupported_platform_warns_no_install(self):
         home = self._home()
@@ -285,13 +295,6 @@ class GateBinaryDistTests(unittest.TestCase):
         self.assertFalse(status["installed"])
         self.assertIn("unsupported platform", status["warn"])
         self.assertIn("darwin/arm64", status["warn"])
-
-    def test_gate_impl_bash_skips_acquisition(self):
-        home = self._home()
-        status = self.gb.acquire(gate_impl="bash", ai_specs_home=home)
-        self.assertFalse(status["attempted"])
-        self.assertFalse(status["installed"])
-        self.assertIsNone(status["warn"])
 
     def test_acquisition_never_raises(self):
         home = self._home()

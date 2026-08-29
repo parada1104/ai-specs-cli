@@ -1,28 +1,18 @@
-"""Hermetic Bash-reference parity fixtures for worktree-gate-go.
+"""Go-only parity fixtures for the worktree-flow gate.
 
-Drives the frozen Bash reference (catalog/recipes/worktree-flow/hooks/
-worktree-gate-legacy.sh) against real Git fixtures described by the corpus
+Drives the Go gate binary against real Git fixtures described by the corpus
 under tests/fixtures/worktree-gate-corpus/. Every corpus case declares the
 fixture it needs (`fixture` key) and a placeholder target; the runner builds
 the fixture in a temp dir, substitutes placeholders ({repo}, {worktree},
 {external}) into the event, and asserts the exit-code contract — plus the
 exact stderr message when the case pins one.
 
-No case may rely on nonexistent-path fail-open behavior (Phase 1 correction
-1.20): placeholders always resolve inside the built fixture, and fixture
-metadata is validated before any case runs (correction 1.23) so a malformed
-fixture can never silently pass as an outside-repository allow.
-
-Malformed-input negative coverage (task 1.15) is part of the corpus: top-level
-JSON array on stdin, unbalanced quotes in a shell command, and shell events
-with no command source all fail open to allow with empty stderr.
-
-The Go half of the parity comparison is explicitly skipped until the binary
-exists (task 1.22 / 1.17); the Bash-vs-expect half always runs.
+Skip loudly only when the Go binary is absent (`dist/worktree-gate-current`).
+Never skip because a Bash reference is missing; the retired script is not
+an oracle.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import subprocess
@@ -31,39 +21,34 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LEGACY = ROOT / "catalog/recipes/worktree-flow/hooks/worktree-gate-legacy.sh"
+BINARY = ROOT / "dist" / "worktree-gate-current"
 CORPUS = ROOT / "tests/fixtures/worktree-gate-corpus"
 
-# The frozen reference ships with unstamped sentinels (__WORKTREE_GATE_MODE__
-# etc.) so it warns and falls back on every invocation. The parity runner
-# materializes a copy with valid stamps (always / auto / auto — the effective
-# defaults) so stderr is exactly the gate message with no setup noise.
 STAMPED_MODE = "always"
 STAMPED_SCOPE = "auto"
 STAMPED_TOPOLOGY = "auto"
 
 
-def sha256(path: Path) -> str:
-    """Return the lowercase hex SHA-256 of a file."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def require_go_binary() -> Path:
+    if not BINARY.is_file():
+        raise unittest.SkipTest(
+            "no Go gate binary in dist/ (run scripts/build-gate.sh); "
+            "parity is Go-only and does not skip because a Bash reference is missing"
+        )
+    return BINARY
 
-def materialize_legacy(dest: Path) -> Path:
-    content = LEGACY.read_text()
-    content = content.replace(
-        'stamped_gate_mode="__WORKTREE_GATE_MODE__"',
-        f'stamped_gate_mode="{STAMPED_MODE}"',
+
+def run_go(event: dict | None, stdin_text: str | None,
+           cwd: Path) -> subprocess.CompletedProcess:
+    binary = require_go_binary()
+    return subprocess.run(
+        [str(binary), "--gate-mode", STAMPED_MODE,
+         "--gate-scope", STAMPED_SCOPE,
+         "--repo-topology", STAMPED_TOPOLOGY,
+         "--protected", "main development"],
+        input=stdin_text if stdin_text is not None else json.dumps(event),
+        capture_output=True, text=True, cwd=cwd,
     )
-    content = content.replace(
-        'stamped_gate_scope="__WORKTREE_GATE_SCOPE__"',
-        f'stamped_gate_scope="{STAMPED_SCOPE}"',
-    )
-    content = content.replace(
-        'stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"',
-        f'stamped_repo_topology="{STAMPED_TOPOLOGY}"',
-    )
-    dest.write_text(content, encoding="utf-8")
-    dest.chmod(0o755)
-    return dest
 
 
 def git(cwd: Path, *args: str) -> None:
@@ -168,38 +153,17 @@ def substitute(text: str, locations: dict[str, Path]) -> str:
     return text
 
 
-def run_legacy(gate: Path, event: dict | None, stdin_text: str | None,
-               cwd: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["bash", str(gate)],
-        input=stdin_text if stdin_text is not None else json.dumps(event),
-        capture_output=True, text=True, cwd=cwd,
-    )
-
-
-
 class WorktreeGateParityTests(unittest.TestCase):
-    def test_frozen_reference_hash_is_pinned(self):
-        # Task 1.2: the frozen Bash reference must never drift silently. The
-        # live hook and the frozen copy are currently byte-identical (the
-        # freeze is PR-1 planning state); pinning the digest of the frozen
-        # copy means any later change to either file breaks here and forces
-        # an explicit, reviewed re-freeze. This is the drift guard for the
-        # parity oracle: the corpus asserts behavior, this asserts identity.
-        expected = "6fc9916144978d85bcd1d6347716172ed00193bf1a24492ab60f07d941afe21b"
-        self.assertEqual(sha256(LEGACY), expected)
-
     def test_protected_main_reference_blocks_real_fixture(self):
         case = json.loads((CORPUS / "01-block-write-protected-branch.json").read_text())
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            gate = materialize_legacy(root / "gate.sh")
             locations = build_fixture(root, case["fixture"])
             event = json.loads(json.dumps(case["event"]))
             event["cwd"] = substitute(event["cwd"], locations)
             event["tool_input"]["file_path"] = substitute(
                 event["tool_input"]["file_path"], locations)
-            result = run_legacy(gate, event, None, locations["repo"])
+            result = run_go( event, None, locations["repo"])
             self.assertEqual(result.returncode, case["expected_exit"], result.stderr)
             self.assertEqual(result.stderr,
                              substitute(case["expected_stderr"], locations) + "\n")
@@ -218,7 +182,6 @@ class WorktreeGateParityTests(unittest.TestCase):
                 validate_corpus_case(case)
                 with tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
-                    gate = materialize_legacy(root / "gate.sh")
                     if case["fixture"] == "none":
                         locations: dict[str, Path] = {}
                         event_cwd = root
@@ -227,7 +190,7 @@ class WorktreeGateParityTests(unittest.TestCase):
                         event_cwd = locations["repo"]
 
                     if case.get("stdin") is not None:
-                        result = run_legacy(gate, None, case["stdin"], event_cwd)
+                        result = run_go( None, case["stdin"], event_cwd)
                     else:
                         event = json.loads(json.dumps(case["event"]))
                         if "cwd" in event:
@@ -238,7 +201,7 @@ class WorktreeGateParityTests(unittest.TestCase):
                                 tool_input[key] = substitute(tool_input[key], locations)
                         if "command" in event:
                             event["command"] = substitute(event["command"], locations)
-                        result = run_legacy(gate, event, None, event_cwd)
+                        result = run_go( event, None, event_cwd)
 
                     self.assertEqual(result.returncode, case["expected_exit"], result.stderr)
                     # Exact IO parity: the gate never writes stdout (only the
@@ -253,45 +216,6 @@ class WorktreeGateParityTests(unittest.TestCase):
                             substitute(case["expected_stderr"], locations) + "\n")
                     else:
                         self.assertEqual(result.stderr, "", result.stderr)
-
-    def test_go_comparison_matches_bash_for_available_binary(self):
-        binary = ROOT / "dist" / "worktree-gate-current"
-        if not binary.exists():
-            self.skipTest("no Go gate binary in dist/")
-        for case_file in sorted(CORPUS.glob("*.json")):
-            case = json.loads(case_file.read_text())
-            validate_corpus_case(case)
-            with self.subTest(case=case_file.name):
-                with tempfile.TemporaryDirectory() as tmp:
-                    root = Path(tmp)
-                    gate = materialize_legacy(root / "gate.sh")
-                    locations = {} if case["fixture"] == "none" else build_fixture(root, case["fixture"])
-                    event_cwd = locations.get("repo", root)
-                    if case.get("stdin") is not None:
-                        payload = case["stdin"]
-                    else:
-                        event = json.loads(json.dumps(case["event"]))
-                        if "cwd" in event:
-                            event["cwd"] = substitute(event["cwd"], locations)
-                        ti = event.get("tool_input") or {}
-                        for key in ("file_path", "notebook_path", "command", "script", "cmd"):
-                            if key in ti:
-                                ti[key] = substitute(ti[key], locations)
-                        for key in ("command", "script"):
-                            if key in event:
-                                event[key] = substitute(event[key], locations)
-                        payload = json.dumps(event)
-                    legacy = run_legacy(gate, None, payload, event_cwd)
-                    go = subprocess.run([str(binary), "--gate-mode", STAMPED_MODE,
-                                         "--gate-scope", STAMPED_SCOPE,
-                                         "--repo-topology", STAMPED_TOPOLOGY,
-                                         "--protected", "main development"],
-                                        input=payload, capture_output=True, text=True,
-                                        cwd=event_cwd)
-                    self.assertEqual(go.returncode, legacy.returncode, go.stderr)
-                    self.assertEqual(go.stdout, legacy.stdout)
-                    self.assertEqual(go.stderr, legacy.stderr)
-
 
     def test_malformed_input_cases_fail_open_silently(self):
         # Task 1.15 fail-open set: malformed input must allow (exit 0) with no
@@ -310,7 +234,6 @@ class WorktreeGateParityTests(unittest.TestCase):
                                  "malformed input must fail open to allow")
                 with tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
-                    gate = materialize_legacy(root / "gate.sh")
                     if case["fixture"] == "none":
                         locations: dict[str, Path] = {}
                         event_cwd = root
@@ -318,7 +241,7 @@ class WorktreeGateParityTests(unittest.TestCase):
                         locations = build_fixture(root, case["fixture"])
                         event_cwd = locations["repo"]
                     if case.get("stdin") is not None:
-                        result = run_legacy(gate, None, case["stdin"], event_cwd)
+                        result = run_go( None, case["stdin"], event_cwd)
                     else:
                         event = json.loads(json.dumps(case["event"]))
                         if "cwd" in event:
@@ -327,7 +250,7 @@ class WorktreeGateParityTests(unittest.TestCase):
                         for key in ("file_path", "notebook_path", "command"):
                             if key in tool_input:
                                 tool_input[key] = substitute(tool_input[key], locations)
-                        result = run_legacy(gate, event, None, event_cwd)
+                        result = run_go( event, None, event_cwd)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stderr, "",
                                      "malformed input must not emit a gate message")
@@ -351,12 +274,11 @@ class WorktreeGateParityTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            gate = materialize_legacy(root / "gate.sh")
             event = json.loads(json.dumps(bad_case["event"]))
             event["cwd"] = substitute(event["cwd"], {})
             event["tool_input"]["file_path"] = substitute(
                 event["tool_input"]["file_path"], {})
-            result = run_legacy(gate, event, None, root)
+            result = run_go( event, None, root)
             self.assertEqual(result.returncode, 0, result.stderr)
         with self.assertRaisesRegex(
                 ValueError, r"fixture case 'none' must not reference placeholders"):
@@ -393,15 +315,14 @@ class WorktreeCwdNormalizationParityTests(unittest.TestCase):
 
     GO_BINARY = ROOT / "dist" / "worktree-gate-current"
 
+    def setUp(self):
+        require_go_binary()
+
     def _fixture(self, root: Path) -> tuple[Path, Path]:
         """Protected main checkout + linked feature worktree (allowing
         process-cwd context), reusing the shared corpus fixture builder."""
         locations = build_fixture(root, "linked-worktree")
         return locations["repo"], locations["worktree"]
-
-    def _run_gate(self, gate: Path, payload: str, cwd: Path) -> subprocess.CompletedProcess:
-        return subprocess.run(["bash", str(gate)], input=payload,
-                              capture_output=True, text=True, cwd=str(cwd))
 
     def _run_go(self, payload: str, cwd: Path) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -431,18 +352,11 @@ class WorktreeCwdNormalizationParityTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     repo, worktree = self._fixture(root)
-                    gate = materialize_legacy(root / "gate.sh")
                     event["cwd"] = f"   {repo}   "  # outer-whitespace wrapped
                     payload = json.dumps(event)
-                    legacy = self._run_gate(gate, payload, worktree)
-                    self.assertEqual(legacy.returncode, 2,
-                                     f"legacy must block after trim: {legacy.stderr}")
-                    if self.GO_BINARY.exists():
-                        go = self._run_go(payload, worktree)
-                        self.assertEqual(go.returncode, 2,
-                                         f"go must block after trim: {go.stderr}")
-                    else:
-                        self.skipTest("no Go gate binary in dist/")
+                    go = self._run_go(payload, worktree)
+                    self.assertEqual(go.returncode, 2,
+                                     f"go must block after trim: {go.stderr}")
 
     def test_invalid_cwd_falls_back_to_allowing_process_cwd_both_implementations(self):
         """Whitespace-only / relative / nonexistent cwd falls back to the
@@ -457,20 +371,14 @@ class WorktreeCwdNormalizationParityTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     repo, worktree = self._fixture(root)
-                    gate = materialize_legacy(root / "gate.sh")
                     event = {
                         "event": "pre-tool-use", "tool_name": "Write",
                         "tool_input": {"file_path": "src.py"},
                         "cwd": substitute(raw_cwd, {"repo": repo}),
                     }
                     payload = json.dumps(event)
-                    legacy = self._run_gate(gate, payload, worktree)
-                    self.assertEqual(legacy.returncode, 0, legacy.stderr)
-                    if self.GO_BINARY.exists():
-                        go = self._run_go(payload, worktree)
-                        self.assertEqual(go.returncode, 0, go.stderr)
-                    else:
-                        self.skipTest("no Go gate binary in dist/")
+                    go = self._run_go(payload, worktree)
+                    self.assertEqual(go.returncode, 0, go.stderr)
 
     def test_shell_event_trim_parity_blocks_protected(self):
         """Shell events go through the same trim; a whitespace-wrapped
@@ -478,19 +386,13 @@ class WorktreeCwdNormalizationParityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo, worktree = self._fixture(root)
-            gate = materialize_legacy(root / "gate.sh")
             payload = json.dumps({
                 "event": "pre-tool-use", "tool_name": "Bash",
                 "tool_input": {"command": "echo x > out.log"},
                 "cwd": f"  {repo}  ",
             })
-            legacy = self._run_gate(gate, payload, worktree)
-            self.assertEqual(legacy.returncode, 2, legacy.stderr)
-            if self.GO_BINARY.exists():
-                go = self._run_go(payload, worktree)
-                self.assertEqual(go.returncode, 2, go.stderr)
-            else:
-                self.skipTest("no Go gate binary in dist/")
+            go = self._run_go(payload, worktree)
+            self.assertEqual(go.returncode, 2, go.stderr)
 
 
 if __name__ == "__main__":

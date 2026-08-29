@@ -95,12 +95,49 @@ class WorktreeGateDoctorTests(unittest.TestCase):
         root = self._project(enabled=False)
         self.assertEqual(self._checks(root, FakeGateBinary(root)), [])
 
-    def test_gate_impl_bash_reports_info(self):
+    def test_gate_impl_bash_reports_retired_error(self):
         root = self._project(gate_impl="bash")
         checks = self._checks(root, FakeGateBinary(root))
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.INFO)
-        self.assertIn("bash", checks[0].message)
+        errors = [c for c in checks if c.severity == self.doctor.Severity.ERROR]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("retired", errors[0].message)
+        self.assertIn("auto", errors[0].message)
+        self.assertIn("go", errors[0].message)
+        self.assertIn("sync", errors[0].message)
+        blob = " ".join(f"{c.severity} {c.message} {c.guidance}" for c in checks)
+        self.assertNotIn("rollback lever", blob)
+
+    def test_stamped_bash_reports_retired_error(self):
+        root = self._project(gate_impl="auto")
+        launcher = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text('stamped_gate_impl="bash"\nstamped_gate_version="9.9.9"\n')
+        checks = self._checks(root, FakeGateBinary(root))
+        errors = [c for c in checks if c.severity == self.doctor.Severity.ERROR]
+        self.assertTrue(errors)
+        self.assertIn("retired", errors[0].message)
+
+    def test_leftover_legacy_file_reports_info_with_rm_hint(self):
+        root = self._project(gate_impl="auto")
+        leftover = (
+            root / "ai-specs" / "recipes" / "worktree-flow"
+            / "hooks" / "worktree-gate-legacy.sh"
+        )
+        leftover.parent.mkdir(parents=True)
+        leftover.write_text("inert leftover\n")
+        fake = FakeGateBinary(root)
+        fake._binary.parent.mkdir(parents=True)
+        fake._binary.write_bytes(b"bin")
+        os.chmod(fake._binary, 0o755)
+        launcher = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+        launcher.write_text('stamped_gate_version="9.9.9"\n')
+        checks = self._checks(root, fake)
+        infos = [c for c in checks if c.severity == self.doctor.Severity.INFO]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("leftover", infos[0].message)
+        self.assertIn("rm ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh",
+                      infos[0].guidance)
+        self.assertNotIn("stale", infos[0].message.lower())
 
     def test_go_without_binary_reports_error_failing_open(self):
         root = self._project(gate_impl="go")
@@ -112,14 +149,16 @@ class WorktreeGateDoctorTests(unittest.TestCase):
         self.assertIn("failing open", checks[0].message)
         self.assertIn(str(root / "no" / "binary"), checks[0].message)
 
-    def test_auto_without_binary_reports_warn_fallback(self):
+    def test_auto_without_binary_reports_error_failing_open(self):
         root = self._project(gate_impl="auto")
         fake = FakeGateBinary(root)
         fake._binary = root / "no" / "binary"
         checks = self._checks(root, fake)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.WARN)
-        self.assertIn("Bash", checks[0].message)
+        self.assertEqual(checks[0].severity, self.doctor.Severity.ERROR)
+        self.assertIn("failing open", checks[0].message)
+        self.assertNotIn("Bash", checks[0].message)
+        self.assertNotIn("rollback lever", checks[0].message)
 
     def test_healthy_binary_reports_ok(self):
         root = self._project()
