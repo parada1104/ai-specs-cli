@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+- **worktree-flow Bash gate retired.** `gate_impl = "bash"` is rejected at
+  sync with an actionable error naming `auto | go` as the only valid values.
+  The catalog no longer ships `hooks/worktree-gate-legacy.sh`. Already
+  materialized copies are inert (doctor INFO with a manual `rm` hint). When
+  no Go binary resolves, the launcher fails open with exactly one stderr
+  warning (`ai-specs sync` / `ai-specs sync --refresh-gates` /
+  `ai-specs doctor`). Restore coverage by re-acquiring the binary, or install
+  the previous CLI and sync.
+
 ### Added
 - **Version-keyed upgrade notices**: a release can declare a required
   post-upgrade action in an `### Upgrade notes` subsection under its

@@ -106,9 +106,9 @@ override.
 
 `worktree-flow`'s `worktree-gate.sh` is a **thin launcher** (bash 3.2 only) that
 resolves the gate implementation and `exec`s it, so stdin and the exit code pass
-through untouched. The implementation of record is a single zero-dependency Go
-binary; a frozen Bash reference (`worktree-gate-legacy.sh`) is retained for one
-minor release as the rollback path.
+through untouched. The only implementation is a single zero-dependency Go
+binary. `gate_impl` accepts `auto | go` only; both acquire the verified binary
+and fail open when none resolves (`ai-specs doctor` reports ERROR).
 
 Resolution order (first hit wins):
 
@@ -119,17 +119,20 @@ Resolution order (first hit wins):
    `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate`,
    populated by `ai-specs sync` (digest-verified against the committed
    `SHA256SUMS` trust root, mode 0755, self-tested, atomic install).
-4. Frozen Bash reference, when the stamped `gate_impl` is `bash`, or `auto`
-   with no usable binary.
-5. Otherwise one stderr warning naming the missing path and the
-   `ai-specs doctor` remedy, then exit `0` (fail open).
+4. Otherwise one stderr warning naming the missing path and the
+   `ai-specs sync` / `ai-specs sync --refresh-gates` / `ai-specs doctor`
+   remedy, then exit `0` (fail open).
 
 The build matrix is `darwin/arm64`, `darwin/amd64`, `linux/amd64`,
 `linux/arm64` (reproducible: `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`,
-version stamped at link time). `gate_impl = auto` prefers the Go binary and
-falls back to Bash; `go` fails open when unusable (doctor ERROR); `bash` needs
-no binary, network, or Go toolchain. The gate never computes a digest on the
+version stamped at link time). The gate never computes a digest on the
 invocation path unless `WORKTREE_GATE_VERIFY=1` requests it.
+
+**Recovery (no Bash rollback path):** per invocation, set
+`WORKTREE_GATE_MODE=off` or `WORKTREE_GATE_BIN=<path>`. Per install, `rm -rf
+$AI_SPECS_HOME/cache/bin/worktree-gate` then `ai-specs sync`. Full revert is
+install the previous CLI release and run `ai-specs sync`. `gate_impl = auto`
+with no usable binary is a doctor ERROR, not a silent fallback.
 
 Because every renderer references only `hook["script_path"]`, all five harnesses
 keep working without re-render churn: the launcher materializes at the unchanged
@@ -164,8 +167,8 @@ them:
 - **The launcher derives its installation root from `BASH_SOURCE[0]`.** A
   relative reference is anchored to the invocation cwd exactly once, the final
   launcher symlink (and parent symlinks) resolve to the physical launcher, and
-  project-local and legacy assets resolve as `hooks/../bin` under that root —
-  never from `$PWD`. An unresolvable root skips project-local and legacy lookup
+  project-local assets resolve as `hooks/../bin` under that root —
+  never from `$PWD`. An unresolvable root skips project-local lookup
   and continues through the explicit override or cache, or fails open.
 - **Pi/OMP keep process-cwd-only events** and claim no workspace root; Cursor's
   missing pre-file-write hook and OpenCode's subagent/MCP coverage gap are
