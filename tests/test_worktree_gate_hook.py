@@ -17,7 +17,6 @@ import unittest
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-LEGACY_GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate-legacy.sh"
 GO_BINARY = ROOT / "dist" / "worktree-gate-current"
 
 
@@ -43,18 +42,21 @@ class _GoGate:
 
 
 class WorktreeGateHookTests(unittest.TestCase):
-    """Integration suite for the worktree gate, parameterized over impl.
+    """Integration suite for the worktree gate (Go binary only).
 
-    impl="bash" runs the frozen reference script (the pre-change behavior);
-    impl="go" runs the same scenarios against the Go binary through the
-    launcher-equivalent flags, so a behavioral differential (mode/scope
-    precedence, URI allowlist, extraction, messages) fails here first
-    (task 2.17). The Go half skips loudly when no binary is built yet.
+    Scenarios run against the Go binary through launcher-equivalent flags.
+    Skip loudly when no binary is built; never skip because a Bash
+    reference is missing.
     """
 
-    impl = "bash"
+    impl = "go"
 
     def setUp(self):
+        if self.impl == "go" and not GO_BINARY.exists():
+            self.skipTest(
+                "no Go gate binary in dist/ (run scripts/build-gate.sh); "
+                "does not skip because a Bash reference is missing"
+            )
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.repo = Path(self.tmp.name) / "repo"
@@ -73,25 +75,10 @@ class WorktreeGateHookTests(unittest.TestCase):
             pass
 
     def _stamped_gate(self, mode: str):
-        """Materialize a gate stamped with the given mode for this impl.
-
-        The Bash path only replaces the mode sentinel; scope and topology stay
-        as the literal __WORKTREE_GATE_SCOPE__ / __WORKTREE_REPO_TOPOLOGY__
-        (invalid), which emits the fallback warnings. The Go path mirrors that
-        by passing the same invalid sentinels so the warning contract is
-        identical across impls.
-        """
-        if self.impl == "go":
-            return _GoGate(mode=mode,
-                           scope="__WORKTREE_GATE_SCOPE__",
-                           topology="__WORKTREE_REPO_TOPOLOGY__")
-        stamped = Path(self.tmp.name) / f"worktree-gate-{mode}.sh"
-        # The Bash impl runs the frozen reference (the pre-launcher gate).
-        # Phase 3 rewrote hooks/worktree-gate.sh as a launcher; the reference
-        # contract the Bash parameterization pins lives in the legacy copy.
-        stamped.write_text(LEGACY_GATE.read_text().replace("__WORKTREE_GATE_MODE__", mode))
-        stamped.chmod(0o755)
-        return stamped
+        """Stamp mode for the Go binary (Bash parameterization retired)."""
+        return _GoGate(mode=mode,
+                       scope="__WORKTREE_GATE_SCOPE__",
+                       topology="__WORKTREE_REPO_TOPOLOGY__")
 
     def _gate_command(self, gate=None) -> list[str]:
         """Build the invocation for the active implementation.
@@ -101,18 +88,15 @@ class WorktreeGateHookTests(unittest.TestCase):
         same mapping). A plain _GoGate or None means the effective defaults
         (always / auto / auto).
         """
-        if self.impl == "go":
-            if gate is None:
-                gate = _GoGate()
-            return [
-                str(GO_BINARY),
-                "--gate-mode", gate.mode,
-                "--gate-scope", gate.scope,
-                "--repo-topology", gate.topology,
-                "--protected", "main development",
-            ]
-        # Bash impl: the frozen reference (the pre-launcher gate contract).
-        return ["bash", str(gate or LEGACY_GATE)]
+        if gate is None:
+            gate = _GoGate()
+        return [
+            str(GO_BINARY),
+            "--gate-mode", gate.mode,
+            "--gate-scope", gate.scope,
+            "--repo-topology", gate.topology,
+            "--protected", "main development",
+        ]
 
     def _run(
         self,
@@ -598,17 +582,8 @@ class WorktreeGateHookTests(unittest.TestCase):
         sub_event["cwd"] = str(subrepo)
         self.assertEqual(self._run(sub_event).returncode, 2)
     def _scope_gate(self, scope: str, topology: str = "monorepo-submodules"):
-        """Materialize a gate stamped with scope/topology for this impl."""
-        if self.impl == "go":
-            return _GoGate(scope=scope, topology=topology)
-        stamped = Path(self.tmp.name) / f"worktree-gate-{scope}-{topology}.sh"
-        content = LEGACY_GATE.read_text()
-        content = content.replace("__WORKTREE_GATE_MODE__", "always")
-        content = content.replace("__WORKTREE_GATE_SCOPE__", scope)
-        content = content.replace("__WORKTREE_REPO_TOPOLOGY__", topology)
-        stamped.write_text(content)
-        stamped.chmod(0o755)
-        return stamped
+        """Stamp scope/topology for the Go binary."""
+        return _GoGate(scope=scope, topology=topology)
 
     def _path_event(self, target: Path, cwd: Path) -> dict:
         event = self._event("Write", str(target))
@@ -902,8 +877,8 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
     proves which implementation candidate was selected with executable
     markers: physical root from BASH_SOURCE[0], ``hooks/../bin`` project-local
     lookup, symlinked and relative invocation, unrelated process cwd, override
-    and cache precedence, legacy fallback, and the rule that a missing root
-    never lets ``$PWD`` become a project root.
+    and cache precedence, fail-open without a Bash fallback, and the rule that
+    a missing root never lets ``$PWD`` become a project root.
     """
 
     STAMP_TOKENS = (
@@ -993,6 +968,7 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("MARKER:override", r.stderr)
         self.assertNotIn("MARKER:project-local", r.stderr)
+        self.assertNotIn("no usable gate", r.stderr)
 
     def test_cache_precedence_when_project_local_missing(self):
         self.bin_marker.unlink()
@@ -1004,25 +980,66 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         r = self._run(self.launcher, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("MARKER:cache", r.stderr)
+        self.assertNotIn("no usable gate", r.stderr)
+
+    def test_project_local_resolves_with_no_fail_open_warning(self):
+        r = self._run(self.launcher, self._elsewhere())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MARKER:project-local", r.stderr)
+        self.assertNotIn("no usable gate", r.stderr)
+
+    def test_unresolved_binary_fails_open_one_warning_never_execs_legacy(self):
+        """No env, pin, or cache: fail open with one warning; planted legacy is inert."""
+        self.bin_marker.unlink()
+        sentinel = "SENTINEL-LEGACY-MUST-NOT-EXEC"
+        legacy = self.install / "hooks" / "worktree-gate-legacy.sh"
+        legacy.write_text(
+            f"#!/usr/bin/env bash\necho '{sentinel}' >&2\nexit 2\n"
+        )
+        legacy.chmod(0o755)
+        r = self._run(self.launcher, self._elsewhere())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(sentinel, r.stderr)
+        warnings = [
+            line for line in r.stderr.splitlines()
+            if "no usable gate" in line
+        ]
+        self.assertEqual(len(warnings), 1, r.stderr)
+        msg = warnings[0]
+        self.assertIn("ai-specs sync", msg)
+        self.assertIn("--refresh-gates", msg)
+        self.assertIn("ai-specs doctor", msg)
+
+    def test_launcher_does_not_branch_on_stamped_gate_impl_to_select_bash(self):
+        """stamped_gate_impl must not select a Bash implementation."""
+        self.bin_marker.unlink()
+        self.launcher.write_text(
+            self._stamped_launcher(**{"__WORKTREE_GATE_IMPL__": "bash"}))
+        self.launcher.chmod(0o755)
+        sentinel = "SENTINEL-STAMPED-BASH-MUST-NOT-EXEC"
+        legacy = self.install / "hooks" / "worktree-gate-legacy.sh"
+        legacy.write_text(
+            f"#!/usr/bin/env bash\necho '{sentinel}' >&2\nexit 2\n"
+        )
+        legacy.chmod(0o755)
+        r = self._run(self.launcher, self._elsewhere())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(sentinel, r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
     def test_legacy_fallback_under_derived_root(self):
-        # No project-local bin and no cache: with gate_impl=auto the launcher
-        # falls back to the frozen Bash reference under its OWN root.
+        # Retired: leftover worktree-gate-legacy.sh beside the launcher must
+        # not run. Fail open with exactly one warning.
         self.bin_marker.unlink()
         self.launcher.write_text(
             self._stamped_launcher(**{"__WORKTREE_GATE_IMPL__": "auto"}))
         self.launcher.chmod(0o755)
-        legacy = self.install / "hooks" / "worktree-gate-legacy.sh"
-        content = (ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" /
-                   "worktree-gate-legacy.sh").read_text()
-        content = content.replace('stamped_gate_mode="__WORKTREE_GATE_MODE__"',
-                                  'stamped_gate_mode="always"')
-        content = content.replace('stamped_gate_scope="__WORKTREE_GATE_SCOPE__"',
-                                  'stamped_gate_scope="auto"')
-        content = content.replace('stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"',
-                                  'stamped_repo_topology="auto"')
-        legacy.write_text(content)
-        legacy.chmod(0o755)
+        sentinel = "SENTINEL-LEGACY-FALLBACK"
+        leftover = self.install / "hooks" / "worktree-gate-legacy.sh"
+        leftover.write_text(
+            f"#!/usr/bin/env bash\necho '{sentinel}' >&2\nexit 2\n"
+        )
+        leftover.chmod(0o755)
 
         repo = Path(self.tmp.name) / "repo"
         repo.mkdir()
@@ -1039,8 +1056,10 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
             "cwd": str(repo),
         })
         r = self._run(self.launcher, self._elsewhere(), stdin=event)
-        self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertIn("worktree-gate", r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(sentinel, r.stderr)
+        self.assertIn("no usable gate", r.stderr)
+        self.assertNotEqual(r.returncode, 2)
 
     def test_missing_root_never_makes_pwd_a_project_root(self):
         # PATH-style bare-name invocation: when BASH_SOURCE[0] cannot be
@@ -1066,7 +1085,7 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("MARKER:decoy", r.stderr,
                          "$PWD must never become a project-local asset root")
-        self.assertIn("no usable gate implementation", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
     def _host_platform(self) -> str:
         uname_s = os.uname().sysname
@@ -1085,21 +1104,3 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class WorktreeGateGoHookTests(WorktreeGateHookTests):
-    """The same 78-scenario suite run against the Go binary.
-
-    Activates exactly when dist/worktree-gate-current exists (built by
-    scripts/build-gate.sh); skips loudly otherwise so a machine without Go
-    keeps the Bash half green (task 1.17 / 2.17).
-    """
-
-    impl = "go"
-
-    def setUp(self):
-        if not GO_BINARY.exists():
-            self.skipTest(
-                "no Go gate binary in dist/ (run scripts/build-gate.sh); "
-                "Bash parameterization still ran")
-        super().setUp()

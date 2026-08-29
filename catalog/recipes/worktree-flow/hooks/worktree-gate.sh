@@ -3,8 +3,7 @@
 #
 # Enforces the worktree-flow discipline: "exploration ends at the first write;
 # create a dedicated worktree before writing." The actual gate logic lives in
-# the Go binary (implementation of record) or, as a rollback path, in the
-# frozen Bash reference worktree-gate-legacy.sh.
+# the Go binary (the only implementation).
 #
 # Dual-input contract (one script, every harness):
 #   PATH mode stdin = JSON { "event", "tool_name",
@@ -18,7 +17,7 @@
 # gate_scope/gate_impl are stamped by sync and may be overridden per
 # invocation (scope via WORKTREE_GATE_SCOPE; impl has no env override).
 #
-# Resolution order (first hit wins, design §5):
+# Resolution order (first hit wins):
 #   1. $WORKTREE_GATE_BIN if executable — the debugging and pinning escape
 #      hatch.
 #   2. Project-local <recipe_root>/bin/worktree-gate — the optional air-gapped
@@ -27,10 +26,9 @@
 #   3. ${AI_SPECS_HOME:-$HOME/.ai-specs}/cache/bin/worktree-gate/
 #      <stamped_version>/<os>-<arch>/worktree-gate — the version-keyed cache
 #      populated by ai-specs sync (lib/_internal/gate_binary.py).
-#   4. Legacy Bash implementation — only when stamped gate_impl is "bash", or
-#      it is "auto" and no binary resolved.
-#   5. Nothing usable → one line to stderr naming the missing path and the
-#      `ai-specs doctor` remedy, then exit 0.
+#   4. Nothing usable → one line to stderr naming the missing binary and the
+#      `ai-specs sync` / `ai-specs sync --refresh-gates` / `ai-specs doctor`
+#      remedy, then exit 0.
 #
 # bash 3.2 only by contract (no mapfile, no associative arrays, no ${v,,}):
 # macos ships bash 3.2 and every harness spawns this script directly.
@@ -171,19 +169,5 @@ if [ -n "$bin" ]; then
   exec "$bin" --gate-mode "$gate_mode" --gate-scope "$gate_scope" --repo-topology "$stamped_repo_topology" --protected "$protected"
 fi
 
-# No usable binary: fall back to the frozen Bash implementation when the
-# stamped gate_impl permits it (bash explicitly, or auto with no binary).
-case "$stamped_gate_impl" in
-  bash|auto)
-    local_legacy=""
-    if recipe_root="$(_launcher_root)"; then
-      local_legacy="$recipe_root/hooks/worktree-gate-legacy.sh"
-    fi
-    if [ -n "$local_legacy" ] && [ -f "$local_legacy" ]; then
-      exec bash "$local_legacy"
-    fi
-    ;;
-esac
-
-echo "worktree-gate: no usable gate implementation found (gate_impl='$stamped_gate_impl'); gate is not enforcing. Run 'ai-specs sync' and 'ai-specs doctor'." >&2
+echo "worktree-gate: no usable gate binary resolved (gate_impl='$stamped_gate_impl'); gate is not enforcing. Run 'ai-specs sync', 'ai-specs sync --refresh-gates', or 'ai-specs doctor'." >&2
 exit 0

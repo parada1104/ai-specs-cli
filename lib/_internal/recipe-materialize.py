@@ -477,12 +477,14 @@ GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
 REPO_TOPOLOGY_PLACEHOLDER = "__WORKTREE_REPO_TOPOLOGY__"
 TRACKER_CLI_HOME_PLACEHOLDER = "__TRACKER_CLI_HOME__"
 GATE_IMPL_PLACEHOLDER = "__WORKTREE_GATE_IMPL__"
-GATE_IMPL_VALUES = ("auto", "go", "bash")
+GATE_IMPL_VALUES = ("auto", "go")
 GATE_VERSION_PLACEHOLDER = "__WORKTREE_GATE_VERSION__"
-# Project-relative path where the frozen Bash reference is materialized
-# alongside the launcher (task 3.9: gate_impl=bash works with no network and
-# no binary).
-LEGACY_HOOK_REL = "ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh"
+
+
+def _invalid_gate_impl_error(impl: str) -> RuntimeError:
+    return RuntimeError(
+        f"invalid gate_impl '{impl}'; bash has been removed; allowed: auto | go"
+    )
 
 
 def _write_gate_backup(
@@ -609,9 +611,7 @@ def materialize_hook_script(
         if merged_cfg is not None:
             impl = str(merged_cfg.get("gate_impl") or "auto")
         if impl not in GATE_IMPL_VALUES:
-            raise RuntimeError(
-                f"invalid gate_impl '{impl}'; allowed: auto | go | bash"
-            )
+            raise _invalid_gate_impl_error(impl)
         content = content.replace(GATE_IMPL_PLACEHOLDER, impl)
     if GATE_VERSION_PLACEHOLDER in content:
         version = "dev"
@@ -679,29 +679,6 @@ def materialize_hook_script(
     )
     print(f"    · hook skipped (no provenance) {rel}")
     return rel
-
-
-def materialize_legacy_gate(recipe_dir: Path, project_root: Path, recipe_id: str) -> None:
-    """Copy the frozen Bash reference alongside the launcher (task 3.9).
-
-    The launcher's legacy fallback (`gate_impl=bash`, or `auto` with no
-    usable binary) execs this file, so a rollback project works with no
-    network and no binary. The copy keeps its unstamped sentinels, exactly
-    like the catalog source: the legacy implementation resolves them itself
-    (invalid → warn + fallback), and the materialized file is never the
-    launcher's staleness probe.
-    """
-    if recipe_id != "worktree-flow":
-        return
-    src = recipe_dir / "hooks" / "worktree-gate-legacy.sh"
-    if not src.is_file():
-        warn(f"worktree-flow: legacy gate source missing at {src}; gate_impl=bash unavailable")
-        return
-    dest = project_root / LEGACY_HOOK_REL
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(src.read_text())
-    os.chmod(dest, 0o755)
-    print(f"    ✓ hook script {LEGACY_HOOK_REL}")
 
 
 # --- Binding resolution -------------------------------------------------------
@@ -792,6 +769,8 @@ def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]
             continue
         value_str = str(result[key])
         if value_str not in enum_values:
+            if key == "gate_impl":
+                raise _invalid_gate_impl_error(value_str)
             allowed = " | ".join(enum_values)
             raise RuntimeError(
                 f"recipe '{recipe.name}': config field '{key}' value '{value_str}' "
@@ -1219,12 +1198,9 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
                 "env": hook_env,
             })
 
-        # Phase 3 distribution (worktree-flow only): materialize the frozen
-        # Bash reference alongside the launcher (rollback path, task 3.9) and
-        # acquire the Go binary when gate_impl wants it (tasks 3.10-3.13).
-        # Acquisition never fails sync: every failure warns and degrades.
+        # Phase 3 distribution (worktree-flow only): acquire the Go binary
+        # when gate_impl is auto or go. Acquisition never fails sync.
         if rid == "worktree-flow":
-            materialize_legacy_gate(recipe_dir, project_root, rid)
             impl = str(merged_cfg.get("gate_impl") or "auto")
             if impl in ("auto", "go"):
                 try:

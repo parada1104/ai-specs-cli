@@ -1,9 +1,8 @@
 """Phase 3 materialization tests for worktree-flow gate distribution.
 
-Tasks 3.7-3.9, 3.17-3.19: `gate_impl` config validation and stamping, legacy
-Bash reference materialization, sentinel-upgrade of pre-Go materialized gates,
-invalid gate_impl rejection, and the rollback rehearsal (gate_impl=bash
-answers the parity corpus through the materialized legacy copy).
+`gate_impl` config validation and stamping (`auto | go` only), sentinel-upgrade
+of pre-Go materialized gates, and invalid-value rejection. `gate_impl=bash` is
+retired: validation must raise naming bash as removed.
 """
 from __future__ import annotations
 
@@ -97,7 +96,7 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
         field = recipe.config_schema.fields["gate_impl"]
         self.assertEqual(field.default, "auto")
-        self.assertEqual(field.enum, ["auto", "go", "bash"])
+        self.assertEqual(field.enum, ["auto", "go"])
 
     def test_gate_impl_defaults_to_auto_and_stamps(self):
         proj = self._project()
@@ -108,18 +107,24 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         self.assertNotIn("__WORKTREE_GATE_IMPL__", content)
         self.assertNotIn("__WORKTREE_GATE_VERSION__", content)
 
-    def test_gate_impl_bash_stamps_and_materializes_legacy(self):
+    def test_gate_impl_bash_rejected_at_sync(self):
+        """gate_impl=bash is removed; sync must fail closed with auto | go."""
         proj = self._project(
             '[recipes.worktree-flow.config]\ngate_impl = "bash"'
         )
-        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
-        content = self._hook(proj).read_text()
-        self.assertIn('stamped_gate_impl="bash"', content)
-        legacy = self._legacy_hook(proj)
-        self.assertTrue(legacy.is_file(), "legacy reference must materialize")
-        src = RECIPE_DIR / "hooks" / "worktree-gate-legacy.sh"
-        self.assertEqual(legacy.read_bytes(), src.read_bytes())
-        self.assertTrue(os.access(legacy, os.X_OK))
+        proc = subprocess.run(
+            ["python3", str(RECIPE_MATERIALIZE_PATH), str(proj), str(self.home)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        combined = proc.stderr + proc.stdout
+        self.assertIn("bash", combined)
+        self.assertIn("removed", combined)
+        self.assertIn("auto | go", combined)
+        self.assertFalse(
+            self._legacy_hook(proj).exists(),
+            "rejected bash must not materialize a legacy gate",
+        )
 
     def test_gate_impl_go_stamps(self):
         proj = self._project(
@@ -129,6 +134,33 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         self.assertIn(
             'stamped_gate_impl="go"', self._hook(proj).read_text()
         )
+        self.assertFalse(
+            self._legacy_hook(proj).exists(),
+            "ordinary sync must not write LEGACY_HOOK_REL",
+        )
+
+    def test_ordinary_sync_never_creates_legacy_hook(self):
+        proj = self._project()
+        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+        self.assertTrue(self._hook(proj).is_file())
+        cleanup = (
+            proj / "ai-specs" / "recipes" / "worktree-flow"
+            / "overrides" / "bin" / "worktree-cleanup.sh"
+        )
+        self.assertTrue(cleanup.is_file(), "cleanup override must still materialize")
+        self.assertFalse(self._legacy_hook(proj).exists())
+
+    def test_leftover_legacy_hook_is_not_rewritten(self):
+        proj = self._project()
+        leftover = self._legacy_hook(proj)
+        leftover.parent.mkdir(parents=True, exist_ok=True)
+        marker = b"LEFTOVER-INERT-BYTES-MUST-STAY\n"
+        leftover.write_bytes(marker)
+        leftover.chmod(0o644)
+        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+        self.assertEqual(leftover.read_bytes(), marker)
+        self.assertFalse(os.access(leftover, os.X_OK),
+                         "leftover must not be classified/refreshed to executable catalog bytes")
 
     def test_invalid_gate_impl_rejected_at_sync_with_enum(self):
         proj = self._project(
@@ -141,14 +173,15 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         combined = proc.stderr + proc.stdout
         self.assertIn("rust", combined)
-        self.assertIn("auto", combined)
-        self.assertIn("go", combined)
-        self.assertIn("bash", combined)
+        self.assertIn("auto | go", combined)
+        self.assertNotIn(" | bash", combined)
 
     def test_merge_config_rejects_invalid_gate_impl(self):
         recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        with self.assertRaisesRegex(RuntimeError, r"auto.*go.*bash"):
+        with self.assertRaisesRegex(RuntimeError, r"auto \| go"):
             self.materialize.merge_config(recipe, {"gate_impl": "rust"})
+        with self.assertRaisesRegex(RuntimeError, r"bash.*removed|removed.*bash"):
+            self.materialize.merge_config(recipe, {"gate_impl": "bash"})
 
     def test_sentinel_upgrade_replaces_pre_go_gate(self):
         # A pre-Go materialized gate (the e080483 gate, which already carries
@@ -365,23 +398,9 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
             self.assertIn("refusing", proc.stderr)
 
 class WorktreeGateRollbackTests(unittest.TestCase):
-    """Task 3.17: rollback rehearsal — gate_impl=bash answers the corpus."""
+    """Predecessor rollback rehearsal converted to the bash-rejection contract."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.materialize = load_module(
-            RECIPE_MATERIALIZE_PATH, "recipe_materialize_rollback_internal"
-        )
-
-    def _git(self, cwd: Path, *args: str) -> None:
-        subprocess.run(["git", "-C", str(cwd), *args], check=True,
-                       capture_output=True, text=True)
-
-    def test_rollback_gate_impl_bash_answers_full_corpus(self):
-        corpus = ROOT / "tests" / "fixtures" / "worktree-gate-corpus"
-        cases = sorted(corpus.glob("*.json"))
-        self.assertGreaterEqual(len(cases), 10, "corpus must be populated")
-
+    def test_gate_impl_bash_rejected_instead_of_rollback_rehearsal(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         home = Path(tmp.name) / "home"
@@ -398,104 +417,20 @@ class WorktreeGateRollbackTests(unittest.TestCase):
             f"[recipes.worktree-flow]\nenabled = true\nversion = \"{ver}\"\n"
             "[recipes.worktree-flow.config]\ngate_impl = 'bash'\n"
         )
-        self.assertEqual(self.materialize.materialize_recipes(proj, home), 0)
-        legacy = proj / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate-legacy.sh"
-        self.assertTrue(legacy.is_file())
-        # The materialized legacy copy carries unstamped sentinels (the
-        # catalog source's placeholders). The rollback rehearsal pins exact
-        # stderr, so stamp the copy exactly like the parity runner does
-        # (always / auto / auto), then assert the file is byte-identical to
-        # the frozen catalog reference apart from those three stamps.
-        content = legacy.read_text()
-        content = content.replace(
-            'stamped_gate_mode="__WORKTREE_GATE_MODE__"',
-            'stamped_gate_mode="always"',
+        proc = subprocess.run(
+            ["python3", str(RECIPE_MATERIALIZE_PATH), str(proj), str(home)],
+            capture_output=True, text=True,
         )
-        content = content.replace(
-            'stamped_gate_scope="__WORKTREE_GATE_SCOPE__"',
-            'stamped_gate_scope="auto"',
+        self.assertEqual(proc.returncode, 1)
+        combined = proc.stderr + proc.stdout
+        self.assertIn("bash", combined)
+        self.assertIn("removed", combined)
+        self.assertIn("auto | go", combined)
+        legacy = (
+            proj / "ai-specs" / "recipes" / "worktree-flow"
+            / "hooks" / "worktree-gate-legacy.sh"
         )
-        content = content.replace(
-            'stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"',
-            'stamped_repo_topology="auto"',
-        )
-        legacy.write_text(content)
-        legacy.chmod(0o755)
-        self.assertTrue(legacy.is_file())
-
-        def substitute(text: str, locations: dict[str, Path]) -> str:
-            for name, path in locations.items():
-                marker = "{" + name + "}"
-                while marker in text:
-                    head, _, tail = text.partition(marker)
-                    if not tail:
-                        text = head + str(path)
-                    else:
-                        text = head + str(path) + "/" + tail.lstrip("/")
-            return text
-
-        for case_file in cases:
-            case = json.loads(case_file.read_text())
-            with self.subTest(case=case_file.name):
-                root = Path(tmp.name) / f"fixture-{case_file.stem}"
-                if root.exists():
-                    import shutil as _sh
-                    _sh.rmtree(root)
-                root.mkdir()
-                repo = root / "repo"
-                repo.mkdir()
-                self._git(repo, "init", "-q")
-                self._git(repo, "config", "user.email", "t@t.t")
-                self._git(repo, "config", "user.name", "t")
-                (repo / "README.md").write_text("x\n")
-                self._git(repo, "add", "-A")
-                self._git(repo, "commit", "-qm", "init")
-                self._git(repo, "checkout", "-q", "-B", "main")
-                locations = {"repo": repo}
-                fixture = case.get("fixture", "none")
-                if fixture in (None, "none", "protected-main"):
-                    pass  # repo already on main
-                elif fixture == "feature-branch":
-                    self._git(repo, "checkout", "-q", "-B", "feature-x")
-                elif fixture == "development-branch":
-                    self._git(repo, "checkout", "-q", "-B", "development")
-                elif fixture == "external-path":
-                    locations["external"] = root / "external"
-                    locations["external"].mkdir()
-                elif fixture == "linked-worktree":
-                    locations["worktree"] = root / "wt"
-                    self._git(repo, "worktree", "add", "-q", "-b", "feat", str(locations["worktree"]))
-                else:
-                    raise AssertionError(f"unhandled fixture {fixture}")
-
-                if case.get("stdin") is not None:
-                    payload = case["stdin"]
-                else:
-                    event = json.loads(json.dumps(case["event"]))
-                    if "cwd" in event:
-                        event["cwd"] = substitute(event["cwd"], locations)
-                    ti = event.get("tool_input") or {}
-                    for key in ("file_path", "notebook_path", "command"):
-                        if key in ti:
-                            ti[key] = substitute(ti[key], locations)
-                    for key in ("command", "script"):
-                        if key in event:
-                            event[key] = substitute(event[key], locations)
-                    payload = json.dumps(event)
-                event_cwd = locations.get("repo", root)
-                env = dict(os.environ, WORKTREE_GATE_PROTECTED="main development")
-                result = subprocess.run(
-                    ["bash", str(legacy)], input=payload,
-                    capture_output=True, text=True, cwd=str(event_cwd), env=env,
-                )
-                self.assertEqual(result.returncode, case["expected_exit"], result.stderr)
-                expected = case.get("expected_stderr")
-                if expected is not None:
-                    self.assertEqual(
-                        result.stderr,
-                        substitute(expected, locations) + "\n")
-                else:
-                    self.assertEqual(result.stderr, "")
+        self.assertFalse(legacy.exists())
 
 
 if __name__ == "__main__":

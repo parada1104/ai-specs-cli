@@ -1,10 +1,10 @@
 """Tokenizer differential: Go tokenizer vs python3 shlex.split.
 
 Pins the shlex-equivalent Go tokenizer
-(catalog/recipes/worktree-flow/gate/tokenize.go) token-for-token against the
-real python3 shlex.split(cmd, posix=True) that the frozen Bash reference's
-pass1 runs (worktree-gate-legacy.sh:129-133), over the shared corpus
-tests/fixtures/worktree-gate-tokenizer-corpus.json (design 8.3, task 1.18).
+(catalog/recipes/worktree-flow/gate/tokenize.go) token-for-token against
+python3 shlex.split(cmd, posix=True) over the shared corpus
+tests/fixtures/worktree-gate-tokenizer-corpus.json. The retired Bash
+tokenizer is not an oracle.
 
 Every corpus entry is either {"cmd": ..., "tokens": [...]} or
 {"cmd": ..., "error": true} — the pinned answers produced by the real shlex.
