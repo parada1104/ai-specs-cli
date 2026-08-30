@@ -73,3 +73,15 @@ writes `ai-specs.env`, and never touches the application's project-root `.env`.
 - **THEN** `ai-specs.env` MUST NOT be created by sync
 - **AND** project-root `.env` MUST be unchanged
 - **AND** the step MUST complete without prompting
+## Success Criteria
+
+1. Sync regenerates the root `ai-specs.env.example` from enabled recipes with
+   required env values (delta: "sync regenerates example + warns on missing
+   values"), keeping resync idempotent.
+2. Sync ensures a managed `.envrc` block idempotently and preserves custom
+   content outside the block.
+3. Missing required env values produce a non-fatal warning; sync never writes
+   secrets, never creates `ai-specs.env`, nested examples, or a project `.env`.
+4. Canonical `openspec/specs/harness-env-scaffold/spec.md` amended: SHALL-NOT-create
+   wording replaces the deprecated-stub sentence, with the new requirement section
+   mirroring the delta.
