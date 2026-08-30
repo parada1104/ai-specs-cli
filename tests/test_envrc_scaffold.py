@@ -163,8 +163,8 @@ class EnvrcScaffoldTests(unittest.TestCase):
                 self.mod.generate_envrc_example(project)
             self.assertFalse((project / "ai-specs" / ".envrc").exists())
             self.assertTrue((project / "ai-specs.env.example").is_file())
-            stub = (project / "ai-specs" / ".envrc.example").read_text(encoding="utf-8")
-            self.assertIn("DEPRECATED", stub)
+            self.assertFalse((project / "ai-specs" / ".envrc.example").exists())
+            self.assertFalse((project / "ai-specs" / ".env.example").exists())
 
     def test_existing_example_backed_up(self):
         with tempfile.TemporaryDirectory() as tmp:

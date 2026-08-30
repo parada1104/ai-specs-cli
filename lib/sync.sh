@@ -6,8 +6,9 @@
 #   1. Refresh root ai-specs/.gitignore from [[deps]]
 #   2. Refresh bundled skills/commands + lock file in the root workspace
 #   3. Vendor external skills in the root workspace only
-#   4. Render root AGENTS.md + auto-invoke table
-#   5. Fan out derived local artifacts to each resolved target
+#   4. Regenerate root ai-specs.env.example + ensure merge-safe .envrc
+#   5. Render root AGENTS.md + auto-invoke table
+#   6. Fan out derived local artifacts to each resolved target
 #
 # `.gitmodules` is advisory-only in V1.
 # Failure mode is stop-on-first-failure with explicit target reporting.
@@ -83,6 +84,7 @@ CLI_VERSION_PY="$AI_SPECS_HOME/lib/_internal/cli_version.py"
 RECIPE_MATERIALIZE_PY="$AI_SPECS_HOME/lib/_internal/recipe-materialize.py"
 AGENTS_RENDER_PY="$AI_SPECS_HOME/lib/_internal/agents-render.py"
 BRIEF_RENDER_POLICY_PY="$AI_SPECS_HOME/lib/_internal/brief-render-policy.py"
+ENV_SCAFFOLD_PY="$AI_SPECS_HOME/lib/_internal/env_scaffold.py"
 SYNC_AGENT_SH="$AI_SPECS_HOME/lib/sync-agent.sh"
 
 if [[ -n "$(shopt -p inherit_errexit 2>/dev/null)" ]]; then
@@ -215,6 +217,8 @@ run_step "root .gitignore (agent block)" python3 "$GITIGNORE_ROOT_REFRESH" "$ROO
 run_step "bundled skills + commands" python3 "$REFRESH_BUNDLED_PY" "$ROOT_PATH" "$AI_SPECS_HOME"
 
 run_step "vendored skills" python3 "$VENDOR_SKILLS_PY" "$ROOT_PATH"
+
+run_step "harness env (.envrc + ai-specs.env.example)" python3 "$ENV_SCAFFOLD_PY" "$ROOT_PATH"
 
 RECIPE_MCP_TEMP="$(mktemp -t ai-specs-recipe-mcp-XXXXXX.json)"
 RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
