@@ -46,18 +46,6 @@ _ENV_EXAMPLE_HEADER = """\
 # Generated from enabled recipes' [[provides.mcp]] env references.
 """
 
-_LEGACY_ENV_EXAMPLE_STUB = """\
-# DEPRECATED: use project-root ai-specs.env.example instead.
-# Root .envrc is managed by ai-specs (dotenv_if_exists ai-specs.env).
-# Regenerate with: ai-specs configure-recipes
-"""
-
-_ENVRC_EXAMPLE_STUB = """\
-# DEPRECATED: use project-root ai-specs.env.example instead.
-# Root .envrc is managed by ai-specs (dotenv_if_exists ai-specs.env).
-# Regenerate with: ai-specs configure-recipes
-"""
-
 ENV_VAR_HELP: dict[str, str] = {
     "TRELLO_API_KEY": (
         "Trello API key — create at https://trello.com/power-ups/admin"
@@ -193,6 +181,17 @@ def load_harness_env(project_root: Path) -> dict[str, str]:
     return _parse_dotenv(path.read_text(encoding="utf-8"))
 
 
+def missing_required_values(project_root: Path) -> list[str]:
+    """Return required MCP env vars that have no non-empty value in ai-specs.env."""
+    required = collect_env_vars(project_root)
+    configured = load_harness_env(project_root)
+    return [
+        var
+        for var in sorted(required)
+        if not (configured.get(var) or "").strip()
+    ]
+
+
 def write_env(project_root: Path, var_values: dict[str, str]) -> Path:
     """Write/merge project-root ai-specs.env. Never touches project-root .env.
 
@@ -216,21 +215,9 @@ def write_env(project_root: Path, var_values: dict[str, str]) -> Path:
     return target
 
 
-def _write_deprecation_stub(path: Path, body: str) -> None:
-    if path.is_file():
-        bak = path.with_name(path.name + ".bak")
-        if not bak.is_file():
-            bak.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
-
-
 def generate_env_example(project_root: Path) -> Path:
-    """Write root ai-specs.env.example; stub deprecated under-ai-specs templates."""
+    """Write root ai-specs.env.example from enabled recipes' MCP env refs."""
     target = harness_env_example_path(project_root)
-    if target.is_file():
-        backup = project_root / f"{HARNESS_ENV_EXAMPLE_NAME}.bak"
-        backup.write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
 
     vars_map = collect_env_vars(project_root)
     lines = [_ENV_EXAMPLE_HEADER.rstrip(), ""]
@@ -239,20 +226,24 @@ def generate_env_example(project_root: Path) -> Path:
             help_bits = [vars_map[var]]
             if var in ENV_VAR_HELP:
                 help_bits.append(ENV_VAR_HELP[var])
-            lines.append(f"{var}=  # {'; '.join(help_bits)}")
+            lines.append(f"{var}=  # {' '.join(help_bits)}")
     else:
         lines.append("# (no env vars required by enabled recipes)")
     lines.append("")
-    target.write_text("\n".join(lines), encoding="utf-8")
+    new_text = "\n".join(lines)
 
-    ai_specs = project_root / "ai-specs"
-    _write_deprecation_stub(ai_specs / ".env.example", _LEGACY_ENV_EXAMPLE_STUB)
-    _write_deprecation_stub(ai_specs / ".envrc.example", _ENVRC_EXAMPLE_STUB)
+    if target.is_file():
+        old_text = target.read_text(encoding="utf-8")
+        if old_text == new_text:
+            return target
+        backup = project_root / f"{HARNESS_ENV_EXAMPLE_NAME}.bak"
+        backup.write_text(old_text, encoding="utf-8")
+
+    target.write_text(new_text, encoding="utf-8")
     return target
 
-
 def generate_envrc_example(project_root: Path) -> Path:
-    """Deprecated alias — writes ai-specs.env.example (and legacy stubs)."""
+    """Deprecated alias — writes ai-specs.env.example only."""
     return generate_env_example(project_root)
 
 
@@ -538,6 +529,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     path = generate_env_example(root)
     ensure_root_envrc(root)
+    for var in missing_required_values(root):
+        print(
+            f"! {var} sin valor en ai-specs.env — ejecuta ai-specs configure-recipes",
+            file=sys.stderr,
+        )
     print(f"Wrote {path}")
     return 0
 

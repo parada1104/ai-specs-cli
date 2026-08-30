@@ -148,10 +148,8 @@ class EnvScaffoldTests(unittest.TestCase):
             self.assertIn("TRELLO_API_KEY=", text)
             self.assertIn("trello.com/power-ups/admin", text)
             self.assertNotIn("export ", text)
-            stub = (project / "ai-specs" / ".envrc.example").read_text(encoding="utf-8")
-            self.assertIn("DEPRECATED", stub)
-            nested_stub = (project / "ai-specs" / ".env.example").read_text(encoding="utf-8")
-            self.assertIn("DEPRECATED", nested_stub)
+            self.assertFalse((project / "ai-specs" / ".envrc.example").exists())
+            self.assertFalse((project / "ai-specs" / ".env.example").exists())
 
     def test_generate_env_example_backup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -167,6 +165,19 @@ class EnvScaffoldTests(unittest.TestCase):
                 (project / "ai-specs.env.example.bak").read_text(encoding="utf-8"),
                 "OLD\n",
             )
+
+    def test_generate_env_example_skips_identical_rewrite(self):
+        """Idempotent sync must not create .bak when example content is unchanged."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="trello-mcp-workflow", recipe_toml=self._trello_toml()
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                self.mod.generate_env_example(project)
+                self.mod.generate_env_example(project)
+            self.assertFalse((project / "ai-specs.env.example.bak").exists())
+            self.assertTrue((project / "ai-specs.env.example").is_file())
 
     def test_ensure_root_envrc_creates(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -421,6 +432,52 @@ class EnvScaffoldTests(unittest.TestCase):
                 result = self.mod.prompt_env_vars(project)
             self.assertEqual(result["TRELLO_API_KEY"], "secret-key")
             password.assert_called()
+
+    def test_missing_required_values_reports_absent_and_blank(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="trello-mcp-workflow", recipe_toml=self._trello_toml()
+            )
+            (project / "ai-specs.env").write_text(
+                "TRELLO_API_KEY=present\nTRELLO_TOKEN=\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                missing = self.mod.missing_required_values(project)
+            self.assertEqual(missing, ["TRELLO_TOKEN"])
+
+    def test_main_warns_missing_values_nonfatal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="trello-mcp-workflow", recipe_toml=self._trello_toml()
+            )
+            (project / "ai-specs.env").write_text(
+                "TRELLO_API_KEY=k\n",
+                encoding="utf-8",
+            )
+            import io
+
+            buf = io.StringIO()
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.object(
+                sys, "stderr", buf
+            ):
+                rc = self.mod.main([str(project)])
+            self.assertEqual(rc, 0)
+            err_text = buf.getvalue()
+            self.assertIn(
+                "! TRELLO_TOKEN sin valor en ai-specs.env — ejecuta ai-specs configure-recipes",
+                err_text,
+            )
+            self.assertNotIn("TRELLO_API_KEY", err_text)
+            self.assertFalse((project / "ai-specs" / ".env.example").exists())
+            self.assertTrue((project / "ai-specs.env.example").is_file())
+            self.assertTrue((project / ".envrc").is_file())
+            self.assertEqual(
+                (project / "ai-specs.env").read_text(encoding="utf-8"),
+                "TRELLO_API_KEY=k\n",
+            )
 
 
 class DepInstallTests(unittest.TestCase):
