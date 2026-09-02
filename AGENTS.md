@@ -69,12 +69,12 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - A session works on one explicit user request or tracker card; resolve focus from memory and tracker before starting.
 - Follow red-green-refactor discipline: write a failing test first, then implement, then clean up.
 - Run the full test suite before committing; do not leave the suite in a failing state.
-- Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; record depth in tasks.md and stop for authorization.
+- Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; compute the signal depth, compare any explicit requested depth, ask on conflicts, and annotate requested/signal/decided depth in tasks.md before authorization.
 - Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.
-- Do not open a PR until the change folder on the branch contains the tier minimum planning files, committed.
+- Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed.
 - After authorization, implement and validate in the change worktree when isolated worktrees are enabled.
-- Archive the change folder on the review branch before merge; never defer archive until after merge.
-- Default artifact store for this project's planning artifacts: `openspec`. When a session asks where planning artifacts should live, answer with this value unless the user overrides it.
+- Before merge, run verify evidence before archive-tail (Standard/Full block without a conforming verify-report.md; Light is advisory), archive the change folder on the review branch at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, and run the pre-merge guardian again; exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.
+- Default artifact store for this project's planning artifacts: `openspec`. When a session asks where planning artifacts should live, answer with this value unless the user overrides it. The store is a persistence preference only: plan-build readiness is always proven by the file-backed canonical change-folder tree, never by a memory-only store.
 - For recognized submodule worktrees, use the topology-derived central planning tree in the superproject; standalone repositories keep their own planning tree.
 - Inspect the active Trello card before resuming work and keep card state in sync with actual progress.
 - Before apply/production work on a structured change, create or link a Trello card and record it in the ## Tracker section of the change's proposal.md (or tasks.md) — card_id + url. openspec/** writes are never gated — write the link section there first.
