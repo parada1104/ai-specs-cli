@@ -33,7 +33,6 @@ ai-specs/.env.bak
 ai-specs/.envrc.bak
 # --- end ai-specs ---
 .env
-.envrc
 ai-specs.env
 ai-specs/.env
 ai-specs/.env.bak
@@ -45,3 +44,5 @@ dist/
 # Stray `go build` output inside the Go gate module (never committed; the
 # trust root is the digest file catalog/recipes/worktree-flow/bin/SHA256SUMS).
 catalog/recipes/worktree-flow/gate/worktree-gate
+
+.codegraph/
