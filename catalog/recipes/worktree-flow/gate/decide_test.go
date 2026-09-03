@@ -121,30 +121,47 @@ func TestIsClaudeException(t *testing.T) {
 }
 
 func TestBlockMessageVerbatim(t *testing.T) {
-	// Byte-identical to the frozen reference (worktree-gate-legacy.sh:527-529),
-	// including the U+2014 em dash and the /worktree-new guidance.
-	want := "worktree-gate: refusing to Write '/repo/src.py' on protected branch 'main' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write."
-	if got := BlockMessage(false, "Write", "/repo/src.py", "main"); got != want {
+	// createWorktree=true keeps the legacy /worktree-new sentence plus the named cwd.
+	cwd := "/repo"
+	want := "worktree-gate: refusing to Write '/repo/src.py' on protected branch 'main' in the main worktree (/repo). Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write."
+	if got := BlockMessage(false, "Write", "/repo/src.py", "main", cwd, true); got != want {
 		t.Fatalf("path block message:\n got %q\nwant %q", got, want)
 	}
-	wantShell := "worktree-gate: refusing shell command that writes '/repo/out.log' on protected branch 'main' in the main worktree — using bash/shell to write here bypasses the worktree gate. Create a dedicated worktree first (e.g. /worktree-new) and run there — exploration ends at the first write."
-	if got := BlockMessage(true, "Bash", "/repo/out.log", "main"); got != wantShell {
+	wantShell := "worktree-gate: refusing shell command that writes '/repo/out.log' on protected branch 'main' in the main worktree (/repo) — using bash/shell to write here bypasses the worktree gate. Create a dedicated worktree first (e.g. /worktree-new) and run there — exploration ends at the first write."
+	if got := BlockMessage(true, "Bash", "/repo/out.log", "main", cwd, true); got != wantShell {
 		t.Fatalf("shell block message:\n got %q\nwant %q", got, wantShell)
 	}
 }
 
+func TestBlockMessageNoCreateWorktreeNamesCwd(t *testing.T) {
+	other := "/other/primary"
+	got := BlockMessage(true, "Bash", "f.txt", "main", other, false)
+	if !strings.Contains(got, other) {
+		t.Fatalf("must name command cwd %q: %q", other, got)
+	}
+	if strings.Contains(got, "/worktree-new") {
+		t.Fatalf("non-session primary must not suggest /worktree-new: %q", got)
+	}
+	if !strings.Contains(got, "bash/shell") {
+		t.Fatalf("shell variant must name bash-bypass risk: %q", got)
+	}
+	gotPath := BlockMessage(false, "Write", "f.txt", "main", other, false)
+	if strings.Contains(gotPath, "/worktree-new") || !strings.Contains(gotPath, other) {
+		t.Fatalf("path createWorktree=false: %q", gotPath)
+	}
+}
+
 func TestBlockMessageDefaultTool(t *testing.T) {
-	got := BlockMessage(false, "", "/repo/x", "main")
+	got := BlockMessage(false, "", "/repo/x", "main", "/repo", true)
 	if !strings.HasPrefix(got, "worktree-gate: refusing to edit '/repo/x' on protected branch 'main'") {
 		t.Fatalf("default-tool message = %q, want 'edit' fallback", got)
 	}
 }
 
 func TestAskMessagePresentsThreeDestinationsAndNoSelfBypass(t *testing.T) {
-	got := AskMessage(false, "Write", "/repo/src.py", "development")
-	// The ask message lists the three destinations for the user.
+	got := AskMessage(false, "Write", "/repo/src.py", "development", "/repo", true)
 	for _, want := range []string{
-		"worktree-gate: refusing to Write '/repo/src.py' on protected branch 'development' in the main worktree.",
+		"worktree-gate: refusing to Write '/repo/src.py' on protected branch 'development' in the main worktree (/repo).",
 		"(1) create a dedicated worktree (recommended)",
 		"(2) create a feature branch here",
 		"(3) write on the protected branch with the user's explicit override",
@@ -154,18 +171,34 @@ func TestAskMessagePresentsThreeDestinationsAndNoSelfBypass(t *testing.T) {
 			t.Fatalf("ask message missing %q:\n%s", want, got)
 		}
 	}
-	// The self-bypass escape hatch must never be advertised to the agent.
 	if strings.Contains(got, "WORKTREE_GATE_MODE=off") || strings.Contains(got, "to bypass") {
 		t.Fatalf("ask message must not advertise a self-bypass: %q", got)
 	}
-	// The hard block still says no — ask is not a silent allow.
 	if !strings.Contains(got, "refusing") {
 		t.Fatalf("ask message must refuse the write: %q", got)
 	}
 }
 
+func TestAskMessageWithoutCreateWorktree(t *testing.T) {
+	got := AskMessage(true, "Bash", "f.txt", "main", "/other/primary", false)
+	if strings.Contains(got, "WORKTREE_GATE_MODE=off") {
+		t.Fatalf("ask must not advertise off: %q", got)
+	}
+	if strings.Contains(got, "/worktree-new") {
+		t.Fatalf("ask createWorktree=false must not contain /worktree-new: %q", got)
+	}
+	if !strings.Contains(got, "/other/primary") {
+		t.Fatalf("ask must name cwd: %q", got)
+	}
+	for _, want := range []string{"(1)", "(2)", "(3)", "Ask the user where to put this work"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ask missing three-destination guidance %q: %s", want, got)
+		}
+	}
+}
+
 func TestAskMessageShellVariant(t *testing.T) {
-	got := AskMessage(true, "Bash", "/repo/out.log", "main")
+	got := AskMessage(true, "Bash", "/repo/out.log", "main", "/repo", true)
 	if !strings.HasPrefix(got, "worktree-gate: refusing shell command that writes '/repo/out.log' on protected branch 'main'") {
 		t.Fatalf("shell ask message prefix = %q", got)
 	}
@@ -178,9 +211,26 @@ func TestAskMessageShellVariant(t *testing.T) {
 }
 
 func TestAskMessageDefaultTool(t *testing.T) {
-	got := AskMessage(false, "", "/repo/x", "main")
+	got := AskMessage(false, "", "/repo/x", "main", "/repo", true)
 	if !strings.HasPrefix(got, "worktree-gate: refusing to edit '/repo/x' on protected branch 'main'") {
 		t.Fatalf("default-tool ask message = %q, want 'edit' fallback", got)
+	}
+}
+
+func TestDegradeMessage(t *testing.T) {
+	for _, mode := range []string{"always", "ask"} {
+		got := DegradeMessage(mode)
+		if strings.Contains(got, "/worktree-new") || strings.Contains(got, "WORKTREE_GATE_MODE=off") || strings.Contains(got, "to bypass") {
+			t.Fatalf("DegradeMessage(%s) leaked bypass/worktree-new: %q", mode, got)
+		}
+		if !strings.Contains(got, "command cwd") {
+			t.Fatalf("DegradeMessage(%s) must mention unrecoverable command cwd: %q", mode, got)
+		}
+	}
+	always := DegradeMessage("always")
+	ask := DegradeMessage("ask")
+	if always == ask {
+		t.Fatal("always vs ask degrade wording may differ")
 	}
 }
 

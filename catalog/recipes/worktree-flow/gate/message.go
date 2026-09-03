@@ -2,35 +2,66 @@ package main
 
 import "fmt"
 
-// BlockMessage builds the verbatim stderr message for a blocked candidate.
-// The two variants mirror worktree-gate-legacy.sh:527-530 byte for byte
-// (including the U+2014 em dash). The block path writes to the primary
-// checkout of the main worktree, so the guidance is to move the write into a
-// dedicated worktree.
-func BlockMessage(shell bool, toolName, candidate, branch string) string {
+func locationPhrase(commandCwd string, createWorktree bool) string {
+	if commandCwd == "" {
+		return "the main worktree"
+	}
+	if createWorktree {
+		return fmt.Sprintf("the main worktree (%s)", commandCwd)
+	}
+	return commandCwd
+}
+
+// BlockMessage builds the stderr message for a blocked candidate.
+// createWorktree keeps the legacy /worktree-new sentence and names commandCwd.
+// When createWorktree is false, stderr names the absolute command cwd and MUST
+// NOT instruct creating another worktree.
+func BlockMessage(shell bool, toolName, candidate, branch, commandCwd string, createWorktree bool) string {
+	loc := locationPhrase(commandCwd, createWorktree)
 	if shell {
-		return fmt.Sprintf("worktree-gate: refusing shell command that writes '%s' on protected branch '%s' in the main worktree — using bash/shell to write here bypasses the worktree gate. Create a dedicated worktree first (e.g. /worktree-new) and run there — exploration ends at the first write.", candidate, branch)
+		msg := fmt.Sprintf("worktree-gate: refusing shell command that writes '%s' on protected branch '%s' in %s — using bash/shell to write here bypasses the worktree gate.", candidate, branch, loc)
+		if createWorktree {
+			msg += " Create a dedicated worktree first (e.g. /worktree-new) and run there — exploration ends at the first write."
+		}
+		return msg
 	}
 	if toolName == "" {
 		toolName = "edit"
 	}
-	return fmt.Sprintf("worktree-gate: refusing to %s '%s' on protected branch '%s' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write.", toolName, candidate, branch)
+	msg := fmt.Sprintf("worktree-gate: refusing to %s '%s' on protected branch '%s' in %s.", toolName, candidate, branch, loc)
+	if createWorktree {
+		msg += " Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write."
+	}
+	return msg
 }
 
 // AskMessage builds the stderr guidance for gate_mode=ask. The write is still
 // refused (exit 2) but the agent is directed to ask the user which destination
-// to use, never to self-bypass. Unlike the legacy AskHint it does NOT advertise
-// the WORKTREE_GATE_MODE=off escape hatch: option 3 (write on the protected
-// branch) is regulated by the skill, not by the gate message.
-func AskMessage(shell bool, toolName, candidate, branch string) string {
-	prefix := fmt.Sprintf("refusing to %s '%s' on protected branch '%s' in the main worktree", defaultTool(toolName), candidate, branch)
+// to use, never to self-bypass. It does NOT advertise WORKTREE_GATE_MODE=off.
+func AskMessage(shell bool, toolName, candidate, branch, commandCwd string, createWorktree bool) string {
+	loc := locationPhrase(commandCwd, createWorktree)
+	prefix := fmt.Sprintf("refusing to %s '%s' on protected branch '%s' in %s", defaultTool(toolName), candidate, branch, loc)
 	if shell {
-		prefix = fmt.Sprintf("refusing shell command that writes '%s' on protected branch '%s' in the main worktree", candidate, branch)
+		prefix = fmt.Sprintf("refusing shell command that writes '%s' on protected branch '%s' in %s", candidate, branch, loc)
+	}
+	opt1 := "(1) create a dedicated worktree (recommended)"
+	if !createWorktree {
+		opt1 = fmt.Sprintf("(1) continue in %s", commandCwd)
 	}
 	return fmt.Sprintf(
-		"worktree-gate: %s. Ask the user where to put this work: (1) create a dedicated worktree (recommended), (2) create a feature branch here, or (3) write on the protected branch with the user's explicit override.",
-		prefix,
+		"worktree-gate: %s. Ask the user where to put this work: %s, (2) create a feature branch here, or (3) write on the protected branch with the user's explicit override.",
+		prefix, opt1,
 	)
+}
+
+// DegradeMessage is fail-open guidance when a relative write has no recoverable
+// cwd. It MUST NOT advertise WORKTREE_GATE_MODE=off, "to bypass", or /worktree-new.
+func DegradeMessage(mode string) string {
+	core := "command cwd could not be recovered for a relative write; it was not classified against the host process cwd."
+	if mode == "ask" {
+		return "worktree-gate: " + core + " Ask the user if this write is intentional."
+	}
+	return "worktree-gate: warn: " + core
 }
 
 func defaultTool(toolName string) string {
