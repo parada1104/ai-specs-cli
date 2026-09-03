@@ -55,7 +55,13 @@ Frozen (confirmed unmodified): `lib/_internal/hooks-render.py`, `worktree-gate.s
 | `gofmt -l catalog/recipes/worktree-flow/gate` | clean after `gofmt -w` |
 | `scripts/build-gate.sh` + SHA256SUMS regen (go1.24.13) | 4 targets |
 | Digest/doctor tests after sums update | 12/12 ok |
-| `./tests/run.sh` (full, before sums update) | 1790 tests; gate digest failures (fixed by SHA256SUMS); **1 pre-existing error** `test_legacy_ceremony_mapping_table` missing `openspec/changes/retire-decision-matrix/...` (out of scope) |
+| `./tests/run.sh` (full, before sums and manifest-test cleanup) | 1790 tests; gate digest failures (fixed by SHA256SUMS); **1 pre-existing error** from an obsolete active manifest-contract check targeting a retired change path (removed in the cleanup correction) |
+| Post-verify correction: `scripts/build-gate.sh` (go1.24.13) + SHA256SUMS regen | 4 targets; new darwin-arm64 `2644dc99…` |
+| Post-verify correction: `gofmt -l catalog/recipes/worktree-flow/gate` | clean (no Go edits) |
+| Post-verify correction: `go test ./...` in gate dir | pass (`ok ai-specs.dev/worktree-gate`, ~10.6s) |
+| Post-verify correction: focused hook fallback + corpus parity | 8/8 ok |
+| Post-verify correction: release/digest/doctor/cache Python | 39 + full hook/parity/cache = 123 ok in combined run |
+| Full `./tests/run.sh` after this correction | **not run** — verification not complete |
 
 ## TDD Cycle Evidence
 
@@ -96,9 +102,22 @@ Frozen (confirmed unmodified): `lib/_internal/hooks-render.py`, `worktree-gate.s
 - **`SHA256SUMS`:** regenerated with go1.24.13 so doctor/release digest tests accept the new binary. Not in the original file table; required for 5.3 digest/doctor checks. Launcher/`doctor.py` source untouched.
 - **`extractPass2` once:** proven via `cd A && python3 -c 'Path("rel").write_text("x")'` attaching final sequential `S`, not per-segment (dedupe would hide double extract).
 
+## Post-verify expectation correction (not a new implementation batch)
+
+Verifier regressions only; Go gate logic unchanged:
+
+- Regenerated `catalog/recipes/worktree-flow/bin/SHA256SUMS` from final source with canonical `go1.24.13` via `scripts/build-gate.sh`.
+- Updated 7 corpus `expected_stderr` strings to name cwd as `the main worktree ({repo})`.
+- `substitute()` in `tests/test_worktree_gate_parity.py` keeps a bare path when `{repo}` is followed by `)` so the named-cwd message can match.
+- Reconciled 6 hook fallback tests to honest degrade (exit 0, DegradeMessage, no `$PWD` block).
+- Removed the obsolete active manifest-contract check for the retired change path; historical archive artifacts and anti-reintroduction guards remain intact.
+- Left the unrelated main-checkout baseline ask-mode failures untouched.
+
+Verification is **not** complete: full `./tests/validate.sh` must be re-run after this cleanup correction.
+
 ## Remaining tasks
 
-Implementation: none unchecked.
+Implementation: none unchecked. Verification still owed (full Python suite + verify-report).
 
 Parent lifecycle:
 

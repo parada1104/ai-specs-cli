@@ -139,8 +139,10 @@ def substitute(text: str, locations: dict[str, Path]) -> str:
 
 
     A placeholder is replaced by the location path plus a "/" separator when
-    anything follows it, so both "{repo}/src.py" and "{repo}src.py" resolve to
-    "<repo>/src.py". A bare "{repo}" at end of string stays a bare path.
+    a path component follows it, so both "{repo}/src.py" and "{repo}src.py"
+    resolve to "<repo>/src.py". A bare "{repo}" at end of string, or one
+    immediately followed by ")", stays a bare path so block messages can name
+    the cwd as "the main worktree ({repo})".
     """
     for name, path in locations.items():
         marker = "{" + name + "}"
@@ -148,6 +150,8 @@ def substitute(text: str, locations: dict[str, Path]) -> str:
             head, _, tail = text.partition(marker)
             if not tail:
                 text = head + str(path)
+            elif tail.startswith(")"):
+                text = head + str(path) + tail
             else:
                 text = head + str(path) + "/" + tail.lstrip("/")
     return text

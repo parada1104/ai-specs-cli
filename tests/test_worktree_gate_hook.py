@@ -803,11 +803,16 @@ class WorktreeGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
     def test_missing_event_cwd_falls_back_to_process_pwd(self):
+        # Missing event cwd is unrecoverable: honest degrade, never block
+        # against the host process $PWD even when that cwd is the protected repo.
         self._checkout("main")
         event = self._event("Write", "src/app.py")
         event.pop("cwd")
         r = self._run_in(event, run_cwd=self.repo)
-        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("command cwd could not be recovered", r.stderr)
+        self.assertIn("not classified against the host process cwd", r.stderr)
+        self.assertNotIn("refusing", r.stderr)
 
     def test_absolute_candidate_unchanged_by_event_cwd(self):
         self._checkout("main")
@@ -826,49 +831,67 @@ class WorktreeGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
 
     def test_relative_shell_write_falls_back_to_process_pwd(self):
+        # Missing event cwd on a relative shell write degrades; $PWD is not
+        # a blocking fallback even when it is the protected primary.
         self._checkout("main")
         event = self._shell_event("echo x > out.log")
         event.pop("cwd")
         r = self._run_in(event, run_cwd=self.repo)
-        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("command cwd could not be recovered", r.stderr)
+        self.assertIn("not classified against the host process cwd", r.stderr)
+        self.assertNotIn("refusing", r.stderr)
 
     def test_relative_event_cwd_falls_back_to_process_pwd(self):
-        # A relative event cwd is unusable: resolution falls back to the
-        # process PWD (the protected repo), so a relative write blocks.
+        # A relative event cwd is unusable: honest degrade, never block
+        # against the host process $PWD (the protected repo).
         self._checkout("main")
         event = self._event("Write", "src/app.py")
         event["cwd"] = "relative/dir"
         r = self._run_in(event, run_cwd=self.repo)
-        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("command cwd could not be recovered", r.stderr)
+        self.assertIn("not classified against the host process cwd", r.stderr)
+        self.assertNotIn("refusing", r.stderr)
+
     def test_relative_event_cwd_traversal_falls_back_to_process_pwd(self):
         # Discriminator: a relative event cwd is unusable even when it
         # resolves (via ..) to an existing directory beside the process PWD.
-        # Resolution must fall back to the process PWD so the relative write
-        # still blocks; a mutant that accepts relative cwds resolved against
-        # the process PWD would resolve outside the repo and allow.
+        # The gate must degrade rather than block on $PWD; a silent allow
+        # (mutant that treats ../outside as a trusted base) would omit the
+        # degrade diagnostic.
         sibling = Path(self.tmp.name) / "outside"
         sibling.mkdir(exist_ok=True)
         self._checkout("main")
         event = self._event("Write", "src/app.py")
         event["cwd"] = "../outside"
         r = self._run_in(event, run_cwd=self.repo)
-        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("command cwd could not be recovered", r.stderr)
+        self.assertIn("not classified against the host process cwd", r.stderr)
+        self.assertNotIn("refusing", r.stderr)
 
     def test_nonexistent_event_cwd_falls_back_to_process_pwd(self):
-        # A nonexistent event cwd is unusable: resolution falls back to the
-        # process PWD (the protected repo), so a relative write blocks.
+        # A nonexistent event cwd is unusable: honest degrade, never block
+        # against the host process $PWD (the protected repo).
         self._checkout("main")
         event = self._event("Write", "src/app.py")
         event["cwd"] = str(Path(self.tmp.name) / "does-not-exist")
         r = self._run_in(event, run_cwd=self.repo)
-        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("command cwd could not be recovered", r.stderr)
+        self.assertIn("not classified against the host process cwd", r.stderr)
+        self.assertNotIn("refusing", r.stderr)
 
     def test_relative_shell_write_falls_back_on_nonexistent_event_cwd(self):
         self._checkout("main")
         event = self._shell_event("echo x > out.log")
         event["cwd"] = str(Path(self.tmp.name) / "does-not-exist")
         r = self._run_in(event, run_cwd=self.repo)
-        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("command cwd could not be recovered", r.stderr)
+        self.assertIn("not classified against the host process cwd", r.stderr)
+        self.assertNotIn("refusing", r.stderr)
 class WorktreeGateLauncherRootTests(unittest.TestCase):
     """BASH_SOURCE[0] installation-root resolution (stabilize-workspace-context
     2.1 / 2.6 / 2.7).
