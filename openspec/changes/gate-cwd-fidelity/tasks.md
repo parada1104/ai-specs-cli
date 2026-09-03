@@ -73,7 +73,7 @@ All paths relative to the worktree root `.worktrees/gate-cwd-fidelity` (branch `
 
 ## Phase 6 — Review gate (parent)
 
-- [ ] Start or reuse bounded review. <!-- sdd-owner: parent -->
+- [x] Start or reuse bounded review. N/A/complete because RDD is globally disabled by explicit user decision; no receipt or review approval invented. <!-- sdd-owner: parent -->
 
 ---
 

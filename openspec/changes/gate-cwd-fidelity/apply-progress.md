@@ -9,9 +9,9 @@ Merged from first apply batch (no prior `apply-progress` artifact).
 
 All 24 implementation-owned rows in `openspec/changes/gate-cwd-fidelity/tasks.md` are `- [x]`.
 
-Parent-owned (deferred, unchanged):
+Parent-owned (closed without RDD):
 
-- [ ] Start or reuse bounded review. <!-- sdd-owner: parent -->
+- [x] Start or reuse bounded review. N/A/complete because RDD is globally disabled by explicit user decision; no receipt or review approval invented. <!-- sdd-owner: parent -->
 
 ## Files changed
 
@@ -31,6 +31,13 @@ Modified:
 - `catalog/recipes/worktree-flow/bin/SHA256SUMS` — canonical go1.24.13 digests for the new binary
 - `openspec/changes/gate-cwd-fidelity/specs/worktree-flow/spec.md` — MODIFIED *Shell Command Write-Bypass Detection*
 - `openspec/changes/gate-cwd-fidelity/tasks.md` — implementation checkboxes
+
+Closing artifacts (verify-close batch, uncommitted; historical list above unchanged):
+
+- `openspec/changes/gate-cwd-fidelity/verify-report.md` — created (`Verdict: PASS`, `ready_for_archive: true`, Criterion 1–2)
+- `openspec/changes/gate-cwd-fidelity/proposal.md` — appended `## Success Criteria` (2 bullets; authorized)
+- `openspec/changes/gate-cwd-fidelity/tasks.md` — parent review task N/A/complete (RDD globally disabled)
+- `openspec/changes/gate-cwd-fidelity/apply-progress.md` — closing verification notes on `e89f783`
 
 Frozen (confirmed unmodified): `lib/_internal/hooks-render.py`, `worktree-gate.sh`, `doctor.py`, `decide.go`, `tokenize.go`, `config.go`, `uri.go`, `extract.go`.
 
@@ -61,7 +68,9 @@ Frozen (confirmed unmodified): `lib/_internal/hooks-render.py`, `worktree-gate.s
 | Post-verify correction: `go test ./...` in gate dir | pass (`ok ai-specs.dev/worktree-gate`, ~10.6s) |
 | Post-verify correction: focused hook fallback + corpus parity | 8/8 ok |
 | Post-verify correction: release/digest/doctor/cache Python | 39 + full hook/parity/cache = 123 ok in combined run |
-| Full `./tests/run.sh` after this correction | **not run** — verification not complete |
+| Full `./tests/run.sh` after this correction | **not run at that batch** — later completed on `e89f783` (see closing note) |
+| Closing `go test ./...` in gate dir (`e89f783`) | PASS (`ok ai-specs.dev/worktree-gate`); zero regressions |
+| Closing `./tests/validate.sh` (`e89f783`) | exit 0; obsolete active manifest-contract check already removed |
 
 ## TDD Cycle Evidence
 
@@ -113,16 +122,16 @@ Verifier regressions only; Go gate logic unchanged:
 - Removed the obsolete active manifest-contract check for the retired change path; historical archive artifacts and anti-reintroduction guards remain intact.
 - Left the unrelated main-checkout baseline ask-mode failures untouched.
 
-Verification is **not** complete: full `./tests/validate.sh` must be re-run after this cleanup correction.
+At the time of that cleanup batch, verification was **not** complete and full `./tests/validate.sh` still needed a re-run. That gap is closed on commit `e89f783`: `./tests/validate.sh` exit 0, `go test ./...` PASS, zero regressions, obsolete active test removed, and `verify-report.md` now exists.
 
 ## Remaining tasks
 
-Implementation: none unchecked. Verification still owed (full Python suite + verify-report).
+Implementation: none unchecked. Verification complete on `e89f783` (`./tests/validate.sh` exit 0; `go test ./...` PASS). `openspec/changes/gate-cwd-fidelity/verify-report.md` exists with `Verdict: PASS` and `ready_for_archive: true`.
 
 Parent lifecycle:
 
 ```
-- [ ] Start or reuse bounded review. <!-- sdd-owner: parent -->
+- [x] Start or reuse bounded review. N/A/complete because RDD is globally disabled by explicit user decision; no receipt or review approval invented. <!-- sdd-owner: parent -->
 ```
 
 ## Workload / PR boundary
@@ -131,4 +140,4 @@ Single PR + `size:exception`. No chain.
 
 ## Status / actionContext
 
-Consumed native JSON: `nextRecommended: sdd-apply`, `applyState: ready`, warnings `[]`. After this batch: implementation complete → `parent-lifecycle` / verify.
+Consumed native JSON: `nextRecommended: sdd-apply`, `applyState: ready`, warnings `[]`. After the implementation batch: implementation complete → verify. After closing artifacts on `e89f783`: verify-report present → ready for archive (RDD globally disabled; no receipt).

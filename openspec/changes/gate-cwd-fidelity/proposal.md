@@ -45,3 +45,8 @@ The worktree-flow shell gate produces false-positive blocks for commands that ex
 
 - card_id: `6a97c05e80015ef9ef90fb6c`
 - url: https://trello.com/c/VkRZdgU6
+
+## Success Criteria
+
+- The worktree-flow shell gate recovers effective cwd from static `git -C <dir>` and `cd <dir> && ...` command context before resolving relative write candidates, while preserving trusted event-cwd behavior.
+- When effective cwd is unrecoverable, relative write candidates degrade honestly without blocking against the host process cwd, and protected-branch messages identify the actual command cwd when one is recoverable.
