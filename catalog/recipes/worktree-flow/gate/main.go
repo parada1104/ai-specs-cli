@@ -125,18 +125,36 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	protectedBranches := strings.Fields(*protected)
 	for _, candidate := range event.Candidates {
-		if IsInternalURI(candidate, event.Mode) {
+		if IsInternalURI(candidate.Path, event.Mode) {
 			continue
 		}
-		if IsClaudeException(candidate, RealPath(filepath.Join(event.Cwd, candidate))) {
+		base, degrade := effectiveBase(candidate)
+		if degrade {
+			fmt.Fprintln(stderr, DegradeMessage(mode))
 			continue
 		}
-		d := Decide(candidate, event.Cwd, scope, topology, protectedBranches)
+		abs := candidate.Path
+		if !filepath.IsAbs(candidate.Path) {
+			if base != "" {
+				abs = RealPath(filepath.Join(base, candidate.Path))
+			}
+		} else {
+			abs = RealPath(candidate.Path)
+		}
+		if IsClaudeException(candidate.Path, abs) {
+			continue
+		}
+		d := Decide(candidate.Path, base, scope, topology, protectedBranches)
 		if !d.Allow {
+			cmdCwd := base
+			if cmdCwd == "" {
+				cmdCwd = event.Cwd
+			}
+			create := shouldCreateWorktree(cmdCwd, event.Cwd)
 			if mode == "ask" {
-				fmt.Fprintln(stderr, AskMessage(event.Mode == "shell", event.Tool, candidate, d.Branch))
+				fmt.Fprintln(stderr, AskMessage(event.Mode == "shell", event.Tool, candidate.Path, d.Branch, cmdCwd, create))
 			} else {
-				fmt.Fprintln(stderr, BlockMessage(event.Mode == "shell", event.Tool, candidate, d.Branch))
+				fmt.Fprintln(stderr, BlockMessage(event.Mode == "shell", event.Tool, candidate.Path, d.Branch, cmdCwd, create))
 			}
 			return 2
 		}
@@ -175,6 +193,8 @@ type explainOutput struct {
 	GateScope    string   `json:"gate_scope"`
 	RepoTopology string   `json:"repo_topology"`
 	Candidates   []string `json:"candidates"`
+	CwdSource    string   `json:"cwd_source"`
+	CommandCwd   string   `json:"command_cwd,omitempty"`
 	Decision     string   `json:"decision"`
 	Branch       string   `json:"branch"`
 	Reason       string   `json:"reason"`
@@ -184,14 +204,30 @@ func explainRun(gateMode, gateScope, repoTopology, protected string, stdin io.Re
 	event := ParseEvent(stdin, processCwd())
 	diag := explainOutput{Mode: event.Mode, Tool: event.Tool, Cwd: event.Cwd,
 		GateMode: gateMode, GateScope: gateScope, RepoTopology: repoTopology,
-		Candidates: event.Candidates, Decision: "allow", Reason: "no-blocking-candidate"}
-	for _, candidate := range event.Candidates {
-		d := Decide(candidate, event.Cwd, ResolveGateScope(os.Getenv("WORKTREE_GATE_SCOPE"), gateScope, stderr), ResolveRepoTopology(repoTopology, stderr), strings.Fields(protected))
-		if !d.Allow {
-			diag.Decision = "block"
-			diag.Branch = d.Branch
-			diag.Reason = "protected-branch"
-			break
+		Candidates: candidatePaths(event.Candidates), Decision: "allow", Reason: "no-blocking-candidate"}
+	if len(event.Candidates) > 0 {
+		c0 := event.Candidates[0]
+		diag.CwdSource = string(c0.Source)
+		if c0.Source == cwdSourceCommand {
+			diag.CommandCwd = c0.Base
+		}
+	}
+	if len(event.Candidates) > 0 {
+		scope := ResolveGateScope(os.Getenv("WORKTREE_GATE_SCOPE"), gateScope, stderr)
+		topology := ResolveRepoTopology(repoTopology, stderr)
+		protectedBranches := strings.Fields(protected)
+		for _, candidate := range event.Candidates {
+			base, degrade := effectiveBase(candidate)
+			if degrade {
+				continue
+			}
+			d := Decide(candidate.Path, base, scope, topology, protectedBranches)
+			if !d.Allow {
+				diag.Decision = "block"
+				diag.Branch = d.Branch
+				diag.Reason = "protected-branch"
+				break
+			}
 		}
 	}
 	payload, err := json.Marshal(diag)
@@ -201,4 +237,22 @@ func explainRun(gateMode, gateScope, repoTopology, protected string, stdin io.Re
 	}
 	fmt.Fprintln(stdout, string(payload))
 	return 0
+}
+
+func candidatePaths(cands []WriteCandidate) []string {
+	if len(cands) == 0 {
+		return nil
+	}
+	out := make([]string, len(cands))
+	for i, c := range cands {
+		out[i] = c.Path
+	}
+	return out
+}
+
+func shouldCreateWorktree(commandCwd, sessionCwd string) bool {
+	if commandCwd == "" || sessionCwd == "" {
+		return true
+	}
+	return RealPath(commandCwd) == RealPath(sessionCwd)
 }

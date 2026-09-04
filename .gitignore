@@ -45,4 +45,5 @@ dist/
 # trust root is the digest file catalog/recipes/worktree-flow/bin/SHA256SUMS).
 catalog/recipes/worktree-flow/gate/worktree-gate
 
+# CodeGraph local symbol index (machine-local, see skill codegraph-worktree).
 .codegraph/

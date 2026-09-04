@@ -95,3 +95,195 @@ func TestParseEventCwdNormalization(t *testing.T) {
 		})
 	}
 }
+
+func parseEventJSON(t *testing.T, raw map[string]interface{}, processCwd string) Event {
+	t.Helper()
+	data, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ParseEvent(strings.NewReader(string(data)), processCwd)
+}
+
+func TestParseEventWriteCandidateSources(t *testing.T) {
+	process := filepath.Join(t.TempDir(), "proc")
+	if err := os.MkdirAll(process, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	eventDir := t.TempDir()
+	wt := t.TempDir()
+
+	t.Run("shell git -C overlay is command source", func(t *testing.T) {
+		raw := map[string]interface{}{
+			"tool_name": "Bash",
+			"cwd":       eventDir,
+			"tool_input": map[string]interface{}{
+				"command": "git -C " + wt + " mv rel-a rel-b",
+			},
+		}
+		ev := parseEventJSON(t, raw, process)
+		if !ev.CwdTrusted {
+			t.Fatal("trusted event cwd")
+		}
+		if len(ev.Candidates) == 0 {
+			t.Fatal("expected mv destination candidate")
+		}
+		var dest WriteCandidate
+		for _, c := range ev.Candidates {
+			if c.Path == "rel-b" {
+				dest = c
+			}
+		}
+		if dest.Path != "rel-b" {
+			t.Fatalf("candidates = %+v, want rel-b", ev.Candidates)
+		}
+		if dest.Source != cwdSourceCommand || dest.Base != wt {
+			t.Fatalf("rel-b = %+v, want source=command base=%s", dest, wt)
+		}
+	})
+
+	t.Run("shell no changer uses event source when trusted", func(t *testing.T) {
+		raw := map[string]interface{}{
+			"tool_name": "Bash",
+			"cwd":       eventDir,
+			"tool_input": map[string]interface{}{
+				"command": "echo x > rel",
+			},
+		}
+		ev := parseEventJSON(t, raw, process)
+		if len(ev.Candidates) != 1 || ev.Candidates[0].Path != "rel" {
+			t.Fatalf("candidates = %+v", ev.Candidates)
+		}
+		c := ev.Candidates[0]
+		if c.Source != cwdSourceEvent || c.Base != eventDir {
+			t.Fatalf("rel = %+v, want source=event", c)
+		}
+	})
+
+	t.Run("shell unrecoverable cd is none even if event trusted", func(t *testing.T) {
+		raw := map[string]interface{}{
+			"tool_name": "Bash",
+			"cwd":       eventDir,
+			"tool_input": map[string]interface{}{
+				"command": `cd - && echo x > rel`,
+			},
+		}
+		ev := parseEventJSON(t, raw, process)
+		if !ev.CwdTrusted {
+			t.Fatal("json cwd still trusted")
+		}
+		var rel WriteCandidate
+		for _, c := range ev.Candidates {
+			if c.Path == "rel" {
+				rel = c
+			}
+		}
+		if rel.Path != "rel" || rel.Source != cwdSourceNone {
+			t.Fatalf("rel = %+v, want source=none", rel)
+		}
+	})
+
+	t.Run("path trusted event source", func(t *testing.T) {
+		raw := map[string]interface{}{
+			"tool_name":  "Write",
+			"cwd":        eventDir,
+			"tool_input": map[string]interface{}{"file_path": "a.py"},
+		}
+		ev := parseEventJSON(t, raw, process)
+		if ev.Mode != "path" || !ev.CwdTrusted {
+			t.Fatalf("mode/trusted = %s %v", ev.Mode, ev.CwdTrusted)
+		}
+		if len(ev.Candidates) != 1 {
+			t.Fatalf("candidates = %+v", ev.Candidates)
+		}
+		c := ev.Candidates[0]
+		if c.Path != "a.py" || c.Source != cwdSourceEvent || c.Base != eventDir {
+			t.Fatalf("path cand = %+v", c)
+		}
+	})
+
+	t.Run("path missing cwd is none; Cwd still records fallback", func(t *testing.T) {
+		raw := map[string]interface{}{
+			"tool_name":  "Write",
+			"tool_input": map[string]interface{}{"file_path": "a.py"},
+		}
+		ev := parseEventJSON(t, raw, process)
+		if ev.CwdTrusted {
+			t.Fatal("missing json cwd must not be trusted")
+		}
+		if ev.Cwd != process {
+			t.Fatalf("Cwd = %q, want process fallback %q", ev.Cwd, process)
+		}
+		if ev.Candidates[0].Source != cwdSourceNone {
+			t.Fatalf("path source = %+v, want none", ev.Candidates[0])
+		}
+	})
+
+	t.Run("path absolute still classified with none source", func(t *testing.T) {
+		abs := filepath.Join(eventDir, "abs.py")
+		raw := map[string]interface{}{
+			"tool_name":  "Write",
+			"tool_input": map[string]interface{}{"file_path": abs},
+		}
+		ev := parseEventJSON(t, raw, process)
+		if ev.Candidates[0].Path != abs {
+			t.Fatalf("path = %+v", ev.Candidates[0])
+		}
+		if ev.Candidates[0].Source != cwdSourceNone {
+			t.Fatalf("abs path source = %s, want none (untrusted event)", ev.Candidates[0].Source)
+		}
+	})
+
+	t.Run("missing json cwd with git -C is still command source", func(t *testing.T) {
+		raw := map[string]interface{}{
+			"tool_name": "Bash",
+			"tool_input": map[string]interface{}{
+				"command": "git -C " + wt + " mv a b",
+			},
+		}
+		ev := parseEventJSON(t, raw, process)
+		if ev.CwdTrusted {
+			t.Fatal("missing json cwd is untrusted")
+		}
+		if ev.Cwd != process {
+			t.Fatalf("Cwd fallback = %q, want %q", ev.Cwd, process)
+		}
+		var b WriteCandidate
+		for _, c := range ev.Candidates {
+			if c.Path == "b" {
+				b = c
+			}
+		}
+		if b.Source != cwdSourceCommand || b.Base != wt {
+			t.Fatalf("git -C dest = %+v, want command/%s", b, wt)
+		}
+	})
+}
+
+func TestParseEventExtractPass2OnceWithFinalS(t *testing.T) {
+	process := t.TempDir()
+	eventDir := t.TempDir()
+	dirA := t.TempDir()
+	raw := map[string]interface{}{
+		"tool_name": "Bash",
+		"cwd":       eventDir,
+		"tool_input": map[string]interface{}{
+			"command": "cd " + dirA + ` && python3 -c 'Path("rel").write_text("x")'`,
+		},
+	}
+	ev := parseEventJSON(t, raw, process)
+	var rel WriteCandidate
+	n := 0
+	for _, c := range ev.Candidates {
+		if c.Path == "rel" {
+			rel = c
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("extractPass2 must run once; rel count=%d candidates=%+v", n, ev.Candidates)
+	}
+	if rel.Source != cwdSourceCommand || rel.Base != dirA {
+		t.Fatalf("pass2 rel = %+v, want command base=final S %s (not event cwd %s)", rel, dirA, eventDir)
+	}
+}
