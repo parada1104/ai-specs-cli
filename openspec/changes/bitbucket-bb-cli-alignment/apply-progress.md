@@ -149,7 +149,7 @@ Parent close-out completed: **7.1, 7.2**.
 
 - `git diff --stat` (tracked files): 16 files, 594 insertions, 114 deletions; OpenSpec change artifacts are intentionally untracked until the review branch commit.
 - Delivery remains a single PR within the explicit 1200-line budget (no chain or `size:exception`).
-- No commit/push has been performed; delivery authorization remains separate from this close-out.
+- Commits `effa753` and `0c69180` are pushed to `origin/change/bitbucket-bb-cli-alignment`; PR #239 is open against `development`.
 - Dogfood isolation: no `ai-specs sync` against this repo's `ai-specs/`.
 
 ## Remaining tasks
