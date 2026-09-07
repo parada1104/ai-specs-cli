@@ -362,7 +362,8 @@ min_version = "2.0.0"
 Unknown keys raise `RecipeValidationError`. Detection is always safe: doctor and
 non-TTY paths never install. On an interactive TTY, configure / init may **offer**
 opt-in install via Homebrew or `apt-get` for known binaries (`gh`, `glab`, `jq`,
-`direnv`, `git`); `npx` / `bb` stay guidance-only. Nothing is installed without an
+`direnv`, `git`, and `bb` → Homebrew formula `bb-cli` with an empty apt package);
+only `npx` remains guidance-only. Nothing is installed without an
 explicit Yes.
 
 ## `[config]` schema declaration

@@ -16,10 +16,11 @@ _PACKAGE_MAP: dict[str, tuple[str, str]] = {
     "jq": ("jq", "jq"),
     "direnv": ("direnv", "direnv"),
     "git": ("git", "git"),
+    "bb": ("bb-cli", ""),
 }
 
-# Always guidance-only (no blind Node / bb installs).
-_GUIDANCE_ONLY = frozenset({"npx", "bb"})
+# Always guidance-only (no blind Node install).
+_GUIDANCE_ONLY = frozenset({"npx"})
 
 
 @dataclass

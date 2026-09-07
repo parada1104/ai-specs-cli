@@ -494,9 +494,63 @@ class DepInstallTests(unittest.TestCase):
         self.assertEqual(plan.kind, "guidance")
         self.assertEqual(plan.command, [])
 
-    def test_bb_guidance_only(self):
-        plan = self.mod.resolve_install_plan("bb", install_url="https://example.com")
+    def _assert_never_brew_install_bb(self, plan):
+        """Token-aware: never argv `brew install bb`. Do not use substring 'brew install bb'."""
+        self.assertNotEqual(plan.command, ["brew", "install", "bb"])
+        if len(plan.command) >= 3 and plan.command[:2] == ["brew", "install"]:
+            self.assertNotEqual(plan.command[2], "bb")
+        tokens = plan.display.split()
+        if len(tokens) >= 3 and tokens[:2] == ["brew", "install"]:
+            self.assertNotEqual(tokens[2], "bb")
+
+    def test_bb_brew_plan_on_darwin(self):
+        with patch.object(
+            self.mod.shutil, "which", side_effect=lambda b: "/opt/brew" if b == "brew" else None
+        ), patch.object(self.mod.platform, "system", return_value="Darwin"):
+            plan = self.mod.resolve_install_plan(
+                "bb", install_url="https://bb-cli.github.io"
+            )
+        self.assertEqual(plan.kind, "brew")
+        self.assertEqual(plan.command, ["brew", "install", "bb-cli"])
+        self.assertEqual(plan.display, "brew install bb-cli")
+        self._assert_never_brew_install_bb(plan)
+
+    def test_bb_brew_plan_on_linux(self):
+        """Linux + Homebrew still offers formula bb-cli (brew wins over apt)."""
+        def which(b):
+            if b == "brew":
+                return "/home/linuxbrew/.linuxbrew/bin/brew"
+            if b == "apt-get":
+                return "/usr/bin/apt-get"
+            return None
+
+        with patch.object(self.mod.shutil, "which", side_effect=which), patch.object(
+            self.mod.platform, "system", return_value="Linux"
+        ):
+            plan = self.mod.resolve_install_plan(
+                "bb", install_url="https://bb-cli.github.io"
+            )
+        self.assertEqual(plan.kind, "brew")
+        self.assertEqual(plan.command, ["brew", "install", "bb-cli"])
+        self.assertEqual(plan.display, "brew install bb-cli")
+        self._assert_never_brew_install_bb(plan)
+
+    def test_bb_apt_only_is_guidance(self):
+        def which(b):
+            if b == "apt-get":
+                return "/usr/bin/apt-get"
+            return None
+
+        with patch.object(self.mod.shutil, "which", side_effect=which), patch.object(
+            self.mod.platform, "system", return_value="Linux"
+        ):
+            plan = self.mod.resolve_install_plan(
+                "bb", install_url="https://bb-cli.github.io"
+            )
         self.assertEqual(plan.kind, "guidance")
+        self.assertEqual(plan.command, [])
+        self.assertEqual(plan.display, "https://bb-cli.github.io")
+        self._assert_never_brew_install_bb(plan)
 
     def test_unknown_binary_guidance_only(self):
         """Binary outside _PACKAGE_MAP / _GUIDANCE_ONLY stays guidance with empty command."""

@@ -3,7 +3,7 @@ name: bitbucket-merge-workflow
 description: >
   Provider-oriented merge workflow for feature branches created in worktrees.
   Uses the configured base branch from
-  [recipes.bitbucket-pr-flow.config] (base_branch). Bitbucket via the bb CLI.
+  [recipes.bitbucket-pr-flow.config] (base_branch). Bitbucket via PHP bb-cli.
 license: MIT
 metadata:
   author: ai-specs
@@ -24,8 +24,12 @@ Use this skill only when the user explicitly asks to create a PR, merge, finish
 a branch, or clean up after merge on Bitbucket.
 
 Use the configured base branch from `[recipes.bitbucket-pr-flow.config]` (`base_branch`).
-This recipe implements Bitbucket through the `bb` CLI. Honor any no-push/no-merge rules
-declared for the project.
+This recipe implements Bitbucket through PHP [`bb-cli`](https://bb-cli.github.io)
+(Homebrew formula `bb-cli`, binary `bb`). Honor any no-push/no-merge rules
+declared for the project. `command -v bb` cannot tell PHP `bb-cli` from a
+leftover TypeScript Bitbucket CLI. Positively confirm PHP `bb-cli` with
+`bb --version` plus the PHP `bb auth show` shape; if the binary is not PHP
+`bb-cli`, stop and install from https://bb-cli.github.io (`brew install bb-cli`).
 
 ## Preconditions
 
@@ -44,35 +48,72 @@ Before any push or PR creation, verify the Bitbucket CLI is available:
 
 ```bash
 command -v bb
+BB_VERSION=$(bb --version 2>&1)
+printf '%s\n' "$BB_VERSION"
+if ! printf '%s\n' "$BB_VERSION" | grep -q 'Version:'; then
+  echo "**Blocker**: \`bb\` on PATH is not PHP bb-cli. Install PHP bb-cli from https://bb-cli.github.io (Homebrew: \`brew install bb-cli\`; never Homebrew formula/cask \`bb\`) and retry."
+  return 1
+fi
 ```
 
 If `bb` is not found, stop and report:
 
-> **Blocker**: `bb` is not installed. Install it from https://bitbucket-cli.paulvanderlei.com/getting-started/installation/
-> and retry.
+> **Blocker**: `bb` is not installed. Install it from https://bb-cli.github.io
+> (Homebrew: `brew install bb-cli`; never Homebrew formula/cask `bb`) and retry.
 
-Then verify authentication:
+If `bb --version` does not identify PHP `bb-cli`, stop — that binary is
+not PHP `bb-cli`.
+
+Then verify authentication with a redacted capture (emit only `Username`;
+never print `AppPassword`). Parse conservatively and block on a missing,
+empty, or multiple Username line:
 
 ```bash
-bb auth show
+AUTH_CAPTURE=$(bb auth show 2>&1)
+USERNAME_LINES=$(printf '%s\n' "$AUTH_CAPTURE" | awk -F': ' '$1 == "Username" { print }')
+USERNAME_COUNT=$(printf '%s\n' "$USERNAME_LINES" | awk 'NF { n++ } END { print n+0 }')
+if [ "$USERNAME_COUNT" -ne 1 ]; then
+  echo "**Blocker**: missing, empty, or multiple Username lines. \`bb\` is not authenticated. Run \`bb auth save\` and retry."
+  return 1
+fi
+USERNAME=$(printf '%s\n' "$USERNAME_LINES" | awk -F': ' '{ gsub(/^ +| +$/, "", $2); print $2 }')
+if [ -z "$USERNAME" ]; then
+  echo "**Blocker**: missing or empty Username. \`bb\` is not authenticated. Run \`bb auth save\` and retry."
+  return 1
+fi
+printf '%s\n' "$USERNAME_LINES"
 ```
 
-If authentication fails (output includes "Not logged in"), stop and report:
+Observed PHP output shape (do not print `AppPassword`): `Username: <value>` and
+`AppPassword: <secret>`. A missing or empty `Username`, or multiple Username
+lines, means credentials are absent or ambiguous. If unauthenticated, stop
+and report:
 
-> **Blocker**: `bb` is not authenticated. Run `bb auth login` and retry.
+> **Blocker**: `bb` is not authenticated. Run `bb auth save` and retry.
+
+**Open verification gap:** `bb auth save` prompt text is undocumented — run it
+with no invented flags. See https://bb-cli.github.io/authentication
 
 Then run **Runtime Preflight: Account Match** when `expected_owner` is set in
 `[recipes.bitbucket-pr-flow.config]` (skip when empty — no extra CLI calls):
 
 ```bash
 # Runtime Preflight: Account Match (Bitbucket)
-# Fix: bb has no `bb auth status`; the correct command is `bb auth show`.
+# PHP bb-cli: capture bb auth show (not bb auth status). Username parse is conservative.
 EXPECTED_OWNER="{config.expected_owner}"
 if [ -n "$EXPECTED_OWNER" ]; then
-  ACTIVE=$(bb auth show 2>&1 | awk '/Username|username/ {print $2}' | head -1)
-  if [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
+  AUTH_CAPTURE=$(bb auth show 2>&1)
+  USERNAME_LINES=$(printf '%s\n' "$AUTH_CAPTURE" | awk -F': ' '$1 == "Username" { print }')
+  USERNAME_COUNT=$(printf '%s\n' "$USERNAME_LINES" | awk 'NF { n++ } END { print n+0 }')
+  if [ "$USERNAME_COUNT" -ne 1 ]; then
+    echo "**Blocker**: missing, empty, or multiple Username lines. Stop rather than guessing."
+    echo "bb has no 'auth switch'. Run: bb auth save"
+    return 1
+  fi
+  ACTIVE=$(printf '%s\n' "$USERNAME_LINES" | awk -F': ' '{ gsub(/^ +| +$/, "", $2); print $2 }')
+  if [ -z "$ACTIVE" ] || [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
     echo "**Blocker**: active bb account is '$ACTIVE'; expected '$EXPECTED_OWNER'."
-    echo "bb has no 'auth switch'. Run: bb auth login"
+    echo "bb has no 'auth switch'. Run: bb auth save"
     return 1
   fi
 fi
@@ -90,7 +131,10 @@ plus configured `[recipes.bitbucket-pr-flow.config].base_branch` and (when set)
 
 Prefer shipping to `main` from a disposable `release/vX.Y.Z` head, not from
 `development` as the PR source. Keep Bitbucket UI "Close source branch" off for
-protected heads; this skill only passes `--close-source-branch` for feature heads.
+protected heads; never pass --close-source-branch to `bb` (that flag is not a
+verified PHP option). Feature-head source-branch closure is git/UI policy
+(worktree remove + `git push $REMOTE --delete` + `git branch -D`), not a
+PHP merge-method flag. Never remotely delete a protected head.
 
 ## Workflow
 
@@ -106,19 +150,25 @@ git push -u $REMOTE <branch-name>
 
 > **Note**: The remote is resolved dynamically to support repos where the Bitbucket remote is named `bitbucket` or `upstream` instead of `origin`. Falls back to `origin` if no known name matches.
 
-5. Create a pull request with the configured base branch:
+5. Create a pull request with the configured base branch (positional source then
+   destination; never `-i` as the agent default):
 
 ```bash
-bb pr create --source <branch-name> --destination <base_branch> --title "<title>" --body "<summary and verification>"
+bb pr create <branch-name> <base_branch> --title "<title>" --description "<summary>"
 ```
 
 6. STOP. Do not merge. Report the PR URL and wait for explicit user approval.
 
-7. Before merging, capture the approved PR source commit to prevent merging unreviewed commits:
+7. `bb pr show <pr-id>` displays **comments** (optional second argument `true`
+   for unresolved inline comments only). It is not PR JSON and must not be used
+   with `--json` / `--jq`.
 
-```bash
-APPROVED_SHA=$(bb pr view <pr-id> --json --jq '.source.commit.hash')
-```
+   Before merging, the approval-SHA policy still applies: do not merge a branch
+   that moved after approval. **Open verification gap:** there is no verified
+   command in this recipe to retrieve `APPROVED_SHA` / `CURRENT_SHA` from PHP
+   `bb-cli` without a forbidden probe. Stop and ask the user to confirm the
+   reviewed revision in the Bitbucket UI rather than guessing flags or running
+   `bb pr commits` as discovery.
 
 8. Before merging, archive and record SDD/OpenSpec artifacts for the change
    while still on the review branch. The archive boundary is the pre-merge
@@ -142,30 +192,22 @@ Do **not** merge if `openspec/changes/<slug>/` still exists, or if
 
 10. Merge only after explicit user approval, required checks/review, the
    pre-merge archive step above, a clean guardian result, and a matching
-   approved source commit. Re-fetch the source commit and stop if it changed
-   since approval:
+   approved source commit (see the open verification gap above). Classify
+   `HEAD_BRANCH` (see **Head branch class**) and merge with method + id only:
 
 ```bash
-CURRENT_SHA=$(bb pr view <pr-id> --json --jq '.source.commit.hash')
+bb pr merge <pr-id>
 ```
 
-If `CURRENT_SHA` differs from `APPROVED_SHA`, stop and report that the branch
-moved after approval. Otherwise classify `HEAD_BRANCH` (see **Head branch class**)
-and merge with squash:
-
-```bash
-# Feature head — close source branch
-bb pr merge <pr-id> --strategy squash --close-source-branch
-
-# Protected head — never pass --close-source-branch
-bb pr merge <pr-id> --strategy squash
-```
-
-> **Note**: Re-checking the source commit ensures only the reviewed revision is merged. If the branch was updated between approval and merge, stop and ask the user to re-review.
+**Open verification gap:** squash strategy and source-branch closure are not
+verified PHP `bb pr merge` options. Do not add `--strategy squash` or
+`--close-source-branch`. Protected heads must not be deleted via Bitbucket UI
+"Close source branch", worktree cleanup, or remote branch delete.
 
 11. After the PR is merged, sync the integration branch. **Post-merge worktree /
-    local branch cleanup runs only for feature heads.** For a protected head,
-    skip worktree remove and `git branch -D` for that head — only sync the base:
+    local / remote branch cleanup runs only for feature heads.** For a
+    protected head, skip worktree remove, `git push $REMOTE --delete`, and
+    `git branch -D` for that head — only sync the base:
 
 ```bash
 git checkout <base_branch>
@@ -183,18 +225,25 @@ bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
   --dir .worktrees --base <base_branch>
 ```
 
-Manual fallback only if the script is unavailable:
+Manual fallback only if the script is unavailable. After a successful merge,
+delete the **feature** remote branch using the same dynamic `$REMOTE`
+resolution. Never run remote delete for a protected head (`main`, `master`,
+`development`, `staging`, configured base/integration). Require explicit user
+instruction and stop without deleting if the worktree is dirty:
 
 ```bash
+REMOTE=$(git remote | grep -E '^(origin|bitbucket|upstream)$' | head -1 || echo "origin")
 git worktree remove <absolute-path-to-worktree>
+git push "$REMOTE" --delete <branch-name>
 git branch -D <branch-name>
 ```
 
-> **Note**: `git branch -D` (capital D) is required because `bb pr merge --strategy squash`
-> rewrites history — the feature branch commits are not ancestors of the target
-> branch, so `git branch -d` would refuse with "not fully merged". Force-delete
+> **Note**: `git branch -D` (capital D) is required when the merged PR does not
+> leave the feature commits as ancestors of the target (common after a UI
+> squash). `git branch -d` would refuse with "not fully merged". Force-delete
 > is safe here because the PR was already merged. Stop without deleting if the
-> worktree is dirty.
+> worktree is dirty. Remote delete is `git push $REMOTE --delete` for feature
+> heads only.
 
 ## Guardrails
 
@@ -202,7 +251,7 @@ git branch -D <branch-name>
 - Never push, merge, delete branches, or remove worktrees without explicit user instruction.
 - Never remove a worktree before confirming the PR is merged and no uncommitted work remains.
 - Never delete a protected head (`main` / `master` / `development` / `staging` /
-  configured base or integration branch) via `--close-source-branch`, worktree
+  configured base or integration branch) via Bitbucket close-source UI, worktree
   cleanup, or remote branch delete.
 - Preserve unrelated changes; stop and ask if cleanup would touch them.
 - Never rely on implicit push behavior from the Bitbucket CLI — always push explicitly before creating the PR.

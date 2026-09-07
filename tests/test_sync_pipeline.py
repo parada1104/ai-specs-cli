@@ -2795,7 +2795,7 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "enabled = ['claude']\n\n"
                 "[recipes.bitbucket-pr-flow]\n"
                 "enabled = true\n"
-                "version = '1.1.0'\n"
+                "version = '1.3.0'\n"
                 # NO base_branch set — catalog default "development" must apply
                 "[[bindings]]\n"
                 "capability = 'vcs-pr-flow'\n"
