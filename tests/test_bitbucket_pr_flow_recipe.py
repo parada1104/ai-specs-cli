@@ -1,4 +1,5 @@
 import importlib.util
+import re
 import sys
 import tempfile
 import tomllib
@@ -88,6 +89,27 @@ class BitbucketPrFlowRecipeTests(unittest.TestCase):
         recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
         doc_targets = [d.target for d in recipe.docs]
         self.assertIn("ai-specs/recipes/bitbucket-pr-flow/README.md", doc_targets)
+
+    def test_recipe_identifies_php_bb_cli(self):
+        """Manifest targets PHP bb-cli homepage, binary bb, recipe 1.3.0, host 1.4.1."""
+        recipe_path = CATALOG / RECIPE_ID / "recipe.toml"
+        text = recipe_path.read_text()
+        data = tomllib.loads(text)
+        self.assertEqual(data["recipe"]["version"], "1.3.0")
+        self.assertEqual(data["deps"]["cli"][0]["binary"], "bb")
+        self.assertEqual(
+            data["deps"]["cli"][0]["install_url"],
+            "https://bb-cli.github.io",
+        )
+        self.assertEqual(data["deps"]["cli"][0]["version_check"], "bb --version")
+        self.assertEqual(data["deps"]["cli"][0]["min_version"], "1.4.1")
+        self.assertNotEqual(
+            data["recipe"]["version"],
+            data["deps"]["cli"][0]["min_version"],
+            "recipe version 1.3.0 must stay distinct from host min_version 1.4.1",
+        )
+        self.assertNotIn("paulvanderlei", text)
+        self.assertNotIn("@pilatos", text)
 
     # --- Phase 2: Materialization ---
 
@@ -215,6 +237,35 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         cls.command_path = CATALOG / RECIPE_ID / "commands" / "bb-pr-create.md"
         cls.skill_text = cls.skill_path.read_text()
         cls.command_text = cls.command_path.read_text()
+        cls.readme_text = (CATALOG / RECIPE_ID / "README.md").read_text()
+        cls.recipe_text = (CATALOG / RECIPE_ID / "recipe.toml").read_text()
+        cls.catalog_doc = (ROOT / "docs" / "recipes-catalog.md").read_text()
+        cls.schema_doc = (ROOT / "docs" / "recipe-schema.md").read_text()
+
+    def _live_surfaces(self) -> dict[str, str]:
+        return {
+            "recipe.toml": self.recipe_text,
+            "README.md": self.readme_text,
+            "bb-pr-create.md": self.command_text,
+            "SKILL.md": self.skill_text,
+            "docs/recipes-catalog.md": self.catalog_doc,
+            "docs/recipe-schema.md": self.schema_doc,
+        }
+
+    def _fenced_executable(self, text: str) -> str:
+        return "\n".join(
+            m.group(1)
+            for m in re.finditer(r"```(?:bash|sh)\n(.*?)```", text, re.DOTALL)
+        )
+
+    def _active_command_lines(self, text: str) -> list[str]:
+        lines = []
+        for raw in self._fenced_executable(text).splitlines():
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            lines.append(stripped)
+        return lines
 
     # --- Skill golden content ---
 
@@ -226,39 +277,129 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         """Skill checks bb authentication via bb auth show."""
         self.assertIn("bb auth show", self.skill_text)
 
+    def test_skill_has_positive_php_bb_cli_identity_guard(self):
+        """Skill blocks a foreign bb using bb --version and PHP bb-cli / brew guidance."""
+        self.assertIn("bb --version", self.skill_text)
+        normalized = self.skill_text.replace("`", "")
+        self.assertRegex(normalized, r"(?i)not PHP bb-cli")
+        self.assertIn("brew install bb-cli", self.skill_text)
+        self.assertIn("https://bb-cli.github.io", self.skill_text)
+
+    def test_command_has_positive_php_bb_cli_identity_guard(self):
+        """Command blocks a foreign bb using bb --version and PHP bb-cli / brew guidance."""
+        self.assertIn("bb --version", self.command_text)
+        normalized = self.command_text.replace("`", "")
+        self.assertRegex(normalized, r"(?i)not PHP bb-cli")
+        self.assertIn("brew install bb-cli", self.command_text)
+        self.assertIn("https://bb-cli.github.io", self.command_text)
+
+    def test_agent_auth_checks_emit_only_username(self):
+        """Agent-facing auth checks capture bb auth show and emit only Username."""
+        for name, text in (
+            ("SKILL.md", self.skill_text),
+            ("bb-pr-create.md", self.command_text),
+        ):
+            with self.subTest(surface=name):
+                auth_lines = [
+                    ln
+                    for ln in self._active_command_lines(text)
+                    if "bb auth show" in ln
+                ]
+                self.assertTrue(
+                    auth_lines,
+                    f"{name} must capture bb auth show in an executable check",
+                )
+                for ln in auth_lines:
+                    self.assertNotEqual(
+                        ln,
+                        "bb auth show",
+                        f"{name} must not print raw bb auth show output",
+                    )
+                    self.assertNotIn("AppPassword", ln)
+                self.assertRegex(
+                    text,
+                    r"(?i)(missing|empty|absent).{0,40}Username|Username.{0,40}(missing|empty|absent)",
+                )
+                self.assertRegex(text, r"(?i)multiple Username")
+
+    def test_skill_deletes_feature_remote_branch_after_merge(self):
+        """Feature heads get an explicit remote-branch delete; protected heads stay excluded."""
+        self.assertRegex(
+            self.skill_text,
+            r"git push\s+\$REMOTE\s+--delete|git push\s+--delete",
+        )
+        self.assertIn("protected", self.skill_text.lower())
+        self.assertIn("development", self.skill_text)
+        self.assertIn("staging", self.skill_text)
+
+    def test_apply_progress_omits_absolute_host_and_worktree_paths(self):
+        """Hardening apply-progress wording must not embed host or worktree absolutes."""
+        progress = (
+            ROOT
+            / "openspec"
+            / "changes"
+            / "bitbucket-bb-cli-alignment"
+            / "apply-progress.md"
+        )
+        self.assertTrue(progress.is_file(), f"missing {progress}")
+        text = progress.read_text()
+        self.assertIsNone(
+            re.search(r"(?m)(/Users/|/home/|/opt/homebrew/)", text),
+            "apply-progress.md must not embed absolute host or Homebrew paths",
+        )
+
     def test_skill_uses_explicit_push(self):
         """Skill uses explicit git push -u $REMOTE before PR creation."""
         self.assertIn("git push -u $REMOTE", self.skill_text)
 
     def test_skill_uses_bb_pr_create_with_required_flags(self):
-        """Skill creates PR with bb pr create and required flags."""
+        """Skill creates PR with verified PHP argv (positional source/dest + title/description)."""
         self.assertIn("bb pr create", self.skill_text)
-        self.assertIn("--source", self.skill_text)
-        self.assertIn("--destination", self.skill_text)
         self.assertIn("--title", self.skill_text)
-        self.assertIn("--body", self.skill_text)
+        self.assertIn("--description", self.skill_text)
+        create_lines = [
+            ln for ln in self._active_command_lines(self.skill_text) if ln.startswith("bb pr create")
+        ]
+        self.assertTrue(create_lines, "Skill must contain an executable bb pr create example")
+        for ln in create_lines:
+            self.assertNotIn("--source", ln)
+            self.assertNotIn("--destination", ln)
+            self.assertNotIn("--body", ln)
 
-    def test_skill_merge_closes_source_branch(self):
-        """Skill merge command includes --close-source-branch for feature heads."""
-        self.assertIn("--close-source-branch", self.skill_text)
+    def test_skill_merge_omits_close_source_flag_and_protects_heads(self):
+        """Protected-head policy remains; PHP merge does not take --close-source-branch."""
         self.assertIn("never pass --close-source-branch", self.skill_text.lower())
         self.assertIn("Head branch class", self.skill_text)
         self.assertIn("development", self.skill_text)
         self.assertIn("staging", self.skill_text)
         self.assertIn("release/v", self.skill_text)
+        merge_lines = [
+            ln for ln in self._active_command_lines(self.skill_text) if ln.startswith("bb pr merge")
+        ]
+        self.assertTrue(merge_lines, "Skill must contain an executable bb pr merge example")
+        for ln in merge_lines:
+            self.assertNotIn("--close-source-branch", ln)
+            self.assertNotIn("--strategy", ln)
 
-    def test_skill_merge_uses_squash_strategy(self):
-        """Skill merge command uses squash strategy."""
+    def test_skill_merge_uses_php_merge_method(self):
+        """Skill merge command is PHP `bb pr merge` with id only."""
         merge_pos = self.skill_text.find("bb pr merge")
         self.assertGreater(merge_pos, 0, "Skill must contain bb pr merge")
         merge_line = self.skill_text[merge_pos:self.skill_text.find("\n", merge_pos)]
-        self.assertIn("--strategy squash", merge_line)
+        self.assertNotIn("--strategy squash", merge_line)
+        self.assertNotIn("--close-source-branch", merge_line)
 
     def test_skill_merge_pins_approved_sha(self):
-        """Skill captures and verifies the approved PR source commit before merging."""
+        """Approval-SHA policy stays; retrieval is an open gap (show is comments, not JSON)."""
         self.assertIn("APPROVED_SHA", self.skill_text)
-        self.assertIn("bb pr view", self.skill_text)
         self.assertIn("CURRENT_SHA", self.skill_text)
+        self.assertIn("bb pr show", self.skill_text)
+        self.assertNotIn("bb pr view", self.skill_text)
+        lowered = self.skill_text.lower()
+        self.assertTrue(
+            "open verification gap" in lowered or "open-verification gap" in lowered,
+            "SHA retrieval must be labeled an open verification gap",
+        )
 
     def test_skill_worktree_cleanup_uses_absolute_path(self):
         """Skill worktree cleanup does not assume cwd is repo root."""
@@ -297,12 +438,20 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("git push -u $REMOTE", self.command_text)
 
     def test_command_uses_bb_pr_create_with_required_flags(self):
-        """Command creates PR with bb pr create and required flags."""
+        """Command creates PR with verified PHP argv."""
         self.assertIn("bb pr create", self.command_text)
-        self.assertIn("--source", self.command_text)
-        self.assertIn("--destination", self.command_text)
         self.assertIn("--title", self.command_text)
-        self.assertIn("--body", self.command_text)
+        self.assertIn("--description", self.command_text)
+        create_lines = [
+            ln
+            for ln in self._active_command_lines(self.command_text)
+            if ln.startswith("bb pr create")
+        ]
+        self.assertTrue(create_lines, "Command must contain an executable bb pr create example")
+        for ln in create_lines:
+            self.assertNotIn("--source", ln)
+            self.assertNotIn("--destination", ln)
+            self.assertNotIn("--body", ln)
 
     def test_command_does_not_include_merge(self):
         """Command is create-only and does not include merge steps."""
@@ -341,9 +490,9 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
             "Skill must contain install blocker message"
         )
         self.assertIn(
-            "https://bitbucket-cli.paulvanderlei.com/getting-started/installation/",
+            "https://bb-cli.github.io",
             self.skill_text,
-            "Skill install blocker must include installation URL"
+            "Skill install blocker must include PHP bb-cli installation URL"
         )
 
     def test_skill_auth_blocker_message(self):
@@ -354,10 +503,11 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
             "Skill must contain auth blocker message"
         )
         self.assertIn(
-            "bb auth login",
+            "bb auth save",
             self.skill_text,
-            "Skill auth blocker must include remediation command"
+            "Skill auth blocker must include PHP remediation command"
         )
+        self.assertNotIn("bb auth login", self.skill_text)
 
     def test_skill_preflight_before_push_order(self):
         """Skill checks bb install and auth BEFORE git push."""
@@ -400,9 +550,9 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
             "Command must contain install blocker message"
         )
         self.assertIn(
-            "https://bitbucket-cli.paulvanderlei.com/getting-started/installation/",
+            "https://bb-cli.github.io",
             self.command_text,
-            "Command install blocker must include installation URL"
+            "Command install blocker must include PHP bb-cli installation URL"
         )
 
     def test_command_auth_blocker_message(self):
@@ -413,10 +563,11 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
             "Command must contain auth blocker message"
         )
         self.assertIn(
-            "bb auth login",
+            "bb auth save",
             self.command_text,
-            "Command auth blocker must include remediation command"
+            "Command auth blocker must include PHP remediation command"
         )
+        self.assertNotIn("bb auth login", self.command_text)
 
     def test_command_preflight_before_push_order(self):
         """Command checks bb install and auth BEFORE git push."""
@@ -462,6 +613,50 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         """Command resolves the Bitbucket remote dynamically instead of hardcoding origin."""
         self.assertIn("REMOTE=$(git remote", self.command_text)
         self.assertIn("git push -u $REMOTE", self.command_text)
+
+    def test_live_surfaces_php_identity_and_forbidden_typescript(self):
+        """Live Bitbucket surfaces identify PHP bb-cli and drop TypeScript identity/verbs."""
+        for name, text in self._live_surfaces().items():
+            with self.subTest(surface=name):
+                self.assertNotIn("paulvanderlei", text)
+                self.assertNotIn("@pilatos", text)
+                self.assertNotIn("bb auth login", text)
+                self.assertNotIn("bb pr view", text)
+                self.assertFalse(
+                    bool(re.search(r"brew install bb(?!-cli)\b", text)),
+                    f"{name} must not propose brew install bb",
+                )
+
+    def test_live_surfaces_php_auth_and_pr_verbs(self):
+        """Auth/PR verbs on recipe surfaces are PHP save/show/create/show/merge."""
+        for name in ("README.md", "bb-pr-create.md", "SKILL.md"):
+            text = self._live_surfaces()[name]
+            with self.subTest(surface=name):
+                self.assertIn("bb auth show", text)
+                self.assertIn("bb auth save", text)
+                self.assertIn("bb pr create", text)
+                self.assertIn("bb pr show", text)
+        self.assertIn("bb pr merge", self.skill_text)
+
+    def test_unverified_flags_absent_from_executable_examples(self):
+        """TypeScript create/show/merge flags are not executable examples."""
+        for name, text in self._live_surfaces().items():
+            if name in ("recipe.toml", "docs/recipe-schema.md", "docs/recipes-catalog.md"):
+                continue
+            with self.subTest(surface=name):
+                for ln in self._active_command_lines(text):
+                    if ln.startswith("bb pr create"):
+                        self.assertNotIn("--source", ln)
+                        self.assertNotIn("--destination", ln)
+                        self.assertNotIn("--body", ln)
+                    if ln.startswith("bb pr show"):
+                        self.assertNotIn("--json", ln)
+                        self.assertNotIn("--jq", ln)
+                    if ln.startswith("bb pr merge"):
+                        self.assertNotIn("--strategy", ln)
+                        self.assertNotIn("--close-source-branch", ln)
+                    self.assertNotIn("bb auth login", ln)
+                    self.assertNotIn("bb pr view", ln)
 
 
 class BitbucketPrFlowDualProviderTests(unittest.TestCase):

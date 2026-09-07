@@ -400,9 +400,12 @@ recipe = "gitlab-mr-flow"
 
 ## bitbucket-pr-flow
 
-**Bitbucket branch → PR → merge flow.** Uses the `bb` CLI. Sibling of
+**Bitbucket branch → PR → merge flow.** Uses PHP [`bb-cli`](https://bb-cli.github.io)
+(Homebrew formula `bb-cli`, binary `bb`). Sibling of
 [`git-pr-flow`](#git-pr-flow) and [`gitlab-mr-flow`](#gitlab-mr-flow).
-Installs no MCP server.
+Installs no MCP server. On a TTY, missing `bb` may offer `brew install bb-cli`
+on macOS (and Linux with Homebrew); apt-only Linux falls back to the install URL.
+Never install Homebrew formula or cask `bb` (getbb.app).
 
 - **Provides:** skill `bitbucket-merge-workflow`, command `/bb-pr-create`; capability
   `vcs-pr-flow`.
@@ -412,16 +415,30 @@ Installs no MCP server.
   |-----|------|----------|---------|-------------|
   | `base_branch` | string | no | `development` | Base branch the PR targets. |
   | `expected_owner` | string | no | `""` | Account username this repo expects; activates auth preflight when set. |
-  | `auto_switch_account` | boolean | no | `false` | Reserved for API parity; bb has no auth switch — mismatch blocks with guidance. |
+  | `auto_switch_account` | boolean | no | `false` | Reserved for API parity; PHP bb-cli has no auth switch — mismatch blocks with `bb auth save` guidance. |
 
-- **Auth note:** Bitbucket CLI uses `bb auth show` (not `bb auth status`) to verify authentication.
+- **Host CLI:** PHP `bb-cli` `1.4.1+` (`version_check = "bb --version"`,
+  `min_version = "1.4.1"`). Recipe `version = "1.3.0"` is the catalog recipe
+  version, not the host floor.
+- **Identity guard:** `command -v bb` is not enough. Preflight runs
+  `bb --version` and confirms PHP `bb-cli` (plus the PHP `Username:` /
+  redacted `bb auth show` shape). A TypeScript Bitbucket CLI is not PHP
+  `bb-cli` and is blocked with `brew install bb-cli` /
+  https://bb-cli.github.io guidance.
+- **Auth note:** PHP `bb-cli` uses a redacted `bb auth show` capture to
+  inspect credentials (emit only `Username`; never print `AppPassword`;
+  reject missing, empty, or multiple Username lines) and `bb auth save` to
+  remediate (not `bb auth status`, and not a login subcommand).
+- **Post-merge cleanup:** delete the feature remote branch
+  (`git push $REMOTE --delete`). Never remotely delete protected heads
+  (`main`, `master`, `development`, `staging`, configured base/integration).
 
 - **Full README:** [`catalog/recipes/bitbucket-pr-flow/README.md`](../catalog/recipes/bitbucket-pr-flow/README.md)
 
 ```toml
 [recipes.bitbucket-pr-flow]
 enabled = true
-version = "1.1.0"
+version = "1.3.0"
 
 [recipes.bitbucket-pr-flow.config]
 base_branch = "development"

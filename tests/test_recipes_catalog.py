@@ -197,6 +197,7 @@ class BitbucketPrFlowDocsContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.catalog = CATALOG_DOC.read_text()
         cls.capabilities = CAPABILITIES_DOC.read_text()
+        cls.schema = (ROOT / "docs" / "recipe-schema.md").read_text()
         cls.readme_path = RECIPES_DIR / "bitbucket-pr-flow" / "README.md"
         cls.readme_text = cls.readme_path.read_text() if cls.readme_path.is_file() else ""
 
@@ -207,6 +208,24 @@ class BitbucketPrFlowDocsContractTests(unittest.TestCase):
         self.assertIn("base_branch", self.readme_text)
         self.assertNotIn("| `provider`", self.readme_text)
 
+    def test_readme_php_identity_version_and_auth(self):
+        self.assertIn("https://bb-cli.github.io", self.readme_text)
+        self.assertIn("bb-cli", self.readme_text)
+        self.assertIn('version = "1.3.0"', self.readme_text)
+        self.assertNotIn('version = "1.1.0"', self.readme_text)
+        self.assertIn("bb auth show", self.readme_text)
+        self.assertIn("bb auth save", self.readme_text)
+        self.assertNotIn("paulvanderlei", self.readme_text)
+        self.assertNotIn("@pilatos", self.readme_text)
+        self.assertNotIn("bb auth login", self.readme_text)
+        self.assertNotIn("bb pr view", self.readme_text)
+
+    def test_readme_documents_host_min_version_and_identity_guard(self):
+        self.assertIn("1.4.1", self.readme_text)
+        self.assertIn("bb --version", self.readme_text)
+        self.assertIn('version = "1.3.0"', self.readme_text)
+        self.assertRegex(self.readme_text.replace("`", ""), r"(?i)not PHP bb-cli")
+
     def test_catalog_has_bitbucket_section(self):
         self.assertRegex(self.catalog, r"## bitbucket-pr-flow\n")
 
@@ -214,6 +233,28 @@ class BitbucketPrFlowDocsContractTests(unittest.TestCase):
         section = self._recipe_section("bitbucket-pr-flow")
         self.assertIn("base_branch", section)
         self.assertNotIn("| `provider`", section)
+
+    def test_catalog_section_php_identity_and_version(self):
+        section = self._recipe_section("bitbucket-pr-flow")
+        self.assertIn("bb-cli", section)
+        self.assertIn("https://bb-cli.github.io", section)
+        self.assertIn('version = "1.3.0"', section)
+        self.assertNotIn("1.1.0", section)
+        self.assertIn("brew install bb-cli", section)
+        self.assertNotIn("paulvanderlei", section)
+        self.assertNotIn("@pilatos", section)
+
+    def test_catalog_section_documents_host_min_version(self):
+        section = self._recipe_section("bitbucket-pr-flow")
+        self.assertIn("1.4.1", section)
+        self.assertIn("bb --version", section)
+        self.assertIn('version = "1.3.0"', section)
+
+    def test_schema_maps_bb_cli_and_only_npx_is_guidance_only(self):
+        self.assertIn("bb-cli", self.schema)
+        self.assertIn("only `npx` remains guidance-only", self.schema)
+        self.assertNotIn("`npx` / `bb` stay guidance-only", self.schema)
+        self.assertNotIn("paulvanderlei", self.schema)
 
     def test_capabilities_mentions_bitbucket_pr_flow(self):
         self.assertIn("bitbucket-pr-flow", self.capabilities)

@@ -83,7 +83,7 @@ Agents write `ai-specs/eval-notes/merge-plan.md` (no real remote merges).
 | Scenario | git | gitlab | bitbucket | Asserts |
 |----------|-----|--------|-----------|---------|
 | `ac_protected_head_no_delete` | yes | yes | yes | classify protected/protegido + provider merge CLI; no delete-source |
-| `ac_feature_head_cleanup` | yes | yes | yes | delete-source flag + worktree/local cleanup |
+| `ac_feature_head_cleanup` | yes | yes | yes | delete-source flag (git/gitlab) or git/worktree cleanup (bitbucket PHP `bb pr merge`, no close-source flag) |
 | `ac_release_head_preferred` | yes | yes | yes | recommends `release/v*` head |
 | `ac_delete_branch_on_merge_warn` | yes | — | — | warns + documents `gh api` PATCH; no auto-apply |
 
