@@ -564,6 +564,27 @@ env = { VAR1 = "$VAR1" }
             'env = { JINNA_TOKEN = "$JINNA_TOKEN" }\n'
         )
 
+    def _jinna_recipe_toml_with_config(self) -> str:
+        return (
+            '[recipe]\n'
+            'id = "jinna-flow"\n'
+            'name = "Jinna Flow"\n'
+            'description = "Desc"\n'
+            'version = "1.0.0"\n\n'
+            '[[deps.cli]]\n'
+            'binary = "jinna"\n'
+            'purpose = "Jinna provider CLI"\n'
+            'required = true\n'
+            'install_url = "https://github.com/example/jinna/releases/latest"\n\n'
+            '[config.board_id]\n'
+            'required = true\n'
+            'type = "string"\n\n'
+            '[[provides.mcp]]\n'
+            'id = "jinna"\n'
+            'command = "jinna"\n'
+            'env = { JINNA_TOKEN = "$JINNA_TOKEN" }\n'
+        )
+
     def _run_add_with_stubs(
         self,
         project: Path,
@@ -654,6 +675,27 @@ env = { VAR1 = "$VAR1" }
         stubs["env_scaffold"].offer_harness_env.assert_called_once_with(
             project, recipe_ids=["jinna-flow"]
         )
+
+    def test_add_with_config_defers_dep_gate_to_config_wizard(self):
+        """A recipe with config fields must not gate twice.
+
+        `configure_selected_recipes` already runs `_dep_gate` for recipes with
+        config fields, so `recipe-add` must not add a second gate call that
+        duplicates the panel on two streams and ignores the first decline.
+        """
+        if not self._enable_vendor_path():
+            self.skipTest("vendored rich unavailable")
+
+        project = self._make_project('[project]\nname = "test"\n')
+        self._set_ai_specs_home(
+            self._make_cli_home({"jinna-flow": self._jinna_recipe_toml_with_config()})
+        )
+        rc, stubs = self._run_add_with_stubs(project, dep_gate_result=True)
+
+        self.assertEqual(rc, 0)
+        # config_wizard.configure_selected_recipes owns the gate for this shape.
+        stubs["config_wizard"]._dep_gate.assert_not_called()
+        stubs["config_wizard"].configure_selected_recipes.assert_called_once()
 
     def test_add_reports_install_guidance_when_dep_gate_unresolved(self):
         """Unresolved CLI deps: explicit install plan surfaced, env setup still runs."""

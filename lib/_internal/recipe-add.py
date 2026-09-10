@@ -252,7 +252,10 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
 
         # CLI dependency gate runs before env prompts so a missing provider CLI
         # (e.g. jinna) gets an explicit install offer instead of being skipped.
-        if recipe.cli_deps and not _run_cli_dep_gate(recipe):
+        # Recipes with config fields are gated again inside
+        # `configure_selected_recipes`, so gate here only when that cannot happen;
+        # otherwise the panel renders twice and the first decline is contradicted.
+        if recipe.cli_deps and not has_config and not _run_cli_dep_gate(recipe):
             _print_cli_dep_guidance(recipe)
 
         if has_config:
