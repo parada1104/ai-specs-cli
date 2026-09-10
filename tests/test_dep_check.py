@@ -6,7 +6,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 DEP_CHECK_PATH = ROOT / "lib" / "_internal" / "dep_check.py"
@@ -163,6 +164,61 @@ class DepCheckTests(unittest.TestCase):
             binaries = sorted((r.recipe_id, r.binary) for r in results)
             self.assertEqual(binaries, [("alpha", "tool-a"), ("beta", "tool-b")])
             self.assertTrue(all(r.recipe_id for r in results))
+
+    def test_github_release_dep_reports_resolution_without_downloading(self):
+        """Requirement 2/3: passive dependency checks never mutate or download."""
+        dep = self.schema.CliDep(
+            binary="jinna",
+            purpose="provider",
+            install_url="https://github.com/parada1104/jinna-provider/releases",
+            installer="github-release",
+            repository="parada1104/jinna-provider",
+            release_policy="latest-stable",
+            min_version="0.1.0",
+        )
+        provider = MagicMock()
+        provider.resolve_provider.return_value = SimpleNamespace(
+            verified=True,
+            source="managed",
+            version="0.1.0",
+            path=Path("/cache/bin/jinna/v0.1.0/darwin-arm64/jinna"),
+            command="/cache/bin/jinna/v0.1.0/darwin-arm64/jinna",
+            target=("darwin", "arm64"),
+        )
+        recipe = self._recipe(dep)
+        with patch.object(self.mod, "_load_provider_install", return_value=provider):
+            results = self.mod.check_cli_deps(recipe, ai_specs_home=Path("/tmp/home"))
+        provider.install_github_release.assert_not_called()
+        self.assertEqual(results[0].source, "managed")
+        self.assertEqual(results[0].resolved_path, "/cache/bin/jinna/v0.1.0/darwin-arm64/jinna")
+        self.assertTrue(results[0].ok)
+
+    def test_github_release_dep_unresolved_is_not_ok(self):
+        dep = self.schema.CliDep(
+            binary="jinna",
+            purpose="provider",
+            install_url="https://github.com/parada1104/jinna-provider/releases",
+            installer="github-release",
+            repository="parada1104/jinna-provider",
+            release_policy="latest-stable",
+            min_version="0.1.0",
+        )
+        provider = MagicMock()
+        provider.resolve_provider.return_value = SimpleNamespace(
+            verified=False,
+            source="unresolved",
+            version="",
+            path=None,
+            command="jinna",
+            target=("darwin", "arm64"),
+        )
+        recipe = self._recipe(dep)
+        with patch.object(self.mod, "_load_provider_install", return_value=provider):
+            results = self.mod.check_cli_deps(recipe)
+        provider.install_github_release.assert_not_called()
+        self.assertFalse(results[0].ok)
+        self.assertEqual(results[0].source, "unresolved")
+        self.assertIn("darwin/arm64", results[0].detail)
 
     def test_version_ge(self):
         self.assertTrue(self.mod._version_ge((2, 0), (2, 0, 0)))

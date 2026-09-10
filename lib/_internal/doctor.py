@@ -630,7 +630,7 @@ class Doctor:
         # Pre-register so dataclasses can resolve cls.__module__ (Python 3.12+).
         sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)
-        return mod.check_project_deps(self.root)
+        return mod.check_project_deps(self.root, ai_specs_home=AI_SPECS_HOME)
 
     def _check_recipe_cli_deps(self) -> None:
         data = self._load_manifest()

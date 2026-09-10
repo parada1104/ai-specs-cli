@@ -130,6 +130,9 @@ class CliDep:
     install_url: str = ""
     version_check: str = ""
     min_version: str = ""
+    installer: str = ""
+    repository: str = ""
+    release_policy: str = ""
 
 
 @dataclass
@@ -424,7 +427,17 @@ def _parse_cli_deps(raw: Any, context: str) -> list[CliDep]:
         raise RecipeValidationError(
             f"{context}: expected array of tables, got {type(raw).__name__}"
         )
-    allowed = {"binary", "purpose", "required", "install_url", "version_check", "min_version"}
+    allowed = {
+        "binary",
+        "purpose",
+        "required",
+        "install_url",
+        "version_check",
+        "min_version",
+        "installer",
+        "repository",
+        "release_policy",
+    }
     out: list[CliDep] = []
     for idx, item in enumerate(raw):
         ctx = f"{context}[{idx}]"
@@ -443,7 +456,40 @@ def _parse_cli_deps(raw: Any, context: str) -> list[CliDep]:
         install_url = _opt_str(item, "install_url", ctx)
         version_check = _opt_str(item, "version_check", ctx)
         min_version = _opt_str(item, "min_version", ctx)
-        out.append(CliDep(binary, purpose, required, install_url, version_check, min_version))
+        installer = _opt_str(item, "installer", ctx)
+        repository = _opt_str(item, "repository", ctx)
+        release_policy = _opt_str(item, "release_policy", ctx)
+        if installer not in ("", "github-release"):
+            raise RecipeValidationError(
+                f"{ctx}.installer: unsupported installer '{installer}'"
+            )
+        release_fields = (repository, release_policy)
+        if installer == "github-release":
+            if repository != "parada1104/jinna-provider":
+                raise RecipeValidationError(
+                    f"{ctx}.repository: only 'parada1104/jinna-provider' is allowed"
+                )
+            if release_policy != "latest-stable":
+                raise RecipeValidationError(
+                    f"{ctx}.release_policy: expected 'latest-stable'"
+                )
+        elif any(release_fields):
+            raise RecipeValidationError(
+                f"{ctx}: repository/release_policy require installer 'github-release'"
+            )
+        out.append(
+            CliDep(
+                binary,
+                purpose,
+                required,
+                install_url,
+                version_check,
+                min_version,
+                installer,
+                repository,
+                release_policy,
+            )
+        )
     return out
 
 

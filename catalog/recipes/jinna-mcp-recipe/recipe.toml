@@ -1,0 +1,57 @@
+[recipe]
+id = "jinna-mcp-recipe"
+name = "OpenProject Provider MCP"
+description = "Install and configure the local Go provider for OpenProject"
+version = "1.0.0"
+author = "ai-specs"
+license = "MIT"
+tags = ["mcp", "openproject", "provider"]
+
+[[deps.cli]]
+binary = "jinna"
+purpose = "Run the local OpenProject provider MCP server"
+required = true
+install_url = "https://github.com/parada1104/jinna-provider/releases"
+version_check = "jinna version"
+min_version = "0.1.0"
+installer = "github-release"
+repository = "parada1104/jinna-provider"
+release_policy = "latest-stable"
+
+[init]
+prompt = "init.md"
+description = "Install the OpenProject provider and configure its local MCP server"
+needs_manifest = true
+needs_mcp = ["jinna"]
+
+[provides]
+skills = [{ id = "jinna-mcp-recipe", source = "bundled" }]
+
+[provides.brief]
+
+[[provides.brief.workflow_rules]]
+key = "jinna-provider-installation"
+text = "Use the local OpenProject provider binary `jinna`; if it is unavailable, use the explicit verified GitHub Release installation flow before configuring its MCP server."
+
+[[provides.brief.workflow_rules]]
+key = "openproject-remote-service"
+text = "OpenProject is a remote Self-Hosted service configured through OPENPROJECT_BASE_URL and OPENPROJECT_API_TOKEN; it is not a local executable dependency."
+
+[[provides.brief.workflow_rules]]
+key = "jinna-mcp-no-fallback"
+text = "Use local `jinna mcp` explicitly. Do not proxy, switch, or replay writes through OpenProject's official remote /mcp endpoint automatically."
+
+[[provides.brief.mcp_descriptions]]
+key = "jinna"
+text = "Local OpenProject provider MCP server using the direct APIv3 client."
+
+[[provides.mcp]]
+id = "jinna"
+command = "{dep:jinna}"
+args = ["mcp"]
+timeout = 30000
+env = { OPENPROJECT_BASE_URL = "$OPENPROJECT_BASE_URL", OPENPROJECT_API_TOKEN = "$OPENPROJECT_API_TOKEN", OPENPROJECT_AUTH = "$OPENPROJECT_AUTH" }
+
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/jinna-mcp-recipe/README.md"

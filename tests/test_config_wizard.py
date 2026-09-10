@@ -276,6 +276,112 @@ class ConfigWizardTests(unittest.TestCase):
         dep_install.resolve_install_plan.assert_called()
         self.assertEqual(dep_install.resolve_install_plan.call_args.args[0], "jq")
 
+    def test_dep_gate_non_tty_never_offers_provider_install(self):
+        """Requirement 3: no TTY means no provider offer, even for github-release."""
+        recipe = self._recipe(
+            fields={
+                "base_branch": self.schema.ConfigField(
+                    required=False, type="string", default="main"
+                )
+            },
+            cli_deps=[
+                self.schema.CliDep(
+                    binary="jinna",
+                    purpose="provider",
+                    install_url="https://github.com/parada1104/jinna-provider/releases",
+                    installer="github-release",
+                    repository="parada1104/jinna-provider",
+                    release_policy="latest-stable",
+                    min_version="0.1.0",
+                )
+            ],
+        )
+        missing = [
+            self.mod._dep_check.DepResult(
+                binary="jinna",
+                found=False,
+                version="",
+                ok=False,
+                install_url="https://github.com/parada1104/jinna-provider/releases",
+                purpose="provider",
+                required=True,
+                source="unresolved",
+            )
+        ]
+        dep_install = MagicMock()
+        confirm = MagicMock()
+        confirm.return_value.ask.return_value = True
+        console = MagicMock()
+        import questionary as q
+
+        with patch.object(
+            self.mod._dep_check, "check_cli_deps", return_value=missing
+        ), patch.object(self.mod, "_load_sibling", return_value=dep_install), patch.object(
+            sys.stdin, "isatty", return_value=False
+        ), patch.object(
+            sys.stdout, "isatty", return_value=False
+        ), patch.object(
+            q, "confirm", confirm
+        ):
+            self.assertTrue(self.mod._dep_gate(recipe, console))
+        dep_install.offer_and_install.assert_not_called()
+        dep_install.resolve_install_plan.assert_not_called()
+
+    def test_dep_gate_passes_provider_plan_fields_on_tty(self):
+        """The TTY offer must carry the validated github-release declaration."""
+        recipe = self._recipe(
+            fields={
+                "base_branch": self.schema.ConfigField(
+                    required=False, type="string", default="main"
+                )
+            },
+            cli_deps=[
+                self.schema.CliDep(
+                    binary="jinna",
+                    purpose="provider",
+                    install_url="https://github.com/parada1104/jinna-provider/releases",
+                    installer="github-release",
+                    repository="parada1104/jinna-provider",
+                    release_policy="latest-stable",
+                    min_version="0.1.0",
+                )
+            ],
+        )
+        missing = [
+            self.mod._dep_check.DepResult(
+                binary="jinna",
+                found=False,
+                version="",
+                ok=False,
+                install_url="https://github.com/parada1104/jinna-provider/releases",
+                purpose="provider",
+                required=True,
+                source="unresolved",
+            )
+        ]
+        dep_install = MagicMock()
+        dep_install.offer_and_install.return_value = []
+        confirm = MagicMock()
+        confirm.return_value.ask.return_value = True
+        console = MagicMock()
+        import questionary as q
+
+        with patch.object(
+            self.mod._dep_check, "check_cli_deps", return_value=missing
+        ), patch.object(self.mod, "_load_sibling", return_value=dep_install), patch.object(
+            sys.stdin, "isatty", return_value=True
+        ), patch.object(
+            sys.stdout, "isatty", return_value=True
+        ), patch.object(
+            q, "confirm", confirm
+        ):
+            self.assertTrue(self.mod._dep_gate(recipe, console))
+        dep_install.resolve_install_plan.assert_called_once()
+        kwargs = dep_install.resolve_install_plan.call_args.kwargs
+        self.assertEqual(kwargs["installer"], "github-release")
+        self.assertEqual(kwargs["repository"], "parada1104/jinna-provider")
+        self.assertEqual(kwargs["release_policy"], "latest-stable")
+
     def test_configure_selected_writes_each(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

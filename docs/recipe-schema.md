@@ -347,7 +347,10 @@ Placement convention: after `[[capabilities]]` / `[[hooks]]`, before the first
 | `required` | no | `true` | `false` → INFO when missing (never WARN) |
 | `install_url` | no | `""` | Guidance link when no installer map entry / user declines |
 | `version_check` | no | `""` | Shell command whose output is scanned for a version |
-| `min_version` | no | `""` | Minimum version; unparseable versions never block |
+| `min_version` | no | `""` | Minimum version; unparseable versions never block for legacy dependencies |
+| `installer` | no | `""` | Constrained installer kind; currently `github-release` for the OpenProject provider |
+| `repository` | no | `""` | Allowlisted source repository required by `github-release` |
+| `release_policy` | no | `""` | Release selection policy; currently `latest-stable` |
 
 ```toml
 [[deps.cli]]
@@ -360,11 +363,12 @@ min_version = "2.0.0"
 ```
 
 Unknown keys raise `RecipeValidationError`. Detection is always safe: doctor and
-non-TTY paths never install. On an interactive TTY, configure / init may **offer**
-opt-in install via Homebrew or `apt-get` for known binaries (`gh`, `glab`, `jq`,
-`direnv`, `git`, and `bb` → Homebrew formula `bb-cli` with an empty apt package);
-only `npx` remains guidance-only. Nothing is installed without an
-explicit Yes.
+non-TTY paths never install. On an interactive TTY, configure may **offer** opt-in
+installation for known package-manager binaries (`bb` uses the `bb-cli`
+package) and for a validated `github-release` dependency. GitHub release
+installation is restricted to the recipe's allowlisted repository, target/archive
+contract, checksum verification, and atomic managed cache. Nothing is installed
+without an explicit Yes; `npx` remains guidance-only and `recipe init` remains read-only.
 
 ## `[config]` schema declaration
 
