@@ -63,13 +63,62 @@ def _resolve_catalog_dir(project_root: Path) -> Path:
     return Path(__file__).resolve().parents[2] / "catalog" / "recipes"
 
 
+def _run_cli_dep_gate(recipe) -> bool:
+    """Route recipe.cli_deps through the shared dependency gate.
+
+    The gate owns any explicit TTY install offer; this module never installs
+    binaries. Returns True when required CLI deps are satisfied, or when the
+    user explicitly accepts configuring anyway.
+    """
+    try:
+        from rich.console import Console
+
+        config_wizard = _load_sibling("config_wizard")
+        return bool(config_wizard._dep_gate(recipe, Console()))
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! CLI dependency check skipped: {exc}")
+        return True
+
+
+def _print_cli_dep_guidance(recipe) -> None:
+    """Print explicit install guidance after an unresolved CLI dependency gate."""
+    try:
+        dep_install = _load_sibling("dep_install")
+    except Exception:  # noqa: BLE001
+        dep_install = None
+
+    print()
+    for dep in recipe.cli_deps:
+        if not getattr(dep, "required", True):
+            continue
+        url = getattr(dep, "install_url", "") or ""
+        target = url
+        if dep_install is not None:
+            try:
+                plan = dep_install.resolve_install_plan(dep.binary, install_url=url)
+                target = (
+                    getattr(plan, "display", "")
+                    or getattr(plan, "binary", "")
+                    or url
+                )
+            except Exception:  # noqa: BLE001
+                target = url
+        line = f"  - {dep.binary}: {target}" if target else f"  - {dep.binary}"
+        print(line)
+    print(
+        "required CLI dependencies are still missing; install them and re-run, "
+        "or continue with:"
+    )
+    print("  ai-specs configure-recipes")
+
+
 def add_recipe(project_root: Path, recipe_id: str) -> int:
     """Validate recipe exists and append [recipes.<id>] to ai-specs.toml."""
     manifest_path = project_root / "ai-specs" / "ai-specs.toml"
     catalog_dir = _resolve_catalog_dir(project_root)
 
     if not manifest_path.is_file():
-        print("Proyecto no inicializado. Ejecuta: ai-specs init", file=sys.stderr)
+        print("Project not initialized. Run: ai-specs init", file=sys.stderr)
         return 1
 
     util = _load_sibling("util")
@@ -82,7 +131,7 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
     try:
         recipe = recipe_read.read_recipe(catalog_dir, recipe_id)
     except Exception as exc:
-        print(f"Recipe '{recipe_id}' no encontrada en catalog/recipes/: {exc}", file=sys.stderr)
+        print(f"Recipe '{recipe_id}' not found in catalog/recipes/: {exc}", file=sys.stderr)
         return 1
 
     # Check if already in manifest
@@ -92,8 +141,8 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
         manifest_recipes = toml_read.read_recipes(data)
         if recipe_id in manifest_recipes:
             print(
-                f"Recipe '{recipe_id}' ya está en el manifest. "
-                "Usa ai-specs sync para materializar.",
+                f"Recipe '{recipe_id}' is already in the manifest. "
+                "Use ai-specs sync to materialize it.",
                 file=sys.stderr,
             )
             return 1
@@ -114,8 +163,8 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
         dep_rc = util.ensure_deps(util.vendor_dir())
         if dep_rc is not None:
             print(
-                "No se agregó la recipe porque no están disponibles las "
-                "dependencias interactivas. Podés reintentar con: "
+                "Recipe not added: interactive dependencies are "
+                "unavailable. Retry with: "
                 "ai-specs recipe add "
                 f"{recipe_id}",
                 file=sys.stderr,
@@ -125,8 +174,8 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
             import questionary as interactive_questionary
         except ImportError as exc:
             print(
-                "No se agregó la recipe porque questionary no está disponible "
-                f"({exc}). Instalá las dependencias del CLI y reintentá.",
+                "Recipe not added: questionary is not available "
+                f"({exc}). Install the CLI dependencies and retry.",
                 file=sys.stderr,
             )
             return 3
@@ -161,14 +210,14 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
     except tomllib.TOMLDecodeError as exc:
         manifest_path.write_text(original_text, encoding="utf-8")
         print(
-            f"Error: agregar '{recipe_id}' produciría un manifest TOML inválido "
-            f"({exc}). No se modificó ai-specs.toml.",
+            f"Error: adding '{recipe_id}' would produce an invalid TOML "
+            f"manifest ({exc}). ai-specs.toml was not modified.",
             file=sys.stderr,
         )
         return 1
 
-    print(f"Recipe '{recipe_id}' agregada al manifest.")
-    print("Próximo sync materializará:")
+    print(f"Recipe '{recipe_id}' added to the manifest.")
+    print("The next sync will materialize:")
 
     provides = recipe_dict.get("provides", {})
     skills = provides.get("skills", [])
@@ -190,41 +239,47 @@ def add_recipe(project_root: Path, recipe_id: str) -> int:
         for d in docs:
             print(f"  - doc: {d['source']} → {d['target']}")
     if not any([skills, commands, mcp, templates, docs]):
-        print("  (ninguna primitive declarada)")
+        print("  (no primitives declared)")
 
 
     # Guidance: what to do next
     # If interactive, run config wizard + env var prompts now
     if tty and (has_config or has_mcp_env):
         print()
-        if not interactive_questionary.confirm("¿Configurar ahora?", default=True).ask():
-            print("Podés configurar después con: ai-specs configure-recipes")
+        if not interactive_questionary.confirm("Configure now?", default=True).ask():
+            print("You can configure later with: ai-specs configure-recipes")
             return 0
+
+        # CLI dependency gate runs before env prompts so a missing provider CLI
+        # (e.g. jinna) gets an explicit install offer instead of being skipped.
+        if recipe.cli_deps and not _run_cli_dep_gate(recipe):
+            _print_cli_dep_guidance(recipe)
+
         if has_config:
             try:
                 cw = _load_sibling("config_wizard")
                 manifest = project_root / "ai-specs" / "ai-specs.toml"
                 cw.configure_selected_recipes(project_root, [recipe_id], manifest)
             except Exception:
-                print("  ! no se pudo abrir el asistente de configuración")
+                print("  ! could not open the configuration wizard")
 
         if has_mcp_env:
             try:
                 env = _load_sibling("env_scaffold")
-                if env.collect_env_vars(project_root):
-                    env.offer_harness_env(project_root)
+                if env.collect_env_vars(project_root, recipe_ids=[recipe_id]):
+                    env.offer_harness_env(project_root, recipe_ids=[recipe_id])
             except Exception:
-                print("  ! no se pudieron configurar las variables de entorno")
+                print("  ! could not configure environment variables")
     else:
         # Non-TTY: print guidance
         next_steps = []
         if has_config:
-            next_steps.append("Configurar valores requeridos: ai-specs configure-recipes")
+            next_steps.append("Configure required values: ai-specs configure-recipes")
         if has_mcp_env:
-            next_steps.append("Configurar variables de entorno MCP: ai-specs configure-recipes")
+            next_steps.append("Configure MCP environment variables: ai-specs configure-recipes")
         if next_steps:
             print()
-            print("Siguientes pasos:")
+            print("Next steps:")
             for step in next_steps:
                 print(f"  - {step}")
     return 0
