@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import io
 import os
@@ -16,6 +17,18 @@ RECIPE_READ_PATH = ROOT / "lib" / "_internal" / "recipe-read.py"
 RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 TOML_READ_PATH = ROOT / "lib" / "_internal" / "toml-read.py"
 CATALOG = ROOT / "catalog" / "recipes"
+
+
+class _TtyStringIO(io.StringIO):
+    """Captured stdout that still reports itself as a TTY.
+
+    ``redirect_stdout`` replaces ``sys.stdout``, so a plain StringIO would make
+    TTY-gated code paths look non-interactive. Reporting ``isatty() == True``
+    keeps the interactive path under test while still capturing the output.
+    """
+
+    def isatty(self) -> bool:
+        return True
 
 
 def load_module(path: Path, name: str):
@@ -217,7 +230,7 @@ type = "string"
                 check=False,
             )
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("Proyecto no inicializado", proc.stderr)
+            self.assertIn("Project not initialized", proc.stderr)
 
     def test_add_uses_cli_catalog_when_project_has_no_local_catalog(self):
         manifest = '[project]\nname = "test"\n'
@@ -380,7 +393,7 @@ type = "string"
         ) as stderr:
             rc = self.mod.add_recipe(project, "my-recipe")
 
-        self.assertIn("No se agregó la recipe", stderr.getvalue())
+        self.assertIn("Recipe not added:", stderr.getvalue())
 
         self.assertEqual(rc, 3)
         self.assertEqual(manifest_path.read_text(encoding="utf-8"), before)
@@ -489,7 +502,7 @@ env = { VAR1 = "$VAR1" }
         self.assertEqual(rc, 3)
         self.assertEqual(manifest_path.read_text(encoding="utf-8"), before)
         fake_util.ensure_deps.assert_called_once_with(vendor)
-        self.assertIn("No se agreg\u00f3 la recipe", stderr.getvalue())
+        self.assertIn("Recipe not added:", stderr.getvalue())
 
     def test_mcp_env_non_tty_gate(self):
         manifest = '[project]\nname = "test"\n'
@@ -521,6 +534,231 @@ env = { VAR1 = "$VAR1" }
         self.assertEqual(rc, 0)
         self.assertIn("[recipes.mcp-recipe]", manifest_path.read_text(encoding="utf-8"))
         fake_util.ensure_deps.assert_not_called()
+
+    def _enable_vendor_path(self) -> bool:
+        """Make vendored rich/questionary importable (mirrors util.ensure_deps)."""
+        vendor = ROOT / "lib" / "_vendor"
+        if vendor.is_dir() and str(vendor) not in sys.path:
+            sys.path.insert(0, str(vendor))
+        try:
+            import rich.console  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    def _jinna_recipe_toml(self) -> str:
+        return (
+            '[recipe]\n'
+            'id = "jinna-flow"\n'
+            'name = "Jinna Flow"\n'
+            'description = "Desc"\n'
+            'version = "1.0.0"\n\n'
+            '[[deps.cli]]\n'
+            'binary = "jinna"\n'
+            'purpose = "Jinna provider CLI"\n'
+            'required = true\n'
+            'install_url = "https://github.com/example/jinna/releases/latest"\n\n'
+            '[[provides.mcp]]\n'
+            'id = "jinna"\n'
+            'command = "jinna"\n'
+            'env = { JINNA_TOKEN = "$JINNA_TOKEN" }\n'
+        )
+
+    def _jinna_recipe_toml_with_config(self) -> str:
+        return (
+            '[recipe]\n'
+            'id = "jinna-flow"\n'
+            'name = "Jinna Flow"\n'
+            'description = "Desc"\n'
+            'version = "1.0.0"\n\n'
+            '[[deps.cli]]\n'
+            'binary = "jinna"\n'
+            'purpose = "Jinna provider CLI"\n'
+            'required = true\n'
+            'install_url = "https://github.com/example/jinna/releases/latest"\n\n'
+            '[config.board_id]\n'
+            'required = true\n'
+            'type = "string"\n\n'
+            '[[provides.mcp]]\n'
+            'id = "jinna"\n'
+            'command = "jinna"\n'
+            'env = { JINNA_TOKEN = "$JINNA_TOKEN" }\n'
+        )
+
+    def _run_add_with_stubs(
+        self,
+        project: Path,
+        *,
+        dep_gate_result: bool,
+        stdout=None,
+    ):
+        """Mock the interactive deps for a jinna recipe and capture the dep gate call."""
+        vendor = project / "cli-vendor"
+        fake_util = mock.Mock()
+        fake_util.is_internal_test_recipe.return_value = False
+        fake_util.ensure_deps.return_value = None
+        fake_util.vendor_dir.return_value = vendor
+        config_wizard = mock.Mock()
+        seen = {}
+
+        def dep_gate(recipe, console):
+            seen["recipe"] = recipe
+            seen["console"] = console
+            return dep_gate_result
+
+        config_wizard._dep_gate.side_effect = dep_gate
+        config_wizard.configure_selected_recipes = mock.Mock()
+        env_scaffold = mock.Mock()
+        env_scaffold.collect_env_vars.return_value = {
+            "JINNA_TOKEN": "required by jinna (jinna-flow)"
+        }
+        dep_install = mock.Mock()
+        dep_install.resolve_install_plan.return_value = mock.Mock(
+            binary="jinna",
+            display="https://github.com/example/jinna/releases/latest",
+            command=[],
+            kind="guidance",
+        )
+        questionary = mock.Mock()
+        questionary.confirm.return_value.ask.return_value = True
+
+        def load_sibling(name):
+            return {
+                "util": fake_util,
+                "config_wizard": config_wizard,
+                "env_scaffold": env_scaffold,
+                "dep_install": dep_install,
+            }[name]
+
+        stack = contextlib.ExitStack()
+        stack.enter_context(
+            mock.patch.object(self.mod, "_load_sibling", side_effect=load_sibling)
+        )
+        stack.enter_context(mock.patch.dict(sys.modules, {"questionary": questionary}))
+        stack.enter_context(mock.patch.object(self.mod.sys.stdin, "isatty", return_value=True))
+        stack.enter_context(mock.patch.object(self.mod.sys.stdout, "isatty", return_value=True))
+        if stdout is not None:
+            stack.enter_context(contextlib.redirect_stdout(stdout))
+        with stack:
+            rc = self.mod.add_recipe(project, "jinna-flow")
+        return rc, {
+            "dep_gate": seen,
+            "config_wizard": config_wizard,
+            "env_scaffold": env_scaffold,
+            "dep_install": dep_install,
+            "util": fake_util,
+        }
+
+    def test_add_routes_cli_deps_through_dep_gate(self):
+        """A recipe with cli_deps must reach config_wizard._dep_gate on a real Console."""
+        if not self._enable_vendor_path():
+            self.skipTest("vendored rich unavailable")
+        from rich.console import Console
+
+        project = self._make_project('[project]\nname = "test"\n')
+        self._set_ai_specs_home(
+            self._make_cli_home({"jinna-flow": self._jinna_recipe_toml()})
+        )
+        rc, stubs = self._run_add_with_stubs(project, dep_gate_result=True)
+
+        self.assertEqual(rc, 0)
+        stubs["config_wizard"]._dep_gate.assert_called_once()
+        recipe_arg = stubs["dep_gate"]["recipe"]
+        console_arg = stubs["dep_gate"]["console"]
+        self.assertEqual(recipe_arg.id, "jinna-flow")
+        self.assertEqual([d.binary for d in recipe_arg.cli_deps], ["jinna"])
+        self.assertIsInstance(console_arg, Console)
+        # Env setup is scoped to the added recipe only.
+        stubs["env_scaffold"].collect_env_vars.assert_called_once_with(
+            project, recipe_ids=["jinna-flow"]
+        )
+        stubs["env_scaffold"].offer_harness_env.assert_called_once_with(
+            project, recipe_ids=["jinna-flow"]
+        )
+
+    def test_add_with_config_defers_dep_gate_to_config_wizard(self):
+        """A recipe with config fields must not gate twice.
+
+        `configure_selected_recipes` already runs `_dep_gate` for recipes with
+        config fields, so `recipe-add` must not add a second gate call that
+        duplicates the panel on two streams and ignores the first decline.
+        """
+        if not self._enable_vendor_path():
+            self.skipTest("vendored rich unavailable")
+
+        project = self._make_project('[project]\nname = "test"\n')
+        self._set_ai_specs_home(
+            self._make_cli_home({"jinna-flow": self._jinna_recipe_toml_with_config()})
+        )
+        rc, stubs = self._run_add_with_stubs(project, dep_gate_result=True)
+
+        self.assertEqual(rc, 0)
+        # config_wizard.configure_selected_recipes owns the gate for this shape.
+        stubs["config_wizard"]._dep_gate.assert_not_called()
+        stubs["config_wizard"].configure_selected_recipes.assert_called_once()
+
+    def test_add_reports_install_guidance_when_dep_gate_unresolved(self):
+        """Unresolved CLI deps: explicit install plan surfaced, env setup still runs."""
+        if not self._enable_vendor_path():
+            self.skipTest("vendored rich unavailable")
+
+        project = self._make_project('[project]\nname = "test"\n')
+        self._set_ai_specs_home(
+            self._make_cli_home({"jinna-flow": self._jinna_recipe_toml()})
+        )
+        out = _TtyStringIO()
+        rc, stubs = self._run_add_with_stubs(project, dep_gate_result=False, stdout=out)
+
+        self.assertEqual(rc, 0)
+        stubs["config_wizard"]._dep_gate.assert_called_once()
+        # Never install silently: recipe-add must not invoke an installer itself.
+        stubs["dep_install"].offer_and_install.assert_not_called()
+        stubs["dep_install"].resolve_install_plan.assert_called_with(
+            "jinna", install_url="https://github.com/example/jinna/releases/latest"
+        )
+        guidance = out.getvalue()
+        self.assertIn("https://github.com/example/jinna/releases/latest", guidance)
+        self.assertIn("required CLI dependencies are still missing", guidance)
+        # Env setup still permitted after an unresolved dep gate.
+        stubs["env_scaffold"].offer_harness_env.assert_called_once_with(
+            project, recipe_ids=["jinna-flow"]
+        )
+
+    def test_add_non_tty_cli_deps_is_guidance_only(self):
+        """Non-TTY must not open the dep gate or prompt for env values."""
+        project = self._make_project('[project]\nname = "test"\n')
+        self._set_ai_specs_home(
+            self._make_cli_home({"jinna-flow": self._jinna_recipe_toml()})
+        )
+        fake_util = mock.Mock()
+        fake_util.is_internal_test_recipe.return_value = False
+        fake_util.ensure_deps.return_value = 3
+        fake_util.vendor_dir.return_value = project / "cli-vendor"
+        config_wizard = mock.Mock()
+        env_scaffold = mock.Mock()
+
+        def load_sibling(name):
+            return {
+                "util": fake_util,
+                "config_wizard": config_wizard,
+                "env_scaffold": env_scaffold,
+            }[name]
+
+        out = io.StringIO()
+        with mock.patch.object(
+            self.mod, "_load_sibling", side_effect=load_sibling
+        ), mock.patch.object(
+            self.mod.sys.stdin, "isatty", return_value=False
+        ), mock.patch.object(
+            self.mod.sys.stdout, "isatty", return_value=False
+        ), contextlib.redirect_stdout(out):
+            rc = self.mod.add_recipe(project, "jinna-flow")
+
+        self.assertEqual(rc, 0)
+        config_wizard._dep_gate.assert_not_called()
+        env_scaffold.offer_harness_env.assert_not_called()
+        self.assertIn("ai-specs configure-recipes", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

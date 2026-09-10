@@ -116,7 +116,7 @@ class SyncEnvScaffoldTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
             combined = proc.stdout + proc.stderr
             self.assertIn(
-                "CANONICAL_VAULT_PATH sin valor en ai-specs.env",
+                "CANONICAL_VAULT_PATH has no value in ai-specs.env",
                 combined,
             )
             self.assertIn("configure-recipes", combined)

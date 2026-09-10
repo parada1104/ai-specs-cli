@@ -127,7 +127,7 @@ class RecipeInitTests(unittest.TestCase):
         self._set_ai_specs_home(self._make_cli_home())
         with self.assertRaises(self.mod.RecipeInitError) as ctx:
             self.mod.build_init_brief(root, "missing")
-        self.assertIn("Recipe 'missing' no encontrada", str(ctx.exception))
+        self.assertIn("Recipe 'missing' not found", str(ctx.exception))
 
     def test_init_rejects_internal_test_recipe(self):
         root = self._make_project()
@@ -143,7 +143,7 @@ class RecipeInitTests(unittest.TestCase):
             root = Path(tmp)
             with self.assertRaises(self.mod.RecipeInitError) as ctx:
                 self.mod.build_init_brief(root, "tracker")
-            self.assertIn("Proyecto no inicializado", str(ctx.exception))
+            self.assertIn("Project not initialized", str(ctx.exception))
             self.assertEqual(list(root.iterdir()), [])
 
     def test_recipe_without_init_workflow_fails(self):
