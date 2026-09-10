@@ -72,11 +72,22 @@ None.
 
 ## Round bookkeeping
 
-- Fix rounds used: 0 of 2.
+- Fix rounds used: 0 of 2 (no `CRITICAL` confirmed by both judges).
 - Scoped re-judgments used: 0 of 2.
-- Reason: no `CRITICAL` finding was confirmed by both judges, so no bounded fix
-  round was opened. `W1` is corroborated but informational by severity; it needs
-  an explicit human decision, not an automatic round.
+- Reason: `W1` is corroborated but informational by severity, so no automatic
+  bounded fix round was opened. The parent surfaced `W1` to the user, who
+  explicitly authorized a corrective commit outside the automatic round budget.
+
+### User-authorized correction for W1
+
+- Commit: `270a44a fix(recipe): gate CLI deps once during recipe add`.
+- Change: `recipe-add.py` now runs `_run_cli_dep_gate` only when the recipe has
+  no config fields (`recipe.cli_deps and not has_config and ...`), because
+  `configure_selected_recipes` already gates the `has_config` path.
+- New test: `tests/test_recipe_add.py::RecipeAddTests.test_add_with_config_defers_dep_gate_to_config_wizard`
+  (RED: `_dep_gate` called once from `recipe-add`; GREEN after the guard).
+- Focused suite after the correction: `Ran 132 tests ... OK`.
+- `I1`–`I4` remain informational and unaddressed by this correction.
 
 ## Verdict
 
@@ -87,7 +98,7 @@ confirmed: []
 suspect: []
 contradictions: []
 info: [W1, I1, I2, I3, I4]
-fix_work_units: []
+fix_work_units: [270a44a]
 scoped_rejudgment: not_run
 terminal_state: approved
 skill_resolution: paths-injected
