@@ -105,6 +105,23 @@ class EnvScaffoldTests(unittest.TestCase):
             },
         )
 
+    def _jinna_toml(self) -> str:
+        """Minimal jinna recipe whose MCP preset references the OpenProject vars."""
+        return (
+            "[recipe]\n"
+            'id = "jinna-mcp-recipe"\n'
+            'name = "OpenProject Provider MCP"\n'
+            'description = "D"\n'
+            'version = "1.0.0"\n\n'
+            "[[provides.mcp]]\n"
+            'id = "jinna"\n'
+            'command = "{dep:jinna}"\n'
+            'args = ["mcp"]\n'
+            'env = { OPENPROJECT_BASE_URL = "$OPENPROJECT_BASE_URL", '
+            'OPENPROJECT_API_TOKEN = "$OPENPROJECT_API_TOKEN", '
+            'OPENPROJECT_AUTH = "$OPENPROJECT_AUTH" }\n'
+        )
+
     def test_write_env_uses_dotenv_not_export(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"
@@ -214,6 +231,54 @@ class EnvScaffoldTests(unittest.TestCase):
                 self.mod.generate_env_example(project)
             self.assertFalse((project / "ai-specs.env.example.bak").exists())
             self.assertTrue((project / "ai-specs.env.example").is_file())
+
+    def test_generate_env_example_renders_openproject_auth_provider_default(self):
+        """The example renders the provider's effective default `basic`; others stay blank."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                path = self.mod.generate_env_example(project)
+            text = path.read_text(encoding="utf-8")
+            self.assertRegex(text, r"(?m)^OPENPROJECT_AUTH=basic\s+#")
+            self.assertRegex(text, r"(?m)^OPENPROJECT_BASE_URL=\s+#")
+            self.assertRegex(text, r"(?m)^OPENPROJECT_API_TOKEN=\s+#")
+            # Example rendering only: it must never create the runtime env file.
+            self.assertFalse((project / "ai-specs.env").exists())
+
+    def test_generate_env_example_default_is_example_only_and_idempotent(self):
+        """A prefilled default stays out of runtime env and keeps .bak idempotence."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                self.mod.generate_env_example(project)
+                self.mod.generate_env_example(project)
+                missing = self.mod.missing_required_values(project)
+            self.assertIn("OPENPROJECT_AUTH", missing)
+            self.assertFalse((project / "ai-specs.env.example.bak").exists())
+            self.assertFalse((project / "ai-specs.env").exists())
+
+    def test_generate_env_example_matches_real_catalog_jinna_recipe(self):
+        """Triangulation: the real catalog declaration yields the same default line."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            (project / "ai-specs").mkdir(parents=True)
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "p"\n\n'
+                '[recipes.jinna-mcp-recipe]\nenabled = true\nversion = "1.0.0"\n',
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(ROOT)}):
+                path = self.mod.generate_env_example(project)
+            text = path.read_text(encoding="utf-8")
+            self.assertRegex(text, r"(?m)^OPENPROJECT_AUTH=basic\s+#")
+            self.assertIn("provider's effective default", text)
+            self.assertRegex(text, r"(?m)^OPENPROJECT_BASE_URL=\s+#")
 
     def test_ensure_root_envrc_creates(self):
         with tempfile.TemporaryDirectory() as tmp:

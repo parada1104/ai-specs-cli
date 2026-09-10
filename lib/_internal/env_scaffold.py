@@ -59,6 +59,17 @@ ENV_VAR_HELP: dict[str, str] = {
         "vault MCP reads). Example: /Users/you/.../vault/nnodes/proyectos/app. "
         "Must be fully resolved — do not leave nested $OTHER_VAR unexpanded."
     ),
+    "OPENPROJECT_AUTH": (
+        "Optional — `basic` is the provider's effective default when unset; "
+        "use `bearer` for Bearer tokens"
+    ),
+}
+
+# Values pre-filled in ai-specs.env.example only. These document a provider's
+# effective default so the committed template stays copy-paste valid; they are
+# never written to ai-specs.env and never override an explicit runtime value.
+ENV_EXAMPLE_DEFAULTS: dict[str, str] = {
+    "OPENPROJECT_AUTH": "basic",
 }
 
 
@@ -236,7 +247,8 @@ def generate_env_example(project_root: Path) -> Path:
             help_bits = [vars_map[var]]
             if var in ENV_VAR_HELP:
                 help_bits.append(ENV_VAR_HELP[var])
-            lines.append(f"{var}=  # {' '.join(help_bits)}")
+            default = ENV_EXAMPLE_DEFAULTS.get(var, "")
+            lines.append(f"{var}={default}  # {' '.join(help_bits)}")
     else:
         lines.append("# (no env vars required by enabled recipes)")
     lines.append("")

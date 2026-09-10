@@ -363,3 +363,108 @@ The published `RELEASE.json` (`version: v0.1.0`, five artifacts) satisfies the n
 
 No commit, push, PR, or archive was performed in this correction pass either. `tasks.md` remains
 36 checked (`0.1`–`8.4`) with `8.5` and `8.6` intentionally unchecked for the verify/delivery phases.
+
+## Post-Apply correction — `OPENPROJECT_AUTH` example default (third apply turn)
+
+This is a **post-Apply example-rendering correction**, not new change scope. The user requested that the
+generated `ai-specs.env.example` show the provider's effective default
+`OPENPROJECT_AUTH=basic` instead of a blank value, after the first dogfood `sync` left the line empty.
+
+### Scope and authorization
+
+- Authorized surfaces only: `lib/_internal/env_scaffold.py`, `tests/test_env_scaffold.py`,
+  `openspec/changes/jinna-mcp-recipe/apply-progress.md`.
+- No runtime MCP env reference changed: `catalog/recipes/jinna-mcp-recipe/recipe.toml` still declares
+  `OPENPROJECT_AUTH = "$OPENPROJECT_AUTH"`, and `collect_env_vars` / `missing_required_values` semantics
+  are untouched, so the variable stays a required runtime reference.
+- No provider code was modified (`jinna-provider` untouched); the default value is documented in the
+  recipe's own `README.md` ("Optional: basic is the provider default") and `init.md`.
+- `ai-specs.env` was neither read nor modified. Root `ai-specs.env.example` (968 bytes, mtime
+  10:07:41) and `ai-specs.env.example.bak` (787 bytes, mtime 10:07:41) are unchanged; both predate this
+  turn's edits (10:44), and no comment rendering was changed under the managed block.
+- No commit, push, PR, archive, or destructive cleanup was performed.
+
+### TDD cycle evidence (strict TDD active)
+
+| Cycle | Behavior pinned | RED evidence | GREEN evidence |
+|---|---|---|---|
+| 15 | `generate_env_example()` renders the provider's effective default `OPENPROJECT_AUTH=basic` while `OPENPROJECT_BASE_URL` / `OPENPROJECT_API_TOKEN` stay blank placeholders | `test_generate_env_example_renders_openproject_auth_provider_default` FAIL — `Regex didn't match: '(?m)^OPENPROJECT_AUTH=basic\s+#'`, actual line was `OPENPROJECT_AUTH=  # required by jinna (jinna-mcp-recipe)` | `ENV_VAR_HELP["OPENPROJECT_AUTH"]` note + `ENV_EXAMPLE_DEFAULTS = {"OPENPROJECT_AUTH": "basic"}` applied in the render loop; test passes |
+
+Triangulation and guard coverage added under green:
+
+- `test_generate_env_example_matches_real_catalog_jinna_recipe` — renders through the **real**
+  `catalog/recipes/jinna-mcp-recipe/recipe.toml` with `AI_SPECS_HOME=<repo root>` and still produces the
+  `OPENPROJECT_AUTH=basic` line (different inputs than the synthetic fixture).
+- `test_generate_env_example_default_is_example_only_and_idempotent` — the prefilled example value does
+  not change `missing_required_values` (runtime env still required), creates no `ai-specs.env`, and two
+  consecutive renders create no `ai-specs.env.example.bak`.
+- Existing backup and idempotence tests (`test_generate_env_example`, `test_generate_env_example_backup`,
+  `test_generate_env_example_skips_identical_rewrite`) and the black-box `test_sync_env_scaffold.py`
+  suite remain green, so the `.bak`/no-rewrite behavior is unchanged.
+
+### Exact test commands and results
+
+Baseline before the new tests: `Ran 36 tests in 0.080s / OK`.
+
+```text
+PYTHONPATH=. python3 -m unittest \
+  tests.test_env_scaffold.EnvScaffoldTests.test_generate_env_example_renders_openproject_auth_provider_default \
+  tests.test_env_scaffold.EnvScaffoldTests.test_generate_env_example_default_is_example_only_and_idempotent
+# RED: Ran 2 tests in 0.017s — FAILED (failures=1)  [the render test, right reason]
+# GREEN: Ran 2 tests in 0.021s — OK
+
+PYTHONPATH=. python3 -m unittest tests.test_env_scaffold
+# Ran 39 tests in 0.094s — OK
+
+PYTHONPATH=. python3 -m unittest tests.test_env_scaffold tests.test_sync_env_scaffold \
+  tests.test_envrc_scaffold tests.test_config_wizard tests.test_jinna_provider_recipe
+# Ran 140 tests in 15.492s — OK (skipped=2)
+
+PYTHONPATH=. python3 -m unittest tests.test_env_scaffold tests.test_envrc_scaffold \
+  tests.test_sync_env_scaffold tests.test_recipe_schema tests.test_recipe_read tests.test_dep_check \
+  tests.test_config_wizard tests.test_recipe_materialize tests.test_recipes_catalog \
+  tests.test_recipe_add tests.test_recipe_configure tests.test_doctor tests.test_recipe_list \
+  tests.test_recipe_init
+# Ran 405 tests in 48.002s — OK (skipped=2 in the jinna suite folded above)
+
+python3 -m py_compile lib/_internal/env_scaffold.py tests/test_env_scaffold.py  # py_compile OK
+bash -n lib/sync.sh                                                          # bash -n OK
+```
+
+The two skips are the opt-in release smoke tests that require `AI_SPECS_JINNA_SMOKE_BINARY`.
+`./tests/validate.sh` is not re-run in this turn; its `run.sh` stage is the ~9.5-minute full suite and
+belongs to the verify phase, whose prior run is recorded above.
+
+### Expected rendered output (real project manifest, temp project)
+
+Rendering the real `ai-specs/ai-specs.toml` against the real catalog in a temporary project produced:
+
+```text
+OPENPROJECT_API_TOKEN=  # required by jinna (jinna-mcp-recipe)
+OPENPROJECT_AUTH=basic  # required by jinna (jinna-mcp-recipe) Optional — `basic` is the provider's effective default when unset; use `bearer` for Bearer tokens
+OPENPROJECT_BASE_URL=  # required by jinna (jinna-mcp-recipe)
+```
+
+The probe wrote only inside a `TemporaryDirectory`; `runtime env file created: False` and
+`backup created: False`.
+
+### Correction-pass files changed
+
+- `lib/_internal/env_scaffold.py` — added `ENV_EXAMPLE_DEFAULTS` (example-rendering-only mapping) and a
+  `ENV_VAR_HELP["OPENPROJECT_AUTH"]` note; `generate_env_example()` now renders
+  `f"{var}={default}  # ..."`.
+- `tests/test_env_scaffold.py` — `_jinna_toml()` fixture plus three new tests.
+
+Diff size: 78 insertions / 1 deletion across the two files, inside the 400-line review budget.
+
+### Persisted task checkboxes
+
+`openspec/changes/jinna-mcp-recipe/tasks.md` is unchanged by this turn: the correction is not a new
+implementation-owned checklist row, and `8.5` / `8.6` remain intentionally unchecked for the
+verify/delivery phases. No completed task is left unmarked.
+
+### Remaining action for the parent (not performed here)
+
+Re-running `ai-specs sync <project>` regenerates root `ai-specs.env.example` with the new default line;
+that write is outside this turn's allowed edit surfaces, and it would replace the current uncommitted
+`ai-specs.env.example.bak`, so it was deliberately not executed.
