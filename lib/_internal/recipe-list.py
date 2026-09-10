@@ -108,12 +108,12 @@ def main() -> int:
     manifest_path = project_root / "ai-specs" / "ai-specs.toml"
 
     if not manifest_path.is_file():
-        print("Proyecto no inicializado. Ejecuta: ai-specs init", file=sys.stderr)
+        print("Project not initialized. Run: ai-specs init", file=sys.stderr)
         return 1
 
     recipes = list_recipes(project_root)
     if not recipes:
-        print("No hay recipes disponibles.")
+        print("No recipes available.")
         return 0
 
     for r in recipes:

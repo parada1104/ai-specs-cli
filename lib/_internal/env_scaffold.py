@@ -76,10 +76,17 @@ def harness_env_example_path(project_root: Path) -> Path:
     return project_root / HARNESS_ENV_EXAMPLE_NAME
 
 
-def collect_env_vars(project_root: Path) -> dict[str, str]:
+def collect_env_vars(
+    project_root: Path,
+    recipe_ids: list[str] | None = None,
+) -> dict[str, str]:
     """Collect $VAR references from enabled recipes' MCP env tables.
 
     Returns {VAR_NAME: purpose}. First declaration wins for purpose text.
+
+    ``recipe_ids`` is additive scoping: ``None`` keeps the aggregate behavior
+    (every enabled recipe), while a list restricts collection to those enabled
+    recipe ids. A selected-but-disabled recipe contributes nothing.
     """
     manifest = project_root / "ai-specs" / "ai-specs.toml"
     if not manifest.is_file():
@@ -91,9 +98,12 @@ def collect_env_vars(project_root: Path) -> dict[str, str]:
         return {}
 
     catalog = _catalog_dir()
+    selected = None if recipe_ids is None else set(recipe_ids)
     collected: dict[str, str] = {}
     for recipe_id, entry in recipes.items():
         if not entry.get("enabled"):
+            continue
+        if selected is not None and recipe_id not in selected:
             continue
         try:
             recipe = _recipe_read.read_recipe(catalog, recipe_id)
@@ -393,12 +403,16 @@ def _is_secret_var(var: str) -> bool:
     return any(kw in upper for kw in ["API_KEY", "TOKEN", "SECRET", "PASSWORD", "APIKEY"])
 
 
-def prompt_env_vars(project_root: Path) -> dict[str, str] | None:
+def prompt_env_vars(
+    project_root: Path,
+    recipe_ids: list[str] | None = None,
+) -> dict[str, str] | None:
     """Prompt interactively for each MCP env var value.
 
-    Returns {VAR: value} or None if cancelled.
+    Returns {VAR: value} or None if cancelled. ``recipe_ids`` scopes which
+    recipes contribute vars; ``None`` prompts the aggregate map.
     """
-    vars_map = collect_env_vars(project_root)
+    vars_map = collect_env_vars(project_root, recipe_ids=recipe_ids)
     if not vars_map:
         return {}
 
@@ -408,14 +422,14 @@ def prompt_env_vars(project_root: Path) -> dict[str, str] | None:
     console = Console()
 
     console.print()
-    console.print("[bold]Variables de entorno requeridas[/bold]")
+    console.print("[bold]Required environment variables[/bold]")
     for var, purpose in vars_map.items():
         console.print(f"  [yellow]{var}[/yellow] — {purpose}")
         if var in ENV_VAR_HELP:
             console.print(f"    [dim]ℹ️  {ENV_VAR_HELP[var]}[/]")
     console.print()
 
-    if not questionary.confirm("¿Configurar ahora los valores?", default=True).ask():
+    if not questionary.confirm("Configure these values now?", default=True).ask():
         return None
 
     result: dict[str, str] = {}
@@ -423,7 +437,7 @@ def prompt_env_vars(project_root: Path) -> dict[str, str] | None:
         if var in ENV_VAR_HELP:
             console.print(f"[dim]ℹ️  {ENV_VAR_HELP[var]}[/]")
         if _is_secret_var(var):
-            value = questionary.password(var, instruction="(input oculto)").ask()
+            value = questionary.password(var, instruction="(hidden input)").ask()
         else:
             value = questionary.text(var).ask()
         if value is None:
@@ -455,8 +469,19 @@ def write_envrc(project_root: Path, var_values: dict[str, str]) -> Path:
     return path
 
 
-def offer_harness_env(project_root: Path, *, offer_direnv_install: bool = True) -> None:
-    """Migrate, prompt, write ai-specs.env, example, root .envrc, direnv allow. Soft-fails."""
+def offer_harness_env(
+    project_root: Path,
+    *,
+    offer_direnv_install: bool = True,
+    recipe_ids: list[str] | None = None,
+) -> None:
+    """Migrate, prompt, write ai-specs.env, example, root .envrc, direnv allow. Soft-fails.
+
+    ``recipe_ids`` scopes the collection/prompted values to those enabled
+    recipes (only prompted values are merged into ai-specs.env). Example
+    generation, the root ``.envrc`` managed block, and direnv handling stay
+    global/aggregate.
+    """
     from rich.console import Console
 
     console = Console()
@@ -466,16 +491,16 @@ def offer_harness_env(project_root: Path, *, offer_direnv_install: bool = True) 
         console.print(f"[yellow]Legacy harness env migration skipped: {exc}[/yellow]")
 
     try:
-        vars_map = collect_env_vars(project_root)
+        vars_map = collect_env_vars(project_root, recipe_ids=recipe_ids)
     except Exception:
         return
     if not vars_map:
         return
 
     try:
-        values = prompt_env_vars(project_root)
+        values = prompt_env_vars(project_root, recipe_ids=recipe_ids)
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]No se pudieron configurar variables de entorno: {exc}[/yellow]")
+        console.print(f"[yellow]Could not configure environment variables: {exc}[/yellow]")
         return
     if values is None:
         return
@@ -483,12 +508,12 @@ def offer_harness_env(project_root: Path, *, offer_direnv_install: bool = True) 
     try:
         if values:
             path = write_env(project_root, values)
-            console.print(f"[green]✓[/green] escrito {path}")
+            console.print(f"[green]✓[/green] wrote {path}")
         generate_env_example(project_root)
         ensure_root_envrc(project_root)
         console.print(f"[green]✓[/green] root .envrc managed block → {project_root / '.envrc'}")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]No se pudo escribir harness env: {exc}[/yellow]")
+        console.print(f"[yellow]Could not write harness env: {exc}[/yellow]")
         return
 
     import shutil
@@ -507,13 +532,13 @@ def offer_harness_env(project_root: Path, *, offer_direnv_install: bool = True) 
 
     try:
         if not direnv_allow(project_root):
-            print("  ! direnv no está instalado o no se pudo ejecutar.", file=sys.stderr)
-            print("    Instalalo con: brew install direnv", file=sys.stderr)
-            print("    Despues corre: direnv allow", file=sys.stderr)
+            print("  ! direnv is not installed or could not be run.", file=sys.stderr)
+            print("    Install it with: brew install direnv", file=sys.stderr)
+            print("    Then run: direnv allow", file=sys.stderr)
         else:
-            print("  ✓ direnv allow — las variables quedan activas en esta terminal")
+            print("  ✓ direnv allow — variables are now active in this terminal")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]direnv allow falló: {exc}[/yellow]")
+        console.print(f"[yellow]direnv allow failed: {exc}[/yellow]")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -523,7 +548,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.path).resolve()
     if not (root / "ai-specs" / "ai-specs.toml").is_file():
         print(
-            f"Proyecto no inicializado: missing ai-specs/ai-specs.toml under {root}",
+            f"Project not initialized: missing ai-specs/ai-specs.toml under {root}",
             file=sys.stderr,
         )
         return 1
@@ -531,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
     ensure_root_envrc(root)
     for var in missing_required_values(root):
         print(
-            f"! {var} sin valor en ai-specs.env — ejecuta ai-specs configure-recipes",
+            f"! {var} has no value in ai-specs.env — run ai-specs configure-recipes",
             file=sys.stderr,
         )
     print(f"Wrote {path}")

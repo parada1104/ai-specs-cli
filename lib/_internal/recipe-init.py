@@ -87,7 +87,7 @@ def _format_mapping(data: dict[str, Any], indent: str = "  ") -> list[str]:
 def _load_manifest(project_root: Path) -> tuple[Any, dict[str, Any]]:
     manifest_path = project_root / "ai-specs" / "ai-specs.toml"
     if not manifest_path.is_file():
-        raise RecipeInitError("Proyecto no inicializado. Ejecuta: ai-specs init")
+        raise RecipeInitError("Project not initialized. Run: ai-specs init")
     toml_read = _load_toml_read()
     return toml_read, toml_read.load_toml(manifest_path)
 
@@ -100,7 +100,7 @@ def _load_recipe(project_root: Path, recipe_id: str) -> tuple[Any, Any, Path]:
     catalog_dir = _resolve_catalog_dir(project_root)
     recipe_dir = catalog_dir / recipe_id
     if not recipe_dir.is_dir():
-        raise RecipeInitError(f"Recipe '{recipe_id}' no encontrada en catalog/recipes/")
+        raise RecipeInitError(f"Recipe '{recipe_id}' not found in catalog/recipes/")
     recipe_read = _load_recipe_read()
     try:
         recipe = recipe_read.read_recipe(catalog_dir, recipe_id)

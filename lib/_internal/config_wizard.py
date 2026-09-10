@@ -265,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
     project_root = Path(args.path).resolve()
     manifest = project_root / "ai-specs" / "ai-specs.toml"
     if not manifest.is_file():
-        print(f"Proyecto no inicializado: missing {manifest}", file=sys.stderr)
+        print(f"Project not initialized: missing {manifest}", file=sys.stderr)
         return 1
 
     err = _util.ensure_deps(_util.vendor_dir())

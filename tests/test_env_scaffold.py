@@ -69,6 +69,42 @@ class EnvScaffoldTests(unittest.TestCase):
             "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n"
         )
 
+    def _project_with_recipes(self, root: Path, recipes: dict[str, str]) -> Path:
+        """Create a project with several enabled recipes in the CLI catalog."""
+        catalog = root / "catalog" / "recipes"
+        project = root / "project"
+        (project / "ai-specs").mkdir(parents=True)
+        manifest = '[project]\nname = "p"\n'
+        for recipe_id, recipe_toml in recipes.items():
+            rdir = catalog / recipe_id
+            rdir.mkdir(parents=True)
+            (rdir / "recipe.toml").write_text(recipe_toml, encoding="utf-8")
+            manifest += f'\n[recipes.{recipe_id}]\nenabled = true\nversion = "1.0"\n'
+        (project / "ai-specs" / "ai-specs.toml").write_text(manifest, encoding="utf-8")
+        return project
+
+    def _vault_toml(self) -> str:
+        return (
+            "[recipe]\n"
+            'id = "vault-canonical-store"\n'
+            'name = "Vault"\n'
+            'description = "D"\n'
+            'version = "1.0"\n\n'
+            "[[provides.mcp]]\n"
+            'id = "vault"\n'
+            'command = "npx"\n'
+            'env = { CANONICAL_VAULT_PATH = "$CANONICAL_VAULT_PATH" }\n'
+        )
+
+    def _two_recipe_project(self, root: Path) -> Path:
+        return self._project_with_recipes(
+            root,
+            {
+                "trello-mcp-workflow": self._trello_toml(),
+                "vault-canonical-store": self._vault_toml(),
+            },
+        )
+
     def test_write_env_uses_dotenv_not_export(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"
@@ -433,6 +469,113 @@ class EnvScaffoldTests(unittest.TestCase):
             self.assertEqual(result["TRELLO_API_KEY"], "secret-key")
             password.assert_called()
 
+    def test_collect_env_vars_selected_recipe_only(self):
+        """recipe_ids narrows collection to the recipe being configured."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                selected = self.mod.collect_env_vars(
+                    project, recipe_ids=["trello-mcp-workflow"]
+                )
+            self.assertEqual(sorted(selected), ["TRELLO_API_KEY", "TRELLO_TOKEN"])
+
+    def test_collect_env_vars_aggregate_when_omitted(self):
+        """Backward compatibility: omitting recipe_ids keeps aggregate behavior."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                aggregate = self.mod.collect_env_vars(project)
+                explicit_none = self.mod.collect_env_vars(project, recipe_ids=None)
+            self.assertEqual(
+                sorted(aggregate),
+                ["CANONICAL_VAULT_PATH", "TRELLO_API_KEY", "TRELLO_TOKEN"],
+            )
+            self.assertEqual(sorted(explicit_none), sorted(aggregate))
+
+    def test_collect_env_vars_empty_selection_collects_nothing(self):
+        """An empty selection is a valid scope: no recipe contributes vars."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                selected = self.mod.collect_env_vars(project, recipe_ids=[])
+            self.assertEqual(selected, {})
+
+    def test_collect_env_vars_selected_skips_disabled_recipe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root,
+                recipe_id="trello-mcp-workflow",
+                recipe_toml=self._trello_toml(),
+                enabled=False,
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                selected = self.mod.collect_env_vars(
+                    project, recipe_ids=["trello-mcp-workflow"]
+                )
+            self.assertEqual(selected, {})
+
+    def test_prompt_env_vars_selected_recipe_only(self):
+        """Selected-only prompting keeps secret/non-secret behavior per var."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            password = MagicMock()
+            password.return_value.ask.return_value = "secret-key"
+            text = MagicMock()
+            text.return_value.ask.return_value = "plain"
+            confirm = MagicMock()
+            confirm.return_value.ask.return_value = True
+            q = MagicMock(password=password, text=text, confirm=confirm)
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.dict(
+                "sys.modules", {"questionary": q}
+            ):
+                result = self.mod.prompt_env_vars(
+                    project, recipe_ids=["trello-mcp-workflow"]
+                )
+            self.assertEqual(sorted(result), ["TRELLO_API_KEY", "TRELLO_TOKEN"])
+            password.assert_called()
+            text.assert_not_called()
+
+    def test_offer_harness_env_selected_recipe_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            values = {"TRELLO_API_KEY": "k", "TRELLO_TOKEN": "t"}
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.object(
+                self.mod, "prompt_env_vars", return_value=values
+            ) as prompt_mock, patch.object(self.mod, "direnv_allow", return_value=True):
+                self.mod.offer_harness_env(
+                    project,
+                    offer_direnv_install=False,
+                    recipe_ids=["trello-mcp-workflow"],
+                )
+            self.assertEqual(
+                prompt_mock.call_args.kwargs.get("recipe_ids"),
+                ["trello-mcp-workflow"],
+            )
+            text = (project / "ai-specs.env").read_text(encoding="utf-8")
+            self.assertIn("TRELLO_API_KEY=k", text)
+            self.assertIn("TRELLO_TOKEN=t", text)
+            self.assertNotIn("CANONICAL_VAULT_PATH", text)
+
+    def test_offer_harness_env_aggregate_when_omitted(self):
+        """Backward compatibility: omitted recipe_ids prompts the aggregate map."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            values = {"TRELLO_API_KEY": "k", "TRELLO_TOKEN": "t"}
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.object(
+                self.mod, "prompt_env_vars", return_value=values
+            ) as prompt_mock, patch.object(self.mod, "direnv_allow", return_value=True):
+                self.mod.offer_harness_env(project, offer_direnv_install=False)
+            self.assertIsNone(prompt_mock.call_args.kwargs.get("recipe_ids"))
+            text = (project / "ai-specs.env").read_text(encoding="utf-8")
+            self.assertIn("TRELLO_API_KEY=k", text)
+
     def test_missing_required_values_reports_absent_and_blank(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -467,7 +610,7 @@ class EnvScaffoldTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             err_text = buf.getvalue()
             self.assertIn(
-                "! TRELLO_TOKEN sin valor en ai-specs.env — ejecuta ai-specs configure-recipes",
+                "! TRELLO_TOKEN has no value in ai-specs.env — run ai-specs configure-recipes",
                 err_text,
             )
             self.assertNotIn("TRELLO_API_KEY", err_text)

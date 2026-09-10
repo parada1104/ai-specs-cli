@@ -352,6 +352,26 @@ class ConfigWizardTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             env.offer_harness_env.assert_called()
 
+    def test_global_configure_recipes_keeps_aggregate_env_offer(self):
+        """Global configure-recipes must keep the unscoped (aggregate) env offer."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            (project / "ai-specs").mkdir(parents=True)
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "p"\n\n[recipes.demo]\nenabled = true\nversion = "1"\n'
+            )
+            env = MagicMock()
+            with patch.object(self.mod, "_enabled_recipe_ids", return_value=["demo"]), patch.object(
+                self.mod, "configure_selected_recipes", return_value={}
+            ), patch.object(self.mod, "_load_sibling", return_value=env), patch.object(
+                self.mod._util, "ensure_deps", return_value=None
+            ), patch("sys.stdin.isatty", return_value=True), patch(
+                "sys.stdout.isatty", return_value=True
+            ):
+                rc = self.mod.main([str(project)])
+            self.assertEqual(rc, 0)
+            env.offer_harness_env.assert_called_once_with(project.resolve())
+
     def test_offer_envrc_soft_fails_on_prompt_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"
