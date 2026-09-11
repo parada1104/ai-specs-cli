@@ -193,6 +193,25 @@ The local provider uses direct APIv3 and the runtime user supplies `OPENPROJECT_
 
 The recipe configures only local `jinna mcp`. Documentation MAY explain the official OpenProject remote `/mcp` endpoint as a separate operator-selected integration, but no recipe hook, resolver, retry path, or MCP preset may automatically switch to it. A failed local write is never replayed against the official endpoint, and a failed official write is never replayed through `jinna`.
 
+### D9. Let the recipe declare an env value set and validate it early
+
+Configuration values that the provider enumerates (today `OPENPROJECT_AUTH`: `basic` or `bearer`) are
+validated at the boundary the recipe owns — not as hardcoded CLI knowledge, and not only inside the
+provider at runtime.
+
+- A `[[provides.mcp]]` preset MAY declare `env_allowed = { KEY = ["a", "b"] }` beside `env`, keyed by the
+  declaration key. Accepted values are recipe data, so provider knowledge stays in the catalog and no
+  per-provider branch is added to the CLI.
+- The interactive flow prompts a constrained variable as a closed choice, making an out-of-set value
+  unrepresentable; a value already configured out of set is reported by `doctor` as an early
+  `harness-env-value` warning instead of failing later at provider start-up.
+- Comparison is case-insensitive because the provider accepts enumerated values in any case, and the
+  warning never echoes the configured value, which may be a credential.
+- A malformed declaration fails open: the variable is left unconstrained and no error is raised, so a
+  catalog authoring mistake cannot break `configure-recipes`.
+- This is deliberately limited to enumerated values. Free-form values (URLs, tokens, absolute paths) keep
+  the existing free-text prompt; deeper semantic validation remains the provider's responsibility.
+
 ## Installer module design
 
 ### Schema/data model

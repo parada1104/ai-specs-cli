@@ -468,3 +468,83 @@ verify/delivery phases. No completed task is left unmarked.
 Re-running `ai-specs sync <project>` regenerates root `ai-specs.env.example` with the new default line;
 that write is outside this turn's allowed edit surfaces, and it would replace the current uncommitted
 `ai-specs.env.example.bak`, so it was deliberately not executed.
+
+## Post-Apply correction — declared env value validation and tracker formatting (fourth apply turn)
+
+This turn closes two defects found by the live verification run and the phase handoff review. Both were
+authorized explicitly by the user (fix the defects inside the change rather than as follow-ups).
+
+### Defect B — `## Tracker` formatting defeated the doctor's card check
+
+`proposal.md` used `- **card_id:** `6aa21ffc2e72c0ce4b22a75b`` with markup around every key.
+`trello_link.parse_tracker_section` therefore returned `'** `6aa21ffc2e72c0ce4b22a75b`'`, so
+`card_id_looks_canonical` was false and `doctor` emitted `INFO tracker-card ... card_id is
+non-canonical (not 24-hex)` for a genuinely canonical id. Rewritten to the conventional
+`- card_id:` / `- url:` / `- list:` form used by the archived changes; the parser now returns the bare
+24-hex id and `doctor` reports `OK tracker-card` with no INFO.
+
+### Defect A — an out-of-set env value was accepted silently
+
+The live run proved that `configure-recipes` persisted `OPENPROJECT_AUTH=basicc` without validation, and
+the failure only surfaced later inside the provider (`configuration error (OPENPROJECT_AUTH): must be
+'basic' or 'bearer'`). Root cause: `prompt_env_vars` prompted every non-secret variable with free text,
+and nothing compared the value against the values the recipe accepts.
+
+**Design decision.** The accepted values belong to the recipe, not to the CLI. A preset MAY declare
+`env_allowed = { KEY = ["a", "b"] }` beside `env`, keyed by the declaration key. `_parse_mcp` already
+collects arbitrary preset keys into `preset.config`, so no schema change was required. Validation happens
+twice: the interactive prompt becomes a closed choice, so an out-of-set typo is unrepresentable, and
+`doctor` warns early about a value already configured out of set. Comparison is case-insensitive because
+the provider accepts enumerated values in any case. A malformed declaration fails open — no constraint,
+no error.
+
+### TDD cycle evidence (strict TDD; delegated implementer, parent review)
+
+RED, reproduced by the parent before any implementation:
+
+```text
+PYTHONPATH=. python3 -m unittest -v  (7 focused tests)
+Ran 7 tests — FAILED (failures=1, errors=4)
+  AttributeError: module 'env_scaffold_internal' has no attribute 'collect_env_allowed'   (x3)
+  AssertionError: Expected 'select' to have been called once. Called 0 times.
+  AttributeError: 'NoneType' object has no attribute 'kwargs'
+  AssertionError: expected harness-env-value WARN for a value outside the declared set
+```
+
+GREEN: the same 7 tests — `Ran 7 tests — OK`.
+
+Parent review of the delegated implementation found two defects the original RED set did not cover, so
+two corrective tests were added and both were fixed:
+
+| Test | RED evidence | Fix |
+|---|---|---|
+| `test_collect_env_allowed_ignores_malformed_declaration` | `{'OPENPROJECT_AUTH': ['b','a','s','i','c']} != {}` plus `TypeError: 'int' object is not iterable` | accept a declaration only as a list of non-empty strings; skip otherwise (fail open) |
+| `test_select_default_is_always_one_of_the_choices` | `'obsolete' not found in ['basic', 'bearer']` | reconcile the example default against the declared values; invariant: the default is always a declared value |
+
+TRIANGULATE: making the doctor comparison case-sensitive makes
+`test_valid_harness_env_value_case_insensitive_no_warn` fail with a real `harness-env-value` warning,
+proving that negative test is not vacuous.
+
+Final focused evidence: `Ran 9 tests — OK`.
+
+### Correction-pass files changed
+
+- `lib/_internal/env_scaffold.py` — shared `_mcp_env_declarations` traversal, `collect_env_allowed`,
+  `_select_default`, and a constrained `questionary.select` in `prompt_env_vars`.
+- `lib/_internal/doctor.py` — `harness-env-value` WARN (case-insensitive, never echoes the value).
+- `catalog/recipes/jinna-mcp-recipe/recipe.toml` — `env_allowed` declaration for `OPENPROJECT_AUTH`.
+- `docs/recipe-schema.md` — documents the `env_allowed` declaration.
+- `openspec/changes/jinna-mcp-recipe/proposal.md` — tracker formatting (defect B).
+- `tests/test_env_scaffold.py` and `tests/test_doctor.py` — the 9 focused tests.
+
+### Live evidence carried into Verify
+
+The live run against provider release `v0.1.0` — managed installation with receipt and upstream checksum
+cross-check, `jinna version`, `jinna health`/`whoami` against the real OpenProject instance, the MCP
+`initialize`/`tools/list` handshake (32 tools) with a real `projects_list` call, and `sync` plus `doctor`
+materialization — is recorded for task `8.5` in `verify-report.md` and is not duplicated here.
+
+### Delivery state
+
+No commit, push, PR, or archive was performed in this turn. `tasks.md` gains Phase 9 marked complete;
+`8.5` and `8.6` remain intentionally unchecked for the verify and delivery phases.

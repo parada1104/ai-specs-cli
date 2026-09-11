@@ -14,6 +14,21 @@ Depth: full
 - **Safety rule:** No network download, provider installation, executable replacement, or secret collection may happen without the exact consent/non-TTY behavior specified here.
 - **Completion rule:** A task is complete only when its acceptance checks and tests pass. Do not mark a task done because a file exists.
 
+## Review Workload Forecast
+
+| Field | Value |
+|-------|-------|
+| Estimated changed lines | ~5,100 authored (2 branch commits ~4,684 + this turn ~410) |
+| Chained PRs recommended | Yes |
+| Suggested split | The 7 reviewable work units below |
+| Delivery strategy | exception-ok — `size:exception` accepted by the user |
+| Chain strategy | not applicable (single PR) |
+
+Decision needed before apply: No (apply is complete)
+Chained PRs recommended: Yes (7 work units) — overridden by an accepted `size:exception`
+Chain strategy: not applicable (single PR)
+Delivery decision: single PR of ~5,200 changed lines with `size:exception` explicitly accepted
+
 ## Dependency graph
 
 ```text
@@ -275,7 +290,7 @@ Depth: full
 - **Check:** no automatic official `/mcp` fallback, no secret literals, no arbitrary downloads, no unrelated recipe regressions.
 - **Acceptance:** scenario matrix is complete and unresolved provider readiness/security issues are blocking, not hidden.
 
-### [ ] 8.5 Prepare review handoff
+### [x] 8.5 Prepare review handoff
 
 - **Record:** provider release/tag consumed, target/checksum evidence, install receipt shape, runtime materialization outputs, rollback behavior, known limitations, and test commands.
 - **Create/complete:** `verify-report.md` for Standard/Full pre-merge evidence.
@@ -287,6 +302,37 @@ Depth: full
 - **Implement:** archive `openspec/changes/jinna-mcp-recipe/` at `openspec/changes/archive/YYYY-MM-DD-jinna-mcp-recipe/` using the actual ISO date only after verify evidence and before merge.
 - **Acceptance:** pre-merge guardian passes after archive; no direct push to `development`; delivery follows the GitHub PR workflow.
 
+## Phase 9 — Declared environment value validation (review-found defect)
+
+The live verification run after task 8.4 proved that `configure-recipes` persisted
+`OPENPROJECT_AUTH=basicc` without validation, and the failure only surfaced later inside the provider
+(`configuration error (OPENPROJECT_AUTH): must be 'basic' or 'bearer'`). Phase 9 closes that gap and is
+controlled by Requirement 11.
+
+### [x] 9.1 Add RED tests for declared allowed values
+
+- **Files:** `tests/test_env_scaffold.py`.
+- **Test:** collect declared values from a preset `env_allowed`; ignore undeclared, disabled, and malformed declarations.
+- **Evidence:** 4 tests fail before implementation (`collect_env_allowed` absent; a string declaration became `['b','a','s','i','c']`; a non-iterable raised `TypeError`).
+
+### [x] 9.2 Implement recipe-declared allowed values and constrained prompting
+
+- **Files:** `lib/_internal/env_scaffold.py`.
+- **Implement:** shared `_mcp_env_declarations` traversal, `collect_env_allowed`, and a `questionary.select` prompt for constrained variables whose default is reconciled case-insensitively against the declared values.
+- **Acceptance:** existing `collect_env_vars` purpose text and composition stay unchanged; no `recipe_schema.py` change is required because `_parse_mcp` already stores arbitrary preset keys.
+
+### [x] 9.3 Add RED tests and an early warning for an out-of-set configured value
+
+- **Files:** `tests/test_doctor.py`, `lib/_internal/doctor.py`.
+- **Implement:** a `harness-env-value` WARN naming the variable and its allowed values, case-insensitive, that never echoes the configured value.
+- **Evidence:** RED before implementation, then green; a case-sensitive mutation makes the negative test fail, proving it is not vacuous.
+
+### [x] 9.4 Document the declaration and harden malformed input
+
+- **Files:** `catalog/recipes/jinna-mcp-recipe/recipe.toml`, `docs/recipe-schema.md`, `lib/_internal/env_scaffold.py`.
+- **Implement:** declare `env_allowed = { OPENPROJECT_AUTH = ["basic", "bearer"] }`, document the key beside the MCP preset docs, and fail open on malformed declarations.
+- **Acceptance:** parent review found both malformed-input defects and the corrective tests pin them; 9 focused tests pass.
+
 ## Suggested reviewable work units
 
 When Apply is authorized, prefer these commits/PR slices:
@@ -297,6 +343,7 @@ When Apply is authorized, prefer these commits/PR slices:
 4. MCP materialization changes and cross-runtime tests.
 5. Catalog recipe assets and user documentation.
 6. Full verification report and archive-tail preparation.
+7. Declared environment value validation (`env_allowed`): collection, constrained prompt, early doctor warning, and documentation.
 
 Do not commit or push from worker tasks. The parent owns review, commits, PR creation, and delivery authorization.
 

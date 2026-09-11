@@ -156,9 +156,9 @@ The provider installer must not require Go, Mise, Python, GitHub CLI, a package 
 
 ## Tracker
 
-- **card_id:** `6aa21ffc2e72c0ce4b22a75b`
-- **url:** https://trello.com/c/KV5tMVug/122-recipe-install-and-configure-openproject-provider
-- **list:** In Progress
+- card_id: `6aa21ffc2e72c0ce4b22a75b`
+- url: https://trello.com/c/KV5tMVug/122-recipe-install-and-configure-openproject-provider
+- list: In Progress
 
 ## Delivery boundary
 

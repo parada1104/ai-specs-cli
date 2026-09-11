@@ -312,3 +312,39 @@ Before Apply/Verify, the parent MUST confirm the provider readiness gate:
 - **When** Apply or Verify is requested
 - **Then** the parent MUST report the provider prerequisite as blocked
 - **And** no recipe result may claim end-to-end release installation is verified.
+
+## Requirement 11: Validate declared environment values
+
+A recipe MAY declare an accepted value set for an environment reference it materializes, keyed by the
+same declaration key as `env` and expressed as `env_allowed` inside the `[[provides.mcp]]` preset.
+Declared values are compared case-insensitively because providers accept their enumerated values in any
+case.
+
+The interactive configuration flow MUST NOT accept a value outside a declared set: a constrained
+variable is prompted as a closed choice. `doctor` MUST report an out-of-set configured value as an early
+warning instead of leaving the failure to the provider at runtime. Neither path MAY echo the configured
+value, which may be a credential.
+
+A malformed declaration (a value that is not a list, or a list whose entries are not non-empty strings)
+MUST fail open: the variable stays unconstrained and no error is raised.
+
+### Scenario: Constrained variable cannot take an out-of-set value
+
+- **Given** an enabled recipe that declares `env_allowed` for one environment reference
+- **When** the interactive configuration flow prompts for that variable
+- **Then** the flow MUST offer only the declared values
+- **And** the persisted value MUST be one of them.
+
+### Scenario: Out-of-set configured value is reported early
+
+- **Given** `ai-specs.env` holds a value outside the declared set for a constrained variable
+- **When** `ai-specs doctor` runs
+- **Then** the report MUST include a warning naming the variable and its allowed values
+- **And** the warning MUST NOT contain the configured value.
+
+### Scenario: Malformed declaration is ignored
+
+- **Given** a recipe whose `env_allowed` entry is not a list of non-empty strings
+- **When** the harness collects declared values
+- **Then** the variable MUST remain unconstrained
+- **And** no error MUST be raised in the configuration or doctor path.
