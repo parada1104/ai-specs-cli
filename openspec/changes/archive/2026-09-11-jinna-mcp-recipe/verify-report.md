@@ -269,3 +269,27 @@ Parent-collected (not re-run here — ~9-minute suites):
 
 `gentle-ai sdd-verify-validate` was attempted before persistence and is **not installed** (`command -v gentle-ai` → not found; consistent with the parent's manual status fallback). Per the operator's explicit retry instruction, this report was written manually with the envelope self-declared above; counts were taken from the retrieved spec (`specs/jinna-mcp-recipe/spec.md`: 11 requirements, 29 scenarios). **Exact blockers for this verdict: none** — the pre-existing suite failure, the pending delivery decision, and the open archive row are recorded risks/gates, not verify blockers.
 
+
+## Verify evidence
+
+- Verdict: PASS
+- Command: ./tests/validate.sh
+- Exit: 0
+- Date: 2026-09-11
+- Commit: 376d706
+- ready_for_archive: true
+
+`./tests/validate.sh` is this repository's configured verify command (`openspec/config.yaml`). Recorded
+result: `Ran 1912 tests in 606.209s — OK (skipped=135)`, the first fully green full-suite run on this
+branch. Focused evidence re-run on the same revision: `tests.test_jinna_provider_recipe` 66 OK
+(skipped=2), `tests.test_env_scaffold` + `tests.test_doctor` 140 OK, `tests.test_change_paths` 12 OK,
+`py_compile` clean.
+
+## Success-criteria mapping
+
+- Criterion 1: PASS — the catalog assets validate and materialize a local provider MCP entry with no provider source, developer paths, or secret literals.
+- Criterion 2: PASS — a missing or incompatible provider produces an explicit allowlisted GitHub Release offer with target selection, checksum and archive verification, and atomic publication only after consent.
+- Criterion 3: PASS — a compatible `PATH` or verified managed-cache provider is reused, while unresolved and non-interactive paths stay visibly incomplete and non-mutating.
+- Criterion 4: PASS — enabled runtimes receive the provider-owned `jinna mcp` command with runtime-specific translation and `$OPENPROJECT_*` environment references only.
+- Criterion 5: PASS — existing recipe behavior stays compatible, with deterministic schema, installer, materialization, documentation and full-validation evidence above.
+- Criterion 6: PASS — provider-backed installation verification was claimed only after the real release, its five target assets, `SHA256SUMS` and `RELEASE.json` passed the readiness gate.
