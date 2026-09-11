@@ -79,6 +79,16 @@ Array of tables with MCP server configuration:
 | `id` | string | yes | MCP preset identifier |
 | ... | any | no | Any MCP fields (`command`, `args`, `env`, etc.) |
 
+Inside a preset, `env` maps each declaration key to an environment variable
+reference (`$VAR`) that the harness resolves at runtime. A preset may also
+declare `env_allowed` — an inline table keyed by the same declaration key
+whose value is a list of accepted values (case-insensitive), for example
+`env_allowed = { OPENPROJECT_AUTH = ["basic", "bearer"] }`. When a var has
+declared allowed values the CLI prompts with a constrained select (so an
+out-of-set value is unrepresentable) and `doctor` emits a `harness-env-value`
+WARN early when the configured value in `ai-specs.env` is outside the set;
+unconstrained vars keep the free-text prompt.
+
 ### `templates`
 
 Array of tables:

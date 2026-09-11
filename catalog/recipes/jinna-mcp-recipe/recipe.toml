@@ -51,6 +51,7 @@ command = "{dep:jinna}"
 args = ["mcp"]
 timeout = 30000
 env = { OPENPROJECT_BASE_URL = "$OPENPROJECT_BASE_URL", OPENPROJECT_API_TOKEN = "$OPENPROJECT_API_TOKEN", OPENPROJECT_AUTH = "$OPENPROJECT_AUTH" }
+env_allowed = { OPENPROJECT_AUTH = ["basic", "bearer"] }
 
 [[provides.docs]]
 source = "README.md"

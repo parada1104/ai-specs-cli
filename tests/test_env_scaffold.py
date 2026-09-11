@@ -120,6 +120,7 @@ class EnvScaffoldTests(unittest.TestCase):
             'env = { OPENPROJECT_BASE_URL = "$OPENPROJECT_BASE_URL", '
             'OPENPROJECT_API_TOKEN = "$OPENPROJECT_API_TOKEN", '
             'OPENPROJECT_AUTH = "$OPENPROJECT_AUTH" }\n'
+            'env_allowed = { OPENPROJECT_AUTH = ["basic", "bearer"] }\n'
         )
 
     def test_write_env_uses_dotenv_not_export(self):
@@ -582,6 +583,155 @@ class EnvScaffoldTests(unittest.TestCase):
                     project, recipe_ids=["trello-mcp-workflow"]
                 )
             self.assertEqual(selected, {})
+
+    def test_collect_env_allowed_reads_recipe_declaration(self):
+        """A recipe may constrain an MCP env reference to declared allowed values."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                allowed = self.mod.collect_env_allowed(
+                    project, recipe_ids=["jinna-mcp-recipe"]
+                )
+            self.assertEqual(allowed, {"OPENPROJECT_AUTH": ["basic", "bearer"]})
+
+    def test_collect_env_allowed_skips_disabled_recipe(self):
+        """A disabled recipe contributes no constraints."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root,
+                recipe_id="jinna-mcp-recipe",
+                recipe_toml=self._jinna_toml(),
+                enabled=False,
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                allowed = self.mod.collect_env_allowed(
+                    project, recipe_ids=["jinna-mcp-recipe"]
+                )
+            self.assertEqual(allowed, {})
+
+    def test_collect_env_allowed_empty_for_unconstrained_recipe(self):
+        """A recipe declaring env references but no allowed values constrains nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="trello-mcp-workflow", recipe_toml=self._trello_toml()
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                allowed = self.mod.collect_env_allowed(project)
+            self.assertEqual(allowed, {})
+
+    def test_collect_env_allowed_ignores_malformed_declaration(self):
+        """A malformed env_allowed shape is ignored, never a bogus or crashing constraint."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for malformed in ('"basic"', "7"):
+                with self.subTest(malformed=malformed):
+                    root = Path(tmp) / malformed.strip('"')
+                    project = self._project_with_recipe(
+                        root,
+                        recipe_id="jinna-mcp-recipe",
+                        recipe_toml=self._jinna_toml().replace(
+                            '["basic", "bearer"]', malformed
+                        ),
+                    )
+                    with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                        allowed = self.mod.collect_env_allowed(
+                            project, recipe_ids=["jinna-mcp-recipe"]
+                        )
+                    self.assertEqual(allowed, {})
+
+    def test_prompt_env_vars_uses_select_for_declared_allowed_values(self):
+        """A constrained var is a closed choice, so a typo like 'basicc' is unrepresentable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            password = MagicMock()
+            password.return_value.ask.return_value = "token"
+            text = MagicMock()
+            text.return_value.ask.return_value = "https://op.example"
+            select = MagicMock()
+            select.return_value.ask.return_value = "bearer"
+            confirm = MagicMock()
+            confirm.return_value.ask.return_value = True
+            q = MagicMock(password=password, text=text, select=select, confirm=confirm)
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.dict(
+                "sys.modules", {"questionary": q}
+            ):
+                result = self.mod.prompt_env_vars(
+                    project, recipe_ids=["jinna-mcp-recipe"]
+                )
+            select.assert_called_once()
+            self.assertEqual(select.call_args.kwargs.get("choices"), ["basic", "bearer"])
+            self.assertEqual(result["OPENPROJECT_AUTH"], "bearer")
+            prompted_free_text = [c.args[0] for c in text.call_args_list]
+            self.assertNotIn("OPENPROJECT_AUTH", prompted_free_text)
+
+    def test_select_default_is_always_one_of_the_choices(self):
+        """A stale example default must not leak a value outside the declared set."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            (project / "ai-specs.env").write_text(
+                "OPENPROJECT_AUTH=legacy\n", encoding="utf-8"
+            )
+            password = MagicMock()
+            password.return_value.ask.return_value = "token"
+            text = MagicMock()
+            text.return_value.ask.return_value = "https://op.example"
+            select = MagicMock()
+            select.return_value.ask.return_value = "basic"
+            q = MagicMock(
+                password=password,
+                text=text,
+                select=select,
+                confirm=MagicMock(
+                    return_value=MagicMock(ask=MagicMock(return_value=True))
+                ),
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.dict(
+                "sys.modules", {"questionary": q}
+            ), patch.object(
+                self.mod, "ENV_EXAMPLE_DEFAULTS", {"OPENPROJECT_AUTH": "obsolete"}
+            ):
+                self.mod.prompt_env_vars(project, recipe_ids=["jinna-mcp-recipe"])
+            self.assertIn(select.call_args.kwargs.get("default"), ["basic", "bearer"])
+
+    def test_prompt_env_vars_select_default_prefers_existing_value(self):
+        """Re-prompting keeps a valid configured value instead of resetting the example default."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            (project / "ai-specs.env").write_text(
+                "OPENPROJECT_AUTH=Bearer\n", encoding="utf-8"
+            )
+            password = MagicMock()
+            password.return_value.ask.return_value = "token"
+            text = MagicMock()
+            text.return_value.ask.return_value = "https://op.example"
+            select = MagicMock()
+            select.return_value.ask.return_value = "bearer"
+            q = MagicMock(
+                password=password,
+                text=text,
+                select=select,
+                confirm=MagicMock(
+                    return_value=MagicMock(ask=MagicMock(return_value=True))
+                ),
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.dict(
+                "sys.modules", {"questionary": q}
+            ):
+                self.mod.prompt_env_vars(project, recipe_ids=["jinna-mcp-recipe"])
+            self.assertEqual(select.call_args.kwargs.get("default"), "bearer")
 
     def test_prompt_env_vars_selected_recipe_only(self):
         """Selected-only prompting keeps secret/non-secret behavior per var."""
