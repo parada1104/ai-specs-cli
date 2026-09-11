@@ -16,6 +16,7 @@ import sys
 from pathlib import Path as _P
 sys.path.insert(0, str(_P(__file__).resolve().parent))
 from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
+from _change_paths import change_artifact
 
 
 def load_module(path: Path, name: str):
@@ -334,13 +335,7 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
 
     def test_apply_progress_omits_absolute_host_and_worktree_paths(self):
         """Hardening apply-progress wording must not embed host or worktree absolutes."""
-        progress = (
-            ROOT
-            / "openspec"
-            / "changes"
-            / "bitbucket-bb-cli-alignment"
-            / "apply-progress.md"
-        )
+        progress = change_artifact(ROOT, "bitbucket-bb-cli-alignment", "apply-progress.md")
         self.assertTrue(progress.is_file(), f"missing {progress}")
         text = progress.read_text()
         self.assertIsNone(
