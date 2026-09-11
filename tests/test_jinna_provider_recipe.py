@@ -18,6 +18,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _change_paths import change_artifact
+
 ROOT = Path(__file__).resolve().parents[1]
 INTERNAL = ROOT / "lib" / "_internal"
 PROVIDER_REPOSITORY = "parada1104/jinna-provider"
@@ -247,8 +250,9 @@ class CatalogRecipeTests(unittest.TestCase):
         self.assertIn("SHA256SUMS", catalog_doc)
 
     def test_design_documents_tag_keyed_cache_layout(self):
-        design = (
-            ROOT / "openspec" / "changes" / "jinna-mcp-recipe" / "design.md"
+        # Archive-aware: the change folder moves under archive/ once this lands.
+        design = change_artifact(
+            ROOT, "jinna-mcp-recipe", "design.md"
         ).read_text(encoding="utf-8")
         self.assertIn("cache/bin/jinna", design)
         self.assertIn("<release-tag>", design)
