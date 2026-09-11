@@ -17,6 +17,7 @@ MCP_RECIPES: dict[str, str] = {
     "trello-mcp-workflow": "trello",
     "vault-canonical-store": "vault-canonical",
     "playwright-mcp": "playwright",
+    "jinna-mcp-recipe": "jinna",
 }
 
 # User-facing config keys that must be documented in the per-recipe section.
@@ -250,9 +251,10 @@ class BitbucketPrFlowDocsContractTests(unittest.TestCase):
         self.assertIn("bb --version", section)
         self.assertIn('version = "1.3.0"', section)
 
-    def test_schema_maps_bb_cli_and_only_npx_is_guidance_only(self):
+    def test_schema_maps_bb_cli_and_provider_release_installer(self):
         self.assertIn("bb-cli", self.schema)
-        self.assertIn("only `npx` remains guidance-only", self.schema)
+        self.assertIn("`npx` remains guidance-only", self.schema)
+        self.assertIn("github-release", self.schema)
         self.assertNotIn("`npx` / `bb` stay guidance-only", self.schema)
         self.assertNotIn("paulvanderlei", self.schema)
 

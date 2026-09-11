@@ -39,6 +39,22 @@ def _load_lock_module():
 _lock_mod = _load_lock_module()
 
 _project_cache_module = None
+_provider_install_module = None
+
+
+def _load_provider_install():
+    global _provider_install_module
+    if _provider_install_module is None:
+        module_path = Path(__file__).with_name("provider_install.py")
+        spec = importlib.util.spec_from_file_location("provider_install", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load provider_install.py at {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _provider_install_module = module
+    return _provider_install_module
+
 
 def _load_project_cache():
     global _project_cache_module
@@ -843,7 +859,60 @@ def execute_hooks(
 
 
 # --- MCP merge ---------------------------------------------------------------
-def build_recipe_mcp(catalog_dir: Path, recipe_ids: list[str], manifest_mcp: dict[str, Any]) -> dict[str, Any]:
+def _resolve_provider_markers(
+    merged: dict[str, Any],
+    catalog_dir: Path,
+    recipe_ids: list[str],
+    ai_specs_home: Path,
+) -> None:
+    provider_install = _load_provider_install()
+    for rid in recipe_ids:
+        try:
+            recipe = read_recipe(catalog_dir, rid)
+        except Exception as exc:  # noqa: BLE001
+            warn(f"recipe '{rid}': cannot read recipe for provider resolution ({exc})")
+            continue
+        dependencies = {dep.binary: dep for dep in recipe.cli_deps}
+        for preset in recipe.mcp:
+            config = merged.get(preset.id)
+            if not isinstance(config, dict) or config.get("command") != "{dep:jinna}":
+                continue
+            dep = dependencies.get("jinna")
+            if dep is None:
+                merged.pop(preset.id, None)
+                warn(f"recipe '{recipe.name}': missing jinna dependency declaration")
+                continue
+            try:
+                resolution = provider_install.resolve_provider(
+                    dep, ai_specs_home=ai_specs_home
+                )
+            except Exception as exc:  # noqa: BLE001
+                # A malformed/unreadable managed cache must degrade to
+                # unresolved, never abort sync with a traceback.
+                merged.pop(preset.id, None)
+                warn(
+                    f"recipe '{recipe.name}': provider jinna could not be resolved "
+                    f"({exc}); run ai-specs configure-recipes interactively to install it"
+                )
+                continue
+            if resolution.verified:
+                resolved = dict(config)
+                resolved["command"] = resolution.command
+                merged[preset.id] = resolved
+                continue
+            merged.pop(preset.id, None)
+            warn(
+                f"recipe '{recipe.name}': provider jinna is unresolved; "
+                "run ai-specs configure-recipes interactively to install it"
+            )
+
+
+def build_recipe_mcp(
+    catalog_dir: Path,
+    recipe_ids: list[str],
+    manifest_mcp: dict[str, Any],
+    ai_specs_home: Path | None = None,
+) -> dict[str, Any]:
     """Merge recipe MCP presets with manifest precedence (shallow merge).
 
     Project manifest keys always win over recipe defaults. Conflicting keys
@@ -865,6 +934,8 @@ def build_recipe_mcp(catalog_dir: Path, recipe_ids: list[str], manifest_mcp: dic
                     )
                 else:
                     manifest_cfg[key] = value
+    if ai_specs_home is not None:
+        _resolve_provider_markers(merged, catalog_dir, recipe_ids, Path(ai_specs_home))
     return merged
 
 
@@ -1102,7 +1173,12 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     manifest_data = mod.load_toml(toml_path)
     manifest_mcp = mod.read_mcp(manifest_data)
 
-    recipe_mcp: dict[str, Any] = {sid: dict(cfg) for sid, cfg in manifest_mcp.items()}
+    recipe_mcp = build_recipe_mcp(
+        catalog_dir,
+        list(enabled.keys()),
+        manifest_mcp,
+        ai_specs_home=cli_home,
+    )
 
     # Build source provenance before materializing so first-time upgrades can
     # remove an untouched project copy even when cache/commands is empty.
@@ -1147,21 +1223,6 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # Commands
         for cmd in recipe.commands:
             materialize_command(recipe_dir, cmd, project_root, cli_home=cli_home)
-
-        # MCP presets (shallow merge with manifest precedence)
-        for mcp in recipe.mcp:
-            if mcp.id not in recipe_mcp:
-                recipe_mcp[mcp.id] = dict(mcp.config)
-                continue
-            manifest_cfg = recipe_mcp[mcp.id]
-            for key, value in mcp.config.items():
-                if key in manifest_cfg:
-                    warn(
-                        f"recipe '{recipe.name}' mcp.id='{mcp.id}' key '{key}' "
-                        f"conflicts with project manifest (manifest wins)"
-                    )
-                else:
-                    manifest_cfg[key] = value
 
         # Templates
         for tpl in recipe.templates:

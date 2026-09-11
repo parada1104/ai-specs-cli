@@ -59,6 +59,17 @@ ENV_VAR_HELP: dict[str, str] = {
         "vault MCP reads). Example: /Users/you/.../vault/nnodes/proyectos/app. "
         "Must be fully resolved — do not leave nested $OTHER_VAR unexpanded."
     ),
+    "OPENPROJECT_AUTH": (
+        "Optional — `basic` is the provider's effective default when unset; "
+        "use `bearer` for Bearer tokens"
+    ),
+}
+
+# Values pre-filled in ai-specs.env.example only. These document a provider's
+# effective default so the committed template stays copy-paste valid; they are
+# never written to ai-specs.env and never override an explicit runtime value.
+ENV_EXAMPLE_DEFAULTS: dict[str, str] = {
+    "OPENPROJECT_AUTH": "basic",
 }
 
 
@@ -88,18 +99,46 @@ def collect_env_vars(
     (every enabled recipe), while a list restricts collection to those enabled
     recipe ids. A selected-but-disabled recipe contributes nothing.
     """
+    declarations = _mcp_env_declarations(project_root, recipe_ids=recipe_ids)
+
+    collected: dict[str, str] = {}
+    for recipe_id, preset_id, declared, _allowed in declarations:
+        for var in declared.values():
+            purpose = f"required by {preset_id} ({recipe_id})"
+            if var not in collected:
+                collected[var] = purpose
+            else:
+                if recipe_id not in collected[var]:
+                    collected[var] = (
+                        f"{collected[var]}; also {preset_id} ({recipe_id})"
+                    )
+    return collected
+
+
+def _mcp_env_declarations(
+    project_root: Path,
+    recipe_ids: list[str] | None = None,
+) -> list[tuple[str, str, dict[str, str], dict[str, list[str]]]]:
+    """Return per-preset MCP env declarations from enabled, in-scope recipes.
+
+    One tuple per ``[[provides.mcp]]`` preset: ``(recipe_id, preset_id,
+    declared, allowed)`` where ``declared`` maps each env declaration key to the
+    ``$VAR`` it references (only ``$VAR`` references, in declaration order) and
+    ``allowed`` maps each referenced variable to the preset's ``env_allowed``
+    values — only when the preset both references the key and declares values.
+    """
     manifest = project_root / "ai-specs" / "ai-specs.toml"
     if not manifest.is_file():
-        return {}
+        return []
     try:
         data = _toml_read.load_toml(manifest)
         recipes = _toml_read.read_recipes(data)
     except Exception:
-        return {}
+        return []
 
     catalog = _catalog_dir()
     selected = None if recipe_ids is None else set(recipe_ids)
-    collected: dict[str, str] = {}
+    declarations: list[tuple[str, str, dict[str, str], dict[str, list[str]]]] = []
     for recipe_id, entry in recipes.items():
         if not entry.get("enabled"):
             continue
@@ -113,21 +152,54 @@ def collect_env_vars(
             env = preset.config.get("env")
             if not isinstance(env, dict):
                 continue
-            for _key, value in env.items():
+            declared: dict[str, str] = {}
+            for key, value in env.items():
                 if not isinstance(value, str):
                     continue
                 match = ENV_REFERENCE_RE.match(value.strip())
                 if not match:
                     continue
-                var = match.group(1)
-                purpose = f"required by {preset.id} ({recipe_id})"
-                if var not in collected:
-                    collected[var] = purpose
-                else:
-                    if recipe_id not in collected[var]:
-                        collected[var] = (
-                            f"{collected[var]}; also {preset.id} ({recipe_id})"
-                        )
+                declared[key] = match.group(1)
+            if not declared:
+                continue
+            allowed: dict[str, list[str]] = {}
+            raw_allowed = preset.config.get("env_allowed")
+            if isinstance(raw_allowed, dict):
+                for akey, avalue in raw_allowed.items():
+                    var = declared.get(akey)
+                    if var is None:
+                        continue
+                    if not isinstance(avalue, list):
+                        continue
+                    valid = [
+                        item
+                        for item in avalue
+                        if isinstance(item, str) and item.strip()
+                    ]
+                    if not valid:
+                        continue
+                    allowed[var] = valid
+            declarations.append((recipe_id, preset.id, declared, allowed))
+    return declarations
+
+
+def collect_env_allowed(
+    project_root: Path,
+    recipe_ids: list[str] | None = None,
+) -> dict[str, list[str]]:
+    """Collect declared allowed values for referenced MCP env vars.
+
+    Returns {VAR_NAME: [allowed values]} for vars whose recipe preset declares
+    ``env_allowed`` beside the ``env`` reference. First declaration wins when
+    multiple presets constrain the same variable.
+    """
+    collected: dict[str, list[str]] = {}
+    for _recipe_id, _preset_id, _declared, allowed in _mcp_env_declarations(
+        project_root, recipe_ids=recipe_ids
+    ):
+        for var, values in allowed.items():
+            if var not in collected:
+                collected[var] = values
     return collected
 
 
@@ -236,7 +308,8 @@ def generate_env_example(project_root: Path) -> Path:
             help_bits = [vars_map[var]]
             if var in ENV_VAR_HELP:
                 help_bits.append(ENV_VAR_HELP[var])
-            lines.append(f"{var}=  # {' '.join(help_bits)}")
+            default = ENV_EXAMPLE_DEFAULTS.get(var, "")
+            lines.append(f"{var}={default}  # {' '.join(help_bits)}")
     else:
         lines.append("# (no env vars required by enabled recipes)")
     lines.append("")
@@ -403,6 +476,23 @@ def _is_secret_var(var: str) -> bool:
     return any(kw in upper for kw in ["API_KEY", "TOKEN", "SECRET", "PASSWORD", "APIKEY"])
 
 
+def _select_default(var: str, choices: list[str], existing: dict[str, str]) -> str:
+    """Pick the default for a constrained select: a matching existing value, else a
+    matching example default, else the first declared choice."""
+    canonical_choices = {choice.lower(): choice for choice in choices}
+    current = (existing.get(var) or "").strip()
+    if current:
+        canonical = canonical_choices.get(current.lower())
+        if canonical is not None:
+            return canonical
+    example = ENV_EXAMPLE_DEFAULTS.get(var)
+    if example is not None:
+        canonical = canonical_choices.get(str(example).lower())
+        if canonical is not None:
+            return canonical
+    return choices[0]
+
+
 def prompt_env_vars(
     project_root: Path,
     recipe_ids: list[str] | None = None,
@@ -432,11 +522,21 @@ def prompt_env_vars(
     if not questionary.confirm("Configure these values now?", default=True).ask():
         return None
 
+    existing = load_harness_env(project_root)
+    allowed_map = collect_env_allowed(project_root, recipe_ids=recipe_ids)
+
     result: dict[str, str] = {}
     for var in sorted(vars_map):
         if var in ENV_VAR_HELP:
             console.print(f"[dim]ℹ️  {ENV_VAR_HELP[var]}[/]")
-        if _is_secret_var(var):
+        choices = allowed_map.get(var)
+        if choices:
+            value = questionary.select(
+                var,
+                choices=choices,
+                default=_select_default(var, choices, existing),
+            ).ask()
+        elif _is_secret_var(var):
             value = questionary.password(var, instruction="(hidden input)").ask()
         else:
             value = questionary.text(var).ask()

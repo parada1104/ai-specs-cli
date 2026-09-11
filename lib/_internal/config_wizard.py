@@ -160,18 +160,29 @@ def _render_dep_panel(results, console) -> None:
 def _dep_gate(recipe: Recipe, console) -> bool:
     import questionary
 
-    results = _dep_check.check_cli_deps(recipe)
+    results = _dep_check.check_cli_deps(recipe, ai_specs_home=_util.ai_specs_home())
     _render_dep_panel(results, console)
     missing_required = [r for r in results if r.required and not r.ok]
+    dep_by_binary = {dep.binary: dep for dep in recipe.cli_deps}
     if missing_required and sys.stdin.isatty() and sys.stdout.isatty():
         try:
             dep_install = _load_sibling("dep_install")
-            plans = [
-                dep_install.resolve_install_plan(r.binary, install_url=r.install_url or "")
-                for r in missing_required
-            ]
+            plans = []
+            for result in missing_required:
+                dep = dep_by_binary.get(result.binary)
+                plans.append(
+                    dep_install.resolve_install_plan(
+                        result.binary,
+                        install_url=result.install_url or "",
+                        installer=getattr(dep, "installer", "") if dep else "",
+                        repository=getattr(dep, "repository", "") if dep else "",
+                        release_policy=getattr(dep, "release_policy", "") if dep else "",
+                        min_version=getattr(dep, "min_version", "") if dep else "",
+                        ai_specs_home=_util.ai_specs_home(),
+                    )
+                )
             dep_install.offer_and_install(plans, tty=True)
-            results = _dep_check.check_cli_deps(recipe)
+            results = _dep_check.check_cli_deps(recipe, ai_specs_home=_util.ai_specs_home())
             _render_dep_panel(results, console)
             missing_required = [r for r in results if r.required and not r.ok]
         except Exception as exc:  # noqa: BLE001

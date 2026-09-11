@@ -68,6 +68,7 @@ never touches the foundational layer.
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
 | [`playwright-ui-flow`](#playwright-ui-flow) | Specific | Playwright UI test/smoke discipline + CLI surface | `ui-browser-testing` | — | `ui_test_command`, `ui_smoke_command`, `playwright_config` |
 | [`playwright-mcp`](#playwright-mcp) | Specific | Exploratory browser automation via `@playwright/mcp` (add-on) | — (augments base) | `playwright` | — (override via `[mcp.playwright]`) |
+| [`jinna-mcp-recipe`](#jinna-mcp-recipe) | Specific | Install and configure the local OpenProject provider | — | `jinna` | OpenProject env references |
 | [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | `artifact_store_default` |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup (standalone / monorepo-apps / monorepo-submodules) | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `repo_topology`, `gate_mode`, `gate_scope`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
@@ -83,8 +84,9 @@ never touches the foundational layer.
 
 Recipes that shell out to external CLIs declare them via `[[deps.cli]]` in
 `recipe.toml`. `ai-specs doctor` emits WARN (required) / INFO (optional) when a
-binary is missing; the config wizard shows the same guidance. Install is always
-manual.
+binary is missing; the config wizard shows the same guidance. Most dependencies
+remain manual, while the provider recipe can offer its verified GitHub Release
+installer on an interactive TTY.
 
 | Recipe | Binary | Purpose | Required |
 |--------|--------|---------|----------|
@@ -97,6 +99,7 @@ manual.
 | `tdd-flow` | — | Test command is config-driven | — |
 | `playwright-ui-flow` | `npx` | Playwright UI test/smoke commands | yes |
 | `playwright-mcp` | `npx` | `@playwright/mcp` server runtime | yes |
+| `jinna-mcp-recipe` | `jinna` | Local OpenProject provider MCP server; interactive GitHub Release installer | yes |
 
 
 ## session-context
@@ -192,6 +195,30 @@ capability of its own (avoids binding ambiguity). Ships MCP preset `playwright`.
 enabled = true
 
 [recipes.playwright-mcp]
+enabled = true
+```
+
+## jinna-mcp-recipe
+
+**Install and configure the local OpenProject provider.** Detects the provider
+binary `jinna`, offers an explicit verified GitHub Release installation when it
+is absent, and materializes the local `jinna mcp` server.
+
+- **Provides:** skill `jinna-mcp-recipe`, local MCP preset `jinna`.
+- **Dependency:** provider binary `jinna` from
+  [`parada1104/jinna-provider`](https://github.com/parada1104/jinna-provider/releases).
+  Existing compatible PATH installations are reused; the interactive dependency
+  flow can install the matching release archive and verify `SHA256SUMS`. The
+  provider declaration uses the constrained `installer = "github-release"` kind.
+- **Configuration:** `OPENPROJECT_BASE_URL`, `OPENPROJECT_API_TOKEN`, and optional
+  `OPENPROJECT_AUTH` are environment references only.
+- **Safety:** `doctor`, `recipe init`, and non-interactive sync never install. The
+  official OpenProject remote `/mcp` endpoint remains a separate operator choice;
+  this recipe never proxies or replays writes between transports.
+- **Full README:** [`catalog/recipes/jinna-mcp-recipe/README.md`](../catalog/recipes/jinna-mcp-recipe/README.md)
+
+```toml
+[recipes.jinna-mcp-recipe]
 enabled = true
 ```
 

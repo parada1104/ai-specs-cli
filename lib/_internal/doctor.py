@@ -630,7 +630,7 @@ class Doctor:
         # Pre-register so dataclasses can resolve cls.__module__ (Python 3.12+).
         sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)
-        return mod.check_project_deps(self.root)
+        return mod.check_project_deps(self.root, ai_specs_home=AI_SPECS_HOME)
 
     def _check_recipe_cli_deps(self) -> None:
         data = self._load_manifest()
@@ -957,6 +957,25 @@ class Doctor:
                 Severity.OK, "harness-env",
                 f"ai-specs.env has {len(vars_map)} required MCP env key(s)",
             ))
+
+        try:
+            collect_allowed = getattr(env_mod, "collect_env_allowed", None)
+            allowed_map = (
+                collect_allowed(self.root) if callable(collect_allowed) else {}
+            )
+        except Exception:
+            allowed_map = {}
+        for var in sorted(allowed_map):
+            choices = allowed_map[var]
+            configured = (present.get(var) or "").strip()
+            if not configured:
+                continue
+            if configured.lower() not in {choice.lower() for choice in choices}:
+                self.checks.append(Check(
+                    Severity.WARN, "harness-env-value",
+                    f"invalid value for {var} in ai-specs.env (allowed: {', '.join(choices)})",
+                    guidance="run ai-specs configure-recipes to pick a valid value",
+                ))
 
     def _mcp_server_count(self, data: dict) -> int:
         mcp = data.get("mcp")
