@@ -296,7 +296,7 @@ Delivery decision: single PR of ~5,200 changed lines with `size:exception` expli
 - **Create/complete:** `verify-report.md` for Standard/Full pre-merge evidence.
 - **Acceptance:** reviewers can evaluate the change without reconstructing provider behavior from chat.
 
-### [ ] 8.6 Archive before merge
+### [x] 8.6 Archive before merge
 
 - **Depends on:** 8.5 and explicit delivery approval.
 - **Implement:** archive `openspec/changes/jinna-mcp-recipe/` at `openspec/changes/archive/YYYY-MM-DD-jinna-mcp-recipe/` using the actual ISO date only after verify evidence and before merge.
