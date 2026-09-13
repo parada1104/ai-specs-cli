@@ -56,11 +56,6 @@ enabled = true
 [recipes.tdd-flow.config]
 test_command = "./tests/validate.sh"
 
-[recipes.plan-build-flow]
-enabled = true
-
-# --- Specific (capability providers) ---
-
 [recipes.trello-mcp-workflow]
 enabled = true
 [recipes.trello-mcp-workflow.config]

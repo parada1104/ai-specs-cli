@@ -60,7 +60,7 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - Do not merge or push to `development` without a PR and explicit human instruction.
 - Preserve unrelated worktree changes; never revert changes you did not make.
 - Before dispatching a write-capable subagent or task, verify which git repository, worktree, and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Under monorepo-submodules, confirming which-repo via show-toplevel is mandatory. Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.
-- If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). With `gate_mode = always`, create a dedicated worktree first (e.g. `/worktree-new`) and write there instead; with `gate_mode = ask`, ask the user which destination to use — worktree (recommended), feature branch in place, or explicit protected-branch override — and wait; never self-bypass with `WORKTREE_GATE_MODE=off`. With `gate_mode = off`, the gate does not block.
+- If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). Create a worktree first (e.g. `/worktree-new`) and write there instead.
 - Use a PR-based merge workflow; all changes to `development` go through a pull request.
 - VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations.
 - Do not push directly to `development`; always open a PR from a feature branch.
@@ -69,17 +69,6 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - A session works on one explicit user request or tracker card; resolve focus from memory and tracker before starting.
 - Follow red-green-refactor discipline: write a failing test first, then implement, then clean up.
 - Run the full test suite before committing; do not leave the suite in a failing state.
-- Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; compute the signal depth, compare any explicit requested depth, ask on conflicts, and annotate requested/signal/decided depth in tasks.md before authorization.
-- Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.
-- Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed.
-- After authorization, implement and validate in the change worktree when isolated worktrees are enabled.
-- Before merge, run verify evidence before archive-tail (Standard/Full block without a conforming verify-report.md; Light is advisory), archive the change folder on the review branch at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, and run the pre-merge guardian again; exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.
-- Default artifact store for this project's planning artifacts: `openspec`. When a session asks where planning artifacts should live, answer with this value unless the user overrides it. The store is a persistence preference only: plan-build readiness is always proven by the file-backed canonical change-folder tree, never by a memory-only store.
-- For recognized submodule worktrees, use the topology-derived central planning tree in the superproject; standalone repositories keep their own planning tree.
-- Full planning runs logical phases explore -> proposal -> spec/design -> tasks; use a host-advertised executor for the current phase when available, otherwise run that phase inline; never skip phases.
-- Phase executor results that are malformed, partial, or blocked stop and preserve planning state; unavailable executors may use inline fallback. Standard and Light behavior remains collapsed and unchanged.
-- Consume one session-level preflight for execution mode, artifact store, review budget, delivery strategy, and chain strategy; never recollect or override those values.
-- Present an artifact-derived plan with intent, scope, key decisions, affected areas, risks, open questions, and labeled recommendations/assumptions; ask accept, adjust, or stop and block unresolved product decisions.
 - Inspect the active Trello card before resuming work and keep card state in sync with actual progress.
 - Before apply/production work on a structured change, create or link a Trello card and record it in the ## Tracker section of the change's proposal.md (or tasks.md) — card_id + url. openspec/** writes are never gated — write the link section there first.
 - On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.
