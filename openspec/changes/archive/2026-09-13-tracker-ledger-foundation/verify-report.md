@@ -399,3 +399,16 @@ evidence defect.
 - SUGGESTION (carried): `tracker-card-gate.sh` header comment still lists `archive` among
   graded shell actions; cosmetic, fix opportunistically during closeout.
 
+## Closeout completion
+
+- Task 7.6: complete. Pre-archive and pre-merge guardians passed; the change is archived at
+  `openspec/changes/archive/2026-09-13-tracker-ledger-foundation/`.
+- Task 7.7: complete. PR: https://github.com/parada1104/ai-specs-cli/pull/244 (base `development`,
+  no merge performed in this session).
+- PR creation snapshot: 68 files changed, `+10,822 / -1,009` lines versus `development`;
+  accepted `size:exception` is recorded in `tasks.md`.
+- Ordered unit commits and line counts: `f1bde2a` +2,840/-0; `bc54ecf` +1,090/-20;
+  `6ddb631` +2,117/-17; `6e3667b` +694/-6; `6311e88` +1,585/-799;
+  `dd677b2` +1,526/-215; `f5de198` +455/-15. The JD correction, final verification,
+  archive, and closeout records followed as `e9c7e8a`, `6e57001`, `504c8d1`, and this metadata update.
+
