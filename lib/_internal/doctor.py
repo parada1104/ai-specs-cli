@@ -8,8 +8,10 @@ Exit code is non-zero when one or more ERROR checks are present.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
@@ -148,7 +150,7 @@ class Doctor:
         self._check_tracked_bundled_leftovers()
         self._check_enabled_agents()
         self._check_recipe_cli_deps()
-        self._check_tracker_card_link()
+        self._check_tracker_ledger()
         self._check_harness_env_layout()
         self._check_worktree_gate()
         self._check_repo_topology()
@@ -661,98 +663,150 @@ class Doctor:
                 ))
 
 
-    def _load_trello_link(self):
-        """Sibling-load lib/_internal/trello_link.py for the shared validity predicate."""
+    def _tracker_common_dir(self) -> Path | None:
+        """Resolve the owning repository's Git common dir (never the planning root)."""
         try:
-            path = Path(__file__).with_name("trello_link.py")
-            spec = importlib.util.spec_from_file_location("trello_link_doctor", path)
-            if spec is None or spec.loader is None:
-                return None
-            mod = importlib.util.module_from_spec(spec)
-            sys.modules[spec.name] = mod
-            spec.loader.exec_module(mod)
-            return mod
+            proc = subprocess.run(
+                ["git", "-C", str(self.root), "rev-parse",
+                 "--path-format=absolute", "--git-common-dir"],
+                capture_output=True, text=True, timeout=10,
+            )
         except Exception:
             return None
+        if proc.returncode != 0:
+            return None
+        raw = proc.stdout.strip()
+        if not raw:
+            return None
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = self.root / candidate
+        try:
+            return candidate.resolve()
+        except OSError:
+            return candidate
 
-    def _check_tracker_card_link(self) -> None:
-        """WARN when active changes lack a ## Tracker section (recipe+marker)."""
-        data = self._load_manifest()
-        recipes = data.get("recipes", {}) or {}
-        tr = recipes.get("trello-mcp-workflow") or {}
-        if not isinstance(tr, dict) or tr.get("enabled") is not True:
-            return
+    def _tracker_witness_path(self, common: Path | None) -> Path | None:
+        if common is None:
+            return None
+        return common / "ai-specs" / "ledger" / "witness.json"
 
-        pc = self._load_project_cache()
-        marker = None
-        if pc is not None:
+    def _tracker_declared(self) -> bool:
+        """True when the project declares tracking supply (a config read, not a grade)."""
+        for candidate in (
+            self.root / "openspec" / "config.yaml",
+            self.root / "openspec" / "config.yml",
+        ):
+            if not candidate.is_file():
+                continue
             try:
-                marker = (
-                    pc.recipe_skills_root(self.root)
-                    / "trello-mcp-workflow"
-                    / "bootstrap-ready"
-                )
-            except Exception:
-                marker = None
-        local_marker = self.root / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
-        if not ((marker is not None and marker.is_file()) or local_marker.is_file()):
+                text = candidate.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if any(line.lstrip().startswith("tracking:") for line in text.splitlines()):
+                return True
+        return False
+
+    def _tracker_ledger_in_play(self) -> bool:
+        """Relevance gate only: is the tracker ledger part of this project?
+
+        Reads configuration and any already-written witness; it never grades a
+        link section. Every severity below comes from the Go predicate (A8/A10).
+        """
+        data = self._load_manifest()
+        recipes = data.get("recipes") or {}
+        tr = recipes.get("trello-mcp-workflow") if isinstance(recipes, dict) else None
+        if isinstance(tr, dict) and tr.get("enabled") is True:
+            return True
+        if self._tracker_declared():
+            return True
+        witness = self._tracker_witness_path(self._tracker_common_dir())
+        return witness is not None and witness.is_file()
+
+    def _tracker_ledger_binary(self) -> Path | None:
+        """Resolve a verified worktree-gate binary, or None (fail closed to ERROR).
+
+        ``WORKTREE_GATE_BIN`` is the debugging/test pin; the version-keyed cache
+        candidate is accepted only with its ``.verified`` receipt, matching the
+        checkpoint hosts. An unverified or absent binary is infrastructure.
+        """
+        override = os.environ.get("WORKTREE_GATE_BIN", "")
+        if override:
+            candidate = Path(override)
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+            return None
+        gb = self._load_gate_binary()
+        if gb is None:
+            return None
+        try:
+            goos, goarch = gb.detect_platform()
+            candidate = gb.cache_bin_path(AI_SPECS_HOME, goos=goos, goarch=goarch)
+        except Exception:
+            return None
+        receipt = candidate.with_name(candidate.name + ".verified")
+        if candidate.is_file() and os.access(candidate, os.X_OK) and receipt.is_file():
+            return candidate
+        return None
+
+    def _tracker_ledger_guidance(self, reason: str, severity: Severity) -> str:
+        """Presentation-only action hint keyed off the Go reason (never a grade)."""
+        if severity == Severity.ERROR:
+            return "run ai-specs sync or ai-specs sync --refresh-gates"
+        return {
+            "witness-missing": "ai-specs sync",
+            "ambiguous": 'add [[bindings]] capability="tracker"',
+            "declared-not-bound": "enable the provider recipe or remove the tracking declaration",
+            "conflict": "adjudicate at the next checkpoint",
+            "unbound": "enable one tracker recipe or ignore",
+        }.get(reason, "")
+
+    def _check_tracker_ledger(self) -> None:
+        """Render the Go ledger verdict's ``doctor`` finding (A10/D15).
+
+        Doctor is a host with no write side effect: it resolves the verified
+        binary, invokes ``--ledger`` in the non-blocking ``warn`` posture, and
+        copies the finding's severity and message verbatim. It never grades a
+        ``## Tracker`` section itself. A missing/unverified binary or an
+        unreadable verdict is infrastructure, so the check fails to ERROR.
+        """
+        if not self._tracker_ledger_in_play():
             return
-
-        link = self._load_trello_link()
-        changes_dir = self.root / "openspec" / "changes"
-        deficient: list[str] = []
-        if changes_dir.is_dir():
-            for change in sorted(p for p in changes_dir.iterdir() if p.is_dir()):
-                if change.name == "archive":
-                    continue
-                if not any(
-                    (change / f).is_file()
-                    for f in ("proposal.md", "tasks.md", "spec.md", "design.md")
-                ):
-                    continue
-                if (change / "tracker.none").is_file():
-                    continue
-                if link is not None and link.is_valid_link(
-                    [change / "proposal.md", change / "tasks.md"]
-                ):
-                    try:
-                        parsed = link.parse_tracker_section(
-                            [change / "proposal.md", change / "tasks.md"]
-                        )
-                        card_id = parsed.get("card_id", "")
-                        if card_id and not link.card_id_looks_canonical(card_id):
-                            self.checks.append(Check(
-                                Severity.INFO, "tracker-card",
-                                f"{change.name}: card_id is non-canonical (not 24-hex)",
-                                guidance="prefer the 24-hex Trello card id",
-                            ))
-                        if "url" not in parsed or not parsed.get("url"):
-                            self.checks.append(Check(
-                                Severity.INFO, "tracker-card",
-                                f"{change.name}: ## Tracker section missing url",
-                                guidance="add url alongside card_id",
-                            ))
-                    except Exception:
-                        pass
-                    continue
-                deficient.append(change.name)
-
-        if deficient:
-            sample = ", ".join(deficient[:5])
-            more = f" (+{len(deficient) - 5})" if len(deficient) > 5 else ""
+        binary = self._tracker_ledger_binary()
+        if binary is None:
             self.checks.append(Check(
-                Severity.WARN, "tracker-card",
-                f"{len(deficient)} active change(s) missing a valid ## Tracker link section: {sample}{more}",
-                guidance=(
-                    "create/link a Trello card and write the ## Tracker section "
-                    "of the change's proposal.md (card_id + url), or add tracker.none"
-                ),
+                Severity.ERROR, "tracker-ledger",
+                "no verified worktree-gate binary; the tracker ledger is failing open",
+                guidance="run ai-specs sync or ai-specs sync --refresh-gates",
             ))
-        else:
+            return
+        try:
+            proc = subprocess.run(
+                [str(binary), "--ledger", "--checkpoint", "work-start",
+                 "--ledger-mode", "warn", "--project-root", str(self.root)],
+                capture_output=True, text=True, timeout=30,
+            )
+            payload = json.loads(proc.stdout)
+        except Exception:
+            payload = None
+        finding = payload.get("doctor") if isinstance(payload, dict) else None
+        if not isinstance(finding, dict):
             self.checks.append(Check(
-                Severity.OK, "tracker-card",
-                "all active changes carry a valid ## Tracker link section (or tracker.none)",
+                Severity.ERROR, "tracker-ledger",
+                "tracker ledger verdict was not machine-readable; failing open",
+                guidance="run ai-specs sync or ai-specs sync --refresh-gates",
             ))
+            return
+        try:
+            severity = Severity(str(finding.get("severity") or "OK"))
+        except ValueError:
+            severity = Severity.ERROR
+        reason = str(payload.get("reason") or "")
+        message = str(finding.get("message") or "") or f"tracker-ledger: {reason}"
+        self.checks.append(Check(
+            severity, "tracker-ledger", message,
+            guidance=self._tracker_ledger_guidance(reason, severity),
+        ))
 
     def _load_gate_binary(self):
         """Sibling-load lib/_internal/gate_binary.py for the gate check."""

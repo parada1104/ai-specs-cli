@@ -1,0 +1,31 @@
+{
+  "label": "four-side disagreement asks in ask mode",
+  "witness": {
+    "state": "bound"
+  },
+  "store": {
+    "items": [
+      {
+        "status": "open",
+        "item_id": "T-1"
+      }
+    ]
+  },
+  "evidence": {
+    "local": "T-1",
+    "remote": "T-2",
+    "code": "",
+    "git": "T-1"
+  },
+  "checkpoint": "apply-start",
+  "mode": "ask",
+  "expected": {
+    "decision": "ask",
+    "reason": "conflict",
+    "active": true,
+    "conflict": true,
+    "exit": 0,
+    "doctor": "WARN"
+  },
+  "kind": "verdict"
+}

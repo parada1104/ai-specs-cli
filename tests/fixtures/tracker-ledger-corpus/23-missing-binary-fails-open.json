@@ -1,0 +1,8 @@
+{
+  "label": "a missing binary fails open at the work-start host",
+  "kind": "bridge",
+  "host": "plan-build-gate",
+  "scenario": "missing-binary",
+  "ledger_mode": "always",
+  "expected_exit": 0
+}

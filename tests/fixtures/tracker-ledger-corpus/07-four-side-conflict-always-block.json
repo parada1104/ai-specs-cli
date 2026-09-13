@@ -1,0 +1,31 @@
+{
+  "label": "four-side disagreement blocks in always mode",
+  "witness": {
+    "state": "bound"
+  },
+  "store": {
+    "items": [
+      {
+        "status": "open",
+        "item_id": "T-1"
+      }
+    ]
+  },
+  "evidence": {
+    "local": "T-1",
+    "remote": "T-2",
+    "code": "",
+    "git": "T-1"
+  },
+  "checkpoint": "apply-start",
+  "mode": "always",
+  "expected": {
+    "decision": "block",
+    "reason": "conflict",
+    "active": true,
+    "conflict": true,
+    "exit": 2,
+    "doctor": "WARN"
+  },
+  "kind": "verdict"
+}

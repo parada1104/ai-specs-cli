@@ -1,0 +1,17 @@
+{
+  "label": "bound + empty store + warn + work-start allows",
+  "witness": {
+    "state": "bound"
+  },
+  "checkpoint": "work-start",
+  "mode": "warn",
+  "expected": {
+    "decision": "allow",
+    "reason": "needs-item",
+    "active": true,
+    "conflict": false,
+    "exit": 0,
+    "doctor": "OK"
+  },
+  "kind": "verdict"
+}

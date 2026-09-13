@@ -847,4 +847,205 @@ No real blocker was reported; the forecast gate is `Decision needed before apply
 
 Produced: this progress artifact and the persisted `- [x]` marks for 5.1–5.7.
 
+## Unit 6 — Phase 6: one grader + parity corpus
+
+Tasks 6.1–6.6 complete. Persisted checkboxes updated in
+`openspec/changes/tracker-ledger-foundation/tasks.md` (`- [x]` for 6.1–6.6; the Phase 6
+block now has zero unchecked rows, re-read with `grep -n "^- \[.\] 6\."`). Unit 7 was
+deliberately **not** started: no docs/trust/close-out work, no `SHA256SUMS` regeneration.
+
+### Files changed
+
+| Path | Change |
+|---|---|
+| `lib/_internal/doctor.py` | `_check_tracker_ledger` + relevance gate + verified-binary resolver + guidance; `_check_tracker_card_link`/`_load_trello_link` deleted; `json`/`subprocess` imports |
+| `lib/_internal/trello_link.py` | Parser-only compatibility comments; no new predicate, `is_valid_link` retained for legacy callers |
+| `tests/test_doctor_tracker_card.py` | Rewritten: A10 severity rendering, relevance gate, infra fail-closed, legacy-grader removal, D15 static assertion |
+| `tests/test_tracker_ledger_parity.py` | New: corpus-driven `--ledger` parity + bridge rows + coverage map + stability/residue |
+| `tests/fixtures/tracker-ledger-corpus/*.json` | New: 24 pinned cases (22 verdict + 2 host bridge) |
+| `openspec/changes/tracker-ledger-foundation/tasks.md` | Checkboxes 6.1–6.6 → `- [x]` |
+| `openspec/changes/tracker-ledger-foundation/apply-progress.md` | This section (merged with Units 1–5) |
+
+**~1,180 authored lines** (doctor +~120/-~110, `trello_link.py` comments, 790-file parity runner
+~430, 24 corpus JSON ~620, doctor test ~300). Over the 400-line review budget by design:
+`tasks.md` declares `400-line budget risk: High` with the maintainer-accepted
+`size:exception`; nothing was compressed or restyled to fit.
+
+### What Unit 6 implements
+
+- **One grader, doctor renders (6.1).** Doctor no longer grades the `## Tracker` link rule:
+  `_check_tracker_card_link` and `_load_trello_link` are gone. `_check_tracker_ledger`
+  resolves a verified binary (`WORKTREE_GATE_BIN` pin, else the version-keyed cache with its
+  `.verified` receipt), runs `--ledger --checkpoint work-start --ledger-mode warn`, and copies
+  the JSON `doctor` finding's severity/message verbatim under the check name `tracker-ledger`.
+  A relevance gate (tracker recipe enabled, a `tracking:` declaration, or an existing witness)
+  keeps the dormant INFO/WARN from becoming noise in projects where the ledger is not in play;
+  it is configuration relevance, never a link predicate. Missing/unverified binary or an
+  unreadable verdict is infrastructure → ERROR. Guidance is presentation-only, keyed off the
+  Go `reason`.
+- **A10 severities end-to-end.** The parity corpus pins the `doctor` severity for every row:
+  INFO `unbound`; WARN `witness-missing`/`ambiguous`/`declared-not-bound`/`conflict`;
+  ERROR `store-corrupt`; OK for bound/healthy, `identity_unavailable`, and `needs-item`.
+- **`trello_link.py` stays a parser (6.2).** The module docstring and `is_valid_link` now say
+  the Go verdict is the grading authority; the parser is a compatibility reader and must not
+  grow rules. `tests/test_trello_link.py` (13 tests) is unchanged and green.
+- **Pinned corpus (6.3).** 24 cases cover every design test-table row: no witness (dormant),
+  bound + empty store × 3 modes, consistent evidence (allow), four-side conflict (ask and
+  always-block), persisted `--decide` + re-grade, checkpoint-scoped opt-out, branch reuse
+  (closed never reopened; new open item allows), two open items (conflict, warn and always),
+  detached HEAD per mode, corrupt store (unevaluable, fail-open in every mode), ambiguous /
+  declared-not-bound / unbound witness severities, `pr-review` and `archive-close`, plus two
+  host-bridge rows: missing binary → exit 0 and `openspec/**` → never blocked.
+- **Parity runner (6.4).** `tests/test_tracker_ledger_parity.py` mirrors
+  `test_worktree_gate_parity.py`: it builds real `git init` fixtures, realpath-resolves the
+  common dir so the runner's identity key matches the Go reader, writes the witness/store,
+  drives `dist/worktree-gate-current --ledger` per fixture, and asserts decision, reason,
+  activation, conflict presence, exit code, doctor severity, and capability. Bridge rows drive
+  the committed `plan-build-gate.sh`. It skips loudly (`SkipTest`) only when the built binary
+  is absent.
+- **TRIANGULATE (6.5).** The corpus runs twice per case against two fresh builds at the same
+  absolute path; normalized payloads (RFC3339 stamps only) must be byte-identical. Every case
+  is checked for store residue: the ledger dir may contain only `witness.json`, `state.json`,
+  and `state.json.lock`. The mutation guard proves the suite is not vacuous, and
+  `tests/test_worktree_gate_parity.py` (8 tests) stays green, confirming the existing
+  worktree-gate corpus is unchanged.
+
+### Focused test commands
+
+```bash
+python3 -m unittest tests.test_doctor_tracker_card -v      # Ran 16 tests ... OK
+python3 -m unittest tests.test_tracker_ledger_parity -v    # Ran 6 tests ... OK
+python3 -m unittest tests.test_trello_link                 # Ran 13 tests ... OK
+python3 -m unittest tests.test_worktree_gate_parity tests.test_doctor_worktree_gate \
+  tests.test_doctor tests.test_override_ownership          # Ran 135 tests ... OK
+python3 -m unittest tests.test_ledger_mode_config tests.test_tracker_card_gate_hook \
+  tests.test_plan_build_gate_hook tests.test_premerge_guardian \
+  tests.test_trello_mcp_workflow_recipe tests.test_tracker_ledger_witness  # Ran 139 tests ... OK
+python3 -m py_compile lib/_internal/doctor.py lib/_internal/trello_link.py \
+  tests/test_tracker_ledger_parity.py tests/test_doctor_tracker_card.py     # exit 0
+```
+
+Manual integration (real built binary, this worktree):
+
+```bash
+WORKTREE_GATE_BIN="$PWD/dist/worktree-gate-current" python3 -c "...Doctor(...)._check_tracker_ledger()"
+# WARN   tracker-ledger   witness missing; run ai-specs sync  (ai-specs sync)
+```
+
+Full `python3 -m unittest discover -s tests -p 'test_*.py'`: `Ran 1947 tests ... FAILED
+(failures=11, skipped=2)`. The 11 failures are the same pre-existing gate-asset digest/build
+failures recorded in Units 4–5 (`test_worktree_gate_release_phase4` ×9,
+`test_release_materialization` ×1, `test_worktree_root_propagation` ×1); task 7.2 owns
+regenerating `catalog/recipes/worktree-flow/bin/SHA256SUMS`. Unit 6 touches no Go source.
+
+### TDD Cycle Evidence
+
+Strict TDD is active (`openspec/config.yaml` `strict_tdd: true`, runner unittest), so every
+task ran RED → GREEN → TRIANGULATE → REFACTOR.
+
+| Task | Test file | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| 6.1 one grader/doctor | `tests/test_doctor_tracker_card.py` | Unit (stub binary) | `unittest tests.test_doctor_worktree_gate tests.test_doctor` 135/135 before any edit | 14 errors (`Doctor` has no `_check_tracker_ledger`) + 1 failure (`_check_tracker_card_link` still present) | 16 tests pass: OK/INFO/WARN/ERROR rendering, guidance, relevance gate, missing/unparseable binary ERROR, legacy section not graded, read-only | INFO unbound, WARN ambiguous/missing-witness/conflict/declared-not-bound, ERROR infra, OK healthy, silent when irrelevant, witness/declaration keep it visible | deleted the legacy grader + loader; extracted `_tracker_ledger_in_play`/`_tracker_ledger_binary`/`_tracker_ledger_guidance` |
+| 6.2 parser-only | `tests/test_trello_link.py` | Unit | 13/13 green before edit | n/a (comment-only change) | 13/13 still green | doctor source grep-asserts `is_valid_link` absent (no grader consumer) | parser comment says compatibility reader, no new rule |
+| 6.3 corpus | `tests/fixtures/tracker-ledger-corpus/*.json` | Data | — | parity runner initially reported 32 failures (mis-pinned `reason` on empty-store allow; bridge missing-binary hit the artifact gate) | 24 files written, then pinned expectations corrected against the binary | — | corpus regenerated as one JSON per row |
+| 6.4 parity runner | `tests/test_tracker_ledger_parity.py` | Integration (real binary + git) | `tests.test_worktree_gate_parity` 8/8 green before | `Ran 6 tests ... FAILED (failures=32)` (corpus vs binary divergence surfaced above) | `Ran 6 tests ... OK` after both fixes | single `--ledger` invocation per step; bridge rows drive the committed host | `_run_case` signature cleaned; bridge fixture builder inlined (shell-write refactor blocked by the gate; used structured edits only) |
+| 6.5 triangulate | same file | Integration | 22 focused tests green | n/a (verification task) | two-run stability green (same absolute path, stamps normalized) | residue assertion allows only `witness.json`/`state.json`/`state.json.lock`; `tests.test_worktree_gate_parity` 8/8 unchanged | — |
+| 6.6 refactor | `tests/test_tracker_ledger_parity.py` | — | 22/22 before refactor | n/a | 22/22 after | unused `identity_key` helper removed; `_run_case` no longer takes an unused path | stable |
+
+**Mutation checks (proving the assertions are not vacuous):**
+
+1. `test_verdict_corpus_rejects_a_divergent_pin` flips a pinned decision and asserts the
+   shared `assert_expected` raises — a runner that always allowed would fail this test.
+2. Rewriting the dormant case's `reason` to `""` fails `test_every_verdict_case_matches_its_pin`
+   (the runner asserted the pinned reason), which is why the corpus is not a rubber stamp.
+3. `test_bridge_rows_fail_open_and_never_block_openspec` fails if the openspec path reaches
+   the stub (the stub log must stay absent).
+
+### Deviations from design (Unit 6 only)
+
+1. **Doctor relevance gate.** A10 lists dormancy severities but not when to run the check. To
+   keep doctor quiet in projects with no tracker in play (and to preserve the existing
+   `test_recipe_cli_deps_warn_when_missing`, which asserts exit 0), the check runs only when
+   the tracker recipe is enabled, a `tracking:` declaration exists, or a witness file exists.
+   This is a config/witness relevance read, not a link predicate; every severity still comes
+   from the Go finding. The alternative (always run) would emit a WARN/ERROR on every project
+   before its first sync.
+2. **Doctor invokes `work-start` in `warn`.** Doctor is a diagnostic host; the doctor finding
+   is checkpoint- and mode-independent (it depends on the binding, store, and conflict), so a
+   non-blocking `warn` probe at `work-start` is the least intrusive way to render it. Doctor
+   writes nothing: a dormant verdict persists no store file (asserted by the read-only test).
+3. **Conflict WARN is re-observed, not read from the snapshot.** The Go `verdictDoctor` warns
+   when the *current* grade carries a conflict (e.g. two open items or disagreeing evidence).
+   Doctor does not pass a `## Tracker` parse as the `code` side, because that would require
+   Python evidence construction beyond a bridge; the corpus therefore pins the conflict WARN
+   through the two-open and four-side rows.
+4. **Bridge rows exercise `plan-build-gate`, not all five hosts.** Unit 5 already proves all
+   five hosts; the corpus bridge rows only need to pin the missing-binary fail-open and the
+   `openspec/**` exemption, and `plan-build-gate.sh` reaches the ledger before its artifact
+   gate without stamping placeholders.
+5. **Stability comparison normalizes RFC3339 stamps.** Conflict snapshots and persisted
+   decisions carry `recorded_at`/`at` stamps from `time.Now()`, so a literal byte comparison
+   would be flaky across seconds. The runner compares the full verdict payload with stamps
+   masked; decision/reason/conflict/exit/doctor are compared exactly.
+6. **Commit not executed.** Task 6.6's `REFACTOR + commit` is complete except the commit: the
+   parent prompt forbids committing, so this slice is commit slice 6 left uncommitted for the
+   parent/PR owner. No commit, push, or merge was performed.
+
+### Remaining tasks (exact unchecked `- [ ]` lines)
+
+Phase 7 (`7.1`–`7.7`) remains unchecked:
+
+```text
+- [ ] 7.1 GREEN: update `docs/capabilities.md`, `docs/runtime-hooks.md`, `README.md`, `catalog/recipes/trello-mcp-workflow/README.md`, and `CHANGELOG.md` with the witness/store paths, five checkpoints, modes, dormancy-in-doctor, and "no provider writes in this slice". <!-- sdd-owner: implementation -->
+- [ ] 7.2 VERIFY: `scripts/build-gate.sh` then `scripts/verify-gate-sums.sh` — same four assets, one trust root; regenerate `catalog/recipes/worktree-flow/bin/SHA256SUMS` only with canonical `go1.24.13`, else record the pending-release note. <!-- sdd-owner: implementation -->
+- [ ] 7.3 VERIFY: `./tests/validate.sh` (py_compile, `bash -n`, gofmt, Go tests incl. `ledger`, unittest discovery) fully green; no runner path edits were needed because the module did not move. <!-- sdd-owner: implementation -->
+- [ ] 7.4 GREEN: write `openspec/changes/tracker-ledger-foundation/verify-report.md` with one `Criterion N: PASS` row per the 11 proposal Success Criteria, plus RED/GREEN evidence per unit. <!-- sdd-owner: implementation -->
+- [ ] 7.5 GREEN: append the Judgment Day input set to `openspec/changes/tracker-ledger-foundation/verify-report.md` (spec scenario → corpus fixture → test name) for up to 3 authorized rounds; record each round's fix re-run. <!-- sdd-owner: implementation -->
+- [ ] 7.6 VERIFY: `python3 lib/_internal/premerge_guardian.py --root . --stage pre-archive` then `--stage pre-merge` pass; archive this change folder to `openspec/changes/archive/2026-09-13-tracker-ledger-foundation/` on the review branch and re-run the guardian after the move. <!-- sdd-owner: implementation -->
+- [ ] 7.7 VERIFY: open ONE PR for the whole change with `gh` (base `development`, accepted `size:exception`), keeping the 7 work units as separate commits in unit order, no merge, and record the PR URL + total changed-line count + per-commit line counts in `openspec/changes/tracker-ledger-foundation/verify-report.md`. <!-- sdd-owner: implementation -->
+```
+
+Unit 7 (docs, trust, close-out) was not started, per the assigned boundary.
+
+### Slice workload / PR boundary (Unit 6)
+
+- Authored lines: **~1,180**, over the 400-line review budget. Expected under the
+  maintainer-accepted `size:exception`; no comments, cases, or tests were dropped, and no
+  restyling was done.
+- Boundary: commit slice 6 of the single PR, and the slice that collapses the grader to one.
+  It depends on Units 3–5 and is revert-safe: reverting `doctor.py`/`trello_link.py` and the
+  parity files restores the predecessor graders exactly, while the Go binary is untouched.
+  The `doctor.py` change is the only production behavior change in this unit (the tracker-card
+  doctor row becomes a `tracker-ledger` row); the worktree gate, guardian, and hosts are
+  unchanged.
+
+### Structured status consumed / produced (Unit 6)
+
+Consumed: `artifactStore: openspec`, `actionContext.mode: repo-local`,
+`allowedEditRoots: [/Users/robert/proyectos/nnodes/ai-specs-cli]`, worktree
+`.worktrees/tracker-ledger-foundation` on `change/tracker-ledger-foundation`, accepted
+`size:exception`. Every write stayed inside the seven allowed surfaces (`doctor.py`,
+`trello_link.py`, the two test files, the corpus fixtures, and the two
+`openspec/changes/tracker-ledger-foundation/**` artifacts). No `actionContext` warning fired
+and no edit left the allowed roots.
+
+**Gate evidence (resolved, not bypassed):** a Python heredoc refactor of
+`tests/test_tracker_ledger_parity.py` was refused by the worktree gate ("refusing shell command
+that writes … on protected branch 'development'"). The intended refactor was reduced and
+completed with the structured `edit` tool only; the fallback heredoc was never used, and the
+remaining cosmetic bridge-builder extraction was dropped rather than forced.
+
+**Status-engine discrepancy (unchanged, warning only):** the native status JSON was computed
+against the main checkout's `planningHome.root`, where this change folder exists only on this
+branch inside the worktree, so it again reported every artifact `missing` and
+`applyState: blocked` with reason "No active SDD changes found.". For the `openspec` store the
+authoritative inputs were read from
+`.worktrees/tracker-ledger-foundation/openspec/changes/tracker-ledger-foundation/` on disk
+(proposal/spec/design/tasks/apply-progress all present). No real blocker was reported; the
+forecast gate is `Decision needed before apply: No`, `Chained PRs recommended: No`,
+`400-line budget risk: High` with the recorded `size:exception`, so implementation proceeded
+without a delivery pause.
+
+Produced: this progress artifact and the persisted `- [x]` marks for 6.1–6.6.
+
 

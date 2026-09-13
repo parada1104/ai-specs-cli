@@ -1,0 +1,18 @@
+{
+  "label": "declared-not-bound witness is dormant with a WARN",
+  "witness": {
+    "state": "declared-not-bound",
+    "recipe_id": ""
+  },
+  "checkpoint": "apply-start",
+  "mode": "warn",
+  "expected": {
+    "decision": "dormant",
+    "reason": "declared-not-bound",
+    "active": false,
+    "conflict": false,
+    "exit": 0,
+    "doctor": "WARN"
+  },
+  "kind": "verdict"
+}

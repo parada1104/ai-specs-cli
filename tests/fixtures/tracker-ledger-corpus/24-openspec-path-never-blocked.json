@@ -1,0 +1,8 @@
+{
+  "label": "openspec/** is never blocked by the path host",
+  "kind": "bridge",
+  "host": "plan-build-gate",
+  "scenario": "openspec-path",
+  "ledger_mode": "always",
+  "expected_exit": 0
+}
