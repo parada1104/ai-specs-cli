@@ -457,3 +457,188 @@ authoritative inputs were read from
 `.worktrees/tracker-ledger-foundation/openspec/changes/tracker-ledger-foundation/` on
 disk (proposal/spec/design/tasks/apply-progress all present), which the parent prompt also
 named explicitly. No edit left the allowed roots; no other `actionContext` warning fired.
+
+## Unit 4 — Phase 4: durable witness (Python bridge)
+
+Tasks 4.1–4.6 complete. Persisted checkboxes updated in
+`openspec/changes/tracker-ledger-foundation/tasks.md` (`- [x]` for 4.1–4.6; the Phase 4
+block now has zero unchecked rows, re-read after the edit). Units 5–7 were deliberately
+**not** started: no checkpoint host reads the witness yet, and no old grader was retired.
+
+### Files changed
+
+| Path | Change |
+|---|---|
+| `lib/_internal/recipe-materialize.py` | +159: `git_common_dir`, `tracking_declared`, `tracker_witness_payload`, `write_tracker_witness` (A4) + two call sites |
+| `tests/test_tracker_ledger_witness.py` | New (328): unit + integration tests for the four states, trap survival, atomicity, no-guess, linked worktree |
+| `tests/fixtures/recipes/test-tracker-ledger/recipe.toml` | New (8): synthetic provider declaring `tracker` |
+| `tests/fixtures/recipes/test-tracker-ledger-conflict/recipe.toml` | New (8): second `tracker` declarer for the ambiguous case |
+| `openspec/changes/tracker-ledger-foundation/tasks.md` | Checkboxes 4.1–4.6 → `- [x]` |
+| `openspec/changes/tracker-ledger-foundation/apply-progress.md` | This section (merged with Units 1–3) |
+
+**503 authored lines** (159 + 328 + 16) plus 6 changed `tasks.md` lines. Over the 400-line
+review budget by design: `tasks.md` declares `400-line budget risk: High` with a
+maintainer-accepted `size:exception`; no comments, tests, or cases were dropped to fit.
+
+### What Unit 4 implements
+
+- **Path (A4/A3).** `git_common_dir(project_root)` mirrors the Go reader
+  (`gitfacts.go::gitCommonWith`): `rev-parse --path-format=absolute --git-common-dir`,
+  relative fallback, then `Path.resolve()` so a linked worktree and its main checkout agree.
+  Witness target is `<git-common-dir>/ai-specs/ledger/witness.json`.
+- **Producer stays single.** `resolve_bindings` is still the only binding producer; the new
+  code only *persists* its map. `tracker_witness_payload` contains no verdict logic — the
+  state is a lookup (`bound` when `tracker` is in the map), a candidate count, and a
+  declaration flag.
+- **Four states.** `bound` (recipe id recorded), `ambiguous` (two or more enabled declarers,
+  `candidates` recorded, `recipe_id` empty — never a guess), `unbound` (no declarer, no
+  declaration), `declared-not-bound` (`openspec/config.yaml` top-level `tracking:` exists but
+  the capability is not bound).
+- **Atomic write (A4).** `mkstemp` (`witness.json.tmp.*`) in the destination directory →
+  `json.dump` + `flush` + `fsync` → `os.replace`; the temp file is unlinked on any failure.
+- **Outside the trap.** The witness is written to the Git common dir, never to
+  `RESOLVED_CONFIG_TEMP`; `lib/sync.sh` was not modified because it already deletes only its
+  five named temps (task 4.4, asserted by a test).
+- **Best-effort, fail-dormant.** Outside a repository there is no common dir and the write is
+  skipped; an `OSError` warns and leaves the ledger dormant rather than aborting sync. No
+  provider is inferred in any state.
+- **Deactivation is a state, not a deletion.** A sync whose enabled set shrinks (or empties)
+  overwrites a previously bound witness with the new outcome, so disabling the tracker recipe
+  cannot leave a stale `bound` activation behind.
+
+### Focused test command
+
+```bash
+python3 -m unittest tests.test_tracker_ledger_witness -v
+# Ran 14 tests in 2.9s
+# OK
+python3 -m py_compile lib/_internal/recipe-materialize.py   # exit 0
+```
+
+Surrounding existing suites (all green, no new failures):
+
+```bash
+python3 -m unittest tests.test_recipe_materialize tests.test_recipe_conflicts \
+  tests.test_sync_recipe_capture                       # Ran 106 tests  OK
+python3 -m unittest tests.test_sync_pipeline tests.test_worktree_flow_recipe \
+  tests.test_agents_render_brief_fragments             # Ran 171 tests  OK
+python3 -m unittest tests.test_trello_mcp_workflow_recipe \
+  tests.test_plan_build_flow_recipe tests.test_brief_render_policy   # Ran 56 tests  OK
+```
+
+Full `./tests/run.sh` (Go + unittest discovery): `Ran 1929 tests ... FAILED (failures=11,
+skipped=2)`. **All 11 failures pre-exist at HEAD (Units 1–3) and none is caused by Unit 4** —
+they are the known gate-asset digest/build state that task 7.2 owns (Unit 3 changed the Go
+source without regenerating `catalog/recipes/worktree-flow/bin/SHA256SUMS`). Verified by
+running the same modules in a detached worktree at `HEAD`: `Ran 17 tests ... FAILED
+(failures=10)` in the two gate-asset modules plus `test_release_materialization`'s
+digest-driven ERROR, i.e. the identical 11 before any Unit 4 edit. The temporary verification
+worktree was removed afterwards.
+
+### TDD Cycle Evidence
+
+| Task | Test file | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| 4.1 witness states | `tests/test_tracker_ledger_witness.py` | Unit | ✅ `unittest tests.test_recipe_materialize tests.test_recipe_conflicts tests.test_sync_recipe_capture` → 92/92 before any edit | ✅ `AttributeError: module 'recipe_materialize_witness' has no attribute 'git_common_dir'` + missing-file errors (9 errors, 2 failures of 12) | ✅ bound / ambiguous / unbound / declared-not-bound / no-provider-vocabulary / trap-survival / no-temp-residue / non-repo cases pass | ✅ explicit `[[bindings]]` beats two declarers → `bound`; disabling the bound recipe overwrites the witness → `unbound`; ambiguous candidates are both fixture ids with `recipe_id == ""` | ✅ `tracker_witness_payload` split from `write_tracker_witness`; shared `LEDGER_*`/`WITNESS_*` constants; `_witness_path`/`_witness` test helpers |
+| 4.2 synthetic fixtures | fixtures + same test file | Unit | ✅ as above | ✅ fixtures absent before this change (catalog had no `test-tracker-ledger*`) | ✅ `test-tracker-ledger` → `bound`; `test-tracker-ledger` + `-conflict` → `ambiguous` | ✅ fixtures declare no skills/commands/templates, so they exercise binding only, not materialization | ✅ fixtures live under `tests/fixtures/recipes/` and are picked up by `populate_catalog`; `AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES` gating unchanged |
+| 4.3 atomic writer | same test file | Unit | ✅ as above | ✅ same RED run (`git_common_dir` undefined) | ✅ witness written at the common-dir path with `v=1`, `capability=tracker`, ISO-Z `written_at` | ✅ `witness.json.tmp.*` glob is empty after sync; a first call site accidentally placed inside the `cap_conflicts` loop was caught immediately by the bound test, and the call was moved to module scope before GREEN | ✅ single `write_tracker_witness` seam; both call sites pass the same already-resolved map |
+| 4.4 sync.sh trap | same test file | Unit (static) + Integration | ✅ `lib/sync.sh` untouched | n/a (confirmation task) | ✅ `test_sync_sh_trap_never_names_the_witness` passes: trap line has `rm -f`, no `witness` token, `RESOLVED_CONFIG_TEMP=` appears exactly once | ✅ end-to-end `ai-specs init` + `ai-specs sync` with `trello-mcp-workflow` enabled leaves `bound`/`trello-mcp-workflow` at the common dir **after the real EXIT trap ran** | ✅ no `sync.sh` edit was needed; the design's "no witness trap, no second temp root" holds as written |
+| 4.5 linked worktree | same test file | Integration | ✅ as above | ✅ same RED run | ✅ `git_common_dir(linked) == git_common_dir(main)`; the witness written from the main checkout is read back through the linked worktree's `.git` file | ✅ built `dist/worktree-gate-current --ledger --checkpoint apply-start --ledger-mode warn --project-root <linked>` returns `active=true`, `decision=allow`, `identity.branch=linked-branch` — the Go reader consumes Python's witness | ✅ assertion also pins that the witness is NOT inside the linked worktree's own `.git` file |
+| 4.6 refactor + compile | — | — | ✅ 14/14 before refactor | n/a | ✅ 14/14 after | ✅ mutation check below | ✅ `python3 -m py_compile lib/_internal/recipe-materialize.py` exit 0 |
+
+**Mutation check (proving the assertions are not vacuous):** changing the ambiguous branch
+`state = WITNESS_AMBIGUOUS` → `WITNESS_UNBOUND` made
+`test_ambiguous_witness_records_candidates_without_guessing` FAIL (and only it). The mutation
+was reverted; all 14 tests are green again. A first, weaker mutation (`len(candidates) > 1` →
+`candidates`) was discarded as equivalent under current inputs rather than reported as
+evidence.
+
+### Deviations from design (Unit 4 only)
+
+1. **The witness is re-written on the zero-enabled-recipes path.** The design does not name
+   this branch, but `materialize_recipes` returns early when no `[recipes.*]` is enabled. Not
+   writing there would leave a previously `bound` witness activating a provider whose recipe
+   was just disabled. The outcome is still a pure lookup of `resolve_bindings` ({} → `unbound`
+   or `declared-not-bound`), so "resolve_bindings is the only producer" is preserved.
+2. **Write failures warn instead of aborting sync.** The design enumerates missing witness as
+   dormant and corrupt *store* as `unevaluable`; it does not fix a policy for witness IO
+   failure. Best-effort + `warn` keeps sync resilient, and the Go reader already treats an
+   unreadable witness as `witness-missing`.
+3. **`declared-not-bound` reads `openspec/config.yaml` with a top-level `tracking:` line
+   scan.** No YAML parser is vendored in this repo, and the design's "(or equivalent
+   declaration)" allows the lighter check. Only the presence of the block is read; no field
+   inside it is interpreted, so no provider vocabulary enters the core.
+4. **`--resolved-config-only` (standalone `sync-agent`) does not write the witness.** That
+   mode documents "no side effects", and the full sync path owns materialization. The design's
+   flow names sync, not the standalone helper.
+5. **`candidates` is populated only for `ambiguous`.** The spec requires candidate ids for
+   that state; other states carry `[]`, keeping "no provider is guessed" visible in the file.
+6. **Commit not executed.** Task 4.6's `REFACTOR + commit` is complete except the commit
+   itself: the parent prompt forbids committing in this phase, so this slice is commit slice 4
+   left uncommitted for the parent/PR owner. No commit, push, or merge was performed.
+
+### Remaining tasks (exact unchecked `- [ ]` lines)
+
+Phases 5–7 remain unchecked; the Phase 4 rows are now `- [x]`. The corresponding lines appear
+in the raw `tasks.md`; this list records the exact 20 still-open rows.
+
+```text
+- [ ] 5.1 RED: `tests/test_ledger_mode_config.py` for A9 mapping (`ledger_mode` wins; `gate_mode` off→skip, warn→warn, always→always; worktree `gate_mode` never read) against `catalog/recipes/trello-mcp-workflow/recipe.toml`. <!-- sdd-owner: implementation -->
+- [ ] 5.2 GREEN: add `[config.ledger_mode]` enum `always|ask|warn` default `warn` to `catalog/recipes/trello-mcp-workflow/recipe.toml` and its README config table in the same commit. <!-- sdd-owner: implementation -->
+- [ ] 5.3 GREEN+RED: `catalog/recipes/plan-build-flow/hooks/plan-build-gate.sh` resolves the verified binary and grades `work-start` (no change folder required; `openspec/**` never blocked). <!-- sdd-owner: implementation -->
+- [ ] 5.4 GREEN+RED: `catalog/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh` grades `apply-start` (`kind=path`) and `pr-review` (`kind=shell` `pr_create`), delete the heredoc `## Tracker` grader, prompt on `ask`, persist the answer via `--decide`; update `tests/test_tracker_card_gate_hook.py`. <!-- sdd-owner: implementation -->
+- [ ] 5.5 GREEN+RED: `lib/_internal/premerge_guardian.py` invokes `pre-merge` and `archive-close` at both stages, tolerates cold `AI_SPECS_HOME`, leaves tier/verify-evidence math untouched; update `tests/test_premerge_guardian.py`. <!-- sdd-owner: implementation -->
+- [ ] 5.6 TRIANGULATE: all five hosts return identical verdict/exit for one pinned fixture input (spec "All five checkpoints reach one predicate"). <!-- sdd-owner: implementation -->
+- [ ] 5.7 REFACTOR: hosts are acquisition/JSON bridges only — grep-assert no `is_valid_link`-style predicate added in shell or Python; point `catalog/recipes/git-pr-flow/commands/pr-create.md` at the verdict; commit. <!-- sdd-owner: implementation -->
+- [ ] 6.1 GREEN+RED: `lib/_internal/doctor.py` renders the JSON `doctor` finding under check `tracker-ledger` with A10 severities (INFO unbound, WARN ambiguous/declared-not-bound/missing-witness/conflict, ERROR infra) and stops grading; drop `_check_tracker_card_link` as a grader; update `tests/test_doctor_tracker_card.py`; assert no runtime-brief/`AGENTS.md` dormancy line (D15). <!-- sdd-owner: implementation -->
+- [ ] 6.2 GREEN: `lib/_internal/trello_link.py` stays a parser — comments + no new predicate; existing consumers delegate to the Go verdict. <!-- sdd-owner: implementation -->
+- [ ] 6.3 RED: pinned `tests/fixtures/tracker-ledger-corpus/*.json` covering every design test-table row (dormant, empty store × modes, consistent evidence, four-side conflict, persisted `--decide`, checkpoint-scoped opt-out, branch reuse → new item, two open items, detached HEAD per mode, `openspec/**` never blocked, missing binary → exit 0). <!-- sdd-owner: implementation -->
+- [ ] 6.4 GREEN: `tests/test_tracker_ledger_parity.py` drives `dist/worktree-gate-current --ledger` per fixture (mirror `tests/test_worktree_gate_parity.py` (read-only) shape) and fails on any host/Go divergence. <!-- sdd-owner: implementation -->
+- [ ] 6.5 TRIANGULATE: run corpus twice; byte-identical verdicts and no store residue; confirm existing worktree-gate corpus unchanged. <!-- sdd-owner: implementation -->
+- [ ] 6.6 REFACTOR + commit. <!-- sdd-owner: implementation -->
+- [ ] 7.1 GREEN: update `docs/capabilities.md`, `docs/runtime-hooks.md`, `README.md`, `catalog/recipes/trello-mcp-workflow/README.md`, and `CHANGELOG.md` with the witness/store paths, five checkpoints, modes, dormancy-in-doctor, and "no provider writes in this slice". <!-- sdd-owner: implementation -->
+- [ ] 7.2 VERIFY: `scripts/build-gate.sh` then `scripts/verify-gate-sums.sh` — same four assets, one trust root; regenerate `catalog/recipes/worktree-flow/bin/SHA256SUMS` only with canonical `go1.24.13`, else record the pending-release note. <!-- sdd-owner: implementation -->
+- [ ] 7.3 VERIFY: `./tests/validate.sh` (py_compile, `bash -n`, gofmt, Go tests incl. `ledger`, unittest discovery) fully green; no runner path edits were needed because the module did not move. <!-- sdd-owner: implementation -->
+- [ ] 7.4 GREEN: write `openspec/changes/tracker-ledger-foundation/verify-report.md` with one `Criterion N: PASS` row per the 11 proposal Success Criteria, plus RED/GREEN evidence per unit. <!-- sdd-owner: implementation -->
+- [ ] 7.5 GREEN: append the Judgment Day input set to `openspec/changes/tracker-ledger-foundation/verify-report.md` (spec scenario → corpus fixture → test name) for up to 3 authorized rounds; record each round's fix re-run. <!-- sdd-owner: implementation -->
+- [ ] 7.6 VERIFY: `python3 lib/_internal/premerge_guardian.py --root . --stage pre-archive` then `--stage pre-merge` pass; archive this change folder to `openspec/changes/archive/2026-09-13-tracker-ledger-foundation/` on the review branch and re-run the guardian after the move. <!-- sdd-owner: implementation -->
+- [ ] 7.7 VERIFY: open ONE PR for the whole change with `gh` (base `development`, accepted `size:exception`), keeping the 7 work units as separate commits in unit order, no merge, and record the PR URL + total changed-line count + per-commit line counts in `openspec/changes/tracker-ledger-foundation/verify-report.md`. <!-- sdd-owner: implementation -->
+```
+
+Checkpoint hosts (Unit 5), grader collapse (Unit 6), and docs/trust (Unit 7) were not
+started, per the assigned boundary. No old grader was retired.
+
+### Slice workload / PR boundary (Unit 4)
+
+- Authored lines: **503** (159 `recipe-materialize.py` + 328 test + 16 fixtures), plus 6
+  changed `tasks.md` lines — over the 400-line review budget, expected under the
+  maintainer-accepted `size:exception`. Nothing was compressed or restyled to fit.
+- Boundary: commit slice 4 of the single PR, and the first slice that writes production
+  state at sync time. It is still behaviourally inert for checkpoints: no host reads the
+  witness yet (Units 5–6), so the ledger stays dormant everywhere regardless of the new file.
+  Reverting this slice restores the previous sync exactly — the only shipped-side addition is
+  the writer, which nothing consumes yet.
+- The Go side was not touched in this unit.
+
+### Structured status consumed / produced (Unit 4)
+
+Consumed (parent prompt + native status engine): `artifactStore: openspec`,
+`actionContext.mode: repo-local`, `allowedEditRoots:
+[/Users/robert/proyectos/nnodes/ai-specs-cli]`, worktree
+`.worktrees/tracker-ledger-foundation` on `change/tracker-ledger-foundation`, accepted
+`size:exception`. Every write stayed inside the five allowed surfaces:
+`lib/_internal/recipe-materialize.py`, `tests/test_tracker_ledger_witness.py`, the two
+`tests/fixtures/recipes/test-tracker-ledger*/recipe.toml` files, and the two
+`openspec/changes/tracker-ledger-foundation/**` artifacts. No `actionContext` warning fired
+and no edit left the allowed roots.
+
+**Status-engine discrepancy (unchanged, warning only):** the native status JSON was computed
+against the main checkout's `planningHome.root`, where the change folder exists only on this
+branch inside the worktree, so it again reported every artifact `missing` and
+`applyState: blocked` with reason "No active SDD changes found.". For the `openspec` store the
+authoritative inputs were read from
+`.worktrees/tracker-ledger-foundation/openspec/changes/tracker-ledger-foundation/` on disk
+(proposal/spec/design/tasks/apply-progress all present). No real blocker was reported.
+
+Produced: this progress artifact and the persisted `- [x]` marks for 4.1–4.6.
+

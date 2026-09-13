@@ -1,0 +1,8 @@
+[recipe]
+id = "test-tracker-ledger"
+name = "Test Tracker Ledger"
+description = "Internal fixture declaring the tracker capability for witness tests."
+version = "1.0.0"
+
+[[capabilities]]
+id = "tracker"

@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -747,6 +748,154 @@ def resolve_bindings(
     return binding_map
 
 
+# --- Binding witness (A4) -----------------------------------------------------
+LEDGER_CAPABILITY = "tracker"
+LEDGER_WITNESS_VERSION = 1
+LEDGER_WITNESS_RELPATH = Path("ai-specs") / "ledger" / "witness.json"
+WITNESS_BOUND = "bound"
+WITNESS_AMBIGUOUS = "ambiguous"
+WITNESS_UNBOUND = "unbound"
+WITNESS_DECLARED_NOT_BOUND = "declared-not-bound"
+
+
+def git_common_dir(project_root: Path) -> str:
+    """Absolute Git common dir for project_root, or "" outside a repository.
+
+    Mirrors the Go reader (``catalog/recipes/worktree-flow/gate/gitfacts.go``):
+    prefer the absolute form, fall back to the relative one, then realpath so a
+    linked worktree and its main checkout resolve to one shared directory (A2).
+    """
+    def run(*args: str) -> str:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(project_root), *args],
+                capture_output=True, text=True, check=False,
+            )
+        except OSError:
+            return ""
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+
+    value = run("rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not value:
+        value = run("rev-parse", "--git-common-dir")
+    if not value:
+        return ""
+    path = Path(value)
+    if not path.is_absolute():
+        path = Path(project_root) / path
+    return str(path.resolve())
+
+
+def tracking_declared(project_root: Path) -> bool:
+    """True when openspec/config.yaml declares a top-level ``tracking:`` block.
+
+    The declaration is supply, never activation (D6); it only distinguishes the
+    witness's ``declared-not-bound`` state from plain ``unbound``.
+    """
+    config = Path(project_root) / "openspec" / "config.yaml"
+    if not config.is_file():
+        return False
+    try:
+        lines = config.read_text().splitlines()
+    except OSError:
+        return False
+    return any(line.startswith("tracking:") for line in lines)
+
+
+def tracker_witness_payload(
+    catalog_dir: Path,
+    enabled_ids: list[str],
+    resolved_bindings: dict[str, str],
+    *,
+    declared: bool,
+    written_at: str,
+) -> dict[str, Any]:
+    """Describe the already-resolved tracker binding (A4).
+
+    There is no verdict logic here: ``resolve_bindings`` stays the only binding
+    producer, and an unresolved capability records candidate recipe ids instead
+    of guessing a provider (D6).
+    """
+    recipe_id = resolved_bindings.get(LEDGER_CAPABILITY, "")
+    candidates: list[str] = []
+    if recipe_id:
+        state = WITNESS_BOUND
+    else:
+        for rid in enabled_ids:
+            try:
+                recipe = read_recipe(catalog_dir, rid)
+            except Exception:
+                continue
+            if any(cap.id == LEDGER_CAPABILITY for cap in recipe.capabilities):
+                candidates.append(rid)
+        if len(candidates) > 1:
+            state = WITNESS_AMBIGUOUS
+        elif declared:
+            state = WITNESS_DECLARED_NOT_BOUND
+        else:
+            state = WITNESS_UNBOUND
+    return {
+        "v": LEDGER_WITNESS_VERSION,
+        "capability": LEDGER_CAPABILITY,
+        "state": state,
+        "recipe_id": recipe_id,
+        "candidates": candidates,
+        "written_at": written_at,
+    }
+
+
+def write_tracker_witness(
+    project_root: Path,
+    catalog_dir: Path,
+    enabled_ids: list[str],
+    resolved_bindings: dict[str, str],
+) -> Path | None:
+    """Atomically persist the resolved tracker binding under the common dir (A4).
+
+    ``<git-common-dir>/ai-specs/ledger/witness.json`` — deliberately outside
+    ``RESOLVED_CONFIG_TEMP`` so ``lib/sync.sh``'s EXIT trap cannot delete it.
+    Best-effort: outside a repository there is no common dir, and a write error
+    leaves the ledger dormant (missing witness) instead of aborting sync. The Go
+    reader treats a missing or unreadable witness as dormant, never bound.
+    """
+    common = git_common_dir(project_root)
+    if not common:
+        return None
+    payload = tracker_witness_payload(
+        catalog_dir,
+        enabled_ids,
+        resolved_bindings,
+        declared=tracking_declared(project_root),
+        written_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    target = Path(common) / LEDGER_WITNESS_RELPATH
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=target.parent, prefix="witness.json.tmp.", suffix=".json"
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(payload, f, indent=2, sort_keys=True)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, target)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError as exc:
+        warn(
+            f"tracker witness not written ({type(exc).__name__}: {exc}); "
+            "ledger stays dormant"
+        )
+        return None
+    return target
+
+
 # --- Config merge -------------------------------------------------------------
 def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]:
     """Merge recipe config schema defaults with manifest overrides.
@@ -1099,6 +1248,9 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         pc.remove_recipe_command_leftovers(project_root, cli_home=cli_home)
         # Still clean up orphaned recipes (none expected) and deps not in manifest
         clean_orphans(project_root, set(), expected_dep_ids, cli_home=cli_home)
+        # A shrinking enabled set must overwrite a previously bound witness with the
+        # unbound outcome, or a disabled provider would stay active.
+        write_tracker_witness(project_root, catalog_dir, [], {})
         print("  (no [recipes.*] enabled — skipping)")
         # Still write resolved-config if requested (even with no enabled recipes)
         if resolved_config_out is not None:
@@ -1138,6 +1290,13 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
                 f"declared by {', '.join(sorted(c.recipes))}. "
                 f"Add an explicit [[bindings]] entry to resolve."
             )
+
+    # Durable tracker binding witness (A4): persist the binding outcome that
+    # resolve_bindings just computed so the Go ledger only ever reads it.
+    # Written outside RESOLVED_CONFIG_TEMP, so the EXIT trap cannot delete it.
+    write_tracker_witness(
+        project_root, catalog_dir, list(enabled.keys()), resolved_bindings
+    )
 
     # Tag conflict check (NEW): advisory only. Tags are metadata and MUST NOT
     # block materialization — the capability-binding layer owns blocking
