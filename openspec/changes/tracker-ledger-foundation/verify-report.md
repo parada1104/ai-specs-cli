@@ -1,18 +1,133 @@
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:289721dec642d555ee6d8743ce22035ccd1e481adaeab195a5e753e5af59912f
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 11/11
+scenarios: 32/32
+test_command: ./tests/validate.sh
+test_exit_code: 0
+test_output_hash: sha256:b314c54bbe4d095d49f35fb0e9de251accd0fb51f6630653ec5baabbd4dd3576
+build_command: ./scripts/build-gate.sh
+build_exit_code: 0
+build_output_hash: sha256:42da1a2230b24d7f8321ddfa4150469cb814c69c05f8c1a3185b109453015258
+```
+
 # Verification Report: Tracker-only Go Ledger foundation
 
 ## Verify evidence
 
-- Verdict: PASS (Phase 7 units 1–6 and 7.1–7.5; 7.6 archive and 7.7 PR are parent-owned and not claimed here)
-- Command: `./tests/validate.sh`
+- Verdict: PASS WITH WARNINGS
+- Command: ./tests/validate.sh
 - Exit: 0
 - Date: 2026-09-13
-- Commit: `dd677b2` (`feat(ledger): consolidate tracker grading`) for units 1–6; the Phase 7 docs/trust slice (7.1–7.3) is uncommitted in the worktree for the parent/PR owner
-- Branch: `change/tracker-ledger-foundation` @ `.worktrees/tracker-ledger-foundation`
-- ready_for_archive: false — archive is task 7.6, owned by the parent orchestrator
+- Commit: f5de19842bd3d81c990f2410dfb96ce9ff3cb394
+- Branch: change/tracker-ledger-foundation @ .worktrees/tracker-ledger-foundation
+- ready_for_archive: false
+
+Canonical verify-executor update (2026-09-13) — every prior apply-phase row below is preserved
+unchanged. The Commit field now carries the current full HEAD SHA because the canonical
+pre-archive guardian requires a bare 7-40 hex revision. The apply phase had recorded `dd677b2`
+for units 1–6 with the Phase 7 slice uncommitted; that slice is now commit `f5de198` and the
+worktree is clean at HEAD. Tasks 7.6 (archive) and 7.7 (PR) remain parent-owned closeout
+prerequisites, so `ready_for_archive` stays false until closeout completes.
 
 This executor implemented **only** Phase 7 tasks 7.1–7.5. Tasks 7.6 (`pre-archive`/`pre-merge`
 guardian + archive move) and 7.7 (single `gh` PR) were deliberately not run; the exact handoff
 is in **Remaining close-out tasks** below.
+
+## Independent verification (canonical verify executor, 2026-09-13)
+
+Independent Full SDD verification of implementation units 1–7.5, run inside the worktree at
+HEAD `f5de19842bd3d81c990f2410dfb96ce9ff3cb394` (clean tree). Verification edited no code and
+no production file; only this report was updated. All authoritative artifacts (proposal, spec,
+design, tasks, apply-progress) were read from the worktree change folder, not the main checkout.
+
+### Exact commands and results
+
+| Command | Result |
+|---|---|
+| `./tests/validate.sh` | exit 0 — py_compile + `bash -n` + gofmt clean + Go `test ./...` (both packages ok) + `Ran 1947 tests in 745.947s` → `OK (skipped=2)` |
+| `./scripts/build-gate.sh` | exit 0 — four targets built with canonical `go1.24.13`; digests of `dist/worktree-gate-*` (excluding `current`) match the committed trust root |
+| `./scripts/verify-gate-sums.sh <generated> catalog/recipes/worktree-flow/bin/SHA256SUMS` | exit 0 — `ok — 4 digest entries match the committed trust root` |
+| `go -C catalog/recipes/worktree-flow/gate test -count=1 ./...` | `ok ai-specs.dev/worktree-gate 15.534s` + `ok ai-specs.dev/worktree-gate/ledger 2.934s` |
+| `gofmt -l catalog/recipes/worktree-flow/gate` and `go vet ./...` | gofmt empty; vet clean |
+| `./dist/worktree-gate-current --selftest` | prints `ok`, exit 0 |
+| `./dist/worktree-gate-current --ledger --checkpoint work-start --ledger-mode warn --project-root $PWD` | exit 0 — JSON `decision=dormant reason=witness-missing active=false` carrying the full design key set (capability, active, checkpoint, mode, decision, reason, identity{common_dir, branch, change, key}, item, conflict, prompt, doctor) |
+| focused suites: `tests.test_tracker_ledger_parity`, `tests.test_doctor_tracker_card`, `tests.test_tracker_ledger_witness`, `tests.test_ledger_mode_config`, `tests.test_tracker_card_gate_hook`, `tests.test_plan_build_gate_hook`, `tests.test_premerge_guardian`, `tests.test_worktree_gate_parity`, `tests.test_trello_link`, `tests.test_trello_mcp_workflow_recipe`, `tests.test_doctor` | `Ran 269 tests in 108.547s` → OK, exit 0 |
+| `python3 lib/_internal/premerge_guardian.py --root . --stage pre-archive tracker-ledger-foundation` | exit 1 — BLOCKED only on `verify-report.md is missing Commit/SHA/Revision (7-40 hex)` (this report's commit-field format; fixed by this update); the ledger checkpoint itself was non-blocking (dormant) and tier minima passed |
+| `python3 lib/_internal/premerge_guardian.py --root . --stage pre-merge tracker-ledger-foundation` | exit 1 — BLOCKED on the missing dated archive (expected pre-closeout state; the archive move is parent-owned task 7.6) |
+
+### Unit evidence cross-check (units 1–7.5)
+
+| Unit | Runtime evidence confirmed by this verification |
+|---|---|
+| 1 — identity + witness (Go) | `ledger/identity.go` + `witness.go` and tests present; live probe on this repo resolved `change=tracker-ledger-foundation` through the archive-aware lookup and reported dormant on the missing witness |
+| 2 — store (Go) | `ledger/store.go` + tests; D17 branch-reuse, D19 checkpoint-scoped opt-out, two-open collision and provider-neutral key-set tests all green in the Go run |
+| 3 — verdict + CLI | `--ledger` contract verified live (exact design JSON keys, exit 0 dormant); `--selftest` still prints `ok` with the ledger invariants |
+| 4 — witness producer | atomic writer in `lib/_internal/recipe-materialize.py`; `tests.test_tracker_ledger_witness` (14 tests) green; synthetic fixture recipes present and internal-gated |
+| 5 — checkpoint hosts | `plan-build-gate.sh` (work-start), `tracker-card-gate.sh` (apply-start / pr-review), `premerge_guardian.py` (archive-close / pre-merge) invoke the verified binary; heredoc grader gone (grep for `is_valid_link`, `_eval_deficient`, `marker_present`, `_emit_and_exit` → no match); `[config.ledger_mode]` enum in `recipe.toml`; `pr-create.md` points at the `pr-review` verdict |
+| 6 — one grader + parity | `doctor.py` renders `_check_tracker_ledger`; legacy `_check_tracker_card_link` / `_load_trello_link` gone (grep clean); `trello_link.py` parser-only; 24 corpus fixtures + parity runner green |
+| 7 — docs + trust | sections present in `docs/capabilities.md`, `docs/runtime-hooks.md`, `README.md`, `CHANGELOG.md`, tracker recipe README; trust root regenerated with canonical `go1.24.13` and byte-reproducible across two builds |
+
+### Spec/design compliance matrix
+
+11 requirements and 32 scenarios in `specs/tracker-ledger/spec.md`, all verified at runtime
+(full suite + focused suites + parity corpus + live binary probes):
+
+| Requirement | Scenarios | Verified by |
+|---|---|---|
+| Durable binding witness | 3 | witness suite (14 tests), corpus rows 01/18–20, live dormant probe |
+| Binding-only activation | 2 | corpus rows 02–04/19, 5×3×8 verdict matrix |
+| Doctor-only dormancy visibility (D15) | 2 | `tests.test_doctor_tracker_card` (16 tests, includes the no-brief-line assertion), corpus rows 18–20 |
+| One primary item per work identity | 4 | identity/store Go suites, corpus rows 10–15 |
+| Human adjudication + branch reuse (D16/D17) | 3 | decide suite, corpus rows 06–13 |
+| Five-checkpoint lifecycle verdicts | 3 | `test_all_five_hosts_block_on_the_same_verdict` + allow twin, corpus rows 21/22/24, work-start no-folder test |
+| Modes always/ask/warn + D18/D19 | 4 | verdict matrix, A9 mode-mapping suite, corpus rows 04/09 |
+| Go-authoritative grader, Python bridge only | 3 | one-grader greps, parity runner, `--selftest ok`, single four-arch trust root |
+| Unevaluable/outage behavior | 3 | corpus rows 16/17/23, guardian cold-home test, corrupt-store Go tests |
+| Scope boundaries (D1/D2/D11/D13/D14) | 3 | provider-neutral key-set test, single module (`go list -deps ./ledger` = stdlib + ledger), no archive edits in the diff |
+| Synthetic fixture + parity corpus | 2 | 24 pinned fixtures, `test_corpus_covers_every_design_row`, hermetic no-network runs |
+
+### Findings
+
+CRITICAL — none.
+
+WARNING
+
+1. Tasks 7.6 (guardian run + archive move to `openspec/changes/archive/2026-09-13-tracker-ledger-foundation/` + guardian re-run) and 7.7 (ONE `gh` PR, base `development`, no merge, line counts recorded) are unchecked — parent-owned closeout prerequisites per the delivery decision, not production implementation. `pre-merge` blocking on the missing archive is the expected pre-closeout state, and `ready_for_archive` stays false until both run; archive is not ready from this report alone.
+2. Guardian tier inference falls back to `standard` because `tasks.md` has no canonical `Depth: full` line (the parser wants `^Depth: (light|standard|full)$`; the current prose "Planning depth: Full …" does not match). If closeout ever runs the guardian with an explicit `--tier full`, this report would additionally need `ready_for_archive: true` and canonical `- Criterion N: PASS — …` mapping rows (the existing mapping uses table rows the strict parser does not read). Harness-mechanics note for closeout, not an implementation defect.
+3. Status-engine discrepancy (carried from every apply unit): the native SDD status is computed against the main checkout, where this change folder does not exist, so it reports "No active SDD changes found." Non-authoritative for the worktree-resident change; all inputs were read from the worktree change folder on disk.
+
+SUGGESTION
+
+1. `tracker-card-gate.sh`'s header comment still lists `archive` among graded shell actions although archive-close moved to the guardian in unit 5. Cosmetic, already recorded by the apply phase; fix opportunistically during closeout.
+
+### Strict TDD compliance
+
+`strict_tdd: true` (`openspec/config.yaml`). `apply-progress.md` carries a TDD Cycle Evidence
+table for every unit (1–7) with RED → GREEN → TRIANGULATE → REFACTOR rows and recorded mutation
+checks proving the assertions are not vacuous. Every referenced test file exists in the tree
+(spot-checked by this verification) and every suite is GREEN at HEAD under this verification's
+own runs. Assertion quality — no tautological, type-only, or smoke-only assertions found in
+the changed/created tests; the corpus pins exact decisions, reasons, and exit codes and carries
+its own divergence-rejection test (`test_verdict_corpus_rejects_a_divergent_pin`).
+
+### Review workload / PR boundary
+
+`tasks.md` records the accepted `size:exception` explicitly (authorization, rationale,
+conditions), `Chained PRs recommended: No`, `Chain strategy: size-exception`, `Decision needed
+before apply: No`. Whole-change diff vs `development` at HEAD: 67 files changed, 10,244
+insertions(+), 1,009 deletions(-) (the prior row below counted 9,796/1,001 across 61 files
+before the Phase 7 commit landed). The branch carries exactly one commit per unit in unit
+order — f1bde2a (1), bc54ecf (2), 6ddb631 (3), 6e3667b (4), 6311e88 (5), dd677b2 (6), f5de198
+(7) — matching the recorded single-PR, ordered-slices strategy; no merge.
+
+### Closeout prerequisites (parent-owned; not implementation defects)
+
+1. **7.6** — re-run `python3 lib/_internal/premerge_guardian.py --root . --stage pre-archive tracker-ledger-foundation` (expected to pass after this report's commit-field fix at the inferred standard tier), archive the folder to `openspec/changes/archive/2026-09-13-tracker-ledger-foundation/` on the review branch, re-run the guardian after the move, then tick 7.6.
+2. **7.7** — open ONE `gh` PR (base `development`, accepted `size:exception`) keeping the seven unit-order commits, record the PR URL + total and per-commit changed-line counts in the (archived) verify report, then tick 7.7. No merge.
 
 ## Results
 
