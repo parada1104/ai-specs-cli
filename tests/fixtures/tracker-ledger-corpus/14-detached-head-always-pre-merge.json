@@ -1,0 +1,18 @@
+{
+  "label": "detached HEAD blocks pre-merge in always",
+  "witness": {
+    "state": "bound"
+  },
+  "detached": true,
+  "checkpoint": "pre-merge",
+  "mode": "always",
+  "expected": {
+    "decision": "block",
+    "reason": "identity_unavailable",
+    "active": true,
+    "conflict": false,
+    "exit": 2,
+    "doctor": "OK"
+  },
+  "kind": "verdict"
+}

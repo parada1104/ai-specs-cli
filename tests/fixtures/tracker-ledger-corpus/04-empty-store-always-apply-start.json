@@ -1,0 +1,17 @@
+{
+  "label": "bound + empty store + always + apply-start blocks",
+  "witness": {
+    "state": "bound"
+  },
+  "checkpoint": "apply-start",
+  "mode": "always",
+  "expected": {
+    "decision": "block",
+    "reason": "needs-item",
+    "active": true,
+    "conflict": false,
+    "exit": 2,
+    "doctor": "OK"
+  },
+  "kind": "verdict"
+}

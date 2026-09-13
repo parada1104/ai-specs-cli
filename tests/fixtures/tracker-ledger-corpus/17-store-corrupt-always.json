@@ -1,0 +1,18 @@
+{
+  "label": "corrupt store fails open even in always",
+  "witness": {
+    "state": "bound"
+  },
+  "store": "corrupt",
+  "checkpoint": "apply-start",
+  "mode": "always",
+  "expected": {
+    "decision": "unevaluable",
+    "reason": "store-corrupt",
+    "active": true,
+    "conflict": false,
+    "exit": 0,
+    "doctor": "ERROR"
+  },
+  "kind": "verdict"
+}

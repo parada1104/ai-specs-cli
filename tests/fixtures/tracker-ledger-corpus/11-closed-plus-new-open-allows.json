@@ -1,0 +1,38 @@
+{
+  "label": "new work on a reused branch opens a new item",
+  "witness": {
+    "state": "bound"
+  },
+  "change": "fixture-change",
+  "store": {
+    "items": [
+      {
+        "status": "closed",
+        "slug": "fixture-change",
+        "item_id": "T-old"
+      },
+      {
+        "status": "open",
+        "slug": "fixture-change",
+        "item_id": "T-new"
+      }
+    ]
+  },
+  "evidence": {
+    "local": "T-new",
+    "remote": "T-new",
+    "code": "",
+    "git": ""
+  },
+  "checkpoint": "apply-start",
+  "mode": "warn",
+  "expected": {
+    "decision": "allow",
+    "reason": "",
+    "active": true,
+    "conflict": false,
+    "exit": 0,
+    "doctor": "OK"
+  },
+  "kind": "verdict"
+}

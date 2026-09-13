@@ -1,0 +1,38 @@
+{
+  "label": "a fresh binding answers the ask prompt with a checkpoint-scoped opt-out",
+  "witness": {
+    "state": "bound"
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "ask",
+      "decide": {
+        "checkpoint": "apply-start",
+        "kind": "opt-out",
+        "choice": "continue"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "opt-out",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    },
+    {
+      "checkpoint": "pre-merge",
+      "mode": "ask",
+      "expected": {
+        "decision": "ask",
+        "reason": "needs-item",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    }
+  ],
+  "kind": "verdict"
+}

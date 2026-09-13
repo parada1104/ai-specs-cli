@@ -18,6 +18,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the previous CLI and sync.
 
 ### Added
+- **Tracker Ledger (Go-owned lifecycle grader)**: when the `tracker` capability
+  is bound, its lifecycle is graded by one `--ledger` mode on the existing
+  verified `worktree-gate` binary — no second binary, release asset, or trust
+  root. `ai-specs sync` persists the durable binding witness at
+  `<git-common-dir>/ai-specs/ledger/witness.json` (`bound` / `ambiguous` /
+  `unbound` / `declared-not-bound`); only `bound` activates the ledger and a
+  missing witness stays dormant (`witness-missing`) without guessing a provider.
+  The per-identity record lives at
+  `<git-common-dir>/ai-specs/ledger/state.json`, written atomically. All five
+  checkpoints — `work-start` (plan-build gate), `apply-start` and `pr-review`
+  (tracker gate), `pre-merge` and `archive-close` (pre-merge guardian) — reach
+  the same predicate and exit `0`/`2` (block only). One project `ledger_mode`
+  (`always` / `ask` / `warn`, default `warn`; legacy `gate_mode` maps forward;
+  `ask` opt-out is checkpoint-scoped). Dormancy surfaces through a
+  `tracker-ledger` `doctor` check only. Core item fields stay provider-neutral,
+  and the slice performs **no** provider MCP/API create or update call. The
+  legacy Python copies of the `## Tracker` validity rule (link parser, tracker
+  hook heredoc, doctor) delegate to the Go predicate or are held by parity tests
+  that fail on divergence.
 - **Version-keyed upgrade notices**: a release can declare a required
   post-upgrade action in an `### Upgrade notes` subsection under its
   `CHANGELOG.md` heading. `ai-specs upgrade` replays the notices of every

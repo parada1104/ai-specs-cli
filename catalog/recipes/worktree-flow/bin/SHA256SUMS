@@ -17,10 +17,11 @@
 # published assets; the CI release workflow diffs its generated SHA256SUMS
 # against this file and fails the release on any mismatch.
 #
-# Regenerated after gate-cwd-fidelity (command cwd recovery + honest degrade)
-# with the canonical go1.24.13 toolchain via:
+# Regenerated after tracker-ledger-foundation (the same four-arch asset gains the
+# `--ledger` mode; no new asset, no second trust root) with the canonical
+# go1.24.13 toolchain via:
 #   scripts/build-gate.sh && shasum -a 256 dist/worktree-gate-* | grep -v current
-2644dc99a8c0c7042ba7be451f29c274b1259dc16807d7c84626bea78934a0b8  worktree-gate-darwin-arm64
-29bc34db8fe8b632e8276f574a89f6858145561dbff7314114e04789f97ea421  worktree-gate-darwin-amd64
-cfe22dfd82299c9876fc64d12053a9e39ca7a00120e1a44cdec15c8f7227d25e  worktree-gate-linux-amd64
-8dfc2af447b0a962e133cf56f3f87086be2fc3c9320fe80621df6f124e2c7629  worktree-gate-linux-arm64
+39b90c0512915dd908c1130d842e077de6d1eb9cf260efc68808b771e5727b21  worktree-gate-darwin-arm64
+1723adc33e06d658ccda9e5d1f3b59af6d4488fa660cbefc5885b75a69629259  worktree-gate-darwin-amd64
+c96845cbfe59a8d89dff624a978294c199ae8159b1988b9c48439fe17326f9e6  worktree-gate-linux-amd64
+af9b400355ef6974be82a4296b91e0aa3069044bddaa79935a52ba638f6dea52  worktree-gate-linux-arm64

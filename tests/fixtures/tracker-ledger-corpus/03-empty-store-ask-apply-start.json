@@ -1,0 +1,17 @@
+{
+  "label": "bound + empty store + ask + apply-start asks",
+  "witness": {
+    "state": "bound"
+  },
+  "checkpoint": "apply-start",
+  "mode": "ask",
+  "expected": {
+    "decision": "ask",
+    "reason": "needs-item",
+    "active": true,
+    "conflict": false,
+    "exit": 0,
+    "doctor": "OK"
+  },
+  "kind": "verdict"
+}

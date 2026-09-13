@@ -1,0 +1,57 @@
+{
+  "label": "a persisted adjudication allows the same checkpoint",
+  "witness": {
+    "state": "bound"
+  },
+  "store": {
+    "items": [
+      {
+        "status": "open",
+        "item_id": "T-1"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "ask",
+      "evidence": {
+        "local": "T-1",
+        "remote": "T-2",
+        "code": "",
+        "git": "T-1"
+      },
+      "decide": {
+        "kind": "adjudicate",
+        "choice": "local"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "adjudicated",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    },
+    {
+      "checkpoint": "apply-start",
+      "mode": "ask",
+      "evidence": {
+        "local": "T-1",
+        "remote": "T-2",
+        "code": "",
+        "git": "T-1"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "adjudicated",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    }
+  ],
+  "kind": "verdict"
+}

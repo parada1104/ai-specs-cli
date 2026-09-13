@@ -17,6 +17,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
 
+STUB_BINARY = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${STUB_LOG}"
+decision="${STUB_DECISION:-allow}"
+reason="${STUB_REASON:-}"
+checkpoint=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --checkpoint) checkpoint="$2"; shift 2 ;;
+    --decide) printf 'DECIDE %s\\n' "$2" >> "${STUB_LOG}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '{"capability":"tracker","active":true,"checkpoint":"%s","mode":"warn","decision":"%s","reason":"%s","identity":{"common_dir":"","branch":"","change":null,"key":""},"item":null,"conflict":null,"prompt":null,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}\\n' "$checkpoint" "$decision" "$reason"
+[ "$decision" = block ] && exit 2
+exit 0
+"""
+
 # The preflight-resolved store (config artifact_store_default) must never change
 # a gate decision. STORE_ENV_KEY is a test-only fixture naming the env a
 # store-aware preflight would set; the gate is store-blind and reads only the
@@ -47,6 +64,28 @@ class PlanBuildGateHookTests(unittest.TestCase):
         (self.repo / "README.md").write_text("x\n")
         _git(self.repo, "add", "-A")
         _git(self.repo, "commit", "-qm", "init")
+        self.stub_log = Path(self.tmp.name) / "stub.log"
+        self.stub = Path(self.tmp.name) / "worktree-gate"
+        self.stub.write_text(STUB_BINARY)
+        self.stub.chmod(0o755)
+
+    def _ledger_env(self, *, decision: str = "allow") -> dict:
+        return {
+            "WORKTREE_GATE_BIN": str(self.stub),
+            "STUB_LOG": str(self.stub_log),
+            "STUB_DECISION": decision,
+        }
+
+    def _logged_checkpoints(self) -> list[str]:
+        if not self.stub_log.exists():
+            return []
+        found = []
+        for line in self.stub_log.read_text().splitlines():
+            parts = line.split()
+            for i, token in enumerate(parts):
+                if token == "--checkpoint" and i + 1 < len(parts):
+                    found.append(parts[i + 1])
+        return found
 
     def _seed_change_at(self, root: Path, slug: str = "demo-change") -> None:
         d = root / "openspec" / "changes" / slug
@@ -125,7 +164,12 @@ class PlanBuildGateHookTests(unittest.TestCase):
         return subprocess.run(
             ["bash", str(GATE)],
             input=json.dumps(event),
-            capture_output=True, text=True, env=env,
+            capture_output=True, text=True,
+            # A new session has no controlling terminal, so the ask prompt's
+            # /dev/tty open fails deterministically instead of blocking on a
+            # developer's real terminal.
+            start_new_session=True,
+            env=env,
         )
 
     # 1. Production write, no change folder → block (exit 2).
@@ -377,6 +421,82 @@ class PlanBuildGateHookTests(unittest.TestCase):
         self.assertEqual(_git_output(fx["sub"], "for-each-ref", "--format=%(refname:short)", "refs/heads"), before_branches)
         after_dirs = sorted(str(p.relative_to(fx["super"])) for p in fx["super"].rglob("*") if p.is_dir())
         self.assertEqual(after_dirs, before_dirs)
+
+    # --- ledger work-start checkpoint (5.3) ---
+
+    def test_work_start_grades_production_write(self):
+        self._seed_change()
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        r = self._run(event, extra_env=self._ledger_env(decision="block"))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["work-start"])
+
+    def test_work_start_grades_without_a_change_folder(self):
+        # No change folder exists; work-start must still grade (the artifact gate
+        # is a separate rule and does not skip the checkpoint).
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        r = self._run(event, extra_env=self._ledger_env(decision="block"))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["work-start"])
+
+    def test_work_start_allow_follows_the_verdict(self):
+        self._seed_change()
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        r = self._run(event, extra_env=self._ledger_env(decision="allow"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["work-start"])
+
+    def test_work_start_plumbs_the_configured_ledger_mode(self):
+        self._seed_change()
+        (self.repo / "ai-specs").mkdir()
+        (self.repo / "ai-specs" / "ai-specs.toml").write_text(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\nledger_mode = 'always'\n"
+        )
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        r = self._run(event, extra_env=self._ledger_env(decision="allow"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--ledger-mode always", self.stub_log.read_text())
+
+    def test_work_start_ask_without_tty_blocks_without_a_decision(self):
+        self._seed_change()
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        env = self._ledger_env(decision="ask")
+        env["TRACKER_LEDGER_MODE"] = "ask"
+        env["STUB_REASON"] = "needs-item"
+        r = self._run(event, extra_env=env)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("no terminal", r.stderr)
+        self.assertNotIn("--decide", self.stub_log.read_text())
+
+    def test_work_start_ask_identity_unavailable_reports_and_proceeds(self):
+        self._seed_change()
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        env = self._ledger_env(decision="ask")
+        env["TRACKER_LEDGER_MODE"] = "ask"
+        env["STUB_REASON"] = "identity_unavailable"
+        r = self._run(event, extra_env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("identity_unavailable", r.stderr)
+        self.assertNotIn("--decide", self.stub_log.read_text())
+
+    def test_work_start_does_not_gate_planning_writes(self):
+        event = self._event(
+            "Write", str(self.repo / "openspec" / "changes" / "new" / "tasks.md")
+        )
+        r = self._run(event, extra_env=self._ledger_env(decision="block"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), [])
+
+    def test_work_start_fails_open_without_a_binary(self):
+        self._seed_change()
+        env = self._ledger_env(decision="block")
+        env.pop("WORKTREE_GATE_BIN")
+        env["AI_SPECS_HOME"] = str(Path(self.tmp.name) / "cold-home")
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        r = self._run(event, extra_env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), [])
 
 if __name__ == "__main__":
     unittest.main()

@@ -76,7 +76,14 @@ required = false
 type = "string"
 default = "warn"
 enum = ["off", "warn", "always"]
-help_text = "Tracker card gate: off (disabled), warn (stderr warning, never blocks — default), or always (block production writes / PR-archive shell when an active change lacks the ## Tracker link section)."
+help_text = "Legacy tracker card gate vocabulary: off (skip the ledger checkpoints), warn (report only), or always (block). Only consulted when ledger_mode is unset."
+
+[config.ledger_mode]
+required = false
+type = "string"
+default = "warn"
+enum = ["always", "ask", "warn"]
+help_text = "Tracker ledger mode: always (block missing/conflicted state at the five checkpoints), ask (prompt at each checkpoint; an opt-out covers only that checkpoint), or warn (report on stderr, never block — default). Overrides gate_mode when set; gate_mode off still skips the checkpoints."
 
 [init]
 prompt = "init.md"
@@ -119,7 +126,7 @@ event = "pre-tool-use"
 script = "hooks/tracker-card-gate.sh"
 matcher = "Edit|Write|MultiEdit|NotebookEdit"
 blocking = true
-description = "Block production edits when an active change lacks the ## Tracker link section (mode=always); warn otherwise"
+description = "Grade production edits at the apply-start ledger checkpoint through the verified Go predicate (mode=always blocks); fail open"
 
 [[provides.hooks]]
 id = "tracker-card-gate-shell"
@@ -127,7 +134,7 @@ event = "pre-tool-use"
 script = "hooks/tracker-card-gate.sh"
 matcher = "Bash|Shell|Execute|Terminal"
 blocking = true
-description = "Best-effort block gh pr create / change-archive shell actions when an active change lacks the ## Tracker link section; does not gate shell writes"
+description = "Grade gh pr create at the pr-review ledger checkpoint through the verified Go predicate; does not gate shell writes"
 
 [[provides.templates]]
 source = "templates/card-feature.md"

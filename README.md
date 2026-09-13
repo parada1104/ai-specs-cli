@@ -160,6 +160,36 @@ portable script that `ai-specs sync` distributes to every enabled harness in its
 native format (Claude `PreToolUse`, generated Cursor/OpenCode/Pi adapters). See
 [`docs/runtime-hooks.md`](docs/runtime-hooks.md).
 
+### Tracker Ledger
+
+When a `tracker` capability is bound, its lifecycle is graded by one Go
+predicate — a `--ledger` mode of the same verified `worktree-gate` binary (no
+second binary, asset, or trust root). The provider recipe supplies configuration
+and the human-facing `## Tracker` section; it is no longer a grader. Core item
+fields stay provider-neutral, and no provider vocabulary is promoted into the
+artifact contract.
+
+- **Witness**: `ai-specs sync` writes
+  `<git-common-dir>/ai-specs/ledger/witness.json` (`bound` / `ambiguous` /
+  `unbound` / `declared-not-bound`). Only `bound` activates the ledger; a missing or
+  unreadable witness is dormant, never guessed.
+- **Store**: one record per work identity (Git common dir + branch, optionally the
+  active change slug) at `<git-common-dir>/ai-specs/ledger/state.json`, written
+  atomically. A branch reused after its item closed opens a new item; two open items
+  are a human conflict.
+- **Five checkpoints**: `work-start`, `apply-start`, `pr-review`, `pre-merge`,
+  `archive-close` all reach the same predicate and exit `0`/`2` (block only).
+- **Modes**: one project `ledger_mode` — `always`, `ask`, or `warn` (default `warn`;
+  promotion is a human edit). `ask` opt-out is checkpoint-scoped.
+- **Dormancy is `doctor`-only**: a `tracker-ledger` check reports the witness state
+  (INFO/WARN) or infrastructure failure (ERROR); the runtime brief gains no dormancy
+  line.
+- **No provider writes in this slice**: the ledger records and reconciles
+  evidence — it performs no MCP/API create, update, move, comment, or label call.
+
+See [`docs/capabilities.md`](docs/capabilities.md) for the capability contract and
+[`docs/runtime-hooks.md`](docs/runtime-hooks.md) for the checkpoint hosts.
+
 ### Updating
 
 ```bash

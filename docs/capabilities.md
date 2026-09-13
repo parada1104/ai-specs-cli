@@ -64,6 +64,49 @@ recipe = "trello-mcp-workflow"
 See [`docs/recipe-schema.md`](recipe-schema.md) for the `[[capabilities]]` and
 [`docs/ai-specs-toml.md`](ai-specs-toml.md) for the `[[bindings]]` contracts.
 
+## Tracker lifecycle: the Tracker Ledger
+
+When a `tracker` capability is bound, its lifecycle is graded by **one Go
+predicate**, shipped as a `--ledger` mode of the existing verified
+`worktree-gate` binary. The provider recipe supplies configuration; it is not the
+grader. Core item fields stay provider-neutral (item id, provider id, native type,
+URL, state, exemption, evidence references); anything provider-specific lives in
+provider recipe config and in an opaque object the predicate never reads. No
+provider vocabulary is promoted into the `## Tracker` authoring contract, and no
+universal artifact field is introduced.
+
+- **Activation witness.** `ai-specs sync` persists the already-computed binding
+  outcome at `<git-common-dir>/ai-specs/ledger/witness.json`, recording exactly one
+  state: `bound`, `ambiguous`, `unbound`, or `declared-not-bound`. A declaration
+alone is supply, not activation: only `bound` activates the ledger, and a missing,
+unreadable, or unknown-version witness stays dormant (`witness-missing`) without
+ever guessing a provider.
+- **Ledger store.** One record per work identity (Git common dir + current short
+  branch, optionally enriched by the active change slug) at
+  `<git-common-dir>/ai-specs/ledger/state.json`, written atomically. A missing file
+  reads as an empty item set; a corrupt file reads as unevaluable, never as a
+  synthesized item. A branch reused after its item closed opens a new item, and two
+  open items for one identity are a human conflict, never a silent pick.
+- **Five checkpoints.** `work-start` (plan-build gate), `apply-start` and
+  `pr-review` (tracker gate), and `pre-merge` / `archive-close` (pre-merge guardian)
+  all reach the same predicate and share one exit contract (`0` allow/ask/dormant,
+  `2` only when the host must stop). Path hosts never block `openspec/**`.
+- **Modes.** One project `ledger_mode`: `always`, `ask`, or `warn` (default `warn`;
+  promotion is an explicit human configuration change). `ask` opt-out is
+  checkpoint-scoped, so the next checkpoint prompts again.
+- **Dormancy is `doctor` only.** A `tracker-ledger` check reports `unbound` (INFO),
+  `ambiguous` / `declared-not-bound` / missing witness / recorded conflict (WARN),
+  and infrastructure failure (ERROR). The runtime brief gains no dormancy line.
+- **No provider writes in this slice.** The ledger records and reconciles evidence;
+  it performs no MCP/API create, update, move, comment, or label call. `always`
+  blocks until an item is supplied, it does not create one.
+
+This is the project-level Python→Go strangler policy applied at the seam it
+touches: the Go predicate is the single authoritative grader for `## Tracker`
+validity, and the legacy Python copies (the link parser, the hook heredoc, and
+`doctor`) delegate to it or are held by parity tests that fail on divergence. The
+Python that remains is a thin acquisition/witness/JSON bridge only.
+
 ## Why this matters
 
 Mixing the pattern and the vendor in one recipe makes it impossible to reuse the

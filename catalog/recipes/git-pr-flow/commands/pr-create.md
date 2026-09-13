@@ -23,6 +23,7 @@ If unset, fall back to the recipe default (`main`) and to the runtime brief
 - The worktree has no unrelated uncommitted changes.
 - Required verification evidence is complete, or the user accepts the gap.
 - `gh` is installed and authenticated.
+- The `pr-review` ledger checkpoint allows the PR (see step 5).
 
 ## Steps
 
@@ -98,6 +99,12 @@ If unset, fall back to the recipe default (`main`) and to the runtime brief
    ```bash
    gh pr create --base <base_branch> --title "<title>" --body "<summary and verification>"
    ```
+
+   The `tracker-card-gate` shell hook grades `gh pr create` at the `pr-review`
+   ledger checkpoint. In `always` mode a missing or conflicted tracked item blocks
+   the command (exit 2); in `ask` mode it prompts for a checkpoint-scoped opt-out;
+   in `warn` mode it only reports. Do not bypass the verdict with shell
+   indirection or a non-`gh` PR provider path.
 
 6. STOP. Do not merge. Report the PR URL and wait for explicit user approval.
 
