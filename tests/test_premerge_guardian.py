@@ -892,6 +892,7 @@ class PremergeGuardianTests(unittest.TestCase):
 STUB_BINARY = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${STUB_LOG}"
 decision="${STUB_DECISION:-allow}"
+reason="${STUB_REASON:-stub}"
 checkpoint=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -900,7 +901,7 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
-printf '{"capability":"tracker","active":true,"checkpoint":"%s","mode":"warn","decision":"%s","reason":"stub","identity":{"common_dir":"","branch":"","change":null,"key":""},"item":null,"conflict":null,"prompt":null,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}\\n' "$checkpoint" "$decision"
+printf '{"capability":"tracker","active":true,"checkpoint":"%s","mode":"warn","decision":"%s","reason":"%s","identity":{"common_dir":"","branch":"","change":null,"key":""},"item":null,"conflict":null,"prompt":null,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}\\n' "$checkpoint" "$decision" "$reason"
 [ "$decision" = block ] && exit 2
 exit 0
 """
@@ -959,7 +960,12 @@ class GuardianLedgerBridgeTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(MODULE_PATH), slug, "--root", str(root),
              "--stage", stage, "--tier", "light"],
-            capture_output=True, text=True, env=env,
+            capture_output=True, text=True,
+            # A new session has no controlling terminal, so the ask prompt's
+            # /dev/tty open fails deterministically instead of blocking on a
+            # developer's real terminal.
+            start_new_session=True,
+            env=env,
         )
 
     def test_resolve_ledger_mode_a9_mapping(self):
@@ -995,6 +1001,26 @@ class GuardianLedgerBridgeTests(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertIn("--checkpoint archive-close", log.read_text())
         self.assertIn("tracker-ledger archive-close", r.stderr)
+
+    def test_ask_without_tty_blocks_without_fabricating_a_decision(self):
+        root = self._repo()
+        self._archive_light(root)
+        binary, log = self._stub(root)
+        env = self._env(binary, log, decision="ask", STUB_REASON="needs-item")
+        r = self._run(root, "done", "pre-merge", env)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("no terminal", r.stderr)
+        self.assertNotIn("DECIDE", log.read_text())
+
+    def test_ask_identity_unavailable_reports_and_proceeds(self):
+        root = self._repo()
+        self._archive_light(root)
+        binary, log = self._stub(root)
+        env = self._env(binary, log, decision="ask", STUB_REASON="identity_unavailable")
+        r = self._run(root, "done", "pre-merge", env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("identity_unavailable", r.stderr)
+        self.assertNotIn("DECIDE", log.read_text())
 
     def test_premerge_grades_pre_merge(self):
         root = self._repo()

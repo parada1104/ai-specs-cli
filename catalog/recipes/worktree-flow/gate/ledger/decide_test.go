@@ -174,6 +174,61 @@ func TestPersistDecisionFailsClosed(t *testing.T) {
 	}
 }
 
+// TestPersistScopedOptOutWithoutPrimaryIsScopedAndAllows pins the fresh-binding ask
+// path (A5/D19): with no open item yet, an explicit checkpoint-scoped opt-out is
+// recorded on its own, allows only the checkpoint it answered, and never
+// synthesizes a tracked item.
+func TestPersistScopedOptOutWithoutPrimaryIsScopedAndAllows(t *testing.T) {
+	path := StorePath(filepath.Join(t.TempDir(), ".git"))
+	if err := SaveStore(path, Store{V: StoreVersion}); err != nil {
+		t.Fatal(err)
+	}
+	key := ident("").Key()
+	if _, err := PersistDecision(path, key, DecisionRequest{Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err != nil {
+		t.Fatalf("PersistDecision opt-out without a primary: %v", err)
+	}
+
+	store := mustLoad(t, path)
+	if len(store.Items) != 0 {
+		t.Fatalf("items = %+v, want no synthesized item", store.Items)
+	}
+	if len(store.OptOuts) != 1 {
+		t.Fatalf("opt_outs = %+v, want exactly one checkpoint-scoped opt-out", store.OptOuts)
+	}
+	got := store.OptOuts[0]
+	if got.Key != key || got.Checkpoint != CheckpointApplyStart || got.Choice != "continue" || got.At != vtNow.UTC().Format(time.RFC3339) {
+		t.Fatalf("scoped opt-out = %+v, want the human answer keyed, stamped and checkpoint-scoped", got)
+	}
+
+	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Store: store, Now: vtNow}
+	apply := base
+	apply.Checkpoint = CheckpointApplyStart
+	assertVerdict(t, "apply-start scoped opt-out", Grade(apply), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
+
+	pre := base
+	pre.Checkpoint = CheckpointPreMerge
+	assertVerdict(t, "pre-merge after scoped opt-out", Grade(pre), vWant{DecisionAsk, ReasonNeedsItem, 0, SeverityOK, true})
+}
+
+// TestPersistWithoutPrimaryStaysClosedForUnrecordableAnswers pins the boundary of
+// the scoped opt-out: an adjudication has no item, no conflict snapshot and no
+// sides, and an identity-unavailable key is not durable, so both stay closed.
+func TestPersistWithoutPrimaryStaysClosedForUnrecordableAnswers(t *testing.T) {
+	path := StorePath(filepath.Join(t.TempDir(), ".git"))
+	if err := SaveStore(path, Store{V: StoreVersion}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PersistDecision(path, ident("").Key(), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}, vtNow); !errors.Is(err, ErrNoPrimary) {
+		t.Fatalf("adjudication without a primary error = %v, want ErrNoPrimary", err)
+	}
+	if _, err := PersistDecision(path, "", DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err == nil {
+		t.Fatalf("keyless opt-out succeeded, want a closed failure")
+	}
+	if store := mustLoad(t, path); len(store.OptOuts) != 0 {
+		t.Fatalf("opt_outs = %+v, want nothing recorded for an unrecordable answer", store.OptOuts)
+	}
+}
+
 // TestPersistConflictFailsClosedForCollision pins that a collided identity cannot
 // silently attach a conflict to one of the open items.
 func TestPersistConflictFailsClosedForCollision(t *testing.T) {

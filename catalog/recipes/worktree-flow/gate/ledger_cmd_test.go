@@ -317,6 +317,58 @@ func TestLedgerDecidePersistsThenRegradeAllows(t *testing.T) {
 	}
 }
 
+// TestLedgerEmptyStoreAskOptOutPersistsAndAllows pins the fixed fresh-binding ask
+// path end to end: no item exists, the explicit human opt-out is recorded
+// checkpoint-scoped, the answered checkpoint allows, no tracked item is
+// synthesized, and the next checkpoint asks again (D19).
+func TestLedgerEmptyStoreAskOptOutPersistsAndAllows(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := ledger.StorePath(common)
+	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "ask", "--project-root", dir}
+
+	code, stdout, _ := runCLI(t, base...)
+	if code != 0 {
+		t.Fatalf("pre-decision exit = %d, want 0", code)
+	}
+	pre := decodeLedgerOut(t, stdout)
+	if pre["decision"] != "ask" || pre["reason"] != "needs-item" || pre["item"] != nil {
+		t.Fatalf("pre-decision = %v/%v (item %v), want ask/needs-item with no item",
+			pre["decision"], pre["reason"], pre["item"])
+	}
+
+	decideArgs := append(append([]string{}, base...),
+		"--decide", `{"checkpoint":"apply-start","kind":"opt-out","choice":"continue"}`)
+	code, stdout, stderr := runCLI(t, decideArgs...)
+	if code != 0 {
+		t.Fatalf("--decide exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	post := decodeLedgerOut(t, stdout)
+	if post["decision"] != "allow" || post["reason"] != "opt-out" {
+		t.Fatalf("post-decision = %v/%v, want allow/opt-out", post["decision"], post["reason"])
+	}
+
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Items) != 0 {
+		t.Fatalf("items = %+v, want no synthesized tracked item", store.Items)
+	}
+	if len(store.OptOuts) != 1 || store.OptOuts[0].Checkpoint != "apply-start" {
+		t.Fatalf("opt_outs = %+v, want exactly one apply-start scoped opt-out", store.OptOuts)
+	}
+
+	code, stdout, _ = runCLI(t, "--ledger", "--checkpoint", "pre-merge", "--ledger-mode", "ask", "--project-root", dir)
+	if code != 0 {
+		t.Fatalf("next checkpoint exit = %d, want 0", code)
+	}
+	next := decodeLedgerOut(t, stdout)
+	if next["decision"] != "ask" || next["reason"] != "needs-item" {
+		t.Fatalf("next checkpoint = %v/%v, want ask/needs-item", next["decision"], next["reason"])
+	}
+}
+
 // TestLedgerDecidePersistFailureExits2 pins the fail-closed rule: a --decide that
 // cannot be persisted exits 2.
 func TestLedgerDecidePersistFailureExits2(t *testing.T) {

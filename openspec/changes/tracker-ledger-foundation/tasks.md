@@ -108,6 +108,13 @@ Under `size:exception` these are **ordered commit slices inside one PR**, not se
 - [ ] 7.6 VERIFY: `python3 lib/_internal/premerge_guardian.py --root . --stage pre-archive` then `--stage pre-merge` pass; archive this change folder to `openspec/changes/archive/2026-09-13-tracker-ledger-foundation/` on the review branch and re-run the guardian after the move. <!-- sdd-owner: implementation -->
 - [ ] 7.7 VERIFY: open ONE PR for the whole change with `gh` (base `development`, accepted `size:exception`), keeping the 7 work units as separate commits in unit order, no merge, and record the PR URL + total changed-line count + per-commit line counts in `openspec/changes/tracker-ledger-foundation/verify-report.md`. <!-- sdd-owner: implementation -->
 
+## Phase 8 — Judgment Day correction round 1 (JD-A-001 / JD-B-005)
+
+- [x] 8.1 RED: focused tests for the empty-store ask path and the non-TTY / identity-unavailable host paths (`ledger/decide_test.go`, `ledger_cmd_test.go`, `tests/test_tracker_card_gate_hook.py`, `tests/test_plan_build_gate_hook.py`, `tests/test_premerge_guardian.py`, `tests/fixtures/tracker-ledger-corpus/25-empty-store-ask-opt-out.json`); all fail against pre-fix `HEAD`. <!-- sdd-owner: implementation -->
+- [x] 8.2 GREEN: `PersistDecision` records an explicit checkpoint-scoped opt-out in the store's `opt_outs[]` when no open primary exists (only for `kind=opt-out`, and only for a non-empty identity key); `Grade` honors it for the answered checkpoint; the hosts block instead of proceeding when no terminal can answer, and report-and-proceed (never prompt) for `identity_unavailable`. `warn`/`always` unaffected. <!-- sdd-owner: implementation -->
+- [x] 8.3 VERIFY: Go `go test ./...` ok; 157 focused ledger/host/doctor tests ok; parity corpus 25 ok; mutation checks (drop the Grade scoped lookup, drop the opt-out-only restriction, restore the silent non-TTY proceed) each caught. <!-- sdd-owner: implementation -->
+- [x] 8.4 VERIFY: `./tests/validate.sh` → 1942/1952 pass; the 10 failures are the release trust-root tests only (`SHA256SUMS` is stale versus the changed Go source), proven digest-only by regenerating the sums in a scratch copy → all 11 release/sync tests pass. Regeneration stays a release step (7.2); the sums were not committed. <!-- sdd-owner: implementation -->
+
 ## Dependencies / order
 
 1 → 2 → 3 (Go core, no prod effect) → 4 (witness producer) → 5 (hosts) → 6 (grader collapse + parity) → 7 (docs/trust/close-out). Unit 5 depends on 3 + 4; unit 6 depends on 5. Units 1–3 are individually revert-safe with the ledger inactive (no witness = dormant). Under `size:exception` this order applies to commits within the single PR; do not reorder units 5 and 6, or the branch briefly carries two `## Tracker` graders.

@@ -50,13 +50,20 @@ func (r DecisionRequest) Validate() error {
 }
 
 // PersistDecision appends the human answer to the single open item for key and
-// clears its current conflict snapshot, all under the store lock. It fails
-// closed on a missing key, a collided identity, a corrupt store, or an invalid
-// request, so the CLI can exit 2.
+// clears its current conflict snapshot, all under the store lock. A checkpoint-
+// scoped opt-out is the one answer that does not need an existing item (D19): a
+// fresh binding records it scoped to its own checkpoint instead of inventing a
+// tracked item. It otherwise fails closed on a missing key, a collided identity,
+// a corrupt store, or an invalid request, so the CLI can exit 2.
 func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) (Decision, error) {
 	req = req.Normalize()
 	if err := req.Validate(); err != nil {
 		return Decision{}, err
+	}
+	// An identity-less answer has no durable key and is never recorded: the host
+	// reports identity_unavailable instead of asking (A2/A5).
+	if key == "" {
+		return Decision{}, fmt.Errorf("%w: empty identity key", ErrInvalidDecision)
 	}
 	stamp := rfc3339Stamp(now)
 	var persisted Decision
@@ -66,6 +73,16 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 			return err
 		}
 		item, err := store.Primary(key)
+		if errors.Is(err, ErrNoPrimary) && req.Kind == DecisionOptOut {
+			// A fresh binding has no item yet (A5/D19): record the explicit human
+			// opt-out checkpoint-scoped, without inventing an item that `always`
+			// would then treat as satisfied.
+			store.OptOuts = append(store.OptOuts, ScopedOptOut{
+				Key: key, Checkpoint: req.Checkpoint, Choice: req.Choice, At: stamp,
+			})
+			persisted = Decision{At: stamp, Checkpoint: req.Checkpoint, Kind: req.Kind, Choice: req.Choice, Note: req.Note}
+			return SaveStore(storePath, store)
+		}
 		if err != nil {
 			return err
 		}

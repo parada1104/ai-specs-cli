@@ -98,6 +98,7 @@ class TrackerCardGateHookTests(unittest.TestCase):
         *,
         mode: str = "warn",
         decision: str = "allow",
+        reason: str = "",
         gate: Path | None = None,
         env: dict | None = None,
     ) -> subprocess.CompletedProcess:
@@ -107,7 +108,11 @@ class TrackerCardGateHookTests(unittest.TestCase):
             input=payload,
             capture_output=True,
             text=True,
-            env=env or self._env(decision=decision),
+            # A new session has no controlling terminal, so the ask prompt's
+            # /dev/tty open fails deterministically instead of blocking on a
+            # developer's real terminal.
+            start_new_session=True,
+            env=env or self._env(decision=decision, reason=reason),
         )
 
     def _event(self, tool: str, file_path: str) -> dict:
@@ -163,13 +168,27 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.assertTrue(r.stderr.strip(), "expected the verdict on stderr")
         self.assertIn("apply-start", r.stderr)
 
-    def test_ask_without_tty_proceeds(self):
+    def test_ask_without_tty_blocks_without_fabricating_a_decision(self):
         r = self._run(
             self._event("Edit", str(self.repo / "lib" / "foo.py")),
             decision="ask",
             gate=self._stamped_gate("warn"),
         )
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("no terminal", r.stderr)
+        self.assertIn("apply-start", r.stderr)
+        self.assertNotIn("DECIDE", self.stub_log.read_text())
+
+    def test_ask_identity_unavailable_reports_and_proceeds(self):
+        r = self._run(
+            self._event("Edit", str(self.repo / "lib" / "foo.py")),
+            decision="ask",
+            reason="identity_unavailable",
+            gate=self._stamped_gate("warn"),
+        )
         self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("identity_unavailable", r.stderr)
+        self.assertNotIn("DECIDE", self.stub_log.read_text())
 
     def test_openspec_paths_never_grade(self):
         target = self.repo / "openspec" / "changes" / "demo" / "proposal.md"

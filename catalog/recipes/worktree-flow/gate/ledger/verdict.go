@@ -204,6 +204,15 @@ func Grade(in Input) Verdict {
 		// Two open rows are a conflict for a human, never a silent pick (A5).
 		v.Conflict = newConflict(ev, in.Now)
 		v.outcome(ev, ReasonConflict)
+	case errors.Is(err, ErrNoPrimary):
+		if in.Store.HasScopedOptOut(in.Identity.Key, in.Checkpoint) {
+			// A fresh binding answered this checkpoint with an explicit scoped
+			// opt-out (D19): the answered checkpoint proceeds and the next one asks
+			// again. No item exists, so nothing else can be satisfied implicitly.
+			v.Decision, v.Reason = DecisionAllow, ReasonOptOut
+		} else {
+			v.outcome(ev, ReasonNeedsItem)
+		}
 	case err != nil:
 		v.outcome(ev, ReasonNeedsItem)
 	default:

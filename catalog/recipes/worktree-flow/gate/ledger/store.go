@@ -92,6 +92,17 @@ type Decision struct {
 	Note       string `json:"note"`
 }
 
+// ScopedOptOut is a checkpoint-scoped human opt-out recorded for an identity that
+// has no open item yet (D19): a freshly bound project must be able to answer the
+// ask prompt before any tracked item exists. It is keyed by identity so the answer
+// stays durable and auditable, and it never synthesizes an item.
+type ScopedOptOut struct {
+	Key        string `json:"key"`
+	Checkpoint string `json:"checkpoint"`
+	Choice     string `json:"choice"`
+	At         string `json:"at"`
+}
+
 // Item is one tracked item. Core fields are provider-neutral (A7): provider
 // vocabulary lives only in the opaque Provider payload, which the predicate
 // never reads. Conflict is an opaque snapshot recorded alongside decisions.
@@ -113,10 +124,12 @@ type Item struct {
 // Key is the item's identity key.
 func (i Item) Key() string { return i.Identity.Key() }
 
-// Store is the on-disk ledger: one version plus the item list (A5).
+// Store is the on-disk ledger: one version, the item list, and the
+// checkpoint-scoped opt-outs recorded before an item existed (A5).
 type Store struct {
-	V     int    `json:"v"`
-	Items []Item `json:"items"`
+	V       int            `json:"v"`
+	Items   []Item         `json:"items"`
+	OptOuts []ScopedOptOut `json:"opt_outs"`
 }
 
 // StorePath is the durable store location: <git-common-dir>/ai-specs/ledger/state.json (A3).
@@ -153,6 +166,9 @@ func SaveStore(path string, store Store) error {
 	}
 	if store.Items == nil {
 		store.Items = []Item{}
+	}
+	if store.OptOuts == nil {
+		store.OptOuts = []ScopedOptOut{}
 	}
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
@@ -280,6 +296,17 @@ func (s Store) HasOptOut(key, checkpoint string) bool {
 	}
 	for _, d := range item.Decisions {
 		if d.Kind == DecisionOptOut && d.Checkpoint == checkpoint {
+			return true
+		}
+	}
+	return false
+}
+
+// HasScopedOptOut reports whether key recorded a checkpoint-scoped opt-out with
+// no open item. Like an item opt-out it covers only the checkpoint it answered.
+func (s Store) HasScopedOptOut(key, checkpoint string) bool {
+	for _, o := range s.OptOuts {
+		if o.Key == key && o.Checkpoint == checkpoint {
 			return true
 		}
 	}

@@ -567,8 +567,8 @@ for side in ("local", "remote", "code", "git"):
 print("  choices: " + ", ".join(prompt.get("choices") or []))
 ' >&2 2>/dev/null
   if ! { exec 3</dev/tty; } 2>/dev/null; then
-    echo "${prefix}: ${checkpoint} needs a decision but no terminal is available; proceeding." >&2
-    return 0
+    echo "${prefix}: ${checkpoint} needs a decision but no terminal is available; no opt-out was recorded; blocking." >&2
+    return 2
   fi
   printf '%s: opt out of the %s checkpoint? [y/N] ' "$prefix" "$checkpoint" >&2
   local answer=""
@@ -606,6 +606,13 @@ _ledger_grade() {
   if [ "$rc" = 2 ] || [ "$decision" = block ]; then
     echo "${prefix}: blocked at ${checkpoint} — ${reason:-missing tracked item}" >&2
     return 2
+  fi
+  if [ "$decision" = ask ] && [ "$reason" = identity_unavailable ]; then
+    # No identity means no durable key for a checkpoint-scoped answer (A2/A5), so
+    # ask cannot collect a recordable decision here: report and proceed without
+    # inferring one (the spec's non-blocking identity_unavailable rule).
+    echo "${prefix}: ${checkpoint} cannot be keyed (identity_unavailable); reporting and proceeding without recording a decision." >&2
+    return 0
   fi
   if [ "$decision" = ask ]; then
     printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("prompt")))' 2>/dev/null \

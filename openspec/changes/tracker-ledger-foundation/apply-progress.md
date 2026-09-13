@@ -1180,3 +1180,37 @@ Produced: this progress artifact, `verify-report.md`, and the persisted `- [x]` 
 7.1–7.5.
 
 
+
+### Judgment Day correction round 1 (JD-A-001 / JD-B-005, one corroborated severe root)
+
+Two blind judges independently corroborated one root defect: in `ask` mode a
+freshly bound project could not proceed. With no existing open primary,
+`PersistDecision` failed `ErrNoPrimary`, so an explicit human opt-out could never
+be recorded; and with no `/dev/tty` the hosts silently proceeded (or, for the
+guardian, mapped the failure inconsistently), which infers a human decision the
+lifecycle forbids.
+
+Fix (bounded to the finding, no provider writes, no generic fields):
+
+- `ledger/store.go` — the store gains a typed, identity-keyed
+  `opt_outs[]` (`ScopedOptOut{key, checkpoint, choice, at}`) plus
+  `HasScopedOptOut`. This is the A5/D19 extension the ask contract needed: a
+  checkpoint-scoped human answer that does not require a tracked item.
+- `ledger/decide.go` — `PersistDecision` appends a scoped opt-out when the
+  identity has no open primary and the request is `kind=opt-out`; an
+  adjudication without a primary still fails closed, and an empty identity key
+  is rejected (an answer with no durable key is never recorded). No item is
+  synthesized, so `always` never sees a fabricated item it would treat as
+  satisfied.
+- `ledger/verdict.go` — `Grade` honors a scoped opt-out for exactly the
+  answered checkpoint (`allow`/`opt-out`); every other checkpoint still returns
+  `ask`/`needs-item`.
+- `plan-build-gate.sh`, `tracker-card-gate.sh`, `premerge_guardian.py` — a
+  missing terminal now blocks with an explicit "no opt-out was recorded"
+  message instead of proceeding, and a `decision=ask` with
+  `reason=identity_unavailable` (which carries no durable key) is reported and
+  allowed without prompting, matching the spec's non-blocking rule. `warn` and
+  `always` mappings are untouched.
+
+Evidence: see verify-report.md, "Judgment Day correction round 1". No commit,
+push, or merge was performed; the release trust root was not regenerated.

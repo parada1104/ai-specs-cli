@@ -570,10 +570,10 @@ def _ledger_ask(binary: Path, checkpoint: str, mode: str, root: Path | str,
     except OSError:
         print(
             f"premerge-guardian: tracker-ledger {checkpoint} needs a decision but "
-            "no terminal is available; proceeding.",
+            "no terminal is available; no opt-out was recorded",
             file=sys.stderr,
         )
-        return []
+        return [f"tracker-ledger {checkpoint}: no opt-out recorded (no terminal available)"]
     if answer.lower() not in ("y", "yes"):
         return [f"tracker-ledger {checkpoint}: no opt-out recorded"]
     payload = json.dumps(
@@ -624,6 +624,16 @@ def ledger_blockers(root: Path | str, checkpoint: str) -> list[str]:
     if proc.returncode == 2 or decision == "block":
         return [f"tracker-ledger {checkpoint}: blocked — {reason or 'missing tracked item'}"]
     if decision == "ask":
+        if reason == "identity_unavailable":
+            # No identity means no durable key for a checkpoint-scoped answer
+            # (A2/A5), so ask cannot collect a recordable decision here: report
+            # and proceed without inferring one (the spec's non-blocking rule).
+            print(
+                f"premerge-guardian: tracker-ledger {checkpoint}: identity_unavailable; "
+                "reporting and proceeding without recording a decision.",
+                file=sys.stderr,
+            )
+            return []
         return _ledger_ask(binary, checkpoint, mode, root, verdict)
     if decision == "unevaluable":
         print(

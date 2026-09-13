@@ -271,3 +271,58 @@ no single corpus row).
   commits in unit order, and record the PR URL + total changed-line count + per-commit line
   counts. Exact blocker: this executor is explicitly forbidden to commit, push, or open a PR;
   the parent owns the single PR.
+
+## Judgment Day correction round 1 (JD-A-001 / JD-B-005)
+
+Correction record appended after the frozen verification below; the front-matter
+revision and hashes above describe the pre-correction candidate and are
+intentionally unchanged.
+
+- **Finding (one corroborated severe root):** `ask` mode could not proceed for a
+  freshly bound project. With no open primary, `--decide`/`PersistDecision`
+  failed `ErrNoPrimary`, and with no `/dev/tty` the hosts silently proceeded or
+  mapped the failed persistence inconsistently — inferring a human decision.
+- **Contract restored:** an explicit `ask` answer is checkpoint-scoped and lets
+  the answered checkpoint proceed; no human decision is ever inferred; `warn`
+  and `always` keep their semantics; no provider write and no synthesized item.
+- **Fix surface:** `ledger/store.go` (`opt_outs[]` + `HasScopedOptOut`),
+  `ledger/decide.go` (scoped opt-out for `kind=opt-out` only, non-empty key),
+  `ledger/verdict.go` (honor it for the answered checkpoint),
+  `plan-build-gate.sh`, `tracker-card-gate.sh`, `premerge_guardian.py`.
+
+### Round 1 evidence
+
+| Step | Command | Result |
+|---|---|---|
+| RED (Go behavior, pre-fix `HEAD` archive) | `go test ./ledger/ -run TestRedPrefixAskOptOutWithoutPrimary` | FAIL — `ledger: no open item for identity` |
+| RED (Go new tests, pre-fix `HEAD`) | `go test ./ledger/` | FAIL — `store.OptOuts undefined` (the scoped surface did not exist) |
+| RED (hosts, pre-fix `HEAD` archive) | 6 new non-TTY / identity tests | FAIL — 6/6, each printing "no terminal is available; proceeding" |
+| GREEN (Go) | `go -C catalog/recipes/worktree-flow/gate test ./...` | ok — `ledger`, `worktree-gate` |
+| GREEN (focused hosts/doctor) | `python3 -m unittest tests.test_tracker_card_gate_hook tests.test_plan_build_gate_hook tests.test_premerge_guardian tests.test_tracker_ledger_parity tests.test_tracker_ledger_witness tests.test_ledger_mode_config tests.test_doctor_tracker_card` | `Ran 157 tests ... OK` |
+| GREEN (parity, new corpus row) | `tests.test_tracker_ledger_parity` | `Ran 6 tests ... OK`, including `25-empty-store-ask-opt-out.json` |
+| Mutation | drop the `Grade` scoped lookup | caught — `apply-start scoped opt-out: decision = "ask", want "allow"` |
+| Mutation | drop the `kind=opt-out` restriction in `PersistDecision` | caught — `adjudication without a primary error = <nil>, want ErrNoPrimary` |
+| Mutation | restore the silent non-TTY proceed in `tracker-card-gate.sh` | caught — `test_ask_without_tty_blocks_without_fabricating_a_decision` |
+| Full suite | `./tests/validate.sh` | 1942/1952 pass; 10 failures, all release trust-root tests |
+
+The 10 failures are one expected artifact, not a regression: the committed
+`catalog/recipes/worktree-flow/bin/SHA256SUMS` still pins the pre-change binaries,
+so `test_worktree_gate_release_phase4` (9 cases) and
+`test_worktree_root_propagation.test_sync_stamps_launcher_and_builds_gate_into_scratch_cache`
+fail on digest mismatch. Diagnosis proven by regenerating the sums in a scratch
+copy with the canonical `go1.24.13` toolchain: the built digests
+(`1723adc3…`, `39b90c05…`, `c96845cb…`, `af9b4003…`) are the only diff, and all
+11 tests pass once the trust root matches. Regeneration remains release step
+7.2; the sums were deliberately not committed here.
+
+### New RED/GREEN pins
+
+| Spec / contract row | Fixture or unit | Test name |
+|---|---|---|
+| Modes `ask` — opt-out is checkpoint-scoped, fresh binding | `25-empty-store-ask-opt-out.json` | `test_every_verdict_case_matches_its_pin` |
+| Fresh-binding opt-out is recordable and scoped | — | `TestPersistScopedOptOutWithoutPrimaryIsScopedAndAllows` |
+| Only the opt-out is recordable without an item | — | `TestPersistWithoutPrimaryStaysClosedForUnrecordableAnswers` |
+| Empty-store ask round trip through the CLI | — | `TestLedgerEmptyStoreAskOptOutPersistsAndAllows` |
+| No terminal never infers a decision | — | `test_ask_without_tty_blocks_without_fabricating_a_decision` (x3 hosts) |
+| `identity_unavailable` reported, never blocking in `ask` | — | `test_ask_identity_unavailable_reports_and_proceeds` (x3 hosts) |
+

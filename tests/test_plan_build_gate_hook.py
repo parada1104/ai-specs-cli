@@ -164,7 +164,12 @@ class PlanBuildGateHookTests(unittest.TestCase):
         return subprocess.run(
             ["bash", str(GATE)],
             input=json.dumps(event),
-            capture_output=True, text=True, env=env,
+            capture_output=True, text=True,
+            # A new session has no controlling terminal, so the ask prompt's
+            # /dev/tty open fails deterministically instead of blocking on a
+            # developer's real terminal.
+            start_new_session=True,
+            env=env,
         )
 
     # 1. Production write, no change folder → block (exit 2).
@@ -452,6 +457,28 @@ class PlanBuildGateHookTests(unittest.TestCase):
         r = self._run(event, extra_env=self._ledger_env(decision="allow"))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("--ledger-mode always", self.stub_log.read_text())
+
+    def test_work_start_ask_without_tty_blocks_without_a_decision(self):
+        self._seed_change()
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        env = self._ledger_env(decision="ask")
+        env["TRACKER_LEDGER_MODE"] = "ask"
+        env["STUB_REASON"] = "needs-item"
+        r = self._run(event, extra_env=env)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("no terminal", r.stderr)
+        self.assertNotIn("--decide", self.stub_log.read_text())
+
+    def test_work_start_ask_identity_unavailable_reports_and_proceeds(self):
+        self._seed_change()
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        env = self._ledger_env(decision="ask")
+        env["TRACKER_LEDGER_MODE"] = "ask"
+        env["STUB_REASON"] = "identity_unavailable"
+        r = self._run(event, extra_env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("identity_unavailable", r.stderr)
+        self.assertNotIn("--decide", self.stub_log.read_text())
 
     def test_work_start_does_not_gate_planning_writes(self):
         event = self._event(
