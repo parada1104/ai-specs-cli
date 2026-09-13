@@ -100,7 +100,9 @@ for `gate_mode`: `ai-specs sync` stamps the resolved mode into
 override at dispatch time. `trello-mcp-workflow` likewise stamps
 `__TRACKER_CARD_GATE_MODE__` (default `warn`) and `__TRACKER_CLI_HOME__`
 into `tracker-card-gate.sh`; `TRACKER_CARD_GATE_MODE` is the one-shot env
-override.
+override. The ledger `ledger_mode` is not stamped: the checkpoint hosts read it
+from `ai-specs/ai-specs.toml` at runtime (falling back to `gate_mode`), and
+`TRACKER_LEDGER_MODE` is the one-shot override.
 
 ## Gate implementation and launcher (worktree-flow)
 
@@ -208,11 +210,48 @@ block are preserved.
 | Recipe | Path hook id | Shell hook id | Shell heuristic |
 |--------|--------------|---------------|-----------------|
 | `worktree-flow` | `worktree-gate` | `worktree-gate-shell` | shell writes into protected main |
-| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` + change-archive helpers |
+| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` (archive-close is graded by the pre-merge guardian) |
 
 Both share one script per recipe with two `[[provides.hooks]]` ids so
 Cursor's file-write skip does not swallow shell coverage. Neither gate
 intercepts MCP tool calls.
+
+## Ledger checkpoints (tracker lifecycle)
+
+`plan-build-flow` and `trello-mcp-workflow` path/shell hooks, plus
+`lib/_internal/premerge_guardian.py`, are **acquisition + JSON bridges** to one
+verified Go predicate. They resolve the `worktree-gate` binary (project-local pin,
+then version-keyed cache with its `.verified` receipt, then the
+explicit `WORKTREE_GATE_BIN` override), invoke it as
+`worktree-gate --ledger --checkpoint <name> --ledger-mode <mode>`, and map the
+JSON verdict to the hook exit contract (`0` allow/ask/dormant/unevaluable, `2`
+only for `block`). Hosts never compile or download on the hot path, and a missing
+or unverified binary fails open with one stderr line.
+
+| Checkpoint | Host |
+|---|---|
+| `work-start` | `plan-build-flow` `plan-build-gate.sh` (before the SDD/proposal phase and before the first production write; no change folder required) |
+| `apply-start` | `trello-mcp-workflow` `tracker-card-gate.sh`, path kind |
+| `pr-review` | `trello-mcp-workflow` `tracker-card-gate.sh`, shell `gh pr create` |
+| `pre-merge` | `premerge_guardian.py --stage pre-merge` |
+| `archive-close` | `premerge_guardian.py --stage pre-archive` |
+
+The verdict is computed from the durable binding witness at
+`<git-common-dir>/ai-specs/ledger/witness.json` and the per-identity store at
+`<git-common-dir>/ai-specs/ledger/state.json`. Only a `bound` witness activates the
+ledger; missing, unreadable, or unknown-version witnesses stay dormant
+(`witness-missing`) and never guess a provider. Mode comes from project config:
+the tracker `ledger_mode` (`always | ask | warn`, default `warn`) wins, and the
+legacy tracker `gate_mode` maps forward (`off` → skip checkpoints, `warn` → `warn`,
+`always` → `always`). The worktree gate's own mode is never read as the ledger
+mode. `TRACKER_LEDGER_MODE` is the one-shot override.
+
+Dormancy is visible through `doctor` only — a `tracker-ledger` check (unbound INFO,
+ambiguous / declared-not-bound / missing witness / recorded conflict WARN,
+infrastructure failure ERROR). The runtime brief and generated agent files gain no
+dormancy line. No host performs a provider MCP/API create or update in this slice;
+`always` blocks until a human supplies the item. Path hosts never block
+`openspec/**`.
 
 ## Shell write-bypass coverage (worktree-flow)
 

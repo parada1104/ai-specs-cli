@@ -1048,4 +1048,135 @@ without a delivery pause.
 
 Produced: this progress artifact and the persisted `- [x]` marks for 6.1–6.6.
 
+## Unit 7 — Phase 7: docs, trust, close-out (7.1–7.5 only)
+
+Tasks 7.1–7.5 complete. Persisted checkboxes updated in
+`openspec/changes/tracker-ledger-foundation/tasks.md` (`- [x]` for 7.1–7.5; 7.6/7.7 left
+unchecked for the parent). Re-read after the edit with `grep -n "^- \[.\] 7\."` to confirm.
+Tasks 7.6 (guardian + archive move) and 7.7 (single `gh` PR) were deliberately **not** run and
+are not claimed.
+
+### Files changed
+
+| Path | Change |
+|---|---|
+| `docs/capabilities.md` | New "Tracker lifecycle: the Tracker Ledger" section: provider-neutral core, witness/store paths, five checkpoints, modes, doctor-only dormancy, no provider writes, strangler-policy relationship |
+| `docs/runtime-hooks.md` | New "Ledger checkpoints (tracker lifecycle)" section (five-host table, binary resolution, witness/store, modes, doctor); `ledger_mode` runtime-read note; corrected the tracker dual-hook shell heuristic (archive-close moved to the guardian) |
+| `README.md` | New "Tracker Ledger" concept section (witness/store paths, five checkpoints, modes, doctor-only dormancy, no provider writes) |
+| `catalog/recipes/trello-mcp-workflow/README.md` | New "Witness, store, and activation" subsection: exact paths, dormant states, doctor severities, no MCP/API writes, provider vocabulary stays in `[config.*]` |
+| `CHANGELOG.md` | New `### Added` bullet describing the Go Tracker Ledger, witness/store paths, five checkpoints, modes, doctor-only dormancy, no provider writes, one-grader delegation |
+| `catalog/recipes/worktree-flow/bin/SHA256SUMS` | Regenerated the four digests with canonical `go1.24.13`; header names the ledger regeneration (same four assets, one trust root) |
+| `openspec/changes/tracker-ledger-foundation/verify-report.md` | New: 11 `Criterion N: PASS` rows, per-unit RED/GREEN/TRIANGULATE/REFACTOR table, 32-row Judgment Day input set, close-out blockers |
+| `openspec/changes/tracker-ledger-foundation/tasks.md` | Checkboxes 7.1–7.5 → `- [x]` |
+| `openspec/changes/tracker-ledger-foundation/apply-progress.md` | This section (merged with Units 1–6) |
+
+**163 added / 12 deleted lines** across 7 tracked files (`git diff --stat`), plus the
+regenerated trust root, before this progress note. Over the 400-line review budget only in the
+whole-change sense; expected under the maintainer-accepted `size:exception`. No comments, docs,
+or tests were dropped or restyled to fit.
+
+### What Unit 7 does
+
+- **Docs (7.1).** The provider-neutral contract is documented in `docs/capabilities.md`,
+  `docs/runtime-hooks.md`, and the root `README.md`; the tracker recipe README adds its
+  provider-scoped witness/store/dormancy detail; `CHANGELOG.md` records the feature under
+  `Unreleased`. Every doc states the witness path
+  (`<git-common-dir>/ai-specs/ledger/witness.json`), the store path
+  (`<git-common-dir>/ai-specs/ledger/state.json`), the five checkpoints, the three modes,
+  `doctor`-only dormancy, provider-neutral core / no universal artifact fields, and "no provider
+  MCP/API writes in this slice". Nothing centers a specific provider in the shared docs.
+- **Trust (7.2).** `scripts/build-gate.sh` built the four targets with `go1.24.13` (no canonical
+  warning); a second build into `/tmp/dist2` produced byte-identical digests, proving
+  reproducibility. `SHA256SUMS` was regenerated from `dist/`, and `scripts/verify-gate-sums.sh`
+  reports `ok — 4 digest entries match the committed trust root`. No new asset and no second
+  trust root appeared.
+- **Validate (7.3).** `./tests/validate.sh` exit 0: `py_compile` + `bash -n` + `gofmt -l` (empty)
+  + `run.sh` (`Ran 1947 tests in 718.846s`, `OK (skipped=2)`, Go `gate` and `ledger` both `ok`).
+  No runner path edits were needed because the module did not move.
+- **Verify report (7.4/7.5).** `verify-report.md` carries the 11-criterion PASS table, the
+  per-unit RED/GREEN/TRIANGULATE/REFACTOR table, the 32-row Judgment Day input set (spec scenario
+  → corpus fixture → test), and the explicit 7.6/7.7 blockers.
+
+### Focused test commands
+
+```bash
+go -C catalog/recipes/worktree-flow/gate test -count=1 ./...
+# ok  ai-specs.dev/worktree-gate  15.090s
+# ok  ai-specs.dev/worktree-gate/ledger  2.986s
+gofmt -l catalog/recipes/worktree-flow/gate            # empty
+go -C catalog/recipes/worktree-flow/gate vet ./...     # clean
+python3 -m unittest tests.test_tracker_ledger_parity tests.test_doctor_tracker_card \
+  tests.test_tracker_ledger_witness tests.test_ledger_mode_config \
+  tests.test_tracker_card_gate_hook tests.test_plan_build_gate_hook \
+  tests.test_premerge_guardian tests.test_worktree_gate_parity tests.test_trello_link
+# Ran 173 tests in 73.916s  OK
+./tests/validate.sh
+# EXIT=0  Ran 1947 tests in 718.846s  OK (skipped=2)
+```
+
+### TDD Cycle Evidence (Unit 7)
+
+| Task | Test / command | Layer | RED | GREEN | TRIANGULATE / REFACTOR |
+|---|---|---|---|---|---|
+| 7.1 docs | `./tests/validate.sh` (docs are not executable; the schema/README tests read the tracker recipe) | Docs + existing schema tests | n/a (prose) | full suite green with the new sections | tracker README/CHANGELOG claims cross-checked against `tracker-card-gate.sh`, `plan-build-gate.sh`, `doctor.py`, `SHA256SUMS`; no doc test asserts a paragraph |
+| 7.2 trust | `scripts/build-gate.sh` + `scripts/verify-gate-sums.sh`; `tests.test_worktree_gate_release_phase4`, `tests.test_release_materialization`, `tests.test_worktree_root_propagation` | Integration / digest | `Ran 22 tests ... FAILED (failures=11)` — digest mismatch `expected 2644dc99…, got 95c1965e…` against the stale committed trust root | `Ran 22 tests ... OK` after the canonical rebuild + SHA256SUMS regeneration | second build into `/tmp/dist2` byte-identical to `dist/` (reproducibility); `verify-gate-sums.sh` matches 4/4 |
+| 7.3 validate | `./tests/validate.sh` | Full | same 11 digest failures before 7.2 | `EXIT=0`, `Ran 1947 tests ... OK (skipped=2)` | gofmt empty, `go vet` clean |
+| 7.4 report | `verify-report.md` content | Docs | n/a | 11 `Criterion N: PASS` rows + per-unit table written | every referenced test name grepped to exist in the tree |
+| 7.5 judgment day | `verify-report.md` input set | Docs | n/a | 32-row scenario → fixture → test map written | no fix round triggered; the mapping points at already-green tests |
+
+### Deviations / notes (Unit 7)
+
+1. **Digest regeneration was the fix, not a test change.** The 11 pre-existing failures were
+   genuine stale-trust-root failures; regenerating `SHA256SUMS` with the canonical toolchain
+   resolved them without touching a test.
+2. **Docs stayed provider-neutral outside the tracker recipe README.** The shared capability and
+   hook docs describe the ledger without naming Trello; the Trello-specific witness/dormancy
+   detail lives only in the recipe README (and its changelog bullet).
+3. **Stale hook comment left in place.** `tracker-card-gate.sh`'s header still lists `archive`
+   among shell actions although archive-close now belongs to the guardian. It is outside this
+   phase's allowed edit surface and is recorded in `verify-report.md` rather than silently edited.
+4. **No commit/push/PR.** The parent prompt forbids committing in this phase; the Phase 7 slice
+   is left uncommitted in `.worktrees/tracker-ledger-foundation` on
+   `change/tracker-ledger-foundation` for the parent/PR owner.
+
+### Remaining tasks (exact unchecked `- [ ]` lines)
+
+```text
+- [ ] 7.6 VERIFY: `python3 lib/_internal/premerge_guardian.py --root . --stage pre-archive` then `--stage pre-merge` pass; archive this change folder to `openspec/changes/archive/2026-09-13-tracker-ledger-foundation/` on the review branch and re-run the guardian after the move. <!-- sdd-owner: implementation -->
+- [ ] 7.7 VERIFY: open ONE PR for the whole change with `gh` (base `development`, accepted `size:exception`), keeping the 7 work units as separate commits in unit order, no merge, and record the PR URL + total changed-line count + per-commit line counts in `openspec/changes/tracker-ledger-foundation/verify-report.md`. <!-- sdd-owner: implementation -->
+```
+
+Every implementation-owned row for Phases 1–6 and 7.1–7.5 is now `- [x]`; only the two
+parent-owned close-out rows remain.
+
+### Slice workload / PR boundary (Unit 7)
+
+- Authored lines: **~163 added / 12 deleted** across 7 tracked files (plus the trust-root
+  regeneration in `SHA256SUMS`). Over the 400-line budget only in the whole-change sense;
+  expected under the accepted `size:exception`.
+- Boundary: commit slice 7 of the single PR, docs/trust/close-out only. Revertable without
+  touching the ledger code or the worktree gate. 7.6 (archive move) and 7.7 (PR) are the parent's
+  ordered next steps.
+
+### Structured status consumed / produced (Unit 7)
+
+Consumed: `artifactStore: openspec`, `actionContext.mode: repo-local`,
+`allowedEditRoots: [/Users/robert/proyectos/nnodes/ai-specs-cli]`, worktree
+`.worktrees/tracker-ledger-foundation` on `change/tracker-ledger-foundation`, accepted
+`size:exception`. Every write stayed inside the eight allowed surfaces (`docs/capabilities.md`,
+`docs/runtime-hooks.md`, `README.md`, `catalog/recipes/trello-mcp-workflow/README.md`,
+`CHANGELOG.md`, `catalog/recipes/worktree-flow/bin/SHA256SUMS`, and the three
+`openspec/changes/tracker-ledger-foundation/**` artifacts). No `actionContext` warning fired.
+
+**Status-engine discrepancy (unchanged, warning only):** the native status JSON was computed
+against the main checkout's `planningHome.root`, where the change folder exists only on this
+branch inside the worktree, so it reported every artifact `missing` and `applyState: blocked`
+with reason "No active SDD changes found.". For the `openspec` store the authoritative inputs
+were read from
+`.worktrees/tracker-ledger-foundation/openspec/changes/tracker-ledger-foundation/` on disk, and
+it was non-authoritative under the store carve-out. No real blocker existed.
+
+Produced: this progress artifact, `verify-report.md`, and the persisted `- [x]` marks for
+7.1–7.5.
+
 

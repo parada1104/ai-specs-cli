@@ -112,8 +112,27 @@ When it is unset the legacy `gate_mode` maps forward: `off`→skip, `warn`→`wa
 `TRACKER_LEDGER_MODE` (and the legacy `TRACKER_CARD_GATE_MODE`). Production dirs
 override: `TRACKER_CARD_GATE_PATHS` (default `lib catalog bin src`). The gate
 **never** blocks `openspec/**` and **fails open** on a missing or unverified
-binary, parse errors, or unavailable IO. It does **not** call Trello MCP: the
-durable binding witness written by `ai-specs sync` is the activation proof.
+binary, parse errors, or unavailable IO.
+
+### Witness, store, and activation
+
+The tracker recipe supplies configuration and provider-private values; it is not
+the grader. Activation is proven by the durable binding witness `ai-specs sync`
+writes at `<git-common-dir>/ai-specs/ledger/witness.json` (`bound` / `ambiguous` /
+`unbound` / `declared-not-bound`). Only `bound` activates the ledger; a missing or
+unreadable witness is dormant (`witness-missing`) and no provider is ever guessed.
+The per-identity record lives at
+`<git-common-dir>/ai-specs/ledger/state.json`, written atomically; a branch reused
+after its item closed opens a new item.
+
+Dormancy is visible through **`doctor` only** — the `tracker-ledger` check renders
+`unbound` (INFO), `ambiguous` / `declared-not-bound` / missing witness / recorded
+conflict (WARN), and infrastructure failure (ERROR). The runtime brief gains no
+per-project dormancy line. The first slice records and reconciles evidence; it
+performs **no** Trello MCP/API create, update, move, comment, or label call —
+`always` blocks until an item is supplied, it does not create one. Provider item
+vocabulary (board, lists, labels, card type) stays in `[config.*]` and out of the
+ledger core item fields and the `## Tracker` contract.
 
 Dual hooks share one script: `tracker-card-gate` (Edit/Write/…) and
 `tracker-card-gate-shell` (Bash/Shell/…).
