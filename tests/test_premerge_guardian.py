@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -885,5 +887,151 @@ class PremergeGuardianTests(unittest.TestCase):
             self.mod.main([slug, "--root", str(root), "--stage", "pre-archive"]),
             0,
         )
+
+
+STUB_BINARY = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${STUB_LOG}"
+decision="${STUB_DECISION:-allow}"
+checkpoint=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --checkpoint) checkpoint="$2"; shift 2 ;;
+    --decide) printf 'DECIDE %s\\n' "$2" >> "${STUB_LOG}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '{"capability":"tracker","active":true,"checkpoint":"%s","mode":"warn","decision":"%s","reason":"stub","identity":{"common_dir":"","branch":"","change":null,"key":""},"item":null,"conflict":null,"prompt":null,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}\\n' "$checkpoint" "$decision"
+[ "$decision" = block ] && exit 2
+exit 0
+"""
+
+
+class GuardianLedgerBridgeTests(unittest.TestCase):
+    """The guardian adds a ledger invoke without changing artifact/verify math."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(MODULE_PATH, "premerge_guardian_ledger")
+
+    def _repo(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "openspec" / "changes" / "archive").mkdir(parents=True)
+        return root
+
+    def _active_light(self, root: Path, slug: str = "demo") -> Path:
+        active = root / "openspec" / "changes" / slug
+        active.mkdir(parents=True)
+        (active / "tasks.md").write_text("Depth: light\n")
+        (active / "proposal.md").write_text("# proposal\n")
+        return active
+
+    def _archive_light(self, root: Path, slug: str = "done") -> Path:
+        archived = root / "openspec" / "changes" / "archive" / slug
+        archived.mkdir(parents=True)
+        (archived / "tasks.md").write_text("Depth: light\n")
+        (archived / "proposal.md").write_text("# proposal\n")
+        return archived
+
+    def _stub(self, root: Path) -> tuple[Path, Path]:
+        base = root / "stub"
+        base.mkdir(exist_ok=True)
+        log = base / "stub.log"
+        binary = base / "worktree-gate"
+        binary.write_text(STUB_BINARY)
+        binary.chmod(0o755)
+        return binary, log
+
+    def _env(self, binary: Path | None, log: Path | None, *, decision: str = "block",
+             **extra: str) -> dict:
+        env = dict(os.environ)
+        for key in ("TRACKER_LEDGER_MODE", "TRACKER_CARD_GATE_MODE", "AI_SPECS_HOME"):
+            env.pop(key, None)
+        if binary is not None and log is not None:
+            env["WORKTREE_GATE_BIN"] = str(binary)
+            env["STUB_LOG"] = str(log)
+            env["STUB_DECISION"] = decision
+        env.update(extra)
+        return env
+
+    def _run(self, root: Path, slug: str, stage: str, env: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(MODULE_PATH), slug, "--root", str(root),
+             "--stage", stage, "--tier", "light"],
+            capture_output=True, text=True, env=env,
+        )
+
+    def test_resolve_ledger_mode_a9_mapping(self):
+        root = self._repo()
+        (root / "ai-specs").mkdir()
+        manifest = root / "ai-specs" / "ai-specs.toml"
+        manifest.write_text(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "ledger_mode = 'always'\ngate_mode = 'off'\n"
+        )
+        self.assertEqual(self.mod.resolve_ledger_mode(root), "always", "ledger_mode wins")
+        manifest.write_text(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\ngate_mode = 'off'\n"
+        )
+        self.assertEqual(self.mod.resolve_ledger_mode(root), "off")
+        manifest.write_text(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\ngate_mode = 'always'\n"
+        )
+        self.assertEqual(self.mod.resolve_ledger_mode(root), "always")
+        manifest.write_text("")
+        self.assertEqual(self.mod.resolve_ledger_mode(root), "warn")
+        with mock.patch.dict(os.environ, {"TRACKER_LEDGER_MODE": "ask"}):
+            self.assertEqual(self.mod.resolve_ledger_mode(root), "ask")
+
+    def test_prearchive_grades_archive_close(self):
+        root = self._repo()
+        self._active_light(root)
+        binary, log = self._stub(root)
+        r = self._run(root, "demo", "pre-archive", self._env(binary, log))
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("--checkpoint archive-close", log.read_text())
+        self.assertIn("tracker-ledger archive-close", r.stderr)
+
+    def test_premerge_grades_pre_merge(self):
+        root = self._repo()
+        self._archive_light(root)
+        binary, log = self._stub(root)
+        r = self._run(root, "done", "pre-merge", self._env(binary, log))
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("--checkpoint pre-merge", log.read_text())
+
+    def test_cold_home_fails_open(self):
+        root = self._repo()
+        self._archive_light(root)
+        env = self._env(None, None, AI_SPECS_HOME=str(root / "cold-home"))
+        r = self._run(root, "done", "pre-merge", env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_tier_math_unchanged_when_ledger_allows(self):
+        root = self._repo()
+        archived = root / "openspec" / "changes" / "archive" / "ok"
+        archived.mkdir(parents=True)
+        (archived / "tasks.md").write_text("Depth: standard\n")
+        (archived / "proposal.md").write_text("# proposal\n")
+        (archived / "specs" / "cap").mkdir(parents=True)
+        (archived / "specs" / "cap" / "spec.md").write_text("# cap\n")
+        (archived / "verify-report.md").write_text(
+            "## Verify evidence\n- Verdict: PASS\n- Command: ./tests/run.sh\n"
+            "- Exit: 0\n- Date: 2026-08-07\n- Commit: 1234567\n"
+        )
+        binary, log = self._stub(root)
+        env = self._env(binary, log, decision="allow")
+        r = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "ok", "--root", str(root),
+             "--stage", "pre-merge", "--tier", "standard"],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("OK (standard)", r.stdout)
+
 if __name__ == "__main__":
     unittest.main()

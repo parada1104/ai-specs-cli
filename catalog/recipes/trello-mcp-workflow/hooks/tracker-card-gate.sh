@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # tracker-card-gate.sh — pre-tool-use guard distributed by trello-mcp-workflow.
 #
-# Semantic model: plan-build-gate (artifact before production). Enforces that
-# every active OpenSpec change carries a ## Tracker link section (or
-# tracker.none) before production writes and high-confidence gh pr create /
-# change-archive shell actions.
+# Semantic model: the ledger is the only grader. This host is a thin
+# acquisition/JSON bridge to the verified Go `--ledger` predicate: it maps a
+# production path write to the `apply-start` checkpoint and `gh pr create` to
+# the `pr-review` checkpoint. Archive-close is graded by the pre-merge guardian.
 #
 # Dual-input contract (one script, every harness):
 #   PATH mode stdin = JSON { "event", "tool_name",
@@ -12,17 +12,20 @@
 #   SHELL mode stdin = JSON with tool_input.command (or script/cmd) OR Cursor
 #     native top-level { "command", "cwd", … }
 #   exit 0 → allow.   exit 2 → block (stderr surfaced to the agent).
-# Fail-open: any parse/lookup/git/python3/ambiguous error allows the action.
+# Fail-open: a missing/unverified binary, any parse/lookup/git/python3 error,
+# or an ambiguous event allows the action. `openspec/**` is never blocked.
 #
 # Tokens stamped at sync (gitignored project copy):
-#   __TRACKER_CARD_GATE_MODE__   (default warn)
-#   __TRACKER_CLI_HOME__         (CLI install home for cache marker resolve)
+#   __TRACKER_CARD_GATE_MODE__   (legacy gate_mode; default warn)
+#   __TRACKER_CLI_HOME__         (CLI install home for binary resolution)
 #
 # Config / env:
-#   TRACKER_CARD_GATE_MODE    env override beats stamp (off|warn|always)
+#   TRACKER_LEDGER_MODE       env override for the ledger mode (always|ask|warn)
+#   TRACKER_CARD_GATE_MODE    legacy gate_mode env override (off|warn|always)
 #   TRACKER_CARD_GATE_PATHS   space-separated production dirs
 #                             (default: "lib catalog bin src")
-#   AI_SPECS_HOME             preferred over stamped CLI home for marker
+#   AI_SPECS_HOME             preferred over stamped CLI home for the binary
+#   WORKTREE_GATE_BIN         explicit verified-binary override (debugging/tests)
 
 stamped_gate_mode="__TRACKER_CARD_GATE_MODE__"
 stamped_cli_home="__TRACKER_CLI_HOME__"
@@ -43,7 +46,6 @@ _resolve_gate_mode() {
   esac
 }
 gate_mode="$(_resolve_gate_mode)"
-[ "$gate_mode" = off ] && exit 0
 
 input="$(cat)"
 
@@ -400,7 +402,7 @@ def nonflag_args(body):
 
 
 def detect_shell_actions(cmd: str):
-    """Return list of (action, detail) with action in {pr_create, archive}."""
+    """Return list of (action, detail) with action in {pr_create}."""
     actions = []
     case_context = bool(re.search(r"(?:^|[;|&()\n])\s*case(?:\s|$)", cmd))
     for seg in segments(cmd):
@@ -414,56 +416,6 @@ def detect_shell_actions(cmd: str):
         # gh pr create
         if cw == "gh" and len(rest) >= 2 and rest[0] == "pr" and rest[1] == "create":
             actions.append(("pr_create", ""))
-            continue
-        # openspec archive <slug?>
-        if cw == "openspec" and rest and rest[0] == "archive":
-            slug = rest[1] if len(rest) >= 2 else ""
-            actions.append(("archive", slug))
-            continue
-        # ai-specs … archive …
-        if cw == "ai-specs" and "archive" in rest:
-            aidx = rest.index("archive")
-            slug = rest[aidx + 1] if aidx + 1 < len(rest) else ""
-            actions.append(("archive", slug))
-            continue
-        if cw == "mv" or (cw == "git" and rest and rest[0] == "mv"):
-            words = body[1:] if cw == "mv" else body[2:]
-            nonflags = [t for t in words if not t.startswith("-")]
-            target_dirs = []
-            for wi, word in enumerate(words):
-                if word in {"-t", "--target-directory"} and wi + 1 < len(words):
-                    target_dirs.append(words[wi + 1])
-                elif word.startswith("--target-directory="):
-                    target_dirs.append(word.split("=", 1)[1])
-                elif word.startswith("-t") and len(word) > 2 and not word.startswith("--"):
-                    target_dirs.append(word[2:])
-            sources = [t for t in nonflags if t not in target_dirs]
-            if sources:
-                src = sources[0]
-                if target_dirs:
-                    dest_candidates = target_dirs
-                else:
-                    dest_candidates = [nonflags[-1]]
-                    trailing_redirect = any(ch in nonflags[-1] for ch in "<>&")
-                    trailing_redirect = trailing_redirect or (
-                        len(nonflags) >= 3
-                        and nonflags[-2] == "&"
-                        and ">" in nonflags[-3]
-                        and nonflags[-1].isdigit()
-                    )
-                    if trailing_redirect:
-                        dest_candidates.extend(nonflags[1:-1])
-                dest = next(
-                    (t for t in dest_candidates if "openspec/changes/archive/" in t.replace("\\", "/")),
-                    "",
-                )
-                if dest:
-                    slug = ""
-                    src_n = src.replace("\\", "/")
-                    m = re.search(r"openspec/changes/([^/]+)/?", src_n)
-                    if m and m.group(1) != "archive":
-                        slug = m.group(1)
-                    actions.append(("archive", slug))
             continue
     return actions
 
@@ -521,171 +473,152 @@ kind="${kind_line%%$'\t'*}"
 rest_kl="${kind_line#*$'\t'}"
 tool_name="${rest_kl%%$'\t'*}"
 cwd="${rest_kl#*$'\t'}"
+# --- Ledger checkpoint bridge (acquisition + JSON only; no predicate) ---------
+# The five ledger checkpoints are graded by the verified Go `--ledger` mode on
+# the shared worktree-gate binary (one predicate, one trust root). This host
+# only resolves the A9 mode, acquires a verified binary, and maps the JSON
+# verdict. A missing/unverified binary, a parse error, or an IO failure fails
+# open (exit 0).
 
-# Shared evaluator: given repo_root + optional slug focus, print deficient list
-# or empty. Exit code unused; stdout = comma-separated deficient slugs.
-_eval_deficient() {
-  local repo_root="$1"
-  local focus_slug="${2:-}"
-  python3 - "$repo_root" "$focus_slug" "$stamped_cli_home" <<'PYEOF' 2>/dev/null
-import hashlib, os, re, sys
+_ledger_mode() {
+  local root="$1"
+  local gate_hint="${2:-}"
+  python3 - "$root" "${TRACKER_LEDGER_MODE:-}" "$gate_hint" <<'PY' 2>/dev/null
+import sys, tomllib
 from pathlib import Path
-BT = chr(96)  # backtick literal kept out of source: bash 3.2 misparses it inside heredocs in command substitution
-FENCE = BT * 3
-
-PAIR_RE = re.compile(
-    r"^\s*(?:[-*]\s+)?\*{0,2}(?P<key>[A-Za-z_][A-Za-z0-9_]*)\*{0,2}\s*:\s*(?P<value>.*)$"
-)
-RECOGNIZED = frozenset({"card_id", "shortlink", "url", "list", "pr"})
-TRACKER_HEADING = re.compile(r"^##\s+Tracker\s*$")
-H2 = re.compile(r"^##\s+")
-BASENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
-
-def clean_value(raw: str) -> str:
-    value = raw.strip()
-    hash_at = value.find(" #")
-    if hash_at != -1:
-        before = value[:hash_at]
-        if before.count(BT) % 2 == 0:
-            value = before.strip()
-    if len(value) >= 2 and value.startswith(BT) and value.endswith(BT):
-        value = value[1:-1].strip()
-    return value
-
-def extract_body(text: str):
-    lines = text.splitlines()
-    start = None
-    in_fence = False
-    fence_marker = ""
-    for i, line in enumerate(lines):
-        stripped = line.lstrip()
-        if stripped.startswith(FENCE) or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            if not in_fence:
-                in_fence = True
-                fence_marker = marker
-            elif stripped.startswith(fence_marker):
-                in_fence = False
-                fence_marker = ""
-            continue
-        if in_fence:
-            continue
-        if TRACKER_HEADING.match(line):
-            start = i + 1
-            break
-    if start is None:
-        return None
-    body = []
-    in_fence = False
-    fence_marker = ""
-    for line in lines[start:]:
-        stripped = line.lstrip()
-        if stripped.startswith(FENCE) or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            if not in_fence:
-                in_fence = True
-                fence_marker = marker
-            elif stripped.startswith(fence_marker):
-                in_fence = False
-                fence_marker = ""
-            body.append(line)
-            continue
-        if not in_fence and H2.match(line):
-            break
-        body.append(line)
-    return "\n".join(body)
-
-def parse_section(paths):
-    for path in paths:
-        try:
-            p = Path(path)
-            if not p.is_file():
-                continue
-            text = p.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        body = extract_body(text)
-        if body is None:
-            continue
-        out = {}
-        in_fence = False
-        fence_marker = ""
-        for line in body.splitlines():
-            stripped = line.lstrip()
-            if stripped.startswith(FENCE) or stripped.startswith("~~~"):
-                marker = stripped[:3]
-                if not in_fence:
-                    in_fence = True
-                    fence_marker = marker
-                elif stripped.startswith(fence_marker):
-                    in_fence = False
-                    fence_marker = ""
-                continue
-            if in_fence or not line.strip() or stripped.startswith("#"):
-                continue
-            m = PAIR_RE.match(line)
-            if not m:
-                continue
-            key = m.group("key").lower()
-            if key not in RECOGNIZED or key in out:
-                continue
-            out[key] = clean_value(m.group("value"))
-        return out
-    return {}
-
-def is_valid_link(change_dir: Path) -> bool:
-    data = parse_section([change_dir / "proposal.md", change_dir / "tasks.md"])
-    return bool(data.get("card_id"))
-
-def sanitize_basename(name: str) -> str:
-    cleaned = BASENAME_SAFE.sub("-", name).strip("-._")
-    return cleaned or "project"
-
-def marker_present(repo_root: Path, stamped_home: str) -> bool:
-    local = repo_root / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
-    if local.is_file():
-        return True
-    home = os.environ.get("AI_SPECS_HOME") or stamped_home
-    if not home or str(home).startswith("__TRACKER_CLI_HOME"):
-        return False
-    try:
-        resolved = repo_root.resolve()
-    except OSError:
-        return False
-    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
-    key = f"{digest}-{sanitize_basename(resolved.name)}"
-    primary = Path(home) / "cache" / "projects" / key / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
-    return primary.is_file()
-
-repo_root = Path(sys.argv[1])
-focus = sys.argv[2] if len(sys.argv) > 2 else ""
-stamped_home = sys.argv[3] if len(sys.argv) > 3 else ""
-
-if not marker_present(repo_root, stamped_home):
-    # inactive → print nothing special; bash treats empty+marker-miss via sentinel
-    print("__INACTIVE__")
-    sys.exit(0)
-
-changes_dir = repo_root / "openspec" / "changes"
-deficient = []
-if changes_dir.is_dir():
-    for child in sorted(changes_dir.iterdir()):
-        if not child.is_dir() or child.name == "archive":
-            continue
-        if not any((child / f).is_file() for f in ("proposal.md", "tasks.md", "spec.md", "design.md")):
-            continue
-        if focus and child.name != focus:
-            continue
-        if (child / "tracker.none").is_file():
-            continue
-        if is_valid_link(child):
-            continue
-        deficient.append(child.name)
-
-print(",".join(deficient))
-PYEOF
+root, env_mode, gate_hint = sys.argv[1], sys.argv[2], sys.argv[3]
+ledger = gate = ""
+try:
+    data = tomllib.loads((Path(root) / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
+    cfg = ((data.get("recipes") or {}).get("trello-mcp-workflow") or {}).get("config") or {}
+    ledger = cfg.get("ledger_mode") or ""
+    gate = cfg.get("gate_mode") or ""
+except Exception:
+    pass
+if gate_hint in ("off", "warn", "always"):
+    gate = gate_hint
+if env_mode in ("always", "ask", "warn"):
+    print(env_mode)
+elif ledger in ("always", "ask", "warn"):
+    print(ledger)
+elif gate == "off":
+    print("off")
+elif gate == "always":
+    print("always")
+else:
+    print("warn")
+PY
 }
 
+_ledger_binary() {
+  if [ -n "${WORKTREE_GATE_BIN:-}" ] && [ -x "$WORKTREE_GATE_BIN" ]; then
+    printf '%s\n' "$WORKTREE_GATE_BIN"
+    return 0
+  fi
+  local home="${AI_SPECS_HOME:-}"
+  if [ -z "$home" ]; then
+    case "$stamped_cli_home" in
+      ""|__*) home="$HOME/.ai-specs" ;;
+      *) home="$stamped_cli_home" ;;
+    esac
+  fi
+  local version=""
+  if [ -f "$home/VERSION" ]; then version="$(tr -d '[:space:]' < "$home/VERSION")"; fi
+  [ -n "$version" ] || version="dev"
+  local goos goarch
+  case "$(uname -s)" in Darwin) goos=darwin ;; Linux) goos=linux ;; *) return 1 ;; esac
+  case "$(uname -m)" in arm64|aarch64) goarch=arm64 ;; x86_64|amd64) goarch=amd64 ;; *) return 1 ;; esac
+  local candidate="$home/cache/bin/worktree-gate/$version/$goos-$goarch/worktree-gate"
+  [ -x "$candidate" ] || return 1
+  [ -f "$candidate.verified" ] || return 1
+  printf '%s\n' "$candidate"
+}
+
+_ledger_field() {
+  # stdin: verdict JSON. $1: top-level key.
+  python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+value = data.get(sys.argv[1], "")
+if isinstance(value, bool):
+    print("1" if value else "0")
+elif value is None:
+    print("")
+else:
+    print(value)
+' "$1" 2>/dev/null
+}
+
+_ledger_ask() {
+  # $1 bin, $2 checkpoint, $3 mode, $4 root, $5 prefix; stdin: prompt JSON.
+  local bin="$1" checkpoint="$2" mode="$3" root="$4" prefix="$5"
+  python3 -c '
+import json, sys
+try:
+    prompt = json.load(sys.stdin) or {}
+except Exception:
+    prompt = {}
+ev = prompt.get("evidence") or {}
+for side in ("local", "remote", "code", "git"):
+    print("  %s: %s" % (side, ev.get(side) or "(unavailable)"))
+print("  choices: " + ", ".join(prompt.get("choices") or []))
+' >&2 2>/dev/null
+  if ! { exec 3</dev/tty; } 2>/dev/null; then
+    echo "${prefix}: ${checkpoint} needs a decision but no terminal is available; proceeding." >&2
+    return 0
+  fi
+  printf '%s: opt out of the %s checkpoint? [y/N] ' "$prefix" "$checkpoint" >&2
+  local answer=""
+  read -r answer <&3 || answer=""
+  exec 3<&-
+  case "$answer" in
+    y|Y|yes|YES|Yes)
+      if "$bin" --ledger --checkpoint "$checkpoint" --ledger-mode "$mode" --project-root "$root" \
+          --decide "{\"checkpoint\":\"$checkpoint\",\"kind\":\"opt-out\",\"choice\":\"continue\"}" >/dev/null 2>&1; then
+        echo "${prefix}: opt-out recorded for ${checkpoint}; proceeding." >&2
+        return 0
+      fi
+      echo "${prefix}: failed to record the ${checkpoint} opt-out; blocking." >&2
+      return 2
+      ;;
+  esac
+  echo "${prefix}: no opt-out recorded for ${checkpoint}; blocking." >&2
+  return 2
+}
+
+_ledger_grade() {
+  # $1 checkpoint, $2 mode, $3 root, $4 prefix. Returns 0 allow / 2 block.
+  local checkpoint="$1" mode="$2" root="$3" prefix="$4"
+  local bin
+  bin="$(_ledger_binary)" || return 0
+  local out rc
+  out="$("$bin" --ledger --checkpoint "$checkpoint" --ledger-mode "$mode" --project-root "$root" 2>/dev/null)"
+  rc=$?
+  [ -n "$out" ] || return 0
+  local decision reason active
+  decision="$(printf '%s' "$out" | _ledger_field decision)" || return 0
+  [ -n "$decision" ] || return 0
+  reason="$(printf '%s' "$out" | _ledger_field reason)"
+  active="$(printf '%s' "$out" | _ledger_field active)"
+  if [ "$rc" = 2 ] || [ "$decision" = block ]; then
+    echo "${prefix}: blocked at ${checkpoint} — ${reason:-missing tracked item}" >&2
+    return 2
+  fi
+  if [ "$decision" = ask ]; then
+    printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("prompt")))' 2>/dev/null \
+      | _ledger_ask "$bin" "$checkpoint" "$mode" "$root" "$prefix"
+    return $?
+  fi
+  if [ "$active" = 1 ] && [ "$decision" != allow ]; then
+    echo "${prefix}: ${decision} at ${checkpoint} — ${reason:-no primary item}" >&2
+  fi
+  return 0
+}
+
+# Resolve the owning repo root from a cwd or path hint (never $PWD for assets).
 _resolve_repo() {
   local hint="$1"
   local dir
@@ -708,32 +641,6 @@ _resolve_repo() {
   git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
   git -C "$dir" rev-parse --show-toplevel 2>/dev/null
 }
-
-_emit_and_exit() {
-  local action_desc="$1"
-  local deficient="$2"
-  local sample=""
-  local path_hint
-  local slug
-  local -a deficient_slugs
-  IFS=',' read -r -a deficient_slugs <<< "$deficient"
-  for slug in "${deficient_slugs[@]}"; do
-    [ -n "$sample" ] && sample+=", "
-    sample+="$slug"
-  done
-  if [ "${#deficient_slugs[@]}" = 1 ]; then
-    path_hint="or add openspec/changes/${sample}/tracker.none with a reason"
-  else
-    path_hint="or add a tracker.none exemption with a reason in each deficient change directory"
-  fi
-  if [ "$gate_mode" = warn ]; then
-    echo "tracker-card-gate: warning — active change(s) missing ## Tracker link section: ${sample}. Create/link Trello cards and write the ## Tracker section (card_id + url), ${path_hint}. Writing under openspec/** is never blocked." >&2
-    exit 0
-  fi
-  echo "tracker-card-gate: refusing to ${action_desc} — active change(s) '${sample}' have no ## Tracker link section in their proposal.md. Create/link Trello cards and write the ## Tracker section (card_id + url), ${path_hint}. Writing under openspec/** is never blocked." >&2
-  exit 2
-}
-
 
 if [ "$kind" = path ]; then
   file_path="$(printf '%s\n' "$parsed" | sed -n '2p')"
@@ -762,10 +669,10 @@ if [ "$kind" = path ]; then
   done
   [ "$is_prod" -eq 1 ] || exit 0
 
-  deficient="$(_eval_deficient "$repo_root")" || exit 0
-  [ "$deficient" = "__INACTIVE__" ] && exit 0
-  [ -n "$deficient" ] || exit 0
-  _emit_and_exit "${tool_name:-edit} '$rel'" "$deficient"
+  mode="$(_ledger_mode "$repo_root" "$gate_mode")"
+  [ "$mode" = off ] && exit 0
+  _ledger_grade "apply-start" "$mode" "$repo_root" "tracker-card-gate" || exit 2
+  exit 0
 fi
 
 if [ "$kind" = shell ]; then
@@ -775,20 +682,9 @@ if [ "$kind" = shell ]; then
     [ -n "$action" ] || continue
     case "$action" in
       pr_create)
-        deficient="$(_eval_deficient "$repo_root")" || exit 0
-        [ "$deficient" = "__INACTIVE__" ] && exit 0
-        [ -n "$deficient" ] || continue
-        _emit_and_exit "gh pr create" "$deficient"
-        ;;
-      archive)
-        if [ -n "$detail" ] && [ -d "$repo_root/openspec/changes/$detail" ]; then
-          deficient="$(_eval_deficient "$repo_root" "$detail")" || exit 0
-        else
-          deficient="$(_eval_deficient "$repo_root")" || exit 0
-        fi
-        [ "$deficient" = "__INACTIVE__" ] && exit 0
-        [ -n "$deficient" ] || continue
-        _emit_and_exit "archive '$detail'" "$deficient"
+        mode="$(_ledger_mode "$repo_root" "$gate_mode")"
+        [ "$mode" = off ] && continue
+        _ledger_grade "pr-review" "$mode" "$repo_root" "tracker-card-gate" || exit 2
         ;;
       *)
         ;;

@@ -55,7 +55,8 @@ Add configuration under `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-s
 | `board_id` | Yes | — | Trello board ID for the project. |
 | `default_list` | No | `In Progress` | List name where new cards are created. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
-| `gate_mode` | No | `warn` | Tracker card gate: `off` / `warn` / `always`. |
+| `gate_mode` | No | `warn` | Legacy vocabulary: `off` / `warn` / `always`. Consulted only when `ledger_mode` is unset. |
+| `ledger_mode` | No | `warn` | Ledger mode: `always` / `ask` / `warn`. `always` blocks missing or conflicted state; `ask` prompts per checkpoint (opt-out is checkpoint-scoped); `warn` reports on stderr and never blocks. Overrides `gate_mode`. |
 
 ### Example
 
@@ -81,28 +82,38 @@ Every active OpenSpec change must carry a `## Tracker` section in `proposal.md`
 - **url**: https://trello.com/c/...
 ```
 
-Doctor and the `tracker-card-gate` hook share this validity predicate. The only
-documented exemption is `openspec/changes/<slug>/tracker.none` (conceptual name
-`tracker:none`) with a one-line reason — logged and rare. Archives are
-grandfathered.
+The `## Tracker` section (and the `tracker.none` exemption) is presentation, not
+the grader. The ledger is the only authority: the `tracker-card-gate` hook sends
+`apply-start` / `pr-review` to the Go verdict, and `doctor` renders its finding.
+The only documented exemption is `openspec/changes/<slug>/tracker.none`
+(conceptual name `tracker:none`) with a one-line reason — logged and rare.
+Archives are grandfathered.
 
 The global contract is also declared in `openspec/config.yaml` under `tracking:`
-(soft guidance for SDD agents). Operational `gate_mode` / `board_id` still come
-from recipe config in `ai-specs.toml`.
+(soft guidance for SDD agents). Operational `ledger_mode` / `gate_mode` /
+`board_id` still come from recipe config in `ai-specs.toml`.
 
 ## Gate modes
 
+The ledger is the only grader. The five checkpoints (`work-start`, `apply-start`,
+`pr-review`, `pre-merge`, `archive-close`) all reach the same verified Go
+`--ledger` predicate; this recipe only supplies the mode and the hooks.
+
 | Mode | Behavior |
 |------|----------|
-| `off` | Gate inactive |
-| `warn` | stderr warning, never blocks (dogfood default) |
-| `always` | block production writes + high-confidence `gh pr create` / archive shell |
+| `off` (`gate_mode`) | Ledger checkpoints skip (doctor still reports the witness). |
+| `warn` | stderr verdict, never blocks (dogfood default). |
+| `ask` | Prompt at each checkpoint; an explicit opt-out allows that checkpoint only. |
+| `always` | Block production writes and `gh pr create` on missing or conflicted state. |
 
-Configured via `[recipes.trello-mcp-workflow.config] gate_mode`. One-shot env
-override: `TRACKER_CARD_GATE_MODE`. Production dirs override:
-`TRACKER_CARD_GATE_PATHS` (default `lib catalog bin src`). The gate **never**
-blocks `openspec/**` and **fails open** on parse/lookup errors. It does **not**
-call Trello MCP — presence of the `## Tracker` section is the proof.
+`ledger_mode` (enum `always|ask|warn`, default `warn`) wins whenever it is set.
+When it is unset the legacy `gate_mode` maps forward: `off`→skip, `warn`→`warn`,
+`always`→`always`. The worktree gate mode is never read. One-shot env override:
+`TRACKER_LEDGER_MODE` (and the legacy `TRACKER_CARD_GATE_MODE`). Production dirs
+override: `TRACKER_CARD_GATE_PATHS` (default `lib catalog bin src`). The gate
+**never** blocks `openspec/**` and **fails open** on a missing or unverified
+binary, parse errors, or unavailable IO. It does **not** call Trello MCP: the
+durable binding witness written by `ai-specs sync` is the activation proof.
 
 Dual hooks share one script: `tracker-card-gate` (Edit/Write/…) and
 `tracker-card-gate-shell` (Bash/Shell/…).

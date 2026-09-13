@@ -642,3 +642,209 @@ authoritative inputs were read from
 
 Produced: this progress artifact and the persisted `- [x]` marks for 4.1–4.6.
 
+## Unit 5 — Phase 5: checkpoint hosts
+
+Tasks 5.1–5.7 complete. Persisted checkboxes updated in
+`openspec/changes/tracker-ledger-foundation/tasks.md` (`- [x]` for 5.1–5.7; the Phase 5
+block now has zero unchecked rows, re-read after the edit with `grep -n "^- \[.\] 5\."`).
+Units 6–7 were deliberately **not** started: no legacy grader was retired (doctor /
+`trello_link`), and no parity corpus or docs/trust work was done.
+
+### Files changed
+
+| Path | Change |
+|---|---|
+| `catalog/recipes/trello-mcp-workflow/recipe.toml` | `[config.ledger_mode]` (enum `always|ask|warn`, default `warn`); hook descriptions + `gate_mode` help text updated |
+| `catalog/recipes/trello-mcp-workflow/README.md` | Config table row, gate-mode table rewrite, `## Tracker`-as-presentation note |
+| `catalog/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh` | Heredoc `## Tracker` grader deleted; path→`apply-start`, shell `pr_create`→`pr-review` through the verified binary; A9 mode; ask prompt + `--decide` |
+| `catalog/recipes/plan-build-flow/hooks/plan-build-gate.sh` | `work-start` checkpoint before the artifact gate; A9 mode; same binary bridge |
+| `catalog/recipes/git-pr-flow/commands/pr-create.md` | `pr-review` precondition + step note |
+| `lib/_internal/premerge_guardian.py` | `resolve_ledger_mode`, `_ledger_binary`, `ledger_blockers`, `_ledger_ask`; `main` invokes `archive-close`/`pre-merge` and merges blockers |
+| `tests/test_ledger_mode_config.py` | New: A9 mapping, recipe schema, five-host parity, no-predicate grep-assert |
+| `tests/test_tracker_card_gate_hook.py` | Rewritten: stub-binary bridge, `gh pr create` tokenizer matrix, archive commands not gated, bash 3.2 |
+| `tests/test_plan_build_gate_hook.py` | +5 work-start bridge tests (no change folder required, mode plumbing, fail-open) |
+| `tests/test_premerge_guardian.py` | +5 guardian bridge tests (A9, both stages, cold home, tier math unchanged) |
+| `openspec/changes/tracker-ledger-foundation/tasks.md` | Checkboxes 5.1–5.7 → `- [x]` |
+| `openspec/changes/tracker-ledger-foundation/apply-progress.md` | This section (merged with Units 1–4) |
+
+**~1,362 authored lines** (`git diff --stat`: 1,027 additions across nine files + 335 new
+test lines), 784 deletions. Over the 400-line review budget by design: `tasks.md` declares
+`400-line budget risk: High` with a maintainer-accepted `size:exception`; nothing was
+compressed or restyled to fit.
+
+### What Unit 5 implements
+
+- **One predicate, five hosts.** `plan-build-gate.sh` grades `work-start`;
+  `tracker-card-gate.sh` grades `apply-start` (path) and `pr-review` (shell `pr_create`);
+  `premerge_guardian.py` grades `archive-close` (`--stage pre-archive`) and `pre-merge`.
+  Every host runs the same verified `worktree-gate --ledger` binary and maps the JSON
+  verdict; the guardian renders blockers through its existing `GuardianResult`.
+- **A9 mode (5.1/5.2).** `[config.ledger_mode]` (`always|ask|warn`, default `warn`) wins;
+  otherwise the tracker `gate_mode` maps `off`→skip, `warn`→`warn`, `always`→`always`. The
+  worktree `gate_mode` is never read. `TRACKER_LEDGER_MODE` is the one-shot override.
+  Because Unit 5's allowed surfaces exclude `recipe-materialize.py`, the mode is resolved at
+  runtime from `ai-specs/ai-specs.toml` (a config read, not a predicate) rather than stamped.
+- **Heredoc grader removed (5.4).** `_eval_deficient`, `is_valid_link`, `marker_present`,
+  `_emit_and_exit`, and the `## Tracker`/`tracker.none` validity copy are gone from the
+  tracker hook. The tokenizer stays (shell acquisition); its archive/`mv` branches were
+  deleted because `archive-close` now belongs to the guardian.
+- **Ask + `--decide` (5.3/5.4/5.5).** `decision=ask` prints the four evidence sides and the
+  legal choices; a `[y/N]` opt-out read from `/dev/tty` is persisted with
+  `--decide {"checkpoint":…,"kind":"opt-out","choice":"continue"}`, which also re-grades.
+  With no usable terminal the host proceeds (fail open) and records nothing.
+- **Fail-open acquisition.** A missing/unverified binary, unparseable JSON, or IO error maps
+  to exit `0` and silence; the binary's own flag/parse errors fail open. `openspec/**` never
+  reaches the ledger in either path host. The guardian's missing-binary path prints one
+  stderr line and adds no blocker.
+- **Guardian math untouched (5.5).** The ledger invoke is merged in `main` after
+  `check_prearchive`/`check_premerge`; tier minima and verify-evidence checks are unchanged
+  (`test_tier_math_unchanged_when_ledger_allows` plus the full existing suite).
+
+### Focused test commands
+
+```bash
+python3 -m unittest tests.test_ledger_mode_config tests.test_tracker_card_gate_hook \
+  tests.test_plan_build_gate_hook tests.test_premerge_guardian
+# Ran 115 tests ... OK
+python3 -m unittest tests.test_trello_mcp_workflow_recipe tests.test_plan_build_flow_recipe \
+  tests.test_git_pr_flow_recipe tests.test_hooks_render tests.test_recipe_schema \
+  tests.test_tracker_ledger_witness tests.test_eval_hook_wiring
+# Ran 263 tests ... OK
+bash -n catalog/recipes/plan-build-flow/hooks/plan-build-gate.sh \
+  && bash -n catalog/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh   # exit 0
+python3 -m py_compile lib/_internal/premerge_guardian.py tests/test_ledger_mode_config.py
+```
+
+Full `./tests/run.sh`: `Ran 1934 tests ... FAILED (failures=11, skipped=2)`. The 11
+failures are the same pre-existing gate-asset digest/build failures recorded in Unit 4
+(`test_worktree_gate_release_phase4` ×9, `test_release_materialization` ×1,
+`test_worktree_root_propagation` ×1); task 7.2 owns regenerating
+`catalog/recipes/worktree-flow/bin/SHA256SUMS`. Unit 5 touches no Go source and none of the
+11 files involved. The Go half of `run.sh` is green (`ok ai-specs.dev/worktree-gate`,
+`ok ai-specs.dev/worktree-gate/ledger`).
+
+### TDD Cycle Evidence
+
+Strict TDD is active (`openspec/config.yaml` `strict_tdd: true`, runner `unittest`), so
+every task ran RED → GREEN → TRIANGULATE → REFACTOR. Because Unit 5 wires hosts that did not
+call the ledger at all, the RED runs are genuine behaviour failures, not missing symbols.
+
+| Task | Test file | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| 5.1 mode mapping | `test_ledger_mode_config.py` | Unit + host | `unittest test_plan_build_gate_hook test_premerge_guardian test_tracker_card_gate_hook` → 110/110 before any edit | 15 failures: `ledger_mode` field absent; hosts never spawned the binary (`_logged_checkpoints() == []`) | `test_recipe_declares_ledger_mode_enum_and_default` + 6 mapping tests pass | ledger-wins vs gate off/warn/always, env override, worktree-mode-ignored, tracker-host mapping | Runtime manifest read adopted instead of a new stamp (see deviations) |
+| 5.2 config | `test_ledger_mode_config.py`, `test_trello_mcp_workflow_recipe` | Unit | same 110/110 | same RED run | recipe + README + help text in place; schema test green | enum/default pinned; README table row pinned via recipe schema | `gate_mode` help text demoted to legacy vocabulary |
+| 5.3 work-start | `test_plan_build_gate_hook.py` | Host (subprocess) | 31 existing plan-build tests green before edit | `test_work_start_grades_production_write` failed (no checkpoint logged) | 5 new tests pass | allow/block stub, mode plumbing (`--ledger-mode always`), `openspec/**` never graded, no change folder required, cold home fail-open | Ledger call moved **before** the artifact gate so a missing change folder cannot skip the checkpoint |
+| 5.4 tracker host | `test_tracker_card_gate_hook.py` | Host (subprocess) | old 36-test file green at HEAD; rewrite keeps tokenizer matrix | rewritten suite against the old hook: path/shell never graded, grader tokens still present | 19 tests pass | `apply-start`/`pr-review` records, allow/block/warn/ask, marker-free activation, mode off, missing binary, archive commands not gated, 62-case `gh pr create` tokenizer matrix, bash 3.2 | Grader + archive branches deleted; `/dev/tty` open checked before prompting |
+| 5.5 guardian | `test_premerge_guardian.py` | CLI (subprocess) + unit | 43 existing guardian tests green before edit | `test_prearchive_grades_archive_close` / `test_premerge_grades_pre_merge` failed (no ledger invoke) | 5 new tests pass | A9 resolver table, both stages, cold `AI_SPECS_HOME` fail-open, tier math unchanged | Ledger merged in `main`, not inside `check_*`, so existing direct-call tests stay pure |
+| 5.6 triangulate | `test_ledger_mode_config.py` | Integration | 115 focused tests green | n/a (verification task) | all five hosts block on a `block` verdict and allow on `allow` | one stub binary, five hosts, five distinct checkpoints logged once each: `apply-start, archive-close, pr-review, pre-merge, work-start` | Guardian exits `1` (its existing convention) where the hooks exit `2` — block/allow semantics identical |
+| 5.7 refactor | `test_ledger_mode_config.py` | Static | — | `test_hosts_add_no_tracker_predicate` failed on the old tracker hook (`is_valid_link`, `RECOGNIZED`, `card_id`, `## Tracker`) | grep-assert green across both hooks and the guardian | `pr-create.md` points at the `pr-review` verdict | no shared bridge file exists in the allowed surfaces; the four bridge helpers are duplicated per host with a comment (see deviations) |
+
+**Mutation checks (proving the assertions are not vacuous):**
+
+1. In `tracker-card-gate.sh`, flipping the `apply-start` argument to `pr-review` made
+   `test_prod_write_grades_apply_start` and the 5.6 checkpoint-set assertion fail.
+2. In `premerge_guardian.py`, returning `[]` from `ledger_blockers` unconditionally made
+   `test_prearchive_grades_archive_close`, `test_premerge_grades_pre_merge`, and both 5.6
+   block subtests fail.
+3. In `plan-build-gate.sh`, moving `_ledger_work_start` back after the artifact gate made
+   `test_work_start_grades_without_a_change_folder` fail.
+
+All three mutations were reverted; the focused suite is green again.
+
+### Deviations from design (Unit 5 only)
+
+1. **Mode is resolved from the project manifest at runtime, not stamped.** Design A9 places
+   `ledger_mode` in recipe config, and `recipe-materialize.py` is outside this unit's allowed
+   edit surface, so no new placeholder could be stamped. The hosts read
+   `[recipes.trello-mcp-workflow.config]` from `ai-specs/ai-specs.toml` (with the tracker
+   `gate_mode` as the A9 fallback) and honor `TRACKER_LEDGER_MODE`. This is still a config
+   read plus an enum choice, not a ledger predicate. A later unit may stamp it for hot-path
+   speed.
+2. **Archive shell actions are no longer gated by the tracker hook.** The design assigns
+   `archive-close` to `premerge_guardian.py --stage pre-archive`, and task 5.4 names only
+   `apply-start` and `pr-review`, so the tokenizer's `openspec archive` / `ai-specs archive` /
+   `mv` / `git mv` branches were deleted rather than left dead. The shell parser is otherwise
+   unchanged, so the `gh pr create` false-positive matrix still guards heredocs and comments.
+3. **`WORKTREE_GATE_BIN` override.** To keep the hosts hermetic and debuggable — and to let
+   the bridge be tested without a released asset — all three hosts accept an explicit
+   executable override before the version-keyed cache. It mirrors `worktree-gate.sh`.
+4. **Cache binaries need the `.verified` receipt; the override does not.** Hosts never execute
+   an unverified cache candidate (mirrors `worktree-cleanup.sh`). The explicit override is a
+   debugging/test pin, like `WORKTREE_GATE_BIN` in the worktree launcher.
+5. **`ask` reads `/dev/tty`; no tty means fail open.** A hook's stdin is the event JSON, so
+   the prompt uses the controlling terminal. When it cannot be opened the host prints the
+   evidence and proceeds without recording a decision (consistent with the fail-open blast
+   radius); a human declining the opt-out blocks.
+6. **The bridge helpers are duplicated per host.** The allowed surfaces contain no shared
+   shell/Python file, so `_ledger_mode`/`_ledger_binary`/`_ledger_field`/`_ledger_ask`,
+   and the guardian's equivalents, are repeated with a comment. Only the config read and the
+   JSON/exit mapping are duplicated; the verdict predicate stays exclusively in Go.
+7. **`unevaluable`/`dormant` do not block the guardian.** Design says infra unevaluable fails
+   open with a doctor ERROR, so the guardian prints a warning and adds no blocker.
+8. **Commit not executed.** Task 5.7's `REFACTOR + commit` is complete except the commit:
+   the parent prompt forbids committing, so this slice is commit slice 5 left uncommitted for
+   the parent/PR owner. No commit, push, or merge was performed.
+
+### Remaining tasks (exact unchecked `- [ ]` lines)
+
+Phases 6–7 remain unchecked; the Phase 5 rows are now `- [x]`. The 17 still-open rows:
+
+```text
+- [ ] 6.1 GREEN+RED: `lib/_internal/doctor.py` renders the JSON `doctor` finding under check `tracker-ledger` with A10 severities (INFO unbound, WARN ambiguous/declared-not-bound/missing-witness/conflict, ERROR infra) and stops grading; drop `_check_tracker_card_link` as a grader; update `tests/test_doctor_tracker_card.py`; assert no runtime-brief/`AGENTS.md` dormancy line (D15). <!-- sdd-owner: implementation -->
+- [ ] 6.2 GREEN: `lib/_internal/trello_link.py` stays a parser — comments + no new predicate; existing consumers delegate to the Go verdict. <!-- sdd-owner: implementation -->
+- [ ] 6.3 RED: pinned `tests/fixtures/tracker-ledger-corpus/*.json` covering every design test-table row (dormant, empty store × modes, consistent evidence, four-side conflict, persisted `--decide`, checkpoint-scoped opt-out, branch reuse → new item, two open items, detached HEAD per mode, `openspec/**` never blocked, missing binary → exit 0). <!-- sdd-owner: implementation -->
+- [ ] 6.4 GREEN: `tests/test_tracker_ledger_parity.py` drives `dist/worktree-gate-current --ledger` per fixture (mirror `tests/test_worktree_gate_parity.py` (read-only) shape) and fails on any host/Go divergence. <!-- sdd-owner: implementation -->
+- [ ] 6.5 TRIANGULATE: run corpus twice; byte-identical verdicts and no store residue; confirm existing worktree-gate corpus unchanged. <!-- sdd-owner: implementation -->
+- [ ] 6.6 REFACTOR + commit. <!-- sdd-owner: implementation -->
+- [ ] 7.1 GREEN: update `docs/capabilities.md`, `docs/runtime-hooks.md`, `README.md`, `catalog/recipes/trello-mcp-workflow/README.md`, and `CHANGELOG.md` with the witness/store paths, five checkpoints, modes, dormancy-in-doctor, and "no provider writes in this slice". <!-- sdd-owner: implementation -->
+- [ ] 7.2 VERIFY: `scripts/build-gate.sh` then `scripts/verify-gate-sums.sh` — same four assets, one trust root; regenerate `catalog/recipes/worktree-flow/bin/SHA256SUMS` only with canonical `go1.24.13`, else record the pending-release note. <!-- sdd-owner: implementation -->
+- [ ] 7.3 VERIFY: `./tests/validate.sh` (py_compile, `bash -n`, gofmt, Go tests incl. `ledger`, unittest discovery) fully green; no runner path edits were needed because the module did not move. <!-- sdd-owner: implementation -->
+- [ ] 7.4 GREEN: write `openspec/changes/tracker-ledger-foundation/verify-report.md` with one `Criterion N: PASS` row per the 11 proposal Success Criteria, plus RED/GREEN evidence per unit. <!-- sdd-owner: implementation -->
+- [ ] 7.5 GREEN: append the Judgment Day input set to `openspec/changes/tracker-ledger-foundation/verify-report.md` (spec scenario → corpus fixture → test name) for up to 3 authorized rounds; record each round's fix re-run. <!-- sdd-owner: implementation -->
+- [ ] 7.6 VERIFY: `python3 lib/_internal/premerge_guardian.py --root . --stage pre-archive` then `--stage pre-merge` pass; archive this change folder to `openspec/changes/archive/2026-09-13-tracker-ledger-foundation/` on the review branch and re-run the guardian after the move. <!-- sdd-owner: implementation -->
+- [ ] 7.7 VERIFY: open ONE PR for the whole change with `gh` (base `development`, accepted `size:exception`), keeping the 7 work units as separate commits in unit order, no merge, and record the PR URL + total changed-line count + per-commit line counts in `openspec/changes/tracker-ledger-foundation/verify-report.md`. <!-- sdd-owner: implementation -->
+```
+
+Unit 6 (one grader: doctor/`trello_link` retirement + parity corpus) and Unit 7 (docs, trust,
+close-out) were not started, per the assigned boundary. No old grader was retired.
+
+### Slice workload / PR boundary (Unit 5)
+
+- Authored lines: **~1,362** (1,027 additions across the four host/docs files and the three
+  edited test files + 335 new `test_ledger_mode_config.py`), 784 deletions, over the 400-line
+  review budget. Expected under the maintainer-accepted `size:exception`; no comments, tests,
+  or edge cases were dropped, and no restyling was done.
+- Boundary: commit slice 5 of the single PR, and the slice that makes checkpoints
+  behaviourally live. It depends on Units 3–4 (verdict + witness) and is the first slice any
+  user-facing hook runs. Reverting the four host files restores the pre-ledger hosts; the
+  heredoc grader returns only with the revert (which is the intended rollback).
+- The Go side was not touched in this unit.
+
+### Structured status consumed / produced (Unit 5)
+
+Consumed: `artifactStore: openspec`, `actionContext.mode: repo-local`,
+`allowedEditRoots: [/Users/robert/proyectos/nnodes/ai-specs-cli]`, worktree
+`.worktrees/tracker-ledger-foundation` on `change/tracker-ledger-foundation`, accepted
+`size:exception`. Every write stayed inside the ten allowed surfaces (two recipe files, two
+hooks, `pr-create.md`, the guardian, the four test files, and the two
+`openspec/changes/tracker-ledger-foundation/**` artifacts). No `actionContext` warning fired
+and no edit left the allowed roots.
+
+**Tooling note (deviation, resolved):** a first attempt at rewriting `tracker-card-gate.sh`
+with a `bash` heredoc ran a Python splice and was correctly refused by the worktree gate
+("refusing shell command that writes … on protected branch 'development'"). The split was
+completed with the structured `edit`/`write` tools only; the fallback heredoc was never used.
+
+**Status-engine discrepancy (unchanged, warning only):** the native status JSON was computed
+against the main checkout's `planningHome.root`, where this change folder exists only on this
+branch inside the worktree, so it again reported every artifact `missing` and
+`applyState: blocked` with reason "No active SDD changes found.". For the `openspec` store the
+authoritative inputs were read from
+`.worktrees/tracker-ledger-foundation/openspec/changes/tracker-ledger-foundation/` on disk.
+No real blocker was reported; the forecast gate is `Decision needed before apply: No`,
+`Chained PRs recommended: No`, `400-line budget risk: High` with the recorded
+`size:exception`, so implementation proceeded without a delivery pause.
+
+Produced: this progress artifact and the persisted `- [x]` marks for 5.1–5.7.
+
+
