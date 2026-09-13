@@ -55,10 +55,10 @@ Under `size:exception` these are **ordered commit slices inside one PR**, not se
 
 ## Phase 2 — Unit 2: store (Go)
 
-- [ ] 2.1 RED: `catalog/recipes/worktree-flow/gate/ledger/store_test.go`: missing file = empty items; corrupt JSON = `unevaluable`/`store-corrupt`, never synthesized; atomic `state.json.tmp.*` + rename leaves no temp residue; identity key `common_dir+"\x1f"+branch[+"\x1f"+change]`. <!-- sdd-owner: implementation -->
-- [ ] 2.2 RED: item rules — closed never reopened, reused branch opens a NEW item (D17), two `open` rows = conflict not pick, provider-neutral fields only (opaque `provider` unread), append-only `decisions[]` kinds `adjudicate|opt-out|open|close|link`, `opt-out` scoped to one checkpoint (D19), advisory ceiling 32 items / 64 KiB (no compaction). <!-- sdd-owner: implementation -->
-- [ ] 2.3 GREEN: implement `catalog/recipes/worktree-flow/gate/ledger/store.go` at `<git-common-dir>/ai-specs/ledger/state.json` (A3). <!-- sdd-owner: implementation -->
-- [ ] 2.4 TRIANGULATE/REFACTOR: concurrent-append test (two writers, one replace wins, no lost decision); commit. <!-- sdd-owner: implementation -->
+- [x] 2.1 RED: `catalog/recipes/worktree-flow/gate/ledger/store_test.go`: missing file = empty items; corrupt JSON = `unevaluable`/`store-corrupt`, never synthesized; atomic `state.json.tmp.*` + rename leaves no temp residue; identity key `common_dir+"\x1f"+branch[+"\x1f"+change]`. <!-- sdd-owner: implementation -->
+- [x] 2.2 RED: item rules — closed never reopened, reused branch opens a NEW item (D17), two `open` rows = conflict not pick, provider-neutral fields only (opaque `provider` unread), append-only `decisions[]` kinds `adjudicate|opt-out|open|close|link`, `opt-out` scoped to one checkpoint (D19), advisory ceiling 32 items / 64 KiB (no compaction). <!-- sdd-owner: implementation -->
+- [x] 2.3 GREEN: implement `catalog/recipes/worktree-flow/gate/ledger/store.go` at `<git-common-dir>/ai-specs/ledger/state.json` (A3). <!-- sdd-owner: implementation -->
+- [x] 2.4 TRIANGULATE/REFACTOR: concurrent-append test (two writers, one replace wins, no lost decision); commit. <!-- sdd-owner: implementation -->
 
 ## Phase 3 — Unit 3: verdict + CLI
 
