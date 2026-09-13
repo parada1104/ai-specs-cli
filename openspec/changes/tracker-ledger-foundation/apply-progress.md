@@ -81,13 +81,6 @@ match`) produce byte-identical resolution in Go and Python.
 ### Remaining tasks (unchecked lines in the persisted tasks artifact)
 
 ```text
-- [ ] 3.1 RED: `catalog/recipes/worktree-flow/gate/ledger/verdict_test.go` — 5 checkpoints × 3 modes table for the design posture matrix incl. `always` blocking missing/conflicted (`needs-item`) and pre-merge `identity_unavailable`, `warn` never blocking, `ask` → `decision=ask` exit 0. <!-- sdd-owner: implementation -->
-- [ ] 3.2 RED: `catalog/recipes/worktree-flow/gate/ledger/decide_test.go` — four-side evidence disagreement records conflict with no default winner; `--decide` persists then re-grade allows; failed persist exits 2. <!-- sdd-owner: implementation -->
-- [ ] 3.3 RED: `catalog/recipes/worktree-flow/gate/ledger_cmd_test.go` — flag surface (`--ledger --checkpoint --ledger-mode --project-root --witness --store --evidence --decide --explain`), exact JSON keys from design, exit 0 for `allow|ask|dormant|unevaluable` and 2 only for `block`, flag-parse fail-open on verdict calls. <!-- sdd-owner: implementation -->
-- [ ] 3.4 GREEN: implement `catalog/recipes/worktree-flow/gate/ledger/verdict.go`, `catalog/recipes/worktree-flow/gate/ledger/decide.go`, `catalog/recipes/worktree-flow/gate/ledger_cmd.go`, and the `--ledger` switch in `catalog/recipes/worktree-flow/gate/main.go` (cleanup-mode precedent). <!-- sdd-owner: implementation -->
-- [ ] 3.5 GREEN: extend `selftest` in `catalog/recipes/worktree-flow/gate/main.go` to assert ledger identity/verdict invariants in-process, still printing `ok` and keeping gate regexp compiles. <!-- sdd-owner: implementation -->
-- [ ] 3.6 TRIANGULATE: `go build` + `dist/worktree-gate-current --ledger --checkpoint work-start --ledger-mode warn` on this repo; confirm existing `--explain`/worktree corpus output unchanged. <!-- sdd-owner: implementation -->
-- [ ] 3.7 REFACTOR + commit: mode/enum helper names, no coupling to worktree gate semantics (D4/A1). <!-- sdd-owner: implementation -->
 - [ ] 4.1 RED: `tests/test_tracker_ledger_witness.py` — after sync, `<git-common-dir>/ai-specs/ledger/witness.json` exists with the four states, candidate ids for `ambiguous`, no provider guessed, and survives the `RESOLVED_CONFIG_TEMP` EXIT trap. <!-- sdd-owner: implementation -->
 - [ ] 4.2 RED: add synthetic provider `tests/fixtures/recipes/test-tracker-ledger/recipe.toml` declaring `tracker` (gated by `AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES`) + `tests/fixtures/recipes/test-tracker-ledger-conflict/recipe.toml` for the ambiguous case. <!-- sdd-owner: implementation -->
 - [ ] 4.3 GREEN: add the atomic `mkstemp`+`os.replace` witness writer to `lib/_internal/recipe-materialize.py` right after `resolve_bindings`/`check_capability_conflicts`; keep it the only binding producer. <!-- sdd-owner: implementation -->
@@ -268,10 +261,10 @@ three failures (`TestTwoOpenItemsAreConflictNotPick`, `TestOptOutIsCheckpointSco
 
 ### Remaining tasks
 
-Phase 3–7 (`3.1`–`7.7`) remain unchecked in
+Phase 4–7 (`4.1`–`7.7`) remain unchecked in
 `openspec/changes/tracker-ledger-foundation/tasks.md`; exact lines are listed in the
-Unit 1 tail above from `- [ ] 3.1` onward (the `2.x` rows were removed from that list as
-they are now `- [x]`).
+Unit 1 tail above from `- [ ] 4.1` onward (the `2.x` and `3.x` rows were removed from
+that list as they are now `- [x]`).
 
 ### Structured status consumed / produced (Unit 2)
 
@@ -282,3 +275,185 @@ inside `.worktrees/tracker-ledger-foundation` on `change/tracker-ledger-foundati
 `openspec/changes/tracker-ledger-foundation/**`). No `actionContext` warning fired and no
 edit left the allowed roots. Produced: this progress artifact plus the persisted `- [x]`
 marks for 2.1–2.4.
+
+## Unit 3 — Phase 3: verdict + CLI
+
+Tasks 3.1–3.7 complete. Persisted checkboxes updated in
+`openspec/changes/tracker-ledger-foundation/tasks.md` (`- [x]` for 3.1–3.7; the Phase 3
+block now has zero unchecked rows). Re-read after the edit to confirm.
+
+### Files changed
+
+| Path | Change |
+|---|---|
+| `catalog/recipes/worktree-flow/gate/ledger/verdict.go` | New: pure checkpoint predicate — 5 checkpoints × 3 modes, evidence model, conflict snapshot, prompt, doctor finding |
+| `catalog/recipes/worktree-flow/gate/ledger/verdict_test.go` | New: posture matrix (5×3×8 scenarios), ask/warn/always pins, opt-out/adjudication, enum surface, exit codes |
+| `catalog/recipes/worktree-flow/gate/ledger/decide.go` | New: `DecisionRequest` validation + locked `PersistDecision`/`PersistConflict`; conflict clearing |
+| `catalog/recipes/worktree-flow/gate/ledger/decide_test.go` | New: four-side conflict predicate, adjudication round trip, fail-closed persist paths, checkpoint-scoped opt-out |
+| `catalog/recipes/worktree-flow/gate/ledger_cmd.go` | New (`package main`): `--ledger` dispatcher, exact JSON contract, evidence loader, decide persist, `ledgerSelftest` |
+| `catalog/recipes/worktree-flow/gate/ledger_cmd_test.go` | New: flag surface, exact JSON keys, exit-code contract, dormant/unevaluable/block, decide round trip, fail-open |
+| `catalog/recipes/worktree-flow/gate/main.go` | `--ledger` flag set + switch (cleanup precedent); `selftest` calls `ledgerSelftest` |
+| `openspec/changes/tracker-ledger-foundation/tasks.md` | Checkboxes 3.1–3.7 → `- [x]` |
+| `openspec/changes/tracker-ledger-foundation/apply-progress.md` | This section (merged with Units 1–2) |
+
+**1,925 authored lines** across 6 new Go files + 24 added `main.go` lines (338 + 429 +
+123 + 223 + 275 + 513 = 1,901 new; `main.go` +24). The worktree gate path is otherwise
+untouched: `Decide`, `Event`, cleanup, tokenize and the `--explain` path have no ledger
+reference (grep evidence below).
+
+### What Unit 3 implements
+
+- **One predicate, five checkpoints (3.4).** `ledger.Grade(Input) Verdict` is pure (no
+  IO): it short-circuits dormant → `unevaluable` (corrupt store) → `identity_unavailable`
+  → item selection, then applies the mode posture. `Checkpoints` is exactly
+  `work-start, apply-start, pr-review, pre-merge, archive-close`; `LedgerModes` is exactly
+  `always, ask, warn`; `NormalizeMode` defaults an unset/unknown mode to `warn` (A9/D18
+  warn-first adoption). The worktree `gate-mode` is never read (D4).
+- **Decisions.** `allow | block | ask | dormant | unevaluable`; `Verdict.ExitCode()` is
+  `2` only for `block`. `ask` carries a `Prompt` (reason, four sides, legal choices) and
+  exits `0`; `warn` never blocks; `always` blocks missing/conflicted state with
+  `needs-item`/`conflict`, and blocks `identity_unavailable` at every checkpoint.
+- **Evidence and conflict (3.2/A6).** Four sides (`local` = ledger item snapshot unless
+  overridden, `remote`/`code`/`git` = host `--evidence` file). An empty side is
+  unavailable and never a winner; any available side disagreeing with the snapshot is a
+  conflict. A conflict grade records the snapshot on the item; a persisted
+  `adjudicate`/`opt-out` decision for that checkpoint resolves it and `PersistDecision`
+  clears the snapshot, so doctor stops warning.
+- **CLI (3.3/3.4).** `--ledger --checkpoint --ledger-mode --project-root --witness
+  --store --evidence --decide --explain` on the existing binary (one module, one asset,
+  one trust root; A1). Stdout is always one JSON object with the design keys
+  (`capability, active, checkpoint, mode, decision, reason, identity{common_dir,branch,
+  change,key}, item, conflict, prompt, doctor{severity,name,message}`); `--explain` is an
+  alias. Evidence/flag-parse/IO problems fail open (exit `0`); a failed `--decide`
+  persist fails closed (exit `2`). Default paths are `<git-common-dir>/ai-specs/ledger/
+  {witness,state}.json`; `--witness`/`--store` override them.
+- **Selftest (3.5).** `--selftest` still compiles every gate regexp, checks git, and then
+  runs `ledgerSelftest()` in-process (enum surface, warn/ask/always posture, dormant,
+  conflict predicate) before printing `ok`. No network, no store IO.
+- **Repository reality check (3.6).** `scripts/build-gate.sh` built the four targets and
+  `dist/worktree-gate-current`; `--selftest` prints `ok`; `--ledger --checkpoint
+  work-start --ledger-mode warn` on this repo printed
+  `decision=dormant reason=witness-missing active=false` (Unit 4 has not written a
+  witness yet) with exit `0`.
+
+### Focused test commands
+
+```bash
+go -C catalog/recipes/worktree-flow/gate test -count=1 ./ledger/...
+# ok  ai-specs.dev/worktree-gate/ledger  2.6s   (13 + 7 new tests + 5×3×8 matrix cells)
+go -C catalog/recipes/worktree-flow/gate test -count=1 .
+# ok  ai-specs.dev/worktree-gate  14.5s          (15 new ledger_cmd tests + existing gate suite)
+go -C catalog/recipes/worktree-flow/gate test -count=1 ./...
+# ok  both packages
+gofmt -l catalog/recipes/worktree-flow/gate   # no output
+go -C catalog/recipes/worktree-flow/gate vet ./...   # clean
+./scripts/build-gate.sh && ./dist/worktree-gate-current --selftest   # ok
+python3 -m unittest tests.test_worktree_gate_parity   # 8 tests OK (corpus unchanged)
+```
+
+Behavior parity for the untouched modes was checked against a pre-change build
+(`main.go` stashed, binary built to `/tmp/gate-old`): `--explain` output is byte-identical
+for empty stdin, a path event, a shell event and `--gate-mode off`; `--tokenize` output is
+identical. The worktree-gate Python corpus (`tests/test_worktree_gate_parity.py`, 8
+tests) stays green.
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| 3.1 verdict | `ledger/verdict_test.go` | Unit | ✅ `go test ./...` gate ok + ledger 27/27 before any edit | ✅ `undefined: Evidence, Verdict, Checkpoints, Grade, …` (build failed) | ✅ posture matrix + 6 focused tests pass | ✅ 5 checkpoints × 3 modes × 8 scenarios = 120 cells, plus dormant-beats-corrupt ordering, ambiguous/declared severities, unknown checkpoint, exit-code map | ✅ `rfc3339Stamp` extracted; `okayDoctor`/`bindingDoctor`/`verdictDoctor` split |
+| 3.2 decide | `ledger/decide_test.go` | Unit | ✅ same baseline | ✅ same RED build (`undefined: DecisionChoices, DecisionRequest, PersistDecision, PersistConflict`) | ✅ conflict predicate, adjudication round trip, fail-closed paths pass | ✅ 7 conflict shapes; opt-out checkpoint scoping; snapshot clear; collision + corrupt + no-primary + bad kind/choice + bad path all fail closed | ✅ `Normalize`/`Validate` split; typed `ErrInvalidDecision`/`ErrUnknownChoice`; `clearConflict`/`setConflict` helpers |
+| 3.3 CLI | `ledger_cmd_test.go` | Unit (in-process `run`) | ✅ same baseline | ✅ JSON-not-emitted + wrong exit codes because `--ledger` was unknown; ledger package build failed | ✅ 15 CLI tests pass | ✅ exact top-level/identity/doctor key sets; exit 0 for allow/ask/dormant/unevaluable, 2 for block; decide round trip; invalid JSON; flag-parse fail-open; detached HEAD per mode; two-open collision; item populated; conflict persisted then cleared; explain alias; worktree explain unchanged | ✅ token names `newLedgerOut`/`loadLedgerEvidence`/`persistLedgerDecision`/`storedLedgerSlug`; `emptyLedgerStorePath`/`recordedConflict` test helpers |
+| 3.4 GREEN impl | (same files) | Unit | ✅ as above | ✅ as above | ✅ all suites green after `go build` | ✅ full `go test ./...` + `-count=1` | ✅ coupling grep + `go list -deps ./ledger` (only stdlib + ledger) |
+| 3.5 selftest | `ledger_cmd_test.go` (`TestLedgerJSONContractKeys`, existing `TestSelftestOK`) + script run | Unit + binary | ✅ existing `TestSelftestOK` | ✅ mutation B (ask→block) made `TestSelftestOK` FAIL, proving `ledgerSelftest` runs | ✅ `--selftest` prints `ok`, exit 0 | ✅ binary `--selftest` after `build-gate.sh`; gate regexp compile + git checks still precede it | ✅ ledger invariant block isolated in `ledgerSelftest()` in `ledger_cmd.go` |
+| 3.6 triangulate | build + binary + Python corpus | Integration | ✅ parity test 8/8 pre-change (baseline green) | n/a (verification task) | ✅ binary emits dormant JSON exit 0 on this repo | ✅ old vs new `--explain` byte-identical (4 inputs) + `--tokenize` identical; parity corpus 8/8 OK | ✅ `--explain` worktree path untouched |
+| 3.7 refactor | `ledger/verdict_test.go`, `ledger/decide_test.go` | Unit | ✅ 35/35 new tests before refactor | n/a (refactor) | ✅ green after dedupe | ✅ two mutation checks below | ✅ `rfc3339Stamp` dedupe; enum helper names verified; no worktree coupling |
+
+**Mutation checks (proving the assertions are not vacuous):**
+1. `Evidence.Conflict` with the `side != e.Local` comparison removed → `TestEvidenceConflictFourSidesNoDefaultWinner` and `TestGradePostureMatrixFiveCheckpointsThreeModes` FAILed.
+2. `outcome` mapping `ModeAsk` to `block` → 6 ledger tests, 4 `package main` tests and `TestSelftestOK` FAILed (including `TestGradeAskPromptAndExitZero` and `TestLedgerExitCodeContract`).
+
+Both mutations were reverted; `gofmt -l` clean and `go test -count=1 ./...` green again.
+
+**Coupling evidence (D4/A1):**
+- `go list -deps ./ledger` lists only `ai-specs.dev/worktree-gate/ledger` (stdlib otherwise) — no gate `Decide`/`Event`/cleanup type is reachable.
+- `grep -rn -E "Decide|Event|cleanup|gate-mode|GateMode|WORKTREE_GATE|PROTECTED|tokenize" ledger/*.go` matches only the package doc comment in `identity.go`; no code reference.
+- `ledger_cmd.go` reads no worktree gate flag or env var; it only injects `gitMemo`/`gitCommon`/`RealPath`/`processCwd` as the shared Git-facts seam.
+
+### Deviations from design (Unit 3 only)
+
+1. **Conflict reason is `conflict`, not `needs-item`.** Task 3.1's parenthetical
+   "(needs-item)" is pinned to the *missing item* case (design test-table row
+   "bound + empty store + always + apply-start | block `needs-item`"). A disagreement or a
+   two-open collision returns `reason=conflict` so the JSON `conflict` object and the
+   doctor WARN have a matching reason. Both are `block`/exit `2` in `always`, ask/`0` in
+   `ask`, allow/`0` in `warn`.
+2. **Conflict resolution is checkpoint-scoped.** A persisted `adjudicate` (or `opt-out`)
+   resolves only the checkpoint it names, mirroring D19 for opt-outs. The snapshot is
+   cleared by `--decide`, so "current conflict" means unresolved at the current
+   checkpoint. This makes the next checkpoint re-present the evidence rather than inherit
+   a stale "resolved" bit.
+3. **Local evidence side is the item snapshot.** The `--evidence` file supplies
+   `remote`/`code`/`git`; `local` defaults to `item.item_id` (the design evidence table).
+   The file may still override `local`, which keeps the predicate testable for
+   "missing local vs present remote".
+4. **Stored-slug recovery in the dispatcher.** `identity.go` cannot be edited in this
+   slice's allowed surface, so the CLI re-derives the identity with `StoredSlug` taken
+   from the single open item for `common_dir+branch`, preserving A11 when a change folder
+   is archived mid-item. Two open items with different slugs are left to the collision
+   path.
+5. **Unknown checkpoint/mode are fail-open, not parse errors.** An unknown
+   `--checkpoint` value returns `unevaluable`/`unknown-checkpoint`/exit `0` (doctor
+   ERROR) instead of aborting; an unknown/empty `--ledger-mode` normalizes to `warn`.
+   Actual flag-parse errors keep the existing launch fail-open (`warning … failing open`,
+   exit `0`).
+6. **Two-open collision has no `--decide` pick path.** `PersistConflict`/`PersistDecision`
+   fail closed when the identity has two open items, so the collision stays a conflict
+   for a human; this slice ships no silent or scripted pick (spec: "never as a silent
+   pick"). A future slice can add an explicit adjudication payload.
+7. **`--decide` is skipped while dormant.** With no active witness there is no item to
+   attach a decision to, so `--decide` is a no-op and the grade stays `dormant`/exit `0`
+   instead of failing closed. A bound ledger with no primary item still fails closed
+   (exit `2`).
+
+### Slice workload / PR boundary (Unit 3)
+
+- Authored lines: **1,925** (1,901 new Go + 24 `main.go`), over the 400-line review
+  budget. Expected under the maintainer-accepted `size:exception`; no comments, tests, or
+  edge cases were dropped, and no restyling was done.
+- Boundary: commit slice 3 of the single PR, and the first slice that changes the shipped
+  binary. It is still inert without a witness (Unit 4): every checkpoint on a repo without
+  `witness.json` grades `dormant`. Reverting `ledger_cmd.go` + the `main.go` hunk (and
+  `verdict.go`/`decide.go`) restores the worktree gate exactly — proven by the
+  old-vs-new `--explain` byte comparison.
+- **Commit step not executed.** Task 3.7's `REFACTOR + commit` is complete except for the
+  commit itself: the parent prompt explicitly forbids committing in this phase, so the
+  slice boundary is left staged-but-uncommitted for the parent/PR owner. No commit, push,
+  or merge was performed.
+
+### Remaining tasks
+
+Phase 4–7 (`4.1`–`7.7`) remain unchecked in
+`openspec/changes/tracker-ledger-foundation/tasks.md`; the exact lines are listed in the
+Unit 1 tail above from `- [ ] 4.1` onward. Python hosts were deliberately **not** wired
+(Unit 5) and no witness producer was added (Unit 4), per the assigned boundary.
+
+### Structured status consumed / produced (Unit 3)
+
+Consumed: `artifactStore: openspec`, `actionContext.mode: repo-local`,
+`allowedEditRoots: [/Users/robert/proyectos/nnodes/ai-specs-cli]`, worktree
+`.worktrees/tracker-ledger-foundation` on `change/tracker-ledger-foundation`. The parent
+supplied the Unit 3 assignment and the accepted `size:exception`; the `Review Workload
+Forecast` gate is `Decision needed before apply: No`, `Chained PRs recommended: No`,
+`400-line budget risk: High`, so implementation proceeded without a delivery pause.
+
+**Status-engine discrepancy (warning, not a blocker):** the native status JSON was
+computed at `planningHome.root = /Users/robert/proyectos/nnodes/ai-specs-cli` (the main
+checkout), where `openspec/changes/` contains only `archive/` — the change folder lives
+on the `change/tracker-ledger-foundation` branch inside this worktree. The status therefore
+reported `changeRoot: null`, every artifact `missing`, and
+`applyState/blockedReasons: "No active SDD changes found."`. For the `openspec` store the
+authoritative inputs were read from
+`.worktrees/tracker-ledger-foundation/openspec/changes/tracker-ledger-foundation/` on
+disk (proposal/spec/design/tasks/apply-progress all present), which the parent prompt also
+named explicitly. No edit left the allowed roots; no other `actionContext` warning fired.

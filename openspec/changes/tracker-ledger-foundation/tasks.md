@@ -62,13 +62,13 @@ Under `size:exception` these are **ordered commit slices inside one PR**, not se
 
 ## Phase 3 — Unit 3: verdict + CLI
 
-- [ ] 3.1 RED: `catalog/recipes/worktree-flow/gate/ledger/verdict_test.go` — 5 checkpoints × 3 modes table for the design posture matrix incl. `always` blocking missing/conflicted (`needs-item`) and pre-merge `identity_unavailable`, `warn` never blocking, `ask` → `decision=ask` exit 0. <!-- sdd-owner: implementation -->
-- [ ] 3.2 RED: `catalog/recipes/worktree-flow/gate/ledger/decide_test.go` — four-side evidence disagreement records conflict with no default winner; `--decide` persists then re-grade allows; failed persist exits 2. <!-- sdd-owner: implementation -->
-- [ ] 3.3 RED: `catalog/recipes/worktree-flow/gate/ledger_cmd_test.go` — flag surface (`--ledger --checkpoint --ledger-mode --project-root --witness --store --evidence --decide --explain`), exact JSON keys from design, exit 0 for `allow|ask|dormant|unevaluable` and 2 only for `block`, flag-parse fail-open on verdict calls. <!-- sdd-owner: implementation -->
-- [ ] 3.4 GREEN: implement `catalog/recipes/worktree-flow/gate/ledger/verdict.go`, `catalog/recipes/worktree-flow/gate/ledger/decide.go`, `catalog/recipes/worktree-flow/gate/ledger_cmd.go`, and the `--ledger` switch in `catalog/recipes/worktree-flow/gate/main.go` (cleanup-mode precedent). <!-- sdd-owner: implementation -->
-- [ ] 3.5 GREEN: extend `selftest` in `catalog/recipes/worktree-flow/gate/main.go` to assert ledger identity/verdict invariants in-process, still printing `ok` and keeping gate regexp compiles. <!-- sdd-owner: implementation -->
-- [ ] 3.6 TRIANGULATE: `go build` + `dist/worktree-gate-current --ledger --checkpoint work-start --ledger-mode warn` on this repo; confirm existing `--explain`/worktree corpus output unchanged. <!-- sdd-owner: implementation -->
-- [ ] 3.7 REFACTOR + commit: mode/enum helper names, no coupling to worktree gate semantics (D4/A1). <!-- sdd-owner: implementation -->
+- [x] 3.1 RED: `catalog/recipes/worktree-flow/gate/ledger/verdict_test.go` — 5 checkpoints × 3 modes table for the design posture matrix incl. `always` blocking missing/conflicted (`needs-item`) and pre-merge `identity_unavailable`, `warn` never blocking, `ask` → `decision=ask` exit 0. <!-- sdd-owner: implementation -->
+- [x] 3.2 RED: `catalog/recipes/worktree-flow/gate/ledger/decide_test.go` — four-side evidence disagreement records conflict with no default winner; `--decide` persists then re-grade allows; failed persist exits 2. <!-- sdd-owner: implementation -->
+- [x] 3.3 RED: `catalog/recipes/worktree-flow/gate/ledger_cmd_test.go` — flag surface (`--ledger --checkpoint --ledger-mode --project-root --witness --store --evidence --decide --explain`), exact JSON keys from design, exit 0 for `allow|ask|dormant|unevaluable` and 2 only for `block`, flag-parse fail-open on verdict calls. <!-- sdd-owner: implementation -->
+- [x] 3.4 GREEN: implement `catalog/recipes/worktree-flow/gate/ledger/verdict.go`, `catalog/recipes/worktree-flow/gate/ledger/decide.go`, `catalog/recipes/worktree-flow/gate/ledger_cmd.go`, and the `--ledger` switch in `catalog/recipes/worktree-flow/gate/main.go` (cleanup-mode precedent). <!-- sdd-owner: implementation -->
+- [x] 3.5 GREEN: extend `selftest` in `catalog/recipes/worktree-flow/gate/main.go` to assert ledger identity/verdict invariants in-process, still printing `ok` and keeping gate regexp compiles. <!-- sdd-owner: implementation -->
+- [x] 3.6 TRIANGULATE: `go build` + `dist/worktree-gate-current --ledger --checkpoint work-start --ledger-mode warn` on this repo; confirm existing `--explain`/worktree corpus output unchanged. <!-- sdd-owner: implementation -->
+- [x] 3.7 REFACTOR + commit: mode/enum helper names, no coupling to worktree gate semantics (D4/A1). <!-- sdd-owner: implementation -->
 
 ## Phase 4 — Unit 4: durable witness (Python bridge)
 

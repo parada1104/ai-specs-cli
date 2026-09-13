@@ -58,6 +58,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	tokenize := fs.Bool("tokenize", false, "tokenize stdin as a shell command (shlex posix); JSON diagnostic on stdout, exit 0")
 	selfTest := fs.Bool("selftest", false, "self-check (regex compile, git presence); exit 1 on any failure")
 	explain := fs.Bool("explain", false, "emit a JSON diagnostic on stdout (still exits 0/2)")
+	// The ledger is the tracker grader. Its flags are disjoint from the worktree
+	// gate flags and its mode never reads the worktree gate mode (A1/A9).
+	ledgerRun := fs.Bool("ledger", false, "evaluate a tracker-ledger checkpoint (JSON on stdout, exit 0/2)")
+	ledgerCheckpoint := fs.String("checkpoint", "", "ledger checkpoint: work-start|apply-start|pr-review|pre-merge|archive-close")
+	ledgerMode := fs.String("ledger-mode", "", "ledger mode: always|ask|warn (default warn)")
+	ledgerProjectRoot := fs.String("project-root", "", "owning repository path for ledger identity (default cwd)")
+	ledgerWitness := fs.String("witness", "", "override the ledger witness path")
+	ledgerStore := fs.String("store", "", "override the ledger store path")
+	ledgerEvidence := fs.String("evidence", "", "path to a JSON evidence file (remote/code/git sides)")
+	ledgerDecide := fs.String("decide", "", "JSON human decision to persist, then re-grade")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain]\n")
@@ -102,6 +112,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCleanup(root, cfg, stdout, stderr)
 	case *selfTest:
 		return selftest(stdout, stderr)
+	case *ledgerRun:
+		return runLedger(ledgerOptions{
+			checkpoint:  *ledgerCheckpoint,
+			mode:        *ledgerMode,
+			projectRoot: *ledgerProjectRoot,
+			witness:     *ledgerWitness,
+			store:       *ledgerStore,
+			evidence:    *ledgerEvidence,
+			decide:      *ledgerDecide,
+		}, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
 	case *tokenize:
@@ -178,6 +198,10 @@ func selftest(stdout, stderr io.Writer) int {
 	}
 	if err := exec.Command("git", "--version").Run(); err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: selftest: git not invocable: %v\n", err)
+		return 1
+	}
+	if err := ledgerSelftest(); err != nil {
+		fmt.Fprintf(stderr, "worktree-gate: selftest: ledger invariants: %v\n", err)
 		return 1
 	}
 	fmt.Fprintln(stdout, "ok")
