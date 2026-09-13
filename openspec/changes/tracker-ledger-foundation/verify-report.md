@@ -1,6 +1,6 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
-evidence_revision: sha256:289721dec642d555ee6d8743ce22035ccd1e481adaeab195a5e753e5af59912f
+evidence_revision: sha256:364ef4a6770401153baeabe1475c767b413b17b9cb6bfeffc3b7a4fc956f1102
 verdict: pass_with_warnings
 blockers: 0
 critical_findings: 0
@@ -8,7 +8,7 @@ requirements: 11/11
 scenarios: 32/32
 test_command: ./tests/validate.sh
 test_exit_code: 0
-test_output_hash: sha256:b314c54bbe4d095d49f35fb0e9de251accd0fb51f6630653ec5baabbd4dd3576
+test_output_hash: sha256:39b8bbfdce9827132913e2d7aa66f3f5ededde5d3ed3da58b83dfe11610b02d4
 build_command: ./scripts/build-gate.sh
 build_exit_code: 0
 build_output_hash: sha256:42da1a2230b24d7f8321ddfa4150469cb814c69c05f8c1a3185b109453015258
@@ -325,4 +325,77 @@ copy with the canonical `go1.24.13` toolchain: the built digests
 | Empty-store ask round trip through the CLI | — | `TestLedgerEmptyStoreAskOptOutPersistsAndAllows` |
 | No terminal never infers a decision | — | `test_ask_without_tty_blocks_without_fabricating_a_decision` (x3 hosts) |
 | `identity_unavailable` reported, never blocking in `ask` | — | `test_ask_identity_unavailable_reports_and_proceeds` (x3 hosts) |
+
+## Final verification — full suite at the correction commit (canonical verify executor, 2026-09-13)
+
+Independent Full SDD verification re-run at the current HEAD
+`e9c7e8a29c688584a702a0368726fe8747c25b5e` (branch `change/tracker-ledger-foundation`, clean
+tree) after the Judgment Day correction landed. The envelope at the top of this report now
+describes this final verification; the superseded pre-correction envelope it replaces is
+preserved verbatim below for evidence continuity.
+
+Superseded pre-correction envelope (every value preserved verbatim):
+
+- `schema`: gentle-ai.verify-result/v1
+- `evidence_revision`: sha256:289721dec642d555ee6d8743ce22035ccd1e481adaeab195a5e753e5af59912f
+- `verdict`: pass_with_warnings
+- `blockers`: 0
+- `critical_findings`: 0
+- `requirements`: 11/11
+- `scenarios`: 32/32
+- `test_command`: ./tests/validate.sh
+- `test_exit_code`: 0
+- `test_output_hash`: sha256:b314c54bbe4d095d49f35fb0e9de251accd0fb51f6630653ec5baabbd4dd3576
+- `build_command`: ./scripts/build-gate.sh
+- `build_exit_code`: 0
+- `build_output_hash`: sha256:42da1a2230b24d7f8321ddfa4150469cb814c69c05f8c1a3185b109453015258
+
+### JD correction surfaces re-verified in code at HEAD (commit e9c7e8a)
+
+| Surface | Evidence at HEAD |
+|---|---|
+| Checkpoint-scoped ask opt-out | `ledger/store.go`: `ScopedOptOut` + `Store.OptOuts` + `HasScopedOptOut` (checkpoint-matched, like item opt-outs); `ledger/decide.go::PersistDecision` records it only for `kind=opt-out` with a non-empty identity key and never synthesizes an item; `ledger/verdict.go:208` honors it for the answered checkpoint only |
+| No-TTY fail-closed | `plan-build-gate.sh` and `tracker-card-gate.sh` `_ledger_ask`: missing `/dev/tty` now `return 2` with "no opt-out was recorded; blocking" (pre-fix: silent `return 0` proceed); `premerge_guardian.py::_ledger_ask` OSError path returns a blocker entry instead of `[]` |
+| Identity-unavailable ask behavior | all three hosts: `ask` + `identity_unavailable` reports and proceeds (exit 0 / `[]`) without recording any decision — no durable key exists for a scoped answer (A2/A5) |
+| Corpus fixture 25 | `tests/fixtures/tracker-ledger-corpus/25-empty-store-ask-opt-out.json` present and driven by `tests.test_tracker_ledger_parity` |
+| Regenerated SHA256SUMS | commit e9c7e8a rewrites all four digests (`39b90c05…` darwin-arm64, `1723adc3…` darwin-amd64, `c96845cb…` linux-amd64, `af9b4003…` linux-arm64); a fresh canonical build on `go1.24.13 darwin/arm64` reproduces them byte-for-byte and `scripts/verify-gate-sums.sh` exits 0 |
+
+### Final evidence commands and results (normal non-TTY shell path)
+
+| Command | Result |
+|---|---|
+| `./tests/validate.sh` | exit 0 — gofmt clean; `ok ai-specs.dev/worktree-gate` + `ok ai-specs.dev/worktree-gate/ledger`; `Ran 1952 tests in 819.911s` → `OK (skipped=2)`; zero failures/errors; output sha256 `39b8bbfdce9827132913e2d7aa66f3f5ededde5d3ed3da58b83dfe11610b02d4` |
+| `./scripts/build-gate.sh` | exit 0 — four targets built with canonical `go1.24.13 darwin/arm64`; output sha256 `42da1a2230b24d7f8321ddfa4150469cb814c69c05f8c1a3185b109453015258` (byte-identical to the build hash recorded before the correction — deterministic build) |
+| `./scripts/verify-gate-sums.sh <generated> catalog/recipes/worktree-flow/bin/SHA256SUMS` | exit 0 — `verify-gate-sums.sh: ok — 4 digest entries match the committed trust root` |
+| `./dist/worktree-gate-current --selftest` | prints `ok`, exit 0 |
+| focused JD/parity suites: `tests.test_tracker_ledger_parity tests.test_tracker_card_gate_hook tests.test_plan_build_gate_hook tests.test_premerge_guardian tests.test_tracker_ledger_witness tests.test_ledger_mode_config tests.test_doctor_tracker_card` | `Ran 157 tests in 85.564s` → OK, exit 0 (matches the JD round-1 count) |
+| `python3 lib/_internal/premerge_guardian.py --root . --stage pre-archive tracker-ledger-foundation` | exit 0 — `premerge-guardian: OK (standard)`; the pre-archive gate now passes at HEAD (the earlier commit-field block was fixed by this report's format update) |
+| `python3 lib/_internal/premerge_guardian.py --root . --stage pre-merge tracker-ledger-foundation` | exit 1 — BLOCKED only on the missing dated archive (`openspec/changes/archive/YYYY-MM-DD-tracker-ledger-foundation/`); expected pre-closeout state, parent-owned task 7.6 |
+
+Evidence-revision recipe: sha256 over the string `HEAD=<full sha>;validate_log=<test output sha256>;build_log=<build output sha256>` → `364ef4a6770401153baeabe1475c767b413b17b9cb6bfeffc3b7a4fc956f1102`.
+
+Validator note: `gentle-ai sdd-verify-validate` is not installed in this environment
+(the `gentle-pi` 2.5.0 package ships no CLI bin), so envelope admission was performed as a
+manual structural check: every schema field present exactly once, counts taken from the actual
+spec (`specs/tracker-ledger/spec.md` re-counted at HEAD: 11 `### Requirement:` headings, 32
+`#### Scenario:` headings), digest formats validated. Recorded as a harness deviation, not an
+evidence defect.
+
+### Final findings
+
+- Verdict: **PASS WITH WARNINGS** — blockers 0, critical 0, severe 0.
+- Requirements 11/11, scenarios 32/32; tasks 1.1–8.4 verified complete at HEAD; only 7.6/7.7
+  remain unchecked and they are parent-owned closeout prerequisites (archive + PR), reported as
+  remaining scope — not implementation defects. Archive is not ready from this report alone.
+- WARNING (closeout, unchanged): 7.6 (archive move to
+  `openspec/changes/archive/2026-09-13-tracker-ledger-foundation/` + guardian re-run after the
+  move) and 7.7 (ONE `gh` PR, base `development`, 7 unit-order commits, record PR URL + line
+  counts) remain parent-owned; `ready_for_archive` stays false until both run.
+- WARNING (carried): guardian tier inference falls back to `standard` because `tasks.md` has no
+  canonical `Depth: full` line (confirmed in the final pre-archive run: `OK (standard)`).
+- WARNING (carried): the native SDD status engine is computed against the main checkout and
+  cannot see the worktree-resident change folder; non-authoritative — all inputs were read from
+  the worktree change folder on disk.
+- SUGGESTION (carried): `tracker-card-gate.sh` header comment still lists `archive` among
+  graded shell actions; cosmetic, fix opportunistically during closeout.
 
