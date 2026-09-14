@@ -1,4 +1,13 @@
-## ADDED Requirements
+# project-doctor Specification
+
+## Purpose
+
+Define `ai-specs doctor`, a read-only diagnostic command that inspects an
+ai-specs project's structure, manifest, agents, bundled assets, generated
+symlinks, MCP wiring, environment substrate, CLI version, and leftover tracked
+files, and reports actionable findings without mutating the project.
+
+## Requirements
 
 ### Requirement: Doctor command availability
 The system MUST expose `ai-specs doctor [path]` as a read-only diagnostic command for ai-specs projects.
@@ -227,11 +236,11 @@ The system MUST validate Pi-specific outputs when `pi` is enabled.
 
 ### Requirement: Tracked bundled-skill leftover guidance
 
-When a project is a git repository and the index still tracks paths under
-`ai-specs/skills/<bundled-id>/` for a CLI-bundled skill id (typically after sync
-deleted the working-tree copy), `doctor` SHALL emit a WARN that names the
-tracked paths and recommends `git rm -r --cached` for those paths. The CLI
-MUST NOT run `git rm`, stage, or commit.
+`doctor` SHALL emit a WARN, when a project is a git repository and the index still
+tracks paths under `ai-specs/skills/<bundled-id>/` for a CLI-bundled skill id
+(typically after sync deleted the working-tree copy), that names the tracked paths
+and recommends `git rm -r --cached` for those paths. The CLI MUST NOT run
+`git rm`, stage, or commit.
 
 #### Scenario: Tracked leftover after disk removal
 
@@ -244,11 +253,11 @@ MUST NOT run `git rm`, stage, or commit.
 
 ### Requirement: Tracked bundled-command leftover guidance
 
-When a project is a git repository and the index still tracks
-`ai-specs/commands/{name}.md` for a CLI-bundled command name (typically after
-sync deleted the working-tree copy), `doctor` SHALL emit a WARN that names the
-tracked paths and recommends `git rm --cached` for those paths. The CLI MUST
-NOT run `git rm`, stage, or commit.
+`doctor` SHALL emit a WARN, when a project is a git repository and the index still
+tracks `ai-specs/commands/{name}.md` for a CLI-bundled command name (typically
+after sync deleted the working-tree copy), that names the tracked paths and
+recommends `git rm --cached` for those paths. The CLI MUST NOT run `git rm`,
+stage, or commit.
 
 #### Scenario: Tracked leftover after disk removal
 
@@ -316,3 +325,147 @@ Doctor MUST NOT print secret values.
 - **WHEN** `ai-specs doctor` runs
 - **THEN** the report MUST NOT WARN for that key as missing
 
+### Requirement: CLI version diagnostics
+
+The system MUST report CLI version state as part of `ai-specs doctor` output.
+
+The report MUST include, when available:
+
+- **installed** — version from `AI_SPECS_HOME/VERSION`
+- **pinned** — from manifest `[tool]` when configured
+- **last_synced** — from `ai-specs/.ai-specs.lock` `[meta].cli_version` when present
+
+#### Scenario: All version sources present and aligned
+
+- **GIVEN** installed CLI `0.12.2`
+- **AND** manifest `[tool].version = "0.12.2"`
+- **AND** lock `[meta].cli_version = "0.12.2"`
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST include an `OK` check named `cli-version`
+- **AND** the message MUST mention installed, pinned, and last-synced values
+
+#### Scenario: No pin configured with last sync recorded
+
+- **GIVEN** installed CLI `0.12.2`
+- **AND** no `[tool]` section in the manifest
+- **AND** lock `[meta].cli_version = "0.10.1"`
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST include a `WARN` check named `cli-version`
+- **AND** the message MUST note installed differs from last-synced
+- **AND** the message SHOULD suggest running `ai-specs sync` or adding a `[tool]` pin
+
+#### Scenario: Exact pin mismatch is ERROR
+
+- **GIVEN** installed CLI `0.11.0`
+- **AND** manifest `[tool].version = "0.12.2"` with policy `exact`
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST include an `ERROR` check named `cli-version`
+- **AND** the command MUST exit non-zero
+
+#### Scenario: Min version violation is ERROR
+
+- **GIVEN** installed CLI `0.10.0`
+- **AND** manifest `[tool].min_version = "0.11.0"`
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST include an `ERROR` check named `cli-version`
+- **AND** the command MUST exit non-zero
+
+#### Scenario: Lock meta absent is INFO
+
+- **GIVEN** installed CLI `0.12.2`
+- **AND** no `[tool]` section
+- **AND** lock file exists without `[meta]`
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST include an `INFO` or `WARN` check noting last-synced is unknown
+- **AND** the message SHOULD recommend running `ai-specs sync` to record meta
+
+#### Scenario: Doctor remains read-only
+
+- **GIVEN** any project state
+- **WHEN** `ai-specs doctor` inspects CLI version
+- **THEN** it MUST NOT modify the manifest, lock file, or any derived artifacts
+
+### Requirement: Active-change missing Tracker link section WARN
+
+When all of the following hold, `ai-specs doctor` SHALL scan active OpenSpec
+change folders and WARN for missing/invalid card-link artifacts:
+
+1. The `trello-mcp-workflow` recipe is enabled in the project manifest.
+2. The recipe bootstrap-ready marker is present at the canonical runtime cache path
+   `cache/projects/<hash>-<name>/.recipe/trello-mcp-workflow/bootstrap-ready`
+   (same location materialize writes), or at the project-local fallback
+   `.recipe/trello-mcp-workflow/bootstrap-ready` used by hermetic tests.
+
+For each directory matching `openspec/changes/<slug>/` that is **not** under
+`openspec/changes/archive/`:
+
+- If `tracker.none` (`tracker:none` exemption) is present → no missing-card WARN
+  for that slug.
+- Else if the `## Tracker` link section is absent, or present but invalid
+  (missing a non-empty `card_id` per `trello-card-linking` validity rules) →
+  emit `Severity.WARN` naming the slug and remediation guidance to
+  create/link a card and write the `## Tracker` link section. A missing `url`
+  is only an informational nudge and MUST NOT make the link invalid.
+
+Default severity is WARN only. Doctor MUST NOT fail the command exit solely
+because of these WARN findings (no FAIL-by-default in v1). Doctor MUST remain
+read-only.
+
+Archived changes MUST NOT be migrated or warned by this check.
+
+#### Scenario: WARN when recipe and marker present and Tracker link section missing
+
+- **GIVEN** `trello-mcp-workflow` is enabled
+- **AND** the bootstrap-ready marker exists under the project recipe cache
+- **AND** `openspec/changes/demo-change/` exists without a `## Tracker` link section and without
+  `tracker.none`
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST include a `WARN` naming `demo-change`
+- **AND** guidance MUST mention creating/linking a card and writing the `## Tracker` section
+- **AND** the command MUST still exit `0` if no unrelated `ERROR` checks exist
+
+#### Scenario: Valid Tracker link section is OK
+
+- **AND** the change's `proposal.md` `## Tracker` section contains non-empty
+  `card_id` (and SHOULD include `url` when available)
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST NOT WARN for `demo-change` as missing a card link
+
+#### Scenario: tracker:none suppresses missing-card WARN
+
+- **GIVEN** recipe enabled and bootstrap marker present
+- **AND** `openspec/changes/demo-change/tracker.none` exists
+- **AND** the `## Tracker` link section is absent
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST NOT WARN for `demo-change` as missing a card link
+
+#### Scenario: Silent when recipe disabled
+
+- **GIVEN** `trello-mcp-workflow` is not enabled
+- **AND** an active change lacks the `## Tracker` link section
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST NOT emit the tracker missing-card WARN
+
+#### Scenario: Silent when bootstrap marker absent
+
+- **GIVEN** `trello-mcp-workflow` is enabled
+- **AND** the bootstrap-ready marker is absent from the recipe cache path
+- **AND** an active change lacks the `## Tracker` link section
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST NOT emit the tracker missing-card WARN
+
+#### Scenario: Archives are not warned
+
+- **GIVEN** recipe enabled and bootstrap marker present
+- **AND** only `openspec/changes/archive/...` folders lack the `## Tracker` link section
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST NOT WARN those archive slugs for missing card links
+
+#### Scenario: Invalid Tracker link section warns
+
+- **GIVEN** recipe enabled and bootstrap marker present
+- **AND** the change's `proposal.md` `## Tracker` section exists but has an empty or
+  missing `card_id`
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the report MUST include a `WARN` naming `demo-change` as lacking a
+  valid card-link artifact

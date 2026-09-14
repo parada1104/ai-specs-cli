@@ -377,8 +377,8 @@ across `session-context` and all additionally enabled recipes.
 
 ### Requirement: [brief].render manifest opt-out disables AGENTS.md writes
 
-The manifest MAY declare `[brief].render` as a boolean. When omitted, the default
-SHALL be `true` (rendering enabled — current behavior). When explicitly `false`,
+The manifest MAY declare `[brief].render` as a boolean. When omitted, the default SHALL
+be `true` (rendering enabled — current behavior). When explicitly `false`,
 `ai-specs sync`, `ai-specs init`, and subrepo fan-out via `sync-agent.sh` MUST
 skip `agents-render.py` entirely. No merge of manifest `[brief]` prose or recipe
 `[provides.brief]` fragments SHALL be written to `AGENTS.md`.
@@ -414,7 +414,7 @@ normally when `render = false`.
 
 ### Requirement: Precedence of render flag over marker and per-section modes
 
-When `[brief].render = false`, brief rendering is fully disabled regardless of:
+When `[brief].render = false`, brief rendering SHALL be fully disabled regardless of:
 - the presence of `<!-- ai-specs:runtime-brief -->` in `AGENTS.md`
 - manifest `[brief]` prose entries
 - enabled recipe `[provides.brief]` fragments
@@ -451,8 +451,8 @@ render with append/replace per section.
 
 ### Requirement: Observability when render is disabled
 
-When brief rendering is skipped due to `[brief].render = false`, the sync or init
-command MUST print a user-visible message on stdout under the agents-render step
+When brief rendering is skipped due to `[brief].render = false`, the sync or init command MUST
+print a user-visible message on stdout under the agents-render step
 header. Init MUST additionally print guidance on stderr when it writes the
 one-line placeholder.
 
@@ -471,9 +471,99 @@ one-line placeholder.
 
 
 
----
+### Requirement: Write decision is governed by provenance
 
-## MODIFIED Requirements (from recipe-brief-fragments)
+Whether `AGENTS.md` is written SHALL be decided by classifying the target with
+the same ownership states used for managed overrides — from disk bytes, the
+recorded baseline, and the bytes that would be written — never by the presence
+of a marker alone.
+
+The decision SHALL live inside the renderer, so that every entry point reaches
+an identical result for identical inputs.
+
+#### Scenario: a pre-existing hand-written brief survives
+- **GIVEN** a repository with an `AGENTS.md` that ai-specs has never written,
+  and no runtime-brief marker
+- **WHEN** `ai-specs init`, `ai-specs sync`, or `ai-specs sync-agent` runs
+- **THEN** the file is left byte-for-byte unchanged
+- **AND** the command reports that it was left alone and why
+
+#### Scenario: an edited generated brief survives
+- **GIVEN** a brief ai-specs wrote, which the user has since edited
+- **WHEN** any of the three commands runs
+- **THEN** the file is left unchanged and the command says so
+
+#### Scenario: an untouched generated brief still updates
+- **GIVEN** a brief ai-specs wrote and the user has not edited
+- **WHEN** the manifest changes and sync runs
+- **THEN** the brief is regenerated with no prompt and no extra output
+- **AND** the new bytes are recorded as the baseline
+
+#### Scenario: a missing brief is created
+- **WHEN** no `AGENTS.md` exists
+- **THEN** it is rendered and its bytes recorded
+
+#### Scenario: every entry point agrees
+- **GIVEN** identical disk, lock, and manifest state
+- **WHEN** the decision is computed for `init`, `sync`, and `sync-agent`
+- **THEN** all three produce the same outcome
+
+### Requirement: Adoption is proven or user-initiated, never inferred
+
+A target with no recorded baseline SHALL be adopted automatically **only** when
+its bytes exactly equal the bytes that would be written. In every other case it
+SHALL be preserved.
+
+Adoption SHALL otherwise require an explicit user action.
+
+#### Scenario: an up-to-date brief adopts silently
+- **GIVEN** no baseline, and a brief identical to what would be written
+- **WHEN** sync runs
+- **THEN** the baseline is recorded and the sync proceeds with no extra output
+
+#### Scenario: a stale brief is preserved, not adopted
+- **GIVEN** no baseline, and a brief that differs from what would be written
+- **WHEN** sync runs
+- **THEN** the file is left unchanged
+- **AND** the reported remedy names both adopting it and claiming it permanently
+
+#### Scenario: explicit adoption is honored
+- **GIVEN** a brief with no baseline
+- **WHEN** the user runs sync with the adopt option
+- **THEN** the current bytes become the baseline
+- **AND** subsequent syncs treat it as a managed brief
+
+### Requirement: A skipped write is always reported
+
+A decision not to write SHALL print the detected state and the available
+remedies. It SHALL NOT be silent.
+
+#### Scenario: the message names both exits
+- **WHEN** a write is skipped because the brief is not ours
+- **THEN** the output names how to hand management to ai-specs
+- **AND** names how to keep the file permanently user-owned
+
+### Requirement: Ownership is reported by doctor
+
+`ai-specs doctor` SHALL report the runtime brief's ownership state.
+
+#### Scenario: an unadopted brief is discoverable
+- **GIVEN** a project whose brief is preserved for lack of a baseline
+- **WHEN** `ai-specs doctor` runs
+- **THEN** the state is reported with the same remedy
+
+### Requirement: Undetermined ownership never writes
+
+The target SHALL be preserved when classification cannot be completed — an
+unreadable lock, an unreadable target.
+
+#### Scenario: an unreadable lock preserves the brief
+- **GIVEN** a lock file that cannot be parsed
+- **WHEN** sync runs
+- **THEN** `AGENTS.md` is not written
+- **AND** the command does not fail with a traceback
+
+---
 
 ### Requirement: Recipe fragments merged into brief sections
 
@@ -571,9 +661,9 @@ collected recipe fragments but are NOT subject to key-based deduplication.
 
 ### Requirement: APPEND default and REPLACE opt-in per section
 
-By default (APPEND mode), each section's rendered content consists of: collected recipe
-fragments (after deduplication) followed by any manifest `[brief]` additions for that
-section.
+By default (APPEND mode), each section's rendered content SHALL consist of: collected
+recipe fragments (after deduplication) followed by any manifest `[brief]` additions for
+that section.
 
 A project author MAY suppress all recipe fragments for a specific section by setting
 `<section>_mode = "replace"` as a sibling key in the manifest `[brief]` table. In REPLACE
@@ -731,8 +821,8 @@ unchanged after this change:
 
 ### Requirement: Harness CLI literacy pointer
 
-The always-on Useful Commands bullet that points agents at harness CLI literacy
-skills SHALL name `harness-lifecycle`, `harness-recipes`, and
+The always-on Useful Commands bullet that points agents at harness CLI literacy skills SHALL
+name `harness-lifecycle`, `harness-recipes`, and
 `harness-skills-deps` without claiming they materialize under
 `ai-specs/skills/`. CLI-bundled skills resolve from the agent skill fan-out /
 cache, not the committed project surface.
