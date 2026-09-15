@@ -54,11 +54,12 @@ If unset, fall back to the recipe default (`main`) and to the runtime brief
        SWITCH_OK=0
      fi
 
-     # 2. Active account (supports multiple logged-in accounts)
+     # 2. Active account (supports multiple logged-in accounts).
+     # Field-based: read the token after "account", print it only for the
+     # entry the CLI marks "Active account: true".
      ACTIVE=$(gh auth status 2>&1 | awk '
        /Logged in to .* account/ {
-         if (match($0, /account [^ ]+ \(/))      { a=substr($0, RSTART+8, RLENGTH-2) }
-         else if (match($0, /account [^ ]+$/))   { a=substr($0, RSTART+8) }
+         for (i = 1; i <= NF; i++) if ($i == "account") { a = $(i + 1) }
        }
        /Active account: true/ { print a }
      ' | head -1)
@@ -75,7 +76,9 @@ If unset, fall back to the recipe default (`main`) and to the runtime brief
          return 1
        fi
        ACTIVE=$(gh auth status 2>&1 | awk '
-         /Logged in to .* account / { if (match($0, /account [^ ]+ \(/)) { a=substr($0, RSTART+8, RLENGTH-2) } else if (match($0, /account [^ ]+$/)) { a=substr($0, RSTART+8) } }
+         /Logged in to .* account/ {
+           for (i = 1; i <= NF; i++) if ($i == "account") { a = $(i + 1) }
+         }
          /Active account: true/ { print a }' | head -1)
        [ "$ACTIVE" = "$TARGET" ] || { echo "**Blocker**: switch did not land. Aborting."; return 1; }
      else

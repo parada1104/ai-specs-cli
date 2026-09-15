@@ -1,4 +1,6 @@
 import importlib.util
+import re
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -24,6 +26,26 @@ def load_module(path: Path, name: str):
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def extract_awk(text: str, anchor: str) -> list[str]:
+    """Return every single-quoted awk program in ``text`` containing ``anchor``."""
+    found = [
+        match.group(1)
+        for match in re.finditer(r"awk\s+'([^']*)'", text, re.S)
+        if anchor in match.group(1)
+    ]
+    if not found:
+        raise AssertionError(f"no awk snippet containing {anchor!r}")
+    return found
+
+
+def run_awk(script: str, sample: str) -> str:
+    proc = subprocess.run(
+        ["awk", script], input=sample, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, f"awk failed: {proc.stderr}"
+    return proc.stdout
 
 
 class GitPrFlowRecipeTests(unittest.TestCase):
@@ -209,6 +231,95 @@ class GitPrFlowGoldenContentTests(unittest.TestCase):
     def test_skill_prefers_release_head_for_main(self):
         """Skill documents release/* heads for shipping to main."""
         self.assertIn("release/v", self.skill_text)
+
+
+class GitPrFlowAccountExtractionTests(unittest.TestCase):
+    """The account-match awk must read the ``Active account: true`` entry and
+    return the bare account token, not annotation noise or literal offsets."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.command_text = (
+            CATALOG / RECIPE_ID / "commands" / "pr-create.md"
+        ).read_text()
+        cls.skill_text = (
+            CATALOG / RECIPE_ID / "skills" / "git-merge-workflow" / "SKILL.md"
+        ).read_text()
+        cls.awk = extract_awk(cls.command_text, "Active account: true")[0]
+
+    def _active(self, status: str) -> str:
+        lines = run_awk(self.awk, status).strip().splitlines()
+        return lines[0] if lines else ""
+
+    def test_single_annotated_account_returns_clean_name(self):
+        status = (
+            "github.com\n"
+            "  \u2713 Logged in to github.com account solo (keyring)\n"
+            "  - Active account: true\n"
+            "  - Git operations protocol: https\n"
+        )
+        self.assertEqual(self._active(status), "solo")
+
+    def test_unannotated_login_returns_account(self):
+        status = (
+            "github.com\n"
+            "  \u2713 Logged in to github.com account solo\n"
+            "  - Active account: true\n"
+        )
+        self.assertEqual(self._active(status), "solo")
+
+    def test_multi_account_returns_the_active_one(self):
+        status = (
+            "github.com\n"
+            "  \u2713 Logged in to github.com account alice (keyring)\n"
+            "  - Active account: false\n"
+            "\n"
+            "  \u2713 Logged in to github.com account bob (keyring)\n"
+            "  - Active account: true\n"
+        )
+        self.assertEqual(self._active(status), "bob")
+
+    def test_without_active_marker_returns_nothing(self):
+        status = (
+            "github.com\n"
+            "  \u2713 Logged in to github.com account alice (keyring)\n"
+            "  - Active account: false\n"
+        )
+        self.assertEqual(self._active(status), "")
+
+    def test_multi_host_returns_the_first_active_account(self):
+        status = (
+            "github.com\n"
+            "  \u2713 Logged in to github.com account alice (keyring)\n"
+            "  - Active account: true\n"
+            "\n"
+            "ghe.example.com\n"
+            "  \u2713 Logged in to ghe.example.com account bob (keyring)\n"
+            "  - Active account: true\n"
+        )
+        self.assertEqual(self._active(status), "alice")
+
+    def test_uses_field_based_extraction_not_literal_offsets(self):
+        """Regression: offsets drifted with the match text; require the token
+        following ``account`` instead."""
+        self.assertNotIn("RSTART", self.awk)
+        self.assertNotIn("RLENGTH", self.awk)
+        self.assertIn('$i == "account"', self.awk)
+
+    def test_all_copies_share_the_same_extraction(self):
+        """Command and skill both read, then re-read after ``gh auth switch``;
+        every copy must stay in sync."""
+        scripts = [
+            _normalize(script)
+            for text in (self.command_text, self.skill_text)
+            for script in extract_awk(text, "Active account: true")
+        ]
+        self.assertGreaterEqual(len(scripts), 2, scripts)
+        self.assertEqual(len(set(scripts)), 1, scripts)
+
+
+def _normalize(script: str) -> str:
+    return "\n".join(line.strip() for line in script.strip().splitlines())
 
 
 if __name__ == "__main__":
