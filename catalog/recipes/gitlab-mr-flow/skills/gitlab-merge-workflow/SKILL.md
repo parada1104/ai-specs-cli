@@ -78,12 +78,16 @@ Then run **Runtime Preflight: Account Match** when `expected_owner` is set in
 # Runtime Preflight: Account Match (GitLab)
 EXPECTED_OWNER="{config.expected_owner}"
 if [ -n "$EXPECTED_OWNER" ]; then
+  # glab has no "Active account" marker: only trust the result when the
+  # status lists exactly one login, otherwise leave it empty so the mismatch
+  # blocker fires.
   ACTIVE=$(glab auth status 2>&1 | awk '
-    /Logged in to gitlab\.com account/ {
-      if (match($0, /account [^ ]+ \(/))      { a=substr($0, RSTART+8, RLENGTH-2) }
-      else if (match($0, /account [^ ]+$/))   { a=substr($0, RSTART+8) }
+    /Logged in to .* as / {
+      for (i = 1; i <= NF; i++) if ($i == "as") { a = $(i + 1) }
+      n += 1
     }
-    /Active account: true/ { print a }' | head -1)
+    END { if (n == 1) print a }
+  ')
   if [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
     echo "**Blocker**: active glab account is '$ACTIVE'; expected '$EXPECTED_OWNER'."
     echo "glab has no 'auth switch'. Run: glab auth login   (or export GLAB_TOKEN=<token>)."
