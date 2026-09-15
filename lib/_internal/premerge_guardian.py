@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -494,16 +495,23 @@ def resolve_ledger_mode(root: Path | str, gate_hint: str = "") -> str:
     """
     env_mode = os.environ.get("TRACKER_LEDGER_MODE", "")
     ledger = gate = ""
-    try:
-        import tomllib
-        manifest = Path(root) / "ai-specs" / "ai-specs.toml"
-        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
-        cfg = ((data.get("recipes") or {}).get("trello-mcp-workflow") or {}).get("config") or {}
-        ledger = str(cfg.get("ledger_mode") or "")
-        gate = str(cfg.get("gate_mode") or "")
-    except Exception:
-        pass
-    if gate_hint in ("off", "warn", "always"):
+    bridge = _ledger_bridge()
+    if bridge is not None:
+        try:
+            import tomllib
+            manifest = Path(root) / "ai-specs" / "ai-specs.toml"
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+            # The bound recipe id comes from the durable witness, never from a
+            # hardcoded literal (task 3.2). Reading the witness is acquisition.
+            recipe = bridge.recipe_id(root)
+            cfg = ((data.get("recipes") or {}).get(recipe) or {}).get("config") or {}
+            ledger = str(cfg.get("ledger_mode") or "")
+            gate = str(cfg.get("gate_mode") or "")
+        except Exception:
+            pass
+    if gate_hint in ("off", "warn", "always") and not gate:
+        # The bound recipe's own gate_mode wins; the caller's legacy hint fills in
+        # when that config section declares none (the pre-witness behavior).
         gate = gate_hint
     if env_mode in ("always", "ask", "warn"):
         return env_mode
@@ -592,8 +600,56 @@ def _ledger_ask(binary: Path, checkpoint: str, mode: str, root: Path | str,
     return []
 
 
-def ledger_blockers(root: Path | str, checkpoint: str) -> list[str]:
-    """Grade one ledger checkpoint through the verified binary (JSON bridge)."""
+def _ledger_bridge():
+    """Sibling-load ``lib/_internal/ledger_bridge.py`` (cold-cache safe), or None.
+
+    The bridge adds no project-cache or ``AI_SPECS_HOME`` dependency: it is loaded
+    from beside this module exactly like ``gate_binary.py``, so a cold CLI install
+    still acquires evidence.
+    """
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "ledger_bridge_guardian", Path(__file__).with_name("ledger_bridge.py")
+        )
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+def _ledger_evidence_args(root: Path | str, slug: str | None) -> tuple[list[str], str | None]:
+    """Build the ``--evidence`` file from the bridge's local facts.
+
+    Returns ``(extra_argv, cleanup_path)``. Acquisition only: the guardian never
+    derives a ledger write from a planning-tree artifact (R1), so a tracker.none file
+    contributes nothing here but the blank evidence side it already implies. The file
+    is never created, modified, or deleted.
+    """
+    bridge = _ledger_bridge()
+    if bridge is None:
+        return [], None
+    resolved_slug = slug or bridge.change_slug(root)
+    try:
+        fd, evidence_path = tempfile.mkstemp(prefix="tracker-ledger-evidence-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(bridge.evidence_payload(root, resolved_slug), handle)
+    except Exception:
+        return [], None
+    return ["--evidence", evidence_path], evidence_path
+
+
+def ledger_blockers(root: Path | str, checkpoint: str, slug: str | None = None) -> list[str]:
+    """Grade one ledger checkpoint through the verified binary (JSON bridge).
+
+    ``slug`` is the change being graded when the caller knows it (archive-close and
+    pre-merge do); otherwise the single active change is used, and an ambiguous
+    planning tree simply contributes no evidence.
+    """
     mode = resolve_ledger_mode(root)
     if mode == "off":
         return []
@@ -605,14 +661,21 @@ def ledger_blockers(root: Path | str, checkpoint: str) -> list[str]:
             file=sys.stderr,
         )
         return []
+    extra, evidence_path = _ledger_evidence_args(root, slug)
     try:
         proc = subprocess.run(
             [str(binary), "--ledger", "--checkpoint", checkpoint,
-             "--ledger-mode", mode, "--project-root", str(root)],
+             "--ledger-mode", mode, "--project-root", str(root), *extra],
             capture_output=True, text=True, timeout=30,
         )
     except Exception:
         return []
+    finally:
+        if evidence_path:
+            try:
+                os.unlink(evidence_path)
+            except OSError:
+                pass
     if not proc.stdout.strip():
         return []
     try:
@@ -667,7 +730,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         result = check_premerge(args.root, args.slug, tier=args.tier)
         checkpoint = "pre-merge"
-    ledger = ledger_blockers(args.root, checkpoint)
+    ledger = ledger_blockers(args.root, checkpoint, args.slug)
     if ledger:
         result.blockers.extend(ledger)
         result.ok = False

@@ -21,6 +21,7 @@ type ledgerOptions struct {
 	store       string
 	evidence    string
 	decide      string
+	write       string
 }
 
 // ledgerIdentJSON is the design identity object: exactly four keys, with change
@@ -33,6 +34,7 @@ type ledgerIdentJSON struct {
 }
 
 // ledgerOut is the design stdout contract consumed by hosts, doctor and parity.
+// Write is the DW4 sidecar: present only on a --write invocation that succeeded.
 type ledgerOut struct {
 	Capability string               `json:"capability"`
 	Active     bool                 `json:"active"`
@@ -45,12 +47,21 @@ type ledgerOut struct {
 	Conflict   *ledger.Conflict     `json:"conflict"`
 	Prompt     *ledger.Prompt       `json:"prompt"`
 	Doctor     ledger.DoctorFinding `json:"doctor"`
+	Write      *ledger.WriteOutcome `json:"write,omitempty"`
 }
 
-// runLedger is the --ledger dispatcher: acquire read-only inputs, grade once,
-// print the JSON verdict, and exit 0/2. Every failure except a --decide persist
-// fails open, matching the gate's blast radius (design "Unevaluable / outage").
+// runLedger is the --ledger dispatcher: acquire read-only inputs, apply at most
+// one write or human decision, grade once, print the JSON verdict, and exit 0/2.
+// Every failure except a --write/--decide persist fails open, matching the gate's
+// blast radius (design "Unevaluable / outage").
 func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
+	if opts.write != "" && opts.decide != "" {
+		// DW2: the two mutation vehicles are mutually exclusive. Refuse before any
+		// IO so nothing is persisted and no verdict is printed.
+		fmt.Fprintln(stderr, "worktree-gate: ledger --write and --decide are mutually exclusive")
+		return 2
+	}
+
 	dir := opts.projectRoot
 	if dir == "" {
 		dir = processCwd()
@@ -78,11 +89,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	ident := ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, Facts: facts})
 	// A stored slug survives its folder being archived mid-item (A11): when the
 	// open item already names a change, that slug wins over re-derivation.
-	if ident.Available() && storeErr == nil {
-		if slug := storedLedgerSlug(store, ident.CommonDir, ident.Branch); slug != "" && slug != ident.Change {
-			ident = ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, StoredSlug: slug, Facts: facts})
-		}
-	}
+	ident = ledgerIdentityWithStoredSlug(ident, store, storeErr, dir, facts)
 
 	if opts.decide != "" && binding.Active() {
 		if err := persistLedgerDecision(storePath, ident.Key, opts.checkpoint, opts.decide); err != nil {
@@ -90,6 +97,23 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 			return 2
 		}
 		store, storeErr = ledger.LoadStore(storePath)
+	}
+
+	// A write is explicit, so it is attempted whenever it was asked for: the
+	// post-write grade is what reflects the result, and a failure persists nothing
+	// and exits 2 with no stdout JSON (L6).
+	var writeOutcome *ledger.WriteOutcome
+	if opts.write != "" {
+		outcome, err := applyLedgerWrite(storePath, ident, binding, opts.checkpoint, opts.write)
+		if err != nil {
+			fmt.Fprintf(stderr, "worktree-gate: ledger --write failed: %v\n", err)
+			return 2
+		}
+		writeOutcome = &outcome
+		store, storeErr = ledger.LoadStore(storePath)
+		// The explicit slug a write just recorded is the stored slug: the re-grade
+		// must select the item that write created, not a stale ambiguous identity.
+		ident = ledgerIdentityWithStoredSlug(ident, store, storeErr, dir, facts)
 	}
 
 	ev, err := loadLedgerEvidence(opts.evidence)
@@ -116,7 +140,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 		}
 	}
 
-	payload, err := json.Marshal(newLedgerOut(verdict))
+	payload, err := json.Marshal(newLedgerOut(verdict, writeOutcome))
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: ledger: %v\n", err)
 		return 0
@@ -125,8 +149,9 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	return verdict.ExitCode()
 }
 
-// newLedgerOut maps a verdict onto the exact stdout contract.
-func newLedgerOut(v ledger.Verdict) ledgerOut {
+// newLedgerOut maps a verdict onto the exact stdout contract. The DW4 write
+// sidecar is omitted entirely when no --write was supplied.
+func newLedgerOut(v ledger.Verdict, write *ledger.WriteOutcome) ledgerOut {
 	out := ledgerOut{
 		Capability: ledger.CapabilityTracker,
 		Active:     v.Active,
@@ -138,6 +163,7 @@ func newLedgerOut(v ledger.Verdict) ledgerOut {
 		Conflict:   v.Conflict,
 		Prompt:     v.Prompt,
 		Doctor:     v.Doctor,
+		Write:      write,
 		Identity: ledgerIdentJSON{
 			CommonDir: v.Identity.CommonDir,
 			Branch:    v.Identity.Branch,
@@ -149,6 +175,21 @@ func newLedgerOut(v ledger.Verdict) ledgerOut {
 		out.Identity.Change = &change
 	}
 	return out
+}
+
+// ledgerIdentityWithStoredSlug re-derives the identity with the slug already
+// recorded on the single open item for its common dir and branch (A11). A stored
+// slug survives its folder being archived mid-item, and an explicit --write change
+// becomes the stored slug so the re-grade selects what the write recorded.
+func ledgerIdentityWithStoredSlug(ident ledger.Identity, store ledger.Store, storeErr error, dir string, facts ledger.Facts) ledger.Identity {
+	if !ident.Available() || storeErr != nil {
+		return ident
+	}
+	slug := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
+	if slug == "" || slug == ident.Change {
+		return ident
+	}
+	return ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, StoredSlug: slug, Facts: facts})
 }
 
 // storedLedgerSlug returns the change slug already recorded on the single open
@@ -193,6 +234,27 @@ func loadLedgerEvidence(path string) (ledger.Evidence, error) {
 	return ledger.Evidence{Local: file.Local, Remote: file.Remote, Code: file.Code, Git: file.Git}, nil
 }
 
+// applyLedgerWrite parses and applies one --write payload under the bounded store
+// lock. The binding's recipe id is the provider recorded when the write has to
+// open the item; the checkpoint flag is the write's checkpoint.
+func applyLedgerWrite(storePath string, ident ledger.Identity, binding ledger.Binding, checkpoint, raw string) (ledger.WriteOutcome, error) {
+	var req ledger.WriteRequest
+	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+		return ledger.WriteOutcome{}, fmt.Errorf("invalid --write JSON: %w", err)
+	}
+	return ledger.ApplyWrite(storePath, ledger.ApplyWriteRequest{
+		Identity: ledger.ItemIdentity{
+			CommonDir: ident.CommonDir,
+			Branch:    ident.Branch,
+			Change:    ident.Change,
+		},
+		Checkpoint: checkpoint,
+		ProviderID: binding.RecipeID,
+		Collision:  ident.Collision,
+		Request:    req,
+	}, time.Now())
+}
+
 // persistLedgerDecision parses and appends the human answer. The checkpoint flag
 // is the default when the payload omits it.
 func persistLedgerDecision(storePath, key, checkpoint, raw string) error {
@@ -207,10 +269,57 @@ func persistLedgerDecision(storePath, key, checkpoint, raw string) error {
 	return err
 }
 
+// ledgerWriteSelftest exercises the machine-write surface in-process and offline:
+// every request rule of the closed write vocabulary, plus the open-if-absent
+// invariant that makes a retried open a no-op instead of a self-inflicted
+// collision. No store is touched and no network is used.
+func ledgerWriteSelftest() error {
+	invalid := []ledger.WriteRequest{
+		{},                         // no kind
+		{Kind: "invented"},         // unknown kind
+		{Kind: ledger.WriteLink},   // link without item_id
+		{Kind: ledger.WriteExempt}, // exempt without a reason
+	}
+	for _, req := range invalid {
+		if err := req.Normalize().Validate(ledger.CheckpointApplyStart); err == nil {
+			return fmt.Errorf("write %+v was accepted", req)
+		}
+	}
+	valid := ledger.WriteRequest{Kind: ledger.WriteOpen}
+	if err := valid.Normalize().Validate(ledger.CheckpointApplyStart); err != nil {
+		return fmt.Errorf("open write rejected: %v", err)
+	}
+	if err := valid.Normalize().Validate("bogus"); err == nil {
+		return fmt.Errorf("write accepted an unknown checkpoint")
+	}
+	if len(ledger.WriteKinds) != 4 {
+		return fmt.Errorf("write kinds = %v, want the closed four-verb set", ledger.WriteKinds)
+	}
+
+	// Open-if-absent is idempotent in memory: the retried open adds no row and the
+	// first one is the single primary.
+	ident := ledger.ItemIdentity{CommonDir: "/selftest/.git", Branch: "selftest"}
+	stamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var store ledger.Store
+	if _, created, err := store.OpenIfAbsent(ident, "selftest", stamp); err != nil || !created {
+		return fmt.Errorf("first open: created=%v err=%v", created, err)
+	}
+	if _, created, err := store.OpenIfAbsent(ident, "selftest", stamp); err != nil || created {
+		return fmt.Errorf("retried open must be a no-op: created=%v err=%v", created, err)
+	}
+	if open := store.OpenItems(ident.Key()); len(open) != 1 {
+		return fmt.Errorf("open items = %d, want exactly one", len(open))
+	}
+	return nil
+}
+
 // ledgerSelftest exercises the ledger enum and posture invariants in-process,
 // with no network and no store IO. --selftest prints its usual "ok" only when
 // this returns nil, so the release toolchain verifies both modes.
 func ledgerSelftest() error {
+	if err := ledgerWriteSelftest(); err != nil {
+		return err
+	}
 	for _, cp := range ledger.Checkpoints {
 		if !ledger.ValidCheckpoint(cp) {
 			return fmt.Errorf("checkpoint %q is not valid", cp)

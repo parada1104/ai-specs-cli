@@ -236,19 +236,63 @@ or unverified binary fails open with one stderr line.
 | `pre-merge` | `premerge_guardian.py --stage pre-merge` |
 | `archive-close` | `premerge_guardian.py --stage pre-archive` |
 
+**Write surface.** Items are opened, linked, closed, and exempted only by explicit
+writes on the same dispatcher:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
+  --project-root . --write '{"kind":"open"}'
+worktree-gate --ledger --checkpoint apply-start --ledger-mode warn --project-root . \
+  --write '{"kind":"link","item_id":"<native-id>","url":"<url>","native_type":"card","state":"in-progress"}'
+```
+
+`--write` and `--decide` are mutually exclusive (both → exit `2`, nothing
+persisted). Success adds `"write":{"kind":…,"applied":…,"reason":…}` to the verdict
+JSON, with `already-open` / `unchanged` / `already-closed` for the idempotent
+no-ops. A failed write prints `worktree-gate: ledger --write failed: …` on stderr,
+persists nothing, and exits `2` with **no** stdout JSON. **Grading never writes**: no
+checkpoint, in any mode, opens or mutates an item because a `## Tracker` section
+parses.
+
+**Evidence sides.** `tracker-card-gate.sh` and `premerge_guardian.py` build their
+`--evidence` file through `lib/_internal/ledger_bridge.py` — acquisition only
+(`## Tracker` / `tracker.none` / local Git facts; no `gh`, no MCP, no network).
+`local` is the ledger's own store snapshot, `code` is the change's `card_id`, `git`
+is that id when a `pr:` is recorded, and `remote` has **no producer in this slice** —
+a deliberate 3-of-4 reconciliation. Missing, malformed, or unreadable artifacts
+yield empty sides (fail open). Branch names and PR URLs are never used as evidence
+sides.
+
+**`tracker.none`.** Where a host finds `openspec/changes/<slug>/tracker.none` it treats
+it as evidence only (blank `code` side) and grades; it never records the exemption
+itself (R1). The file is the human act and is never created, modified, or deleted by a
+host. Recording the exemption is the explicit human/agent
+`--write '{"kind":"exempt","reason":"<one line>"}'`. A recorded `Item.Exemption` is
+honored at every checkpoint as allow/exempt and is not a conflict; removing the file
+does not revoke it (a human adjudicates with `--decide`).
+
+The bridge directory is stamped at sync (`__TRACKER_LIB_INTERNAL__` → the CLI's
+`lib/_internal`). An empty or absent stamp skips the evidence file (fail open),
+exactly like a missing binary.
+
 The verdict is computed from the durable binding witness at
 `<git-common-dir>/ai-specs/ledger/witness.json` and the per-identity store at
 `<git-common-dir>/ai-specs/ledger/state.json`. Only a `bound` witness activates the
 ledger; missing, unreadable, or unknown-version witnesses stay dormant
-(`witness-missing`) and never guess a provider. Mode comes from project config:
-the tracker `ledger_mode` (`always | ask | warn`, default `warn`) wins, and the
-legacy tracker `gate_mode` maps forward (`off` → skip checkpoints, `warn` → `warn`,
-`always` → `always`). The worktree gate's own mode is never read as the ledger
-mode. `TRACKER_LEDGER_MODE` is the one-shot override.
+(`witness-missing`) and never guess a provider. Mode comes from project config at
+`recipes.<witness recipe_id>.config`: the tracker `ledger_mode`
+(`always | ask | warn`, default `warn`) wins, and the legacy `gate_mode` maps
+forward (`off` → skip checkpoints, `warn` → `warn`, `always` → `always`). The recipe
+id is read from the durable witness (the legacy literal is only the bridge's
+fallback), so a non-legacy provider recipe's own config drives the checkpoint. The
+worktree gate's own mode is never read as the ledger mode. `TRACKER_LEDGER_MODE` is
+the one-shot override.
 
 Dormancy is visible through `doctor` only — a `tracker-ledger` check (unbound INFO,
 ambiguous / declared-not-bound / missing witness / recorded conflict WARN,
-infrastructure failure ERROR). The runtime brief and generated agent files gain no
+infrastructure failure ERROR), plus one INFO when a bound witness has no
+`plan-build-flow` recipe enabled: `work-start is unhosted`, with the other four
+checkpoints still grading. The runtime brief and generated agent files gain no
 dormancy line. No host performs a provider MCP/API create or update in this slice;
 `always` blocks until a human supplies the item. Path hosts never block
 `openspec/**`.

@@ -17,11 +17,11 @@
 # published assets; the CI release workflow diffs its generated SHA256SUMS
 # against this file and fails the release on any mismatch.
 #
-# Regenerated after tracker-ledger-foundation (the same four-arch asset gains the
-# `--ledger` mode; no new asset, no second trust root) with the canonical
-# go1.24.13 toolchain via:
+# Regenerated after trello-ledger-integration (the same four-arch asset gains the
+# `--write open|link|close|exempt` verb and the bounded store lock; no new asset, no
+# second trust root) with the canonical go1.24.13 toolchain via:
 #   scripts/build-gate.sh && shasum -a 256 dist/worktree-gate-* | grep -v current
-39b90c0512915dd908c1130d842e077de6d1eb9cf260efc68808b771e5727b21  worktree-gate-darwin-arm64
-1723adc33e06d658ccda9e5d1f3b59af6d4488fa660cbefc5885b75a69629259  worktree-gate-darwin-amd64
-c96845cbfe59a8d89dff624a978294c199ae8159b1988b9c48439fe17326f9e6  worktree-gate-linux-amd64
-af9b400355ef6974be82a4296b91e0aa3069044bddaa79935a52ba638f6dea52  worktree-gate-linux-arm64
+cbf063cecd8a436cc2a66d9b1488740402a99d1c770389c2cd42ef9c7e61bdac  worktree-gate-darwin-arm64
+357a36af5930c6bdfa35295f98ed33c5b202839e21c23c1e5ec097ebdbbdd8dc  worktree-gate-darwin-amd64
+eb26827a8e965554955a17a259d099214dc7a1d2abea761652228bf1925e491e  worktree-gate-linux-amd64
+678cf5a7e1d32c1769417ab8eb91064207e9634e4fa0c109bbd5eaf215b4efc8  worktree-gate-linux-arm64

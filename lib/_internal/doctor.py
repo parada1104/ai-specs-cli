@@ -707,6 +707,54 @@ class Doctor:
                 return True
         return False
 
+    def _load_ledger_bridge(self):
+        """Sibling-load lib/_internal/ledger_bridge.py (cold-cache safe), or None."""
+        try:
+            path = Path(__file__).with_name("ledger_bridge.py")
+            spec = importlib.util.spec_from_file_location("ledger_bridge_doctor", path)
+            if spec is None or spec.loader is None:
+                return None
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            spec.loader.exec_module(mod)
+            return mod
+        except Exception:
+            return None
+
+    def _tracker_recipe_id(self) -> str:
+        """The witness-bound recipe id, with the bridge's legacy fallback.
+
+        Reading the witness is acquisition, never grading (task 3.2). An empty result
+        means the bridge is unavailable, so no ``recipes.<id>`` section can be
+        selected and the relevance gate relies on the declaration and the witness
+        alone. The fallback literal lives in the bridge, not here.
+        """
+        bridge = self._load_ledger_bridge()
+        if bridge is None:
+            return ""
+        try:
+            return bridge.recipe_id(self.root)
+        except Exception:
+            return ""
+
+    def _tracker_recipe_enabled(self, recipe_id: str) -> bool:
+        data = self._load_manifest()
+        recipes = data.get("recipes") or {}
+        entry = recipes.get(recipe_id) if isinstance(recipes, dict) and recipe_id else None
+        return isinstance(entry, dict) and entry.get("enabled") is True
+
+    def _tracker_witness_state(self) -> str:
+        witness = self._tracker_witness_path(self._tracker_common_dir())
+        if witness is None or not witness.is_file():
+            return ""
+        try:
+            data = json.loads(witness.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        if isinstance(data, dict) and isinstance(data.get("state"), str):
+            return data["state"]
+        return ""
+
     def _tracker_ledger_in_play(self) -> bool:
         """Relevance gate only: is the tracker ledger part of this project?
 
@@ -715,7 +763,8 @@ class Doctor:
         """
         data = self._load_manifest()
         recipes = data.get("recipes") or {}
-        tr = recipes.get("trello-mcp-workflow") if isinstance(recipes, dict) else None
+        recipe_id = self._tracker_recipe_id()
+        tr = recipes.get(recipe_id) if isinstance(recipes, dict) and recipe_id else None
         if isinstance(tr, dict) and tr.get("enabled") is True:
             return True
         if self._tracker_declared():
@@ -772,6 +821,16 @@ class Doctor:
         """
         if not self._tracker_ledger_in_play():
             return
+        if self._tracker_witness_state() == "bound" and not self._tracker_recipe_enabled("plan-build-flow"):
+            # L5: work-start stays hosted by plan-build-flow. Where that recipe is not
+            # enabled the checkpoint is unhosted while the other four keep grading;
+            # doctor reports the limitation and issues no write (spec "Unhosted
+            # work-start is visible").
+            self.checks.append(Check(
+                Severity.INFO, "tracker-ledger",
+                "work-start is unhosted: enable plan-build-flow to grade that checkpoint",
+                guidance="enable the plan-build-flow recipe, or grade work-start with an explicit --write",
+            ))
         binary = self._tracker_ledger_binary()
         if binary is None:
             self.checks.append(Check(

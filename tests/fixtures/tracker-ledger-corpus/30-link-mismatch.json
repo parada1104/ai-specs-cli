@@ -1,0 +1,68 @@
+{
+  "label": "a link write moves the local side, so a code link mismatch conflicts (link mismatch)",
+  "witness": {
+    "state": "bound"
+  },
+  "change": "link-change",
+  "store": {
+    "items": [
+      {
+        "slug": "link-change",
+        "item_id": "card-local",
+        "decisions": [
+          {
+            "kind": "open"
+          }
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "always",
+      "write": {
+        "kind": "link",
+        "item_id": "card-linked",
+        "url": "https://trello.com/c/linked",
+        "native_type": "card",
+        "state": "in-progress",
+        "provider": {
+          "list": "In Progress"
+        }
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK",
+        "write": {
+          "kind": "link",
+          "applied": true,
+          "reason": ""
+        }
+      }
+    },
+    {
+      "checkpoint": "apply-start",
+      "mode": "always",
+      "evidence": {
+        "local": "",
+        "remote": "",
+        "code": "card-local",
+        "git": ""
+      },
+      "expected": {
+        "decision": "block",
+        "reason": "conflict",
+        "active": true,
+        "conflict": true,
+        "exit": 2,
+        "doctor": "WARN"
+      }
+    }
+  ],
+  "kind": "verdict"
+}

@@ -202,7 +202,84 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         root = self._project(recipe_enabled=False, init_git=True)
         self._write_witness(root, {"v": 1, "capability": "tracker", "state": "bound"})
         self._stub(verdict(severity="OK", message=""))
-        self.assertEqual(len(self._render(root)), 1)
+        checks = self._render(root)
+        # The Go finding plus the unhosted work-start INFO (task 3.3).
+        self.assertTrue(any(c.severity == self.doctor_mod.Severity.OK for c in checks), checks)
+        self.assertTrue(any("work-start is unhosted" in c.message for c in checks), checks)
+
+    # --- witness-derived recipe lookup and the unhosted work-start (3.1/3.3) ---
+
+    def _project_with_fixture_recipe(self) -> Path:
+        root = Path(self.tmp.name) / "fixture-prj"
+        root.mkdir()
+        ai = root / "ai-specs"
+        ai.mkdir()
+        (ai / "ai-specs.toml").write_text(
+            "[project]\nname = 'fixture'\n\n[agents]\nenabled = []\n\n"
+            "[recipes.trello-mcp-workflow]\nenabled = false\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            'board_id = "69ec097f13e2d38ecd89a557"\n'
+            "[recipes.fixture-tracker]\nenabled = true\n"
+        )
+        (root / "AGENTS.md").write_text("# agents\n")
+        subprocess.run(["git", "-C", str(root), "init", "-q"], check=True,
+                       capture_output=True, text=True)
+        return root
+
+    def _bound_fixture_witness(self, root: Path) -> None:
+        self._write_witness(root, {
+            "v": 1, "capability": "tracker", "state": "bound",
+            "recipe_id": "fixture-tracker", "candidates": [],
+        })
+
+    def test_doctor_resolves_the_recipe_id_from_the_witness(self):
+        root = self._project_with_fixture_recipe()
+        self._bound_fixture_witness(root)
+        doc = self.doctor_mod.Doctor(root)
+        self.assertEqual(doc._tracker_recipe_id(), "fixture-tracker")
+
+    def test_doctor_falls_back_to_the_legacy_recipe_id_without_a_witness(self):
+        root = self._project_with_fixture_recipe()
+        doc = self.doctor_mod.Doctor(root)
+        self.assertEqual(doc._tracker_recipe_id(), "trello-mcp-workflow")
+
+    def test_bound_witness_without_plan_build_reports_unhosted_work_start(self):
+        root = self._project_with_fixture_recipe()
+        self._bound_fixture_witness(root)
+        self._stub(verdict(severity="OK", message=""))
+        checks = self._render(root)
+        unhosted = [c for c in checks if "work-start is unhosted" in c.message]
+        self.assertEqual(len(unhosted), 1, checks)
+        self.assertEqual(unhosted[0].name, "tracker-ledger")
+        self.assertEqual(unhosted[0].severity, self.doctor_mod.Severity.INFO)
+
+    def test_no_unhosted_info_when_plan_build_flow_is_enabled(self):
+        root = self._project_with_fixture_recipe()
+        manifest = root / "ai-specs" / "ai-specs.toml"
+        manifest.write_text(manifest.read_text() + "[recipes.plan-build-flow]\nenabled = true\n")
+        self._bound_fixture_witness(root)
+        self._stub(verdict(severity="OK", message=""))
+        checks = self._render(root)
+        self.assertFalse(any("work-start is unhosted" in c.message for c in checks), checks)
+
+    def test_no_unhosted_info_without_a_bound_witness(self):
+        root = self._project_with_fixture_recipe()
+        self._stub(verdict(severity="WARN", reason="witness-missing",
+                           message="witness missing; run ai-specs sync"))
+        checks = self._render(root)
+        self.assertFalse(any("work-start is unhosted" in c.message for c in checks), checks)
+
+    def test_doctor_still_issues_no_writes(self):
+        root = self._project_with_fixture_recipe()
+        self._bound_fixture_witness(root)
+        self._stub(verdict(severity="OK", message=""))
+
+        def walk(base: Path):
+            return sorted(str(p.relative_to(base)) for p in base.rglob("*") if p.is_file())
+
+        before = walk(root)
+        self._render(root)
+        self.assertEqual(before, walk(root))
 
     # --- infra fail-closed ---
 

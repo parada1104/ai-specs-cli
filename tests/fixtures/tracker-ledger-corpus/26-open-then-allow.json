@@ -1,0 +1,45 @@
+{
+  "label": "an explicit open write opens the item and the re-grade allows (open-then-allow)",
+  "witness": {
+    "state": "bound"
+  },
+  "change": "write-change",
+  "store": {
+    "items": []
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "warn",
+      "write": {
+        "kind": "open"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK",
+        "write": {
+          "kind": "open",
+          "applied": true,
+          "reason": ""
+        }
+      }
+    },
+    {
+      "checkpoint": "apply-start",
+      "mode": "warn",
+      "expected": {
+        "decision": "allow",
+        "reason": "",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    }
+  ],
+  "kind": "verdict"
+}

@@ -12,12 +12,16 @@
 #   SHELL mode stdin = JSON with tool_input.command (or script/cmd) OR Cursor
 #     native top-level { "command", "cwd", … }
 #   exit 0 → allow.   exit 2 → block (stderr surfaced to the agent).
-# Fail-open: a missing/unverified binary, any parse/lookup/git/python3 error,
-# or an ambiguous event allows the action. `openspec/**` is never blocked.
+# Fail-open: a missing/unverified binary, an unstamped/missing evidence bridge,
+# any parse/lookup/git/python3 error, or an ambiguous event allows the action.
+# Fail-closed: a `--write` that cannot be recorded (validation, lock timeout,
+# ambiguous identity, store IO) exits 2 with no verdict JSON. `openspec/**` is never
+# blocked.
 #
 # Tokens stamped at sync (gitignored project copy):
 #   __TRACKER_CARD_GATE_MODE__   (legacy gate_mode; default warn)
 #   __TRACKER_CLI_HOME__         (CLI install home for binary resolution)
+#   __TRACKER_LIB_INTERNAL__     (CLI lib/_internal dir holding ledger_bridge.py)
 #
 # Config / env:
 #   TRACKER_LEDGER_MODE       env override for the ledger mode (always|ask|warn)
@@ -29,6 +33,7 @@
 
 stamped_gate_mode="__TRACKER_CARD_GATE_MODE__"
 stamped_cli_home="__TRACKER_CLI_HOME__"
+stamped_lib_internal="__TRACKER_LIB_INTERNAL__"
 prod_dirs="${TRACKER_CARD_GATE_PATHS:-lib catalog bin src}"
 [ -n "${prod_dirs// /}" ] || prod_dirs="lib catalog bin src"
 
@@ -54,7 +59,8 @@ input="$(cat)"
 #     kind ∈ {path, shell, none}
 #   path → line 2: <abs_or_rel_file_path>
 #   shell → line 2: <action>\t<details>
-#     action ∈ {pr_create, archive}\t<details may be slug or empty>
+#     action ∈ {pr_create}\t<details is empty; archive-close is graded by the
+#     pre-merge guardian, so archive shell commands are not gated here>
 # Fail-open: any python error → exit 0.
 parsed="$(python3 - "$input" "$stamped_cli_home" <<'PYEOF' 2>/dev/null
 import json, re, shlex, sys
@@ -480,22 +486,73 @@ cwd="${rest_kl#*$'\t'}"
 # verdict. A missing/unverified binary, a parse error, or an IO failure fails
 # open (exit 0).
 
+# The evidence bridge lives beside the CLI's other internals. Its stamp follows the
+# same materialize path as __TRACKER_CLI_HOME__; an empty or unstamped value means the
+# bridge is unavailable, so the evidence file is skipped (fail open), exactly like a
+# missing/unverified binary. The bridge is acquisition only: no host derives a ledger
+# write from a planning-tree artifact (R1).
+_ledger_bridge() {
+  case "$stamped_lib_internal" in
+    ""|__*) return 1 ;;
+  esac
+  [ -f "$stamped_lib_internal/ledger_bridge.py" ] || return 1
+  printf '%s\n' "$stamped_lib_internal"
+}
+
+_ledger_bridge_call() {
+  # $1 bridge dir, $2 verb, then the verb's arguments. Acquisition only: it prints
+  # the verb's stdout (or writes the evidence file) and never grades.
+  local lib="$1" verb="$2"
+  shift 2
+  python3 - "$lib" "$verb" "$@" <<'PY' 2>/dev/null
+import json, sys
+from pathlib import Path
+lib, verb = sys.argv[1], sys.argv[2]
+sys.path.insert(0, lib)
+import ledger_bridge
+root = Path(sys.argv[3])
+if verb == "slug":
+    print(ledger_bridge.change_slug(root))
+elif verb == "recipe":
+    print(ledger_bridge.recipe_id(root))
+elif verb == "evidence":
+    payload = ledger_bridge.evidence_payload(root, sys.argv[4] or None)
+    Path(sys.argv[5]).write_text(json.dumps(payload), encoding="utf-8")
+PY
+}
+
+_ledger_recipe_id() {
+  # The bound recipe id from the durable witness (via the bridge), or nothing when
+  # the bridge is unstamped. Reading the witness is acquisition, not grading.
+  local lib
+  lib="$(_ledger_bridge)" || return 0
+  _ledger_bridge_call "$lib" recipe "$1"
+}
+
 _ledger_mode() {
+  # $1 root, $2 legacy gate-mode hint, $3 witness recipe id (may be empty). The
+  # config section is recipes.<recipe>; without a recipe id only the env override
+  # and the stamped hint apply, which keeps the warn-first default.
   local root="$1"
   local gate_hint="${2:-}"
-  python3 - "$root" "${TRACKER_LEDGER_MODE:-}" "$gate_hint" <<'PY' 2>/dev/null
+  local recipe="${3:-}"
+  python3 - "$root" "${TRACKER_LEDGER_MODE:-}" "$gate_hint" "$recipe" <<'PY' 2>/dev/null
 import sys, tomllib
 from pathlib import Path
 root, env_mode, gate_hint = sys.argv[1], sys.argv[2], sys.argv[3]
+recipe = sys.argv[4] if len(sys.argv) > 4 else ""
 ledger = gate = ""
-try:
-    data = tomllib.loads((Path(root) / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
-    cfg = ((data.get("recipes") or {}).get("trello-mcp-workflow") or {}).get("config") or {}
-    ledger = cfg.get("ledger_mode") or ""
-    gate = cfg.get("gate_mode") or ""
-except Exception:
-    pass
-if gate_hint in ("off", "warn", "always"):
+if recipe:
+    try:
+        data = tomllib.loads((Path(root) / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
+        cfg = ((data.get("recipes") or {}).get(recipe) or {}).get("config") or {}
+        ledger = cfg.get("ledger_mode") or ""
+        gate = cfg.get("gate_mode") or ""
+    except Exception:
+        pass
+if gate_hint in ("off", "warn", "always") and not gate:
+    # The bound recipe's own gate_mode wins; the stamped legacy hint fills in when
+    # that config section declares none (the pre-witness behavior).
     gate = gate_hint
 if env_mode in ("always", "ask", "warn"):
     print(env_mode)
@@ -594,9 +651,28 @@ _ledger_grade() {
   local checkpoint="$1" mode="$2" root="$3" prefix="$4"
   local bin
   bin="$(_ledger_binary)" || return 0
+  local extra=() evidence="" lib=""
+  if lib="$(_ledger_bridge)"; then
+    local slug
+    # R1: the host never converts an artifact into a ledger write. A planning-tree
+    # tracker.none file is presentation and evidence only; recording the exemption is
+    # an explicit `--write kind=exempt` made outside this host, never a side effect of
+    # grading a checkpoint. The file is never created, modified, or deleted here.
+    slug="$(_ledger_bridge_call "$lib" slug "$root")"
+    evidence="$(mktemp "${TMPDIR:-/tmp}/tracker-ledger-evidence.XXXXXX" 2>/dev/null)"
+    if [ -n "$evidence" ]; then
+      if _ledger_bridge_call "$lib" evidence "$root" "$slug" "$evidence"; then
+        extra=(--evidence "$evidence")
+      else
+        rm -f "$evidence"; evidence=""
+      fi
+    fi
+  fi
   local out rc
-  out="$("$bin" --ledger --checkpoint "$checkpoint" --ledger-mode "$mode" --project-root "$root" 2>/dev/null)"
+  out="$("$bin" --ledger --checkpoint "$checkpoint" --ledger-mode "$mode" \
+      --project-root "$root" "${extra[@]}" 2>/dev/null)"
   rc=$?
+  [ -z "$evidence" ] || rm -f "$evidence"
   [ -n "$out" ] || return 0
   local decision reason active
   decision="$(printf '%s' "$out" | _ledger_field decision)" || return 0
@@ -676,7 +752,7 @@ if [ "$kind" = path ]; then
   done
   [ "$is_prod" -eq 1 ] || exit 0
 
-  mode="$(_ledger_mode "$repo_root" "$gate_mode")"
+  mode="$(_ledger_mode "$repo_root" "$gate_mode" "$(_ledger_recipe_id "$repo_root")")"
   [ "$mode" = off ] && exit 0
   _ledger_grade "apply-start" "$mode" "$repo_root" "tracker-card-gate" || exit 2
   exit 0
@@ -689,7 +765,7 @@ if [ "$kind" = shell ]; then
     [ -n "$action" ] || continue
     case "$action" in
       pr_create)
-        mode="$(_ledger_mode "$repo_root" "$gate_mode")"
+        mode="$(_ledger_mode "$repo_root" "$gate_mode" "$(_ledger_recipe_id "$repo_root")")"
         [ "$mode" = off ] && continue
         _ledger_grade "pr-review" "$mode" "$repo_root" "tracker-card-gate" || exit 2
         ;;

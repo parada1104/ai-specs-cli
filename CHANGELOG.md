@@ -37,6 +37,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   legacy Python copies of the `## Tracker` validity rule (link parser, tracker
   hook heredoc, doctor) delegate to the Go predicate or are held by parity tests
   that fail on divergence.
+- **Tracker Ledger write surface**: `worktree-gate --ledger --write '<json>'`
+  records `open` / `link` / `close` / `exempt` beside the existing `--decide`.
+  `open` is open-if-absent under the store lock, so a retried open reports
+  `already-open` instead of manufacturing a second item or a conflict; `link` writes
+  the provider's native id/URL/type/state plus an opaque provider payload onto the
+  provider-neutral core fields; `close` never reopens; and `exempt` persists the
+  reason supplied by an explicit human/agent write as `Item.Exemption` (the
+  human-authored `tracker.none` file is evidence-only — no host auto-records it),
+  honored at every checkpoint as allow/exempt. Success adds a `write: {kind, applied, reason}` sidecar to the verdict
+  JSON, and `--write`/`--decide` are mutually exclusive. Every declared decision kind
+  and core item field now has a production writer, and **grading never writes**.
+  Store-lock acquisition is bounded (~100 ms): grade paths fail open on timeout while
+  write and `--decide` paths fail closed. Hosts build their own `--evidence` through
+  the new acquisition-only `lib/_internal/ledger_bridge.py` (local/code/git — the
+  `remote` side stays unwired as a deliberate 3-of-4 reconciliation), and a failed
+  write persists nothing and exits `2` with no stdout JSON. The tracker gate,
+  pre-merge guardian, and `doctor` resolve their recipe id from the binding witness
+  with the legacy literal only as a fallback; `doctor` reports an unhosted
+  `work-start` as INFO. `catalog/recipes/plan-build-flow/**` is unchanged.
 - **Version-keyed upgrade notices**: a release can declare a required
   post-upgrade action in an `### Upgrade notes` subsection under its
   `CHANGELOG.md` heading. `ai-specs upgrade` replays the notices of every

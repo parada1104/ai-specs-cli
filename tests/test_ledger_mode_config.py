@@ -30,6 +30,9 @@ RECIPE_TOML = RECIPE_DIR / "recipe.toml"
 PLAN_BUILD_GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
 TRACKER_GATE = RECIPE_DIR / "hooks" / "tracker-card-gate.sh"
 GUARDIAN = ROOT / "lib" / "_internal" / "premerge_guardian.py"
+DOCTOR = ROOT / "lib" / "_internal" / "doctor.py"
+LEGACY_RECIPE = "trello-mcp-workflow"
+LIB_INTERNAL = ROOT / "lib" / "_internal"
 SCHEMA = ROOT / "lib" / "_internal" / "recipe_schema.py"
 
 STUB_BINARY = """#!/usr/bin/env bash
@@ -94,6 +97,108 @@ class LedgerModeConfigTests(unittest.TestCase):
         self.stub.write_text(STUB_BINARY)
         self.stub.chmod(0o755)
 
+    # --- witness-derived recipe lookup (task 3.1) ---
+
+    def _witness(self, recipe_id: str) -> None:
+        common = subprocess.run(
+            ["git", "-C", str(self.repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        ledger_dir = Path(common) / "ai-specs" / "ledger"
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        (ledger_dir / "witness.json").write_text(json.dumps({
+            "v": 1, "capability": "tracker", "state": "bound", "recipe_id": recipe_id,
+            "candidates": [], "written_at": "2026-01-01T00:00:00Z",
+        }))
+
+    def _manifest_two_recipes(self, *, legacy_gate: str | None, fixture_mode: str | None) -> None:
+        text = (
+            "[project]\nname = 'mode'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+        )
+        if legacy_gate is not None:
+            text += f'gate_mode = "{legacy_gate}"\n'
+        text += "[recipes.fixture-tracker]\nenabled = true\n[recipes.fixture-tracker.config]\n"
+        if fixture_mode is not None:
+            text += f'ledger_mode = "{fixture_mode}"\n'
+        ai_specs = self.repo / "ai-specs"
+        ai_specs.mkdir(exist_ok=True)
+        (ai_specs / "ai-specs.toml").write_text(text)
+
+    def test_witness_recipe_id_drives_the_tracker_host_mode_lookup(self):
+        self._manifest_two_recipes(legacy_gate="off", fixture_mode="always")
+        self._witness("fixture-tracker")
+        r = self._tracker_path("warn", env=self._env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            self._ledger_modes(), ["always"],
+            "the mode must come from the witness-bound recipe's config, not the literal",
+        )
+
+    def test_witness_recipe_id_drives_the_guardian_mode_lookup(self):
+        self._manifest_two_recipes(legacy_gate="off", fixture_mode="always")
+        self._witness("fixture-tracker")
+        active = self.repo / "openspec" / "changes" / "demo-change"
+        active.mkdir(parents=True, exist_ok=True)
+        (active / "tasks.md").write_text("Depth: light\n")
+        (active / "proposal.md").write_text("# proposal\n")
+        r = subprocess.run(
+            ["python3", str(GUARDIAN), "demo-change", "--root", str(self.repo),
+             "--stage", "pre-archive", "--tier", "light"],
+            capture_output=True, text=True, env=self._env(),
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._ledger_modes(), ["always"],
+                         "the guardian must read the witness recipe's config too")
+
+    def test_witness_recipe_gate_mode_maps_forward(self):
+        self._manifest_two_recipes(legacy_gate="off", fixture_mode=None)
+        ai = self.repo / "ai-specs" / "ai-specs.toml"
+        ai.write_text(ai.read_text() + 'gate_mode = "always"\n')
+        self._witness("fixture-tracker")
+        self._tracker_path("warn", env=self._env())
+        self.assertEqual(self._ledger_modes(), ["always"])
+
+    def test_env_override_still_beats_the_witness_recipe(self):
+        self._manifest_two_recipes(legacy_gate="off", fixture_mode="always")
+        self._witness("fixture-tracker")
+        self._tracker_path("warn", env=self._env(TRACKER_LEDGER_MODE="warn"))
+        self.assertEqual(self._ledger_modes(), ["warn"])
+
+    def test_missing_witness_keeps_the_legacy_lookup(self):
+        self._manifest(ledger_mode="always", gate_mode="off")
+        r = self._tracker_path("off", env=self._env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["apply-start"], r.stderr)
+        self.assertEqual(self._ledger_modes(), ["always"], r.stderr)
+
+    # --- 3.4: the remaining literal is named, not silently left ---
+
+    def test_no_hardcoded_recipe_lookup_remains_at_the_three_in_scope_sites(self):
+        sites = (
+            ("guardian", GUARDIAN, 'get("trello-mcp-workflow")', "recipe_id(root)"),
+            ("hook", TRACKER_GATE, 'get("trello-mcp-workflow")', "_ledger_recipe_id"),
+            ("doctor", DOCTOR, 'get("trello-mcp-workflow")', "recipe_id"),
+        )
+        for label, path, literal_lookup, resolver in sites:
+            with self.subTest(site=label):
+                text = path.read_text(encoding="utf-8")
+                self.assertNotIn(
+                    literal_lookup, text,
+                    f"{path.name} still looks config up by the hardcoded recipe id; the "
+                    "fallback belongs in ledger_bridge.LEGACY_RECIPE_ID",
+                )
+                self.assertIn(resolver, text, f"{path.name} must resolve the witness recipe id")
+
+    def test_the_out_of_scope_residue_is_named_in_the_docs(self):
+        plan_build = PLAN_BUILD_GATE.read_text(encoding="utf-8")
+        self.assertIn(LEGACY_RECIPE, plan_build,
+                      "plan-build-gate.sh is the named, out-of-scope residue (L5)")
+        docs = (ROOT / "docs" / "capabilities.md").read_text(encoding="utf-8")
+        self.assertIn("plan-build", docs)
+        self.assertIn("work-start", docs)
+
     # --- 5.2: recipe declares the field ---
 
     def test_recipe_declares_ledger_mode_enum_and_default(self):
@@ -138,6 +243,7 @@ class LedgerModeConfigTests(unittest.TestCase):
             TRACKER_GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", gate_mode)
             .replace("__TRACKER_CLI_HOME__", "")
+            .replace("__TRACKER_LIB_INTERNAL__", str(LIB_INTERNAL))
         )
         path.write_text(text)
         path.chmod(0o755)

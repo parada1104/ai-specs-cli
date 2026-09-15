@@ -97,9 +97,53 @@ ever guessing a provider.
 - **Dormancy is `doctor` only.** A `tracker-ledger` check reports `unbound` (INFO),
   `ambiguous` / `declared-not-bound` / missing witness / recorded conflict (WARN),
   and infrastructure failure (ERROR). The runtime brief gains no dormancy line.
+- **Explicit item opening.** An item is opened only by a deliberate write, never
+  because a `## Tracker` section parses. Grading is pure: no checkpoint, in any mode,
+  creates, mutates, or deletes store state, so `always` with no item blocks and leaves
+  the store byte-identical.
+- **Write surface.** `worktree-gate --ledger --write '<json>'` records exactly four
+  kinds beside the existing `--decide`: `open` (open-if-absent under the store lock),
+  `link` (native id, URL, native type, state, and an opaque provider payload on the
+  provider-neutral core fields), `close`, and `exempt`. `--write` and `--decide` are
+  mutually exclusive. Writes are idempotent where they can be: a retried `open`
+  reports `applied: false` / `already-open`, a repeated `link` reports `unchanged`,
+  and a second `close` reports `already-closed`. Success adds a
+  `write: {kind, applied, reason}` sidecar to the verdict JSON. Every declared
+  decision kind and core item field now has a production writer.
+- **Failed writes fail closed.** A validation failure, a lock timeout (bounded ~100 ms
+  attempt), a `change-ambiguous` identity without an explicit slug, or a store IO
+  error persists nothing, leaves the store byte-identical, prints
+  `worktree-gate: ledger --write failed: …` on stderr, and exits `2` with no stdout
+  JSON. Grade paths keep failing open (missing or unverified binary, unreadable
+  evidence, flag-parse errors on verdict calls, grade-path lock timeout).
+- **Three of four evidence sides.** `lib/_internal/ledger_bridge.py` builds the
+  `--evidence` file from local facts only: `local` is the ledger's own store snapshot,
+  `code` is the change's `## Tracker` `card_id`, `git` is that same native id when a
+  `pr:` is recorded, and `remote` has **no producer in this slice**. The bridge never
+  grades, never calls `gh`, MCP, or the network, works from a cold CLI install with no
+  project cache, and turns any read failure into an empty side (fail open). Branch
+  names and PR URLs are deliberately not evidence sides: the conflict predicate
+  equality-compares every non-empty side against the local item id.
+- **`tracker.none` is evidence, not a durable exemption on its own.** The human-authored
+  `openspec/changes/<slug>/tracker.none` is presentation/evidence-only; it becomes
+  `Item.Exemption` only through the explicit human/agent `exempt` write, whose reason
+  is supplied in the payload. No host auto-records it (R1) — hosts treat it as blank
+  `code` evidence and never create, modify, or delete the file. Once recorded it is
+  honored at every checkpoint as allow/exempt and never registers as a conflict.
+  Removing the file does not auto-revoke it — reopening evidence is a human act
+  (`--decide '{"kind":"adjudicate","choice":"…"}'` clears the exemption).
 - **No provider writes in this slice.** The ledger records and reconciles evidence;
   it performs no MCP/API create, update, move, comment, or label call. `always`
   blocks until an item is supplied, it does not create one.
+- **Witness-derived configuration.** The tracker gate, the pre-merge guardian, and
+  `doctor` resolve the bound recipe id from the witness and read
+  `recipes.<id>.config` for `ledger_mode` / `gate_mode`; the legacy literal survives
+  only as the bridge's fallback. Reading the witness is acquisition, not grading.
+- **Remaining work, named not silent.** `work-start` is still hosted by
+  `plan-build-flow`, whose `plan-build-gate.sh` resolves its config through the legacy
+  literal and is intentionally out of scope here. A tracker-bound project without
+  `plan-build-flow` enabled has an unhosted `work-start`; `doctor` reports it as an
+  INFO line (`work-start is unhosted`) while the other four checkpoints keep grading.
 
 This is the project-level Python→Go strangler policy applied at the seam it
 touches: the Go predicate is the single authoritative grader for `## Tracker`

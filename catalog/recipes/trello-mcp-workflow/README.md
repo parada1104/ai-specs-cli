@@ -108,11 +108,52 @@ The ledger is the only grader. The five checkpoints (`work-start`, `apply-start`
 
 `ledger_mode` (enum `always|ask|warn`, default `warn`) wins whenever it is set.
 When it is unset the legacy `gate_mode` maps forward: `off`→skip, `warn`→`warn`,
-`always`→`always`. The worktree gate mode is never read. One-shot env override:
+`always`→`always`. The config section is the **witness-bound** recipe
+(`recipes.<witness recipe_id>.config`), so a non-legacy provider recipe drives the
+checkpoint; the `trello-mcp-workflow` literal is only the bridge's fallback when no
+witness resolves. The worktree gate mode is never read. One-shot env override:
 `TRACKER_LEDGER_MODE` (and the legacy `TRACKER_CARD_GATE_MODE`). Production dirs
 override: `TRACKER_CARD_GATE_PATHS` (default `lib catalog bin src`). The gate
 **never** blocks `openspec/**` and **fails open** on a missing or unverified
 binary, parse errors, or unavailable IO.
+
+### The write surface
+
+Items are opened, linked, closed, and exempted only by explicit writes — a parsed
+`## Tracker` section never opens one, and grading never writes:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
+  --project-root . --write '{"kind":"open"}'
+worktree-gate --ledger --checkpoint apply-start --ledger-mode warn --project-root . \
+  --write '{"kind":"link","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress","provider":{"list":"In Progress"}}'
+worktree-gate --ledger --checkpoint archive-close --ledger-mode warn \
+  --project-root . --write '{"kind":"close"}'
+worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
+  --project-root . --write '{"kind":"exempt","reason":"<first line of tracker.none>"}'
+```
+
+`--write` and `--decide` are mutually exclusive. Success adds
+`"write":{"kind":…,"applied":…,"reason":…}` to the verdict; the idempotent no-ops
+are `already-open`, `unchanged`, and `already-closed`. A failed write (invalid
+payload, lock timeout, ambiguous identity, store IO) persists nothing, reports
+`worktree-gate: ledger --write failed: …` on stderr, and exits `2` with no stdout
+JSON. Grade paths keep failing open.
+
+### Evidence sides
+
+`tracker-card-gate.sh` and `premerge_guardian.py` pass a bridge-built `--evidence`
+file (`lib/_internal/ledger_bridge.py`, acquisition only): `local` is the ledger's
+own store snapshot, `code` is the change's `## Tracker` `card_id`, and `git` is that
+same id when a `pr:` is recorded. The `remote` side is **unwired in this slice** — a
+deliberate 3-of-4 reconciliation. A missing or malformed artifact yields an empty
+side (fail open).
+
+Where a host finds `openspec/changes/<slug>/tracker.none`, it treats it as evidence
+only (blank `code` side) and grades; it never records the exemption itself (R1). The
+file is the human act and is never created, modified, or deleted by a host. Durable
+recording is the explicit human/agent `--write '{"kind":"exempt","reason":"<one line>"}'`;
+removing the file does not revoke a recorded exemption.
 
 ### Witness, store, and activation
 
@@ -127,7 +168,9 @@ after its item closed opens a new item.
 
 Dormancy is visible through **`doctor` only** — the `tracker-ledger` check renders
 `unbound` (INFO), `ambiguous` / `declared-not-bound` / missing witness / recorded
-conflict (WARN), and infrastructure failure (ERROR). The runtime brief gains no
+conflict (WARN), infrastructure failure (ERROR), plus an INFO when a bound witness has
+no `plan-build-flow` recipe enabled (`work-start is unhosted`; the other four
+checkpoints keep grading). The runtime brief gains no
 per-project dormancy line. The first slice records and reconciles evidence; it
 performs **no** Trello MCP/API create, update, move, comment, or label call —
 `always` blocks until an item is supplied, it does not create one. Provider item
