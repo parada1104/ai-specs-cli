@@ -546,6 +546,383 @@ func TestLedgerExplainIsAnAlias(t *testing.T) {
 	assertKeys(t, "verdict", out, "capability", "active", "checkpoint", "mode", "decision", "reason", "identity", "item", "conflict", "prompt", "doctor")
 }
 
+// ledgerWritePrefix is the argv prefix for a write against an explicit project root.
+func ledgerWritePrefix(dir string) []string {
+	return []string{"--ledger", "--checkpoint", "apply-start", "--project-root", dir}
+}
+
+// ledgerWritePrefixMode is the same prefix with an explicit ledger mode.
+func ledgerWritePrefixMode(dir, mode string) []string {
+	return []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", mode, "--project-root", dir}
+}
+
+// ledgerWriteArgs is the --write argv fragment for one payload.
+func ledgerWriteArgs(payload string) []string {
+	return []string{"--write", payload}
+}
+
+// ledgerWriteRun runs one --ledger invocation whose argv ends with a --write payload.
+func ledgerWriteRun(t *testing.T, prefix []string, payload string) (int, string, string) {
+	t.Helper()
+	args := append(append([]string{}, prefix...), ledgerWriteArgs(payload)...)
+	return runCLI(t, args...)
+}
+
+// ledgerStoreBytes reads the store file, or nil when it does not exist.
+func ledgerStoreBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatal(err)
+	}
+	return data
+}
+
+// ledgerStoreMtime is the store's modification time, used to prove a failed write
+// did not even rewrite identical bytes.
+func ledgerStoreMtime(t *testing.T, path string) time.Time {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.ModTime()
+}
+
+// TestLedgerWriteOpenThenIdempotentRetryViaCLI pins the CLI write vehicle end to
+// end: the write sidecar is emitted on success, the post-write grade is
+// re-graded, and a retried open is reported as already-open.
+func TestLedgerWriteOpenThenIdempotentRetryViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := ledger.StorePath(common)
+	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "always", "--project-root", dir}
+
+	code, stdout, stderr := ledgerWriteRun(t, base, `{"kind":"open"}`)
+	if code != 0 {
+		t.Fatalf("open exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	out := decodeLedgerOut(t, stdout)
+	side, ok := out["write"].(map[string]any)
+	if !ok {
+		t.Fatalf("write sidecar = %v, want an object", out["write"])
+	}
+	assertKeys(t, "write", side, "kind", "applied", "reason")
+	if side["kind"] != "open" || side["applied"] != true {
+		t.Fatalf("write sidecar = %v, want open/applied", side)
+	}
+	if out["decision"] != "allow" || out["item"] == nil {
+		t.Fatalf("post-write grade = %v (item %v), want allow with the item", out["decision"], out["item"])
+	}
+
+	code, stdout, stderr = runCLI(t, append(append([]string{}, base...), ledgerWriteArgs(`{"kind":"open"}`)...)...)
+	if code != 0 {
+		t.Fatalf("retried open exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	side = decodeLedgerOut(t, stdout)["write"].(map[string]any)
+	if side["applied"] != false || side["reason"] != "already-open" {
+		t.Fatalf("retried open sidecar = %v, want applied=false/already-open", side)
+	}
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Items) != 1 {
+		t.Fatalf("items = %d, want exactly one", len(store.Items))
+	}
+}
+
+// TestLedgerWriteLinkPersistsNativeFieldsViaCLI pins the link verb through the CLI.
+func TestLedgerWriteLinkPersistsNativeFieldsViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := ledger.StorePath(common)
+	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "warn", "--project-root", dir}
+
+	if code, _, stderr := ledgerWriteRun(t, base, `{"kind":"open"}`); code != 0 {
+		t.Fatalf("open exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	payload := `{"kind":"link","item_id":"6aa703fdcf61a90ec702d58b","url":"https://trello.com/c/ie4mQykZ","native_type":"card","state":"in-progress","provider":{"list":"In Progress"}}`
+	code, stdout, stderr := ledgerWriteRun(t, base, payload)
+	if code != 0 {
+		t.Fatalf("link exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	if side := decodeLedgerOut(t, stdout)["write"].(map[string]any); side["applied"] != true {
+		t.Fatalf("link sidecar = %v, want applied", side)
+	}
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := store.Primary(ledger.IdentityKey(common, ledgerGit(t, dir, "symbolic-ref", "--quiet", "--short", "HEAD"), ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.ItemID != "6aa703fdcf61a90ec702d58b" || item.NativeType != "card" || item.State != "in-progress" {
+		t.Fatalf("item core fields = %+v, want the linked native fields", item)
+	}
+	if !strings.Contains(string(item.Provider), "In Progress") {
+		t.Fatalf("opaque provider = %s, want the payload preserved", item.Provider)
+	}
+}
+
+// TestLedgerWriteMutuallyExclusiveWithDecide pins the DW2 exclusivity: both flags
+// exit 2 and persist nothing.
+func TestLedgerWriteMutuallyExclusiveWithDecide(t *testing.T) {
+	dir, common, branch := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := saveLedgerStore(t, common, branch, "card-local", nil)
+	before := ledgerStoreBytes(t, storePath)
+
+	code, stdout, stderr := runCLI(t, "--ledger", "--checkpoint", "apply-start", "--project-root", dir,
+		"--write", `{"kind":"open"}`, "--decide", `{"choice":"local"}`)
+	if code != 2 {
+		t.Fatalf("mutually exclusive exit = %d, want 2; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("mutually exclusive stdout = %q, want no JSON", stdout)
+	}
+	if string(before) != string(ledgerStoreBytes(t, storePath)) {
+		t.Fatal("a mutually exclusive invocation must persist nothing")
+	}
+}
+
+// TestLedgerWriteFailedWriteExits2WithNoJSON pins the L6 output contract: a rejected
+// write reports on stderr and emits no stdout JSON.
+func TestLedgerWriteFailedWriteExits2WithNoJSON(t *testing.T) {
+	dir, common, branch := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := saveLedgerStore(t, common, branch, "card-local", nil)
+	before := ledgerStoreBytes(t, storePath)
+	beforeMtime := ledgerStoreMtime(t, storePath)
+
+	code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"invented"}`)
+	if code != 2 {
+		t.Fatalf("failed write exit = %d, want 2; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("failed write stdout = %q, want no JSON", stdout)
+	}
+	if !strings.Contains(stderr, "ledger --write failed:") {
+		t.Fatalf("failed write stderr = %q, want the --write failure prefix", stderr)
+	}
+	if string(before) != string(ledgerStoreBytes(t, storePath)) {
+		t.Fatal("a failed write must leave the store byte-identical")
+	}
+	if !ledgerStoreMtime(t, storePath).Equal(beforeMtime) {
+		t.Fatal("a failed write must not rewrite the store at all")
+	}
+}
+
+// TestLedgerWriteFlagParseFailsOpenButValidationFailsClosed pins the two postures:
+// an unparsable flag on a verdict call fails open, while a successfully parsed
+// write with a bad payload fails closed.
+func TestLedgerWriteFlagParseFailsOpenButValidationFailsClosed(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+
+	code, stdout, stderr := runCLI(t, "--ledger", "--checkpoint", "apply-start", "--project-root", dir,
+		"--write", `{"kind":"open"}`, "--bogus-flag")
+	if code != 0 {
+		t.Fatalf("flag-parse error exit = %d, want 0 (fail open); stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("flag-parse error stdout = %q, want empty", stdout)
+	}
+
+	code, stdout, _ = ledgerWriteRun(t, ledgerWritePrefix(dir), "not-json")
+	if code != 2 {
+		t.Fatalf("invalid --write JSON exit = %d, want 2", code)
+	}
+	if stdout != "" {
+		t.Fatalf("invalid --write JSON stdout = %q, want empty", stdout)
+	}
+}
+
+// TestLedgerWriteExemptHonoredAtEveryCheckpointViaCLI pins the tracker.none mapping
+// end to end: the exempt write persists a reason and every checkpoint then allows
+// with reason=exempt, even in always.
+func TestLedgerWriteExemptHonoredAtEveryCheckpointViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := ledger.StorePath(common)
+
+	code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"exempt","reason":"no tracker for this spike"}`)
+	if code != 0 {
+		t.Fatalf("exempt exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	if side := decodeLedgerOut(t, stdout)["write"].(map[string]any); side["applied"] != true {
+		t.Fatalf("exempt sidecar = %v, want applied", side)
+	}
+
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Items) != 1 || store.Items[0].Exemption != "no tracker for this spike" {
+		t.Fatalf("store = %+v, want one exempt item with the persisted reason", store.Items)
+	}
+
+	for _, cp := range ledger.Checkpoints {
+		code, stdout, stderr := runCLI(t, "--ledger", "--checkpoint", cp, "--ledger-mode", "always", "--project-root", dir)
+		if code != 0 {
+			t.Fatalf("%s exempt exit = %d, want 0; stderr: %s", cp, code, stderr)
+		}
+		out := decodeLedgerOut(t, stdout)
+		if out["decision"] != "allow" || out["reason"] != "exempt" {
+			t.Fatalf("%s = %v/%v, want allow/exempt", cp, out["decision"], out["reason"])
+		}
+	}
+}
+
+// TestLedgerWriteChangeAmbiguousRefusesViaCLI pins the collision refusal through the
+// CLI: two active change folders make the identity ambiguous, so an open without an
+// explicit slug exits 2 and writes nothing.
+func TestLedgerWriteChangeAmbiguousRefusesViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	for _, slug := range []string{"alpha-change", "beta-change"} {
+		folder := filepath.Join(dir, "openspec", "changes", slug)
+		if err := os.MkdirAll(folder, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	storePath := ledger.StorePath(common)
+
+	code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"open"}`)
+	if code != 2 {
+		t.Fatalf("ambiguous write exit = %d, want 2; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("ambiguous write stdout = %q, want no JSON", stdout)
+	}
+	if ledgerStoreBytes(t, storePath) != nil {
+		t.Fatal("a refused ambiguous write must persist nothing")
+	}
+
+	code, stdout, stderr = ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"open","change":"alpha-change"}`)
+	if code != 0 {
+		t.Fatalf("explicit-slug write exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Items) != 1 || store.Items[0].Identity.Change != "alpha-change" {
+		t.Fatalf("store items = %+v, want one item under the explicit slug", store.Items)
+	}
+	if decodeLedgerOut(t, stdout)["item"] == nil {
+		t.Fatal("the post-write grade must select the freshly opened item")
+	}
+}
+
+// TestLedgerWriteUsesTheOwnerProjectRootOrCwd pins that writes follow the same owner
+// project root as grades: an explicit --project-root and the process cwd reach one
+// store, so a write issued either way lands on the same item.
+func TestLedgerWriteUsesTheOwnerProjectRootOrCwd(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := ledger.StorePath(common)
+
+	t.Chdir(dir)
+	code, stdout, stderr := ledgerWriteRun(t, []string{"--ledger", "--checkpoint", "apply-start"}, `{"kind":"open"}`)
+	if code != 0 {
+		t.Fatalf("cwd-relative write exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	if side := decodeLedgerOut(t, stdout)["write"].(map[string]any); side["applied"] != true {
+		t.Fatalf("cwd-relative write sidecar = %v, want applied", side)
+	}
+
+	code, stdout, stderr = ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"link","item_id":"card-cwd"}`)
+	if code != 0 {
+		t.Fatalf("project-root write exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	if side := decodeLedgerOut(t, stdout)["write"].(map[string]any); side["applied"] != true {
+		t.Fatalf("project-root write sidecar = %v, want applied", side)
+	}
+
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Items) != 1 || store.Items[0].ItemID != "card-cwd" {
+		t.Fatalf("store items = %+v, want one item linked through the same store", store.Items)
+	}
+}
+
+// TestLedgerWriteLeavesNoTempResidueViaCLI pins the atomic-write contract at the CLI
+// boundary: a successful write leaves only the store beside its lock file.
+func TestLedgerWriteLeavesNoTempResidueViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+
+	if code, _, stderr := ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"open"}`); code != 0 {
+		t.Fatalf("write exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	residue, err := filepath.Glob(filepath.Join(common, "ai-specs", "ledger", "state.json.tmp.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(residue) != 0 {
+		t.Fatalf("temp residue after a CLI write: %v", residue)
+	}
+}
+
+// TestLedgerGradeNeverWritesStore pins grade purity (L2): a checkpoint that grades
+// needs-item creates, mutates and deletes nothing — not even a store file.
+func TestLedgerGradeNeverWritesStore(t *testing.T) {
+	dir, common, branch := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := ledger.StorePath(common)
+
+	for _, cp := range ledger.Checkpoints {
+		code, stdout, stderr := runCLI(t, "--ledger", "--checkpoint", cp, "--ledger-mode", "always", "--project-root", dir)
+		if code != 2 {
+			t.Fatalf("%s: exit = %d, want 2 (block); stderr: %s", cp, code, stderr)
+		}
+		out := decodeLedgerOut(t, stdout)
+		if out["decision"] != "block" || out["reason"] != "needs-item" {
+			t.Fatalf("%s = %v/%v, want block/needs-item", cp, out["decision"], out["reason"])
+		}
+		if ledgerStoreBytes(t, storePath) != nil {
+			t.Fatalf("%s: grading needs-item created a store file", cp)
+		}
+	}
+
+	// With an item present and no disagreement, grading leaves the bytes alone.
+	storePath = saveLedgerStore(t, common, branch, "card-local", nil)
+	before := ledgerStoreBytes(t, storePath)
+	beforeMtime := ledgerStoreMtime(t, storePath)
+	if code, _, stderr := runCLI(t, "--ledger", "--checkpoint", "apply-start", "--ledger-mode", "always", "--project-root", dir); code != 0 {
+		t.Fatalf("consistent grade exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	if string(before) != string(ledgerStoreBytes(t, storePath)) {
+		t.Fatal("a consistent grade must not rewrite the store")
+	}
+	if !ledgerStoreMtime(t, storePath).Equal(beforeMtime) {
+		t.Fatal("a consistent grade must not touch the store at all")
+	}
+}
+
+// TestSelftestExercisesTheWriteSurface pins task 1.7: the offline self-check covers
+// the write-request rules and the open-if-absent invariant, and the binary's
+// existing success marker is unchanged.
+func TestSelftestExercisesTheWriteSurface(t *testing.T) {
+	if err := ledgerWriteSelftest(); err != nil {
+		t.Fatalf("ledgerWriteSelftest: %v", err)
+	}
+	code, stdout, stderr := runCLI(t, "--selftest")
+	if code != 0 {
+		t.Fatalf("--selftest exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	if strings.TrimSpace(stdout) != "ok" {
+		t.Fatalf("--selftest stdout = %q, want ok", stdout)
+	}
+}
+
 // TestWorktreeExplainUnchangedWithoutLedger pins that the worktree --explain
 // output shape is untouched by the ledger mode.
 func TestWorktreeExplainUnchangedWithoutLedger(t *testing.T) {

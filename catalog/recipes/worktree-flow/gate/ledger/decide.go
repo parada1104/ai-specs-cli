@@ -91,6 +91,11 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 			return err
 		}
 		clearConflict(&store, item.ID)
+		if req.Kind == DecisionAdjudicate {
+			// An adjudication is the one human act that clears a tracker.none
+			// exemption (DW1): file removal never revokes the store record.
+			clearExemption(&store, item.ID)
+		}
 		return SaveStore(storePath, store)
 	})
 	if err != nil {
@@ -126,6 +131,16 @@ func clearConflict(s *Store, id string) {
 	for i := range s.Items {
 		if s.Items[i].ID == id {
 			s.Items[i].Conflict = nil
+		}
+	}
+}
+
+// clearExemption revokes a tracker.none exemption on the item with id. Only a
+// persisted human adjudication reaches here; no grade ever auto-revokes one.
+func clearExemption(s *Store, id string) {
+	for i := range s.Items {
+		if s.Items[i].ID == id {
+			s.Items[i].Exemption = ""
 		}
 	}
 }

@@ -894,13 +894,19 @@ printf '%s\\n' "$*" >> "${STUB_LOG}"
 decision="${STUB_DECISION:-allow}"
 reason="${STUB_REASON:-stub}"
 checkpoint=""
+wrote=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --checkpoint) checkpoint="$2"; shift 2 ;;
     --decide) printf 'DECIDE %s\\n' "$2" >> "${STUB_LOG}"; shift 2 ;;
+    --write) printf 'WRITE %s\\n' "$2" >> "${STUB_LOG}"; wrote=1; shift 2 ;;
+    --evidence) printf 'EVIDENCE %s\\n' "$2" >> "${STUB_LOG}"; shift 2 ;;
     *) shift ;;
   esac
 done
+if [ "$wrote" = 1 ] && [ "${STUB_WRITE_EXIT:-0}" = 2 ]; then
+  exit 2
+fi
 printf '{"capability":"tracker","active":true,"checkpoint":"%s","mode":"warn","decision":"%s","reason":"%s","identity":{"common_dir":"","branch":"","change":null,"key":""},"item":null,"conflict":null,"prompt":null,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}\\n' "$checkpoint" "$decision" "$reason"
 [ "$decision" = block ] && exit 2
 exit 0
@@ -1036,6 +1042,108 @@ class GuardianLedgerBridgeTests(unittest.TestCase):
         env = self._env(None, None, AI_SPECS_HOME=str(root / "cold-home"))
         r = self._run(root, "done", "pre-merge", env)
         self.assertEqual(r.returncode, 0, r.stderr)
+
+    def _logged(self, log: Path) -> list[str]:
+        return log.read_text().splitlines() if log.exists() else []
+
+    def _grade_lines(self, log: Path) -> list[str]:
+        return [l for l in self._logged(log) if "--checkpoint" in l and "--write" not in l]
+
+    def _write_lines(self, log: Path) -> list[str]:
+        return [l for l in self._logged(log) if l.startswith("WRITE ")]
+
+    def test_tracker_none_never_becomes_a_guardian_write(self):
+        root = self._repo()
+        archived = self._archive_light(root, "done")
+        (archived / "tracker.none").write_text(
+            "\nno tracker card for this archive\n", encoding="utf-8"
+        )
+        binary, log = self._stub(root)
+        env = self._env(binary, log, decision="allow")
+        r = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "done", "--root", str(root),
+             "--stage", "pre-merge", "--tier", "light"],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            self._write_lines(log), [],
+            "the tracker.none file must never authorize the guardian to write an exemption",
+        )
+        grades = self._grade_lines(log)
+        self.assertEqual(len(grades), 1, log.read_text())
+        self.assertIn("--evidence", grades[0], "the guardian must pass bridge-built evidence")
+        self.assertTrue((archived / "tracker.none").is_file(),
+                        "the guardian never creates or deletes the human-authored file")
+
+    def test_grade_line_carries_evidence_without_an_exemption(self):
+        root = self._repo()
+        self._archive_light(root)
+        binary, log = self._stub(root)
+        env = self._env(binary, log, decision="allow")
+        r = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "done", "--root", str(root),
+             "--stage", "pre-merge", "--tier", "light"],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._write_lines(log), [])
+        self.assertIn("--evidence", self._grade_lines(log)[0])
+
+    def test_tracker_none_never_reaches_the_write_surface(self):
+        root = self._repo()
+        archived = self._archive_light(root, "done")
+        (archived / "tracker.none").write_text("no tracker card\n", encoding="utf-8")
+        binary, log = self._stub(root)
+        env = self._env(binary, log, decision="allow", STUB_WRITE_EXIT="2")
+        r = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "done", "--root", str(root),
+             "--stage", "pre-merge", "--tier", "light"],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._write_lines(log), [],
+                         "a failing write surface proves the guardian issues no exempt write")
+        self.assertEqual(len(self._grade_lines(log)), 1, log.read_text())
+
+    def test_tracker_none_cannot_unlock_a_blocking_checkpoint(self):
+        root = self._repo()
+        archived = self._archive_light(root, "done")
+        (archived / "tracker.none").write_text("no tracker card\n", encoding="utf-8")
+        binary, log = self._stub(root)
+        env = self._env(binary, log, decision="block", STUB_REASON="missing tracked item")
+        r = self._run(root, "done", "pre-merge", env)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertEqual(self._write_lines(log), [],
+                         "writing the exemption the file describes is not the guardian's call")
+
+    def test_evidence_survives_a_cold_cli_home(self):
+        root = self._repo()
+        self._archive_light(root)
+        binary, log = self._stub(root)
+        env = self._env(binary, log, decision="allow",
+                        AI_SPECS_HOME=str(root / "cold-home-with-no-cache"))
+        r = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "done", "--root", str(root),
+             "--stage", "pre-merge", "--tier", "light"],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--evidence", self._grade_lines(log)[0],
+                      "the bridge is sibling-loaded, so no cache is required")
+
+    def test_ledger_blockers_grades_pr_review_with_evidence(self):
+        root = self._repo()
+        active = self._active_light(root, "demo")
+        (active / "proposal.md").write_text(
+            "## Tracker\n\n- **card_id**: `6aa703fdcf61a90ec702d58b`\n", encoding="utf-8"
+        )
+        binary, log = self._stub(root)
+        env = self._env(binary, log, decision="allow")
+        with mock.patch.dict(os.environ, env, clear=True):
+            blockers = self.mod.ledger_blockers(root, "pr-review", slug="demo")
+        self.assertEqual(blockers, [], log.read_text())
+        self.assertIn("--evidence", self._grade_lines(log)[0])
 
     def test_tier_math_unchanged_when_ledger_allows(self):
         root = self._repo()

@@ -493,6 +493,10 @@ REPO_TOPOLOGY_VALUES = ("auto", "standalone", "monorepo-apps", "monorepo-submodu
 GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
 REPO_TOPOLOGY_PLACEHOLDER = "__WORKTREE_REPO_TOPOLOGY__"
 TRACKER_CLI_HOME_PLACEHOLDER = "__TRACKER_CLI_HOME__"
+# The tracker gate's evidence-bridge directory: $AI_SPECS_HOME/lib/_internal, where
+# ledger_bridge.py ships. Empty when no CLI home resolves, which makes the host
+# skip evidence acquisition and the tracker.none write (fail open).
+TRACKER_LIB_INTERNAL_PLACEHOLDER = "__TRACKER_LIB_INTERNAL__"
 GATE_IMPL_PLACEHOLDER = "__WORKTREE_GATE_IMPL__"
 GATE_IMPL_VALUES = ("auto", "go")
 GATE_VERSION_PLACEHOLDER = "__WORKTREE_GATE_VERSION__"
@@ -641,6 +645,13 @@ def materialize_hook_script(
     if TRACKER_CLI_HOME_PLACEHOLDER in content:
         home_val = str(Path(cli_home).resolve()) if cli_home is not None else ""
         content = content.replace(TRACKER_CLI_HOME_PLACEHOLDER, home_val)
+    if TRACKER_LIB_INTERNAL_PLACEHOLDER in content:
+        internal = (
+            str((Path(cli_home) / "lib" / "_internal").resolve())
+            if cli_home is not None
+            else ""
+        )
+        content = content.replace(TRACKER_LIB_INTERNAL_PLACEHOLDER, internal)
 
     util = _load_util()
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"

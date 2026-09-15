@@ -1,0 +1,52 @@
+{
+  "label": "a failed write persists nothing and exits 2 with no stdout JSON (write-failure)",
+  "witness": {
+    "state": "bound"
+  },
+  "change": "failure-change",
+  "store": {
+    "items": [
+      {
+        "slug": "failure-change",
+        "item_id": "card-local"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "warn",
+      "write": {
+        "kind": "link"
+      },
+      "expected": {
+        "exit": 2,
+        "stdout_json": false
+      }
+    },
+    {
+      "checkpoint": "apply-start",
+      "mode": "warn",
+      "evidence": {
+        "local": "",
+        "remote": "",
+        "code": "card-local",
+        "git": ""
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    }
+  ],
+  "store_pin": {
+    "items": 1,
+    "unique_ids": 1,
+    "open_items": 1
+  },
+  "kind": "verdict"
+}

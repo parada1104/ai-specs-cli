@@ -1,0 +1,54 @@
+{
+  "label": "the same conflict grade twice is byte-stable after recorded_at normalization (byte-stable)",
+  "witness": {
+    "state": "bound"
+  },
+  "change": "stable-change",
+  "store": {
+    "items": [
+      {
+        "slug": "stable-change",
+        "item_id": "card-local"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "ask",
+      "evidence": {
+        "local": "",
+        "remote": "",
+        "code": "card-other",
+        "git": ""
+      },
+      "expected": {
+        "decision": "ask",
+        "reason": "conflict",
+        "active": true,
+        "conflict": true,
+        "exit": 0,
+        "doctor": "WARN"
+      }
+    },
+    {
+      "checkpoint": "apply-start",
+      "mode": "ask",
+      "evidence": {
+        "local": "",
+        "remote": "",
+        "code": "card-other",
+        "git": ""
+      },
+      "expected": {
+        "decision": "ask",
+        "reason": "conflict",
+        "active": true,
+        "conflict": true,
+        "exit": 0,
+        "doctor": "WARN"
+      }
+    }
+  ],
+  "kind": "verdict"
+}

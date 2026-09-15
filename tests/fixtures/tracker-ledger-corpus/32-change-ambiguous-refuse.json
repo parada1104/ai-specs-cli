@@ -1,0 +1,54 @@
+{
+  "label": "a change-ambiguous write is refused without an explicit slug (change-ambiguous)",
+  "witness": {
+    "state": "bound"
+  },
+  "change": [
+    "alpha-change",
+    "beta-change"
+  ],
+  "store": {
+    "items": []
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "always",
+      "write": {
+        "kind": "open"
+      },
+      "expected": {
+        "exit": 2,
+        "stdout_json": false
+      }
+    },
+    {
+      "checkpoint": "apply-start",
+      "mode": "always",
+      "write": {
+        "kind": "open",
+        "change": "alpha-change"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK",
+        "write": {
+          "kind": "open",
+          "applied": true,
+          "reason": ""
+        }
+      }
+    }
+  ],
+  "store_pin": {
+    "items": 1,
+    "unique_ids": 1,
+    "open_items": 1,
+    "change": "alpha-change"
+  },
+  "kind": "verdict"
+}

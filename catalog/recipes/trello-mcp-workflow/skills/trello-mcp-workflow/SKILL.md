@@ -132,6 +132,33 @@ apply/production work. The only documented exemption is
 `openspec/changes/<slug>/tracker.none` (conceptual name `tracker:none`) with a
 one-line reason — log it; this is rare.
 
+**The ledger records the item; the artifact only presents it.** An item is opened,
+linked, closed, and exempted by explicit writes — a parsed `## Tracker` never opens
+one, and grading never writes:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --write '{"kind":"open"}'
+worktree-gate --ledger --checkpoint apply-start \
+  --write '{"kind":"link","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress"}'
+```
+
+A failed write exits `2`, persists nothing, and prints no verdict JSON; a retried
+`open` reports `already-open` instead of creating a second item. For `tracker.none`,
+the human/agent records the exemption with an explicit write so every checkpoint
+honors it and it never registers as a conflict:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start \
+  --write '{"kind":"exempt","reason":"<one line>"}'
+```
+
+The file itself is presentation/evidence only — no host auto-records it (R1); hosts
+treat it as blank `code` evidence and never create, modify, or delete the file.
+Removing the file does not revoke a recorded exemption — reopen evidence with
+`worktree-gate --ledger --checkpoint <name> --decide '{"kind":"adjudicate","choice":"<side>"}'`.
+Hosts grade with `local`/`code`/`git` evidence built from local facts; the `remote`
+side is unwired in this slice.
+
 ---
 
 ## Capability: trello-card-linking

@@ -15,28 +15,38 @@ verdict, and assert:
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "trello-mcp-workflow" / "hooks" / "tracker-card-gate.sh"
+LIB_INTERNAL = ROOT / "lib" / "_internal"
 
 STUB_BINARY = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${STUB_LOG}"
 decision="${STUB_DECISION:-allow}"
 reason="${STUB_REASON:-}"
 checkpoint=""
+wrote=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --checkpoint) checkpoint="$2"; shift 2 ;;
     --decide) printf 'DECIDE %s\\n' "$2" >> "${STUB_LOG}"; shift 2 ;;
+    --write) printf 'WRITE %s\\n' "$2" >> "${STUB_LOG}"; wrote=1; shift 2 ;;
+    --evidence) printf 'EVIDENCE %s\\n' "$2" >> "${STUB_LOG}"; shift 2 ;;
     *) shift ;;
   esac
 done
+if [ "$wrote" = 1 ] && [ "${STUB_WRITE_EXIT:-0}" = 2 ]; then
+  exit 2
+fi
 prompt='null'
 if [ "$decision" = ask ]; then
   prompt='{"reason":"needs-item","evidence":{"local":"","remote":"","code":"","git":""},"choices":["continue","local"]}'
@@ -69,16 +79,44 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.stub.write_text(STUB_BINARY)
         self.stub.chmod(0o755)
 
-    def _stamped_gate(self, mode: str, cli_home: str = "") -> Path:
+    def _stamped_gate(self, mode: str, cli_home: str = "",
+                      lib_internal: str = "__TRACKER_LIB_INTERNAL__") -> Path:
         self.assertTrue(GATE.is_file(), f"gate script missing: {GATE}")
         stamped = Path(self.tmp.name) / f"tracker-card-gate-{mode}.sh"
         stamped.write_text(
             GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", mode)
             .replace("__TRACKER_CLI_HOME__", cli_home)
+            .replace("__TRACKER_LIB_INTERNAL__", lib_internal)
         )
         stamped.chmod(0o755)
         return stamped
+
+    def _stamped_gate_bridged(self, mode: str = "warn") -> Path:
+        """A gate whose __TRACKER_LIB_INTERNAL__ stamp resolves the real bridge."""
+        return self._stamped_gate(mode, lib_internal=str(LIB_INTERNAL))
+
+    def _change(self, slug: str = "demo-change", tracker_none: str | None = None) -> Path:
+        folder = self.repo / "openspec" / "changes" / slug
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "proposal.md").write_text(
+            "## Tracker\n\n- **card_id**: `6aa703fdcf61a90ec702d58b`\n", encoding="utf-8"
+        )
+        if tracker_none is not None:
+            (folder / "tracker.none").write_text(tracker_none, encoding="utf-8")
+        return folder
+
+    def _logged(self) -> list[str]:
+        if not self.stub_log.exists():
+            return []
+        return self.stub_log.read_text().splitlines()
+
+    def _grade_lines(self) -> list[str]:
+        """Logged grade invocations: they carry --checkpoint but never --write."""
+        return [l for l in self._logged() if "--checkpoint" in l and "--write" not in l]
+
+    def _write_lines(self) -> list[str]:
+        return [l for l in self._logged() if l.startswith("WRITE ")]
 
     def _env(self, *, decision: str = "allow", reason: str = "", **extra: str) -> dict:
         env = dict(os.environ)
@@ -393,6 +431,94 @@ class TrackerCardGateHookTests(unittest.TestCase):
                     gate=self._stamped_gate("always"),
                 )
                 self.assertEqual(r.returncode, expected, f"{label}: {command}\n{r.stderr}")
+
+    # --- ledger evidence bridge and tracker.none exemption ---
+
+    def test_graded_argv_carries_the_bridge_evidence_file(self):
+        self._change("demo-change")
+        r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),
+                      gate=self._stamped_gate_bridged())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        grades = self._grade_lines()
+        self.assertEqual(len(grades), 1, self.stub_log.read_text())
+        self.assertIn("--evidence", grades[0], "the host must pass bridge-built evidence")
+        self.assertEqual(self._write_lines(), [], "no exemption means no write")
+
+    def test_tracker_none_never_becomes_a_host_owned_write(self):
+        change = self._change("demo-change", tracker_none="\nno tracker card for this spike\n")
+        r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),
+                      gate=self._stamped_gate_bridged())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            self._write_lines(), [],
+            "the tracker.none file must never authorize the host to write an exemption",
+        )
+        grades = self._grade_lines()
+        self.assertEqual(len(grades), 1, self.stub_log.read_text())
+        self.assertIn("--evidence", grades[0], "the host still grades the checkpoint")
+        self.assertTrue((change / "tracker.none").is_file(),
+                        "the host never creates or deletes the human-authored file")
+
+    def test_tracker_none_never_reaches_the_write_surface(self):
+        self._change("demo-change", tracker_none="no tracker card for this spike\n")
+        env = self._env(decision="allow", STUB_WRITE_EXIT="2")
+        r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),
+                      gate=self._stamped_gate_bridged(), env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._write_lines(), [],
+                         "a failing write surface proves the host issues no exempt write")
+        self.assertEqual(len(self._grade_lines()), 1, self.stub_log.read_text())
+
+    def test_tracker_none_cannot_unlock_a_blocking_checkpoint(self):
+        self._change("demo-change", tracker_none="no tracker card for this spike\n")
+        r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),
+                      decision="block", gate=self._stamped_gate_bridged())
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(self._write_lines(), [],
+                         "writing the exemption the file describes is not the host's call")
+
+    def test_materialize_stamps_the_bridge_directory(self):
+        materialize_path = ROOT / "lib" / "_internal" / "recipe-materialize.py"
+        spec = importlib.util.spec_from_file_location("recipe_materialize_stamp", materialize_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        base = Path(self.tmp.name)
+        project = base / "project"
+        recipe_dir = base / "recipe"
+        hooks = recipe_dir / "hooks"
+        hooks.mkdir(parents=True)
+        (hooks / "tracker-card-gate.sh").write_text(GATE.read_text())
+        hook = SimpleNamespace(script="hooks/tracker-card-gate.sh", id="tracker-card-gate")
+        rel = module.materialize_hook_script(
+            recipe_dir, hook, project, "trello-mcp-workflow", {"gate_mode": "warn"},
+            cli_home=ROOT,
+        )
+        text = (project / rel).read_text()
+        self.assertNotIn("__TRACKER_LIB_INTERNAL__", text, "the stamp must be substituted")
+        self.assertIn(str((ROOT / "lib" / "_internal").resolve()), text)
+        # No CLI home means no bridge directory: the host then skips both evidence
+        # and the exemption write (fail open).
+        rel2 = module.materialize_hook_script(
+            recipe_dir, hook, base / "project2", "trello-mcp-workflow",
+            {"gate_mode": "warn"}, cli_home=None,
+        )
+        text2 = (base / "project2" / rel2).read_text()
+        self.assertNotIn("__TRACKER_LIB_INTERNAL__", text2)
+        self.assertIn('stamped_lib_internal=""', text2)
+
+    def test_unstamped_bridge_skips_evidence_and_exempt_write(self):
+        self._change("demo-change", tracker_none="no tracker card for this spike\n")
+        r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),
+                      gate=self._stamped_gate("warn"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._write_lines(), [])
+        grades = self._grade_lines()
+        self.assertEqual(len(grades), 1, self.stub_log.read_text())
+        self.assertNotIn("--evidence", grades[0])
+        self.assertEqual(self._logged_checkpoints(), ["apply-start"])
 
     # --- bash 3.2 compatibility ---
 

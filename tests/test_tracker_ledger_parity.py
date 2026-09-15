@@ -58,6 +58,15 @@ DESIGN_ROWS = {
     "archive_close": ("22-", "archive-close"),
     "missing_binary": ("23-", "missing binary"),
     "openspec_path": ("24-", "openspec/**"),
+    "write_open": ("26-", "open-then-allow"),
+    "write_code_conflict": ("27-", "code-vs-ledger"),
+    "write_exempt": ("28-", "tracker.none"),
+    "write_reopen": ("29-", "idempotent re-open"),
+    "write_link_mismatch": ("30-", "link mismatch"),
+    "write_same_second": ("31-", "same-second"),
+    "write_ambiguous": ("32-", "change-ambiguous"),
+    "write_failure": ("33-", "write-failure"),
+    "write_stable_regrade": ("34-", "byte-stable"),
 }
 
 
@@ -100,10 +109,16 @@ def build_verdict_fixture(root: Path, case: dict) -> tuple[Path, Path]:
         git(repo, "checkout", "-q", "--detach")
 
     change = case.get("change")
-    if change:
-        folder = repo / "openspec" / "changes" / change
+    changes = change if isinstance(change, list) else ([change] if change else [])
+    for slug in changes:
+        folder = repo / "openspec" / "changes" / slug
         folder.mkdir(parents=True)
         (folder / "proposal.md").write_text("# proposal\n", encoding="utf-8")
+    if changes and case.get("tracker_none") is not None:
+        # The human-authored exemption the host records, never creates (DW1).
+        (repo / "openspec" / "changes" / changes[0] / "tracker.none").write_text(
+            case["tracker_none"], encoding="utf-8"
+        )
 
     common_raw = git(
         repo, "rev-parse", "--path-format=absolute", "--git-common-dir"
@@ -191,15 +206,45 @@ def run_step(root: Path, repo: Path, case: dict, step: dict,
     decide = step.get("decide")
     if decide is not None:
         cmd += ["--decide", json.dumps(decide)]
+    write = step.get("write")
+    if write is not None:
+        # One argv element, never eval'd (design "Safe behavior").
+        cmd += ["--write", json.dumps(write)]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if step.get("expected", {}).get("stdout_json", True) is False:
+        return proc, None
     payload = json.loads(proc.stdout)
     return proc, payload
 
 
+def assert_store_pin(test: unittest.TestCase, ledger_dir: Path, pin: dict) -> None:
+    """Pin store-level invariants the verdict JSON cannot express."""
+    data = json.loads((ledger_dir / "state.json").read_text())
+    items = data.get("items", [])
+    test.assertEqual(len(items), pin["items"], f"items = {items}")
+    test.assertEqual(len({item["id"] for item in items}), pin["unique_ids"],
+                     f"item ids are not unique: {items}")
+    test.assertEqual(sum(1 for item in items if item["status"] == "open"), pin["open_items"])
+    if "exemption" in pin:
+        test.assertIn(pin["exemption"], [item["exemption"] for item in items])
+    if "change" in pin:
+        test.assertIn(pin["change"], [item["identity"]["change"] for item in items])
+
+
 def normalize(value):
-    """Replace dynamic RFC3339 stamps so two runs compare byte-for-byte."""
+    """Replace dynamic clock-derived values so two runs compare byte-for-byte.
+
+    RFC3339 stamps cover ``recorded_at`` and decision ``at`` values. The item
+    ``id`` is the design's ``sha256(identity + opened-at)`` digest, so it is a
+    clock-derived value too: two fresh runs of the same fixture open their items
+    in different seconds and must still compare equal.
+    """
     if isinstance(value, dict):
-        return {k: normalize(v) for k, v in value.items()}
+        out = {k: normalize(v) for k, v in value.items()}
+        item = out.get("item")
+        if isinstance(item, dict) and isinstance(item.get("id"), str):
+            item["id"] = "<item-id>"
+        return out
     if isinstance(value, list):
         return [normalize(v) for v in value]
     if isinstance(value, str) and STAMP_RE.match(value):
@@ -210,6 +255,15 @@ def normalize(value):
 def assert_expected(test: unittest.TestCase, payload: dict,
                     proc: subprocess.CompletedProcess, expected: dict) -> None:
     test.assertEqual(proc.returncode, expected["exit"], proc.stderr)
+    if expected.get("stdout_json", True) is False:
+        # A failed write emits no stdout JSON at all (L6).
+        test.assertEqual(proc.stdout, "", "a failed write must print no verdict JSON")
+        return
+    if "write" in expected:
+        side = payload.get("write") or {}
+        test.assertEqual(side.get("kind"), expected["write"]["kind"])
+        test.assertEqual(side.get("applied"), expected["write"]["applied"])
+        test.assertEqual(side.get("reason"), expected["write"]["reason"])
     test.assertEqual(payload.get("decision"), expected["decision"])
     test.assertEqual(payload.get("reason"), expected["reason"])
     test.assertEqual(bool(payload.get("active")), expected["active"])
@@ -244,9 +298,11 @@ class TrackerLedgerParityTests(unittest.TestCase):
             with self.subTest(case=case_file.name):
                 root = self.root / case_file.stem
                 root.mkdir()
-                _, results = self._run_case(case, root)
+                ledger_dir, results = self._run_case(case, root)
                 for step, proc, payload in results:
                     assert_expected(self, payload, proc, step["expected"])
+                if case.get("store_pin"):
+                    assert_store_pin(self, ledger_dir, case["store_pin"])
 
     def test_no_store_residue_and_no_unexpected_ledger_files(self):
         for case_file, case in self.verdict_cases:
