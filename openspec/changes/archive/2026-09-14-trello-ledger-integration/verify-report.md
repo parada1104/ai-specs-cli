@@ -14,6 +14,28 @@ build_exit_code: 0
 build_output_hash: sha256:e4a6af9859ae9933b772bb0e27514e592dfba9de179234571a15932ad9720346
 ```
 
+## Verify evidence
+
+- Verdict: PASS
+- Command: `./tests/validate.sh`
+- Exit: 0
+- Date: 2026-09-14
+- Commit: 1f13c80
+- ready_for_archive: true
+
+## Success-criteria mapping
+
+- Criterion 1: PASS — explicit ledger writer
+- Criterion 2: PASS — production lifecycle fields
+- Criterion 3: PASS — production conflict evidence
+- Criterion 4: PASS — persistent exemption behavior
+- Criterion 5: PASS — pure grading
+- Criterion 6: PASS — failure postures
+- Criterion 7: PASS — preserved semantics
+- Criterion 8: PASS — provider lookup coverage
+- Criterion 9: PASS — validation and trust root
+- Criterion 10: PASS — honest documentation
+
 # Verify Report: trello-ledger-integration
 
 Verdict: **PASS**. The implementation satisfies the approved delta spec (13/13 requirements,
