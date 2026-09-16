@@ -940,3 +940,40 @@ func TestWorktreeExplainUnchangedWithoutLedger(t *testing.T) {
 		}
 	}
 }
+
+// TestLedgerReconcileRejectedWithMutationFlags pins F4: reconciliation is a
+// read-only sidecar, so combining it with a mutation vehicle is refused before
+// any IO. Both payloads below would otherwise mutate the store.
+func TestLedgerReconcileRejectedWithMutationFlags(t *testing.T) {
+	obs := writeReconcileObs(t, reconcileObsBody(t, nil))
+	cases := []struct {
+		name string
+		flag []string
+	}{
+		{"write", []string{"--write", `{"kind":"link","item_id":"6aa703fdcf61a90ec702d58b"}`}},
+		{"decide", []string{"--decide", `{"choice":"local"}`}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, common, branch := ledgerRepo(t)
+			writeLedgerWitness(t, common, "bound", reconcileRecipeID)
+			storePath := saveLedgerStore(t, common, branch, "card-1", nil)
+			before := ledgerStoreBytes(t, storePath)
+
+			args := append(reconcileRunArgs(dir, obs, "delivery"), tc.flag...)
+			code, stdout, stderr := runCLI(t, args...)
+			if code != 2 {
+				t.Fatalf("--reconcile with %s exit = %d, want 2; stderr: %s", tc.name, code, stderr)
+			}
+			if stdout != "" {
+				t.Fatalf("stdout = %q, want no JSON when the invocation is refused", stdout)
+			}
+			if !strings.Contains(stderr, "--reconcile") {
+				t.Fatalf("stderr = %q, want the refusal to name --reconcile", stderr)
+			}
+			if string(before) != string(ledgerStoreBytes(t, storePath)) {
+				t.Fatalf("a refused combination must persist nothing (%s)", tc.name)
+			}
+		})
+	}
+}

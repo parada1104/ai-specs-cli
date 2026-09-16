@@ -57,6 +57,7 @@ Add configuration under `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-s
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
 | `gate_mode` | No | `warn` | Legacy vocabulary: `off` / `warn` / `always`. Consulted only when `ledger_mode` is unset. |
 | `ledger_mode` | No | `warn` | Ledger mode: `always` / `ask` / `warn`. `always` blocks missing or conflicted state; `ask` prompts per checkpoint (opt-out is checkpoint-scoped); `warn` reports on stderr and never blocks. Overrides `gate_mode`. |
+| `reconcile` | No | — | Declarative remote-reconciliation mapping (`scope_field`, `max_age_seconds`, `expectations`). The recipe schema validates the declared shape and sync carries the project's block through unchanged. The Go gate reads only the project manifest, so an unbound block means every comparison is `unconfigured`, never a default. |
 
 ### Example
 
@@ -67,6 +68,22 @@ version = "1.3.0"
 
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"
+```
+
+The optional remote-reconciliation mapping declares which config fields a
+comparison may read, is validated on load/sync (unknown keys, wrong types, or an
+expectations list over the bound are rejected), and can be set with
+`ai-specs recipe configure trello-mcp-workflow --set 'reconcile={...}'`:
+
+```toml
+[recipes.trello-mcp-workflow.config.reconcile]
+scope_field = "board_id"
+max_age_seconds = 900
+
+[[recipes.trello-mcp-workflow.config.reconcile.expectations]]
+event = "delivery"
+property = "list"
+config_field = "default_list"
 ```
 
 
@@ -145,9 +162,10 @@ JSON. Grade paths keep failing open.
 `tracker-card-gate.sh` and `premerge_guardian.py` pass a bridge-built `--evidence`
 file (`lib/_internal/ledger_bridge.py`, acquisition only): `local` is the ledger's
 own store snapshot, `code` is the change's `## Tracker` `card_id`, and `git` is that
-same id when a `pr:` is recorded. The `remote` side is **unwired in this slice** — a
-deliberate 3-of-4 reconciliation. A missing or malformed artifact yields an empty
-side (fail open).
+same id when a `pr:` is recorded. The `--evidence` `remote` side stays **unwired**:
+remote reconciliation is a separate, explicit `--reconcile` comparison documented in
+the `trello-mcp-workflow` skill, and the grade path stays offline. A missing or
+malformed artifact yields an empty side (fail open).
 
 Where a host finds `openspec/changes/<slug>/tracker.none`, it treats it as evidence
 only (blank `code` side) and grades; it never records the exemption itself (R1). The

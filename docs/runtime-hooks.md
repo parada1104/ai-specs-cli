@@ -258,10 +258,14 @@ parses.
 `--evidence` file through `lib/_internal/ledger_bridge.py` — acquisition only
 (`## Tracker` / `tracker.none` / local Git facts; no `gh`, no MCP, no network).
 `local` is the ledger's own store snapshot, `code` is the change's `card_id`, `git`
-is that id when a `pr:` is recorded, and `remote` has **no producer in this slice** —
-a deliberate 3-of-4 reconciliation. Missing, malformed, or unreadable artifacts
-yield empty sides (fail open). Branch names and PR URLs are never used as evidence
-sides.
+is that id when a `pr:` is recorded, and `remote` has **no producer in this
+`--evidence` file** — a deliberate 3-of-4 reconciliation there. Missing, malformed,
+or unreadable artifacts yield empty sides (fail open). Branch names and PR URLs are
+never used as evidence sides. Remote reconciliation is a separate, explicit
+`--reconcile` comparison that stays off the hooks and off the grade path and is
+opt-in per project (a project without the `[config.reconcile]` mapping gets an
+explicit `unconfigured`, never a default); it writes neither the store nor the
+provider and leaves the graded exit code unchanged.
 
 **`tracker.none`.** Where a host finds `openspec/changes/<slug>/tracker.none` it treats
 it as evidence only (blank `code` side) and grades; it never records the exemption

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import re
 import tomllib
@@ -97,6 +98,42 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
             text = text.rstrip() + "\n" + config_block + "\n"
         (ai_specs / "ai-specs.toml").write_text(text)
         return root
+
+    def test_recipe_declares_first_class_reconcile_table(self):
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        tables = recipe.config_schema.tables
+        self.assertIn("reconcile", tables)
+        self.assertNotIn("reconcile", recipe.config_schema.extra)
+        self.assertNotIn("reconcile", recipe.config_schema.fields)
+        # The declared shape is the exact authority the Go gate decodes.
+        shape = tables["reconcile"].shape
+        self.assertEqual(
+            set(shape), {"scope_field", "max_age_seconds", "expectations"}
+        )
+        self.assertEqual(shape["scope_field"], "string")
+        self.assertEqual(shape["max_age_seconds"], "integer")
+        self.assertEqual(
+            set(shape["expectations"][0]), {"event", "property", "config_field"}
+        )
+
+    def test_sync_accepts_declared_reconcile_block_without_warning(self):
+        block = (
+            "[recipes.trello-mcp-workflow.config.reconcile]\n"
+            'scope_field = "board_id"\n'
+            "max_age_seconds = 900\n\n"
+            "[[recipes.trello-mcp-workflow.config.reconcile.expectations]]\n"
+            'event = "delivery"\nproperty = "list"\nconfig_field = "default_list"\n'
+        )
+        root = self._make_project(block)
+        captured = io.StringIO()
+        real_stderr = sys.stderr
+        sys.stderr = captured
+        try:
+            rc = self.materialize.materialize_recipes(root, ROOT)
+        finally:
+            sys.stderr = real_stderr
+        self.assertEqual(rc, 0)
+        self.assertNotIn("unknown config key", captured.getvalue())
 
     def test_sync_stamps_tracker_gate_mode_default_warn(self):
         root = self._make_project()

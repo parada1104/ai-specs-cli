@@ -56,6 +56,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-merge guardian, and `doctor` resolve their recipe id from the binding witness
   with the legacy literal only as a fallback; `doctor` reports an unhosted
   `work-start` as INFO. `catalog/recipes/plan-build-flow/**` is unchanged.
+- **Tracker Ledger remote reconciliation (explicit, opt-in)**: `worktree-gate
+  --ledger --reconcile '<observation.json>' --reconcile-event <event>` compares one
+  transport-acquired observation against the bound item and the recipe-declared
+  expectations, and adds a `reconcile` sidecar to the verdict JSON. The comparison is
+  provider-neutral and owned by Go: the recipe declares the mapping (`[config.reconcile]`
+  — `scope_field`, `max_age_seconds`, and per-event `expectations` of `property` +
+  `config_field`), the transport supplies the observation, and no provider vocabulary
+  is promoted into the core and no stored item status is read as an expected remote
+  state. It is deterministic (the clock is supplied), never writes the store or the
+  provider, and leaves the graded exit code unchanged; `--reconcile` is mutually
+  exclusive with `--write`/`--decide`, and a conflicting grade's conflict snapshot is
+  suppressed instead of recorded. The mapping is a first-class validated recipe section
+  that sync validates and carries through unchanged, so a project that does not bind it
+  gets an explicit `unconfigured`, never a default — reconciliation is opt-in per
+  project, off the edit hooks and off the grade path. Missing, stale, malformed, future,
+  unavailable, mis-scoped, or property-mismatched observations never agree; only a
+  conditional match of the declared properties for the requested event is `agree`,
+  and that is never proof of delivery. Every non-agreeing outcome is a pending explicit
+  decision with exactly three closed resolutions (fix remote state and re-observe /
+  record observed state as truth by an explicit ledger write / leave pending); the agent
+  never resolves it, never infers consent, and never blocks unrelated work, and a
+  headless session leaves it pending. Named open gap: a closed or archived item after a
+  merge has no safely bound target yet and reports `unbound-identity` rather than being
+  guessed.
 - **Version-keyed upgrade notices**: a release can declare a required
   post-upgrade action in an `### Upgrade notes` subsection under its
   `CHANGELOG.md` heading. `ai-specs upgrade` replays the notices of every

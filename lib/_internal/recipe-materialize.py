@@ -911,11 +911,15 @@ def write_tracker_witness(
 def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]:
     """Merge recipe config schema defaults with manifest overrides.
 
-    Fails if any required=True field is missing in the final dict.
-    Warns if manifest provides keys not in the schema.
+    Fails if any required=True field is missing in the final dict. Carries a
+    declared structured (table) section such as ``reconcile`` through after
+    validating it against the recipe's declarative shape. Warns for any other
+    manifest key not in the schema.
     """
     result: dict[str, Any] = {}
-    schema_fields = recipe.config_schema.fields if hasattr(recipe, "config_schema") else {}
+    schema = getattr(recipe, "config_schema", None)
+    schema_fields = schema.fields if schema is not None else {}
+    schema_tables = getattr(schema, "tables", {}) or {}
 
     # Start with defaults
     for key, field in schema_fields.items():
@@ -924,10 +928,19 @@ def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]
 
     # Overlay manifest values
     for key, value in manifest_config.items():
-        if key not in schema_fields:
-            warn(f"recipe '{recipe.name}': unknown config key '{key}' in manifest (ignored)")
+        if key in schema_fields:
+            result[key] = value
             continue
-        result[key] = value
+        if key in schema_tables:
+            try:
+                _load_recipe_schema().validate_structured_config(key, value)
+            except _load_recipe_schema().RecipeValidationError as exc:
+                raise RuntimeError(
+                    f"recipe '{recipe.name}': invalid config field '{key}': {exc}"
+                ) from exc
+            result[key] = value
+            continue
+        warn(f"recipe '{recipe.name}': unknown config key '{key}' in manifest (ignored)")
     if "gate_scope" in schema_fields and not str(result.get("gate_scope") or "").strip():
         result["gate_scope"] = "auto"
 

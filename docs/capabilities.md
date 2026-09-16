@@ -119,11 +119,20 @@ ever guessing a provider.
 - **Three of four evidence sides.** `lib/_internal/ledger_bridge.py` builds the
   `--evidence` file from local facts only: `local` is the ledger's own store snapshot,
   `code` is the change's `## Tracker` `card_id`, `git` is that same native id when a
-  `pr:` is recorded, and `remote` has **no producer in this slice**. The bridge never
-  grades, never calls `gh`, MCP, or the network, works from a cold CLI install with no
-  project cache, and turns any read failure into an empty side (fail open). Branch
-  names and PR URLs are deliberately not evidence sides: the conflict predicate
-  equality-compares every non-empty side against the local item id.
+  `pr:` is recorded, and `remote` has **no producer in this `--evidence` file**. The
+  bridge never grades, never calls `gh`, MCP, or the network, works from a cold CLI
+  install with no project cache, and turns any read failure into an empty side (fail
+  open). Branch names and PR URLs are deliberately not evidence sides: the conflict
+  predicate equality-compares every non-empty side against the local item id.
+
+  Remote reconciliation is a separate, **explicit and opt-in** comparison, never an
+  `--evidence` side and never part of the grade: `worktree-gate --ledger --reconcile
+  '<observation.json>' --reconcile-event <event>` compares declared properties only.
+  The transport acquires the observation, the recipe declares the mapping
+  (`[config.reconcile]`), and the gate reads the project manifest — a project without
+  the block gets an explicit `unconfigured`, never a default. It writes neither the
+  store nor the provider, stays off every hook, and leaves the graded exit code
+  unchanged.
 - **`tracker.none` is evidence, not a durable exemption on its own.** The human-authored
   `openspec/changes/<slug>/tracker.none` is presentation/evidence-only; it becomes
   `Item.Exemption` only through the explicit human/agent `exempt` write, whose reason
