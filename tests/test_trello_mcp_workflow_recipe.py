@@ -116,6 +116,40 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
             set(shape["expectations"][0]), {"event", "property", "config_field"}
         )
 
+    def test_recipe_declares_lifecycle_event_defaults(self):
+        """Recipe-owned mapping: review/merge events resolve list names from
+        defaulted config fields, so a synced project reconciles with zero
+        per-project configuration."""
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        fields = recipe.config_schema.fields
+        self.assertEqual(fields["review_list"].default, "Review")
+        self.assertEqual(fields["done_list"].default, "Done")
+        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
+            raw = tomllib.load(fh)
+        expectations = raw["config"]["reconcile"]["expectations"]
+        by_event = {e["event"]: e for e in expectations}
+        self.assertEqual(
+            by_event["review"], {"event": "review", "property": "list", "config_field": "review_list"}
+        )
+        self.assertEqual(
+            by_event["merge"], {"event": "merge", "property": "list", "config_field": "done_list"}
+        )
+
+    def test_sync_stamps_declared_reconcile_and_lifecycle_defaults(self):
+        """Recipe-declared reconcile table and lifecycle list defaults propagate
+        into the project manifest during sync, so reconciliation works out of
+        the box and per-project config remains an override."""
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
+            manifest = tomllib.load(fh)
+        cfg = manifest["recipes"]["trello-mcp-workflow"]["config"]
+        self.assertEqual(cfg["review_list"], "Review")
+        self.assertEqual(cfg["done_list"], "Done")
+        self.assertIn("reconcile", cfg)
+        events = {e["event"] for e in cfg["reconcile"]["expectations"]}
+        self.assertEqual(events, {"delivery", "review", "merge"})
+
     def test_sync_accepts_declared_reconcile_block_without_warning(self):
         block = (
             "[recipes.trello-mcp-workflow.config.reconcile]\n"

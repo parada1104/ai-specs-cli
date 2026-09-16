@@ -271,6 +271,63 @@ def merge_catalog_defaults_into_resolved(
         pass
 
 
+# --- Recipe-declared reconcile stamping ---------------------------------------
+def _load_recipe_config_write() -> Any:
+    global _recipe_config_write_module
+    if _recipe_config_write_module is None:
+        module_path = Path(__file__).with_name("recipe-config-write.py")
+        spec = importlib.util.spec_from_file_location("recipe_config_write_internal", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load recipe-config-write.py at {module_path}")
+        _recipe_config_write_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = _recipe_config_write_module
+        spec.loader.exec_module(_recipe_config_write_module)
+    return _recipe_config_write_module
+
+
+_recipe_config_write_module: Any = None
+
+
+def stamp_recipe_reconcile_defaults(project_root: Path, catalog_dir: Path, enabled_ids: list[str]) -> None:
+    """Stamp recipe-declared reconcile mapping and the config values it selects
+    into the project manifest, absent keys only.
+
+    The gate reads only the manifest, so the recipe-owned lifecycle mapping
+    (delivery/review/merge) must reach ``[recipes.<id>.config]`` for
+    reconciliation to work out of the box. Explicit project values always win;
+    this helper never overwrites an existing key. Optional fields stamp only
+    when the declared mapping references them, so unrelated defaults keep the
+    old resolved-render behavior.
+    """
+    schema = _load_recipe_schema()
+    manifest = project_root / "ai-specs" / "ai-specs.toml"
+    writer = _load_recipe_config_write()
+    for rid in enabled_ids:
+        try:
+            recipe = read_recipe(catalog_dir, rid)
+        except Exception:
+            continue  # validation failures surface through the normal sync path
+        tables = recipe.config_schema.tables
+        declared = tables.get("reconcile")
+        if declared is None:
+            continue
+        values = declared.values or {}
+        stamp: dict[str, Any] = {"reconcile": values}
+        used: set[str] = {values.get("scope_field") or ""}
+        for expectation in values.get("expectations", []) or []:
+            if isinstance(expectation, dict):
+                used.add(expectation.get("config_field") or "")
+        used.discard("")
+        for field_name in used:
+            field = recipe.config_schema.fields.get(field_name)
+            if field is not None and field.default is not None:
+                stamp[field_name] = field.default
+        try:
+            writer.update_recipe_config(manifest, rid, stamp)
+        except Exception as exc:
+            warn(f"recipe '{recipe.name}': reconcile defaults not stamped ({type(exc).__name__}: {exc})")
+
+
 # --- Conflict detection -------------------------------------------------------
 _conflict_module = None
 
@@ -1321,6 +1378,10 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     write_tracker_witness(
         project_root, catalog_dir, list(enabled.keys()), resolved_bindings
     )
+
+    # Recipe-owned reconcile mapping reaches the manifest here: the gate reads
+    # only the manifest, so declared defaults must be stamped during sync.
+    stamp_recipe_reconcile_defaults(project_root, catalog_dir, list(enabled.keys()))
 
     # Tag conflict check (NEW): advisory only. Tags are metadata and MUST NOT
     # block materialization — the capability-binding layer owns blocking
