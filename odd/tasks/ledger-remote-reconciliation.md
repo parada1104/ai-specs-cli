@@ -68,8 +68,13 @@ pending-decision wording checked against behavior: three closed resolutions, no
 No provider/network
 mutation and no commit/push.
 
-Change implementation complete (T1-T4), review/delivery pending. Parent spot check
-ok — regenerated sums from `dist/` match the committed trust root (an initial
-mismatch was a stale pre-regeneration /tmp file, not the artifact). Next step:
-native review at the deliverable boundary (RDD on, consent before execution), then
-the user-owned commit/PR decision.
+Change implementation complete (T1-T4), committed as 89eea92 on this branch
+(no push). Native review started with granted consent: lineage
+review-9ea19d90df2d6041, state reviewing, tier high, 4 lenses (risk,
+resilience, readability, reliability), correction budget 200. Reviewer
+execution is PAUSED by model-provider quota (Codex usage limit reached; no
+reviewer ran, no mutation). Next session: fresh gentle_review STATUS on the
+worktree, then gentle_review_capture_group with the four reoffered collect
+bindings (risk order 0, resilience 1, readability 2, reliability 3),
+acknowledge the forecast, then rerun with reviewerRunAcknowledged=true.
+Delivery (PR/merge) remains user-owned.
