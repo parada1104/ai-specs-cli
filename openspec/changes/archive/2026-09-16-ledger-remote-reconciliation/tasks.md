@@ -1,6 +1,8 @@
 # ODD tracking bridge
 
-This change now follows ODD by explicit user decision. This file only preserves the repository tracker-link contract; it is not an SDD phase plan.
+This change followed ODD by explicit user decision. This file only preserves the repository tracker-link contract; it is not an SDD phase plan.
+
+Depth: light
 
 Authoritative task document: `odd/tasks/ledger-remote-reconciliation.md`.
 Existing `explore.md` is preserved as historical investigation, not an approved implementation contract.
