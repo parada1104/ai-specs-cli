@@ -399,6 +399,15 @@ func applyWriteToStore(store *Store, ident ItemIdentity, req ApplyWriteRequest, 
 
 	case WriteClose:
 		if err == nil {
+			// S1: a close carrying a provider payload records the observed
+			// snapshot at close time; the store must never keep a stale
+			// link-time snapshot when the provider state was just read. A
+			// bare close invents and clears nothing.
+			if write.State != "" || len(write.Provider) > 0 {
+				if err := store.RecordSnapshot(item.ID, write.State, write.Provider); err != nil {
+					return false, "", err
+				}
+			}
 			if err := store.CloseItem(item.ID, Decision{At: stamp, Checkpoint: req.Checkpoint}); err != nil {
 				return false, "", err
 			}
@@ -558,6 +567,26 @@ func (s *Store) OpenItem(ident ItemIdentity, providerID string, at time.Time) It
 
 // CloseItem appends a close decision and marks the item closed. There is no
 // reopen path: a closed item is never selected again (D17).
+// RecordSnapshot updates the observed provider snapshot (state and opaque
+// payload) on one item without touching status or decisions. Used by close to
+// persist what the provider actually reported at close time (S1).
+func (s *Store) RecordSnapshot(id, state string, provider json.RawMessage) error {
+	for i := range s.Items {
+		if s.Items[i].ID != id {
+			continue
+		}
+		canonical := canonicalProvider(provider)
+		if state != "" {
+			s.Items[i].State = state
+		}
+		if len(canonical) > 0 && string(canonical) != "{}" {
+			s.Items[i].Provider = json.RawMessage(canonical)
+		}
+		return nil
+	}
+	return fmt.Errorf("ledger: no item %q", id)
+}
+
 func (s *Store) CloseItem(id string, d Decision) error {
 	for i := range s.Items {
 		if s.Items[i].ID != id {
