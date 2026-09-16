@@ -356,6 +356,17 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         self.assertTrue("bash" in blob or "shell" in blob)
 
 
+    def test_skill_documents_recipe_default_lifecycle_events(self):
+        """The observation producer must state the recipe-supported events and
+        their defaulted list mapping, so the agent observes against the mapping
+        the gate will compare with."""
+        skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
+        self.assertIn("review_list", skill)
+        self.assertIn("done_list", skill)
+        self.assertIn("review", skill)
+        self.assertIn("merge", skill)
+        self.assertIn("overrides it", skill)  # config is override-only
+
     def test_skill_doc_content_contract(self):
         skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
         self.assertNotIn("Allow the agent to skip card creation", skill)
