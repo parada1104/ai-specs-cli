@@ -633,6 +633,57 @@ func fakeManifestParser(t *testing.T, script string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
+// fakeManifestParserInDir shadows python3 on PATH with one shell script written
+// into dir (used to place the interpreter inside the project root for R1-001).
+func fakeManifestParserInDir(t *testing.T, dir, script string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "python3"), []byte("#!/bin/sh\n"+script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestLedgerReconcileIsolatesTheManifestInterpreter pins R1-001: the manifest
+// parser runs the ambient interpreter isolated and never an interpreter the
+// repository itself supplies, so repository-controlled or ambient module
+// shadowing cannot execute arbitrary code during --reconcile.
+func TestLedgerReconcileIsolatesTheManifestInterpreter(t *testing.T) {
+	t.Run("interpreter inside the project root is refused", func(t *testing.T) {
+		root := t.TempDir()
+		fakeManifestParserInDir(t, root, "echo '{}'\n")
+		_, err := readManifestRecipes(writeReconcileManifest(t, root, reconcileManifestBody))
+		if err == nil || !strings.Contains(err.Error(), "resolves inside the project root") {
+			t.Fatalf("error = %v, want an in-root interpreter refusal", err)
+		}
+	})
+
+	t.Run("parser runs isolated (-I -B)", func(t *testing.T) {
+		fakeManifestParser(t, `if [ "$1" = "-I" ] && [ "$2" = "-B" ]; then echo '{"recipes":{}}'; else exit 9; fi`)
+		recipes, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), reconcileManifestBody))
+		if err != nil {
+			t.Fatalf("readManifestRecipes: %v, want an isolated parser invocation", err)
+		}
+		if _, ok := recipes["recipes"]; !ok {
+			t.Fatalf("recipes = %v, want the parsed manifest table shape", recipes)
+		}
+	})
+
+	t.Run("ambient PYTHONPATH cannot shadow stdlib imports", func(t *testing.T) {
+		shadow := t.TempDir()
+		if err := os.WriteFile(filepath.Join(shadow, "json.py"), []byte("raise RuntimeError('shadowed')\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PYTHONPATH", shadow)
+		recipes, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), reconcileManifestBody))
+		if err != nil {
+			t.Fatalf("readManifestRecipes: %v, want isolation to ignore the shadowing module", err)
+		}
+		if _, ok := recipes["trello-mcp-workflow"]; !ok {
+			t.Fatalf("recipes = %v, want the parsed recipe table", recipes)
+		}
+	})
+}
+
 // TestLedgerReconcileBoundsTheManifestParser pins F5: the parser subprocess is
 // bounded in time and output, and its failure is reported as bounded detail
 // rather than raw parser output.

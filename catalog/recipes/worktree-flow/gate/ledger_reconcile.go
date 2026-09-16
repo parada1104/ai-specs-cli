@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ai-specs.dev/worktree-gate/ledger"
@@ -368,7 +369,8 @@ func readManifestRecipes(path string) (map[string]manifestRecipe, error) {
 	if err := regularFile(path); err != nil {
 		return nil, err
 	}
-	out, err := runManifestParser(path)
+	root := filepath.Dir(filepath.Dir(path))
+	out, err := runManifestParser(root, path)
 	if err != nil {
 		return nil, err
 	}
@@ -385,28 +387,56 @@ func readManifestRecipes(path string) (map[string]manifestRecipe, error) {
 // echoing its output. WaitDelay bounds the wait for the output pipes, so a child
 // that leaves a helper holding them cannot extend the deadline: the whole call is
 // bounded by twice manifestParseTimeout.
-func runManifestParser(path string) ([]byte, error) {
+//
+// The interpreter is resolved explicitly and then run isolated (-I -B): isolated
+// mode ignores PYTHON* environment variables and user site-packages, so neither a
+// repository-controlled nor an ambient module can shadow the stdlib imports the
+// reader performs (R1-001). An interpreter resolving inside the project root is
+// refused: the manifest must never select the code that parses it.
+func runManifestParser(root, path string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), manifestParseTimeout)
 	defer cancel()
 
+	interpreter, err := manifestInterpreter(root)
+	if err != nil {
+		return nil, err
+	}
 	stdout := &cappedBuffer{max: acquisitionLimit}
 	stderr := &cappedBuffer{max: manifestErrorLimit}
-	cmd := exec.CommandContext(ctx, "python3", "-c", manifestReader, path)
+	cmd := exec.CommandContext(ctx, interpreter, "-I", "-B", "-c", manifestReader, path)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.WaitDelay = manifestParseTimeout
 
-	err := cmd.Run()
+	runErr := cmd.Run()
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("standard TOML parser timed out after %s", manifestParseTimeout)
 	}
-	if err != nil {
-		return nil, classifyManifestParserError(err)
+	if runErr != nil {
+		return nil, classifyManifestParserError(runErr)
 	}
 	if stdout.truncated {
 		return nil, fmt.Errorf("standard TOML parser returned more than %d bytes", acquisitionLimit)
 	}
 	return stdout.buf.Bytes(), nil
+}
+
+// manifestInterpreter resolves the ambient python3 without executing it and
+// refuses an interpreter that lives inside the project root, where repository
+// content could shadow the system interpreter. Resolution failures are named so
+// a missing interpreter and a suspicious one are distinguishable without leaking
+// filesystem detail beyond the resolved path class.
+func manifestInterpreter(root string) (string, error) {
+	interpreter, err := exec.LookPath("python3")
+	if err != nil {
+		return "", fmt.Errorf("standard TOML parser is unavailable: %v", err)
+	}
+	if abs, absErr := filepath.Abs(interpreter); absErr == nil {
+		if absRoot, rootErr := filepath.Abs(root); rootErr == nil && (absRoot == abs || strings.HasPrefix(abs+string(filepath.Separator), absRoot)) {
+			return "", errors.New("standard TOML parser interpreter resolves inside the project root")
+		}
+	}
+	return interpreter, nil
 }
 
 // classifyManifestParserError names the failure without reproducing parser
