@@ -820,6 +820,120 @@ class CliDepParsingTests(unittest.TestCase):
         recipe = self.schema.load_recipe_toml(catalog / "worktree-flow" / "recipe.toml")
         self.assertEqual(recipe.cli_deps[0].binary, "git")
 
+class StructuredConfigSectionTests(unittest.TestCase):
+    """F2: recipe-declared [config.reconcile] is validated as a first-class table."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_structured")
+
+    _VALID = (
+        "[config.reconcile]\n"
+        'scope_field = "board_id"\n'
+        "max_age_seconds = 900\n"
+        "\n"
+        "[[config.reconcile.expectations]]\n"
+        'event = "delivery"\n'
+        'property = "list"\n'
+        'config_field = "default_list"\n'
+    )
+
+    def _load(self, tmp: str, body: str):
+        recipe_dir = Path(tmp) / "structured"
+        recipe_dir.mkdir()
+        (recipe_dir / "recipe.toml").write_text(
+            '[recipe]\nid = "structured"\nname = "Structured"\n'
+            'description = "D"\nversion = "1.0"\n\n' + body
+        )
+        return self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+
+    def test_reconcile_parses_as_structured_table_not_extra(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = self._load(tmp, self._VALID)
+        self.assertIn("reconcile", data.config_schema.tables)
+        self.assertNotIn("reconcile", data.config_schema.extra)
+        self.assertNotIn("reconcile", data.config_schema.fields)
+        shape = data.config_schema.tables["reconcile"].shape
+        self.assertEqual(shape["scope_field"], "string")
+        self.assertEqual(shape["max_age_seconds"], "integer")
+        self.assertEqual(
+            set(shape["expectations"][0]),
+            {"event", "property", "config_field"},
+        )
+
+    def test_structured_unknown_subkey_rejected(self):
+        body = self._VALID.replace(
+            'scope_field = "board_id"',
+            'scope_field = "board_id"\nbogus = 1',
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self._load(tmp, body)
+        self.assertIn("unknown key", str(ctx.exception))
+        self.assertIn("bogus", str(ctx.exception))
+
+    def test_structured_wrong_scalar_type_rejected(self):
+        body = self._VALID.replace("max_age_seconds = 900", 'max_age_seconds = "900"')
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self._load(tmp, body)
+        self.assertIn("max_age_seconds", str(ctx.exception))
+        self.assertIn("integer", str(ctx.exception))
+
+    def test_structured_expectation_unknown_key_rejected(self):
+        body = self._VALID.replace(
+            'property = "list"', 'property = "list"\nextra_key = "x"'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self._load(tmp, body)
+        self.assertIn("extra_key", str(ctx.exception))
+
+    def test_structured_non_table_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self._load(tmp, '[config]\nreconcile = "nope"\n')
+        self.assertIn("reconcile", str(ctx.exception))
+        self.assertIn("table", str(ctx.exception))
+
+    def test_structured_array_not_a_list_rejected(self):
+        body = self._VALID.replace(
+            "[[config.reconcile.expectations]]\n"
+            'event = "delivery"\n'
+            'property = "list"\n'
+            'config_field = "default_list"\n',
+            'expectations = "soon"\n',
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self._load(tmp, body)
+        self.assertIn("expectations", str(ctx.exception))
+        self.assertIn("array", str(ctx.exception))
+
+    def test_structured_array_too_large_rejected(self):
+        entries = "".join(
+            "[[config.reconcile.expectations]]\n"
+            f'event = "e{idx}"\nproperty = "list"\nconfig_field = "default_list"\n'
+            for idx in range(self.schema.STRUCTURED_LIST_MAX + 1)
+        )
+        body = (
+            "[config.reconcile]\n"
+            'scope_field = "board_id"\n'
+            "max_age_seconds = 900\n\n"
+            + entries
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(self.schema.RecipeValidationError) as ctx:
+                self._load(tmp, body)
+        self.assertIn("at most", str(ctx.exception))
+
+    def test_nonstandard_section_without_shape_still_extra(self):
+        body = "[config.other_section]\nkey = \"value\"\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            data = self._load(tmp, body)
+        self.assertIn("other_section", data.config_schema.extra)
+        self.assertNotIn("other_section", data.config_schema.tables)
+
     def test_recipe_conflicts_tolerates_deps_block(self):
         conflicts_mod = load_module(
             ROOT / "lib" / "_internal" / "recipe-conflicts.py",

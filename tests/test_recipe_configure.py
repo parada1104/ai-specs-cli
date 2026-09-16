@@ -122,6 +122,19 @@ class RecipeConfigureTests(unittest.TestCase):
         self.assertEqual(report["status"], "rejected")
         self.assertNotIn("literal", manifest.read_text())
 
+    def test_parse_assignment_accepts_structured_table(self):
+        recipe = self.mod._schema_for("trello-mcp-workflow")
+        key, value = self.mod._parse_assignment(
+            recipe,
+            'reconcile={scope_field="board_id",max_age_seconds=900,'
+            'expectations=[{event="delivery",property="list",config_field="default_list"}]}',
+        )
+        self.assertEqual(key, "reconcile")
+        self.assertEqual(value["scope_field"], "board_id")
+        self.assertEqual(value["expectations"][0]["event"], "delivery")
+        with self.assertRaises(self.mod.ConfigureError):
+            self.mod._parse_assignment(recipe, "reconcile=not_toml")
+
     def test_no_gitmodules_surfaces_monorepo_apps_question(self):
         tmp, root, _manifest = self._project()
         self.addCleanup(tmp.cleanup)
@@ -198,6 +211,69 @@ class RecipeConfigureTests(unittest.TestCase):
         self.assertEqual(doc["grounding"]["init"]["needs_mcp"], ["trello"])
         self.assertIn("TRELLO_API_KEY", doc["grounding"]["mcp"]["env_vars"])
         self.assertNotIn("$TRELLO_API_KEY", json.dumps(doc))
+
+    _TRELLO_BASE = (
+        "[project]\nname='fixture'\n\n"
+        "[recipes.trello-mcp-workflow]\nenabled=true\nversion='1.3.0'\n\n"
+        "[recipes.trello-mcp-workflow.config]\n"
+        'board_id = "69ec097f13e2d38ecd89a557"\n'
+    )
+
+    def test_trello_inspect_lists_reconcile_table_and_not_unknown(self):
+        tmp, root, manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        manifest.write_text(
+            self._TRELLO_BASE
+            + "\n[recipes.trello-mcp-workflow.config.reconcile]\n"
+            'scope_field = "board_id"\n'
+            "max_age_seconds = 900\n\n"
+            "[[recipes.trello-mcp-workflow.config.reconcile.expectations]]\n"
+            'event = "delivery"\nproperty = "list"\nconfig_field = "default_list"\n'
+        )
+        doc = self.mod.inspect_project(root, "trello-mcp-workflow")
+        types = {field["key"]: field["type"] for field in doc["schema"]["fields"]}
+        self.assertEqual(types.get("reconcile"), "table")
+        self.assertNotIn("reconcile", doc["unknown_keys"])
+        self.assertEqual(
+            doc["current_config"]["reconcile"]["scope_field"], "board_id"
+        )
+
+    def test_apply_accepts_structured_table_key(self):
+        tmp, root, manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        manifest.write_text(self._TRELLO_BASE)
+        reconcile = {
+            "scope_field": "board_id",
+            "max_age_seconds": 900,
+            "expectations": [
+                {"event": "delivery", "property": "list", "config_field": "default_list"}
+            ],
+        }
+        report, code = self.mod.apply_project(
+            root, "trello-mcp-workflow", {"reconcile": reconcile}
+        )
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["status"], "ok")
+        import tomllib
+
+        written = tomllib.loads(manifest.read_text())
+        self.assertEqual(
+            written["recipes"]["trello-mcp-workflow"]["config"]["reconcile"], reconcile
+        )
+
+    def test_apply_rejects_malformed_structured_table(self):
+        tmp, root, manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        manifest.write_text(self._TRELLO_BASE)
+        before = manifest.read_bytes()
+        report, code = self.mod.apply_project(
+            root,
+            "trello-mcp-workflow",
+            {"reconcile": {"scope_field": "board_id", "bogus": 1}},
+        )
+        self.assertEqual(code, 3)
+        self.assertEqual(report["status"], "rejected")
+        self.assertEqual(manifest.read_bytes(), before)
 
 if __name__ == "__main__":
     unittest.main()

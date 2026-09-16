@@ -22,6 +22,11 @@ type ledgerOptions struct {
 	evidence    string
 	decide      string
 	write       string
+	// reconcile is the opt-in, off-hot-path comparison: an observation payload
+	// path plus the event the caller asks to compare. Absent, the stdout contract
+	// is the legacy verdict byte for byte.
+	reconcile      string
+	reconcileEvent string
 }
 
 // ledgerIdentJSON is the design identity object: exactly four keys, with change
@@ -48,6 +53,7 @@ type ledgerOut struct {
 	Prompt     *ledger.Prompt       `json:"prompt"`
 	Doctor     ledger.DoctorFinding `json:"doctor"`
 	Write      *ledger.WriteOutcome `json:"write,omitempty"`
+	Reconcile  *ledgerReconcileJSON `json:"reconcile,omitempty"`
 }
 
 // runLedger is the --ledger dispatcher: acquire read-only inputs, apply at most
@@ -59,6 +65,14 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 		// DW2: the two mutation vehicles are mutually exclusive. Refuse before any
 		// IO so nothing is persisted and no verdict is printed.
 		fmt.Fprintln(stderr, "worktree-gate: ledger --write and --decide are mutually exclusive")
+		return 2
+	}
+	if opts.reconcile != "" && (opts.write != "" || opts.decide != "") {
+		// Reconciliation describes the graded item and is read-only, so it is refused
+		// with a mutation vehicle before any IO: a comparison can never be asked about
+		// a store the same invocation is changing. The only other write this
+		// invocation could reach, recording a conflict snapshot, is suppressed below.
+		fmt.Fprintln(stderr, "worktree-gate: ledger --reconcile cannot be combined with --write or --decide")
 		return 2
 	}
 
@@ -123,6 +137,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 		ev = ledger.Evidence{}
 	}
 
+	now := time.Now()
 	verdict := ledger.Grade(ledger.Input{
 		Checkpoint: opts.checkpoint,
 		Mode:       opts.mode,
@@ -131,16 +146,29 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 		Store:      store,
 		StoreErr:   storeErr,
 		Evidence:   ev,
-		Now:        time.Now(),
+		Now:        now,
 	})
 
+	// The conflict snapshot is a store write. A --reconcile invocation is documented
+	// as read-only, so it suppresses the write and reports the suppression; a plain
+	// grade keeps recording exactly what it always did. The conflict itself still
+	// reaches the verdict and the sidecar, so nothing is hidden from the caller.
 	if verdict.Conflict != nil && verdict.Item != nil {
-		if err := ledger.PersistConflict(storePath, ident.Key, *verdict.Conflict); err != nil {
+		if opts.reconcile != "" {
+			fmt.Fprintln(stderr, "worktree-gate: ledger conflict not recorded: --reconcile is read-only")
+		} else if err := ledger.PersistConflict(storePath, ident.Key, *verdict.Conflict); err != nil {
 			fmt.Fprintf(stderr, "worktree-gate: ledger conflict not recorded: %v\n", err)
 		}
 	}
 
-	payload, err := json.Marshal(newLedgerOut(verdict, writeOutcome))
+	// Reconciliation is explicit and off the hot path: it rides along as a sidecar
+	// and never alters the graded decision, writes the store, or resolves anything.
+	var reconcileOut *ledgerReconcileJSON
+	if opts.reconcile != "" {
+		reconcileOut = reconcileSidecar(dir, binding, verdict, opts.reconcile, opts.reconcileEvent, now)
+	}
+
+	payload, err := json.Marshal(newLedgerOut(verdict, writeOutcome, reconcileOut))
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: ledger: %v\n", err)
 		return 0
@@ -149,9 +177,9 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	return verdict.ExitCode()
 }
 
-// newLedgerOut maps a verdict onto the exact stdout contract. The DW4 write
-// sidecar is omitted entirely when no --write was supplied.
-func newLedgerOut(v ledger.Verdict, write *ledger.WriteOutcome) ledgerOut {
+// newLedgerOut maps a verdict onto the exact stdout contract. The DW4 write and
+// the reconciliation sidecars are omitted entirely when they were not requested.
+func newLedgerOut(v ledger.Verdict, write *ledger.WriteOutcome, reconcile *ledgerReconcileJSON) ledgerOut {
 	out := ledgerOut{
 		Capability: ledger.CapabilityTracker,
 		Active:     v.Active,
@@ -164,6 +192,7 @@ func newLedgerOut(v ledger.Verdict, write *ledger.WriteOutcome) ledgerOut {
 		Prompt:     v.Prompt,
 		Doctor:     v.Doctor,
 		Write:      write,
+		Reconcile:  reconcile,
 		Identity: ledgerIdentJSON{
 			CommonDir: v.Identity.CommonDir,
 			Branch:    v.Identity.Branch,

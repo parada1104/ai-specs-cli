@@ -317,6 +317,55 @@ class RecipeMaterializeTests(unittest.TestCase):
         cfg = self.mod.merge_config(recipe, {"unknown": 1})
         self.assertEqual(cfg, {})
 
+    def _structured_recipe(self):
+        """A recipe declaring the [config.reconcile] structured table."""
+        schema = self.mod._load_recipe_schema()
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe_dir = Path(tmp) / "reconcile-recipe"
+            recipe_dir.mkdir()
+            (recipe_dir / "recipe.toml").write_text(
+                '[recipe]\nid = "reconcile-recipe"\nname = "Reconcile"\n'
+                'description = "D"\nversion = "1.0"\n\n'
+                '[config.board_id]\nrequired = true\ntype = "string"\n\n'
+                '[config.reconcile]\n'
+                'scope_field = "board_id"\n'
+                'max_age_seconds = 900\n\n'
+                '[[config.reconcile.expectations]]\n'
+                'event = "delivery"\nproperty = "list"\nconfig_field = "default_list"\n'
+            )
+            return schema.load_recipe_toml(recipe_dir / "recipe.toml")
+
+    def test_merge_config_carries_declared_reconcile_table(self):
+        recipe = self._structured_recipe()
+        declared = {
+            "scope_field": "board_id",
+            "max_age_seconds": 900,
+            "expectations": [
+                {"event": "delivery", "property": "list", "config_field": "default_list"}
+            ],
+        }
+        captured = io.StringIO()
+        real_stderr = sys.stderr
+        sys.stderr = captured
+        try:
+            cfg = self.mod.merge_config(
+                recipe, {"board_id": "69ec097f13e2d38ecd89a557", "reconcile": declared}
+            )
+        finally:
+            sys.stderr = real_stderr
+        self.assertEqual(cfg["reconcile"], declared)
+        self.assertNotIn("unknown config key", captured.getvalue())
+
+    def test_merge_config_rejects_malformed_reconcile_table(self):
+        recipe = self._structured_recipe()
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.merge_config(
+                recipe,
+                {"board_id": "abc", "reconcile": {"max_age_seconds": "soon"}},
+            )
+        self.assertIn("reconcile", str(ctx.exception))
+        self.assertIn("integer", str(ctx.exception))
+
     def test_execute_hooks_validate_config_success(self):
         from lib._internal.recipe_schema import Recipe, ConfigSchema, ConfigField, Hook
         recipe = Recipe(id="r", name="R", description="D", version="1.0",

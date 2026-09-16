@@ -69,6 +69,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ledgerEvidence := fs.String("evidence", "", "path to a JSON evidence file (remote/code/git sides)")
 	ledgerDecide := fs.String("decide", "", "JSON human decision to persist, then re-grade")
 	ledgerWrite := fs.String("write", "", "JSON machine write to apply (open|link|close|exempt), then re-grade")
+	ledgerReconcile := fs.String("reconcile", "", "path to an MCP-acquired observation JSON; adds a reconcile sidecar (exit code unchanged)")
+	ledgerReconcileEvent := fs.String("reconcile-event", "", "the event the caller asks to compare (recipe-declared expectations for it)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain]\n")
@@ -115,14 +117,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return selftest(stdout, stderr)
 	case *ledgerRun:
 		return runLedger(ledgerOptions{
-			checkpoint:  *ledgerCheckpoint,
-			mode:        *ledgerMode,
-			projectRoot: *ledgerProjectRoot,
-			witness:     *ledgerWitness,
-			store:       *ledgerStore,
-			evidence:    *ledgerEvidence,
-			decide:      *ledgerDecide,
-			write:       *ledgerWrite,
+			checkpoint:     *ledgerCheckpoint,
+			mode:           *ledgerMode,
+			projectRoot:    *ledgerProjectRoot,
+			witness:        *ledgerWitness,
+			store:          *ledgerStore,
+			evidence:       *ledgerEvidence,
+			decide:         *ledgerDecide,
+			write:          *ledgerWrite,
+			reconcile:      *ledgerReconcile,
+			reconcileEvent: *ledgerReconcileEvent,
 		}, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)

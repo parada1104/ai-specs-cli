@@ -85,6 +85,30 @@ default = "warn"
 enum = ["always", "ask", "warn"]
 help_text = "Tracker ledger mode: always (block missing/conflicted state at the five checkpoints), ask (prompt at each checkpoint; an opt-out covers only that checkpoint), or warn (report on stderr, never block — default). Overrides gate_mode when set; gate_mode off still skips the checkpoints."
 
+# Remote reconciliation mapping (ledger remote reconciliation, T2). The recipe
+# declares which config fields a comparison may read: the scope the observation
+# must report, and, per event, the property it declares plus the config field whose
+# value that property must show. It is provider adaptation, never provider state:
+# nothing here is compared against a stored item status.
+#
+# The Go gate reads the runtime values from the project manifest
+# (`[recipes.trello-mcp-workflow.config]` and this same table in
+# ai-specs/ai-specs.toml), so a project that does not bind the block gets an
+# explicit non-agreeing `unconfigured` result. This block is the recipe-side
+# declaration and wizard/doctor documentation — never a runtime fallback — and Go
+# hardcodes no field name, property name, list name, or freshness window. The
+# recipe schema validates this block's shape (`scope_field`, `max_age_seconds`,
+# `expectations` entries) and sync carries the project-declared block through
+# without the old unknown-key warning.
+[config.reconcile]
+scope_field = "board_id"
+max_age_seconds = 900
+
+[[config.reconcile.expectations]]
+event = "delivery"
+property = "list"
+config_field = "default_list"
+
 [init]
 prompt = "init.md"
 description = "Configure Trello board and list mappings before sync"

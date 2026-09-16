@@ -13,6 +13,7 @@ metadata:
     - "New structured change or feature request"
     - "Active change is missing a linked Trello card"
     - "Resuming work on a change with a stale or unknown card"
+    - "Reconciling the ledger card against live Trello state"
 ---
 
 # Trello MCP Workflow
@@ -33,6 +34,7 @@ metadata:
 | `default_list` | No | `In Progress` | List name where new cards are created when no phase-specific list applies. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
 | `gate_mode` | No | `warn` | Tracker card gate: `off` / `warn` / `always`. |
+| `reconcile` | No | — | Declarative remote-reconciliation mapping (`scope_field`, `max_age_seconds`, `expectations`). The recipe schema validates the declared shape and sync carries the project's `[recipes.trello-mcp-workflow.config.reconcile]` block through unchanged; because the gate reads only the project manifest, an unbound block means every comparison is `unconfigured`, never a default. Add or change it with `ai-specs recipe configure trello-mcp-workflow --set 'reconcile={...}'`. |
 
 Configuration is read from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`.
 
@@ -158,6 +160,154 @@ Removing the file does not revoke a recorded exemption — reopen evidence with
 `worktree-gate --ledger --checkpoint <name> --decide '{"kind":"adjudicate","choice":"<side>"}'`.
 Hosts grade with `local`/`code`/`git` evidence built from local facts; the `remote`
 side is unwired in this slice.
+
+### Remote reconciliation (explicit, off the hot path)
+
+The grade above compares local facts. Reconciling against what Trello *actually*
+reports is a separate, explicit comparison: the agent acquires the remote data
+through the Trello MCP tools and the Go gate compares it against the bound card and
+the recipe-declared expectations. The comparison is never automatic, never a
+provider write, and never resolves a decision — it rides along as a sidecar and the
+graded exit code is unchanged.
+
+**1. Observe through MCP (board isolation still applies).** After the board guard,
+read the linked card with `trello_get_card(cardId, fields="idBoard,idList,name")`,
+validate `idBoard` against the configured `board_id`, and resolve the card's list
+name with `trello_get_lists(boardId: <board_id>)`. Report only what you actually
+read — never the state you expected to find.
+
+**2. Write the observation payload outside the repository** (for example to
+`$(mktemp)`), so no workspace file changes and the worktree gate stays untouched:
+
+```json
+{
+  "provider_id": "trello-mcp-workflow",
+  "scope": "<board_id>",
+  "item_id": "<24-hex card id>",
+  "observed_at": "<RFC3339 UTC stamp of this read>",
+  "event": "<the event you observed, e.g. delivery>",
+  "properties": { "list": "<list name you read>" }
+}
+```
+
+The payload is a closed shape: `provider_id`, `scope`, `item_id`, `observed_at`,
+`event`, `properties` are the only accepted keys, unknown keys are rejected, and
+values must be the types shown. `observed_at` is the moment of the read, not a
+remembered or inferred time. The payload is read under a fixed size budget
+(1048576 bytes): a larger file is reported as `observation-invalid`, never parsed.
+
+**3. Compare with the gate**, naming the event you are asking about
+(`--reconcile-event`). Use the stamped/verified gate binary path (`$WORKTREE_GATE_BIN`
+or the CLI cache path the hooks use):
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --project-root "$PWD" \
+  --reconcile "$OBSERVATION" --reconcile-event delivery
+```
+
+Reconciliation is read-only: the gate refuses `--reconcile` combined with `--write`
+or `--decide` with exit 2 before it touches the store, it never writes the store —
+a conflicting grade's conflict snapshot is suppressed instead of recorded and the
+suppression is reported on stderr — and it never resolves a decision or changes the
+graded exit code.
+
+**4. Read the sidecar** (top-level `reconcile` key of the verdict JSON):
+
+| Outcome | Meaning | Next step |
+|---|---|---|
+| `agree` | Every declared property matches for the requested event, and the observation reported that event. | Conditional expectation met. Still not proof of delivery. |
+| `unconfigured` | The manifest, the recipe's `[config.reconcile]` mapping, or a config value it selects is missing, or the recipe is `enabled = false`. | Bind the mapping in `ai-specs/ai-specs.toml`; read `detail`. A readable, explicitly disabled recipe grants no authority. |
+| `unmapped-event` | No expectation is declared for the requested event. | Pending / unreconciled: declare the mapping or drop the request. |
+| `event-mismatch` | The observation reports a different (or no) event than the one requested. | Never treat the requested event as observed; re-read or re-request. |
+| `observation-invalid` | The payload is missing, malformed, oversized, or carries unknown keys. | Fix the acquisition; nothing was compared. |
+| `unbound-identity`, `identity-mismatch` | No bound card, or the observation belongs to another provider/scope/item. | Fix the binding or the observation; wrong scope is never compared. |
+| `stale-observation`, `future-observed-at`, `invalid-observed-at`, `invalid-window`, `invalid-clock` | The observation is older than the declared window, dated in the future, unparsable, or the freshness window is undeclared. | Re-read; bind a positive `max_age_seconds` no larger than `9223372036`. There is no freshness default. |
+| `missing-property`, `property-mismatch` | A declared property was not reported or holds another value. | Report the discrepancy and present it as a pending explicit decision. |
+
+Only `agree` is agreement. A selected event is never evidence that the event
+happened, a local property match is not a merge/release verification, and a
+non-agreeing outcome is information to report — it does not block unrelated work and
+it creates no provider write.
+
+**Pending decisions (every non-agree outcome).** Agreement is a conditional match
+of the declared expectations for the requested event, not proof that the event was
+delivered. Every non-agreeing outcome above is a *pending explicit decision*: the
+agent presents it and the human resolves it. Nothing is resolved by the agent, by a
+provider write, or by treating silence as consent. Only the **disputed action** (for
+example claiming the card is merged/released, or recording local state as done) is
+suspended; unrelated work in the session continues normally.
+
+For one non-agree outcome, the agent presents, in one message:
+
+- The `outcome` and what it means (the table above).
+- The event asked for (`requested_event`) against the event actually observed
+  (`observed_event`); an unobserved event is never the requested one.
+- The bound identity this comparison was about: `provider_id`, `scope`, `item_id`.
+  An empty `item_id` means nothing was bound — never borrow another card's id.
+- `observed_at` and its age against the declared `max_age_seconds`; an age the
+  agent cannot compute is reported as unknown, not as fresh.
+- The `findings` list verbatim when it carries entries (`property`, `expected`,
+  `observed`, `status`), or the bounded `detail` string for the wiring outcomes
+  (`unconfigured`, `unmapped-event`, `observation-invalid`) that carry none.
+
+Then it asks **exactly one** `ask_user` question offering exactly these
+resolutions:
+
+| Resolution | What it does |
+|---|---|
+| **Fix remote state and re-observe** | Correct the card in Trello, then re-read and re-run the `--reconcile` comparison. The agent never edits the card on its own initiative. |
+| **Record observed state as truth** | The human decides what the observed state means and the agent performs the explicit ledger write (`--write` / `--decide`) that records it. Never inferred, never automatic. |
+| **Leave pending** | No resolution now: report the item as unreconciled and continue unrelated work. It is re-raised on the next explicit reconciliation, not silently dropped. |
+
+Hard rules:
+
+- **No inferred consent.** An unanswered, dismissed, or defaulted prompt is not a
+  yes. `record observed state as truth` requires an explicit human selection; the
+  agent never selects it for the human, and it never re-asks with a leading option.
+- **No provider mutation before an explicit human choice.** Until the human
+  chooses, the agent performs no Trello create/update/move/comment/label call and
+  no provider-adjacent write. Running the comparison is not consent.
+- **Unrelated work continues.** A pending decision suspends only the disputed
+  action; it never blocks the session, other tasks, or the graded exit code.
+- **Headless or unavailable UI leaves the decision pending.** When no interactive
+  prompt is available, the agent does not guess a resolution: it reports the
+  outcome as pending/unreconciled with the same fields above and leaves it for a
+  session that can ask.
+- **Agreement is conditional expectation match, not delivery proof.** `agree` means
+  only that the declared properties matched for the requested event; it is not
+  evidence of a merge, a release, or a delivery.
+- **The closed-item / post-merge gap stays named.** A closed or archived card after
+  a merge has no safely bound target yet, so it reports `unbound-identity` and is
+  presented as a pending decision — never guessed.
+
+Reading the mapping is bounded acquisition: the manifest must be a plain file, and
+the standard parser runs under a deadline with capped output. A missing parser, a
+hung parser, an oversized result, a non-TOML manifest, and an invalid mapping all
+reach the sidecar as `unconfigured` with a bounded `detail` — never as raw parser
+output.
+
+**Declared mapping.** `[config.reconcile]` in this recipe declares the fields; the
+project binds their values under `[recipes.trello-mcp-workflow.config]` in
+`ai-specs/ai-specs.toml`. The gate reads only the project manifest, so a project
+without the block gets `unconfigured` (never a default):
+
+```toml
+[recipes.trello-mcp-workflow.config.reconcile]
+scope_field = "board_id"
+max_age_seconds = 900
+
+[[recipes.trello-mcp-workflow.config.reconcile.expectations]]
+event = "delivery"
+property = "list"
+config_field = "default_list"
+```
+
+Each expectation means "when the caller asks about `event`, the property `property`
+must show the value configured in `config_field`". `max_age_seconds` must be
+positive and at most `9223372036`; anything else is `unconfigured`, never a clamped
+default. Note the open gap: the gate binds the card the ledger grades, so a
+closed/archived card after a merge has no safe target yet and reports
+`unbound-identity` rather than guessing one.
 
 ---
 
