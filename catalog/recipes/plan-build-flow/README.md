@@ -69,8 +69,22 @@ requires its complete planning chain.
   when present, otherwise `design.md`. A missing, empty, or duplicate heading
   in the authoritative source blocks Full; it never falls back to `design.md`.
   Light is advisory only.
+- **Promote canonical specs before archiving:** Standard and Full deltas under
+  `openspec/changes/<slug>/specs/<domain>/spec.md` are composed into
+  `openspec/specs/<domain>/spec.md` by the promotion helper
+  `lib/_internal/spec_promotion.py <slug> --root <planning-root>`. ADDED
+  requirements are appended, MODIFIED requirements replace the full canonical
+  block with the exact same requirement name, unrelated canonical requirements
+  and sections survive, a missing canonical domain is created from the delta, and
+  a rerun after an interruption is a no-op. A colliding ADDED requirement, a
+  MODIFIED target that does not exist, and an unsupported RENAMED delta block
+  without writing; a destructive REMOVED delta blocks unless the removal was
+  explicitly approved, then re-run with `--allow-removed`. Only the promoter
+  writes canonical specs; the guardian only validates them and never mutates
+  `openspec/specs/`. Light changes and changes with no deltas are unaffected.
 - **Two enforcement points:** run the verify gate before archive-tail and run
-  the pre-merge guardian again after archive. Missing `explore.md` is never a
+  the pre-merge guardian again after archive. Both points also block a Standard
+  or Full delta that is unpromoted or unresolved. Missing `explore.md` is never a
   guardian blocker.
 - **Archive before merge** on the review branch — never after merge lands on the
   base branch. OpenSpec's canonical destination is
@@ -79,6 +93,11 @@ requires its complete planning chain.
   when no dated candidate exists. Multiple dated candidates, dated-plus-undated
   candidates, invalid dates, and near-match names fail closed with named
   blockers.
+- **Tracker `archive-close` is not this archive.** Tracker item closure is a
+  separate Tracker-domain checkpoint
+  (`tracker_ledger_host.py <slug> --root <root> --checkpoint archive-close`). It
+  never moves the change folder, never infers closure from OpenSpec archive
+  state, and writes nothing. Plan Build's artifact guardian is tracker-free.
 
 Plans already in flight when this contract ships add missing `proposal.md` or
 verify evidence before their PR/archive; no replan or restart is needed.
@@ -94,7 +113,7 @@ agent, which adds the missing artifacts when that change resumes.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.7.0"
+version = "1.8.0"
 ```
 
 Then run `ai-specs sync`.
