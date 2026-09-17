@@ -8,7 +8,7 @@ Goal: recipe-owned default event mapping so reconciliation works out of the box 
 - [x] T1 GREEN: recipe.toml extended; ConfigTable retains declared values; sync stamps recipe-declared reconcile + referenced fields into manifest (absent keys only)
 - [x] T2: SKILL documents the recipe-supported events (review, merge, delivery) and override-only config
 - [x] T3: dogfood — sync stamped reconcile block + review_list/done_list/default_list; epic_list and unrelated defaults untouched; manifest reverted per dogfood-verification-isolation (project state is evidence, not deliverable)
-- [ ] T4: full suite at deliverable boundary + commit
+- [x] T4: full suite at deliverable boundary — 2029 tests OK, skipped=2; combined candidate committed after the post-close fix
 
 ## Tracker
 

@@ -7,11 +7,11 @@ Goal: the observation producer contract is pinned — the SKILL documents the re
 - [x] T1: Go parity contract `TestLedgerReconcileSkillObservationShapeIsCurrent` — SKILL json payload keys == Go closed shape (both directions; catches silent drift)
 - [x] T2: Python doc contract — SKILL states review_list/done_list defaults, review/merge events, override-only config (stacked on #130)
 - [x] Focused suites green (trello recipe 14 OK; gate + ledger OK)
-- [ ] T3: full validation at deliverable boundary + commit
+- [x] T3: full validation at deliverable boundary — 2029 tests OK, skipped=2; combined candidate committed
 
 ## Notes
 
-- Stacked on `feat/tracker-recipe-default-mapping` (needs its SKILL/config changes).
+- Included in the combined `feat/tracker-reconcile-adoption` delivery (recipe/default changes are in the same PR).
 - No new agent loop, no CLI acquisition verb; the producer remains the documented MCP read + mktemp payload, now contract-pinned.
 
 ## Tracker

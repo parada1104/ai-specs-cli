@@ -132,6 +132,11 @@ type Input struct {
 	StoreErr   error
 	Evidence   Evidence
 	Now        time.Time
+	// ReportItem is an explicit row to evaluate when the identity has no open
+	// primary. It is set only by the explicit close write path, whose own row is
+	// closed and therefore never primary (D17); a plain grade leaves it nil and
+	// still reports needs-item for a closed-only store.
+	ReportItem *Item
 }
 
 // Verdict is the checkpoint outcome. Decision is the only field a host maps to
@@ -199,6 +204,11 @@ func Grade(in Input) Verdict {
 
 	ev := in.Evidence
 	item, err := in.Store.Primary(in.Identity.Key)
+	if errors.Is(err, ErrNoPrimary) && in.ReportItem != nil {
+		// An explicit close write reports the row it just closed: the row stays
+		// non-primary (D17), but this one invocation must grade its own observation.
+		item, err = *in.ReportItem, nil
+	}
 	switch {
 	case errors.Is(err, ErrMultipleOpen):
 		// Two open rows are a conflict for a human, never a silent pick (A5).

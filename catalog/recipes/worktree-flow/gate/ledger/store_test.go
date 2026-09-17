@@ -229,6 +229,48 @@ func TestClosedItemIsNeverSelectedOrReopened(t *testing.T) {
 	}
 }
 
+// TestLatestClosedReportsLatestClosedRowWithoutPrimary pins the read-only report
+// selector: LatestClosed returns the most recently stored closed row for a key,
+// and that row is never primary, so new work on a reused branch still selects the
+// new open row (D17).
+func TestLatestClosedReportsLatestClosedRowWithoutPrimary(t *testing.T) {
+	id := ident("old-work")
+	var store Store
+	if _, ok := store.LatestClosed(id.Key()); ok {
+		t.Fatal("an empty store has no closed row")
+	}
+	first := store.OpenItem(id, "trello-mcp-workflow", t0)
+	if err := store.CloseItem(first.ID, Decision{At: "2026-09-13T01:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := store.LatestClosed(id.Key())
+	if !ok || got.ID != first.ID || got.Status != StatusClosed {
+		t.Fatalf("LatestClosed = %+v/%v, want the closed row %q", got, ok, first.ID)
+	}
+	if _, err := store.Primary(id.Key()); !errors.Is(err, ErrNoPrimary) {
+		t.Fatalf("a closed row must never be primary (err = %v)", err)
+	}
+
+	// A newer close for the same key is the row reported.
+	second := store.OpenItem(id, "trello-mcp-workflow", t0.Add(time.Minute))
+	if err := store.CloseItem(second.ID, Decision{At: "2026-09-13T02:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := store.LatestClosed(id.Key()); got.ID != second.ID {
+		t.Fatalf("LatestClosed = %q, want the newer closed row %q", got.ID, second.ID)
+	}
+
+	// New work still opens its own primary and LatestClosed never returns it.
+	third := store.OpenItem(id, "trello-mcp-workflow", t0.Add(2*time.Minute))
+	primary, err := store.Primary(id.Key())
+	if err != nil || primary.ID != third.ID {
+		t.Fatalf("new work primary = %+v/%v, want the new open row %q", primary, err, third.ID)
+	}
+	if got, _ := store.LatestClosed(id.Key()); got.Status != StatusClosed {
+		t.Fatalf("LatestClosed returned a non-closed row: %+v", got)
+	}
+}
+
 // TestReusedBranchOpensNewItemD17 pins D17's positive half: new work after a
 // close opens a NEW primary item, and the old closed row is left closed.
 func TestReusedBranchOpensNewItemD17(t *testing.T) {

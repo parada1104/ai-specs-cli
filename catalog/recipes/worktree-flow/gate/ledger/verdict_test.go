@@ -262,6 +262,47 @@ func TestGradeAlwaysBlocksPreMergeIdentityUnavailable(t *testing.T) {
 	assertVerdict(t, "pre-merge/always/identity_unavailable", got, vWant{DecisionBlock, ReasonIdentityUnavailable, 2, SeverityOK, true})
 }
 
+// TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported pins D17 at the
+// predicate: a closed row is never primary, so a plain grade of a closed-only
+// store reports needs-item. Only an explicit report item — the close write's own
+// row — lets that one grade evaluate the closed row.
+func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
+	var store Store
+	closed := store.OpenItem(ident(""), "trello-mcp-workflow", t0)
+	if err := store.CloseItem(closed.ID, Decision{At: "2026-09-13T13:00:00Z", Checkpoint: CheckpointArchiveClose}); err != nil {
+		t.Fatal(err)
+	}
+	input := Input{
+		Checkpoint: CheckpointArchiveClose,
+		Mode:       ModeAlways,
+		Binding:    boundBinding(),
+		Identity:   availIdentity(),
+		Store:      store,
+		Now:        vtNow,
+	}
+
+	plain := Grade(input)
+	if plain.Decision != DecisionBlock || plain.Reason != ReasonNeedsItem {
+		t.Fatalf("closed-only plain grade = %q/%q, want block/needs-item", plain.Decision, plain.Reason)
+	}
+	if plain.Item != nil {
+		t.Fatalf("plain grade selected a closed row: %+v", plain.Item)
+	}
+
+	reported, ok := store.LatestClosed(availIdentity().Key)
+	if !ok {
+		t.Fatal("LatestClosed found no closed row")
+	}
+	input.ReportItem = &reported
+	got := Grade(input)
+	if got.Decision != DecisionAllow || got.Reason != "" {
+		t.Fatalf("reported close grade = %q/%q, want allow", got.Decision, got.Reason)
+	}
+	if got.Item == nil || got.Item.Status != StatusClosed {
+		t.Fatalf("reported close grade item = %+v, want the closed row", got.Item)
+	}
+}
+
 // TestGradeCheckpointScopedOptOutD19 pins D19: an ask opt-out allows only the
 // checkpoint that was answered; the next checkpoint asks again.
 func TestGradeCheckpointScopedOptOutD19(t *testing.T) {

@@ -290,12 +290,20 @@ hung parser, an oversized result, a non-TOML manifest, and an invalid mapping al
 reach the sidecar as `unconfigured` with a bounded `detail` — never as raw parser
 output.
 
-**Declared mapping.** `[config.reconcile]` in this recipe declares the fields; the
-project binds their values under `[recipes.trello-mcp-workflow.config]` in
-`ai-specs/ai-specs.toml`. The gate reads only the project manifest, so a project
-without the block gets `unconfigured` (never a default):
+**Declared mapping.** The recipe declares the lifecycle mapping and its
+conservative list defaults. During `ai-specs sync`, the mapping and the config
+values it references are stamped into `[recipes.trello-mcp-workflow.config]`
+when absent; explicit project values remain overrides and are never replaced.
+A project that has not been synced after this recipe version can temporarily
+report `unconfigured`; re-run sync rather than authoring a reconcile block by
+hand:
 
 ```toml
+[recipes.trello-mcp-workflow.config]
+default_list = "In Progress"
+review_list = "Review"
+done_list = "Done"
+
 [recipes.trello-mcp-workflow.config.reconcile]
 scope_field = "board_id"
 max_age_seconds = 900
@@ -304,14 +312,23 @@ max_age_seconds = 900
 event = "delivery"
 property = "list"
 config_field = "default_list"
+
+[[recipes.trello-mcp-workflow.config.reconcile.expectations]]
+event = "review"
+property = "list"
+config_field = "review_list"
+
+[[recipes.trello-mcp-workflow.config.reconcile.expectations]]
+event = "merge"
+property = "list"
+config_field = "done_list"
 ```
 
 Each expectation means "when the caller asks about `event`, the property `property`
 must show the value configured in `config_field`". `max_age_seconds` must be
 positive and at most `9223372036`; anything else is `unconfigured`, never a clamped
-default. Note the open gap: the gate binds the card the ledger grades, so a
-closed/archived card after a merge has no safe target yet and reports
-`unbound-identity` rather than guessing one.
+default. Note the remaining product gap: a closed/archived card after a merge
+needs an explicit close-report binding; the gate never guesses a closed row.
 
 ---
 

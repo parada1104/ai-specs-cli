@@ -643,6 +643,19 @@ func (s Store) OpenItems(key string) []Item {
 	return open
 }
 
+// LatestClosed returns the most recently stored closed item for key, if any.
+// Closed rows are never primary (D17); this is the read-only report selector the
+// explicit close write path uses to grade the row it just closed, and it never
+// makes a closed row selectable for new work.
+func (s Store) LatestClosed(key string) (Item, bool) {
+	for i := len(s.Items) - 1; i >= 0; i-- {
+		if s.Items[i].Status == StatusClosed && s.Items[i].Key() == key {
+			return s.Items[i], true
+		}
+	}
+	return Item{}, false
+}
+
 // HasOptOut reports whether the primary item for key recorded an opt-out at
 // checkpoint. An opt-out covers only the checkpoint it was answered for (D19).
 func (s Store) HasOptOut(key, checkpoint string) bool {
