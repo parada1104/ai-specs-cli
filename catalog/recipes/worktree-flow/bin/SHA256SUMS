@@ -13,6 +13,10 @@
 # (.github/workflows/release-worktree-gate.yml) — and MUST be regenerated with
 # exactly that version, or the CI checksum gate fails the release.
 #
+# The four executable assets are intentionally CI/release outputs, not tracked
+# files. These lines are their source-level trust manifest; regenerate them with
+# scripts/build-gate.sh after any Go gate change and verify before publishing.
+#
 # Regenerated as part of the release (task 4.9): digests MUST match the
 # published assets; the CI release workflow diffs its generated SHA256SUMS
 # against this file and fails the release on any mismatch.
