@@ -309,6 +309,24 @@ func TestReusedBranchOpensNewItemD17(t *testing.T) {
 	}
 }
 
+// TestSameSecondOpenItemIDsStayUnique pins the persisted-row identity guard:
+// a close followed by a new open in the same second must not reuse the ID.
+func TestSameSecondOpenItemIDsStayUnique(t *testing.T) {
+	id := ident("same-second")
+	var store Store
+	closed := store.OpenItem(id, "trello-mcp-workflow", vtNow)
+	if err := store.CloseItem(closed.ID, Decision{At: t0.Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	fresh := store.OpenItem(id, "trello-mcp-workflow", vtNow)
+	if fresh.ID == closed.ID {
+		t.Fatalf("same-second open reused ID %q", fresh.ID)
+	}
+	if len(store.Items) != 2 || store.Items[0].Status != StatusClosed || store.Items[1].Status != StatusOpen {
+		t.Fatalf("store rows = %+v, want closed then open", store.Items)
+	}
+}
+
 // TestTwoOpenItemsAreConflictNotPick pins "two open rows are a conflict, never a
 // silent pick": Primary reports the collision and returns no item.
 func TestTwoOpenItemsAreConflictNotPick(t *testing.T) {

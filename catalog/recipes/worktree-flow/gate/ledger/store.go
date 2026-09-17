@@ -555,7 +555,7 @@ func NewItemID(identityKey, openedAt string) string {
 func (s *Store) OpenItem(ident ItemIdentity, providerID string, at time.Time) Item {
 	stamp := at.UTC().Format(time.RFC3339)
 	item := Item{
-		ID:         NewItemID(ident.Key(), stamp),
+		ID:         s.uniqueItemID(ident, stamp),
 		Identity:   ident,
 		Status:     StatusOpen,
 		ProviderID: providerID,

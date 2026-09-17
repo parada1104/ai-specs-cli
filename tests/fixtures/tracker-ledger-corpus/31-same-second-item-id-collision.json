@@ -35,11 +35,11 @@
         "kind": "close"
       },
       "expected": {
-        "decision": "block",
-        "reason": "needs-item",
+        "decision": "allow",
+        "reason": "",
         "active": true,
         "conflict": false,
-        "exit": 2,
+        "exit": 0,
         "doctor": "OK",
         "write": {
           "kind": "close",
