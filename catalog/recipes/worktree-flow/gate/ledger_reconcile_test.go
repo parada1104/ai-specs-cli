@@ -1180,3 +1180,200 @@ config_field = "board_id"
 		})
 	}
 }
+
+// reconcileMergeManifestBody declares a merge expectation on the default Done
+// list, so a closed-only fixture reaches the comparison with a mapped event.
+const reconcileMergeManifestBody = `[recipes.trello-mcp-workflow]
+enabled = true
+[recipes.trello-mcp-workflow.config]
+board_id = "board-1"
+done_list = "Done"
+[recipes.trello-mcp-workflow.config.reconcile]
+scope_field = "board_id"
+max_age_seconds = 900
+[[recipes.trello-mcp-workflow.config.reconcile.expectations]]
+event = "merge"
+property = "list"
+config_field = "done_list"
+`
+
+// reconcileMergeManifestPublishedBody is the same mapping with the optional
+// conditional published field configured: the recipe-owned merge target becomes
+// Published only because the project named that list. No default is invented.
+const reconcileMergeManifestPublishedBody = `[recipes.trello-mcp-workflow]
+enabled = true
+[recipes.trello-mcp-workflow.config]
+board_id = "board-1"
+done_list = "Done"
+published_list = "Published"
+[recipes.trello-mcp-workflow.config.reconcile]
+scope_field = "board_id"
+max_age_seconds = 900
+[[recipes.trello-mcp-workflow.config.reconcile.expectations]]
+event = "merge"
+property = "list"
+config_field = "done_list"
+config_field_when_set = "published_list"
+`
+
+// reconcileMergeManifestBadPublishedBody configures the optional field with the
+// wrong type: unusable config is reported, never coerced into a merged target.
+const reconcileMergeManifestBadPublishedBody = `[recipes.trello-mcp-workflow]
+enabled = true
+[recipes.trello-mcp-workflow.config]
+board_id = "board-1"
+done_list = "Done"
+published_list = 3
+[recipes.trello-mcp-workflow.config.reconcile]
+scope_field = "board_id"
+max_age_seconds = 900
+[[recipes.trello-mcp-workflow.config.reconcile.expectations]]
+event = "merge"
+property = "list"
+config_field = "done_list"
+config_field_when_set = "published_list"
+`
+
+// saveClosedReconcileStore stores exactly one closed row carrying itemID and
+// returns the store path: a closed-only store has no primary (D17), which is the
+// post-merge shape the comparison must bind without reopening the row.
+func saveClosedReconcileStore(t *testing.T, common, branch, itemID string) string {
+	t.Helper()
+	return saveLedgerStore(t, common, branch, itemID, func(s *ledger.Store) {
+		if err := s.CloseItem(s.Items[0].ID, ledger.Decision{At: ledgerT0.UTC().Format(time.RFC3339)}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// TestLedgerReconcileBindsCorroboratedClosedItemAfterMerge pins the closed-item
+// comparison path: with no primary, the observation's item id binds only because
+// exactly one local closed row for the current identity corroborates it. The
+// lookup is read-only and never makes the closed row primary (D17).
+func TestLedgerReconcileBindsCorroboratedClosedItemAfterMerge(t *testing.T) {
+	dir, common, branch := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", reconcileRecipeID)
+	storePath := saveClosedReconcileStore(t, common, branch, "card-1")
+	writeReconcileManifest(t, dir, reconcileMergeManifestBody)
+	before := ledgerStoreBytes(t, storePath)
+	obs := writeReconcileObs(t, reconcileObsBody(t, func(o map[string]any) {
+		o["event"] = "merge"
+		o["properties"] = map[string]string{"list": "Done"}
+	}))
+
+	code, stdout, stderr := reconcileRun(t, dir, obs, "merge")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	side := reconcileSidecarOf(t, stdout)
+	if side["outcome"] != ledger.ReconcileAgree {
+		t.Fatalf("outcome = %v, want %s; sidecar: %v", side["outcome"], ledger.ReconcileAgree, side)
+	}
+	if side["item_id"] != "card-1" {
+		t.Fatalf("item_id = %v, want the corroborated closed row id", side["item_id"])
+	}
+	if string(ledgerStoreBytes(t, storePath)) != string(before) {
+		t.Fatal("reconciliation must not rewrite the store")
+	}
+}
+
+// TestLedgerReconcileUncorroboratedClosedItemStaysUnbound pins that the
+// observation's item id is never trusted on its own: with no local closed row
+// carrying it, the comparison stays unbound-identity and disagrees.
+func TestLedgerReconcileUncorroboratedClosedItemStaysUnbound(t *testing.T) {
+	dir, common, branch := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", reconcileRecipeID)
+	saveClosedReconcileStore(t, common, branch, "card-1")
+	writeReconcileManifest(t, dir, reconcileMergeManifestBody)
+	obs := writeReconcileObs(t, reconcileObsBody(t, func(o map[string]any) {
+		o["event"] = "merge"
+		o["item_id"] = "card-999"
+		o["properties"] = map[string]string{"list": "Done"}
+	}))
+
+	code, stdout, stderr := reconcileRun(t, dir, obs, "merge")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	side := reconcileSidecarOf(t, stdout)
+	if side["outcome"] != ledger.ReconcileUnboundIdentity {
+		t.Fatalf("outcome = %v, want %s", side["outcome"], ledger.ReconcileUnboundIdentity)
+	}
+	if side["item_id"] != "" {
+		t.Fatalf("item_id = %v, want empty for an uncorroborated id", side["item_id"])
+	}
+}
+
+// TestLedgerReconcileAmbiguousClosedItemStaysUnbound pins the ambiguous half: two
+// closed rows for the identity carrying the same observed id are a human question,
+// so the comparison stays unbound-identity instead of picking one.
+func TestLedgerReconcileAmbiguousClosedItemStaysUnbound(t *testing.T) {
+	dir, common, branch := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", reconcileRecipeID)
+	saveLedgerStore(t, common, branch, "card-1", func(s *ledger.Store) {
+		if err := s.CloseItem(s.Items[0].ID, ledger.Decision{At: ledgerT0.UTC().Format(time.RFC3339)}); err != nil {
+			t.Fatal(err)
+		}
+		at := ledgerT0.Add(time.Minute)
+		s.OpenItem(ledger.ItemIdentity{CommonDir: common, Branch: branch}, reconcileRecipeID, at)
+		s.Items[len(s.Items)-1].ItemID = "card-1"
+		if err := s.CloseItem(s.Items[len(s.Items)-1].ID, ledger.Decision{At: at.UTC().Format(time.RFC3339)}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	writeReconcileManifest(t, dir, reconcileMergeManifestBody)
+	obs := writeReconcileObs(t, reconcileObsBody(t, func(o map[string]any) {
+		o["event"] = "merge"
+		o["properties"] = map[string]string{"list": "Done"}
+	}))
+
+	code, stdout, stderr := reconcileRun(t, dir, obs, "merge")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	side := reconcileSidecarOf(t, stdout)
+	if side["outcome"] != ledger.ReconcileUnboundIdentity {
+		t.Fatalf("outcome = %v, want %s", side["outcome"], ledger.ReconcileUnboundIdentity)
+	}
+	if side["item_id"] != "" {
+		t.Fatalf("item_id = %v, want empty for an ambiguous match", side["item_id"])
+	}
+}
+
+// TestLedgerReconcileConditionalMergePrefersPublishedWhenConfigured pins the
+// recipe-owned conditional mapping: the same declared expectation compares the
+// published list only when the project configured it, and the default Done list
+// otherwise. No provider vocabulary reaches the comparator.
+func TestLedgerReconcileConditionalMergePrefersPublishedWhenConfigured(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		list    string
+		outcome string
+	}{
+		{"configured published agrees", reconcileMergeManifestPublishedBody, "Published", ledger.ReconcileAgree},
+		{"configured published rejects Done", reconcileMergeManifestPublishedBody, "Done", ledger.ReconcilePropertyMismatch},
+		{"absent published keeps Done", reconcileMergeManifestBody, "Done", ledger.ReconcileAgree},
+		{"misconfigured published is unconfigured", reconcileMergeManifestBadPublishedBody, "Published", reconcileUnconfigured},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, common, branch := ledgerRepo(t)
+			writeLedgerWitness(t, common, "bound", reconcileRecipeID)
+			saveClosedReconcileStore(t, common, branch, "card-1")
+			writeReconcileManifest(t, dir, tc.body)
+			obs := writeReconcileObs(t, reconcileObsBody(t, func(o map[string]any) {
+				o["event"] = "merge"
+				o["properties"] = map[string]string{"list": tc.list}
+			}))
+
+			code, stdout, stderr := reconcileRun(t, dir, obs, "merge")
+			if code != 0 {
+				t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
+			}
+			if side := reconcileSidecarOf(t, stdout); side["outcome"] != tc.outcome {
+				t.Fatalf("outcome = %v, want %s", side["outcome"], tc.outcome)
+			}
+		})
+	}
+}

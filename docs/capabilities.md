@@ -82,9 +82,14 @@ The ledger's domain id is `tracker`, and a provider recipe extends it as an
 `ledger.Reconcile`) compares neutral expectations against neutral observations and
 knows no provider. A provider recipe declares `[config.reconcile]` — `scope_field`,
 `max_age_seconds`, and per-event `expectations` that bind a neutral property to a
-config field — and the transport supplies the closed observation payload. Trello
-is the first adapter; a Jira/Linear adapter would declare the same shared mapping
-shape against the same comparator and need no core change.
+config field — and the transport supplies the closed observation payload. An
+expectation may also declare an optional `config_field_when_set`: that second field
+becomes the target only when the project configured it, so one recipe-owned
+conditional mapping (the Trello `merge` event targeting a Published list only when
+`published_list` is set, and Done otherwise) adds no provider vocabulary to the
+comparator and invents no default. Trello is the first adapter; a Jira/Linear
+adapter would declare the same shared mapping shape against the same comparator and
+need no core change.
 
 Adapter mapping is separate from Tracker-domain policy. `ledger_mode` / `gate_mode`
 decide *when* the ledger speaks (`always` / `ask` / `warn`) and stay out of the
@@ -157,7 +162,11 @@ ever guessing a provider.
   (`[config.reconcile]`), and the gate reads the project manifest — a project without
   the block gets an explicit `unconfigured`, never a default. It writes neither the
   store nor the provider, stays off every hook, and leaves the graded exit code
-  unchanged.
+  unchanged. When the identity has no open primary (D17 keeps a closed row out of
+  that slot), a merge comparison binds a closed item only when the observation's
+  item id matches exactly one locally stored closed row for the current identity: the
+  row is compared read-only, never reopened, and never selected for new work, and a
+  missing or ambiguous match stays `unbound-identity`.
 - **`tracker.none` is evidence, not a durable exemption on its own.** The human-authored
   `openspec/changes/<slug>/tracker.none` is presentation/evidence-only; it becomes
   `Item.Exemption` only through the explicit human/agent `exempt` write, whose reason

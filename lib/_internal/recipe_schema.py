@@ -132,6 +132,12 @@ STRUCTURED_CONFIG_SHAPES: dict[str, Any] = {
                 "event": "string",
                 "property": "string",
                 "config_field": "string",
+                # Optional conditional target: when this config field resolves to
+                # a non-empty value the expectation compares against it instead of
+                # config_field. It lets a recipe declare a conditional mapping
+                # without inventing a value or teaching the comparator provider
+                # vocabulary.
+                "config_field_when_set": "string",
             }
         ],
     },

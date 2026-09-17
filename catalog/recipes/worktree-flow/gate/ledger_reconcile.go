@@ -89,6 +89,14 @@ type reconcileExpectation struct {
 	Event       string `json:"event"`
 	Property    string `json:"property"`
 	ConfigField string `json:"config_field"`
+	// ConfigFieldWhenSet is an optional second config field. When it resolves to
+	// a non-empty value the expectation compares against it instead of
+	// ConfigField; otherwise ConfigField stays the target. It keeps a conditional
+	// adapter mapping declarative (a lifecycle event that targets one list only
+	// when the project configured that list, another otherwise) without teaching
+	// the comparator provider vocabulary: both names stay opaque config fields and
+	// the selection happens before the comparison, never inside it.
+	ConfigFieldWhenSet string `json:"config_field_when_set"`
 }
 
 // ledgerReconcileJSON is the reconciliation sidecar. It is emitted on stdout only
@@ -115,15 +123,17 @@ func reconcileSidecar(root string, binding ledger.Binding, verdict ledger.Verdic
 	out := &ledgerReconcileJSON{
 		RequestedEvent: event,
 		ProviderID:     binding.RecipeID,
-		ItemID:         boundItemID(verdict.Item),
 	}
 
 	obs, err := loadReconcileObservation(obsPath)
 	if err != nil {
 		out.Outcome = reconcileInvalidObservation
+		// No observation loaded, so only the graded primary can name the item.
+		out.ItemID = boundItemID(verdict.Item)
 		out.Detail = fmt.Sprintf("observation %s: %v", obsPath, err)
 		return out
 	}
+	out.ItemID = boundReconcileItemID(verdict, obs)
 	out.ObservedEvent = obs.Event
 	out.ObservedAt = obs.ObservedAt
 
@@ -178,13 +188,59 @@ func eventFinding(requested, observed string) ledger.Finding {
 
 // boundItemID is the native id of the item the grade bound, or "" when the grade
 // selected none. A nil item means no safe target: the comparison then reports an
-// unbound identity instead of borrowing an unrelated item. Binding a closed item
-// after a merge is a known open question and is deliberately not guessed here.
+// unbound identity instead of borrowing an unrelated item.
 func boundItemID(item *ledger.Item) string {
 	if item == nil {
 		return ""
 	}
 	return item.ItemID
+}
+
+// boundReconcileItemID resolves the item a comparison is about. The graded
+// primary item always wins. A closed-only store has no primary (D17), so after a
+// merge the observation's item id binds a closed row only when exactly one
+// locally stored closed row for the current identity corroborates it: the
+// provider-reported id is never trusted on its own, a missing or ambiguous match
+// stays unbound, and the lookup is read-only. It never makes the row primary and
+// never changes the graded verdict.
+func boundReconcileItemID(verdict ledger.Verdict, obs reconcileObservation) string {
+	if id := boundItemID(verdict.Item); id != "" {
+		return id
+	}
+	return corroboratedClosedItemID(verdict.Identity, obs.ItemID)
+}
+
+// corroboratedClosedItemID returns observedID only when exactly one closed row
+// for ident's identity carries it. The match is the D17 identity unit (common dir
+// and branch); when the current identity names a change the row must name the
+// same change, while a row whose archived change the current derivation no longer
+// sees still matches. A missing identity, an unreadable store, and a zero or
+// multiple match all return "" so the comparison reports an unbound identity.
+func corroboratedClosedItemID(ident ledger.Identity, observedID string) string {
+	if observedID == "" || !ident.Available() || ident.CommonDir == "" {
+		return ""
+	}
+	store, err := ledger.LoadStore(ledger.StorePath(ident.CommonDir))
+	if err != nil {
+		return ""
+	}
+	matches := 0
+	for _, item := range store.Items {
+		if item.Status != ledger.StatusClosed || item.ItemID != observedID {
+			continue
+		}
+		if item.Identity.CommonDir != ident.CommonDir || item.Identity.Branch != ident.Branch {
+			continue
+		}
+		if ident.Change != "" && item.Identity.Change != ident.Change {
+			continue
+		}
+		matches++
+	}
+	if matches != 1 {
+		return ""
+	}
+	return observedID
 }
 
 // loadReconcileObservation reads the transport's observation. It is a trust
@@ -254,9 +310,25 @@ func resolveReconcileMapping(root, recipeID, event string) (string, []ledger.Exp
 		if decl.Property == "" || decl.ConfigField == "" {
 			return "", nil, 0, fmt.Errorf("recipe %q reconcile mapping: expectation for event %q needs property and config_field", recipeID, event)
 		}
-		value, ok := configValue(config, decl.ConfigField)
+		// A declared conditional field replaces the default target only when it
+		// resolves to a non-empty string. An absent or blank value leaves the
+		// declared default standing; a present value that is not a string is
+		// unusable config and is reported rather than coerced.
+		field := decl.ConfigField
+		if decl.ConfigFieldWhenSet != "" {
+			if _, present := config[decl.ConfigFieldWhenSet]; present {
+				candidate, ok := configValue(config, decl.ConfigFieldWhenSet)
+				if !ok {
+					return "", nil, 0, fmt.Errorf("recipe %q reconcile mapping: conditional config field %q is not a string", recipeID, decl.ConfigFieldWhenSet)
+				}
+				if strings.TrimSpace(candidate) != "" {
+					field = decl.ConfigFieldWhenSet
+				}
+			}
+		}
+		value, ok := configValue(config, field)
 		if !ok {
-			return "", nil, 0, fmt.Errorf("recipe %q reconcile mapping: config field %q has no value", recipeID, decl.ConfigField)
+			return "", nil, 0, fmt.Errorf("recipe %q reconcile mapping: config field %q has no value", recipeID, field)
 		}
 		expected = append(expected, ledger.Expectation{Name: decl.Property, Value: value})
 	}

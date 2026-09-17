@@ -177,6 +177,111 @@ class RecipeConfigWriteTests(unittest.TestCase):
         self.mod.update_recipe_config(path, "x", {"branch": "main"})
         self.assertEqual(path.read_bytes(), before)
 
+    _RECONCILE_INLINE = (
+        '[recipes.x]\nenabled = true\n\n[recipes.x.config]\n'
+        'board_id = "b1"\n'
+        'reconcile = { scope_field = "board_id", max_age_seconds = 900, '
+        'expectations = [{ event = "delivery", property = "list", '
+        'config_field = "default_list" }] }  # recipe-owned\n'
+    )
+
+    def test_dotted_update_of_inline_table_preserves_siblings_and_comment(self):
+        path = self._manifest(self._RECONCILE_INLINE)
+        self.mod.update_recipe_config(path, "x", {"reconcile.max_age_seconds": 1200})
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("# recipe-owned", text)
+        self.assertIn('board_id = "b1"', text)
+        data = tomllib.loads(text)
+        cfg = data["recipes"]["x"]["config"]
+        self.assertEqual(cfg["reconcile"]["max_age_seconds"], 1200)
+        self.assertEqual(cfg["reconcile"]["scope_field"], "board_id")
+        self.assertEqual(
+            cfg["reconcile"]["expectations"][0]["config_field"], "default_list"
+        )
+
+    def test_dotted_nested_structured_value_assignment(self):
+        path = self._manifest(self._RECONCILE_INLINE)
+        replacement = [
+            {"event": "merge", "property": "list", "config_field": "done_list"}
+        ]
+        self.mod.update_recipe_config(path, "x", {"reconcile.expectations": replacement})
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            data["recipes"]["x"]["config"]["reconcile"]["expectations"], replacement
+        )
+
+    def test_dotted_update_of_header_table_replaces_leaf_line(self):
+        path = self._manifest(
+            "[recipes.x]\nenabled = true\n\n[recipes.x.config]\n"
+            'board_id = "b1"\n\n'
+            "[recipes.x.config.reconcile]\n"
+            'scope_field = "board_id"\n'
+            "max_age_seconds = 900  # keep\n\n"
+            "[[recipes.x.config.reconcile.expectations]]\n"
+            'event = "delivery"\nproperty = "list"\nconfig_field = "default_list"\n'
+        )
+        self.mod.update_recipe_config(path, "x", {"reconcile.max_age_seconds": 1200})
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("max_age_seconds = 1200  # keep", text)
+        self.assertIn('scope_field = "board_id"', text)
+        data = tomllib.loads(text)
+        cfg = data["recipes"]["x"]["config"]["reconcile"]
+        self.assertEqual(cfg["max_age_seconds"], 1200)
+        self.assertEqual(len(cfg["expectations"]), 1)
+
+    def test_dotted_update_creates_inline_table_when_absent(self):
+        path = self._manifest(
+            "[recipes.x]\nenabled = true\n\n[recipes.x.config]\n"
+            'board_id = "b1"\n'
+        )
+        self.mod.update_recipe_config(path, "x", {"reconcile.max_age_seconds": 1200})
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        cfg = data["recipes"]["x"]["config"]
+        self.assertEqual(cfg["reconcile"]["max_age_seconds"], 1200)
+        self.assertEqual(cfg["board_id"], "b1")
+
+    def test_dotted_and_whole_table_for_same_root_is_rejected(self):
+        path = self._manifest(self._RECONCILE_INLINE)
+        before = path.read_bytes()
+        with self.assertRaises(self.mod.RecipeConfigWriteError):
+            self.mod.update_recipe_config(
+                path,
+                "x",
+                {
+                    "reconcile": {"scope_field": "board_id"},
+                    "reconcile.max_age_seconds": 1200,
+                },
+            )
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_dotted_leaf_colliding_with_subtable_is_rejected_without_rewrite(self):
+        path = self._manifest(
+            "[recipes.x]\nenabled = true\n\n[recipes.x.config]\n"
+            'board_id = "b1"\n\n'
+            "[recipes.x.config.reconcile]\n"
+            'scope_field = "board_id"\n'
+            "[[recipes.x.config.reconcile.expectations]]\n"
+            'event = "delivery"\nproperty = "list"\nconfig_field = "default_list"\n'
+        )
+        before = path.read_bytes()
+        with self.assertRaises(self.mod.RecipeConfigWriteError):
+            self.mod.update_recipe_config(
+                path,
+                "x",
+                {
+                    "reconcile.expectations": [
+                        {"event": "delivery", "property": "list", "config_field": "other"}
+                    ]
+                },
+            )
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_dotted_semantic_noop_preserves_original_bytes(self):
+        path = self._manifest(self._RECONCILE_INLINE)
+        before = path.read_bytes()
+        self.mod.update_recipe_config(path, "x", {"reconcile.max_age_seconds": 900})
+        self.assertEqual(path.read_bytes(), before)
+
     def test_multiline_value_is_rejected_without_rewrite(self):
         path = self._manifest(
             "[recipes.x]\nenabled = true\n\n[recipes.x.config]\n"

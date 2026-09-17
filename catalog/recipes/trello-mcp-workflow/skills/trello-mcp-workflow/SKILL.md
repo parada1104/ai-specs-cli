@@ -33,6 +33,9 @@ metadata:
 | `board_id` | Yes | — | Trello board ID for the project. Example: `69ec097f13e2d38ecd89a557`. |
 | `default_list` | No | `In Progress` | List name where new cards are created when no phase-specific list applies. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
+| `review_list` | No | `Review` | List a card must reach when the `review` lifecycle event reconciles. |
+| `done_list` | No | `Done` | List a card must reach when the `merge` lifecycle event reconciles (the default merge target). |
+| `published_list` | No | — | Optional list that means the merge was also published/released. When set, the `merge` event reconciles against it instead of `done_list`. No default is invented: leave it unset when the board has no such list. |
 | `gate_mode` | No | `warn` | Tracker card gate: `off` / `warn` / `always`. |
 | `reconcile` | No | — | Declarative remote-reconciliation mapping (`scope_field`, `max_age_seconds`, `expectations`). The recipe declares the lifecycle mapping by default (delivery/review/merge); a project `[recipes.trello-mcp-workflow.config.reconcile]` block, when present, overrides it. Re-run `ai-specs sync` after recipe changes to propagate defaults. |
 
@@ -232,9 +235,10 @@ remembered or inferred time. The payload is read under a fixed size budget
 (`--reconcile-event`). Use the stamped/verified gate binary path (`$WORKTREE_GATE_BIN`
 or the CLI cache path the hooks use). The recipe declares the supported lifecycle
 mapping by default — `delivery` → `default_list` (In Progress), `review` →
-`review_list` (Review), `merge` → `done_list` (Done) — so a synced project
-reconciles without per-project configuration; the project's `[config.reconcile]`
-block, when present, overrides it:
+`review_list` (Review), `merge` → `done_list` (Done), or → `published_list` when the
+project configured that optional list — so a synced project reconciles without
+per-project configuration; the project's `[config.reconcile]` block, when present,
+overrides it:
 
 ```bash
 worktree-gate --ledger --checkpoint apply-start --project-root "$PWD" \
@@ -312,9 +316,13 @@ Hard rules:
 - **Agreement is conditional expectation match, not delivery proof.** `agree` means
   only that the declared properties matched for the requested event; it is not
   evidence of a merge, a release, or a delivery.
-- **The closed-item / post-merge gap stays named.** A closed or archived card after
-  a merge has no safely bound target yet, so it reports `unbound-identity` and is
-  presented as a pending decision — never guessed.
+- **Closed items after a merge are locally corroborated.** D17 keeps a closed row
+  out of the primary slot, so a merge comparison has no bound card by default. It
+  binds one only when the observation's item id matches exactly one locally stored
+  closed row for the current identity: that corroborated row is compared read-only,
+  never reopened, and never selected for new work. An id with no local match, or
+  with more than one, stays `unbound-identity` and is presented as a pending
+  decision — never guessed and never trusted from the provider alone.
 
 Reading the mapping is bounded acquisition: the manifest must be a plain file, and
 the standard parser runs under a deadline with capped output. A missing parser, a
@@ -335,6 +343,9 @@ hand:
 default_list = "In Progress"
 review_list = "Review"
 done_list = "Done"
+# Optional; set it only when the board has a Published-style list. Omit it and the
+# merge event keeps reconciling against done_list.
+# published_list = "Published"
 
 [recipes.trello-mcp-workflow.config.reconcile]
 scope_field = "board_id"
@@ -354,13 +365,19 @@ config_field = "review_list"
 event = "merge"
 property = "list"
 config_field = "done_list"
+config_field_when_set = "published_list"
 ```
 
 Each expectation means "when the caller asks about `event`, the property `property`
-must show the value configured in `config_field`". `max_age_seconds` must be
-positive and at most `9223372036`; anything else is `unconfigured`, never a clamped
-default. Note the remaining product gap: a closed/archived card after a merge
-needs an explicit close-report binding; the gate never guesses a closed row.
+must show the value configured in `config_field`". `config_field_when_set` is an
+optional conditional target: the merge expectation compares `published_list` when
+the project configured that list, and `done_list` otherwise. The condition is
+declared by the recipe, so a project still configures list names only — it never
+hand-authors which property maps to which list, and no Published list is invented.
+`max_age_seconds` must be positive and at most `9223372036`; anything else is
+`unconfigured`, never a clamped default. When there is no open card, a merge
+comparison binds a closed row only through the locally corroborated id described
+above; the gate never guesses a closed row.
 
 ---
 

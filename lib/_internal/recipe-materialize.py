@@ -317,6 +317,7 @@ def stamp_recipe_reconcile_defaults(project_root: Path, catalog_dir: Path, enabl
         for expectation in values.get("expectations", []) or []:
             if isinstance(expectation, dict):
                 used.add(expectation.get("config_field") or "")
+                used.add(expectation.get("config_field_when_set") or "")
         used.discard("")
         for field_name in used:
             field = recipe.config_schema.fields.get(field_name)
