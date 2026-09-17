@@ -27,7 +27,7 @@
 # four-arch asset gains Go-owned remote-observation reconciliation; no new asset,
 # no second trust root) with the canonical go1.24.13 toolchain via:
 #   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
-44f3e756b9e81e031a75a87edf7abe84febdfe341c3b35ddba0da01e65a6a038  worktree-gate-darwin-arm64
-792855232d76a6dd445ac4cb7f23cbc2749eb53ef3cf07ab833c49fa778ef1ed  worktree-gate-darwin-amd64
-cbcf9766663da32d098be57ce2700baeb5c64d5a1630ccb84421b99e55aa70aa  worktree-gate-linux-amd64
-02c2b31102c8effca70ae5cc51098f087097464a44535d82cda37183ce93e7fe  worktree-gate-linux-arm64
+e675072a9c172546b95c620201772ed2bbff535945aa46329a0c2b250c2404f7  worktree-gate-darwin-arm64
+0d79e1d088ae7ccf46c1895773dc679572f7b66339de34cd64197ef4533ee8c1  worktree-gate-darwin-amd64
+a0974a6ef981b5dae1856dd00af96ba0ca2f1587924df79f22d29202281e97cb  worktree-gate-linux-amd64
+291c921ffc9a0ec0002ddd226615b270335f29ae4d378d6d299f7ae87325c934  worktree-gate-linux-arm64
