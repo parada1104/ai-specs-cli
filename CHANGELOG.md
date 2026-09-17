@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The per-identity record lives at
   `<git-common-dir>/ai-specs/ledger/state.json`, written atomically. All five
   checkpoints — `work-start` (plan-build gate), `apply-start` and `pr-review`
-  (tracker gate), `pre-merge` and `archive-close` (pre-merge guardian) — reach
+  (tracker gate), `pre-merge` and `archive-close` (tracker ledger host) — reach
   the same predicate and exit `0`/`2` (block only). One project `ledger_mode`
   (`always` / `ask` / `warn`, default `warn`; legacy `gate_mode` maps forward;
   `ask` opt-out is checkpoint-scoped). Dormancy surfaces through a
@@ -52,10 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write and `--decide` paths fail closed. Hosts build their own `--evidence` through
   the new acquisition-only `lib/_internal/ledger_bridge.py` (local/code/git — the
   `remote` side stays unwired as a deliberate 3-of-4 reconciliation), and a failed
-  write persists nothing and exits `2` with no stdout JSON. The tracker gate,
-  pre-merge guardian, and `doctor` resolve their recipe id from the binding witness
-  with the legacy literal only as a fallback; `doctor` reports an unhosted
-  `work-start` as INFO. `catalog/recipes/plan-build-flow/**` is unchanged.
+  write persists nothing and exits `2` with no stdout JSON. The plan-build work-start
+  gate, the tracker gate, the tracker-ledger host, and `doctor` resolve their recipe
+  id from the binding witness with the legacy literal only as the bridge's fallback
+  (no host carries a hardcoded recipe id); `doctor` reports an unhosted
+  `work-start` as INFO.
 - **Tracker Ledger remote reconciliation (explicit, opt-in)**: `worktree-gate
   --ledger --reconcile '<observation.json>' --reconcile-event <event>` compares one
   transport-acquired observation against the bound item and the recipe-declared
@@ -117,6 +118,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   semantics for malformed results, single-session preflight composition, and
   artifact-derived accept/adjust/stop plan presentation. Standard and Light
   behavior remains unchanged.
+- **Artifact guardian ownership and Tracker-domain port migration.**
+  `premerge_guardian.py` is now the Plan Build-only, tracker-free artifact
+  guardian, and Plan Build's review-branch tail runs verify → canonical
+  delta-spec promotion → read-only guardian → archive, with the guardian
+  validating promotion parity without writing. The `pre-merge` and
+  `archive-close` checkpoints are hosted by the Tracker-domain
+  `lib/_internal/tracker_ledger_host.py`, independent of Plan Build and of
+  OpenSpec archive; the ledger core stays autonomous, Tracker is a domain port,
+  and provider recipes extend it only by declarative `[config.reconcile]`
+  mapping. `plan-build-gate.sh` resolves the witness-bound recipe through the
+  stamped `ledger_bridge` seam, removing the last hardcoded recipe literal.
+- `plan-build-flow` `1.7.0` → `1.8.0`: promotion-before-guardian ownership, the
+  tracker-free guardian, and witness-derived `work-start` configuration.
+- `trello-mcp-workflow` `1.3.0` → `1.4.0`: the tracker lifecycle host and
+  Plan Build-independent `archive-close` guidance.
 
 ### Fixed
 - **`ai-specs sync` no longer loses a failing step's exit status.** `run_step`

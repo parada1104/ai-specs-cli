@@ -313,6 +313,14 @@ default_list = "In Progress"
 			detail: "default_list",
 		},
 		{
+			// Tracker-domain policy (ledger_mode/gate_mode) is not adapter data. The
+			// mapping surface is closed, so a policy key smuggled into it is rejected
+			// rather than read as a mapping field or silently ignored.
+			name:   "policy key inside the adapter mapping",
+			body:   strings.Replace(reconcileManifestBody, "scope_field = \"board_id\"", "scope_field = \"board_id\"\nledger_mode = \"always\"", 1),
+			detail: "reconcile",
+		},
+		{
 			name:   "scope field holds a non-string value",
 			body:   strings.Replace(reconcileManifestBody, `board_id = "board-1"`, "board_id = 42", 1),
 			detail: "board_id",
@@ -412,6 +420,72 @@ func TestLedgerReconcileExpectationsFollowConfiguration(t *testing.T) {
 	}
 	if finding := findings[0].(map[string]any); finding["expected"] != moved {
 		t.Fatalf("finding = %v, want the configured expected value", finding)
+	}
+}
+
+// TestLedgerReconcileNonProviderAdapterFeedsTheSameComparator pins the Tracker
+// domain port boundary at the CLI: a recipe that names no provider drives the very
+// same neutral expectation/observation comparator by declaring a mapping alone.
+// Go hardcodes no provider, config field, or property name, so the adapter is
+// purely declarative data and the core stays provider-neutral.
+func TestLedgerReconcileNonProviderAdapterFeedsTheSameComparator(t *testing.T) {
+	const adapterRecipeID = "fixture-tracker"
+	const adapterManifest = `[recipes.fixture-tracker]
+enabled = true
+[recipes.fixture-tracker.config]
+workspace_id = "workspace-1"
+shipped_status = "Shipped"
+[recipes.fixture-tracker.config.reconcile]
+scope_field = "workspace_id"
+max_age_seconds = 900
+[[recipes.fixture-tracker.config.reconcile.expectations]]
+event = "delivery"
+property = "status"
+config_field = "shipped_status"
+`
+	dir, common, branch := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", adapterRecipeID)
+	saveLedgerStore(t, common, branch, "item-1", nil)
+	writeReconcileManifest(t, dir, adapterManifest)
+
+	// The observation carries the adapter's neutral property, never a provider's.
+	observation := func(status string) string {
+		body, err := json.Marshal(map[string]any{
+			"provider_id": adapterRecipeID,
+			"scope":       "workspace-1",
+			"item_id":     "item-1",
+			"observed_at": time.Now().UTC().Format(time.RFC3339),
+			"event":       "delivery",
+			"properties":  map[string]string{"status": status},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	code, stdout, stderr := reconcileRun(t, dir, writeReconcileObs(t, observation("Shipped")), "delivery")
+	if code != 0 {
+		t.Fatalf("adapter agree exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	side := reconcileSidecarOf(t, stdout)
+	if side["outcome"] != ledger.ReconcileAgree {
+		t.Fatalf("outcome = %v, want agree for the declarative adapter; sidecar: %v", side["outcome"], side)
+	}
+	if side["provider_id"] != adapterRecipeID || side["scope"] != "workspace-1" || side["item_id"] != "item-1" {
+		t.Fatalf("identity = %v/%v/%v, want the adapter binding", side["provider_id"], side["scope"], side["item_id"])
+	}
+
+	code, stdout, _ = reconcileRun(t, dir, writeReconcileObs(t, observation("Backlog")), "delivery")
+	if code != 0 {
+		t.Fatalf("adapter mismatch exit = %d, want 0", code)
+	}
+	side = reconcileSidecarOf(t, stdout)
+	if side["outcome"] != ledger.ReconcilePropertyMismatch {
+		t.Fatalf("outcome = %v, want %s for the adapter's configured value", side["outcome"], ledger.ReconcilePropertyMismatch)
+	}
+	if findings, _ := side["findings"].([]any); len(findings) != 1 {
+		t.Fatalf("findings = %v, want the single adapter-declared property", side["findings"])
 	}
 }
 

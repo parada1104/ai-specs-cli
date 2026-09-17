@@ -75,6 +75,24 @@ provider recipe config and in an opaque object the predicate never reads. No
 provider vocabulary is promoted into the `## Tracker` authoring contract, and no
 universal artifact field is introduced.
 
+### The Tracker-domain port
+
+The ledger's domain id is `tracker`, and a provider recipe extends it as an
+**adapter**, not as a grader. One pure Go comparator (`ledger.Grade` /
+`ledger.Reconcile`) compares neutral expectations against neutral observations and
+knows no provider. A provider recipe declares `[config.reconcile]` — `scope_field`,
+`max_age_seconds`, and per-event `expectations` that bind a neutral property to a
+config field — and the transport supplies the closed observation payload. Trello
+is the first adapter; a Jira/Linear adapter would declare the same shared mapping
+shape against the same comparator and need no core change.
+
+Adapter mapping is separate from Tracker-domain policy. `ledger_mode` / `gate_mode`
+decide *when* the ledger speaks (`always` / `ask` / `warn`) and stay out of the
+mapping surface; `[config.reconcile]` only declares *what* the recipe maps, and a
+policy key smuggled into it is rejected. An absent or unbound adapter is dormant
+(`unbound` / `witness-missing`) or reports an explicit `unconfigured` comparison —
+never a default and never a guessed provider.
+
 - **Activation witness.** `ai-specs sync` persists the already-computed binding
   outcome at `<git-common-dir>/ai-specs/ledger/witness.json`, recording exactly one
   state: `bound`, `ambiguous`, `unbound`, or `declared-not-bound`. A declaration
@@ -88,9 +106,16 @@ ever guessing a provider.
   synthesized item. A branch reused after its item closed opens a new item, and two
   open items for one identity are a human conflict, never a silent pick.
 - **Five checkpoints.** `work-start` (plan-build gate), `apply-start` and
-  `pr-review` (tracker gate), and `pre-merge` / `archive-close` (pre-merge guardian)
-  all reach the same predicate and share one exit contract (`0` allow/ask/dormant,
+  `pr-review` (tracker gate), and `pre-merge` / `archive-close` (tracker ledger
+  host) all reach the same predicate and share one exit contract (`0` allow/ask/dormant,
   `2` only when the host must stop). Path hosts never block `openspec/**`.
+- **Tracker lifecycle is Plan Build-independent.** The `pre-merge` and
+  `archive-close` checkpoints are hosted by `lib/_internal/tracker_ledger_host.py`
+  (`--checkpoint pre-merge|archive-close`, required `--root`, optional slug; the
+  `--stage pre-merge|pre-archive` form stays as a compatibility alias). The host
+  grades with **no `openspec/` tree** and never infers tracker item closure from
+  an OpenSpec archive: `archive-close` is the tracker item close boundary, not
+  the spec archive.
 - **Modes.** One project `ledger_mode`: `always`, `ask`, or `warn` (default `warn`;
   promotion is an explicit human configuration change). `ask` opt-out is
   checkpoint-scoped, so the next checkpoint prompts again.
@@ -144,15 +169,18 @@ ever guessing a provider.
 - **No provider writes in this slice.** The ledger records and reconciles evidence;
   it performs no MCP/API create, update, move, comment, or label call. `always`
   blocks until an item is supplied, it does not create one.
-- **Witness-derived configuration.** The tracker gate, the pre-merge guardian, and
-  `doctor` resolve the bound recipe id from the witness and read
-  `recipes.<id>.config` for `ledger_mode` / `gate_mode`; the legacy literal survives
-  only as the bridge's fallback. Reading the witness is acquisition, not grading.
-- **Remaining work, named not silent.** `work-start` is still hosted by
-  `plan-build-flow`, whose `plan-build-gate.sh` resolves its config through the legacy
-  literal and is intentionally out of scope here. A tracker-bound project without
-  `plan-build-flow` enabled has an unhosted `work-start`; `doctor` reports it as an
-  INFO line (`work-start is unhosted`) while the other four checkpoints keep grading.
+- **Witness-derived configuration.** The plan-build work-start gate, the tracker
+  gate, the tracker-ledger host, and `doctor` resolve the bound recipe id from the
+  witness and read `recipes.<id>.config` for `ledger_mode` / `gate_mode`; the legacy
+  literal survives only as the bridge's fallback. No host resolves its config
+  section from a hardcoded recipe id. Reading the witness is acquisition, not
+  grading.
+- **`work-start` host.** `work-start` is hosted by `plan-build-flow`'s
+  `plan-build-gate.sh`, which resolves the bound recipe id through the same stamped
+  `ledger_bridge` seam as the other hosts, so `recipes.<witness recipe id>.config`
+  drives its effective mode. A tracker-bound project without `plan-build-flow`
+  enabled has an unhosted `work-start`; `doctor` reports it as an INFO line
+  (`work-start is unhosted`) while the other four checkpoints keep grading.
 
 This is the project-level Python→Go strangler policy applied at the seam it
 touches: the Go predicate is the single authoritative grader for `## Tracker`

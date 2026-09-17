@@ -40,6 +40,19 @@ See the Board Isolation section in `skills/trello-mcp-workflow/SKILL.md` for ful
 
 Every active change must carry a `## Tracker` section in `proposal.md` (fallback `tasks.md`) with non-empty `card_id` (+ `url`). Exemption: `openspec/changes/<slug>/tracker.none`. See the skill's **Card link section (`## Tracker`)** for the canonical shape.
 
+## Tracker lifecycle checkpoints
+
+The tracker ledger lifecycle is Plan Build-independent and needs no `openspec/` tree. Grade it directly with the generic Tracker-domain host:
+
+```bash
+python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
+  <slug> --root "$PWD" --checkpoint pre-merge
+python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
+  <slug> --root "$PWD" --checkpoint archive-close
+```
+
+`--root` is required; the slug is optional. `--stage pre-merge|pre-archive` stays as a compatibility alias for `--checkpoint pre-merge|archive-close`. **`archive-close` is tracker item closure, not an OpenSpec archive** — it never infers a close from archive state. A provider recipe only maps native state through `[config.reconcile]`; it does not enable, configure, or implement the ledger.
+
 ## Phase Mappings
 
 ### Phase → List

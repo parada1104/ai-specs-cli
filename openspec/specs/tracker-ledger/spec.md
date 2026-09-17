@@ -218,7 +218,7 @@ the predicate.
 - GIVEN a pinned fixture input (identity, evidence, mode, checkpoint)
 - WHEN each checkpoint host invokes the ledger (`work-start` via the
   plan-build gate, `apply-start`/`pr-review` via the tracker gate, `pre-merge`
-  and `archive-close` via the pre-merge guardian stages)
+  and `archive-close` via the tracker-ledger host)
 - THEN every host observes the same decision, conflict, and exit code for that
   input
 
@@ -306,7 +306,7 @@ conflict predicate, the lifecycle state machine, the write surface and its
 invariants, and checkpoint verdicts. No second Go module, second binary, second
 release asset, or second trust root MAY be created, and tracker semantics MUST
 NOT couple to worktree gate semantics beyond sharing the binary and Git-facts
-layer. Python call sites (sync/materialization, hooks, guardian, doctor) MUST
+layer. Python call sites (sync/materialization, the checkpoint hosts, doctor) MUST
 remain thin acquisition, witness-writing, and JSON-consumption bridges: no new
 Python grader and no duplicated predicate MAY be introduced. The `## Tracker`
 validity rule MUST have exactly one authoritative grader — the Go predicate;
@@ -367,7 +367,7 @@ or a malformed verdict call never blocks.
 
 - GIVEN mode `always` at pre-merge and the verified binary cannot be acquired
   (cold cache, no network)
-- WHEN the guardian invokes the ledger
+- WHEN a checkpoint host invokes the ledger
 - THEN the checkpoint fails open, the merge is not blocked by the ledger, and
   doctor records an ERROR for the infrastructure failure
 
@@ -395,9 +395,11 @@ or a malformed verdict call never blocks.
 
 ### Requirement: Scope boundaries
 
-The ledger MUST remain tracker-only. It MUST NOT introduce a generic or
-multi-capability ledger framework, a ledger plugin API, a second capability
-ledger, or a worktree-specific ledger or worktree-identity model. It MUST NOT
+The ledger MUST remain tracker-only. It MUST NOT introduce a multi-capability
+ledger framework, a second capability ledger, a per-provider grader or any
+provider code in the core, a ledger plugin API beyond the single Tracker-domain
+port specified below, or a worktree-specific ledger or worktree-identity model.
+It MUST NOT
 migrate, rewrite, or blanket-revalidate historical archives or in-flight
 changes. Provider item vocabulary (provider ids beyond the bound recipe id,
 board/list/label/issue-type shapes, provider config fields) MUST stay
@@ -429,6 +431,40 @@ in recipe configuration, never in ledger core.
 - GIVEN archived changes and in-flight changes recorded before the ledger
 - WHEN the ledger ships
 - THEN no archive is migrated, rewritten, or revalidated; forward work only
+
+### Requirement: Tracker domain port with declarative provider adapters
+
+The ledger core MUST be an autonomous grader with no provider vocabulary: its item fields, lifecycle state
+machine, conflict predicate, and checkpoint verdicts MUST be provider-neutral. Tracker is a **domain port**
+of that core, not a provider. A provider recipe (Trello today; Jira/Linear later) extends the port by
+declaring a **declarative adapter mapping** — native state values bound to neutral properties, e.g.
+`[config.reconcile]` with `scope_field`, `max_age_seconds`, and per-event `expectations` — that the Go
+core reads from the project manifest. Recipe configuration is an adapter input only: it MUST NOT enable,
+disable, or change ledger behavior or grading, and `ledger_mode` / `gate_mode` stay Tracker-domain policy
+separate from the mapping surface. An absent or unbound adapter MUST stay dormant or report an explicit
+`unconfigured` comparison, never a default, and no provider may be guessed. Adding a provider MUST add
+only mapping data: it MUST NOT add provider-specific Go, a second grader, or a core change.
+
+#### Scenario: One core comparator, declarative adapters
+
+- GIVEN the Tracker-domain core and any bound provider recipe
+- WHEN a checkpoint grades or reconciles an item
+- THEN the comparison runs in the one Go predicate against neutral expectations
+- AND the provider contributes only its declarative mapping
+
+#### Scenario: Mapping never conditions ledger behavior
+
+- GIVEN a provider recipe that declares an adapter mapping
+- WHEN its `[config.reconcile]` table is inspected
+- THEN it declares only native-value-to-neutral-property mapping keys
+- AND `ledger_mode` / `gate_mode` are absent from it
+
+#### Scenario: Absent adapter is dormant, never guessed
+
+- GIVEN no bound adapter, or an item whose native state is outside the declared mapping
+- WHEN a comparison is requested
+- THEN the outcome is dormant or an explicit `unconfigured`
+- AND no provider or default state is synthesized
 
 ### Requirement: Synthetic provider fixture and parity corpus
 
@@ -588,7 +624,7 @@ thin Python bridge — acquisition only — MUST build the evidence file from lo
 ledger store snapshot; `code` = the change's `## Tracker` `card_id` and recorded `pr:` parsed by the
 existing pure parser, or the presence of `tracker.none`; `git` = locally derivable branch/HEAD/commit
 plus the recorded PR URL. The bridge MUST NOT grade, MUST NOT introduce a new Python predicate, and MUST
-NOT call `gh`, MCP, or the network. The tracker-gate and pre-merge-guardian hosts MUST pass the
+NOT call `gh`, MCP, or the network. The tracker-gate and tracker-ledger hosts MUST pass the
 bridge-built evidence at their checkpoints (`apply-start`, `pr-review`, `pre-merge`, `archive-close`);
 `work-start` keeps its existing host behavior. Unreadable or malformed evidence MUST fail open (empty
 evidence side), as today. The `remote` side MUST have no producer in this slice — no tracker MCP read —
@@ -642,11 +678,11 @@ a human act (remove the file and adjudicate in the ledger); no grade MAY auto-re
 ### Requirement: Witness-derived provider configuration lookup
 
 The ledger mode / gate mode configuration lookup MUST resolve the bound recipe id from the durable
-binding witness (`Binding.RecipeID`) at the host layer — the tracker gate, the pre-merge guardian, and
-doctor. Reading the witness is acquisition, not grading. When the witness is missing or unreadable, the
-lookup MUST fall back to the legacy literal so behavior is identical to today. After this change no
-hardcoded recipe-id config lookup MAY remain at those three sites, or the residue MUST be named as
-remaining work in the change's task list. The witness → recipe id → provider-config seam is the only
+binding witness (`Binding.RecipeID`) at every host layer — the plan-build work-start gate, the tracker gate, the tracker-ledger host, and doctor. Reading the witness is acquisition, not grading. When the
+witness is missing or unreadable, the lookup MUST fall back to the legacy literal so behavior is
+identical to today. No host MAY resolve its config section from a hardcoded provider or recipe literal:
+the one literal MUST live in the bridge's fallback, and each host MUST read
+`recipes.<witness recipe id>.config`. The witness → recipe id → provider-config seam is the only
 provider extension point; no provider-specific behavior enters ledger core.
 
 #### Scenario: Witness recipe id drives mode lookup
@@ -663,13 +699,18 @@ provider extension point; no provider-specific behavior enters ledger core.
 
 ---
 
-### Requirement: Checkpoint ownership stays put
+### Requirement: Plan Build-independent tracker checkpoint hosts
 
-The five checkpoints MUST keep their current hosts: `work-start` → plan-build-flow gate; `apply-start`
-and `pr-review` → tracker card gate; `pre-merge` and `archive-close` → pre-merge guardian. This change
-MUST NOT relocate a checkpoint host and MUST NOT change content under the plan-build-flow recipe. Where
-`work-start`'s host is not enabled (a tracker-bound project without plan-build-flow), that limitation
-MUST be visible through the doctor check or documentation while the other four checkpoints keep grading.
+The five checkpoints MUST keep their tracker-domain hosts: `work-start` → plan-build-flow gate;
+`apply-start` and `pr-review` → tracker card gate; `pre-merge` and `archive-close` →
+`lib/_internal/tracker_ledger_host.py` (`--checkpoint pre-merge|archive-close`). The `pre-merge` and
+`archive-close` checkpoints MUST be executable with no `openspec/` tree, and tracker item closure MUST
+stay independent of OpenSpec archive: archive state MUST NOT select, infer, or substitute for a tracker
+checkpoint, and the Plan Build artifact guardian MUST NOT host, grade, or write tracker state. Plan Build
+owns its own verify → promotion → read-only guardian → archive tail; the tracker-ledger host owns only
+tracker lifecycle grading. Where `work-start`'s host is not enabled (a tracker-bound project without
+plan-build-flow), that limitation MUST be visible through the doctor check or documentation while the
+other four checkpoints keep grading.
 
 #### Scenario: Unhosted work-start is visible
 
@@ -677,6 +718,20 @@ MUST be visible through the doctor check or documentation while the other four c
 - WHEN doctor runs
 - THEN the unhosted `work-start` checkpoint is reported or documented as a limitation, and the other
   four checkpoints still grade
+
+#### Scenario: Tracker closure without an OpenSpec archive
+
+- GIVEN a tracker-bound change with no `openspec/` tree
+- WHEN `archive-close` is graded through the tracker-ledger host
+- THEN the checkpoint reaches the same Go predicate and returns a verdict
+- AND no OpenSpec archive is required, read, or inferred
+
+#### Scenario: The artifact guardian never hosts a tracker checkpoint
+
+- GIVEN the Plan Build artifact guardian evaluates a change
+- WHEN it reports its verdict
+- THEN no tracker checkpoint is graded by it
+- AND tracker state is never written by it
 
 ---
 

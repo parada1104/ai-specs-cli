@@ -2,7 +2,7 @@
 id = "trello-mcp-workflow"
 name = "Trello MCP Workflow"
 description = "Automated Trello board integration for ai-specs SDD workflows"
-version = "1.3.0"
+version = "1.4.0"
 tags = ["tracker", "trello"]
 
 [[capabilities]]
@@ -97,11 +97,14 @@ default = "warn"
 enum = ["always", "ask", "warn"]
 help_text = "Tracker ledger mode: always (block missing/conflicted state at the five checkpoints), ask (prompt at each checkpoint; an opt-out covers only that checkpoint), or warn (report on stderr, never block — default). Overrides gate_mode when set; gate_mode off still skips the checkpoints."
 
-# Remote reconciliation mapping (ledger remote reconciliation, T2). The recipe
-# declares which config fields a comparison may read: the scope the observation
-# must report, and, per event, the property it declares plus the config field whose
-# value that property must show. It is provider adaptation, never provider state:
-# nothing here is compared against a stored item status.
+# Remote reconciliation mapping (ledger remote reconciliation, T2). This is the
+# recipe's Tracker-domain adapter declaration: it maps native config values to
+# neutral properties and never grades or sets ledger policy (ledger_mode/gate_mode
+# stay in their own separate config). It declares which config fields a comparison
+# may read: the scope the observation must report, and, per event, the property it
+# declares plus the config field whose value that property must show. It is provider
+# adaptation, never provider state: nothing here is compared against a stored item
+# status.
 #
 # The Go gate reads the runtime values from the project manifest
 # (`[recipes.trello-mcp-workflow.config]` and this same table in
@@ -148,6 +151,8 @@ workflow_rules = [
     "On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.",
     "If the tracker gate warns or blocks, create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down.",
     "Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare.",
+    "Tracker lifecycle checkpoints are Plan Build-independent: grade them with `lib/_internal/tracker_ledger_host.py <slug> --root <root> --checkpoint pre-merge|archive-close`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive.",
+    "Provider tracker recipes only map native state through `[config.reconcile]`; they never enable, configure, or implement the ledger, and they never grade items.",
 ]
 
 [[provides.brief.context_sources]]

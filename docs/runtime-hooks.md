@@ -210,7 +210,7 @@ block are preserved.
 | Recipe | Path hook id | Shell hook id | Shell heuristic |
 |--------|--------------|---------------|-----------------|
 | `worktree-flow` | `worktree-gate` | `worktree-gate-shell` | shell writes into protected main |
-| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` (archive-close is graded by the pre-merge guardian) |
+| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` (archive-close is graded by the tracker ledger host) |
 
 Both share one script per recipe with two `[[provides.hooks]]` ids so
 Cursor's file-write skip does not swallow shell coverage. Neither gate
@@ -219,7 +219,7 @@ intercepts MCP tool calls.
 ## Ledger checkpoints (tracker lifecycle)
 
 `plan-build-flow` and `trello-mcp-workflow` path/shell hooks, plus
-`lib/_internal/premerge_guardian.py`, are **acquisition + JSON bridges** to one
+`lib/_internal/tracker_ledger_host.py`, are **acquisition + JSON bridges** to one
 verified Go predicate. They resolve the `worktree-gate` binary (project-local pin,
 then version-keyed cache with its `.verified` receipt, then the
 explicit `WORKTREE_GATE_BIN` override), invoke it as
@@ -228,13 +228,27 @@ JSON verdict to the hook exit contract (`0` allow/ask/dormant/unevaluable, `2`
 only for `block`). Hosts never compile or download on the hot path, and a missing
 or unverified binary fails open with one stderr line.
 
+The domain is Tracker, not a provider. One pure Go grader compares neutral
+expectations against neutral observations; a provider recipe extends that domain
+by declaring a `[config.reconcile]` **adapter** mapping in the project manifest,
+while `ledger_mode` / `gate_mode` stay Tracker-domain policy. The tracker
+lifecycle host is `lib/_internal/tracker_ledger_host.py`; `premerge_guardian.py`
+is Plan Build's artifact-only guardian and never invokes the ledger.
+
 | Checkpoint | Host |
 |---|---|
-| `work-start` | `plan-build-flow` `plan-build-gate.sh` (before the SDD/proposal phase and before the first production write; no change folder required) |
+| `work-start` | `plan-build-flow` `plan-build-gate.sh` (before the SDD/proposal phase and before the first production write; no change folder required; resolves the witness recipe id through the stamped bridge) |
 | `apply-start` | `trello-mcp-workflow` `tracker-card-gate.sh`, path kind |
 | `pr-review` | `trello-mcp-workflow` `tracker-card-gate.sh`, shell `gh pr create` |
-| `pre-merge` | `premerge_guardian.py --stage pre-merge` |
-| `archive-close` | `premerge_guardian.py --stage pre-archive` |
+| `pre-merge` | `tracker_ledger_host.py --checkpoint pre-merge` |
+| `archive-close` | `tracker_ledger_host.py --checkpoint archive-close` |
+
+The `pre-merge` and `archive-close` lifecycle is Plan Build-independent: the host
+needs **no `openspec/` tree**, and `--stage pre-merge|pre-archive` remains a
+compatibility alias for `--checkpoint pre-merge|archive-close`. `archive-close` is
+**tracker item closure**, not an OpenSpec archive — the host never reads archive
+state to infer a close, and it is acquisition-only (evidence + JSON bridge, no
+provider write, no network, no second grader).
 
 **Write surface.** Items are opened, linked, closed, and exempted only by explicit
 writes on the same dispatcher:
@@ -254,7 +268,7 @@ persists nothing, and exits `2` with **no** stdout JSON. **Grading never writes*
 checkpoint, in any mode, opens or mutates an item because a `## Tracker` section
 parses.
 
-**Evidence sides.** `tracker-card-gate.sh` and `premerge_guardian.py` build their
+**Evidence sides.** `tracker-card-gate.sh` and `tracker_ledger_host.py` build their
 `--evidence` file through `lib/_internal/ledger_bridge.py` — acquisition only
 (`## Tracker` / `tracker.none` / local Git facts; no `gh`, no MCP, no network).
 `local` is the ledger's own store snapshot, `code` is the change's `card_id`, `git`
@@ -276,8 +290,10 @@ honored at every checkpoint as allow/exempt and is not a conflict; removing the 
 does not revoke it (a human adjudicates with `--decide`).
 
 The bridge directory is stamped at sync (`__TRACKER_LIB_INTERNAL__` → the CLI's
-`lib/_internal`). An empty or absent stamp skips the evidence file (fail open),
-exactly like a missing binary.
+`lib/_internal`). The tracker gate uses it for evidence acquisition, and the
+plan-build gate uses the same seam to resolve the witness-bound recipe id. An empty
+or absent stamp skips the evidence file and leaves the recipe id unresolved (fail
+open), exactly like a missing binary.
 
 The verdict is computed from the durable binding witness at
 `<git-common-dir>/ai-specs/ledger/witness.json` and the per-identity store at
