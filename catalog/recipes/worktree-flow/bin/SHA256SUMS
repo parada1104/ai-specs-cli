@@ -1,5 +1,5 @@
 # Expected SHA-256 digests of the published worktree-gate release assets
-# (v0.22.0). This file is the trust root (D5): the network supplies only
+# (v0.23.0). This file is the trust root (D5): the network supplies only
 # bytes, the repository supplies the expected digest. A downloaded asset
 # whose SHA-256 does not match is deleted and never executed.
 #
@@ -27,7 +27,7 @@
 # four-arch asset gains Go-owned remote-observation reconciliation; no new asset,
 # no second trust root) with the canonical go1.24.13 toolchain via:
 #   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
-b08f1aec8b1adb8225f6bf01b8b8be3f064f7904aef72ca786b2d2c2959ab758  worktree-gate-darwin-arm64
-35cb429d9e6cc46fe4c24d4e7addba68d37975476b2efbfce8bfe05be3528ad0  worktree-gate-darwin-amd64
-147d3d8399404a8753744b77a213169624964134bdda25e9cb794ecaeed1ad23  worktree-gate-linux-amd64
-06122cc16561c198ab238c33162f2af1cee7a5d39c7751f9eedd651f191c8ea4  worktree-gate-linux-arm64
+28bd88b8355760a8ab91d9c8d0ffa7fe9db3a6e1bbef43456df02a2f087376d6  worktree-gate-darwin-arm64
+33328df74f15c84cc0f6f0dd898c25d67386f4123522095710f161663c0fb83f  worktree-gate-darwin-amd64
+6c28bba5ce3b2ee7e0f73210af1e07c74d750699602172ac92197db8efdfb155  worktree-gate-linux-amd64
+08d17a8603476f11c4d831905a28b0032b7c842d37e49d45a636aa745771e785  worktree-gate-linux-arm64

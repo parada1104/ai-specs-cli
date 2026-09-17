@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-09-17
+
+### Upgrade notes
+Run `ai-specs sync` in each project to materialize the updated Tracker Ledger and Plan Build lifecycle assets. Run `ai-specs doctor` to confirm the resolved tracker and guardian configuration.
+
 ### Breaking
 - **worktree-flow Bash gate retired.** `gate_impl = "bash"` is rejected at
   sync with an actionable error naming `auto | go` as the only valid values.
