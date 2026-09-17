@@ -64,7 +64,7 @@ Add configuration under `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-s
 ```toml
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.3.0"
+version = "1.4.0"
 
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"
@@ -86,6 +86,21 @@ property = "list"
 config_field = "default_list"
 ```
 
+## Tracker-domain adapter
+
+This recipe is a **Tracker-domain adapter**: it provides the `tracker` capability
+and extends the one autonomous Go ledger by *mapping*, never by grading. The
+mapping is declarative data in `[config.reconcile]` — it names the config field
+that carries the scope and, per event, the neutral property each native value must
+show. The Go core reads only the project manifest and hardcodes no Trello field,
+list, or property name, so another provider (Jira, Linear) can declare the same
+shape and feed the same neutral expectation/observation comparator.
+
+Adapter mapping and Tracker-domain policy are separate surfaces. `ledger_mode` /
+`gate_mode` decide *when* the ledger speaks and live in `[config.<recipe>]`;
+`[config.reconcile]` only declares *what* the recipe maps. The mapping surface
+rejects a policy key, and an unbound mapping is an explicit `unconfigured`, never
+a default.
 
 ## Card-per-change contract
 
@@ -115,6 +130,35 @@ The global contract is also declared in `openspec/config.yaml` under `tracking:`
 The ledger is the only grader. The five checkpoints (`work-start`, `apply-start`,
 `pr-review`, `pre-merge`, `archive-close`) all reach the same verified Go
 `--ledger` predicate; this recipe only supplies the mode and the hooks.
+
+### Tracker lifecycle host (`pre-merge`, `archive-close`)
+
+The `pre-merge` and `archive-close` checkpoints are Plan Build-independent: the
+Tracker-domain host grades them with **no `openspec/` tree**. Run it directly at
+the lifecycle boundary — it is the generic command a future Jira/Linear recipe
+reuses unchanged:
+
+```bash
+python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
+  <slug> --root "$PWD" --checkpoint pre-merge
+python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
+  <slug> --root "$PWD" --checkpoint archive-close
+```
+
+`--root` is required (the resolved project root, never the process cwd) and the
+slug is optional. `--stage pre-merge|pre-archive` remains a compatibility alias
+for `--checkpoint pre-merge|archive-close`.
+
+**`archive-close` is tracker item closure, not an OpenSpec archive.** It asks the
+one Go predicate whether the bound tracker item can be closed; it never moves
+`openspec/changes/<slug>/`, never infers closure from archive state, and never
+writes. The host is acquisition only (evidence + JSON bridge): no provider write,
+no network, no second grader.
+
+This host and the ledger it calls are the generic Tracker domain, not Trello. A
+provider recipe contributes **only** its `[config.reconcile]` native-state mapping:
+provider recipes do not enable, configure, or implement the ledger, and they never
+grade.
 
 | Mode | Behavior |
 |------|----------|
@@ -159,7 +203,7 @@ JSON. Grade paths keep failing open.
 
 ### Evidence sides
 
-`tracker-card-gate.sh` and `premerge_guardian.py` pass a bridge-built `--evidence`
+`tracker-card-gate.sh` and `tracker_ledger_host.py` pass a bridge-built `--evidence`
 file (`lib/_internal/ledger_bridge.py`, acquisition only): `local` is the ledger's
 own store snapshot, `code` is the change's `## Tracker` `card_id`, and `git` is that
 same id when a `pr:` is recorded. The `--evidence` `remote` side stays **unwired**:

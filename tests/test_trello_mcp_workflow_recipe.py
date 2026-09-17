@@ -43,7 +43,7 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
     def test_recipe_validates_with_dual_hooks_and_gate_mode(self):
         recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
         self.assertEqual(recipe.id, "trello-mcp-workflow")
-        self.assertEqual(recipe.version, "1.3.0")
+        self.assertEqual(recipe.version, "1.4.0")
         fields = recipe.config_schema.fields
         self.assertIn("gate_mode", fields)
         self.assertEqual(fields["gate_mode"].default, "warn")
@@ -366,6 +366,39 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         self.assertIn("review", skill)
         self.assertIn("merge", skill)
         self.assertIn("overrides it", skill)  # config is override-only
+
+    def test_tracker_lifecycle_host_is_documented_as_plan_build_independent(self):
+        """The generic Tracker recipe surfaces the lifecycle host as a reusable
+        command, separate from Plan Build/OpenSpec and from provider mapping."""
+        skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
+        quick = (RECIPE_DIR / "commands" / "trello-workflow.md").read_text()
+        readme = (RECIPE_DIR / "README.md").read_text()
+        brief = (RECIPE_DIR / "recipe.toml").read_text()
+        for name, text in (("skill", skill), ("quick-reference", quick),
+                           ("README", readme), ("brief", brief)):
+            with self.subTest(surface=name):
+                self.assertIn("tracker_ledger_host.py", text)
+                self.assertIn("--checkpoint", text)
+        for name, text in (("skill", skill), ("README", readme)):
+            with self.subTest(surface=name):
+                lowered = text.lower()
+                self.assertIn("archive-close", lowered)
+                self.assertIn("tracker item closure", lowered)
+                self.assertIn("openspec", lowered)
+        # Provider recipes only map native state; they never own the ledger.
+        self.assertIn("[config.reconcile]", readme)
+        self.assertIn("do not enable", readme)
+
+    def test_recipe_version_and_migration_surface(self):
+        """W6: the recipe version bump is recorded in the migration surface."""
+        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
+            self.assertEqual(tomllib.load(fh)["recipe"]["version"], "1.4.0")
+        readme = (RECIPE_DIR / "README.md").read_text()
+        catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
+        self.assertIn('version = "1.4.0"', readme)
+        self.assertIn('version = "1.4.0"', catalog)
+        unreleased = (ROOT / "CHANGELOG.md").read_text().split("## [0.21.0]", 1)[0]
+        self.assertIn("1.3.0` → `1.4.0", unreleased)
 
     def test_skill_doc_content_contract(self):
         skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
