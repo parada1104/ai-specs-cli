@@ -1039,5 +1039,66 @@ class RepoTopologyBriefTests(unittest.TestCase):
         self.assertNotIn("Repo topology", text)
 
 
+class WorktreeGateModeBriefRenderTests(unittest.TestCase):
+    """Rendered brief behavior for the worktree-flow config-aware gate fragment.
+
+    Uses the real catalog recipe fragments so the recipe source is exercised
+    end-to-end through the renderer for each gate_mode value.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_worktree_gate_mode")
+
+    def _workflow_fragments(self) -> list[dict]:
+        import tomllib
+
+        recipe_toml = (
+            ROOT / "catalog" / "recipes" / "worktree-flow" / "recipe.toml"
+        )
+        with open(recipe_toml, "rb") as fh:
+            data = tomllib.load(fh)
+        rules = data["provides"]["brief"]["workflow_rules"]
+        return [{"key": None, "text": rule} for rule in rules]
+
+    def _render(self, gate_mode: str) -> str:
+        manifest = {"project": {"name": "fixture"}, "brief": {}}
+        resolved = {
+            "enabled": ["worktree-flow"],
+            "recipes": {
+                "worktree-flow": {
+                    "gate_mode": gate_mode,
+                    "brief_fragments": {
+                        "workflow_rules": self._workflow_fragments()
+                    },
+                }
+            },
+            "bindings": {},
+        }
+        return "\n".join(self.mod._render_lines(manifest, resolved))
+
+    def test_ask_mode_brief_uses_user_mediated_destinations(self):
+        text = self._render("ask")
+        self.assertIn("`gate_mode = ask`", text)
+        self.assertIn("ask the user to choose a destination", text)
+        self.assertIn("feature branch in the current checkout", text)
+        self.assertIn("explicit protected-branch override", text)
+        self.assertNotIn("WORKTREE_GATE_MODE=off", text)
+        self.assertNotIn(
+            "Create a dedicated worktree for changes that write artifacts or modify code.",
+            text,
+        )
+
+    def test_always_mode_brief_requires_dedicated_worktree(self):
+        text = self._render("always")
+        self.assertIn("`gate_mode = always`", text)
+        self.assertIn("`always` requires a dedicated worktree", text)
+
+    def test_off_mode_brief_defers_to_user_direction(self):
+        text = self._render("off")
+        self.assertIn("`gate_mode = off`", text)
+        self.assertIn("where the user directs", text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -132,8 +132,9 @@ runtime_flow = [
   "A session works on one explicit user request or Trello card.",
   "The orchestrator coordinates work inline using project skills and the runtime brief.",
   "`explore` can run without a worktree when it only produces thinking.",
-  "Artifact phases and implementation phases run in a dedicated worktree when they write files.",
 ]
+# The worktree requirement for protected-branch writes is contributed by the
+# worktree-flow recipe (config-aware via `gate_mode`), not hard-coded here.
 # "Trello is the source of truth..." is now contributed by trello-mcp-workflow recipe
 # (key: trello-source-of-truth). Project-specific entries remain here.
 context_sources = [

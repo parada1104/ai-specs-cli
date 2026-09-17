@@ -44,7 +44,7 @@ to an unverified or legacy destructive implementation.
 | Mode | Behavior |
 |---|---|
 | `always` | Current strict behavior: block writes to the main worktree on protected branches. |
-| `ask` | Block, but surface a bypass hint: rerun with `WORKTREE_GATE_MODE=off` for that one invocation. |
+| `ask` | Block, and direct the agent to ask the user to choose a destination: a dedicated worktree (recommended), a feature branch in the current checkout, or an explicit protected-branch override. The agent must not self-bypass. |
 | `off` | Disable the gate entirely; writes are allowed even on protected branches. |
 
 Default: `always`.
