@@ -56,11 +56,6 @@ enabled = true
 [recipes.tdd-flow.config]
 test_command = "./tests/validate.sh"
 
-[recipes.plan-build-flow]
-enabled = true
-
-# --- Specific (capability providers) ---
-
 [recipes.trello-mcp-workflow]
 enabled = true
 [recipes.trello-mcp-workflow.config]
@@ -158,6 +153,11 @@ conflict_policy = [
 workflow_rules = [
   "Follow the project's designated workflow for structured changes.",
   "Direct `skill-sync` runs are allowed only for metadata validation.",
+  # Project-level Python→Go strangler policy (card #126). Incremental: apply at the seam you touch.
+  "New authoritative logic, state machines, predicates, and durable state belong in Go.",
+  "When touching Python on the active path, migrate the behavior/dependency being touched to Go where practical; Python may remain only as a thin compatibility/acquisition/JSON bridge during the transition.",
+  "Keep one authoritative grader per behavior and add parity/contract tests at each migrated seam.",
+  "Do not perform unrelated drive-by rewrites; the policy is incremental.",
 ]
 # useful_commands_mode = "replace" keeps only the auto-generated test_command line and
 # project-specific manual commands; suppresses recipe fragments that would duplicate

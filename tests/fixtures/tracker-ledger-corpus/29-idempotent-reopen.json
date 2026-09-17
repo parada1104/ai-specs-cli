@@ -1,0 +1,58 @@
+{
+  "label": "a retried open is an idempotent re-open, not a second item",
+  "witness": {
+    "state": "bound"
+  },
+  "change": "reopen-change",
+  "store": {
+    "items": []
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "always",
+      "write": {
+        "kind": "open"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK",
+        "write": {
+          "kind": "open",
+          "applied": true,
+          "reason": ""
+        }
+      }
+    },
+    {
+      "checkpoint": "apply-start",
+      "mode": "always",
+      "write": {
+        "kind": "open"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK",
+        "write": {
+          "kind": "open",
+          "applied": false,
+          "reason": "already-open"
+        }
+      }
+    }
+  ],
+  "store_pin": {
+    "items": 1,
+    "unique_ids": 1,
+    "open_items": 1
+  },
+  "kind": "verdict"
+}

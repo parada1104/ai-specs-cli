@@ -102,8 +102,30 @@ executed by the agent; there is NO executable `/worktree-new` helper.
 - If a structured Edit/Write/MultiEdit call is blocked or errors for any
   reason while on a protected branch, that is never grounds to retry the
   write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`) —
-  using bash to write bypasses the worktree gate entirely. Create a worktree
-  first (`/worktree-new`) and write there instead.
+  using bash to write bypasses the worktree gate entirely.
+  - `gate_mode = always`: create a dedicated worktree
+    (`/worktree-new`) and write there instead.
+  - `gate_mode = ask`: **ask the user** which destination to use and
+    wait — a dedicated worktree (recommended), a feature branch in the
+    current checkout, or an explicit override to write on the protected
+    branch. Do not pick a destination yourself, and do not re-run with
+    `WORKTREE_GATE_MODE=off` as a self-authorization shortcut.
+  - `gate_mode = off`: the gate does not block; work where the user directs.
+
+## Asking the user (per harness)
+
+When `gate_mode = ask` blocks a write, surface the three destinations with
+the harness's **native user-question mechanism** and stop until the user
+answers:
+
+| Harness | Mechanism |
+|---|---|
+| pi | `ask_user_question` (structured options) |
+| claude | `AskUserQuestion` (or a direct conversational question) |
+| opencode / cursor / omp | the interactive user prompt / inline question |
+
+The user's answer decides the destination; never decide for them, and never
+treat the block as permission to bypass the guard.
 
 ## Creating a worktree
 
@@ -151,8 +173,10 @@ cd <main-repo-root>
 
 ### Script-first (preferred)
 
-Prefer the materialized cleanup script (or `/worktree-clean`) over ad-hoc
-remove sequences:
+Prefer the materialized verified-Go cleanup launcher (or `/worktree-clean`) over
+ad-hoc remove sequences. Run it from the main repository worktree; it owns
+post-merge remote deletion and independently verifies remote absence:
+
 
 ```bash
 bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
@@ -162,7 +186,7 @@ bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
 Optional `--submodule` / `--subrepo` scopes to one module; default = all
 initialized. Run with `--dry-run` first to preview removals.
 
-The script is conservative by design:
+The launcher is conservative by design:
 
 - **Removes** a worktree only when its branch is fully merged into the base —
   detecting both regular/fast-forward merges (ancestry) and squash/rebase merges
@@ -170,6 +194,11 @@ The script is conservative by design:
 - **Preserves** worktrees with uncommitted changes (reported as `dirty`).
 - **Preserves** worktrees whose branch is not yet merged (`unmerged`).
 - **Never touches** the main worktree or detached-HEAD worktrees.
+- Refuses loudly before every worktree, local-branch, or remote-branch delete
+  when the branch is protected (`main`, `master`, `development`, `staging`,
+  or configured base/integration names).
+- Deletes the remote branch only after local cleanup and verifies absence with
+  `git ls-remote --heads`; failure is not reported as success.
 - Under submodules, enumerates per-module lists; uninitialized modules are
   skipped.
 

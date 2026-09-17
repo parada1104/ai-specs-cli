@@ -46,18 +46,6 @@ _ENV_EXAMPLE_HEADER = """\
 # Generated from enabled recipes' [[provides.mcp]] env references.
 """
 
-_LEGACY_ENV_EXAMPLE_STUB = """\
-# DEPRECATED: use project-root ai-specs.env.example instead.
-# Root .envrc is managed by ai-specs (dotenv_if_exists ai-specs.env).
-# Regenerate with: ai-specs configure-recipes
-"""
-
-_ENVRC_EXAMPLE_STUB = """\
-# DEPRECATED: use project-root ai-specs.env.example instead.
-# Root .envrc is managed by ai-specs (dotenv_if_exists ai-specs.env).
-# Regenerate with: ai-specs configure-recipes
-"""
-
 ENV_VAR_HELP: dict[str, str] = {
     "TRELLO_API_KEY": (
         "Trello API key — create at https://trello.com/power-ups/admin"
@@ -71,6 +59,17 @@ ENV_VAR_HELP: dict[str, str] = {
         "vault MCP reads). Example: /Users/you/.../vault/nnodes/proyectos/app. "
         "Must be fully resolved — do not leave nested $OTHER_VAR unexpanded."
     ),
+    "OPENPROJECT_AUTH": (
+        "Optional — `basic` is the provider's effective default when unset; "
+        "use `bearer` for Bearer tokens"
+    ),
+}
+
+# Values pre-filled in ai-specs.env.example only. These document a provider's
+# effective default so the committed template stays copy-paste valid; they are
+# never written to ai-specs.env and never override an explicit runtime value.
+ENV_EXAMPLE_DEFAULTS: dict[str, str] = {
+    "OPENPROJECT_AUTH": "basic",
 }
 
 
@@ -88,24 +87,62 @@ def harness_env_example_path(project_root: Path) -> Path:
     return project_root / HARNESS_ENV_EXAMPLE_NAME
 
 
-def collect_env_vars(project_root: Path) -> dict[str, str]:
+def collect_env_vars(
+    project_root: Path,
+    recipe_ids: list[str] | None = None,
+) -> dict[str, str]:
     """Collect $VAR references from enabled recipes' MCP env tables.
 
     Returns {VAR_NAME: purpose}. First declaration wins for purpose text.
+
+    ``recipe_ids`` is additive scoping: ``None`` keeps the aggregate behavior
+    (every enabled recipe), while a list restricts collection to those enabled
+    recipe ids. A selected-but-disabled recipe contributes nothing.
+    """
+    declarations = _mcp_env_declarations(project_root, recipe_ids=recipe_ids)
+
+    collected: dict[str, str] = {}
+    for recipe_id, preset_id, declared, _allowed in declarations:
+        for var in declared.values():
+            purpose = f"required by {preset_id} ({recipe_id})"
+            if var not in collected:
+                collected[var] = purpose
+            else:
+                if recipe_id not in collected[var]:
+                    collected[var] = (
+                        f"{collected[var]}; also {preset_id} ({recipe_id})"
+                    )
+    return collected
+
+
+def _mcp_env_declarations(
+    project_root: Path,
+    recipe_ids: list[str] | None = None,
+) -> list[tuple[str, str, dict[str, str], dict[str, list[str]]]]:
+    """Return per-preset MCP env declarations from enabled, in-scope recipes.
+
+    One tuple per ``[[provides.mcp]]`` preset: ``(recipe_id, preset_id,
+    declared, allowed)`` where ``declared`` maps each env declaration key to the
+    ``$VAR`` it references (only ``$VAR`` references, in declaration order) and
+    ``allowed`` maps each referenced variable to the preset's ``env_allowed``
+    values — only when the preset both references the key and declares values.
     """
     manifest = project_root / "ai-specs" / "ai-specs.toml"
     if not manifest.is_file():
-        return {}
+        return []
     try:
         data = _toml_read.load_toml(manifest)
         recipes = _toml_read.read_recipes(data)
     except Exception:
-        return {}
+        return []
 
     catalog = _catalog_dir()
-    collected: dict[str, str] = {}
+    selected = None if recipe_ids is None else set(recipe_ids)
+    declarations: list[tuple[str, str, dict[str, str], dict[str, list[str]]]] = []
     for recipe_id, entry in recipes.items():
         if not entry.get("enabled"):
+            continue
+        if selected is not None and recipe_id not in selected:
             continue
         try:
             recipe = _recipe_read.read_recipe(catalog, recipe_id)
@@ -115,21 +152,54 @@ def collect_env_vars(project_root: Path) -> dict[str, str]:
             env = preset.config.get("env")
             if not isinstance(env, dict):
                 continue
-            for _key, value in env.items():
+            declared: dict[str, str] = {}
+            for key, value in env.items():
                 if not isinstance(value, str):
                     continue
                 match = ENV_REFERENCE_RE.match(value.strip())
                 if not match:
                     continue
-                var = match.group(1)
-                purpose = f"required by {preset.id} ({recipe_id})"
-                if var not in collected:
-                    collected[var] = purpose
-                else:
-                    if recipe_id not in collected[var]:
-                        collected[var] = (
-                            f"{collected[var]}; also {preset.id} ({recipe_id})"
-                        )
+                declared[key] = match.group(1)
+            if not declared:
+                continue
+            allowed: dict[str, list[str]] = {}
+            raw_allowed = preset.config.get("env_allowed")
+            if isinstance(raw_allowed, dict):
+                for akey, avalue in raw_allowed.items():
+                    var = declared.get(akey)
+                    if var is None:
+                        continue
+                    if not isinstance(avalue, list):
+                        continue
+                    valid = [
+                        item
+                        for item in avalue
+                        if isinstance(item, str) and item.strip()
+                    ]
+                    if not valid:
+                        continue
+                    allowed[var] = valid
+            declarations.append((recipe_id, preset.id, declared, allowed))
+    return declarations
+
+
+def collect_env_allowed(
+    project_root: Path,
+    recipe_ids: list[str] | None = None,
+) -> dict[str, list[str]]:
+    """Collect declared allowed values for referenced MCP env vars.
+
+    Returns {VAR_NAME: [allowed values]} for vars whose recipe preset declares
+    ``env_allowed`` beside the ``env`` reference. First declaration wins when
+    multiple presets constrain the same variable.
+    """
+    collected: dict[str, list[str]] = {}
+    for _recipe_id, _preset_id, _declared, allowed in _mcp_env_declarations(
+        project_root, recipe_ids=recipe_ids
+    ):
+        for var, values in allowed.items():
+            if var not in collected:
+                collected[var] = values
     return collected
 
 
@@ -193,6 +263,17 @@ def load_harness_env(project_root: Path) -> dict[str, str]:
     return _parse_dotenv(path.read_text(encoding="utf-8"))
 
 
+def missing_required_values(project_root: Path) -> list[str]:
+    """Return required MCP env vars that have no non-empty value in ai-specs.env."""
+    required = collect_env_vars(project_root)
+    configured = load_harness_env(project_root)
+    return [
+        var
+        for var in sorted(required)
+        if not (configured.get(var) or "").strip()
+    ]
+
+
 def write_env(project_root: Path, var_values: dict[str, str]) -> Path:
     """Write/merge project-root ai-specs.env. Never touches project-root .env.
 
@@ -216,21 +297,9 @@ def write_env(project_root: Path, var_values: dict[str, str]) -> Path:
     return target
 
 
-def _write_deprecation_stub(path: Path, body: str) -> None:
-    if path.is_file():
-        bak = path.with_name(path.name + ".bak")
-        if not bak.is_file():
-            bak.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
-
-
 def generate_env_example(project_root: Path) -> Path:
-    """Write root ai-specs.env.example; stub deprecated under-ai-specs templates."""
+    """Write root ai-specs.env.example from enabled recipes' MCP env refs."""
     target = harness_env_example_path(project_root)
-    if target.is_file():
-        backup = project_root / f"{HARNESS_ENV_EXAMPLE_NAME}.bak"
-        backup.write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
 
     vars_map = collect_env_vars(project_root)
     lines = [_ENV_EXAMPLE_HEADER.rstrip(), ""]
@@ -239,20 +308,25 @@ def generate_env_example(project_root: Path) -> Path:
             help_bits = [vars_map[var]]
             if var in ENV_VAR_HELP:
                 help_bits.append(ENV_VAR_HELP[var])
-            lines.append(f"{var}=  # {'; '.join(help_bits)}")
+            default = ENV_EXAMPLE_DEFAULTS.get(var, "")
+            lines.append(f"{var}={default}  # {' '.join(help_bits)}")
     else:
         lines.append("# (no env vars required by enabled recipes)")
     lines.append("")
-    target.write_text("\n".join(lines), encoding="utf-8")
+    new_text = "\n".join(lines)
 
-    ai_specs = project_root / "ai-specs"
-    _write_deprecation_stub(ai_specs / ".env.example", _LEGACY_ENV_EXAMPLE_STUB)
-    _write_deprecation_stub(ai_specs / ".envrc.example", _ENVRC_EXAMPLE_STUB)
+    if target.is_file():
+        old_text = target.read_text(encoding="utf-8")
+        if old_text == new_text:
+            return target
+        backup = project_root / f"{HARNESS_ENV_EXAMPLE_NAME}.bak"
+        backup.write_text(old_text, encoding="utf-8")
+
+    target.write_text(new_text, encoding="utf-8")
     return target
 
-
 def generate_envrc_example(project_root: Path) -> Path:
-    """Deprecated alias — writes ai-specs.env.example (and legacy stubs)."""
+    """Deprecated alias — writes ai-specs.env.example only."""
     return generate_env_example(project_root)
 
 
@@ -402,12 +476,33 @@ def _is_secret_var(var: str) -> bool:
     return any(kw in upper for kw in ["API_KEY", "TOKEN", "SECRET", "PASSWORD", "APIKEY"])
 
 
-def prompt_env_vars(project_root: Path) -> dict[str, str] | None:
+def _select_default(var: str, choices: list[str], existing: dict[str, str]) -> str:
+    """Pick the default for a constrained select: a matching existing value, else a
+    matching example default, else the first declared choice."""
+    canonical_choices = {choice.lower(): choice for choice in choices}
+    current = (existing.get(var) or "").strip()
+    if current:
+        canonical = canonical_choices.get(current.lower())
+        if canonical is not None:
+            return canonical
+    example = ENV_EXAMPLE_DEFAULTS.get(var)
+    if example is not None:
+        canonical = canonical_choices.get(str(example).lower())
+        if canonical is not None:
+            return canonical
+    return choices[0]
+
+
+def prompt_env_vars(
+    project_root: Path,
+    recipe_ids: list[str] | None = None,
+) -> dict[str, str] | None:
     """Prompt interactively for each MCP env var value.
 
-    Returns {VAR: value} or None if cancelled.
+    Returns {VAR: value} or None if cancelled. ``recipe_ids`` scopes which
+    recipes contribute vars; ``None`` prompts the aggregate map.
     """
-    vars_map = collect_env_vars(project_root)
+    vars_map = collect_env_vars(project_root, recipe_ids=recipe_ids)
     if not vars_map:
         return {}
 
@@ -417,22 +512,32 @@ def prompt_env_vars(project_root: Path) -> dict[str, str] | None:
     console = Console()
 
     console.print()
-    console.print("[bold]Variables de entorno requeridas[/bold]")
+    console.print("[bold]Required environment variables[/bold]")
     for var, purpose in vars_map.items():
         console.print(f"  [yellow]{var}[/yellow] — {purpose}")
         if var in ENV_VAR_HELP:
             console.print(f"    [dim]ℹ️  {ENV_VAR_HELP[var]}[/]")
     console.print()
 
-    if not questionary.confirm("¿Configurar ahora los valores?", default=True).ask():
+    if not questionary.confirm("Configure these values now?", default=True).ask():
         return None
+
+    existing = load_harness_env(project_root)
+    allowed_map = collect_env_allowed(project_root, recipe_ids=recipe_ids)
 
     result: dict[str, str] = {}
     for var in sorted(vars_map):
         if var in ENV_VAR_HELP:
             console.print(f"[dim]ℹ️  {ENV_VAR_HELP[var]}[/]")
-        if _is_secret_var(var):
-            value = questionary.password(var, instruction="(input oculto)").ask()
+        choices = allowed_map.get(var)
+        if choices:
+            value = questionary.select(
+                var,
+                choices=choices,
+                default=_select_default(var, choices, existing),
+            ).ask()
+        elif _is_secret_var(var):
+            value = questionary.password(var, instruction="(hidden input)").ask()
         else:
             value = questionary.text(var).ask()
         if value is None:
@@ -464,8 +569,19 @@ def write_envrc(project_root: Path, var_values: dict[str, str]) -> Path:
     return path
 
 
-def offer_harness_env(project_root: Path, *, offer_direnv_install: bool = True) -> None:
-    """Migrate, prompt, write ai-specs.env, example, root .envrc, direnv allow. Soft-fails."""
+def offer_harness_env(
+    project_root: Path,
+    *,
+    offer_direnv_install: bool = True,
+    recipe_ids: list[str] | None = None,
+) -> None:
+    """Migrate, prompt, write ai-specs.env, example, root .envrc, direnv allow. Soft-fails.
+
+    ``recipe_ids`` scopes the collection/prompted values to those enabled
+    recipes (only prompted values are merged into ai-specs.env). Example
+    generation, the root ``.envrc`` managed block, and direnv handling stay
+    global/aggregate.
+    """
     from rich.console import Console
 
     console = Console()
@@ -475,16 +591,16 @@ def offer_harness_env(project_root: Path, *, offer_direnv_install: bool = True) 
         console.print(f"[yellow]Legacy harness env migration skipped: {exc}[/yellow]")
 
     try:
-        vars_map = collect_env_vars(project_root)
+        vars_map = collect_env_vars(project_root, recipe_ids=recipe_ids)
     except Exception:
         return
     if not vars_map:
         return
 
     try:
-        values = prompt_env_vars(project_root)
+        values = prompt_env_vars(project_root, recipe_ids=recipe_ids)
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]No se pudieron configurar variables de entorno: {exc}[/yellow]")
+        console.print(f"[yellow]Could not configure environment variables: {exc}[/yellow]")
         return
     if values is None:
         return
@@ -492,12 +608,12 @@ def offer_harness_env(project_root: Path, *, offer_direnv_install: bool = True) 
     try:
         if values:
             path = write_env(project_root, values)
-            console.print(f"[green]✓[/green] escrito {path}")
+            console.print(f"[green]✓[/green] wrote {path}")
         generate_env_example(project_root)
         ensure_root_envrc(project_root)
         console.print(f"[green]✓[/green] root .envrc managed block → {project_root / '.envrc'}")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]No se pudo escribir harness env: {exc}[/yellow]")
+        console.print(f"[yellow]Could not write harness env: {exc}[/yellow]")
         return
 
     import shutil
@@ -516,13 +632,13 @@ def offer_harness_env(project_root: Path, *, offer_direnv_install: bool = True) 
 
     try:
         if not direnv_allow(project_root):
-            print("  ! direnv no está instalado o no se pudo ejecutar.", file=sys.stderr)
-            print("    Instalalo con: brew install direnv", file=sys.stderr)
-            print("    Despues corre: direnv allow", file=sys.stderr)
+            print("  ! direnv is not installed or could not be run.", file=sys.stderr)
+            print("    Install it with: brew install direnv", file=sys.stderr)
+            print("    Then run: direnv allow", file=sys.stderr)
         else:
-            print("  ✓ direnv allow — las variables quedan activas en esta terminal")
+            print("  ✓ direnv allow — variables are now active in this terminal")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]direnv allow falló: {exc}[/yellow]")
+        console.print(f"[yellow]direnv allow failed: {exc}[/yellow]")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -532,12 +648,17 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.path).resolve()
     if not (root / "ai-specs" / "ai-specs.toml").is_file():
         print(
-            f"Proyecto no inicializado: missing ai-specs/ai-specs.toml under {root}",
+            f"Project not initialized: missing ai-specs/ai-specs.toml under {root}",
             file=sys.stderr,
         )
         return 1
     path = generate_env_example(root)
     ensure_root_envrc(root)
+    for var in missing_required_values(root):
+        print(
+            f"! {var} has no value in ai-specs.env — run ai-specs configure-recipes",
+            file=sys.stderr,
+        )
     print(f"Wrote {path}")
     return 0
 

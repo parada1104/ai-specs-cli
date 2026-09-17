@@ -1,0 +1,27 @@
+{
+  "label": "a closed item is never reopened as primary",
+  "witness": {
+    "state": "bound"
+  },
+  "change": "fixture-change",
+  "store": {
+    "items": [
+      {
+        "status": "closed",
+        "slug": "fixture-change",
+        "item_id": "T-old"
+      }
+    ]
+  },
+  "checkpoint": "apply-start",
+  "mode": "always",
+  "expected": {
+    "decision": "block",
+    "reason": "needs-item",
+    "active": true,
+    "conflict": false,
+    "exit": 2,
+    "doctor": "OK"
+  },
+  "kind": "verdict"
+}

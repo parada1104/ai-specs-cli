@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -20,13 +21,51 @@ var gitCache = struct {
 	values map[string]string
 }{values: map[string]string{}}
 
+func newGitCommand(dir string, args ...string) *exec.Cmd {
+	argv := append([]string{"-C", dir}, args...)
+	return exec.Command("git", argv...)
+}
+
 func git(dir string, args ...string) string {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	out, err := cmd.Output()
+	out, err := newGitCommand(dir, args...).Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func gitRaw(dir string, args ...string) string {
+	out, err := newGitCommand(dir, args...).Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
+func gitRawBytes(dir string, args ...string) []byte {
+	out, err := newGitCommand(dir, args...).Output()
+	if err != nil {
+		return nil
+	}
+	return out
+}
+
+func runGit(dir string, args ...string) error {
+	return newGitCommand(dir, args...).Run()
+}
+
+func execPatchID(patch []byte) string {
+	cmd := exec.Command("git", "patch-id", "--stable")
+	cmd.Stdin = bytes.NewReader(patch)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 func gitMemo(dir string, args ...string) string {
@@ -45,9 +84,17 @@ func gitMemo(dir string, args ...string) string {
 }
 
 func gitCommon(root string) string {
-	v := gitMemo(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	return gitCommonWith(root, gitMemo)
+}
+
+func gitCommonFresh(root string, fact func(string, ...string) string) string {
+	return gitCommonWith(root, fact)
+}
+
+func gitCommonWith(root string, fact func(string, ...string) string) string {
+	v := fact(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if v == "" {
-		v = gitMemo(root, "rev-parse", "--git-common-dir")
+		v = fact(root, "rev-parse", "--git-common-dir")
 	}
 	if v == "" {
 		return ""

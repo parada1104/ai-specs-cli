@@ -69,13 +69,6 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - A session works on one explicit user request or tracker card; resolve focus from memory and tracker before starting.
 - Follow red-green-refactor discipline: write a failing test first, then implement, then clean up.
 - Run the full test suite before committing; do not leave the suite in a failing state.
-- Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; record depth in tasks.md and stop for authorization.
-- Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.
-- Do not open a PR until the change folder on the branch contains the tier minimum planning files, committed.
-- After authorization, implement and validate in the change worktree when isolated worktrees are enabled.
-- Archive the change folder on the review branch before merge; never defer archive until after merge.
-- Default artifact store for this project's planning artifacts: `openspec`. When a session asks where planning artifacts should live, answer with this value unless the user overrides it.
-- For recognized submodule worktrees, use the topology-derived central planning tree in the superproject; standalone repositories keep their own planning tree.
 - Inspect the active Trello card before resuming work and keep card state in sync with actual progress.
 - Before apply/production work on a structured change, create or link a Trello card and record it in the ## Tracker section of the change's proposal.md (or tasks.md) — card_id + url. openspec/** writes are never gated — write the link section there first.
 - On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.
@@ -83,6 +76,10 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare.
 - Follow the project's designated workflow for structured changes.
 - Direct `skill-sync` runs are allowed only for metadata validation.
+- New authoritative logic, state machines, predicates, and durable state belong in Go.
+- When touching Python on the active path, migrate the behavior/dependency being touched to Go where practical; Python may remain only as a thin compatibility/acquisition/JSON bridge during the transition.
+- Keep one authoritative grader per behavior and add parity/contract tests at each migrated seam.
+- Do not perform unrelated drive-by rewrites; the policy is incremental.
 
 ## Useful Commands
 

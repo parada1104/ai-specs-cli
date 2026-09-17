@@ -2,7 +2,7 @@ id = "ac_protected_head_no_delete"
 recipe_id = "bitbucket-pr-flow"
 prompt_file = "prompt.txt"
 mode = "build"
-description = "Protected head development: merge without --close-source-branch"
+description = "Protected head development: merge without closing or deleting the branch"
 forbidden_path_globs = []
 required_path_globs = ["ai-specs/eval-notes/merge-plan.md"]
 required_content = [
@@ -31,4 +31,5 @@ required_content = [
 ]
 forbidden_command_lines = [
   { path = "ai-specs/eval-notes/merge-plan.md", starts_with = "bb pr merge", must_not_contain = "--close-source-branch" },
+  { path = "ai-specs/eval-notes/merge-plan.md", starts_with = "bb pr merge", must_not_contain = "--strategy" },
 ]

@@ -1,0 +1,1 @@
+I need to change `VALUE = 1` to `VALUE = 2` in `src/app.py` on the current `development` checkout. Respect the worktree workflow: inspect the protected checkout first, ask me where this work should go, and wait for my answer before invoking any file-writing tool or trying another authorization path.

@@ -2,7 +2,7 @@
 id = "trello-mcp-workflow"
 name = "Trello MCP Workflow"
 description = "Automated Trello board integration for ai-specs SDD workflows"
-version = "1.3.0"
+version = "1.4.0"
 tags = ["tracker", "trello"]
 
 [[capabilities]]
@@ -65,6 +65,18 @@ required = false
 type = "string"
 default = "Epic"
 help_text = "List name for epic-type cards. Must match an existing list on your Trello board (create the list first if needed)."
+
+[config.review_list]
+required = false
+type = "string"
+default = "Review"
+help_text = "List a card must reach when the review lifecycle event reconciles. Must match an existing list on your Trello board."
+
+[config.done_list]
+required = false
+type = "string"
+default = "Done"
+help_text = "List a card must reach when the merge lifecycle event reconciles. Must match an existing list on your Trello board."
 [config.board_isolation]
 forbidden_tools = ["trello_get_my_cards", "trello_list_boards"]
 restricted_tools = ["trello_set_active_board"]
@@ -76,7 +88,51 @@ required = false
 type = "string"
 default = "warn"
 enum = ["off", "warn", "always"]
-help_text = "Tracker card gate: off (disabled), warn (stderr warning, never blocks — default), or always (block production writes / PR-archive shell when an active change lacks the ## Tracker link section)."
+help_text = "Legacy tracker card gate vocabulary: off (skip the ledger checkpoints), warn (report only), or always (block). Only consulted when ledger_mode is unset."
+
+[config.ledger_mode]
+required = false
+type = "string"
+default = "warn"
+enum = ["always", "ask", "warn"]
+help_text = "Tracker ledger mode: always (block missing/conflicted state at the five checkpoints), ask (prompt at each checkpoint; an opt-out covers only that checkpoint), or warn (report on stderr, never block — default). Overrides gate_mode when set; gate_mode off still skips the checkpoints."
+
+# Remote reconciliation mapping (ledger remote reconciliation, T2). This is the
+# recipe's Tracker-domain adapter declaration: it maps native config values to
+# neutral properties and never grades or sets ledger policy (ledger_mode/gate_mode
+# stay in their own separate config). It declares which config fields a comparison
+# may read: the scope the observation must report, and, per event, the property it
+# declares plus the config field whose value that property must show. It is provider
+# adaptation, never provider state: nothing here is compared against a stored item
+# status.
+#
+# The Go gate reads the runtime values from the project manifest
+# (`[recipes.trello-mcp-workflow.config]` and this same table in
+# ai-specs/ai-specs.toml), so a project that does not bind the block gets an
+# explicit non-agreeing `unconfigured` result. This block is the recipe-side
+# declaration and wizard/doctor documentation — never a runtime fallback — and Go
+# hardcodes no field name, property name, list name, or freshness window. The
+# recipe schema validates this block's shape (`scope_field`, `max_age_seconds`,
+# `expectations` entries) and sync carries the project-declared block through
+# without the old unknown-key warning.
+[config.reconcile]
+scope_field = "board_id"
+max_age_seconds = 900
+
+[[config.reconcile.expectations]]
+event = "delivery"
+property = "list"
+config_field = "default_list"
+
+[[config.reconcile.expectations]]
+event = "review"
+property = "list"
+config_field = "review_list"
+
+[[config.reconcile.expectations]]
+event = "merge"
+property = "list"
+config_field = "done_list"
 
 [init]
 prompt = "init.md"
@@ -95,6 +151,8 @@ workflow_rules = [
     "On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.",
     "If the tracker gate warns or blocks, create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down.",
     "Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare.",
+    "Tracker lifecycle checkpoints are Plan Build-independent: grade them with `lib/_internal/tracker_ledger_host.py <slug> --root <root> --checkpoint pre-merge|archive-close`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive.",
+    "Provider tracker recipes only map native state through `[config.reconcile]`; they never enable, configure, or implement the ledger, and they never grade items.",
 ]
 
 [[provides.brief.context_sources]]
@@ -119,7 +177,7 @@ event = "pre-tool-use"
 script = "hooks/tracker-card-gate.sh"
 matcher = "Edit|Write|MultiEdit|NotebookEdit"
 blocking = true
-description = "Block production edits when an active change lacks the ## Tracker link section (mode=always); warn otherwise"
+description = "Grade production edits at the apply-start ledger checkpoint through the verified Go predicate (mode=always blocks); fail open"
 
 [[provides.hooks]]
 id = "tracker-card-gate-shell"
@@ -127,7 +185,7 @@ event = "pre-tool-use"
 script = "hooks/tracker-card-gate.sh"
 matcher = "Bash|Shell|Execute|Terminal"
 blocking = true
-description = "Best-effort block gh pr create / change-archive shell actions when an active change lacks the ## Tracker link section; does not gate shell writes"
+description = "Grade gh pr create at the pr-review ledger checkpoint through the verified Go predicate; does not gate shell writes"
 
 [[provides.templates]]
 source = "templates/card-feature.md"

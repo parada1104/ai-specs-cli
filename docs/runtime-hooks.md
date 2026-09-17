@@ -100,15 +100,17 @@ for `gate_mode`: `ai-specs sync` stamps the resolved mode into
 override at dispatch time. `trello-mcp-workflow` likewise stamps
 `__TRACKER_CARD_GATE_MODE__` (default `warn`) and `__TRACKER_CLI_HOME__`
 into `tracker-card-gate.sh`; `TRACKER_CARD_GATE_MODE` is the one-shot env
-override.
+override. The ledger `ledger_mode` is not stamped: the checkpoint hosts read it
+from `ai-specs/ai-specs.toml` at runtime (falling back to `gate_mode`), and
+`TRACKER_LEDGER_MODE` is the one-shot override.
 
 ## Gate implementation and launcher (worktree-flow)
 
 `worktree-flow`'s `worktree-gate.sh` is a **thin launcher** (bash 3.2 only) that
 resolves the gate implementation and `exec`s it, so stdin and the exit code pass
-through untouched. The implementation of record is a single zero-dependency Go
-binary; a frozen Bash reference (`worktree-gate-legacy.sh`) is retained for one
-minor release as the rollback path.
+through untouched. The only implementation is a single zero-dependency Go
+binary. `gate_impl` accepts `auto | go` only; both acquire the verified binary
+and fail open when none resolves (`ai-specs doctor` reports ERROR).
 
 Resolution order (first hit wins):
 
@@ -119,17 +121,20 @@ Resolution order (first hit wins):
    `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate`,
    populated by `ai-specs sync` (digest-verified against the committed
    `SHA256SUMS` trust root, mode 0755, self-tested, atomic install).
-4. Frozen Bash reference, when the stamped `gate_impl` is `bash`, or `auto`
-   with no usable binary.
-5. Otherwise one stderr warning naming the missing path and the
-   `ai-specs doctor` remedy, then exit `0` (fail open).
+4. Otherwise one stderr warning naming the missing path and the
+   `ai-specs sync` / `ai-specs sync --refresh-gates` / `ai-specs doctor`
+   remedy, then exit `0` (fail open).
 
 The build matrix is `darwin/arm64`, `darwin/amd64`, `linux/amd64`,
 `linux/arm64` (reproducible: `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`,
-version stamped at link time). `gate_impl = auto` prefers the Go binary and
-falls back to Bash; `go` fails open when unusable (doctor ERROR); `bash` needs
-no binary, network, or Go toolchain. The gate never computes a digest on the
+version stamped at link time). The gate never computes a digest on the
 invocation path unless `WORKTREE_GATE_VERIFY=1` requests it.
+
+**Recovery (no Bash rollback path):** per invocation, set
+`WORKTREE_GATE_MODE=off` or `WORKTREE_GATE_BIN=<path>`. Per install, `rm -rf
+$AI_SPECS_HOME/cache/bin/worktree-gate` then `ai-specs sync`. Full revert is
+install the previous CLI release and run `ai-specs sync`. `gate_impl = auto`
+with no usable binary is a doctor ERROR, not a silent fallback.
 
 Because every renderer references only `hook["script_path"]`, all five harnesses
 keep working without re-render churn: the launcher materializes at the unchanged
@@ -164,8 +169,8 @@ them:
 - **The launcher derives its installation root from `BASH_SOURCE[0]`.** A
   relative reference is anchored to the invocation cwd exactly once, the final
   launcher symlink (and parent symlinks) resolve to the physical launcher, and
-  project-local and legacy assets resolve as `hooks/../bin` under that root —
-  never from `$PWD`. An unresolvable root skips project-local and legacy lookup
+  project-local assets resolve as `hooks/../bin` under that root —
+  never from `$PWD`. An unresolvable root skips project-local lookup
   and continues through the explicit override or cache, or fails open.
 - **Pi/OMP keep process-cwd-only events** and claim no workspace root; Cursor's
   missing pre-file-write hook and OpenCode's subagent/MCP coverage gap are
@@ -205,11 +210,112 @@ block are preserved.
 | Recipe | Path hook id | Shell hook id | Shell heuristic |
 |--------|--------------|---------------|-----------------|
 | `worktree-flow` | `worktree-gate` | `worktree-gate-shell` | shell writes into protected main |
-| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` + change-archive helpers |
+| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` (archive-close is graded by the tracker ledger host) |
 
 Both share one script per recipe with two `[[provides.hooks]]` ids so
 Cursor's file-write skip does not swallow shell coverage. Neither gate
 intercepts MCP tool calls.
+
+## Ledger checkpoints (tracker lifecycle)
+
+`plan-build-flow` and `trello-mcp-workflow` path/shell hooks, plus
+`lib/_internal/tracker_ledger_host.py`, are **acquisition + JSON bridges** to one
+verified Go predicate. They resolve the `worktree-gate` binary (project-local pin,
+then version-keyed cache with its `.verified` receipt, then the
+explicit `WORKTREE_GATE_BIN` override), invoke it as
+`worktree-gate --ledger --checkpoint <name> --ledger-mode <mode>`, and map the
+JSON verdict to the hook exit contract (`0` allow/ask/dormant/unevaluable, `2`
+only for `block`). Hosts never compile or download on the hot path, and a missing
+or unverified binary fails open with one stderr line.
+
+The domain is Tracker, not a provider. One pure Go grader compares neutral
+expectations against neutral observations; a provider recipe extends that domain
+by declaring a `[config.reconcile]` **adapter** mapping in the project manifest,
+while `ledger_mode` / `gate_mode` stay Tracker-domain policy. The tracker
+lifecycle host is `lib/_internal/tracker_ledger_host.py`; `premerge_guardian.py`
+is Plan Build's artifact-only guardian and never invokes the ledger.
+
+| Checkpoint | Host |
+|---|---|
+| `work-start` | `plan-build-flow` `plan-build-gate.sh` (before the SDD/proposal phase and before the first production write; no change folder required; resolves the witness recipe id through the stamped bridge) |
+| `apply-start` | `trello-mcp-workflow` `tracker-card-gate.sh`, path kind |
+| `pr-review` | `trello-mcp-workflow` `tracker-card-gate.sh`, shell `gh pr create` |
+| `pre-merge` | `tracker_ledger_host.py --checkpoint pre-merge` |
+| `archive-close` | `tracker_ledger_host.py --checkpoint archive-close` |
+
+The `pre-merge` and `archive-close` lifecycle is Plan Build-independent: the host
+needs **no `openspec/` tree**, and `--stage pre-merge|pre-archive` remains a
+compatibility alias for `--checkpoint pre-merge|archive-close`. `archive-close` is
+**tracker item closure**, not an OpenSpec archive — the host never reads archive
+state to infer a close, and it is acquisition-only (evidence + JSON bridge, no
+provider write, no network, no second grader).
+
+**Write surface.** Items are opened, linked, closed, and exempted only by explicit
+writes on the same dispatcher:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
+  --project-root . --write '{"kind":"open"}'
+worktree-gate --ledger --checkpoint apply-start --ledger-mode warn --project-root . \
+  --write '{"kind":"link","item_id":"<native-id>","url":"<url>","native_type":"card","state":"in-progress"}'
+```
+
+`--write` and `--decide` are mutually exclusive (both → exit `2`, nothing
+persisted). Success adds `"write":{"kind":…,"applied":…,"reason":…}` to the verdict
+JSON, with `already-open` / `unchanged` / `already-closed` for the idempotent
+no-ops. A failed write prints `worktree-gate: ledger --write failed: …` on stderr,
+persists nothing, and exits `2` with **no** stdout JSON. **Grading never writes**: no
+checkpoint, in any mode, opens or mutates an item because a `## Tracker` section
+parses.
+
+**Evidence sides.** `tracker-card-gate.sh` and `tracker_ledger_host.py` build their
+`--evidence` file through `lib/_internal/ledger_bridge.py` — acquisition only
+(`## Tracker` / `tracker.none` / local Git facts; no `gh`, no MCP, no network).
+`local` is the ledger's own store snapshot, `code` is the change's `card_id`, `git`
+is that id when a `pr:` is recorded, and `remote` has **no producer in this
+`--evidence` file** — a deliberate 3-of-4 reconciliation there. Missing, malformed,
+or unreadable artifacts yield empty sides (fail open). Branch names and PR URLs are
+never used as evidence sides. Remote reconciliation is a separate, explicit
+`--reconcile` comparison that stays off the hooks and off the grade path and is
+opt-in per project (a project without the `[config.reconcile]` mapping gets an
+explicit `unconfigured`, never a default); it writes neither the store nor the
+provider and leaves the graded exit code unchanged.
+
+**`tracker.none`.** Where a host finds `openspec/changes/<slug>/tracker.none` it treats
+it as evidence only (blank `code` side) and grades; it never records the exemption
+itself (R1). The file is the human act and is never created, modified, or deleted by a
+host. Recording the exemption is the explicit human/agent
+`--write '{"kind":"exempt","reason":"<one line>"}'`. A recorded `Item.Exemption` is
+honored at every checkpoint as allow/exempt and is not a conflict; removing the file
+does not revoke it (a human adjudicates with `--decide`).
+
+The bridge directory is stamped at sync (`__TRACKER_LIB_INTERNAL__` → the CLI's
+`lib/_internal`). The tracker gate uses it for evidence acquisition, and the
+plan-build gate uses the same seam to resolve the witness-bound recipe id. An empty
+or absent stamp skips the evidence file and leaves the recipe id unresolved (fail
+open), exactly like a missing binary.
+
+The verdict is computed from the durable binding witness at
+`<git-common-dir>/ai-specs/ledger/witness.json` and the per-identity store at
+`<git-common-dir>/ai-specs/ledger/state.json`. Only a `bound` witness activates the
+ledger; missing, unreadable, or unknown-version witnesses stay dormant
+(`witness-missing`) and never guess a provider. Mode comes from project config at
+`recipes.<witness recipe_id>.config`: the tracker `ledger_mode`
+(`always | ask | warn`, default `warn`) wins, and the legacy `gate_mode` maps
+forward (`off` → skip checkpoints, `warn` → `warn`, `always` → `always`). The recipe
+id is read from the durable witness (the legacy literal is only the bridge's
+fallback), so a non-legacy provider recipe's own config drives the checkpoint. The
+worktree gate's own mode is never read as the ledger mode. `TRACKER_LEDGER_MODE` is
+the one-shot override.
+
+Dormancy is visible through `doctor` only — a `tracker-ledger` check (unbound INFO,
+ambiguous / declared-not-bound / missing witness / recorded conflict WARN,
+infrastructure failure ERROR), plus one INFO when a bound witness has no
+`plan-build-flow` recipe enabled: `work-start is unhosted`, with the other four
+checkpoints still grading. The runtime brief and generated agent files gain no
+dormancy line. No host performs a provider MCP/API create or update in this slice;
+`always` blocks until a human supplies the item. Path hosts never block
+`openspec/**`.
 
 ## Shell write-bypass coverage (worktree-flow)
 

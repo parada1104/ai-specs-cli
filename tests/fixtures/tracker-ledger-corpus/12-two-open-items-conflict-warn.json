@@ -1,0 +1,29 @@
+{
+  "label": "two open items are a conflict, not a pick (warn)",
+  "witness": {
+    "state": "bound"
+  },
+  "store": {
+    "items": [
+      {
+        "status": "open",
+        "item_id": "T-1"
+      },
+      {
+        "status": "open",
+        "item_id": "T-2"
+      }
+    ]
+  },
+  "checkpoint": "apply-start",
+  "mode": "warn",
+  "expected": {
+    "decision": "allow",
+    "reason": "conflict",
+    "active": true,
+    "conflict": true,
+    "exit": 0,
+    "doctor": "WARN"
+  },
+  "kind": "verdict"
+}

@@ -1,0 +1,29 @@
+{
+  "label": "two open items block in always",
+  "witness": {
+    "state": "bound"
+  },
+  "store": {
+    "items": [
+      {
+        "status": "open",
+        "item_id": "T-1"
+      },
+      {
+        "status": "open",
+        "item_id": "T-2"
+      }
+    ]
+  },
+  "checkpoint": "apply-start",
+  "mode": "always",
+  "expected": {
+    "decision": "block",
+    "reason": "conflict",
+    "active": true,
+    "conflict": true,
+    "exit": 2,
+    "doctor": "WARN"
+  },
+  "kind": "verdict"
+}

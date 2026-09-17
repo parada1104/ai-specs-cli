@@ -1,0 +1,78 @@
+{
+  "label": "close then re-open inside one second keeps every item id unique (same-second)",
+  "witness": {
+    "state": "bound"
+  },
+  "change": "collision-change",
+  "store": {
+    "items": []
+  },
+  "steps": [
+    {
+      "checkpoint": "archive-close",
+      "mode": "always",
+      "write": {
+        "kind": "open"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK",
+        "write": {
+          "kind": "open",
+          "applied": true,
+          "reason": ""
+        }
+      }
+    },
+    {
+      "checkpoint": "archive-close",
+      "mode": "always",
+      "write": {
+        "kind": "close"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK",
+        "write": {
+          "kind": "close",
+          "applied": true,
+          "reason": ""
+        }
+      }
+    },
+    {
+      "checkpoint": "apply-start",
+      "mode": "always",
+      "write": {
+        "kind": "open"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK",
+        "write": {
+          "kind": "open",
+          "applied": true,
+          "reason": ""
+        }
+      }
+    }
+  ],
+  "store_pin": {
+    "items": 2,
+    "unique_ids": 2,
+    "open_items": 1
+  },
+  "kind": "verdict"
+}

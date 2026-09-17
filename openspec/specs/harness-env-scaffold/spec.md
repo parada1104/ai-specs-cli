@@ -36,8 +36,9 @@ project-root `.env`.
 The system SHALL be able to generate project-root `ai-specs.env.example` from
 enabled recipes' `[[provides.mcp]]` `$VAR` references, with empty values and
 purpose/help comments. Existing `ai-specs.env.example` SHALL be backed up to
-`ai-specs.env.example.bak` before overwrite. `ai-specs/.env.example` and
-`ai-specs/.envrc.example` SHALL NOT be the primary template (deprecated stubs).
+`ai-specs.env.example.bak` before overwrite. The generator SHALL NOT write any
+example file under the `ai-specs/` directory (`ai-specs/.env.example` and
+`ai-specs/.envrc.example` are not created or regenerated).
 
 #### Scenario: Example lists required vars
 
@@ -45,6 +46,64 @@ purpose/help comments. Existing `ai-specs.env.example` SHALL be backed up to
 - **WHEN** `generate_env_example` runs
 - **THEN** `ai-specs.env.example` MUST list both variables
 - **AND** known vars MUST include curated help text when available
+
+#### Scenario: No example under ai-specs/
+
+- **GIVEN** a project whose `ai-specs/` has no env example files
+- **WHEN** `generate_env_example` runs
+- **THEN** `ai-specs/.env.example` and `ai-specs/.envrc.example` MUST NOT be
+  created
+
+### Requirement: sync regenerates example + warns on missing values
+
+When `ai-specs sync` runs, the system SHALL:
+1. Regenerate project-root `ai-specs.env.example` from enabled recipes.
+2. Ensure the project-root `.envrc` managed block (`dotenv_if_exists .env` and
+   `dotenv_if_exists ai-specs.env`).
+3. Report as a non-fatal warning every required env var (declared by an enabled
+   recipe) that has no value configured in project-root `ai-specs.env`.
+
+The step MUST be deterministic and non-interactive: it never prompts, never
+writes `ai-specs.env`, and never touches the application's project-root `.env`.
+
+#### Scenario: sync surfaces newly enabled recipe env var
+
+- **GIVEN** `ai-specs.toml` enables a recipe whose `[[provides.mcp]]` env
+  references `$CANONICAL_VAULT_PATH`
+- **AND** a previous sync ran when the recipe was disabled
+- **WHEN** `ai-specs sync` runs again
+- **THEN** `ai-specs.env.example` MUST now contain `CANONICAL_VAULT_PATH=` with
+  its purpose/help comment
+
+#### Scenario: sync ensures .envrc when missing
+
+- **GIVEN** a project root with no `.envrc`
+- **WHEN** `ai-specs sync` runs
+- **THEN** `.envrc` MUST exist with the managed markers and both
+  `dotenv_if_exists` lines
+
+#### Scenario: sync preserves custom .envrc content
+
+- **GIVEN** project-root `.envrc` has custom direnv lines and no managed block
+- **WHEN** `ai-specs sync` runs
+- **THEN** the custom lines MUST remain and the managed block appended after them
+
+#### Scenario: sync warns about empty required vars
+
+- **GIVEN** enabled recipes require `CANONICAL_VAULT_PATH`
+- **AND** `ai-specs.env` does not define `CANONICAL_VAULT_PATH`
+- **WHEN** `ai-specs sync` runs
+- **THEN** sync MUST emit a non-fatal warning that `CANONICAL_VAULT_PATH` still
+  needs a value
+- **AND** the sync MUST still complete successfully (exit 0)
+
+#### Scenario: sync does not write secrets or touch app .env
+
+- **GIVEN** a project where the interactive offer path never wrote `ai-specs.env`
+- **WHEN** `ai-specs sync` runs
+- **THEN** `ai-specs.env` MUST NOT be created by sync
+- **AND** project-root `.env` MUST be unchanged
+- **AND** the step MUST complete without prompting
 
 ### Requirement: Merge-safe project-root .envrc managed block
 

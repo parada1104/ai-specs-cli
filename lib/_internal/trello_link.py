@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Canonical ## Tracker link-section parser for active OpenSpec changes.
 
-Shared validity predicate used by doctor and (via an embedded twin) the
-tracker-card-gate hook. Validity = non-empty card_id in a ## Tracker section
-of proposal.md (fallback tasks.md). card_id shape is not required for
-validity; card_id_looks_canonical() is an INFO-nudge helper only.
+Parser-only compatibility reader. The authoritative ``## Tracker`` validity
+rule is graded by the Go ledger predicate (``worktree-gate --ledger``); this
+module still parses the human-facing section for consumers that need the
+fields (card_id, url, ...), and ``is_valid_link`` is retained only for those
+legacy callers — it is *not* a grader and MUST NOT grow new rules. Doctor no
+longer consumes it; existing consumers delegate meaning to the Go verdict.
 """
 from __future__ import annotations
 
@@ -139,7 +141,12 @@ parse_trello_md = parse_tracker_section
 
 
 def is_valid_link(artifact_paths: list[Path]) -> bool:
-    """True iff a ## Tracker section yields a non-empty card_id."""
+    """Legacy compatibility reader: True iff a ## Tracker section has a card_id.
+
+    This is not the grading authority. The Go ledger predicate decides validity;
+    callers that need a verdict invoke ``worktree-gate --ledger`` through a host
+    bridge. Kept as-is for compatibility and never extended with new rules.
+    """
     data = parse_tracker_section(artifact_paths)
     return bool(data.get("card_id"))
 

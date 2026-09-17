@@ -72,9 +72,9 @@ harness's wiring references one copy.
 
 ### Requirement: Direct rendering for the exit-code-native harness (Claude)
 
-Claude Code natively honors the normalized contract (stdin JSON + `exit 2` →
-block), so sync SHALL wire the materialized script **directly** into
-`.claude/settings.json` within a managed block — no adapter.
+Claude Code natively honors the normalized contract (stdin JSON + `exit 2` → block), so sync SHALL
+wire the materialized script **directly** into `.claude/settings.json` within a
+managed block — no adapter.
 
 #### Scenario: Claude wiring
 - **GIVEN** an enabled `claude` agent and a `pre-tool-use` hook with a matcher
@@ -136,10 +136,9 @@ delegation-heavy workflows on opencode/pi/omp.
 
 ### Requirement: Config values flow to hooks
 
-Hook behavior tunable through recipe `[config.*]` overridden in
-`[recipes.<id>.config]` SHALL be made available to the rendered hook (e.g. via
-environment variables on the generated wiring), without declaring the hook in
-the project manifest.
+Hook behavior tunable through recipe `[config.*]` overridden in `[recipes.<id>.config]` SHALL
+be made available to the rendered hook (e.g. via environment variables on the
+generated wiring), without declaring the hook in the project manifest.
 
 #### Scenario: Overridden config reaches the hook
 - **GIVEN** a recipe hook that reads `WORKTREE_GATE_PROTECTED` and a manifest `[recipes.worktree-flow.config]` setting protected branches
@@ -161,3 +160,32 @@ user-authored hook entries outside the managed block.
 - **GIVEN** a `.claude/settings.json` with a user-authored hook outside the managed block
 - **WHEN** sync runs
 - **THEN** the user-authored hook SHALL be preserved and only the managed block SHALL be rewritten
+
+### Requirement: Omp is a first-class runtime-hook adapter target
+
+Sync SHALL render `[[provides.hooks]]` for the `omp` harness into
+`.omp/extensions/<recipe>-<hook>.ts`, importing `@oh-my-pi/pi-coding-agent`,
+registering `pi.on("tool_call", …)` for `pre-tool-use`, and returning
+`{ block: true, reason }` when the script exits `2`. Documentation that lists
+per-harness hook wiring SHALL include `omp` alongside `claude`, `cursor`,
+`opencode`, and `pi`.
+
+#### Scenario: Omp extension shim generated
+- **GIVEN** an enabled `omp` agent and a `pre-tool-use` hook
+- **WHEN** sync runs
+- **THEN** sync SHALL generate `.omp/extensions/<recipe>-<hook>.ts` that
+  registers `pi.on("tool_call", …)`, spawns the script, and returns
+  `{ block: true }` when the script exits `2`
+
+### Requirement: OpenCode tool-name matcher is case-insensitive
+
+Generated OpenCode plugins SHALL match tool names case-insensitively, consistent
+with the pi and omp adapters (tool ids may arrive lowercase while recipe
+matchers use Claude-style names such as `Edit`/`Write`).
+
+#### Scenario: OpenCode matcher uses the i flag
+- **GIVEN** an enabled `opencode` agent and a `pre-tool-use` hook with a
+  non-empty matcher
+- **WHEN** sync generates the OpenCode plugin
+- **THEN** the plugin SHALL construct the matcher as
+  `new RegExp(\`^(?:${MATCHER})$\`, "i")`

@@ -1,0 +1,89 @@
+{
+  "label": "a tracker.none exemption is recorded and honored at every checkpoint (tracker.none)",
+  "witness": {
+    "state": "bound"
+  },
+  "change": "exempt-change",
+  "tracker_none": "\nno tracker card for this spike\n",
+  "store": {
+    "items": []
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "always",
+      "write": {
+        "kind": "exempt",
+        "reason": "no tracker card for this spike"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "exempt",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK",
+        "write": {
+          "kind": "exempt",
+          "applied": true,
+          "reason": ""
+        }
+      }
+    },
+    {
+      "checkpoint": "work-start",
+      "mode": "always",
+      "expected": {
+        "decision": "allow",
+        "reason": "exempt",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    },
+    {
+      "checkpoint": "pr-review",
+      "mode": "always",
+      "expected": {
+        "decision": "allow",
+        "reason": "exempt",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    },
+    {
+      "checkpoint": "pre-merge",
+      "mode": "always",
+      "expected": {
+        "decision": "allow",
+        "reason": "exempt",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    },
+    {
+      "checkpoint": "archive-close",
+      "mode": "always",
+      "expected": {
+        "decision": "allow",
+        "reason": "exempt",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    }
+  ],
+  "store_pin": {
+    "items": 1,
+    "unique_ids": 1,
+    "open_items": 1,
+    "exemption": "no tracker card for this spike"
+  },
+  "kind": "verdict"
+}

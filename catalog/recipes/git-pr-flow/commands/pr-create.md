@@ -23,6 +23,7 @@ If unset, fall back to the recipe default (`main`) and to the runtime brief
 - The worktree has no unrelated uncommitted changes.
 - Required verification evidence is complete, or the user accepts the gap.
 - `gh` is installed and authenticated.
+- The `pr-review` ledger checkpoint allows the PR (see step 5).
 
 ## Steps
 
@@ -53,11 +54,12 @@ If unset, fall back to the recipe default (`main`) and to the runtime brief
        SWITCH_OK=0
      fi
 
-     # 2. Active account (supports multiple logged-in accounts)
+     # 2. Active account (supports multiple logged-in accounts).
+     # Field-based: read the token after "account", print it only for the
+     # entry the CLI marks "Active account: true".
      ACTIVE=$(gh auth status 2>&1 | awk '
        /Logged in to .* account/ {
-         if (match($0, /account [^ ]+ \(/))      { a=substr($0, RSTART+8, RLENGTH-2) }
-         else if (match($0, /account [^ ]+$/))   { a=substr($0, RSTART+8) }
+         for (i = 1; i <= NF; i++) if ($i == "account") { a = $(i + 1) }
        }
        /Active account: true/ { print a }
      ' | head -1)
@@ -74,7 +76,9 @@ If unset, fall back to the recipe default (`main`) and to the runtime brief
          return 1
        fi
        ACTIVE=$(gh auth status 2>&1 | awk '
-         /Logged in to .* account / { if (match($0, /account [^ ]+ \(/)) { a=substr($0, RSTART+8, RLENGTH-2) } else if (match($0, /account [^ ]+$/)) { a=substr($0, RSTART+8) } }
+         /Logged in to .* account/ {
+           for (i = 1; i <= NF; i++) if ($i == "account") { a = $(i + 1) }
+         }
          /Active account: true/ { print a }' | head -1)
        [ "$ACTIVE" = "$TARGET" ] || { echo "**Blocker**: switch did not land. Aborting."; return 1; }
      else
@@ -98,6 +102,12 @@ If unset, fall back to the recipe default (`main`) and to the runtime brief
    ```bash
    gh pr create --base <base_branch> --title "<title>" --body "<summary and verification>"
    ```
+
+   The `tracker-card-gate` shell hook grades `gh pr create` at the `pr-review`
+   ledger checkpoint. In `always` mode a missing or conflicted tracked item blocks
+   the command (exit 2); in `ask` mode it prompts for a checkpoint-scoped opt-out;
+   in `warn` mode it only reports. Do not bypass the verdict with shell
+   indirection or a non-`gh` PR provider path.
 
 6. STOP. Do not merge. Report the PR URL and wait for explicit user approval.
 

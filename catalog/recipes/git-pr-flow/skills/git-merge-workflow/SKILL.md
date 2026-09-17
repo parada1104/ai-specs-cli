@@ -26,15 +26,25 @@ Use the configured base branch from `[recipes.git-pr-flow.config]` (`base_branch
 This recipe implements GitHub through the `gh` CLI. Honor any no-push/no-merge rules
 declared for the project.
 
+## Artifact ownership
+
+This skill owns provider transport, PR review and merge, and worktree/branch
+cleanup only. It does not own SDD/OpenSpec planning, spec promotion, archive, or
+the pre-merge artifact guardian, and it imposes no planning-artifact
+precondition on the branch.
+
+When the `plan-build-flow` recipe is enabled, that recipe owns artifact
+planning, promotion, and archive, together with its own pre-archive and
+pre-merge gates; finish them before requesting this skill's merge. A project
+that does not enable Plan Build can create and merge a PR with no OpenSpec
+change tree.
+
 ## Preconditions
 
 - User explicitly requested PR/merge/cleanup.
 - Working branch belongs to one focused change.
 - Worktree has no unrelated uncommitted changes.
 - Required verification evidence is complete or the user accepts the gap.
-- A change folder under `openspec/changes/<slug>/` (excluding `archive/`) exists
-  on the branch with at least `tasks.md` committed. If missing, stop before PR
-  creation and complete planning first.
 - `gh` is installed and authenticated when GitHub is the provider.
 
 ## Runtime Preflight
@@ -57,11 +67,12 @@ if [ -n "$EXPECTED_OWNER" ]; then
     SWITCH_OK=0
   fi
 
-  # 2. Active account (supports multiple logged-in accounts)
+  # 2. Active account (supports multiple logged-in accounts).
+  # Field-based: read the token after "account", print it only for the
+  # entry the CLI marks "Active account: true".
   ACTIVE=$(gh auth status 2>&1 | awk '
     /Logged in to .* account/ {
-      if (match($0, /account [^ ]+ \(/))      { a=substr($0, RSTART+8, RLENGTH-2) }
-      else if (match($0, /account [^ ]+$/))   { a=substr($0, RSTART+8) }
+      for (i = 1; i <= NF; i++) if ($i == "account") { a = $(i + 1) }
     }
     /Active account: true/ { print a }
   ' | head -1)
@@ -78,7 +89,9 @@ if [ -n "$EXPECTED_OWNER" ]; then
       return 1
     fi
     ACTIVE=$(gh auth status 2>&1 | awk '
-      /Logged in to .* account / { if (match($0, /account [^ ]+ \(/)) { a=substr($0, RSTART+8, RLENGTH-2) } else if (match($0, /account [^ ]+$/)) { a=substr($0, RSTART+8) } }
+      /Logged in to .* account/ {
+        for (i = 1; i <= NF; i++) if ($i == "account") { a = $(i + 1) }
+      }
       /Active account: true/ { print a }' | head -1)
     [ "$ACTIVE" = "$TARGET" ] || { echo "**Blocker**: switch did not land. Aborting."; return 1; }
   else
@@ -142,51 +155,29 @@ git push -u origin <branch-name>
 gh pr create --base <integration-branch> --title "<title>" --body "<summary and verification>"
 ```
 
-6. Before merging, archive and record SDD/OpenSpec artifacts for the change
-   while still on the review branch. The archive boundary is the pre-merge
-   branch state — never defer this step until after the merge lands on the base
-   branch. Commit and push any archive commits to the review branch before
-   proceeding.
-
-7. **Pre-merge guardian (hard stop):** confirm the change is archived and has
-   tier-minimum files. Prefer:
+6. Classify `HEAD_BRANCH` (see **Head branch class**). Before the provider merge
+   command, authorize the Tracker item with the provider-neutral Tracker
+   lifecycle host. This is Tracker item authorization, not OpenSpec artifact or
+   archive validation; the host is safe when dormant or unbound and is the only
+   Go-ledger bridge. Stop on a non-zero exit:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
-  <slug> --root <repo-root>
+python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
+  <slug> --root <planning-root> --checkpoint pre-merge
 ```
 
-The helper ships with the CLI install under `~/.ai-specs` (not copied into
-consumer projects).
-
-Do **not** merge if `openspec/changes/<slug>/` still exists, or if
-`openspec/changes/archive/<slug>/` is missing tier files.
-
-8. Classify `HEAD_BRANCH` (see **Head branch class**). Merge only after explicit
-   user approval, required checks/review, archive on the review branch, and a
-   clean guardian result:
+   Merge only after explicit user approval and required checks/review. Merge
+   without asking the hosting provider to delete the source branch:
 
 ```bash
-# Feature head — delete remote source via gh
-gh pr merge --squash --delete-branch
-
-# Protected head — never pass --delete-branch
 gh pr merge --squash
 ```
 
-9. After the PR is merged, sync the integration branch. **Post-merge worktree /
-   local / remote branch cleanup runs only for feature heads.** For a protected
-   head, skip worktree remove, `git branch -D`, and `git push origin --delete`
-   for that head — only sync the base:
-
-```bash
-git checkout <integration-branch>
-git pull --ff-only origin <integration-branch>
-```
-
-For a **feature** head, leave the worktree first (`cd` to the main repo root —
-never remove while `$PWD` is inside the worktree). Prefer the worktree-flow
-cleanup script:
+7. After the PR is merged, run the complete cleanup sequence from the main
+   repository worktree. Do not switch the base checkout first: the cleanup
+   command must release every feature worktree before touching its branches,
+   and must delete and verify the remote branch before deleting the local one.
+   The base sync is deliberately LAST:
 
 ```bash
 cd <main-repo-root>
@@ -194,25 +185,28 @@ bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
   --dir .worktrees --base <integration-branch>
 ```
 
-Manual fallback only if the script is unavailable:
+The cleanup command owns, in this order, merged-worktree removal, remote branch
+deletion plus independent verification, local branch removal, and finally:
 
 ```bash
-git worktree remove <absolute-path-to-worktree>
-git branch -D <branch-name>
+git pull --ff-only origin <integration-branch>
 ```
 
-> **Note**: `git branch -D` (capital D) is required because `gh pr merge --squash`
-> rewrites history — the feature branch commits are not ancestors of the target
-> branch, so `git branch -d` would refuse with "not fully merged". Force-delete
-> is safe here because the PR was already merged. Stop without deleting if the
-> worktree is dirty.
+It checks protected names immediately before every destructive operation and
+refuses any branch still held by a worktree. The local branch is deleted only
+after the remote one is provably gone, so an unreachable remote leaves a branch
+a rerun can retry instead of an orphaned remote nothing can find again. It also
+inspects local branches left without worktrees; it deletes those only when
+positive merge evidence exists — a merged tip, patch equivalence, or identical
+tree content. A same-named path existing on the base is not evidence, because
+two commits can touch one path with entirely different content and never meet.
+Ambiguous evidence is preserved.
+The command must be run from the main worktree, never from a feature worktree.
 
-If the remote feature branch still exists after merge (e.g. merge without
-`--delete-branch`), delete it explicitly — **feature heads only**:
-
-```bash
-git push origin --delete <branch-name>
-```
+Do not use hosting-provider source-branch deletion for this layout: the base
+branch is checked out in the main worktree, so provider-side local deletion is
+structurally unable to complete the required local/remote cleanup sequence.
+Manual deletion is not a substitute for the verified cleanup command.
 
 ## Guardrails
 
@@ -220,7 +214,7 @@ git push origin --delete <branch-name>
 - Never push, merge, delete branches, or remove worktrees without explicit user instruction.
 - Never remove a worktree before confirming the PR is merged and no uncommitted work remains.
 - Never delete a protected head (`main` / `master` / `development` / `staging` /
-  configured base or integration branch) via `--delete-branch`, worktree cleanup,
-  or `git push --delete`.
+  configured base or integration branch) via hosting-provider branch deletion,
+  worktree cleanup, or `git push --delete`.
 - Preserve unrelated changes; stop and ask if cleanup would touch them.
 - If `gh` is unavailable or unauthenticated, stop with the exact blocker.

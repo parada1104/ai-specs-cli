@@ -8,8 +8,10 @@ Exit code is non-zero when one or more ERROR checks are present.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
@@ -143,11 +145,12 @@ class Doctor:
         self._check_legacy_recipe_versions()
         self._check_agents_md()
         self._check_brief_render_policy()
+        self._check_brief_provenance()
         self._check_bundled_assets()
         self._check_tracked_bundled_leftovers()
         self._check_enabled_agents()
         self._check_recipe_cli_deps()
-        self._check_tracker_card_link()
+        self._check_tracker_ledger()
         self._check_harness_env_layout()
         self._check_worktree_gate()
         self._check_repo_topology()
@@ -455,6 +458,106 @@ class Doctor:
         except ValueError:
             return False
 
+    def _check_brief_provenance(self) -> None:
+        """Report the runtime brief's lock-backed ownership state."""
+        manifest_path = self.root / "ai-specs" / "ai-specs.toml"
+        agents_path = self.root / "AGENTS.md"
+        if not manifest_path.is_file():
+            return
+        if self._brief_render_disabled():
+            self.checks.append(Check(
+                Severity.INFO,
+                "brief-provenance",
+                "runtime brief ownership: disabled ([brief].render = false)",
+                guidance="set [brief].render = true when ai-specs should render AGENTS.md",
+            ))
+            return
+        try:
+            import tomllib
+
+            with manifest_path.open("rb") as fh:
+                manifest = tomllib.load(fh)
+            renderer_path = Path(__file__).with_name("agents-render.py")
+            renderer_spec = importlib.util.spec_from_file_location(
+                "agents_render_doctor", renderer_path
+            )
+            if renderer_spec is None or renderer_spec.loader is None:
+                raise RuntimeError("unable to load agents-render.py")
+            renderer = importlib.util.module_from_spec(renderer_spec)
+            sys.modules[renderer_spec.name] = renderer
+            renderer_spec.loader.exec_module(renderer)
+
+            # Rebuild the same resolved recipe data that the sync pipeline passes
+            # to agents-render.py. If it cannot be built, report undetermined
+            # rather than guessing ownership from a partial brief.
+            materialize_path = Path(__file__).with_name("recipe-materialize.py")
+            materialize_spec = importlib.util.spec_from_file_location(
+                "recipe_materialize_doctor_brief", materialize_path
+            )
+            if materialize_spec is None or materialize_spec.loader is None:
+                raise RuntimeError("unable to load recipe-materialize.py")
+            materialize = importlib.util.module_from_spec(materialize_spec)
+            sys.modules[materialize_spec.name] = materialize
+            materialize_spec.loader.exec_module(materialize)
+            resolved = materialize.build_resolved_config(self.root)
+            materialize.merge_catalog_defaults_into_resolved(resolved, AI_SPECS_HOME)
+            materialize.attach_brief_fragments_to_resolved(resolved, AI_SPECS_HOME)
+            # Match materialize_recipes() auto-binding so doctor renders the
+            # same structured brief bytes as sync, including recipe-provided
+            # capability bindings that are not explicit in the manifest.
+            enabled_ids = list(resolved.get("enabled") or [])
+            if enabled_ids:
+                catalog_dir = AI_SPECS_HOME / "catalog" / "recipes"
+                manifest_bindings = materialize.load_bindings_from_manifest(self.root)
+                auto_bindings = materialize.resolve_bindings(
+                    catalog_dir, enabled_ids, manifest_bindings
+                )
+                if auto_bindings:
+                    resolved["bindings"] = auto_bindings
+            resolved.setdefault("project_root", str(self.root.resolve()))
+            would_write = "\n".join(
+                renderer._render_lines(manifest, resolved)
+            ).encode()
+            # Ask for the state sync would ACT on. classify_brief returns the
+            # raw classification, which reports "untracked" for a brief sync
+            # would silently adopt — a diagnostic that contradicts the tool.
+            state = renderer.brief_effective_state(
+                manifest_path,
+                agents_path,
+                would_write,
+            )
+        except Exception:
+            state = "undetermined"
+        if state == "missing":
+            message = "runtime brief ownership: missing"
+            severity = Severity.INFO
+            guidance = "ai-specs sync will create AGENTS.md"
+        elif state == "managed_current":
+            message = "runtime brief ownership: managed_current"
+            severity = Severity.OK
+            guidance = ""
+        elif state == "managed_stale":
+            message = "runtime brief ownership: managed_stale"
+            severity = Severity.INFO
+            guidance = "ai-specs sync will refresh the untouched brief"
+        elif state == "marker":
+            message = "runtime brief ownership: marker (user-owned)"
+            severity = Severity.INFO
+            guidance = "remove the marker only if ai-specs should manage AGENTS.md"
+        elif state == "user_modified":
+            message = "runtime brief ownership: user_modified; preserving existing file"
+            severity = Severity.WARN
+            guidance = "ai-specs sync --adopt-brief or add the runtime-brief marker"
+        elif state == "untracked":
+            message = "runtime brief ownership: untracked; preserving existing file"
+            severity = Severity.WARN
+            guidance = "ai-specs sync --adopt-brief or add the runtime-brief marker"
+        else:
+            message = f"runtime brief ownership: {state}; preserving existing file"
+            severity = Severity.WARN
+            guidance = "inspect the lock and target, or add the runtime-brief marker"
+        self.checks.append(Check(severity, "brief-provenance", message, guidance=guidance))
+
     def _check_brief_render_policy(self) -> None:
         manifest = self._load_manifest()
         if not manifest:
@@ -529,7 +632,7 @@ class Doctor:
         # Pre-register so dataclasses can resolve cls.__module__ (Python 3.12+).
         sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)
-        return mod.check_project_deps(self.root)
+        return mod.check_project_deps(self.root, ai_specs_home=AI_SPECS_HOME)
 
     def _check_recipe_cli_deps(self) -> None:
         data = self._load_manifest()
@@ -560,11 +663,55 @@ class Doctor:
                 ))
 
 
-    def _load_trello_link(self):
-        """Sibling-load lib/_internal/trello_link.py for the shared validity predicate."""
+    def _tracker_common_dir(self) -> Path | None:
+        """Resolve the owning repository's Git common dir (never the planning root)."""
         try:
-            path = Path(__file__).with_name("trello_link.py")
-            spec = importlib.util.spec_from_file_location("trello_link_doctor", path)
+            proc = subprocess.run(
+                ["git", "-C", str(self.root), "rev-parse",
+                 "--path-format=absolute", "--git-common-dir"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            return None
+        if proc.returncode != 0:
+            return None
+        raw = proc.stdout.strip()
+        if not raw:
+            return None
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = self.root / candidate
+        try:
+            return candidate.resolve()
+        except OSError:
+            return candidate
+
+    def _tracker_witness_path(self, common: Path | None) -> Path | None:
+        if common is None:
+            return None
+        return common / "ai-specs" / "ledger" / "witness.json"
+
+    def _tracker_declared(self) -> bool:
+        """True when the project declares tracking supply (a config read, not a grade)."""
+        for candidate in (
+            self.root / "openspec" / "config.yaml",
+            self.root / "openspec" / "config.yml",
+        ):
+            if not candidate.is_file():
+                continue
+            try:
+                text = candidate.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if any(line.lstrip().startswith("tracking:") for line in text.splitlines()):
+                return True
+        return False
+
+    def _load_ledger_bridge(self):
+        """Sibling-load lib/_internal/ledger_bridge.py (cold-cache safe), or None."""
+        try:
+            path = Path(__file__).with_name("ledger_bridge.py")
+            spec = importlib.util.spec_from_file_location("ledger_bridge_doctor", path)
             if spec is None or spec.loader is None:
                 return None
             mod = importlib.util.module_from_spec(spec)
@@ -574,84 +721,151 @@ class Doctor:
         except Exception:
             return None
 
-    def _check_tracker_card_link(self) -> None:
-        """WARN when active changes lack a ## Tracker section (recipe+marker)."""
+    def _tracker_recipe_id(self) -> str:
+        """The witness-bound recipe id, with the bridge's legacy fallback.
+
+        Reading the witness is acquisition, never grading (task 3.2). An empty result
+        means the bridge is unavailable, so no ``recipes.<id>`` section can be
+        selected and the relevance gate relies on the declaration and the witness
+        alone. The fallback literal lives in the bridge, not here.
+        """
+        bridge = self._load_ledger_bridge()
+        if bridge is None:
+            return ""
+        try:
+            return bridge.recipe_id(self.root)
+        except Exception:
+            return ""
+
+    def _tracker_recipe_enabled(self, recipe_id: str) -> bool:
         data = self._load_manifest()
-        recipes = data.get("recipes", {}) or {}
-        tr = recipes.get("trello-mcp-workflow") or {}
-        if not isinstance(tr, dict) or tr.get("enabled") is not True:
+        recipes = data.get("recipes") or {}
+        entry = recipes.get(recipe_id) if isinstance(recipes, dict) and recipe_id else None
+        return isinstance(entry, dict) and entry.get("enabled") is True
+
+    def _tracker_witness_state(self) -> str:
+        witness = self._tracker_witness_path(self._tracker_common_dir())
+        if witness is None or not witness.is_file():
+            return ""
+        try:
+            data = json.loads(witness.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        if isinstance(data, dict) and isinstance(data.get("state"), str):
+            return data["state"]
+        return ""
+
+    def _tracker_ledger_in_play(self) -> bool:
+        """Relevance gate only: is the tracker ledger part of this project?
+
+        Reads configuration and any already-written witness; it never grades a
+        link section. Every severity below comes from the Go predicate (A8/A10).
+        """
+        data = self._load_manifest()
+        recipes = data.get("recipes") or {}
+        recipe_id = self._tracker_recipe_id()
+        tr = recipes.get(recipe_id) if isinstance(recipes, dict) and recipe_id else None
+        if isinstance(tr, dict) and tr.get("enabled") is True:
+            return True
+        if self._tracker_declared():
+            return True
+        witness = self._tracker_witness_path(self._tracker_common_dir())
+        return witness is not None and witness.is_file()
+
+    def _tracker_ledger_binary(self) -> Path | None:
+        """Resolve a verified worktree-gate binary, or None (fail closed to ERROR).
+
+        ``WORKTREE_GATE_BIN`` is the debugging/test pin; the version-keyed cache
+        candidate is accepted only with its ``.verified`` receipt, matching the
+        checkpoint hosts. An unverified or absent binary is infrastructure.
+        """
+        override = os.environ.get("WORKTREE_GATE_BIN", "")
+        if override:
+            candidate = Path(override)
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+            return None
+        gb = self._load_gate_binary()
+        if gb is None:
+            return None
+        try:
+            goos, goarch = gb.detect_platform()
+            candidate = gb.cache_bin_path(AI_SPECS_HOME, goos=goos, goarch=goarch)
+        except Exception:
+            return None
+        receipt = candidate.with_name(candidate.name + ".verified")
+        if candidate.is_file() and os.access(candidate, os.X_OK) and receipt.is_file():
+            return candidate
+        return None
+
+    def _tracker_ledger_guidance(self, reason: str, severity: Severity) -> str:
+        """Presentation-only action hint keyed off the Go reason (never a grade)."""
+        if severity == Severity.ERROR:
+            return "run ai-specs sync or ai-specs sync --refresh-gates"
+        return {
+            "witness-missing": "ai-specs sync",
+            "ambiguous": 'add [[bindings]] capability="tracker"',
+            "declared-not-bound": "enable the provider recipe or remove the tracking declaration",
+            "conflict": "adjudicate at the next checkpoint",
+            "unbound": "enable one tracker recipe or ignore",
+        }.get(reason, "")
+
+    def _check_tracker_ledger(self) -> None:
+        """Render the Go ledger verdict's ``doctor`` finding (A10/D15).
+
+        Doctor is a host with no write side effect: it resolves the verified
+        binary, invokes ``--ledger`` in the non-blocking ``warn`` posture, and
+        copies the finding's severity and message verbatim. It never grades a
+        ``## Tracker`` section itself. A missing/unverified binary or an
+        unreadable verdict is infrastructure, so the check fails to ERROR.
+        """
+        if not self._tracker_ledger_in_play():
             return
-
-        pc = self._load_project_cache()
-        marker = None
-        if pc is not None:
-            try:
-                marker = (
-                    pc.recipe_skills_root(self.root)
-                    / "trello-mcp-workflow"
-                    / "bootstrap-ready"
-                )
-            except Exception:
-                marker = None
-        local_marker = self.root / ".recipe" / "trello-mcp-workflow" / "bootstrap-ready"
-        if not ((marker is not None and marker.is_file()) or local_marker.is_file()):
+        if self._tracker_witness_state() == "bound" and not self._tracker_recipe_enabled("plan-build-flow"):
+            # L5: work-start stays hosted by plan-build-flow. Where that recipe is not
+            # enabled the checkpoint is unhosted while the other four keep grading;
+            # doctor reports the limitation and issues no write (spec "Unhosted
+            # work-start is visible").
+            self.checks.append(Check(
+                Severity.INFO, "tracker-ledger",
+                "work-start is unhosted: enable plan-build-flow to grade that checkpoint",
+                guidance="enable the plan-build-flow recipe, or grade work-start with an explicit --write",
+            ))
+        binary = self._tracker_ledger_binary()
+        if binary is None:
+            self.checks.append(Check(
+                Severity.ERROR, "tracker-ledger",
+                "no verified worktree-gate binary; the tracker ledger is failing open",
+                guidance="run ai-specs sync or ai-specs sync --refresh-gates",
+            ))
             return
-
-        link = self._load_trello_link()
-        changes_dir = self.root / "openspec" / "changes"
-        deficient: list[str] = []
-        if changes_dir.is_dir():
-            for change in sorted(p for p in changes_dir.iterdir() if p.is_dir()):
-                if change.name == "archive":
-                    continue
-                if not any(
-                    (change / f).is_file()
-                    for f in ("proposal.md", "tasks.md", "spec.md", "design.md")
-                ):
-                    continue
-                if (change / "tracker.none").is_file():
-                    continue
-                if link is not None and link.is_valid_link(
-                    [change / "proposal.md", change / "tasks.md"]
-                ):
-                    try:
-                        parsed = link.parse_tracker_section(
-                            [change / "proposal.md", change / "tasks.md"]
-                        )
-                        card_id = parsed.get("card_id", "")
-                        if card_id and not link.card_id_looks_canonical(card_id):
-                            self.checks.append(Check(
-                                Severity.INFO, "tracker-card",
-                                f"{change.name}: card_id is non-canonical (not 24-hex)",
-                                guidance="prefer the 24-hex Trello card id",
-                            ))
-                        if "url" not in parsed or not parsed.get("url"):
-                            self.checks.append(Check(
-                                Severity.INFO, "tracker-card",
-                                f"{change.name}: ## Tracker section missing url",
-                                guidance="add url alongside card_id",
-                            ))
-                    except Exception:
-                        pass
-                    continue
-                deficient.append(change.name)
-
-        if deficient:
-            sample = ", ".join(deficient[:5])
-            more = f" (+{len(deficient) - 5})" if len(deficient) > 5 else ""
+        try:
+            proc = subprocess.run(
+                [str(binary), "--ledger", "--checkpoint", "work-start",
+                 "--ledger-mode", "warn", "--project-root", str(self.root)],
+                capture_output=True, text=True, timeout=30,
+            )
+            payload = json.loads(proc.stdout)
+        except Exception:
+            payload = None
+        finding = payload.get("doctor") if isinstance(payload, dict) else None
+        if not isinstance(finding, dict):
             self.checks.append(Check(
-                Severity.WARN, "tracker-card",
-                f"{len(deficient)} active change(s) missing a valid ## Tracker link section: {sample}{more}",
-                guidance=(
-                    "create/link a Trello card and write the ## Tracker section "
-                    "of the change's proposal.md (card_id + url), or add tracker.none"
-                ),
+                Severity.ERROR, "tracker-ledger",
+                "tracker ledger verdict was not machine-readable; failing open",
+                guidance="run ai-specs sync or ai-specs sync --refresh-gates",
             ))
-        else:
-            self.checks.append(Check(
-                Severity.OK, "tracker-card",
-                "all active changes carry a valid ## Tracker link section (or tracker.none)",
-            ))
+            return
+        try:
+            severity = Severity(str(finding.get("severity") or "OK"))
+        except ValueError:
+            severity = Severity.ERROR
+        reason = str(payload.get("reason") or "")
+        message = str(finding.get("message") or "") or f"tracker-ledger: {reason}"
+        self.checks.append(Check(
+            severity, "tracker-ledger", message,
+            guidance=self._tracker_ledger_guidance(reason, severity),
+        ))
 
     def _load_gate_binary(self):
         """Sibling-load lib/_internal/gate_binary.py for the gate check."""
@@ -672,11 +886,11 @@ class Doctor:
 
         Severity table:
           OK    Go binary resolved, version matches the stamp, selftest passes
-          INFO  gate_impl=bash configured explicitly (rollback lever)
-          WARN  gate_impl=auto silently falling back to Bash
+          ERROR gate_impl=bash configured (retired value)
+          ERROR no usable binary (auto and go both fail open)
           WARN  binary version does not match the stamped version
-          ERROR gate_impl=go with no usable binary (gate failing open)
           ERROR digest mismatch recorded at the last acquisition
+          INFO  leftover worktree-gate-legacy.sh on disk (inert; manual rm)
 
         A fail-open gate is invisible by construction, so this ERROR is the
         only place a user can discover it.
@@ -698,11 +912,13 @@ class Doctor:
 
         launcher = self.root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
         stamped_version = ""
+        stamped_impl = ""
         if launcher.is_file():
             for line in launcher.read_text(encoding="utf-8").splitlines():
                 if line.startswith('stamped_gate_version="'):
                     stamped_version = line.split('"', 2)[1]
-                    break
+                elif line.startswith('stamped_gate_impl="'):
+                    stamped_impl = line.split('"', 2)[1]
 
         gb = self._load_gate_binary()
         if gb is None:
@@ -722,10 +938,22 @@ class Doctor:
             ))
             return
 
-        if impl == "bash":
+        leftover = (
+            self.root / "ai-specs" / "recipes" / "worktree-flow"
+            / "hooks" / "worktree-gate-legacy.sh"
+        )
+        if leftover.is_file():
             self.checks.append(Check(
                 Severity.INFO, "worktree-gate",
-                "gate_impl=bash configured explicitly; frozen Bash reference in effect (rollback lever)",
+                "leftover worktree-gate-legacy.sh is inert and is not a governed asset",
+                guidance="rm ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh",
+            ))
+
+        if impl == "bash" or stamped_impl == "bash":
+            self.checks.append(Check(
+                Severity.ERROR, "worktree-gate",
+                "gate_impl=bash is retired; set auto or go, then ai-specs sync",
+                guidance="doctor is read-only; set gate_impl to auto or go, then run ai-specs sync",
             ))
             return
 
@@ -735,18 +963,11 @@ class Doctor:
 
         if not usable:
             expected = str(binary)
-            if impl == "go":
-                self.checks.append(Check(
-                    Severity.ERROR, "worktree-gate",
-                    f"gate_impl=go and no usable binary at {expected}; the gate is failing open",
-                    guidance="run ai-specs sync (network) or AI_SPECS_GATE_BUILD=1 ai-specs sync (local build)",
-                ))
-            else:
-                self.checks.append(Check(
-                    Severity.WARN, "worktree-gate",
-                    f"gate_impl=auto and no usable binary at {expected}; falling back to the Bash implementation",
-                    guidance="run ai-specs sync to acquire the Go binary",
-                ))
+            self.checks.append(Check(
+                Severity.ERROR, "worktree-gate",
+                f"gate_impl={impl} and no usable binary at {expected}; the gate is failing open",
+                guidance="run ai-specs sync or ai-specs sync --refresh-gates",
+            ))
             return
 
         version = gb.binary_version(binary)
@@ -849,6 +1070,25 @@ class Doctor:
                 Severity.OK, "harness-env",
                 f"ai-specs.env has {len(vars_map)} required MCP env key(s)",
             ))
+
+        try:
+            collect_allowed = getattr(env_mod, "collect_env_allowed", None)
+            allowed_map = (
+                collect_allowed(self.root) if callable(collect_allowed) else {}
+            )
+        except Exception:
+            allowed_map = {}
+        for var in sorted(allowed_map):
+            choices = allowed_map[var]
+            configured = (present.get(var) or "").strip()
+            if not configured:
+                continue
+            if configured.lower() not in {choice.lower() for choice in choices}:
+                self.checks.append(Check(
+                    Severity.WARN, "harness-env-value",
+                    f"invalid value for {var} in ai-specs.env (allowed: {', '.join(choices)})",
+                    guidance="run ai-specs configure-recipes to pick a valid value",
+                ))
 
     def _mcp_server_count(self, data: dict) -> int:
         mcp = data.get("mcp")

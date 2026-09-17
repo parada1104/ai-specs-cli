@@ -27,15 +27,25 @@ Use the configured base branch from `[recipes.gitlab-mr-flow.config]` (`base_bra
 This recipe implements GitLab through the `glab` CLI. Honor any no-push/no-merge rules
 declared for the project.
 
+## Artifact ownership
+
+This skill owns provider transport, MR review and merge, and worktree/branch
+cleanup only. It does not own SDD/OpenSpec planning, spec promotion, archive, or
+the pre-merge artifact guardian, and it imposes no planning-artifact
+precondition on the branch.
+
+When the `plan-build-flow` recipe is enabled, that recipe owns artifact
+planning, promotion, and archive, together with its own pre-archive and
+pre-merge gates; finish them before requesting this skill's merge. A project
+that does not enable Plan Build can create and merge an MR with no OpenSpec
+change tree.
+
 ## Preconditions
 
 - User explicitly requested MR/merge/cleanup.
 - Working branch belongs to one focused change.
 - Worktree has no unrelated uncommitted changes.
 - Required verification evidence is complete or the user accepts the gap.
-- A change folder under `openspec/changes/<slug>/` (excluding `archive/`) exists
-  on the branch with at least `tasks.md` committed. If missing, stop before PR
-  creation and complete planning first.
 - `glab` is installed and authenticated.
 
 ## Runtime Preflight
@@ -78,12 +88,16 @@ Then run **Runtime Preflight: Account Match** when `expected_owner` is set in
 # Runtime Preflight: Account Match (GitLab)
 EXPECTED_OWNER="{config.expected_owner}"
 if [ -n "$EXPECTED_OWNER" ]; then
+  # glab has no "Active account" marker: only trust the result when the
+  # status lists exactly one login, otherwise leave it empty so the mismatch
+  # blocker fires.
   ACTIVE=$(glab auth status 2>&1 | awk '
-    /Logged in to gitlab\.com account/ {
-      if (match($0, /account [^ ]+ \(/))      { a=substr($0, RSTART+8, RLENGTH-2) }
-      else if (match($0, /account [^ ]+$/))   { a=substr($0, RSTART+8) }
+    /Logged in to .* as / {
+      for (i = 1; i <= NF; i++) if ($i == "as") { a = $(i + 1) }
+      n += 1
     }
-    /Active account: true/ { print a }' | head -1)
+    END { if (n == 1) print a }
+  ')
   if [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
     echo "**Blocker**: active glab account is '$ACTIVE'; expected '$EXPECTED_OWNER'."
     echo "glab has no 'auth switch'. Run: glab auth login   (or export GLAB_TOKEN=<token>)."
@@ -134,29 +148,19 @@ glab mr create --source-branch <branch-name> --target-branch <base_branch> --tit
 APPROVED_SHA=$(glab mr view <mr-number> --output json | jq -r '.sha')
 ```
 
-8. Before merging, archive and record SDD/OpenSpec artifacts for the change
-   while still on the review branch. The archive boundary is the pre-merge
-   branch state — never defer this step until after the merge lands on the base
-   branch. Commit and push any archive commits to the review branch before
-   proceeding.
-
-9. **Pre-merge guardian (hard stop):** confirm the change is archived and has
-   tier-minimum files. Prefer:
+8. Classify `HEAD_BRANCH` (see **Head branch class**). Before the provider merge
+   command, authorize the Tracker item with the provider-neutral Tracker
+   lifecycle host. This is Tracker item authorization, not OpenSpec artifact or
+   archive validation; the host is safe when dormant or unbound and is the only
+   Go-ledger bridge. Stop on a non-zero exit:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
-  <slug> --root <repo-root>
+python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
+  <slug> --root <planning-root> --checkpoint pre-merge
 ```
 
-The helper ships with the CLI install under `~/.ai-specs` (not copied into
-consumer projects).
-
-Do **not** merge if `openspec/changes/<slug>/` still exists, or if
-`openspec/changes/archive/<slug>/` is missing tier files.
-
-10. Classify `HEAD_BRANCH` (see **Head branch class**). Merge only after explicit
-   user approval, required checks/review, the pre-merge archive step above, a
-   clean guardian result, and pinning the approved SHA:
+   Merge only after explicit user approval, required checks/review, and
+   pinning the approved SHA:
 
 ```bash
 # Feature head — remove source branch
@@ -168,7 +172,7 @@ glab mr merge <mr-number> --squash --yes --sha $APPROVED_SHA
 
 > **Note**: The `--sha` flag ensures that only the reviewed commit is merged. If the branch was updated between approval and merge, the command will fail, preventing unreviewed commits from being merged.
 
-11. After the MR is merged, sync the integration branch. **Post-merge worktree /
+9. After the MR is merged, sync the integration branch. **Post-merge worktree /
     local branch cleanup runs only for feature heads.** For a protected head,
     skip worktree remove and `git branch -D` for that head — only sync the base:
 

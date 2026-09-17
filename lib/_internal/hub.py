@@ -71,6 +71,7 @@ _MENU: list[tuple[Action, str, str]] = [
     (Action.AGENTS, "Agents", "Select which AI agents to enable"),
     (Action.SKILLS, "Skills", "List / inspect project skills by origin"),
     (Action.RECIPES, "Recipes", "List / add / remove / configure catalog recipes"),
+    (Action.CONFIGURE_RECIPES, "Configure recipes", "Set up recipe config, CLI deps, env vars"),
     (Action.RULES_AUDIT, "Rules audit", "Inventory legacy rules for migration"),
     (Action.UPGRADE, "Upgrade", "Upgrade the global ai-specs installation"),
     (Action.VERSION, "Version", "Print the CLI version"),

@@ -69,6 +69,60 @@ class EnvScaffoldTests(unittest.TestCase):
             "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n"
         )
 
+    def _project_with_recipes(self, root: Path, recipes: dict[str, str]) -> Path:
+        """Create a project with several enabled recipes in the CLI catalog."""
+        catalog = root / "catalog" / "recipes"
+        project = root / "project"
+        (project / "ai-specs").mkdir(parents=True)
+        manifest = '[project]\nname = "p"\n'
+        for recipe_id, recipe_toml in recipes.items():
+            rdir = catalog / recipe_id
+            rdir.mkdir(parents=True)
+            (rdir / "recipe.toml").write_text(recipe_toml, encoding="utf-8")
+            manifest += f'\n[recipes.{recipe_id}]\nenabled = true\nversion = "1.0"\n'
+        (project / "ai-specs" / "ai-specs.toml").write_text(manifest, encoding="utf-8")
+        return project
+
+    def _vault_toml(self) -> str:
+        return (
+            "[recipe]\n"
+            'id = "vault-canonical-store"\n'
+            'name = "Vault"\n'
+            'description = "D"\n'
+            'version = "1.0"\n\n'
+            "[[provides.mcp]]\n"
+            'id = "vault"\n'
+            'command = "npx"\n'
+            'env = { CANONICAL_VAULT_PATH = "$CANONICAL_VAULT_PATH" }\n'
+        )
+
+    def _two_recipe_project(self, root: Path) -> Path:
+        return self._project_with_recipes(
+            root,
+            {
+                "trello-mcp-workflow": self._trello_toml(),
+                "vault-canonical-store": self._vault_toml(),
+            },
+        )
+
+    def _jinna_toml(self) -> str:
+        """Minimal jinna recipe whose MCP preset references the OpenProject vars."""
+        return (
+            "[recipe]\n"
+            'id = "jinna-mcp-recipe"\n'
+            'name = "OpenProject Provider MCP"\n'
+            'description = "D"\n'
+            'version = "1.0.0"\n\n'
+            "[[provides.mcp]]\n"
+            'id = "jinna"\n'
+            'command = "{dep:jinna}"\n'
+            'args = ["mcp"]\n'
+            'env = { OPENPROJECT_BASE_URL = "$OPENPROJECT_BASE_URL", '
+            'OPENPROJECT_API_TOKEN = "$OPENPROJECT_API_TOKEN", '
+            'OPENPROJECT_AUTH = "$OPENPROJECT_AUTH" }\n'
+            'env_allowed = { OPENPROJECT_AUTH = ["basic", "bearer"] }\n'
+        )
+
     def test_write_env_uses_dotenv_not_export(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"
@@ -148,10 +202,8 @@ class EnvScaffoldTests(unittest.TestCase):
             self.assertIn("TRELLO_API_KEY=", text)
             self.assertIn("trello.com/power-ups/admin", text)
             self.assertNotIn("export ", text)
-            stub = (project / "ai-specs" / ".envrc.example").read_text(encoding="utf-8")
-            self.assertIn("DEPRECATED", stub)
-            nested_stub = (project / "ai-specs" / ".env.example").read_text(encoding="utf-8")
-            self.assertIn("DEPRECATED", nested_stub)
+            self.assertFalse((project / "ai-specs" / ".envrc.example").exists())
+            self.assertFalse((project / "ai-specs" / ".env.example").exists())
 
     def test_generate_env_example_backup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -167,6 +219,67 @@ class EnvScaffoldTests(unittest.TestCase):
                 (project / "ai-specs.env.example.bak").read_text(encoding="utf-8"),
                 "OLD\n",
             )
+
+    def test_generate_env_example_skips_identical_rewrite(self):
+        """Idempotent sync must not create .bak when example content is unchanged."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="trello-mcp-workflow", recipe_toml=self._trello_toml()
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                self.mod.generate_env_example(project)
+                self.mod.generate_env_example(project)
+            self.assertFalse((project / "ai-specs.env.example.bak").exists())
+            self.assertTrue((project / "ai-specs.env.example").is_file())
+
+    def test_generate_env_example_renders_openproject_auth_provider_default(self):
+        """The example renders the provider's effective default `basic`; others stay blank."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                path = self.mod.generate_env_example(project)
+            text = path.read_text(encoding="utf-8")
+            self.assertRegex(text, r"(?m)^OPENPROJECT_AUTH=basic\s+#")
+            self.assertRegex(text, r"(?m)^OPENPROJECT_BASE_URL=\s+#")
+            self.assertRegex(text, r"(?m)^OPENPROJECT_API_TOKEN=\s+#")
+            # Example rendering only: it must never create the runtime env file.
+            self.assertFalse((project / "ai-specs.env").exists())
+
+    def test_generate_env_example_default_is_example_only_and_idempotent(self):
+        """A prefilled default stays out of runtime env and keeps .bak idempotence."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                self.mod.generate_env_example(project)
+                self.mod.generate_env_example(project)
+                missing = self.mod.missing_required_values(project)
+            self.assertIn("OPENPROJECT_AUTH", missing)
+            self.assertFalse((project / "ai-specs.env.example.bak").exists())
+            self.assertFalse((project / "ai-specs.env").exists())
+
+    def test_generate_env_example_matches_real_catalog_jinna_recipe(self):
+        """Triangulation: the real catalog declaration yields the same default line."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            (project / "ai-specs").mkdir(parents=True)
+            (project / "ai-specs" / "ai-specs.toml").write_text(
+                '[project]\nname = "p"\n\n'
+                '[recipes.jinna-mcp-recipe]\nenabled = true\nversion = "1.0.0"\n',
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(ROOT)}):
+                path = self.mod.generate_env_example(project)
+            text = path.read_text(encoding="utf-8")
+            self.assertRegex(text, r"(?m)^OPENPROJECT_AUTH=basic\s+#")
+            self.assertIn("provider's effective default", text)
+            self.assertRegex(text, r"(?m)^OPENPROJECT_BASE_URL=\s+#")
 
     def test_ensure_root_envrc_creates(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -422,6 +535,308 @@ class EnvScaffoldTests(unittest.TestCase):
             self.assertEqual(result["TRELLO_API_KEY"], "secret-key")
             password.assert_called()
 
+    def test_collect_env_vars_selected_recipe_only(self):
+        """recipe_ids narrows collection to the recipe being configured."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                selected = self.mod.collect_env_vars(
+                    project, recipe_ids=["trello-mcp-workflow"]
+                )
+            self.assertEqual(sorted(selected), ["TRELLO_API_KEY", "TRELLO_TOKEN"])
+
+    def test_collect_env_vars_aggregate_when_omitted(self):
+        """Backward compatibility: omitting recipe_ids keeps aggregate behavior."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                aggregate = self.mod.collect_env_vars(project)
+                explicit_none = self.mod.collect_env_vars(project, recipe_ids=None)
+            self.assertEqual(
+                sorted(aggregate),
+                ["CANONICAL_VAULT_PATH", "TRELLO_API_KEY", "TRELLO_TOKEN"],
+            )
+            self.assertEqual(sorted(explicit_none), sorted(aggregate))
+
+    def test_collect_env_vars_empty_selection_collects_nothing(self):
+        """An empty selection is a valid scope: no recipe contributes vars."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                selected = self.mod.collect_env_vars(project, recipe_ids=[])
+            self.assertEqual(selected, {})
+
+    def test_collect_env_vars_selected_skips_disabled_recipe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root,
+                recipe_id="trello-mcp-workflow",
+                recipe_toml=self._trello_toml(),
+                enabled=False,
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                selected = self.mod.collect_env_vars(
+                    project, recipe_ids=["trello-mcp-workflow"]
+                )
+            self.assertEqual(selected, {})
+
+    def test_collect_env_allowed_reads_recipe_declaration(self):
+        """A recipe may constrain an MCP env reference to declared allowed values."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                allowed = self.mod.collect_env_allowed(
+                    project, recipe_ids=["jinna-mcp-recipe"]
+                )
+            self.assertEqual(allowed, {"OPENPROJECT_AUTH": ["basic", "bearer"]})
+
+    def test_collect_env_allowed_skips_disabled_recipe(self):
+        """A disabled recipe contributes no constraints."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root,
+                recipe_id="jinna-mcp-recipe",
+                recipe_toml=self._jinna_toml(),
+                enabled=False,
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                allowed = self.mod.collect_env_allowed(
+                    project, recipe_ids=["jinna-mcp-recipe"]
+                )
+            self.assertEqual(allowed, {})
+
+    def test_collect_env_allowed_empty_for_unconstrained_recipe(self):
+        """A recipe declaring env references but no allowed values constrains nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="trello-mcp-workflow", recipe_toml=self._trello_toml()
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                allowed = self.mod.collect_env_allowed(project)
+            self.assertEqual(allowed, {})
+
+    def test_collect_env_allowed_ignores_malformed_declaration(self):
+        """A malformed env_allowed shape is ignored, never a bogus or crashing constraint."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for malformed in ('"basic"', "7"):
+                with self.subTest(malformed=malformed):
+                    root = Path(tmp) / malformed.strip('"')
+                    project = self._project_with_recipe(
+                        root,
+                        recipe_id="jinna-mcp-recipe",
+                        recipe_toml=self._jinna_toml().replace(
+                            '["basic", "bearer"]', malformed
+                        ),
+                    )
+                    with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                        allowed = self.mod.collect_env_allowed(
+                            project, recipe_ids=["jinna-mcp-recipe"]
+                        )
+                    self.assertEqual(allowed, {})
+
+    def test_prompt_env_vars_uses_select_for_declared_allowed_values(self):
+        """A constrained var is a closed choice, so a typo like 'basicc' is unrepresentable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            password = MagicMock()
+            password.return_value.ask.return_value = "token"
+            text = MagicMock()
+            text.return_value.ask.return_value = "https://op.example"
+            select = MagicMock()
+            select.return_value.ask.return_value = "bearer"
+            confirm = MagicMock()
+            confirm.return_value.ask.return_value = True
+            q = MagicMock(password=password, text=text, select=select, confirm=confirm)
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.dict(
+                "sys.modules", {"questionary": q}
+            ):
+                result = self.mod.prompt_env_vars(
+                    project, recipe_ids=["jinna-mcp-recipe"]
+                )
+            select.assert_called_once()
+            self.assertEqual(select.call_args.kwargs.get("choices"), ["basic", "bearer"])
+            self.assertEqual(result["OPENPROJECT_AUTH"], "bearer")
+            prompted_free_text = [c.args[0] for c in text.call_args_list]
+            self.assertNotIn("OPENPROJECT_AUTH", prompted_free_text)
+
+    def test_select_default_is_always_one_of_the_choices(self):
+        """A stale example default must not leak a value outside the declared set."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            (project / "ai-specs.env").write_text(
+                "OPENPROJECT_AUTH=legacy\n", encoding="utf-8"
+            )
+            password = MagicMock()
+            password.return_value.ask.return_value = "token"
+            text = MagicMock()
+            text.return_value.ask.return_value = "https://op.example"
+            select = MagicMock()
+            select.return_value.ask.return_value = "basic"
+            q = MagicMock(
+                password=password,
+                text=text,
+                select=select,
+                confirm=MagicMock(
+                    return_value=MagicMock(ask=MagicMock(return_value=True))
+                ),
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.dict(
+                "sys.modules", {"questionary": q}
+            ), patch.object(
+                self.mod, "ENV_EXAMPLE_DEFAULTS", {"OPENPROJECT_AUTH": "obsolete"}
+            ):
+                self.mod.prompt_env_vars(project, recipe_ids=["jinna-mcp-recipe"])
+            self.assertIn(select.call_args.kwargs.get("default"), ["basic", "bearer"])
+
+    def test_prompt_env_vars_select_default_prefers_existing_value(self):
+        """Re-prompting keeps a valid configured value instead of resetting the example default."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="jinna-mcp-recipe", recipe_toml=self._jinna_toml()
+            )
+            (project / "ai-specs.env").write_text(
+                "OPENPROJECT_AUTH=Bearer\n", encoding="utf-8"
+            )
+            password = MagicMock()
+            password.return_value.ask.return_value = "token"
+            text = MagicMock()
+            text.return_value.ask.return_value = "https://op.example"
+            select = MagicMock()
+            select.return_value.ask.return_value = "bearer"
+            q = MagicMock(
+                password=password,
+                text=text,
+                select=select,
+                confirm=MagicMock(
+                    return_value=MagicMock(ask=MagicMock(return_value=True))
+                ),
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.dict(
+                "sys.modules", {"questionary": q}
+            ):
+                self.mod.prompt_env_vars(project, recipe_ids=["jinna-mcp-recipe"])
+            self.assertEqual(select.call_args.kwargs.get("default"), "bearer")
+
+    def test_prompt_env_vars_selected_recipe_only(self):
+        """Selected-only prompting keeps secret/non-secret behavior per var."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            password = MagicMock()
+            password.return_value.ask.return_value = "secret-key"
+            text = MagicMock()
+            text.return_value.ask.return_value = "plain"
+            confirm = MagicMock()
+            confirm.return_value.ask.return_value = True
+            q = MagicMock(password=password, text=text, confirm=confirm)
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.dict(
+                "sys.modules", {"questionary": q}
+            ):
+                result = self.mod.prompt_env_vars(
+                    project, recipe_ids=["trello-mcp-workflow"]
+                )
+            self.assertEqual(sorted(result), ["TRELLO_API_KEY", "TRELLO_TOKEN"])
+            password.assert_called()
+            text.assert_not_called()
+
+    def test_offer_harness_env_selected_recipe_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            values = {"TRELLO_API_KEY": "k", "TRELLO_TOKEN": "t"}
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.object(
+                self.mod, "prompt_env_vars", return_value=values
+            ) as prompt_mock, patch.object(self.mod, "direnv_allow", return_value=True):
+                self.mod.offer_harness_env(
+                    project,
+                    offer_direnv_install=False,
+                    recipe_ids=["trello-mcp-workflow"],
+                )
+            self.assertEqual(
+                prompt_mock.call_args.kwargs.get("recipe_ids"),
+                ["trello-mcp-workflow"],
+            )
+            text = (project / "ai-specs.env").read_text(encoding="utf-8")
+            self.assertIn("TRELLO_API_KEY=k", text)
+            self.assertIn("TRELLO_TOKEN=t", text)
+            self.assertNotIn("CANONICAL_VAULT_PATH", text)
+
+    def test_offer_harness_env_aggregate_when_omitted(self):
+        """Backward compatibility: omitted recipe_ids prompts the aggregate map."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._two_recipe_project(root)
+            values = {"TRELLO_API_KEY": "k", "TRELLO_TOKEN": "t"}
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.object(
+                self.mod, "prompt_env_vars", return_value=values
+            ) as prompt_mock, patch.object(self.mod, "direnv_allow", return_value=True):
+                self.mod.offer_harness_env(project, offer_direnv_install=False)
+            self.assertIsNone(prompt_mock.call_args.kwargs.get("recipe_ids"))
+            text = (project / "ai-specs.env").read_text(encoding="utf-8")
+            self.assertIn("TRELLO_API_KEY=k", text)
+
+    def test_missing_required_values_reports_absent_and_blank(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="trello-mcp-workflow", recipe_toml=self._trello_toml()
+            )
+            (project / "ai-specs.env").write_text(
+                "TRELLO_API_KEY=present\nTRELLO_TOKEN=\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
+                missing = self.mod.missing_required_values(project)
+            self.assertEqual(missing, ["TRELLO_TOKEN"])
+
+    def test_main_warns_missing_values_nonfatal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._project_with_recipe(
+                root, recipe_id="trello-mcp-workflow", recipe_toml=self._trello_toml()
+            )
+            (project / "ai-specs.env").write_text(
+                "TRELLO_API_KEY=k\n",
+                encoding="utf-8",
+            )
+            import io
+
+            buf = io.StringIO()
+            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.object(
+                sys, "stderr", buf
+            ):
+                rc = self.mod.main([str(project)])
+            self.assertEqual(rc, 0)
+            err_text = buf.getvalue()
+            self.assertIn(
+                "! TRELLO_TOKEN has no value in ai-specs.env — run ai-specs configure-recipes",
+                err_text,
+            )
+            self.assertNotIn("TRELLO_API_KEY", err_text)
+            self.assertFalse((project / "ai-specs" / ".env.example").exists())
+            self.assertTrue((project / "ai-specs.env.example").is_file())
+            self.assertTrue((project / ".envrc").is_file())
+            self.assertEqual(
+                (project / "ai-specs.env").read_text(encoding="utf-8"),
+                "TRELLO_API_KEY=k\n",
+            )
+
 
 class DepInstallTests(unittest.TestCase):
     @classmethod
@@ -437,9 +852,63 @@ class DepInstallTests(unittest.TestCase):
         self.assertEqual(plan.kind, "guidance")
         self.assertEqual(plan.command, [])
 
-    def test_bb_guidance_only(self):
-        plan = self.mod.resolve_install_plan("bb", install_url="https://example.com")
+    def _assert_never_brew_install_bb(self, plan):
+        """Token-aware: never argv `brew install bb`. Do not use substring 'brew install bb'."""
+        self.assertNotEqual(plan.command, ["brew", "install", "bb"])
+        if len(plan.command) >= 3 and plan.command[:2] == ["brew", "install"]:
+            self.assertNotEqual(plan.command[2], "bb")
+        tokens = plan.display.split()
+        if len(tokens) >= 3 and tokens[:2] == ["brew", "install"]:
+            self.assertNotEqual(tokens[2], "bb")
+
+    def test_bb_brew_plan_on_darwin(self):
+        with patch.object(
+            self.mod.shutil, "which", side_effect=lambda b: "/opt/brew" if b == "brew" else None
+        ), patch.object(self.mod.platform, "system", return_value="Darwin"):
+            plan = self.mod.resolve_install_plan(
+                "bb", install_url="https://bb-cli.github.io"
+            )
+        self.assertEqual(plan.kind, "brew")
+        self.assertEqual(plan.command, ["brew", "install", "bb-cli"])
+        self.assertEqual(plan.display, "brew install bb-cli")
+        self._assert_never_brew_install_bb(plan)
+
+    def test_bb_brew_plan_on_linux(self):
+        """Linux + Homebrew still offers formula bb-cli (brew wins over apt)."""
+        def which(b):
+            if b == "brew":
+                return "/home/linuxbrew/.linuxbrew/bin/brew"
+            if b == "apt-get":
+                return "/usr/bin/apt-get"
+            return None
+
+        with patch.object(self.mod.shutil, "which", side_effect=which), patch.object(
+            self.mod.platform, "system", return_value="Linux"
+        ):
+            plan = self.mod.resolve_install_plan(
+                "bb", install_url="https://bb-cli.github.io"
+            )
+        self.assertEqual(plan.kind, "brew")
+        self.assertEqual(plan.command, ["brew", "install", "bb-cli"])
+        self.assertEqual(plan.display, "brew install bb-cli")
+        self._assert_never_brew_install_bb(plan)
+
+    def test_bb_apt_only_is_guidance(self):
+        def which(b):
+            if b == "apt-get":
+                return "/usr/bin/apt-get"
+            return None
+
+        with patch.object(self.mod.shutil, "which", side_effect=which), patch.object(
+            self.mod.platform, "system", return_value="Linux"
+        ):
+            plan = self.mod.resolve_install_plan(
+                "bb", install_url="https://bb-cli.github.io"
+            )
         self.assertEqual(plan.kind, "guidance")
+        self.assertEqual(plan.command, [])
+        self.assertEqual(plan.display, "https://bb-cli.github.io")
+        self._assert_never_brew_install_bb(plan)
 
     def test_unknown_binary_guidance_only(self):
         """Binary outside _PACKAGE_MAP / _GUIDANCE_ONLY stays guidance with empty command."""

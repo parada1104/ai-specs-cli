@@ -7,7 +7,168 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-09-17
+
+### Upgrade notes
+Run `ai-specs sync` in each project to materialize the updated Tracker Ledger and Plan Build lifecycle assets. Run `ai-specs doctor` to confirm the resolved tracker and guardian configuration.
+
+### Breaking
+- **worktree-flow Bash gate retired.** `gate_impl = "bash"` is rejected at
+  sync with an actionable error naming `auto | go` as the only valid values.
+  The catalog no longer ships `hooks/worktree-gate-legacy.sh`. Already
+  materialized copies are inert (doctor INFO with a manual `rm` hint). When
+  no Go binary resolves, the launcher fails open with exactly one stderr
+  warning (`ai-specs sync` / `ai-specs sync --refresh-gates` /
+  `ai-specs doctor`). Restore coverage by re-acquiring the binary, or install
+  the previous CLI and sync.
+
+### Added
+- **Tracker Ledger (Go-owned lifecycle grader)**: when the `tracker` capability
+  is bound, its lifecycle is graded by one `--ledger` mode on the existing
+  verified `worktree-gate` binary — no second binary, release asset, or trust
+  root. `ai-specs sync` persists the durable binding witness at
+  `<git-common-dir>/ai-specs/ledger/witness.json` (`bound` / `ambiguous` /
+  `unbound` / `declared-not-bound`); only `bound` activates the ledger and a
+  missing witness stays dormant (`witness-missing`) without guessing a provider.
+  The per-identity record lives at
+  `<git-common-dir>/ai-specs/ledger/state.json`, written atomically. All five
+  checkpoints — `work-start` (plan-build gate), `apply-start` and `pr-review`
+  (tracker gate), `pre-merge` and `archive-close` (tracker ledger host) — reach
+  the same predicate and exit `0`/`2` (block only). One project `ledger_mode`
+  (`always` / `ask` / `warn`, default `warn`; legacy `gate_mode` maps forward;
+  `ask` opt-out is checkpoint-scoped). Dormancy surfaces through a
+  `tracker-ledger` `doctor` check only. Core item fields stay provider-neutral,
+  and the slice performs **no** provider MCP/API create or update call. The
+  legacy Python copies of the `## Tracker` validity rule (link parser, tracker
+  hook heredoc, doctor) delegate to the Go predicate or are held by parity tests
+  that fail on divergence.
+- **Tracker Ledger write surface**: `worktree-gate --ledger --write '<json>'`
+  records `open` / `link` / `close` / `exempt` beside the existing `--decide`.
+  `open` is open-if-absent under the store lock, so a retried open reports
+  `already-open` instead of manufacturing a second item or a conflict; `link` writes
+  the provider's native id/URL/type/state plus an opaque provider payload onto the
+  provider-neutral core fields; `close` never reopens; and `exempt` persists the
+  reason supplied by an explicit human/agent write as `Item.Exemption` (the
+  human-authored `tracker.none` file is evidence-only — no host auto-records it),
+  honored at every checkpoint as allow/exempt. Success adds a `write: {kind, applied, reason}` sidecar to the verdict
+  JSON, and `--write`/`--decide` are mutually exclusive. Every declared decision kind
+  and core item field now has a production writer, and **grading never writes**.
+  Store-lock acquisition is bounded (~100 ms): grade paths fail open on timeout while
+  write and `--decide` paths fail closed. Hosts build their own `--evidence` through
+  the new acquisition-only `lib/_internal/ledger_bridge.py` (local/code/git — the
+  `remote` side stays unwired as a deliberate 3-of-4 reconciliation), and a failed
+  write persists nothing and exits `2` with no stdout JSON. The plan-build work-start
+  gate, the tracker gate, the tracker-ledger host, and `doctor` resolve their recipe
+  id from the binding witness with the legacy literal only as the bridge's fallback
+  (no host carries a hardcoded recipe id); `doctor` reports an unhosted
+  `work-start` as INFO.
+- **Tracker Ledger remote reconciliation (explicit, opt-in)**: `worktree-gate
+  --ledger --reconcile '<observation.json>' --reconcile-event <event>` compares one
+  transport-acquired observation against the bound item and the recipe-declared
+  expectations, and adds a `reconcile` sidecar to the verdict JSON. The comparison is
+  provider-neutral and owned by Go: the recipe declares the mapping (`[config.reconcile]`
+  — `scope_field`, `max_age_seconds`, and per-event `expectations` of `property` +
+  `config_field`), the transport supplies the observation, and no provider vocabulary
+  is promoted into the core and no stored item status is read as an expected remote
+  state. It is deterministic (the clock is supplied), never writes the store or the
+  provider, and leaves the graded exit code unchanged; `--reconcile` is mutually
+  exclusive with `--write`/`--decide`, and a conflicting grade's conflict snapshot is
+  suppressed instead of recorded. The mapping is a first-class validated recipe section
+  that sync validates and carries through unchanged, so a project that does not bind it
+  gets an explicit `unconfigured`, never a default — reconciliation is opt-in per
+  project, off the edit hooks and off the grade path. Missing, stale, malformed, future,
+  unavailable, mis-scoped, or property-mismatched observations never agree; only a
+  conditional match of the declared properties for the requested event is `agree`,
+  and that is never proof of delivery. Every non-agreeing outcome is a pending explicit
+  decision with exactly three closed resolutions (fix remote state and re-observe /
+  record observed state as truth by an explicit ledger write / leave pending); the agent
+  never resolves it, never infers consent, and never blocks unrelated work, and a
+  headless session leaves it pending. Named open gap: a closed or archived item after a
+  merge has no safely bound target yet and reports `unbound-identity` rather than being
+  guessed.
+- **Version-keyed upgrade notices**: a release can declare a required
+  post-upgrade action in an `### Upgrade notes` subsection under its
+  `CHANGELOG.md` heading. `ai-specs upgrade` replays the notices of every
+  version the user crossed, oldest release first, under **Action required**.
+  Notices are prose and are never evaluated or executed: `upgrade` runs against
+  `~/.ai-specs` and has no consumer project in scope, so anything
+  project-dependent stays with `ai-specs doctor`, which has that state.
+- **Version crossing summary**: after a successful upgrade, the versions
+  crossed are summarized with up to three condensed bullets each (first
+  sentence, capped at 100 characters) and an explicit "and N more" rather than
+  a silent truncation.
+- **Narrowed global install**: `~/.ai-specs` is now a partial clone
+  (`--filter=blob:none`) with a cone-mode sparse checkout that excludes
+  `openspec/`, `tests/`, `.github/` and `tmp/` — 1842 tracked files down to 958,
+  with every runtime path intact. Full commit history is preserved, because
+  `ai-specs upgrade` needs `git merge-base --is-ancestor` for its divergence
+  guard and a shallow clone would break it. Narrowing is best effort: an
+  unsupported git, a dirty tree, or any failure leaves a usable full checkout
+  and the upgrade still succeeds. `git -C ~/.ai-specs sparse-checkout disable`
+  restores every file.
+
+### Changed
+- `ai-specs upgrade` no longer forwards raw `git` output. It prints one labelled
+  line per step, adopting the `run_step` contract already used by `ai-specs
+  sync`. `-v`/`--verbose` restores the full detail, and a failing step always
+  prints everything it produced. Upgrading `0.20.0` to `0.22.0` went from ~250
+  lines to 21. No safety check, abort condition, or exit code changed.
+- `release-flow` skill: authoring an upgrade notice is now part of the version
+  bump, and the tag/release step reflects that CI creates the GitHub Release
+  (`softprops/action-gh-release`), so `gh release create` fails with "already
+  exists" — the ritual now uses `gh release edit`.
+
+- **`plan-build-flow` Full phase compatibility**: documents provider-neutral
+  logical phase dispatch with inline availability fallback, stop-and-preserve
+  semantics for malformed results, single-session preflight composition, and
+  artifact-derived accept/adjust/stop plan presentation. Standard and Light
+  behavior remains unchanged.
+- **Artifact guardian ownership and Tracker-domain port migration.**
+  `premerge_guardian.py` is now the Plan Build-only, tracker-free artifact
+  guardian, and Plan Build's review-branch tail runs verify → canonical
+  delta-spec promotion → read-only guardian → archive, with the guardian
+  validating promotion parity without writing. The `pre-merge` and
+  `archive-close` checkpoints are hosted by the Tracker-domain
+  `lib/_internal/tracker_ledger_host.py`, independent of Plan Build and of
+  OpenSpec archive; the ledger core stays autonomous, Tracker is a domain port,
+  and provider recipes extend it only by declarative `[config.reconcile]`
+  mapping. `plan-build-gate.sh` resolves the witness-bound recipe through the
+  stamped `ledger_bridge` seam, removing the last hardcoded recipe literal.
+- `plan-build-flow` `1.7.0` → `1.8.0`: promotion-before-guardian ownership, the
+  tracker-free guardian, and witness-derived `work-start` configuration.
+- `trello-mcp-workflow` `1.3.0` → `1.4.0`: the tracker lifecycle host and
+  Plan Build-independent `archive-close` guidance.
+
+### Fixed
+- **`ai-specs sync` no longer loses a failing step's exit status.** `run_step`
+  in `lib/sync.sh` and `lib/sync-agent.sh`, and the hand-rolled
+  recipe-materialize capture block, all restored `errexit` *before* printing
+  the output they had captured. A failure while printing — a `cat` hitting
+  SIGPIPE on an early-closed stdout, or a full disk — aborted the script from
+  inside the helper, so the wrapped command's exit status was replaced by
+  `cat`'s and the temporary files leaked. Measured on the capture block: exit 1
+  with 2 stranded files before, exit 3 with none after. Only bare call sites
+  were affected, which is 5 of 6 in `sync.sh` and all 4 in `sync-agent.sh`; a
+  guarded `if ! run_step …` was never exposed.
+- **Sync no longer strands temporary files.** The recipe-materialize `EXIT`
+  trap covers its two capture files, which previously sat outside it entirely,
+  and is registered before the temporaries it guards rather than after. Every
+  name is `:-` expanded: under `set -u` a trap referencing an unset variable
+  dies mid-cleanup and replaces the script's exit status with its own. Leaked
+  temporary files per `ai-specs sync` dropped from three to one; the remainder
+  comes from `recipe-materialize.py`, tracked separately.
+- **A `mktemp` failure now names itself** instead of surfacing later as
+  whatever abort message the wrapped command produces. The step still runs, and
+  the warning states that its output is unfiltered — compact mode cannot apply
+  when nothing is captured.
+
 ## [0.22.0] — 2026-08-17
+
+### Upgrade notes
+Run `ai-specs sync` in each project to acquire the verified Go worktree-gate
+binary. Until you do, the gate keeps falling back to the Bash implementation.
+Run `ai-specs doctor` to confirm the resolved implementation; if it reports a
+preserved customized gate, use `ai-specs sync --refresh-gates`.
 
 ### Added
 - **Autocontained Go worktree gate**: the `worktree-flow` gate is now a single
@@ -85,6 +246,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distribution, legacy reference materialization.
 - `plan-build-flow` `1.4.0` → `1.5.0`: adversarial depth classification compares explicit requests with signal tiers, asks on conflicts, and records resolution annotations in `tasks.md`.
 - `plan-build-flow` `1.5.0` → `1.6.0`: tier-specific proposal/spec minima, Standard/Full staged verify evidence gates before archive and merge, and grandfathering guidance for in-flight plans.
+- `plan-build-flow` `1.6.0` → `1.7.0`: Full logical phase compatibility,
+  composed preflight values, and artifact-derived plan presentation contracts.
+    - **`worktree-flow` `gate_mode=ask` consults the user**: a blocked write on a
+      protected branch now stops and asks the user for a destination — create a
+      dedicated worktree (recommended), create a feature branch in place, or write
+      on the protected branch with their explicit override — instead of telling
+      the agent to self-bypass with `WORKTREE_GATE_MODE=off`. `always` keeps its
+      hard block; `off` stays fully disabled. Version bump for `worktree-flow`
+      `1.6.0` and `creation_mode` lands with PR #230, not here.
 - Removed the retired `sdd-adaptive-contract` ceremony contract: deleted the
   canonical spec, the `sdd.decision_matrix` section in `openspec/config.yaml`,
   and the `[sdd]` recipe metadata in `docs/recipe-schema.md`; `plan-build-flow`
@@ -336,7 +506,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Acciones separadas "Configure recipes" y "Remove recipe" del menu principal del hub — ahora integradas en submenu Recipes.
 
-## [0.12.4] — 2026-07-12
 ### Changed
 
 - **TUI upgraded to Questionary interactive prompts** — agent and recipe

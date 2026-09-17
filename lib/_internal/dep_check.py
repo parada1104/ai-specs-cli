@@ -45,6 +45,8 @@ class DepResult:
     required: bool
     recipe_id: str = ""  # populated by check_project_deps
     detail: str = ""  # human note, e.g. "found 1.9.0 < required 2.0.0"
+    source: str = ""  # path | managed | unresolved for acquired binaries
+    resolved_path: str = ""
 
 
 def _load_sibling(name: str):
@@ -67,6 +69,17 @@ def _catalog_dir() -> Path:
 
 def _which(binary: str) -> bool:
     return shutil.which(binary) is not None
+
+
+def _load_provider_install():
+    path = Path(__file__).with_name("provider_install.py")
+    spec = importlib.util.spec_from_file_location("provider_install", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load provider installer at {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run_version_check(cmd: str) -> str:
@@ -101,7 +114,56 @@ def _version_ge(have: tuple[int, ...], want: tuple[int, ...]) -> bool:
     return have_p >= want_p
 
 
-def _check_one(dep: CliDep, recipe_id: str = "") -> DepResult:
+def _check_one(
+    dep: CliDep,
+    recipe_id: str = "",
+    ai_specs_home: Path | None = None,
+) -> DepResult:
+    if getattr(dep, "installer", "") == "github-release":
+        try:
+            resolution = _load_provider_install().resolve_provider(
+                dep, ai_specs_home=ai_specs_home
+            )
+        except Exception as exc:  # noqa: BLE001
+            return DepResult(
+                binary=dep.binary,
+                found=False,
+                version="",
+                ok=False,
+                install_url=dep.install_url,
+                purpose=dep.purpose,
+                required=dep.required,
+                recipe_id=recipe_id,
+                detail=f"provider check failed: {exc}",
+                source="unresolved",
+            )
+        if resolution.verified and resolution.path is not None:
+            return DepResult(
+                binary=dep.binary,
+                found=True,
+                version=resolution.version,
+                ok=True,
+                install_url=dep.install_url,
+                purpose=dep.purpose,
+                required=dep.required,
+                recipe_id=recipe_id,
+                detail=f"using {resolution.source} provider",
+                source=resolution.source,
+                resolved_path=str(resolution.path),
+            )
+        return DepResult(
+            binary=dep.binary,
+            found=False,
+            version=resolution.version,
+            ok=False,
+            install_url=dep.install_url,
+            purpose=dep.purpose,
+            required=dep.required,
+            recipe_id=recipe_id,
+            detail=f"not found for {resolution.target[0] or '?'}/{resolution.target[1] or '?'}",
+            source="unresolved",
+        )
+
     found = _which(dep.binary)
     if not found:
         return DepResult(
@@ -177,12 +239,21 @@ def _check_one(dep: CliDep, recipe_id: str = "") -> DepResult:
     )
 
 
-def check_cli_deps(recipe: Recipe) -> list[DepResult]:
+def check_cli_deps(
+    recipe: Recipe,
+    ai_specs_home: Path | None = None,
+) -> list[DepResult]:
     """One DepResult per recipe.cli_deps entry. Never raises."""
     results: list[DepResult] = []
     for dep in recipe.cli_deps:
         try:
-            results.append(_check_one(dep, recipe_id=getattr(recipe, "id", "") or ""))
+            results.append(
+                _check_one(
+                    dep,
+                    recipe_id=getattr(recipe, "id", "") or "",
+                    ai_specs_home=ai_specs_home,
+                )
+            )
         except Exception:
             results.append(
                 DepResult(
@@ -200,7 +271,10 @@ def check_cli_deps(recipe: Recipe) -> list[DepResult]:
     return results
 
 
-def check_project_deps(project_root: Path) -> list[DepResult]:
+def check_project_deps(
+    project_root: Path,
+    ai_specs_home: Path | None = None,
+) -> list[DepResult]:
     """Aggregate CLI dep checks across enabled recipes in the project manifest."""
     toml_read = _load_sibling("toml-read")
     recipe_read = _load_sibling("recipe-read")
@@ -222,7 +296,7 @@ def check_project_deps(project_root: Path) -> list[DepResult]:
             recipe = recipe_read.read_recipe(catalog, recipe_id)
         except Exception:
             continue
-        for result in check_cli_deps(recipe):
+        for result in check_cli_deps(recipe, ai_specs_home=ai_specs_home):
             result.recipe_id = recipe_id
             out.append(result)
     return out

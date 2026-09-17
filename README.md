@@ -28,6 +28,7 @@ cd my-project
 ai-specs init                        # scaffold ai-specs/ + AGENTS.md + .gitignore
 # edit ai-specs/ai-specs.toml — set [agents].enabled, add [[deps]], add [mcp.*]
 ai-specs sync                        # vendor deps + regen AGENTS.md + fan out per agent
+ai-specs sync --adopt-brief           # explicitly hand an existing AGENTS.md to ai-specs
 ```
 
 Your agent configs are now generated from the manifest. Re-run `ai-specs sync`
@@ -79,7 +80,7 @@ Missing interactive deps (`rich` + `questionary`) yield exit **3** with install 
 | `ai-specs recipe list [path]` | List available recipes |
 | `ai-specs recipe add <id> [path]` | Add a recipe declaration |
 | `ai-specs recipe init <id> [path]` | View recipe initialization brief |
-| `ai-specs upgrade [--dry-run] [--force]` | Upgrade global installation |
+| `ai-specs upgrade [--dry-run] [--force] [-v]` | Upgrade global installation |
 | `ai-specs version` | Print version |
 
 Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
@@ -159,15 +160,67 @@ portable script that `ai-specs sync` distributes to every enabled harness in its
 native format (Claude `PreToolUse`, generated Cursor/OpenCode/Pi adapters). See
 [`docs/runtime-hooks.md`](docs/runtime-hooks.md).
 
+### Tracker Ledger
+
+When a `tracker` capability is bound, its lifecycle is graded by one Go
+predicate — a `--ledger` mode of the same verified `worktree-gate` binary (no
+second binary, asset, or trust root). The provider recipe supplies configuration
+and the human-facing `## Tracker` section; it is no longer a grader. Core item
+fields stay provider-neutral, and no provider vocabulary is promoted into the
+artifact contract.
+
+- **Witness**: `ai-specs sync` writes
+  `<git-common-dir>/ai-specs/ledger/witness.json` (`bound` / `ambiguous` /
+  `unbound` / `declared-not-bound`). Only `bound` activates the ledger; a missing or
+  unreadable witness is dormant, never guessed.
+- **Store**: one record per work identity (Git common dir + branch, optionally the
+  active change slug) at `<git-common-dir>/ai-specs/ledger/state.json`, written
+  atomically. A branch reused after its item closed opens a new item; two open items
+  are a human conflict.
+- **Five checkpoints**: `work-start`, `apply-start`, `pr-review`, `pre-merge`,
+  `archive-close` all reach the same predicate and exit `0`/`2` (block only).
+- **Modes**: one project `ledger_mode` — `always`, `ask`, or `warn` (default `warn`;
+  promotion is a human edit). `ask` opt-out is checkpoint-scoped.
+- **Dormancy is `doctor`-only**: a `tracker-ledger` check reports the witness state
+  (INFO/WARN) or infrastructure failure (ERROR); the runtime brief gains no dormancy
+  line.
+- **No provider writes in this slice**: the ledger records and reconciles
+  evidence — it performs no MCP/API create, update, move, comment, or label call.
+
+See [`docs/capabilities.md`](docs/capabilities.md) for the capability contract and
+[`docs/runtime-hooks.md`](docs/runtime-hooks.md) for the checkpoint hosts.
+
 ### Updating
 
 ```bash
 ai-specs upgrade                     # fast-forward global install
 ai-specs upgrade --dry-run           # preview only
+ai-specs upgrade -v                  # show the full git output
 ```
+
+The upgrade prints one line per step, then summarizes the versions you crossed.
+When a release requires a post-upgrade action, it prints that under
+**Action required** — read it, because nothing else will tell you.
 
 After upgrading, run `ai-specs sync` in each project to refresh generated
 artifacts.
+
+### Install footprint
+
+`~/.ai-specs` is a partial clone with a sparse checkout: `openspec/`, `tests/`,
+`.github/` and `tmp/` are not materialized, since nothing reads them at runtime.
+The full commit history is kept — `ai-specs upgrade` needs it to verify your
+install has not diverged, which a shallow clone would break.
+
+To restore every file (for example to run the test suite from the install):
+
+```bash
+git -C ~/.ai-specs sparse-checkout disable
+```
+
+Narrowing is best effort. On a git without sparse-checkout support, or if
+anything fails, you keep an ordinary full checkout and the upgrade still
+succeeds.
 
 ## Project layout (this repo)
 

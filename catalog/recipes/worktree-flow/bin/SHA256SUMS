@@ -1,5 +1,5 @@
 # Expected SHA-256 digests of the published worktree-gate release assets
-# (v0.22.0). This file is the trust root (D5): the network supplies only
+# (v0.23.0). This file is the trust root (D5): the network supplies only
 # bytes, the repository supplies the expected digest. A downloaded asset
 # whose SHA-256 does not match is deleted and never executed.
 #
@@ -13,14 +13,21 @@
 # (.github/workflows/release-worktree-gate.yml) — and MUST be regenerated with
 # exactly that version, or the CI checksum gate fails the release.
 #
+# The four executable assets are intentionally CI/release outputs, not tracked
+# files. These lines are their source-level trust manifest; regenerate them with
+# scripts/build-gate.sh after any Go gate change and verify before publishing.
+#
 # Regenerated as part of the release (task 4.9): digests MUST match the
 # published assets; the CI release workflow diffs its generated SHA256SUMS
 # against this file and fails the release on any mismatch.
 #
-# Regenerated for stabilize-workspace-context (event-cwd whitespace trim in
-# gate/event.go) with the canonical go1.24.13 toolchain via:
-#   scripts/build-gate.sh && shasum -a 256 dist/worktree-gate-* | grep -v current
-075aff9f0ae1853b1b477b9f6e5e6bd5df65f63c99abe1ad941ae5ac8abd322a  worktree-gate-darwin-arm64
-a6f85bd3d359ab1a5f183c8376169dd4e65be33035f7a0e21453af0fd5975c58  worktree-gate-darwin-amd64
-295888b12d11e768e934cb1d52e6c123a13418165096043dde485499a0d63d18  worktree-gate-linux-amd64
-4cc5bbd6f14e6f7ca00774aa44a4c4db6bac17c68ea268e874a9b180a4ed7cbc  worktree-gate-linux-arm64
+# Regenerated after trello-ledger-integration (the same four-arch asset gains the
+# `--write open|link|close|exempt` verb and the bounded store lock; no new asset, no
+# second trust root) and again after ledger-remote-reconciliation (the same
+# four-arch asset gains Go-owned remote-observation reconciliation; no new asset,
+# no second trust root) with the canonical go1.24.13 toolchain via:
+#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
+28bd88b8355760a8ab91d9c8d0ffa7fe9db3a6e1bbef43456df02a2f087376d6  worktree-gate-darwin-arm64
+33328df74f15c84cc0f6f0dd898c25d67386f4123522095710f161663c0fb83f  worktree-gate-darwin-amd64
+6c28bba5ce3b2ee7e0f73210af1e07c74d750699602172ac92197db8efdfb155  worktree-gate-linux-amd64
+08d17a8603476f11c4d831905a28b0032b7c842d37e49d45a636aa745771e785  worktree-gate-linux-arm64

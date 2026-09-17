@@ -185,7 +185,7 @@ class RecipeListTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("Proyecto no inicializado", proc.stderr)
+            self.assertIn("Project not initialized", proc.stderr)
 
     def test_cli_produces_output(self):
         proc = subprocess.run(

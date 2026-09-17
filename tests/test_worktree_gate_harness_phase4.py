@@ -18,9 +18,9 @@ the five harnesses consume the gate:
 - 4.4  live smoke through the real launcher: blocked write on a protected
        branch, allowed write inside a linked worktree.
 
-The Go binary is not required: the launcher's legacy fallback answers the
-smoke scenarios when no binary is cached, so this suite runs green on any
-machine (the phase-2/3 suites already pin Go-vs-Bash parity).
+The Go binary is required for live launcher smoke. Missing-binary
+scenarios fail open with one warning and never exec a planted legacy
+script.
 """
 from __future__ import annotations
 
@@ -36,7 +36,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HOOKS_RENDER_PATH = ROOT / "lib" / "_internal" / "hooks-render.py"
 GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-LEGACY_GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate-legacy.sh"
 GO_BINARY = ROOT / "dist" / "worktree-gate-current"
 
 # The resolved hook entries the sync pipeline produces for worktree-flow
@@ -105,7 +104,7 @@ def _materialize_launcher(dest: Path, *, mode: str = "always",
 def _install_binary_in(project: Path) -> Path:
     """Place the built binary at the launcher's project-local pin path."""
     if not GO_BINARY.exists():
-        raise unittest.SkipTest("no Go gate binary in dist/; launcher smoke uses legacy fallback")
+        raise unittest.SkipTest("no Go gate binary in dist/; launcher smoke requires the Go pin")
     pin = project / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
     pin.parent.mkdir(parents=True, exist_ok=True)
     pin.write_bytes(GO_BINARY.read_bytes())
@@ -410,20 +409,21 @@ class LauncherLiveSmokeTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stderr, "")
 
-    def test_launcher_falls_back_to_legacy_without_binary(self):
-        # No binary anywhere (empty AI_SPECS_HOME, no project pin):
-        # gate_impl=auto must fall back to the frozen Bash reference, keeping
-        # the gate enforcing (not failing open).
-        if not LEGACY_GATE.is_file():
-            self.skipTest("frozen Bash reference missing")
-        # Remove the project pin installed by setUp so only the legacy path is
-        # reachable.
+    def test_missing_binary_fails_open_without_legacy_exec(self):
+        # No binary anywhere: fail open with one warning. A planted leftover
+        # worktree-gate-legacy.sh must not run.
         pin = self.root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
         pin.unlink(missing_ok=True)
-        legacy = self.root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate-legacy.sh"
-        legacy.parent.mkdir(parents=True, exist_ok=True)
-        legacy.write_bytes(LEGACY_GATE.read_bytes())
-        legacy.chmod(0o755)
+        sentinel = "SENTINEL-HARNESS-LEGACY-MUST-NOT-EXEC"
+        leftover = (
+            self.root / "ai-specs" / "recipes" / "worktree-flow"
+            / "hooks" / "worktree-gate-legacy.sh"
+        )
+        leftover.parent.mkdir(parents=True, exist_ok=True)
+        leftover.write_text(
+            f"#!/usr/bin/env bash\necho '{sentinel}' >&2\nexit 2\n"
+        )
+        leftover.chmod(0o755)
         event = {
             "event": "pre-tool-use",
             "tool_name": "Write",
@@ -431,8 +431,10 @@ class LauncherLiveSmokeTests(unittest.TestCase):
             "cwd": str(self.repo),
         }
         r = self._run(event)
-        self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertIn("refusing", r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(sentinel, r.stderr)
+        warnings = [line for line in r.stderr.splitlines() if "no usable gate" in line]
+        self.assertEqual(len(warnings), 1, r.stderr)
 
 
 if __name__ == "__main__":

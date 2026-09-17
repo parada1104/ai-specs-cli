@@ -9,5 +9,5 @@
     "cwd": "{repo}"
   },
   "expected_exit": 2,
-  "expected_stderr": "worktree-gate: refusing to Write '{repo}src.py' on protected branch 'main' in the main worktree. Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write."
+  "expected_stderr": "worktree-gate: refusing to Write '{repo}src.py' on protected branch 'main' in the main worktree ({repo}). Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write."
 }

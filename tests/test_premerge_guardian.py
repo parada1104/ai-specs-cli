@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -885,5 +887,442 @@ class PremergeGuardianTests(unittest.TestCase):
             self.mod.main([slug, "--root", str(root), "--stage", "pre-archive"]),
             0,
         )
+
+
+LEDGER_STUB_BINARY = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${STUB_LOG}"
+decision="${STUB_DECISION:-allow}"
+reason="${STUB_REASON:-stub}"
+checkpoint=""
+wrote=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --checkpoint) checkpoint="$2"; shift 2 ;;
+    --decide) printf 'DECIDE %s\\n' "$2" >> "${STUB_LOG}"; shift 2 ;;
+    --write) printf 'WRITE %s\\n' "$2" >> "${STUB_LOG}"; wrote=1; shift 2 ;;
+    --evidence) printf 'EVIDENCE %s\\n' "$2" >> "${STUB_LOG}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "$wrote" = 1 ] && [ "${STUB_WRITE_EXIT:-0}" = 2 ]; then
+  exit 2
+fi
+printf '{"capability":"tracker","active":true,"checkpoint":"%s","mode":"warn","decision":"%s","reason":"%s","identity":{"common_dir":"","branch":"","change":null,"key":""},"item":null,"conflict":null,"prompt":null,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}\\n' "$checkpoint" "$decision" "$reason"
+[ "$decision" = block ] && exit 2
+exit 0
+"""
+
+
+class GuardianTrackerIsolationTests(unittest.TestCase):
+    """W1: the artifact guardian owns artifacts; the tracker host owns the ledger.
+
+    These regressions pin the ownership split: the guardian module exposes no
+    tracker grader, and running the guardian against a blocking ledger stub never
+    reaches that stub.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(MODULE_PATH, "premerge_guardian_isolation")
+
+    def _repo(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "openspec" / "changes" / "archive").mkdir(parents=True)
+        return root
+
+    def _archive_light(self, root: Path, slug: str = "done") -> Path:
+        archived = root / "openspec" / "changes" / "archive" / slug
+        archived.mkdir(parents=True)
+        (archived / "tasks.md").write_text("Depth: light\n")
+        (archived / "proposal.md").write_text("# proposal\n")
+        return archived
+
+    def _env(self) -> dict:
+        env = dict(os.environ)
+        for key in ("TRACKER_LEDGER_MODE", "TRACKER_CARD_GATE_MODE", "AI_SPECS_HOME"):
+            env.pop(key, None)
+        return env
+
+    def test_artifact_guardian_exposes_no_tracker_grader(self):
+        for symbol in (
+            "ledger_blockers", "resolve_ledger_mode", "_ledger_binary",
+            "_ledger_bridge", "_ledger_evidence_args",
+        ):
+            self.assertFalse(
+                hasattr(self.mod, symbol),
+                f"the artifact guardian must not own tracker symbol {symbol!r}",
+            )
+
+    def test_artifact_guardian_never_invokes_the_tracker_ledger(self):
+        root = self._repo()
+        self._archive_light(root)
+        binary = root / "stub-worktree-gate"
+        binary.write_text(LEDGER_STUB_BINARY)
+        binary.chmod(0o755)
+        log = root / "stub.log"
+        env = self._env()
+        env["WORKTREE_GATE_BIN"] = str(binary)
+        env["STUB_LOG"] = str(log)
+        # A blocking verdict would fail the guardian if it graded the ledger.
+        env["STUB_DECISION"] = "block"
+        env["STUB_REASON"] = "missing tracked item"
+
+        r = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "done", "--root", str(root),
+             "--stage", "pre-merge", "--tier", "light"],
+            capture_output=True, text=True, env=env,
+        )
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(
+            log.exists(),
+            "the artifact guardian must not invoke the tracker ledger predicate",
+        )
+
+
+def _requirement(name: str, body: str) -> str:
+    return (
+        f"### Requirement: {name}\n\n{body}\n\n"
+        f"#### Scenario: {name}\n\n- **WHEN** {name}\n- **THEN** {name}\n"
+    )
+
+
+CANONICAL_SPEC = (
+    "# capability Specification\n\n## Purpose\n\nExisting purpose.\n\n"
+    "## Requirements\n\n" + _requirement("Existing requirement", "Existing body.")
+)
+
+PROMOTED_DELTA = (
+    "# Delta for capability\n\n## ADDED Requirements\n\n"
+    + _requirement("Added requirement", "Added body.")
+)
+
+UNRESOLVED_DELTA = (
+    "# Delta for capability\n\n## MODIFIED Requirements\n\n"
+    + _requirement("Absent requirement", "New body.")
+)
+
+STANDARD_EVIDENCE = (
+    "## Verify evidence\n- Verdict: PASS\n- Command: ./tests/run.sh\n"
+    "- Exit: 0\n- Date: 2026-08-07\n- Commit: 1234567\n"
+)
+
+
+class SpecPromotionParityTests(unittest.TestCase):
+    """W3: the read-only guardian blocks Standard/Full unpromoted deltas.
+
+    Promotion is a separate, explicit writer. The guardian only validates
+    canonical/delta parity and must never mutate ``openspec/specs``.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(MODULE_PATH, "premerge_guardian_promotion_parity")
+
+    def _repo(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "openspec" / "changes" / "archive").mkdir(parents=True)
+        (root / "openspec" / "specs").mkdir(parents=True)
+        return root
+
+    def _active(
+        self,
+        root: Path,
+        slug: str,
+        delta: str | None = None,
+        *,
+        tier: str = "standard",
+        evidence: str | None = STANDARD_EVIDENCE,
+    ) -> Path:
+        folder = root / "openspec" / "changes" / slug
+        (folder / "specs" / "capability").mkdir(parents=True, exist_ok=True)
+        (folder / "tasks.md").write_text(f"Depth: {tier}\n", encoding="utf-8")
+        (folder / "proposal.md").write_text("# proposal\n", encoding="utf-8")
+        (folder / "specs" / "capability" / "spec.md").write_text(
+            delta if delta is not None else PROMOTED_DELTA, encoding="utf-8"
+        )
+        if evidence:
+            (folder / "verify-report.md").write_text(evidence, encoding="utf-8")
+        return folder
+
+    def _archive(self, root: Path, slug: str, delta: str | None = None, **kwargs) -> Path:
+        active = self._active(root, slug, delta, **kwargs)
+        archived = root / "openspec" / "changes" / "archive" / slug
+        archived.parent.mkdir(parents=True, exist_ok=True)
+        active.rename(archived)
+        return archived
+
+    def _write_canonical(self, root: Path, text: str) -> Path:
+        path = root / "openspec" / "specs" / "capability" / "spec.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _promotion_blockers(blockers: list[str]) -> list[str]:
+        return [b for b in blockers if "spec_promotion" in b or "canonical" in b.lower()]
+
+    def test_prearchive_blocks_an_unpromoted_standard_delta(self):
+        root = self._repo()
+        self._active(root, "unpromoted", PROMOTED_DELTA)
+
+        result = self.mod.check_prearchive(root, "unpromoted", tier="standard")
+
+        self.assertFalse(result.ok)
+        promotion = self._promotion_blockers(result.blockers)
+        self.assertTrue(promotion, result.blockers)
+        self.assertEqual(
+            self.mod.main(["unpromoted", "--root", str(root), "--stage", "pre-archive"]),
+            1,
+        )
+
+    def test_prearchive_passes_when_the_delta_is_promoted(self):
+        root = self._repo()
+        self._promote(root, "promoted", PROMOTED_DELTA)
+        self._active(root, "promoted", PROMOTED_DELTA)
+
+        result = self.mod.check_prearchive(root, "promoted", tier="standard")
+
+        self.assertTrue(result.ok, result.blockers)
+
+    def test_premerge_blocks_an_unpromoted_archived_delta(self):
+        root = self._repo()
+        self._archive(root, "merged-unpromoted", PROMOTED_DELTA)
+
+        result = self.mod.check_premerge(root, "merged-unpromoted", tier="standard")
+
+        self.assertFalse(result.ok)
+        self.assertTrue(self._promotion_blockers(result.blockers), result.blockers)
+        self.assertEqual(
+            self.mod.main(["merged-unpromoted", "--root", str(root)]),
+            1,
+        )
+
+    def test_premerge_passes_for_a_promoted_standard_change(self):
+        root = self._repo()
+        self._promote(root, "merged-promoted", PROMOTED_DELTA)
+        self._archive(root, "merged-promoted", PROMOTED_DELTA)
+
+        result = self.mod.check_premerge(root, "merged-promoted", tier="standard")
+
+        self.assertTrue(result.ok, result.blockers)
+
+    def test_premerge_passes_for_a_promoted_full_change(self):
+        root = self._repo()
+        evidence = (
+            "## Verify evidence\n- Verdict: PASS\n- Command: ./tests/run.sh\n"
+            "- Exit: 0\n- Date: 2026-08-07\n- Commit: 1234567\n"
+            "- ready_for_archive: true\n\n"
+            "## Success-criteria mapping\n- Criterion 1: PASS — criterion one\n"
+        )
+        proposal = (
+            "# proposal\n\n## Success Criteria\n\n- first criterion\n"
+        )
+        self._promote(root, "merged-full", PROMOTED_DELTA)
+        archived = self._archive(
+            root, "merged-full", PROMOTED_DELTA, tier="full", evidence=evidence
+        )
+        (archived / "proposal.md").write_text(proposal, encoding="utf-8")
+
+        result = self.mod.check_premerge(root, "merged-full", tier="full")
+
+        self.assertTrue(result.ok, result.blockers)
+
+    def test_unresolved_delta_blocks_even_with_a_conforming_report(self):
+        root = self._repo()
+        self._active(root, "unresolved", UNRESOLVED_DELTA)
+        self._write_canonical(root, CANONICAL_SPEC)
+
+        result = self.mod.check_prearchive(root, "unresolved", tier="standard")
+
+        self.assertFalse(result.ok)
+        self.assertTrue(self._promotion_blockers(result.blockers), result.blockers)
+
+    def test_renamed_delta_is_reported_as_unresolved(self):
+        root = self._repo()
+        renamed = (
+            "# Delta for capability\n\n## RENAMED Requirements\n\n"
+            "- FROM: `### Requirement: Existing requirement`\n"
+            "  TO: `### Requirement: Renamed requirement`\n"
+        )
+        self._active(root, "renamed", renamed)
+        self._write_canonical(root, CANONICAL_SPEC)
+
+        result = self.mod.check_prearchive(root, "renamed", tier="standard")
+
+        self.assertFalse(result.ok)
+        self.assertTrue(any("RENAMED" in b for b in result.blockers), result.blockers)
+
+    def test_light_change_without_specs_is_unaffected(self):
+        root = self._repo()
+        folder = root / "openspec" / "changes" / "light-change"
+        folder.mkdir(parents=True)
+        (folder / "tasks.md").write_text("Depth: light\n", encoding="utf-8")
+        (folder / "proposal.md").write_text("# proposal\n", encoding="utf-8")
+
+        result = self.mod.check_prearchive(root, "light-change", tier="light")
+
+        self.assertTrue(result.ok, result.blockers)
+        archived = root / "openspec" / "changes" / "archive" / "light-change"
+        archived.parent.mkdir(parents=True, exist_ok=True)
+        folder.rename(archived)
+        self.assertTrue(
+            self.mod.check_premerge(root, "light-change", tier="light").ok
+        )
+        self.assertEqual(list((root / "openspec" / "specs").iterdir()), [])
+
+    def test_guardian_never_writes_canonical_specs_or_temp_files(self):
+        root = self._repo()
+        self._active(root, "read-only", PROMOTED_DELTA)
+        canonical_dir = root / "openspec" / "specs" / "capability"
+
+        result = self.mod.check_prearchive(root, "read-only", tier="standard")
+
+        self.assertFalse(result.ok)
+        self.assertFalse(canonical_dir.exists())
+        self.assertEqual(list((root / "openspec" / "specs").iterdir()), [])
+
+    def _promote(self, root: Path, slug: str, delta: str) -> None:
+        """Compose the delta with the promoter, exactly as the skill instructs."""
+        spec_path = Path(self.mod.__file__).with_name("spec_promotion.py")
+        promotion = load_module(spec_path, f"spec_promotion_for_{slug}")
+        folder = root / "openspec" / "changes" / slug
+        (folder / "specs" / "capability").mkdir(parents=True, exist_ok=True)
+        (folder / "specs" / "capability" / "spec.md").write_text(
+            delta, encoding="utf-8"
+        )
+        (folder / "tasks.md").write_text("Depth: standard\n", encoding="utf-8")
+        (folder / "proposal.md").write_text("# proposal\n", encoding="utf-8")
+        report = promotion.promote_change(root, slug)
+        assert not report.blockers, report.blockers
+
+
+PLAN_BUILD_SPEC = ROOT / "openspec" / "specs" / "plan-build-flow" / "spec.md"
+TRACKER_LEDGER_SPEC = ROOT / "openspec" / "specs" / "tracker-ledger" / "spec.md"
+VCS_PR_SPEC = ROOT / "openspec" / "specs" / "vcs-pr-flow" / "spec.md"
+TRACKER_GATE_HOOK = (
+    ROOT / "catalog" / "recipes" / "trello-mcp-workflow" / "hooks" / "tracker-card-gate.sh"
+)
+PLAN_BUILD_GATE_HOOK = (
+    ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
+)
+
+
+class CanonicalOwnershipContractTests(unittest.TestCase):
+    """W6: the canonical specs pin the post-split ownership, not the fused one.
+
+    The three canonical specs are the durable contract. These regressions keep
+    Plan Build owning verify -> promotion -> read-only guardian -> archive, the
+    Tracker domain host owning `pre-merge`/`archive-close` independently of
+    Plan Build/OpenSpec archive, and VCS owning transport/review/merge/cleanup
+    only -- while no stale text still says the artifact guardian hosts tracker
+    checkpoints.
+    """
+
+    @staticmethod
+    def _norm(text: str) -> str:
+        """Collapse wrapping so an assertion pins the clause, not the line breaks."""
+        return " ".join(text.split())
+
+    # --- plan-build-flow: verify -> promote -> guardian -> archive ---
+
+    def test_plan_build_owns_the_ordered_review_branch_tail(self):
+        text = self._norm(PLAN_BUILD_SPEC.read_text(encoding="utf-8"))
+        self.assertIn(
+            "verify evidence \u2192 promote canonical delta specs \u2192 run the "
+            "read-only artifact guardian \u2192 archive the change folder",
+            text,
+        )
+
+    def test_plan_build_guardian_validates_promotion_parity_read_only(self):
+        text = self._norm(PLAN_BUILD_SPEC.read_text(encoding="utf-8"))
+        self.assertIn("promotion parity", text)
+        self.assertIn("read-only", text)
+        self.assertIn("MUST NOT write, rewrite, promote, or repair canonical specs", text)
+        # The pre-merge guardian hard-blocker list carries the parity blocker.
+        self.assertIn("promotion parity check", text)
+
+    def test_plan_build_keeps_light_and_odd_no_spec_behavior_explicit(self):
+        text = self._norm(PLAN_BUILD_SPEC.read_text(encoding="utf-8"))
+        self.assertIn("Light", text)
+        self.assertIn("ODD task-only", text)
+        self.assertIn("no spec deltas", text)
+
+    def test_plan_build_guardian_is_not_offered_to_vcs_merge_skills(self):
+        text = self._norm(PLAN_BUILD_SPEC.read_text(encoding="utf-8"))
+        self.assertNotIn("or a VCS merge skill", text)
+
+    # --- tracker-ledger: autonomous core + Tracker domain port ---
+
+    def test_tracker_ledger_hosts_the_pre_merge_and_archive_close_checkpoints(self):
+        text = self._norm(TRACKER_LEDGER_SPEC.read_text(encoding="utf-8"))
+        self.assertIn("tracker_ledger_host.py", text)
+        self.assertIn("`--checkpoint pre-merge|archive-close`", text)
+
+    def test_tracker_ledger_spec_never_pins_checkpoints_to_the_guardian(self):
+        text = TRACKER_LEDGER_SPEC.read_text(encoding="utf-8")
+        self.assertNotIn("premerge_guardian", text)
+        self.assertNotIn("pre-merge guardian", text)
+
+    def test_tracker_closure_is_independent_of_the_openspec_archive(self):
+        text = self._norm(TRACKER_LEDGER_SPEC.read_text(encoding="utf-8"))
+        self.assertIn("independent of OpenSpec archive", text)
+        self.assertIn("no `openspec/` tree", text)
+
+    def test_tracker_domain_port_and_declarative_adapters_are_specified(self):
+        text = self._norm(TRACKER_LEDGER_SPEC.read_text(encoding="utf-8"))
+        self.assertIn("### Requirement: Tracker domain port with declarative provider adapters", text)
+        self.assertIn("[config.reconcile]", text)
+        self.assertIn("MUST NOT enable, disable, or change ledger behavior", text)
+        self.assertIn("no provider may be guessed", text)
+
+    def test_no_host_resolves_config_from_a_hardcoded_literal(self):
+        text = self._norm(TRACKER_LEDGER_SPEC.read_text(encoding="utf-8"))
+        self.assertIn("No host MAY resolve its config section from a hardcoded", text)
+        self.assertIn("the plan-build work-start gate, the tracker gate, the tracker-ledger host, and doctor", text)
+
+    # --- vcs-pr-flow: transport/review/merge/cleanup only ---
+
+    def test_vcs_owns_transport_without_sdd_ceremony(self):
+        text = self._norm(VCS_PR_SPEC.read_text(encoding="utf-8"))
+        self.assertIn("### Requirement: VCS transport owns PR/MR, review, and cleanup only", text)
+        self.assertIn("MUST NOT require, produce, schedule, or validate SDD/OpenSpec planning or archive artifacts", text)
+        self.assertIn("MUST NOT call the artifact guardian itself", text)
+
+    def test_vcs_spec_keeps_provider_neutral_safety(self):
+        text = self._norm(VCS_PR_SPEC.read_text(encoding="utf-8"))
+        for phrase in ("no auto-merge", "protected heads", "post-merge cleanup"):
+            self.assertIn(phrase, text)
+        self.assertNotIn("premerge_guardian", text)
+
+    # --- no stale host reference anywhere in the shipped surface ---
+
+    def test_tracker_gate_comments_name_the_tracker_ledger_host(self):
+        text = TRACKER_GATE_HOOK.read_text(encoding="utf-8")
+        self.assertNotIn("pre-merge guardian", text)
+        self.assertIn("tracker_ledger_host.py", text)
+
+    def test_unreleased_changelog_names_the_tracker_ledger_host(self):
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        unreleased = changelog.split("## [0.22.0]", 1)[0]
+        self.assertIn("tracker_ledger_host.py", unreleased)
+        self.assertNotIn("pre-merge guardian", unreleased)
+
+    def test_no_shipped_recipe_claims_the_guardian_hosts_tracker_checkpoints(self):
+        offenders = []
+        for path in sorted((ROOT / "catalog" / "recipes").rglob("*.sh")):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if "pre-merge guardian" in text or "premerge_guardian" in text:
+                offenders.append(str(path.relative_to(ROOT)))
+        self.assertEqual(
+            offenders, [],
+            "no tracker host may claim the Plan Build artifact guardian grades it",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

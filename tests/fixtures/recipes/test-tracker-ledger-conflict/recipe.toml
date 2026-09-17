@@ -1,0 +1,8 @@
+[recipe]
+id = "test-tracker-ledger-conflict"
+name = "Test Tracker Ledger Conflict"
+description = "Internal fixture declaring the tracker capability to create an ambiguous binding."
+version = "1.0.0"
+
+[[capabilities]]
+id = "tracker"

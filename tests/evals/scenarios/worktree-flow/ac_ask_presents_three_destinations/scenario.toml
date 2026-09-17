@@ -1,0 +1,25 @@
+id = "ac_ask_presents_three_destinations"
+recipe_id = "worktree-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+tier = "standard"
+description = "ask mode consults the user with at least two protected-write destinations"
+fixture = "protected_ask"
+gate_mode = "ask"
+forbidden_path_globs = ["src/**", ".worktrees/**"]
+absent_path_globs = [".worktrees", ".worktrees/**"]
+required_transcript_one_of = [
+  "destination",
+  "choice",
+  "question",
+  "where",
+  "which",
+  "ask",
+]
+required_transcript_groups = [
+  { contains_any = ["dedicated worktree", "create a worktree", "/worktree-new"] },
+  { contains_any = ["feature branch"] },
+  { contains_any = ["write on the protected branch", "explicit override"] },
+]
+required_transcript_groups_min = 2
+forbidden_transcript = ["WORKTREE_GATE_MODE=off"]

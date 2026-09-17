@@ -19,9 +19,9 @@ Invariants (spec "Binary acquisition, verification and cache layout"):
 - Atomic install. Download to a temp file in the destination directory,
   verify, `chmod 0755`, then `os.replace` into place. A partial download can
   never be executed.
-- Never selects unverified bytes. Every failure warns and degrades; the gate
-  falls back to the frozen Bash implementation (`gate_impl=auto`) or fails
-  open (`gate_impl=go`) with a recorded `doctor` ERROR.
+- Never selects unverified bytes. Every failure warns and degrades; `auto`
+  and `go` both fail open with a recorded `doctor` ERROR. There is no Bash
+  fallback.
 - Opt-in local build. `AI_SPECS_GATE_BUILD=1`, or offline with a Go toolchain
   present, builds from the in-repo Go source into the same cache layout.
   A Go toolchain is NEVER a user prerequisite for install or use.
@@ -381,7 +381,7 @@ def acquire(
     Returns a status dict consumed by sync and doctor:
 
         {
-          "attempted": bool,      # platform in matrix and impl != bash
+          "attempted": bool,      # platform in matrix; auto and go both acquire
           "installed": bool,      # usable binary now present at cache path
           "platform": (goos, goarch),
           "cache_path": str,
@@ -389,9 +389,8 @@ def acquire(
           "mismatch": str | None, # recorded digest mismatch (doctor ERROR)
         }
 
-    Never raises. Every failure warns and degrades: `gate_impl=auto` falls
-    back to the legacy Bash implementation (the launcher decides); `go` fails
-    open with a recorded doctor ERROR.
+    Never raises. Every failure warns and degrades: `auto` and `go` both fail
+    open with a recorded doctor ERROR. There is no Bash fallback.
     """
     home = ai_specs_home if ai_specs_home is not None else _ai_specs_home()
     version = cli_version(home)
@@ -404,9 +403,6 @@ def acquire(
         "warn": None,
         "mismatch": None,
     }
-
-    if gate_impl == "bash":
-        return out
 
     # Platform outside the published matrix (or unknown) → no binary target.
     if not goos or not goarch or (goos, goarch) not in SUPPORTED_PLATFORMS:
@@ -619,9 +615,9 @@ def acquire(
 
 
 def _degradation_hint(gate_impl: str) -> str:
-    if gate_impl == "go":
-        return "gate_impl=go: gate is failing open (run 'ai-specs doctor')"
-    return "gate_impl=auto: falling back to the Bash implementation"
+    return (
+        f"gate_impl={gate_impl}: gate is failing open (run 'ai-specs doctor')"
+    )
 
 
 def _asset_url(version: str, asset_name: str) -> str:

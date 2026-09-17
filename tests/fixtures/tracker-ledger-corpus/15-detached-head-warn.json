@@ -1,0 +1,18 @@
+{
+  "label": "detached HEAD reports without blocking in warn",
+  "witness": {
+    "state": "bound"
+  },
+  "detached": true,
+  "checkpoint": "apply-start",
+  "mode": "warn",
+  "expected": {
+    "decision": "allow",
+    "reason": "identity_unavailable",
+    "active": true,
+    "conflict": false,
+    "exit": 0,
+    "doctor": "OK"
+  },
+  "kind": "verdict"
+}

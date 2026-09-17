@@ -1,0 +1,18 @@
+{
+  "label": "unbound witness is dormant with an INFO",
+  "witness": {
+    "state": "unbound",
+    "recipe_id": ""
+  },
+  "checkpoint": "work-start",
+  "mode": "warn",
+  "expected": {
+    "decision": "dormant",
+    "reason": "unbound",
+    "active": false,
+    "conflict": false,
+    "exit": 0,
+    "doctor": "INFO"
+  },
+  "kind": "verdict"
+}

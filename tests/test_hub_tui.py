@@ -85,8 +85,8 @@ class TestCommandMenu(unittest.TestCase):
         with mock.patch.object(questionary, "select", return_value=fake_select):
             self.assertIs(menu.prompt(), self.mod.Action.QUIT)
 
-    def test_menu_has_exact_eleven_entries(self):
-        self.assertEqual(len(self.mod._MENU), 11)
+    def test_menu_has_exact_twelve_entries(self):
+        self.assertEqual(len(self.mod._MENU), 12)
         titles = [t for _, t, _ in self.mod._MENU]
         self.assertEqual(
             titles,
@@ -96,6 +96,7 @@ class TestCommandMenu(unittest.TestCase):
                 "Agents",
                 "Skills",
                 "Recipes",
+                "Configure recipes",
                 "Rules audit",
                 "Upgrade",
                 "Version",
@@ -110,9 +111,31 @@ class TestCommandMenu(unittest.TestCase):
         self.assertIs(entry[0], self.mod.Action.AGENTS)
         self.assertEqual(entry[1], "Agents")
 
-    def test_configure_recipes_nested_under_recipes_action(self):
+    def test_recipes_submenu_configure_alias_still_dispatches(self):
+        class _Runner:
+            def __init__(self):
+                self.calls = []
+
+            def run(self, action, extra=None):
+                self.calls.append((action, extra))
+                return 0
+
+        runner = _Runner()
+        with mock.patch.object(self.mod, "pick_one", return_value="configure"), mock.patch.object(
+            self.mod, "pause", return_value=False
+        ):
+            self.mod._run_recipes_submenu(mock.Mock(), runner, Path("/tmp"))
+        self.assertEqual(runner.calls, [(self.mod.Action.CONFIGURE_RECIPES, None)])
+
+    def test_configure_recipes_visible_in_main_menu_with_description(self):
         self.assertTrue(hasattr(self.mod.Action, "CONFIGURE_RECIPES"))
         self.assertEqual(self.mod.Action.CONFIGURE_RECIPES.value, "configure-recipes")
+        entry = next(
+            e for e in self.mod._MENU if e[0] is self.mod.Action.CONFIGURE_RECIPES
+        )
+        self.assertEqual(entry[1], "Configure recipes")
+        self.assertTrue(entry[2].strip(), "menu entry needs a useful description")
+        self.assertEqual(entry[2], entry[2].strip())
 
 
 @unittest.skipUnless(_has_deps(), "rich/questionary not importable")
@@ -255,8 +278,8 @@ class TestHubPTYE2E(unittest.TestCase):
     def test_quit_immediately(self):
         target = self._workspace()
         _ai_specs_init(target)
-        # Menu default is Sync (index 0). Arrow down 9 times to Quit, Enter.
-        feed = b"\x1b[B" * 10 + b"\n"
+        # Menu default is Sync (index 0). Arrow down 11 times to Quit, Enter.
+        feed = b"\x1b[B" * 11 + b"\n"
         rc, output = self._spawn_pty(target, feed)
         self.assertEqual(rc, 0, f"output: {output!r}")
         self.assertNotIn(b"Traceback", output)
@@ -265,9 +288,9 @@ class TestHubPTYE2E(unittest.TestCase):
         target = self._workspace()
         _ai_specs_init(target)
         version = (ROOT / "VERSION").read_text(encoding="utf-8").strip().encode()
-        # Arrow down 7 → Version, Enter; then 10 → Quit, Enter.
+        # Arrow down 8 → Version, Enter; then 11 → Quit, Enter.
         # After Version the menu reappears at Sync again.
-        feed = b"\x1b[B" * 7 + b"\n" + b"\x1b[B" * 10 + b"\n"
+        feed = b"\x1b[B" * 8 + b"\n" + b"\x1b[B" * 11 + b"\n"
         rc, output = self._spawn_pty(target, feed, timeout=15)
         self.assertEqual(rc, 0, f"output: {output!r}")
         self.assertIn(version, output)
@@ -278,7 +301,7 @@ class TestHubPTYE2E(unittest.TestCase):
         stages = [
             (b"What do you want to do?", b"\x1b[B\n"),  # Doctor
             (b"Press Enter to return", b"\n"),
-            (b"What do you want to do?", b"\x1b[B" * 10 + b"\n"),  # Quit
+            (b"What do you want to do?", b"\x1b[B" * 11 + b"\n"),  # Quit
         ]
         rc, output = self._spawn_pty(target, b"", timeout=25, stages=stages)
         self.assertEqual(rc, 0, f"output: {output!r}")
@@ -408,7 +431,7 @@ class TestSkillsSubmenuPTY(unittest.TestCase):
             (b"What do you want to do?", b"\x1b[B" * 3 + b"\n"),  # Skills
             (b"Skills:", b"\n"),  # List skills (default)
             (b"Press Enter to return", b"\n"),
-            (b"What do you want to do?", b"\x1b[B" * 10 + b"\n"),  # Quit
+            (b"What do you want to do?", b"\x1b[B" * 11 + b"\n"),  # Quit
         ]
         rc, output = harness._spawn_pty(target, b"", timeout=25, stages=stages)
         self.assertEqual(rc, 0, f"output: {output!r}")

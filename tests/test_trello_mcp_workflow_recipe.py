@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import re
 import tomllib
@@ -42,7 +43,7 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
     def test_recipe_validates_with_dual_hooks_and_gate_mode(self):
         recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
         self.assertEqual(recipe.id, "trello-mcp-workflow")
-        self.assertEqual(recipe.version, "1.3.0")
+        self.assertEqual(recipe.version, "1.4.0")
         fields = recipe.config_schema.fields
         self.assertIn("gate_mode", fields)
         self.assertEqual(fields["gate_mode"].default, "warn")
@@ -97,6 +98,76 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
             text = text.rstrip() + "\n" + config_block + "\n"
         (ai_specs / "ai-specs.toml").write_text(text)
         return root
+
+    def test_recipe_declares_first_class_reconcile_table(self):
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        tables = recipe.config_schema.tables
+        self.assertIn("reconcile", tables)
+        self.assertNotIn("reconcile", recipe.config_schema.extra)
+        self.assertNotIn("reconcile", recipe.config_schema.fields)
+        # The declared shape is the exact authority the Go gate decodes.
+        shape = tables["reconcile"].shape
+        self.assertEqual(
+            set(shape), {"scope_field", "max_age_seconds", "expectations"}
+        )
+        self.assertEqual(shape["scope_field"], "string")
+        self.assertEqual(shape["max_age_seconds"], "integer")
+        self.assertEqual(
+            set(shape["expectations"][0]), {"event", "property", "config_field"}
+        )
+
+    def test_recipe_declares_lifecycle_event_defaults(self):
+        """Recipe-owned mapping: review/merge events resolve list names from
+        defaulted config fields, so a synced project reconciles with zero
+        per-project configuration."""
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        fields = recipe.config_schema.fields
+        self.assertEqual(fields["review_list"].default, "Review")
+        self.assertEqual(fields["done_list"].default, "Done")
+        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
+            raw = tomllib.load(fh)
+        expectations = raw["config"]["reconcile"]["expectations"]
+        by_event = {e["event"]: e for e in expectations}
+        self.assertEqual(
+            by_event["review"], {"event": "review", "property": "list", "config_field": "review_list"}
+        )
+        self.assertEqual(
+            by_event["merge"], {"event": "merge", "property": "list", "config_field": "done_list"}
+        )
+
+    def test_sync_stamps_declared_reconcile_and_lifecycle_defaults(self):
+        """Recipe-declared reconcile table and lifecycle list defaults propagate
+        into the project manifest during sync, so reconciliation works out of
+        the box and per-project config remains an override."""
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
+            manifest = tomllib.load(fh)
+        cfg = manifest["recipes"]["trello-mcp-workflow"]["config"]
+        self.assertEqual(cfg["review_list"], "Review")
+        self.assertEqual(cfg["done_list"], "Done")
+        self.assertIn("reconcile", cfg)
+        events = {e["event"] for e in cfg["reconcile"]["expectations"]}
+        self.assertEqual(events, {"delivery", "review", "merge"})
+
+    def test_sync_accepts_declared_reconcile_block_without_warning(self):
+        block = (
+            "[recipes.trello-mcp-workflow.config.reconcile]\n"
+            'scope_field = "board_id"\n'
+            "max_age_seconds = 900\n\n"
+            "[[recipes.trello-mcp-workflow.config.reconcile.expectations]]\n"
+            'event = "delivery"\nproperty = "list"\nconfig_field = "default_list"\n'
+        )
+        root = self._make_project(block)
+        captured = io.StringIO()
+        real_stderr = sys.stderr
+        sys.stderr = captured
+        try:
+            rc = self.materialize.materialize_recipes(root, ROOT)
+        finally:
+            sys.stderr = real_stderr
+        self.assertEqual(rc, 0)
+        self.assertNotIn("unknown config key", captured.getvalue())
 
     def test_sync_stamps_tracker_gate_mode_default_warn(self):
         root = self._make_project()
@@ -284,6 +355,50 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         self.assertTrue("write" in blob or "edit" in blob)
         self.assertTrue("bash" in blob or "shell" in blob)
 
+
+    def test_skill_documents_recipe_default_lifecycle_events(self):
+        """The observation producer must state the recipe-supported events and
+        their defaulted list mapping, so the agent observes against the mapping
+        the gate will compare with."""
+        skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
+        self.assertIn("review_list", skill)
+        self.assertIn("done_list", skill)
+        self.assertIn("review", skill)
+        self.assertIn("merge", skill)
+        self.assertIn("overrides it", skill)  # config is override-only
+
+    def test_tracker_lifecycle_host_is_documented_as_plan_build_independent(self):
+        """The generic Tracker recipe surfaces the lifecycle host as a reusable
+        command, separate from Plan Build/OpenSpec and from provider mapping."""
+        skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
+        quick = (RECIPE_DIR / "commands" / "trello-workflow.md").read_text()
+        readme = (RECIPE_DIR / "README.md").read_text()
+        brief = (RECIPE_DIR / "recipe.toml").read_text()
+        for name, text in (("skill", skill), ("quick-reference", quick),
+                           ("README", readme), ("brief", brief)):
+            with self.subTest(surface=name):
+                self.assertIn("tracker_ledger_host.py", text)
+                self.assertIn("--checkpoint", text)
+        for name, text in (("skill", skill), ("README", readme)):
+            with self.subTest(surface=name):
+                lowered = text.lower()
+                self.assertIn("archive-close", lowered)
+                self.assertIn("tracker item closure", lowered)
+                self.assertIn("openspec", lowered)
+        # Provider recipes only map native state; they never own the ledger.
+        self.assertIn("[config.reconcile]", readme)
+        self.assertIn("do not enable", readme)
+
+    def test_recipe_version_and_migration_surface(self):
+        """W6: the recipe version bump is recorded in the migration surface."""
+        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
+            self.assertEqual(tomllib.load(fh)["recipe"]["version"], "1.4.0")
+        readme = (RECIPE_DIR / "README.md").read_text()
+        catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
+        self.assertIn('version = "1.4.0"', readme)
+        self.assertIn('version = "1.4.0"', catalog)
+        unreleased = (ROOT / "CHANGELOG.md").read_text().split("## [0.21.0]", 1)[0]
+        self.assertIn("1.3.0` → `1.4.0", unreleased)
 
     def test_skill_doc_content_contract(self):
         skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()

@@ -5,8 +5,22 @@
 # project surface; skill/recipe/dep content hashes are not tracked.
 
 [meta]
-cli_version = "0.21.0"
-synced_at = "2026-08-05T20:43:48Z"
+cli_version = "0.22.0"
+synced_at = "2026-08-29T07:07:36Z"
+
+[managed."ai-specs/recipes/plan-build-flow/hooks/plan-build-gate.sh"]
+sha256 = "6a4d7c18d405b1725a05344d0b64966e05b2a6b59195c9b9268f9abcf623077a"
+recipe = "plan-build-flow"
+source = "hooks/plan-build-gate.sh"
+kind = "gate"
+policy = "auto"
+
+[managed."ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh"]
+sha256 = "1b0037de0910ed7919f5f5fb875ec5dfb462064895d676c455221d3abf579e58"
+recipe = "trello-mcp-workflow"
+source = "hooks/tracker-card-gate.sh"
+kind = "gate"
+policy = "auto"
 
 [managed."ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-bug.md"]
 sha256 = "222842253e6dcfa7901acb73e7a78a43b1344d509d3fdd71b184967cfc530f2b"
@@ -57,8 +71,15 @@ source = "templates/vault-fs-mcp.sh"
 kind = "template"
 policy = "auto"
 
+[managed."ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"]
+sha256 = "3abce15974ce3ad16add653f48f3d9689a34b1077faf392cc4af9e022761ff1c"
+recipe = "worktree-flow"
+source = "hooks/worktree-gate.sh"
+kind = "gate"
+policy = "auto"
+
 [managed."ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"]
-sha256 = "3e413d6374b0687f392e1ed0483ac200e6a8918df78f57324da550e53ccfd5b4"
+sha256 = "9520d0f56f603c081bb6e956c03609ba816fbc322bffe22da61ca3cb78c875c6"
 recipe = "worktree-flow"
 source = "templates/worktree-cleanup.sh"
 kind = "template"

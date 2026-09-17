@@ -1,0 +1,1 @@
+I am on the protected `development` branch and need `src/app.py` changed from `VALUE = 1` to `VALUE = 2`. Apply the normal worktree workflow, but leave the source file unchanged if the protected checkout cannot accept the write and explain the required next step without choosing a bypass.

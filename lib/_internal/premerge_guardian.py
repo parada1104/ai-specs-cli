@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Pre-merge guardian for planning artifacts and staged verification evidence."""
+"""Pre-merge guardian for planning artifacts and staged verification evidence.
+
+This module is read-only. It validates tier minima, staged verification evidence,
+and canonical/delta spec promotion parity; it never writes canonical specs and
+never touches tracker state. Promotion is a separate explicit writer
+(``spec_promotion.py``) that runs before the pre-archive check.
+"""
 
 from __future__ import annotations
 
@@ -424,14 +430,67 @@ def check_verify_evidence(change_dir: Path, tier: Tier | str) -> list[str]:
     return blockers
 
 
-def _inspect_folder(folder: Path, tier: Tier | str | None, location: str) -> GuardianResult:
+def _inspect_folder(
+    folder: Path, tier: Tier | str | None, location: str, repo_root: Path
+) -> GuardianResult:
     blockers: list[str] = []
     tasks = folder / "tasks.md"
     tasks_text = tasks.read_text(encoding="utf-8", errors="replace") if tasks.is_file() else ""
     resolved = _resolve_tier(tasks_text, tier, blockers)
     blockers.extend(_check_minimums(folder, resolved, location))
     blockers.extend(check_verify_evidence(folder, resolved))
+    blockers.extend(_promotion_blockers(repo_root, folder, resolved, location))
     return GuardianResult(ok=not blockers, blockers=blockers, tier=resolved, archive_path=folder)
+
+
+_SPEC_PROMOTION = None
+
+
+def _spec_promotion():
+    """Sibling-load ``lib/_internal/spec_promotion.py`` (cold-install safe), or None.
+
+    The guardian reuses the promoter's parser and parity checker instead of
+    duplicating delta-operation logic.
+    """
+    global _SPEC_PROMOTION
+    if _SPEC_PROMOTION is None:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "spec_promotion_guardian", Path(__file__).with_name("spec_promotion.py")
+            )
+            if spec is None or spec.loader is None:
+                return None
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+            _SPEC_PROMOTION = module
+        except Exception:
+            return None
+    return _SPEC_PROMOTION
+
+
+def _promotion_blockers(
+    repo_root: Path, folder: Path, tier: Tier | str, location: str
+) -> list[str]:
+    """Block Standard/Full when a delta is unpromoted or cannot be composed.
+
+    Read-only and tier-scoped: Light and changes without ``specs/`` deltas are
+    never affected, and no canonical spec is written here.
+    """
+    if str(tier).lower() not in ("standard", "full"):
+        return []
+    promotion = _spec_promotion()
+    if promotion is None:
+        return [
+            f"{location}: canonical spec promotion parity cannot be verified — "
+            "lib/_internal/spec_promotion.py is missing from this install"
+        ]
+    try:
+        blockers = promotion.check_folder_parity(repo_root, folder)
+    except Exception as exc:  # fail closed rather than skip the parity check
+        return [f"{location}: canonical spec promotion parity could not be evaluated: {exc}"]
+    return [f"{location}: {blocker}" for blocker in blockers]
 
 
 def check_prearchive(
@@ -449,7 +508,7 @@ def check_prearchive(
             tier=str(tier) if tier else None,
             archive_path=active,
         )
-    return _inspect_folder(active, tier, f"changes/{slug}")
+    return _inspect_folder(active, tier, f"changes/{slug}", Path(repo_root))
 
 
 def check_premerge(
@@ -475,7 +534,7 @@ def check_premerge(
     if archive is None:
         return GuardianResult(ok=False, blockers=blockers, tier=str(tier) if tier else None)
 
-    result = _inspect_folder(archive, tier, f"archive/{archive.name}")
+    result = _inspect_folder(archive, tier, f"archive/{archive.name}", root)
     result.blockers = blockers + result.blockers
     result.ok = not result.blockers
     result.archive_path = archive

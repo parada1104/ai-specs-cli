@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
 GATE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow" / "gate"
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
-RECIPE_VERSION = "1.5.0"  # catalog/recipes/worktree-flow/recipe.toml
+RECIPE_VERSION = "1.6.0"  # catalog/recipes/worktree-flow/recipe.toml
 
 MANIFEST = (
     "[project]\n"
@@ -59,7 +59,6 @@ DERIVED_IN_WORKTREE = (
     "ai-specs/.gitignore",
     "ai-specs/.ai-specs.lock",
     "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh",
-    "ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh",
     "ai-specs/recipes/worktree-flow/README.md",
     "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh",
 )

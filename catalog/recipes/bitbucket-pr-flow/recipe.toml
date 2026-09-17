@@ -18,7 +18,9 @@ action = "validate-config"
 binary = "bb"
 purpose = "Create and manage Bitbucket pull requests"
 required = true
-install_url = "https://bitbucket-cli.paulvanderlei.com/getting-started/installation/"
+install_url = "https://bb-cli.github.io"
+version_check = "bb --version"
+min_version = "1.4.1"
 
 [config.base_branch]
 required = false
@@ -36,7 +38,7 @@ help_text = "Bitbucket workspace or user that should own the remote (multi-accou
 required = false
 type = "bool"
 default = false
-help_text = "If true, try to switch bb CLI account when it does not match expected_owner. Install: https://bitbucket-cli.paulvanderlei.com/getting-started/installation/"
+help_text = "PHP bb-cli has no `bb auth switch`. Leave false; a mismatch blocks and the user must run `bb auth save`. See https://bb-cli.github.io/authentication"
 
 [provides]
 skills = [{ id = "bitbucket-merge-workflow", source = "bundled" }]

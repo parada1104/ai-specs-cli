@@ -1,6 +1,8 @@
 # worktree-clean
 
-Reclaim git worktrees whose branch has been merged into the integration branch.
+Reclaim git worktrees whose branch has been merged into the integration branch,
+and delete their remote branches from the main worktree after independent
+verification.
 
 ## When to use
 
@@ -26,6 +28,12 @@ Optional scope flags (forwarded to the script):
 - On a standalone repo these flags are inert (single pass), not an error.
 
 ## Steps
+
+Cleanup MUST be run from the main repository worktree. Do not invoke it from a
+linked feature worktree: that worktree may be the deletion target, and GitHub's
+`gh pr merge --delete-branch` cannot handle this layout when the base is already
+checked out elsewhere. The cleanup launcher uses the verified Go binary; if it
+is unavailable, it fails closed and performs no destructive action.
 
 0. Ensure your shell is **outside** the worktree you might remove (`cd` to the
    main / superproject repository root first).

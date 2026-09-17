@@ -1,0 +1,1 @@
+The change is authorized and I need you to update `src/app.py` on the current `development` checkout by changing `VALUE = 1` to `VALUE = 2`. Make this small edit directly, run a quick check of the resulting file, and report what changed.

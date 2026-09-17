@@ -576,12 +576,59 @@ class SyncMarkerPreservationTests(unittest.TestCase):
             "User custom content must be preserved after sync",
         )
 
-    def test_sync_without_marker_regenerates_agents_md(self):
-        """Counterpart to W2: without the marker, sync DOES regenerate AGENTS.md normally.
+    def test_sync_preserves_a_truly_untracked_agents_md(self):
+        """The real first-sight migration path: a brief with NO lock baseline.
 
-        Asserts that the marker-preservation logic is marker-gated (not always-preserve).
-        After init, we leave AGENTS.md as-is (no marker), then overwrite it with stale
-        content (no marker), run sync, and assert the output is NOT the stale content.
+        This is the repository-predates-ai-specs case the change exists for, and
+        it was not covered end to end: every sibling test ran `init` first, which
+        records a baseline and therefore drives `user_modified` instead.
+        """
+        target = self._make_target()
+        result = subprocess.run(
+            [str(CLI), "init", str(target)],
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, f"init failed:\n{result.stderr}")
+        agents_md = target / "AGENTS.md"
+
+        # Drop the recorded baseline so the brief is genuinely untracked, the
+        # state every existing project is in before its first sync on this code.
+        lock_path = target / "ai-specs/.ai-specs.lock"
+        lock_text = lock_path.read_text()
+        lock_path.write_text(
+            "\n".join(
+                line for line in lock_text.splitlines()
+                if "AGENTS.md" not in line
+            ).replace("[managed.]\n", "")
+            + "\n"
+        )
+
+        handwritten = "# Hand-written brief that predates ai-specs\n"
+        agents_md.write_text(handwritten)
+
+        result = subprocess.run(
+            [str(CLI), "sync", str(target)],
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
+        self.assertEqual(
+            agents_md.read_text(), handwritten,
+            "a brief with no baseline must survive sync untouched",
+        )
+        combined = result.stdout + result.stderr
+        self.assertIn("untracked", combined, "the reported state must name untracked")
+        self.assertIn("--adopt-brief", combined)
+        self.assertIn("ai-specs:runtime-brief", combined)
+
+    def test_sync_without_marker_preserves_user_modified_agents_md(self):
+        """An edited generated brief is preserved even without the marker.
+
+        NOTE ON THE NAME: this drives `user_modified`, not `untracked`. `init`
+        records a baseline before the overwrite, so a baseline exists by the
+        time sync runs. An earlier name claimed `untracked` and the assertions
+        still passed, because the remedy text is state-agnostic — the test could
+        not have caught a regression specific to the first-sight path. The true
+        no-baseline path is covered by the sibling test below.
         """
         target = self._make_target()
 
@@ -609,18 +656,15 @@ class SyncMarkerPreservationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
 
         final = agents_md.read_text()
-        # Stale content must be gone (sync regenerated the file)
-        self.assertNotEqual(
+        # Divergent bytes must survive migration without a recorded baseline.
+        self.assertEqual(
             final,
             stale,
-            "sync must regenerate AGENTS.md when no marker is present",
+            "sync must preserve a divergent untracked AGENTS.md",
         )
-        # Regenerated content must have the real brief structure
-        self.assertIn(
-            "## Workflow Rules",
-            final,
-            "Regenerated AGENTS.md must contain ## Workflow Rules section",
-        )
+        combined = result.stdout + result.stderr
+        self.assertIn("--adopt-brief", combined)
+        self.assertIn("ai-specs:runtime-brief", combined)
 
 
 # ---------------------------------------------------------------------------

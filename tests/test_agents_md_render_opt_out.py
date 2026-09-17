@@ -54,11 +54,17 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
         self.assertEqual(agents_md.read_text(), manual)
         self.assertIn("skipped AGENTS.md (brief.render = false)", result.stdout)
 
-    def test_sync_default_render_true_regenerates(self):
+    def test_sync_default_render_true_preserves_divergent_brief(self):
+        """`init` records a baseline first, so this exercises `user_modified`,
+        not `untracked` as the name previously claimed. The assertions passed
+        either way because the remedy text is state-agnostic. The true
+        no-baseline path is covered in test_runtime_brief_baseline.py.
+        """
         target = self._make_target()
         self._init(target)
         agents_md = target / "AGENTS.md"
-        agents_md.write_text("# Stale — sync must replace this.\n")
+        stale = "# Stale — sync must preserve this until ownership is explicit.\n"
+        agents_md.write_text(stale)
 
         result = subprocess.run(
             [str(CLI), "sync", str(target)],
@@ -67,8 +73,11 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotEqual(agents_md.read_text(), "# Stale — sync must replace this.\n")
-        self.assertNotIn("skipped AGENTS.md (brief.render = false)", result.stdout)
+        self.assertEqual(agents_md.read_text(), stale)
+        combined = result.stdout + result.stderr
+        self.assertNotIn("skipped AGENTS.md (brief.render = false)", combined)
+        self.assertIn("--adopt-brief", combined)
+        self.assertIn("ai-specs:runtime-brief", combined)
 
     def test_init_placeholder_when_render_false(self):
         target = self._make_target()

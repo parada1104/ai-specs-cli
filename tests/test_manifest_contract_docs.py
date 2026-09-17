@@ -141,24 +141,6 @@ class ManifestContractDocsTests(unittest.TestCase):
         self.assertNotIn("## `[sdd]` recipe metadata", self.recipe_doc)
         self.assertNotIn("threshold", self.recipe_doc)
 
-    def test_legacy_ceremony_mapping_table(self):
-        # The plan-build delta spec codifies the migration mapping from the
-        # retired four-level ceremony vocabulary to the Light/Standard/Full
-        # depth tiers; every mapping row must be present.
-        delta = (
-            ROOT
-            / "openspec"
-            / "changes"
-            / "retire-decision-matrix"
-            / "specs"
-            / "plan-build-flow"
-            / "spec.md"
-        )
-        text = delta.read_text()
-        self.assertIn("- `trivial` and `local_fix` → **Light**", text)
-        self.assertIn("- `behavior_change` → **Standard**", text)
-        self.assertIn("- `domain_change` → **Full**", text)
-
     def test_no_retired_ceremony_tokens_in_live_surfaces(self):
         # The retired tokens must be absent from live config, docs, and the
         # trello README. Archives and the changelog are exempt (historical).

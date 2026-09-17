@@ -116,10 +116,113 @@ class ConfigField:
     enum: list[str] | None = None
     help_text: str = ""
 
+
+# Declarative shape of structured (table) config sections. A recipe declares one
+# of these under ``[config.<name>]``; the value is validated against the shape
+# here and exposed as a first-class table value instead of landing in the opaque
+# ``ConfigSchema.extra`` bucket. The grammar is deliberately tiny — a scalar type
+# name, a table of named sub-shapes, or a one-element list for a bounded array —
+# never a general schema language.
+STRUCTURED_CONFIG_SHAPES: dict[str, Any] = {
+    "reconcile": {
+        "scope_field": "string",
+        "max_age_seconds": "integer",
+        "expectations": [
+            {
+                "event": "string",
+                "property": "string",
+                "config_field": "string",
+            }
+        ],
+    },
+}
+
+# Upper bound on a structured array such as the reconcile expectations list.
+STRUCTURED_LIST_MAX = 32
+
+
+def _check_shape_scalar(context: str, value: Any, kind: str) -> None:
+    if kind == "string":
+        if not isinstance(value, str):
+            raise RecipeValidationError(
+                f"{context}: expected string, got {type(value).__name__}"
+            )
+    elif kind == "integer":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RecipeValidationError(
+                f"{context}: expected integer, got {type(value).__name__}"
+            )
+    elif kind == "boolean":
+        if not isinstance(value, bool):
+            raise RecipeValidationError(
+                f"{context}: expected boolean, got {type(value).__name__}"
+            )
+    else:
+        raise RecipeValidationError(f"{context}: invalid scalar type '{kind}'")
+
+
+def _check_shape_value(context: str, value: Any, shape: Any) -> None:
+    if isinstance(shape, str):
+        _check_shape_scalar(context, value, shape)
+        return
+    if isinstance(shape, list):
+        if not isinstance(value, list):
+            raise RecipeValidationError(
+                f"{context}: expected array, got {type(value).__name__}"
+            )
+        if len(value) > STRUCTURED_LIST_MAX:
+            raise RecipeValidationError(
+                f"{context}: expected at most {STRUCTURED_LIST_MAX} entries, got {len(value)}"
+            )
+        for idx, item in enumerate(value):
+            _check_shape_value(f"{context}[{idx}]", item, shape[0])
+        return
+    if isinstance(shape, dict):
+        if not isinstance(value, dict):
+            raise RecipeValidationError(
+                f"{context}: expected table, got {type(value).__name__}"
+            )
+        for key in value:
+            if key not in shape:
+                raise RecipeValidationError(f"{context}: unknown key '{key}'")
+        for key, sub_shape in shape.items():
+            if key in value:
+                _check_shape_value(f"{context}.{key}", value[key], sub_shape)
+        return
+    raise RecipeValidationError(f"{context}: invalid shape declaration")
+
+
+def validate_structured_config(section: str, value: Any) -> None:
+    """Validate a ``[config.<section>]`` table against its declared shape.
+
+    Raises RecipeValidationError for an unknown sub-key, a wrong value type, a
+    non-table value, or an oversized array. A section without a declared shape
+    is a no-op, so callers can validate any manifest config key safely.
+    """
+    shape = STRUCTURED_CONFIG_SHAPES.get(section)
+    if shape is None:
+        return
+    _check_shape_value(f"[config.{section}]", value, shape)
+
+
+@dataclass
+class ConfigTable:
+    """A validated table-valued ``[config.<name>]`` section declared by a recipe.
+
+    ``shape`` is the declarative authority downstream decoders mirror; ``values``
+    retains the recipe-declared raw table so sync can stamp recipe-owned
+    defaults into the project manifest without re-reading the TOML.
+    """
+
+    shape: dict[str, Any] = field(default_factory=dict)
+    values: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass
 class ConfigSchema:
     fields: dict[str, ConfigField] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    tables: dict[str, ConfigTable] = field(default_factory=dict)
 
 
 @dataclass
@@ -130,6 +233,9 @@ class CliDep:
     install_url: str = ""
     version_check: str = ""
     min_version: str = ""
+    installer: str = ""
+    repository: str = ""
+    release_policy: str = ""
 
 
 @dataclass
@@ -424,7 +530,17 @@ def _parse_cli_deps(raw: Any, context: str) -> list[CliDep]:
         raise RecipeValidationError(
             f"{context}: expected array of tables, got {type(raw).__name__}"
         )
-    allowed = {"binary", "purpose", "required", "install_url", "version_check", "min_version"}
+    allowed = {
+        "binary",
+        "purpose",
+        "required",
+        "install_url",
+        "version_check",
+        "min_version",
+        "installer",
+        "repository",
+        "release_policy",
+    }
     out: list[CliDep] = []
     for idx, item in enumerate(raw):
         ctx = f"{context}[{idx}]"
@@ -443,7 +559,40 @@ def _parse_cli_deps(raw: Any, context: str) -> list[CliDep]:
         install_url = _opt_str(item, "install_url", ctx)
         version_check = _opt_str(item, "version_check", ctx)
         min_version = _opt_str(item, "min_version", ctx)
-        out.append(CliDep(binary, purpose, required, install_url, version_check, min_version))
+        installer = _opt_str(item, "installer", ctx)
+        repository = _opt_str(item, "repository", ctx)
+        release_policy = _opt_str(item, "release_policy", ctx)
+        if installer not in ("", "github-release"):
+            raise RecipeValidationError(
+                f"{ctx}.installer: unsupported installer '{installer}'"
+            )
+        release_fields = (repository, release_policy)
+        if installer == "github-release":
+            if repository != "parada1104/jinna-provider":
+                raise RecipeValidationError(
+                    f"{ctx}.repository: only 'parada1104/jinna-provider' is allowed"
+                )
+            if release_policy != "latest-stable":
+                raise RecipeValidationError(
+                    f"{ctx}.release_policy: expected 'latest-stable'"
+                )
+        elif any(release_fields):
+            raise RecipeValidationError(
+                f"{ctx}: repository/release_policy require installer 'github-release'"
+            )
+        out.append(
+            CliDep(
+                binary,
+                purpose,
+                required,
+                install_url,
+                version_check,
+                min_version,
+                installer,
+                repository,
+                release_policy,
+            )
+        )
     return out
 
 
@@ -452,9 +601,16 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
         return ConfigSchema()
     fields: dict[str, ConfigField] = {}
     extra: dict[str, Any] = {}
+    tables: dict[str, ConfigTable] = {}
     for key, value in raw.items():
         if not isinstance(value, dict):
             raise RecipeValidationError(f"{context}.config.{key}: expected table, got {type(value).__name__}")
+        # Structured sections are validated against their declarative shape and
+        # exposed as first-class table values.
+        if key in STRUCTURED_CONFIG_SHAPES:
+            validate_structured_config(key, value)
+            tables[key] = ConfigTable(shape=STRUCTURED_CONFIG_SHAPES[key], values=dict(value))
+            continue
         # Detect standard ConfigField entries by the presence of 'required' key.
         # Non-standard config sections (e.g., board_isolation) are stored in extra.
         if "required" not in value:
@@ -515,7 +671,7 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
             enum=enum_values,
             help_text=help_text,
         )
-    return ConfigSchema(fields=fields, extra=extra)
+    return ConfigSchema(fields=fields, extra=extra, tables=tables)
 
 
 def _parse_init(raw: Any, context: str, recipe_dir: Path | None = None) -> InitWorkflow | None:

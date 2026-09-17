@@ -22,6 +22,7 @@ from tests.evals.lib.harness import (  # noqa: E402
     materialize_project,
     run_prompt,
     runtime_available,
+    wire_runtime_hooks,
 )
 from tests.evals.lib.project_fixture import (  # noqa: E402
     add_initialized_submodule,
@@ -40,6 +41,10 @@ LIVE_SCENARIOS: tuple[str, ...] = (
     "ac_monorepo_apps_no_subrepo_needed",
     "ac_cleanup_scans_all_submodules",
     "ac_gate_blocked_write_creates_worktree_not_bash_fallback",
+    "ac_ask_presents_three_destinations",
+    "ac_ask_never_self_bypasses",
+    "ac_always_keeps_hard_block",
+    "ac_off_never_gates",
 )
 
 RECIPE_ID = "worktree-flow"
@@ -126,7 +131,7 @@ def _prepare_fixture(root: Path, fixture: str) -> None:
             check=True,
         )
         return
-    if fixture == "protected_main":
+    if fixture in {"protected_main", "protected_ask"}:
         app = root / "src" / "app.py"
         app.parent.mkdir(parents=True, exist_ok=True)
         if not app.is_file():
@@ -147,6 +152,14 @@ def _prepare_fixture(root: Path, fixture: str) -> None:
             )
         # Main worktree on a protected branch name.
         subprocess.run(["git", "branch", "-M", "development"], cwd=root, check=True)
+        if fixture == "protected_ask":
+            # Keep the protected checkout active while giving the agent a
+            # real, non-protected branch destination to discover.
+            subprocess.run(
+                ["git", "branch", "feature/eval-gate-destination"],
+                cwd=root,
+                check=True,
+            )
         return
     raise ValueError(f"unknown worktree-flow fixture: {fixture}")
 
@@ -166,11 +179,20 @@ class WorktreeFlowLiveEvals(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         version = recipe_version(REPO_ROOT / "catalog", RECIPE_ID)
+        fixture = str(meta.get("fixture", "")).strip()
+        gate_mode = str(meta.get("gate_mode", "")).strip()
         # Prefer development as integration branch so gate scenarios match prompts.
         extra = (
             "\n[recipes.worktree-flow.config]\n"
             'integration_branch = "development"\n'
         )
+        if gate_mode:
+            self.assertIn(
+                gate_mode,
+                {"always", "ask", "off"},
+                f"{scenario_id}: invalid gate_mode",
+            )
+            extra += f'gate_mode = "{gate_mode}"\n'
         materialize_project(root, RECIPE_ID, version, extra=extra)
         seed_project_files(root)
         setup_runtime_skills(
@@ -179,12 +201,15 @@ class WorktreeFlowLiveEvals(unittest.TestCase):
         setup_runtime_commands(
             root, runtime, RECIPE_ID, catalog_root=REPO_ROOT / "catalog"
         )
+        # Exercise the runtime-native shell hook where the harness supports
+        # it; cursor-agent maps to Cursor and intentionally has no file-write
+        # hook, so the skill/transcript remains the behavioral surface there.
+        wire_runtime_hooks(root, runtime)
 
         init_git_repo(root)
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         subprocess.run(["git", "commit", "-qm", "baseline"], cwd=root, check=True)
 
-        fixture = str(meta.get("fixture", "")).strip()
         if fixture:
             _prepare_fixture(root, fixture)
 
@@ -288,6 +313,50 @@ class WorktreeFlowLiveEvals(unittest.TestCase):
             if hits:
                 self.fail(
                     f"{label}: affirmative forbidden phrase in {rule['path']}: {hits[0]}"
+                )
+
+        transcript = "\n".join(
+            str(result.get(key) or "")
+            for key in ("result_text", "stdout", "stderr")
+        ).lower()
+        for needle in meta.get("required_transcript_all", []):
+            self.assertIn(
+                str(needle).lower(),
+                transcript,
+                f"{label}: transcript missing required {needle!r}",
+            )
+        one_of = [str(needle).lower() for needle in meta.get("required_transcript_one_of", [])]
+        if one_of:
+            self.assertTrue(
+                any(needle in transcript for needle in one_of),
+                f"{label}: transcript missing any of {one_of!r}",
+            )
+        for needle in meta.get("required_transcript_any", []):
+            self.assertIn(
+                str(needle).lower(),
+                transcript,
+                f"{label}: transcript missing required {needle!r}",
+            )
+        groups = meta.get("required_transcript_groups", [])
+        minimum = int(meta.get("required_transcript_groups_min", 0))
+        if groups and minimum:
+            matched = sum(
+                any(
+                    str(needle).lower() in transcript
+                    for needle in group.get("contains_any", [])
+                )
+                for group in groups
+            )
+            self.assertGreaterEqual(
+                matched,
+                minimum,
+                f"{label}: transcript matched {matched}/{minimum} destination groups",
+            )
+        for needle in meta.get("forbidden_transcript", []):
+            hits = forbidden_phrase_violations(transcript, [str(needle)])
+            if hits:
+                self.fail(
+                    f"{label}: affirmative forbidden transcript phrase: {hits[0]}"
                 )
 
     def _run_named(self, scenario_id: str):

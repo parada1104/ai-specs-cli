@@ -4,6 +4,12 @@ Open a pull request for the current feature branch using the Bitbucket PR flow.
 This command operationalizes the bundled `bitbucket-merge-workflow` skill — read
 that skill first for the full guardrails before acting.
 
+This recipe uses PHP [`bb-cli`](https://bb-cli.github.io) (formula `bb-cli`,
+binary `bb`). `command -v bb` cannot distinguish a leftover TypeScript
+Bitbucket CLI. Positively confirm PHP `bb-cli` with `bb --version` plus the
+PHP `bb auth show` shape; if the binary is not PHP `bb-cli`, stop and install
+from https://bb-cli.github.io (`brew install bb-cli`) rather than guessing flags.
+
 ## Configuration
 
 Read the base branch from the recipe config in `ai-specs.toml`:
@@ -32,22 +38,52 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 
    ```bash
    command -v bb
+   BB_VERSION=$(bb --version 2>&1)
+   printf '%s\n' "$BB_VERSION"
+   if ! printf '%s\n' "$BB_VERSION" | grep -q 'Version:'; then
+     echo "**Blocker**: \`bb\` on PATH is not PHP bb-cli. Install PHP bb-cli from https://bb-cli.github.io (Homebrew: \`brew install bb-cli\`; never Homebrew formula/cask \`bb\`) and retry."
+     return 1
+   fi
    ```
 
    If `bb` is not found, stop and report:
 
-   > **Blocker**: `bb` is not installed. Install it from https://bitbucket-cli.paulvanderlei.com/getting-started/installation/
-   > and retry.
+   > **Blocker**: `bb` is not installed. Install it from https://bb-cli.github.io
+   > (Homebrew: `brew install bb-cli`; never Homebrew formula/cask `bb`) and retry.
 
-3. Verify authentication:
+   If `bb --version` does not identify PHP `bb-cli`, stop — that binary is
+   not PHP `bb-cli`.
+
+3. Verify authentication with a redacted capture (emit only `Username`;
+   never print `AppPassword`). Parse conservatively and block on a missing,
+   empty, or multiple Username line:
 
    ```bash
-   bb auth show
+   AUTH_CAPTURE=$(bb auth show 2>&1)
+   USERNAME_LINES=$(printf '%s\n' "$AUTH_CAPTURE" | awk -F': ' '$1 == "Username" { print }')
+   USERNAME_COUNT=$(printf '%s\n' "$USERNAME_LINES" | awk 'NF { n++ } END { print n+0 }')
+   if [ "$USERNAME_COUNT" -ne 1 ]; then
+     echo "**Blocker**: missing, empty, or multiple Username lines. \`bb\` is not authenticated. Run \`bb auth save\` and retry."
+     return 1
+   fi
+   USERNAME=$(printf '%s\n' "$USERNAME_LINES" | awk -F': ' '{ gsub(/^ +| +$/, "", $2); print $2 }')
+   if [ -z "$USERNAME" ]; then
+     echo "**Blocker**: missing or empty Username. \`bb\` is not authenticated. Run \`bb auth save\` and retry."
+     return 1
+   fi
+   printf '%s\n' "$USERNAME_LINES"
    ```
 
-   If authentication fails (output includes "Not logged in"), stop and report:
+   Observed PHP output shape (do not print `AppPassword`): lines
+   `Username: <value>` and `AppPassword: <secret>`. A missing or empty
+   `Username`, or multiple Username lines, means credentials are absent or
+   ambiguous. If unauthenticated, stop and report:
 
-   > **Blocker**: `bb` is not authenticated. Run `bb auth login` and retry.
+   > **Blocker**: `bb` is not authenticated. Run `bb auth save` and retry.
+
+   **Open verification gap:** exact `bb auth save` prompts are not encoded here.
+   Run `bb auth save` with no invented flags. See
+   https://bb-cli.github.io/authentication
 
 4. Run **Runtime Preflight: Account Match** (config-gated — skip when `expected_owner` is empty):
 
@@ -60,17 +96,30 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 
    ```bash
    # Runtime Preflight: Account Match (Bitbucket)
-   # Fix: bb has no `bb auth status`; the correct command is `bb auth show`.
+   # PHP bb-cli: capture bb auth show (not bb auth status). Username parse is conservative.
    EXPECTED_OWNER="{config.expected_owner}"
    if [ -n "$EXPECTED_OWNER" ]; then
-     ACTIVE=$(bb auth show 2>&1 | awk '/Username|username/ {print $2}' | head -1)
-     if [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
+     AUTH_CAPTURE=$(bb auth show 2>&1)
+     USERNAME_LINES=$(printf '%s\n' "$AUTH_CAPTURE" | awk -F': ' '$1 == "Username" { print }')
+     USERNAME_COUNT=$(printf '%s\n' "$USERNAME_LINES" | awk 'NF { n++ } END { print n+0 }')
+     if [ "$USERNAME_COUNT" -ne 1 ]; then
+       echo "**Blocker**: missing, empty, or multiple Username lines. Stop rather than guessing."
+       echo "bb has no 'auth switch'. Run: bb auth save"
+       return 1
+     fi
+     ACTIVE=$(printf '%s\n' "$USERNAME_LINES" | awk -F': ' '{ gsub(/^ +| +$/, "", $2); print $2 }')
+     if [ -z "$ACTIVE" ] || [ "$ACTIVE" != "$EXPECTED_OWNER" ]; then
        echo "**Blocker**: active bb account is '$ACTIVE'; expected '$EXPECTED_OWNER'."
-       echo "bb has no 'auth switch'. Run: bb auth login"
+       echo "bb has no 'auth switch'. Run: bb auth save"
        return 1
      fi
    fi
    ```
+
+   **Open verification gap:** do not treat this awk as a stable public API.
+   Never log `AppPassword`. If Username is missing, empty, or there are
+   multiple Username lines, stop rather than guessing. There is no
+   `bb auth switch`.
 
    If the preflight returns a blocker, stop before pushing.
 
@@ -85,13 +134,21 @@ If unset, fall back to the recipe default (`development`) and to the runtime bri
 
    > **Note**: The remote is resolved dynamically to support repos where the Bitbucket remote is named `bitbucket` or `upstream` instead of `origin`. Falls back to `origin` if no known name matches.
 
-7. Create the PR against the configured base branch:
+7. Create the PR against the configured base branch (PHP positional source then
+   destination; `--title` / `--description`; never `-i` as the agent default):
 
    ```bash
-   bb pr create --source <branch-name> --destination <base_branch> --title "<title>" --body "<summary and verification>"
+   bb pr create <branch-name> <base_branch> --title "<title>" --description "<summary>"
    ```
 
+   Do not invent `--source`, `--destination`, or `--body`. Do not run
+   `bb pr create --help` (it performs a real operation). If destination
+   semantics are unclear for this repo, **stop** before create.
+
 8. STOP. Do not merge. Report the PR URL and wait for explicit user approval.
+
+   Inspection of an existing PR's **comments** uses `bb pr show <pr-id>` (not JSON).
+   Merge stays in the bundled skill.
 
 For the full merge workflow (approval → merge with source-commit check → cleanup), see the `bitbucket-merge-workflow` skill.
 

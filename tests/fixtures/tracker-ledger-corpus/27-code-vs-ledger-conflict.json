@@ -1,0 +1,54 @@
+{
+  "label": "a code-vs-ledger mismatch conflicts at apply-start and pre-merge with remote absent",
+  "witness": {
+    "state": "bound"
+  },
+  "change": "conflict-change",
+  "store": {
+    "items": [
+      {
+        "slug": "conflict-change",
+        "item_id": "card-local"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "always",
+      "evidence": {
+        "local": "",
+        "remote": "",
+        "code": "card-other",
+        "git": ""
+      },
+      "expected": {
+        "decision": "block",
+        "reason": "conflict",
+        "active": true,
+        "conflict": true,
+        "exit": 2,
+        "doctor": "WARN"
+      }
+    },
+    {
+      "checkpoint": "pre-merge",
+      "mode": "always",
+      "evidence": {
+        "local": "",
+        "remote": "",
+        "code": "card-other",
+        "git": ""
+      },
+      "expected": {
+        "decision": "block",
+        "reason": "conflict",
+        "active": true,
+        "conflict": true,
+        "exit": 2,
+        "doctor": "WARN"
+      }
+    }
+  ],
+  "kind": "verdict"
+}

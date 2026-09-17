@@ -1,0 +1,17 @@
+{
+  "label": "archive-close reports a missing close decision in warn",
+  "witness": {
+    "state": "bound"
+  },
+  "checkpoint": "archive-close",
+  "mode": "warn",
+  "expected": {
+    "decision": "allow",
+    "reason": "needs-item",
+    "active": true,
+    "conflict": false,
+    "exit": 0,
+    "doctor": "OK"
+  },
+  "kind": "verdict"
+}

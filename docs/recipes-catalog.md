@@ -68,6 +68,7 @@ never touches the foundational layer.
 | [`tdd-flow`](#tdd-flow) | Foundational | Red-green-refactor with a configurable test command | `test-runner` | — | `test_command` |
 | [`playwright-ui-flow`](#playwright-ui-flow) | Specific | Playwright UI test/smoke discipline + CLI surface | `ui-browser-testing` | — | `ui_test_command`, `ui_smoke_command`, `playwright_config` |
 | [`playwright-mcp`](#playwright-mcp) | Specific | Exploratory browser automation via `@playwright/mcp` (add-on) | — (augments base) | `playwright` | — (override via `[mcp.playwright]`) |
+| [`jinna-mcp-recipe`](#jinna-mcp-recipe) | Specific | Install and configure the local OpenProject provider | — | `jinna` | OpenProject env references |
 | [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | `artifact_store_default` |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup (standalone / monorepo-apps / monorepo-submodules) | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `repo_topology`, `gate_mode`, `gate_scope`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
@@ -83,8 +84,9 @@ never touches the foundational layer.
 
 Recipes that shell out to external CLIs declare them via `[[deps.cli]]` in
 `recipe.toml`. `ai-specs doctor` emits WARN (required) / INFO (optional) when a
-binary is missing; the config wizard shows the same guidance. Install is always
-manual.
+binary is missing; the config wizard shows the same guidance. Most dependencies
+remain manual, while the provider recipe can offer its verified GitHub Release
+installer on an interactive TTY.
 
 | Recipe | Binary | Purpose | Required |
 |--------|--------|---------|----------|
@@ -97,6 +99,7 @@ manual.
 | `tdd-flow` | — | Test command is config-driven | — |
 | `playwright-ui-flow` | `npx` | Playwright UI test/smoke commands | yes |
 | `playwright-mcp` | `npx` | `@playwright/mcp` server runtime | yes |
+| `jinna-mcp-recipe` | `jinna` | Local OpenProject provider MCP server; interactive GitHub Release installer | yes |
 
 
 ## session-context
@@ -195,6 +198,30 @@ enabled = true
 enabled = true
 ```
 
+## jinna-mcp-recipe
+
+**Install and configure the local OpenProject provider.** Detects the provider
+binary `jinna`, offers an explicit verified GitHub Release installation when it
+is absent, and materializes the local `jinna mcp` server.
+
+- **Provides:** skill `jinna-mcp-recipe`, local MCP preset `jinna`.
+- **Dependency:** provider binary `jinna` from
+  [`parada1104/jinna-provider`](https://github.com/parada1104/jinna-provider/releases).
+  Existing compatible PATH installations are reused; the interactive dependency
+  flow can install the matching release archive and verify `SHA256SUMS`. The
+  provider declaration uses the constrained `installer = "github-release"` kind.
+- **Configuration:** `OPENPROJECT_BASE_URL`, `OPENPROJECT_API_TOKEN`, and optional
+  `OPENPROJECT_AUTH` are environment references only.
+- **Safety:** `doctor`, `recipe init`, and non-interactive sync never install. The
+  official OpenProject remote `/mcp` endpoint remains a separate operator choice;
+  this recipe never proxies or replays writes between transports.
+- **Full README:** [`catalog/recipes/jinna-mcp-recipe/README.md`](../catalog/recipes/jinna-mcp-recipe/README.md)
+
+```toml
+[recipes.jinna-mcp-recipe]
+enabled = true
+```
+
 ## plan-build-flow
 
 **Ambient skill-only change workflow.** The bundled skill auto-invokes on
@@ -203,8 +230,35 @@ authorization, then implements, validates, and closes the change — without
 `/plan` or `/build` commands. Implementation defers to an isolated-worktree
 workflow when one is enabled, without hard-depending on it.
 
+Full planning follows `explore -> proposal -> spec/design -> tasks`: spec and
+design may run in parallel after proposal, and tasks waits for both. A
+host-advertised executor may handle the current phase; absent or unavailable
+execution falls back inline, while malformed, partial, or blocked results stop
+and preserve state. Standard and Light remain collapsed and unchanged.
+
+One session-level preflight owns execution mode, artifact store, review budget,
+delivery strategy, and chain strategy. Plan-build consumes those values without
+recollecting or overriding them. Final plan review derives intent, scope, key
+decisions, affected areas, risks, open questions, and labeled
+recommendations/assumptions from the available artifacts, then requires
+explicit accept, adjust, or stop. Automatic mode blocks unresolved product
+decisions.
+
 It is the sole ceremony/depth classification source (`Light` / `Standard` /
 `Full`), replacing the retired ceremony contract.
+
+Delta specifications are promoted before archive: each
+`openspec/changes/<slug>/specs/<domain>/spec.md` delta is composed into
+`openspec/specs/<domain>/spec.md` by `lib/_internal/spec_promotion.py`. ADDED
+requirements are appended, MODIFIED requirements replace the full canonical block
+with the exact same requirement name, unrelated canonical requirements and
+sections survive, and a rerun after an interruption is a no-op. A colliding ADDED
+requirement, a MODIFIED target that does not exist, an unsupported RENAMED delta,
+and a destructive REMOVED delta without explicit approval all block without
+writing. Only the promoter writes canonical specs; the guardian only validates
+and never mutates them. An unpromoted or unresolved Standard/Full delta blocks
+the pre-archive and pre-merge checks; Light and changes without deltas are
+unaffected.
 
 OpenSpec archive-tail uses the canonical dated destination
 `openspec/changes/archive/YYYY-MM-DD-<slug>/` with a valid ISO calendar date.
@@ -212,6 +266,12 @@ The exact undated `archive/<slug>/` form remains a legacy fallback only when no
 dated candidate exists. The pre-merge guardian inspects only direct children,
 rejects invalid or near-match names, and fails closed for multiple dated or
 dated-plus-undated candidates.
+
+This OpenSpec archive is Plan Build's change-folder boundary and is separate from
+a tracker recipe's `archive-close` checkpoint: `archive-close` is tracker item
+closure through the Tracker-domain host (`tracker_ledger_host.py --checkpoint
+archive-close`), never moving the change folder, never inferring closure from
+archive state, and writing nothing. The pre-merge artifact guardian is tracker-free.
 
 - **Provides:** skill `plan-build-flow`; capability `plan-build-flow`.
 - **Config:**
@@ -232,7 +292,7 @@ dated-plus-undated candidates.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.6.0"
+version = "1.8.0"
 
 [recipes.plan-build-flow.config]
 artifact_store_default = "both"
@@ -267,18 +327,16 @@ unmerged ones, and never touches the main worktree.
   [`docs/runtime-hooks.md`](runtime-hooks.md); capabilities
   `worktree-isolation`, `worktree-cleanup`.
 - **Gate implementation:** the gate ships as a single zero-dependency Go
-  binary (implementation of record) plus a frozen Bash reference
-  (`worktree-gate-legacy.sh`) kept for one minor release as the rollback path.
-  `gate_impl` selects the implementation: `auto` (default — prefer the Go
-  binary, fall back to Bash), `go` (binary only; fails open when unusable, with
-  a `worktree-gate` doctor ERROR), or `bash` (frozen Bash reference; no binary,
-  network, or Go toolchain required). `ai-specs sync` materializes a thin
-  bash-3.2 launcher at the unchanged hook path, acquires the binary into
+  binary. `gate_impl` selects acquisition policy: `auto` (default) or `go`
+  (explicit pin). Both acquire the verified binary; when none is usable the
+  launcher fails open with one stderr warning and `ai-specs doctor` reports
+  ERROR. `ai-specs sync` materializes a thin bash-3.2 launcher at the unchanged
+  hook path, acquires the binary into
   `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/`,
   verifies SHA-256 against the committed `SHA256SUMS` trust root before install,
   and degrades with a warning on any failure — acquisition never fails sync.
-  `ai-specs doctor` reports the resolved implementation, version, digest state,
-  and silent fallbacks.
+  `ai-specs doctor` reports the resolved implementation, version, and digest
+  state. `gate_impl = bash` is rejected at sync.
 - **Gate provenance:** sync records a baseline of the exact bytes the CLI last
   rendered for the generated gate hook. A baseline match means unmodified and
   may be force-updated; a byte mismatch or missing baseline is preserved with a
@@ -296,9 +354,9 @@ unmerged ones, and never touches the main worktree.
   | `worktrees_dir` | string | `.worktrees` | Directory holding per-change worktrees. |
   | `integration_branch` | string | `main` | Branch worktrees are created from and merged into. |
   | `auto_remove_merged` | boolean | `true` | Whether merged worktrees are eligible for cleanup. |
-  | `gate_mode` | string | `always` | Main-worktree gate mode. `always` keeps the current block, `ask` blocks with a bypass hint, and `off` disables the gate. |
+  | `gate_mode` | string | `always` | Main-worktree gate mode. `always` keeps the current block (+ worktree guidance), `ask` blocks and tells the agent to ask the user for a destination (worktree / feature branch / explicit protected-branch override), and `off` disables the gate. |
   | `gate_scope` | string | `auto` | Scope policy: `auto` / `superrepo` / `subrepo`; only proven canonical `<superrepo>/openspec/changes/**` planning paths are excepted. |
-  | `gate_impl` | string | `auto` | Gate implementation: `auto` / `go` / `bash` (see "Gate implementation" above). |
+  | `gate_impl` | string | `auto` | Gate implementation: `auto` / `go` (see "Gate implementation" above). |
   | `WORKTREE_GATE_SCOPE` | string | — | Optional invocation override; invalid values warn and fall back to the stamped scope. |
   | `repo_topology` | string | `auto` | `auto` / `standalone` / `monorepo-apps` / `monorepo-submodules`. Auto detects initialized submodules; never auto-selects `monorepo-apps`. Shared `<worktrees_dir>/<subrepo>-<slug>` layout under submodules; cleanup enumerates per-module. |
   | `WORKTREE_GATE_PROTECTED` | string | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
@@ -308,7 +366,7 @@ unmerged ones, and never touches the main worktree.
 ```toml
 [recipes.worktree-flow]
 enabled = true
-version = "1.5.0"
+version = "1.6.0"
 
 [recipes.worktree-flow.config]
 integration_branch = "development"
@@ -388,9 +446,12 @@ recipe = "gitlab-mr-flow"
 
 ## bitbucket-pr-flow
 
-**Bitbucket branch → PR → merge flow.** Uses the `bb` CLI. Sibling of
+**Bitbucket branch → PR → merge flow.** Uses PHP [`bb-cli`](https://bb-cli.github.io)
+(Homebrew formula `bb-cli`, binary `bb`). Sibling of
 [`git-pr-flow`](#git-pr-flow) and [`gitlab-mr-flow`](#gitlab-mr-flow).
-Installs no MCP server.
+Installs no MCP server. On a TTY, missing `bb` may offer `brew install bb-cli`
+on macOS (and Linux with Homebrew); apt-only Linux falls back to the install URL.
+Never install Homebrew formula or cask `bb` (getbb.app).
 
 - **Provides:** skill `bitbucket-merge-workflow`, command `/bb-pr-create`; capability
   `vcs-pr-flow`.
@@ -400,16 +461,30 @@ Installs no MCP server.
   |-----|------|----------|---------|-------------|
   | `base_branch` | string | no | `development` | Base branch the PR targets. |
   | `expected_owner` | string | no | `""` | Account username this repo expects; activates auth preflight when set. |
-  | `auto_switch_account` | boolean | no | `false` | Reserved for API parity; bb has no auth switch — mismatch blocks with guidance. |
+  | `auto_switch_account` | boolean | no | `false` | Reserved for API parity; PHP bb-cli has no auth switch — mismatch blocks with `bb auth save` guidance. |
 
-- **Auth note:** Bitbucket CLI uses `bb auth show` (not `bb auth status`) to verify authentication.
+- **Host CLI:** PHP `bb-cli` `1.4.1+` (`version_check = "bb --version"`,
+  `min_version = "1.4.1"`). Recipe `version = "1.3.0"` is the catalog recipe
+  version, not the host floor.
+- **Identity guard:** `command -v bb` is not enough. Preflight runs
+  `bb --version` and confirms PHP `bb-cli` (plus the PHP `Username:` /
+  redacted `bb auth show` shape). A TypeScript Bitbucket CLI is not PHP
+  `bb-cli` and is blocked with `brew install bb-cli` /
+  https://bb-cli.github.io guidance.
+- **Auth note:** PHP `bb-cli` uses a redacted `bb auth show` capture to
+  inspect credentials (emit only `Username`; never print `AppPassword`;
+  reject missing, empty, or multiple Username lines) and `bb auth save` to
+  remediate (not `bb auth status`, and not a login subcommand).
+- **Post-merge cleanup:** delete the feature remote branch
+  (`git push $REMOTE --delete`). Never remotely delete protected heads
+  (`main`, `master`, `development`, `staging`, configured base/integration).
 
 - **Full README:** [`catalog/recipes/bitbucket-pr-flow/README.md`](../catalog/recipes/bitbucket-pr-flow/README.md)
 
 ```toml
 [recipes.bitbucket-pr-flow]
 enabled = true
-version = "1.1.0"
+version = "1.3.0"
 
 [recipes.bitbucket-pr-flow.config]
 base_branch = "development"
@@ -460,7 +535,7 @@ requires a `## Tracker` link section before production/PR-archive work.
 ```toml
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.3.0"
+version = "1.4.0"
 
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"

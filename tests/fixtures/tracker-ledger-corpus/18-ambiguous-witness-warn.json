@@ -1,0 +1,22 @@
+{
+  "label": "ambiguous witness is dormant with a WARN",
+  "witness": {
+    "state": "ambiguous",
+    "recipe_id": "",
+    "candidates": [
+      "test-tracker-ledger",
+      "test-tracker-ledger-conflict"
+    ]
+  },
+  "checkpoint": "work-start",
+  "mode": "warn",
+  "expected": {
+    "decision": "dormant",
+    "reason": "ambiguous",
+    "active": false,
+    "conflict": false,
+    "exit": 0,
+    "doctor": "WARN"
+  },
+  "kind": "verdict"
+}

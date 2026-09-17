@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,22 @@ def _load_lock_module():
 _lock_mod = _load_lock_module()
 
 _project_cache_module = None
+_provider_install_module = None
+
+
+def _load_provider_install():
+    global _provider_install_module
+    if _provider_install_module is None:
+        module_path = Path(__file__).with_name("provider_install.py")
+        spec = importlib.util.spec_from_file_location("provider_install", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load provider_install.py at {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _provider_install_module = module
+    return _provider_install_module
+
 
 def _load_project_cache():
     global _project_cache_module
@@ -252,6 +269,63 @@ def merge_catalog_defaults_into_resolved(
                 pass
     except Exception:
         pass
+
+
+# --- Recipe-declared reconcile stamping ---------------------------------------
+def _load_recipe_config_write() -> Any:
+    global _recipe_config_write_module
+    if _recipe_config_write_module is None:
+        module_path = Path(__file__).with_name("recipe-config-write.py")
+        spec = importlib.util.spec_from_file_location("recipe_config_write_internal", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load recipe-config-write.py at {module_path}")
+        _recipe_config_write_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = _recipe_config_write_module
+        spec.loader.exec_module(_recipe_config_write_module)
+    return _recipe_config_write_module
+
+
+_recipe_config_write_module: Any = None
+
+
+def stamp_recipe_reconcile_defaults(project_root: Path, catalog_dir: Path, enabled_ids: list[str]) -> None:
+    """Stamp recipe-declared reconcile mapping and the config values it selects
+    into the project manifest, absent keys only.
+
+    The gate reads only the manifest, so the recipe-owned lifecycle mapping
+    (delivery/review/merge) must reach ``[recipes.<id>.config]`` for
+    reconciliation to work out of the box. Explicit project values always win;
+    this helper never overwrites an existing key. Optional fields stamp only
+    when the declared mapping references them, so unrelated defaults keep the
+    old resolved-render behavior.
+    """
+    schema = _load_recipe_schema()
+    manifest = project_root / "ai-specs" / "ai-specs.toml"
+    writer = _load_recipe_config_write()
+    for rid in enabled_ids:
+        try:
+            recipe = read_recipe(catalog_dir, rid)
+        except Exception:
+            continue  # validation failures surface through the normal sync path
+        tables = recipe.config_schema.tables
+        declared = tables.get("reconcile")
+        if declared is None:
+            continue
+        values = declared.values or {}
+        stamp: dict[str, Any] = {"reconcile": values}
+        used: set[str] = {values.get("scope_field") or ""}
+        for expectation in values.get("expectations", []) or []:
+            if isinstance(expectation, dict):
+                used.add(expectation.get("config_field") or "")
+        used.discard("")
+        for field_name in used:
+            field = recipe.config_schema.fields.get(field_name)
+            if field is not None and field.default is not None:
+                stamp[field_name] = field.default
+        try:
+            writer.update_recipe_config(manifest, rid, stamp)
+        except Exception as exc:
+            warn(f"recipe '{recipe.name}': reconcile defaults not stamped ({type(exc).__name__}: {exc})")
 
 
 # --- Conflict detection -------------------------------------------------------
@@ -476,13 +550,19 @@ REPO_TOPOLOGY_VALUES = ("auto", "standalone", "monorepo-apps", "monorepo-submodu
 GATE_MODE_PLACEHOLDER = "__WORKTREE_GATE_MODE__"
 REPO_TOPOLOGY_PLACEHOLDER = "__WORKTREE_REPO_TOPOLOGY__"
 TRACKER_CLI_HOME_PLACEHOLDER = "__TRACKER_CLI_HOME__"
+# The tracker gate's evidence-bridge directory: $AI_SPECS_HOME/lib/_internal, where
+# ledger_bridge.py ships. Empty when no CLI home resolves, which makes the host
+# skip evidence acquisition and the tracker.none write (fail open).
+TRACKER_LIB_INTERNAL_PLACEHOLDER = "__TRACKER_LIB_INTERNAL__"
 GATE_IMPL_PLACEHOLDER = "__WORKTREE_GATE_IMPL__"
-GATE_IMPL_VALUES = ("auto", "go", "bash")
+GATE_IMPL_VALUES = ("auto", "go")
 GATE_VERSION_PLACEHOLDER = "__WORKTREE_GATE_VERSION__"
-# Project-relative path where the frozen Bash reference is materialized
-# alongside the launcher (task 3.9: gate_impl=bash works with no network and
-# no binary).
-LEGACY_HOOK_REL = "ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh"
+
+
+def _invalid_gate_impl_error(impl: str) -> RuntimeError:
+    return RuntimeError(
+        f"invalid gate_impl '{impl}'; bash has been removed; allowed: auto | go"
+    )
 
 
 def _write_gate_backup(
@@ -609,9 +689,7 @@ def materialize_hook_script(
         if merged_cfg is not None:
             impl = str(merged_cfg.get("gate_impl") or "auto")
         if impl not in GATE_IMPL_VALUES:
-            raise RuntimeError(
-                f"invalid gate_impl '{impl}'; allowed: auto | go | bash"
-            )
+            raise _invalid_gate_impl_error(impl)
         content = content.replace(GATE_IMPL_PLACEHOLDER, impl)
     if GATE_VERSION_PLACEHOLDER in content:
         version = "dev"
@@ -624,6 +702,13 @@ def materialize_hook_script(
     if TRACKER_CLI_HOME_PLACEHOLDER in content:
         home_val = str(Path(cli_home).resolve()) if cli_home is not None else ""
         content = content.replace(TRACKER_CLI_HOME_PLACEHOLDER, home_val)
+    if TRACKER_LIB_INTERNAL_PLACEHOLDER in content:
+        internal = (
+            str((Path(cli_home) / "lib" / "_internal").resolve())
+            if cli_home is not None
+            else ""
+        )
+        content = content.replace(TRACKER_LIB_INTERNAL_PLACEHOLDER, internal)
 
     util = _load_util()
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
@@ -681,29 +766,6 @@ def materialize_hook_script(
     return rel
 
 
-def materialize_legacy_gate(recipe_dir: Path, project_root: Path, recipe_id: str) -> None:
-    """Copy the frozen Bash reference alongside the launcher (task 3.9).
-
-    The launcher's legacy fallback (`gate_impl=bash`, or `auto` with no
-    usable binary) execs this file, so a rollback project works with no
-    network and no binary. The copy keeps its unstamped sentinels, exactly
-    like the catalog source: the legacy implementation resolves them itself
-    (invalid → warn + fallback), and the materialized file is never the
-    launcher's staleness probe.
-    """
-    if recipe_id != "worktree-flow":
-        return
-    src = recipe_dir / "hooks" / "worktree-gate-legacy.sh"
-    if not src.is_file():
-        warn(f"worktree-flow: legacy gate source missing at {src}; gate_impl=bash unavailable")
-        return
-    dest = project_root / LEGACY_HOOK_REL
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(src.read_text())
-    os.chmod(dest, 0o755)
-    print(f"    ✓ hook script {LEGACY_HOOK_REL}")
-
-
 # --- Binding resolution -------------------------------------------------------
 def resolve_bindings(
     catalog_dir: Path, enabled_ids: list[str], manifest_bindings: list[dict[str, str]]
@@ -754,15 +816,167 @@ def resolve_bindings(
     return binding_map
 
 
+# --- Binding witness (A4) -----------------------------------------------------
+LEDGER_CAPABILITY = "tracker"
+LEDGER_WITNESS_VERSION = 1
+LEDGER_WITNESS_RELPATH = Path("ai-specs") / "ledger" / "witness.json"
+WITNESS_BOUND = "bound"
+WITNESS_AMBIGUOUS = "ambiguous"
+WITNESS_UNBOUND = "unbound"
+WITNESS_DECLARED_NOT_BOUND = "declared-not-bound"
+
+
+def git_common_dir(project_root: Path) -> str:
+    """Absolute Git common dir for project_root, or "" outside a repository.
+
+    Mirrors the Go reader (``catalog/recipes/worktree-flow/gate/gitfacts.go``):
+    prefer the absolute form, fall back to the relative one, then realpath so a
+    linked worktree and its main checkout resolve to one shared directory (A2).
+    """
+    def run(*args: str) -> str:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(project_root), *args],
+                capture_output=True, text=True, check=False,
+            )
+        except OSError:
+            return ""
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+
+    value = run("rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not value:
+        value = run("rev-parse", "--git-common-dir")
+    if not value:
+        return ""
+    path = Path(value)
+    if not path.is_absolute():
+        path = Path(project_root) / path
+    return str(path.resolve())
+
+
+def tracking_declared(project_root: Path) -> bool:
+    """True when openspec/config.yaml declares a top-level ``tracking:`` block.
+
+    The declaration is supply, never activation (D6); it only distinguishes the
+    witness's ``declared-not-bound`` state from plain ``unbound``.
+    """
+    config = Path(project_root) / "openspec" / "config.yaml"
+    if not config.is_file():
+        return False
+    try:
+        lines = config.read_text().splitlines()
+    except OSError:
+        return False
+    return any(line.startswith("tracking:") for line in lines)
+
+
+def tracker_witness_payload(
+    catalog_dir: Path,
+    enabled_ids: list[str],
+    resolved_bindings: dict[str, str],
+    *,
+    declared: bool,
+    written_at: str,
+) -> dict[str, Any]:
+    """Describe the already-resolved tracker binding (A4).
+
+    There is no verdict logic here: ``resolve_bindings`` stays the only binding
+    producer, and an unresolved capability records candidate recipe ids instead
+    of guessing a provider (D6).
+    """
+    recipe_id = resolved_bindings.get(LEDGER_CAPABILITY, "")
+    candidates: list[str] = []
+    if recipe_id:
+        state = WITNESS_BOUND
+    else:
+        for rid in enabled_ids:
+            try:
+                recipe = read_recipe(catalog_dir, rid)
+            except Exception:
+                continue
+            if any(cap.id == LEDGER_CAPABILITY for cap in recipe.capabilities):
+                candidates.append(rid)
+        if len(candidates) > 1:
+            state = WITNESS_AMBIGUOUS
+        elif declared:
+            state = WITNESS_DECLARED_NOT_BOUND
+        else:
+            state = WITNESS_UNBOUND
+    return {
+        "v": LEDGER_WITNESS_VERSION,
+        "capability": LEDGER_CAPABILITY,
+        "state": state,
+        "recipe_id": recipe_id,
+        "candidates": candidates,
+        "written_at": written_at,
+    }
+
+
+def write_tracker_witness(
+    project_root: Path,
+    catalog_dir: Path,
+    enabled_ids: list[str],
+    resolved_bindings: dict[str, str],
+) -> Path | None:
+    """Atomically persist the resolved tracker binding under the common dir (A4).
+
+    ``<git-common-dir>/ai-specs/ledger/witness.json`` — deliberately outside
+    ``RESOLVED_CONFIG_TEMP`` so ``lib/sync.sh``'s EXIT trap cannot delete it.
+    Best-effort: outside a repository there is no common dir, and a write error
+    leaves the ledger dormant (missing witness) instead of aborting sync. The Go
+    reader treats a missing or unreadable witness as dormant, never bound.
+    """
+    common = git_common_dir(project_root)
+    if not common:
+        return None
+    payload = tracker_witness_payload(
+        catalog_dir,
+        enabled_ids,
+        resolved_bindings,
+        declared=tracking_declared(project_root),
+        written_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    target = Path(common) / LEDGER_WITNESS_RELPATH
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=target.parent, prefix="witness.json.tmp.", suffix=".json"
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(payload, f, indent=2, sort_keys=True)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, target)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError as exc:
+        warn(
+            f"tracker witness not written ({type(exc).__name__}: {exc}); "
+            "ledger stays dormant"
+        )
+        return None
+    return target
+
+
 # --- Config merge -------------------------------------------------------------
 def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]:
     """Merge recipe config schema defaults with manifest overrides.
 
-    Fails if any required=True field is missing in the final dict.
-    Warns if manifest provides keys not in the schema.
+    Fails if any required=True field is missing in the final dict. Carries a
+    declared structured (table) section such as ``reconcile`` through after
+    validating it against the recipe's declarative shape. Warns for any other
+    manifest key not in the schema.
     """
     result: dict[str, Any] = {}
-    schema_fields = recipe.config_schema.fields if hasattr(recipe, "config_schema") else {}
+    schema = getattr(recipe, "config_schema", None)
+    schema_fields = schema.fields if schema is not None else {}
+    schema_tables = getattr(schema, "tables", {}) or {}
 
     # Start with defaults
     for key, field in schema_fields.items():
@@ -771,10 +985,19 @@ def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]
 
     # Overlay manifest values
     for key, value in manifest_config.items():
-        if key not in schema_fields:
-            warn(f"recipe '{recipe.name}': unknown config key '{key}' in manifest (ignored)")
+        if key in schema_fields:
+            result[key] = value
             continue
-        result[key] = value
+        if key in schema_tables:
+            try:
+                _load_recipe_schema().validate_structured_config(key, value)
+            except _load_recipe_schema().RecipeValidationError as exc:
+                raise RuntimeError(
+                    f"recipe '{recipe.name}': invalid config field '{key}': {exc}"
+                ) from exc
+            result[key] = value
+            continue
+        warn(f"recipe '{recipe.name}': unknown config key '{key}' in manifest (ignored)")
     if "gate_scope" in schema_fields and not str(result.get("gate_scope") or "").strip():
         result["gate_scope"] = "auto"
 
@@ -792,6 +1015,8 @@ def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]
             continue
         value_str = str(result[key])
         if value_str not in enum_values:
+            if key == "gate_impl":
+                raise _invalid_gate_impl_error(value_str)
             allowed = " | ".join(enum_values)
             raise RuntimeError(
                 f"recipe '{recipe.name}': config field '{key}' value '{value_str}' "
@@ -864,7 +1089,60 @@ def execute_hooks(
 
 
 # --- MCP merge ---------------------------------------------------------------
-def build_recipe_mcp(catalog_dir: Path, recipe_ids: list[str], manifest_mcp: dict[str, Any]) -> dict[str, Any]:
+def _resolve_provider_markers(
+    merged: dict[str, Any],
+    catalog_dir: Path,
+    recipe_ids: list[str],
+    ai_specs_home: Path,
+) -> None:
+    provider_install = _load_provider_install()
+    for rid in recipe_ids:
+        try:
+            recipe = read_recipe(catalog_dir, rid)
+        except Exception as exc:  # noqa: BLE001
+            warn(f"recipe '{rid}': cannot read recipe for provider resolution ({exc})")
+            continue
+        dependencies = {dep.binary: dep for dep in recipe.cli_deps}
+        for preset in recipe.mcp:
+            config = merged.get(preset.id)
+            if not isinstance(config, dict) or config.get("command") != "{dep:jinna}":
+                continue
+            dep = dependencies.get("jinna")
+            if dep is None:
+                merged.pop(preset.id, None)
+                warn(f"recipe '{recipe.name}': missing jinna dependency declaration")
+                continue
+            try:
+                resolution = provider_install.resolve_provider(
+                    dep, ai_specs_home=ai_specs_home
+                )
+            except Exception as exc:  # noqa: BLE001
+                # A malformed/unreadable managed cache must degrade to
+                # unresolved, never abort sync with a traceback.
+                merged.pop(preset.id, None)
+                warn(
+                    f"recipe '{recipe.name}': provider jinna could not be resolved "
+                    f"({exc}); run ai-specs configure-recipes interactively to install it"
+                )
+                continue
+            if resolution.verified:
+                resolved = dict(config)
+                resolved["command"] = resolution.command
+                merged[preset.id] = resolved
+                continue
+            merged.pop(preset.id, None)
+            warn(
+                f"recipe '{recipe.name}': provider jinna is unresolved; "
+                "run ai-specs configure-recipes interactively to install it"
+            )
+
+
+def build_recipe_mcp(
+    catalog_dir: Path,
+    recipe_ids: list[str],
+    manifest_mcp: dict[str, Any],
+    ai_specs_home: Path | None = None,
+) -> dict[str, Any]:
     """Merge recipe MCP presets with manifest precedence (shallow merge).
 
     Project manifest keys always win over recipe defaults. Conflicting keys
@@ -886,6 +1164,8 @@ def build_recipe_mcp(catalog_dir: Path, recipe_ids: list[str], manifest_mcp: dic
                     )
                 else:
                     manifest_cfg[key] = value
+    if ai_specs_home is not None:
+        _resolve_provider_markers(merged, catalog_dir, recipe_ids, Path(ai_specs_home))
     return merged
 
 
@@ -1049,6 +1329,9 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         pc.remove_recipe_command_leftovers(project_root, cli_home=cli_home)
         # Still clean up orphaned recipes (none expected) and deps not in manifest
         clean_orphans(project_root, set(), expected_dep_ids, cli_home=cli_home)
+        # A shrinking enabled set must overwrite a previously bound witness with the
+        # unbound outcome, or a disabled provider would stay active.
+        write_tracker_witness(project_root, catalog_dir, [], {})
         print("  (no [recipes.*] enabled — skipping)")
         # Still write resolved-config if requested (even with no enabled recipes)
         if resolved_config_out is not None:
@@ -1089,6 +1372,17 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
                 f"Add an explicit [[bindings]] entry to resolve."
             )
 
+    # Durable tracker binding witness (A4): persist the binding outcome that
+    # resolve_bindings just computed so the Go ledger only ever reads it.
+    # Written outside RESOLVED_CONFIG_TEMP, so the EXIT trap cannot delete it.
+    write_tracker_witness(
+        project_root, catalog_dir, list(enabled.keys()), resolved_bindings
+    )
+
+    # Recipe-owned reconcile mapping reaches the manifest here: the gate reads
+    # only the manifest, so declared defaults must be stamped during sync.
+    stamp_recipe_reconcile_defaults(project_root, catalog_dir, list(enabled.keys()))
+
     # Tag conflict check (NEW): advisory only. Tags are metadata and MUST NOT
     # block materialization — the capability-binding layer owns blocking
     # decisions about competing providers. We surface overlaps as warnings so a
@@ -1123,7 +1417,12 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     manifest_data = mod.load_toml(toml_path)
     manifest_mcp = mod.read_mcp(manifest_data)
 
-    recipe_mcp: dict[str, Any] = {sid: dict(cfg) for sid, cfg in manifest_mcp.items()}
+    recipe_mcp = build_recipe_mcp(
+        catalog_dir,
+        list(enabled.keys()),
+        manifest_mcp,
+        ai_specs_home=cli_home,
+    )
 
     # Build source provenance before materializing so first-time upgrades can
     # remove an untouched project copy even when cache/commands is empty.
@@ -1169,21 +1468,6 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         for cmd in recipe.commands:
             materialize_command(recipe_dir, cmd, project_root, cli_home=cli_home)
 
-        # MCP presets (shallow merge with manifest precedence)
-        for mcp in recipe.mcp:
-            if mcp.id not in recipe_mcp:
-                recipe_mcp[mcp.id] = dict(mcp.config)
-                continue
-            manifest_cfg = recipe_mcp[mcp.id]
-            for key, value in mcp.config.items():
-                if key in manifest_cfg:
-                    warn(
-                        f"recipe '{recipe.name}' mcp.id='{mcp.id}' key '{key}' "
-                        f"conflicts with project manifest (manifest wins)"
-                    )
-                else:
-                    manifest_cfg[key] = value
-
         # Templates
         for tpl in recipe.templates:
             materialize_template(recipe_dir, tpl, project_root, merged_cfg, recipe_id=rid)
@@ -1219,12 +1503,9 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
                 "env": hook_env,
             })
 
-        # Phase 3 distribution (worktree-flow only): materialize the frozen
-        # Bash reference alongside the launcher (rollback path, task 3.9) and
-        # acquire the Go binary when gate_impl wants it (tasks 3.10-3.13).
-        # Acquisition never fails sync: every failure warns and degrades.
+        # Phase 3 distribution (worktree-flow only): acquire the Go binary
+        # when gate_impl is auto or go. Acquisition never fails sync.
         if rid == "worktree-flow":
-            materialize_legacy_gate(recipe_dir, project_root, rid)
             impl = str(merged_cfg.get("gate_impl") or "auto")
             if impl in ("auto", "go"):
                 try:

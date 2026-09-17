@@ -102,6 +102,18 @@ def _schema_document(recipe: Any) -> dict[str, Any]:
                 "help_text": field.help_text or "",
             }
         )
+    for key, table in (getattr(recipe.config_schema, "tables", {}) or {}).items():
+        fields.append(
+            {
+                "key": key,
+                "type": "table",
+                "required": False,
+                "enum": None,
+                "default": None,
+                "help_text": "",
+                "shape": table.shape,
+            }
+        )
     return {"fields": fields}
 
 
@@ -210,7 +222,9 @@ def inspect_project(project_root: Path, recipe_id: str) -> dict[str, Any]:
     if topology is not None:
         grounding["topology"] = topology
     fields = recipe.config_schema.fields
-    unknown = sorted(key for key in current if key not in fields)
+    tables = getattr(recipe.config_schema, "tables", {}) or {}
+    addressable = set(fields) | set(tables)
+    unknown = sorted(key for key in current if key not in addressable)
     return {
         "schema_version": SCHEMA_VERSION,
         "recipe": {"id": recipe_id, "enabled": enabled, "present_in_manifest": present},
@@ -229,7 +243,14 @@ def _is_secret_literal(key: str, value: Any) -> bool:
 
 def _validate_values(recipe: Any, values: dict[str, Any]) -> None:
     fields = recipe.config_schema.fields
+    tables = getattr(recipe.config_schema, "tables", {}) or {}
     for key, value in values.items():
+        if key in tables:
+            try:
+                _recipe_schema.validate_structured_config(key, value)
+            except _recipe_schema.RecipeValidationError as exc:
+                raise ConfigureError(str(exc)) from exc
+            continue
         field = fields.get(key)
         if field is None:
             raise ConfigureError(f"unknown config key: {key}")
@@ -378,6 +399,13 @@ def _parse_assignment(recipe: Any, assignment: str) -> tuple[str, Any]:
     raw = raw.strip()
     if not key:
         raise ConfigureError("--set requires a non-empty key")
+    if key in (getattr(recipe.config_schema, "tables", {}) or {}):
+        # Structured table value: the caller passes a TOML inline table, e.g.
+        # --set 'reconcile={scope_field="board_id",max_age_seconds=900,...}'
+        try:
+            return key, tomllib.loads(f"value = {raw}\n")["value"]
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigureError(f"invalid TOML value for {key}: {exc}") from exc
     field = recipe.config_schema.fields.get(key)
     if field is None:
         raise ConfigureError(f"unknown config key: {key}")

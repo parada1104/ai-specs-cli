@@ -1,0 +1,31 @@
+{
+  "label": "bound + open item + consistent evidence allows",
+  "witness": {
+    "state": "bound"
+  },
+  "store": {
+    "items": [
+      {
+        "status": "open",
+        "item_id": "T-1"
+      }
+    ]
+  },
+  "evidence": {
+    "local": "T-1",
+    "remote": "T-1",
+    "code": "T-1",
+    "git": "T-1"
+  },
+  "checkpoint": "apply-start",
+  "mode": "warn",
+  "expected": {
+    "decision": "allow",
+    "reason": "",
+    "active": true,
+    "conflict": false,
+    "exit": 0,
+    "doctor": "OK"
+  },
+  "kind": "verdict"
+}

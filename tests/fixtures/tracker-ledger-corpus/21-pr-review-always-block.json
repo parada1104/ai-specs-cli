@@ -1,0 +1,17 @@
+{
+  "label": "pr-review blocks a missing item in always",
+  "witness": {
+    "state": "bound"
+  },
+  "checkpoint": "pr-review",
+  "mode": "always",
+  "expected": {
+    "decision": "block",
+    "reason": "needs-item",
+    "active": true,
+    "conflict": false,
+    "exit": 2,
+    "doctor": "OK"
+  },
+  "kind": "verdict"
+}

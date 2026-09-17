@@ -41,6 +41,22 @@ def read_recipe(catalog_dir: Path, recipe_id: str) -> Recipe:
     return load_recipe_toml(recipe_dir / "recipe.toml")
 
 
+def _cli_dep_to_dict(dep) -> dict:
+    result = {
+        "binary": dep.binary,
+        "purpose": dep.purpose,
+        "required": dep.required,
+        "install_url": dep.install_url,
+        "version_check": dep.version_check,
+        "min_version": dep.min_version,
+    }
+    for key in ("installer", "repository", "release_policy"):
+        value = getattr(dep, key, "")
+        if value:
+            result[key] = value
+    return result
+
+
 def recipe_to_dict(recipe: Recipe) -> dict:
     init = None
     if recipe.init is not None:
@@ -92,17 +108,7 @@ def recipe_to_dict(recipe: Recipe) -> dict:
                 for h in recipe.runtime_hooks
             ],
         },
-        "cli_deps": [
-            {
-                "binary": d.binary,
-                "purpose": d.purpose,
-                "required": d.required,
-                "install_url": d.install_url,
-                "version_check": d.version_check,
-                "min_version": d.min_version,
-            }
-            for d in recipe.cli_deps
-        ],
+        "cli_deps": [_cli_dep_to_dict(d) for d in recipe.cli_deps],
     }
 
 

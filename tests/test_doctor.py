@@ -1281,6 +1281,61 @@ class HarnessEnvDoctorTests(unittest.TestCase):
             self.assertTrue(ok, "expected harness-env OK when key is present")
             self.assertFalse(warn, "harness-env must not WARN when key is non-empty")
 
+    def _write_mcp_project_with_choice(self, root: Path) -> Path:
+        """Like _write_mcp_project, but the MCP env reference declares allowed values."""
+        project = self._write_mcp_project(root)
+        (root / "catalog" / "recipes" / "demo-recipe" / "recipe.toml").write_text(
+            "[recipe]\n"
+            'id = "demo-recipe"\n'
+            'name = "Demo"\n'
+            'description = "D"\n'
+            'version = "1.0"\n\n'
+            "[[provides.mcp]]\n"
+            'id = "demo"\n'
+            'command = "npx"\n'
+            'env = { DEMO_MODE = "$DEMO_MODE" }\n'
+            'env_allowed = { DEMO_MODE = ["on", "off"] }\n',
+            encoding="utf-8",
+        )
+        return project
+
+    def test_invalid_harness_env_value_warns_with_allowed_values(self):
+        """A configured value outside the recipe's declared set WARNs early, without echoing it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_mcp_project_with_choice(root)
+            (project / "ai-specs.env").write_text("DEMO_MODE=onoff\n", encoding="utf-8")
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value="/usr/bin/direnv"
+            ):
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            warn = [
+                c
+                for c in doc.checks
+                if c.name == "harness-env-value"
+                and c.severity == self.doctor.Severity.WARN
+            ]
+            self.assertTrue(
+                warn, "expected harness-env-value WARN for a value outside the declared set"
+            )
+            self.assertIn("DEMO_MODE", warn[0].message)
+            self.assertIn("on, off", warn[0].message)
+            self.assertNotIn("onoff", warn[0].message)
+
+    def test_valid_harness_env_value_case_insensitive_no_warn(self):
+        """The provider accepts declared values case-insensitively, so no WARN is warranted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = self._write_mcp_project_with_choice(root)
+            (project / "ai-specs.env").write_text("DEMO_MODE=OFF\n", encoding="utf-8")
+            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
+                "shutil.which", return_value="/usr/bin/direnv"
+            ):
+                doc = self.doctor.Doctor(project)
+                doc.run()
+            self.assertFalse([c for c in doc.checks if c.name == "harness-env-value"])
+
     def test_stale_managed_body_warns(self):
         """JD-8: markers with nested ai-specs/.env body must WARN envrc-managed."""
         with tempfile.TemporaryDirectory() as tmp:

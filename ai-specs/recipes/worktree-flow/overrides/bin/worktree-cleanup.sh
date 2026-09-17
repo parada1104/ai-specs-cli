@@ -224,6 +224,59 @@ candidate_has_patch_equivalence() {
     return 1
 }
 
+# A squash commit can combine the patches from several branch commits, so the
+# per-commit `git cherry` proof above cannot match it. Compare the complete
+# branch delta with the selected candidate delta from their common ancestor as
+# a conservative second proof. This intentionally does not inspect historical
+# candidate commits: a squash that was later reverted must remain unmerged.
+candidate_has_combined_patch_equivalence() {
+    local sha="$1" candidate="$2" common branch_patch candidate_patch
+    common="$(git merge-base "$candidate" "$sha" 2>/dev/null)" || return 1
+    [[ -n "$common" ]] || return 1
+
+    branch_patch="$(
+        git diff --no-ext-diff --binary "$common" "$sha" 2>/dev/null \
+            | git patch-id --stable 2>/dev/null \
+            | awk 'NR == 1 {print $1}'
+    )" || true
+    candidate_patch="$(
+        git diff --no-ext-diff --binary "$common" "$candidate" 2>/dev/null \
+            | git patch-id --stable 2>/dev/null \
+            | awk 'NR == 1 {print $1}'
+    )" || true
+
+    [[ -n "$branch_patch" && "$branch_patch" == "$candidate_patch" ]]
+}
+
+# A complete squash may share the base with unrelated commits. In that case
+# the candidate's combined patch is larger, but every path changed by the
+# branch must still have the branch's final tree entry. Comparing final tree
+# entries handles that case while still rejecting partial and reverted changes.
+candidate_has_combined_tree_equivalence() {
+    local sha="$1" candidate="$2" common path branch_entry candidate_entry count=0
+    common="$(git merge-base "$candidate" "$sha" 2>/dev/null)" || return 1
+    [[ -n "$common" ]] || return 1
+
+    # NUL-delimited `--name-only -z` output keeps pathnames that contain
+    # newlines (or other Git-quoted characters) verbatim, so each changed path
+    # is passed to `git ls-tree` exactly as stored. A quoted literal (the
+    # non-NUL form) would resolve to no entry on both sides and falsely look
+    # equivalent, wrongly classifying an unmerged branch as merged (JD-B-001).
+    # The read loop runs in THIS shell (process substitution, not a pipe) so
+    # `count` and `return` propagate back under `set -euo pipefail`.
+    while IFS= read -r -d '' path; do
+        [[ -n "$path" ]] || continue
+        count=$((count + 1))
+        branch_entry="$(git ls-tree "$sha" -- "$path" 2>/dev/null)" || return 1
+        candidate_entry="$(git ls-tree "$candidate" -- "$path" 2>/dev/null)" || return 1
+        [[ "$branch_entry" == "$candidate_entry" ]] || return 1
+    done < <(git diff --no-ext-diff --name-only -z --no-renames "$common" "$sha" 2>/dev/null)
+
+    # No changed path between common and sha proves nothing; stay conservative
+    # and treat the branch as unmerged.
+    [[ "$count" -gt 0 ]]
+}
+
 # Decide whether a branch is fully merged into base, covering both regular
 # (fast-forward / merge-commit) integration and squash/rebase merges.
 # Evaluates ordered base candidates (exact base, upstream, remote-tracking).
@@ -246,6 +299,14 @@ is_merged() {
     while IFS= read -r candidate; do
         if candidate_has_patch_equivalence "$sha" "$candidate"; then
             debug_log "merged by patch-id: $candidate"
+            return 0
+        fi
+        if candidate_has_combined_patch_equivalence "$sha" "$candidate"; then
+            debug_log "merged by combined patch-id: $candidate"
+            return 0
+        fi
+        if candidate_has_combined_tree_equivalence "$sha" "$candidate"; then
+            debug_log "merged by combined tree state: $candidate"
             return 0
         fi
     done <<< "$candidates"

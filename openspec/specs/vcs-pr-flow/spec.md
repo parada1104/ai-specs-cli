@@ -161,37 +161,55 @@ Neither document MAY include a `provider` config row.
 - THEN the config table includes `base_branch`, `expected_owner`, and `auto_switch_account`
 - AND it does not include `provider`
 
-### Requirement: Pre-merge archive artifacts
+### Requirement: VCS transport owns PR/MR, review, and cleanup only
 
-The system MUST archive and record SDD/OpenSpec artifacts before a VCS PR/MR is merged. The archive boundary MUST occur while the change is still on the review branch, not after the merge commit lands on the base branch.
+VCS provider workflows MUST own provider transport, review/merge gating, and
+worktree/branch cleanup only: push the branch, create the PR/MR, run the
+provider's auth and approval preflight, merge only after explicit user approval,
+and remove the feature worktree and branch post-merge. They MUST NOT require,
+produce, schedule, or validate SDD/OpenSpec planning or archive artifacts: a
+VCS-only project MUST be able to merge with no `openspec/changes/<slug>/` folder,
+no archive entry, and no artifact-guardian invocation, and a provider workflow
+MUST NOT call the artifact
+guardian itself.
 
-#### Scenario: Archive runs before merge
+When Plan Build is enabled, its own archive gate owns the artifact boundary on
+the review branch before merge (see the `plan-build-flow` contract). A VCS
+workflow MUST NOT create, move, or require archive artifacts, and it MUST NOT
+treat the merged state on the base branch as an archive boundary.
 
-- GIVEN a provider-backed PR/MR is ready to merge
-- WHEN the archive step runs for the change
-- THEN the change artifacts are persisted before merge completes
-- AND the archive records the pre-merge state as the source of truth
+Provider-neutral safety stays here: explicit push, no auto-merge, protected
+heads left undeleted after merge, and post-merge cleanup. No provider introduces
+a different artifact-timing rule, and no provider becomes a second artifact
+gate.
 
-#### Scenario: Post-merge archive is rejected
+#### Scenario: VCS-only merge needs no planning artifacts
 
-- GIVEN a PR/MR has already been merged into the base branch
-- WHEN the archive step tries to treat the merged state as the archive boundary
-- THEN the system rejects that interpretation
-- AND the archive must reference the pre-merge branch state instead
+- GIVEN a project binds a VCS recipe and has no Plan Build recipe
+- AND no `openspec/changes/<slug>/` folder exists
+- WHEN the merge workflow runs for the change
+- THEN it pushes, reviews, and merges after user approval without requiring a change folder
+- AND it never invokes the artifact guardian
+
+#### Scenario: Plan Build keeps its own artifact gate
+
+- GIVEN Plan Build and a VCS recipe are both enabled
+- WHEN the merge workflow runs for a change
+- THEN the VCS workflow performs transport, review, merge, and cleanup only
+- AND artifact planning, promotion, and archive remain Plan Build's own gate
+
+#### Scenario: Post-merge archive is not the VCS boundary
+
+- GIVEN a PR/MR has already merged into the base branch
+- WHEN a provider workflow is asked to treat that merged state as the archive boundary
+- THEN it refuses, because the archive boundary belongs to Plan Build and occurs on the review branch before merge
 
 #### Scenario: Provider behavior stays aligned
 
 - GIVEN GitHub, GitLab, or Bitbucket provider flows are enabled
-- WHEN the pre-merge archive rule is rendered into workflow guidance
-- THEN the provider guidance matches the same archive-before-merge contract
-- AND no provider introduces a different timing rule
-
-#### Scenario: Hidden ceremony remains hidden
-
-- GIVEN the user follows the normal plan/build flow
-- WHEN the archive rule is applied
-- THEN no new slash command or extra user-facing mode is introduced
-- AND the archive step remains part of the existing invisible workflow
+- WHEN the transport/merge contract is rendered into workflow guidance
+- THEN each provider documents the same transport, review, merge, and cleanup scope
+- AND each provider documents that artifact planning and archive belong to Plan Build
 
 ### Requirement: Post-merge branch and worktree cleanup
 

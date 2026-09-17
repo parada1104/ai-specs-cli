@@ -121,10 +121,85 @@ the archive and merge guardians never block on it.
 
 Trivial read-only questions skip the classifier entirely.
 
-## 3. Phase mapping (private)
+## 3. Full phase compatibility (private)
+
+Full planning runs these logical phases in order:
+
+`explore -> proposal -> spec/design -> tasks`
+
+| Phase | Required inputs | Output artifact | Dependency |
+|---|---|---|---|
+| **explore** | User intent, repository context, and known constraints | `explore.md` | None |
+| **proposal** | `explore.md` plus the original intent | `proposal.md` | After explore |
+| **spec** | `proposal.md` | `specs/**/*.md` | After proposal |
+| **design** | `proposal.md` | `design.md` | After proposal |
+| **tasks** | `proposal.md`, the spec delta, and `design.md` | `tasks.md` | After both spec and design |
+
+Spec and design may run in parallel only after proposal is complete. Tasks waits
+for both outputs. Each phase owns its output artifact and must leave prior
+artifacts intact.
+
+The host may advertise a **host-advertised executor** for the **current** logical phase. The
+advertisement is an optional capability boundary consisting of the phase name,
+the required input artifacts, and the output artifact it can produce. The
+recipe remains provider-neutral: it does not select a runtime, model, or
+external execution service.
+
+Dispatch one phase at a time. If no phase executor is advertised, run the
+current phase inline. An advertised executor that is unavailable may also use
+the inline fallback. A complete result is accepted only after its output is
+present and matches the current phase contract.
+
+Malformed, partial, or blocked executor results are a stop condition. Stop and
+preserve all existing artifacts and state, report the blocked phase and result status,
+and wait for a decision. Do not silently rerun the executor, accept an
+incomplete artifact, or skip the phase. Do not skip phases because an earlier
+executor was unavailable; inline fallback still completes that phase.
+
+This phase compatibility applies only to Full. Standard and Light remain
+collapsed and unchanged; they do not acquire Full's phase dispatch.
+
+## 3.1 Preflight composition
+
+Preflight is one session-level authority for **execution mode**, **artifact
+store**, **review budget**, **delivery strategy**, and **chain strategy**.
+Plan-build consumes those resolved values and passes them through the flow; it
+must never recollect or override them, and phase executors cannot replace them.
+
+Interactive mode asks once for unresolved preflight choices, then asks only
+phase-specific product questions. Automatic mode does not duplicate those
+prompts; it records the resolved values and proceeds according to them. The
+artifact store remains a persistence preference, while file-backed readiness and
+the existing worktree, verify, archive, topology, and PR gates remain
+authoritative.
+
+## 3.2 Artifact-derived plan presentation
+
+At each review point, derive a concise technical presentation from the
+artifacts available so far:
+
+| Field | Evidence |
+|---|---|
+| **Intent** | Original request and `proposal.md` |
+| **Scope** | `proposal.md` in-scope and out-of-scope boundaries |
+| **Key decisions** | Proposal, spec, design, and task choices |
+| **Affected areas** | Proposal/design paths and task work units |
+| **Risks** | `explore.md`, design trade-offs, and unresolved constraints |
+| **Open questions** | Questions recorded by the phase that exposed them |
+| **Recommendations / assumptions** | Explicitly labeled conclusions derived from the artifacts |
+
+Interactive mode asks open questions after the phase that exposed them,
+especially after explore, and then offers **accept**, **adjust**, or **stop**.
+Automatic mode records recommendations as labeled assumptions or decision notes;
+unresolved product decisions block rather than being silently decided. The final
+plan always requires an explicit **accept**, **adjust**, or **stop**. A
+recommendation may be accepted or adjusted; it is never treated as an implicit
+product decision.
+
+## 3.3 Plan/build lifecycle
 
 - **Plan** runs the chain for the classified tier (Section 2), then **stops**.
-- **Build** runs: apply → verify → artifact/PR gates → archive-tail (pre-merge).
+- **Build** runs: apply -> verify -> artifact/PR gates -> archive-tail (pre-merge).
 
 ## 4. When to invoke
 
@@ -236,7 +311,29 @@ Sequence on the review branch:
 1. Implement and verify.
 2. Commit and push implementation **and** planning files.
 3. Open a PR (artifact gate satisfied).
-Before moving the change folder, run the executable pre-archive gate and stop
+4. Promote canonical specs. Compose every delta under
+   `openspec/changes/<slug>/specs/<domain>/spec.md` into
+   `openspec/specs/<domain>/spec.md` with the promotion helper and commit the
+   result on the review branch:
+
+```bash
+python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/spec_promotion.py" \
+  <slug> --root <planning-root>
+```
+
+   Composition follows the archive contract: `## ADDED Requirements` appends,
+   `## MODIFIED Requirements` replaces the full canonical block with the exact
+   same requirement name, unrelated canonical requirements and sections survive,
+   a missing canonical domain is created from the delta, and a rerun after an
+   interruption is a no-op. A colliding `ADDED`, a `MODIFIED` target that does
+   not exist, or an unsupported `## RENAMED Requirements` delta blocks without
+   writing. A destructive `## REMOVED Requirements` delta blocks unless the
+   removal was explicitly approved, in which case re-run with `--allow-removed`.
+   Only the promoter writes canonical specs; the guardian only validates them
+   and never mutates `openspec/specs/`. Light and changes with no `specs/`
+   deltas have nothing to promote.
+
+5. Before moving the change folder, run the executable pre-archive gate and stop
 if it exits nonzero. `--root` is the resolved planning root from the request
 context — required, never the process cwd; a subrepo request passes the proven
 superproject root:
@@ -247,10 +344,11 @@ python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
 ```
 
 The command must pass for Standard and Full; do not archive or continue when it
-reports missing or failed evidence. Light remains advisory. This is the
-pre-archive check; the pre-merge guardian below remains required after archive.
+reports missing or failed evidence, or an unpromoted or unresolved delta. Light
+remains advisory. This is the pre-archive check; the pre-merge guardian below
+remains required after archive.
 
-4. After the pre-archive gate passes, run archive-tail — move
+6. After the pre-archive gate passes, run archive-tail — move
    `openspec/changes/<slug>/` → `openspec/changes/archive/YYYY-MM-DD-<slug>/`,
    using a valid ISO calendar date, then commit and push to the review branch.
    The exact undated `openspec/changes/archive/<slug>/` form remains readable
@@ -258,7 +356,7 @@ pre-archive check; the pre-merge guardian below remains required after archive.
    dated provider form. The guardian fails closed when multiple dated
    candidates, dated-plus-undated candidates, invalid dates, or near-match
    names are present.
-5. Run the pre-merge guardian; merge only after explicit user approval.
+7. Run the pre-merge guardian; merge only after explicit user approval.
 
 ### 7.4 Pre-merge merge guardian (hard stop)
 
@@ -291,6 +389,18 @@ Hard blockers (do **not** merge):
 4. Standard lacks a conforming dedicated `verify-report.md`.
 5. Full lacks a conforming dedicated `verify-report.md` with strict `PASS` and
    `ready_for_archive: true`.
+6. A Standard or Full delta under `specs/<domain>/spec.md` is not promoted into
+   `openspec/specs/<domain>/spec.md`, or cannot be composed (collision, missing
+   `MODIFIED` target, unsupported `RENAMED`, destructive `REMOVED` without
+   explicit approval). Run the promoter first; the guardian only validates and
+   never writes canonical specs or tracker state.
+
+The promotion check is tier-scoped: Light changes and changes with no `specs/`
+deltas are never blocked by it.
+
+Tracker item closure (`tracker_ledger_host.py --checkpoint archive-close`) is a
+separate Tracker-domain checkpoint: it is not this OpenSpec archive, it never
+moves the change folder, and this guardian never grades or writes tracker state.
 
 ### In-flight plans and stale PRs
 
@@ -333,7 +443,7 @@ merged base branch as the archive boundary.
 
 ## 11. Archive-tail graceful no-op
 
-Archive-tail runs at step 4 of Section 7.3 (before merge):
+Archive-tail runs at step 6 of Section 7.3 (before merge):
 
 - **Change-folder close** — move `openspec/changes/<slug>/` →
   `openspec/changes/archive/YYYY-MM-DD-<slug>/` using a valid ISO calendar date

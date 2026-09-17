@@ -1,0 +1,57 @@
+{
+  "label": "an ask opt-out covers only the answered checkpoint",
+  "witness": {
+    "state": "bound"
+  },
+  "store": {
+    "items": [
+      {
+        "status": "open",
+        "item_id": "T-1"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "checkpoint": "apply-start",
+      "mode": "ask",
+      "evidence": {
+        "local": "T-1",
+        "remote": "T-2",
+        "code": "",
+        "git": "T-1"
+      },
+      "decide": {
+        "kind": "opt-out",
+        "choice": "continue"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": "opt-out",
+        "active": true,
+        "conflict": false,
+        "exit": 0,
+        "doctor": "OK"
+      }
+    },
+    {
+      "checkpoint": "pre-merge",
+      "mode": "ask",
+      "evidence": {
+        "local": "T-1",
+        "remote": "T-2",
+        "code": "",
+        "git": "T-1"
+      },
+      "expected": {
+        "decision": "ask",
+        "reason": "conflict",
+        "active": true,
+        "conflict": true,
+        "exit": 0,
+        "doctor": "WARN"
+      }
+    }
+  ],
+  "kind": "verdict"
+}
