@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
+LIB_INTERNAL = ROOT / "lib" / "_internal"
 
 STUB_BINARY = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${STUB_LOG}"
@@ -92,6 +93,27 @@ class PlanBuildGateHookTests(unittest.TestCase):
         d.mkdir(parents=True, exist_ok=True)
         (d / "tasks.md").write_text("# tasks\n")
 
+    def _stamped_gate(self) -> Path:
+        """The materialized hook: sync stamps the CLI's lib/_internal seam."""
+        path = Path(self.tmp.name) / "plan-build-gate.sh"
+        path.write_text(
+            GATE.read_text().replace("__TRACKER_LIB_INTERNAL__", str(LIB_INTERNAL))
+        )
+        path.chmod(0o755)
+        return path
+
+    def _witness(self, recipe_id: str) -> None:
+        common = subprocess.run(
+            ["git", "-C", str(self.repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        ledger_dir = Path(common) / "ai-specs" / "ledger"
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        (ledger_dir / "witness.json").write_text(json.dumps({
+            "v": 1, "capability": "tracker", "state": "bound", "recipe_id": recipe_id,
+            "candidates": [], "written_at": "2026-01-01T00:00:00Z",
+        }))
+
     def _seed_change(self, slug: str = "demo-change") -> None:
         self._seed_change_at(self.repo, slug)
 
@@ -162,7 +184,7 @@ class PlanBuildGateHookTests(unittest.TestCase):
         if extra_env:
             env.update(extra_env)
         return subprocess.run(
-            ["bash", str(GATE)],
+            ["bash", str(self._stamped_gate())],
             input=json.dumps(event),
             capture_output=True, text=True,
             # A new session has no controlling terminal, so the ask prompt's
@@ -458,6 +480,39 @@ class PlanBuildGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("--ledger-mode always", self.stub_log.read_text())
 
+    def test_work_start_reads_the_witness_bound_recipe_config(self):
+        """W6: the gate resolves `recipes.<witness recipe id>`, not a literal."""
+        self._seed_change()
+        (self.repo / "ai-specs").mkdir()
+        (self.repo / "ai-specs" / "ai-specs.toml").write_text(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\nledger_mode = 'warn'\n"
+            "[recipes.fixture-tracker]\nenabled = true\n"
+            "[recipes.fixture-tracker.config]\nledger_mode = 'always'\n"
+        )
+        self._witness("fixture-tracker")
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        r = self._run(event, extra_env=self._ledger_env(decision="allow"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--ledger-mode always", self.stub_log.read_text())
+
+    def test_work_start_without_the_bridge_stamp_fails_open_to_the_default(self):
+        """Cold install (no stamped bridge) keeps the warn-first default."""
+        self._seed_change()
+        (self.repo / "ai-specs").mkdir()
+        (self.repo / "ai-specs" / "ai-specs.toml").write_text(
+            "[recipes.trello-mcp-workflow]\nenabled = true\n"
+            "[recipes.trello-mcp-workflow.config]\nledger_mode = 'always'\n"
+        )
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        r = subprocess.run(
+            ["bash", str(GATE)],
+            input=json.dumps(event), capture_output=True, text=True,
+            start_new_session=True, env={**os.environ, **self._ledger_env(decision="allow")},
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--ledger-mode warn", self.stub_log.read_text())
+
     def test_work_start_ask_without_tty_blocks_without_a_decision(self):
         self._seed_change()
         event = self._event("Write", str(self.repo / "src" / "app.py"))
@@ -497,6 +552,13 @@ class PlanBuildGateHookTests(unittest.TestCase):
         r = self._run(event, extra_env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._logged_checkpoints(), [])
+
+    def test_gate_carries_no_provider_literal(self):
+        """W6: the hook resolves its recipe through ledger_bridge, never a literal."""
+        text = GATE.read_text(encoding="utf-8")
+        self.assertNotIn("trello-mcp-workflow", text)
+        self.assertIn("__TRACKER_LIB_INTERNAL__", text)
+        self.assertIn("ledger_bridge", text)
 
 if __name__ == "__main__":
     unittest.main()
