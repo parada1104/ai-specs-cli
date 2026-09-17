@@ -42,6 +42,7 @@ enabled = true
 [recipes.worktree-flow.config]
 worktrees_dir = ".worktrees"
 integration_branch = "development"
+gate_mode="ask"
 
 [recipes.git-pr-flow]
 enabled = true
