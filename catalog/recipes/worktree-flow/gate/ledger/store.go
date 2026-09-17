@@ -565,8 +565,6 @@ func (s *Store) OpenItem(ident ItemIdentity, providerID string, at time.Time) It
 	return item
 }
 
-// CloseItem appends a close decision and marks the item closed. There is no
-// reopen path: a closed item is never selected again (D17).
 // RecordSnapshot updates the observed provider snapshot (state and opaque
 // payload) on one item without touching status or decisions. Used by close to
 // persist what the provider actually reported at close time (S1).
@@ -587,6 +585,8 @@ func (s *Store) RecordSnapshot(id, state string, provider json.RawMessage) error
 	return fmt.Errorf("ledger: no item %q", id)
 }
 
+// CloseItem appends a close decision and marks the item closed. There is no
+// reopen path: a closed item is never selected again (D17).
 func (s *Store) CloseItem(id string, d Decision) error {
 	for i := range s.Items {
 		if s.Items[i].ID != id {
