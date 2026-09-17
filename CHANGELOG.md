@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Tracker lifecycle host strangler.** The redundant
+  `lib/_internal/tracker_ledger_host.py` Python host is removed. Its `pre-merge`
+  and `archive-close` lifecycle surface now lives in the existing shell bridge
+  `catalog/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh` as a direct
+  host mode (`--root <root> --checkpoint pre-merge|archive-close [slug]`, with
+  `--stage pre-merge|pre-archive` kept as a compatibility alias). Merge skills,
+  commands, and docs call that bridge directly: the same bridge functions resolve
+  the A9 ledger mode, acquire a verified binary (fail-open), build `--evidence`
+  through `ledger_bridge.py`, and map the one Go `--ledger` verdict, so no new
+  Python host and no second grader exist. Tracker item closure stays distinct
+  from an OpenSpec archive: the requested checkpoint always decides. Moving the
+  effective `ledger_mode` / legacy `gate_mode` resolution into Go remains a
+  separate follow-up, since it changes the Go binary and trust root.
+
 ## [0.23.0] — 2026-09-17
 
 ### Upgrade notes

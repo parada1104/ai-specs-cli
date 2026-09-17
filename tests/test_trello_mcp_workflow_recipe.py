@@ -369,7 +369,12 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
 
     def test_tracker_lifecycle_host_is_documented_as_plan_build_independent(self):
         """The generic Tracker recipe surfaces the lifecycle host as a reusable
-        command, separate from Plan Build/OpenSpec and from provider mapping."""
+        command, separate from Plan Build/OpenSpec and from provider mapping.
+
+        The host is the shell bridge's direct mode
+        (``tracker-card-gate.sh --root <root> --checkpoint <name>``) — the retired
+        Python host is gone and no new Python host replaces it.
+        """
         skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
         quick = (RECIPE_DIR / "commands" / "trello-workflow.md").read_text()
         readme = (RECIPE_DIR / "README.md").read_text()
@@ -377,8 +382,9 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         for name, text in (("skill", skill), ("quick-reference", quick),
                            ("README", readme), ("brief", brief)):
             with self.subTest(surface=name):
-                self.assertIn("tracker_ledger_host.py", text)
+                self.assertIn("tracker-card-gate.sh", text)
                 self.assertIn("--checkpoint", text)
+                self.assertNotIn("tracker_ledger_host.py", text)
         for name, text in (("skill", skill), ("README", readme)):
             with self.subTest(surface=name):
                 lowered = text.lower()

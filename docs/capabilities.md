@@ -106,12 +106,13 @@ ever guessing a provider.
   synthesized item. A branch reused after its item closed opens a new item, and two
   open items for one identity are a human conflict, never a silent pick.
 - **Five checkpoints.** `work-start` (plan-build gate), `apply-start` and
-  `pr-review` (tracker gate), and `pre-merge` / `archive-close` (tracker ledger
-  host) all reach the same predicate and share one exit contract (`0` allow/ask/dormant,
+  `pr-review` (tracker gate), and `pre-merge` / `archive-close` (tracker gate
+  direct host mode) all reach the same predicate and share one exit contract (`0` allow/ask/dormant,
   `2` only when the host must stop). Path hosts never block `openspec/**`.
 - **Tracker lifecycle is Plan Build-independent.** The `pre-merge` and
-  `archive-close` checkpoints are hosted by `lib/_internal/tracker_ledger_host.py`
-  (`--checkpoint pre-merge|archive-close`, required `--root`, optional slug; the
+  `archive-close` checkpoints are hosted by the `tracker-card-gate.sh` shell
+  bridge
+  (`--root <root> --checkpoint pre-merge|archive-close`, optional slug; the
   `--stage pre-merge|pre-archive` form stays as a compatibility alias). The host
   grades with **no `openspec/` tree** and never infers tracker item closure from
   an OpenSpec archive: `archive-close` is the tracker item close boundary, not

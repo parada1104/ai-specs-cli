@@ -156,14 +156,19 @@ gh pr create --base <integration-branch> --title "<title>" --body "<summary and 
 ```
 
 6. Classify `HEAD_BRANCH` (see **Head branch class**). Before the provider merge
-   command, authorize the Tracker item with the provider-neutral Tracker
-   lifecycle host. This is Tracker item authorization, not OpenSpec artifact or
-   archive validation; the host is safe when dormant or unbound and is the only
-   Go-ledger bridge. Stop on a non-zero exit:
+   command, authorize the Tracker item with the direct host mode of the tracker
+   gate script. This is Tracker item authorization, not OpenSpec artifact or
+   archive validation; the bridge is the single shell host to the verified Go
+   `--ledger` predicate, and it is safe when dormant or unbound. Tracker
+   checkpoints only exist when the tracker recipe is installed: if the script is
+   absent, skip this step (there is no tracker lifecycle to authorize). Stop on a
+   non-zero exit:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
-  <slug> --root <planning-root> --checkpoint pre-merge
+GATE=ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh
+if [ -f "$GATE" ]; then
+  bash "$GATE" --root <planning-root> --checkpoint pre-merge <slug>
+fi
 ```
 
    Merge only after explicit user approval and required checks/review. Merge

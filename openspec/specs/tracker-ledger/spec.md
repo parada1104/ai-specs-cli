@@ -217,8 +217,9 @@ the predicate.
 
 - GIVEN a pinned fixture input (identity, evidence, mode, checkpoint)
 - WHEN each checkpoint host invokes the ledger (`work-start` via the
-  plan-build gate, `apply-start`/`pr-review` via the tracker gate, `pre-merge`
-  and `archive-close` via the tracker-ledger host)
+  plan-build gate, `apply-start`/`pr-review` via the tracker gate in hook mode,
+  `pre-merge` and `archive-close` via that same tracker gate in direct host mode
+  `--root <root> --checkpoint pre-merge|archive-close`)
 - THEN every host observes the same decision, conflict, and exit code for that
   input
 
@@ -624,8 +625,9 @@ thin Python bridge — acquisition only — MUST build the evidence file from lo
 ledger store snapshot; `code` = the change's `## Tracker` `card_id` and recorded `pr:` parsed by the
 existing pure parser, or the presence of `tracker.none`; `git` = locally derivable branch/HEAD/commit
 plus the recorded PR URL. The bridge MUST NOT grade, MUST NOT introduce a new Python predicate, and MUST
-NOT call `gh`, MCP, or the network. The tracker-gate and tracker-ledger hosts MUST pass the
-bridge-built evidence at their checkpoints (`apply-start`, `pr-review`, `pre-merge`, `archive-close`);
+NOT call `gh`, MCP, or the network. The tracker gate host — in hook mode and in its direct
+`--root <root> --checkpoint pre-merge|archive-close` mode — MUST pass the
+bridge-built evidence at its checkpoints (`apply-start`, `pr-review`, `pre-merge`, `archive-close`);
 `work-start` keeps its existing host behavior. Unreadable or malformed evidence MUST fail open (empty
 evidence side), as today. The `remote` side MUST have no producer in this slice — no tracker MCP read —
 and the deliberate gap MUST be stated in the docs. The bridge and evidence passing MUST keep working from
@@ -678,7 +680,7 @@ a human act (remove the file and adjudicate in the ledger); no grade MAY auto-re
 ### Requirement: Witness-derived provider configuration lookup
 
 The ledger mode / gate mode configuration lookup MUST resolve the bound recipe id from the durable
-binding witness (`Binding.RecipeID`) at every host layer — the plan-build work-start gate, the tracker gate, the tracker-ledger host, and doctor. Reading the witness is acquisition, not grading. When the
+binding witness (`Binding.RecipeID`) at every host layer — the plan-build work-start gate, the tracker gate (including its direct `--root <root> --checkpoint pre-merge|archive-close` host mode), and doctor. Reading the witness is acquisition, not grading. When the
 witness is missing or unreadable, the lookup MUST fall back to the legacy literal so behavior is
 identical to today. No host MAY resolve its config section from a hardcoded provider or recipe literal:
 the one literal MUST live in the bridge's fallback, and each host MUST read
@@ -703,12 +705,13 @@ provider extension point; no provider-specific behavior enters ledger core.
 
 The five checkpoints MUST keep their tracker-domain hosts: `work-start` → plan-build-flow gate;
 `apply-start` and `pr-review` → tracker card gate; `pre-merge` and `archive-close` →
-`lib/_internal/tracker_ledger_host.py` (`--checkpoint pre-merge|archive-close`). The `pre-merge` and
+the `tracker-card-gate.sh` shell bridge in direct host mode
+(`--root <root> --checkpoint pre-merge|archive-close`). The `pre-merge` and
 `archive-close` checkpoints MUST be executable with no `openspec/` tree, and tracker item closure MUST
 stay independent of OpenSpec archive: archive state MUST NOT select, infer, or substitute for a tracker
 checkpoint, and the Plan Build artifact guardian MUST NOT host, grade, or write tracker state. Plan Build
-owns its own verify → promotion → read-only guardian → archive tail; the tracker-ledger host owns only
-tracker lifecycle grading. Where `work-start`'s host is not enabled (a tracker-bound project without
+owns its own verify → promotion → read-only guardian → archive tail; the `tracker-card-gate.sh` direct
+checkpoint host owns only tracker lifecycle grading. Where `work-start`'s host is not enabled (a tracker-bound project without
 plan-build-flow), that limitation MUST be visible through the doctor check or documentation while the
 other four checkpoints keep grading.
 
@@ -722,7 +725,7 @@ other four checkpoints keep grading.
 #### Scenario: Tracker closure without an OpenSpec archive
 
 - GIVEN a tracker-bound change with no `openspec/` tree
-- WHEN `archive-close` is graded through the tracker-ledger host
+- WHEN `archive-close` is graded through the `tracker-card-gate.sh` direct checkpoint host
 - THEN the checkpoint reaches the same Go predicate and returns a verdict
 - AND no OpenSpec archive is required, read, or inferred
 

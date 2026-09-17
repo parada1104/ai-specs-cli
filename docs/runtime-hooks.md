@@ -210,7 +210,7 @@ block are preserved.
 | Recipe | Path hook id | Shell hook id | Shell heuristic |
 |--------|--------------|---------------|-----------------|
 | `worktree-flow` | `worktree-gate` | `worktree-gate-shell` | shell writes into protected main |
-| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` (archive-close is graded by the tracker ledger host) |
+| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` (archive-close is graded by the shell host's direct mode) |
 
 Both share one script per recipe with two `[[provides.hooks]]` ids so
 Cursor's file-write skip does not swallow shell coverage. Neither gate
@@ -219,7 +219,7 @@ intercepts MCP tool calls.
 ## Ledger checkpoints (tracker lifecycle)
 
 `plan-build-flow` and `trello-mcp-workflow` path/shell hooks, plus
-`lib/_internal/tracker_ledger_host.py`, are **acquisition + JSON bridges** to one
+`tracker-card-gate.sh`'s direct host mode, are **acquisition + JSON bridges** to one
 verified Go predicate. They resolve the `worktree-gate` binary (project-local pin,
 then version-keyed cache with its `.verified` receipt, then the
 explicit `WORKTREE_GATE_BIN` override), invoke it as
@@ -232,7 +232,8 @@ The domain is Tracker, not a provider. One pure Go grader compares neutral
 expectations against neutral observations; a provider recipe extends that domain
 by declaring a `[config.reconcile]` **adapter** mapping in the project manifest,
 while `ledger_mode` / `gate_mode` stay Tracker-domain policy. The tracker
-lifecycle host is `lib/_internal/tracker_ledger_host.py`; `premerge_guardian.py`
+lifecycle host is `tracker-card-gate.sh` invoked directly
+(`--root <root> --checkpoint pre-merge|archive-close`); `premerge_guardian.py`
 is Plan Build's artifact-only guardian and never invokes the ledger.
 
 | Checkpoint | Host |
@@ -240,8 +241,8 @@ is Plan Build's artifact-only guardian and never invokes the ledger.
 | `work-start` | `plan-build-flow` `plan-build-gate.sh` (before the SDD/proposal phase and before the first production write; no change folder required; resolves the witness recipe id through the stamped bridge) |
 | `apply-start` | `trello-mcp-workflow` `tracker-card-gate.sh`, path kind |
 | `pr-review` | `trello-mcp-workflow` `tracker-card-gate.sh`, shell `gh pr create` |
-| `pre-merge` | `tracker_ledger_host.py --checkpoint pre-merge` |
-| `archive-close` | `tracker_ledger_host.py --checkpoint archive-close` |
+| `pre-merge` | `tracker-card-gate.sh --root <root> --checkpoint pre-merge` |
+| `archive-close` | `tracker-card-gate.sh --root <root> --checkpoint archive-close` |
 
 The `pre-merge` and `archive-close` lifecycle is Plan Build-independent: the host
 needs **no `openspec/` tree**, and `--stage pre-merge|pre-archive` remains a
@@ -268,7 +269,8 @@ persists nothing, and exits `2` with **no** stdout JSON. **Grading never writes*
 checkpoint, in any mode, opens or mutates an item because a `## Tracker` section
 parses.
 
-**Evidence sides.** `tracker-card-gate.sh` and `tracker_ledger_host.py` build their
+**Evidence sides.** `tracker-card-gate.sh` (pre-tool-use hook and direct host
+mode) builds its
 `--evidence` file through `lib/_internal/ledger_bridge.py` — acquisition only
 (`## Tracker` / `tracker.none` / local Git facts; no `gh`, no MCP, no network).
 `local` is the ledger's own store snapshot, `code` is the change's `card_id`, `git`
