@@ -65,6 +65,18 @@ required = false
 type = "string"
 default = "Epic"
 help_text = "List name for epic-type cards. Must match an existing list on your Trello board (create the list first if needed)."
+
+[config.review_list]
+required = false
+type = "string"
+default = "Review"
+help_text = "List a card must reach when the review lifecycle event reconciles. Must match an existing list on your Trello board."
+
+[config.done_list]
+required = false
+type = "string"
+default = "Done"
+help_text = "List a card must reach when the merge lifecycle event reconciles. Must match an existing list on your Trello board."
 [config.board_isolation]
 forbidden_tools = ["trello_get_my_cards", "trello_list_boards"]
 restricted_tools = ["trello_set_active_board"]
@@ -108,6 +120,16 @@ max_age_seconds = 900
 event = "delivery"
 property = "list"
 config_field = "default_list"
+
+[[config.reconcile.expectations]]
+event = "review"
+property = "list"
+config_field = "review_list"
+
+[[config.reconcile.expectations]]
+event = "merge"
+property = "list"
+config_field = "done_list"
 
 [init]
 prompt = "init.md"

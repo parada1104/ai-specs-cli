@@ -207,9 +207,15 @@ def validate_structured_config(section: str, value: Any) -> None:
 
 @dataclass
 class ConfigTable:
-    """A validated table-valued ``[config.<name>]`` section declared by a recipe."""
+    """A validated table-valued ``[config.<name>]`` section declared by a recipe.
+
+    ``shape`` is the declarative authority downstream decoders mirror; ``values``
+    retains the recipe-declared raw table so sync can stamp recipe-owned
+    defaults into the project manifest without re-reading the TOML.
+    """
 
     shape: dict[str, Any] = field(default_factory=dict)
+    values: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -603,7 +609,7 @@ def _parse_config(raw: Any, context: str) -> ConfigSchema:
         # exposed as first-class table values.
         if key in STRUCTURED_CONFIG_SHAPES:
             validate_structured_config(key, value)
-            tables[key] = ConfigTable(shape=STRUCTURED_CONFIG_SHAPES[key])
+            tables[key] = ConfigTable(shape=STRUCTURED_CONFIG_SHAPES[key], values=dict(value))
             continue
         # Detect standard ConfigField entries by the presence of 'required' key.
         # Non-standard config sections (e.g., board_isolation) are stored in extra.

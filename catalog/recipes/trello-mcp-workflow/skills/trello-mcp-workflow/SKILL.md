@@ -34,7 +34,7 @@ metadata:
 | `default_list` | No | `In Progress` | List name where new cards are created when no phase-specific list applies. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
 | `gate_mode` | No | `warn` | Tracker card gate: `off` / `warn` / `always`. |
-| `reconcile` | No | — | Declarative remote-reconciliation mapping (`scope_field`, `max_age_seconds`, `expectations`). The recipe schema validates the declared shape and sync carries the project's `[recipes.trello-mcp-workflow.config.reconcile]` block through unchanged; because the gate reads only the project manifest, an unbound block means every comparison is `unconfigured`, never a default. Add or change it with `ai-specs recipe configure trello-mcp-workflow --set 'reconcile={...}'`. |
+| `reconcile` | No | — | Declarative remote-reconciliation mapping (`scope_field`, `max_age_seconds`, `expectations`). The recipe declares the lifecycle mapping by default (delivery/review/merge); a project `[recipes.trello-mcp-workflow.config.reconcile]` block, when present, overrides it. Re-run `ai-specs sync` after recipe changes to propagate defaults. |
 
 Configuration is read from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`.
 
@@ -198,7 +198,11 @@ remembered or inferred time. The payload is read under a fixed size budget
 
 **3. Compare with the gate**, naming the event you are asking about
 (`--reconcile-event`). Use the stamped/verified gate binary path (`$WORKTREE_GATE_BIN`
-or the CLI cache path the hooks use):
+or the CLI cache path the hooks use). The recipe declares the supported lifecycle
+mapping by default — `delivery` → `default_list` (In Progress), `review` →
+`review_list` (Review), `merge` → `done_list` (Done) — so a synced project
+reconciles without per-project configuration; the project's `[config.reconcile]`
+block, when present, overrides it:
 
 ```bash
 worktree-gate --ledger --checkpoint apply-start --project-root "$PWD" \
@@ -216,7 +220,7 @@ graded exit code.
 | Outcome | Meaning | Next step |
 |---|---|---|
 | `agree` | Every declared property matches for the requested event, and the observation reported that event. | Conditional expectation met. Still not proof of delivery. |
-| `unconfigured` | The manifest, the recipe's `[config.reconcile]` mapping, or a config value it selects is missing, or the recipe is `enabled = false`. | Bind the mapping in `ai-specs/ai-specs.toml`; read `detail`. A readable, explicitly disabled recipe grants no authority. |
+| `unconfigured` | The manifest, the recipe's `[config.reconcile]` mapping, or a config value it selects is missing, or the recipe is `enabled = false`. | Re-run `ai-specs sync` so recipe defaults propagate; read `detail`. A readable, explicitly disabled recipe grants no authority. |
 | `unmapped-event` | No expectation is declared for the requested event. | Pending / unreconciled: declare the mapping or drop the request. |
 | `event-mismatch` | The observation reports a different (or no) event than the one requested. | Never treat the requested event as observed; re-read or re-request. |
 | `observation-invalid` | The payload is missing, malformed, oversized, or carries unknown keys. | Fix the acquisition; nothing was compared. |
@@ -286,12 +290,20 @@ hung parser, an oversized result, a non-TOML manifest, and an invalid mapping al
 reach the sidecar as `unconfigured` with a bounded `detail` — never as raw parser
 output.
 
-**Declared mapping.** `[config.reconcile]` in this recipe declares the fields; the
-project binds their values under `[recipes.trello-mcp-workflow.config]` in
-`ai-specs/ai-specs.toml`. The gate reads only the project manifest, so a project
-without the block gets `unconfigured` (never a default):
+**Declared mapping.** The recipe declares the lifecycle mapping and its
+conservative list defaults. During `ai-specs sync`, the mapping and the config
+values it references are stamped into `[recipes.trello-mcp-workflow.config]`
+when absent; explicit project values remain overrides and are never replaced.
+A project that has not been synced after this recipe version can temporarily
+report `unconfigured`; re-run sync rather than authoring a reconcile block by
+hand:
 
 ```toml
+[recipes.trello-mcp-workflow.config]
+default_list = "In Progress"
+review_list = "Review"
+done_list = "Done"
+
 [recipes.trello-mcp-workflow.config.reconcile]
 scope_field = "board_id"
 max_age_seconds = 900
@@ -300,14 +312,23 @@ max_age_seconds = 900
 event = "delivery"
 property = "list"
 config_field = "default_list"
+
+[[recipes.trello-mcp-workflow.config.reconcile.expectations]]
+event = "review"
+property = "list"
+config_field = "review_list"
+
+[[recipes.trello-mcp-workflow.config.reconcile.expectations]]
+event = "merge"
+property = "list"
+config_field = "done_list"
 ```
 
 Each expectation means "when the caller asks about `event`, the property `property`
 must show the value configured in `config_field`". `max_age_seconds` must be
 positive and at most `9223372036`; anything else is `unconfigured`, never a clamped
-default. Note the open gap: the gate binds the card the ledger grades, so a
-closed/archived card after a merge has no safe target yet and reports
-`unbound-identity` rather than guessing one.
+default. Note the remaining product gap: a closed/archived card after a merge
+needs an explicit close-report binding; the gate never guesses a closed row.
 
 ---
 

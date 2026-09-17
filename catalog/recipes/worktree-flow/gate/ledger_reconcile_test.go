@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -120,6 +121,53 @@ func reconcileSidecarOf(t *testing.T, stdout string) map[string]any {
 // TestLedgerReconcileAgreesOnDeclaredPropertiesViaCLI pins the happy path: the
 // observation matches the bound identity, the recipe-declared scope and every
 // declared expectation, and the sidecar reports it without touching the store.
+func TestLedgerReconcileSkillObservationShapeIsCurrent(t *testing.T) {
+	// The skill is the producer contract: the observation payload keys it
+	// documents must be exactly the keys the gate accepts, so a skill edit
+	// and a gate change cannot drift apart silently.
+	skillPath := filepath.Join("..", "..", "trello-mcp-workflow",
+		"skills", "trello-mcp-workflow", "SKILL.md")
+	raw, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read skill contract: %v", err)
+	}
+	const fence = "```json"
+	start := strings.Index(string(raw), fence)
+	if start < 0 {
+		t.Fatal("skill carries no json payload example")
+	}
+	end := strings.Index(string(raw[start+len(fence):]), "```")
+	if end < 0 {
+		t.Fatal("json payload example is unterminated")
+	}
+	documented := map[string]bool{}
+	var example map[string]any
+	if err := json.Unmarshal([]byte(string(raw)[start+len(fence):start+len(fence)+end]), &example); err != nil {
+		t.Fatalf("skill payload example is not valid json: %v", err)
+	}
+	for key := range example {
+		documented[key] = true
+	}
+	accepted := map[string]bool{}
+	typ := reflect.TypeOf(reconcileObservation{})
+	for i := 0; i < typ.NumField(); i++ {
+		tag := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
+		if tag != "" {
+			accepted[tag] = true
+		}
+	}
+	for key := range accepted {
+		if !documented[key] {
+			t.Fatalf("gate accepts key %q that the skill payload does not document", key)
+		}
+	}
+	for key := range documented {
+		if !accepted[key] {
+			t.Fatalf("skill documents key %q that the gate rejects as unknown", key)
+		}
+	}
+}
+
 func TestLedgerReconcileAgreesOnDeclaredPropertiesViaCLI(t *testing.T) {
 	dir := reconcileFixture(t)
 	obs := writeReconcileObs(t, reconcileObsBody(t, nil))

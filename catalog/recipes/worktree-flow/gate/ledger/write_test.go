@@ -298,6 +298,68 @@ func TestApplyWriteLinkPopulatesCoreFieldsAndAppendsDecision(t *testing.T) {
 	}
 }
 
+// TestApplyWriteCloseRecordsObservedSnapshot pins S1: a close carrying a
+// provider payload records the observed state/list at close time instead of
+// persisting a stale link-time snapshot. A close without a payload keeps the
+// existing behavior (no snapshot update).
+func TestApplyWriteCloseRecordsObservedSnapshot(t *testing.T) {
+	path := writePath(t)
+	saveWriteStore(t, path, storeWithOpenItem("card-1"))
+
+	if _, err := applyWrite(t, path, "p", WriteRequest{
+		Kind: WriteLink, ItemID: "card-1", URL: "https://example.test/card-1",
+		NativeType: "card", State: "in-progress", Provider: json.RawMessage(`{"list":"In Progress"}`),
+	}); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+
+	if _, err := applyWrite(t, path, "p", WriteRequest{
+		Kind: WriteClose, State: "done", Provider: json.RawMessage(`{"list":"Done"}`),
+	}); err != nil {
+		t.Fatalf("close with payload: %v", err)
+	}
+
+	loaded := loadWriteStore(t, path)
+	item := loaded.Items[0]
+	if item.Status != StatusClosed {
+		t.Fatalf("status = %q, want closed", item.Status)
+	}
+	if item.State != "done" {
+		t.Fatalf("state = %q, want the observed done state, not the stale link snapshot", item.State)
+	}
+	var provider map[string]any
+	if err := json.Unmarshal(item.Provider, &provider); err != nil {
+		t.Fatalf("opaque provider did not round-trip: %v (%s)", err, item.Provider)
+	}
+	if provider["list"] != "Done" {
+		t.Fatalf("provider payload = %v, want the observed list=Done", provider)
+	}
+	last := item.Decisions[len(item.Decisions)-1]
+	if last.Kind != DecisionClose {
+		t.Fatalf("last decision = %+v, want close", last)
+	}
+}
+
+// TestApplyWriteCloseWithoutPayloadKeepsSnapshot pins that the snapshot update
+// is opt-in via payload: a bare close must not invent or clear state.
+func TestApplyWriteCloseWithoutPayloadKeepsSnapshot(t *testing.T) {
+	path := writePath(t)
+	saveWriteStore(t, path, storeWithOpenItem("card-1"))
+	if _, err := applyWrite(t, path, "p", WriteRequest{
+		Kind: WriteLink, ItemID: "card-1", URL: "https://example.test/card-1",
+		NativeType: "card", State: "in-progress", Provider: json.RawMessage(`{"list":"In Progress"}`),
+	}); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteClose}); err != nil {
+		t.Fatalf("bare close: %v", err)
+	}
+	item := loadWriteStore(t, path).Items[0]
+	if item.State != "in-progress" {
+		t.Fatalf("state = %q, want the link snapshot preserved on a payload-less close", item.State)
+	}
+}
+
 // TestApplyWriteCloseThenCloseIsExplicit pins DW4 for close: the second close is
 // signalled as already-closed and the item stays in the store, closed.
 func TestApplyWriteCloseThenCloseIsExplicit(t *testing.T) {

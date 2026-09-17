@@ -117,7 +117,18 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	// post-write grade is what reflects the result, and a failure persists nothing
 	// and exits 2 with no stdout JSON (L6).
 	var writeOutcome *ledger.WriteOutcome
+	// reportItem is the just-closed row a close write hands to the post-write grade:
+	// a close leaves no open primary, so without it the grade would report
+	// needs-item for the row the same invocation just persisted (D17 keeps that row
+	// out of Primary, so it is passed explicitly and read-only).
+	var reportItem *ledger.Item
 	if opts.write != "" {
+		if ledgerWriteKind(opts.write) == ledger.WriteClose {
+			// A close targets the row an earlier open created, so its stored slug
+			// is recovered even from a closed row; this is close-only and never
+			// lets that row become primary for new work (D17).
+			ident = ledgerIdentityForClose(ident, store, storeErr, dir, facts)
+		}
 		outcome, err := applyLedgerWrite(storePath, ident, binding, opts.checkpoint, opts.write)
 		if err != nil {
 			fmt.Fprintf(stderr, "worktree-gate: ledger --write failed: %v\n", err)
@@ -128,6 +139,11 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 		// The explicit slug a write just recorded is the stored slug: the re-grade
 		// must select the item that write created, not a stale ambiguous identity.
 		ident = ledgerIdentityWithStoredSlug(ident, store, storeErr, dir, facts)
+		if outcome.Kind == ledger.WriteClose {
+			if closed, ok := store.LatestClosed(ident.Key); ok {
+				reportItem = &closed
+			}
+		}
 	}
 
 	ev, err := loadLedgerEvidence(opts.evidence)
@@ -147,6 +163,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 		StoreErr:   storeErr,
 		Evidence:   ev,
 		Now:        now,
+		ReportItem: reportItem,
 	})
 
 	// The conflict snapshot is a store write. A --reconcile invocation is documented
@@ -239,6 +256,58 @@ func storedLedgerSlug(store ledger.Store, common, branch string) string {
 		return changes[0]
 	}
 	return ""
+}
+
+// ledgerIdentityForClose re-derives the identity for an explicit close write,
+// recovering the change slug from the row the close targets: the single open
+// primary when one exists, otherwise the latest closed row for this common dir
+// and branch. It is close-only by design — a plain grade or a new open never
+// adopts a closed row's slug, so a closed row can never become primary for new
+// work (D17). An idempotent close retry therefore still targets the row a prior
+// close persisted after its change folder was archived, or while several active
+// change folders make the fresh identity ambiguous.
+func ledgerIdentityForClose(ident ledger.Identity, store ledger.Store, storeErr error, dir string, facts ledger.Facts) ledger.Identity {
+	if !ident.Available() || storeErr != nil {
+		return ident
+	}
+	slug := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
+	if slug == "" {
+		slug = latestClosedSlug(store, ident.CommonDir, ident.Branch)
+	}
+	if slug == "" || slug == ident.Change {
+		return ident
+	}
+	return ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, StoredSlug: slug, Facts: facts})
+}
+
+// latestClosedSlug returns the change slug on the most recently stored closed
+// row for the common dir and branch, so a close retry after an archive still
+// targets the row the original close persisted. It is read-only and only ever
+// consulted by the explicit close path.
+func latestClosedSlug(store ledger.Store, common, branch string) string {
+	for i := len(store.Items) - 1; i >= 0; i-- {
+		item := store.Items[i]
+		if item.Status != ledger.StatusClosed {
+			continue
+		}
+		if item.Identity.CommonDir != common || item.Identity.Branch != branch {
+			continue
+		}
+		return item.Identity.Change
+	}
+	return ""
+}
+
+// ledgerWriteKind is the normalized machine-write verb of a --write payload, or
+// "" when the payload is not decodable. It decides the close-only identity
+// recovery before the write; an undecodable payload still fails closed in
+// applyLedgerWrite with the same exit 2 and stderr as before.
+func ledgerWriteKind(raw string) string {
+	var req ledger.WriteRequest
+	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+		return ""
+	}
+	return req.Normalize().Kind
 }
 
 // loadLedgerEvidence reads the host-supplied evidence file. Local defaults to

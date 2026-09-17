@@ -13,6 +13,10 @@
 # (.github/workflows/release-worktree-gate.yml) — and MUST be regenerated with
 # exactly that version, or the CI checksum gate fails the release.
 #
+# The four executable assets are intentionally CI/release outputs, not tracked
+# files. These lines are their source-level trust manifest; regenerate them with
+# scripts/build-gate.sh after any Go gate change and verify before publishing.
+#
 # Regenerated as part of the release (task 4.9): digests MUST match the
 # published assets; the CI release workflow diffs its generated SHA256SUMS
 # against this file and fails the release on any mismatch.
@@ -23,7 +27,7 @@
 # four-arch asset gains Go-owned remote-observation reconciliation; no new asset,
 # no second trust root) with the canonical go1.24.13 toolchain via:
 #   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
-b7ea9eb3c3ee551c365d43b6f334ebc1e031785d77085c7fb479b20df642d577  worktree-gate-darwin-arm64
-4233be5b2e7ea65fac44b985fd94fbf63c86a5b1741ca7074409d27f81ef41a4  worktree-gate-darwin-amd64
-2aa10f33ebc216fcc9efa53ee296b3c60d7428f53f1d3e47d4b8b769c3ffdbdd  worktree-gate-linux-amd64
-8691ea097e2950c5d7e25227068ead61fab5c63666387ac8fad79137309f0199  worktree-gate-linux-arm64
+b08f1aec8b1adb8225f6bf01b8b8be3f064f7904aef72ca786b2d2c2959ab758  worktree-gate-darwin-arm64
+35cb429d9e6cc46fe4c24d4e7addba68d37975476b2efbfce8bfe05be3528ad0  worktree-gate-darwin-amd64
+147d3d8399404a8753744b77a213169624964134bdda25e9cb794ecaeed1ad23  worktree-gate-linux-amd64
+06122cc16561c198ab238c33162f2af1cee7a5d39c7751f9eedd651f191c8ea4  worktree-gate-linux-arm64

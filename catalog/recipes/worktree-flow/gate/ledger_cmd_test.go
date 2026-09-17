@@ -635,6 +635,159 @@ func TestLedgerWriteOpenThenIdempotentRetryViaCLI(t *testing.T) {
 	}
 }
 
+// TestLedgerWriteCloseWithSnapshotThenRetryViaCLI pins the live close path: an
+// explicit close carrying the observed provider snapshot must persist state and
+// provider, close the row, and still grade allow in the same invocation. Grade
+// only selects open rows for new work (D17), so the close write reports its own
+// just-closed row to that one post-write grade. The idempotent retry reports
+// already-closed and grades the same closed row.
+func TestLedgerWriteCloseWithSnapshotThenRetryViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	// An active change folder gives the work an identity slug, the realistic shape.
+	if err := os.MkdirAll(filepath.Join(dir, "openspec", "changes", "tracker-reconcile-adoption"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	storePath := ledger.StorePath(common)
+
+	if code, _, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"open"}`); code != 0 {
+		t.Fatalf("open exit = %d, want 0; stderr: %s", code, stderr)
+	}
+
+	closePrefix := []string{"--ledger", "--checkpoint", "archive-close", "--ledger-mode", "always", "--project-root", dir}
+	payload := `{"kind":"close","state":"done","provider":{"list":"Done"}}`
+	code, stdout, stderr := ledgerWriteRun(t, closePrefix, payload)
+	if code != 0 {
+		t.Fatalf("close exit = %d, want 0 (allow); stderr: %s", code, stderr)
+	}
+	out := decodeLedgerOut(t, stdout)
+	if out["decision"] != "allow" || out["reason"] != "" {
+		t.Fatalf("post-close grade = %v/%v, want allow", out["decision"], out["reason"])
+	}
+	item, ok := out["item"].(map[string]any)
+	if !ok {
+		t.Fatalf("post-close item = %v, want the just-closed row", out["item"])
+	}
+	if item["status"] != "closed" || item["state"] != "done" {
+		t.Fatalf("post-close item = %v, want status closed and state done", item)
+	}
+	provider, ok := item["provider"].(map[string]any)
+	if !ok || provider["list"] != "Done" {
+		t.Fatalf("post-close provider = %v, want the observed snapshot {list: Done}", item["provider"])
+	}
+	side, ok := out["write"].(map[string]any)
+	if !ok {
+		t.Fatalf("close write sidecar = %v, want an object", out["write"])
+	}
+	assertKeys(t, "close write", side, "kind", "applied", "reason")
+	if side["kind"] != "close" || side["applied"] != true {
+		t.Fatalf("close write sidecar = %v, want close/applied", side)
+	}
+
+	// The retry meets the same closed row: already-closed, and the post-write
+	// grade still resolves to it instead of needs-item.
+	code, stdout, stderr = ledgerWriteRun(t, closePrefix, payload)
+	if code != 0 {
+		t.Fatalf("close retry exit = %d, want 0 (allow); stderr: %s", code, stderr)
+	}
+	out = decodeLedgerOut(t, stdout)
+	if out["decision"] != "allow" {
+		t.Fatalf("post-close retry grade = %v/%v, want allow", out["decision"], out["reason"])
+	}
+	retryItem, ok := out["item"].(map[string]any)
+	if !ok || retryItem["status"] != "closed" {
+		t.Fatalf("post-close retry item = %v, want the closed row", out["item"])
+	}
+	side = out["write"].(map[string]any)
+	if side["applied"] != false || side["reason"] != "already-closed" {
+		t.Fatalf("close retry sidecar = %v, want applied=false/already-closed", side)
+	}
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Items) != 1 || store.Items[0].Status != ledger.StatusClosed {
+		t.Fatalf("close retry must keep one closed row: %+v", store.Items)
+	}
+}
+
+// TestLedgerWriteCloseRetryRecoversStoredSlugViaCLI pins the close-only identity
+// recovery: an idempotent close retry must target the row the first close
+// persisted even when the change slug can no longer be derived — because its
+// folder was archived, or because several active change folders made the identity
+// ambiguous. Only the explicit close recovers the closed row's slug; a plain
+// grade or a new open still never adopts a closed row (D17).
+func TestLedgerWriteCloseRetryRecoversStoredSlugViaCLI(t *testing.T) {
+	const slug = "tracker-reconcile-adoption"
+	closePrefix := func(dir string) []string {
+		return []string{"--ledger", "--checkpoint", "archive-close", "--ledger-mode", "always", "--project-root", dir}
+	}
+	const closePayload = `{"kind":"close","state":"done","provider":{"list":"Done"}}`
+
+	cases := []struct {
+		name  string
+		drift func(t *testing.T, dir string)
+	}{
+		{
+			name: "archived change folder",
+			drift: func(t *testing.T, dir string) {
+				active := filepath.Join(dir, "openspec", "changes", slug)
+				archived := filepath.Join(dir, "openspec", "changes", "archive", "2026-01-01-"+slug)
+				if err := os.MkdirAll(filepath.Dir(archived), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(active, archived); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "multiple active change folders",
+			drift: func(t *testing.T, dir string) {
+				if err := os.MkdirAll(filepath.Join(dir, "openspec", "changes", "another-change"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, common, _ := ledgerRepo(t)
+			writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+			if err := os.MkdirAll(filepath.Join(dir, "openspec", "changes", slug), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if code, _, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"open"}`); code != 0 {
+				t.Fatalf("open exit = %d, want 0; stderr: %s", code, stderr)
+			}
+			if code, stdout, stderr := ledgerWriteRun(t, closePrefix(dir), closePayload); code != 0 {
+				t.Fatalf("close exit = %d, want 0 (allow); stderr: %s", code, stderr)
+			} else if out := decodeLedgerOut(t, stdout); out["decision"] != "allow" {
+				t.Fatalf("first close grade = %v/%v, want allow", out["decision"], out["reason"])
+			}
+
+			tc.drift(t, dir)
+
+			code, stdout, stderr := ledgerWriteRun(t, closePrefix(dir), closePayload)
+			if code != 0 {
+				t.Fatalf("close retry exit = %d, want 0 (allow); stderr: %s", code, stderr)
+			}
+			out := decodeLedgerOut(t, stdout)
+			if out["decision"] != "allow" {
+				t.Fatalf("close retry grade = %v/%v, want allow", out["decision"], out["reason"])
+			}
+			side, ok := out["write"].(map[string]any)
+			if !ok || side["applied"] != false || side["reason"] != "already-closed" {
+				t.Fatalf("close retry sidecar = %v, want applied=false/already-closed", out["write"])
+			}
+			if item, ok := out["item"].(map[string]any); !ok || item["status"] != "closed" {
+				t.Fatalf("close retry item = %v, want the closed row", out["item"])
+			}
+		})
+	}
+}
+
 // TestLedgerWriteLinkPersistsNativeFieldsViaCLI pins the link verb through the CLI.
 func TestLedgerWriteLinkPersistsNativeFieldsViaCLI(t *testing.T) {
 	dir, common, _ := ledgerRepo(t)
