@@ -2,7 +2,7 @@
 """Ledger evidence bridge: acquisition and JSON only, never a grader.
 
 Builds the local-facts half of the ledger's four-side evidence model for the
-checkpoint hosts (``tracker-card-gate.sh``, ``premerge_guardian.py``). This slice
+checkpoint hosts (``tracker-card-gate.sh``, ``tracker_ledger_host.py``). This slice
 produces three sides (L3):
 
   ``local``   always empty from here — the Go ledger uses its own store snapshot
@@ -15,6 +15,10 @@ root, or a malformed section yields an empty side rather than an exception, so a
 checkpoint never blocks because acquisition failed. The ``## Tracker`` validity
 rule has exactly one authoritative grader — the Go ``--ledger`` predicate — and
 ``trello_link.parse_tracker_section`` stays the only parser (A8/D5).
+
+The domain is Tracker, not a provider. Provider adaptation is the declarative
+``[config.reconcile]`` mapping the Go core reads from the manifest; this bridge
+supplies only neutral local facts and never grades or names a provider.
 
 No ``gh``, no MCP, no network: the only subprocess is a local ``git rev-parse``
 used to locate the durable witness / store directory.
