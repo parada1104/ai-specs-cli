@@ -896,11 +896,57 @@ There is no bypass flag.
 - THEN verify evidence is produced before archive-tail on the review branch
 - AND the pre-merge guardian re-checks the same evidence after archive
 
+### Requirement: Promotion and archive ownership
+
+Plan Build owns the review-branch tail of a change and MUST run it in this order:
+verify evidence → promote canonical delta specs → run the read-only artifact
+guardian → archive the change folder. Canonical delta-spec promotion is the
+explicit writer (`lib/_internal/spec_promotion.py`): before the first pre-archive
+guardian and before the change folder moves, it composes every applicable
+ADDED/MODIFIED/REMOVED delta requirement into the matching
+`openspec/specs/<domain>/spec.md`, preserving unrelated canonical requirements
+and sections and staying idempotent on a rerun.
+
+The artifact guardian validates **promotion parity** — every archived
+Standard/Full delta requirement is present in its canonical spec and no
+destructive or unresolved delta remains. Promotion parity is a read-only check:
+the guardian MUST NOT write, rewrite, promote, or repair canonical specs, change
+folders, or tracker state.
+
+Light changes, and ODD task-only work that keeps no OpenSpec change folder, carry
+no spec deltas: promotion and promotion-parity validation apply only to Standard
+and Full changes with at least one delta, and neither a canonical spec nor a
+promotion blocker is invented for them.
+
+#### Scenario: Ordered tail promotes before the guardian
+
+- GIVEN an authorized Standard or Full change with at least one delta
+- WHEN the review-branch tail runs
+- THEN verify evidence is produced first
+- AND the deltas are composed into canonical specs before the pre-archive guardian
+- AND the change folder is archived only after the guardian passes
+
+#### Scenario: Guardian validates parity without writing
+
+- GIVEN an archived Standard or Full change whose delta requirement is absent
+  from the matching canonical spec
+- WHEN the pre-archive or pre-merge guardian runs
+- THEN it blocks with a promotion-parity blocker
+- AND `openspec/specs/**` is byte-identical afterward
+
+#### Scenario: Light and ODD task-only work have no promotion step
+
+- GIVEN a Light change, or an ODD task-only change with no `openspec/` change folder
+- WHEN the tail runs
+- THEN no canonical promotion is required
+- AND no promotion-parity blocker is raised
+
 ### Requirement: Pre-merge merge guardian
 
 Before merge, missing tier artifacts, a still-active change folder, an
-unresolvable archive, or (for Standard and Full) missing verify evidence per the
-staged verify gate is a hard stop. Agents MUST invoke
+unresolvable archive, a failing promotion-parity check, or (for Standard and
+Full) missing verify evidence per the staged verify gate is a hard stop. Agents
+MUST invoke
 `$AI_SPECS_HOME/lib/_internal/premerge_guardian.py` (defaulting
 `AI_SPECS_HOME` to `$HOME/.ai-specs` when unset) with the propagated planning
 root as defined by this requirement. Sync MUST NOT materialize a per-project
@@ -952,6 +998,9 @@ Hard blockers (do **not** merge):
    Standard evidence shape in *Staged verify gate*.
 5. Full: archived folder lacks a `verify-report.md` that satisfies the Full
    evidence shape in *Staged verify gate*.
+6. Standard or Full: the promotion parity check in *Promotion and archive
+   ownership* fails — an archived delta requirement is absent from or unresolved
+   in its canonical `openspec/specs/<domain>/spec.md`.
 
 The guardian MUST NOT add a blocker for a missing `explore.md` at any depth, and
 MUST NOT add a verify blocker at Light. The guardian SHALL evaluate only the
@@ -1019,9 +1068,17 @@ changes.
 - WHEN an agent attempts to merge the PR/MR
 - THEN the skill stops with a plain-language blocker requiring archive-tail first
 
+#### Scenario: Unpromoted archived delta blocks the merge
+
+- GIVEN a Standard or Full change is archived with a delta requirement that is
+  absent from the canonical spec
+- WHEN the pre-merge guardian runs
+- THEN it fails with a promotion-parity blocker
+- AND it does not write, promote, or repair the canonical spec itself
+
 #### Scenario: Guardian path is CLI-home
 
-- GIVEN `plan-build-flow` (or a VCS merge skill) is enabled
+- GIVEN `plan-build-flow` is enabled
 - WHEN an agent runs the pre-merge guardian
 - THEN it uses `${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py`
 - AND the recipe does not target `ai-specs/bin/premerge_guardian.py`
@@ -1180,3 +1237,4 @@ advisory skill + workflow-rules layer.
 | AC12 | `test_skill_has_pr_and_archive_gates` | PR/archive gates |
 | AC13 | `test_brief_mentions_depth_and_pr_gate` | brief fragments |
 | AC14 | `test_plan_build_gate_hook` (unit); `ac8_approval_verb_without_folder` (live) | pre-tool-use artifact gate |
+| AC15 | `CanonicalOwnershipContractTests` (guardian ownership, promotion parity, tracker-free guardian) | promotion and archive ownership |

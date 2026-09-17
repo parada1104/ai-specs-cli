@@ -30,6 +30,7 @@ RECIPE_TOML = RECIPE_DIR / "recipe.toml"
 PLAN_BUILD_GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
 TRACKER_GATE = RECIPE_DIR / "hooks" / "tracker-card-gate.sh"
 GUARDIAN = ROOT / "lib" / "_internal" / "premerge_guardian.py"
+TRACKER_HOST = ROOT / "lib" / "_internal" / "tracker_ledger_host.py"
 DOCTOR = ROOT / "lib" / "_internal" / "doctor.py"
 LEGACY_RECIPE = "trello-mcp-workflow"
 LIB_INTERNAL = ROOT / "lib" / "_internal"
@@ -126,7 +127,7 @@ class LedgerModeConfigTests(unittest.TestCase):
         ai_specs.mkdir(exist_ok=True)
         (ai_specs / "ai-specs.toml").write_text(text)
 
-    def test_witness_recipe_id_drives_the_tracker_host_mode_lookup(self):
+    def test_witness_recipe_id_drives_the_tracker_card_gate_mode_lookup(self):
         self._manifest_two_recipes(legacy_gate="off", fixture_mode="always")
         self._witness("fixture-tracker")
         r = self._tracker_path("warn", env=self._env())
@@ -136,7 +137,7 @@ class LedgerModeConfigTests(unittest.TestCase):
             "the mode must come from the witness-bound recipe's config, not the literal",
         )
 
-    def test_witness_recipe_id_drives_the_guardian_mode_lookup(self):
+    def test_witness_recipe_id_drives_the_tracker_host_mode_lookup(self):
         self._manifest_two_recipes(legacy_gate="off", fixture_mode="always")
         self._witness("fixture-tracker")
         active = self.repo / "openspec" / "changes" / "demo-change"
@@ -144,13 +145,13 @@ class LedgerModeConfigTests(unittest.TestCase):
         (active / "tasks.md").write_text("Depth: light\n")
         (active / "proposal.md").write_text("# proposal\n")
         r = subprocess.run(
-            ["python3", str(GUARDIAN), "demo-change", "--root", str(self.repo),
-             "--stage", "pre-archive", "--tier", "light"],
+            ["python3", str(TRACKER_HOST), "demo-change", "--root", str(self.repo),
+             "--stage", "pre-archive"],
             capture_output=True, text=True, env=self._env(),
         )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._ledger_modes(), ["always"],
-                         "the guardian must read the witness recipe's config too")
+                         "the tracker host must read the witness recipe's config too")
 
     def test_witness_recipe_gate_mode_maps_forward(self):
         self._manifest_two_recipes(legacy_gate="off", fixture_mode=None)
@@ -173,31 +174,50 @@ class LedgerModeConfigTests(unittest.TestCase):
         self.assertEqual(self._logged_checkpoints(), ["apply-start"], r.stderr)
         self.assertEqual(self._ledger_modes(), ["always"], r.stderr)
 
-    # --- 3.4: the remaining literal is named, not silently left ---
-
-    def test_no_hardcoded_recipe_lookup_remains_at_the_three_in_scope_sites(self):
-        sites = (
-            ("guardian", GUARDIAN, 'get("trello-mcp-workflow")', "recipe_id(root)"),
-            ("hook", TRACKER_GATE, 'get("trello-mcp-workflow")', "_ledger_recipe_id"),
-            ("doctor", DOCTOR, 'get("trello-mcp-workflow")', "recipe_id"),
+    def test_witness_recipe_id_drives_the_plan_build_work_start_mode(self):
+        """W6: the last provider literal is gone; work-start resolves the witness."""
+        self._manifest_two_recipes(legacy_gate="warn", fixture_mode="always")
+        self._witness("fixture-tracker")
+        r = self._plan_build(env=self._env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            self._ledger_modes(), ["always"],
+            "work-start must read the witness-bound recipe's config, not a literal",
         )
-        for label, path, literal_lookup, resolver in sites:
+
+    # --- 3.4 / W6: no host resolves its config from a hardcoded recipe id ---
+
+    def test_no_hardcoded_recipe_lookup_remains_at_any_host_site(self):
+        sites = (
+            ("tracker-host", TRACKER_HOST, "recipe_id(root)"),
+            ("tracker-gate", TRACKER_GATE, "_ledger_recipe_id"),
+            ("plan-build-gate", PLAN_BUILD_GATE, "_ledger_recipe_id"),
+            ("doctor", DOCTOR, "recipe_id"),
+        )
+        for label, path, resolver in sites:
             with self.subTest(site=label):
                 text = path.read_text(encoding="utf-8")
                 self.assertNotIn(
-                    literal_lookup, text,
+                    'get("trello-mcp-workflow")', text,
                     f"{path.name} still looks config up by the hardcoded recipe id; the "
                     "fallback belongs in ledger_bridge.LEGACY_RECIPE_ID",
                 )
                 self.assertIn(resolver, text, f"{path.name} must resolve the witness recipe id")
 
-    def test_the_out_of_scope_residue_is_named_in_the_docs(self):
+    def test_plan_build_gate_uses_the_stamped_bridge_seam(self):
         plan_build = PLAN_BUILD_GATE.read_text(encoding="utf-8")
-        self.assertIn(LEGACY_RECIPE, plan_build,
-                      "plan-build-gate.sh is the named, out-of-scope residue (L5)")
+        self.assertNotIn(LEGACY_RECIPE, plan_build,
+                         "the final provider literal must be gone from plan-build-gate.sh")
+        self.assertIn("__TRACKER_LIB_INTERNAL__", plan_build,
+                      "the gate must resolve the recipe through the stamped ledger_bridge seam")
+        self.assertIn("ledger_bridge", plan_build)
         docs = (ROOT / "docs" / "capabilities.md").read_text(encoding="utf-8")
         self.assertIn("plan-build", docs)
         self.assertIn("work-start", docs)
+        self.assertNotIn(
+            "resolves its config through the legacy literal", docs,
+            "the named residue is closed; docs must not still claim it",
+        )
 
     # --- 5.2: recipe declares the field ---
 
@@ -208,6 +228,47 @@ class LedgerModeConfigTests(unittest.TestCase):
         self.assertIn("ledger_mode", fields)
         self.assertEqual(fields["ledger_mode"].default, "warn")
         self.assertEqual(set(fields["ledger_mode"].enum or []), {"always", "ask", "warn"})
+
+    # --- W2: the ledger core is a provider-neutral Tracker domain port ---
+
+    def test_production_go_ledger_has_no_provider_vocabulary(self):
+        gate = ROOT / "catalog" / "recipes" / "worktree-flow" / "gate"
+        production = sorted(p for p in gate.rglob("*.go") if not p.name.endswith("_test.go"))
+        self.assertTrue(production, "expected the production Go gate sources")
+        for path in production:
+            text = path.read_text(encoding="utf-8").lower()
+            for token in ("trello", "jira", "linear", "bitbucket", "gitlab", "github"):
+                with self.subTest(file=path.name, token=token):
+                    self.assertNotIn(
+                        token, text,
+                        f"{path.name} promotes provider vocabulary into the Tracker-domain core",
+                    )
+
+    def test_reconcile_mapping_is_adapter_data_not_policy(self):
+        mapping = tomllib.loads(RECIPE_TOML.read_text())["config"]["reconcile"]
+        self.assertEqual(
+            set(mapping), {"scope_field", "max_age_seconds", "expectations"},
+            "the adapter mapping surface is exactly the declarative mapping keys",
+        )
+        for policy in ("ledger_mode", "gate_mode"):
+            with self.subTest(policy=policy):
+                self.assertNotIn(
+                    policy, mapping,
+                    "Tracker-domain policy must stay out of the adapter mapping",
+                )
+        self.assertEqual(
+            {entry["event"] for entry in mapping["expectations"]},
+            {"delivery", "review", "merge"},
+        )
+
+    def test_adapter_boundary_is_documented(self):
+        readme = (RECIPE_DIR / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Tracker-domain", readme)
+        self.assertIn("adapter", readme)
+        self.assertIn("adapter", RECIPE_TOML.read_text(encoding="utf-8"))
+        capabilities = (ROOT / "docs" / "capabilities.md").read_text(encoding="utf-8")
+        self.assertIn("Tracker-domain port", capabilities)
+        self.assertIn("adapter", capabilities)
 
     # --- helpers ---
 
@@ -249,6 +310,17 @@ class LedgerModeConfigTests(unittest.TestCase):
         path.chmod(0o755)
         return path
 
+    def _stamped_plan_build_gate(self) -> Path:
+        """The materialized hook: sync stamps the CLI's lib/_internal seam."""
+        path = Path(self.tmp.name) / "plan-build-gate.sh"
+        path.write_text(
+            PLAN_BUILD_GATE.read_text().replace(
+                "__TRACKER_LIB_INTERNAL__", str(LIB_INTERNAL)
+            )
+        )
+        path.chmod(0o755)
+        return path
+
     def _env(self, **extra: str) -> dict:
         env = dict(os.environ)
         env.pop("TRACKER_CARD_GATE_MODE", None)
@@ -268,7 +340,7 @@ class LedgerModeConfigTests(unittest.TestCase):
             "cwd": str(self.repo),
         }
         return subprocess.run(
-            ["bash", str(PLAN_BUILD_GATE)],
+            ["bash", str(self._stamped_plan_build_gate())],
             input=json.dumps(event), capture_output=True, text=True, env=env,
         )
 
@@ -382,20 +454,20 @@ class LedgerModeConfigTests(unittest.TestCase):
             "cwd": str(self.repo),
         })
         return [
-            ("work-start", ["bash", str(PLAN_BUILD_GATE)], plan_event, active),
+            ("work-start", ["bash", str(self._stamped_plan_build_gate())], plan_event, active),
             ("apply-start", ["bash", str(gate)], path_event, active),
             ("pr-review", ["bash", str(gate)], shell_event, active),
             (
                 "archive-close",
-                ["python3", str(GUARDIAN), "demo-change", "--root", str(self.repo),
-                 "--stage", "pre-archive", "--tier", "light"],
+                ["python3", str(TRACKER_HOST), "demo-change", "--root", str(self.repo),
+                 "--stage", "pre-archive"],
                 "",
                 active,
             ),
             (
                 "pre-merge",
-                ["python3", str(GUARDIAN), "done-change", "--root", str(self.repo),
-                 "--stage", "pre-merge", "--tier", "light"],
+                ["python3", str(TRACKER_HOST), "done-change", "--root", str(self.repo),
+                 "--stage", "pre-merge"],
                 "",
                 archived,
             ),
@@ -426,7 +498,7 @@ class LedgerModeConfigTests(unittest.TestCase):
 
     def test_hosts_add_no_tracker_predicate(self):
         forbidden = ("is_valid_link", "RECOGNIZED", "card_id", "## Tracker")
-        for path in (PLAN_BUILD_GATE, TRACKER_GATE, GUARDIAN):
+        for path in (PLAN_BUILD_GATE, TRACKER_GATE, GUARDIAN, TRACKER_HOST):
             text = path.read_text()
             for token in forbidden:
                 with self.subTest(host=path.name, token=token):

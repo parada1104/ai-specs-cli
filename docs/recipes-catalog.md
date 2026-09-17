@@ -247,12 +247,31 @@ decisions.
 It is the sole ceremony/depth classification source (`Light` / `Standard` /
 `Full`), replacing the retired ceremony contract.
 
+Delta specifications are promoted before archive: each
+`openspec/changes/<slug>/specs/<domain>/spec.md` delta is composed into
+`openspec/specs/<domain>/spec.md` by `lib/_internal/spec_promotion.py`. ADDED
+requirements are appended, MODIFIED requirements replace the full canonical block
+with the exact same requirement name, unrelated canonical requirements and
+sections survive, and a rerun after an interruption is a no-op. A colliding ADDED
+requirement, a MODIFIED target that does not exist, an unsupported RENAMED delta,
+and a destructive REMOVED delta without explicit approval all block without
+writing. Only the promoter writes canonical specs; the guardian only validates
+and never mutates them. An unpromoted or unresolved Standard/Full delta blocks
+the pre-archive and pre-merge checks; Light and changes without deltas are
+unaffected.
+
 OpenSpec archive-tail uses the canonical dated destination
 `openspec/changes/archive/YYYY-MM-DD-<slug>/` with a valid ISO calendar date.
 The exact undated `archive/<slug>/` form remains a legacy fallback only when no
 dated candidate exists. The pre-merge guardian inspects only direct children,
 rejects invalid or near-match names, and fails closed for multiple dated or
 dated-plus-undated candidates.
+
+This OpenSpec archive is Plan Build's change-folder boundary and is separate from
+a tracker recipe's `archive-close` checkpoint: `archive-close` is tracker item
+closure through the Tracker-domain host (`tracker_ledger_host.py --checkpoint
+archive-close`), never moving the change folder, never inferring closure from
+archive state, and writing nothing. The pre-merge artifact guardian is tracker-free.
 
 - **Provides:** skill `plan-build-flow`; capability `plan-build-flow`.
 - **Config:**
@@ -273,7 +292,7 @@ dated-plus-undated candidates.
 ```toml
 [recipes.plan-build-flow]
 enabled = true
-version = "1.7.0"
+version = "1.8.0"
 
 [recipes.plan-build-flow.config]
 artifact_store_default = "both"
@@ -516,7 +535,7 @@ requires a `## Tracker` link section before production/PR-archive work.
 ```toml
 [recipes.trello-mcp-workflow]
 enabled = true
-version = "1.3.0"
+version = "1.4.0"
 
 [recipes.trello-mcp-workflow.config]
 board_id = "69ec097f13e2d38ecd89a557"

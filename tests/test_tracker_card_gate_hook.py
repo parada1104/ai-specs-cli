@@ -434,6 +434,13 @@ class TrackerCardGateHookTests(unittest.TestCase):
 
     # --- ledger evidence bridge and tracker.none exemption ---
 
+    def test_gate_comments_name_the_tracker_ledger_host(self):
+        """W6: the host comments must not still claim the artifact guardian grades it."""
+        text = GATE.read_text(encoding="utf-8")
+        self.assertNotIn("pre-merge guardian", text)
+        self.assertNotIn("premerge_guardian", text)
+        self.assertIn("tracker_ledger_host.py", text)
+
     def test_graded_argv_carries_the_bridge_evidence_file(self):
         self._change("demo-change")
         r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),

@@ -4,7 +4,8 @@
 # Semantic model: the ledger is the only grader. This host is a thin
 # acquisition/JSON bridge to the verified Go `--ledger` predicate: it maps a
 # production path write to the `apply-start` checkpoint and `gh pr create` to
-# the `pr-review` checkpoint. Archive-close is graded by the pre-merge guardian.
+# the `pr-review` checkpoint. Archive-close is graded by the tracker ledger host
+# (`lib/_internal/tracker_ledger_host.py --checkpoint archive-close`).
 #
 # Dual-input contract (one script, every harness):
 #   PATH mode stdin = JSON { "event", "tool_name",
@@ -60,7 +61,7 @@ input="$(cat)"
 #   path → line 2: <abs_or_rel_file_path>
 #   shell → line 2: <action>\t<details>
 #     action ∈ {pr_create}\t<details is empty; archive-close is graded by the
-#     pre-merge guardian, so archive shell commands are not gated here>
+#     tracker ledger host, so archive shell commands are not gated here>
 # Fail-open: any python error → exit 0.
 parsed="$(python3 - "$input" "$stamped_cli_home" <<'PYEOF' 2>/dev/null
 import json, re, shlex, sys

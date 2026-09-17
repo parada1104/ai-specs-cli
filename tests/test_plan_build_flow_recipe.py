@@ -156,7 +156,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
                 "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
                 "Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed.",
                 "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
-                "Before merge, run verify evidence before archive-tail (Standard/Full block without a conforming verify-report.md; Light is advisory), archive the change folder on the review branch at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, and run the pre-merge guardian again; exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.",
+                "Before merge on the review branch: run verify evidence (Standard/Full block without a conforming verify-report.md; Light is advisory), then promote canonical specs so every delta under specs/<domain>/spec.md is composed into openspec/specs/<domain>/spec.md (the promoter is the only writer and the guardian only validates), then pass the pre-archive guardian, then archive the change folder at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, then run the pre-merge guardian again; an unpromoted or unresolved delta blocks Standard/Full, exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.",
             ],
         )
         self.assertIn("{config.artifact_store_default}", rules[5].text)
@@ -179,13 +179,14 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         ):
             self.assertIn(marker, skill)
 
-    def test_readme_and_catalog_pin_recipe_1_7_0(self):
+    def test_readme_and_catalog_pin_recipe_1_8_0(self):
         readme = (CATALOG / RECIPE_ID / "README.md").read_text()
         catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
-        self.assertIn('version = "1.7.0"', readme)
-        self.assertIn('version = "1.7.0"', catalog)
+        self.assertIn('version = "1.8.0"', readme)
+        self.assertIn('version = "1.8.0"', catalog)
         changelog = (ROOT / "CHANGELOG.md").read_text()
         unreleased = changelog.split("## [0.21.0]", 1)[0]
+        self.assertIn("1.7.0` → `1.8.0", unreleased)
         self.assertIn("1.6.0` → `1.7.0", unreleased)
         self.assertIn("1.5.0` → `1.6.0", unreleased)
 
@@ -364,7 +365,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             self.assertIn(phrase, catalog)
 
     def test_version_and_catalog_documentation_use_current_contract(self):
-        self.assertEqual(_recipe_version(), "1.7.0")
+        self.assertEqual(_recipe_version(), "1.8.0")
         readme = (CATALOG / RECIPE_ID / "README.md").read_text()
         catalog = (ROOT / "docs" / "recipes-catalog.md").read_text()
         for text in (readme, catalog):
@@ -372,7 +373,20 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             self.assertIn("openspec", text)
             self.assertIn("engram", text)
             self.assertIn("both", text)
-            self.assertIn("1.7.0", text)
+            self.assertIn("1.8.0", text)
+
+    def test_promotion_open_spec_archive_and_tracker_closure_are_distinguished(self):
+        """W6: Plan Build owns the OpenSpec archive; Tracker owns item closure."""
+        recipe_dir = CATALOG / RECIPE_ID
+        surfaces = (
+            (recipe_dir / "README.md").read_text(),
+            (ROOT / "docs" / "recipes-catalog.md").read_text(),
+        )
+        for raw in surfaces:
+            text = " ".join(raw.split()).lower()
+            self.assertIn("archive-close", text)
+            self.assertIn("tracker item closure", text)
+            self.assertIn("openspec", text)
 
     def test_success_criteria_source_selection_contract_is_documented(self):
         recipe_dir = CATALOG / RECIPE_ID
@@ -583,6 +597,73 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         for term in ("gentle-ai", "gentle ai"):
             self.assertNotIn(term, rules.lower())
             self.assertNotIn(term, surface)
+
+    def test_skill_orders_promotion_before_archive_and_a_guardian(self):
+        """The lifecycle order is verify → promote → pre-archive → archive → merge."""
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
+        text = skill.lower()
+        for marker in (
+            "spec_promotion.py",
+            "promotion helper",
+            "pre-archive",
+            "archive-tail",
+            "pre-merge guardian",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, text)
+
+        normalized = " ".join(text.split())
+        steps = [
+            "1. implement and verify.",
+            "4. promote canonical specs.",
+            "5. before moving the change folder",
+            "6. after the pre-archive gate passes, run archive-tail",
+            "7. run the pre-merge guardian",
+        ]
+        positions = []
+        for step in steps:
+            with self.subTest(step=step):
+                self.assertIn(step, normalized)
+            positions.append(normalized.index(step))
+        self.assertEqual(positions, sorted(positions), steps)
+        self.assertIn("--stage pre-archive", normalized)
+
+    def test_skill_separates_promoter_writes_from_guardian_validation(self):
+        skill = (
+            (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md")
+            .read_text()
+            .lower()
+        )
+        normalized = " ".join(skill.split())
+        self.assertIn("only the promoter writes", normalized)
+        self.assertIn("guardian only validates", normalized)
+        self.assertIn("read-only", normalized)
+
+    def test_brief_rule_orders_promotion_before_the_pre_archive_guardian(self):
+        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
+        rules = [fragment.text for fragment in recipe.brief_fragments.workflow_rules]
+        gate_rule = " ".join(rules[4].split())
+        self.assertIn("promote canonical specs", gate_rule)
+        promote_at = gate_rule.index("promote canonical specs")
+        pre_archive_at = gate_rule.index("pre-archive guardian")
+        archive_at = gate_rule.index("archive the change folder")
+        guardian_at = gate_rule.index("pre-merge guardian")
+        self.assertLess(promote_at, pre_archive_at)
+        self.assertLess(pre_archive_at, archive_at)
+        self.assertLess(archive_at, guardian_at)
+
+    def test_readme_and_catalog_document_promotion_roles_and_order(self):
+        readme = (CATALOG / RECIPE_ID / "README.md").read_text().lower()
+        catalog = (ROOT / "docs" / "recipes-catalog.md").read_text().lower()
+        for name, text in (("readme", readme), ("catalog", catalog)):
+            normalized = " ".join(text.split())
+            with self.subTest(document=name):
+                self.assertIn("spec_promotion.py", normalized)
+                self.assertIn("only the promoter writes", normalized)
+                self.assertIn("guardian only validates", normalized)
+                self.assertLess(
+                    normalized.index("promote"), normalized.index("archive-tail")
+                )
 
 
 if __name__ == "__main__":

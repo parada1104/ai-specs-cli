@@ -137,8 +137,9 @@ class GitPrFlowRecipeTests(unittest.TestCase):
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
         text = skill.read_text()
-        self.assertIn("AI_SPECS_HOME", text)
-        self.assertIn("lib/_internal/premerge_guardian.py", text)
+        # W4: the VCS skill must not carry or invoke the Plan Build artifact
+        # guardian; the guardian stays a CLI-home, Plan Build-only helper.
+        self.assertNotIn("premerge_guardian.py", text)
         self.assertNotIn("ai-specs/bin/premerge_guardian.py", text)
 
     def test_canonical_guardian_lives_in_cli_home(self):
@@ -155,13 +156,29 @@ class GitPrFlowGoldenContentTests(unittest.TestCase):
         )
         cls.skill_text = cls.skill_path.read_text()
 
-    def test_skill_requires_pre_merge_archive_before_merge(self):
-        """Skill archives SDD/OpenSpec artifacts before gh pr merge."""
-        merge_pos = self.skill_text.find("gh pr merge")
-        archive_pos = self.skill_text.find("archive and record SDD/OpenSpec artifacts")
-        self.assertGreater(archive_pos, 0)
-        self.assertGreater(merge_pos, 0)
-        self.assertLess(archive_pos, merge_pos)
+    def test_skill_does_not_require_openspec_change_folder(self):
+        """VCS-only projects merge without an OpenSpec change folder."""
+        self.assertNotIn("openspec/changes/<slug>/", self.skill_text)
+
+    def test_skill_does_not_own_archive_tail(self):
+        """Archive-tail stays with Plan Build; the VCS skill never archives."""
+        self.assertNotIn("archive and record SDD/OpenSpec artifacts", self.skill_text)
+
+    def test_skill_does_not_invoke_premerge_guardian(self):
+        """The artifact guardian is Plan Build-owned, not a VCS precondition."""
+        self.assertNotIn("premerge_guardian.py", self.skill_text)
+
+    def test_skill_points_artifact_ownership_at_plan_build(self):
+        """A concise note hands planning/promotion/archive to Plan Build."""
+        self.assertIn("Artifact ownership", self.skill_text)
+        self.assertIn("plan-build-flow", self.skill_text)
+
+    def test_skill_invokes_tracker_ledger_host_before_merge(self):
+        """Tracker authorization is graded by the provider-neutral host."""
+        self.assertIn("tracker_ledger_host.py", self.skill_text)
+        self.assertIn("--root <planning-root>", self.skill_text)
+        self.assertIn("--checkpoint pre-merge", self.skill_text)
+        self.assertNotIn("premerge_guardian.py", self.skill_text)
 
     def test_skill_requires_native_post_merge_cleanup_sequence(self):
         """Skill delegates ordered branch/worktree cleanup to the Go command."""

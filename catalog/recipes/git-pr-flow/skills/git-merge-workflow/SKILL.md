@@ -26,15 +26,25 @@ Use the configured base branch from `[recipes.git-pr-flow.config]` (`base_branch
 This recipe implements GitHub through the `gh` CLI. Honor any no-push/no-merge rules
 declared for the project.
 
+## Artifact ownership
+
+This skill owns provider transport, PR review and merge, and worktree/branch
+cleanup only. It does not own SDD/OpenSpec planning, spec promotion, archive, or
+the pre-merge artifact guardian, and it imposes no planning-artifact
+precondition on the branch.
+
+When the `plan-build-flow` recipe is enabled, that recipe owns artifact
+planning, promotion, and archive, together with its own pre-archive and
+pre-merge gates; finish them before requesting this skill's merge. A project
+that does not enable Plan Build can create and merge a PR with no OpenSpec
+change tree.
+
 ## Preconditions
 
 - User explicitly requested PR/merge/cleanup.
 - Working branch belongs to one focused change.
 - Worktree has no unrelated uncommitted changes.
 - Required verification evidence is complete or the user accepts the gap.
-- A change folder under `openspec/changes/<slug>/` (excluding `archive/`) exists
-  on the branch with at least `tasks.md` committed. If missing, stop before PR
-  creation and complete planning first.
 - `gh` is installed and authenticated when GitHub is the provider.
 
 ## Runtime Preflight
@@ -145,36 +155,25 @@ git push -u origin <branch-name>
 gh pr create --base <integration-branch> --title "<title>" --body "<summary and verification>"
 ```
 
-6. Before merging, archive and record SDD/OpenSpec artifacts for the change
-   while still on the review branch. The archive boundary is the pre-merge
-   branch state — never defer this step until after the merge lands on the base
-   branch. Commit and push any archive commits to the review branch before
-   proceeding.
-
-7. **Pre-merge guardian (hard stop):** confirm the change is archived and has
-   tier-minimum files. Prefer:
+6. Classify `HEAD_BRANCH` (see **Head branch class**). Before the provider merge
+   command, authorize the Tracker item with the provider-neutral Tracker
+   lifecycle host. This is Tracker item authorization, not OpenSpec artifact or
+   archive validation; the host is safe when dormant or unbound and is the only
+   Go-ledger bridge. Stop on a non-zero exit:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
-  <slug> --root <repo-root>
+python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
+  <slug> --root <planning-root> --checkpoint pre-merge
 ```
 
-The helper ships with the CLI install under `~/.ai-specs` (not copied into
-consumer projects).
-
-Do **not** merge if `openspec/changes/<slug>/` still exists, or if
-`openspec/changes/archive/<slug>/` is missing tier files.
-
-8. Classify `HEAD_BRANCH` (see **Head branch class**). Merge only after explicit
-   user approval, required checks/review, archive on the review branch, and a
-   clean guardian result. Merge without asking the hosting provider to delete
-   the source branch:
+   Merge only after explicit user approval and required checks/review. Merge
+   without asking the hosting provider to delete the source branch:
 
 ```bash
 gh pr merge --squash
 ```
 
-9. After the PR is merged, run the complete cleanup sequence from the main
+7. After the PR is merged, run the complete cleanup sequence from the main
    repository worktree. Do not switch the base checkout first: the cleanup
    command must release every feature worktree before touching its branches,
    and must delete and verify the remote branch before deleting the local one.
