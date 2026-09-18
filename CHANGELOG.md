@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-09-18
+
+### Upgrade notes
+Run `ai-specs sync` in each project to materialize the updated Worktree cleanup and release-flow assets.
+
+### Added
+- **Worktree Ledger port.** Worktree cleanup now evaluates a provider-neutral Go domain port with deterministic observations, outcomes, and golden-corpus coverage.
+- **Evidence-bound cleanup.** Linked and stale worktree cleanup accepts provider PR merge evidence only when it is bound to the current branch tip, preserving reused branches with new unmerged work.
+
+### Changed
+- **Release flow.** The canonical checkout remains on `development` during promotion and tagging; releases tag the fetched `origin/main` commit directly.
+
 ## [0.23.1] — 2026-09-18
 
 ### Added
