@@ -148,7 +148,25 @@ worktree-gate --ledger --checkpoint apply-start \
 ```
 
 A failed write exits `2`, persists nothing, and prints no verdict JSON; a retried
-`open` reports `already-open` instead of creating a second item. For `tracker.none`,
+`open` reports `already-open` instead of creating a second item.
+
+**`bind` is the generic binding command** for SDD, ODD, and no-flow work alike: one
+`--write` opens-if-absent and links in the same locked transaction, so a branch
+binding is seeded from a valid external tracker item with no `openspec/`/SDD/ODD
+artifact and no provider call:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --project-root . \
+  --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress"}'
+```
+
+A retried `bind` reports `unchanged` instead of duplicating; a `change-ambiguous`
+identity is refused unless the payload carries an explicit `change`; a closed row is
+never reopened (D17). State stays in the existing Go ledger at
+`<git-common-dir>/ai-specs/ledger/state.json`, and nothing is written into the
+repository tree.
+
+For `tracker.none`,
 the human/agent records the exemption with an explicit write so every checkpoint
 honors it and it never registers as a conflict:
 

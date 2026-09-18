@@ -43,8 +43,11 @@ const (
 	MaxStoreBytes = 64 * 1024
 
 	// Machine write verbs (DW2). This is the closed write vocabulary; `exempt`
-	// is deliberately NOT a sixth decisionKinds entry (DW4).
+	// is deliberately NOT a sixth decisionKinds entry (DW4). `bind` is the
+	// generic one-shot lifecycle verb: open-if-absent + link in one locked
+	// transaction, recorded with the existing open and link decisions.
 	WriteOpen   = "open"
+	WriteBind   = "bind"
 	WriteLink   = "link"
 	WriteClose  = "close"
 	WriteExempt = "exempt"
@@ -75,7 +78,7 @@ var (
 )
 
 // WriteKinds is the closed machine-write verb set (DW2).
-var WriteKinds = []string{WriteOpen, WriteLink, WriteClose, WriteExempt}
+var WriteKinds = []string{WriteOpen, WriteBind, WriteLink, WriteClose, WriteExempt}
 
 // decisionKinds is the closed set of append-only decision kinds (A6).
 var decisionKinds = map[string]bool{
@@ -273,9 +276,11 @@ func (r WriteRequest) Validate(checkpoint string) error {
 		return fmt.Errorf("%w: kind %q", ErrInvalidWrite, r.Kind)
 	}
 	switch r.Kind {
-	case WriteLink:
+	case WriteLink, WriteBind:
+		// Both verbs record the supplied native id: link targets the existing
+		// open primary, bind opens-if-absent and then links.
 		if r.ItemID == "" {
-			return fmt.Errorf("%w: link requires item_id", ErrInvalidWrite)
+			return fmt.Errorf("%w: %s requires item_id", ErrInvalidWrite, r.Kind)
 		}
 	case WriteExempt:
 		if r.Reason == "" {
@@ -373,29 +378,29 @@ func applyWriteToStore(store *Store, ident ItemIdentity, req ApplyWriteRequest, 
 		}
 		return true, "", nil
 
+	case WriteBind:
+		if err != nil {
+			if !errors.Is(err, ErrNoPrimary) {
+				// A collided identity is not something a bind may guess around.
+				return false, "", err
+			}
+			// No open primary: open-if-absent and link in this same locked
+			// transaction, so bind is one atomic open+link. OpenIfAbsent never
+			// reopens a closed row; it appends a distinct new primary (D17).
+			item, _, err = store.OpenIfAbsent(ident, providerID, now)
+			if err != nil {
+				return false, "", err
+			}
+		}
+		return applyLinkToStore(store, item, req, write, stamp)
+
 	case WriteLink:
 		if err != nil {
 			// A link needs exactly one open primary: a collision or a missing
 			// item is not something a link may guess around.
 			return false, "", err
 		}
-		if sameLink(item, write) {
-			return false, WriteReasonUnchanged, nil
-		}
-		for i := range store.Items {
-			if store.Items[i].ID != item.ID {
-				continue
-			}
-			store.Items[i].ItemID = write.ItemID
-			store.Items[i].URL = write.URL
-			store.Items[i].NativeType = write.NativeType
-			store.Items[i].State = write.State
-			store.Items[i].Provider = json.RawMessage(canonicalProvider(write.Provider))
-			store.Items[i].Decisions = append(store.Items[i].Decisions,
-				Decision{At: stamp, Checkpoint: req.Checkpoint, Kind: DecisionLink})
-			return true, "", nil
-		}
-		return false, "", ErrNoPrimary
+		return applyLinkToStore(store, item, req, write, stamp)
 
 	case WriteClose:
 		if err == nil {
@@ -445,6 +450,93 @@ func applyWriteToStore(store *Store, ident ItemIdentity, req ApplyWriteRequest, 
 		return true, "", nil
 	}
 	return false, "", fmt.Errorf("%w: kind %q", ErrInvalidWrite, write.Kind)
+}
+
+// applyLinkToStore writes the link fields onto an already-selected open item and
+// appends the link decision, or reports unchanged when the payload is already the
+// item's exact link state. It is shared by the link and bind verbs so both record
+// provider-neutral fields identically.
+func applyLinkToStore(store *Store, item Item, req ApplyWriteRequest, write WriteRequest, stamp string) (bool, string, error) {
+	if sameLink(item, write) {
+		return false, WriteReasonUnchanged, nil
+	}
+	for i := range store.Items {
+		if store.Items[i].ID != item.ID {
+			continue
+		}
+		store.Items[i].ItemID = write.ItemID
+		store.Items[i].URL = write.URL
+		store.Items[i].NativeType = write.NativeType
+		store.Items[i].State = write.State
+		store.Items[i].Provider = json.RawMessage(canonicalProvider(write.Provider))
+		store.Items[i].Decisions = append(store.Items[i].Decisions,
+			Decision{At: stamp, Checkpoint: req.Checkpoint, Kind: DecisionLink})
+		return true, "", nil
+	}
+	return false, "", ErrNoPrimary
+}
+
+// CloseBranchItem closes the single open item whose identity shares commonDir and
+// branch, ignoring any stored change slug. It is the flow-agnostic VCS-boundary
+// close seam: cleanup knows only the repository's common dir and the branch name,
+// so it cannot rebuild the exact identity key when the item carries a slug. A
+// store with no open row for that pair is an idempotent no-op — never bound, or
+// already closed — and nothing is written. More than one open row is a collision
+// that fails closed rather than guessing (D17). A closed row is never reopened or
+// rewritten.
+func CloseBranchItem(storePath, commonDir, branch, checkpoint string, now time.Time) (WriteOutcome, error) {
+	if !ValidCheckpoint(checkpoint) {
+		return WriteOutcome{}, fmt.Errorf("%w: checkpoint %q", ErrInvalidWrite, checkpoint)
+	}
+	commonDir = strings.TrimSpace(commonDir)
+	branch = strings.TrimSpace(branch)
+	if commonDir == "" || branch == "" {
+		return WriteOutcome{}, fmt.Errorf("%w: identity unavailable", ErrInvalidWrite)
+	}
+
+	out := WriteOutcome{Kind: WriteClose}
+	err := withStoreLock(storePath, func() error {
+		store, err := LoadStore(storePath)
+		if err != nil {
+			return err
+		}
+		matching := store.OpenItemsForBranch(commonDir, branch)
+		switch len(matching) {
+		case 0:
+			out.Reason = WriteReasonAlreadyClosed
+			return nil
+		case 1:
+			if err := store.CloseItem(matching[0].ID, Decision{At: rfc3339Stamp(now), Checkpoint: checkpoint}); err != nil {
+				return err
+			}
+			if err := SaveStore(storePath, store); err != nil {
+				return err
+			}
+			out.Applied = true
+			return nil
+		default:
+			return ErrMultipleOpen
+		}
+	})
+	if err != nil {
+		return WriteOutcome{}, err
+	}
+	return out, nil
+}
+
+// OpenItemsForBranch returns the open items whose identity shares commonDir and
+// branch, regardless of change slug, in stored order.
+func (s Store) OpenItemsForBranch(commonDir, branch string) []Item {
+	var open []Item
+	for _, item := range s.Items {
+		if item.Status != StatusOpen {
+			continue
+		}
+		if item.Identity.CommonDir == commonDir && item.Identity.Branch == branch {
+			open = append(open, item)
+		}
+	}
+	return open
 }
 
 // OpenIfAbsent appends a new open primary item only when the identity has none.

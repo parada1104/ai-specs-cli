@@ -58,7 +58,7 @@ func rawBytes(t *testing.T, path string) []byte {
 
 // TestWriteKindEnumPinned pins the closed machine-write verb set (DW2).
 func TestWriteKindEnumPinned(t *testing.T) {
-	want := []string{WriteOpen, WriteLink, WriteClose, WriteExempt}
+	want := []string{WriteOpen, WriteBind, WriteLink, WriteClose, WriteExempt}
 	if len(WriteKinds) != len(want) {
 		t.Fatalf("WriteKinds = %v, want %v", WriteKinds, want)
 	}
@@ -67,12 +67,13 @@ func TestWriteKindEnumPinned(t *testing.T) {
 			t.Fatalf("WriteKinds[%d] = %q, want %q", i, WriteKinds[i], kind)
 		}
 	}
-	// No sixth kind leaks into the closed append-only decision set (DW4).
-	if decisionKinds[WriteExempt] {
-		t.Fatal("exempt must not be a decisionKinds entry (DW4)")
+	// No verb leaks a new decision kind into the closed append-only set (DW4):
+	// exempt sets Item.Exemption and bind records the existing open+link kinds.
+	if decisionKinds[WriteExempt] || decisionKinds[WriteBind] {
+		t.Fatal("exempt and bind must not be decisionKinds entries (DW4)")
 	}
 	for _, kind := range want {
-		if !decisionKinds[kind] && kind != WriteExempt {
+		if !decisionKinds[kind] && kind != WriteExempt && kind != WriteBind {
 			t.Fatalf("%q has no decision kind mapping", kind)
 		}
 	}
@@ -88,6 +89,7 @@ func TestWriteRequestValidate(t *testing.T) {
 		cp   string
 	}{
 		{"open", WriteRequest{Kind: WriteOpen}, CheckpointApplyStart},
+		{"bind with item id", WriteRequest{Kind: WriteBind, ItemID: "card-1"}, CheckpointApplyStart},
 		{"link with item id", WriteRequest{Kind: WriteLink, ItemID: "card-1"}, CheckpointPRReview},
 		{"close", WriteRequest{Kind: WriteClose}, CheckpointPreMerge},
 		{"exempt with reason", WriteRequest{Kind: WriteExempt, Reason: "no tracker for this change"}, CheckpointArchiveClose},
@@ -106,6 +108,7 @@ func TestWriteRequestValidate(t *testing.T) {
 		{"empty kind", WriteRequest{}, CheckpointApplyStart},
 		{"unknown kind", WriteRequest{Kind: "unexempt"}, CheckpointApplyStart},
 		{"uppercase kind", WriteRequest{Kind: "OPEN"}, CheckpointApplyStart},
+		{"bind without item id", WriteRequest{Kind: WriteBind}, CheckpointApplyStart},
 		{"link without item id", WriteRequest{Kind: WriteLink}, CheckpointApplyStart},
 		{"exempt with blank reason", WriteRequest{Kind: WriteExempt, Reason: "   "}, CheckpointApplyStart},
 		{"unknown checkpoint", WriteRequest{Kind: WriteOpen}, "bogus"},
@@ -167,6 +170,219 @@ func TestApplyWriteOpenIsOpenIfAbsent(t *testing.T) {
 	}
 	if open[0].ProviderID != "trello-mcp-workflow" {
 		t.Fatalf("provider id = %q, want the bound recipe", open[0].ProviderID)
+	}
+}
+
+// TestApplyWriteBindOpensAndLinksInOneWrite pins the atomic bind contract: one
+// locked write against an empty store opens exactly one primary item AND records
+// the supplied provider-neutral link fields plus the open and link decisions —
+// never two rows and never a stored-but-unlinked row.
+func TestApplyWriteBindOpensAndLinksInOneWrite(t *testing.T) {
+	path := writePath(t)
+	saveWriteStore(t, path, Store{V: StoreVersion})
+
+	out, err := applyWrite(t, path, "trello-mcp-workflow", WriteRequest{
+		Kind: WriteBind, ItemID: "card-7", URL: "https://example.invalid/c/7",
+		NativeType: "card", State: "in-progress",
+		Provider: json.RawMessage(`{"list":"In Progress"}`),
+	})
+	if err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	if !out.Applied || out.Kind != WriteBind || out.Reason != "" {
+		t.Fatalf("bind = %+v, want applied bind with no reason", out)
+	}
+
+	loaded := loadWriteStore(t, path)
+	if len(loaded.Items) != 1 {
+		t.Fatalf("items = %d, want exactly one open+linked row", len(loaded.Items))
+	}
+	item := loaded.Items[0]
+	if item.Status != StatusOpen || item.ItemID != "card-7" || item.URL != "https://example.invalid/c/7" ||
+		item.NativeType != "card" || item.State != "in-progress" {
+		t.Fatalf("bound item = %+v, want the open+linked row", item)
+	}
+	if item.ProviderID != "trello-mcp-workflow" {
+		t.Fatalf("provider id = %q, want the bound recipe", item.ProviderID)
+	}
+	if len(item.Decisions) != 2 || item.Decisions[0].Kind != DecisionOpen || item.Decisions[1].Kind != DecisionLink {
+		t.Fatalf("decisions = %+v, want one open then one link decision", item.Decisions)
+	}
+	if item.Decisions[1].Checkpoint != CheckpointApplyStart {
+		t.Fatalf("link decision checkpoint = %q, want the write checkpoint", item.Decisions[1].Checkpoint)
+	}
+	if _, err := loaded.Primary(ident("").Key()); err != nil {
+		t.Fatalf("the bound row must be the single primary: %v", err)
+	}
+}
+
+// TestApplyWriteBindIsIdempotent pins the retried bind: an identical payload
+// reports unchanged without rewriting the store or duplicating a link decision,
+// and canonical provider formatting is not a spurious change.
+func TestApplyWriteBindIsIdempotent(t *testing.T) {
+	path := writePath(t)
+	saveWriteStore(t, path, Store{V: StoreVersion})
+	bind := WriteRequest{
+		Kind: WriteBind, ItemID: "card-8", URL: "https://example.invalid/c/8",
+		NativeType: "card", State: "in-progress",
+		Provider: json.RawMessage(`{"list":"In Progress"}`),
+	}
+	if _, err := applyWrite(t, path, "p", bind); err != nil {
+		t.Fatalf("first bind: %v", err)
+	}
+
+	same := bind
+	same.Provider = json.RawMessage("{\n  \"list\": \"In Progress\"\n}")
+	before := rawBytes(t, path)
+	second, err := applyWrite(t, path, "p", same)
+	if err != nil {
+		t.Fatalf("retried bind: %v", err)
+	}
+	if second.Applied || second.Kind != WriteBind || second.Reason != WriteReasonUnchanged {
+		t.Fatalf("retried bind = %+v, want applied=false/unchanged", second)
+	}
+	if string(before) != string(rawBytes(t, path)) {
+		t.Fatal("an idempotent bind must not rewrite the store")
+	}
+
+	loaded := loadWriteStore(t, path)
+	if len(loaded.Items) != 1 {
+		t.Fatalf("items = %d, want exactly one row after a retried bind", len(loaded.Items))
+	}
+	links := 0
+	for _, d := range loaded.Items[0].Decisions {
+		if d.Kind == DecisionLink {
+			links++
+		}
+	}
+	if links != 1 {
+		t.Fatalf("link decisions = %d, want exactly 1 (%+v)", links, loaded.Items[0].Decisions)
+	}
+}
+
+// TestApplyWriteBindLinksAnAlreadyOpenItem pins the non-empty half of
+// open-if-absent: a bind whose identity already has an open primary links that
+// row in place instead of opening a second one.
+func TestApplyWriteBindLinksAnAlreadyOpenItem(t *testing.T) {
+	path := writePath(t)
+	saveWriteStore(t, path, Store{V: StoreVersion})
+	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteOpen}); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	out, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteBind, ItemID: "card-9"})
+	if err != nil {
+		t.Fatalf("bind over an open row: %v", err)
+	}
+	if !out.Applied {
+		t.Fatalf("bind over an open row = %+v, want applied", out)
+	}
+
+	loaded := loadWriteStore(t, path)
+	if len(loaded.Items) != 1 {
+		t.Fatalf("items = %d, want the one existing row linked in place", len(loaded.Items))
+	}
+	item := loaded.Items[0]
+	if item.ItemID != "card-9" {
+		t.Fatalf("item id = %q, want the bound card", item.ItemID)
+	}
+	opens, links := 0, 0
+	for _, d := range item.Decisions {
+		switch d.Kind {
+		case DecisionOpen:
+			opens++
+		case DecisionLink:
+			links++
+		}
+	}
+	if opens != 1 || links != 1 {
+		t.Fatalf("decisions = %+v, want one open and one link", item.Decisions)
+	}
+}
+
+// TestApplyWriteBindAfterCloseKeepsTheClosedRowAndOpensANewOne pins D17 for bind:
+// a closed row is never reopened, and the explicit bind is the deliberate write
+// that opens a distinct new primary for reused work on the same branch.
+func TestApplyWriteBindAfterCloseKeepsTheClosedRowAndOpensANewOne(t *testing.T) {
+	path := writePath(t)
+	saveWriteStore(t, path, Store{V: StoreVersion})
+	key := ident("").Key()
+
+	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteBind, ItemID: "card-1"}); err != nil {
+		t.Fatalf("first bind: %v", err)
+	}
+	firstID := loadWriteStore(t, path).Items[0].ID
+	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteClose}); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteBind, ItemID: "card-2"}); err != nil {
+		t.Fatalf("bind after close: %v", err)
+	}
+
+	loaded := loadWriteStore(t, path)
+	if len(loaded.Items) != 2 {
+		t.Fatalf("items = %d, want the closed row plus a new open row", len(loaded.Items))
+	}
+	ids := map[string]bool{}
+	for _, item := range loaded.Items {
+		if ids[item.ID] {
+			t.Fatalf("duplicate item id %q", item.ID)
+		}
+		ids[item.ID] = true
+	}
+	if got := loaded.Items[0]; got.ID != firstID || got.Status != StatusClosed {
+		t.Fatalf("closed row = %+v, want it still closed and never reopened (D17)", got)
+	}
+	primary, err := loaded.Primary(key)
+	if err != nil {
+		t.Fatalf("the new bind must be the single primary: %v", err)
+	}
+	if primary.ID == firstID || primary.ItemID != "card-2" || primary.Status != StatusOpen {
+		t.Fatalf("primary = %+v, want a distinct new open row from the second bind", primary)
+	}
+}
+
+// TestApplyWriteConcurrentBindsKeepOnePrimary drives the bind writer under -race:
+// two concurrent binds for one identity must end with exactly one open+linked row
+// and no duplicate ids, because the whole open+link happens under one lock.
+func TestApplyWriteConcurrentBindsKeepOnePrimary(t *testing.T) {
+	path := writePath(t)
+	saveWriteStore(t, path, Store{V: StoreVersion})
+
+	done := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteBind, ItemID: "card-race"})
+			done <- err
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("concurrent bind: %v", err)
+		}
+	}
+
+	loaded := loadWriteStore(t, path)
+	open := loaded.OpenItems(ident("").Key())
+	if len(open) != 1 {
+		t.Fatalf("open items = %d, want exactly 1 under concurrency", len(open))
+	}
+	if open[0].ItemID != "card-race" {
+		t.Fatalf("item id = %q, want the bound card", open[0].ItemID)
+	}
+	ids := map[string]bool{}
+	for _, item := range loaded.Items {
+		if ids[item.ID] {
+			t.Fatalf("duplicate item id %q", item.ID)
+		}
+		ids[item.ID] = true
+	}
+	residue, err := filepath.Glob(filepath.Join(filepath.Dir(path), "state.json.tmp.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(residue) != 0 {
+		t.Fatalf("temp residue under concurrency: %v", residue)
 	}
 }
 
@@ -568,18 +784,20 @@ func TestApplyWriteFailuresLeaveStoreByteIdentical(t *testing.T) {
 		name string
 		path string
 		req  WriteRequest
+		seed bool
 	}{
-		{"invalid payload", writePath(t), WriteRequest{Kind: "invented"}},
-		{"link without item id", writePath(t), WriteRequest{Kind: WriteLink}},
-		{"exempt without reason", writePath(t), WriteRequest{Kind: WriteExempt}},
-		{"close without a row", writePath(t), WriteRequest{Kind: WriteClose}},
-		{"link on a collided identity", twoOpen, WriteRequest{Kind: WriteLink, ItemID: "card-1"}},
-		{"path under a file", filepath.Join(blocker, "state.json"), WriteRequest{Kind: WriteOpen}},
+		{"invalid payload", writePath(t), WriteRequest{Kind: "invented"}, true},
+		{"link without item id", writePath(t), WriteRequest{Kind: WriteLink}, true},
+		{"bind without item id", writePath(t), WriteRequest{Kind: WriteBind}, true},
+		{"exempt without reason", writePath(t), WriteRequest{Kind: WriteExempt}, true},
+		{"close without a row", writePath(t), WriteRequest{Kind: WriteClose}, true},
+		{"link on a collided identity", twoOpen, WriteRequest{Kind: WriteLink, ItemID: "card-1"}, false},
+		{"bind on a collided identity", twoOpen, WriteRequest{Kind: WriteBind, ItemID: "card-1"}, false},
+		{"path under a file", filepath.Join(blocker, "state.json"), WriteRequest{Kind: WriteOpen}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.name == "invalid payload" || tc.name == "link without item id" ||
-				tc.name == "exempt without reason" || tc.name == "close without a row" {
+			if tc.seed {
 				saveWriteStore(t, tc.path, Store{V: StoreVersion})
 			}
 			before, beforeErr := os.ReadFile(tc.path)

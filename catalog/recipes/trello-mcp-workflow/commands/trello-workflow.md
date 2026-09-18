@@ -52,6 +52,17 @@ bash "$GATE" --root "$PWD" --checkpoint archive-close <slug>
 
 `--root` is required; the slug is optional. `--stage pre-merge|pre-archive` stays as a compatibility alias for `--checkpoint pre-merge|archive-close`. **`archive-close` is tracker item closure, not an OpenSpec archive** — it never infers a close from archive state. A provider recipe only maps native state through `[config.reconcile]`; it does not enable, configure, or implement the ledger.
 
+Seed the branch binding with the generic `bind` write — one locked transaction that
+opens-if-absent and links, with no `openspec/`/SDD/ODD artifact and no provider call:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --project-root "$PWD" \
+  --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress"}'
+```
+
+A retried `bind` reports `unchanged`; a closed row is never reopened (D17). State
+lives in `<git-common-dir>/ai-specs/ledger/state.json`.
+
 ## Phase Mappings
 
 ### Phase → List

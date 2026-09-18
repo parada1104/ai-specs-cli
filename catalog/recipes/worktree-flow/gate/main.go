@@ -68,7 +68,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ledgerStore := fs.String("store", "", "override the ledger store path")
 	ledgerEvidence := fs.String("evidence", "", "path to a JSON evidence file (remote/code/git sides)")
 	ledgerDecide := fs.String("decide", "", "JSON human decision to persist, then re-grade")
-	ledgerWrite := fs.String("write", "", "JSON machine write to apply (open|link|close|exempt), then re-grade")
+	ledgerWrite := fs.String("write", "", "JSON machine write to apply (open|bind|link|close|exempt), then re-grade")
 	ledgerReconcile := fs.String("reconcile", "", "path to an MCP-acquired observation JSON; adds a reconcile sidecar (exit code unchanged)")
 	ledgerReconcileEvent := fs.String("reconcile-event", "", "the event the caller asks to compare (recipe-declared expectations for it)")
 

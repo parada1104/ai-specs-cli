@@ -635,6 +635,110 @@ func TestLedgerWriteOpenThenIdempotentRetryViaCLI(t *testing.T) {
 	}
 }
 
+// TestLedgerWriteBindSeedsOpenLinkViaCLI pins the generic binding command end to
+// end: one `--write` bind against an empty store opens and links in a single
+// transaction, the write sidecar reports it applied, the post-write grade selects
+// the new item, and a retried bind is an unchanged, byte-stable no-op.
+func TestLedgerWriteBindSeedsOpenLinkViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := ledger.StorePath(common)
+	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "always", "--project-root", dir}
+	payload := `{"kind":"bind","item_id":"card-bind","url":"https://example.invalid/c/bind","native_type":"card","state":"in-progress","provider":{"list":"In Progress"}}`
+
+	code, stdout, stderr := ledgerWriteRun(t, base, payload)
+	if code != 0 {
+		t.Fatalf("bind exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	out := decodeLedgerOut(t, stdout)
+	side, ok := out["write"].(map[string]any)
+	if !ok {
+		t.Fatalf("write sidecar = %v, want an object", out["write"])
+	}
+	assertKeys(t, "bind write", side, "kind", "applied", "reason")
+	if side["kind"] != "bind" || side["applied"] != true || side["reason"] != "" {
+		t.Fatalf("bind write sidecar = %v, want bind/applied with no reason", side)
+	}
+	if out["decision"] != "allow" {
+		t.Fatalf("post-bind grade = %v/%v, want allow", out["decision"], out["reason"])
+	}
+	item, ok := out["item"].(map[string]any)
+	if !ok || item["item_id"] != "card-bind" || item["status"] != "open" {
+		t.Fatalf("post-bind item = %v, want the freshly bound open item", out["item"])
+	}
+
+	before := ledgerStoreBytes(t, storePath)
+	code, stdout, stderr = ledgerWriteRun(t, base, payload)
+	if code != 0 {
+		t.Fatalf("bind retry exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	side = decodeLedgerOut(t, stdout)["write"].(map[string]any)
+	if side["applied"] != false || side["reason"] != "unchanged" {
+		t.Fatalf("bind retry sidecar = %v, want applied=false/unchanged", side)
+	}
+	if string(before) != string(ledgerStoreBytes(t, storePath)) {
+		t.Fatal("an idempotent bind retry must leave the store byte-identical")
+	}
+
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Items) != 1 {
+		t.Fatalf("items = %d, want exactly one opened-and-linked row", len(store.Items))
+	}
+	opens, links := 0, 0
+	for _, d := range store.Items[0].Decisions {
+		switch d.Kind {
+		case ledger.DecisionOpen:
+			opens++
+		case ledger.DecisionLink:
+			links++
+		}
+	}
+	if opens != 1 || links != 1 {
+		t.Fatalf("decisions = %+v, want exactly one open and one link", store.Items[0].Decisions)
+	}
+}
+
+// TestLedgerWriteBindIsRefusedForAChangeAmbiguousIdentityViaCLI pins the
+// fail-closed posture on the generic bind too: two active change folders make the
+// identity ambiguous, so a bind without an explicit slug exits 2 and persists
+// nothing.
+func TestLedgerWriteBindIsRefusedForAChangeAmbiguousIdentityViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	for _, slug := range []string{"alpha-change", "beta-change"} {
+		if err := os.MkdirAll(filepath.Join(dir, "openspec", "changes", slug), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	storePath := ledger.StorePath(common)
+
+	code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"bind","item_id":"card-ambiguous"}`)
+	if code != 2 {
+		t.Fatalf("ambiguous bind exit = %d, want 2; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("ambiguous bind stdout = %q, want no JSON", stdout)
+	}
+	if ledgerStoreBytes(t, storePath) != nil {
+		t.Fatal("a refused ambiguous bind must persist nothing")
+	}
+
+	code, _, stderr = ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"bind","item_id":"card-ambiguous","change":"alpha-change"}`)
+	if code != 0 {
+		t.Fatalf("explicit-slug bind exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Items) != 1 || store.Items[0].Identity.Change != "alpha-change" || store.Items[0].ItemID != "card-ambiguous" {
+		t.Fatalf("store items = %+v, want one bound item under the explicit slug", store.Items)
+	}
+}
+
 // TestLedgerWriteCloseWithSnapshotThenRetryViaCLI pins the live close path: an
 // explicit close carrying the observed provider snapshot must persist state and
 // provider, close the row, and still grade allow in the same invocation. Grade

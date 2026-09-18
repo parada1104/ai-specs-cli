@@ -1,6 +1,7 @@
 """Validation + materialization tests for the worktree-flow catalog recipe."""
 
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
@@ -374,6 +375,157 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         text = self._rendered_workflow_rules("off")
         self.assertIn("`gate_mode = off`", text)
         self.assertIn("where the user directs", text)
+
+    # --- Managed VCS post-merge close hook (card AImzsLWw, T3) ---------------
+
+    POST_MERGE_TARGET = ".git/hooks/post-merge"
+
+    def test_recipe_registers_managed_post_merge_template(self):
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        targets = {t.target: t for t in recipe.templates}
+        self.assertIn(self.POST_MERGE_TARGET, targets)
+        entry = targets[self.POST_MERGE_TARGET]
+        self.assertEqual(entry.source, "templates/post-merge.sh")
+        self.assertEqual(entry.condition, "not_exists")
+
+    def test_sync_materializes_post_merge_hook(self):
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        hook = root / ".git" / "hooks" / "post-merge"
+        self.assertTrue(hook.is_file(), "managed post-merge hook should materialize")
+        self.assertTrue(
+            os.access(hook, os.X_OK), "post-merge hook must be executable for Git"
+        )
+        content = hook.read_text()
+        self.assertIn("worktree-cleanup.sh", content)
+        self.assertIn("exit 0", content)
+        self.assertNotIn("__WORKTREE_", content)
+
+    def test_post_merge_hook_fails_open_without_launcher(self):
+        import subprocess
+
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        hook = root / ".git" / "hooks" / "post-merge"
+        proc = subprocess.run(
+            ["bash", str(hook)], cwd=root, capture_output=True, text=True
+        )
+        self.assertEqual(
+            proc.returncode, 0, "hook must fail open and never break the merge"
+        )
+
+    def test_sync_preserves_existing_post_merge_hook(self):
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        hook = root / ".git" / "hooks" / "post-merge"
+        hook.write_text("#!/bin/sh\necho user hook\n")
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        self.assertEqual(hook.read_text(), "#!/bin/sh\necho user hook\n")
+
+    # --- Post-merge hook stamps configured cleanup config (T4) ---------------
+
+    def test_post_merge_hook_stamps_configured_cleanup_config(self):
+        root = self._make_project_with_config(
+            '[recipes.worktree-flow.config]\n'
+            'worktrees_dir = "custom-wt"\n'
+            'integration_branch = "trunk"\n'
+            'repo_topology = "monorepo-submodules"'
+        )
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        content = (root / ".git" / "hooks" / "post-merge").read_text()
+        self.assertNotIn("__WORKTREE_", content)
+        self.assertIn('worktrees_dir="custom-wt"', content)
+        self.assertIn('integration_branch="trunk"', content)
+        self.assertIn('topology="monorepo-submodules"', content)
+
+    def test_post_merge_hook_stamps_catalog_defaults(self):
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        content = (root / ".git" / "hooks" / "post-merge").read_text()
+        self.assertNotIn("__WORKTREE_", content)
+        self.assertIn('worktrees_dir=".worktrees"', content)
+        self.assertIn('integration_branch="main"', content)
+        self.assertIn('topology="auto"', content)
+
+    def test_post_merge_hook_materializes_in_linked_worktree(self):
+        import subprocess
+
+        hold = tempfile.TemporaryDirectory()
+        self.addCleanup(hold.cleanup)
+        main = Path(hold.name) / "main"
+        main.mkdir()
+
+        def git(*args):
+            subprocess.run(
+                ["git", "-C", str(main), *args],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        git("init", "-q")
+        git("config", "user.email", "t@t.t")
+        git("config", "user.name", "t")
+        (main / "README.md").write_text("main\n")
+        git("add", "-A")
+        git("commit", "-qm", "init")
+        git("checkout", "-q", "-B", "main")
+        wt = Path(hold.name) / "wt"
+        git("worktree", "add", "-q", "-b", "feat", str(wt))
+
+        ai_specs = wt / "ai-specs"
+        ai_specs.mkdir()
+        (ai_specs / "skills").mkdir()
+        (ai_specs / "commands").mkdir()
+        import tomllib
+
+        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
+            version = tomllib.load(fh)["recipe"]["version"]
+        (ai_specs / "ai-specs.toml").write_text(
+            "[project]\nname = 'fixture'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            f'[recipes.worktree-flow]\nenabled = true\nversion = "{version}"\n'
+        )
+        self.assertEqual(self.materialize.materialize_recipes(wt, ROOT), 0)
+        # A linked worktree's `.git` is a gitfile, not a directory: the managed
+        # hook must resolve to the shared hooks dir instead of crashing on a
+        # bogus `.git/hooks` directory.
+        hook = main / ".git" / "hooks" / "post-merge"
+        self.assertTrue(hook.is_file(), "hook must materialize in the shared git dir")
+        self.assertTrue(os.access(hook, os.X_OK))
+
+    def test_post_merge_hook_passes_stamped_config_to_launcher(self):
+        import subprocess
+
+        root = self._make_project_with_config(
+            '[recipes.worktree-flow.config]\n'
+            'worktrees_dir = "custom-wt"\n'
+            'integration_branch = "trunk"'
+        )
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+
+        launcher = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides"
+            / "bin" / "worktree-cleanup.sh"
+        )
+        captured = root / "captured-args.txt"
+        launcher.write_text(
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > " + str(captured) + "\n"
+        )
+        launcher.chmod(0o755)
+
+        hook = root / ".git" / "hooks" / "post-merge"
+        proc = subprocess.run(
+            ["bash", str(hook)], cwd=root, capture_output=True, text=True
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        args = captured.read_text().splitlines()
+        self.assertIn("--dir", args)
+        self.assertEqual(args[args.index("--dir") + 1], "custom-wt")
+        self.assertIn("--base", args)
+        self.assertEqual(args[args.index("--base") + 1], "trunk")
+
 
 if __name__ == "__main__":
     unittest.main()

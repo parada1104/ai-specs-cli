@@ -180,7 +180,29 @@ binary, parse errors, or unavailable IO.
 ### The write surface
 
 Items are opened, linked, closed, and exempted only by explicit writes — a parsed
-`## Tracker` section never opens one, and grading never writes:
+`## Tracker` section never opens one, and grading never writes. `bind` is the one
+verb that combines open and link.
+
+**`bind` is the generic binding command** for SDD, ODD, and no-flow work alike: it
+seeds the branch binding from a valid external tracker item with no `openspec/` (or
+any other repository) artifact and no provider/network call:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
+  --project-root . \
+  --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress"}'
+```
+
+`bind` is open-if-absent plus link in one locked transaction: it creates the primary
+item when the identity has none and records the supplied provider-neutral fields and
+the open+link decisions either way. A retried `bind` reports `unchanged` instead of
+duplicating; a `change-ambiguous` identity is refused unless the payload names the
+change slug explicitly; and a closed row is never reopened — a later explicit `bind`
+opens a distinct new primary (D17). Authoritative state stays in the existing Go
+ledger at `<git-common-dir>/ai-specs/ledger/state.json`; the command writes nothing
+into the repository tree.
+
+The explicit verbs remain available when a caller wants to control each step:
 
 ```bash
 worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \

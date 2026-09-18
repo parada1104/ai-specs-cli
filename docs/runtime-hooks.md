@@ -259,15 +259,27 @@ worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
   --project-root . --write '{"kind":"open"}'
 worktree-gate --ledger --checkpoint apply-start --ledger-mode warn --project-root . \
   --write '{"kind":"link","item_id":"<native-id>","url":"<url>","native_type":"card","state":"in-progress"}'
+# Generic, workflow-agnostic: open-if-absent + link in one locked transaction.
+worktree-gate --ledger --checkpoint apply-start --ledger-mode warn --project-root . \
+  --write '{"kind":"bind","item_id":"<native-id>","url":"<url>","native_type":"card","state":"in-progress"}'
 ```
 
-`--write` and `--decide` are mutually exclusive (both → exit `2`, nothing
-persisted). Success adds `"write":{"kind":…,"applied":…,"reason":…}` to the verdict
-JSON, with `already-open` / `unchanged` / `already-closed` for the idempotent
-no-ops. A failed write prints `worktree-gate: ledger --write failed: …` on stderr,
-persists nothing, and exits `2` with **no** stdout JSON. **Grading never writes**: no
+`bind` is the one verb that combines open and link, so SDD, ODD, and no-flow callers
+can seed the branch item with no `## Tracker` / `tracker.none` / `openspec/` artifact
+and no provider or network call. `--write` and `--decide` are mutually exclusive
+(both → exit `2`, nothing persisted). Success adds
+`"write":{"kind":…,"applied":…,"reason":…}` to the verdict JSON, with
+`already-open` / `unchanged` / `already-closed` for the idempotent no-ops. A failed
+write prints `worktree-gate: ledger --write failed: …` on stderr, persists nothing,
+and exits `2` with **no** stdout JSON.
+
+**Pure grade paths vs. authorized lifecycle writes.** Every *grade* path is pure: no
 checkpoint, in any mode, opens or mutates an item because a `## Tracker` section
-parses.
+parses. Exactly two writers record lifecycle locally: the generic machine write
+surface above, and the VCS-boundary `archive-close` writer run by the verified
+worktree cleanup. Both write only `<git-common-dir>/ai-specs/ledger/state.json`,
+perform no provider MCP/API call and no network I/O, and are never reached from a
+grade path. Opening is therefore **not** agent-only.
 
 **Evidence sides.** `tracker-card-gate.sh` (pre-tool-use hook and direct host
 mode) builds its
@@ -315,9 +327,24 @@ ambiguous / declared-not-bound / missing witness / recorded conflict WARN,
 infrastructure failure ERROR), plus one INFO when a bound witness has no
 `plan-build-flow` recipe enabled: `work-start is unhosted`, with the other four
 checkpoints still grading. The runtime brief and generated agent files gain no
-dormancy line. No host performs a provider MCP/API create or update in this slice;
-`always` blocks until a human supplies the item. Path hosts never block
-`openspec/**`.
+dormancy line. No host performs a provider MCP/API create or update; `always`
+blocks until a human supplies the item. Path hosts never block `openspec/**`.
+
+**VCS-boundary close (`post-merge`).** Independent of the tracker gate hook,
+`worktree-flow` installs a managed `.git/hooks/post-merge` trigger (materialized
+with `condition = "not_exists"`). At a merge boundary it invokes the verified
+worktree cleanup launcher, which closes the matching open item at `archive-close`
+— matched on the Git common dir + branch, ignoring any stored change slug —
+**before** removing a provably merged worktree or local branch. The close is
+idempotent and never reopens a closed row (D17). The hook is fail-open for the
+already-sealed merge outcome (failures go to stderr and it exits `0`), while the
+destructive cleanup fails closed: a close that cannot be persisted preserves the
+candidate. The trigger is workflow-agnostic (no SDD/ODD/OpenSpec and no provider
+call), and the direct tracker host
+(`tracker-card-gate.sh --root <root> --checkpoint archive-close`) remains the
+fallback when the hook is absent. The hook carries the project's configured
+`worktrees_dir`, `integration_branch`, and `repo_topology` stamped at sync, so
+cleanup never silently falls back to `.worktrees`/current HEAD.
 
 ## Shell write-bypass coverage (worktree-flow)
 
