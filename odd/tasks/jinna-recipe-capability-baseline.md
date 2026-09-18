@@ -30,7 +30,7 @@ Harden the Jinna OpenProject recipe as a standalone ai-specs product for consume
 ## Tasks
 
 - [x] T1 — Define the provider-neutral capability baseline and add contract coverage using the existing VCS capability pattern.
-- [ ] T2 — Add or extend an isolated consumer fixture for the standalone Jinna recipe lifecycle.
+- [x] T2 — Add or extend an isolated consumer fixture for the standalone Jinna recipe lifecycle.
 - [ ] T3 — Reconcile recipe docs/skill guidance for slow remote services without introducing hidden fallback behavior.
 - [ ] T4 — Run focused tests and `./tests/validate.sh`; record RED/GREEN and final evidence.
 
@@ -40,6 +40,8 @@ Harden the Jinna OpenProject recipe as a standalone ai-specs product for consume
 - T1 RED: `python3 -m unittest tests.test_capability_baseline -v` failed with 1 failure and 3 errors because the baseline section was absent.
 - T1 GREEN: the same focused suite passed with 13 tests. Adjacency suites passed with 93 tests across Playwright, ledger mode, Trello recipe, and catalog checks.
 - No Jinna recipe or dogfood manifest files changed.
+- T2 complete. `tests/test_jinna_consumer_recipe.py` runs the real CLI against a temporary consumer and temporary CLI home with a fake PATH provider; it covers init, recipe add, sync, doctor, materialized README/skill/MCP outputs, environment references, passive provider invocation, and dogfood-manifest immutability.
+- T2 baseline GREEN: the new integration contract passed on first run; `tests.test_jinna_consumer_recipe` passed 1 test, the combined Jinna/baseline/recipe-add suite passed 38 tests, and the existing Jinna provider suite passed 66 tests with 2 skips.
 
 ## Acceptance criteria
 
