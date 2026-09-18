@@ -15,6 +15,15 @@ from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow"
 RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
+AGENTS_RENDER_PATH = ROOT / "lib" / "_internal" / "agents-render.py"
+
+UNCONDITIONAL_WORKTREE_RULE = (
+    "Create a dedicated worktree for changes that write artifacts or modify code."
+)
+PROJECT_RUNTIME_FLOW_WORKTREE_RULE = (
+    "Artifact phases and implementation phases run in a dedicated worktree "
+    "when they write files."
+)
 
 
 def load_module(path: Path, name: str):
@@ -33,6 +42,7 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         cls.materialize = load_module(
             RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal_wtf"
         )
+        cls.agents_render = load_module(AGENTS_RENDER_PATH, "agents_render_wtf")
 
     def test_recipe_validates(self):
         recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
@@ -314,6 +324,56 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         hook.write_text("custom legacy hook\n")
         self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
         self.assertEqual(hook.read_text(), "custom legacy hook\n")
+
+    # --- Gate-mode brief reconciliation (card AImzsLWw) -------------------
+
+    def _resolved_worktree_brief(self, gate_mode: str) -> dict:
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        frags = self.materialize._fragments_to_json(recipe.brief_fragments)
+        return {
+            "enabled": ["worktree-flow"],
+            "recipes": {
+                "worktree-flow": {
+                    "gate_mode": gate_mode,
+                    "integration_branch": "development",
+                    "brief_fragments": frags,
+                }
+            },
+            "bindings": {},
+        }
+
+    def _rendered_workflow_rules(self, gate_mode: str) -> str:
+        resolved = self._resolved_worktree_brief(gate_mode)
+        return "\n".join(self.agents_render._section_workflow_rules({}, resolved))
+
+    def test_recipe_brief_fragment_is_config_aware(self):
+        raw = (RECIPE_DIR / "recipe.toml").read_text()
+        self.assertIn("{config.gate_mode}", raw)
+        self.assertNotIn(UNCONDITIONAL_WORKTREE_RULE, raw)
+        self.assertNotIn("WORKTREE_GATE_MODE=off", raw)
+
+    def test_project_manifest_runtime_flow_has_no_unconditional_worktree_rule(self):
+        text = (ROOT / "ai-specs" / "ai-specs.toml").read_text()
+        self.assertNotIn(PROJECT_RUNTIME_FLOW_WORKTREE_RULE, text)
+
+    def test_rendered_brief_states_always_policy(self):
+        text = self._rendered_workflow_rules("always")
+        self.assertIn("`gate_mode = always`", text)
+        self.assertIn("`always` requires a dedicated worktree", text)
+
+    def test_rendered_brief_states_ask_policy_without_bypass(self):
+        text = self._rendered_workflow_rules("ask")
+        self.assertIn("`gate_mode = ask`", text)
+        self.assertIn("ask the user to choose a destination", text)
+        self.assertIn("feature branch in the current checkout", text)
+        self.assertIn("explicit protected-branch override", text)
+        self.assertNotIn("WORKTREE_GATE_MODE=off", text)
+        self.assertNotIn(UNCONDITIONAL_WORKTREE_RULE, text)
+
+    def test_rendered_brief_states_off_policy(self):
+        text = self._rendered_workflow_rules("off")
+        self.assertIn("`gate_mode = off`", text)
+        self.assertIn("where the user directs", text)
 
 if __name__ == "__main__":
     unittest.main()

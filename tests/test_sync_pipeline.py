@@ -1039,6 +1039,42 @@ class SyncPipelineTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
+    def test_sync_brief_reflects_worktree_gate_mode_ask(self):
+        """End-to-end: recipe gate fragment renders config-aware ask-mode prose.
+
+        Proves the effective [recipes.worktree-flow.config].gate_mode reaches
+        generated AGENTS.md prose, that no unconditional dedicated-worktree rule
+        survives, and that the removed self-bypass token never reappears.
+        """
+        workspace = self.make_workspace()
+        try:
+            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'gate-mode-brief-fixture'\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[recipes.worktree-flow]\n"
+                "enabled = true\n"
+                "[recipes.worktree-flow.config]\n"
+                "gate_mode = 'ask'\n"
+            )
+
+            subprocess.run(
+                [str(CLI), "sync", str(workspace)], check=True, text=True, env=_sync_env()
+            )
+
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("`gate_mode = ask`", agents)
+            self.assertIn("ask the user to choose a destination", agents)
+            self.assertNotIn("WORKTREE_GATE_MODE=off", agents)
+            self.assertNotIn(
+                "Create a dedicated worktree for changes that write artifacts or modify code.",
+                agents,
+            )
+        finally:
+            shutil.rmtree(workspace.parent)
+
     def test_sync_rich_brief_identical_on_second_run(self):
         """Idempotency test on the RICH rendering path.
 
