@@ -16,7 +16,7 @@ post-merge cleanup.
   item at `archive-close` before any destructive removal.
 - **Managed `.git/hooks/post-merge` trigger** — runs that cleanup automatically at a
   merge boundary (`condition = "not_exists"`, so an existing user hook is preserved).
-  It is workflow-agnostic: no SDD/ODD/OpenSpec dependency and no provider/network call.
+  It is workflow-agnostic: no SDD/ODD/OpenSpec dependency and no provider mutation. Cleanup may perform the documented read-only PR merge-commit acquisition when local proofs are inconclusive.
 
 ## Enable
 
@@ -264,16 +264,46 @@ removal without this proof.
 
 The catalog source remains the authoritative launcher template.
 
+## Worktree ledger port
+
+Cleanup classification is a **domain port** of the autonomous Go ledger core, not an
+ad-hoc merge check in the actuator. `ledger.EvaluateWorktree` is a pure evaluator over
+one normalized observation — `detached`, `dirty`, `localMerged`, `prMergeCommit`,
+`mergeCommitInBase` — returning one outcome (`detached` / `dirty` / `merged` /
+`unmerged`) in safety order: detached, then dirty, then merge proof. It never shells
+out, reads the clock, touches the filesystem, or calls a provider, and it reuses no
+Tracker witness, store, or checkpoint. The Worktree and Tracker ports are separate;
+no universal artifact schema is introduced.
+
+The accepted observations are pinned by a JSON golden corpus under
+`gate/ledger/testdata/worktree-ledger-corpus/` (detached, dirty, local merged, PR merge
+commit in base, PR commit outside base, no evidence). Loading it from Go and requiring
+at least one preserve and one merged case keeps the corpus from passing vacuously.
+
+**Acquisition stays in cleanup.** `cleanup.go` is the single Go actuator: it gathers
+git facts, feeds the port a normalized observation, and owns every destructive check
+(protected branches, worktree-held branches, remote-deletion ordering, and the
+tracker-ledger close before removal). The optional provider seam is **read-only**:
+after local ancestry/patch/tree proofs are inconclusive, cleanup may run
+`gh pr list --head <branch> --state all --json mergeCommit` and accept a merge commit
+only when it is reachable from an already-resolved local base candidate. Base
+resolution never fetches or touches the network, and the seam fails closed — a
+missing, failing, or malformed `gh` yields no evidence, so the candidate is preserved.
+Cleanup performs no provider API (create/update/move/comment/label) mutation; its
+destructive actions remain the host git operations and run only after a proven merge.
+
 ## Cleanup contract
 
 | Worktree state | Action |
 |---|---|
-| Branch merged into base (regular **or** squash/rebase), clean | removed |
+| Branch merged into base (regular **or** squash/rebase) or PR merge commit proven reachable from a resolved base candidate, clean | removed |
 | Uncommitted changes | preserved (`dirty`) |
 | Branch not merged | preserved (`unmerged`) |
 | Main / detached HEAD | never touched |
 
 Squash/rebase merges are detected by patch-id (`git cherry`), since the squashed
-commit is not an ancestor of the base branch.
+commit is not an ancestor of the base branch. When no local proof succeeds, cleanup
+may fall back to the read-only `gh pr list` merge-commit evidence described above;
+missing or out-of-base evidence preserves the candidate.
 
 Run with `--dry-run` to preview before removing anything.

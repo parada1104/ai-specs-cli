@@ -8,7 +8,10 @@ its conflicts — graded once by a single authoritative predicate and consumed a
 the checkpoints that already exist. The ledger replaces the current state where
 "what is the tracked item for this work" is split across three independent
 graders and a temp-file binding map, without inventing a generic ledger
-framework, a worktree ledger, or provider vocabulary in core.
+framework, a generic capability registry, a second ledger
+store/witness/checkpoint surface, or provider vocabulary in core. Additional
+domains are added as independent, provider-neutral domain ports over the same
+core; the Worktree port is specified separately by the worktree-flow spec.
 
 Decisions D1–D19 (proposal) and A1–A11 (design) are closed inputs; this spec
 elaborates them and does not reopen them. Where names appear (flags, JSON keys,
@@ -396,11 +399,24 @@ or a malformed verdict call never blocks.
 
 ### Requirement: Scope boundaries
 
-The ledger MUST remain tracker-only. It MUST NOT introduce a multi-capability
-ledger framework, a second capability ledger, a per-provider grader or any
-provider code in the core, a ledger plugin API beyond the single Tracker-domain
-port specified below, or a worktree-specific ledger or worktree-identity model.
-It MUST NOT
+The ledger core MUST be organized as domain ports, not as a capability registry.
+A **domain port** is one independently specified, provider-neutral predicate over
+normalized observations that lives inside the same single ledger core; it owns its
+own observation shape, its own outcome vocabulary, and its own consumers, and it
+is reached through its own explicit contract rather than a shared generic
+registry. Tracker is the first domain port, specified below. Worktree MAY be
+specified as a second domain port by the worktree-flow spec, provided it does not
+become a second ledger. The ledger MUST NOT introduce a multi-capability ledger
+framework, a generic capability registry or capability parameterization, a second
+ledger store, witness, or checkpoint surface, a per-provider grader or any
+provider code in the core, or a ledger plugin API. Each domain port MUST remain
+independent: the Worktree port MUST NOT read, write, or depend on the Tracker
+binding witness, the Tracker store, or the five Tracker checkpoints, and MUST NOT
+be expressed in Tracker lifecycle vocabulary. Every core evaluator — Tracker as
+well as any additional domain port — MUST remain pure and provider-neutral: it
+reads a normalized observation and returns a deterministic outcome, and it MUST
+NOT shell out, touch the filesystem, perform network or provider calls, or read
+provider configuration. It MUST NOT
 migrate, rewrite, or blanket-revalidate historical archives or in-flight
 changes. Provider item vocabulary (provider ids beyond the bound recipe id,
 board/list/label/issue-type shapes, provider config fields) MUST stay
@@ -416,9 +432,20 @@ in recipe configuration, never in ledger core.
 #### Scenario: No generic capability ledger
 
 - GIVEN the ledger implementation
-- WHEN a second, non-tracker capability is considered
-- THEN no generic ledger framework, capability parameterization, or second
-  ledger exists; a future capability would require its own explicit change
+- WHEN a domain beyond Tracker is considered
+- THEN it MUST be introduced as its own explicitly specified domain port with
+  its own contract and its own explicit change
+- AND no generic ledger framework, capability registry, capability
+  parameterization, or second store/witness/checkpoint surface exists
+
+#### Scenario: Domain ports stay independent
+
+- GIVEN the Tracker-domain port with its binding witness, store, and checkpoints
+- WHEN the Worktree domain port evaluates a candidate
+- THEN it reads only its own normalized observation, depends on no Tracker
+  witness, store, checkpoint, or item surface, and returns only its own outcome
+  vocabulary
+- AND both evaluators remain pure and provider-neutral
 
 #### Scenario: Provider vocabulary stays out of core
 

@@ -1,0 +1,13 @@
+{
+  "observation": {
+    "detached": false,
+    "dirty": false,
+    "localMerged": false,
+    "prMergeCommit": "",
+    "mergeCommitInBase": false
+  },
+  "want": {
+    "merged": false,
+    "reason": "unmerged"
+  }
+}
