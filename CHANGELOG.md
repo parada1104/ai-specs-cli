@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1] — 2026-09-18
+
 ### Added
 - **Flow-agnostic Tracker Ledger lifecycle.** The ledger now has a generic
   `{"kind":"bind",…}` write — open-if-absent plus link in one locked transaction —
