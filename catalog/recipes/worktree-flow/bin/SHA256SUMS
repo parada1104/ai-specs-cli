@@ -32,7 +32,12 @@
 # the optional `config_field_when_set` reconcile mapping and the corroborated closed-item
 # binding; no new asset, no second trust root), same canonical go1.24.13 toolchain and the
 # same command above.
-99af17d408cecfa95c9fb36ea6286c832175368d16cb6bbd0bf168591c4b496e  worktree-gate-darwin-arm64
-3b59c0ef30afb54aeced1db9e61a1f0e4fe6bc1edf1e291d0f25b8d3e082504e  worktree-gate-darwin-amd64
-bbeab01fa5280b509f7a64c193f83b37aebf26099f53aeea195dbe2064523a12  worktree-gate-linux-amd64
-ad7f902cca710bcf45dec67f97656f70f535e9f4223fd8c5a564eb17f78f2cc8  worktree-gate-linux-arm64
+#
+# Regenerated for the flow-agnostic lifecycle (the same four-arch asset gains the generic
+# `bind` write, the branch-scoped `CloseBranchItem` archive-close writer, and the bounded
+# store-lock/idempotency work; no new asset, no second trust root), same canonical
+# go1.24.13 toolchain and the same command above.
+c164b2a11d7a72fd7fa670fd4f2340bd6e4339c417434538bf8a299b777228a7  worktree-gate-darwin-arm64
+24684d1e3727e497e971bcf47e761da160ceabbe18974b116e6c8e891439143e  worktree-gate-darwin-amd64
+649eec3121213a91a2b1810117c851225835fb21df18110427fabcdf8f2cef33  worktree-gate-linux-amd64
+7505e58d5ab5e059b6826314d20469b14cdd91ab551263c2b5fbd8e1b36381bf  worktree-gate-linux-arm64

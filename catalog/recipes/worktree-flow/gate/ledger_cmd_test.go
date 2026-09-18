@@ -635,6 +635,140 @@ func TestLedgerWriteOpenThenIdempotentRetryViaCLI(t *testing.T) {
 	}
 }
 
+// TestLedgerWriteBindSeedsOpenLinkViaCLI pins the generic binding command end to
+// end: one `--write` bind against an empty store opens and links in a single
+// transaction, the write sidecar reports it applied, the post-write grade selects
+// the new item, and a retried bind is an unchanged, byte-stable no-op.
+func TestLedgerWriteBindSeedsOpenLinkViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := ledger.StorePath(common)
+	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "always", "--project-root", dir}
+	payload := `{"kind":"bind","item_id":"card-bind","url":"https://example.invalid/c/bind","native_type":"card","state":"in-progress","provider":{"list":"In Progress"}}`
+
+	code, stdout, stderr := ledgerWriteRun(t, base, payload)
+	if code != 0 {
+		t.Fatalf("bind exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	out := decodeLedgerOut(t, stdout)
+	side, ok := out["write"].(map[string]any)
+	if !ok {
+		t.Fatalf("write sidecar = %v, want an object", out["write"])
+	}
+	assertKeys(t, "bind write", side, "kind", "applied", "reason")
+	if side["kind"] != "bind" || side["applied"] != true || side["reason"] != "" {
+		t.Fatalf("bind write sidecar = %v, want bind/applied with no reason", side)
+	}
+	if out["decision"] != "allow" {
+		t.Fatalf("post-bind grade = %v/%v, want allow", out["decision"], out["reason"])
+	}
+	item, ok := out["item"].(map[string]any)
+	if !ok || item["item_id"] != "card-bind" || item["status"] != "open" {
+		t.Fatalf("post-bind item = %v, want the freshly bound open item", out["item"])
+	}
+
+	before := ledgerStoreBytes(t, storePath)
+	code, stdout, stderr = ledgerWriteRun(t, base, payload)
+	if code != 0 {
+		t.Fatalf("bind retry exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	side = decodeLedgerOut(t, stdout)["write"].(map[string]any)
+	if side["applied"] != false || side["reason"] != "unchanged" {
+		t.Fatalf("bind retry sidecar = %v, want applied=false/unchanged", side)
+	}
+	if string(before) != string(ledgerStoreBytes(t, storePath)) {
+		t.Fatal("an idempotent bind retry must leave the store byte-identical")
+	}
+
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Items) != 1 {
+		t.Fatalf("items = %d, want exactly one opened-and-linked row", len(store.Items))
+	}
+	opens, links := 0, 0
+	for _, d := range store.Items[0].Decisions {
+		switch d.Kind {
+		case ledger.DecisionOpen:
+			opens++
+		case ledger.DecisionLink:
+			links++
+		}
+	}
+	if opens != 1 || links != 1 {
+		t.Fatalf("decisions = %+v, want exactly one open and one link", store.Items[0].Decisions)
+	}
+}
+
+// TestLedgerWriteBindIsBranchLevelForAChangeAmbiguousIdentityViaCLI pins the
+// external-binding decision through the CLI: two active change folders make the
+// identity ambiguous, but a bind that omits `change` is a deliberate branch-level
+// binding. It opens one branch-only item, grades allow, and a retry is an
+// unchanged, byte-stable no-op; an explicit `change` payload keeps slug semantics.
+func TestLedgerWriteBindIsBranchLevelForAChangeAmbiguousIdentityViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	for _, slug := range []string{"alpha-change", "beta-change"} {
+		if err := os.MkdirAll(filepath.Join(dir, "openspec", "changes", slug), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	storePath := ledger.StorePath(common)
+
+	code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"bind","item_id":"card-ambiguous"}`)
+	if code != 0 {
+		t.Fatalf("ambiguous branch bind exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	out := decodeLedgerOut(t, stdout)
+	if out["decision"] != "allow" {
+		t.Fatalf("post-bind grade = %v/%v, want allow", out["decision"], out["reason"])
+	}
+	if side, ok := out["write"].(map[string]any); !ok || side["kind"] != "bind" || side["applied"] != true {
+		t.Fatalf("ambiguous branch bind sidecar = %v, want bind/applied", out["write"])
+	}
+	store, err := ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Items) != 1 || store.Items[0].Identity.Change != "" || store.Items[0].ItemID != "card-ambiguous" {
+		t.Fatalf("store items = %+v, want one branch-only bound item", store.Items)
+	}
+
+	// A retried branch bind is idempotent and byte-stable.
+	before := ledgerStoreBytes(t, storePath)
+	code, stdout, stderr = ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"bind","item_id":"card-ambiguous"}`)
+	if code != 0 {
+		t.Fatalf("ambiguous branch bind retry exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	if side := decodeLedgerOut(t, stdout)["write"].(map[string]any); side["applied"] != false || side["reason"] != "unchanged" {
+		t.Fatalf("branch bind retry sidecar = %v, want applied=false/unchanged", side)
+	}
+	if string(before) != string(ledgerStoreBytes(t, storePath)) {
+		t.Fatal("an idempotent branch bind retry must leave the store byte-identical")
+	}
+
+	// An explicit change payload keeps the slug-keyed identity, so it opens a
+	// distinct row instead of relinking the branch-only one.
+	code, stdout, stderr = ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"bind","item_id":"card-slug","change":"alpha-change"}`)
+	if code != 0 {
+		t.Fatalf("explicit-slug bind exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	store, err = ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var openSlugs []string
+	for _, item := range store.Items {
+		if item.Status == ledger.StatusOpen {
+			openSlugs = append(openSlugs, item.Identity.Change)
+		}
+	}
+	if len(openSlugs) != 2 || openSlugs[0] != "" || openSlugs[1] != "alpha-change" {
+		t.Fatalf("open slugs = %v, want the branch-only row plus the explicit-slug row", openSlugs)
+	}
+}
+
 // TestLedgerWriteCloseWithSnapshotThenRetryViaCLI pins the live close path: an
 // explicit close carrying the observed provider snapshot must persist state and
 // provider, close the row, and still grade allow in the same invocation. Grade

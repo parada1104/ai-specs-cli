@@ -128,19 +128,40 @@ ever guessing a provider.
 - **Dormancy is `doctor` only.** A `tracker-ledger` check reports `unbound` (INFO),
   `ambiguous` / `declared-not-bound` / missing witness / recorded conflict (WARN),
   and infrastructure failure (ERROR). The runtime brief gains no dormancy line.
-- **Explicit item opening.** An item is opened only by a deliberate write, never
-  because a `## Tracker` section parses. Grading is pure: no checkpoint, in any mode,
-  creates, mutates, or deletes store state, so `always` with no item blocks and leaves
-  the store byte-identical.
-- **Write surface.** `worktree-gate --ledger --write '<json>'` records exactly four
+- **Explicit item opening by authorized local writers.** An item is opened only by a
+  deliberate write, never because a `## Tracker` section parses. Grading is pure: no
+  checkpoint, in any mode, creates, mutates, or deletes store state, so `always` with
+  no item blocks and leaves the store byte-identical. Opening is **not** agent-only:
+  exactly two writers are authorized, and both are local lifecycle writers — the
+  generic machine write surface, and the VCS-boundary `archive-close` writer invoked
+  by verified cleanup at a merge boundary. Neither performs a provider or network
+  call, and neither is reachable from a grade path.
+- **Write surface.** `worktree-gate --ledger --write '<json>'` records exactly five
   kinds beside the existing `--decide`: `open` (open-if-absent under the store lock),
-  `link` (native id, URL, native type, state, and an opaque provider payload on the
-  provider-neutral core fields), `close`, and `exempt`. `--write` and `--decide` are
+  `bind`, `link` (native id, URL, native type, state, and an opaque provider payload on
+  the provider-neutral core fields), `close`, and `exempt`. `--write` and `--decide` are
   mutually exclusive. Writes are idempotent where they can be: a retried `open`
-  reports `applied: false` / `already-open`, a repeated `link` reports `unchanged`,
-  and a second `close` reports `already-closed`. Success adds a
+  reports `applied: false` / `already-open`, a repeated `link` or `bind` reports
+  `unchanged`, and a second `close` reports `already-closed`. Success adds a
   `write: {kind, applied, reason}` sidecar to the verdict JSON. Every declared
   decision kind and core item field now has a production writer.
+- **`bind` is the generic lifecycle write.** `{"kind":"bind",…}` opens-if-absent and
+  links in one locked transaction, appending the existing `open` and `link` decisions
+  (no new decision kind). It is usable by SDD, ODD, and no-flow callers alike and
+  requires **no** repository tracker artifact (`## Tracker`, `tracker.none`, or an
+  `openspec/` tree) and no provider/network call, so a valid external binding can seed
+  the branch item before any apply boundary. A `change-ambiguous` identity is refused
+  unless the payload carries an explicit slug, and a closed row is never reopened — a
+  later explicit `bind` opens a distinct new primary (D17).
+- **Automatic close at the VCS boundary.** A managed `post-merge` hook invokes the
+  verified worktree cleanup, which closes the matching open item at `archive-close`
+  (matched on the Git common dir + branch, ignoring any stored slug) **before** it
+  removes a provably merged worktree or local branch. The close is idempotent and never
+  reopens a closed row. The hook itself is fail-open for the already-sealed merge
+  (failures to stderr, exit `0`), while the destructive cleanup fails closed: a close
+  that cannot be persisted preserves the candidate. The direct tracker host
+  (`tracker-card-gate.sh --root <root> --checkpoint archive-close`) stays the fallback
+  when the hook is absent.
 - **Failed writes fail closed.** A validation failure, a lock timeout (bounded ~100 ms
   attempt), a `change-ambiguous` identity without an explicit slug, or a store IO
   error persists nothing, leaves the store byte-identical, prints
@@ -176,9 +197,10 @@ ever guessing a provider.
   honored at every checkpoint as allow/exempt and never registers as a conflict.
   Removing the file does not auto-revoke it — reopening evidence is a human act
   (`--decide '{"kind":"adjudicate","choice":"…"}'` clears the exemption).
-- **No provider writes in this slice.** The ledger records and reconciles evidence;
-  it performs no MCP/API create, update, move, comment, or label call. `always`
-  blocks until an item is supplied, it does not create one.
+- **No provider writes.** The ledger records and reconciles evidence, and its two
+  authorized lifecycle writers (`bind` and the VCS `archive-close` close) write only
+  the local store; none performs an MCP/API create, update, move, comment, or label
+  call. `always` blocks until an item is supplied, it does not create one.
 - **Witness-derived configuration.** The plan-build work-start gate, the tracker
   gate, the tracker-ledger host, and `doctor` resolve the bound recipe id from the
   witness and read `recipes.<id>.config` for `ledger_mode` / `gate_mode`; the legacy

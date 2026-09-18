@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"ai-specs.dev/worktree-gate/ledger"
 )
 
 // TestCleanupModeIsRegistered proves the --cleanup flag reaches its dispatch.
@@ -541,4 +544,220 @@ func TestRemoteDeletionFailureLeavesLocalBranchForRetry(t *testing.T) {
 	if got := cleanupGitTest(t, root, "ls-remote", "--heads", "origin", "feat-orphan"); got != "" {
 		t.Fatalf("rerun left the remote branch behind: %q", got)
 	}
+}
+
+// --- Flow-agnostic VCS close (T3) -------------------------------------------
+
+// cleanupCommonLedgerPath returns the store path the cleanup path writes, using
+// the same realpath(common-dir) derivation it does.
+func cleanupCommonLedgerPath(t *testing.T, root string) string {
+	t.Helper()
+	common := RealPath(gitCommon(root))
+	if common == "" {
+		t.Fatal("test fixture has no git common dir")
+	}
+	return ledger.StorePath(common)
+}
+
+// readCleanupLedger loads the seeded store, failing the test on error.
+func readCleanupLedger(t *testing.T, path string) ledger.Store {
+	t.Helper()
+	store, err := ledger.LoadStore(path)
+	if err != nil {
+		t.Fatalf("LoadStore(%s): %v", path, err)
+	}
+	return store
+}
+
+// seedCleanupLedger writes one open item whose identity includes a change slug,
+// mirroring the real binding. Cleanup only has common dir + branch.
+func seedCleanupLedger(t *testing.T, root, branch, change string) string {
+	t.Helper()
+	common := RealPath(gitCommon(root))
+	path := ledger.StorePath(common)
+	var store ledger.Store
+	store.OpenItem(ledger.ItemIdentity{CommonDir: common, Branch: branch, Change: change}, "test-recipe", time.Now())
+	if err := ledger.SaveStore(path, store); err != nil {
+		t.Fatalf("SaveStore: %v", err)
+	}
+	return path
+}
+
+func assertCleanupItemClosedAtArchiveClose(t *testing.T, path, branch string) {
+	t.Helper()
+	store := readCleanupLedger(t, path)
+	if len(store.Items) != 1 {
+		t.Fatalf("items = %+v, want one stored row", store.Items)
+	}
+	item := store.Items[0]
+	if item.Status != ledger.StatusClosed {
+		t.Fatalf("item %s status = %q, want closed", item.ID, item.Status)
+	}
+	last := item.Decisions[len(item.Decisions)-1]
+	if last.Kind != ledger.DecisionClose || last.Checkpoint != ledger.CheckpointArchiveClose {
+		t.Fatalf("last decision = %+v, want close at archive-close", last)
+	}
+	if item.Identity.Branch != branch {
+		t.Fatalf("closed item branch = %q, want %q", item.Identity.Branch, branch)
+	}
+}
+
+// TestCleanupClosesLedgerItemBeforeRemovingMergedWorktree is the core T3 seam:
+// the merged worktree and its local branch are removed, and the matching ledger
+// item — stored with a change slug cleanup never sees — is closed at
+// archive-close.
+func TestCleanupClosesLedgerItemBeforeRemovingMergedWorktree(t *testing.T) {
+	root := makeCleanupRepo(t)
+	wt := addCleanupWorktree(t, root, "feat-ledger")
+	if err := os.WriteFile(filepath.Join(wt, "ledger.txt"), []byte("ledger\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "ledger")
+	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge ledger", "feat-ledger")
+	path := seedCleanupLedger(t, root, "feat-ledger", "some-change-slug")
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", false, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("cleanup exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Fatalf("merged worktree survived cleanup: err=%v", err)
+	}
+	if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/feat-ledger").Run(); err == nil {
+		t.Fatal("local branch survived cleanup")
+	}
+	assertCleanupItemClosedAtArchiveClose(t, path, "feat-ledger")
+}
+
+// TestCleanupDryRunNeverMutatesLedger pins the dry-run boundary: the candidate
+// is reported but the ledger row stays open and the store is byte-identical.
+func TestCleanupDryRunNeverMutatesLedger(t *testing.T) {
+	root := makeCleanupRepo(t)
+	wt := addCleanupWorktree(t, root, "feat-ledger-dry")
+	if err := os.WriteFile(filepath.Join(wt, "dry.txt"), []byte("dry\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "dry")
+	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge dry", "feat-ledger-dry")
+	path := seedCleanupLedger(t, root, "feat-ledger-dry", "dry-change")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("dry run removed the worktree: %v", err)
+	}
+	store := readCleanupLedger(t, path)
+	if store.Items[0].Status != ledger.StatusOpen {
+		t.Fatalf("dry run closed the item: status=%q", store.Items[0].Status)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("dry run rewrote the ledger store")
+	}
+}
+
+// TestCleanupPreservesCandidateWhenLedgerStoreIsUnevaluable pins fail-closed for
+// destructive cleanup: an unreadable ledger must not remove the candidate.
+func TestCleanupPreservesCandidateWhenLedgerStoreIsUnevaluable(t *testing.T) {
+	root := makeCleanupRepo(t)
+	wt := addCleanupWorktree(t, root, "feat-ledger-corrupt")
+	if err := os.WriteFile(filepath.Join(wt, "corrupt.txt"), []byte("corrupt\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "corrupt")
+	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge corrupt", "feat-ledger-corrupt")
+	path := cleanupCommonLedgerPath(t, root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", false, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code == 0 {
+		t.Fatalf("cleanup reported success despite an unevaluable ledger: stdout=%s", stdout.String())
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("candidate was removed despite a ledger failure: %v", err)
+	}
+	if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/feat-ledger-corrupt").Run(); err != nil {
+		t.Fatal("local branch was removed despite a ledger failure")
+	}
+}
+
+// TestCleanupWithoutMatchingLedgerItemStillRemoves pins the no-op half: a store
+// with no open row for the branch must not block removal or invent a row.
+func TestCleanupWithoutMatchingLedgerItemStillRemoves(t *testing.T) {
+	root := makeCleanupRepo(t)
+	wt := addCleanupWorktree(t, root, "feat-ledger-nomatch")
+	if err := os.WriteFile(filepath.Join(wt, "nomatch.txt"), []byte("nomatch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "nomatch")
+	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge nomatch", "feat-ledger-nomatch")
+	// Seed an unrelated open item: it must survive untouched.
+	other := seedCleanupLedger(t, root, "some-other-branch", "other-change")
+	before, err := os.ReadFile(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", false, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("cleanup exit=%d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Fatalf("unmatched ledger row blocked removal: err=%v", err)
+	}
+	after, err := os.ReadFile(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("an unmatched branch close mutated the store")
+	}
+}
+
+// TestCleanupClosesLedgerForStaleMergedLocalBranch covers the second removal
+// seam: a merged branch with no worktree still closes its ledger item before the
+// local branch is deleted.
+func TestCleanupClosesLedgerForStaleMergedLocalBranch(t *testing.T) {
+	root := makeCleanupRepo(t)
+	cleanupGitTest(t, root, "checkout", "-qb", "stale-ledger")
+	if err := os.WriteFile(filepath.Join(root, "stale-ledger.txt"), []byte("landed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", ".")
+	cleanupGitTest(t, root, "commit", "-qm", "stale ledger")
+	cleanupGitTest(t, root, "checkout", "-q", "main")
+	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge stale-ledger", "stale-ledger")
+	path := seedCleanupLedger(t, root, "stale-ledger", "stale-change")
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", false, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("cleanup exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/stale-ledger").Run(); err == nil {
+		t.Fatal("merged stale branch survived cleanup")
+	}
+	assertCleanupItemClosedAtArchiveClose(t, path, "stale-ledger")
 }

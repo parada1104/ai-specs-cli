@@ -375,6 +375,7 @@ func ledgerWriteSelftest() error {
 	invalid := []ledger.WriteRequest{
 		{},                         // no kind
 		{Kind: "invented"},         // unknown kind
+		{Kind: ledger.WriteBind},   // bind without item_id
 		{Kind: ledger.WriteLink},   // link without item_id
 		{Kind: ledger.WriteExempt}, // exempt without a reason
 	}
@@ -390,8 +391,8 @@ func ledgerWriteSelftest() error {
 	if err := valid.Normalize().Validate("bogus"); err == nil {
 		return fmt.Errorf("write accepted an unknown checkpoint")
 	}
-	if len(ledger.WriteKinds) != 4 {
-		return fmt.Errorf("write kinds = %v, want the closed four-verb set", ledger.WriteKinds)
+	if len(ledger.WriteKinds) != 5 {
+		return fmt.Errorf("write kinds = %v, want the closed five-verb set", ledger.WriteKinds)
 	}
 
 	// Open-if-absent is idempotent in memory: the retried open adds no row and the

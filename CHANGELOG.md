@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Flow-agnostic Tracker Ledger lifecycle.** The ledger now has a generic
+  `{"kind":"bind",…}` write — open-if-absent plus link in one locked transaction —
+  usable by SDD, ODD, and no-flow work alike, with no `## Tracker` / `tracker.none`
+  / `openspec/` artifact required and no provider or network call. A managed
+  `.git/hooks/post-merge` trigger (worktree-flow, `condition = "not_exists"`)
+  invokes the verified cleanup, which closes the matching open item at
+  `archive-close` (matched on the Git common dir + branch) before any destructive
+  removal; the direct tracker host stays the fallback. Grading remains pure, and
+  neither writer touches a provider.
+
 ### Changed
 - **Tracker lifecycle host strangler.** The redundant
   `lib/_internal/tracker_ledger_host.py` Python host is removed. Its `pre-merge`
@@ -21,6 +32,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from an OpenSpec archive: the requested checkpoint always decides. Moving the
   effective `ledger_mode` / legacy `gate_mode` resolution into Go remains a
   separate follow-up, since it changes the Go binary and trust root.
+- **Authorized local lifecycle writers documented.** The Tracker Ledger spec and
+  capability/hook docs state that grading stays pure while the generic `bind`
+  writer and the VCS `archive-close` writer are the two authorized local lifecycle
+  writers, superseding the archived agent-only L2/DW1 wording. Both are
+  provider-write-free, and the worktree `post-merge` hook is documented as
+  fail-open for the sealed merge while the destructive cleanup it triggers fails
+  closed.
+
+### Fixed
+- **Customized-project post-merge cleanup.** The managed `post-merge` hook now
+  stamps the project's configured `worktrees_dir`, `integration_branch`, and
+  `repo_topology` and passes them to the verified cleanup launcher, so automatic
+  cleanup no longer silently falls back to `.worktrees`/current HEAD.
 
 ## [0.23.0] — 2026-09-17
 

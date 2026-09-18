@@ -8,6 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"ai-specs.dev/worktree-gate/ledger"
 )
 
 // cleanupConfig is intentionally independent from the pre-tool-use gate config.
@@ -295,6 +298,35 @@ func branchHeldByWorktree(records []worktreeRecord, branch, except string) bool 
 	return false
 }
 
+// closeLedgerBeforeRemoval closes the single open ledger item matching the
+// repository's common dir and the candidate branch, at archive-close.
+//
+// This is the automatic VCS-boundary close: it is independent of SDD, ODD, or a
+// named agent workflow, and it makes no provider or network call. Cleanup knows
+// only the common dir and the branch, so the ledger matches on those two fields
+// and ignores any stored change slug. A missing or already-closed item is a
+// no-op. An identity, store, or write failure returns an error so the caller
+// preserves the candidate: fail closed for destructive cleanup. Dry-run never
+// mutates the ledger, and a protected branch is never a cleanup candidate, so
+// neither is closed here.
+func closeLedgerBeforeRemoval(repoRoot, branch string, cfg cleanupConfig, out io.Writer) error {
+	if cfg.dryRun || branch == "" || isProtectedBranch(cfg.protected, branch) {
+		return nil
+	}
+	common := RealPath(gitCommon(repoRoot))
+	if common == "" {
+		return fmt.Errorf("worktree-cleanup: ledger identity unavailable for %q; refusing removal", branch)
+	}
+	outcome, err := ledger.CloseBranchItem(ledger.StorePath(common), common, branch, ledger.CheckpointArchiveClose, time.Now())
+	if err != nil {
+		return fmt.Errorf("worktree-cleanup: ledger close for %q failed: %w", branch, err)
+	}
+	if outcome.Applied {
+		formatCleanupStatus(out, "closed ledger item for %s", branch)
+	}
+	return nil
+}
+
 func removeWorktreeCleanup(repoRoot string, record worktreeRecord, displayName string, cfg cleanupConfig, all []worktreeRecord, out io.Writer) error {
 	if err := assertDeletable("worktree removal", record.branch, cfg.protected); err != nil {
 		return err
@@ -505,6 +537,14 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 			formatCleanupStatus(out, "skipped %s (unmerged)", name)
 			continue
 		}
+		// The VCS-boundary close runs before the destructive removal: a ledger
+		// store or write failure must preserve the candidate, not delete the work
+		// the ledger just failed to record (fail closed for destructive cleanup).
+		if err := closeLedgerBeforeRemoval(repoRoot, record.branch, cfg, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", name, err)
+			failures = append(failures, err)
+			continue
+		}
 		remote := remoteForBranch(repoRoot, record.branch)
 		// One candidate's failure must never abandon the rest of the pass.
 		// spec.md: "it MUST not stop after the first candidate". Returning here
@@ -559,6 +599,11 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 		}
 		if cfg.dryRun {
 			formatCleanupStatus(out, "would remove %s", local.branch)
+			continue
+		}
+		if err := closeLedgerBeforeRemoval(repoRoot, local.branch, cfg, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", local.branch, err)
+			failures = append(failures, err)
 			continue
 		}
 		record := worktreeRecord{branch: local.branch, sha: local.sha}
