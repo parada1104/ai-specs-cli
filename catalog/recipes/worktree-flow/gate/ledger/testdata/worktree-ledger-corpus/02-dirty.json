@@ -1,0 +1,13 @@
+{
+  "observation": {
+    "detached": false,
+    "dirty": true,
+    "localMerged": true,
+    "prMergeCommit": "cafe",
+    "mergeCommitInBase": true
+  },
+  "want": {
+    "merged": false,
+    "reason": "dirty"
+  }
+}

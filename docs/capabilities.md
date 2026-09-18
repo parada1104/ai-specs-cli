@@ -220,6 +220,51 @@ validity, and the legacy Python copies (the link parser, the hook heredoc, and
 `doctor`) delegate to it or are held by parity tests that fail on divergence. The
 Python that remains is a thin acquisition/witness/JSON bridge only.
 
+## Worktree lifecycle: the Worktree domain port
+
+The autonomous ledger core is organized as **domain ports**, not a capability
+registry. `Tracker` is its first port; **`worktree`** is a second, independently
+specified port. Both are one pure predicate over normalized observations inside the
+same verified Go binary — there is no second ledger, no second store/witness/checkpoint
+surface, no generic capability parameterization, and no universal artifact schema.
+Tracker and Worktree are separate ports with separate contracts; Worktree reuses no
+Tracker witness, store, or checkpoint.
+
+### What the Worktree port is
+
+`ledger.EvaluateWorktree` classifies one normalized `WorktreeObservation`
+(`detached`, `dirty`, `localMerged`, `prMergeCommit`, `mergeCommitInBase`) into one
+outcome (`detached`, `dirty`, `merged`, `unmerged`). It is pure and deterministic: it
+never shells out, reads the clock, touches the filesystem, or calls a provider. The
+precedence is safety order — detached, then dirty, then merge proof — so an unsafe
+candidate is reported for what it is and never looks cleanable on the strength of a
+merge proof. A merge needs a positive proof: a local graph/patch/tree proof, or a
+provider merge commit that acquisition already proved reachable from a resolved base
+candidate. Its reasons are the cleanup contract's own output strings, not Tracker
+lifecycle vocabulary.
+
+Worktree-flow is proven by a JSON golden corpus under
+`catalog/recipes/worktree-flow/gate/ledger/testdata/worktree-ledger-corpus/` (detached,
+dirty, local merged, PR merge commit in base, PR commit outside base, no evidence).
+The Go test loads it, and its mutation guard fails if the corpus stops pinning at least
+one preserve and one merged case.
+
+### Acquisition, evidence, and the actuator
+
+Acquisition stays in the cleanup actuator (`cleanup.go`) — the single Go actuator that
+owns every destructive check (protected branches, worktree-held branches,
+remote-deletion ordering, and the ledger close before removal). It gathers git facts,
+feeds the normalized observation to the port, and acts only on a `merged` verdict.
+
+The optional provider seam is **read-only acquisition**: after local ancestry/patch/tree
+proofs are inconclusive, cleanup may run `gh pr list --head <branch> --state all --json
+mergeCommit` and accept a reported merge commit only when it is reachable from one of
+the already-resolved local base candidates. Base resolution itself never fetches and
+never goes to the network. The seam fails closed: a missing, failing, or malformed `gh`
+yields no evidence, so the candidate is preserved. Cleanup performs no provider API
+(create/update/move/comment/label) mutation; its destructive actions remain the host
+git operations and run only after a proven merge.
+
 ## Why this matters
 
 Mixing the pattern and the vendor in one recipe makes it impossible to reuse the

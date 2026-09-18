@@ -198,7 +198,8 @@ func candidateHasPatchEquivalenceCleanup(repoRoot, sha, candidate string) bool {
 	// stands on its own here. A reverted squash is already rejected at the
 	// cherry step, because the individual commits' patch-ids no longer match
 	// anything reachable. Standalone tree equivalence remains the third,
-	// independent term of isMergedCleanup's chain, as in the reference.
+	// independent term of the local-proof chain in isMergedWithCandidates, as in
+	// the reference.
 	return true
 }
 
@@ -259,8 +260,11 @@ func candidateHasCombinedTreeEquivalenceCleanup(repoRoot, sha, candidate string)
 	return count > 0
 }
 
-func isMergedCleanup(repoRoot, sha, base string) bool {
-	candidates := resolveBaseCandidatesCleanup(repoRoot, base)
+// isMergedWithCandidates runs the local proofs against every already-resolved
+// base candidate. The candidate list is passed in so a single pass resolves the
+// base spellings once and evaluates both the local proofs and the provider merge
+// evidence against the same set.
+func isMergedWithCandidates(repoRoot, sha string, candidates []string) bool {
 	for _, candidate := range candidates {
 		if candidateHasMergedTipCleanup(repoRoot, sha, candidate) {
 			return true
@@ -423,50 +427,122 @@ func localBranchRecordsCleanup(repoRoot string) []localBranchRecord {
 	return records
 }
 
-// ghPRRecord is the minimal shape read from `gh pr list --json mergeCommit`.
+// ghPRRecord is the minimal shape read from
+// `gh pr list --json headRefOid,mergeCommit`.
 type ghPRRecord struct {
+	HeadRefOID  string `json:"headRefOid"`
 	MergeCommit *struct {
 		OID string `json:"oid"`
 	} `json:"mergeCommit"`
 }
 
-// staleBranchEvidenceCleanup decides whether a local branch with no worktree is
-// provably merged. Missing, open, or malformed pull-request evidence preserves
-// the branch rather than guessing.
-func staleBranchEvidenceCleanup(repoRoot string, record localBranchRecord, base string) (bool, string) {
-	if isMergedCleanup(repoRoot, record.sha, base) {
-		return true, "merged"
-	}
-	cmd := exec.Command("gh", "pr", "list", "--head", record.branch, "--state", "all", "--json", "mergeCommit")
+// ghMergeCommitsCleanup reads the provider merge commits recorded for a branch.
+// Acquisition is read-only and fails closed: a missing, failing, or malformed
+// `gh` yields no evidence, and the caller then preserves the candidate.
+//
+// Each record is bound to the candidate's current tip: a merge commit is
+// accepted only for the pull request whose recorded head is exactly sha. A
+// branch can be reused after a merged pull request — the old merge commit stays
+// reachable from base while the reused tip carries unmerged work — so an
+// unbound or mismatched head proves nothing about sha and is discarded.
+//
+// The owning repository is passed explicitly and pinned as the command dir.
+// Under monorepo-submodules the process cwd is the superproject while a pass is
+// bound to a submodule, and the provider resolves `pr list` from cwd: without
+// this the evidence describes the wrong repository.
+func ghMergeCommitsCleanup(repoRoot, branch, sha string) []string {
+	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--state", "all", "--json", "headRefOid,mergeCommit")
+	cmd.Dir = repoRoot
 	output, err := cmd.Output()
 	if err != nil {
-		return false, "unmerged"
+		return nil
 	}
 	var prs []ghPRRecord
 	if err := json.Unmarshal(output, &prs); err != nil {
-		return false, "unmerged"
+		return nil
 	}
 	// Scan EVERY pull request for this head. Returning on the first entry that
 	// lacks a merge commit misses the case of a branch closed unmerged once and
 	// later reused for a pull request that did merge.
+	var oids []string
 	for _, pr := range prs {
 		if pr.MergeCommit == nil || pr.MergeCommit.OID == "" {
 			continue
 		}
-		if runGit(repoRoot, "merge-base", "--is-ancestor", pr.MergeCommit.OID, base) == nil {
-			return true, "merged"
+		// Fail closed: a head the provider did not report, or one that is not the
+		// candidate's current tip, cannot bind this merge commit to sha.
+		if pr.HeadRefOID == "" || pr.HeadRefOID != sha {
+			continue
+		}
+		oids = append(oids, pr.MergeCommit.OID)
+	}
+	return oids
+}
+
+// mergeCommitInCandidates proves one provider merge commit is reachable from any
+// already-resolved base candidate. An unknown or unrelated revision proves
+// nothing.
+func mergeCommitInCandidates(repoRoot, oid string, candidates []string) bool {
+	for _, candidate := range candidates {
+		if candidateHasMergedTipCleanup(repoRoot, oid, candidate) {
+			return true
 		}
 	}
-	// No path-presence fallback. Proving that a same-named file exists on the
-	// base is not proof that this branch's work landed: two commits can touch
-	// the same path with entirely different content and never meet.
-	//
-	// Making that check sound would mean comparing blob content — which is
-	// exactly candidateHasCombinedTreeEquivalenceCleanup, already run above by
-	// isMergedCleanup. So the fallback was either unsound or redundant. A
-	// branch whose merge cannot be proven is preserved, per the contract:
-	// refuse rather than guess.
-	return false, "unmerged"
+	return false
+}
+
+// mergeEvidenceWorktreeObservation fills the merge fields of a normalized
+// observation. It short-circuits before provider acquisition whenever the port
+// can already decide, so a detached or dirty candidate — and a locally-proven
+// merge — never reaches the network.
+//
+// There is deliberately no path-presence fallback. Proving that a same-named
+// file exists on the base is not proof that this branch's work landed: two
+// commits can touch the same path with entirely different content and never
+// meet. A sound version of that check is exactly
+// candidateHasCombinedTreeEquivalenceCleanup, already run above. A merge that
+// cannot be proven is preserved: refuse rather than guess.
+func mergeEvidenceWorktreeObservation(repoRoot, branch, sha string, candidates []string, obs ledger.WorktreeObservation) ledger.WorktreeObservation {
+	if obs.Detached || obs.Dirty {
+		return obs
+	}
+	obs.LocalMerged = isMergedWithCandidates(repoRoot, sha, candidates)
+	if obs.LocalMerged {
+		return obs
+	}
+	// Every returned commit is already bound to this candidate's tip, so the
+	// first reported commit is recorded even when it is not in base; the port
+	// then evaluates the observed evidence rather than a pre-digested boolean.
+	for _, oid := range ghMergeCommitsCleanup(repoRoot, branch, sha) {
+		if mergeCommitInCandidates(repoRoot, oid, candidates) {
+			obs.PRMergeCommit, obs.MergeCommitInBase = oid, true
+			return obs
+		}
+		if obs.PRMergeCommit == "" {
+			obs.PRMergeCommit = oid
+		}
+	}
+	return obs
+}
+
+// linkedWorktreeObservationCleanup gathers the facts the Worktree port needs for
+// a linked worktree candidate: detached, then dirty, then merge evidence. The
+// order is the evaluation order, so the expensive proofs and the provider call
+// only run for a candidate that could actually be cleaned.
+func linkedWorktreeObservationCleanup(repoRoot string, record worktreeRecord, candidates []string) ledger.WorktreeObservation {
+	obs := ledger.WorktreeObservation{Detached: record.branch == ""}
+	if obs.Detached {
+		return obs
+	}
+	obs.Dirty = strings.TrimSpace(git(record.path, "status", "--porcelain")) != ""
+	return mergeEvidenceWorktreeObservation(repoRoot, record.branch, record.sha, candidates, obs)
+}
+
+// staleBranchObservationCleanup gathers the facts for a local branch with no
+// worktree. Such a branch is never detached and has no working tree to dirty,
+// so it goes straight to the merge evidence.
+func staleBranchObservationCleanup(repoRoot string, record localBranchRecord, candidates []string) ledger.WorktreeObservation {
+	return mergeEvidenceWorktreeObservation(repoRoot, record.branch, record.sha, candidates, ledger.WorktreeObservation{})
 }
 
 func removeRemoteBranchCleanup(repoRoot string, record worktreeRecord, remote string, cfg cleanupConfig, out io.Writer) error {
@@ -518,6 +594,10 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 	if base == "" {
 		base = git(repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
 	}
+	// The base spellings are resolved once for the whole pass: the Worktree port
+	// evaluates local proofs and provider merge-commit evidence against the same
+	// already-resolved candidate set.
+	candidates := resolveBaseCandidatesCleanup(repoRoot, base)
 	var failures []error
 	for _, record := range records {
 		recordPath := filepath.Clean(record.path)
@@ -525,16 +605,9 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 			continue
 		}
 		name := strings.TrimPrefix(recordPath, prefix)
-		if record.branch == "" {
-			formatCleanupStatus(out, "skipped %s (detached)", name)
-			continue
-		}
-		if strings.TrimSpace(git(record.path, "status", "--porcelain")) != "" {
-			formatCleanupStatus(out, "skipped %s (dirty)", name)
-			continue
-		}
-		if !isMergedCleanup(repoRoot, record.sha, base) {
-			formatCleanupStatus(out, "skipped %s (unmerged)", name)
+		outcome := ledger.EvaluateWorktree(linkedWorktreeObservationCleanup(repoRoot, record, candidates))
+		if !outcome.Merged {
+			formatCleanupStatus(out, "skipped %s (%s)", name, outcome.Reason)
 			continue
 		}
 		// The VCS-boundary close runs before the destructive removal: a ledger
@@ -592,9 +665,9 @@ func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer
 		if isProtectedBranch(cfg.protected, local.branch) || branchHeldByWorktree(held, local.branch, "") {
 			continue
 		}
-		merged, reason := staleBranchEvidenceCleanup(repoRoot, local, base)
-		if !merged {
-			formatCleanupStatus(out, "skipped %s (%s)", local.branch, reason)
+		outcome := ledger.EvaluateWorktree(staleBranchObservationCleanup(repoRoot, local, candidates))
+		if !outcome.Merged {
+			formatCleanupStatus(out, "skipped %s (%s)", local.branch, outcome.Reason)
 			continue
 		}
 		if cfg.dryRun {
