@@ -238,6 +238,74 @@ class RecipeConfigureTests(unittest.TestCase):
             doc["current_config"]["reconcile"]["scope_field"], "board_id"
         )
 
+    def test_parse_assignment_accepts_dotted_structured_key(self):
+        recipe = self.mod._schema_for("trello-mcp-workflow")
+        key, value = self.mod._parse_assignment(recipe, "reconcile.max_age_seconds=1200")
+        self.assertEqual(key, "reconcile.max_age_seconds")
+        self.assertEqual(value, 1200)
+        key, value = self.mod._parse_assignment(
+            recipe,
+            'reconcile.expectations=[{event="merge",property="list",config_field="done_list"}]',
+        )
+        self.assertEqual(key, "reconcile.expectations")
+        self.assertEqual(value[0]["event"], "merge")
+        with self.assertRaises(self.mod.ConfigureError):
+            self.mod._parse_assignment(recipe, "reconcile.max_age_seconds=not_a_number")
+        with self.assertRaises(self.mod.ConfigureError):
+            self.mod._parse_assignment(recipe, "not_a_table.thing=1")
+
+    _TRELLO_RECONCILE_INLINE = (
+        _TRELLO_BASE
+        + 'reconcile = { scope_field = "board_id", max_age_seconds = 900, '
+        'expectations = [{ event = "delivery", property = "list", '
+        'config_field = "default_list" }] }\n'
+    )
+
+    def test_apply_dotted_update_edits_existing_reconcile_table(self):
+        tmp, root, manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        manifest.write_text(self._TRELLO_RECONCILE_INLINE)
+        report, code = self.mod.apply_project(
+            root, "trello-mcp-workflow", {"reconcile.max_age_seconds": 1200}
+        )
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(
+            report["applied"]["changed"][0]["key"], "reconcile.max_age_seconds"
+        )
+        import tomllib
+
+        cfg = tomllib.loads(manifest.read_text())["recipes"]["trello-mcp-workflow"]["config"]
+        self.assertEqual(cfg["reconcile"]["max_age_seconds"], 1200)
+        self.assertEqual(cfg["reconcile"]["scope_field"], "board_id")
+        self.assertEqual(
+            cfg["reconcile"]["expectations"][0]["config_field"], "default_list"
+        )
+
+    def test_apply_dotted_update_rejects_wrong_type_without_write(self):
+        tmp, root, manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        manifest.write_text(self._TRELLO_RECONCILE_INLINE)
+        before = manifest.read_bytes()
+        report, code = self.mod.apply_project(
+            root, "trello-mcp-workflow", {"reconcile.max_age_seconds": "soon"}
+        )
+        self.assertEqual(code, 3)
+        self.assertEqual(report["status"], "rejected")
+        self.assertEqual(manifest.read_bytes(), before)
+
+    def test_apply_dotted_noop_preserves_bytes(self):
+        tmp, root, manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        manifest.write_text(self._TRELLO_RECONCILE_INLINE)
+        before = manifest.read_bytes()
+        report, code = self.mod.apply_project(
+            root, "trello-mcp-workflow", {"reconcile.max_age_seconds": 900}
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(report["status"], "no-op")
+        self.assertEqual(manifest.read_bytes(), before)
+
     def test_apply_accepts_structured_table_key(self):
         tmp, root, manifest = self._project()
         self.addCleanup(tmp.cleanup)
