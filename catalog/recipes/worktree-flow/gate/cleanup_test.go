@@ -761,3 +761,240 @@ func TestCleanupClosesLedgerForStaleMergedLocalBranch(t *testing.T) {
 	}
 	assertCleanupItemClosedAtArchiveClose(t, path, "stale-ledger")
 }
+
+// --- Worktree port: provider merge-commit evidence (T2) ----------------------
+
+// installFakeGh puts a `gh` script of the test's choosing first on PATH. The
+// acquisition under test only ever reads provider evidence; the fake keeps the
+// regression hermetic and returns the same JSON shape `gh pr list --json
+// mergeCommit` does.
+func installFakeGh(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	gh := filepath.Join(dir, "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\n"+body+"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// hideGhFromPath leaves only git reachable, so provider acquisition fails
+// exactly as it does on a machine without the provider CLI. Cleanup must then
+// preserve the candidate instead of guessing.
+func hideGhFromPath(t *testing.T) {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git is not on PATH: %v", err)
+	}
+	bin := t.TempDir()
+	if err := os.Symlink(gitPath, filepath.Join(bin, "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+}
+
+// squashMergeFixture builds the confirmed false negative: a clean linked
+// worktree whose branch was squash-merged, then made unreachable to every local
+// proof. Two branch commits make the squash a combined patch no single patch-id
+// matches, and the base then advances over one of the branch's own paths with
+// different content, so the combined-tree proof fails too.
+//
+// It returns the branch tip (provably not in base) and the squash merge commit
+// (provably in base) so the tests can drive the provider both ways.
+func squashMergeFixture(t *testing.T) (root, branchTip, mergeCommit string) {
+	t.Helper()
+	root = makeCleanupRepo(t)
+	wt := addCleanupWorktree(t, root, "feat-squash-pr")
+	if err := os.WriteFile(filepath.Join(wt, "pr-one.txt"), []byte("one\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "pr one")
+	if err := os.WriteFile(filepath.Join(wt, "pr-two.txt"), []byte("two\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "pr two")
+	branchTip = cleanupGitTest(t, wt, "rev-parse", "HEAD")
+	cleanupGitTest(t, root, "merge", "-q", "--squash", "feat-squash-pr")
+	cleanupGitTest(t, root, "commit", "-qm", "squash merge feat-squash-pr")
+	mergeCommit = cleanupGitTest(t, root, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(root, "pr-one.txt"), []byte("advanced\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, root, "add", ".")
+	cleanupGitTest(t, root, "commit", "-qm", "advance base over the branch path")
+	return root, branchTip, mergeCommit
+}
+
+// TestCleanupProvesSquashMergeFromPRMergeCommit is the regression for the
+// confirmed false negative: every local proof fails, but the provider records
+// the squash merge commit and that commit is in the base, so the candidate is
+// merged and cleanable.
+func TestCleanupProvesSquashMergeFromPRMergeCommit(t *testing.T) {
+	root, branchTip, mergeCommit := squashMergeFixture(t)
+	installFakeGh(t, `printf '%s\n' '[{"headRefOid":"`+branchTip+`","mergeCommit":{"oid":"`+mergeCommit+`"}}]'`)
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "would remove feat-squash-pr") {
+		t.Fatalf("a squash merge commit provably in base was not accepted: %q", stdout.String())
+	}
+}
+
+// TestCleanupPreservesSquashMergeWhenPRCommitIsOutsideBase is the negative half.
+// The same fixture proves the local proofs fail, so a provider commit that is
+// NOT reachable from the base must leave the candidate preserved.
+func TestCleanupPreservesSquashMergeWhenPRCommitIsOutsideBase(t *testing.T) {
+	root, branchTip, _ := squashMergeFixture(t)
+	installFakeGh(t, `printf '%s\n' '[{"headRefOid":"`+branchTip+`","mergeCommit":{"oid":"`+branchTip+`"}}]'`)
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "skipped feat-squash-pr (unmerged)") {
+		t.Fatalf("a provider commit outside the base was accepted: %q", stdout.String())
+	}
+}
+
+// TestCleanupPreservesSquashMergeWhenGhIsMissing pins fail-closed acquisition:
+// with no provider CLI there is no merge evidence, so the candidate survives
+// even though the merge commit would have proven it.
+func TestCleanupPreservesSquashMergeWhenGhIsMissing(t *testing.T) {
+	root, _, _ := squashMergeFixture(t)
+	hideGhFromPath(t)
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "skipped feat-squash-pr (unmerged)") {
+		t.Fatalf("a missing provider was not treated as no evidence: %q", stdout.String())
+	}
+}
+
+// TestCleanupEvaluatesPRCommitAgainstEveryBaseCandidate pins the candidate set:
+// the merge commit is only reachable from the remote-tracking base spelling, not
+// from the local base ref. Checking a single spelling would wrongly preserve it.
+func TestCleanupEvaluatesPRCommitAgainstEveryBaseCandidate(t *testing.T) {
+	root, branchTip, mergeCommit := squashMergeFixture(t)
+	cleanupGitTest(t, root, "remote", "add", "origin", filepath.Join(t.TempDir(), "origin.git"))
+	// origin/main keeps the advanced history that contains the merge commit,
+	// while the local base ref is rolled back behind it. Only the second
+	// candidate spelling can still prove the merge.
+	cleanupGitTest(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	cleanupGitTest(t, root, "update-ref", "refs/heads/main", mergeCommit+"^")
+	installFakeGh(t, `printf '%s\n' '[{"headRefOid":"`+branchTip+`","mergeCommit":{"oid":"`+mergeCommit+`"}}]'`)
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "would remove feat-squash-pr") {
+		t.Fatalf("the remote-tracking base candidate was not consulted: %q", stdout.String())
+	}
+}
+
+// TestCleanupPreservesReusedBranchDespiteOlderMergedPR is the regression for
+// the reused-branch defect: a branch is squash-merged, then reused for new
+// unmerged commits. The provider still reports the old pull request and its
+// merge commit is still reachable from base, but its recorded head is the old
+// tip, not the reused tip. An unbound historical merge must never be accepted
+// for the reused tip, so the branch is preserved.
+func TestCleanupPreservesReusedBranchDespiteOlderMergedPR(t *testing.T) {
+	root := makeCleanupRepo(t)
+	wt := addCleanupWorktree(t, root, "feat-reused-pr")
+	if err := os.WriteFile(filepath.Join(wt, "reused-one.txt"), []byte("one\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "merged head")
+	mergedHead := cleanupGitTest(t, wt, "rev-parse", "HEAD")
+	cleanupGitTest(t, root, "merge", "-q", "--squash", "feat-reused-pr")
+	cleanupGitTest(t, root, "commit", "-qm", "squash merge feat-reused-pr")
+	mergeCommit := cleanupGitTest(t, root, "rev-parse", "HEAD")
+	// Reuse the branch: a new commit the base has never seen.
+	if err := os.WriteFile(filepath.Join(wt, "reused-two.txt"), []byte("two\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, wt, "add", ".")
+	cleanupGitTest(t, wt, "commit", "-qm", "reused unmerged work")
+	reusedTip := cleanupGitTest(t, wt, "rev-parse", "HEAD")
+	if reusedTip == mergedHead {
+		t.Fatal("fixture did not reuse the branch")
+	}
+	installFakeGh(t, `printf '%s\n' '[{"headRefOid":"`+mergedHead+`","mergeCommit":{"oid":"`+mergeCommit+`"}}]'`)
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", true, nil)
+	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("dry run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "skipped feat-reused-pr (unmerged)") {
+		t.Fatalf("an older merged pull request was accepted for the reused tip: %q", stdout.String())
+	}
+}
+
+// TestGhMergeCommitsRunsInOwningRepository is the regression for the confirmed
+// monorepo-submodules defect: cleanup is launched from the superproject, but a
+// pass is bound to a submodule repoRoot. Inheriting the process cwd makes `gh`
+// answer for the superproject while the caller evaluates the submodule, so the
+// evidence is acquired from the wrong repository.
+//
+// The fake provider records the directory it actually ran in, which is the only
+// observable that can tell the two repositories apart. `-P` (the /bin/pwd
+// binary, not the shell builtin) reports the physical cwd, so an inherited PWD
+// env var cannot mask the defect.
+func TestGhMergeCommitsRunsInOwningRepository(t *testing.T) {
+	repoRoot := t.TempDir()
+	const wantHead = "headsha"
+	// The alternate cases prove the pinned dir does not disturb the rest of the
+	// contract: parsed evidence still comes back, the call still happened in the
+	// owning root, and a head that cannot be bound to the candidate is discarded.
+	for _, tc := range []struct {
+		name string
+		body string
+		want []string
+	}{
+		{name: "no evidence", body: `printf '%s\n' '[]'`},
+		{
+			name: "one merge commit",
+			body: `printf '%s\n' '[{"headRefOid":"` + wantHead + `","mergeCommit":{"oid":"abc123"}}]'`,
+			want: []string{"abc123"},
+		},
+		{
+			name: "head missing",
+			body: `printf '%s\n' '[{"mergeCommit":{"oid":"abc123"}}]'`,
+		},
+		{
+			name: "head mismatch",
+			body: `printf '%s\n' '[{"headRefOid":"other","mergeCommit":{"oid":"abc123"}}]'`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := filepath.Join(t.TempDir(), "gh-cwd")
+			installFakeGh(t, `/bin/pwd -P > '`+record+`'
+`+tc.body)
+
+			oids := ghMergeCommitsCleanup(repoRoot, "feat-cwd", wantHead)
+			if strings.Join(oids, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("merge-commit evidence = %v, want %v", oids, tc.want)
+			}
+			raw, err := os.ReadFile(record)
+			if err != nil {
+				t.Fatalf("the fake provider never ran: %v", err)
+			}
+			if cwd := RealPath(strings.TrimSpace(string(raw))); cwd != RealPath(repoRoot) {
+				t.Fatalf("gh ran in %q, want the owning repository root %q", cwd, RealPath(repoRoot))
+			}
+		})
+	}
+}

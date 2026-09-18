@@ -21,10 +21,14 @@ not be treated as proof that the branch is merged.
 
 The existing candidate order remains authoritative: exact `--base`, configured
 upstream, configured remote-tracking ref, and the conditional `origin/<base>`
-fallback only when the configured remote-tracking ref does not resolve. The
-cleanup MUST use only local refs and MUST NOT fetch. The implementation MUST
-preserve the current ancestry-first and `git cherry` patch-id decision points;
-this requirement does not authorize a new merge heuristic.
+fallback only when the configured remote-tracking ref does not resolve. Base
+candidate resolution MUST use only local refs and MUST NOT fetch. The
+implementation MUST preserve the current ancestry-first and `git cherry`
+patch-id decision points; this requirement does not authorize a new local merge
+heuristic. When those local decision points are inconclusive, cleanup MAY
+acquire read-only provider merge-commit evidence as specified by the Worktree
+Ledger Port requirement: that acquisition never resolves or extends a base
+candidate, never mutates the provider, and fails closed.
 
 #### Scenario: Multi-commit regular merge is eligible
 
@@ -61,6 +65,77 @@ this requirement does not authorize a new merge heuristic.
 - THEN it MUST report `skipped <name> (unmerged)`
 - AND it MUST preserve both the worktree and branch
 
+### Requirement: Worktree Ledger Port
+
+Cleanup classification MUST be produced by a pure domain port of the autonomous
+Go ledger core (`ledger.EvaluateWorktree`), not by an ad-hoc merge check inside
+the cleanup actuator. The port MUST evaluate a normalized, provider-neutral
+observation and MUST be deterministic: identical observations yield identical
+outcomes, with no clock, filesystem, subprocess, network, or provider
+dependency. Git-fact and provider-evidence acquisition MUST stay in the cleanup
+actuator, which feeds the normalized observation to the port; the port MUST NOT
+acquire anything itself. The port MUST NOT reuse the Tracker port's binding
+witness, store, or checkpoints, and it MUST return only its own outcome
+vocabulary (`detached`, `dirty`, `merged`, `unmerged`).
+
+Evaluation precedence MUST be detached, then dirty, then merge proof. A detached
+or dirty candidate MUST be preserved before any merge check is attempted.
+Detached MUST outrank dirty. A merge MUST require a positive proof: a local proof
+from the existing ancestry-first, patch-id, or tree-equivalence decision points,
+or a provider merge commit that acquisition proved reachable from one of the
+already-resolved base candidates. Missing, malformed, unmerged, or out-of-base
+evidence MUST preserve the candidate as `unmerged`.
+
+The optional provider evidence seam MUST be read-only acquisition: `gh pr list
+--head <branch> --state all --json mergeCommit` MAY run only after the local
+proofs are inconclusive, every reported merge commit MUST be checked against
+every resolved base candidate, and it MUST NOT fetch, resolve an extra base
+candidate, or mutate the provider. It MUST fail closed: a missing, failing, or
+malformed `gh` yields no evidence and the candidate is preserved. Cleanup MUST
+remain the single Go actuator and MUST keep owning every destructive safety
+check (protected branches, worktree-held branches, remote-deletion ordering, and
+ledger-close-before-removal); the port performs no mutation. All existing output
+strings (`would remove <name>`, `skipped <name> (detached|dirty|unmerged)`,
+`removed <name>`, `failed <name> …`) MUST remain unchanged.
+
+#### Scenario: Normalized evaluator is deterministic and pure
+
+- GIVEN a normalized Worktree observation
+- WHEN the port evaluates it twice
+- THEN both evaluations return the identical outcome
+- AND the port performs no git, filesystem, network, or provider access
+
+#### Scenario: Detached and dirty precede merge proof
+
+- GIVEN a candidate that is detached and dirty while a merge proof is also present
+- WHEN the port evaluates it
+- THEN the outcome is `detached`
+- AND a dirty but attached candidate carrying a merge proof yields `dirty`
+- AND the candidate is preserved in both cases
+
+#### Scenario: Local proof or read-only PR merge-commit evidence merges
+
+- GIVEN a clean attached candidate whose branch work is proven locally
+- WHEN the port evaluates it
+- THEN the outcome is `merged`
+- AND a candidate that fails every local proof but whose provider merge commit
+  is proven reachable from a resolved base candidate also yields `merged`
+
+#### Scenario: Every resolved base candidate is checked
+
+- GIVEN several resolved base candidates and a provider merge commit reachable
+  from one of them
+- WHEN acquisition checks the evidence
+- THEN the commit is accepted
+- AND a commit reachable from none of them is not
+
+#### Scenario: Missing or out-of-base evidence preserves
+
+- GIVEN a clean attached candidate with no local proof and missing, malformed,
+  or out-of-base provider evidence
+- WHEN the port evaluates it
+- THEN the outcome is `unmerged` and the worktree and branch are preserved
+
 ### Requirement: Conservative Skip for Dirty Worktrees
 
 The system MUST preserve dirty, main, detached, unmerged, and topology-protected
@@ -94,7 +169,7 @@ candidates.
 - AND it MUST preserve the worktree and branch
 
 ### Requirement: Bounded Candidate Resolution
-Candidate-base resolution MUST use only refs already present in the local repository. It MUST NOT trigger `git fetch` or any network operation.
+Candidate-base resolution MUST use only refs already present in the local repository. It MUST NOT trigger `git fetch`, and it MUST NOT perform any network operation as part of base resolution. The only optional network read in cleanup is the read-only provider merge-commit acquisition specified by the Worktree Ledger Port requirement, which runs after local proofs are inconclusive and never resolves or extends a base candidate.
 
 #### Scenario: Missing remote does not fetch
 - GIVEN `origin/main` is absent locally

@@ -317,8 +317,9 @@ pull requests.
 **Isolated git worktrees under `.worktrees/` with safe post-merge cleanup.**
 File-writing change work runs in a dedicated worktree; pure exploration stays
 outside one. The bundled cleanup script removes only merged + clean worktrees
-(detecting regular, squash, and rebase merges by patch-id), preserves dirty and
-unmerged ones, and never touches the main worktree.
+(detecting regular, squash, and rebase merges by patch-id, plus a PR merge commit
+proven reachable from a resolved base candidate), preserves dirty and unmerged
+ones, and never touches the main worktree.
 
 - **Provides:** skill `worktree-flow`, commands `/worktree-new`,
   `/worktree-clean`, script `bin/worktree-cleanup.sh`, and a `worktree-gate`
@@ -345,6 +346,19 @@ unmerged ones, and never touches the main worktree.
   saves the exact pre-refresh bytes to a cache-only immutable backup before
   replacing a customized gate; `ai-specs doctor` warns on customized gates and
   stays quiet on matching baselines.
+- **Worktree ledger port (cleanup classification):** cleanup classifies each
+  candidate through the pure `ledger.EvaluateWorktree` domain port of the same Go
+  binary — a deterministic evaluator over a normalized observation (`detached`,
+  `dirty`, `localMerged`, `prMergeCommit`, `mergeCommitInBase`) returning `detached`
+  / `dirty` / `merged` / `unmerged` in safety order. It reuses no Tracker
+  witness/store/checkpoint, and its accepted observations are pinned by a JSON golden
+  corpus under
+  `catalog/recipes/worktree-flow/gate/ledger/testdata/worktree-ledger-corpus/`.
+  Cleanup stays the Go actuator and owns every destructive check; the optional
+  provider seam is read-only acquisition — after local proofs are inconclusive it may
+  run `gh pr list --head <branch> --state all --json mergeCommit` and accept a merge
+  commit only when reachable from an already-resolved local base candidate, failing
+  closed otherwise. No provider API mutation is performed.
 - **Topologies:** `standalone`, `monorepo-apps` (naming-only), and
   `monorepo-submodules` (per-submodule `git -C` create + cleanup enumeration
   under a shared superproject `worktrees_dir`).
