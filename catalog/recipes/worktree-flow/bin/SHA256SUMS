@@ -1,5 +1,5 @@
 # Expected SHA-256 digests of the published worktree-gate release assets
-# (v0.23.1). This file is the trust root (D5): the network supplies only
+# (v0.24.0). This file is the trust root (D5): the network supplies only
 # bytes, the repository supplies the expected digest. A downloaded asset
 # whose SHA-256 does not match is deleted and never executed.
 #
@@ -33,11 +33,11 @@
 # binding; no new asset, no second trust root), same canonical go1.24.13 toolchain and the
 # same command above.
 #
-# Regenerated for the flow-agnostic lifecycle and release v0.23.1 (the same four-arch
-# asset gains the generic `bind` write, the branch-scoped `CloseBranchItem` archive-close
-# writer, and the bounded store-lock/idempotency work; no new asset, no second trust root),
-# with the canonical go1.24.13 toolchain and the same command above.
-18231f3b049af96ee3bb6a35aa76f6657c0b008567252900c724fb8aa92fbc1b  worktree-gate-darwin-arm64
-67b3f0b26bb7d4e2a77427e6da4300fc8215d9464cc389c77d6a9c1c653e285d  worktree-gate-darwin-amd64
-5fecfa98881a04e046e70ebc1e0c2a711154425f6ad69e441f764ae7b7bfc2b6  worktree-gate-linux-amd64
-38ad067b605beb4364a0f446b7b7a5dff37744e633abec7da9a7ea9008905122  worktree-gate-linux-arm64
+# Regenerated for the Worktree Ledger port and release v0.24.0 (the same four-arch
+# asset gains the provider-neutral Worktree domain port, current-tip-bound PR evidence,
+# and deterministic cleanup coverage; no new asset, no second trust root), with the
+# canonical go1.24.13 toolchain and the same command above.
+99a7b5f10dd6510d309a7ebc2844a061f83e26ae6e7c7c28d01942e42bfffca4  worktree-gate-darwin-arm64
+48157287fe2da4b26627e5c2191db06ee6e701bb1d133db8c9935e1c44a5b312  worktree-gate-darwin-amd64
+5aa050c6cfcffa3650ce6b1c7422960433530160bbc2e221061751aa924f20c6  worktree-gate-linux-amd64
+2bb66b16b623859af250bc7f954595896fa503617c8b1e3bab36444924924bfc  worktree-gate-linux-arm64
