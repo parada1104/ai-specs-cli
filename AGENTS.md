@@ -31,7 +31,6 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - A session works on one explicit user request or Trello card.
 - The orchestrator coordinates work inline using project skills and the runtime brief.
 - `explore` can run without a worktree when it only produces thinking.
-- Artifact phases and implementation phases run in a dedicated worktree when they write files.
 - VCS/PR provider: GitHub (`gh` CLI); base branch: `development`
 
 ## Trello Tracking
@@ -56,11 +55,11 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 
 ## Workflow Rules
 
-- Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.
+- Protected-branch writes are governed by the effective worktree `gate_mode = ask`: `always` requires a dedicated worktree before writing; `ask` requires the orchestrator to ask the user to choose a destination (a dedicated worktree, a feature branch in the current checkout, or an explicit protected-branch override); `off` permits writing where the user directs. Pure exploration can proceed without a worktree when it writes no files.
 - Do not merge or push to `development` without a PR and explicit human instruction.
 - Preserve unrelated worktree changes; never revert changes you did not make.
 - Before dispatching a write-capable subagent or task, verify which git repository, worktree, and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Under monorepo-submodules, confirming which-repo via show-toplevel is mandatory. Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.
-- If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). Create a worktree first (e.g. `/worktree-new`) and write there instead.
+- If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). With `gate_mode = always`, create a dedicated worktree first (e.g. `/worktree-new`) and write there instead; with `gate_mode = ask`, ask the user which destination to use — worktree (recommended), feature branch in place, or explicit protected-branch override — and wait; with `gate_mode = off`, the gate does not block.
 - Use a PR-based merge workflow; all changes to `development` go through a pull request.
 - VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations.
 - Do not push directly to `development`; always open a PR from a feature branch.
@@ -74,6 +73,8 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.
 - If the tracker gate warns or blocks, create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down.
 - Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare.
+- Tracker lifecycle checkpoints are Plan Build-independent: grade them with the tracker gate's direct host mode `ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh --root <root> --checkpoint pre-merge|archive-close [slug]`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive.
+- Provider tracker recipes only map native state through `[config.reconcile]`; they never enable, configure, or implement the ledger, and they never grade items.
 - Follow the project's designated workflow for structured changes.
 - Direct `skill-sync` runs are allowed only for metadata validation.
 - New authoritative logic, state machines, predicates, and durable state belong in Go.

@@ -65,7 +65,7 @@ gate_mode = "warn"
 
 default_list = "In Progress"
 done_list = "Done"
-reconcile = { scope_field = "board_id", max_age_seconds = 900, expectations = [{ event = "delivery", property = "list", config_field = "default_list" }, { event = "review", property = "list", config_field = "review_list" }, { event = "merge", property = "list", config_field = "done_list" }] }
+reconcile = { scope_field = "board_id", max_age_seconds = 900, expectations = [{ event = "delivery", property = "list", config_field = "default_list" }, { event = "review", property = "list", config_field = "review_list" }, { event = "merge", property = "list", config_field = "done_list", config_field_when_set = "published_list" }] }
 review_list = "Review"
 [recipes.vault-canonical-store]
 enabled = true
