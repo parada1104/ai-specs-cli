@@ -62,6 +62,23 @@ jinna mcp
 
 The provider calls OpenProject APIv3 directly. The official OpenProject remote `/mcp` endpoint is a separate operator-selected integration. This recipe never proxies, automatically switches, or replays failed writes between the local provider and the official endpoint.
 
+## Runtime boundary
+
+`ai-specs sync` and `ai-specs doctor` are local materialization checks. They resolve the recipe assets and the local MCP configuration; they do not contact OpenProject.
+
+Live diagnostics are explicit and opt-in:
+
+```bash
+jinna health
+jinna whoami
+```
+
+These commands make a live request to the configured OpenProject service. No passive or materialization command runs them automatically.
+
+The recipe's 30-second MCP timeout bounds local server startup and transport for `jinna mcp`. It is not the remote OpenProject API SLA, and a slow self-hosted instance can still exceed it.
+
+Slow or unavailable self-hosted service behavior stays visible. This recipe does not hide it with automatic retries, proxy fallback, endpoint switching, or write replay.
+
 ## Troubleshooting and rollback
 
 Managed installations live under a tag-keyed cache:
