@@ -113,7 +113,8 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         self.assertEqual(shape["scope_field"], "string")
         self.assertEqual(shape["max_age_seconds"], "integer")
         self.assertEqual(
-            set(shape["expectations"][0]), {"event", "property", "config_field"}
+            set(shape["expectations"][0]),
+            {"event", "property", "config_field", "config_field_when_set"},
         )
 
     def test_recipe_declares_lifecycle_event_defaults(self):
@@ -132,8 +133,43 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
             by_event["review"], {"event": "review", "property": "list", "config_field": "review_list"}
         )
         self.assertEqual(
-            by_event["merge"], {"event": "merge", "property": "list", "config_field": "done_list"}
+            by_event["merge"],
+            {
+                "event": "merge",
+                "property": "list",
+                "config_field": "done_list",
+                "config_field_when_set": "published_list",
+            },
         )
+
+    def test_recipe_declares_optional_published_list_without_invented_default(self):
+        """The Published lifecycle list is optional and has no fabricated default:
+        a project that never configured it keeps the merge target on Done."""
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        fields = recipe.config_schema.fields
+        self.assertIn("published_list", fields)
+        self.assertFalse(fields["published_list"].required)
+        self.assertIsNone(fields["published_list"].default)
+
+    def test_sync_stamps_conditional_merge_mapping_without_published_list(self):
+        root = self._make_project()
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
+            cfg = tomllib.load(fh)["recipes"]["trello-mcp-workflow"]["config"]
+        merge = next(e for e in cfg["reconcile"]["expectations"] if e["event"] == "merge")
+        self.assertEqual(merge["config_field"], "done_list")
+        self.assertEqual(merge["config_field_when_set"], "published_list")
+        # No fabricated Published list: the project never configured one.
+        self.assertNotIn("published_list", cfg)
+
+    def test_sync_preserves_project_published_list_override(self):
+        root = self._make_project('published_list = "Published"')
+        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
+            cfg = tomllib.load(fh)["recipes"]["trello-mcp-workflow"]["config"]
+        self.assertEqual(cfg["published_list"], "Published")
+        merge = next(e for e in cfg["reconcile"]["expectations"] if e["event"] == "merge")
+        self.assertEqual(merge["config_field_when_set"], "published_list")
 
     def test_sync_stamps_declared_reconcile_and_lifecycle_defaults(self):
         """Recipe-declared reconcile table and lifecycle list defaults propagate
@@ -367,9 +403,27 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         self.assertIn("merge", skill)
         self.assertIn("overrides it", skill)  # config is override-only
 
+    def test_skill_and_capabilities_document_published_and_closed_item_binding(self):
+        """The optional conditional merge target and the corroborated closed-item
+        comparison are documented, so the recipe-owned boundary is discoverable
+        without the agent hand-authoring an event mapping."""
+        skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
+        capabilities = (ROOT / "docs" / "capabilities.md").read_text()
+        self.assertIn("published_list", skill)
+        self.assertIn("config_field_when_set", skill)
+        self.assertIn("corroborat", skill.lower())
+        self.assertIn("config_field_when_set", capabilities)
+        self.assertIn("closed row", capabilities)
+        self.assertIn("unbound-identity", capabilities)
+
     def test_tracker_lifecycle_host_is_documented_as_plan_build_independent(self):
         """The generic Tracker recipe surfaces the lifecycle host as a reusable
-        command, separate from Plan Build/OpenSpec and from provider mapping."""
+        command, separate from Plan Build/OpenSpec and from provider mapping.
+
+        The host is the shell bridge's direct mode
+        (``tracker-card-gate.sh --root <root> --checkpoint <name>``) — the retired
+        Python host is gone and no new Python host replaces it.
+        """
         skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
         quick = (RECIPE_DIR / "commands" / "trello-workflow.md").read_text()
         readme = (RECIPE_DIR / "README.md").read_text()
@@ -377,8 +431,9 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         for name, text in (("skill", skill), ("quick-reference", quick),
                            ("README", readme), ("brief", brief)):
             with self.subTest(surface=name):
-                self.assertIn("tracker_ledger_host.py", text)
+                self.assertIn("tracker-card-gate.sh", text)
                 self.assertIn("--checkpoint", text)
+                self.assertNotIn("tracker_ledger_host.py", text)
         for name, text in (("skill", skill), ("README", readme)):
             with self.subTest(surface=name):
                 lowered = text.lower()

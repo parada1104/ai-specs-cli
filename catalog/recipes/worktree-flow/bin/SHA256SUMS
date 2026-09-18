@@ -1,5 +1,5 @@
 # Expected SHA-256 digests of the published worktree-gate release assets
-# (v0.23.0). This file is the trust root (D5): the network supplies only
+# (v0.23.1). This file is the trust root (D5): the network supplies only
 # bytes, the repository supplies the expected digest. A downloaded asset
 # whose SHA-256 does not match is deleted and never executed.
 #
@@ -27,7 +27,17 @@
 # four-arch asset gains Go-owned remote-observation reconciliation; no new asset,
 # no second trust root) with the canonical go1.24.13 toolchain via:
 #   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
-28bd88b8355760a8ab91d9c8d0ffa7fe9db3a6e1bbef43456df02a2f087376d6  worktree-gate-darwin-arm64
-33328df74f15c84cc0f6f0dd898c25d67386f4123522095710f161663c0fb83f  worktree-gate-darwin-amd64
-6c28bba5ce3b2ee7e0f73210af1e07c74d750699602172ac92197db8efdfb155  worktree-gate-linux-amd64
-08d17a8603476f11c4d831905a28b0032b7c842d37e49d45a636aa745771e785  worktree-gate-linux-arm64
+#
+# Regenerated again after the tracker-ledger follow-ups (the same four-arch asset gains
+# the optional `config_field_when_set` reconcile mapping and the corroborated closed-item
+# binding; no new asset, no second trust root), same canonical go1.24.13 toolchain and the
+# same command above.
+#
+# Regenerated for the flow-agnostic lifecycle and release v0.23.1 (the same four-arch
+# asset gains the generic `bind` write, the branch-scoped `CloseBranchItem` archive-close
+# writer, and the bounded store-lock/idempotency work; no new asset, no second trust root),
+# with the canonical go1.24.13 toolchain and the same command above.
+ee8d4bd9169b0ee15fcb82958dae33644eb634629baf738fe19a7134bce5d1cf  worktree-gate-darwin-arm64
+3ca717e0acc69a44ef39c7e694c0f598322bee41fba283174390b8eac32f8b7a  worktree-gate-darwin-amd64
+6ae55e32a69374029a05fcd070bbf9bbc0967b38eabb53871711e3869f4b0d78  worktree-gate-linux-amd64
+e0529fa3b0fcaf87225eef2dbad9d7aa23cf44ca2329bc9edbdc2a724cd3eb72  worktree-gate-linux-arm64

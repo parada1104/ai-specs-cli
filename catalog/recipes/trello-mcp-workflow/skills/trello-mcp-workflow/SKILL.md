@@ -33,6 +33,9 @@ metadata:
 | `board_id` | Yes | — | Trello board ID for the project. Example: `69ec097f13e2d38ecd89a557`. |
 | `default_list` | No | `In Progress` | List name where new cards are created when no phase-specific list applies. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
+| `review_list` | No | `Review` | List a card must reach when the `review` lifecycle event reconciles. |
+| `done_list` | No | `Done` | List a card must reach when the `merge` lifecycle event reconciles (the default merge target). |
+| `published_list` | No | — | Optional list that means the merge was also published/released. When set, the `merge` event reconciles against it instead of `done_list`. No default is invented: leave it unset when the board has no such list. |
 | `gate_mode` | No | `warn` | Tracker card gate: `off` / `warn` / `always`. |
 | `reconcile` | No | — | Declarative remote-reconciliation mapping (`scope_field`, `max_age_seconds`, `expectations`). The recipe declares the lifecycle mapping by default (delivery/review/merge); a project `[recipes.trello-mcp-workflow.config.reconcile]` block, when present, overrides it. Re-run `ai-specs sync` after recipe changes to propagate defaults. |
 
@@ -145,7 +148,28 @@ worktree-gate --ledger --checkpoint apply-start \
 ```
 
 A failed write exits `2`, persists nothing, and prints no verdict JSON; a retried
-`open` reports `already-open` instead of creating a second item. For `tracker.none`,
+`open` reports `already-open` instead of creating a second item.
+
+**`bind` is the generic binding command** for SDD, ODD, and no-flow work alike: one
+`--write` opens-if-absent and links in the same locked transaction, so a branch
+binding is seeded from a valid external tracker item with no `openspec/`/SDD/ODD
+artifact and no provider call:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --project-root . \
+  --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress"}'
+```
+
+A `bind` without `change` is a deliberate branch-level binding: it links the single
+open row for the same common dir and branch regardless of its stored slug, refuses
+(fail closed, nothing persisted) when several open rows exist, and otherwise opens a
+branch-only item, so external binding needs no artifact. A `bind` that carries an
+explicit `change` keeps the slug-keyed identity. A retried `bind` reports `unchanged`
+instead of duplicating, and a closed row is never reopened (D17). State stays in the
+existing Go ledger at `<git-common-dir>/ai-specs/ledger/state.json`, and nothing is
+written into the repository tree.
+
+For `tracker.none`,
 the human/agent records the exemption with an explicit write so every checkpoint
 honors it and it never registers as a conflict:
 
@@ -164,15 +188,14 @@ side is unwired in this slice.
 ### Tracker lifecycle checkpoints (`pre-merge`, `archive-close`)
 
 The ledger's lifecycle is **Plan Build-independent**: this recipe never needs an
-`openspec/` tree to grade a tracker checkpoint. Run the Tracker-domain host
-directly — this is the generic lifecycle command, and a future Jira/Linear recipe
-reuses it unchanged:
+`openspec/` tree to grade a tracker checkpoint. Run the tracker gate's direct
+host mode — this is the generic lifecycle command, and a future Jira/Linear
+recipe reuses it unchanged:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
-  <slug> --root "$PWD" --checkpoint pre-merge
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
-  <slug> --root "$PWD" --checkpoint archive-close
+GATE=ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh
+bash "$GATE" --root "$PWD" --checkpoint pre-merge <slug>
+bash "$GATE" --root "$PWD" --checkpoint archive-close <slug>
 ```
 
 `--root` is required and is the resolved project root, never the process cwd. The
@@ -232,9 +255,10 @@ remembered or inferred time. The payload is read under a fixed size budget
 (`--reconcile-event`). Use the stamped/verified gate binary path (`$WORKTREE_GATE_BIN`
 or the CLI cache path the hooks use). The recipe declares the supported lifecycle
 mapping by default — `delivery` → `default_list` (In Progress), `review` →
-`review_list` (Review), `merge` → `done_list` (Done) — so a synced project
-reconciles without per-project configuration; the project's `[config.reconcile]`
-block, when present, overrides it:
+`review_list` (Review), `merge` → `done_list` (Done), or → `published_list` when the
+project configured that optional list — so a synced project reconciles without
+per-project configuration; the project's `[config.reconcile]` block, when present,
+overrides it:
 
 ```bash
 worktree-gate --ledger --checkpoint apply-start --project-root "$PWD" \
@@ -312,9 +336,13 @@ Hard rules:
 - **Agreement is conditional expectation match, not delivery proof.** `agree` means
   only that the declared properties matched for the requested event; it is not
   evidence of a merge, a release, or a delivery.
-- **The closed-item / post-merge gap stays named.** A closed or archived card after
-  a merge has no safely bound target yet, so it reports `unbound-identity` and is
-  presented as a pending decision — never guessed.
+- **Closed items after a merge are locally corroborated.** D17 keeps a closed row
+  out of the primary slot, so a merge comparison has no bound card by default. It
+  binds one only when the observation's item id matches exactly one locally stored
+  closed row for the current identity: that corroborated row is compared read-only,
+  never reopened, and never selected for new work. An id with no local match, or
+  with more than one, stays `unbound-identity` and is presented as a pending
+  decision — never guessed and never trusted from the provider alone.
 
 Reading the mapping is bounded acquisition: the manifest must be a plain file, and
 the standard parser runs under a deadline with capped output. A missing parser, a
@@ -335,6 +363,9 @@ hand:
 default_list = "In Progress"
 review_list = "Review"
 done_list = "Done"
+# Optional; set it only when the board has a Published-style list. Omit it and the
+# merge event keeps reconciling against done_list.
+# published_list = "Published"
 
 [recipes.trello-mcp-workflow.config.reconcile]
 scope_field = "board_id"
@@ -354,13 +385,19 @@ config_field = "review_list"
 event = "merge"
 property = "list"
 config_field = "done_list"
+config_field_when_set = "published_list"
 ```
 
 Each expectation means "when the caller asks about `event`, the property `property`
-must show the value configured in `config_field`". `max_age_seconds` must be
-positive and at most `9223372036`; anything else is `unconfigured`, never a clamped
-default. Note the remaining product gap: a closed/archived card after a merge
-needs an explicit close-report binding; the gate never guesses a closed row.
+must show the value configured in `config_field`". `config_field_when_set` is an
+optional conditional target: the merge expectation compares `published_list` when
+the project configured that list, and `done_list` otherwise. The condition is
+declared by the recipe, so a project still configures list names only — it never
+hand-authors which property maps to which list, and no Published list is invented.
+`max_age_seconds` must be positive and at most `9223372036`; anything else is
+`unconfigured`, never a clamped default. When there is no open card, a merge
+comparison binds a closed row only through the locally corroborated id described
+above; the gate never guesses a closed row.
 
 ---
 

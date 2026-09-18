@@ -858,7 +858,7 @@ class StructuredConfigSectionTests(unittest.TestCase):
         self.assertEqual(shape["max_age_seconds"], "integer")
         self.assertEqual(
             set(shape["expectations"][0]),
-            {"event", "property", "config_field"},
+            {"event", "property", "config_field", "config_field_when_set"},
         )
 
     def test_structured_unknown_subkey_rejected(self):

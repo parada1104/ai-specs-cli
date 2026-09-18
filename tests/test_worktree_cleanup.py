@@ -913,6 +913,100 @@ class WorktreeCleanupTests(unittest.TestCase):
         self.assertNotIn("would remove apps/api-feat-done", out.stdout)
         self.assertNotIn("apps/api-feat-done", out.stdout)
 
+    # --- Automatic ledger close at the VCS boundary (T3) ---------------------
+
+    def _seed_ledger(self, repo: Path, branch: str, change: str) -> Path:
+        import json
+
+        common = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        real_common = os.path.realpath(common)
+        store_path = Path(real_common) / "ai-specs" / "ledger" / "state.json"
+        store_path.parent.mkdir(parents=True, exist_ok=True)
+        state = {
+            "v": 1,
+            "items": [
+                {
+                    "id": "0123456789abcdef",
+                    "identity": {
+                        "common_dir": real_common,
+                        "branch": branch,
+                        "change": change,
+                    },
+                    "status": "open",
+                    "item_id": "card-1",
+                    "provider_id": "test-recipe",
+                    "native_type": "card",
+                    "url": "",
+                    "state": "",
+                    "provider": {},
+                    "exemption": "",
+                    "conflict": None,
+                    "decisions": [
+                        {
+                            "at": "2026-09-13T00:00:00Z",
+                            "checkpoint": "",
+                            "kind": "open",
+                            "choice": "",
+                            "note": "",
+                        }
+                    ],
+                }
+            ],
+            "opt_outs": [],
+        }
+        store_path.write_text(json.dumps(state))
+        return store_path
+
+    def test_cleanup_closes_matching_ledger_item(self):
+        import json
+
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-ledger")
+        (wt / "f.txt").write_text("x\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "ledger work")
+        git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feat-ledger")
+        # The stored identity carries a change slug; cleanup only sees the branch.
+        store_path = self._seed_ledger(repo, "feat-ledger", "some-change-slug")
+
+        out = self._run_cleanup(repo)
+
+        self.assertFalse(wt.exists(), "merged worktree should be removed")
+        item = json.loads(store_path.read_text())["items"][0]
+        self.assertEqual(item["status"], "closed")
+        self.assertEqual(item["decisions"][-1]["kind"], "close")
+        self.assertEqual(item["decisions"][-1]["checkpoint"], "archive-close")
+        self.assertIn("closed ledger item for feat-ledger", out.stdout)
+
+    def test_dry_run_never_mutates_ledger(self):
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-ledger-dry")
+        (wt / "f.txt").write_text("x\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "ledger dry work")
+        git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feat-ledger-dry")
+        store_path = self._seed_ledger(repo, "feat-ledger-dry", "dry-change")
+        before = store_path.read_bytes()
+
+        self._run_cleanup(repo, "--dry-run")
+
+        self.assertTrue(wt.exists(), "dry run must remove nothing")
+        self.assertEqual(
+            store_path.read_bytes(), before, "dry run must not mutate the ledger"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

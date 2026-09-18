@@ -279,7 +279,6 @@ context sources, safety rules, and workflow conventions.
 purpose = "per-project AI harness for configuration, MCPs, recipes, memory, and tracker integration."
 runtime_flow = [
   "A session works on one explicit user request or Trello card.",
-  "Artifact phases run in a dedicated worktree when they write files.",
 ]
 context_sources = [
   "Trello is the source of truth for work state and dependencies.",
@@ -291,7 +290,9 @@ conflict_policy = [
 ]
 workflow_rules = [
   "Do not merge or push to the integration branch without explicit human instruction.",
-  "Create a dedicated worktree for changes that write artifacts or modify code.",
+  # The protected-branch worktree requirement is contributed by the
+  # worktree-flow recipe and is config-aware via
+  # [recipes.worktree-flow.config].gate_mode (`always` / `ask` / `off`).
 ]
 useful_commands = [
   "Inspect the active Trello card before resuming work.",

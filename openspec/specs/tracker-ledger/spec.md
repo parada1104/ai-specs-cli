@@ -217,8 +217,9 @@ the predicate.
 
 - GIVEN a pinned fixture input (identity, evidence, mode, checkpoint)
 - WHEN each checkpoint host invokes the ledger (`work-start` via the
-  plan-build gate, `apply-start`/`pr-review` via the tracker gate, `pre-merge`
-  and `archive-close` via the tracker-ledger host)
+  plan-build gate, `apply-start`/`pr-review` via the tracker gate in hook mode,
+  `pre-merge` and `archive-close` via that same tracker gate in direct host mode
+  `--root <root> --checkpoint pre-merge|archive-close`)
 - THEN every host observes the same decision, conflict, and exit code for that
   input
 
@@ -407,7 +408,9 @@ provider-private in recipe configuration and in an opaque provider object on
 the item that the predicate does not read; core item fields MUST remain
 provider-neutral (item id, provider id, native type, URL, state, exemption,
 evidence references). The ledger MUST NOT perform any provider create, update,
-move, comment, or label call in this slice. Provider configuration MUST live
+move, comment, or label call in this slice; the generic `bind` writer and the
+VCS-boundary archive-close writer are local lifecycle writers and perform no such
+call and no network access. Provider configuration MUST live
 in recipe configuration, never in ledger core.
 
 #### Scenario: No generic capability ledger
@@ -499,12 +502,13 @@ MUST exercise the bridge rather than a second grader.
 
 ---
 
-### Requirement: Machine write surface for open, link, close, and exempt
+### Requirement: Machine write surface for open, bind, link, close, and exempt
 
 The ledger CLI MUST expose a machine write surface on the existing verdict flow — one JSON-payload write
 verb plus the existing `--checkpoint`, following the proven `--decide` pattern: parse → validate → locked
-read-modify-write → re-grade → print verdict. It MUST support exactly the kinds `open`, `link`, `close`, and
-`exempt`, and MUST NOT add a new subcommand tree, second binary, second Go module, or new release asset.
+read-modify-write → re-grade → print verdict. It MUST support exactly the kinds `open`, `bind`, `link`,
+`close`, and `exempt`, and MUST NOT add a new subcommand tree, second binary, second Go module, or new
+release asset.
 After this change every declared decision kind and core item field — `DecisionOpen`, `DecisionClose`,
 `DecisionLink`, and `Item.{ID, URL, State, NativeType, Provider, Exemption}` — MUST have at least one
 production writer; any declared kind still unreachable from production MUST be named as deliberately
@@ -513,6 +517,44 @@ corresponding machine-written kind to the item's append-only decision log. The `
 provider's native id, URL, native type, and state on the provider-neutral core fields plus an opaque
 provider object the predicate does not read. The `exempt` verb MUST set the item's exemption with a
 persisted reason.
+
+The `bind` verb is the **generic, workflow-agnostic lifecycle write**: in one locked transaction it opens
+the primary item if the identity has none and records the supplied native fields, appending the existing
+`open` and `link` decisions (never a new decision kind). It MUST be usable by SDD, ODD, and no-flow callers
+alike, MUST require **no** repository tracker artifact (`## Tracker` section, `tracker.none`, or `openspec/`
+tree), and MUST perform no provider or network call. A `bind` that omits `change` MUST be a deliberate
+**branch-level** binding: it matches the single open row for the same common dir and branch regardless of
+the stored change slug, MUST refuse (fail closed, nothing persisted) when several open rows exist, and
+otherwise MUST open a new branch-only item. A `bind` whose payload names the change MUST keep the
+slug-keyed identity. A retried `bind` for an already-linked item MUST report the idempotent `unchanged`
+outcome; and a closed row MUST NOT be reopened — a later explicit `bind` opens a distinct new primary (D17).
+
+#### Scenario: Bind seeds open and link without a repository artifact
+
+- GIVEN a bound identity, an empty store, and no `openspec/` tree or `## Tracker` section
+- WHEN a single `bind` write supplies the native id, URL, native type, state, and provider payload
+- THEN exactly one open primary item exists with those core fields populated, the open and link decisions
+  are appended, the `write` sidecar reports `applied: true`, and no provider or network call was made
+
+#### Scenario: Bind is branch-level without an artifact
+
+- GIVEN several active change folders (a `change-ambiguous` identity) and either no open row or exactly one
+  existing open row for the common dir and branch
+- WHEN a `bind` write omits `change`
+- THEN the single existing open row is linked regardless of its stored slug, or a new branch-only item is
+  opened when none exists, and no `openspec/` artifact or provider call is required
+
+#### Scenario: Branch-level bind refuses a collision
+
+- GIVEN two open rows for one common dir and branch
+- WHEN a `bind` write omits `change`
+- THEN the bind is refused, nothing is persisted, and the command exits `2`
+
+#### Scenario: Repeated bind is idempotent
+
+- GIVEN an item already linked through `bind`
+- WHEN the identical `bind` write is issued again
+- THEN no second item is created, no duplicate link decision is appended, and the outcome is `unchanged`
 
 #### Scenario: Open creates exactly one primary item
 
@@ -542,12 +584,26 @@ persisted reason.
 
 ---
 
-### Requirement: Explicit item opening
+### Requirement: Explicit item opening by authorized local lifecycle writers
 
 An item MUST be opened only by a deliberate write. Grading MUST be pure: no grade of any checkpoint, in
 any mode, MAY create, mutate, or delete store state. Hosts MUST NOT auto-open an item because a
 `## Tracker` section parses or because a checkpoint grades `needs-item`. The archived scenario in which
 the grade opens the item is superseded: the opening verb lives on the write surface.
+
+The archived **agent-only** L2/DW1 wording is superseded. Opening is no longer agent-only: exactly two
+writers are authorized, and both are **local lifecycle writers** that perform no provider or network call.
+
+1. The generic machine write surface (the `open` and `bind` verbs, plus `link`, `close`, and `exempt`),
+   invoked deliberately by a host, a human, or a workflow-agnostic caller. It is usable before any apply
+   boundary and requires no SDD/ODD/OpenSpec artifact.
+2. The VCS-boundary archive-close writer, invoked by the verified worktree cleanup at a merge boundary
+   (the `post-merge` hook and its direct cleanup fallback). It closes the matching open primary item for
+   the repository common dir and branch at `archive-close`, ignoring any stored change slug.
+
+Neither writer creates, mutates, moves, comments on, or labels a provider item, and neither may be reached
+by a grade path. A closed row MUST NOT be reopened by either writer, and a reused branch opens a new
+primary only through an explicit write (D17).
 
 #### Scenario: Grading never writes
 
@@ -560,6 +616,59 @@ the grade opens the item is superseded: the opening verb lives on the write surf
 - GIVEN a `## Tracker` section with a valid `card_id` and no write issued
 - WHEN any checkpoint grades
 - THEN no item is created and no write surface call is made by the parse alone
+
+#### Scenario: Authorized writers are local and provider-free
+
+- GIVEN a bound ledger and a workflow-agnostic caller (no SDD, ODD, or OpenSpec in play)
+- WHEN the generic `bind` writer or the VCS archive-close writer records the lifecycle
+- THEN the only durable change is the local store under `<git-common-dir>/ai-specs/ledger/`, no provider
+  or network call is performed, and no grade path mutated state
+
+---
+
+### Requirement: VCS-boundary archive-close writer
+
+The lifecycle MUST close automatically at the VCS merge boundary without coupling to SDD, ODD, OpenSpec, or
+any agent. A managed `post-merge` trigger MUST invoke the verified worktree cleanup, which closes the
+matching item **before** any destructive removal. Cleanup matches the open primary by the repository's Git
+common dir and the candidate branch, ignoring any stored change slug, and records the `archive-close`
+checkpoint. A missing or already-closed matching item is an idempotent no-op, and a collision of two open
+rows for the pair fails closed rather than guessing (D17). The direct tracker host
+(`tracker-card-gate.sh --root <root> --checkpoint archive-close`) remains the fallback when the Git hook is
+absent.
+
+The close MUST be reached only from the merge boundary, and it MUST NOT invent or reopen a row: a branch
+whose merge is not proven is preserved. The `post-merge` hook MUST be fail-open for the sealed merge
+outcome (it reports failures to stderr and exits `0`), while the destructive cleanup it triggers MUST fail
+closed: when the ledger close cannot be persisted, the candidate worktree/branch is preserved rather than
+removed, so no work is destroyed without its lifecycle record.
+
+#### Scenario: Post-merge closes the matching item before removal
+
+- GIVEN a merged, clean worktree whose branch has one open ledger item carrying a change slug
+- WHEN the managed `post-merge` trigger runs the verified cleanup
+- THEN the matching item is closed with an `archive-close` decision before the worktree is removed, and the
+  close matched on the branch despite the stored slug
+
+#### Scenario: Post-merge close is idempotent and never reopens
+
+- GIVEN the matching item for a merged branch is already closed
+- WHEN the `post-merge` trigger runs cleanup again
+- THEN no row is created, rewritten, or reopened, and cleanup reports a successful no-op
+
+#### Scenario: Failed close preserves the candidate (fail closed)
+
+- GIVEN cleanup has proven a worktree merged but the ledger store write fails
+- WHEN cleanup runs
+- THEN the candidate worktree and branch are preserved and reported as failed, no destructive action is
+  taken, and the merge outcome observed by Git is unchanged
+
+#### Scenario: Hook absence falls back to the direct host
+
+- GIVEN a project with no managed `post-merge` hook installed
+- WHEN the merge boundary passes
+- THEN closing the item remains available through the direct tracker host at `archive-close`, and nothing
+  infers a close from an OpenSpec archive
 
 ---
 
@@ -574,7 +683,9 @@ derivation so two opens for one identity in the same second cannot yield two ite
 `link` write identical to the item's current link state MUST NOT append a duplicate decision. A `close`
 of an already-closed item MUST NOT create anything and MUST be explicitly signaled rather than silently
 duplicated. A write for a `change-ambiguous` identity MUST be refused (fail closed) unless the caller
-supplies an explicit change slug. On lock timeout, grade paths MUST fail open and write paths MUST fail
+supplies an explicit change slug. The one exception is a branch-level `bind` that omits `change`: it is
+matched by common dir and branch, as defined by the machine write surface, instead of being refused. On
+lock timeout, grade paths MUST fail open and write paths MUST fail
 closed with exit `2` and no store change.
 
 #### Scenario: Retried open stays idempotent
@@ -605,7 +716,7 @@ closed with exit `2` and no store change.
 #### Scenario: Change-ambiguous write is refused
 
 - GIVEN an identity whose change collision is `change-ambiguous`
-- WHEN a write is attempted without an explicit slug
+- WHEN a write other than a branch-level `bind` is attempted without an explicit slug
 - THEN the write is refused, nothing is persisted, and the command exits `2`
 
 #### Scenario: Lock contention has bounded postures
@@ -624,8 +735,9 @@ thin Python bridge — acquisition only — MUST build the evidence file from lo
 ledger store snapshot; `code` = the change's `## Tracker` `card_id` and recorded `pr:` parsed by the
 existing pure parser, or the presence of `tracker.none`; `git` = locally derivable branch/HEAD/commit
 plus the recorded PR URL. The bridge MUST NOT grade, MUST NOT introduce a new Python predicate, and MUST
-NOT call `gh`, MCP, or the network. The tracker-gate and tracker-ledger hosts MUST pass the
-bridge-built evidence at their checkpoints (`apply-start`, `pr-review`, `pre-merge`, `archive-close`);
+NOT call `gh`, MCP, or the network. The tracker gate host — in hook mode and in its direct
+`--root <root> --checkpoint pre-merge|archive-close` mode — MUST pass the
+bridge-built evidence at its checkpoints (`apply-start`, `pr-review`, `pre-merge`, `archive-close`);
 `work-start` keeps its existing host behavior. Unreadable or malformed evidence MUST fail open (empty
 evidence side), as today. The `remote` side MUST have no producer in this slice — no tracker MCP read —
 and the deliberate gap MUST be stated in the docs. The bridge and evidence passing MUST keep working from
@@ -678,7 +790,7 @@ a human act (remove the file and adjudicate in the ledger); no grade MAY auto-re
 ### Requirement: Witness-derived provider configuration lookup
 
 The ledger mode / gate mode configuration lookup MUST resolve the bound recipe id from the durable
-binding witness (`Binding.RecipeID`) at every host layer — the plan-build work-start gate, the tracker gate, the tracker-ledger host, and doctor. Reading the witness is acquisition, not grading. When the
+binding witness (`Binding.RecipeID`) at every host layer — the plan-build work-start gate, the tracker gate (including its direct `--root <root> --checkpoint pre-merge|archive-close` host mode), and doctor. Reading the witness is acquisition, not grading. When the
 witness is missing or unreadable, the lookup MUST fall back to the legacy literal so behavior is
 identical to today. No host MAY resolve its config section from a hardcoded provider or recipe literal:
 the one literal MUST live in the bridge's fallback, and each host MUST read
@@ -703,12 +815,13 @@ provider extension point; no provider-specific behavior enters ledger core.
 
 The five checkpoints MUST keep their tracker-domain hosts: `work-start` → plan-build-flow gate;
 `apply-start` and `pr-review` → tracker card gate; `pre-merge` and `archive-close` →
-`lib/_internal/tracker_ledger_host.py` (`--checkpoint pre-merge|archive-close`). The `pre-merge` and
+the `tracker-card-gate.sh` shell bridge in direct host mode
+(`--root <root> --checkpoint pre-merge|archive-close`). The `pre-merge` and
 `archive-close` checkpoints MUST be executable with no `openspec/` tree, and tracker item closure MUST
 stay independent of OpenSpec archive: archive state MUST NOT select, infer, or substitute for a tracker
 checkpoint, and the Plan Build artifact guardian MUST NOT host, grade, or write tracker state. Plan Build
-owns its own verify → promotion → read-only guardian → archive tail; the tracker-ledger host owns only
-tracker lifecycle grading. Where `work-start`'s host is not enabled (a tracker-bound project without
+owns its own verify → promotion → read-only guardian → archive tail; the `tracker-card-gate.sh` direct
+checkpoint host owns only tracker lifecycle grading. Where `work-start`'s host is not enabled (a tracker-bound project without
 plan-build-flow), that limitation MUST be visible through the doctor check or documentation while the
 other four checkpoints keep grading.
 
@@ -722,7 +835,7 @@ other four checkpoints keep grading.
 #### Scenario: Tracker closure without an OpenSpec archive
 
 - GIVEN a tracker-bound change with no `openspec/` tree
-- WHEN `archive-close` is graded through the tracker-ledger host
+- WHEN `archive-close` is graded through the `tracker-card-gate.sh` direct checkpoint host
 - THEN the checkpoint reaches the same Go predicate and returns a verdict
 - AND no OpenSpec archive is required, read, or inferred
 

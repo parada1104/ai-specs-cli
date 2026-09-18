@@ -9,8 +9,10 @@ verdict, and assert:
   ``pr-review`` through the stub;
 - exit 0 allow / exit 2 block, and fail-open on a missing binary or bad input;
 - ``openspec/**`` and non-production writes never reach the ledger;
-- the shell tokenizer detects only ``gh pr create`` (archive-close moved to the
-  pre-merge guardian, so archive shell actions are not gated here);
+- the shell tokenizer detects only `gh pr create`; the `pre-merge` and
+  `archive-close` checkpoints are graded by this same script's direct host mode
+  (`--root <root> --checkpoint <name>`), so archive shell actions are not gated
+  here;
 - the script still parses and runs under bash 3.2.
 """
 from __future__ import annotations
@@ -434,12 +436,13 @@ class TrackerCardGateHookTests(unittest.TestCase):
 
     # --- ledger evidence bridge and tracker.none exemption ---
 
-    def test_gate_comments_name_the_tracker_ledger_host(self):
-        """W6: the host comments must not still claim the artifact guardian grades it."""
+    def test_gate_comments_name_the_direct_host_mode(self):
+        """W6/strangler: the shell host documents its direct CLI checkpoint mode
+        and never claims the artifact guardian grades tracker checkpoints."""
         text = GATE.read_text(encoding="utf-8")
         self.assertNotIn("pre-merge guardian", text)
         self.assertNotIn("premerge_guardian", text)
-        self.assertIn("tracker_ledger_host.py", text)
+        self.assertIn("--checkpoint pre-merge|archive-close", text)
 
     def test_graded_argv_carries_the_bridge_evidence_file(self):
         self._change("demo-change")

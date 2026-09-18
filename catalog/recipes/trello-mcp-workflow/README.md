@@ -134,15 +134,14 @@ The ledger is the only grader. The five checkpoints (`work-start`, `apply-start`
 ### Tracker lifecycle host (`pre-merge`, `archive-close`)
 
 The `pre-merge` and `archive-close` checkpoints are Plan Build-independent: the
-Tracker-domain host grades them with **no `openspec/` tree**. Run it directly at
+shell host grades them with **no `openspec/` tree**. Run its direct host mode at
 the lifecycle boundary — it is the generic command a future Jira/Linear recipe
 reuses unchanged:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
-  <slug> --root "$PWD" --checkpoint pre-merge
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
-  <slug> --root "$PWD" --checkpoint archive-close
+GATE=ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh
+bash "$GATE" --root "$PWD" --checkpoint pre-merge <slug>
+bash "$GATE" --root "$PWD" --checkpoint archive-close <slug>
 ```
 
 `--root` is required (the resolved project root, never the process cwd) and the
@@ -181,7 +180,33 @@ binary, parse errors, or unavailable IO.
 ### The write surface
 
 Items are opened, linked, closed, and exempted only by explicit writes — a parsed
-`## Tracker` section never opens one, and grading never writes:
+`## Tracker` section never opens one, and grading never writes. `bind` is the one
+verb that combines open and link.
+
+**`bind` is the generic binding command** for SDD, ODD, and no-flow work alike: it
+seeds the branch binding from a valid external tracker item with no `openspec/` (or
+any other repository) artifact and no provider/network call:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
+  --project-root . \
+  --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress"}'
+```
+
+`bind` is open-if-absent plus link in one locked transaction: it creates the primary
+item when the identity has none and records the supplied provider-neutral fields and
+the open+link decisions either way. A `bind` that omits `change` is a deliberate
+branch-level binding: it matches the single open row for the same common dir and
+branch regardless of its stored change slug, refuses (fail closed, nothing persisted)
+when several open rows exist, and otherwise opens a branch-only item — so external
+binding works with no SDD/ODD/OpenSpec artifact. A `bind` that names the change keeps
+the slug-keyed identity. A retried `bind` reports `unchanged` instead of duplicating,
+and a closed row is never reopened — a later explicit `bind` opens a distinct new
+primary (D17). Authoritative state stays in the existing Go
+ledger at `<git-common-dir>/ai-specs/ledger/state.json`; the command writes nothing
+into the repository tree.
+
+The explicit verbs remain available when a caller wants to control each step:
 
 ```bash
 worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
@@ -203,7 +228,8 @@ JSON. Grade paths keep failing open.
 
 ### Evidence sides
 
-`tracker-card-gate.sh` and `tracker_ledger_host.py` pass a bridge-built `--evidence`
+`tracker-card-gate.sh` (pre-tool-use hook and direct host mode) passes a
+bridge-built `--evidence`
 file (`lib/_internal/ledger_bridge.py`, acquisition only): `local` is the ledger's
 own store snapshot, `code` is the change's `## Tracker` `card_id`, and `git` is that
 same id when a `pr:` is recorded. The `--evidence` `remote` side stays **unwired**:

@@ -11,8 +11,12 @@ post-merge cleanup.
   a worktree for a change and to reclaim merged worktrees.
 - **Script `bin/worktree-cleanup.sh`** — verified Go cleanup launcher: removes
   only merged + clean worktrees, preserves dirty and unmerged ones, never touches
-  protected heads, deletes merged remote branches from the main worktree, and
-  verifies remote absence with `git ls-remote --heads`.
+  protected heads, deletes merged remote branches from the main worktree, verifies
+  remote absence with `git ls-remote --heads`, and closes the matching tracker-ledger
+  item at `archive-close` before any destructive removal.
+- **Managed `.git/hooks/post-merge` trigger** — runs that cleanup automatically at a
+  merge boundary (`condition = "not_exists"`, so an existing user hook is preserved).
+  It is workflow-agnostic: no SDD/ODD/OpenSpec dependency and no provider/network call.
 
 ## Enable
 
@@ -44,7 +48,7 @@ to an unverified or legacy destructive implementation.
 | Mode | Behavior |
 |---|---|
 | `always` | Current strict behavior: block writes to the main worktree on protected branches. |
-| `ask` | Block, but surface a bypass hint: rerun with `WORKTREE_GATE_MODE=off` for that one invocation. |
+| `ask` | Block, and direct the agent to ask the user to choose a destination: a dedicated worktree (recommended), a feature branch in the current checkout, or an explicit protected-branch override. The agent must not self-bypass. |
 | `off` | Disable the gate entirely; writes are allowed even on protected branches. |
 
 Default: `always`.
@@ -211,6 +215,31 @@ or remove the gate and resync: `rm <gate-path> && ai-specs sync`.
 
 After a user-modified warning, re-apply any local customizations to the refreshed
 gate as needed.
+
+## Post-merge lifecycle close
+
+The recipe materializes a managed `.git/hooks/post-merge` wrapper. At a merge
+boundary it invokes the cleanup launcher, which closes the matching open
+`tracker-ledger` item at `archive-close` (matched on the Git common dir + branch,
+ignoring any stored change slug) **before** removing a provably merged worktree or
+local branch. The close is idempotent and never reopens a closed row (D17), and it
+performs no provider or network call — it writes only the local ledger store under
+`<git-common-dir>/ai-specs/ledger/`.
+
+The hook is fail-open for the merge itself: it reports cleanup failures on stderr
+and exits `0`, so it never changes the already-sealed merge outcome. The
+destructive cleanup it triggers fails closed: if the ledger close cannot be
+persisted, the candidate worktree/branch is preserved instead of removed. Without
+the hook, the direct tracker host
+(`tracker-card-gate.sh --root <root> --checkpoint archive-close`) remains the
+fallback.
+
+At sync the wrapper is stamped with the project's `worktrees_dir`,
+`integration_branch`, and `repo_topology`, and passes them to the launcher as
+`--dir`, `--base`, and `--topology`. A customized project therefore never silently
+falls back to `.worktrees`/current HEAD during automatic cleanup. The
+`not_exists` policy preserves any pre-existing user hook at `.git/hooks/post-merge`;
+remove the file and run `ai-specs sync` to (re)install the managed wrapper.
 
 ## Post-merge remote cleanup
 

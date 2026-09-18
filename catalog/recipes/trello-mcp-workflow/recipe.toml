@@ -77,6 +77,12 @@ required = false
 type = "string"
 default = "Done"
 help_text = "List a card must reach when the merge lifecycle event reconciles. Must match an existing list on your Trello board."
+
+[config.published_list]
+required = false
+type = "string"
+help_text = "Optional list that means the merge was also published/released (e.g. Published). Leave it unset when the board has no such list: the merge event then reconciles against done_list. No default is invented, and an unset value is never treated as configured."
+
 [config.board_isolation]
 forbidden_tools = ["trello_get_my_cards", "trello_list_boards"]
 restricted_tools = ["trello_set_active_board"]
@@ -115,6 +121,11 @@ help_text = "Tracker ledger mode: always (block missing/conflicted state at the 
 # recipe schema validates this block's shape (`scope_field`, `max_age_seconds`,
 # `expectations` entries) and sync carries the project-declared block through
 # without the old unknown-key warning.
+#
+# `merge` is conditional and recipe-owned: it targets `published_list` only when
+# the project configured that list, and `done_list` otherwise. The condition is
+# declarative (`config_field_when_set`) so the project still configures list names
+# only; it never hand-authors which property maps to which list.
 [config.reconcile]
 scope_field = "board_id"
 max_age_seconds = 900
@@ -133,6 +144,7 @@ config_field = "review_list"
 event = "merge"
 property = "list"
 config_field = "done_list"
+config_field_when_set = "published_list"
 
 [init]
 prompt = "init.md"
@@ -151,7 +163,7 @@ workflow_rules = [
     "On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.",
     "If the tracker gate warns or blocks, create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down.",
     "Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare.",
-    "Tracker lifecycle checkpoints are Plan Build-independent: grade them with `lib/_internal/tracker_ledger_host.py <slug> --root <root> --checkpoint pre-merge|archive-close`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive.",
+    "Tracker lifecycle checkpoints are Plan Build-independent: grade them with the tracker gate's direct host mode `ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh --root <root> --checkpoint pre-merge|archive-close [slug]`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive.",
     "Provider tracker recipes only map native state through `[config.reconcile]`; they never enable, configure, or implement the ledger, and they never grade items.",
 ]
 

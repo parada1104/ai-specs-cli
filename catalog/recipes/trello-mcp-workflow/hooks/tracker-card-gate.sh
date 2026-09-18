@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # tracker-card-gate.sh — pre-tool-use guard distributed by trello-mcp-workflow.
 #
-# Semantic model: the ledger is the only grader. This host is a thin
-# acquisition/JSON bridge to the verified Go `--ledger` predicate: it maps a
-# production path write to the `apply-start` checkpoint and `gh pr create` to
-# the `pr-review` checkpoint. Archive-close is graded by the tracker ledger host
-# (`lib/_internal/tracker_ledger_host.py --checkpoint archive-close`).
+# Semantic model: the ledger is the only grader. This script is the one shell
+# host: a thin acquisition/JSON bridge to the verified Go `--ledger` predicate.
+# As a pre-tool-use hook it maps a production path write to the `apply-start`
+# checkpoint and `gh pr create` to the `pr-review` checkpoint. As a CLI
+# (`--root <root> --checkpoint pre-merge|archive-close`, or the retained
+# `--stage pre-merge|pre-archive` alias) it grades the Tracker lifecycle
+# checkpoints directly. That CLI mode absorbed the retired
+# `lib/_internal/tracker_ledger_host.py` Python host: no separate Python host
+# exists for `pre-merge` or `archive-close`.
 #
 # Dual-input contract (one script, every harness):
 #   PATH mode stdin = JSON { "event", "tool_name",
@@ -52,6 +56,22 @@ _resolve_gate_mode() {
   esac
 }
 gate_mode="$(_resolve_gate_mode)"
+
+# --- Direct host mode (argv-selected; never the stdin hook contract) ----------
+# Merge skills/commands grade a Tracker lifecycle checkpoint with an explicit
+# host flag:
+#   tracker-card-gate.sh --root <project-root> --checkpoint pre-merge|archive-close [slug]
+#   tracker-card-gate.sh --root <project-root> --stage pre-merge|pre-archive [slug]
+# The mode is selected by argv only, so a piped hook payload can never choose a
+# checkpoint, and the stdin contract below is untouched. Like hook mode this is
+# acquisition/JSON transport to the verified Go predicate: no predicate, no
+# write, no network.
+host_mode=0
+for _host_arg in "$@"; do
+  case "$_host_arg" in --root|--checkpoint|--stage) host_mode=1 ;; esac
+done
+
+if [ "$host_mode" -eq 0 ]; then
 
 input="$(cat)"
 
@@ -480,6 +500,8 @@ kind="${kind_line%%$'\t'*}"
 rest_kl="${kind_line#*$'\t'}"
 tool_name="${rest_kl%%$'\t'*}"
 cwd="${rest_kl#*$'\t'}"
+
+fi  # end hook-payload parsing (skipped in direct host mode)
 # --- Ledger checkpoint bridge (acquisition + JSON only; no predicate) ---------
 # The five ledger checkpoints are graded by the verified Go `--ledger` mode on
 # the shared worktree-gate binary (one predicate, one trust root). This host
@@ -648,10 +670,18 @@ print("  choices: " + ", ".join(prompt.get("choices") or []))
 }
 
 _ledger_grade() {
-  # $1 checkpoint, $2 mode, $3 root, $4 prefix. Returns 0 allow / 2 block.
-  local checkpoint="$1" mode="$2" root="$3" prefix="$4"
+  # $1 checkpoint, $2 mode, $3 root, $4 prefix, $5 explicit change slug (optional).
+  # Returns 0 allow / 2 block. A caller-supplied slug scopes evidence to the change
+  # being graded (archive-close and pre-merge know it); without one the single
+  # active change is used, and an ambiguous planning tree contributes no evidence.
+  local checkpoint="$1" mode="$2" root="$3" prefix="$4" explicit_slug="${5:-}"
   local bin
-  bin="$(_ledger_binary)" || return 0
+  if ! bin="$(_ledger_binary)"; then
+    # Missing/unverified binary fails open rather than blocking a merge; say so,
+    # because a silent skip looks identical to a passing checkpoint.
+    echo "${prefix}: tracker-ledger: no verified gate binary resolved; failing open (run ai-specs sync / ai-specs doctor)" >&2
+    return 0
+  fi
   local extra=() evidence="" lib=""
   if lib="$(_ledger_bridge)"; then
     local slug
@@ -659,7 +689,8 @@ _ledger_grade() {
     # tracker.none file is presentation and evidence only; recording the exemption is
     # an explicit `--write kind=exempt` made outside this host, never a side effect of
     # grading a checkpoint. The file is never created, modified, or deleted here.
-    slug="$(_ledger_bridge_call "$lib" slug "$root")"
+    slug="$explicit_slug"
+    [ -n "$slug" ] || slug="$(_ledger_bridge_call "$lib" slug "$root")"
     evidence="$(mktemp "${TMPDIR:-/tmp}/tracker-ledger-evidence.XXXXXX" 2>/dev/null)"
     if [ -n "$evidence" ]; then
       if _ledger_bridge_call "$lib" evidence "$root" "$slug" "$evidence"; then
@@ -725,6 +756,77 @@ _resolve_repo() {
   git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
   git -C "$dir" rev-parse --show-toplevel 2>/dev/null
 }
+
+# --- Direct host mode dispatch (CLI lifecycle surface) ------------------------
+# `--root` is required and is resolved to the owning git work tree, never assumed
+# from the process cwd. The requested checkpoint always decides: an entry under
+# `openspec/changes/archive/` never selects `archive-close`, which is tracker item
+# closure, not an OpenSpec archive. Nothing is written or inferred here.
+_host_usage() {
+  echo "usage: tracker-card-gate.sh --root <project-root> [--checkpoint pre-merge|archive-close | --stage pre-merge|pre-archive] [slug]" >&2
+}
+
+tracker_host() {
+  local root="" checkpoint="" stage="" slug=""
+  while [ $# -gt 0 ]; do
+    local arg="$1"
+    shift
+    case "$arg" in
+      --root) root="${1:-}"; [ $# -gt 0 ] && shift ;;
+      --checkpoint) checkpoint="${1:-}"; [ $# -gt 0 ] && shift ;;
+      --stage) stage="${1:-}"; [ $# -gt 0 ] && shift ;;
+      -h|--help) _host_usage; return 0 ;;
+      --*) echo "tracker-card-gate: unknown option '${arg}'" >&2; _host_usage; return 2 ;;
+      *)
+        if [ -n "$slug" ]; then
+          echo "tracker-card-gate: unexpected argument '${arg}'" >&2
+          _host_usage
+          return 2
+        fi
+        slug="$arg"
+        ;;
+    esac
+  done
+  if [ -z "$root" ]; then
+    echo "tracker-card-gate: --root is required for the direct host mode" >&2
+    _host_usage
+    return 2
+  fi
+  local from_stage=""
+  case "$stage" in
+    "") ;;
+    pre-archive) from_stage="archive-close" ;;
+    pre-merge) from_stage="pre-merge" ;;
+    *) echo "tracker-card-gate: invalid --stage '${stage}'" >&2; _host_usage; return 2 ;;
+  esac
+  case "$checkpoint" in
+    ""|pre-merge|archive-close) ;;
+    *) echo "tracker-card-gate: invalid --checkpoint '${checkpoint}'" >&2; _host_usage; return 2 ;;
+  esac
+  if [ -n "$checkpoint" ] && [ -n "$from_stage" ] && [ "$checkpoint" != "$from_stage" ]; then
+    echo "tracker-card-gate: --checkpoint ${checkpoint} conflicts with --stage ${stage}" >&2
+    _host_usage
+    return 2
+  fi
+  [ -n "$checkpoint" ] || checkpoint="${from_stage:-pre-merge}"
+  local repo_root
+  repo_root="$(_resolve_repo "$root")" || {
+    echo "tracker-card-gate: no git work tree at '${root}'; failing open" >&2
+    return 0
+  }
+  local mode
+  mode="$(_ledger_mode "$repo_root" "$gate_mode" "$(_ledger_recipe_id "$repo_root")")"
+  if [ "$mode" = off ]; then
+    echo "tracker-card-gate: ledger_mode off; skipping ${checkpoint}" >&2
+    return 0
+  fi
+  _ledger_grade "$checkpoint" "$mode" "$repo_root" "tracker-card-gate" "$slug"
+}
+
+if [ "$host_mode" -eq 1 ]; then
+  tracker_host "$@"
+  exit $?
+fi
 
 if [ "$kind" = path ]; then
   file_path="$(printf '%s\n' "$parsed" | sed -n '2p')"

@@ -652,3 +652,180 @@ func TestConcurrentAppendDoesNotLoseDecisions(t *testing.T) {
 		t.Fatalf("temp residue after concurrent appends: %v", residue)
 	}
 }
+
+// --- Flow-agnostic VCS close (T3) -------------------------------------------
+
+// branchCloseIdent is the cleanup-side identity: common dir + branch, no slug.
+func branchCloseIdent() ItemIdentity {
+	return ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close"}
+}
+
+// TestCloseBranchItemClosesSingleMatchingOpenItemAcrossChangeSlug pins the
+// cleanup seam: cleanup knows only the common dir and the branch, but the stored
+// item may carry a change slug. The close must still find and close it at the
+// injected checkpoint (archive-close).
+func TestCloseBranchItemClosesSingleMatchingOpenItemAcrossChangeSlug(t *testing.T) {
+	path := writePath(t)
+	stored := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "some-change"}
+	var store Store
+	opened := store.OpenItem(stored, "test-recipe", t0)
+	saveWriteStore(t, path, store)
+
+	out, err := CloseBranchItem(path, "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	if err != nil {
+		t.Fatalf("CloseBranchItem: %v", err)
+	}
+	if !out.Applied || out.Kind != WriteClose {
+		t.Fatalf("outcome = %+v, want an applied close", out)
+	}
+
+	loaded := loadWriteStore(t, path)
+	if len(loaded.Items) != 1 {
+		t.Fatalf("items = %+v, want the single stored row", loaded.Items)
+	}
+	item := loaded.Items[0]
+	if item.ID != opened.ID || item.Status != StatusClosed {
+		t.Fatalf("item = %+v, want the matching row closed", item)
+	}
+	last := item.Decisions[len(item.Decisions)-1]
+	if last.Kind != DecisionClose || last.Checkpoint != CheckpointArchiveClose {
+		t.Fatalf("last decision = %+v, want close at archive-close", last)
+	}
+	if _, err := loaded.Primary(item.Key()); !errors.Is(err, ErrNoPrimary) {
+		t.Fatalf("closed row must not be primary (err = %v)", err)
+	}
+}
+
+// TestCloseBranchItemAbsentOrClosedIsNoOp pins the idempotent half: an identity
+// with no open row is a successful no-op and the store is left byte-identical.
+func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
+	t.Run("absent", func(t *testing.T) {
+		path := writePath(t)
+		saveWriteStore(t, path, Store{V: StoreVersion})
+		before := rawBytes(t, path)
+
+		out, err := CloseBranchItem(path, "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+		if err != nil {
+			t.Fatalf("absent close: %v", err)
+		}
+		if out.Applied || out.Kind != WriteClose || out.Reason != WriteReasonAlreadyClosed {
+			t.Fatalf("absent close = %+v, want applied=false/already-closed", out)
+		}
+		if string(before) != string(rawBytes(t, path)) {
+			t.Fatal("an absent no-op must not rewrite the store")
+		}
+	})
+
+	t.Run("already closed", func(t *testing.T) {
+		path := writePath(t)
+		ident := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "some-change"}
+		var store Store
+		item := store.OpenItem(ident, "test-recipe", t0)
+		if err := store.CloseItem(item.ID, Decision{At: t0.Format(time.RFC3339)}); err != nil {
+			t.Fatal(err)
+		}
+		saveWriteStore(t, path, store)
+		before := rawBytes(t, path)
+
+		out, err := CloseBranchItem(path, "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+		if err != nil {
+			t.Fatalf("closed close: %v", err)
+		}
+		if out.Applied || out.Reason != WriteReasonAlreadyClosed {
+			t.Fatalf("closed close = %+v, want applied=false/already-closed", out)
+		}
+		if string(before) != string(rawBytes(t, path)) {
+			t.Fatal("a closed row must not be rewritten or reopened (D17)")
+		}
+		loaded := loadWriteStore(t, path)
+		if loaded.Items[0].Status != StatusClosed {
+			t.Fatalf("status = %q, want the closed row preserved", loaded.Items[0].Status)
+		}
+	})
+}
+
+// TestCloseBranchItemMultipleOpenIsCollisionRefused pins the refusal: two open
+// rows for one common dir + branch cannot be disambiguated by branch alone, so
+// the close fails closed and persists nothing.
+func TestCloseBranchItemMultipleOpenIsCollisionRefused(t *testing.T) {
+	path := writePath(t)
+	var store Store
+	store.OpenItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "one"}, "test-recipe", t0)
+	store.OpenItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "two"}, "test-recipe", t0)
+	saveWriteStore(t, path, store)
+	before := rawBytes(t, path)
+
+	_, err := CloseBranchItem(path, "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	if !errors.Is(err, ErrMultipleOpen) {
+		t.Fatalf("error = %v, want ErrMultipleOpen", err)
+	}
+	if string(before) != string(rawBytes(t, path)) {
+		t.Fatal("a refused collision must persist nothing")
+	}
+}
+
+// TestCloseBranchItemTargetsOnlyOpenRowOnReusedBranch triangulates D17: a
+// reused branch can hold a closed old row and a new open row; the close selects
+// the open one and leaves the closed one closed.
+func TestCloseBranchItemTargetsOnlyOpenRowOnReusedBranch(t *testing.T) {
+	path := writePath(t)
+	oldIdent := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "old"}
+	newIdent := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "new"}
+	var store Store
+	old := store.OpenItem(oldIdent, "test-recipe", t0)
+	if err := store.CloseItem(old.ID, Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointArchiveClose}); err != nil {
+		t.Fatal(err)
+	}
+	fresh := store.OpenItem(newIdent, "test-recipe", t0.Add(time.Hour))
+	saveWriteStore(t, path, store)
+
+	out, err := CloseBranchItem(path, "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	if err != nil {
+		t.Fatalf("CloseBranchItem: %v", err)
+	}
+	if !out.Applied {
+		t.Fatalf("outcome = %+v, want the new open row closed", out)
+	}
+	loaded := loadWriteStore(t, path)
+	if len(loaded.Items) != 2 {
+		t.Fatalf("items = %d, want the old closed + new closed row", len(loaded.Items))
+	}
+	for _, item := range loaded.Items {
+		if item.Status != StatusClosed {
+			t.Fatalf("item %s status = %q, want closed", item.ID, item.Status)
+		}
+	}
+	// The fresh row was the one closed now; the old row keeps its original close.
+	if last := loaded.Items[1].Decisions[len(loaded.Items[1].Decisions)-1]; loaded.Items[1].ID != fresh.ID || last.Checkpoint != CheckpointArchiveClose {
+		t.Fatalf("fresh row = %+v, want it closed at archive-close", loaded.Items[1])
+	}
+}
+
+// TestCloseBranchItemRejectsMissingIdentityOrCheckpoint pins the fail-closed
+// input validation: cleanup must never guess a key or accept a fake checkpoint.
+func TestCloseBranchItemRejectsMissingIdentityOrCheckpoint(t *testing.T) {
+	path := writePath(t)
+	saveWriteStore(t, path, Store{V: StoreVersion})
+	before := rawBytes(t, path)
+
+	cases := []struct {
+		name    string
+		common  string
+		branch  string
+		checkpt string
+	}{
+		{"missing common dir", "", "feat/vcs-close", CheckpointArchiveClose},
+		{"missing branch", "/repo/.git", "", CheckpointArchiveClose},
+		{"unknown checkpoint", "/repo/.git", "feat/vcs-close", "bogus"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := CloseBranchItem(path, tc.common, tc.branch, tc.checkpt, vtNow); err == nil {
+				t.Fatal("invalid close input was accepted")
+			}
+			if string(before) != string(rawBytes(t, path)) {
+				t.Fatal("a rejected close must persist nothing")
+			}
+		})
+	}
+}

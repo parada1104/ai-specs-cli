@@ -82,9 +82,14 @@ The ledger's domain id is `tracker`, and a provider recipe extends it as an
 `ledger.Reconcile`) compares neutral expectations against neutral observations and
 knows no provider. A provider recipe declares `[config.reconcile]` — `scope_field`,
 `max_age_seconds`, and per-event `expectations` that bind a neutral property to a
-config field — and the transport supplies the closed observation payload. Trello
-is the first adapter; a Jira/Linear adapter would declare the same shared mapping
-shape against the same comparator and need no core change.
+config field — and the transport supplies the closed observation payload. An
+expectation may also declare an optional `config_field_when_set`: that second field
+becomes the target only when the project configured it, so one recipe-owned
+conditional mapping (the Trello `merge` event targeting a Published list only when
+`published_list` is set, and Done otherwise) adds no provider vocabulary to the
+comparator and invents no default. Trello is the first adapter; a Jira/Linear
+adapter would declare the same shared mapping shape against the same comparator and
+need no core change.
 
 Adapter mapping is separate from Tracker-domain policy. `ledger_mode` / `gate_mode`
 decide *when* the ledger speaks (`always` / `ask` / `warn`) and stay out of the
@@ -106,12 +111,13 @@ ever guessing a provider.
   synthesized item. A branch reused after its item closed opens a new item, and two
   open items for one identity are a human conflict, never a silent pick.
 - **Five checkpoints.** `work-start` (plan-build gate), `apply-start` and
-  `pr-review` (tracker gate), and `pre-merge` / `archive-close` (tracker ledger
-  host) all reach the same predicate and share one exit contract (`0` allow/ask/dormant,
+  `pr-review` (tracker gate), and `pre-merge` / `archive-close` (tracker gate
+  direct host mode) all reach the same predicate and share one exit contract (`0` allow/ask/dormant,
   `2` only when the host must stop). Path hosts never block `openspec/**`.
 - **Tracker lifecycle is Plan Build-independent.** The `pre-merge` and
-  `archive-close` checkpoints are hosted by `lib/_internal/tracker_ledger_host.py`
-  (`--checkpoint pre-merge|archive-close`, required `--root`, optional slug; the
+  `archive-close` checkpoints are hosted by the `tracker-card-gate.sh` shell
+  bridge
+  (`--root <root> --checkpoint pre-merge|archive-close`, optional slug; the
   `--stage pre-merge|pre-archive` form stays as a compatibility alias). The host
   grades with **no `openspec/` tree** and never infers tracker item closure from
   an OpenSpec archive: `archive-close` is the tracker item close boundary, not
@@ -122,19 +128,40 @@ ever guessing a provider.
 - **Dormancy is `doctor` only.** A `tracker-ledger` check reports `unbound` (INFO),
   `ambiguous` / `declared-not-bound` / missing witness / recorded conflict (WARN),
   and infrastructure failure (ERROR). The runtime brief gains no dormancy line.
-- **Explicit item opening.** An item is opened only by a deliberate write, never
-  because a `## Tracker` section parses. Grading is pure: no checkpoint, in any mode,
-  creates, mutates, or deletes store state, so `always` with no item blocks and leaves
-  the store byte-identical.
-- **Write surface.** `worktree-gate --ledger --write '<json>'` records exactly four
+- **Explicit item opening by authorized local writers.** An item is opened only by a
+  deliberate write, never because a `## Tracker` section parses. Grading is pure: no
+  checkpoint, in any mode, creates, mutates, or deletes store state, so `always` with
+  no item blocks and leaves the store byte-identical. Opening is **not** agent-only:
+  exactly two writers are authorized, and both are local lifecycle writers — the
+  generic machine write surface, and the VCS-boundary `archive-close` writer invoked
+  by verified cleanup at a merge boundary. Neither performs a provider or network
+  call, and neither is reachable from a grade path.
+- **Write surface.** `worktree-gate --ledger --write '<json>'` records exactly five
   kinds beside the existing `--decide`: `open` (open-if-absent under the store lock),
-  `link` (native id, URL, native type, state, and an opaque provider payload on the
-  provider-neutral core fields), `close`, and `exempt`. `--write` and `--decide` are
+  `bind`, `link` (native id, URL, native type, state, and an opaque provider payload on
+  the provider-neutral core fields), `close`, and `exempt`. `--write` and `--decide` are
   mutually exclusive. Writes are idempotent where they can be: a retried `open`
-  reports `applied: false` / `already-open`, a repeated `link` reports `unchanged`,
-  and a second `close` reports `already-closed`. Success adds a
+  reports `applied: false` / `already-open`, a repeated `link` or `bind` reports
+  `unchanged`, and a second `close` reports `already-closed`. Success adds a
   `write: {kind, applied, reason}` sidecar to the verdict JSON. Every declared
   decision kind and core item field now has a production writer.
+- **`bind` is the generic lifecycle write.** `{"kind":"bind",…}` opens-if-absent and
+  links in one locked transaction, appending the existing `open` and `link` decisions
+  (no new decision kind). It is usable by SDD, ODD, and no-flow callers alike and
+  requires **no** repository tracker artifact (`## Tracker`, `tracker.none`, or an
+  `openspec/` tree) and no provider/network call, so a valid external binding can seed
+  the branch item before any apply boundary. A `change-ambiguous` identity is refused
+  unless the payload carries an explicit slug, and a closed row is never reopened — a
+  later explicit `bind` opens a distinct new primary (D17).
+- **Automatic close at the VCS boundary.** A managed `post-merge` hook invokes the
+  verified worktree cleanup, which closes the matching open item at `archive-close`
+  (matched on the Git common dir + branch, ignoring any stored slug) **before** it
+  removes a provably merged worktree or local branch. The close is idempotent and never
+  reopens a closed row. The hook itself is fail-open for the already-sealed merge
+  (failures to stderr, exit `0`), while the destructive cleanup fails closed: a close
+  that cannot be persisted preserves the candidate. The direct tracker host
+  (`tracker-card-gate.sh --root <root> --checkpoint archive-close`) stays the fallback
+  when the hook is absent.
 - **Failed writes fail closed.** A validation failure, a lock timeout (bounded ~100 ms
   attempt), a `change-ambiguous` identity without an explicit slug, or a store IO
   error persists nothing, leaves the store byte-identical, prints
@@ -157,7 +184,11 @@ ever guessing a provider.
   (`[config.reconcile]`), and the gate reads the project manifest — a project without
   the block gets an explicit `unconfigured`, never a default. It writes neither the
   store nor the provider, stays off every hook, and leaves the graded exit code
-  unchanged.
+  unchanged. When the identity has no open primary (D17 keeps a closed row out of
+  that slot), a merge comparison binds a closed item only when the observation's
+  item id matches exactly one locally stored closed row for the current identity: the
+  row is compared read-only, never reopened, and never selected for new work, and a
+  missing or ambiguous match stays `unbound-identity`.
 - **`tracker.none` is evidence, not a durable exemption on its own.** The human-authored
   `openspec/changes/<slug>/tracker.none` is presentation/evidence-only; it becomes
   `Item.Exemption` only through the explicit human/agent `exempt` write, whose reason
@@ -166,9 +197,10 @@ ever guessing a provider.
   honored at every checkpoint as allow/exempt and never registers as a conflict.
   Removing the file does not auto-revoke it — reopening evidence is a human act
   (`--decide '{"kind":"adjudicate","choice":"…"}'` clears the exemption).
-- **No provider writes in this slice.** The ledger records and reconciles evidence;
-  it performs no MCP/API create, update, move, comment, or label call. `always`
-  blocks until an item is supplied, it does not create one.
+- **No provider writes.** The ledger records and reconciles evidence, and its two
+  authorized lifecycle writers (`bind` and the VCS `archive-close` close) write only
+  the local store; none performs an MCP/API create, update, move, comment, or label
+  call. `always` blocks until an item is supplied, it does not create one.
 - **Witness-derived configuration.** The plan-build work-start gate, the tracker
   gate, the tracker-ledger host, and `doctor` resolve the bound recipe id from the
   witness and read `recipes.<id>.config` for `ledger_mode` / `gate_mode`; the legacy

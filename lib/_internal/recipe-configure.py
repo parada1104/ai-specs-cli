@@ -241,10 +241,43 @@ def _is_secret_literal(key: str, value: Any) -> bool:
     return bool(SECRET_KEY_RE.search(key)) and isinstance(value, str) and not value.startswith("${env:")
 
 
+def _assign_nested(target: dict[str, Any], parts: list[str], value: Any) -> None:
+    """Set a dotted path inside target, creating intermediate tables."""
+    node = target
+    for part in parts[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            node[part] = child
+        node = child
+    node[parts[-1]] = value
+
+
+def _lookup_nested(mapping: dict[str, Any], key: str) -> tuple[Any, bool]:
+    """Resolve a dotted key against a nested config dict."""
+    node: Any = mapping
+    for part in key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None, False
+        node = node[part]
+    return node, True
+
+
 def _validate_values(recipe: Any, values: dict[str, Any]) -> None:
     fields = recipe.config_schema.fields
     tables = getattr(recipe.config_schema, "tables", {}) or {}
     for key, value in values.items():
+        if "." in key:
+            root, rest = key.split(".", 1)
+            if root not in tables:
+                raise ConfigureError(f"unknown config key: {root}")
+            nested: dict[str, Any] = {}
+            _assign_nested(nested, rest.split("."), value)
+            try:
+                _recipe_schema.validate_structured_config(root, nested)
+            except _recipe_schema.RecipeValidationError as exc:
+                raise ConfigureError(str(exc)) from exc
+            continue
         if key in tables:
             try:
                 _recipe_schema.validate_structured_config(key, value)
@@ -346,11 +379,21 @@ def apply_project(
 
     _present, _enabled, current = _recipe_state(manifest, recipe_id)
     for key in sorted(values):
+        if "." in key:
+            current_value, present = _lookup_nested(current, key)
+            if present and current_value == values[key]:
+                report["applied"]["unchanged"].append(key)
+            else:
+                report["applied"]["changed"].append(
+                    {"key": key, "from": current_value if present else None, "to": values[key]}
+                )
+            continue
         if key in current and current[key] == values[key]:
             report["applied"]["unchanged"].append(key)
         else:
             report["applied"]["changed"].append({"key": key, "from": current.get(key), "to": values[key]})
-    report["applied"]["preserved"] = sorted(key for key in current if key not in values)
+    touched = {key.split(".", 1)[0] for key in values}
+    report["applied"]["preserved"] = sorted(key for key in current if key not in touched)
     changed = bool(report["applied"]["changed"])
     report["assumptions"] = inspect_project(project_root, recipe_id).get("assumptions", [])
 
@@ -399,7 +442,19 @@ def _parse_assignment(recipe: Any, assignment: str) -> tuple[str, Any]:
     raw = raw.strip()
     if not key:
         raise ConfigureError("--set requires a non-empty key")
-    if key in (getattr(recipe.config_schema, "tables", {}) or {}):
+    tables = getattr(recipe.config_schema, "tables", {}) or {}
+    if "." in key:
+        # Dotted assignment: one nested sub-key of a declared structured table.
+        root, rest = key.split(".", 1)
+        if not root or not rest:
+            raise ConfigureError(f"invalid dotted config key: {key}")
+        if root not in tables:
+            raise ConfigureError(f"unknown config key: {root}")
+        try:
+            return key, tomllib.loads(f"value = {raw}\n")["value"]
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigureError(f"invalid TOML value for {key}: {exc}") from exc
+    if key in tables:
         # Structured table value: the caller passes a TOML inline table, e.g.
         # --set 'reconcile={scope_field="board_id",max_age_seconds=900,...}'
         try:

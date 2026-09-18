@@ -338,10 +338,11 @@ class GitlabMrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("plan-build-flow", self.skill_text)
 
     def test_skill_invokes_tracker_ledger_host_before_merge(self):
-        """Tracker authorization is graded by the provider-neutral host."""
-        self.assertIn("tracker_ledger_host.py", self.skill_text)
+        """Tracker authorization is graded by the shell host's direct mode."""
+        self.assertIn("tracker-card-gate.sh", self.skill_text)
         self.assertIn("--root <planning-root>", self.skill_text)
         self.assertIn("--checkpoint pre-merge", self.skill_text)
+        self.assertNotIn("tracker_ledger_host.py", self.skill_text)
         self.assertNotIn("premerge_guardian.py", self.skill_text)
 
     def test_command_uses_explicit_push(self):

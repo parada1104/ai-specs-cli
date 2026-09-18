@@ -398,9 +398,10 @@ Hard blockers (do **not** merge):
 The promotion check is tier-scoped: Light changes and changes with no `specs/`
 deltas are never blocked by it.
 
-Tracker item closure (`tracker_ledger_host.py --checkpoint archive-close`) is a
-separate Tracker-domain checkpoint: it is not this OpenSpec archive, it never
-moves the change folder, and this guardian never grades or writes tracker state.
+Tracker item closure (`tracker-card-gate.sh --root <root> --checkpoint
+archive-close`) is a separate Tracker-domain checkpoint: it is not this OpenSpec
+archive, it never moves the change folder, and this guardian never grades or
+writes tracker state.
 
 ### In-flight plans and stale PRs
 

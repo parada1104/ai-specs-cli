@@ -91,11 +91,11 @@ commands = [
 
 [provides.brief]
 workflow_rules = [
-    "Create a dedicated worktree for changes that write artifacts or modify code. Pure exploration can happen before a worktree if it writes no files.",
+    "Protected-branch writes are governed by the effective worktree `gate_mode = {config.gate_mode}`: `always` requires a dedicated worktree before writing; `ask` requires the orchestrator to ask the user to choose a destination (a dedicated worktree, a feature branch in the current checkout, or an explicit protected-branch override); `off` permits writing where the user directs. Pure exploration can proceed without a worktree when it writes no files.",
     "Do not merge or push to `{config.integration_branch}` without a PR and explicit human instruction.",
     "Preserve unrelated worktree changes; never revert changes you did not make.",
     "Before dispatching a write-capable subagent or task, verify which git repository, worktree, and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Under monorepo-submodules, confirming which-repo via show-toplevel is mandatory. Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp.",
-    "If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). With `gate_mode = always`, create a dedicated worktree first (e.g. `/worktree-new`) and write there instead; with `gate_mode = ask`, ask the user which destination to use — worktree (recommended), feature branch in place, or explicit protected-branch override — and wait; never self-bypass with `WORKTREE_GATE_MODE=off`. With `gate_mode = off`, the gate does not block.",
+    "If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). With `gate_mode = always`, create a dedicated worktree first (e.g. `/worktree-new`) and write there instead; with `gate_mode = ask`, ask the user which destination to use — worktree (recommended), feature branch in place, or explicit protected-branch override — and wait; with `gate_mode = off`, the gate does not block.",
 ]
 
 [[provides.hooks]]
@@ -116,6 +116,16 @@ description = "Best-effort block shell commands that write into the main worktre
 [[provides.templates]]
 source = "templates/worktree-cleanup.sh"
 target = "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"
+condition = "not_exists"
+
+# Managed VCS post-merge close trigger. Sync stamps the project's configured
+# worktrees_dir, integration_branch, and repo_topology into the wrapper, which
+# passes them to the materialized cleanup launcher; cleanup closes the matching
+# ledger item at archive-close before it removes a merged worktree or local
+# branch. The not_exists condition preserves any existing user hook at this path.
+[[provides.templates]]
+source = "templates/post-merge.sh"
+target = ".git/hooks/post-merge"
 condition = "not_exists"
 
 [[provides.docs]]

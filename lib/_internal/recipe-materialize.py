@@ -317,6 +317,7 @@ def stamp_recipe_reconcile_defaults(project_root: Path, catalog_dir: Path, enabl
         for expectation in values.get("expectations", []) or []:
             if isinstance(expectation, dict):
                 used.add(expectation.get("config_field") or "")
+                used.add(expectation.get("config_field_when_set") or "")
         used.discard("")
         for field_name in used:
             field = recipe.config_schema.fields.get(field_name)
@@ -441,6 +442,43 @@ def materialize_command(
     print(f"    ✓ command {cmd.id}")
 
 
+def resolve_template_dest(project_root: Path, target: str) -> Path:
+    """Resolve a governed template target to its real path.
+
+    A ``.git/...`` target (a Git hook) is resolved through Git's own
+    ``rev-parse --git-path``, because in a linked worktree ``.git`` is a gitfile,
+    not a directory: the naive ``project_root/.git/hooks`` join raises
+    ``NotADirectoryError``. Git resolves hooks to the shared hooks directory, so
+    the hook lands where Git will actually run it. Anything else stays
+    project-relative, and a missing/unavailable Git falls back to the literal
+    project-relative path (fixtures outside a repository still materialize).
+    """
+    literal = project_root / target
+    if not target.startswith(".git/"):
+        return literal
+    remainder = target[len(".git/") :]
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--git-path", remainder],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return literal
+    if proc.returncode != 0:
+        return literal
+    resolved = proc.stdout.strip()
+    if not resolved:
+        return literal
+    path = Path(resolved)
+    if not path.is_absolute():
+        # Git emits a repo-relative path for the main worktree; we invoked it
+        # with `-C project_root`, so anchor there.
+        path = project_root / path
+    return path
+
+
 def materialize_template(
     recipe_dir: Path,
     tpl: Any,
@@ -450,11 +488,11 @@ def materialize_template(
 ) -> None:
     util = _load_util()
     src = recipe_dir / tpl.source
-    dest = project_root / tpl.target
+    dest = resolve_template_dest(project_root, tpl.target)
     if not src.is_file():
         raise RuntimeError(f"template source not found: {src}")
 
-    content = util.render_override_bytes(src, merged_cfg)
+    content = render_template_bytes(src, merged_cfg)
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
     lock = load_lock(lock_path)
     target = Path(tpl.target).as_posix()
@@ -557,6 +595,34 @@ TRACKER_LIB_INTERNAL_PLACEHOLDER = "__TRACKER_LIB_INTERNAL__"
 GATE_IMPL_PLACEHOLDER = "__WORKTREE_GATE_IMPL__"
 GATE_IMPL_VALUES = ("auto", "go")
 GATE_VERSION_PLACEHOLDER = "__WORKTREE_GATE_VERSION__"
+# Narrow per-recipe template stamps for worktree-flow's managed post-merge hook.
+# The hook must carry the project's configured cleanup inputs, or cleanup
+# silently falls back to `.worktrees` / the current HEAD for customized projects.
+WORKTREES_DIR_PLACEHOLDER = "__WORKTREE_WORKTREES_DIR__"
+INTEGRATION_BRANCH_PLACEHOLDER = "__WORKTREE_INTEGRATION_BRANCH__"
+
+
+def render_template_bytes(src: Path, merged_cfg: dict[str, Any] | None) -> bytes:
+    """Render one governed template with the shared topology token plus the
+    narrow cleanup-config stamps the managed post-merge hook needs.
+
+    ``util.render_override_bytes`` owns the shared ``__WORKTREE_REPO_TOPOLOGY__``
+    token; this adds only ``worktrees_dir`` and ``integration_branch`` so the
+    rendered bytes are the exact content sync writes (and the lock compares).
+    """
+    util = _load_util()
+    data = util.render_override_bytes(src, merged_cfg)
+    if merged_cfg is None:
+        return data
+    for token, key, default in (
+        (WORKTREES_DIR_PLACEHOLDER, "worktrees_dir", ".worktrees"),
+        (INTEGRATION_BRANCH_PLACEHOLDER, "integration_branch", "main"),
+    ):
+        token_bytes = token.encode()
+        if token_bytes in data:
+            value = str(merged_cfg.get(key) or default)
+            data = data.replace(token_bytes, value.encode())
+    return data
 
 
 def _invalid_gate_impl_error(impl: str) -> RuntimeError:
