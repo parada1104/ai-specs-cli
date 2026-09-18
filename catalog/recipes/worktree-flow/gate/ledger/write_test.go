@@ -260,6 +260,138 @@ func TestApplyWriteBindIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestApplyWriteBindWithoutChangeIsBranchLevel pins the external-binding
+// decision: a bind that omits `change` is a deliberate branch-level binding. A
+// change-ambiguous identity (several active OpenSpec folders omitted the slug)
+// is not refused; the bind opens a fresh branch-only primary instead.
+func TestApplyWriteBindWithoutChangeIsBranchLevel(t *testing.T) {
+	path := writePath(t)
+	saveWriteStore(t, path, Store{V: StoreVersion})
+
+	out, err := ApplyWrite(path, ApplyWriteRequest{
+		Identity:   ident(""),
+		Checkpoint: CheckpointApplyStart,
+		Collision:  CollisionChangeAmbiguous,
+		Request:    WriteRequest{Kind: WriteBind, ItemID: "card-1"},
+	}, vtNow)
+	if err != nil {
+		t.Fatalf("ambiguous branch bind: %v", err)
+	}
+	if !out.Applied || out.Kind != WriteBind {
+		t.Fatalf("ambiguous branch bind = %+v, want applied bind", out)
+	}
+
+	loaded := loadWriteStore(t, path)
+	if len(loaded.Items) != 1 {
+		t.Fatalf("items = %d, want one branch-only row", len(loaded.Items))
+	}
+	item := loaded.Items[0]
+	if item.Identity.Change != "" {
+		t.Fatalf("stored change = %q, want branch-only", item.Identity.Change)
+	}
+	if item.ItemID != "card-1" || item.Status != StatusOpen {
+		t.Fatalf("bound item = %+v, want the open branch-only card", item)
+	}
+}
+
+// TestApplyWriteBindWithoutChangeLinksTheSingleSlottedOpenRow pins the branch-level
+// match: with exactly one open row for the common dir and branch, a bind without a
+// change payload links that row even though it stores a change slug.
+func TestApplyWriteBindWithoutChangeLinksTheSingleSlottedOpenRow(t *testing.T) {
+	path := writePath(t)
+	store := Store{V: StoreVersion}
+	store.OpenItem(ident("existing-slug"), "p", t0)
+	saveWriteStore(t, path, store)
+
+	out, err := ApplyWrite(path, ApplyWriteRequest{
+		Identity:   ident(""),
+		Checkpoint: CheckpointApplyStart,
+		Collision:  CollisionChangeAmbiguous,
+		Request:    WriteRequest{Kind: WriteBind, ItemID: "card-2"},
+	}, vtNow)
+	if err != nil {
+		t.Fatalf("branch-level bind: %v", err)
+	}
+	if !out.Applied {
+		t.Fatalf("branch-level bind = %+v, want applied", out)
+	}
+
+	loaded := loadWriteStore(t, path)
+	if len(loaded.Items) != 1 {
+		t.Fatalf("items = %d, want the existing row linked in place", len(loaded.Items))
+	}
+	item := loaded.Items[0]
+	if item.Identity.Change != "existing-slug" {
+		t.Fatalf("stored change = %q, want the untouched existing slug", item.Identity.Change)
+	}
+	if item.ItemID != "card-2" || item.Status != StatusOpen {
+		t.Fatalf("linked item = %+v, want the existing open row with the new card", item)
+	}
+}
+
+// TestApplyWriteBindWithoutChangeRefusesMultipleOpenRows pins the refusal: two open
+// rows for one common dir and branch cannot be disambiguated by branch alone, so a
+// branch-level bind fails closed and persists nothing.
+func TestApplyWriteBindWithoutChangeRefusesMultipleOpenRows(t *testing.T) {
+	path := writePath(t)
+	store := Store{V: StoreVersion}
+	store.OpenItem(ident("one"), "p", t0)
+	store.OpenItem(ident("two"), "p", t0)
+	saveWriteStore(t, path, store)
+	before := rawBytes(t, path)
+
+	_, err := ApplyWrite(path, ApplyWriteRequest{
+		Identity:   ident(""),
+		Checkpoint: CheckpointApplyStart,
+		Collision:  CollisionChangeAmbiguous,
+		Request:    WriteRequest{Kind: WriteBind, ItemID: "card-3"},
+	}, vtNow)
+	if !errors.Is(err, ErrMultipleOpen) {
+		t.Fatalf("branch-level bind error = %v, want ErrMultipleOpen", err)
+	}
+	if string(before) != string(rawBytes(t, path)) {
+		t.Fatal("a refused branch-level bind must leave the store byte-identical")
+	}
+}
+
+// TestApplyWriteBindWithChangeKeepsSlugSemantics pins the explicit-slug bind: a
+// payload that names the change keeps the slug-keyed identity, so it stays a
+// distinct row that a later branch-level bind then links in place.
+func TestApplyWriteBindWithChangeKeepsSlugSemantics(t *testing.T) {
+	path := writePath(t)
+	saveWriteStore(t, path, Store{V: StoreVersion})
+
+	if _, err := ApplyWrite(path, ApplyWriteRequest{
+		Identity:   ident(""),
+		Checkpoint: CheckpointApplyStart,
+		Collision:  CollisionChangeAmbiguous,
+		Request:    WriteRequest{Kind: WriteBind, ItemID: "card-4", Change: "alpha-change"},
+	}, vtNow); err != nil {
+		t.Fatalf("explicit-slug bind: %v", err)
+	}
+	loaded := loadWriteStore(t, path)
+	if len(loaded.Items) != 1 || loaded.Items[0].Identity.Change != "alpha-change" {
+		t.Fatalf("items = %+v, want one row under the explicit slug", loaded.Items)
+	}
+
+	out, err := ApplyWrite(path, ApplyWriteRequest{
+		Identity:   ident(""),
+		Checkpoint: CheckpointApplyStart,
+		Collision:  CollisionChangeAmbiguous,
+		Request:    WriteRequest{Kind: WriteBind, ItemID: "card-5"},
+	}, vtNow)
+	if err != nil {
+		t.Fatalf("branch-level bind over a slotted row: %v", err)
+	}
+	if !out.Applied {
+		t.Fatalf("branch-level bind over a slotted row = %+v, want applied", out)
+	}
+	loaded = loadWriteStore(t, path)
+	if len(loaded.Items) != 1 || loaded.Items[0].Identity.Change != "alpha-change" || loaded.Items[0].ItemID != "card-5" {
+		t.Fatalf("items = %+v, want the single slotted row relinked", loaded.Items)
+	}
+}
+
 // TestApplyWriteBindLinksAnAlreadyOpenItem pins the non-empty half of
 // open-if-absent: a bind whose identity already has an open primary links that
 // row in place instead of opening a second one.

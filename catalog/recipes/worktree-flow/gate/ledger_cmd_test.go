@@ -701,11 +701,12 @@ func TestLedgerWriteBindSeedsOpenLinkViaCLI(t *testing.T) {
 	}
 }
 
-// TestLedgerWriteBindIsRefusedForAChangeAmbiguousIdentityViaCLI pins the
-// fail-closed posture on the generic bind too: two active change folders make the
-// identity ambiguous, so a bind without an explicit slug exits 2 and persists
-// nothing.
-func TestLedgerWriteBindIsRefusedForAChangeAmbiguousIdentityViaCLI(t *testing.T) {
+// TestLedgerWriteBindIsBranchLevelForAChangeAmbiguousIdentityViaCLI pins the
+// external-binding decision through the CLI: two active change folders make the
+// identity ambiguous, but a bind that omits `change` is a deliberate branch-level
+// binding. It opens one branch-only item, grades allow, and a retry is an
+// unchanged, byte-stable no-op; an explicit `change` payload keeps slug semantics.
+func TestLedgerWriteBindIsBranchLevelForAChangeAmbiguousIdentityViaCLI(t *testing.T) {
 	dir, common, _ := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
 	for _, slug := range []string{"alpha-change", "beta-change"} {
@@ -715,27 +716,56 @@ func TestLedgerWriteBindIsRefusedForAChangeAmbiguousIdentityViaCLI(t *testing.T)
 	}
 	storePath := ledger.StorePath(common)
 
-	code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"bind","item_id":"card-ambiguous"}`)
-	if code != 2 {
-		t.Fatalf("ambiguous bind exit = %d, want 2; stderr: %s", code, stderr)
-	}
-	if stdout != "" {
-		t.Fatalf("ambiguous bind stdout = %q, want no JSON", stdout)
-	}
-	if ledgerStoreBytes(t, storePath) != nil {
-		t.Fatal("a refused ambiguous bind must persist nothing")
-	}
-
-	code, _, stderr = ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"bind","item_id":"card-ambiguous","change":"alpha-change"}`)
+	code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"bind","item_id":"card-ambiguous"}`)
 	if code != 0 {
-		t.Fatalf("explicit-slug bind exit = %d, want 0; stderr: %s", code, stderr)
+		t.Fatalf("ambiguous branch bind exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	out := decodeLedgerOut(t, stdout)
+	if out["decision"] != "allow" {
+		t.Fatalf("post-bind grade = %v/%v, want allow", out["decision"], out["reason"])
+	}
+	if side, ok := out["write"].(map[string]any); !ok || side["kind"] != "bind" || side["applied"] != true {
+		t.Fatalf("ambiguous branch bind sidecar = %v, want bind/applied", out["write"])
 	}
 	store, err := ledger.LoadStore(storePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.Items) != 1 || store.Items[0].Identity.Change != "alpha-change" || store.Items[0].ItemID != "card-ambiguous" {
-		t.Fatalf("store items = %+v, want one bound item under the explicit slug", store.Items)
+	if len(store.Items) != 1 || store.Items[0].Identity.Change != "" || store.Items[0].ItemID != "card-ambiguous" {
+		t.Fatalf("store items = %+v, want one branch-only bound item", store.Items)
+	}
+
+	// A retried branch bind is idempotent and byte-stable.
+	before := ledgerStoreBytes(t, storePath)
+	code, stdout, stderr = ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"bind","item_id":"card-ambiguous"}`)
+	if code != 0 {
+		t.Fatalf("ambiguous branch bind retry exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	if side := decodeLedgerOut(t, stdout)["write"].(map[string]any); side["applied"] != false || side["reason"] != "unchanged" {
+		t.Fatalf("branch bind retry sidecar = %v, want applied=false/unchanged", side)
+	}
+	if string(before) != string(ledgerStoreBytes(t, storePath)) {
+		t.Fatal("an idempotent branch bind retry must leave the store byte-identical")
+	}
+
+	// An explicit change payload keeps the slug-keyed identity, so it opens a
+	// distinct row instead of relinking the branch-only one.
+	code, stdout, stderr = ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"bind","item_id":"card-slug","change":"alpha-change"}`)
+	if code != 0 {
+		t.Fatalf("explicit-slug bind exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	store, err = ledger.LoadStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var openSlugs []string
+	for _, item := range store.Items {
+		if item.Status == ledger.StatusOpen {
+			openSlugs = append(openSlugs, item.Identity.Change)
+		}
+	}
+	if len(openSlugs) != 2 || openSlugs[0] != "" || openSlugs[1] != "alpha-change" {
+		t.Fatalf("open slugs = %v, want the branch-only row plus the explicit-slug row", openSlugs)
 	}
 }
 

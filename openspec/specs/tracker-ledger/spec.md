@@ -522,10 +522,12 @@ The `bind` verb is the **generic, workflow-agnostic lifecycle write**: in one lo
 the primary item if the identity has none and records the supplied native fields, appending the existing
 `open` and `link` decisions (never a new decision kind). It MUST be usable by SDD, ODD, and no-flow callers
 alike, MUST require **no** repository tracker artifact (`## Tracker` section, `tracker.none`, or `openspec/`
-tree), and MUST perform no provider or network call. A retried `bind` for an already-linked item MUST report
-the idempotent `unchanged` outcome; a `change-ambiguous` identity MUST be refused unless the payload names
-the change slug explicitly; and a closed row MUST NOT be reopened — a later explicit `bind` opens a distinct
-new primary (D17).
+tree), and MUST perform no provider or network call. A `bind` that omits `change` MUST be a deliberate
+**branch-level** binding: it matches the single open row for the same common dir and branch regardless of
+the stored change slug, MUST refuse (fail closed, nothing persisted) when several open rows exist, and
+otherwise MUST open a new branch-only item. A `bind` whose payload names the change MUST keep the
+slug-keyed identity. A retried `bind` for an already-linked item MUST report the idempotent `unchanged`
+outcome; and a closed row MUST NOT be reopened — a later explicit `bind` opens a distinct new primary (D17).
 
 #### Scenario: Bind seeds open and link without a repository artifact
 
@@ -533,6 +535,20 @@ new primary (D17).
 - WHEN a single `bind` write supplies the native id, URL, native type, state, and provider payload
 - THEN exactly one open primary item exists with those core fields populated, the open and link decisions
   are appended, the `write` sidecar reports `applied: true`, and no provider or network call was made
+
+#### Scenario: Bind is branch-level without an artifact
+
+- GIVEN several active change folders (a `change-ambiguous` identity) and either no open row or exactly one
+  existing open row for the common dir and branch
+- WHEN a `bind` write omits `change`
+- THEN the single existing open row is linked regardless of its stored slug, or a new branch-only item is
+  opened when none exists, and no `openspec/` artifact or provider call is required
+
+#### Scenario: Branch-level bind refuses a collision
+
+- GIVEN two open rows for one common dir and branch
+- WHEN a `bind` write omits `change`
+- THEN the bind is refused, nothing is persisted, and the command exits `2`
 
 #### Scenario: Repeated bind is idempotent
 
@@ -667,7 +683,9 @@ derivation so two opens for one identity in the same second cannot yield two ite
 `link` write identical to the item's current link state MUST NOT append a duplicate decision. A `close`
 of an already-closed item MUST NOT create anything and MUST be explicitly signaled rather than silently
 duplicated. A write for a `change-ambiguous` identity MUST be refused (fail closed) unless the caller
-supplies an explicit change slug. On lock timeout, grade paths MUST fail open and write paths MUST fail
+supplies an explicit change slug. The one exception is a branch-level `bind` that omits `change`: it is
+matched by common dir and branch, as defined by the machine write surface, instead of being refused. On
+lock timeout, grade paths MUST fail open and write paths MUST fail
 closed with exit `2` and no store change.
 
 #### Scenario: Retried open stays idempotent
@@ -698,7 +716,7 @@ closed with exit `2` and no store change.
 #### Scenario: Change-ambiguous write is refused
 
 - GIVEN an identity whose change collision is `change-ambiguous`
-- WHEN a write is attempted without an explicit slug
+- WHEN a write other than a branch-level `bind` is attempted without an explicit slug
 - THEN the write is refused, nothing is persisted, and the command exits `2`
 
 #### Scenario: Lock contention has bounded postures

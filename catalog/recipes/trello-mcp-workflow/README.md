@@ -195,10 +195,14 @@ worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
 
 `bind` is open-if-absent plus link in one locked transaction: it creates the primary
 item when the identity has none and records the supplied provider-neutral fields and
-the open+link decisions either way. A retried `bind` reports `unchanged` instead of
-duplicating; a `change-ambiguous` identity is refused unless the payload names the
-change slug explicitly; and a closed row is never reopened — a later explicit `bind`
-opens a distinct new primary (D17). Authoritative state stays in the existing Go
+the open+link decisions either way. A `bind` that omits `change` is a deliberate
+branch-level binding: it matches the single open row for the same common dir and
+branch regardless of its stored change slug, refuses (fail closed, nothing persisted)
+when several open rows exist, and otherwise opens a branch-only item — so external
+binding works with no SDD/ODD/OpenSpec artifact. A `bind` that names the change keeps
+the slug-keyed identity. A retried `bind` reports `unchanged` instead of duplicating,
+and a closed row is never reopened — a later explicit `bind` opens a distinct new
+primary (D17). Authoritative state stays in the existing Go
 ledger at `<git-common-dir>/ai-specs/ledger/state.json`; the command writes nothing
 into the repository tree.
 

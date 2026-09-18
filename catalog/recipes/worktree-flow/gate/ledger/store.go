@@ -323,7 +323,13 @@ func ApplyWrite(storePath string, req ApplyWriteRequest, now time.Time) (WriteOu
 		// An identity-less write has no durable key and is never recorded (A2/A5).
 		return WriteOutcome{}, fmt.Errorf("%w: identity unavailable", ErrInvalidWrite)
 	}
-	if write.Change != "" || req.Collision == CollisionChangeAmbiguous {
+	// A bind with no change payload is a deliberate branch-level binding: the
+	// branch, not any change slug, is the identity, so external binding works with
+	// no SDD/ODD/OpenSpec artifact (A11). An explicit change payload keeps the
+	// slug-keyed identity, and every other verb keeps the change-ambiguous refusal.
+	if write.Kind == WriteBind && write.Change == "" {
+		ident.Change = ""
+	} else if write.Change != "" || req.Collision == CollisionChangeAmbiguous {
 		if write.Change == "" {
 			return WriteOutcome{}, fmt.Errorf("%w: change-ambiguous identity needs an explicit change slug", ErrInvalidWrite)
 		}
@@ -379,6 +385,12 @@ func applyWriteToStore(store *Store, ident ItemIdentity, req ApplyWriteRequest, 
 		return true, "", nil
 
 	case WriteBind:
+		if write.Change == "" {
+			// A bind that omits `change` is a branch-level external bind: match the
+			// single open row for this common dir and branch regardless of stored
+			// slug, refuse a collision, or otherwise open a fresh branch-only item.
+			return applyBranchBindToStore(store, ident, req, write, now, stamp)
+		}
 		if err != nil {
 			if !errors.Is(err, ErrNoPrimary) {
 				// A collided identity is not something a bind may guess around.
@@ -450,6 +462,28 @@ func applyWriteToStore(store *Store, ident ItemIdentity, req ApplyWriteRequest, 
 		return true, "", nil
 	}
 	return false, "", fmt.Errorf("%w: kind %q", ErrInvalidWrite, write.Kind)
+}
+
+// applyBranchBindToStore is the branch-level external bind: it links the single
+// open item whose identity shares the common dir and branch, ignoring any stored
+// change slug, and opens a fresh branch-only primary only when none exists. Two
+// open rows for one branch cannot be disambiguated by branch alone, so it refuses
+// rather than guessing (D17). It is bind-only; open, link, and close keep their
+// slug-keyed identities.
+func applyBranchBindToStore(store *Store, ident ItemIdentity, req ApplyWriteRequest, write WriteRequest, now time.Time, stamp string) (bool, string, error) {
+	matching := store.OpenItemsForBranch(ident.CommonDir, ident.Branch)
+	switch len(matching) {
+	case 0:
+		item, _, err := store.OpenIfAbsent(ident, req.ProviderID, now)
+		if err != nil {
+			return false, "", err
+		}
+		return applyLinkToStore(store, item, req, write, stamp)
+	case 1:
+		return applyLinkToStore(store, matching[0], req, write, stamp)
+	default:
+		return false, "", ErrMultipleOpen
+	}
 }
 
 // applyLinkToStore writes the link fields onto an already-selected open item and

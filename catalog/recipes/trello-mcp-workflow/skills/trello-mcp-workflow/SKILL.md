@@ -160,11 +160,14 @@ worktree-gate --ledger --checkpoint apply-start --project-root . \
   --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress"}'
 ```
 
-A retried `bind` reports `unchanged` instead of duplicating; a `change-ambiguous`
-identity is refused unless the payload carries an explicit `change`; a closed row is
-never reopened (D17). State stays in the existing Go ledger at
-`<git-common-dir>/ai-specs/ledger/state.json`, and nothing is written into the
-repository tree.
+A `bind` without `change` is a deliberate branch-level binding: it links the single
+open row for the same common dir and branch regardless of its stored slug, refuses
+(fail closed, nothing persisted) when several open rows exist, and otherwise opens a
+branch-only item, so external binding needs no artifact. A `bind` that carries an
+explicit `change` keeps the slug-keyed identity. A retried `bind` reports `unchanged`
+instead of duplicating, and a closed row is never reopened (D17). State stays in the
+existing Go ledger at `<git-common-dir>/ai-specs/ledger/state.json`, and nothing is
+written into the repository tree.
 
 For `tracker.none`,
 the human/agent records the exemption with an explicit write so every checkpoint

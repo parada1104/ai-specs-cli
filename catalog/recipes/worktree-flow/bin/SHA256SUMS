@@ -37,7 +37,7 @@
 # `bind` write, the branch-scoped `CloseBranchItem` archive-close writer, and the bounded
 # store-lock/idempotency work; no new asset, no second trust root), same canonical
 # go1.24.13 toolchain and the same command above.
-22c01fd04944ed78eedc1a3e40b699cf44ade429fdb487f2e7ece1dc518c0a4a  worktree-gate-darwin-arm64
-509e4360b48ddbbcba280de4d93cf3504dc05ab853414c13c0c67c7983be53ea  worktree-gate-darwin-amd64
-bc7088bb44c6104767749ec832b825b010ca079ffe41f7dc57a248e738c28a8b  worktree-gate-linux-amd64
-69ed74e6faf05086076bbbba06ce45132861e787a381f1d126d9b96feaf21354  worktree-gate-linux-arm64
+c164b2a11d7a72fd7fa670fd4f2340bd6e4339c417434538bf8a299b777228a7  worktree-gate-darwin-arm64
+24684d1e3727e497e971bcf47e761da160ceabbe18974b116e6c8e891439143e  worktree-gate-darwin-amd64
+649eec3121213a91a2b1810117c851225835fb21df18110427fabcdf8f2cef33  worktree-gate-linux-amd64
+7505e58d5ab5e059b6826314d20469b14cdd91ab551263c2b5fbd8e1b36381bf  worktree-gate-linux-arm64
