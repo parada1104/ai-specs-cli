@@ -1,37 +1,44 @@
-"""RED/GREEN tests for the tracker-domain ledger host.
+"""Direct host-mode contract for the Tracker ledger lifecycle checkpoints.
 
-W1 split the tracker-ledger acquisition/JSON host out of the Plan Build artifact
-guardian. These tests pin that the host:
+The `pre-merge` / `archive-close` lifecycle used to be hosted by a dedicated
+Python module (``lib/_internal/tracker_ledger_host.py``). That host is retired:
+the contract now lives in the existing shell bridge
+``catalog/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh`` as a direct,
+argv-selected host mode, and the merge skills/commands call it there.
 
-  * grades the ``pre-merge`` and ``archive-close`` wire checkpoints on its own,
-    without any Plan Build/OpenSpec artifact tree;
-  * keeps the A9 ledger-mode mapping, evidence bridge, cold-cache fail-open, and
-    fail-closed ``ask``/``block`` behavior;
-  * exposes a CLI entry point that preserves ``--root`` and stage semantics.
+These tests pin the direct mode:
 
-The stub ``worktree-gate`` binary records its argv, so no host test re-implements
-the Go predicate.
+  * ``--root <root> --checkpoint pre-merge|archive-close`` grades through the one
+    verified Go predicate with bridge-built ``--evidence``;
+  * the ``--stage pre-merge|pre-archive`` compatibility alias, and the rule that
+    contradictory flags grade nothing;
+  * ask/no-TTY, fail-open binary resolution, and the ``off`` skip;
+  * host mode is selected by argv, never by a piped hook payload;
+  * ``archive-close`` is tracker item closure, never an OpenSpec archive, and the
+    host never infers a tracker write.
+
+A stub ``worktree-gate`` binary records its argv, so no test re-implements the go
+predicate. `tests.test_tracker_card_gate_hook` keeps the pre-tool-use hook
+contract (path/shell) for the same script.
 """
-
 from __future__ import annotations
 
-import importlib.util
+import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
-
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "lib" / "_internal" / "tracker_ledger_host.py"
+GATE = ROOT / "catalog" / "recipes" / "trello-mcp-workflow" / "hooks" / "tracker-card-gate.sh"
+LIB_INTERNAL = ROOT / "lib" / "_internal"
+RETIRED_HOST = ROOT / "lib" / "_internal" / "tracker_ledger_host.py"
 
 STUB_BINARY = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${STUB_LOG}"
 decision="${STUB_DECISION:-allow}"
-reason="${STUB_REASON:-stub}"
+reason="${STUB_REASON:-}"
 checkpoint=""
 wrote=0
 while [ $# -gt 0 ]; do
@@ -46,355 +53,227 @@ done
 if [ "$wrote" = 1 ] && [ "${STUB_WRITE_EXIT:-0}" = 2 ]; then
   exit 2
 fi
-printf '{"capability":"tracker","active":true,"checkpoint":"%s","mode":"warn","decision":"%s","reason":"%s","identity":{"common_dir":"","branch":"","change":null,"key":""},"item":null,"conflict":null,"prompt":null,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}\\n' "$checkpoint" "$decision" "$reason"
+prompt='null'
+if [ "$decision" = ask ]; then
+  prompt='{"reason":"needs-item","evidence":{"local":"","remote":"","code":"","git":""},"choices":["continue","local"]}'
+fi
+printf '{"capability":"tracker","active":true,"checkpoint":"%s","mode":"warn","decision":"%s","reason":"%s","identity":{"common_dir":"","branch":"","change":null,"key":""},"item":null,"conflict":null,"prompt":%s,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}\\n' "$checkpoint" "$decision" "$reason" "$prompt"
 [ "$decision" = block ] && exit 2
 exit 0
 """
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
 
 
-class TrackerLedgerHostTests(unittest.TestCase):
-    """The tracker host grades checkpoints with no Plan Build dependency."""
+class TrackerLedgerHostDirectModeTests(unittest.TestCase):
+    """`tracker-card-gate.sh` grades lifecycle checkpoints as a direct host."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(MODULE_PATH, "tracker_ledger_host_test")
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.repo = base / "repo"
+        self.repo.mkdir()
+        _git(self.repo, "init", "-q")
+        _git(self.repo, "config", "user.email", "t@t.t")
+        _git(self.repo, "config", "user.name", "t")
+        (self.repo / "README.md").write_text("x\n")
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-qm", "init")
+        self.stub_log = base / "stub.log"
+        self.stub = base / "worktree-gate"
+        self.stub.write_text(STUB_BINARY)
+        self.stub.chmod(0o755)
 
-    def _root(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        # Deliberately no openspec/ tree: tracker checkpoints are independent.
-        return Path(tmp.name)
+    def _stamped_host(self, mode: str = "warn") -> Path:
+        stamped = Path(self.tmp.name) / f"tracker-card-gate-host-{mode}.sh"
+        stamped.write_text(
+            GATE.read_text()
+            .replace("__TRACKER_CARD_GATE_MODE__", mode)
+            .replace("__TRACKER_CLI_HOME__", "")
+            .replace("__TRACKER_LIB_INTERNAL__", str(LIB_INTERNAL))
+        )
+        stamped.chmod(0o755)
+        return stamped
 
-    def _planning_root(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        (root / "openspec" / "changes" / "archive").mkdir(parents=True)
-        return root
-
-    def _active_light(self, root: Path, slug: str = "demo") -> Path:
-        active = root / "openspec" / "changes" / slug
-        active.mkdir(parents=True)
-        (active / "tasks.md").write_text("Depth: light\n")
-        (active / "proposal.md").write_text("# proposal\n")
-        return active
-
-    def _archive_light(self, root: Path, slug: str = "done") -> Path:
-        archived = root / "openspec" / "changes" / "archive" / slug
-        archived.mkdir(parents=True)
-        (archived / "tasks.md").write_text("Depth: light\n")
-        (archived / "proposal.md").write_text("# proposal\n")
-        return archived
-
-    def _stub(self, root: Path) -> tuple[Path, Path]:
-        base = root / "stub"
-        base.mkdir(exist_ok=True)
-        log = base / "stub.log"
-        binary = base / "worktree-gate"
-        binary.write_text(STUB_BINARY)
-        binary.chmod(0o755)
-        return binary, log
-
-    def _env(self, binary: Path | None, log: Path | None, *, decision: str = "block",
-             **extra: str) -> dict:
+    def _env(self, *, decision: str = "allow", reason: str = "", **extra: str) -> dict:
         env = dict(os.environ)
-        for key in ("TRACKER_LEDGER_MODE", "TRACKER_CARD_GATE_MODE", "AI_SPECS_HOME"):
+        for key in ("TRACKER_CARD_GATE_MODE", "TRACKER_LEDGER_MODE",
+                    "TRACKER_CARD_GATE_PATHS", "AI_SPECS_HOME"):
             env.pop(key, None)
-        if binary is not None and log is not None:
-            env["WORKTREE_GATE_BIN"] = str(binary)
-            env["STUB_LOG"] = str(log)
-            env["STUB_DECISION"] = decision
+        env["WORKTREE_GATE_BIN"] = str(self.stub)
+        env["STUB_LOG"] = str(self.stub_log)
+        env["STUB_DECISION"] = decision
+        env["STUB_REASON"] = reason
         env.update(extra)
         return env
 
-    def _run(self, root: Path, slug: str | None, stage: str, env: dict) -> subprocess.CompletedProcess:
-        args = [slug] if slug is not None else []
-        args += ["--root", str(root), "--stage", stage]
-        return self._run_argv(args, env)
-
-    def _run_argv(self, argv: list[str], env: dict) -> subprocess.CompletedProcess:
-        # A new session has no controlling terminal, so the ask prompt's
-        # /dev/tty open fails deterministically instead of blocking on a
-        # developer's real terminal.
-        return subprocess.run(
-            [sys.executable, str(MODULE_PATH), *argv], capture_output=True, text=True,
-            start_new_session=True,
-            env=env,
-        )
-
-    def _logged(self, log: Path) -> list[str]:
-        return log.read_text().splitlines() if log.exists() else []
-
-    def _grade_lines(self, log: Path) -> list[str]:
-        return [l for l in self._logged(log) if "--checkpoint" in l and "--write" not in l]
-
-    def _write_lines(self, log: Path) -> list[str]:
-        return [l for l in self._logged(log) if l.startswith("WRITE ")]
-
-    # --- checkpoint availability without Plan Build ---
-
-    def test_pre_merge_checkpoint_grades_without_plan_build(self):
-        root = self._root()
-        binary, log = self._stub(root)
-        blockers = None
-        env = self._env(binary, log, decision="allow")
-        with mock.patch.dict(os.environ, env, clear=True):
-            blockers = self.mod.ledger_blockers(root, "pre-merge")
-        self.assertEqual(blockers, [], log.read_text())
-        self.assertIn("--checkpoint pre-merge", self._grade_lines(log)[0])
-
-    def test_archive_close_checkpoint_grades_without_plan_build(self):
-        root = self._root()
-        binary, log = self._stub(root)
-        env = self._env(binary, log, decision="allow")
-        with mock.patch.dict(os.environ, env, clear=True):
-            blockers = self.mod.ledger_blockers(root, "archive-close")
-        self.assertEqual(blockers, [], log.read_text())
-        self.assertIn("--checkpoint archive-close", self._grade_lines(log)[0])
-
-    # --- CLI preserves --root and stage wire values ---
-
-    def test_cli_prearchive_stage_grades_archive_close(self):
-        root = self._planning_root()
-        self._active_light(root)
-        binary, log = self._stub(root)
-        r = self._run(root, "demo", "pre-archive", self._env(binary, log))
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("--checkpoint archive-close", log.read_text())
-        self.assertIn("tracker-ledger archive-close", r.stderr)
-
-    def test_cli_premerge_stage_grades_pre_merge(self):
-        root = self._planning_root()
-        self._archive_light(root)
-        binary, log = self._stub(root)
-        r = self._run(root, "done", "pre-merge", self._env(binary, log))
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("--checkpoint pre-merge", log.read_text())
-
-    # --- direct --checkpoint lifecycle surface (W5) ---
-
-    def test_cli_checkpoint_pre_merge_grades_without_plan_build(self):
-        root = self._root()  # deliberately no openspec/ tree at all
-        binary, log = self._stub(root)
-        r = self._run_argv(
-            ["demo", "--root", str(root), "--checkpoint", "pre-merge"],
-            self._env(binary, log, decision="allow"),
-        )
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("--checkpoint pre-merge", self._grade_lines(log)[0])
-
-    def test_cli_checkpoint_archive_close_grades_without_plan_build(self):
-        root = self._root()  # deliberately no openspec/ tree at all
-        binary, log = self._stub(root)
-        r = self._run_argv(
-            ["demo", "--root", str(root), "--checkpoint", "archive-close"],
-            self._env(binary, log, decision="allow"),
-        )
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("--checkpoint archive-close", self._grade_lines(log)[0])
-        self.assertEqual(
-            self._write_lines(log), [],
-            "the lifecycle host never infers a tracker close write",
-        )
-
-    def test_cli_default_checkpoint_stays_pre_merge(self):
-        root = self._root()
-        binary, log = self._stub(root)
-        r = self._run_argv(
-            ["demo", "--root", str(root)], self._env(binary, log, decision="allow")
-        )
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("--checkpoint pre-merge", self._grade_lines(log)[0])
-
-    def test_cli_stage_alias_still_maps_to_wire_checkpoints(self):
-        root = self._root()
-        binary, log = self._stub(root)
-        r = self._run_argv(
-            ["demo", "--root", str(root), "--stage", "pre-archive"],
-            self._env(binary, log, decision="allow"),
-        )
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("--checkpoint archive-close", self._grade_lines(log)[0])
-
-    def test_cli_conflicting_checkpoint_and_stage_grade_nothing(self):
-        root = self._root()
-        binary, log = self._stub(root)
-        r = self._run_argv(
-            ["demo", "--root", str(root),
-             "--checkpoint", "archive-close", "--stage", "pre-merge"],
-            self._env(binary, log, decision="allow"),
-        )
-        self.assertNotEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(
-            self._grade_lines(log), [],
-            "a contradictory lifecycle request must not grade anything",
-        )
-
-    def test_openspec_archive_never_selects_the_archive_close_checkpoint(self):
-        """An OpenSpec archive is not tracker item closure: the requested
-        checkpoint decides, never the planning tree."""
-        root = self._planning_root()
-        self._archive_light(root, "done")
-        binary, log = self._stub(root)
-        r = self._run_argv(
-            ["done", "--root", str(root), "--checkpoint", "pre-merge"],
-            self._env(binary, log, decision="allow"),
-        )
-        self.assertEqual(r.returncode, 0, r.stderr)
-        grades = self._grade_lines(log)
-        self.assertEqual(len(grades), 1, log.read_text())
-        self.assertIn("--checkpoint pre-merge", grades[0])
-        self.assertNotIn("--checkpoint archive-close", grades[0])
-        self.assertEqual(self._write_lines(log), [])
-
-    def test_runtime_docs_no_longer_route_tracker_checkpoints_to_the_guardian(self):
-        for path in (ROOT / "docs" / "capabilities.md", ROOT / "docs" / "runtime-hooks.md"):
-            text = path.read_text(encoding="utf-8")
-            with self.subTest(doc=path.name):
-                self.assertNotIn("pre-merge guardian", text)
-                self.assertIn("tracker_ledger_host.py", text)
-
-    # --- A9 ledger mode mapping ---
-
-    def test_resolve_ledger_mode_a9_mapping(self):
-        root = self._planning_root()
-        (root / "ai-specs").mkdir()
-        manifest = root / "ai-specs" / "ai-specs.toml"
-        manifest.write_text(
-            "[recipes.trello-mcp-workflow]\nenabled = true\n"
-            "[recipes.trello-mcp-workflow.config]\n"
-            "ledger_mode = 'always'\ngate_mode = 'off'\n"
-        )
-        self.assertEqual(self.mod.resolve_ledger_mode(root), "always", "ledger_mode wins")
-        manifest.write_text(
-            "[recipes.trello-mcp-workflow]\nenabled = true\n"
-            "[recipes.trello-mcp-workflow.config]\ngate_mode = 'off'\n"
-        )
-        self.assertEqual(self.mod.resolve_ledger_mode(root), "off")
-        manifest.write_text(
-            "[recipes.trello-mcp-workflow]\nenabled = true\n"
-            "[recipes.trello-mcp-workflow.config]\ngate_mode = 'always'\n"
-        )
-        self.assertEqual(self.mod.resolve_ledger_mode(root), "always")
-        manifest.write_text("")
-        self.assertEqual(self.mod.resolve_ledger_mode(root), "warn")
-        with mock.patch.dict(os.environ, {"TRACKER_LEDGER_MODE": "ask"}):
-            self.assertEqual(self.mod.resolve_ledger_mode(root), "ask")
-
-    # --- fail-open / fail-closed behavior preserved ---
-
-    def test_ask_without_tty_blocks_without_fabricating_a_decision(self):
-        root = self._planning_root()
-        self._archive_light(root)
-        binary, log = self._stub(root)
-        env = self._env(binary, log, decision="ask", STUB_REASON="needs-item")
-        r = self._run(root, "done", "pre-merge", env)
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("no terminal", r.stderr)
-        self.assertNotIn("DECIDE", log.read_text())
-
-    def test_ask_identity_unavailable_reports_and_proceeds(self):
-        root = self._planning_root()
-        self._archive_light(root)
-        binary, log = self._stub(root)
-        env = self._env(binary, log, decision="ask", STUB_REASON="identity_unavailable")
-        r = self._run(root, "done", "pre-merge", env)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("identity_unavailable", r.stderr)
-        self.assertNotIn("DECIDE", log.read_text())
-
-    def test_cold_home_fails_open(self):
-        root = self._planning_root()
-        self._archive_light(root)
-        env = self._env(None, None, AI_SPECS_HOME=str(root / "cold-home"))
-        r = self._run(root, "done", "pre-merge", env)
-        self.assertEqual(r.returncode, 0, r.stderr)
-
-    # --- evidence bridge behavior preserved ---
-
-    def test_tracker_none_never_becomes_a_host_write(self):
-        root = self._planning_root()
-        archived = self._archive_light(root, "done")
-        (archived / "tracker.none").write_text(
-            "\nno tracker card for this archive\n", encoding="utf-8"
-        )
-        binary, log = self._stub(root)
-        r = self._run(root, "done", "pre-merge", self._env(binary, log, decision="allow"))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(
-            self._write_lines(log), [],
-            "the tracker.none file must never authorize the host to write an exemption",
-        )
-        grades = self._grade_lines(log)
-        self.assertEqual(len(grades), 1, log.read_text())
-        self.assertIn("--evidence", grades[0], "the host must pass bridge-built evidence")
-        self.assertTrue((archived / "tracker.none").is_file(),
-                        "the host never creates or deletes the human-authored file")
-
-    def test_grade_line_carries_evidence_without_an_exemption(self):
-        root = self._planning_root()
-        self._archive_light(root)
-        binary, log = self._stub(root)
-        r = self._run(root, "done", "pre-merge", self._env(binary, log, decision="allow"))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self._write_lines(log), [])
-        self.assertIn("--evidence", self._grade_lines(log)[0])
-
-    def test_tracker_none_never_reaches_the_write_surface(self):
-        root = self._planning_root()
-        archived = self._archive_light(root, "done")
-        (archived / "tracker.none").write_text("no tracker card\n", encoding="utf-8")
-        binary, log = self._stub(root)
-        env = self._env(binary, log, decision="allow", STUB_WRITE_EXIT="2")
-        r = self._run(root, "done", "pre-merge", env)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self._write_lines(log), [],
-                         "a failing write surface proves the host issues no exempt write")
-        self.assertEqual(len(self._grade_lines(log)), 1, log.read_text())
-
-    def test_tracker_none_cannot_unlock_a_blocking_checkpoint(self):
-        root = self._planning_root()
-        archived = self._archive_light(root, "done")
-        (archived / "tracker.none").write_text("no tracker card\n", encoding="utf-8")
-        binary, log = self._stub(root)
-        env = self._env(binary, log, decision="block", STUB_REASON="missing tracked item")
-        r = self._run(root, "done", "pre-merge", env)
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertEqual(self._write_lines(log), [],
-                         "writing the exemption the file describes is not the host's call")
-
-    def test_evidence_survives_a_cold_cli_home(self):
-        root = self._planning_root()
-        self._archive_light(root)
-        binary, log = self._stub(root)
-        env = self._env(binary, log, decision="allow",
-                        AI_SPECS_HOME=str(root / "cold-home-with-no-cache"))
-        r = self._run(root, "done", "pre-merge", env)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("--evidence", self._grade_lines(log)[0],
-                      "the bridge is sibling-loaded, so no cache is required")
-
-    def test_ledger_blockers_grades_pr_review_with_evidence(self):
-        root = self._planning_root()
-        active = self._active_light(root, "demo")
-        (active / "proposal.md").write_text(
+    def _change(self, slug: str = "demo-change") -> Path:
+        folder = self.repo / "openspec" / "changes" / slug
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "proposal.md").write_text(
             "## Tracker\n\n- **card_id**: `6aa703fdcf61a90ec702d58b`\n", encoding="utf-8"
         )
-        binary, log = self._stub(root)
-        env = self._env(binary, log, decision="allow")
-        with mock.patch.dict(os.environ, env, clear=True):
-            blockers = self.mod.ledger_blockers(root, "pr-review", slug="demo")
-        self.assertEqual(blockers, [], log.read_text())
-        self.assertIn("--evidence", self._grade_lines(log)[0])
+        return folder
+
+    def _run_host(
+        self,
+        *args: str,
+        mode: str = "warn",
+        decision: str = "allow",
+        reason: str = "",
+        env: dict | None = None,
+        stdin: str = "",
+    ) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(self._stamped_host(mode)), *args],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            # A new session has no controlling terminal, so the ask prompt's
+            # /dev/tty open fails deterministically instead of blocking.
+            start_new_session=True,
+            env=env or self._env(decision=decision, reason=reason),
+        )
+
+    def _logged(self) -> list[str]:
+        return self.stub_log.read_text().splitlines() if self.stub_log.exists() else []
+
+    def _logged_checkpoints(self) -> list[str]:
+        checkpoints = []
+        for line in self._logged():
+            parts = line.split()
+            for i, token in enumerate(parts):
+                if token == "--checkpoint" and i + 1 < len(parts):
+                    checkpoints.append(parts[i + 1])
+        return checkpoints
+
+    def _grade_lines(self) -> list[str]:
+        return [l for l in self._logged() if "--checkpoint" in l and "--write" not in l]
+
+    def _write_lines(self) -> list[str]:
+        return [l for l in self._logged() if l.startswith("WRITE ")]
+
+    # --- the retired Python host ---
+
+    def test_the_python_lifecycle_host_is_gone(self):
+        """No Python host file backs `pre-merge`/`archive-close` any more."""
+        self.assertFalse(RETIRED_HOST.exists(),
+                         "the tracker lifecycle host is the shell bridge's direct mode")
+
+    # --- direct checkpoint grading ---
+
+    def test_pre_merge_grades_with_bridge_evidence(self):
+        self._change()
+        r = self._run_host("--root", str(self.repo), "--checkpoint", "pre-merge", "demo-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["pre-merge"])
+        self.assertIn("--evidence", self._grade_lines()[0])
+
+    def test_archive_close_grades_without_inferring_a_write(self):
+        self._change()
+        r = self._run_host(
+            "--root", str(self.repo), "--checkpoint", "archive-close", "demo-change"
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["archive-close"])
+        self.assertEqual(self._write_lines(), [],
+                         "the lifecycle host never infers a tracker close write")
+
+    def test_stage_alias_maps_pre_archive_to_archive_close(self):
+        r = self._run_host("--root", str(self.repo), "--stage", "pre-archive")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["archive-close"])
+
+    def test_default_checkpoint_is_pre_merge(self):
+        r = self._run_host("--root", str(self.repo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["pre-merge"])
+
+    def test_conflicting_checkpoint_and_stage_grade_nothing(self):
+        r = self._run_host(
+            "--root", str(self.repo),
+            "--checkpoint", "archive-close", "--stage", "pre-merge",
+        )
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), [],
+                         "a contradictory lifecycle request must not grade anything")
+
+    def test_root_is_required(self):
+        r = self._run_host("--checkpoint", "pre-merge")
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--root", r.stderr)
+        self.assertEqual(self._logged_checkpoints(), [])
+
+    def test_root_resolves_to_the_git_toplevel(self):
+        nested = self.repo / "nested" / "deeper"
+        nested.mkdir(parents=True)
+        r = self._run_host("--root", str(nested), "--checkpoint", "pre-merge")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        parts = self._grade_lines()[0].split()
+        root = parts[parts.index("--project-root") + 1]
+        self.assertEqual(os.path.realpath(root), os.path.realpath(str(self.repo)))
+
+    # --- verdict mapping ---
+
+    def test_block_verdict_blocks(self):
+        r = self._run_host(
+            "--root", str(self.repo), "--checkpoint", "pre-merge", decision="block"
+        )
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertIn("blocked at pre-merge", r.stderr)
+
+    def test_ask_without_tty_blocks_without_recording(self):
+        r = self._run_host(
+            "--root", str(self.repo), "--checkpoint", "pre-merge", decision="ask"
+        )
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertIn("no terminal", r.stderr)
+        self.assertNotIn("DECIDE", self.stub_log.read_text())
+
+    def test_ask_identity_unavailable_reports_and_proceeds(self):
+        r = self._run_host(
+            "--root", str(self.repo), "--checkpoint", "pre-merge",
+            decision="ask", reason="identity_unavailable",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("identity_unavailable", r.stderr)
+        self.assertNotIn("DECIDE", self.stub_log.read_text())
+
+    def test_gate_mode_off_skips_the_checkpoint(self):
+        r = self._run_host(
+            "--root", str(self.repo), "--checkpoint", "pre-merge",
+            mode="off", decision="block",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), [])
+
+    def test_missing_verified_binary_fails_open(self):
+        env = self._env(decision="block")
+        env.pop("WORKTREE_GATE_BIN", None)
+        env["AI_SPECS_HOME"] = str(Path(self.tmp.name) / "cold-home")
+        r = self._run_host("--root", str(self.repo), "--checkpoint", "pre-merge", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), [])
+
+    # --- argv selection, not stdin ---
+
+    def test_host_mode_is_selected_by_argv_not_a_hook_payload(self):
+        stdin = json.dumps({
+            "event": "pre-tool-use",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": str(self.repo / "lib" / "foo.py")},
+            "cwd": str(self.repo),
+        })
+        r = self._run_host(
+            "--root", str(self.repo), "--checkpoint", "archive-close",
+            decision="block", stdin=stdin,
+        )
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["archive-close"],
+                         "the requested checkpoint wins over any piped hook payload")
 
 
 if __name__ == "__main__":

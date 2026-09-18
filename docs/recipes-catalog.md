@@ -269,9 +269,10 @@ dated-plus-undated candidates.
 
 This OpenSpec archive is Plan Build's change-folder boundary and is separate from
 a tracker recipe's `archive-close` checkpoint: `archive-close` is tracker item
-closure through the Tracker-domain host (`tracker_ledger_host.py --checkpoint
-archive-close`), never moving the change folder, never inferring closure from
-archive state, and writing nothing. The pre-merge artifact guardian is tracker-free.
+closure through the tracker gate's direct host mode (`tracker-card-gate.sh --root
+<root> --checkpoint archive-close`), never moving the change folder, never
+inferring closure from archive state, and writing nothing. The pre-merge
+artifact guardian is tracker-free.
 
 - **Provides:** skill `plan-build-flow`; capability `plan-build-flow`.
 - **Config:**

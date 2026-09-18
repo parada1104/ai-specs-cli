@@ -134,15 +134,14 @@ The ledger is the only grader. The five checkpoints (`work-start`, `apply-start`
 ### Tracker lifecycle host (`pre-merge`, `archive-close`)
 
 The `pre-merge` and `archive-close` checkpoints are Plan Build-independent: the
-Tracker-domain host grades them with **no `openspec/` tree**. Run it directly at
+shell host grades them with **no `openspec/` tree**. Run its direct host mode at
 the lifecycle boundary — it is the generic command a future Jira/Linear recipe
 reuses unchanged:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
-  <slug> --root "$PWD" --checkpoint pre-merge
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
-  <slug> --root "$PWD" --checkpoint archive-close
+GATE=ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh
+bash "$GATE" --root "$PWD" --checkpoint pre-merge <slug>
+bash "$GATE" --root "$PWD" --checkpoint archive-close <slug>
 ```
 
 `--root` is required (the resolved project root, never the process cwd) and the
@@ -203,7 +202,8 @@ JSON. Grade paths keep failing open.
 
 ### Evidence sides
 
-`tracker-card-gate.sh` and `tracker_ledger_host.py` pass a bridge-built `--evidence`
+`tracker-card-gate.sh` (pre-tool-use hook and direct host mode) passes a
+bridge-built `--evidence`
 file (`lib/_internal/ledger_bridge.py`, acquisition only): `local` is the ledger's
 own store snapshot, `code` is the change's `## Tracker` `card_id`, and `git` is that
 same id when a `pr:` is recorded. The `--evidence` `remote` side stays **unwired**:

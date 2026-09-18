@@ -164,15 +164,14 @@ side is unwired in this slice.
 ### Tracker lifecycle checkpoints (`pre-merge`, `archive-close`)
 
 The ledger's lifecycle is **Plan Build-independent**: this recipe never needs an
-`openspec/` tree to grade a tracker checkpoint. Run the Tracker-domain host
-directly — this is the generic lifecycle command, and a future Jira/Linear recipe
-reuses it unchanged:
+`openspec/` tree to grade a tracker checkpoint. Run the tracker gate's direct
+host mode — this is the generic lifecycle command, and a future Jira/Linear
+recipe reuses it unchanged:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
-  <slug> --root "$PWD" --checkpoint pre-merge
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/tracker_ledger_host.py" \
-  <slug> --root "$PWD" --checkpoint archive-close
+GATE=ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh
+bash "$GATE" --root "$PWD" --checkpoint pre-merge <slug>
+bash "$GATE" --root "$PWD" --checkpoint archive-close <slug>
 ```
 
 `--root` is required and is the resolved project root, never the process cwd. The

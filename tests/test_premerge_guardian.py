@@ -1258,10 +1258,17 @@ class CanonicalOwnershipContractTests(unittest.TestCase):
 
     # --- tracker-ledger: autonomous core + Tracker domain port ---
 
-    def test_tracker_ledger_hosts_the_pre_merge_and_archive_close_checkpoints(self):
+    def test_tracker_gate_direct_mode_hosts_the_pre_merge_and_archive_close_checkpoints(self):
         text = self._norm(TRACKER_LEDGER_SPEC.read_text(encoding="utf-8"))
-        self.assertIn("tracker_ledger_host.py", text)
-        self.assertIn("`--checkpoint pre-merge|archive-close`", text)
+        # The canonical contract names the live shell bridge in direct host mode.
+        self.assertIn(
+            "`pre-merge` and `archive-close` → the `tracker-card-gate.sh` shell "
+            "bridge in direct host mode "
+            "(`--root <root> --checkpoint pre-merge|archive-close`)",
+            text,
+        )
+        # ... and no longer names the retired Python host anywhere.
+        self.assertNotIn("tracker_ledger_host.py", text)
 
     def test_tracker_ledger_spec_never_pins_checkpoints_to_the_guardian(self):
         text = TRACKER_LEDGER_SPEC.read_text(encoding="utf-8")
@@ -1283,7 +1290,11 @@ class CanonicalOwnershipContractTests(unittest.TestCase):
     def test_no_host_resolves_config_from_a_hardcoded_literal(self):
         text = self._norm(TRACKER_LEDGER_SPEC.read_text(encoding="utf-8"))
         self.assertIn("No host MAY resolve its config section from a hardcoded", text)
-        self.assertIn("the plan-build work-start gate, the tracker gate, the tracker-ledger host, and doctor", text)
+        self.assertIn(
+            "the plan-build work-start gate, the tracker gate (including its direct "
+            "`--root <root> --checkpoint pre-merge|archive-close` host mode), and doctor",
+            text,
+        )
 
     # --- vcs-pr-flow: transport/review/merge/cleanup only ---
 
@@ -1301,15 +1312,23 @@ class CanonicalOwnershipContractTests(unittest.TestCase):
 
     # --- no stale host reference anywhere in the shipped surface ---
 
-    def test_tracker_gate_comments_name_the_tracker_ledger_host(self):
+    def test_tracker_gate_comments_name_the_direct_checkpoint_host(self):
         text = TRACKER_GATE_HOOK.read_text(encoding="utf-8")
         self.assertNotIn("pre-merge guardian", text)
-        self.assertIn("tracker_ledger_host.py", text)
+        self.assertIn("--checkpoint pre-merge|archive-close", text)
+        # The retired Python host may survive only as a historical removal note.
+        if "tracker_ledger_host.py" in text:
+            self.assertIn("retired", text)
 
-    def test_unreleased_changelog_names_the_tracker_ledger_host(self):
+    def test_unreleased_changelog_records_the_python_host_removal(self):
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         unreleased = changelog.split("## [0.22.0]", 1)[0]
-        self.assertIn("tracker_ledger_host.py", unreleased)
+        # Historical removal note only: the entry names the retired module and the
+        # shell bridge that now hosts the checkpoints, never a live Python host.
+        self.assertIn(
+            "`lib/_internal/tracker_ledger_host.py` Python host is removed", unreleased
+        )
+        self.assertIn("--checkpoint pre-merge|archive-close", unreleased)
         self.assertNotIn("pre-merge guardian", unreleased)
 
     def test_no_shipped_recipe_claims_the_guardian_hosts_tracker_checkpoints(self):

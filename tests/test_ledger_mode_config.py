@@ -30,7 +30,6 @@ RECIPE_TOML = RECIPE_DIR / "recipe.toml"
 PLAN_BUILD_GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
 TRACKER_GATE = RECIPE_DIR / "hooks" / "tracker-card-gate.sh"
 GUARDIAN = ROOT / "lib" / "_internal" / "premerge_guardian.py"
-TRACKER_HOST = ROOT / "lib" / "_internal" / "tracker_ledger_host.py"
 DOCTOR = ROOT / "lib" / "_internal" / "doctor.py"
 LEGACY_RECIPE = "trello-mcp-workflow"
 LIB_INTERNAL = ROOT / "lib" / "_internal"
@@ -144,11 +143,7 @@ class LedgerModeConfigTests(unittest.TestCase):
         active.mkdir(parents=True, exist_ok=True)
         (active / "tasks.md").write_text("Depth: light\n")
         (active / "proposal.md").write_text("# proposal\n")
-        r = subprocess.run(
-            ["python3", str(TRACKER_HOST), "demo-change", "--root", str(self.repo),
-             "--stage", "pre-archive"],
-            capture_output=True, text=True, env=self._env(),
-        )
+        r = self._tracker_host("archive-close", env=self._env())
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._ledger_modes(), ["always"],
                          "the tracker host must read the witness recipe's config too")
@@ -189,7 +184,6 @@ class LedgerModeConfigTests(unittest.TestCase):
 
     def test_no_hardcoded_recipe_lookup_remains_at_any_host_site(self):
         sites = (
-            ("tracker-host", TRACKER_HOST, "recipe_id(root)"),
             ("tracker-gate", TRACKER_GATE, "_ledger_recipe_id"),
             ("plan-build-gate", PLAN_BUILD_GATE, "_ledger_recipe_id"),
             ("doctor", DOCTOR, "recipe_id"),
@@ -416,10 +410,21 @@ class LedgerModeConfigTests(unittest.TestCase):
 
     def test_tracker_host_applies_same_mapping(self):
         self._manifest(ledger_mode="always", gate_mode="off")
-        r = self._tracker_path("off", env=self._env())
+        r = self._tracker_host("archive-close", env=self._env())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self._logged_checkpoints(), ["apply-start"], r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["archive-close"], r.stderr)
         self.assertEqual(self._ledger_modes(), ["always"])
+
+    def _tracker_host(self, checkpoint: str, *, env: dict,
+                      slug: str | None = None) -> subprocess.CompletedProcess:
+        """The direct shell-host surface the merge skills invoke."""
+        args = ["--root", str(self.repo), "--checkpoint", checkpoint]
+        if slug is not None:
+            args.append(slug)
+        return subprocess.run(
+            ["bash", str(self._stamped_tracker_gate("warn")), *args],
+            capture_output=True, text=True, env=env,
+        )
 
     # --- 5.6: all five checkpoints reach one predicate ---
 
@@ -459,15 +464,15 @@ class LedgerModeConfigTests(unittest.TestCase):
             ("pr-review", ["bash", str(gate)], shell_event, active),
             (
                 "archive-close",
-                ["python3", str(TRACKER_HOST), "demo-change", "--root", str(self.repo),
-                 "--stage", "pre-archive"],
+                ["bash", str(gate), "--root", str(self.repo),
+                 "--checkpoint", "archive-close", "demo-change"],
                 "",
                 active,
             ),
             (
                 "pre-merge",
-                ["python3", str(TRACKER_HOST), "done-change", "--root", str(self.repo),
-                 "--stage", "pre-merge"],
+                ["bash", str(gate), "--root", str(self.repo),
+                 "--checkpoint", "pre-merge", "done-change"],
                 "",
                 archived,
             ),
@@ -498,7 +503,7 @@ class LedgerModeConfigTests(unittest.TestCase):
 
     def test_hosts_add_no_tracker_predicate(self):
         forbidden = ("is_valid_link", "RECOGNIZED", "card_id", "## Tracker")
-        for path in (PLAN_BUILD_GATE, TRACKER_GATE, GUARDIAN, TRACKER_HOST):
+        for path in (PLAN_BUILD_GATE, TRACKER_GATE, GUARDIAN):
             text = path.read_text()
             for token in forbidden:
                 with self.subTest(host=path.name, token=token):

@@ -2,8 +2,9 @@
 """Ledger evidence bridge: acquisition and JSON only, never a grader.
 
 Builds the local-facts half of the ledger's four-side evidence model for the
-checkpoint hosts (``tracker-card-gate.sh``, ``tracker_ledger_host.py``). This slice
-produces three sides (L3):
+one checkpoint host, ``tracker-card-gate.sh`` — its pre-tool-use hook mode and
+its direct ``--root <root> --checkpoint pre-merge|archive-close`` mode. This
+slice produces three sides (L3):
 
   ``local``   always empty from here — the Go ledger uses its own store snapshot
   ``remote``  always empty — no producer in this slice (no tracker MCP read)
