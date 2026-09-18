@@ -58,4 +58,6 @@ The shipped ledger intentionally chose agent-only `open|link|close` writes (L2/D
 - Evidence: focused suites green; Go gate rebuilt with go1.24.13; trust-root verification passed; `./tests/validate.sh` ran 2139 tests with 2 skips.
 - Ledger evidence: generic branch-level `bind` created one open item for this branch in the Git-common-dir store; `ai-specs doctor` reported tracker-ledger OK, with work-start unhosted INFO.
 - Dogfood: in-progress `bash bin/ai-specs sync .` and `bash bin/ai-specs doctor .` completed successfully; generated AGENTS/lock/manifest changes were restored per dogfood isolation, while the refreshed ignored hook/config state was retained only as verification output.
+- Delivery: commits `2cf55f5`, `a8ccc82`, and `f076233`; PR #264 — https://github.com/parada1104/ai-specs-cli/pull/264 — labeled `type:feature`.
+- Native review: attempted, but the controller selected an accumulated historical/generated baseline and then hit a native revision race while abandoning it; no reviewer capture was submitted. Independent verification is the delivery evidence.
 - Known note: repository-wide `openspec validate --specs` still reports unrelated pre-existing spec failures; tracker-ledger and runtime-hook specs validate.
