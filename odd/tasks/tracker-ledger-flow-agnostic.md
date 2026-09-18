@@ -33,7 +33,7 @@ The shipped ledger intentionally chose agent-only `open|link|close` writes (L2/D
 - [x] T2 — Implement the Go atomic lifecycle writer and host bridge.
 - [x] T3 — Install/distribute the generic VCS post-merge close hook and update integration tests.
 - [x] T4 — Reconcile canonical spec, recipe/agent docs, and stale generated assets.
-- [ ] T5 — Run focused/full validation, dogfood sync/doctor, and record ledger evidence.
+- [x] T5 — Run focused/full validation, dogfood sync/doctor, and record ledger evidence.
 
 ## Acceptance criteria
 - A valid external branch binding can be seeded once through the generic ledger command and produces one idempotent local open+link, independent of SDD/ODD/no-flow execution.
@@ -55,5 +55,7 @@ The shipped ledger intentionally chose agent-only `open|link|close` writes (L2/D
 - Branch: `feat/tracker-ledger-flow-agnostic`
 - Base: `development` at `90c19a3`
 - State: T1–T4 implemented and verified in the feature worktree; no commit yet.
-- Evidence: focused suites green; Go gate rebuilt with go1.24.13; trust-root verification passed; `./tests/run.sh` ran 2139 tests with 2 skips.
+- Evidence: focused suites green; Go gate rebuilt with go1.24.13; trust-root verification passed; `./tests/validate.sh` ran 2139 tests with 2 skips.
+- Ledger evidence: generic branch-level `bind` created one open item for this branch in the Git-common-dir store; `ai-specs doctor` reported tracker-ledger OK, with work-start unhosted INFO.
+- Dogfood: in-progress `bash bin/ai-specs sync .` and `bash bin/ai-specs doctor .` completed successfully; generated AGENTS/lock/manifest changes were restored per dogfood isolation, while the refreshed ignored hook/config state was retained only as verification output.
 - Known note: repository-wide `openspec validate --specs` still reports unrelated pre-existing spec failures; tracker-ledger and runtime-hook specs validate.
