@@ -136,10 +136,14 @@ EOF
 Squash-merge is fine for the bump PR (after user approval). Pull
 `origin/development` after it lands.
 
-### 4. Promote head (disposable)
+### 4. Promote head (disposable local branch)
+
+The promotion head is a local branch only so it can be pushed as the PR head;
+it does not need its own worktree, and the canonical worktree stays on
+`development` throughout the promotion and tag steps.
 
 ```bash
-git fetch origin development
+git fetch origin development main
 git branch -f release/vX.Y.Z origin/development
 git push -u origin release/vX.Y.Z
 ```
@@ -174,13 +178,17 @@ gh pr merge <n> --merge --delete-branch
 
 ### 5. Tag and GitHub release
 
-On `main` after the promote lands:
+After the promote PR lands, tag the fetched `origin/main` commit directly. Do
+not checkout `main` in the canonical worktree: Git tags point at commits, not
+working directories, and the canonical checkout remains on `development`.
 
 ```bash
 git fetch origin main
-git checkout -B main origin/main
-git tag -a "vX.Y.Z" -m "vX.Y.Z"
+test "$(git rev-parse origin/main)" = "$(git rev-parse origin/development)" \
+  || { echo "origin/main is not the current development tip" >&2; exit 1; }
+git tag -a "vX.Y.Z" origin/main -m "vX.Y.Z"
 git push origin "vX.Y.Z"
+test "$(git rev-list -n1 "vX.Y.Z")" = "$(git rev-parse origin/main)"
 ```
 
 **The tag push creates the release — you do not.** Pushing `v*` triggers
@@ -228,17 +236,20 @@ repo-root `install.sh`, not a nested path.
 ### 6. Cleanup
 
 ```bash
-git worktree remove .worktrees/release-vX.Y.Z 2>/dev/null || true
 git branch -D chore/release-vX.Y.Z release/vX.Y.Z 2>/dev/null || true
 git push origin --delete chore/release-vX.Y.Z 2>/dev/null || true
 # release/v* may already be deleted by --delete-branch on the promote PR
 ```
 
-Do **not** delete `development` or `main`.
+If a release branch was deliberately checked out in a worktree, remove that
+worktree before deleting the branch. The normal flow creates no release
+worktree. Do **not** delete `development` or `main`.
 
 ## Post-release checklist
 
-- [ ] `VERSION` on `main` matches the tag
+- [ ] `origin/main` contains the tagged release commit
+- [ ] `VERSION` on `origin/main` matches the tag
+- [ ] Canonical worktree remains on `development`
 - [ ] GitHub Release exists and notes look right
 - [ ] `development` still exists on origin
 - [ ] Feature release branches/worktrees removed
