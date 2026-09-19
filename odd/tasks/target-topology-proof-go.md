@@ -30,7 +30,7 @@ Move the bounded submodule-to-superproject topology proof used by the Plan Build
 - [x] T1 — Pin the Go query and shell delegation contracts with failing tests.
 - [x] T2 — Implement the minimal Go topology proof query and focused unit coverage.
 - [x] T3 — Replace Plan Build's duplicate topology proof with verified Go delegation and parity coverage.
-- [ ] T4 — Rebuild trust assets, run full validation, and record evidence. (in progress)
+- [ ] T4 — Rebuild trust assets, run full validation, and record evidence. (in progress — trust-root regeneration complete; full validation and native review pending)
 
 ## Decisions
 
@@ -45,8 +45,13 @@ Move the bounded submodule-to-superproject topology proof used by the Plan Build
 - GREEN: `go -C catalog/recipes/worktree-flow/gate test -run 'TestResolveCentralRoot|TestModuleRecords|TestClassifyStandalone|TestCentralFromCommon|TestLegacyCentral' -count=1 .` passed 11 selected tests; `go vet` passed and `gofmt -l` was clean.
 - T3 GREEN: `python3 -m unittest tests.test_plan_build_gate_hook` -> 44 tests OK (evidence observed independently by the parent, not re-run in this update).
 - T3 shell lint: `bash -n catalog/recipes/plan-build-flow/hooks/plan-build-gate.sh` passed.
-- Final validation: pending.
+- T4 trust-root regeneration: built all four assets with the canonical `go1.24.13` toolchain into a temporary absolute output dir outside the repository — `OUT="$(mktemp -d /tmp/t4-gate-build.XXXXXX)"` -> `/tmp/t4-gate-build.6Uvk9u`, then `scripts/build-gate.sh "$OUT"` -> "build-gate.sh: done — 4 targets built" (darwin/arm64, darwin/amd64, linux/amd64, linux/arm64) with no non-canonical toolchain warning; `go version` = `go1.24.13`.
+- T4 checksum generation: `(cd "$OUT" && shasum -a 256 worktree-gate-* | grep -v current) > /tmp/t4-gate-sums.txt` produced a bare 4-line file (no header, no `worktree-gate-current` entry).
+- T4 verify (pre-update): `./scripts/verify-gate-sums.sh /tmp/t4-gate-sums.txt catalog/recipes/worktree-flow/bin/SHA256SUMS` exited 1 with all four digests differing — the committed trust root was stale before regeneration.
+- T4 trust root: only the four digest lines of `catalog/recipes/worktree-flow/bin/SHA256SUMS` were replaced (`git diff --stat` = 4 insertions / 4 deletions); the documentation header is unchanged. New digests: darwin-amd64 `f6af08edaac36238f619d2f380bff6f5bc5982eabaa0f499eb69d2620ac139b6`, darwin-arm64 `382ad6740566749bf64d8d882184e4b43aa93350db15cc1322ab33a594413cc2`, linux-amd64 `6be19ba798c04a1d115b67ad00d5cfe5c38198f077fa4169f15e26394fa5f916`, linux-arm64 `aae01d913667ab02cf208f5169819e27fe09440d68ddf50784fd8edacb7f31e8`.
+- T4 verify (post-update): `./scripts/verify-gate-sums.sh /tmp/t4-gate-sums.txt catalog/recipes/worktree-flow/bin/SHA256SUMS` exited 0 -> "verify-gate-sums.sh: ok — 4 digest entries match the committed trust root".
+- Final full validation (`./tests/validate.sh`) and native review: pending; the full test suite was intentionally not run in this trust-root update.
 
 ## Status
 
-T1–T3 complete; the Go query now composes the existing proof helpers, preserves the legacy fail-closed fallback, and supports linked submodule worktrees; Plan Build's duplicate topology proof is replaced by verified Go delegation with parity coverage. T4 in progress. Full validation and native review remain pending.
+T1–T3 complete; the Go query now composes the existing proof helpers, preserves the legacy fail-closed fallback, and supports linked submodule worktrees; Plan Build's duplicate topology proof is replaced by verified Go delegation with parity coverage. T4 in progress: trust-root regeneration is done — the four digests in `catalog/recipes/worktree-flow/bin/SHA256SUMS` were rebuilt with canonical `go1.24.13` into a temp dir outside the repository and independently re-verified with `scripts/verify-gate-sums.sh` — but the full validation command (`./tests/validate.sh`) and native review are both still pending and were not run in this update. Changes are uncommitted.
