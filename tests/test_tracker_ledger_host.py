@@ -38,6 +38,21 @@ LIB_INTERNAL = ROOT / "lib" / "_internal"
 RETIRED_HOST = ROOT / "lib" / "_internal" / "tracker_ledger_host.py"
 
 STUB_BINARY = """#!/usr/bin/env bash
+# Mode resolution is Go-owned now: the shell host forwards the raw
+# `--ledger-gate-mode` hint instead of skipping `off` itself. So this double
+# mirrors Go's resolved-off short-circuit - a stderr note and exit 0 with no
+# checkpoint verdict, grading or log entry - before it records any argv.
+gate_mode=""
+want_mode=0
+for arg in "$@"; do
+  if [ "$want_mode" = 1 ]; then gate_mode="$arg"; want_mode=0
+  elif [ "$arg" = "--ledger-gate-mode" ]; then want_mode=1
+  fi
+done
+if [ "$gate_mode" = off ]; then
+  printf 'worktree-gate: ledger_mode off; skipping checkpoint\\n' >&2
+  exit 0
+fi
 printf '%s\\n' "$*" >> "${STUB_LOG}"
 decision="${STUB_DECISION:-allow}"
 reason="${STUB_REASON:-}"
