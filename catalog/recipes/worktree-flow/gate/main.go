@@ -73,6 +73,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ledgerWrite := fs.String("write", "", "JSON machine write to apply (open|bind|link|close|exempt), then re-grade")
 	ledgerReconcile := fs.String("reconcile", "", "path to an MCP-acquired observation JSON; adds a reconcile sidecar (exit code unchanged)")
 	ledgerReconcileEvent := fs.String("reconcile-event", "", "the event the caller asks to compare (recipe-declared expectations for it)")
+	// Binding resolution is a separate command surface: it reads the catalog, not
+	// the worktree, and its flags never touch the gate or ledger state.
+	resolveBindingsCmd := fs.Bool("resolve-bindings", false, "resolve capability-to-recipe bindings and grade capability conflicts (JSON on stdout, exit 0/2)")
+	bindingsCatalogDir := fs.String("catalog-dir", "", "catalog recipes directory for --resolve-bindings")
+	bindingsRecipeIDs := stringListFlag{}
+	fs.Var(&bindingsRecipeIDs, "recipe", "enabled recipe id in order (repeatable, for --resolve-bindings)")
+	bindingsJSON := fs.String("bindings", "[]", "explicit manifest [[bindings]] tables as a JSON array of {capability, recipe}")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -132,6 +139,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			write:          *ledgerWrite,
 			reconcile:      *ledgerReconcile,
 			reconcileEvent: *ledgerReconcileEvent,
+		}, stdout, stderr)
+	case *resolveBindingsCmd:
+		return runResolveBindings(bindingsOptions{
+			catalogDir: *bindingsCatalogDir,
+			recipeIDs:  bindingsRecipeIDs.values,
+			bindings:   *bindingsJSON,
 		}, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
