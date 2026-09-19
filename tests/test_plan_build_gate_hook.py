@@ -19,6 +19,13 @@ GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-
 
 STUB_BINARY = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${STUB_LOG}"
+for arg in "$@"; do
+  if [ "$arg" = "--resolve-central-root" ]; then
+    [ -n "${STUB_CENTRAL_ROOT:-}" ] || exit 1
+    printf '{"central_root":"%s","submodule":"%s"}\\n' "${STUB_CENTRAL_ROOT}" "${STUB_CENTRAL_SUB:-apps/api}"
+    exit 0
+  fi
+done
 decision="${STUB_DECISION:-allow}"
 reason="${STUB_REASON:-}"
 checkpoint=""
@@ -433,6 +440,56 @@ class PlanBuildGateHookTests(unittest.TestCase):
         self.assertEqual(_git_output(fx["sub"], "for-each-ref", "--format=%(refname:short)", "refs/heads"), before_branches)
         after_dirs = sorted(str(p.relative_to(fx["super"])) for p in fx["super"].rglob("*") if p.is_dir())
         self.assertEqual(after_dirs, before_dirs)
+
+    # --- central-root proof delegation (T1) ---
+
+    def _topology_env(self, central_root: Path | None, submodule: str = "apps/api") -> dict:
+        env = {
+            "WORKTREE_GATE_BIN": str(self.stub),
+            "STUB_LOG": str(self.stub_log),
+        }
+        if central_root is not None:
+            env["STUB_CENTRAL_ROOT"] = str(central_root)
+            env["STUB_CENTRAL_SUB"] = submodule
+        return env
+
+    def test_gate_delegates_central_root_proof_to_binary(self):
+        """The central root must come from `--resolve-central-root`.
+
+        The stub answers with a planning root the shell proof could never
+        derive, so an allow verdict can only come from the delegated proof.
+        """
+        fx = self._make_super_with_submodule()
+        delegated = Path(self.tmp.name) / "delegated-central"
+        self._seed_change_at(delegated, "demo")
+        r = self._run(
+            self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+            extra_env=self._topology_env(delegated),
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--resolve-central-root", self.stub_log.read_text())
+
+    def test_gate_does_not_prove_topology_without_the_binary(self):
+        """An empty `--resolve-central-root` answer is authoritative.
+
+        A real central plan exists, so any shell-side proof would allow; the
+        hook must fail closed on the unproven topology instead.
+        """
+        fx = self._make_super_with_submodule()
+        self._seed_change_at(fx["super"], "demo")
+        r = self._run(
+            self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+            extra_env=self._topology_env(None),
+        )
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertNotIn(str(fx["super"] / "openspec" / "changes"), r.stderr)
+
+    def test_gate_no_longer_owns_the_shell_topology_proof(self):
+        text = GATE.read_text(encoding="utf-8")
+        self.assertIn("--resolve-central-root", text,
+                      "the hook must delegate the central-root proof to Go")
+        self.assertNotIn("resolve_central_root() {", text,
+                         "the duplicated shell topology proof must be gone")
 
     # --- ledger work-start checkpoint (5.3) ---
 
