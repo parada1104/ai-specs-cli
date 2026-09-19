@@ -212,3 +212,12 @@ remove <path>`, then `git branch -D <branch>` after squash/rebase merges.
 Stop without deleting if the worktree is dirty.
 
 This honors the project rule: never revert or discard changes you did not make.
+
+### Candidate-view store (separate)
+
+This cleanup covers `.worktrees/` only. Native review candidate views live under
+the shared git dir (`.git/gentle-ai/candidate-views`) and are controller-owned.
+After the merged-worktree pass, load the `worktree-candidate-cleanup` skill to
+audit that store and, only when every eligibility proof holds, reap stale
+candidate views and their matching `*.owner.json` markers. Never delete candidate
+views or markers ad hoc.
