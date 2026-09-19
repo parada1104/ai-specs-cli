@@ -222,6 +222,7 @@ has_active_plan() {
   local f
   shopt -s nullglob
   for f in "$1"/openspec/changes/*/tasks.md; do
+    [ -n "$f" ] || continue
     return 0
   done
   return 1
