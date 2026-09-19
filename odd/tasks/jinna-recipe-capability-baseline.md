@@ -33,6 +33,7 @@ Harden the Jinna OpenProject recipe as a standalone ai-specs product for consume
 - [x] T2 — Add or extend an isolated consumer fixture for the standalone Jinna recipe lifecycle.
 - [x] T3 — Reconcile recipe docs/skill guidance for slow remote services without introducing hidden fallback behavior.
 - [x] T4 — Run focused tests and `./tests/validate.sh`; record RED/GREEN and final evidence.
+- [x] T5 — Add the recipe entrypoint parity matrix across CLI, wizard, Hub/TUI, sync, and doctor; normalize only proven divergent seams.
 
 ## Progress and evidence
 
@@ -47,6 +48,10 @@ Harden the Jinna OpenProject recipe as a standalone ai-specs product for consume
 - T3 GREEN: the focused boundary suite passed 2 tests; combined Jinna/baseline/consumer checks passed 16 tests and the existing provider suite passed 66 tests with 2 skips.
 - T4 complete. Focused product/baseline suite passed 82 tests with 2 expected opt-in release-smoke skips; adjacent schema/add/materialize/doctor/catalog suites passed 272 tests; `./tests/validate.sh` passed with exit 0; `git diff --check` passed.
 - Final commit range: `495bcd2`, `bc279f9`, `71bd213`, plus this evidence update. The worktree remained clean after validation, and `ai-specs/ai-specs.toml` was unchanged.
+- Follow-up T5 authorized: cover every recipe entry surface and converge them on the same domain behavior before treating the recipe product as interface-complete.
+- T5 complete. `tests/test_recipe_entrypoint_parity.py` covers catalog list/init/add, non-interactive recipe configure inspect, sync, doctor, top-level help, configure-recipes help/dispatch, Hub help/dispatch, and Hub label/dispatch parity. The Hub remains a presenter delegating whole-project `configure-recipes`; no alternate domain path was introduced.
+- T5 RED: the focused suite initially had 1 help failure and 1 missing-helper error for the unadvertised `recipe configure` and stale Hub label.
+- T5 GREEN: focused parity suite passed 11 tests; Hub/TUI/Jinna/recipe init/list/configure adjacency passed 96 tests; harness/config wizard adjacency passed 33 tests; `./tests/validate.sh` passed with 2163 tests and 142 skips; `git diff --check` passed.
 
 ## Acceptance criteria
 

@@ -70,7 +70,7 @@ _MENU: list[tuple[Action, str, str]] = [
     (Action.DOCTOR, "Doctor", "Full project health report (read-only)"),
     (Action.AGENTS, "Agents", "Select which AI agents to enable"),
     (Action.SKILLS, "Skills", "List / inspect project skills by origin"),
-    (Action.RECIPES, "Recipes", "List / add / remove / configure catalog recipes"),
+    (Action.RECIPES, "Recipes", "List / add / remove catalog recipes"),
     (Action.CONFIGURE_RECIPES, "Configure recipes", "Set up recipe config, CLI deps, env vars"),
     (Action.RULES_AUDIT, "Rules audit", "Inventory legacy rules for migration"),
     (Action.UPGRADE, "Upgrade", "Upgrade the global ai-specs installation"),
@@ -104,6 +104,19 @@ def recipe_add_choices(recipes: list[dict]) -> list[tuple[str, str]]:
         version = r.get("version") or ""
         out.append((f"{name} ({rid})  v{version}", rid))
     return out
+
+
+def recipes_submenu_choices() -> list[tuple[str, str]]:
+    """Recipes submenu options. The configure entry is the whole-project action."""
+    return [
+        ("List recipes", "list"),
+        ("Add recipe", "add"),
+        ("Remove recipe", "remove"),
+        # Delegates to `ai-specs configure-recipes` (whole project), not a
+        # per-recipe `recipe configure`; the label must say so.
+        ("Configure recipes (whole project, configure-recipes)", "configure"),
+        ("Back", "back"),
+    ]
 
 
 def recipe_remove_choices(recipes: list[dict]) -> list[tuple[str, str]]:
@@ -444,16 +457,7 @@ def _run_skills_submenu(console, target: Path) -> int | None:
 
 def _run_recipes_submenu(console, runner: DelegateRunner, target: Path) -> int | None:
     """Interactive Recipes submenu. Returns 0 to quit hub, None to continue."""
-    sub = pick_one(
-        "Recipes:",
-        [
-            ("List recipes", "list"),
-            ("Add recipe", "add"),
-            ("Remove recipe", "remove"),
-            ("Configure recipe", "configure"),
-            ("Back", "back"),
-        ],
-    )
+    sub = pick_one("Recipes:", recipes_submenu_choices())
     if sub is None or sub == "back":
         return None
 
