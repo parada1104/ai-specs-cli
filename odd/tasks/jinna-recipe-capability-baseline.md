@@ -32,7 +32,7 @@ Harden the Jinna OpenProject recipe as a standalone ai-specs product for consume
 - [x] T1 — Define the provider-neutral capability baseline and add contract coverage using the existing VCS capability pattern.
 - [x] T2 — Add or extend an isolated consumer fixture for the standalone Jinna recipe lifecycle.
 - [x] T3 — Reconcile recipe docs/skill guidance for slow remote services without introducing hidden fallback behavior.
-- [ ] T4 — Run focused tests and `./tests/validate.sh`; record RED/GREEN and final evidence.
+- [x] T4 — Run focused tests and `./tests/validate.sh`; record RED/GREEN and final evidence.
 
 ## Progress and evidence
 
@@ -45,6 +45,8 @@ Harden the Jinna OpenProject recipe as a standalone ai-specs product for consume
 - T3 complete. README and SKILL now state that sync/doctor are local-only, health/whoami are opt-in live diagnostics, the 30-second timeout covers local MCP startup/transport rather than the remote API SLA, and slow/unavailable service behavior is not hidden by retry/fallback/replay.
 - T3 RED: `python3 -m unittest tests.test_jinna_runtime_boundaries -v` failed with 2 documentation failures before the boundary sections existed.
 - T3 GREEN: the focused boundary suite passed 2 tests; combined Jinna/baseline/consumer checks passed 16 tests and the existing provider suite passed 66 tests with 2 skips.
+- T4 complete. Focused product/baseline suite passed 82 tests with 2 expected opt-in release-smoke skips; adjacent schema/add/materialize/doctor/catalog suites passed 272 tests; `./tests/validate.sh` passed with exit 0; `git diff --check` passed.
+- Final commit range: `495bcd2`, `bc279f9`, `71bd213`, plus this evidence update. The worktree remained clean after validation, and `ai-specs/ai-specs.toml` was unchanged.
 
 ## Acceptance criteria
 
