@@ -52,6 +52,7 @@ Harden the Jinna OpenProject recipe as a standalone ai-specs product for consume
 - T5 complete. `tests/test_recipe_entrypoint_parity.py` covers catalog list/init/add, non-interactive recipe configure inspect, sync, doctor, top-level help, configure-recipes help/dispatch, Hub help/dispatch, and Hub label/dispatch parity. The Hub remains a presenter delegating whole-project `configure-recipes`; no alternate domain path was introduced.
 - T5 RED: the focused suite initially had 1 help failure and 1 missing-helper error for the unadvertised `recipe configure` and stale Hub label.
 - T5 GREEN: focused parity suite passed 11 tests; Hub/TUI/Jinna/recipe init/list/configure adjacency passed 96 tests; harness/config wizard adjacency passed 33 tests; `./tests/validate.sh` passed with 2163 tests and 142 skips; `git diff --check` passed.
+- T5 delivery commit: `2cf7086` (`test(recipe): cover entrypoint parity`).
 
 ## Acceptance criteria
 
