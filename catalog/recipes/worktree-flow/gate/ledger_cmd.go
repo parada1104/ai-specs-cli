@@ -226,22 +226,30 @@ func newLedgerOut(v ledger.Verdict, write *ledger.WriteOutcome, reconcile *ledge
 // ledgerIdentityWithStoredSlug re-derives the identity with the slug already
 // recorded on the single open item for its common dir and branch (A11). A stored
 // slug survives its folder being archived mid-item, and an explicit --write change
-// becomes the stored slug so the re-grade selects what the write recorded.
+// becomes the stored slug so the re-grade selects what the write recorded. A
+// branch-level bind deliberately stores an empty slug; that is still a found row
+// and must not fall back to the planning tree's current slug.
 func ledgerIdentityWithStoredSlug(ident ledger.Identity, store ledger.Store, storeErr error, dir string, facts ledger.Facts) ledger.Identity {
 	if !ident.Available() || storeErr != nil {
 		return ident
 	}
-	slug := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
-	if slug == "" || slug == ident.Change {
+	slug, found := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
+	if !found || (slug == ident.Change && ident.Collision == "") {
+		return ident
+	}
+	if slug == "" {
+		ident.Change = ""
+		ident.Collision = ""
+		ident.Key = ledger.IdentityKey(ident.CommonDir, ident.Branch, "")
 		return ident
 	}
 	return ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, StoredSlug: slug, Facts: facts})
 }
 
 // storedLedgerSlug returns the change slug already recorded on the single open
-// item for the common dir and branch, so a mid-item archive does not rewrite the
-// identity (A11).
-func storedLedgerSlug(store ledger.Store, common, branch string) string {
+// item for the common dir and branch, plus whether a row was found. The boolean
+// distinguishes a deliberate branch-level empty slug from no open row (A11).
+func storedLedgerSlug(store ledger.Store, common, branch string) (string, bool) {
 	var changes []string
 	for _, item := range store.Items {
 		if item.Status != ledger.StatusOpen {
@@ -253,9 +261,9 @@ func storedLedgerSlug(store ledger.Store, common, branch string) string {
 		changes = append(changes, item.Identity.Change)
 	}
 	if len(changes) == 1 {
-		return changes[0]
+		return changes[0], true
 	}
-	return ""
+	return "", false
 }
 
 // ledgerIdentityForClose re-derives the identity for an explicit close write,
@@ -270,11 +278,17 @@ func ledgerIdentityForClose(ident ledger.Identity, store ledger.Store, storeErr 
 	if !ident.Available() || storeErr != nil {
 		return ident
 	}
-	slug := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
-	if slug == "" {
+	slug, found := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
+	if !found {
 		slug = latestClosedSlug(store, ident.CommonDir, ident.Branch)
 	}
-	if slug == "" || slug == ident.Change {
+	if slug == ident.Change && ident.Collision == "" {
+		return ident
+	}
+	if slug == "" {
+		ident.Change = ""
+		ident.Collision = ""
+		ident.Key = ledger.IdentityKey(ident.CommonDir, ident.Branch, "")
 		return ident
 	}
 	return ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, StoredSlug: slug, Facts: facts})
