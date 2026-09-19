@@ -36,7 +36,7 @@ Make the generic Tracker ledger represent the real provider-backed lifecycle whi
 - [x] T2 — Wire explicit bind and fresh remote observation after provider item creation/linking; preserve provider-neutral core boundaries.
 - [x] T3 — Remove Tracker blocking hooks/legacy gate_mode semantics while retaining Worktree gate_mode.
 - [x] T4 — Move repo_topology to `[project]` with legacy recipe fallback and stamped compatibility.
-- [ ] T5 — Run focused/full validation, update evidence, and prepare review.
+- [x] T5 — Run focused/full validation, update evidence, and prepare review.
 
 ## Progress and evidence
 
@@ -55,6 +55,8 @@ Make the generic Tracker ledger represent the real provider-backed lifecycle whi
 - T3 RED/GREEN: Tracker/Ledger/Trello suite passed 90 tests; Plan Build/Worktree suite passed 175 tests with 90 existing Go-binary skips; diff check passed.
 - T4 complete. `[project].repo_topology` is the CLI-owned source; the legacy worktree-flow recipe key remains a fallback with deprecation metadata; planning, stamping, brief, doctor, hub, configure, TUI, and sync consumers use the shared accessor while stamped gate tokens remain compatible.
 - T4 verification: topology/config/materialization/TUI/doctor/hub/target-resolve/manifest suites passed 425 tests; `git diff --check` passed.
+- T5 complete. The Go trust root was regenerated with canonical go1.24.13; parity fixtures and design-row needles were updated for provider-backed local-row/lifecycle-opt-out semantics. Final `./tests/validate.sh` passed with exit 0; Go tests, vet, gofmt, sums verification, and diff check passed.
+- Final T5 scope: `catalog/recipes/worktree-flow/bin/SHA256SUMS`, tracker-ledger parity corpus 02/03/04/09/10/21/22/25/26/29/31/32, and `tests/test_tracker_ledger_parity.py`.
 
 ## Acceptance criteria
 

@@ -1,5 +1,5 @@
 {
-  "label": "an explicit open write opens the item and the re-grade allows (open-then-allow)",
+  "label": "an explicit local-only open remains non-compliant (open-then-report)",
   "witness": {
     "state": "bound"
   },
@@ -16,11 +16,11 @@
       },
       "expected": {
         "decision": "allow",
-        "reason": "",
+        "reason": "needs-item",
         "active": true,
         "conflict": false,
         "exit": 0,
-        "doctor": "OK",
+        "doctor": "WARN",
         "write": {
           "kind": "open",
           "applied": true,
@@ -33,11 +33,11 @@
       "mode": "warn",
       "expected": {
         "decision": "allow",
-        "reason": "",
+        "reason": "needs-item",
         "active": true,
         "conflict": false,
         "exit": 0,
-        "doctor": "OK"
+        "doctor": "WARN"
       }
     }
   ],

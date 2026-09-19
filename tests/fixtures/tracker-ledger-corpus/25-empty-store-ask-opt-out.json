@@ -1,5 +1,5 @@
 {
-  "label": "a fresh binding answers the ask prompt with a checkpoint-scoped opt-out",
+  "label": "a fresh binding answers the ask prompt with a lifecycle-scoped opt-out",
   "witness": {
     "state": "bound"
   },
@@ -25,8 +25,8 @@
       "checkpoint": "pre-merge",
       "mode": "ask",
       "expected": {
-        "decision": "ask",
-        "reason": "needs-item",
+        "decision": "allow",
+        "reason": "opt-out",
         "active": true,
         "conflict": false,
         "exit": 0,
