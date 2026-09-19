@@ -38,7 +38,7 @@ func TestResolveLedgerModeTable(t *testing.T) {
 		// 1. Valid env ledger wins over everything.
 		{"env ledger always wins over configured ledger and gates", "always", "off", "warn", "off", "off", "always", "", true},
 		{"env ledger ask wins over configured ledger always", "ask", "always", "always", "always", "always", "ask", "", true},
-		{"env ledger off wins over all", "off", "always", "always", "always", "always", "off", "", true},
+		{"env ledger off is not a ledger mode; falls through to configured ledger", "off", "off", "always", "always", "always", "always", "", true},
 		{"invalid env ledger falls through to configured ledger", "bogus", "", "always", "", "", "always", "", false},
 
 		// 2. Configured ledger wins over configured gate and raw legacy env.
@@ -46,6 +46,7 @@ func TestResolveLedgerModeTable(t *testing.T) {
 		{"configured ledger always wins over legacy off", "", "off", "always", "off", "off", "always", "", true},
 		{"configured ledger warn wins over legacy off", "", "off", "warn", "off", "off", "warn", "", true},
 		{"invalid configured ledger falls through to configured gate", "", "", "bogus", "off", "always", "off", "", false},
+		{"configured ledger off is not a ledger mode; falls through to configured gate", "", "", "off", "always", "", "always", "", true},
 
 		// 3. Configured gate maps off/always/warn and shadows the raw legacy env.
 		{"configured gate off maps to off", "", "always", "", "off", "always", "off", "", true},

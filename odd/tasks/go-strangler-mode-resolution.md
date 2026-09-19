@@ -28,7 +28,7 @@ Move effective `ledger_mode` and legacy `gate_mode` resolution into the authorit
 ## Tasks
 
 - [x] T1 — Pin current mode-resolution precedence and failure/off-path behavior with failing Go/host contract tests. RED: `go -C catalog/recipes/worktree-flow/gate test -run 'TestResolveLedgerMode'` fails to compile because `ResolveLedgerMode` does not exist yet.
-- [ ] T2 — Implement Go-owned effective mode resolution and route ledger/worktree entrypoints through it.
+- [x] T2 — Implement Go-owned effective mode resolution and route ledger/worktree entrypoints through it. GREEN: focused resolver/ledger tests passed; Go now resolves raw config/env/hint inputs when `--ledger-mode` is omitted.
 - [ ] T3 — Remove duplicate policy-bearing shell resolvers while preserving thin acquisition/dispatch bridges and update docs/tests.
 - [ ] T4 — Rebuild the four trust-root artifacts, run focused and full validation, and record evidence.
 
@@ -45,15 +45,16 @@ Move effective `ledger_mode` and legacy `gate_mode` resolution into the authorit
 - Worktree: `.worktrees/go-strangler-mode-resolution`
 - Branch: `feat/go-strangler-mode-resolution`
 - Base: `development` at `03b5f2c`
-- Status: T1 complete; the contract-only test is committed and production implementation is intentionally absent.
+- Status: T2 complete; Go owns effective ledger-mode resolution and the CLI wiring is ready for shell-host migration.
 
 ## Evidence
 
 - RED: `go -C catalog/recipes/worktree-flow/gate test -run 'TestResolveLedgerMode'` → expected build failure: `undefined: ResolveLedgerMode`.
-- GREEN: pending; T2 must implement the exact tested contract.
+- GREEN: `go -C catalog/recipes/worktree-flow/gate test -run 'TestResolveLedgerMode|TestLedger.*Mode|TestLedger'` → PASS; `gofmt -l` and `git diff --check` clean.
 - Full validation: pending.
 - Trust-root verification: pending.
+- T2 review: independent read-only verifier PASS; shell/Python remained untouched.
 
 ## Next step
 
-Implement `ResolveLedgerMode` in Go and wire the ledger CLI to use it.
+Route the shell hosts through the raw `--ledger-gate-mode` hint and remove their duplicate mode resolvers without changing acquisition or verdict mapping.

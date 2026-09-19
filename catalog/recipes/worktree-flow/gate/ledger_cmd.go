@@ -14,8 +14,12 @@ import (
 // worktree gate flags are never read here: the ledger does not couple to
 // worktree semantics (D4/A1).
 type ledgerOptions struct {
-	checkpoint  string
-	mode        string
+	checkpoint string
+	mode       string
+	// gateMode is the raw stamped legacy tracker gate_mode hint. It is consulted
+	// only when --ledger-mode is omitted, and is never resolved against the
+	// worktree gate policy here.
+	gateMode    string
 	projectRoot string
 	witness     string
 	store       string
@@ -99,6 +103,20 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	binding := ledger.ReadBinding(witnessPath)
 	store, storeErr := ledger.LoadStore(storePath)
 
+	// The effective mode is the explicit --ledger-mode when given (an explicit
+	// normalized mode, unchanged for existing callers); otherwise Go resolves it
+	// from env, the bound recipe's configuration and the stamped legacy hint. An
+	// `off` resolution disables the checkpoint before any grading, matching the
+	// shell behavior this resolver takes ownership of.
+	mode := opts.mode
+	if mode == "" {
+		mode = resolveLedgerMode(dir, binding, opts.gateMode, stderr)
+		if mode == ledgerModeOff {
+			fmt.Fprintf(stderr, "worktree-gate: ledger_mode off; skipping %s\n", opts.checkpoint)
+			return 0
+		}
+	}
+
 	facts := ledger.Facts(gitMemo)
 	ident := ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, Facts: facts})
 	// A stored slug survives its folder being archived mid-item (A11): when the
@@ -156,7 +174,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	now := time.Now()
 	verdict := ledger.Grade(ledger.Input{
 		Checkpoint: opts.checkpoint,
-		Mode:       opts.mode,
+		Mode:       mode,
 		Binding:    binding,
 		Identity:   ident,
 		Store:      store,
