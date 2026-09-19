@@ -62,7 +62,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// gate flags and its mode never reads the worktree gate mode (A1/A9).
 	ledgerRun := fs.Bool("ledger", false, "evaluate a tracker-ledger checkpoint (JSON on stdout, exit 0/2)")
 	ledgerCheckpoint := fs.String("checkpoint", "", "ledger checkpoint: work-start|apply-start|pr-review|pre-merge|archive-close")
-	ledgerMode := fs.String("ledger-mode", "", "ledger mode: always|ask|warn (default warn)")
+	ledgerMode := fs.String("ledger-mode", "", "ledger mode: always|ask|warn (default: resolve from env/config/hint, then warn)")
+	ledgerGateMode := fs.String("ledger-gate-mode", "", "raw stamped legacy tracker gate_mode hint (off|warn|always); used only when no --ledger-mode")
 	ledgerProjectRoot := fs.String("project-root", "", "owning repository path for ledger identity (default cwd)")
 	ledgerWitness := fs.String("witness", "", "override the ledger witness path")
 	ledgerStore := fs.String("store", "", "override the ledger store path")
@@ -119,6 +120,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runLedger(ledgerOptions{
 			checkpoint:     *ledgerCheckpoint,
 			mode:           *ledgerMode,
+			gateMode:       *ledgerGateMode,
 			projectRoot:    *ledgerProjectRoot,
 			witness:        *ledgerWitness,
 			store:          *ledgerStore,

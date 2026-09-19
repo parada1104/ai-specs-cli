@@ -213,8 +213,21 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         )
         content = hook.read_text()
         self.assertIn('stamped_gate_scope="', content, "launcher must keep the sentinel")
-        self.assertIn("_resolve_gate_mode", content, "must be replaced by the launcher")
+        self.assertIn("--gate-mode", content, "must be replaced by the launcher")
+        self.assertNotIn("_resolve_gate_mode", content,
+                         "mode resolution is Go-owned; the launcher must not resolve")
         self.assertIn("stamped_gate_impl=", content, "launcher must carry gate_impl")
+
+    def test_launcher_forwards_the_raw_stamped_mode_to_go(self):
+        # The launcher is transport only: env/stamp precedence and fallback are
+        # Go's ResolveGateMode (config.go / config_test.go). The shell must
+        # forward the raw stamped value and do no resolution of its own.
+        src = (RECIPE_DIR / "hooks" / "worktree-gate.sh").read_text()
+        self.assertIn('--gate-mode "$stamped_gate_mode"', src)
+        for token in ("_resolve_gate_mode", 'gate_mode="$('):
+            with self.subTest(token=token):
+                self.assertNotIn(token, src,
+                                 "shell mode resolution belongs in Go's ResolveGateMode")
 
     def test_launcher_keeps_literal_staleness_sentinel(self):
         # Task 3.2: recipe-materialize.py:494-508 upgrades existing projects

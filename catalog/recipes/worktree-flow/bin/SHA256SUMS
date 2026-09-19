@@ -37,7 +37,7 @@
 # asset gains the provider-neutral Worktree domain port, current-tip-bound PR evidence,
 # and deterministic cleanup coverage; no new asset, no second trust root), with the
 # canonical go1.24.13 toolchain and the same command above.
-6a050d1d29c38345e9221a870158ce1bc4cecc673a3894a99e20510c0a1c82bc  worktree-gate-darwin-amd64
-e8403ae7db5ff6bcbb58e77b4346a83199666dda34ce3ffe9e8c246596709054  worktree-gate-darwin-arm64
-8b9806731e7f8dc45b22a40ae83ade05d7356a48c99a510a4e703c8f55ecefba  worktree-gate-linux-amd64
-2bfdf374d93c834364b846a718be8a785620b4a969ba2b4f340330a9be9676da  worktree-gate-linux-arm64
+8d773cb810c34d56ff60c4c9c058f4c026e5605da45cfcc3dcefe5e45d11b200  worktree-gate-darwin-amd64
+edec9118c63344e6a9303663acf18e9c3516a2f8c6ab010465edd950fb33fb75  worktree-gate-darwin-arm64
+a2c44106d57a383af0adc8b00aba4ea6cad9d0f72a81f316e4336dc22d607803  worktree-gate-linux-amd64
+7bed34f9f32185957c38914270b5f9f17192c1fcfcbeae1c075f423a0d9ec184  worktree-gate-linux-arm64

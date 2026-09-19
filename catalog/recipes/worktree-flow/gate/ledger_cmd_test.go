@@ -1266,3 +1266,63 @@ func TestLedgerReconcileRejectedWithMutationFlags(t *testing.T) {
 		})
 	}
 }
+
+// TestLedgerEffectiveModeResolutionViaCLI pins the CLI wiring of the effective
+// ledger mode: when --ledger-mode is omitted the mode is resolved from the bound
+// recipe's configured ledger_mode, the raw legacy --ledger-gate-mode hint is the
+// fallback when the recipe declares none, a resolved off disables the checkpoint
+// before grading, and an explicit --ledger-mode still wins over all of them.
+func TestLedgerEffectiveModeResolutionViaCLI(t *testing.T) {
+	dir, common, _ := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", reconcileRecipeID)
+	t.Setenv("TRACKER_LEDGER_MODE", "")
+	t.Setenv("TRACKER_CARD_GATE_MODE", "")
+
+	writeRecipe := func(body string) {
+		writeReconcileManifest(t, dir, body)
+	}
+	recipeMode := func(mode string) string {
+		return "[recipes." + reconcileRecipeID + "]\nenabled = true\n[recipes." + reconcileRecipeID + ".config]\nledger_mode = \"" + mode + "\"\n"
+	}
+	recipeGate := func(mode string) string {
+		return "[recipes." + reconcileRecipeID + "]\nenabled = true\n[recipes." + reconcileRecipeID + ".config]\ngate_mode = \"" + mode + "\"\n"
+	}
+	run := func(args ...string) (int, string, string) {
+		return runCLI(t, append([]string{"--ledger", "--checkpoint", "pre-merge", "--project-root", dir}, args...)...)
+	}
+
+	// 1. The configured ledger_mode resolves when the flag is omitted.
+	writeRecipe(recipeMode("ask"))
+	if code, stdout, stderr := run(); code != 0 {
+		t.Fatalf("configured ask exit = %d, want 0; stderr: %s", code, stderr)
+	} else if out := decodeLedgerOut(t, stdout); out["mode"] != "ask" {
+		t.Fatalf("configured ask mode = %v, want ask", out["mode"])
+	}
+
+	// 2. A configured gate_mode=off resolves to off and disables the checkpoint
+	// before any grading (`off` is a gate mapping, not a ledger mode).
+	writeRecipe(recipeGate("off"))
+	if code, stdout, stderr := run(); code != 0 {
+		t.Fatalf("off exit = %d, want 0; stderr: %s", code, stderr)
+	} else if stdout != "" {
+		t.Fatalf("off stdout = %q, want no verdict JSON", stdout)
+	} else if !strings.Contains(stderr, "off") {
+		t.Fatalf("off stderr = %q, want the off skip note", stderr)
+	}
+
+	// 3. An explicit --ledger-mode still wins over the resolved gate mapping.
+	writeRecipe(recipeGate("off"))
+	if code, stdout, stderr := run("--ledger-mode", "warn"); code != 0 {
+		t.Fatalf("explicit warn exit = %d, want 0; stderr: %s", code, stderr)
+	} else if out := decodeLedgerOut(t, stdout); out["mode"] != "warn" {
+		t.Fatalf("explicit warn mode = %v, want warn", out["mode"])
+	}
+
+	// 4. With no configured ledger_mode, the raw legacy hint is the fallback.
+	writeRecipe(reconcileManifestBody)
+	if code, stdout, stderr := run("--ledger-gate-mode", "always"); code != 2 {
+		t.Fatalf("legacy hint exit = %d, want 2 (always blocks needs-item); stderr: %s", code, stderr)
+	} else if out := decodeLedgerOut(t, stdout); out["mode"] != "always" {
+		t.Fatalf("legacy hint mode = %v, want always", out["mode"])
+	}
+}

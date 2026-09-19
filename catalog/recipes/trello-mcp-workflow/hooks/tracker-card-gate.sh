@@ -3,11 +3,13 @@
 #
 # Semantic model: the ledger is the only grader. This script is the one shell
 # host: a thin acquisition/JSON bridge to the verified Go `--ledger` predicate.
-# As a pre-tool-use hook it maps a production path write to the `apply-start`
-# checkpoint and `gh pr create` to the `pr-review` checkpoint. As a CLI
-# (`--root <root> --checkpoint pre-merge|archive-close`, or the retained
-# `--stage pre-merge|pre-archive` alias) it grades the Tracker lifecycle
-# checkpoints directly. That CLI mode absorbed the retired
+# Mode resolution is Go-owned too (`ResolveLedgerMode`): this host forwards the
+# raw stamped legacy gate hint as `--ledger-gate-mode` and never resolves or
+# skips a checkpoint itself. As a pre-tool-use hook it maps a production path
+# write to the `apply-start` checkpoint and `gh pr create` to the `pr-review`
+# checkpoint. As a CLI (`--root <root> --checkpoint pre-merge|archive-close`, or
+# the retained `--stage pre-merge|pre-archive` alias) it grades the Tracker
+# lifecycle checkpoints directly. That CLI mode absorbed the retired
 # `lib/_internal/tracker_ledger_host.py` Python host: no separate Python host
 # exists for `pre-merge` or `archive-close`.
 #
@@ -28,13 +30,14 @@
 # JSON. `openspec/**` is never blocked.
 #
 # Tokens stamped at sync (gitignored project copy):
-#   __TRACKER_CARD_GATE_MODE__   (legacy gate_mode; default warn)
+#   __TRACKER_CARD_GATE_MODE__   (raw legacy gate_mode hint; default warn)
 #   __TRACKER_CLI_HOME__         (CLI install home for binary resolution)
 #   __TRACKER_LIB_INTERNAL__     (CLI lib/_internal dir holding ledger_bridge.py)
 #
-# Config / env:
-#   TRACKER_LEDGER_MODE       env override for the ledger mode (always|ask|warn)
-#   TRACKER_CARD_GATE_MODE    legacy gate_mode env override (off|warn|always)
+# Config / env (all read by Go's ledger-mode resolver, never by this host):
+#   TRACKER_LEDGER_MODE       strongest mode env (always|ask|warn)
+#   TRACKER_CARD_GATE_MODE    legacy gate_mode env (off|warn|always)
+# Host-only env:
 #   TRACKER_CARD_GATE_PATHS   space-separated production dirs
 #                             (default: "lib catalog bin src")
 #   AI_SPECS_HOME             preferred over stamped CLI home for the binary
@@ -45,21 +48,6 @@ stamped_cli_home="__TRACKER_CLI_HOME__"
 stamped_lib_internal="__TRACKER_LIB_INTERNAL__"
 prod_dirs="${TRACKER_CARD_GATE_PATHS:-lib catalog bin src}"
 [ -n "${prod_dirs// /}" ] || prod_dirs="lib catalog bin src"
-
-_resolve_gate_mode() {
-  local candidate="${TRACKER_CARD_GATE_MODE:-$stamped_gate_mode}"
-  case "$candidate" in off|warn|always) echo "$candidate" ; return ;;
-  esac
-  if [ -n "${TRACKER_CARD_GATE_MODE:-}" ]; then
-    echo "tracker-card-gate: ignoring invalid TRACKER_CARD_GATE_MODE='${TRACKER_CARD_GATE_MODE}'; falling back to stamped mode." >&2
-  elif [ "$stamped_gate_mode" != off ] && [ "$stamped_gate_mode" != warn ] && [ "$stamped_gate_mode" != always ]; then
-    echo "tracker-card-gate: invalid stamped gate_mode='${stamped_gate_mode}'; falling back to warn." >&2
-  fi
-  case "$stamped_gate_mode" in off|warn|always) echo "$stamped_gate_mode" ;;
-  *) echo warn ;;
-  esac
-}
-gate_mode="$(_resolve_gate_mode)"
 
 # --- Direct host mode (argv-selected; never the stdin hook contract) ----------
 # Merge skills/commands grade a Tracker lifecycle checkpoint with an explicit
@@ -509,9 +497,10 @@ fi  # end hook-payload parsing (skipped in direct host mode)
 # --- Ledger checkpoint bridge (acquisition + JSON only; no predicate) ---------
 # The five ledger checkpoints are graded by the verified Go `--ledger` mode on
 # the shared worktree-gate binary (one predicate, one trust root). This host
-# only resolves the A9 mode, acquires a verified binary, and maps the JSON
-# verdict. A missing/unverified binary, a parse error, or an IO failure fails
-# open (exit 0).
+# only acquires a verified binary, forwards the raw stamped legacy gate hint,
+# and maps the JSON verdict; Go resolves the effective mode from env, the
+# witness-bound recipe config, that hint and the warn default. A
+# missing/unverified binary, a parse error, or an IO failure fails open (exit 0).
 
 # The evidence bridge lives beside the CLI's other internals. Its stamp follows the
 # same materialize path as __TRACKER_CLI_HOME__; an empty or unstamped value means the
@@ -540,57 +529,9 @@ import ledger_bridge
 root = Path(sys.argv[3])
 if verb == "slug":
     print(ledger_bridge.change_slug(root))
-elif verb == "recipe":
-    print(ledger_bridge.recipe_id(root))
 elif verb == "evidence":
     payload = ledger_bridge.evidence_payload(root, sys.argv[4] or None)
     Path(sys.argv[5]).write_text(json.dumps(payload), encoding="utf-8")
-PY
-}
-
-_ledger_recipe_id() {
-  # The bound recipe id from the durable witness (via the bridge), or nothing when
-  # the bridge is unstamped. Reading the witness is acquisition, not grading.
-  local lib
-  lib="$(_ledger_bridge)" || return 0
-  _ledger_bridge_call "$lib" recipe "$1"
-}
-
-_ledger_mode() {
-  # $1 root, $2 legacy gate-mode hint, $3 witness recipe id (may be empty). The
-  # config section is recipes.<recipe>; without a recipe id only the env override
-  # and the stamped hint apply, which keeps the warn-first default.
-  local root="$1"
-  local gate_hint="${2:-}"
-  local recipe="${3:-}"
-  python3 - "$root" "${TRACKER_LEDGER_MODE:-}" "$gate_hint" "$recipe" <<'PY' 2>/dev/null
-import sys, tomllib
-from pathlib import Path
-root, env_mode, gate_hint = sys.argv[1], sys.argv[2], sys.argv[3]
-recipe = sys.argv[4] if len(sys.argv) > 4 else ""
-ledger = gate = ""
-if recipe:
-    try:
-        data = tomllib.loads((Path(root) / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
-        cfg = ((data.get("recipes") or {}).get(recipe) or {}).get("config") or {}
-        ledger = cfg.get("ledger_mode") or ""
-        gate = cfg.get("gate_mode") or ""
-    except Exception:
-        pass
-if gate_hint in ("off", "warn", "always") and not gate:
-    # The bound recipe's own gate_mode wins; the stamped legacy hint fills in when
-    # that config section declares none (the pre-witness behavior).
-    gate = gate_hint
-if env_mode in ("always", "ask", "warn"):
-    print(env_mode)
-elif ledger in ("always", "ask", "warn"):
-    print(ledger)
-elif gate == "off":
-    print("off")
-elif gate == "always":
-    print("always")
-else:
-    print("warn")
 PY
 }
 
@@ -637,8 +578,10 @@ else:
 }
 
 _ledger_ask() {
-  # $1 bin, $2 checkpoint, $3 mode, $4 root, $5 prefix; stdin: prompt JSON.
-  local bin="$1" checkpoint="$2" mode="$3" root="$4" prefix="$5"
+  # $1 bin, $2 checkpoint, $3 root, $4 prefix; stdin: prompt JSON. The follow-up
+  # `--decide` forwards the raw stamped legacy hint so Go re-resolves the same
+  # effective mode it graded with (no host-resolved --ledger-mode).
+  local bin="$1" checkpoint="$2" root="$3" prefix="$4"
   python3 -c '
 import json, sys
 try:
@@ -660,7 +603,8 @@ print("  choices: " + ", ".join(prompt.get("choices") or []))
   exec 3<&-
   case "$answer" in
     y|Y|yes|YES|Yes)
-      if "$bin" --ledger --checkpoint "$checkpoint" --ledger-mode "$mode" --project-root "$root" \
+      if "$bin" --ledger --checkpoint "$checkpoint" --ledger-gate-mode "$stamped_gate_mode" \
+          --project-root "$root" \
           --decide "{\"checkpoint\":\"$checkpoint\",\"kind\":\"opt-out\",\"choice\":\"continue\"}" >/dev/null 2>&1; then
         echo "${prefix}: opt-out recorded for ${checkpoint}; proceeding." >&2
         return 0
@@ -674,13 +618,13 @@ print("  choices: " + ", ".join(prompt.get("choices") or []))
 }
 
 _ledger_grade() {
-  # $1 checkpoint, $2 mode, $3 root, $4 prefix, $5 explicit change slug (optional).
+  # $1 checkpoint, $2 root, $3 prefix, $4 explicit change slug (optional).
   # Always returns 0: the Tracker host is advisory, so a block/ask verdict is
   # reported and never blocks. A caller-supplied slug scopes evidence to the
   # change being graded (archive-close and pre-merge know it); without one the
   # single active change is used, and an ambiguous planning tree contributes no
-  # evidence.
-  local checkpoint="$1" mode="$2" root="$3" prefix="$4" explicit_slug="${5:-}"
+  # evidence. The raw stamped legacy hint is forwarded and Go resolves the mode.
+  local checkpoint="$1" root="$2" prefix="$3" explicit_slug="${4:-}"
   local bin
   if ! bin="$(_ledger_binary)"; then
     # Missing/unverified binary fails open rather than blocking a merge; say so,
@@ -707,7 +651,7 @@ _ledger_grade() {
     fi
   fi
   local out rc
-  out="$("$bin" --ledger --checkpoint "$checkpoint" --ledger-mode "$mode" \
+  out="$("$bin" --ledger --checkpoint "$checkpoint" --ledger-gate-mode "$stamped_gate_mode" \
       --project-root "$root" "${extra[@]}" 2>/dev/null)"
   rc=$?
   [ -z "$evidence" ] || rm -f "$evidence"
@@ -730,7 +674,7 @@ _ledger_grade() {
   fi
   if [ "$decision" = ask ]; then
     printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("prompt")))' 2>/dev/null \
-      | _ledger_ask "$bin" "$checkpoint" "$mode" "$root" "$prefix"
+      | _ledger_ask "$bin" "$checkpoint" "$root" "$prefix"
     return $?
   fi
   if [ "$active" = 1 ] && [ "$decision" != allow ]; then
@@ -820,13 +764,7 @@ tracker_host() {
     echo "tracker-card-gate: no git work tree at '${root}'; failing open" >&2
     return 0
   }
-  local mode
-  mode="$(_ledger_mode "$repo_root" "$gate_mode" "$(_ledger_recipe_id "$repo_root")")"
-  if [ "$mode" = off ]; then
-    echo "tracker-card-gate: ledger_mode off; skipping ${checkpoint}" >&2
-    return 0
-  fi
-  _ledger_grade "$checkpoint" "$mode" "$repo_root" "tracker-card-gate" "$slug"
+  _ledger_grade "$checkpoint" "$repo_root" "tracker-card-gate" "$slug"
 }
 
 if [ "$host_mode" -eq 1 ]; then
@@ -861,9 +799,7 @@ if [ "$kind" = path ]; then
   done
   [ "$is_prod" -eq 1 ] || exit 0
 
-  mode="$(_ledger_mode "$repo_root" "$gate_mode" "$(_ledger_recipe_id "$repo_root")")"
-  [ "$mode" = off ] && exit 0
-  _ledger_grade "apply-start" "$mode" "$repo_root" "tracker-card-gate"
+  _ledger_grade "apply-start" "$repo_root" "tracker-card-gate"
   exit 0
 fi
 
@@ -874,9 +810,7 @@ if [ "$kind" = shell ]; then
     [ -n "$action" ] || continue
     case "$action" in
       pr_create)
-        mode="$(_ledger_mode "$repo_root" "$gate_mode" "$(_ledger_recipe_id "$repo_root")")"
-        [ "$mode" = off ] && continue
-        _ledger_grade "pr-review" "$mode" "$repo_root" "tracker-card-gate"
+        _ledger_grade "pr-review" "$repo_root" "tracker-card-gate"
         ;;
       *)
         ;;
