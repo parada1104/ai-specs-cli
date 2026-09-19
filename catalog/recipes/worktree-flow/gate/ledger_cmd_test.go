@@ -317,10 +317,10 @@ func TestLedgerDecidePersistsThenRegradeAllows(t *testing.T) {
 	}
 }
 
-// TestLedgerEmptyStoreAskOptOutPersistsAndAllows pins the fixed fresh-binding ask
+// TestLedgerEmptyStoreAskOptOutPersistsAndAllows pins the fresh-binding ask
 // path end to end: no item exists, the explicit human opt-out is recorded
-// checkpoint-scoped, the answered checkpoint allows, no tracked item is
-// synthesized, and the next checkpoint asks again (D19).
+// for the lifecycle, the answered checkpoint allows, no tracked item is
+// synthesized, and the next checkpoint remains opted out.
 func TestLedgerEmptyStoreAskOptOutPersistsAndAllows(t *testing.T) {
 	dir, common, _ := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
@@ -355,8 +355,8 @@ func TestLedgerEmptyStoreAskOptOutPersistsAndAllows(t *testing.T) {
 	if len(store.Items) != 0 {
 		t.Fatalf("items = %+v, want no synthesized tracked item", store.Items)
 	}
-	if len(store.OptOuts) != 1 || store.OptOuts[0].Checkpoint != "apply-start" {
-		t.Fatalf("opt_outs = %+v, want exactly one apply-start scoped opt-out", store.OptOuts)
+	if len(store.OptOuts) != 1 || store.OptOuts[0].Checkpoint != "apply-start" || store.OptOuts[0].Scope != ledger.ScopeLifecycle {
+		t.Fatalf("opt_outs = %+v, want one lifecycle-scoped opt-out answered at apply-start", store.OptOuts)
 	}
 
 	code, stdout, _ = runCLI(t, "--ledger", "--checkpoint", "pre-merge", "--ledger-mode", "ask", "--project-root", dir)
@@ -364,8 +364,8 @@ func TestLedgerEmptyStoreAskOptOutPersistsAndAllows(t *testing.T) {
 		t.Fatalf("next checkpoint exit = %d, want 0", code)
 	}
 	next := decodeLedgerOut(t, stdout)
-	if next["decision"] != "ask" || next["reason"] != "needs-item" {
-		t.Fatalf("next checkpoint = %v/%v, want ask/needs-item", next["decision"], next["reason"])
+	if next["decision"] != "allow" || next["reason"] != "opt-out" {
+		t.Fatalf("next checkpoint = %v/%v, want allow/opt-out", next["decision"], next["reason"])
 	}
 }
 
@@ -599,7 +599,7 @@ func TestLedgerWriteOpenThenIdempotentRetryViaCLI(t *testing.T) {
 	dir, common, _ := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
 	storePath := ledger.StorePath(common)
-	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "always", "--project-root", dir}
+	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "warn", "--project-root", dir}
 
 	code, stdout, stderr := ledgerWriteRun(t, base, `{"kind":"open"}`)
 	if code != 0 {
@@ -614,8 +614,8 @@ func TestLedgerWriteOpenThenIdempotentRetryViaCLI(t *testing.T) {
 	if side["kind"] != "open" || side["applied"] != true {
 		t.Fatalf("write sidecar = %v, want open/applied", side)
 	}
-	if out["decision"] != "allow" || out["item"] == nil {
-		t.Fatalf("post-write grade = %v (item %v), want allow with the item", out["decision"], out["item"])
+	if out["decision"] != "allow" || out["reason"] != "needs-item" || out["item"] == nil {
+		t.Fatalf("post-write grade = %v/%v (item %v), want allow/needs-item with the local-only item", out["decision"], out["reason"], out["item"])
 	}
 
 	code, stdout, stderr = runCLI(t, append(append([]string{}, base...), ledgerWriteArgs(`{"kind":"open"}`)...)...)
@@ -784,8 +784,9 @@ func TestLedgerWriteCloseWithSnapshotThenRetryViaCLI(t *testing.T) {
 	}
 	storePath := ledger.StorePath(common)
 
-	if code, _, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"open"}`); code != 0 {
-		t.Fatalf("open exit = %d, want 0; stderr: %s", code, stderr)
+	bindPayload := `{"kind":"bind","item_id":"close-test-card","url":"https://example.invalid/close-test-card","native_type":"card","state":"in-progress","provider":{"list":"In Progress"}}`
+	if code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), bindPayload); code != 0 {
+		t.Fatalf("bind exit = %d, want 0; stdout: %s; stderr: %s", code, stdout, stderr)
 	}
 
 	closePrefix := []string{"--ledger", "--checkpoint", "archive-close", "--ledger-mode", "always", "--project-root", dir}
@@ -892,8 +893,9 @@ func TestLedgerWriteCloseRetryRecoversStoredSlugViaCLI(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(dir, "openspec", "changes", slug), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if code, _, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"open"}`); code != 0 {
-				t.Fatalf("open exit = %d, want 0; stderr: %s", code, stderr)
+			bindPayload := `{"kind":"bind","item_id":"close-retry-card","url":"https://example.invalid/close-retry-card","native_type":"card","state":"in-progress","provider":{"list":"In Progress"}}`
+			if code, _, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), bindPayload); code != 0 {
+				t.Fatalf("bind exit = %d, want 0; stderr: %s", code, stderr)
 			}
 			if code, stdout, stderr := ledgerWriteRun(t, closePrefix(dir), closePayload); code != 0 {
 				t.Fatalf("close exit = %d, want 0 (allow); stderr: %s", code, stderr)

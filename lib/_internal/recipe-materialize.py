@@ -1334,18 +1334,17 @@ def build_resolved_config(project_root: Path) -> dict[str, Any]:
         "enabled": enabled_ids,
         "project_root": str(Path(project_root).resolve()),
     }
-    wf_cfg: dict[str, Any] = {}
-    wf_raw = raw_recipes.get("worktree-flow")
-    if isinstance(wf_raw, dict):
-        wf_cfg = wf_raw.get("config") if isinstance(wf_raw.get("config"), dict) else {
-            k: v for k, v in wf_raw.items() if k not in ("enabled", "version")
-        }
-    configured_topology = str(wf_cfg.get("repo_topology") or "auto")
+    # Topology is project-owned (CLI-resolved), never re-derived per recipe.
     try:
-        topo = _load_util().resolve_repo_topology(project_root, configured_topology)
-        resolved["topology"] = {"resolved": topo.resolved, "via": topo.via}
+        topo = _load_util().project_repo_topology(project_root, manifest_data)
+        resolved["topology"] = topo.as_dict()
     except Exception:
-        resolved["topology"] = {"resolved": "standalone", "via": "auto"}
+        resolved["topology"] = {
+            "resolved": "standalone",
+            "configured": "auto",
+            "via": "auto",
+            "source": "default",
+        }
     return resolved
 
 
@@ -1518,6 +1517,11 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
             merged_cfg = merge_config(recipe, manifest_config)
         except RuntimeError as exc:
             fail(str(exc))
+        # Project-owned keys win over their legacy recipe alias so every stamp
+        # and rendered template carries one resolved value.
+        merged_cfg = util.project_owned_recipe_config(
+            project_root, None, rid, merged_cfg
+        )
 
         recipe_dir = catalog_dir / rid
 

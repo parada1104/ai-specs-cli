@@ -136,12 +136,34 @@ def _toml_key(key: str) -> str:
 
 
 
+# Config keys the project manifest owns; the recipe key stays a read-only
+# legacy alias, so new flows never write topology under a recipe.
+_PROJECT_OWNED_KEYS = frozenset({"repo_topology"})
+
+
+def _wizard_recipe(recipe):
+    """Recipe view without project-owned config keys, so they are never prompted."""
+    import dataclasses
+
+    schema = getattr(recipe, "config_schema", None)
+    fields = getattr(schema, "fields", None)
+    if not isinstance(fields, dict):
+        return recipe
+    remaining = {k: v for k, v in fields.items() if k not in _PROJECT_OWNED_KEYS}
+    if len(remaining) == len(fields):
+        return recipe
+    return dataclasses.replace(
+        recipe, config_schema=dataclasses.replace(schema, fields=remaining)
+    )
+
+
 def _render_manifest(
     tw,
     project_name: str,
     agents: list[str],
     recipes: list[dict[str, str]],
     configured: dict | None = None,
+    topology: str = "auto",
 ) -> str:
     lines: list[str] = [
         TOML_HEADER.rstrip(),
@@ -149,6 +171,7 @@ def _render_manifest(
         "[project]",
         f"name = {tw.toml_value(project_name)}",
         "subrepos = []",
+        f"repo_topology = {tw.toml_value(topology)}",
         "",
         "[agents]",
         f"enabled = {tw.toml_value(agents)}",
@@ -161,7 +184,11 @@ def _render_manifest(
             rid = recipe["id"]
             lines.append(f"[recipes.{_toml_key(rid)}]")
             lines.append("enabled = true")
-            vals = configured.get(rid) or {}
+            vals = {
+                k: v
+                for k, v in (configured.get(rid) or {}).items()
+                if k not in _PROJECT_OWNED_KEYS
+            }
             if vals:
                 lines.append("")
                 lines.append(f"[recipes.{_toml_key(rid)}.config]")
@@ -198,7 +225,7 @@ def _configure_recipes(recipes: list[dict[str, str]], console, catalog_dir: Path
             raise KeyboardInterrupt
         if not do_now:
             continue
-        values = wizard.run_config_wizard(recipe, {})
+        values = wizard.run_config_wizard(_wizard_recipe(recipe), {})
         if values:
             configured[rid] = values
     return configured
@@ -302,13 +329,13 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         # 3.5 Configure selected recipes (optional per-recipe)
         catalog_dir = _ai_specs_home() / "catalog" / "recipes"
         configured = _configure_recipes(recipes, console, catalog_dir) if recipes else {}
-        # Identity topology is a convenience default only. A later explicit
-        # answer from _configure_recipes (schema-driven enum) wins — do not
-        # clobber repo_topology if already set.
-        if any(r.get("id") == "worktree-flow" for r in recipes):
-            configured.setdefault("worktree-flow", {}).setdefault(
-                "repo_topology", topology
-            )
+        # Topology is project-owned: any recipe-side answer (mock or older
+        # schema-driven flow) is promoted to [project].repo_topology instead of
+        # being written under the recipe config.
+        for vals in configured.values():
+            promoted = vals.pop("repo_topology", None)
+            if promoted:
+                topology = promoted
 
         # 4. Preview + confirm
         console.print()
@@ -334,7 +361,9 @@ def run_wizard(*, target: Path, name_prefill: str, out_path: Path) -> int:
         if not confirmed:
             return _cancel()
 
-        toml_text = _render_manifest(tw, project_name, agents, recipes, configured)
+        toml_text = _render_manifest(
+            tw, project_name, agents, recipes, configured, topology=topology
+        )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(toml_text, encoding="utf-8")
 

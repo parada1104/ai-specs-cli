@@ -1,5 +1,5 @@
 {
-  "label": "a change-ambiguous write is refused without an explicit slug (change-ambiguous)",
+  "label": "a change-ambiguous write is refused without an explicit slug, while explicit bind works (change-ambiguous)",
   "witness": {
     "state": "bound"
   },
@@ -26,7 +26,8 @@
       "checkpoint": "apply-start",
       "mode": "always",
       "write": {
-        "kind": "open",
+        "kind": "bind",
+        "item_id": "alpha-card",
         "change": "alpha-change"
       },
       "expected": {
@@ -37,7 +38,7 @@
         "exit": 0,
         "doctor": "OK",
         "write": {
-          "kind": "open",
+          "kind": "bind",
           "applied": true,
           "reason": ""
         }

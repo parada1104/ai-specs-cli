@@ -13,6 +13,8 @@ These tests pin the direct mode:
   * the ``--stage pre-merge|pre-archive`` compatibility alias, and the rule that
     contradictory flags grade nothing;
   * ask/no-TTY, fail-open binary resolution, and the ``off`` skip;
+  * every Tracker verdict is advisory: a ``block``/``ask`` is reported on
+    stderr and the direct host still exits 0; only usage errors exit non-zero;
   * host mode is selected by argv, never by a piped hook payload;
   * ``archive-close`` is tracker item closure, never an OpenSpec archive, and the
     host never infers a tracker write.
@@ -218,18 +220,19 @@ class TrackerLedgerHostDirectModeTests(unittest.TestCase):
 
     # --- verdict mapping ---
 
-    def test_block_verdict_blocks(self):
+    def test_block_verdict_reported_advisory_without_blocking(self):
         r = self._run_host(
             "--root", str(self.repo), "--checkpoint", "pre-merge", decision="block"
         )
-        self.assertNotEqual(r.returncode, 0, r.stderr)
-        self.assertIn("blocked at pre-merge", r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("pre-merge", r.stderr)
+        self.assertIn("advisory", r.stderr.lower())
 
-    def test_ask_without_tty_blocks_without_recording(self):
+    def test_ask_without_tty_reports_pending_without_recording(self):
         r = self._run_host(
             "--root", str(self.repo), "--checkpoint", "pre-merge", decision="ask"
         )
-        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("no terminal", r.stderr)
         self.assertNotIn("DECIDE", self.stub_log.read_text())
 
@@ -271,7 +274,7 @@ class TrackerLedgerHostDirectModeTests(unittest.TestCase):
             "--root", str(self.repo), "--checkpoint", "archive-close",
             decision="block", stdin=stdin,
         )
-        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._logged_checkpoints(), ["archive-close"],
                          "the requested checkpoint wins over any piped hook payload")
 

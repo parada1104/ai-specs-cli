@@ -1,5 +1,5 @@
 {
-  "label": "a retried open is an idempotent re-open, not a second item",
+  "label": "a retried local-only open remains non-compliant and does not add a second item",
   "witness": {
     "state": "bound"
   },
@@ -15,12 +15,12 @@
         "kind": "open"
       },
       "expected": {
-        "decision": "allow",
-        "reason": "",
+        "decision": "block",
+        "reason": "needs-item",
         "active": true,
         "conflict": false,
-        "exit": 0,
-        "doctor": "OK",
+        "exit": 2,
+        "doctor": "WARN",
         "write": {
           "kind": "open",
           "applied": true,
@@ -35,12 +35,12 @@
         "kind": "open"
       },
       "expected": {
-        "decision": "allow",
-        "reason": "",
+        "decision": "block",
+        "reason": "needs-item",
         "active": true,
         "conflict": false,
-        "exit": 0,
-        "doctor": "OK",
+        "exit": 2,
+        "doctor": "WARN",
         "write": {
           "kind": "open",
           "applied": false,

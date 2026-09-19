@@ -7,8 +7,11 @@ Covers three things at once:
 2. The A9 mapping the hosts apply: an explicit ``ledger_mode`` wins; otherwise
    the tracker ``gate_mode`` maps ``off``→skip, ``warn``→``warn``,
    ``always``→``always``. The worktree gate mode is never read.
-3. The five checkpoint hosts all reach the one Go predicate and honor its
-   verdict (spec "All five checkpoints reach one predicate").
+3. The five checkpoint hosts all reach the one Go predicate. The four Tracker
+   checkpoints are advisory: a ``block``/``ask``/``needs-item`` verdict is
+   reported on stderr and the host still exits 0. The Plan Build ``work-start``
+   host keeps its own blocking authority (spec "All five checkpoints reach one
+   predicate").
 
 The hosts are acquisition/JSON bridges, so every test drives them with a stub
 ``worktree-gate`` binary (``WORKTREE_GATE_BIN``) that records its argv. No host
@@ -478,13 +481,22 @@ class LedgerModeConfigTests(unittest.TestCase):
             ),
         ]
 
-    def test_all_five_hosts_block_on_the_same_verdict(self):
+    def test_work_start_blocks_while_tracker_hosts_report_advisory(self):
         self._manifest(gate_mode="warn")
         env = self._env(STUB_DECISION="block", STUB_REASON="needs-item")
         for checkpoint, cmd, payload, _ in self._five_host_commands():
             with self.subTest(checkpoint=checkpoint):
                 r = subprocess.run(cmd, input=payload, capture_output=True, text=True, env=env)
-                self.assertNotEqual(r.returncode, 0, f"{checkpoint}: {r.stderr}")
+                if checkpoint == "work-start":
+                    self.assertNotEqual(r.returncode, 0, f"{checkpoint}: {r.stderr}")
+                else:
+                    self.assertEqual(
+                        r.returncode, 0,
+                        f"{checkpoint} is a Tracker checkpoint and must stay advisory: {r.stderr}",
+                    )
+                    self.assertIn(checkpoint, r.stderr,
+                                  "the advisory host still reports the verdict")
+                    self.assertIn("advisory", r.stderr.lower())
         self.assertEqual(
             sorted(self._logged_checkpoints()),
             ["apply-start", "archive-close", "pr-review", "pre-merge", "work-start"],
