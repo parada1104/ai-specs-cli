@@ -29,8 +29,8 @@ Move the bounded submodule-to-superproject topology proof used by the Plan Build
 
 - [x] T1 — Pin the Go query and shell delegation contracts with failing tests.
 - [x] T2 — Implement the minimal Go topology proof query and focused unit coverage.
-- [ ] T3 — Replace Plan Build's duplicate topology proof with verified Go delegation and parity coverage.
-- [ ] T4 — Rebuild trust assets, run full validation, and record evidence.
+- [x] T3 — Replace Plan Build's duplicate topology proof with verified Go delegation and parity coverage.
+- [ ] T4 — Rebuild trust assets, run full validation, and record evidence. (in progress)
 
 ## Decisions
 
@@ -43,8 +43,10 @@ Move the bounded submodule-to-superproject topology proof used by the Plan Build
 - Exploration: delegated read-only map identified three topology implementations and ranked the Plan Build proof as the smallest coherent seam.
 - RED: `go -C catalog/recipes/worktree-flow/gate test -run 'TestResolveCentralRoot' -count=1 .` failed 5/5 as expected because `--resolve-central-root` is not defined; `python3 -m unittest tests.test_plan_build_gate_hook` ran 43 and failed only the 3 new delegation tests.
 - GREEN: `go -C catalog/recipes/worktree-flow/gate test -run 'TestResolveCentralRoot|TestModuleRecords|TestClassifyStandalone|TestCentralFromCommon|TestLegacyCentral' -count=1 .` passed 11 selected tests; `go vet` passed and `gofmt -l` was clean.
+- T3 GREEN: `python3 -m unittest tests.test_plan_build_gate_hook` -> 44 tests OK (evidence observed independently by the parent, not re-run in this update).
+- T3 shell lint: `bash -n catalog/recipes/plan-build-flow/hooks/plan-build-gate.sh` passed.
 - Final validation: pending.
 
 ## Status
 
-T1–T2 complete; the Go query now composes the existing proof helpers, preserves the legacy fail-closed fallback, and supports linked submodule worktrees. T3 in progress.
+T1–T3 complete; the Go query now composes the existing proof helpers, preserves the legacy fail-closed fallback, and supports linked submodule worktrees; Plan Build's duplicate topology proof is replaced by verified Go delegation with parity coverage. T4 in progress. Full validation and native review remain pending.
