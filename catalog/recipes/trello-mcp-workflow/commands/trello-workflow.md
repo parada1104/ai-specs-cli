@@ -40,6 +40,23 @@ See the Board Isolation section in `skills/trello-mcp-workflow/SKILL.md` for ful
 
 Every active change must carry a `## Tracker` section in `proposal.md` (fallback `tasks.md`) with non-empty `card_id` (+ `url`). Exemption: `openspec/changes/<slug>/tracker.none`. See the skill's **Card link section (`## Tracker`)** for the canonical shape.
 
+`## Tracker` is **artifact sugar only**: it is presentation, never authority, and it **never opens or binds** a ledger row. Rows are opened, linked, closed, and exempted only by explicit writes.
+
+## Provider-backed lifecycle seam
+
+A Trello card is created or linked through MCP, but the ledger item is bound locally. After the provider card exists, run the exact `bind` write — one locked transaction that opens-if-absent and links, with `kind=bind`, the card's `item_id`, `url`, `native_type` (`card`), a provider-neutral `state`, and the opaque `provider` snapshot (the observed list):
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --ledger-mode <mode> --project-root <root> \
+  --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress","provider":{"list":"<list name>"}}'
+```
+
+A retried `bind` reports `unchanged` and a closed row is never reopened (D17). The write needs no `openspec/`/SDD/ODD artifact and makes no provider call; state lives in `<git-common-dir>/ai-specs/ledger/state.json`.
+
+At a delivery, review, or merge lifecycle transition the agent/provider adapter reads the card through MCP (`trello_get_card`), produces the closed observation payload, and calls `worktree-gate --ledger --reconcile <observation> --reconcile-event <event>`. The closed payload has exactly `provider_id`, `scope`, `item_id`, `observed_at`, `event`, and `properties`. **Only `agree` is provider-backed compliance**; every other outcome is a pending decision. The Go ledger stays **provider-neutral** and performs **no provider write** — provider calls live only in the adapter.
+
+**Ask path (`ledger_mode = ask`).** At cycle start the gate can return a `needs-item` verdict (decision `ask`). The agent's options are to **create or link** the provider card and then bind it locally with the write above, or to record the human's explicit decline once with `--decide ... --kind opt-out`. The decline is **lifecycle-scoped** and is **not repeated** at every checkpoint; it is never inferred and creates no item.
+
 ## Tracker lifecycle checkpoints
 
 The tracker ledger lifecycle is Plan Build-independent and needs no `openspec/` tree. Grade it directly with the tracker gate's shell host:
@@ -51,17 +68,6 @@ bash "$GATE" --root "$PWD" --checkpoint archive-close <slug>
 ```
 
 `--root` is required; the slug is optional. `--stage pre-merge|pre-archive` stays as a compatibility alias for `--checkpoint pre-merge|archive-close`. **`archive-close` is tracker item closure, not an OpenSpec archive** — it never infers a close from archive state. A provider recipe only maps native state through `[config.reconcile]`; it does not enable, configure, or implement the ledger.
-
-Seed the branch binding with the generic `bind` write — one locked transaction that
-opens-if-absent and links, with no `openspec/`/SDD/ODD artifact and no provider call:
-
-```bash
-worktree-gate --ledger --checkpoint apply-start --project-root "$PWD" \
-  --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress"}'
-```
-
-A retried `bind` reports `unchanged`; a closed row is never reopened (D17). State
-lives in `<git-common-dir>/ai-specs/ledger/state.json`.
 
 ## Phase Mappings
 

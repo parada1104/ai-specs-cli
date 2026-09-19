@@ -137,9 +137,10 @@ apply/production work. The only documented exemption is
 `openspec/changes/<slug>/tracker.none` (conceptual name `tracker:none`) with a
 one-line reason — log it; this is rare.
 
-**The ledger records the item; the artifact only presents it.** An item is opened,
-linked, closed, and exempted by explicit writes — a parsed `## Tracker` never opens
-one, and grading never writes:
+**The ledger records the item; the artifact only presents it.** The `## Tracker`
+section is **artifact sugar only** — presentation, never authority: it **never
+opens or binds** a ledger row. An item is opened, linked, closed, and exempted only
+by explicit writes, and grading never writes:
 
 ```bash
 worktree-gate --ledger --checkpoint apply-start --write '{"kind":"open"}'
@@ -150,15 +151,36 @@ worktree-gate --ledger --checkpoint apply-start \
 A failed write exits `2`, persists nothing, and prints no verdict JSON; a retried
 `open` reports `already-open` instead of creating a second item.
 
-**`bind` is the generic binding command** for SDD, ODD, and no-flow work alike: one
-`--write` opens-if-absent and links in the same locked transaction, so a branch
-binding is seeded from a valid external tracker item with no `openspec/`/SDD/ODD
-artifact and no provider call:
+**`bind` is the generic binding command** for SDD, ODD, and no-flow work alike.
+After the provider item exists — a Trello card just created or already linked — the
+agent performs the exact local bind write. One `--write` opens-if-absent and links
+in the same locked transaction, so the branch binding is seeded from that valid
+external tracker item with no `openspec/`/SDD/ODD artifact and no provider call:
 
 ```bash
-worktree-gate --ledger --checkpoint apply-start --project-root . \
-  --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress"}'
+worktree-gate --ledger --checkpoint apply-start --ledger-mode <mode> \
+  --project-root <root> \
+  --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress","provider":{"list":"<list name>"}}'
 ```
+
+The bind payload is `kind=bind` with the card's `item_id`, `url`, `native_type`
+(`card`), a provider-neutral `state`, and the opaque `provider` snapshot (here the
+observed list name). The Go core stores that provider object without reading it, so
+no Trello vocabulary enters the ledger core.
+
+**Ask path (`ledger_mode = ask`).** At the start of the cycle the gate can return a
+`needs-item` verdict (decision `ask`): no provider-backed item is bound yet. The
+agent's options are to **create or link** the provider card and then bind it locally
+with the write above, or to record the human's explicit decline once. The decline is
+**lifecycle-scoped**: it covers the change lifecycle and is **not repeated** at
+every checkpoint. Record it explicitly — never inferred, never automatic:
+
+```bash
+worktree-gate --ledger --checkpoint apply-start --ledger-mode ask --project-root <root> \
+  --decide '{"checkpoint":"apply-start","kind":"opt-out","choice":"continue"}'
+```
+
+An explicit decline is not a `tracker.none` exemption and creates no item.
 
 A `bind` without `change` is a deliberate branch-level binding: it links the single
 open row for the same common dir and branch regardless of its stored slug, refuses
@@ -252,7 +274,15 @@ remembered or inferred time. The payload is read under a fixed size budget
 (1048576 bytes): a larger file is reported as `observation-invalid`, never parsed.
 
 **3. Compare with the gate**, naming the event you are asking about
-(`--reconcile-event`). Use the stamped/verified gate binary path (`$WORKTREE_GATE_BIN`
+(`--reconcile-event`). At a delivery, review, or merge lifecycle transition the
+agent/provider adapter reads the card through MCP, produces this closed observation
+payload, and calls
+`worktree-gate --ledger --reconcile <observation> --reconcile-event <event>`; the Go
+ledger compares and **only `agree` is provider-backed compliance**. The comparison
+keeps the Go ledger **provider-neutral**: it reads the neutral
+payload, performs **no provider write**, and touches no provider state — provider
+calls live only in the adapter (the agent's MCP reads), never in the core. Use the
+stamped/verified gate binary path (`$WORKTREE_GATE_BIN`
 or the CLI cache path the hooks use). The recipe declares the supported lifecycle
 mapping by default — `delivery` → `default_list` (In Progress), `review` →
 `review_list` (Review), `merge` → `done_list` (Done), or → `published_list` when the

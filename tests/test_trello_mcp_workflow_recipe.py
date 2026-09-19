@@ -31,6 +31,12 @@ def load_module(path: Path, name: str):
     return module
 
 
+def norm(text: str) -> str:
+    """Collapse markdown emphasis and whitespace so phrase assertions survive
+    line wrapping and `inline code` styling."""
+    return re.sub(r"[`*\s]+", " ", text).strip().lower()
+
+
 class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -443,6 +449,97 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         # Provider recipes only map native state; they never own the ledger.
         self.assertIn("[config.reconcile]", readme)
         self.assertIn("do not enable", readme)
+
+    def _tracker_surfaces(self):
+        return {
+            "skill": (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text(),
+            "command": (RECIPE_DIR / "commands" / "trello-workflow.md").read_text(),
+            "README": (RECIPE_DIR / "README.md").read_text(),
+            "brief": (RECIPE_DIR / "recipe.toml").read_text(),
+        }
+
+    def test_skill_and_command_document_provider_backed_bind_payload(self):
+        """T2 seam: after a provider card is created or linked, the recipe
+        documents the exact local `bind` payload (kind/item_id/url/native_type/
+        state plus the opaque provider snapshot) and states the `## Tracker`
+        section is artifact sugar that never opens or binds a ledger row."""
+        surfaces = self._tracker_surfaces()
+        for name in ("skill", "command"):
+            with self.subTest(surface=name):
+                text = norm(surfaces[name])
+                self.assertIn('"kind":"bind"', text)
+                self.assertIn("--ledger-mode", text)
+                self.assertIn("--project-root", text)
+                self.assertIn("native_type", text)
+                self.assertIn('"card"', text)
+                self.assertIn("provider", text)
+                self.assertIn("artifact sugar", text)
+                self.assertIn("never opens or binds", text)
+
+    def test_skill_and_command_document_reconcile_observation_seam(self):
+        """T2 seam: lifecycle transitions read the card through MCP, emit the
+        closed observation payload, and call the gate's explicit comparison;
+        only `agree` is provider-backed compliance, while the Go ledger stays
+        provider-neutral and provider writes stay outside it."""
+        surfaces = self._tracker_surfaces()
+        for name in ("skill", "command"):
+            with self.subTest(surface=name):
+                text = norm(surfaces[name])
+                self.assertIn("trello_get_card", text)
+                self.assertIn("--reconcile", text)
+                self.assertIn("--reconcile-event", text)
+                for key in ("provider_id", "scope", "item_id", "observed_at", "properties"):
+                    self.assertIn(key, text)
+                self.assertIn("only agree is provider-backed compliance", text)
+                self.assertIn("provider-neutral", text)
+                self.assertIn("no provider write", text)
+
+    def test_skill_and_command_document_needs_item_ask_path(self):
+        """T2 seam: an `ask` `needs-item` verdict is answered by creating or
+        linking the provider item and then binding it locally; an explicit
+        decline is lifecycle-scoped and is not repeated at every checkpoint."""
+        surfaces = self._tracker_surfaces()
+        for name in ("skill", "command"):
+            with self.subTest(surface=name):
+                text = norm(surfaces[name])
+                self.assertIn("needs-item", text)
+                self.assertIn("create or link", text)
+                self.assertIn("then bind", text)
+                self.assertIn("lifecycle-scoped", text)
+                self.assertIn("not repeated", text)
+                self.assertIn("opt-out", text)
+
+    def test_readme_and_brief_keep_provider_neutral_boundary(self):
+        """The provider-neutral core boundary stays stated on the README and
+        recipe-brief surfaces: the recipe maps native state and never grades,
+        enables, or implements the ledger."""
+        surfaces = self._tracker_surfaces()
+        readme = norm(surfaces["README"])
+        brief = norm(surfaces["brief"])
+        self.assertIn("provider-neutral", readme)
+        self.assertIn("by mapping", readme)
+        self.assertIn("never by grading", readme)
+        self.assertIn("--ledger-mode", readme)
+        self.assertIn('"kind":"bind"', readme)
+        self.assertIn("provider recipes do not enable", readme)
+        self.assertIn("map native state", brief)
+        self.assertIn("never enable", brief)
+        self.assertIn("never grade", brief)
+
+    def test_bind_and_reconcile_surfaces_reject_local_only_compliance(self):
+        """Triangulation: every documented bind is mode-aware, and the skill and
+        command state that a non-agreeing comparison is a pending decision, never
+        compliance — local-only success is never claimed on any surface."""
+        surfaces = self._tracker_surfaces()
+        for name in ("skill", "command", "README"):
+            with self.subTest(surface=name, part="mode-aware bind"):
+                self.assertIn(
+                    "--ledger --checkpoint apply-start --ledger-mode",
+                    norm(surfaces[name]),
+                )
+        for name in ("skill", "command"):
+            with self.subTest(surface=name, part="pending decision"):
+                self.assertIn("pending decision", norm(surfaces[name]))
 
     def test_recipe_version_and_migration_surface(self):
         """W6: the recipe version bump is recorded in the migration surface."""
