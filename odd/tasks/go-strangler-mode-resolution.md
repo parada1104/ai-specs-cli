@@ -30,7 +30,7 @@ Move effective `ledger_mode` and legacy `gate_mode` resolution into the authorit
 - [x] T1 — Pin current mode-resolution precedence and failure/off-path behavior with failing Go/host contract tests. RED: `go -C catalog/recipes/worktree-flow/gate test -run 'TestResolveLedgerMode'` fails to compile because `ResolveLedgerMode` does not exist yet.
 - [x] T2 — Implement Go-owned effective mode resolution and route ledger/worktree entrypoints through it. GREEN: focused resolver/ledger tests passed; Go now resolves raw config/env/hint inputs when `--ledger-mode` is omitted.
 - [x] T3 — Remove duplicate policy-bearing shell resolvers while preserving thin acquisition/dispatch bridges and update docs/tests. GREEN: focused hook/config suite passed 105 tests with 4 expected skips; all three hooks pass `bash -n`.
-- [x] T4 — Rebuild the four trust-root artifacts, run focused and full validation, and record evidence. GREEN: rebuilt the Go trust root with go1.24.13 and verified it with `bash scripts/verify-gate-sums.sh <temp-generated-sums> catalog/recipes/worktree-flow/bin/SHA256SUMS` (4 digest entries); Go tests, `go vet`, `gofmt`, full validation, parity suites, and `git diff --check` all clean. NOTE: the first direct-host `off` run failed because the host test double did not mirror the shell contract; the test double was corrected and the suite has passed since. Commit: `5310b63`.
+- [x] T4 — Rebuild the four trust-root artifacts, run focused and full validation, and record evidence. GREEN: rebuilt the Go trust root with go1.24.13 and verified it with `bash scripts/verify-gate-sums.sh <temp-generated-sums> catalog/recipes/worktree-flow/bin/SHA256SUMS` (4 digest entries); Go tests, `go vet`, `gofmt`, full validation, parity suites, and `git diff --check` all clean. NOTE: the first direct-host `off` run failed because the host test double did not mirror the shell contract; the test double was corrected and the suite has passed since. Commit: `a7686cb`.
 
 ## Acceptance criteria
 
@@ -45,7 +45,7 @@ Move effective `ledger_mode` and legacy `gate_mode` resolution into the authorit
 - Worktree: `.worktrees/go-strangler-mode-resolution`
 - Branch: `feat/go-strangler-mode-resolution`
 - Base: `development` at `03b5f2c`
-- Status: T1–T4 complete; feature work-unit commits are 539aca8, e75c7a3, 3047d99, 5310b63; candidate awaits native review.
+- Status: T1–T4 complete; feature work-unit commits are 539aca8, e75c7a3, 3047d99, a7686cb; candidate awaits native review.
 
 ## Evidence
 
