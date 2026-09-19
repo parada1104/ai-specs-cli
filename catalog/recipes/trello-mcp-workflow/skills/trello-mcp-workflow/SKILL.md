@@ -36,7 +36,8 @@ metadata:
 | `review_list` | No | `Review` | List a card must reach when the `review` lifecycle event reconciles. |
 | `done_list` | No | `Done` | List a card must reach when the `merge` lifecycle event reconciles (the default merge target). |
 | `published_list` | No | — | Optional list that means the merge was also published/released. When set, the `merge` event reconciles against it instead of `done_list`. No default is invented: leave it unset when the board has no such list. |
-| `gate_mode` | No | `warn` | Tracker card gate: `off` / `warn` / `always`. |
+| `gate_mode` | No | `warn` | **Deprecated compatibility only**: legacy `off` / `warn` / `always` for the Tracker card gate. The tracker is advisory and never blocks source changes; prefer `ledger_mode`. |
+| `ledger_mode` | No | `warn` | **Canonical** Tracker mode: `always` / `ask` / `warn`. Tracker checkpoints never block — a `block` / `ask` / `needs-item` verdict is reported and the host continues. `always` is the strictest verdict and still governs the Plan Build `work-start` checkpoint, which may block separately. |
 | `reconcile` | No | — | Declarative remote-reconciliation mapping (`scope_field`, `max_age_seconds`, `expectations`). The recipe declares the lifecycle mapping by default (delivery/review/merge); a project `[recipes.trello-mcp-workflow.config.reconcile]` block, when present, overrides it. Re-run `ai-specs sync` after recipe changes to propagate defaults. |
 
 Configuration is read from `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-specs.toml`.
@@ -182,6 +183,10 @@ worktree-gate --ledger --checkpoint apply-start --ledger-mode ask --project-root
 
 An explicit decline is not a `tracker.none` exemption and creates no item.
 
+The `ask` prompt is advisory: run without a terminal it reports the pending
+`needs-item` state, records no opt-out, and proceeds without blocking. A recorded
+decline is lifecycle-scoped and is not repeated at later checkpoints.
+
 A `bind` without `change` is a deliberate branch-level binding: it links the single
 open row for the same common dir and branch regardless of its stored slug, refuses
 (fail closed, nothing persisted) when several open rows exist, and otherwise opens a
@@ -230,9 +235,10 @@ one Go predicate whether the bound tracker item can be closed. It never moves
 `openspec/changes/<slug>/`, never reads an OpenSpec archive to infer or select
 closure, and never writes. The host is acquisition only: it resolves the mode,
 builds local evidence through `ledger_bridge.py`, calls
-`worktree-gate --ledger --checkpoint <name>`, and maps the verdict (`0`
-allow/ask/dormant/unevaluable, nonzero when blocked). No provider write, no
-network, no second grader.
+`worktree-gate --ledger --checkpoint <name>`, and reports the verdict. The host
+is advisory: `block` / `ask` / `needs-item` are reported on stderr and it exits
+`0`, so a Tracker checkpoint never blocks a merge, a close, or source work. No
+provider write, no network, no second grader.
 
 The host and the ledger belong to the generic Tracker domain, not to Trello. A
 provider recipe contributes only its `[config.reconcile]` native-state mapping;
@@ -529,7 +535,7 @@ If progress data files are unavailable, post the comment with available data and
 
 - All runtime Trello **availability** failures (MCP/network/API down) emit warnings to stderr and continue — never block.
 - Optionally log warnings to `.recipe/trello-mcp-workflow/warnings.log` with timestamp, capability, and error detail.
-- A **missing `## Tracker` link section** is **not** an availability failure. Do not claim 'Trello unavailable' to skip it; create/link the card and write the section (or write `tracker.none` with a logged reason). The tracker-card gate may warn or block production/PR-archive actions when the artifact is missing.
+- A **missing `## Tracker` link section** is **not** an availability failure. Do not claim 'Trello unavailable' to skip it; create/link the card and write the section (or write `tracker.none` with a logged reason). The tracker-card gate reports a warn/block/ask verdict when the artifact is missing, but it is advisory and never blocks source or PR/archive work.
 - If the Trello MCP server is unreachable, skip Trello MCP calls for the remainder of the session and log a single warning — but still do not invent an availability excuse for a missing link section once MCP is back.
 
 ---

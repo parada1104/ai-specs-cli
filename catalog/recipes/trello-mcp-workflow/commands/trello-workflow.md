@@ -55,7 +55,7 @@ A retried `bind` reports `unchanged` and a closed row is never reopened (D17). T
 
 At a delivery, review, or merge lifecycle transition the agent/provider adapter reads the card through MCP (`trello_get_card`), produces the closed observation payload, and calls `worktree-gate --ledger --reconcile <observation> --reconcile-event <event>`. The closed payload has exactly `provider_id`, `scope`, `item_id`, `observed_at`, `event`, and `properties`. **Only `agree` is provider-backed compliance**; every other outcome is a pending decision. The Go ledger stays **provider-neutral** and performs **no provider write** — provider calls live only in the adapter.
 
-**Ask path (`ledger_mode = ask`).** At cycle start the gate can return a `needs-item` verdict (decision `ask`). The agent's options are to **create or link** the provider card and then bind it locally with the write above, or to record the human's explicit decline once with `--decide ... --kind opt-out`. The decline is **lifecycle-scoped** and is **not repeated** at every checkpoint; it is never inferred and creates no item.
+**Ask path (`ledger_mode = ask`).** At cycle start the gate can return a `needs-item` verdict (decision `ask`). The agent's options are to **create or link** the provider card and then bind it locally with the write above, or to record the human's explicit decline once with `--decide ... --kind opt-out`. The decline is **lifecycle-scoped** and is **not repeated** at every checkpoint; it is never inferred and creates no item. The `ask` prompt is advisory: without a terminal the gate reports the pending `needs-item` state, records no opt-out, and proceeds without blocking.
 
 ## Tracker lifecycle checkpoints
 
@@ -68,6 +68,8 @@ bash "$GATE" --root "$PWD" --checkpoint archive-close <slug>
 ```
 
 `--root` is required; the slug is optional. `--stage pre-merge|pre-archive` stays as a compatibility alias for `--checkpoint pre-merge|archive-close`. **`archive-close` is tracker item closure, not an OpenSpec archive** — it never infers a close from archive state. A provider recipe only maps native state through `[config.reconcile]`; it does not enable, configure, or implement the ledger.
+
+The Tracker host is **advisory**: it reports a `block` / `ask` / `needs-item` verdict on stderr and exits `0`, so a non-zero Tracker verdict never blocks a merge, a close, or unrelated source work. Only the Plan Build `work-start` checkpoint may still block, separately.
 
 ## Phase Mappings
 

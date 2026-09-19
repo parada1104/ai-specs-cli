@@ -16,12 +16,16 @@
 #     "tool_input": {file_path|notebook_path}, "cwd" }
 #   SHELL mode stdin = JSON with tool_input.command (or script/cmd) OR Cursor
 #     native top-level { "command", "cwd", … }
-#   exit 0 → allow.   exit 2 → block (stderr surfaced to the agent).
+#   exit 0 → no block. Every Tracker verdict is advisory: a Go `block`/`ask`/
+#     `needs-item` is reported on stderr and this host still exits 0. It never
+#     blocks a source change or a Tracker lifecycle boundary.
+#   exit 2 → reserved for a usage error (bad/missing --root, --checkpoint, or
+#     --stage), never for a ledger verdict.
 # Fail-open: a missing/unverified binary, an unstamped/missing evidence bridge,
 # any parse/lookup/git/python3 error, or an ambiguous event allows the action.
-# Fail-closed: a `--write` that cannot be recorded (validation, lock timeout,
-# ambiguous identity, store IO) exits 2 with no verdict JSON. `openspec/**` is never
-# blocked.
+# Fail-closed (Go binary, not this host): a `--write` that cannot be recorded
+# (validation, lock timeout, ambiguous identity, store IO) exits 2 with no verdict
+# JSON. `openspec/**` is never blocked.
 #
 # Tokens stamped at sync (gitignored project copy):
 #   __TRACKER_CARD_GATE_MODE__   (legacy gate_mode; default warn)
@@ -647,8 +651,8 @@ for side in ("local", "remote", "code", "git"):
 print("  choices: " + ", ".join(prompt.get("choices") or []))
 ' >&2 2>/dev/null
   if ! { exec 3</dev/tty; } 2>/dev/null; then
-    echo "${prefix}: ${checkpoint} needs a decision but no terminal is available; no opt-out was recorded; blocking." >&2
-    return 2
+    echo "${prefix}: ${checkpoint} needs a decision but no terminal is available; no opt-out was recorded — Tracker advisory, continuing without blocking." >&2
+    return 0
   fi
   printf '%s: opt out of the %s checkpoint? [y/N] ' "$prefix" "$checkpoint" >&2
   local answer=""
@@ -661,19 +665,21 @@ print("  choices: " + ", ".join(prompt.get("choices") or []))
         echo "${prefix}: opt-out recorded for ${checkpoint}; proceeding." >&2
         return 0
       fi
-      echo "${prefix}: failed to record the ${checkpoint} opt-out; blocking." >&2
-      return 2
+      echo "${prefix}: failed to record the ${checkpoint} opt-out — Tracker advisory, continuing without blocking." >&2
+      return 0
       ;;
   esac
-  echo "${prefix}: no opt-out recorded for ${checkpoint}; blocking." >&2
-  return 2
+  echo "${prefix}: no opt-out recorded for ${checkpoint} — Tracker advisory, continuing without blocking." >&2
+  return 0
 }
 
 _ledger_grade() {
   # $1 checkpoint, $2 mode, $3 root, $4 prefix, $5 explicit change slug (optional).
-  # Returns 0 allow / 2 block. A caller-supplied slug scopes evidence to the change
-  # being graded (archive-close and pre-merge know it); without one the single
-  # active change is used, and an ambiguous planning tree contributes no evidence.
+  # Always returns 0: the Tracker host is advisory, so a block/ask verdict is
+  # reported and never blocks. A caller-supplied slug scopes evidence to the
+  # change being graded (archive-close and pre-merge know it); without one the
+  # single active change is used, and an ambiguous planning tree contributes no
+  # evidence.
   local checkpoint="$1" mode="$2" root="$3" prefix="$4" explicit_slug="${5:-}"
   local bin
   if ! bin="$(_ledger_binary)"; then
@@ -712,8 +718,8 @@ _ledger_grade() {
   reason="$(printf '%s' "$out" | _ledger_field reason)"
   active="$(printf '%s' "$out" | _ledger_field active)"
   if [ "$rc" = 2 ] || [ "$decision" = block ]; then
-    echo "${prefix}: blocked at ${checkpoint} — ${reason:-missing tracked item}" >&2
-    return 2
+    echo "${prefix}: blocked at ${checkpoint} — ${reason:-missing tracked item} (Tracker advisory: reported, not enforced)." >&2
+    return 0
   fi
   if [ "$decision" = ask ] && [ "$reason" = identity_unavailable ]; then
     # No identity means no durable key for a checkpoint-scoped answer (A2/A5), so
@@ -728,7 +734,7 @@ _ledger_grade() {
     return $?
   fi
   if [ "$active" = 1 ] && [ "$decision" != allow ]; then
-    echo "${prefix}: ${decision} at ${checkpoint} — ${reason:-no primary item}" >&2
+    echo "${prefix}: ${decision} at ${checkpoint} — ${reason:-no primary item} (Tracker advisory)." >&2
   fi
   return 0
 }
@@ -857,7 +863,7 @@ if [ "$kind" = path ]; then
 
   mode="$(_ledger_mode "$repo_root" "$gate_mode" "$(_ledger_recipe_id "$repo_root")")"
   [ "$mode" = off ] && exit 0
-  _ledger_grade "apply-start" "$mode" "$repo_root" "tracker-card-gate" || exit 2
+  _ledger_grade "apply-start" "$mode" "$repo_root" "tracker-card-gate"
   exit 0
 fi
 
@@ -870,7 +876,7 @@ if [ "$kind" = shell ]; then
       pr_create)
         mode="$(_ledger_mode "$repo_root" "$gate_mode" "$(_ledger_recipe_id "$repo_root")")"
         [ "$mode" = off ] && continue
-        _ledger_grade "pr-review" "$mode" "$repo_root" "tracker-card-gate" || exit 2
+        _ledger_grade "pr-review" "$mode" "$repo_root" "tracker-card-gate"
         ;;
       *)
         ;;

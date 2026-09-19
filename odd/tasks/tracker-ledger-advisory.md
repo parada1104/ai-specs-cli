@@ -34,7 +34,7 @@ Make the generic Tracker ledger represent the real provider-backed lifecycle whi
 
 - [x] T1 — Define the advisory provider-backed state machine and mode normalization with RED/GREEN contract tests.
 - [x] T2 — Wire explicit bind and fresh remote observation after provider item creation/linking; preserve provider-neutral core boundaries.
-- [ ] T3 — Remove Tracker blocking hooks/legacy gate_mode semantics while retaining Worktree gate_mode.
+- [x] T3 — Remove Tracker blocking hooks/legacy gate_mode semantics while retaining Worktree gate_mode.
 - [ ] T4 — Move repo_topology to `[project]` with legacy recipe fallback and stamped compatibility.
 - [ ] T5 — Run focused/full validation, update evidence, and prepare review.
 
@@ -51,6 +51,8 @@ Make the generic Tracker ledger represent the real provider-backed lifecycle whi
 - T1 verification: `go test ./ledger/ -count=1`, `go test ./... -count=1`, `go vet ./...`, `gofmt -l`, and `git diff --check` all pass.
 - T2 complete. Trello skill and command now document the provider-card → local `bind` write and the MCP observation → `--reconcile` continuation; `## Tracker` remains artifact sugar and only `agree` counts as provider-backed compliance.
 - T2 RED/GREEN: the new bind/observation/ask-path contract tests were added against existing surfaces and the Trello recipe suite passed 25 tests; ledger parity/witness/host/mode suites passed 70 tests with 7 existing skips; diff check passed.
+- T3 complete. Tracker hook and direct host verdicts are advisory/non-blocking; Trello hook metadata is `blocking = false`; `ledger_mode` is canonical and Trello `gate_mode` is documented as deprecated compatibility. Worktree and Plan Build gate semantics remain unchanged; merge-host docs reflect advisory Tracker behavior.
+- T3 RED/GREEN: Tracker/Ledger/Trello suite passed 90 tests; Plan Build/Worktree suite passed 175 tests with 90 existing Go-binary skips; diff check passed.
 
 ## Acceptance criteria
 

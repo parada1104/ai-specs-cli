@@ -63,13 +63,34 @@ class TrelloMcpWorkflowRecipeTests(unittest.TestCase):
         )
         self.assertEqual(by_id["tracker-card-gate"].script, "hooks/tracker-card-gate.sh")
         self.assertEqual(by_id["tracker-card-gate-shell"].script, "hooks/tracker-card-gate.sh")
-        self.assertTrue(by_id["tracker-card-gate"].blocking)
+        # Tracker hooks are advisory metadata: they never claim blocking = true.
+        self.assertFalse(by_id["tracker-card-gate"].blocking)
+        self.assertFalse(by_id["tracker-card-gate-shell"].blocking)
         frags = (recipe.brief_fragments.workflow_rules or []) if recipe.brief_fragments else []
         rules = " ".join(f.text for f in frags)
         self.assertIn("## Tracker", rules)
         self.assertIn("tracker.none", rules)
         self.assertIn("never bypass", rules.lower())
         self.assertIn("phase", rules.lower())
+
+    def test_tracker_hooks_and_gate_mode_are_metadata_advisory(self):
+        """T3: Tracker hook metadata and the legacy gate_mode field are advisory,
+        never declared as a blocking gate, while ledger_mode stays canonical."""
+        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
+        by_id = {h.id: h for h in recipe.runtime_hooks}
+        for hook_id in ("tracker-card-gate", "tracker-card-gate-shell"):
+            with self.subTest(hook=hook_id):
+                hook = by_id[hook_id]
+                self.assertFalse(hook.blocking, "Tracker hooks must not claim blocking")
+                self.assertIn("advisory", (hook.description or "").lower())
+        fields = recipe.config_schema.fields
+        self.assertIn("ledger_mode", fields)
+        self.assertNotIn(
+            "off", set(fields["ledger_mode"].enum or []),
+            "ledger_mode is always|ask|warn; off stays a gate_mode compatibility value",
+        )
+        self.assertIn("deprecated", (fields["gate_mode"].help_text or "").lower())
+
     def test_tracking_declaration_matches_recipe_config(self):
         config_text = (ROOT / "openspec" / "config.yaml").read_text()
         board_match = re.search(r"^  board_id:\s*\"([^\"]+)\"", config_text, re.MULTILINE)
