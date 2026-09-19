@@ -6,7 +6,8 @@ binary (``WORKTREE_GATE_BIN``) that records its argv and returns a controlled
 verdict, and assert:
 
 - a production path write grades ``apply-start`` and ``gh pr create`` grades
-  ``pr-review`` through the stub;
+  ``pr-review`` through the stub, forwarding the raw stamped legacy gate hint as
+  ``--ledger-gate-mode`` and never resolving ``--ledger-mode`` itself;
 - every Tracker verdict is advisory: the host reports a Go ``block``/``ask`` on
   stderr and still exits 0, and fails open on a missing binary or bad input;
 - ``openspec/**`` and non-production writes never reach the ledger;
@@ -15,6 +16,12 @@ verdict, and assert:
   (`--root <root> --checkpoint <name>`), so archive shell actions are not gated
   here;
 - the script still parses and runs under bash 3.2.
+
+Effective mode resolution (env -> witness recipe config -> raw hint -> warn, with
+`off` disabling the checkpoint) is Go-owned (``ledger_mode.go`` /
+``ledger_cmd.go``) and pinned by ``ledger_mode_test.go`` and
+``TestLedgerEffectiveModeResolutionViaCLI``; this suite asserts the transport
+boundary only.
 """
 from __future__ import annotations
 
@@ -263,11 +270,44 @@ class TrackerCardGateHookTests(unittest.TestCase):
         )
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_gate_mode_off_skips_the_ledger(self):
+    def test_gate_mode_off_is_forwarded_raw_not_skipped_by_the_host(self):
+        # `off` skipping is Go's short-circuit (ledger_cmd.go returns before
+        # grading); the host is transport only and must still invoke the
+        # predicate. TestLedgerEffectiveModeResolutionViaCLI step 2 pins the skip.
         r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),
                       decision="block", gate=self._stamped_gate("off"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self._logged_checkpoints(), [])
+        self.assertEqual(self._logged_checkpoints(), ["apply-start"])
+        logged = self.stub_log.read_text()
+        self.assertIn("--ledger-gate-mode off", logged)
+        self.assertNotIn("--ledger-mode", logged,
+                         "the host must never resolve an explicit --ledger-mode")
+
+    def test_host_carries_no_shell_mode_policy_helper(self):
+        text = GATE.read_text(encoding="utf-8")
+        for token in ("_ledger_mode", "_resolve_gate_mode", "_ledger_recipe_id"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, text,
+                                 "mode policy is Go-owned; the host must not duplicate it")
+
+    def test_ask_follow_up_decide_forwards_the_raw_hint(self):
+        # The opt-out re-grade must re-resolve the same mode, so the --decide
+        # invocation forwards the raw stamped hint and never a resolved mode.
+        self.assertIn(
+            '--ledger-gate-mode "$stamped_gate_mode" \\\n'
+            '          --project-root "$root" \\\n'
+            '          --decide',
+            GATE.read_text(encoding="utf-8"),
+        )
+
+    def test_shell_pr_review_forwards_the_raw_stamped_hint(self):
+        r = self._run(self._shell_event("gh pr create --fill"),
+                      gate=self._stamped_gate("always"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["pr-review"])
+        logged = self.stub_log.read_text()
+        self.assertIn("--ledger-gate-mode always", logged)
+        self.assertNotIn("--ledger-mode", logged)
 
     def test_missing_binary_fail_open(self):
         env = self._env(decision="block")

@@ -16,7 +16,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
-LIB_INTERNAL = ROOT / "lib" / "_internal"
 
 STUB_BINARY = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${STUB_LOG}"
@@ -94,25 +93,16 @@ class PlanBuildGateHookTests(unittest.TestCase):
         (d / "tasks.md").write_text("# tasks\n")
 
     def _stamped_gate(self) -> Path:
-        """The materialized hook: sync stamps the CLI's lib/_internal seam."""
+        """A materialized copy of the hook.
+
+        The hook carries no per-project stamp: mode resolution reads the
+        witness binding, env and manifest inside Go, so there is nothing to
+        substitute here.
+        """
         path = Path(self.tmp.name) / "plan-build-gate.sh"
-        path.write_text(
-            GATE.read_text().replace("__TRACKER_LIB_INTERNAL__", str(LIB_INTERNAL))
-        )
+        path.write_text(GATE.read_text())
         path.chmod(0o755)
         return path
-
-    def _witness(self, recipe_id: str) -> None:
-        common = subprocess.run(
-            ["git", "-C", str(self.repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-        ledger_dir = Path(common) / "ai-specs" / "ledger"
-        ledger_dir.mkdir(parents=True, exist_ok=True)
-        (ledger_dir / "witness.json").write_text(json.dumps({
-            "v": 1, "capability": "tracker", "state": "bound", "recipe_id": recipe_id,
-            "candidates": [], "written_at": "2026-01-01T00:00:00Z",
-        }))
 
     def _seed_change(self, slug: str = "demo-change") -> None:
         self._seed_change_at(self.repo, slug)
@@ -468,7 +458,12 @@ class PlanBuildGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._logged_checkpoints(), ["work-start"])
 
-    def test_work_start_plumbs_the_configured_ledger_mode(self):
+    def test_work_start_delegates_mode_resolution_to_go(self):
+        # Effective mode (env -> witness recipe config -> raw hint -> warn, off
+        # disabling the checkpoint) is Go's. The host must forward no mode at
+        # all; the resolution itself is pinned by
+        # TestLedgerEffectiveModeResolutionViaCLI (ledger_cmd_test.go) and
+        # ledger_mode_test.go.
         self._seed_change()
         (self.repo / "ai-specs").mkdir()
         (self.repo / "ai-specs" / "ai-specs.toml").write_text(
@@ -478,42 +473,17 @@ class PlanBuildGateHookTests(unittest.TestCase):
         event = self._event("Write", str(self.repo / "src" / "app.py"))
         r = self._run(event, extra_env=self._ledger_env(decision="allow"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("--ledger-mode always", self.stub_log.read_text())
-
-    def test_work_start_reads_the_witness_bound_recipe_config(self):
-        """W6: the gate resolves `recipes.<witness recipe id>`, not a literal."""
-        self._seed_change()
-        (self.repo / "ai-specs").mkdir()
-        (self.repo / "ai-specs" / "ai-specs.toml").write_text(
-            "[recipes.trello-mcp-workflow]\nenabled = true\n"
-            "[recipes.trello-mcp-workflow.config]\nledger_mode = 'warn'\n"
-            "[recipes.fixture-tracker]\nenabled = true\n"
-            "[recipes.fixture-tracker.config]\nledger_mode = 'always'\n"
-        )
-        self._witness("fixture-tracker")
-        event = self._event("Write", str(self.repo / "src" / "app.py"))
-        r = self._run(event, extra_env=self._ledger_env(decision="allow"))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("--ledger-mode always", self.stub_log.read_text())
-
-    def test_work_start_without_the_bridge_stamp_fails_open_to_the_default(self):
-        """Cold install (no stamped bridge) keeps the warn-first default."""
-        self._seed_change()
-        (self.repo / "ai-specs").mkdir()
-        (self.repo / "ai-specs" / "ai-specs.toml").write_text(
-            "[recipes.trello-mcp-workflow]\nenabled = true\n"
-            "[recipes.trello-mcp-workflow.config]\nledger_mode = 'always'\n"
-        )
-        event = self._event("Write", str(self.repo / "src" / "app.py"))
-        r = subprocess.run(
-            ["bash", str(GATE)],
-            input=json.dumps(event), capture_output=True, text=True,
-            start_new_session=True, env={**os.environ, **self._ledger_env(decision="allow")},
-        )
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("--ledger-mode warn", self.stub_log.read_text())
+        logged = self.stub_log.read_text()
+        self.assertIn("--ledger --checkpoint work-start", logged)
+        self.assertNotIn("--ledger-mode", logged,
+                         "Go resolves the mode; the host must not pre-resolve it")
+        self.assertNotIn("--ledger-gate-mode", logged,
+                         "plan-build has no legacy tracker gate hint to forward")
 
     def test_work_start_ask_without_tty_blocks_without_a_decision(self):
+        # TRACKER_LEDGER_MODE is Go's strongest input; the stub stands in for
+        # Go's resolved `ask` verdict, and the host must not fabricate a
+        # decision when no terminal can collect one.
         self._seed_change()
         event = self._event("Write", str(self.repo / "src" / "app.py"))
         env = self._ledger_env(decision="ask")
@@ -553,12 +523,14 @@ class PlanBuildGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._logged_checkpoints(), [])
 
-    def test_gate_carries_no_provider_literal(self):
-        """W6: the hook resolves its recipe through ledger_bridge, never a literal."""
+    def test_gate_carries_no_provider_literal_or_mode_seam(self):
+        """The hook delegates all Tracker policy: no provider literal, no mode
+        helper, and no witness-recipe bridge seam (Go resolves the binding)."""
         text = GATE.read_text(encoding="utf-8")
         self.assertNotIn("trello-mcp-workflow", text)
-        self.assertIn("__TRACKER_LIB_INTERNAL__", text)
-        self.assertIn("ledger_bridge", text)
+        self.assertNotIn("ledger_bridge", text)
+        self.assertNotIn("__TRACKER_LIB_INTERNAL__", text)
+        self.assertNotIn("_ledger_mode", text)
 
 if __name__ == "__main__":
     unittest.main()

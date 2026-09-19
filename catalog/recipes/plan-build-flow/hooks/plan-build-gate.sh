@@ -9,11 +9,10 @@
 # stdin: normalized JSON {event, tool_name, tool_input, cwd}
 # exit 0: allow; exit 2: block. Malformed or unrelated events fail open.
 # PLAN_BUILD_GATE_PATHS is scope only (default: src lib catalog).
-# __TRACKER_LIB_INTERNAL__ is stamped at sync with the CLI's lib/_internal, where
-# ledger_bridge.py ships; an empty or unstamped value skips the witness lookup
-# (fail open), exactly like a missing or unverified binary.
+# The ledger mode is Go-owned: this hook invokes `--ledger` with no mode flag and
+# Go resolves the effective mode from env, the witness-bound recipe config and
+# the warn default (see ledger_mode.go / ledger_cmd.go).
 
-stamped_lib_internal="__TRACKER_LIB_INTERNAL__"
 prod_dirs="${PLAN_BUILD_GATE_PATHS:-src lib catalog}"
 [ -n "${prod_dirs// /}" ] || prod_dirs="src lib catalog"
 
@@ -91,73 +90,10 @@ done
 # --- Ledger work-start checkpoint (acquisition + JSON bridge only) ------------
 # The five ledger checkpoints are graded by the verified Go `--ledger` mode on
 # the shared worktree-gate binary (one predicate, one trust root). This host
-# only resolves the A9 mode, acquires a verified binary, and maps the JSON
-# verdict. A missing/unverified binary, a parse error, or an IO failure fails
-# open (exit 0). `openspec/**` never reaches this point, so it is never blocked.
-
-_ledger_bridge() {
-  # The evidence bridge lives beside the CLI's other internals. An empty or
-  # unstamped value means the bridge is unavailable, so the witness recipe id is
-  # unresolved and the lookup keeps the warn-first default (fail open).
-  case "$stamped_lib_internal" in
-    ""|__*) return 1 ;;
-  esac
-  [ -f "$stamped_lib_internal/ledger_bridge.py" ] || return 1
-  printf '%s\n' "$stamped_lib_internal"
-}
-
-_ledger_recipe_id() {
-  # The bound recipe id from the durable witness (via the bridge), or nothing
-  # when the bridge is unstamped. Reading the witness is acquisition, not grading.
-  local lib
-  lib="$(_ledger_bridge)" || return 0
-  python3 - "$lib" "$1" <<'PY' 2>/dev/null || true
-import sys
-from pathlib import Path
-lib = sys.argv[1]
-sys.path.insert(0, lib)
-import ledger_bridge
-print(ledger_bridge.recipe_id(Path(sys.argv[2])))
-PY
-}
-
-_ledger_mode() {
-  # $1 root, $2 legacy gate-mode hint, $3 witness recipe id (may be empty). The
-  # config section is recipes.<recipe>; without a recipe id only the env override
-  # and the stamped hint apply, which keeps the warn-first default.
-  local root="$1"
-  local gate_hint="${2:-}"
-  local recipe="${3:-}"
-  python3 - "$root" "${TRACKER_LEDGER_MODE:-}" "$gate_hint" "$recipe" <<'PY' 2>/dev/null
-import sys, tomllib
-from pathlib import Path
-root, env_mode, gate_hint = sys.argv[1], sys.argv[2], sys.argv[3]
-recipe = sys.argv[4] if len(sys.argv) > 4 else ""
-ledger = gate = ""
-if recipe:
-    try:
-        data = tomllib.loads((Path(root) / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
-        cfg = ((data.get("recipes") or {}).get(recipe) or {}).get("config") or {}
-        ledger = cfg.get("ledger_mode") or ""
-        gate = cfg.get("gate_mode") or ""
-    except Exception:
-        pass
-if gate_hint in ("off", "warn", "always") and not gate:
-    # The bound recipe's own gate_mode wins; the stamped legacy hint fills in when
-    # that config section declares none (the pre-witness behavior).
-    gate = gate_hint
-if env_mode in ("always", "ask", "warn"):
-    print(env_mode)
-elif ledger in ("always", "ask", "warn"):
-    print(ledger)
-elif gate == "off":
-    print("off")
-elif gate == "always":
-    print("always")
-else:
-    print("warn")
-PY
-}
+# only acquires a verified binary and maps the JSON verdict; Go resolves the
+# effective mode from env, the witness-bound recipe config and the warn default.
+# A missing/unverified binary, a parse error, or an IO failure fails open
+# (exit 0). `openspec/**` never reaches this point, so it is never blocked.
 
 _ledger_binary() {
   if [ -n "${WORKTREE_GATE_BIN:-}" ] && [ -x "$WORKTREE_GATE_BIN" ]; then
@@ -196,8 +132,10 @@ else:
 }
 
 _ledger_ask() {
-  # $1 bin, $2 checkpoint, $3 mode, $4 root, $5 prefix; stdin: prompt JSON.
-  local bin="$1" checkpoint="$2" mode="$3" root="$4" prefix="$5"
+  # $1 bin, $2 checkpoint, $3 root, $4 prefix; stdin: prompt JSON. The follow-up
+  # `--decide` carries no mode: Go re-resolves the same effective mode it graded
+  # with.
+  local bin="$1" checkpoint="$2" root="$3" prefix="$4"
   python3 -c '
 import json, sys
 try:
@@ -219,7 +157,7 @@ print("  choices: " + ", ".join(prompt.get("choices") or []))
   exec 3<&-
   case "$answer" in
     y|Y|yes|YES|Yes)
-      if "$bin" --ledger --checkpoint "$checkpoint" --ledger-mode "$mode" --project-root "$root" \
+      if "$bin" --ledger --checkpoint "$checkpoint" --project-root "$root" \
           --decide "{\"checkpoint\":\"$checkpoint\",\"kind\":\"opt-out\",\"choice\":\"continue\"}" >/dev/null 2>&1; then
         echo "${prefix}: opt-out recorded for ${checkpoint}; proceeding." >&2
         return 0
@@ -233,12 +171,13 @@ print("  choices: " + ", ".join(prompt.get("choices") or []))
 }
 
 _ledger_grade() {
-  # $1 checkpoint, $2 mode, $3 root, $4 prefix. Returns 0 allow / 2 block.
-  local checkpoint="$1" mode="$2" root="$3" prefix="$4"
+  # $1 checkpoint, $2 root, $3 prefix. Returns 0 allow / 2 block. No mode flag is
+  # forwarded: Go resolves env, the witness-bound recipe config and the default.
+  local checkpoint="$1" root="$2" prefix="$3"
   local bin
   bin="$(_ledger_binary)" || return 0
   local out rc
-  out="$("$bin" --ledger --checkpoint "$checkpoint" --ledger-mode "$mode" --project-root "$root" 2>/dev/null)"
+  out="$("$bin" --ledger --checkpoint "$checkpoint" --project-root "$root" 2>/dev/null)"
   rc=$?
   [ -n "$out" ] || return 0
   local decision reason active
@@ -259,7 +198,7 @@ _ledger_grade() {
   fi
   if [ "$decision" = ask ]; then
     printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("prompt")))' 2>/dev/null \
-      | _ledger_ask "$bin" "$checkpoint" "$mode" "$root" "$prefix"
+      | _ledger_ask "$bin" "$checkpoint" "$root" "$prefix"
     return $?
   fi
   if [ "$active" = 1 ] && [ "$decision" != allow ]; then
@@ -269,10 +208,8 @@ _ledger_grade() {
 }
 
 _ledger_work_start() {
-  local mode
-  mode="$(_ledger_mode "$repo_root" "" "$(_ledger_recipe_id "$repo_root")")"
-  [ "$mode" = off ] && return 0
-  _ledger_grade "work-start" "$mode" "$repo_root" "plan-build-gate"
+  # `off` skipping is Go's short-circuit (runLedger returns before grading).
+  _ledger_grade "work-start" "$repo_root" "plan-build-gate"
 }
 
 # Work-start fires before the first non-read-only production write, whether or
