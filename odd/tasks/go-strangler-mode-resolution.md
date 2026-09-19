@@ -45,7 +45,7 @@ Move effective `ledger_mode` and legacy `gate_mode` resolution into the authorit
 - Worktree: `.worktrees/go-strangler-mode-resolution`
 - Branch: `feat/go-strangler-mode-resolution`
 - Base: `development` at `03b5f2c`
-- Status: T1–T4 complete; feature work-unit commits are 539aca8, e75c7a3, 3047d99, a7686cb; candidate awaits native review.
+- Status: T1–T4 complete; feature work-unit commits are 539aca8, e75c7a3, 3047d99, a7686cb; candidate native-reviewed and acknowledged; PR/delivery remains user-owned.
 
 ## Evidence
 
@@ -57,7 +57,9 @@ Move effective `ledger_mode` and legacy `gate_mode` resolution into the authorit
 - Diff hygiene (T4): `git diff --check` → clean.
 - T2 review: independent read-only verifier PASS; shell/Python remained untouched.
 - T3 review: independent read-only verifier PASS; focused suite `Ran 105 tests ... OK (skipped=4)`.
+- Native review: lineage `review-a83d97a0d458fc64`, target `sha256:b6738deef16fedb472a9676451356a9d539e36e47dbd0015ad1863730c6187a7`, 3 changed paths / 35 lines, all four lenses submitted; review approved and acknowledgement burned successfully. No correction required.
+- Advisory findings were non-blocking/informational: trust-root unverifiable in reviewer context and test-stub contract/off-path suggestions; independent trust-root/full-suite evidence already recorded above.
 
 ## Next step
 
-Run the parent-owned native review on the T4 work-unit candidate before reporting delivery readiness.
+Open the PR when the user authorizes delivery; do not push or merge automatically.
