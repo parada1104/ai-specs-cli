@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Capability binding resolution and capability conflict grading, moved from the
@@ -45,10 +46,14 @@ type capabilityConflict struct {
 
 // bindingResolution is the stdout contract. All three fields are present on
 // every successful run; an absent result is an empty object/list, never null.
+// Warnings is the only optional field: it carries best-effort side effects of the
+// command itself (the durable witness write), so a write failure is reported
+// without demoting or masking a resolution error.
 type bindingResolution struct {
 	Bindings  map[string]string    `json:"bindings"`
 	Conflicts []capabilityConflict `json:"conflicts"`
 	Errors    []string             `json:"errors"`
+	Warnings  []string             `json:"warnings,omitempty"`
 }
 
 // capabilityIndex is the one shared read of the enabled recipes' declarations.
@@ -204,17 +209,22 @@ func parseManifestBindings(raw string) ([]manifestBinding, error) {
 	return list, nil
 }
 
-// bindingsOptions is the parsed --resolve-bindings flag surface.
+// bindingsOptions is the parsed --resolve-bindings flag surface. projectRoot is
+// the repository the durable witness is written under; writeWitness is opt-out so
+// a caller (or test) can resolve bindings without touching the ledger.
 type bindingsOptions struct {
-	catalogDir string
-	recipeIDs  []string
-	bindings   string
+	catalogDir   string
+	recipeIDs    []string
+	bindings     string
+	projectRoot  string
+	writeWitness bool
 }
 
 // runResolveBindings is the --resolve-bindings command: acquire the enabled
-// recipes' capabilities through the TOML seam, grade bindings and conflicts, and
-// print one JSON object on stdout. Resolution errors are data (exit 0); only a
-// process-level failure — unusable flags or an unavailable parser — exits 2.
+// recipes' capabilities through the TOML seam, grade bindings and conflicts,
+// persist the durable tracker witness, and print one JSON object on stdout.
+// Resolution errors are data (exit 0); only a process-level failure — unusable
+// flags or an unavailable parser — exits 2.
 func runResolveBindings(opts bindingsOptions, stdout, stderr io.Writer) int {
 	if opts.catalogDir == "" {
 		fmt.Fprintln(stderr, "worktree-gate: --resolve-bindings requires --catalog-dir")
@@ -230,7 +240,26 @@ func runResolveBindings(opts bindingsOptions, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "worktree-gate: --resolve-bindings: %v\n", err)
 		return 2
 	}
-	payload, err := json.Marshal(gradeBindings(opts.recipeIDs, capsByRecipe, explicit))
+	result := gradeBindings(opts.recipeIDs, capsByRecipe, explicit)
+	if opts.writeWitness && len(result.Errors) == 0 {
+		// An unresolved binding is not persisted: the Python authority aborts
+		// before its witness write on a resolution error, so writing a guessed
+		// unbound state here would invent a decision the resolver never made.
+		// The root defaults to cwd and the write is best-effort: a missing Git
+		// common dir skips silently, a write failure is a warning, never an exit.
+		projectRoot := opts.projectRoot
+		if projectRoot == "" {
+			projectRoot = "."
+		}
+		witness := trackerWitnessPayload(
+			opts.recipeIDs, capsByRecipe, result.Bindings,
+			trackingDeclared(projectRoot), witnessWrittenAt(time.Now()),
+		)
+		if warning := writeTrackerWitness(projectRoot, witness).Warning; warning != "" {
+			result.Warnings = append(result.Warnings, warning)
+		}
+	}
+	payload, err := json.Marshal(result)
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --resolve-bindings: %v\n", err)
 		return 2

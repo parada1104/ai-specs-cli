@@ -266,7 +266,7 @@ func TestRunResolveBindingsCommand(t *testing.T) {
 	})
 
 	t.Run("ambiguity warns but exits 0", func(t *testing.T) {
-		code, stdout, stderr := runCLI(t, "--resolve-bindings", "--catalog-dir", catalogDir, "--recipe", "alpha", "--recipe", "beta")
+		code, stdout, stderr := runCLI(t, "--resolve-bindings", "--catalog-dir", catalogDir, "--recipe", "alpha", "--recipe", "beta", "--write-witness=false")
 		if code != 0 {
 			t.Fatalf("code = %d stderr = %q, want 0", code, stderr)
 		}
@@ -285,7 +285,7 @@ func TestRunResolveBindingsCommand(t *testing.T) {
 	})
 
 	t.Run("resolution error is data and exits 0", func(t *testing.T) {
-		code, stdout, stderr := runCLI(t, "--resolve-bindings", "--catalog-dir", catalogDir, "--recipe", "alpha", "--bindings", `[{"capability":"vcs","recipe":"ghost"}]`)
+		code, stdout, stderr := runCLI(t, "--resolve-bindings", "--catalog-dir", catalogDir, "--recipe", "alpha", "--bindings", `[{"capability":"vcs","recipe":"ghost"}]`, "--write-witness=false")
 		if code != 0 {
 			t.Fatalf("code = %d stderr = %q, want 0", code, stderr)
 		}
