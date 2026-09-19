@@ -19,6 +19,39 @@ GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-
 
 STUB_BINARY = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${STUB_LOG}"
+
+# Fixture model of the verified Go binary's --resolve-central-root: it answers
+# only for a directory registered as a proven submodule worktree, or for an
+# explicit STUB_CENTRAL_ROOT override, and exits nonzero otherwise (Go's
+# fail-closed contract). The longest registered ancestor wins, as git resolves
+# upward from a subdirectory.
+_topology() {
+  local manifest="${STUB_TOPOLOGY:-}" dir best="" entry="" p c s
+  dir="$(pwd -P)"
+  if [ -n "${STUB_CENTRAL_ROOT:-}" ]; then
+    printf '%s\\t%s\\n' "$STUB_CENTRAL_ROOT" "${STUB_CENTRAL_SUB:-apps/api}"
+    return 0
+  fi
+  [ -n "$manifest" ] && [ -f "$manifest" ] || return 1
+  while IFS=$'\\t' read -r p c s; do
+    [ -n "$p" ] || continue
+    case "$dir" in
+      "$p"|"$p"/*)
+        if [ "${#p}" -gt "${#best}" ]; then best="$p"; entry="${c}"$'\\t'"${s}"; fi
+        ;;
+    esac
+  done < "$manifest"
+  [ -n "$best" ] || return 1
+  printf '%s\\n' "$entry"
+}
+
+for arg in "$@"; do
+  if [ "$arg" = "--resolve-central-root" ]; then
+    entry="$(_topology)" || exit 1
+    printf '{"central_root":"%s","submodule":"%s"}\\n' "${entry%%$'\\t'*}" "${entry#*$'\\t'}"
+    exit 0
+  fi
+done
 decision="${STUB_DECISION:-allow}"
 reason="${STUB_REASON:-}"
 checkpoint=""
@@ -52,6 +85,11 @@ def _git_output(cwd: Path, *args: str) -> str:
                           capture_output=True, text=True).stdout.strip()
 
 
+def _real(path: Path) -> str:
+    """Canonical path, matching what the hook's realpath probe reports."""
+    return os.path.realpath(str(path))
+
+
 class PlanBuildGateHookTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -65,6 +103,9 @@ class PlanBuildGateHookTests(unittest.TestCase):
         _git(self.repo, "add", "-A")
         _git(self.repo, "commit", "-qm", "init")
         self.stub_log = Path(self.tmp.name) / "stub.log"
+        # The fixture's model of what the verified Go binary can prove: probe
+        # directory -> (central root, registered submodule path).
+        self.topology = Path(self.tmp.name) / "topology.tsv"
         self.stub = Path(self.tmp.name) / "worktree-gate"
         self.stub.write_text(STUB_BINARY)
         self.stub.chmod(0o755)
@@ -146,13 +187,30 @@ class PlanBuildGateHookTests(unittest.TestCase):
         _git(superproject, *add_args)
         _git(superproject, "commit", "-qm", "add submodule")
 
+        sub = superproject / "apps" / "api"
         linked = superproject / ".worktrees" / f"apps-api-{label}"
         linked.parent.mkdir(parents=True)
-        _git(superproject / "apps" / "api", "worktree", "add", "-b", f"feat-{label}", str(linked), "HEAD")
-        self.assertTrue((superproject / "apps" / "api" / ".git").exists())
+        _git(sub, "worktree", "add", "-b", f"feat-{label}", str(linked), "HEAD")
+        self.assertTrue((sub / ".git").exists())
         self.assertEqual(_git_output(linked, "rev-parse", "--show-toplevel"), str(linked))
         self.assertEqual(_git_output(linked, "rev-parse", "--show-superproject-working-tree"), "")
-        return {"source": source, "super": superproject, "sub": superproject / "apps" / "api", "linked": linked}
+        # The fake binary proves topology from this table instead of shell
+        # probing; both the submodule tree and its linked worktree are answers
+        # the real Go query produces.
+        self._register_topology(sub, superproject, "apps/api")
+        self._register_topology(linked, superproject, "apps/api")
+        return {"source": source, "super": superproject, "sub": sub, "linked": linked}
+
+    def _register_topology(self, probe: Path, central: Path, submodule: str) -> None:
+        with self.topology.open("a", encoding="utf-8") as fh:
+            fh.write(f"{_real(probe)}\t{_real(central)}\t{submodule}\n")
+
+    def _forget_topology(self, *probes: Path) -> None:
+        """Drop registered proofs (a deinitialized module proves nothing)."""
+        dropped = {_real(p) for p in probes}
+        kept = [line for line in self.topology.read_text(encoding="utf-8").splitlines()
+                if line.split("\t", 1)[0] not in dropped]
+        self.topology.write_text("".join(f"{line}\n" for line in kept), encoding="utf-8")
 
     def _event(self, tool: str, file_path: str, *, cwd: Path | None = None) -> dict:
         return {
@@ -293,7 +351,8 @@ class PlanBuildGateHookTests(unittest.TestCase):
     def test_submodule_worktree_allows_production_with_central_plan(self):
         fx = self._make_super_with_submodule()
         self._seed_change_at(fx["super"], "demo")
-        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+                      extra_env=self._topology_env())
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_default_nested_submodule_name_resolves_central(self):
@@ -303,25 +362,29 @@ class PlanBuildGateHookTests(unittest.TestCase):
             "apps/api",
         )
         self._seed_change_at(fx["super"], "demo")
-        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+                      extra_env=self._topology_env())
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_superproject_path_with_modules_component_resolves_central(self):
         fx = self._make_super_with_submodule("modules-parent", "api", "modules")
         self._seed_change_at(fx["super"], "demo")
-        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+                      extra_env=self._topology_env())
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_submodule_worktree_blocks_without_central_plan(self):
         fx = self._make_super_with_submodule()
-        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+                      extra_env=self._topology_env())
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn(str(fx["super"] / "openspec" / "changes"), r.stderr)
 
     def test_submodule_worktree_blocks_with_archived_only_central_plan(self):
         fx = self._make_super_with_submodule()
         self._seed_archived_change_at(fx["super"], "demo")
-        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+                      extra_env=self._topology_env())
         self.assertEqual(r.returncode, 2, r.stderr)
 
     def test_submodule_worktree_allows_central_plan_creation(self):
@@ -343,17 +406,21 @@ class PlanBuildGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
 
     def test_superproject_probe_empty_still_resolves_central(self):
+        # The empty --show-superproject-working-tree fact is Go's proof input
+        # (main_test.go); this host only consumes the delegated answer.
         fx = self._make_super_with_submodule()
         self.assertEqual(_git_output(fx["linked"], "rev-parse", "--show-superproject-working-tree"), "")
         self._seed_change_at(fx["super"], "demo")
-        r = self._run(self._event("Write", str(fx["linked"] / "src" / "new.py"), cwd=fx["linked"]))
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "new.py"), cwd=fx["linked"]),
+                      extra_env=self._topology_env())
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_similar_submodule_names_do_not_select_wrong_parent(self):
         first = self._make_super_with_submodule("first", "api")
         second = self._make_super_with_submodule("second", "api")
         self._seed_change_at(second["super"], "only-second")
-        r = self._run(self._event("Write", str(first["linked"] / "src" / "app.py"), cwd=first["linked"]))
+        r = self._run(self._event("Write", str(first["linked"] / "src" / "app.py"), cwd=first["linked"]),
+                      extra_env=self._topology_env())
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn(str(first["super"] / "openspec" / "changes"), r.stderr)
         self.assertNotIn(str(second["super"]), r.stderr)
@@ -363,7 +430,11 @@ class PlanBuildGateHookTests(unittest.TestCase):
         self._seed_change_at(fx["super"], "central")
         _git(fx["super"], "submodule", "deinit", "-f", "--", "apps/api")
         self.assertEqual(_git_output(fx["linked"], "rev-parse", "--show-toplevel"), str(fx["linked"]))
-        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        # A deinitialized module is no longer a proven submodule, so Go stops
+        # answering for it; the fixture table must stop answering too.
+        self._forget_topology(fx["linked"], fx["sub"])
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+                      extra_env=self._topology_env())
         self.assertEqual(r.returncode, 2, r.stderr)
 
     def test_non_submodule_worktree_uses_own_root(self):
@@ -427,12 +498,90 @@ class PlanBuildGateHookTests(unittest.TestCase):
         before_worktrees = _git_output(fx["sub"], "worktree", "list", "--porcelain")
         before_branches = _git_output(fx["sub"], "for-each-ref", "--format=%(refname:short)", "refs/heads")
         before_dirs = sorted(str(p.relative_to(fx["super"])) for p in fx["super"].rglob("*") if p.is_dir())
-        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]))
+        r = self._run(self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+                      extra_env=self._topology_env())
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertEqual(_git_output(fx["sub"], "worktree", "list", "--porcelain"), before_worktrees)
         self.assertEqual(_git_output(fx["sub"], "for-each-ref", "--format=%(refname:short)", "refs/heads"), before_branches)
         after_dirs = sorted(str(p.relative_to(fx["super"])) for p in fx["super"].rglob("*") if p.is_dir())
         self.assertEqual(after_dirs, before_dirs)
+
+    # --- central-root proof delegation (T1) ---
+
+    def _topology_env(
+        self, *, override: Path | None = None, empty: bool = False
+    ) -> dict:
+        """Env wiring the fake binary's `--resolve-central-root` answer.
+
+        Default: the fixture's registered table answers by probe directory, so
+        the gate must actually run the query from that directory. `override`
+        forces a specific answer; `empty` models the authoritative empty answer
+        (Go exits nonzero) that no shell-side proof may recover from.
+        """
+        env = {
+            "WORKTREE_GATE_BIN": str(self.stub),
+            "STUB_LOG": str(self.stub_log),
+            "STUB_TOPOLOGY": "" if empty else str(self.topology),
+        }
+        if override is not None:
+            env["STUB_CENTRAL_ROOT"] = _real(override)
+            env["STUB_CENTRAL_SUB"] = "apps/api"
+        return env
+
+    def test_gate_delegates_central_root_proof_to_binary(self):
+        """The central root must come from `--resolve-central-root`.
+
+        The stub answers with a directory that contains the submodule worktree
+        but is not the git-proven superproject (no `.git` tree there), so an
+        allow verdict can only come from the delegated proof.
+        """
+        fx = self._make_super_with_submodule()
+        delegated = fx["super"] / ".worktrees"
+        self._seed_change_at(delegated, "demo")
+        r = self._run(
+            self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+            extra_env=self._topology_env(override=delegated),
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--resolve-central-root", self.stub_log.read_text())
+
+    def test_gate_does_not_prove_topology_without_the_binary(self):
+        """An empty `--resolve-central-root` answer is authoritative.
+
+        A real central plan exists, so any shell-side proof would allow; the
+        hook must fail closed on the unproven topology instead.
+        """
+        fx = self._make_super_with_submodule()
+        self._seed_change_at(fx["super"], "demo")
+        r = self._run(
+            self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+            extra_env=self._topology_env(empty=True),
+        )
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertNotIn(str(fx["super"] / "openspec" / "changes"), r.stderr)
+
+    def test_gate_ignores_a_central_root_outside_the_repository(self):
+        """A central root that does not contain the nearest root is no proof."""
+        fx = self._make_super_with_submodule()
+        unrelated = Path(self.tmp.name) / "unrelated-central"
+        self._seed_change_at(unrelated, "demo")
+        r = self._run(
+            self._event("Write", str(fx["linked"] / "src" / "app.py"), cwd=fx["linked"]),
+            extra_env=self._topology_env(override=unrelated),
+        )
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertNotIn(str(unrelated / "openspec" / "changes"), r.stderr)
+
+    def test_gate_no_longer_owns_the_shell_topology_proof(self):
+        text = GATE.read_text(encoding="utf-8")
+        self.assertIn("--resolve-central-root", text,
+                      "the hook must delegate the central-root proof to Go")
+        self.assertNotIn("resolve_central_root() {", text,
+                         "the duplicated shell topology proof must be gone")
+        for literal in ("--git-common-dir", ".gitmodules", "submodule status",
+                        "--show-superproject-working-tree"):
+            self.assertNotIn(literal, text,
+                             f"shell topology logic must not be reimplemented: {literal}")
 
     # --- ledger work-start checkpoint (5.3) ---
 
