@@ -57,6 +57,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.Var(&cleanupScopes, "subrepo", "limit cleanup to a subrepo path (repeatable)")
 	tokenize := fs.Bool("tokenize", false, "tokenize stdin as a shell command (shlex posix); JSON diagnostic on stdout, exit 0")
 	selfTest := fs.Bool("selftest", false, "self-check (regex compile, git presence); exit 1 on any failure")
+	resolveCentral := fs.Bool("resolve-central-root", false, "print the proven central planning root and registered submodule as JSON; exit 1 when unproven")
 	explain := fs.Bool("explain", false, "emit a JSON diagnostic on stdout (still exits 0/2)")
 	// The ledger is the tracker grader. Its flags are disjoint from the worktree
 	// gate flags and its mode never reads the worktree gate mode (A1/A9).
@@ -74,7 +75,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ledgerReconcileEvent := fs.String("reconcile-event", "", "the event the caller asks to compare (recipe-declared expectations for it)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain]\n")
+		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
 	}
 
 	if err := fs.Parse(args); err != nil {
@@ -116,6 +117,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCleanup(root, cfg, stdout, stderr)
 	case *selfTest:
 		return selftest(stdout, stderr)
+	case *resolveCentral:
+		return resolveCentralRootRun(stdout, stderr)
 	case *ledgerRun:
 		return runLedger(ledgerOptions{
 			checkpoint:     *ledgerCheckpoint,
@@ -213,6 +216,33 @@ func selftest(stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(stdout, "ok")
+	return 0
+}
+
+// centralRootOutput is the read-only proof emitted by --resolve-central-root:
+// the absolute canonical superproject root and the registered relative
+// submodule path (e.g. "apps/api"). It mirrors the shell proof it replaces
+// (plan-build-gate.sh resolve_central_root).
+type centralRootOutput struct {
+	CentralRoot string `json:"central_root"`
+	Submodule   string `json:"submodule"`
+}
+
+// resolveCentralRootRun is the CLI wrapper: it emits exactly one JSON object on
+// stdout when the submodule topology is proven, otherwise nothing on stdout and
+// a nonzero exit (fail closed).
+func resolveCentralRootRun(stdout, stderr io.Writer) int {
+	root, sub, ok := resolveCentralRoot(processCwd())
+	if !ok {
+		fmt.Fprintln(stderr, "worktree-gate: resolve-central-root: unproven submodule topology")
+		return 1
+	}
+	payload, err := json.Marshal(centralRootOutput{CentralRoot: root, Submodule: sub})
+	if err != nil {
+		fmt.Fprintf(stderr, "worktree-gate: resolve-central-root: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, string(payload))
 	return 0
 }
 

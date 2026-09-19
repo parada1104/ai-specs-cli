@@ -28,7 +28,7 @@ Move the bounded submodule-to-superproject topology proof used by the Plan Build
 ## Tasks
 
 - [x] T1 — Pin the Go query and shell delegation contracts with failing tests.
-- [ ] T2 — Implement the minimal Go topology proof query and focused unit coverage.
+- [x] T2 — Implement the minimal Go topology proof query and focused unit coverage.
 - [ ] T3 — Replace Plan Build's duplicate topology proof with verified Go delegation and parity coverage.
 - [ ] T4 — Rebuild trust assets, run full validation, and record evidence.
 
@@ -42,9 +42,9 @@ Move the bounded submodule-to-superproject topology proof used by the Plan Build
 
 - Exploration: delegated read-only map identified three topology implementations and ranked the Plan Build proof as the smallest coherent seam.
 - RED: `go -C catalog/recipes/worktree-flow/gate test -run 'TestResolveCentralRoot' -count=1 .` failed 5/5 as expected because `--resolve-central-root` is not defined; `python3 -m unittest tests.test_plan_build_gate_hook` ran 43 and failed only the 3 new delegation tests.
-- GREEN: pending.
+- GREEN: `go -C catalog/recipes/worktree-flow/gate test -run 'TestResolveCentralRoot|TestModuleRecords|TestClassifyStandalone|TestCentralFromCommon|TestLegacyCentral' -count=1 .` passed 11 selected tests; `go vet` passed and `gofmt -l` was clean.
 - Final validation: pending.
 
 ## Status
 
-T1 complete; RED contracts are pinned. T2 in progress.
+T1–T2 complete; the Go query now composes the existing proof helpers, preserves the legacy fail-closed fallback, and supports linked submodule worktrees. T3 in progress.
