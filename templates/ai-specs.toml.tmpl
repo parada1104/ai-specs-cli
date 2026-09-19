@@ -25,6 +25,11 @@ name = "{{PROJECT_NAME}}"
 # subrepos is optional; default: []. Accepts root-relative paths only.
 # V1: used as derived sync targets; they do not create local manifests.
 subrepos = []
+# repo_topology is optional; default: "auto".
+# One CLI-owned value read by planning, sync stamping, the brief, doctor, and
+# status: auto | standalone | monorepo-apps | monorepo-submodules.
+# auto detects initialized submodules → monorepo-submodules, else standalone.
+# repo_topology = "auto"
 
 [agents]
 # enabled is optional; default: []. Only these agents receive configs.
@@ -43,7 +48,7 @@ enabled = ["claude", "cursor", "opencode"]
 # enabled = true
 #
 # [recipes.worktree-flow.config]
-# repo_topology = "auto"  # auto | standalone | monorepo-apps | monorepo-submodules
+# repo_topology = "auto"  # DEPRECATED alias of [project].repo_topology (read-only, one window)
 # integration_branch = "main"
 # gate_mode = "always"
 # # version = "1.0.0"  # legacy — ignored with WARN if present

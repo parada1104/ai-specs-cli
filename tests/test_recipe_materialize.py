@@ -848,7 +848,7 @@ class ResolvedConfigContextTests(unittest.TestCase):
     def setUpClass(cls):
         cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_ctx")
 
-    def _project(self, *, topology: str | None = None) -> Path:
+    def _project(self, *, topology: str | None = None, project_topology: str | None = None) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
@@ -856,7 +856,10 @@ class ResolvedConfigContextTests(unittest.TestCase):
         ai_specs.mkdir()
         (ai_specs / "skills").mkdir()
         (ai_specs / "commands").mkdir()
-        text = "[project]\nname='ctx'\n\n[agents]\nenabled=['claude']\n"
+        text = "[project]\nname='ctx'\n"
+        if project_topology is not None:
+            text += f"repo_topology = '{project_topology}'\n"
+        text += "\n[agents]\nenabled=['claude']\n"
         if topology is not None:
             text += (
                 "[recipes.worktree-flow]\nenabled = true\n"
@@ -890,6 +893,29 @@ class ResolvedConfigContextTests(unittest.TestCase):
         data = json.loads(out.read_text())
         self.assertEqual(data["project_root"], str(root.resolve()))
         self.assertIn("topology", data)
+
+    def test_project_field_wins_in_resolved_config(self):
+        root = self._project(topology="standalone", project_topology="monorepo-apps")
+        out = root / "resolved.json"
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT, resolved_config_out=out), 0)
+        data = json.loads(out.read_text())
+        self.assertEqual(data["topology"]["resolved"], "monorepo-apps")
+        self.assertEqual(data["topology"]["configured"], "monorepo-apps")
+        self.assertEqual(data["topology"]["source"], "project")
+
+    def test_stamps_project_topology_into_gate_and_cleanup(self):
+        root = self._project(topology="standalone", project_topology="monorepo-apps")
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        hook = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "hooks"
+            / "worktree-gate.sh"
+        )
+        self.assertIn('stamped_repo_topology="monorepo-apps"', hook.read_text())
+        cleanup = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides" / "bin"
+            / "worktree-cleanup.sh"
+        )
+        self.assertIn('stamped_repo_topology="monorepo-apps"', cleanup.read_text())
 
 
 class RuntimeHookMaterializeTests(unittest.TestCase):

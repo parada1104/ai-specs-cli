@@ -1122,20 +1122,28 @@ class Doctor:
             return
         recipes = data.get("recipes") or {}
         wf = recipes.get("worktree-flow") or {}
-        if not isinstance(wf, dict) or wf.get("enabled") is not True:
-            return
-        cfg = wf.get("config") or {}
-        configured = str(cfg.get("repo_topology") or "auto")
+        wf_enabled = isinstance(wf, dict) and wf.get("enabled") is True
         try:
-            res = util.resolve_repo_topology(self.root, configured)
+            topo = util.project_repo_topology(self.root, data)
         except Exception:
             return
-        n = len(res.submodules)
+        # A project-owned value always reports; the legacy recipe alias only
+        # reports while worktree-flow is enabled (previous behavior).
+        if topo.source == "default" and not wf_enabled:
+            return
+        n = len(topo.submodules)
         self.checks.append(Check(
             Severity.INFO,
             "repo-topology",
-            f"{res.resolved} (via {res.via}; {n} initialized submodule(s))",
+            f"{topo.resolved} (via {topo.via}; source: {topo.source}; "
+            f"{n} initialized submodule(s))",
         ))
+        if topo.deprecation:
+            self.checks.append(Check(
+                Severity.WARN,
+                "repo-topology-deprecated",
+                topo.deprecation,
+            ))
 
     def _check_stale_template_overrides(self) -> None:
         """Diagnose governed templates using lock-backed ownership state."""
@@ -1190,7 +1198,9 @@ class Doctor:
                 recipe = schema.load_recipe_toml(recipe_toml)
             except Exception:
                 continue
-            merged_cfg = val.get("config") if isinstance(val.get("config"), dict) else {}
+            merged_cfg = util.project_owned_recipe_config(
+                self.root, data, rid, val.get("config") if isinstance(val.get("config"), dict) else {}
+            )
             for tpl in getattr(recipe, "templates", []) or []:
                 if getattr(tpl, "condition", None) != "not_exists":
                     continue

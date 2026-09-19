@@ -41,6 +41,7 @@ Conservative compatibility rules in V1:
 |---------|--------|--------|
 | `[project]` | `name` | optional, default `""` |
 | `[project]` | `subrepos` | optional, default `[]`, validated as root-relative target paths |
+| `[project]` | `repo_topology` | optional, default `auto`; `auto` / `standalone` / `monorepo-apps` / `monorepo-submodules` |
 | `[agents]` | `enabled` | optional, default `[]` |
 | `[[deps]]` | `id`, `source` | only required minimum fields |
 | `[[deps]]` | `path`, `scope`, `auto_invoke`, `license`, `vendor_attribution`, `version` | optional passthrough fields consumed by vendoring/rendering |
@@ -83,7 +84,22 @@ Project metadata owned by the repo.
 [project]
 name = "my-project"
 subrepos = ["packages/app", "packages/docs"]
+repo_topology = "auto"   # auto | standalone | monorepo-apps | monorepo-submodules
 ```
+
+`repo_topology` is CLI-owned: planning, materialization/stamping, brief
+rendering, `doctor`, `status`, recipe-configure grounding, and the init TUI all
+read this one value. `auto` detects initialized `.gitmodules` entries →
+`monorepo-submodules`, else `standalone`; it never auto-selects
+`monorepo-apps` (naming-only, same mechanics as `standalone`).
+
+`repo_topology` is independent of worktree-flow: it keeps resolving even when
+that recipe is disabled.
+
+`recipes.worktree-flow.config.repo_topology` remains readable as a deprecated
+compatibility alias for one migration window — the project field wins when both
+are present, and a recipe-only value is reported with a deprecation marker
+(`doctor` WARN). New flows write the project field only.
 
 ### `[tool]`
 
@@ -164,13 +180,12 @@ board_id = "abc123"
 default_list = "In Progress"
 ```
 
-`worktree-flow` also supports gated write modes and repo topology:
+`worktree-flow` also supports gated write modes:
 
 ```toml
 [recipes.worktree-flow.config]
 gate_mode = "ask"
 gate_scope = "auto"     # auto | superrepo | subrepo
-repo_topology = "auto"   # auto | standalone | monorepo-apps | monorepo-submodules
 ```
 
 `gate_scope` is independent from `gate_mode` and `repo_topology` and controls
@@ -184,8 +199,9 @@ which proven repository owners the worktree gate protects:
 
 The `superrepo`/`subrepo` classifications require `repo_topology = "monorepo-submodules"` (or `auto` resolving to it); standalone and monorepo-apps retain the original protected-primary behavior. `WORKTREE_GATE_SCOPE` may override the stamped value for one invocation; invalid values warn and fall back safely.
 
-`repo_topology` defaults to `auto` (initialized `.gitmodules` →
-`monorepo-submodules`, else `standalone`). `monorepo-apps` is naming-only.
+Repository topology is declared once in `[project].repo_topology` (see above).
+The legacy `recipes.worktree-flow.config.repo_topology` key is still read for
+one migration window and is never written by new flows.
 
 For config fields that define an `enum`, sync validates that the manifest value
 is one of the allowed entries before materializing the recipe.

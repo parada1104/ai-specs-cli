@@ -233,6 +233,116 @@ def resolve_repo_topology(
         return TopologyResolution("standalone", configured, via, (), False)
 
 
+LEGACY_TOPOLOGY_RECIPE_ID = "worktree-flow"
+REPO_TOPOLOGY_KEY = "repo_topology"
+TOPOLOGY_SOURCE_PROJECT = "project"
+TOPOLOGY_SOURCE_LEGACY_RECIPE = "legacy-recipe"
+TOPOLOGY_SOURCE_DEFAULT = "default"
+LEGACY_REPO_TOPOLOGY_DEPRECATION = (
+    "recipes.worktree-flow.config.repo_topology is deprecated; set "
+    "[project].repo_topology instead"
+)
+
+
+@dataclass(frozen=True)
+class ProjectTopology:
+    """Resolved project topology plus where the configured value came from."""
+
+    resolved: str
+    configured: str
+    via: str  # "config" (explicit) | "auto" (detected)
+    source: str  # "project" | "legacy-recipe" | "default"
+    deprecation: str | None
+    submodules: tuple[str, ...]
+    gitmodules_present: bool
+
+    def as_dict(self) -> dict:
+        return {
+            "resolved": self.resolved,
+            "configured": self.configured,
+            "via": self.via,
+            "source": self.source,
+            "submodules": list(self.submodules),
+            "gitmodules_present": self.gitmodules_present,
+        }
+
+
+def project_manifest_data(project_root: Path) -> dict:
+    """Best-effort parse of ``<root>/ai-specs/ai-specs.toml``; ``{}`` when absent."""
+    manifest = Path(project_root) / "ai-specs" / "ai-specs.toml"
+    if not manifest.is_file():
+        return {}
+    try:
+        import tomllib
+
+        return tomllib.loads(manifest.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - unreadable manifest degrades to defaults
+        return {}
+
+
+def _legacy_recipe_topology(data: dict) -> str:
+    recipes = data.get("recipes") if isinstance(data, dict) else None
+    recipe = recipes.get(LEGACY_TOPOLOGY_RECIPE_ID) if isinstance(recipes, dict) else None
+    if not isinstance(recipe, dict):
+        return ""
+    config = recipe.get("config")
+    if not isinstance(config, dict):
+        config = {k: v for k, v in recipe.items() if k not in ("enabled", "version")}
+    value = config.get(REPO_TOPOLOGY_KEY)
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def topology_config(data: dict) -> tuple[str, str, str | None]:
+    """Return ``(configured, source, deprecation)`` for one manifest.
+
+    ``[project].repo_topology`` wins; the worktree-flow recipe key is a
+    deprecated compatibility alias for one migration window; else ``auto``.
+    """
+    project = data.get("project") if isinstance(data, dict) else None
+    value = project.get(REPO_TOPOLOGY_KEY) if isinstance(project, dict) else None
+    if isinstance(value, str) and value.strip():
+        return value.strip(), TOPOLOGY_SOURCE_PROJECT, None
+    legacy = _legacy_recipe_topology(data)
+    if legacy:
+        return legacy, TOPOLOGY_SOURCE_LEGACY_RECIPE, LEGACY_REPO_TOPOLOGY_DEPRECATION
+    return "auto", TOPOLOGY_SOURCE_DEFAULT, None
+
+
+def project_repo_topology(project_root: Path, data: dict | None = None) -> ProjectTopology:
+    """The single CLI-owned topology read for planning, stamping, brief, doctor, hub.
+
+    ``data`` accepts an already-parsed manifest; otherwise the project manifest
+    is read best-effort. Recipe-only configuration keeps working but is reported
+    as ``legacy-recipe`` with a deprecation marker.
+    """
+    if data is None:
+        data = project_manifest_data(project_root)
+    configured, source, deprecation = topology_config(data)
+    resolution = resolve_repo_topology(Path(project_root), configured)
+    return ProjectTopology(
+        resolved=resolution.resolved,
+        configured=resolution.configured,
+        via=resolution.via,
+        source=source,
+        deprecation=deprecation,
+        submodules=resolution.submodules,
+        gitmodules_present=resolution.gitmodules_present,
+    )
+
+
+def project_owned_recipe_config(
+    project_root: Path, data: dict | None, recipe_id: str, config: dict | None
+) -> dict:
+    """Copy ``config`` with project-owned keys applied, so project value wins.
+
+    Keeps every renderer, stamper, and staleness check on one resolved value.
+    """
+    merged = dict(config or {})
+    if recipe_id == LEGACY_TOPOLOGY_RECIPE_ID:
+        merged[REPO_TOPOLOGY_KEY] = project_repo_topology(project_root, data).configured
+    return merged
+
+
 class SubrepoResolutionError(ValueError):
     """Raised when ``resolve_subrepo`` cannot pick a valid submodule path."""
 

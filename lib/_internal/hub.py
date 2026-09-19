@@ -217,11 +217,11 @@ def status_summary(root: Path) -> StatusSummary:
             import tomllib
             data = tomllib.loads(manifest.read_text(encoding="utf-8"))
             wf = (data.get("recipes") or {}).get("worktree-flow") or {}
-            if isinstance(wf, dict) and wf.get("enabled") is True:
-                cfg_val = str((wf.get("config") or {}).get("repo_topology") or "auto")
-                res = _util.resolve_repo_topology(root, cfg_val)
-                topology = res.resolved
-                topology_via = res.via
+            wf_enabled = isinstance(wf, dict) and wf.get("enabled") is True
+            topo = _util.project_repo_topology(root, data)
+            if topo.source != "default" or wf_enabled:
+                topology = topo.resolved
+                topology_via = topo.via
         except Exception:
             pass
     return StatusSummary(

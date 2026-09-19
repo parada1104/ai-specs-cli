@@ -155,10 +155,9 @@ def resolve_target_plan(project_root: str | Path) -> dict[str, Any]:
     # manifest is the canonical planning tree for every target; .gitmodules is
     # advisory-only and never expands the declared target set.
     wf_cfg = _worktree_flow_config(data)
-    configured_topology = str(wf_cfg.get("repo_topology") or "auto")
     worktrees_dir = str(wf_cfg.get("worktrees_dir") or ".worktrees") or ".worktrees"
     util = _load_util_module()
-    topology = util.resolve_repo_topology(root, configured_topology)
+    topology = util.project_repo_topology(root, data)
     fanout_targets = [t["rel"] for t in targets if t["kind"] == "subrepo"]
 
     return {
@@ -167,7 +166,9 @@ def resolve_target_plan(project_root: str | Path) -> dict[str, Any]:
         "planning_root": str(root),
         "topology": {
             "resolved": topology.resolved,
+            "configured": topology.configured,
             "via": topology.via,
+            "source": topology.source,
         },
         "declared_only": True,
         "fanout_targets": fanout_targets,

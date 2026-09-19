@@ -5,6 +5,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -63,6 +64,29 @@ class RecipeConfigureTests(unittest.TestCase):
             doc = self.mod.inspect_project(root, "worktree-flow")
         self.assertEqual(doc["grounding"]["topology"]["resolved"], "monorepo-submodules")
         self.assertEqual(doc["grounding"]["topology"]["submodules"], ["libs/core"])
+
+    def test_apply_routes_repo_topology_to_project_field(self):
+        """T4 — the project owns topology; recipe config must not gain it."""
+        tmp, root, manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        report, code = self.mod.apply_project(
+            root, "worktree-flow", {"repo_topology": "monorepo-apps"}
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(report["status"], "ok")
+        data = tomllib.loads(manifest.read_text())
+        self.assertEqual(data["project"]["repo_topology"], "monorepo-apps")
+        self.assertNotIn("repo_topology", data["recipes"]["worktree-flow"].get("config") or {})
+
+    def test_grounding_reports_project_source(self):
+        tmp, root, manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        lines = manifest.read_text().splitlines()
+        lines.insert(1, 'repo_topology = "monorepo-apps"')
+        manifest.write_text("\n".join(lines) + "\n")
+        doc = self.mod.inspect_project(root, "worktree-flow")
+        self.assertEqual(doc["grounding"]["topology"]["resolved"], "monorepo-apps")
+        self.assertEqual(doc["grounding"]["topology"]["source"], "project")
 
     def test_apply_rejects_unknown_key_without_write(self):
         tmp, root, manifest = self._project()

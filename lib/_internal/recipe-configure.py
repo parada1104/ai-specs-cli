@@ -33,8 +33,13 @@ def _load_sibling(name: str):
 _recipe_schema = _load_sibling("recipe_schema")
 _recipe_read = _load_sibling("recipe-read")
 _config_write = _load_sibling("recipe-config-write")
+_toml_write = _load_sibling("toml_write")
 _util = _load_sibling("util")
 _cli_version = _load_sibling("cli_version")
+
+# Config keys the project manifest owns. New flows write these to their project
+# home instead of the legacy recipe alias; old recipe configs stay readable.
+PROJECT_OWNED_KEYS = frozenset({"repo_topology"})
 
 SCHEMA_VERSION = 1
 REPORT_VERSION = 1
@@ -117,17 +122,21 @@ def _schema_document(recipe: Any) -> dict[str, Any]:
     return {"fields": fields}
 
 
-def _topology_grounding(project_root: Path, recipe: Any, current: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+def _topology_grounding(
+    project_root: Path, recipe: Any, manifest: dict[str, Any]
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Ground topology from the CLI-owned project value (legacy alias included)."""
     field = recipe.config_schema.fields.get("repo_topology")
     if field is None:
         return None, []
-    configured = str(current.get("repo_topology", field.default or "auto"))
     try:
-        resolution = _util.resolve_repo_topology(project_root, configured)
+        resolution = _util.project_repo_topology(project_root, manifest)
+        configured = resolution.configured
         topology = {
             "resolved": resolution.resolved,
-            "configured": resolution.configured,
+            "configured": configured,
             "via": resolution.via,
+            "source": resolution.source,
             "submodules": sorted(resolution.submodules),
             "gitmodules_present": bool(resolution.gitmodules_present),
         }
@@ -138,12 +147,15 @@ def _topology_grounding(project_root: Path, recipe: Any, current: dict[str, Any]
             )
         if topology["via"] == "auto" and not topology["gitmodules_present"]:
             assumptions.append("topology detection had no .gitmodules signal and may have degraded to standalone")
+        if resolution.deprecation:
+            assumptions.append(resolution.deprecation)
         return topology, assumptions
     except Exception as exc:  # noqa: BLE001
         return {
             "resolved": None,
-            "configured": configured,
+            "configured": "auto",
             "via": "error",
+            "source": "error",
             "submodules": [],
             "gitmodules_present": False,
         }, [f"topology detection failed: {type(exc).__name__}"]
@@ -193,7 +205,7 @@ def inspect_project(project_root: Path, recipe_id: str) -> dict[str, Any]:
     manifest = _load_manifest(project_root)
     recipe = _schema_for(recipe_id)
     present, enabled, current = _recipe_state(manifest, recipe_id)
-    topology, assumptions = _topology_grounding(project_root, recipe, current)
+    topology, assumptions = _topology_grounding(project_root, recipe, manifest)
     manifest_mcp = manifest.get("mcp") if isinstance(manifest.get("mcp"), dict) else {}
     required_mcp = [preset.id for preset in recipe.mcp]
     cli_deps = [
@@ -303,6 +315,48 @@ def _validate_values(recipe: Any, values: dict[str, Any]) -> None:
             raise ConfigureError(f"{key} does not match its validation pattern")
 
 
+def _write_project_key(manifest_path: Path, key: str, value: Any) -> None:
+    """Set one scalar in ``[project]``, preserving the rest of the file bytes."""
+    original = manifest_path.read_text(encoding="utf-8")
+    lines = original.splitlines(keepends=True)
+    header = next(
+        (idx for idx, line in enumerate(lines) if line.strip() == "[project]"), None
+    )
+    if header is None:
+        text = original if original.endswith("\n") or not original else original + "\n"
+        new_text = text + f"\n[project]\n{key} = {_toml_write.toml_value(value)}\n"
+    else:
+        end = len(lines)
+        for idx in range(header + 1, len(lines)):
+            if lines[idx].lstrip().startswith("["):
+                end = idx
+                break
+        pattern = re.compile(
+            rf"^(\s*)(?:{re.escape(key)}|{re.escape(json.dumps(key))})\s*="
+        )
+        replaced = False
+        for idx in range(header + 1, end):
+            match = pattern.match(lines[idx])
+            if match is None:
+                continue
+            _value_part, comment = _config_write._split_inline_comment(lines[idx])
+            newline = "\n" if lines[idx].endswith("\n") else ""
+            lines[idx] = (
+                f"{match.group(1)}{key} = {_toml_write.toml_value(value)}"
+                f"{comment.rstrip(chr(10) + chr(13))}{newline}"
+            )
+            replaced = True
+            break
+        if not replaced:
+            lines[end:end] = [f"{key} = {_toml_write.toml_value(value)}\n"]
+        new_text = "".join(lines)
+    try:
+        tomllib.loads(new_text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigureError(f"invalid TOML after project write: {exc}") from exc
+    manifest_path.write_text(new_text, encoding="utf-8")
+
+
 def _run_command(argv: list[str], cwd: Path) -> tuple[int, str]:
     env = dict(os.environ)
     env["AI_SPECS_HOME"] = str(_cli_home())
@@ -378,7 +432,16 @@ def apply_project(
         report["gaps"].append(f"lock cli_version {locked} != installed {installed} (next sync restamps)")
 
     _present, _enabled, current = _recipe_state(manifest, recipe_id)
+    project = manifest.get("project") if isinstance(manifest.get("project"), dict) else {}
     for key in sorted(values):
+        if key in PROJECT_OWNED_KEYS:
+            if project.get(key) == values[key]:
+                report["applied"]["unchanged"].append(key)
+            else:
+                report["applied"]["changed"].append(
+                    {"key": key, "from": project.get(key), "to": values[key]}
+                )
+            continue
         if "." in key:
             current_value, present = _lookup_nested(current, key)
             if present and current_value == values[key]:
@@ -392,7 +455,8 @@ def apply_project(
             report["applied"]["unchanged"].append(key)
         else:
             report["applied"]["changed"].append({"key": key, "from": current.get(key), "to": values[key]})
-    touched = {key.split(".", 1)[0] for key in values}
+    recipe_values = {key: value for key, value in values.items() if key not in PROJECT_OWNED_KEYS}
+    touched = {key.split(".", 1)[0] for key in recipe_values}
     report["applied"]["preserved"] = sorted(key for key in current if key not in touched)
     changed = bool(report["applied"]["changed"])
     report["assumptions"] = inspect_project(project_root, recipe_id).get("assumptions", [])
@@ -403,7 +467,10 @@ def apply_project(
         return report, 0
 
     try:
-        _config_write.update_recipe_config(_manifest_path(project_root), recipe_id, values)
+        for key in sorted(values):
+            if key in PROJECT_OWNED_KEYS and project.get(key) != values[key]:
+                _write_project_key(_manifest_path(project_root), key, values[key])
+        _config_write.update_recipe_config(_manifest_path(project_root), recipe_id, recipe_values)
     except Exception as exc:  # noqa: BLE001
         report["status"] = "failed"
         report["reason"] = str(exc)
