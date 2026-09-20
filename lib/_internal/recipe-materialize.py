@@ -1555,6 +1555,166 @@ def build_recipe_mcp(
     return merged
 
 
+# --- Orphan cleanup bridge (Go --plan-orphans) --------------------------------
+#
+# Go owns the orphan DECISION: which materialized recipe/dep names and which
+# lock recipe ids the manifest no longer expects. Python keeps ACQUISITION
+# (listing the project cache roots and reading the lock) and EXECUTION
+# (``shutil.rmtree``, ``remove_recipe_lock_entries`` + ``write_lock``). The
+# Python decision below is a TEMPORARY fail-open fallback
+# (``GO_ORPHANS_BRIDGE_FALLBACK``) the strangler deletes once the bridge is
+# proven: it runs only when the binary cannot be acquired, executed, or parsed,
+# and the run is always announced by exactly one warning line.
+GO_ORPHANS_BRIDGE_FALLBACK = "GO_ORPHANS_BRIDGE_FALLBACK"
+GO_ORPHANS_BRIDGE_TIMEOUT_SECONDS = 60
+
+_ORPHAN_PLAN_KEYS = (
+    "orphaned_recipes",
+    "orphaned_deps",
+    "orphaned_inproject_deps",
+    "stale_lock_recipes",
+)
+
+
+def _warn_orphans_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded orphan authority."""
+    warn(
+        f"{GO_ORPHANS_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python orphan authority"
+    )
+
+
+def _orphans_bridge_home(cli_home: Path | None) -> Path:
+    """The AI_SPECS_HOME owning the version-keyed gate binary cache."""
+    if cli_home is not None:
+        return Path(cli_home).resolve()
+    return Path(__file__).resolve().parents[2]
+
+
+def _is_orphan_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented sorted-list envelope."""
+    if not isinstance(envelope, dict):
+        return False
+    return all(isinstance(envelope.get(key), list) for key in _ORPHAN_PLAN_KEYS)
+
+
+def go_orphan_plan(home: Path, plan_input: dict[str, Any]) -> dict[str, Any] | None:
+    """Run ``worktree-gate --plan-orphans`` and return its JSON envelope, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    or the output was not the documented envelope. The caller then falls back to
+    the temporary Python authority. This function emits the single
+    ``GO_ORPHANS_BRIDGE_FALLBACK`` warning naming the reason, so a degraded run
+    is never silent and never needs a second warning.
+    """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(home)
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_orphans_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_orphans_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    try:
+        proc = subprocess.run(
+            [str(binary), "--plan-orphans"],
+            input=json.dumps(plan_input),
+            capture_output=True,
+            text=True,
+            timeout=GO_ORPHANS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn_orphans_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_orphans_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_orphans_bridge_fallback(f"worktree-gate output was not JSON ({exc})")
+        return None
+    if not _is_orphan_envelope(envelope):
+        _warn_orphans_bridge_fallback(
+            "worktree-gate output did not match the orphan envelope"
+        )
+        return None
+    return envelope
+
+
+def _dir_child_names(directory: Path) -> list[str]:
+    """Directory child names of one materialized scope, sorted; files ignored."""
+    if not directory.is_dir():
+        return []
+    return sorted(child.name for child in directory.iterdir() if child.is_dir())
+
+
+def _orphan_plan_input(
+    recipe_dir: Path,
+    deps_dir: Path,
+    inproject_deps: Path,
+    lock: dict[str, Any],
+    enabled_recipe_ids: set[str],
+    expected_dep_ids: set[str],
+) -> dict[str, list[str]]:
+    """The stdin envelope: the same names the Python authority used to compare."""
+    return {
+        "recipe_skills": _dir_child_names(recipe_dir),
+        "deps_skills": _dir_child_names(deps_dir),
+        "inproject_deps": _dir_child_names(inproject_deps),
+        "lock_recipes": sorted(lock.get("recipes") or {}),
+        "enabled_recipe_ids": sorted(enabled_recipe_ids),
+        "expected_dep_ids": sorted(expected_dep_ids),
+    }
+
+
+def _python_orphan_plan(
+    recipe_dir: Path,
+    deps_dir: Path,
+    inproject_deps: Path,
+    lock: dict[str, Any],
+    enabled_recipe_ids: set[str],
+    expected_dep_ids: set[str],
+) -> dict[str, list[str]]:
+    """Compute the orphan plan (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_ORPHANS_BRIDGE_FALLBACK``; ``worktree-gate --plan-orphans`` is the
+    primary authority. Sorted so both paths produce byte-identical output.
+    """
+    return {
+        "orphaned_recipes": [
+            name
+            for name in _dir_child_names(recipe_dir)
+            if name not in enabled_recipe_ids
+        ],
+        "orphaned_deps": [
+            name
+            for name in _dir_child_names(deps_dir)
+            if name not in expected_dep_ids
+        ],
+        "orphaned_inproject_deps": [
+            name
+            for name in _dir_child_names(inproject_deps)
+            if name not in expected_dep_ids
+        ],
+        "stale_lock_recipes": sorted(
+            rid
+            for rid in (lock.get("recipes") or {})
+            if rid not in enabled_recipe_ids
+        ),
+    }
+
+
 def clean_orphans(
     project_root: Path,
     enabled_recipe_ids: set[str],
@@ -1563,36 +1723,49 @@ def clean_orphans(
 ) -> None:
     pc = _load_project_cache()
     recipe_dir = pc.recipe_skills_root(project_root, cli_home=cli_home)
-    if recipe_dir.is_dir():
-        for child in recipe_dir.iterdir():
-            if child.is_dir() and child.name not in enabled_recipe_ids:
-                shutil.rmtree(child)
-                print(f"  ✓ removed orphaned cache .recipe/{child.name}")
-
     deps_dir = pc.deps_skills_root(project_root, cli_home=cli_home)
-    if deps_dir.is_dir():
-        for child in deps_dir.iterdir():
-            if child.is_dir() and child.name not in expected_dep_ids:
-                shutil.rmtree(child)
-                print(f"  ✓ removed orphaned cache .deps/{child.name}")
-
-    # Prune in-project toml-dep materialization (ai-specs/.deps/) for deps no
-    # longer declared in the manifest.
+    # In-project toml-dep materialization (ai-specs/.deps/) is pruned for deps
+    # no longer declared in the manifest.
     inproject_deps = pc.inproject_deps_root(project_root)
-    if inproject_deps.is_dir():
-        for child in inproject_deps.iterdir():
-            if child.is_dir() and child.name not in expected_dep_ids:
-                shutil.rmtree(child)
-                print(f"  ✓ removed orphaned ai-specs/.deps/{child.name}")
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path) if lock_path.is_file() else {}
+
+    plan = go_orphan_plan(
+        _orphans_bridge_home(cli_home),
+        _orphan_plan_input(
+            recipe_dir, deps_dir, inproject_deps, lock,
+            enabled_recipe_ids, expected_dep_ids,
+        ),
+    )
+    if plan is None:
+        plan = _python_orphan_plan(
+            recipe_dir, deps_dir, inproject_deps, lock,
+            enabled_recipe_ids, expected_dep_ids,
+        )
+
+    for name in plan["orphaned_recipes"]:
+        child = recipe_dir / name
+        if child.is_dir():
+            shutil.rmtree(child)
+            print(f"  ✓ removed orphaned cache .recipe/{name}")
+
+    for name in plan["orphaned_deps"]:
+        child = deps_dir / name
+        if child.is_dir():
+            shutil.rmtree(child)
+            print(f"  ✓ removed orphaned cache .deps/{name}")
+
+    for name in plan["orphaned_inproject_deps"]:
+        child = inproject_deps / name
+        if child.is_dir():
+            shutil.rmtree(child)
+            print(f"  ✓ removed orphaned ai-specs/.deps/{name}")
 
     # Clean up stale lock entries for recipes no longer in the manifest
-    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
     if lock_path.is_file():
-        lock = load_lock(lock_path)
         removed_any = False
-        for rid in list(lock.get("recipes", {})):
-            if rid not in enabled_recipe_ids:
-                remove_recipe_lock_entries(lock, rid)
+        for rid in plan["stale_lock_recipes"]:
+            if remove_recipe_lock_entries(lock, rid):
                 removed_any = True
                 print(f"  ✓ removed stale lock entries for recipe '{rid}'")
         if removed_any:
