@@ -360,7 +360,8 @@ def check_capability_conflicts(
     conflict shape the call sites already read. A resolution error reported in
     the same envelope is ignored here: the conflict grader is independent of the
     binding grader in both authorities, so a duplicate binding is graded fatal
-    even though resolution aborts. Never writes the witness.
+    even though resolution aborts. Never writes the witness and never acquires a
+    binary: the read-only bridge call leaves acquisition opt-in off.
     """
     envelope = go_binding_resolution(catalog_dir, recipe_ids, manifest_bindings)
     if envelope is not None:
@@ -918,6 +919,32 @@ def _warn_bridge_fallback(reason: str) -> None:
     )
 
 
+def _acquire_gate_binary(gb: Any, home: Path) -> Path | None:
+    """Acquire the gate binary for the binding step, then re-resolve.
+
+    Acquisition is opt-in (``go_binding_resolution(acquire_if_missing=True)``),
+    only ever set by the sync binding step: it reuses the exact
+    ``gate_binary.acquire`` the worktree-flow distribution step calls and the
+    same ``AI_SPECS_GATE_OFFLINE`` signal, so there is one acquisition authority.
+    The acquisition warning is deliberately NOT re-emitted here: the sync
+    pipeline already reports acquisition degradation, and this bridge keeps its
+    single ``GO_BINDINGS_BRIDGE_FALLBACK`` line. Never raises: a failed
+    acquisition is a fallback, not a sync error.
+    """
+    try:
+        gb.acquire(
+            gate_impl="auto",
+            ai_specs_home=home,
+            offline=os.environ.get("AI_SPECS_GATE_OFFLINE") == "1",
+        )
+    except Exception:  # noqa: BLE001 - a failed acquisition degrades to fallback
+        return None
+    try:
+        return gb.resolve_verified_binary(home)
+    except Exception:  # noqa: BLE001 - an unloadable helper is "no binary"
+        return None
+
+
 def go_binding_resolution(
     catalog_dir: Path,
     enabled_ids: list[str],
@@ -925,6 +952,7 @@ def go_binding_resolution(
     *,
     project_root: Path | None = None,
     write_witness: bool = False,
+    acquire_if_missing: bool = False,
 ) -> dict[str, Any] | None:
     """Run the Go binding authority and return its JSON envelope, or None.
 
@@ -937,12 +965,22 @@ def go_binding_resolution(
     ``write_witness`` lets Go own the durable witness in the same invocation.
     It never applies without ``project_root``: Go defaults the witness root to
     the process cwd, and a read-only caller must not inherit a write there.
+
+    ``acquire_if_missing`` is the sync binding step's acquisition opt-in: when
+    no verified binary resolves, the bridge acquires through the canonical
+    ``gate_binary`` path (mirroring ``AI_SPECS_GATE_OFFLINE``) and re-resolves,
+    so a fresh project's first sync does not fall back just because the
+    worktree-flow recipe is disabled. Read-only callers (doctor, conflict
+    grading) leave it False and never touch the network.
     """
     if project_root is None:
         write_witness = False
     try:
         gb = _load_gate_binary()
-        binary = gb.resolve_verified_binary(_bridge_home(catalog_dir))
+        home = _bridge_home(catalog_dir)
+        binary = gb.resolve_verified_binary(home)
+        if binary is None and acquire_if_missing:
+            binary = _acquire_gate_binary(gb, home)
     except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
         _warn_bridge_fallback(f"the gate binary could not be resolved ({type(exc).__name__}: {exc})")
         return None
@@ -1035,6 +1073,7 @@ def binding_resolution(
     *,
     project_root: Path | None = None,
     write_witness: bool = False,
+    acquire_if_missing: bool = False,
 ) -> tuple[dict[str, str], list[Any]]:
     """Resolve bindings and grade capability conflicts, Go first.
 
@@ -1055,6 +1094,7 @@ def binding_resolution(
         manifest_bindings,
         project_root=project_root,
         write_witness=write_witness,
+        acquire_if_missing=acquire_if_missing,
     )
     if envelope is not None:
         return _bindings_from_envelope(envelope), _conflicts_from_envelope(envelope)
@@ -1074,15 +1114,17 @@ def resolve_bindings(
     *,
     project_root: Path | None = None,
     write_witness: bool = False,
+    acquire_if_missing: bool = False,
 ) -> dict[str, str]:
     """Resolve capability-to-recipe bindings through the Go authority.
 
     Step 1 (validate explicit bindings) and step 2 (auto-bind a capability
     exactly one enabled recipe declares) run in ``worktree-gate
     --resolve-bindings``. Read-only callers (doctor, sync-agent) keep the
-    default ``write_witness=False``, which the bridge passes to Go as
-    ``--write-witness=false`` so no caller other than sync can touch the ledger.
-    Raises ``RuntimeError`` for an invalid manifest binding.
+    defaults ``write_witness=False`` and ``acquire_if_missing=False``: they
+    pass ``--write-witness=false`` so no caller other than sync can touch the
+    ledger, and they never acquire or download a binary. Raises
+    ``RuntimeError`` for an invalid manifest binding.
     """
     return binding_resolution(
         catalog_dir,
@@ -1090,6 +1132,7 @@ def resolve_bindings(
         manifest_bindings,
         project_root=project_root,
         write_witness=write_witness,
+        acquire_if_missing=acquire_if_missing,
     )[0]
 
 
@@ -1674,7 +1717,10 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # Recover the witness ownership rule for a shrinking enabled set through
         # the same Go authority as the enabled path, so a disabled provider never
         # stays active. The fallback writes it in Python when Go cannot run.
-        binding_resolution(catalog_dir, [], [], project_root=project_root, write_witness=True)
+        binding_resolution(
+            catalog_dir, [], [],
+            project_root=project_root, write_witness=True, acquire_if_missing=True,
+        )
         print("  (no [recipes.*] enabled — skipping)")
         # Still write resolved-config if requested (even with no enabled recipes)
         if resolved_config_out is not None:
@@ -1705,6 +1751,9 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         manifest_bindings,
         project_root=project_root,
         write_witness=True,
+        # The sync binding step owns acquisition, independent of worktree-flow
+        # enablement, so the first sync of a fresh project does not fall back.
+        acquire_if_missing=True,
     )
     for c in cap_conflicts:
         if getattr(c, "severity", "fatal") == "fatal":

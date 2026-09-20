@@ -410,7 +410,9 @@ class WitnessBridgeTests(_GoBridgeTestCase):
         """The two authorities persist the same document, key order and all."""
         go_root = self._project(TRACKER_RECIPE + TRACKER_CONFLICT_RECIPE)
         self._sync(go_root)
-        with mock.patch.dict(os.environ, {}, clear=False):
+        # Unpinning the binary makes the sync binding step free to acquire; the
+        # offline signal keeps that acquisition from reaching the network.
+        with mock.patch.dict(os.environ, {"AI_SPECS_GATE_OFFLINE": "1"}, clear=False):
             os.environ.pop("WORKTREE_GATE_BIN", None)
             py_root = self._project(TRACKER_RECIPE + TRACKER_CONFLICT_RECIPE)
             self._sync(py_root)
@@ -489,6 +491,12 @@ class FailOpenFallbackTests(unittest.TestCase):
         allow = mock.patch.dict(os.environ, allow_internal_test_recipes_env())
         allow.start()
         self.addCleanup(allow.stop)
+        # The sync binding step now acquires the gate binary. These fallback
+        # tests pin a missing binary and must stay network-hermetic, so they
+        # signal offline instead of hitting a release download.
+        offline = mock.patch.dict(os.environ, {"AI_SPECS_GATE_OFFLINE": "1"})
+        offline.start()
+        self.addCleanup(offline.stop)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
@@ -608,6 +616,147 @@ class FailOpenFallbackTests(unittest.TestCase):
         self.assertIsNone(self.gb.resolve_verified_binary(home))
         self.gb.verification_record_path(candidate).write_text("status=verified\n")
         self.assertEqual(self.gb.resolve_verified_binary(home), candidate)
+
+
+class BindingAcquisitionTests(unittest.TestCase):
+    """The sync binding step acquires the gate binary; read-only callers never do.
+
+    T6: a fresh project without worktree-flow must not fall back to the Python
+    authority merely because nothing acquired the binary yet. The sync binding
+    step runs the same ``gate_binary.acquire`` the worktree-flow distribution
+    step uses and re-resolves; only an acquisition that still yields no verified
+    binary falls back, with the single ``GO_BINDINGS_BRIDGE_FALLBACK`` line.
+    Read-only callers (the doctor shape, conflict grading) never acquire.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(
+            RECIPE_MATERIALIZE_PATH, "recipe_materialize_binding_acquisition"
+        )
+        cls._home_tmp = tempfile.TemporaryDirectory()
+        cls.home = Path(cls._home_tmp.name)
+        populate_catalog(cls.home / "catalog" / "recipes")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._home_tmp.cleanup()
+
+    def setUp(self):
+        allow = mock.patch.dict(os.environ, allow_internal_test_recipes_env())
+        allow.start()
+        self.addCleanup(allow.stop)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        # The module caches its gate_binary helper, so patching this instance
+        # also patches the one the bridge calls.
+        self.gb = self.mod._load_gate_binary()
+        no_pin = mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": ""})
+        no_pin.start()
+        self.addCleanup(no_pin.stop)
+
+    def _catalog(self) -> Path:
+        return self.home / "catalog" / "recipes"
+
+    def _project(self, recipes: str = TRACKER_RECIPE) -> Path:
+        root = self.tmp / "repo"
+        (root / "ai-specs").mkdir(parents=True)
+        (root / "ai-specs" / "ai-specs.toml").write_text(
+            "[project]\nname = 'acquisition'\n\n[agents]\nenabled = ['claude']\n\n"
+            + recipes
+        )
+        _git(root, "init", "-q")
+        return root
+
+    def _envelope_stub(self) -> Path:
+        payload = json.dumps({
+            "bindings": {"tracker": "test-tracker-ledger"},
+            "conflicts": [],
+            "errors": [],
+            "warnings": [],
+        })
+        path = self.tmp / "worktree-gate-stub"
+        path.write_text(f"#!/bin/sh\nprintf '%s' '{payload}'\n")
+        path.chmod(0o755)
+        return path
+
+    def test_sync_binding_step_acquires_and_uses_the_go_authority(self):
+        root = self._project()
+        stub = self._envelope_stub()
+        calls = []
+
+        def fake_acquire(**kwargs):
+            calls.append(kwargs)
+            os.environ["WORKTREE_GATE_BIN"] = str(stub)
+            return {"attempted": True, "installed": True, "warn": None}
+
+        captured = io.StringIO()
+        with mock.patch.dict(os.environ, {"AI_SPECS_GATE_OFFLINE": "0"}):
+            with mock.patch.object(self.gb, "acquire", side_effect=fake_acquire):
+                with contextlib.redirect_stderr(captured):
+                    out = root / ".resolved.json"
+                    self.assertEqual(
+                        self.mod.materialize_recipes(
+                            root, self.home, resolved_config_out=out
+                        ),
+                        0,
+                    )
+        self.assertEqual(len(calls), 1, "the binding step must acquire once")
+        self.assertEqual(calls[0]["gate_impl"], "auto")
+        self.assertIs(calls[0]["offline"], False)
+        self.assertEqual(
+            json.loads(out.read_text())["bindings"],
+            {"tracker": "test-tracker-ledger"},
+        )
+        self.assertNotIn(
+            self.mod.GO_BINDINGS_BRIDGE_FALLBACK,
+            captured.getvalue(),
+            "a successful acquisition must not fall back",
+        )
+
+    def test_sync_binding_step_falls_back_offline_with_one_warning(self):
+        root = self._project()
+        calls = []
+        acquisition_warn = "worktree-gate: fake offline degradation"
+
+        def fake_acquire(**kwargs):
+            calls.append(kwargs)
+            return {"attempted": True, "installed": False, "warn": acquisition_warn}
+
+        captured = io.StringIO()
+        with mock.patch.dict(os.environ, {"AI_SPECS_GATE_OFFLINE": "1"}):
+            with mock.patch.object(self.gb, "acquire", side_effect=fake_acquire):
+                with contextlib.redirect_stderr(captured):
+                    self.assertEqual(self.mod.materialize_recipes(root, self.home), 0)
+        stderr = captured.getvalue()
+        self.assertEqual(len(calls), 1, "the binding step must acquire once")
+        self.assertIs(calls[0]["offline"], True)
+        self.assertEqual(stderr.count(self.mod.GO_BINDINGS_BRIDGE_FALLBACK), 1, stderr)
+        self.assertNotIn(
+            acquisition_warn, stderr,
+            "the bridge must not duplicate the acquisition warning",
+        )
+
+    def test_read_only_resolution_never_acquires(self):
+        """The doctor call shape resolves bindings without any acquisition."""
+        calls = []
+
+        def fail_acquire(**kwargs):
+            calls.append(kwargs)
+            raise AssertionError("the read-only path must never acquire")
+
+        captured = io.StringIO()
+        with mock.patch.object(self.gb, "acquire", side_effect=fail_acquire):
+            with contextlib.redirect_stderr(captured):
+                bindings = self.mod.resolve_bindings(
+                    self._catalog(), ["test-tracker-ledger"], []
+                )
+        self.assertEqual(bindings, {"tracker": "test-tracker-ledger"})
+        self.assertEqual(calls, [], "the read-only path must never acquire")
+        self.assertEqual(
+            captured.getvalue().count(self.mod.GO_BINDINGS_BRIDGE_FALLBACK), 1
+        )
 
 
 if __name__ == "__main__":
