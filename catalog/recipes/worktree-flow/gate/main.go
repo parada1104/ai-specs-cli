@@ -84,6 +84,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// Orphan planning is another separate command surface: pure set arithmetic
 	// over a JSON envelope on stdin; it never reads the worktree or the catalog.
 	planOrphansCmd := fs.Bool("plan-orphans", false, "plan materialization orphans from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
+	// Resolved-config projection is a manifest query: it reads one project root's
+	// ai-specs.toml, projects it in Go, and emits a single JSON envelope.
+	planResolvedConfigCmd := fs.Bool("plan-resolved-config", false, "project the project manifest into the resolved-config JSON envelope (exit 0/2)")
+	resolvedProjectRoot := fs.String("project", "", "project root for --plan-resolved-config (default: cwd)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -154,6 +158,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}, stdout, stderr)
 	case *planOrphansCmd:
 		return runPlanOrphans(stdin, stdout, stderr)
+	case *planResolvedConfigCmd:
+		root := *resolvedProjectRoot
+		if root == "" {
+			root = processCwd()
+		}
+		return runPlanResolvedConfig(root, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
 	case *tokenize:
