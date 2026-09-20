@@ -60,6 +60,12 @@ map of `lib/_internal/recipe-materialize.py` + `lib/sync.sh`).
 - T5 evidence: `./tests/validate.sh` exit 0 (verify agent, 2026-09-20):
   py_compile + bash -n + gofmt clean, go test gate packages ok, unittest
   2234 tests OK (skipped=2), ~11.7 min. No blockers.
+- Native review: lineage `review-8ce721b04e58757c`, base `origin/development`
+  committed-only, tier high (process_boundary), 7 paths / 1006 lines.
+  4/4 lenses admitted, zero blockers; 6 informational findings recorded as
+  follow-ups (rmtree trusts envelope names; sums self-attested regen; bridge
+  race window; envelope element types; stale-lock return gate; lock order).
+  State approved, acknowledge-approved burned (gentle-ai.review-acknowledged/v1).
 
 ## Tracker
 
