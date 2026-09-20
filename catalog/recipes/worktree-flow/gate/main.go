@@ -81,6 +81,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.Var(&bindingsRecipeIDs, "recipe", "enabled recipe id in order (repeatable, for --resolve-bindings)")
 	bindingsJSON := fs.String("bindings", "[]", "explicit manifest [[bindings]] tables as a JSON array of {capability, recipe}")
 	bindingsWriteWitness := fs.Bool("write-witness", true, "persist the durable tracker binding witness after --resolve-bindings (best-effort)")
+	// Orphan planning is another separate command surface: pure set arithmetic
+	// over a JSON envelope on stdin; it never reads the worktree or the catalog.
+	planOrphansCmd := fs.Bool("plan-orphans", false, "plan materialization orphans from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -149,6 +152,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			projectRoot:  *ledgerProjectRoot,
 			writeWitness: *bindingsWriteWitness,
 		}, stdout, stderr)
+	case *planOrphansCmd:
+		return runPlanOrphans(stdin, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
 	case *tokenize:
