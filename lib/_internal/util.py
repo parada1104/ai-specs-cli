@@ -7,6 +7,7 @@ module top — ``ensure_deps`` may import them lazily after the vendor gate.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -659,6 +660,151 @@ def render_override_bytes(catalog_src: Path, merged_cfg: dict | None = None) -> 
     return data.replace(token, topology.encode())
 
 
+# --- Managed-override classification: Go authority (GO_CLASSIFY_OVERRIDE_BRIDGE_FALLBACK)
+#
+# The Go gate binary (``worktree-gate --plan-classify``) owns the ownership
+# DECISION (missing/untracked/user_modified/managed_current/managed_stale).
+# Python keeps only the argument adaptation it already performed (resolving the
+# exact would-write bytes from ``catalog_src``) and the TEMPORARY fail-open
+# fallback below, which runs only when no verified binary can run. Every
+# degraded run is announced by exactly one warning line.
+GO_CLASSIFY_OVERRIDE_BRIDGE_FALLBACK = "GO_CLASSIFY_OVERRIDE_BRIDGE_FALLBACK"
+GO_CLASSIFY_OVERRIDE_BRIDGE_TIMEOUT_SECONDS = 60
+
+_CLASSIFY_OVERRIDE_STATES = frozenset(
+    {"missing", "untracked", "user_modified", "managed_current", "managed_stale"}
+)
+
+_gate_binary_module = None
+
+
+def _load_gate_binary() -> object:
+    """Load the sibling gate_binary.py acquisition module (lazy, cached).
+
+    Local mirror of ``recipe-materialize._load_gate_binary``: util.py must not
+    import recipe-materialize (recipe-materialize imports util), and the sibling
+    is not on ``sys.path`` when util.py is loaded standalone, so the file is
+    resolved relative to this module. The load stays lazy to honor util.py's
+    stdlib-only import-time contract.
+    """
+    global _gate_binary_module
+    if _gate_binary_module is None:
+        import importlib.util
+
+        module_path = Path(__file__).with_name("gate_binary.py")
+        spec = importlib.util.spec_from_file_location(
+            "gate_binary_internal", module_path
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"unable to load gate_binary.py at {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _gate_binary_module = module
+    return _gate_binary_module
+
+
+def _warn_classify_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded classification authority."""
+    print(
+        f"{GO_CLASSIFY_OVERRIDE_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python classification authority",
+        file=sys.stderr,
+    )
+
+
+def _resolve_would_write(
+    catalog_src: Path | bytes | str | None,
+    would_write: bytes | str | None,
+) -> bytes | None:
+    """The exact post-render bytes sync would write, or None.
+
+    Mirrors the argument adaptation the Python authority always performed: an
+    explicit ``would_write`` wins, a ``bytes``/``str`` ``catalog_src`` is taken
+    literally, and a ``Path`` ``catalog_src`` is rendered.
+    """
+    if would_write is None and isinstance(catalog_src, (bytes, str)):
+        would_write = catalog_src
+        catalog_src = None
+    if would_write is None and isinstance(catalog_src, Path) and catalog_src.is_file():
+        would_write = render_override_bytes(catalog_src)
+    if would_write is None:
+        return None
+    if isinstance(would_write, str):
+        would_write = would_write.encode()
+    return would_write
+
+
+def go_classify_managed_override(
+    materialized_dest: Path,
+    managed_entry: dict | None,
+    catalog_src: Path | bytes | None = None,
+    would_write: bytes | str | None = None,
+) -> str | None:
+    """Run ``worktree-gate --plan-classify`` and return its state, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    or the output was not the documented envelope. The caller then falls back to
+    the temporary Python authority. This function emits the single
+    ``GO_CLASSIFY_OVERRIDE_BRIDGE_FALLBACK`` warning naming the reason, so a
+    degraded run is never silent and never needs a second warning.
+
+    This bridge is read-only: it never acquires a binary, so callers only
+    degrade when no verified binary is already available.
+    """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary()
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_classify_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_classify_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    resolved = _resolve_would_write(catalog_src, would_write)
+    payload = {
+        "dest": str(materialized_dest),
+        "managed_entry": managed_entry if isinstance(managed_entry, dict) else None,
+        "would_write": None if resolved is None else resolved.decode("utf-8"),
+    }
+    try:
+        proc = subprocess.run(
+            [str(binary), "--plan-classify"],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=GO_CLASSIFY_OVERRIDE_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn_classify_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_classify_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_classify_bridge_fallback(f"worktree-gate output was not JSON ({exc})")
+        return None
+    if (
+        not isinstance(envelope, dict)
+        or envelope.get("state") not in _CLASSIFY_OVERRIDE_STATES
+    ):
+        _warn_classify_bridge_fallback(
+            "worktree-gate output did not match the classify envelope"
+        )
+        return None
+    return str(envelope["state"])
+
+
 def classify_managed_override(
     materialized_dest: Path,
     managed_entry: dict | None = None,
@@ -670,6 +816,39 @@ def classify_managed_override(
     ``catalog_src`` accepts a source path for convenience; callers with rendered
     placeholder content should pass ``would_write`` so comparison uses the exact
     post-render bytes that sync would write.
+
+    ``worktree-gate --plan-classify`` is the primary authority; the Python
+    decision is a TEMPORARY fail-open fallback announced by one
+    ``GO_CLASSIFY_OVERRIDE_BRIDGE_FALLBACK`` warning per degraded run. This
+    function keeps its historical signature and return values and never raises
+    because of a bridge failure.
+    """
+    try:
+        state = go_classify_managed_override(
+            materialized_dest, managed_entry, catalog_src, would_write
+        )
+    except Exception as exc:  # noqa: BLE001 - a bridge defect must fail open
+        _warn_classify_bridge_fallback(
+            f"the bridge failed unexpectedly ({type(exc).__name__}: {exc})"
+        )
+        state = None
+    if state is not None:
+        return state
+    return _python_classify_managed_override(
+        materialized_dest, managed_entry, catalog_src, would_write
+    )
+
+
+def _python_classify_managed_override(
+    materialized_dest: Path,
+    managed_entry: dict | None = None,
+    catalog_src: Path | bytes | None = None,
+    would_write: bytes | str | None = None,
+) -> str:
+    """TEMPORARY Python classification authority (GO_CLASSIFY_OVERRIDE_BRIDGE_FALLBACK).
+
+    Kept only as the fail-open fallback; ``worktree-gate --plan-classify`` is the
+    primary authority. It mirrors the historical Python decision exactly.
     """
     if not materialized_dest.is_file():
         return "missing"
@@ -679,13 +858,7 @@ def classify_managed_override(
     if disk_sha != str(managed_entry["sha256"]):
         return "user_modified"
 
-    if would_write is None and isinstance(catalog_src, (bytes, str)):
-        would_write = catalog_src
-        catalog_src = None
-    if would_write is None and isinstance(catalog_src, Path) and catalog_src.is_file():
-        would_write = render_override_bytes(catalog_src)
-    if would_write is None:
+    resolved = _resolve_would_write(catalog_src, would_write)
+    if resolved is None:
         return "managed_current"
-    if isinstance(would_write, str):
-        would_write = would_write.encode()
-    return "managed_current" if disk_sha == sha256_bytes(would_write) else "managed_stale"
+    return "managed_current" if disk_sha == sha256_bytes(resolved) else "managed_stale"

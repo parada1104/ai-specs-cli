@@ -2028,7 +2028,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         print("  (no [recipes.*] enabled — skipping)")
         # Still write resolved-config if requested (even with no enabled recipes)
         if resolved_config_out is not None:
-            resolved = build_resolved_config(project_root)
+            resolved = build_resolved_config(project_root, ai_specs_home=ai_specs_home)
             with open(resolved_config_out, "w") as f:
                 json.dump(resolved, f, indent=2, sort_keys=True)
                 f.write("\n")
@@ -2248,7 +2248,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     # build_resolved_config() provides the recipes/enabled structure; we override the
     # bindings key with the full auto-bound map so downstream renderers see auto-bindings.
     if resolved_config_out is not None:
-        resolved = build_resolved_config(project_root)
+        resolved = build_resolved_config(project_root, ai_specs_home=ai_specs_home)
         resolved["bindings"] = resolved_bindings  # replace explicit-only with auto-bound
         merge_catalog_defaults_into_resolved(resolved, ai_specs_home)
         attach_brief_fragments_to_resolved(resolved, ai_specs_home)
