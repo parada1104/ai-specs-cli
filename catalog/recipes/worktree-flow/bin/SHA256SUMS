@@ -43,7 +43,12 @@
 # asset gains the provider-neutral Worktree domain port, current-tip-bound PR evidence,
 # and deterministic cleanup coverage; no new asset, no second trust root), with the
 # canonical go1.24.13 toolchain and the same command above.
-ab0c50d4546379ef0f512c96d58865613c1d5f642c4608f955c8efe950587c06  worktree-gate-darwin-amd64
-9dc9afa418bc9c2d92794a1a7d6a7f2b9d73aca8ca40ca20afc8bebe62ae7104  worktree-gate-darwin-arm64
-7c7e3a8a5a3db3db68c9f6d31745b3c1eb51517a822f516a544dfa58d4438135  worktree-gate-linux-amd64
-c648d6fdde2783fec51ec6c3176ca92581e224bcd217dd5b4f98c4bc3fd65657  worktree-gate-linux-arm64
+#
+# Regenerated for the go-orphan-cleanup strangler slice (the same four-arch asset
+# gains the Go-owned `--plan-orphans` materialization orphan planning; no new
+# asset, no second trust root), with the canonical go1.24.13 toolchain via:
+#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
+ad48a82da6d7a14f810eabc5a6255aa4d1b39c809e72562c9c433e6b3603a66d  worktree-gate-darwin-amd64
+623d538c4e38f2b9a8463eb060f18fe6b5235d43e0b82d2c9b6ef654cdce2a87  worktree-gate-darwin-arm64
+ff95efddbf13302fa4d6aa1969c1c77c3d30a5d40cfb53261b58f849bbf30ca6  worktree-gate-linux-amd64
+76fd1b07b45ef67c2683e590e30edf36bb1283a024e73750b76cf76c9fa2ce20  worktree-gate-linux-arm64
