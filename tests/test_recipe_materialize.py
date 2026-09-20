@@ -195,6 +195,37 @@ class RecipeMaterializeTests(unittest.TestCase):
         root = self._make_project("")
         self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
 
+    # --- ai_specs_home forwarding regression --------------------------------
+
+    def _assert_home_forwarded(self, root: Path) -> None:
+        out = root / "resolved.json"
+        explicit_home = _home()
+        # The explicit home must not be the module default so a forwarded value
+        # is distinguishable from an implicit __file__-relative resolution.
+        default_home = Path(self.mod.__file__).resolve().parents[2]
+        self.assertNotEqual(explicit_home, default_home)
+        with mock.patch.object(
+            self.mod, "build_resolved_config", wraps=self.mod.build_resolved_config
+        ) as spy:
+            self.assertEqual(
+                self.mod.materialize_recipes(
+                    root, explicit_home, resolved_config_out=out
+                ),
+                0,
+            )
+        spy.assert_called_once()
+        self.assertEqual(spy.call_args.kwargs.get("ai_specs_home"), explicit_home)
+
+    def test_materialize_forwards_ai_specs_home_when_no_recipes_enabled(self):
+        root = self._make_project("")
+        self._assert_home_forwarded(root)
+
+    def test_materialize_forwards_ai_specs_home_when_recipes_enabled(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        self._assert_home_forwarded(root)
+
     def test_recipe_does_not_overwrite_user_local_skill(self):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
