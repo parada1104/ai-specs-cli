@@ -353,6 +353,29 @@ def check_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
 def check_capability_conflicts(
     catalog_dir: Path, recipe_ids: list[str], manifest_bindings: list[dict[str, str]]
 ) -> list[Any]:
+    """Grade capability conflicts through the Go authority (read-only).
+
+    Fatal (duplicate explicit binding) and warning (ambiguous provider) grades
+    come from the same ``--resolve-bindings`` envelope as the bindings, in the
+    conflict shape the call sites already read. A resolution error reported in
+    the same envelope is ignored here: the conflict grader is independent of the
+    binding grader in both authorities, so a duplicate binding is graded fatal
+    even though resolution aborts. Never writes the witness.
+    """
+    envelope = go_binding_resolution(catalog_dir, recipe_ids, manifest_bindings)
+    if envelope is not None:
+        return _conflicts_from_envelope(envelope)
+    return _python_check_capability_conflicts(catalog_dir, recipe_ids, manifest_bindings)
+
+
+def _python_check_capability_conflicts(
+    catalog_dir: Path, recipe_ids: list[str], manifest_bindings: list[dict[str, str]]
+) -> list[Any]:
+    """Grade capability conflicts (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_BINDINGS_BRIDGE_FALLBACK``; the Go grader is the primary authority.
+    """
     mod = _load_conflict()
     return mod.check_capability_conflicts(catalog_dir, recipe_ids, manifest_bindings)
 
@@ -832,11 +855,259 @@ def materialize_hook_script(
     return rel
 
 
-# --- Binding resolution -------------------------------------------------------
+# --- Binding resolution (Go authority, temporary Python fallback) --------------
+#
+# The Go gate binary (``--resolve-bindings``) owns capability binding
+# resolution, capability conflict grading, and the durable tracker witness
+# write. Python keeps only what is not the decision: TOML acquisition it already
+# performs for other purposes, and the conflict -> error message formatting sync
+# users see. This section is the bridge between them.
+#
+# The Python implementations below are a TEMPORARY fail-open fallback
+# (``GO_BINDINGS_BRIDGE_FALLBACK``): they run only when the binary cannot be
+# acquired, verified, executed, or parsed, and the strangler deletes them once
+# the bridge is proven in the field. Tests pin their contract; they are never
+# the primary authority.
+GO_BINDINGS_BRIDGE_FALLBACK = "GO_BINDINGS_BRIDGE_FALLBACK"
+GO_BINDINGS_BRIDGE_TIMEOUT_SECONDS = 60
+
+# Stable machine-readable classification of the Go resolution errors. Go emits
+# one deterministic message per failure and aborts step 1 on the first one; the
+# prefix is that message's stable contract, so a caller branches on a code
+# instead of matching a whole sentence. An unrecognized error keeps its Go text
+# and classifies as "binding-error" rather than being dropped.
+GO_BINDING_ERROR_CODES = {
+    "duplicate explicit binding for capability": "duplicate-explicit-binding",
+    "references disabled/unknown recipe": "disabled-or-unknown-recipe",
+    "does not declare that capability": "undeclared-capability",
+}
+
+
+class BindingResolutionError(RuntimeError):
+    """Invalid manifest binding, carrying the stable bridge error code.
+
+    Subclasses RuntimeError so every existing ``except RuntimeError`` call site
+    (sync, sync-agent, tests) keeps working unchanged; ``code`` is the
+    machine-readable classification, and ``str(exc)`` stays the exact message
+    the Python authority raised.
+    """
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def binding_error_code(message: str) -> str:
+    """Classify one Go resolution error message into its stable bridge code."""
+    for prefix, code in GO_BINDING_ERROR_CODES.items():
+        if prefix in message:
+            return code
+    return "binding-error"
+
+
+def _bridge_home(catalog_dir: Path) -> Path:
+    """The AI_SPECS_HOME owning a ``<home>/catalog/recipes`` directory."""
+    return Path(catalog_dir).resolve().parents[1]
+
+
+def _warn_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded binding authority."""
+    warn(
+        f"{GO_BINDINGS_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python binding authority"
+    )
+
+
+def go_binding_resolution(
+    catalog_dir: Path,
+    enabled_ids: list[str],
+    manifest_bindings: list[dict[str, str]],
+    *,
+    project_root: Path | None = None,
+    write_witness: bool = False,
+) -> dict[str, Any] | None:
+    """Run the Go binding authority and return its JSON envelope, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    or the output was not the documented envelope. The caller then falls back to
+    the temporary Python authority. This function emits the single
+    ``GO_BINDINGS_BRIDGE_FALLBACK`` warning naming the reason, so a degraded run
+    is never silent and never needs a second warning.
+
+    ``write_witness`` lets Go own the durable witness in the same invocation.
+    It never applies without ``project_root``: Go defaults the witness root to
+    the process cwd, and a read-only caller must not inherit a write there.
+    """
+    if project_root is None:
+        write_witness = False
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_bridge_home(catalog_dir))
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_bridge_fallback(f"the gate binary could not be resolved ({type(exc).__name__}: {exc})")
+        return None
+    if binary is None:
+        _warn_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    command = [str(binary), "--resolve-bindings", "--catalog-dir", str(catalog_dir)]
+    for rid in enabled_ids:
+        command += ["--recipe", str(rid)]
+    command += ["--bindings", json.dumps(manifest_bindings)]
+    if project_root is not None:
+        command += ["--project-root", str(project_root)]
+    # One token, not ``--write-witness false``: Go's flag package treats a
+    # boolean flag as valueless, so a separate "false" argument would leave the
+    # write ENABLED and demote the value to an ignored positional argument.
+    write_flag = "true" if write_witness else "false"
+    command += [f"--write-witness={write_flag}"]
+
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=GO_BINDINGS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn_bridge_fallback(f"worktree-gate did not run ({type(exc).__name__}: {exc})")
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_bridge_fallback(f"worktree-gate exited {proc.returncode} ({detail})")
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_bridge_fallback(f"worktree-gate output was not JSON ({exc})")
+        return None
+    if (
+        not isinstance(envelope, dict)
+        or not isinstance(envelope.get("bindings"), dict)
+        or not isinstance(envelope.get("conflicts"), list)
+        or not isinstance(envelope.get("errors"), list)
+    ):
+        _warn_bridge_fallback("worktree-gate output did not match the binding envelope")
+        return None
+    for warning in envelope.get("warnings") or []:
+        # Go's best-effort side effects (a failed witness write) are reported
+        # without demoting a resolution error that is already in ``errors``.
+        warn(str(warning))
+    return envelope
+
+
+def _bindings_from_envelope(envelope: dict[str, Any]) -> dict[str, str]:
+    """Adapt the Go envelope's bindings, raising exactly what Python raised.
+
+    Go aborts step 1 on the first invalid explicit binding with the same
+    deterministic message the Python authority raised, so parity is exact; the
+    classification rides along as ``BindingResolutionError.code``.
+    """
+    errors = [str(error) for error in envelope.get("errors") or []]
+    if errors:
+        raise BindingResolutionError(errors[0], binding_error_code(errors[0]))
+    return {str(cap): str(rid) for cap, rid in envelope["bindings"].items()}
+
+
+def _conflicts_from_envelope(envelope: dict[str, Any]) -> list[Any]:
+    """Adapt the Go envelope's conflicts onto the existing ``Conflict`` type.
+
+    Call sites read ``primitive_type`` / ``primitive_id`` / ``recipes`` /
+    ``severity``, so reusing the dataclass keeps the sync warning and blocking
+    messages byte-identical to the ones the Python grader produced.
+    """
+    conflict_cls = _load_conflict().Conflict
+    return [
+        conflict_cls(
+            primitive_type=str(item.get("type", "capability")),
+            primitive_id=str(item.get("id", "")),
+            recipes=set(item.get("recipes") or []),
+            severity=str(item.get("severity") or "fatal"),
+        )
+        for item in envelope.get("conflicts") or []
+    ]
+
+
+def binding_resolution(
+    catalog_dir: Path,
+    enabled_ids: list[str],
+    manifest_bindings: list[dict[str, str]],
+    *,
+    project_root: Path | None = None,
+    write_witness: bool = False,
+) -> tuple[dict[str, str], list[Any]]:
+    """Resolve bindings and grade capability conflicts, Go first.
+
+    One invocation returns both graders and, when ``write_witness`` is set, the
+    durable tracker witness Go writes itself. When the bridge cannot run, the
+    temporary Python authority computes both and writes the witness with the
+    Python writer, so a degraded run still leaves a truthful ledger.
+
+    Go persists the witness before the caller acts on a fatal conflict, exactly
+    as the Python path would have: a fatal conflict is always a duplicate
+    explicit binding, which is also a resolution error, so an unresolved
+    binding is never persisted. Raises ``RuntimeError`` for an invalid manifest
+    binding, exactly as ``resolve_bindings`` does.
+    """
+    envelope = go_binding_resolution(
+        catalog_dir,
+        enabled_ids,
+        manifest_bindings,
+        project_root=project_root,
+        write_witness=write_witness,
+    )
+    if envelope is not None:
+        return _bindings_from_envelope(envelope), _conflicts_from_envelope(envelope)
+    bindings = _python_resolve_bindings(catalog_dir, enabled_ids, manifest_bindings)
+    conflicts = _python_check_capability_conflicts(
+        catalog_dir, enabled_ids, manifest_bindings
+    )
+    if write_witness:
+        write_tracker_witness(project_root, catalog_dir, enabled_ids, bindings)
+    return bindings, conflicts
+
+
 def resolve_bindings(
+    catalog_dir: Path,
+    enabled_ids: list[str],
+    manifest_bindings: list[dict[str, str]],
+    *,
+    project_root: Path | None = None,
+    write_witness: bool = False,
+) -> dict[str, str]:
+    """Resolve capability-to-recipe bindings through the Go authority.
+
+    Step 1 (validate explicit bindings) and step 2 (auto-bind a capability
+    exactly one enabled recipe declares) run in ``worktree-gate
+    --resolve-bindings``. Read-only callers (doctor, sync-agent) keep the
+    default ``write_witness=False``, which the bridge passes to Go as
+    ``--write-witness=false`` so no caller other than sync can touch the ledger.
+    Raises ``RuntimeError`` for an invalid manifest binding.
+    """
+    return binding_resolution(
+        catalog_dir,
+        enabled_ids,
+        manifest_bindings,
+        project_root=project_root,
+        write_witness=write_witness,
+    )[0]
+
+
+# --- Binding resolution: TEMPORARY Python authority (GO_BINDINGS_BRIDGE_FALLBACK)
+#
+# Everything below is the fail-open fallback the strangler deletes once the Go
+# bridge is proven: it runs only when the gate binary cannot run, and the run is
+# always announced by a GO_BINDINGS_BRIDGE_FALLBACK warning line.
+#
+# --- Binding resolution -------------------------------------------------------
+def _python_resolve_bindings(
     catalog_dir: Path, enabled_ids: list[str], manifest_bindings: list[dict[str, str]]
 ) -> dict[str, str]:
-    """Resolve capability-to-recipe bindings.
+    """Resolve capability-to-recipe bindings (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_BINDINGS_BRIDGE_FALLBACK``; ``worktree-gate --resolve-bindings`` is the
+    primary authority.
 
     Step 1: Validate explicit bindings (recipe enabled, recipe declares capability).
     Step 2: Auto-bind capabilities declared by exactly one enabled recipe.
@@ -985,6 +1256,12 @@ def write_tracker_witness(
     resolved_bindings: dict[str, str],
 ) -> Path | None:
     """Atomically persist the resolved tracker binding under the common dir (A4).
+
+    TEMPORARY fail-open fallback (``GO_BINDINGS_BRIDGE_FALLBACK``):
+    ``worktree-gate --resolve-bindings`` normally writes this witness itself in
+    the invocation that resolves the bindings, and the strangler deletes this
+    writer with the rest of the Python binding authority. It stays reachable for
+    the degraded path (no verified binary) and for tests that pin its contract.
 
     ``<git-common-dir>/ai-specs/ledger/witness.json`` — deliberately outside
     ``RESOLVED_CONFIG_TEMP`` so ``lib/sync.sh``'s EXIT trap cannot delete it.
@@ -1394,9 +1671,10 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         pc.remove_recipe_command_leftovers(project_root, cli_home=cli_home)
         # Still clean up orphaned recipes (none expected) and deps not in manifest
         clean_orphans(project_root, set(), expected_dep_ids, cli_home=cli_home)
-        # A shrinking enabled set must overwrite a previously bound witness with the
-        # unbound outcome, or a disabled provider would stay active.
-        write_tracker_witness(project_root, catalog_dir, [], {})
+        # Recover the witness ownership rule for a shrinking enabled set through
+        # the same Go authority as the enabled path, so a disabled provider never
+        # stays active. The fallback writes it in Python when Go cannot run.
+        binding_resolution(catalog_dir, [], [], project_root=project_root, write_witness=True)
         print("  (no [recipes.*] enabled — skipping)")
         # Still write resolved-config if requested (even with no enabled recipes)
         if resolved_config_out is not None:
@@ -1417,11 +1695,17 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
     manifest_bindings = load_bindings_from_manifest(project_root)
 
-    # Binding resolution (NEW)
-    resolved_bindings = resolve_bindings(catalog_dir, list(enabled.keys()), manifest_bindings)
-
-    # Capability conflict check (NEW)
-    cap_conflicts = check_capability_conflicts(catalog_dir, list(enabled.keys()), manifest_bindings)
+    # Binding resolution, capability conflict grading, and the durable tracker
+    # witness are ONE Go invocation (single authority, single durable write).
+    # resolve_bindings just computed the binding the Go ledger reads; nothing
+    # downstream re-derives it.
+    resolved_bindings, cap_conflicts = binding_resolution(
+        catalog_dir,
+        list(enabled.keys()),
+        manifest_bindings,
+        project_root=project_root,
+        write_witness=True,
+    )
     for c in cap_conflicts:
         if getattr(c, "severity", "fatal") == "fatal":
             fail(
@@ -1437,12 +1721,9 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
                 f"Add an explicit [[bindings]] entry to resolve."
             )
 
-    # Durable tracker binding witness (A4): persist the binding outcome that
-    # resolve_bindings just computed so the Go ledger only ever reads it.
-    # Written outside RESOLVED_CONFIG_TEMP, so the EXIT trap cannot delete it.
-    write_tracker_witness(
-        project_root, catalog_dir, list(enabled.keys()), resolved_bindings
-    )
+    # Durable tracker binding witness (A4): Go persisted the binding outcome
+    # during the invocation above, outside RESOLVED_CONFIG_TEMP, so the EXIT trap
+    # cannot delete it.
 
     # Recipe-owned reconcile mapping reaches the manifest here: the gate reads
     # only the manifest, so declared defaults must be stamped during sync.
