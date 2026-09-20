@@ -1773,8 +1773,129 @@ def clean_orphans(
 
 
 # --- Main ---------------------------------------------------------------------
-def build_resolved_config(project_root: Path) -> dict[str, Any]:
-    """Build a resolved-config JSON blob from raw manifest data.
+# --- Resolved-config projection: Go authority (GO_RESOLVED_CONFIG_BRIDGE_FALLBACK)
+#
+# The Go gate binary (``--plan-resolved-config``) owns the resolved-config
+# PROJECTION: capability bindings, the per-recipe config (flat + config
+# sub-table), the enabled id list, the resolved project root, and the resolved
+# topology. Python keeps only the manifest acquisition it already performs and
+# the TEMPORARY fail-open fallback below
+# (``GO_RESOLVED_CONFIG_BRIDGE_FALLBACK``). This bridge is read-only: it never
+# acquires a binary, so doctor and sync only degrade when no verified binary is
+# already available.
+GO_RESOLVED_CONFIG_BRIDGE_FALLBACK = "GO_RESOLVED_CONFIG_BRIDGE_FALLBACK"
+GO_RESOLVED_CONFIG_BRIDGE_TIMEOUT_SECONDS = 60
+
+_RESOLVED_TOPOLOGY_STRING_KEYS = ("resolved", "configured", "via", "source")
+
+
+def _warn_resolved_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded resolved-config authority."""
+    warn(
+        f"{GO_RESOLVED_CONFIG_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python projection authority"
+    )
+
+
+def _is_str_keyed_mapping(value: Any, value_type: type) -> bool:
+    """True for a ``{str: value_type}`` mapping (empty mappings included)."""
+    if not isinstance(value, dict):
+        return False
+    return all(
+        isinstance(key, str) and isinstance(item, value_type)
+        for key, item in value.items()
+    )
+
+
+def _is_resolved_config_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented resolved-config envelope."""
+    if not isinstance(envelope, dict):
+        return False
+    topology = envelope.get("topology")
+    if not isinstance(topology, dict):
+        return False
+    return (
+        _is_str_keyed_mapping(envelope.get("bindings"), str)
+        and _is_str_keyed_mapping(envelope.get("recipes"), dict)
+        and isinstance(envelope.get("enabled"), list)
+        and isinstance(envelope.get("project_root"), str)
+        and all(
+            isinstance(topology.get(key), str)
+            for key in _RESOLVED_TOPOLOGY_STRING_KEYS
+        )
+        and isinstance(topology.get("submodules"), list)
+        and isinstance(topology.get("gitmodules_present"), bool)
+    )
+
+
+def go_resolved_config(
+    project_root: Path, *, ai_specs_home: Path | None = None
+) -> dict[str, Any] | None:
+    """Run ``worktree-gate --plan-resolved-config`` and return its JSON envelope, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    or the output was not the documented envelope. The caller then falls back to
+    the temporary Python authority. This function emits the single
+    ``GO_RESOLVED_CONFIG_BRIDGE_FALLBACK`` warning naming the reason, so a
+    degraded run is never silent and never needs a second warning.
+
+    This bridge is read-only and never acquires a binary: doctor and sync both
+    either have a verified binary or degrade to the Python projection.
+    """
+    home = (
+        ai_specs_home
+        if ai_specs_home is not None
+        else Path(__file__).resolve().parents[2]
+    )
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(home)
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_resolved_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_resolved_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    try:
+        proc = subprocess.run(
+            [str(binary), "--plan-resolved-config", "--project", str(project_root)],
+            capture_output=True,
+            text=True,
+            timeout=GO_RESOLVED_CONFIG_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn_resolved_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_resolved_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_resolved_bridge_fallback(f"worktree-gate output was not JSON ({exc})")
+        return None
+    if not _is_resolved_config_envelope(envelope):
+        _warn_resolved_bridge_fallback(
+            "worktree-gate output did not match the resolved-config envelope"
+        )
+        return None
+    return envelope
+
+
+def _python_build_resolved_config(project_root: Path) -> dict[str, Any]:
+    """Build a resolved-config JSON blob from raw manifest data (TEMPORARY authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_RESOLVED_CONFIG_BRIDGE_FALLBACK``; ``worktree-gate
+    --plan-resolved-config`` is the primary authority.
 
     Reads [recipes.*] sub-tables directly (no catalog lookup), plus [[bindings]].
     Returns: {bindings: {capability→recipe}, recipes: {id→{raw config keys}}, enabled: [id...]}
@@ -1839,6 +1960,16 @@ def build_resolved_config(project_root: Path) -> dict[str, Any]:
             "source": "default",
         }
     return resolved
+
+
+def build_resolved_config(
+    project_root: Path, ai_specs_home: Path | None = None
+) -> dict[str, Any]:
+    """Build the resolved-config blob, Go first with a fail-open Python fallback."""
+    envelope = go_resolved_config(project_root, ai_specs_home=ai_specs_home)
+    if envelope is not None:
+        return envelope
+    return _python_build_resolved_config(project_root)
 
 
 def _enabled_agents(project_root: Path) -> list[str]:
@@ -2151,7 +2282,7 @@ def build_resolved_config_only(project_root: Path, resolved_config_out: Path, ai
     custom/symlinked installs).
     """
     try:
-        resolved = build_resolved_config(project_root)
+        resolved = build_resolved_config(project_root, ai_specs_home=ai_specs_home)
 
         # Attempt catalog-aware auto-binding (same as the full materialize path)
         # so standalone sync-agent forwards the same enriched bindings as sync.sh.
