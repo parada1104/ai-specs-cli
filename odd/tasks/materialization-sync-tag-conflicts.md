@@ -62,6 +62,10 @@ Rank 3 of the Python-to-Go strangler is closing the materialization/sync domain.
   - Go and Python conflict shapes and ordering agree;
   - advisory tag conflicts never alter the materialization exit code.
 - **Checks**: RED bridge/parity test(s), GREEN `./tests/validate.sh` plus built gate binary, then parent spot check.
+- **Worker evidence**: RED bridge tests failed with the missing fallback symbol; GREEN bridge and existing materialization tests passed.
+- **Post-digest verification**: after rebuilding the gate binary and regenerating `SHA256SUMS`, `shasum` matched all four `SHA256SUMS` lines. `python3 -m unittest tests.test_tag_conflict_bridge` ran 9 tests with no skips against the digest-verified default binary. `python3 -m unittest tests.test_recipe_materialize tests.test_materialize_bridge` ran 84 tests OK.
+- **Task closure**: functional verification is complete but the task stays `in progress`; the canonical `./tests/validate.sh` command did not complete (see Blockers).
+- **Implementation note**: the Go envelope maps back onto `TagConflict` so the existing warning loop remains unchanged; degraded runs emit one `GO_TAG_CONFLICTS_BRIDGE_FALLBACK` warning and retain the Python authority.
 
 ### T3 — Normalize artifacts and close the work unit
 - **Route**: parent orchestration with delegated verification as required by the verification trigger.
@@ -74,17 +78,24 @@ Rank 3 of the Python-to-Go strangler is closing the materialization/sync domain.
 - **Checks**: `scripts/build-gate.sh`, digest verification, `./tests/validate.sh`, status/diff review, native risk assessment/review path.
 - **Status**: pending
 
+## Blockers
+
+### B1 — `./tests/validate.sh` does not complete (pre-existing)
+- `./tests/validate.sh` timed out after 600s inside the unittest subprocess-spawning sync tests. The preceding static `py_compile`, `bash -n`, and `gofmt` phases passed.
+- A clean `HEAD` snapshot reproduced both the hang and six unrelated runtime-brief ownership failures, classifying them as pre-existing and outside this change.
+- Impact: this blocks any claim of full-suite green. It must not be silently treated as passed, and T2/T3 cannot close on a green-suite claim while B1 is open.
+
 ## Delivery strategy
 - **Strategy**: `single-pr` while the measured candidate remains below the native review budget; split into chained PRs only if implementation evidence exceeds it.
 - **Forecast**: approximately 400–650 authored changed lines for the tag-conflict seam alone, excluding generated binaries/digests.
-- **Current progress**: T1 implementation and independent verification are complete; T1 is ready to commit; T2 bridge/parity work is now in progress.
+- **Current progress**: T1 is committed as `c024707`. T2 source and `SHA256SUMS` changes remain uncommitted; post-digest parity is green for the bridge (9 bridge tests, 84 materialization tests) and the digest matches all four `SHA256SUMS` lines. Full validation is blocked by B1 (pre-existing).
 
 ## Verification evidence
 - **Exploration**: `check_tag_conflicts` is advisory-only; its Python core is pure and preserves first-seen tag order. Go currently lacks top-level recipe tag/conflict acquisition.
 - **Scope decision**: `merge_config` deferred because it needs a richer `[config.*]` schema acquisition/validation surface and shares no decision logic with tag conflicts.
-- **RED evidence**: T1 focused Go tests failed before implementation with missing planner/acquisition/JSON behavior; T2 pending.
-- **GREEN evidence**: T1 focused and full Go gate tests passed in the worker; independent `go test -count=1 ./...` passed; T2 pending.
+- **RED evidence**: T1 focused Go tests failed before implementation with missing planner/acquisition/JSON behavior; T2 bridge tests failed before implementation with missing bridge symbols.
+- **GREEN evidence**: T1 focused and full Go gate tests passed in the worker; independent `go test -count=1 ./...` passed. T2 focused bridge and existing materialization tests passed; post-digest `shasum` matched all four `SHA256SUMS` lines, `python3 -m unittest tests.test_tag_conflict_bridge` ran 9 tests with no skips against the digest-verified default binary, and `python3 -m unittest tests.test_recipe_materialize tests.test_materialize_bridge` ran 84 tests OK. Full validation is blocked by B1 (pre-existing) and is not claimed green.
 - **Final evidence**: pending T3.
 
 ## Next step
-Commit the closed T1 work unit, then let the bounded writer implement T2's fail-open bridge and parity coverage.
+T2 functional verification is complete, but task closure and delivery remain blocked by B1. Keep B1 documented rather than marking the suite green. Native review may assess the current candidate while the blocker remains recorded; do not close T2 or proceed to T3's green-suite claim until B1 is resolved or explicitly waived.
