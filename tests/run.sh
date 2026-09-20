@@ -4,6 +4,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 # Offline vendor for kepano/obsidian-skills when vault-canonical-store is enabled in tests.
 export AI_SPECS_VENDOR_FIXTURE_ROOT="${AI_SPECS_VENDOR_FIXTURE_ROOT:-$ROOT/tests/fixtures/kepano-obsidian-skills}"
+# The sync binding path acquires the gate binary, so the suite must stay
+# network-hermetic. Tests that need acquisition pin it explicitly.
+export AI_SPECS_GATE_OFFLINE=1
 bash "$ROOT/tests/test_vault_fs_mcp.sh"
 if command -v go >/dev/null 2>&1; then
     echo "run.sh: go found — running Go gate tests (go test ./catalog/recipes/worktree-flow/gate/...)"

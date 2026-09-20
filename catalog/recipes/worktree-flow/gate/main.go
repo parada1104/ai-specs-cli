@@ -65,7 +65,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ledgerCheckpoint := fs.String("checkpoint", "", "ledger checkpoint: work-start|apply-start|pr-review|pre-merge|archive-close")
 	ledgerMode := fs.String("ledger-mode", "", "ledger mode: always|ask|warn (default: resolve from env/config/hint, then warn)")
 	ledgerGateMode := fs.String("ledger-gate-mode", "", "raw stamped legacy tracker gate_mode hint (off|warn|always); used only when no --ledger-mode")
-	ledgerProjectRoot := fs.String("project-root", "", "owning repository path for ledger identity (default cwd)")
+	ledgerProjectRoot := fs.String("project-root", "", "owning repository path for ledger identity and the binding witness (default cwd)")
 	ledgerWitness := fs.String("witness", "", "override the ledger witness path")
 	ledgerStore := fs.String("store", "", "override the ledger store path")
 	ledgerEvidence := fs.String("evidence", "", "path to a JSON evidence file (remote/code/git sides)")
@@ -73,6 +73,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ledgerWrite := fs.String("write", "", "JSON machine write to apply (open|bind|link|close|exempt), then re-grade")
 	ledgerReconcile := fs.String("reconcile", "", "path to an MCP-acquired observation JSON; adds a reconcile sidecar (exit code unchanged)")
 	ledgerReconcileEvent := fs.String("reconcile-event", "", "the event the caller asks to compare (recipe-declared expectations for it)")
+	// Binding resolution is a separate command surface: it reads the catalog, not
+	// the worktree, and its flags never touch the gate or ledger state.
+	resolveBindingsCmd := fs.Bool("resolve-bindings", false, "resolve capability-to-recipe bindings and grade capability conflicts (JSON on stdout, exit 0/2)")
+	bindingsCatalogDir := fs.String("catalog-dir", "", "catalog recipes directory for --resolve-bindings")
+	bindingsRecipeIDs := stringListFlag{}
+	fs.Var(&bindingsRecipeIDs, "recipe", "enabled recipe id in order (repeatable, for --resolve-bindings)")
+	bindingsJSON := fs.String("bindings", "[]", "explicit manifest [[bindings]] tables as a JSON array of {capability, recipe}")
+	bindingsWriteWitness := fs.Bool("write-witness", true, "persist the durable tracker binding witness after --resolve-bindings (best-effort)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -132,6 +140,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			write:          *ledgerWrite,
 			reconcile:      *ledgerReconcile,
 			reconcileEvent: *ledgerReconcileEvent,
+		}, stdout, stderr)
+	case *resolveBindingsCmd:
+		return runResolveBindings(bindingsOptions{
+			catalogDir:   *bindingsCatalogDir,
+			recipeIDs:    bindingsRecipeIDs.values,
+			bindings:     *bindingsJSON,
+			projectRoot:  *ledgerProjectRoot,
+			writeWitness: *bindingsWriteWitness,
 		}, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)

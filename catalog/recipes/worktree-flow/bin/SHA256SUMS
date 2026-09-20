@@ -21,6 +21,12 @@
 # published assets; the CI release workflow diffs its generated SHA256SUMS
 # against this file and fails the release on any mismatch.
 #
+# Regenerated for the go-binding-witness strangler slice (the same four-arch asset
+# gains the Go-owned `--resolve-bindings` capability binding/conflict grading and
+# the Go-written durable tracker witness; no new asset, no second trust root), with
+# the canonical go1.24.13 toolchain via scripts/build-gate.sh && (cd dist && shasum
+# -a 256 worktree-gate-* | grep -v current).
+#
 # Regenerated after trello-ledger-integration (the same four-arch asset gains the
 # `--write open|link|close|exempt` verb and the bounded store lock; no new asset, no
 # second trust root) and again after ledger-remote-reconciliation (the same
@@ -37,7 +43,7 @@
 # asset gains the provider-neutral Worktree domain port, current-tip-bound PR evidence,
 # and deterministic cleanup coverage; no new asset, no second trust root), with the
 # canonical go1.24.13 toolchain and the same command above.
-f6af08edaac36238f619d2f380bff6f5bc5982eabaa0f499eb69d2620ac139b6  worktree-gate-darwin-amd64
-382ad6740566749bf64d8d882184e4b43aa93350db15cc1322ab33a594413cc2  worktree-gate-darwin-arm64
-6be19ba798c04a1d115b67ad00d5cfe5c38198f077fa4169f15e26394fa5f916  worktree-gate-linux-amd64
-aae01d913667ab02cf208f5169819e27fe09440d68ddf50784fd8edacb7f31e8  worktree-gate-linux-arm64
+ab0c50d4546379ef0f512c96d58865613c1d5f642c4608f955c8efe950587c06  worktree-gate-darwin-amd64
+9dc9afa418bc9c2d92794a1a7d6a7f2b9d73aca8ca40ca20afc8bebe62ae7104  worktree-gate-darwin-arm64
+7c7e3a8a5a3db3db68c9f6d31745b3c1eb51517a822f516a544dfa58d4438135  worktree-gate-linux-amd64
+c648d6fdde2783fec51ec6c3176ca92581e224bcd217dd5b4f98c4bc3fd65657  worktree-gate-linux-arm64

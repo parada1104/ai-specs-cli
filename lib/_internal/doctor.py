@@ -504,7 +504,10 @@ class Doctor:
             materialize.attach_brief_fragments_to_resolved(resolved, AI_SPECS_HOME)
             # Match materialize_recipes() auto-binding so doctor renders the
             # same structured brief bytes as sync, including recipe-provided
-            # capability bindings that are not explicit in the manifest.
+            # capability bindings that are not explicit in the manifest. The
+            # bridge resolves through the Go authority and is read-only unless
+            # asked to write, so this call passes no project root and no write
+            # opt-in: doctor must never touch the durable witness.
             enabled_ids = list(resolved.get("enabled") or [])
             if enabled_ids:
                 catalog_dir = AI_SPECS_HOME / "catalog" / "recipes"
@@ -777,26 +780,13 @@ class Doctor:
 
         ``WORKTREE_GATE_BIN`` is the debugging/test pin; the version-keyed cache
         candidate is accepted only with its ``.verified`` receipt, matching the
-        checkpoint hosts. An unverified or absent binary is infrastructure.
+        checkpoint hosts. An unverified or absent binary is infrastructure. The
+        resolution order lives once, in ``gate_binary.resolve_verified_binary``.
         """
-        override = os.environ.get("WORKTREE_GATE_BIN", "")
-        if override:
-            candidate = Path(override)
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return candidate
-            return None
         gb = self._load_gate_binary()
         if gb is None:
             return None
-        try:
-            goos, goarch = gb.detect_platform()
-            candidate = gb.cache_bin_path(AI_SPECS_HOME, goos=goos, goarch=goarch)
-        except Exception:
-            return None
-        receipt = candidate.with_name(candidate.name + ".verified")
-        if candidate.is_file() and os.access(candidate, os.X_OK) and receipt.is_file():
-            return candidate
-        return None
+        return gb.resolve_verified_binary(AI_SPECS_HOME)
 
     def _tracker_ledger_guidance(self, reason: str, severity: Severity) -> str:
         """Presentation-only action hint keyed off the Go reason (never a grade)."""
