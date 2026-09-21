@@ -1,0 +1,71 @@
+{
+  "schema": "gentle-ai.judgment-day.ledger/v1",
+  "target_identity": "sha256:888321be946b13ad1cd7c45655e519cc977f049970e9008e7bb0ee0a82271671",
+  "round": 1,
+  "judges": ["jd-judge-a", "jd-judge-b"],
+  "findings": [
+    {"id": "JD-A-001", "lens": "judgment-day", "location": "lib/_internal/recipe-materialize.py:1585-1596", "severity": "WARNING", "status_at_freeze": "open", "evidence_class": "deterministic", "evidence_claim": "subprocess.run(text=True) without encoding raises UnicodeDecodeError (ValueError) under non-UTF-8 locale for non-ASCII Go responses, escaping go_merge_config transport handling and crashing merge_config instead of one fallback warning."},
+    {"id": "JD-B-001", "lens": "judgment-day", "location": "lib/_internal/recipe-materialize.py:1564-1572", "severity": "WARNING", "status_at_freeze": "open", "evidence_class": "deterministic", "evidence_claim": "go_merge_config resolves the gate binary via _orphans_bridge_home(None) (package parents[2]) and ignores materialize_recipes' ai_specs_home/cli_home, so under non-default homes the merge bridge misses the acquired binary and warns GO_MERGE_CONFIG_BRIDGE_FALLBACK per recipe per sync; bridge tests hide it via WORKTREE_GATE_BIN."},
+    {"id": "JD-B-002", "lens": "judgment-day", "location": "lib/_internal/gate_binary.py:232-238", "severity": "WARNING", "status_at_freeze": "open", "evidence_class": "deterministic", "evidence_claim": "resolve_verified_binary accepts any executable with an existing .verified sidecar without digest re-check; a stale v0.24.0 cache binary fail-opens on the new --plan-merge-config flag (exit 0 empty stdout) causing one fallback warning per recipe per sync for projects without worktree-flow acquire."},
+    {"id": "JD-AB-001", "lens": "judgment-day", "location": "catalog/recipes/worktree-flow/gate/mergeconfig.go:281-293", "severity": "WARNING", "status_at_freeze": "open", "evidence_class": "deterministic", "evidence_claim": "pyRepr always single-quotes strings and escapes only backslash, apostrophe, \\n, \\r, \\t; Python repr() switches to double quotes when the string contains an apostrophe and emits \\xHH/\\uXXXX for other controls, so enum-error messages diverge for containers holding such strings (both judges reported; B WARNING, A SUGGESTION)."},
+    {"id": "JD-A-002", "lens": "judgment-day", "location": "catalog/recipes/worktree-flow/gate/mergeconfig.go:310-322", "severity": "SUGGESTION", "status_at_freeze": "open", "evidence_class": "deterministic", "evidence_claim": "For a declared empty array shape Go returns 'invalid shape declaration' while Python silently accepts empty and raises IndexError on non-empty; unreachable today because STRUCTURED_CONFIG_SHAPES only declares dict-topped shapes. INFO only, not in fix scope."}
+  ],
+  "authorized_fix_ids": ["JD-A-001", "JD-B-001", "JD-B-002", "JD-AB-001"],
+  "info_only_ids": ["JD-A-002"],
+  "user_authorization": "User explicitly requested fixing WARNING findings even without CRITICAL ('si no hay criticals igual vamos con los warnings').",
+  "fixes": {
+    "JD-A-001": {
+      "delta": "recipe-materialize.py go_merge_config subprocess.run now passes encoding='utf-8' + errors='replace' (locale-proof: undecodable Go bytes become U+FFFD and degrade to the JSON-parse fallback) and the transport except clause also catches UnicodeDecodeError; other bridges' text=True pattern untouched.",
+      "tests": "tests/test_merge_config_bridge.py FailOpenFallbackTests.test_unicode_decode_error_falls_back_with_one_warning (mocked UnicodeDecodeError, locale-independent) and .test_undecodable_go_output_falls_back_with_one_warning (real invalid-UTF-8 stub); RED: both errored with UnicodeDecodeError escaping run(); GREEN: one fallback warning + Python fallback each."
+    },
+    "JD-B-001": {
+      "delta": "merge_config/go_merge_config gained a keyword-only home param (default None preserves package-root resolution); go_merge_config resolves via _orphans_bridge_home(home); the production call site in materialize_recipes passes cli_home, mirroring the sibling bridges.",
+      "tests": "tests/test_merge_config_bridge.py MergeConfigHomeResolutionTests: binary placed only at <home>/cache/bin/worktree-gate/dev/<plat>/ with .verified sidecar and WORKTREE_GATE_BIN unset is used when home is passed (RED: TypeError unexpected kwarg 'home') and is NOT consulted without home; full module 43 tests OK.",
+      "note": "with-home test needs the JD-B-002 digest re-check to skip homes without a committed SHA256SUMS (load_expected_digests empty on a bare temp home), so the two fixes compose; verified together."
+    },
+    "JD-B-002": {
+      "delta": "gate_binary.py resolve_verified_binary re-checks the cache candidate's sha256 against the SHA256SUMS trust root (load_expected_digests) when the asset has a committed digest; mismatch => not-verified (None, acquire may refresh). WORKTREE_GATE_BIN authority-one override and homes without a committed digest keep their previous behavior.",
+      "tests": "tests/test_worktree_gate_dist_config.py ResolveVerifiedBinaryDigestRecheckTests: stale bytes + valid sidecar + differing committed digest are NOT resolved (RED: resolved today); matching digest still resolves; no committed digest keeps sidecar acceptance. tests.test_binding_bridge re-run OK (shares resolve_verified_binary)."
+    },
+    "JD-AB-001": {
+      "delta": "mergeconfig.go pyRepr now matches CPython repr(): double-quote wrap when the string holds an apostrophe and no double quote (single-quote default kept), backslash + active quote + \n \r \t named, other non-printables as \\xNN (<=0xFF), \\uXXXX (<=0xFFFF), \\UXXXXXXXX, printability via unicode.IsPrint.",
+      "tests": "mergeconfig_test.go TestMergeConfigEnumUsesPythonStr gains apostrophe-in-container, both-quote-kinds, \\x01/\\x7f/\\x85, \\u2028 and dict-with-apostrophe cases (RED: 6 failed under the old single-quote replacer; GREEN after the fix, go test -count=1 ./... ok); bridge parity seam case added in tests/test_merge_config_bridge.py (Go error == Python error).",
+      "build": "scripts/build-gate.sh rebuilt all four targets with canonical go1.24.13; SHA256SUMS regenerated preserving format/order; (cd dist && shasum -a 256 -c ../catalog/recipes/worktree-flow/bin/SHA256SUMS) all OK."
+    },
+    "JD-A-002": "not touched (INFO-only, outside fix scope)"
+  },
+  "round_2": {
+    "judges": ["jd-judge-a", "jd-judge-b"],
+    "findings": [
+      {
+        "id": "JD2-AB-001",
+        "lens": "judgment-day",
+        "location": "lib/_internal/gate_binary.py:244 (resolve_verified_binary digest re-check)",
+        "severity": "WARNING",
+        "status_at_freeze": "open",
+        "evidence_class": "deterministic",
+        "fix_caused_in_round": 1,
+        "confirmed_by": ["jd-judge-a", "jd-judge-b"],
+        "evidence_claim": "resolve_verified_binary now calls load_expected_digests(home) unguarded; load_expected_digests does sums_path.read_text(encoding='utf-8') which raises OSError/UnicodeDecodeError on unreadable or non-UTF-8 SHA256SUMS, propagating out of a resolver whose docstring promises 'Never raises and never warns'. ai-specs doctor calls resolve_verified_binary unguarded (lib/_internal/doctor.py _tracker_ledger_binary) and crashes instead of degrading to its designed 'no verified worktree-gate binary' ERROR check."
+      },
+      {
+        "id": "JD2-A-002",
+        "lens": "judgment-day",
+        "location": "catalog/recipes/worktree-flow/gate/mergeconfig.go (gate_scope TrimSpace divergence)",
+        "severity": "SUGGESTION",
+        "status_at_freeze": "open",
+        "evidence_class": "deterministic",
+        "evidence_claim": "Go and Python diverge on \\x1c-\\x1f whitespace handling in gate_scope TrimSpace; INFO-only per user instruction, recorded here, not in fix scope."
+      }
+    ],
+    "authorized_fix_ids": ["JD2-AB-001"],
+    "info_only_ids": ["JD2-A-002"],
+    "fixes": {
+      "JD2-AB-001": {
+        "delta": "gate_binary.py resolve_verified_binary wraps the digest re-check's load_expected_digests(home) call in try/except (OSError, UnicodeDecodeError) and fails closed (returns None) on an unreadable or undecodable SHA256SUMS trust root; docstring updated to state that an unreadable trust root fails closed. load_expected_digests' own contract for other callers unchanged; doctor.py untouched (it degrades transitively once the resolver never raises).",
+        "tests": "tests/test_worktree_gate_dist_config.py ResolveVerifiedBinaryDigestRecheckTests.test_unreadable_sums_degrades_to_not_verified (SHA256SUMS chmod 0o000) and .test_non_utf8_sums_degrades_to_not_verified (invalid UTF-8 bytes): RED — 2 errors (PermissionError and UnicodeDecodeError escaping resolve_verified_binary); GREEN — 5/5 focused, 21/21 module OK. Readable-digest behavior preserved by existing matching-digest and no-digest tests."
+      },
+      "JD2-A-002": "not touched (INFO-only per user instruction)"
+    }
+  }
+}

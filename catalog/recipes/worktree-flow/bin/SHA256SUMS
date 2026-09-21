@@ -64,7 +64,15 @@
 # tag-conflict grading; no new asset, no second trust root), with the canonical
 # go1.24.13 toolchain via:
 #   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
-a17c6d48c98d0e9121480fd3bade24bcd2c92c9d0da99fd019ee93a57f3357a8  worktree-gate-darwin-amd64
-e2fa239b523b43f1c1b4f6351441f881d1fa9918608c9b2f4993ba23afca2020  worktree-gate-darwin-arm64
-387e94ba873e01164a265b347ebed0bbf1ac2075e866a74817bbfa328c7ff37c  worktree-gate-linux-amd64
-888d34d51859180166ad112a8f77f92f99cca0d54327c599fe7573adf23dbe04  worktree-gate-linux-arm64
+# Regenerated for the go-merge-config strangler slice (the same four-arch asset
+# gains the Go-owned `--plan-merge-config` recipe merge_config decision; no new
+# asset, no second trust root), with the canonical go1.24.13 toolchain via:
+#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
+# Regenerated for the merge-config CPython repr parity fix (the same four-arch
+# asset's pyRepr now matches CPython repr() quote selection and control-char
+# escapes; no new asset, no second trust root), with the canonical go1.24.13
+# toolchain via the same command above.
+e04838b1b4c493cf65b8651dfd57fb6eba7a868bc7e4edbb666770d2d138ea87  worktree-gate-darwin-amd64
+6810c5a5230bb8563e9c6c51921d0ce4aa4d35289dfa857bfb65e0edb11eecab  worktree-gate-darwin-arm64
+a7f57434b4467a53a860363a582c0ad492eb895a0f9f350c96a2d565de09f40f  worktree-gate-linux-amd64
+7bce66bf52dc077ec7befd57bc996a09945c48b5626638cddc8686a7a9521c5f  worktree-gate-linux-arm64
