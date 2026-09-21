@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import io
 import json
@@ -104,6 +105,35 @@ class RecipeMaterializeTests(unittest.TestCase):
         skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill")
         self.assertTrue(skill_dir.is_dir())
         self.assertTrue((skill_dir / "SKILL.md").is_file())
+
+    def test_tag_conflicts_stay_advisory_and_keep_todays_text(self):
+        # The bridge only changes who grades tag conflicts; the call site keeps
+        # its warning text and never lets an advisory conflict change the exit
+        # code. Pin both by grading a warning and a fatal through materialize.
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        tag_conflict = self.mod._load_conflict().TagConflict
+        conflicts = [
+            tag_conflict(tag="vcs", recipes={"b", "a"}, severity="warning"),
+            tag_conflict(tag="flow", recipes={"a", "b"}, severity="fatal"),
+        ]
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured), mock.patch.object(
+            self.mod, "check_tag_conflicts", return_value=conflicts
+        ):
+            code = self.mod.materialize_recipes(root, _home())
+        self.assertEqual(code, 0)
+        stderr = captured.getvalue()
+        self.assertIn(
+            "tag overlap: recipes a, b share tag 'vcs' (same capability category).",
+            stderr,
+        )
+        self.assertIn(
+            "tag conflict: recipes a, b share tag 'flow' and declare an explicit "
+            "conflicts_with. Review whether both should be enabled.",
+            stderr,
+        )
 
     def test_materializes_command(self):
         root = self._make_project(

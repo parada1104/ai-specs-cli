@@ -59,7 +59,12 @@
 # no new asset, no second trust root), with the canonical go1.24.13 toolchain
 # via:
 #   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
-1c7a0b09ac8bee6925cd6116ff27c5aa6d1ceb4da71d7e5492da6dbc7c790d4b  worktree-gate-darwin-amd64
-ab57df0bc1fe2f0b096bf3a4eba4f33d2dc3610e9b60b22fdda4142e03beaea2  worktree-gate-darwin-arm64
-381517845d1b57808990927e139d15586c80ac59ba1397a876d199704cafb3d8  worktree-gate-linux-amd64
-b36c30d580190ad5d3f7ccfa3a2b7b19dcb3f23918268acb15e0c2478ba573d6  worktree-gate-linux-arm64
+# Regenerated for the materialization-sync-tag-conflicts strangler slice (the same
+# four-arch asset gains the Go-owned `--resolve-tag-conflicts` advisory recipe
+# tag-conflict grading; no new asset, no second trust root), with the canonical
+# go1.24.13 toolchain via:
+#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
+a17c6d48c98d0e9121480fd3bade24bcd2c92c9d0da99fd019ee93a57f3357a8  worktree-gate-darwin-amd64
+e2fa239b523b43f1c1b4f6351441f881d1fa9918608c9b2f4993ba23afca2020  worktree-gate-darwin-arm64
+387e94ba873e01164a265b347ebed0bbf1ac2075e866a74817bbfa328c7ff37c  worktree-gate-linux-amd64
+888d34d51859180166ad112a8f77f92f99cca0d54327c599fe7573adf23dbe04  worktree-gate-linux-arm64
