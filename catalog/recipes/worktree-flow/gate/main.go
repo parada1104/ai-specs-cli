@@ -76,11 +76,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// Binding resolution is a separate command surface: it reads the catalog, not
 	// the worktree, and its flags never touch the gate or ledger state.
 	resolveBindingsCmd := fs.Bool("resolve-bindings", false, "resolve capability-to-recipe bindings and grade capability conflicts (JSON on stdout, exit 0/2)")
-	bindingsCatalogDir := fs.String("catalog-dir", "", "catalog recipes directory for --resolve-bindings")
+	bindingsCatalogDir := fs.String("catalog-dir", "", "catalog recipes directory for --resolve-bindings and --resolve-tag-conflicts")
 	bindingsRecipeIDs := stringListFlag{}
-	fs.Var(&bindingsRecipeIDs, "recipe", "enabled recipe id in order (repeatable, for --resolve-bindings)")
+	fs.Var(&bindingsRecipeIDs, "recipe", "enabled recipe id in order (repeatable, for --resolve-bindings and --resolve-tag-conflicts)")
 	bindingsJSON := fs.String("bindings", "[]", "explicit manifest [[bindings]] tables as a JSON array of {capability, recipe}")
 	bindingsWriteWitness := fs.Bool("write-witness", true, "persist the durable tracker binding witness after --resolve-bindings (best-effort)")
+	// Tag-conflict grading is another catalog query: it reads the enabled recipes'
+	// [recipe] metadata and emits one JSON envelope. Advisory only, so it never
+	// changes the caller's materialization exit behavior.
+	resolveTagConflictsCmd := fs.Bool("resolve-tag-conflicts", false, "grade advisory tag conflicts across enabled recipes (JSON on stdout, exit 0/2)")
 	// Orphan planning is another separate command surface: pure set arithmetic
 	// over a JSON envelope on stdin; it never reads the worktree or the catalog.
 	planOrphansCmd := fs.Bool("plan-orphans", false, "plan materialization orphans from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
@@ -158,6 +162,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			bindings:     *bindingsJSON,
 			projectRoot:  *ledgerProjectRoot,
 			writeWitness: *bindingsWriteWitness,
+		}, stdout, stderr)
+	case *resolveTagConflictsCmd:
+		return runResolveTagConflicts(tagConflictOptions{
+			catalogDir: *bindingsCatalogDir,
+			recipeIDs:  bindingsRecipeIDs.values,
 		}, stdout, stderr)
 	case *planOrphansCmd:
 		return runPlanOrphans(stdin, stdout, stderr)

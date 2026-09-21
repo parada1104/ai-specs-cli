@@ -74,18 +74,115 @@ func loadRecipeCapabilities(catalogDir string, recipeIDs []string) (map[string][
 	return runRecipeTomlParser(catalogDir, readable)
 }
 
-// runRecipeTomlParser runs the standard TOML parser under the same bounded
-// execution as the manifest seam: one deadline, capped stdout and stderr, and
-// WaitDelay bounding the output-pipe wait. The shared constants and helpers in
-// ledger_reconcile.go are reused, so acquisition safety is not re-decided here.
+// recipeTagMetadataReader is the acquisition boundary for the tag-conflict
+// grader. It reads only the top-level [recipe] metadata that grader needs — the
+// recipe id (never the catalog directory name), the declared tags, and the
+// conflicts_with declarations — and prints them as one JSON object keyed by the
+// requested recipe id. It selects nothing: grouping and severity stay in Go.
+//
+// A recipe the parser cannot deserialize, whose [recipe] table is absent, whose
+// id is not a non-empty string, or whose tags/conflicts_with are not arrays of
+// non-empty strings is omitted: the Python loader raises for the same shapes, so
+// the tag grader never sees that recipe.
+const recipeTagMetadataReader = `import json, os, sys, tomllib
+catalog = sys.argv[1]
+out = {}
+for rid in sys.argv[2:]:
+    try:
+        with open(os.path.join(catalog, rid, "recipe.toml"), "rb") as handle:
+            data = tomllib.load(handle)
+    except Exception:
+        continue
+    table = data.get("recipe")
+    if not isinstance(table, dict):
+        continue
+    recipe_id = table.get("id")
+    if not isinstance(recipe_id, str) or not recipe_id.strip():
+        continue
+    tags = table.get("tags", [])
+    if not isinstance(tags, list) or any(not isinstance(t, str) or not t.strip() for t in tags):
+        continue
+    conflicts = table.get("conflicts_with", [])
+    if not isinstance(conflicts, list) or any(not isinstance(c, str) or not c.strip() for c in conflicts):
+        continue
+    out[rid] = {"id": recipe_id.strip(), "tags": tags, "conflicts_with": conflicts}
+print(json.dumps(out))
+`
+
+// runRecipeTomlParser runs the capability reader under the bounded TOML
+// execution and deserializes its JSON object.
+func runRecipeTomlParser(catalogDir string, recipeIDs []string) (map[string][]string, error) {
+	raw, err := runRecipeTomlReader(catalogDir, recipeIDs, recipeTomlReader)
+	if err != nil {
+		return nil, err
+	}
+	var caps map[string][]string
+	if err := json.Unmarshal(raw, &caps); err != nil {
+		return nil, fmt.Errorf("deserialized capabilities: %w", err)
+	}
+	return caps, nil
+}
+
+// loadRecipeTagMetadata acquires the top-level [recipe] id, tags and
+// conflicts_with of every enabled recipe in one bounded parser run, preserving
+// the enabled order so first-seen tag ordering is reproducible downstream. A
+// recipe whose recipe.toml is missing or is not a plain file is never handed to
+// the parser and is absent from the result, matching the Python wrapper that
+// skips a recipe without a readable recipe.toml.
+func loadRecipeTagMetadata(catalogDir string, recipeIDs []string) ([]recipeTagMetadata, error) {
+	readable := make([]string, 0, len(recipeIDs))
+	seen := make(map[string]bool, len(recipeIDs))
+	for _, rid := range recipeIDs {
+		if seen[rid] {
+			continue
+		}
+		seen[rid] = true
+		if regularFile(filepath.Join(catalogDir, rid, "recipe.toml")) == nil {
+			readable = append(readable, rid)
+		}
+	}
+	if len(readable) == 0 {
+		return []recipeTagMetadata{}, nil
+	}
+	byRecipe, err := runRecipeTagMetadataParser(catalogDir, readable)
+	if err != nil {
+		return nil, err
+	}
+	ordered := make([]recipeTagMetadata, 0, len(readable))
+	for _, rid := range readable {
+		if metadata, ok := byRecipe[rid]; ok {
+			ordered = append(ordered, metadata)
+		}
+	}
+	return ordered, nil
+}
+
+// runRecipeTagMetadataParser runs the [recipe] metadata reader under the bounded
+// TOML execution and deserializes its JSON object.
+func runRecipeTagMetadataParser(catalogDir string, recipeIDs []string) (map[string]recipeTagMetadata, error) {
+	raw, err := runRecipeTomlReader(catalogDir, recipeIDs, recipeTagMetadataReader)
+	if err != nil {
+		return nil, err
+	}
+	var metadata map[string]recipeTagMetadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return nil, fmt.Errorf("deserialized tag metadata: %w", err)
+	}
+	return metadata, nil
+}
+
+// runRecipeTomlReader executes one stdlib-TOML recipe reader under the same
+// bounded execution as the manifest seam: one deadline, capped stdout and
+// stderr, and WaitDelay bounding the output-pipe wait. The shared constants and
+// helpers in ledger_reconcile.go are reused, so acquisition safety is not
+// re-decided here.
 //
 // The interpreter is resolved with the catalog dir as the protected root and run
 // isolated (-I -B): neither an ambient nor a catalog-controlled module can shadow
 // the stdlib imports the reader performs, and the catalog must never select the
-// code that parses it. The runner duplicates the manifest runner only because the
-// existing one hardcodes its reader; generalizing it would mean editing frozen
-// behavior outside this slice.
-func runRecipeTomlParser(catalogDir string, recipeIDs []string) (map[string][]string, error) {
+// code that parses it. Every recipe.toml reader shares this runner so adding a
+// reader cannot fork acquisition behavior.
+func runRecipeTomlReader(catalogDir string, recipeIDs []string, reader string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), manifestParseTimeout)
 	defer cancel()
 
@@ -95,7 +192,7 @@ func runRecipeTomlParser(catalogDir string, recipeIDs []string) (map[string][]st
 	}
 	stdout := &cappedBuffer{max: acquisitionLimit}
 	stderr := &cappedBuffer{max: manifestErrorLimit}
-	args := append([]string{"-I", "-B", "-c", recipeTomlReader, catalogDir}, recipeIDs...)
+	args := append([]string{"-I", "-B", "-c", reader, catalogDir}, recipeIDs...)
 	cmd := exec.CommandContext(ctx, interpreter, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -111,9 +208,5 @@ func runRecipeTomlParser(catalogDir string, recipeIDs []string) (map[string][]st
 	if stdout.truncated {
 		return nil, fmt.Errorf("standard TOML parser returned more than %d bytes", acquisitionLimit)
 	}
-	var caps map[string][]string
-	if err := json.Unmarshal(stdout.buf.Bytes(), &caps); err != nil {
-		return nil, fmt.Errorf("deserialized capabilities: %w", err)
-	}
-	return caps, nil
+	return stdout.buf.Bytes(), nil
 }
