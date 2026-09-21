@@ -88,9 +88,24 @@ Rank 3 of the Python-to-Go strangler is closing the materialization/sync domain.
 - Impact: this blocks any claim of full-suite green. It must not be silently treated as passed, and T2/T3 cannot close on a green-suite claim while B1 is open.
 
 ## Delivery strategy
-- **Strategy**: one PR with two work-unit review slices — T1 at 601 changed lines and T2 at 496 changed lines. Each slice stays under the roughly 1000 native candidate budget; the aggregate branch is 1089 changed lines and must never be reviewed as a single candidate.
+- **Strategy**: two stacked PRs, both opened now and left unmerged (PR1 #282, PR2 #283).
+  - **PR1** — T1 commit `c024707` against `development`. PR1 is the chain base and targets `development` directly.
+  - **PR2** — T2 commit `dee435d` plus T3 evidence commit `54d2336`, initially based on PR1/T1 rather than on `development`. PR2 is a child of PR1 and is retargeted to `development` only after PR1 merges.
+- **Chained-PR size note**: the two-PR split exceeds the 400-line chained-pr guideline; the user explicitly accepted the chained-pr `size:exception` for this split. The budget constrains how work is sliced only and never justifies compressing or deleting code, tests, or docs.
+- **Native candidate budget**: PR1's reviewed candidate was 601 changed lines (approved). PR2's native base-ref is the full T1 commit `c024707fd4df7b941b854dfacae837f7529a1bb0`, giving a PR2 candidate budget of about 505 changed lines. The aggregate branch is 1089 changed lines and must never be reviewed as a single candidate.
+- **Open-without-merge**: the user accepted opening both PRs without merging while B1 (`./tests/validate.sh` does not complete) and the T2 native-review-unavailable gap remain documented. Neither gap is waived, hidden, or treated as approved.
 - **Forecast**: approximately 400–650 authored changed lines for the tag-conflict seam alone, excluding generated binaries/digests.
-- **Current progress**: T1 is committed as `c024707` (Go tag-conflict planner); T2 is committed as `dee435d` (fail-open Python bridge plus regenerated `SHA256SUMS`). T1 native review is approved and acknowledged (601 lines, 4/4 lenses). T2 functional verification and independent high-risk verification are complete (post-digest 9-test bridge suite, 84-test materialization suite). T2 native review could not start and is recorded as unavailable, not approved. Full validation is still blocked by B1 (pre-existing).
+- **Current progress**: both stacked PRs are now open and unmerged — PR1 #282 and PR2 #283. T1 is committed as `c024707` (Go tag-conflict planner); T2 is committed as `dee435d` (fail-open Python bridge plus regenerated `SHA256SUMS`); T3 evidence is committed as `54d2336`. T1 native review is approved and acknowledged (601 lines, 4/4 lenses). T2 functional verification and independent high-risk verification are complete (post-digest 9-test bridge suite, 84-test materialization suite). T2 native review could not start and is recorded as unavailable, not approved. Full validation is still blocked by B1 (pre-existing).
+
+### Chain Context
+```
+PR1 #282: T1 Go tag-conflict planner (c024707) ........ targets development
+  └── PR2 #283: T2 Python bridge (dee435d) + T3 evidence (54d2336) ... targets PR1 📍
+```
+- **PR numbers**: PR1 = #282 (https://github.com/parada1104/ai-specs-cli/pull/282), PR2 = #283 (https://github.com/parada1104/ai-specs-cli/pull/283); both open and unmerged.
+- **PR2 native base-ref**: full T1 commit `c024707fd4df7b941b854dfacae837f7529a1bb0` (candidate budget about 505 changed lines), never the aggregate 1089-line branch.
+- **Prior dependency**: PR2 cannot merge before PR1; PR2 is retargeted to `development` only after PR1 merges.
+- **Out of scope / documented gaps**: B1 (pre-existing `./tests/validate.sh` failure) and the T2 native-review-unavailable outcome stay documented and are not waived.
 
 ## Verification evidence
 - **Exploration**: `check_tag_conflicts` is advisory-only; its Python core is pure and preserves first-seen tag order. Go currently lacks top-level recipe tag/conflict acquisition.
@@ -101,4 +116,4 @@ Rank 3 of the Python-to-Go strangler is closing the materialization/sync domain.
 - **Final evidence**: pending T3.
 
 ## Next step
-T2 functional verification and the independent high-risk verification are complete, so the remaining functional gate is B1: T2/T3 cannot claim full-suite green or closure while `./tests/validate.sh` still fails on the pre-existing timeout and unrelated runtime-brief ownership failures. Native T2 review is unavailable but is not silently treated as approved, and delivery stays blocked by B1 plus ordinary PR policy. Do not close T2 or proceed to T3's green-suite claim until B1 is resolved or explicitly waived.
+PR preparation and opening are authorized: PR1 (T1 `c024707`) targets `development`, and PR2 (T2 `dee435d` plus T3 evidence `54d2336`) is opened on top of PR1 with native base-ref `c024707fd4df7b941b854dfacae837f7529a1bb0` and left unmerged alongside PR1. B1 (pre-existing `./tests/validate.sh` timeout plus unrelated runtime-brief ownership failures) and the T2 native-review-unavailable gap remain documented and are not waived, so neither PR is merged while either gap stands, and PR2 is not retargeted to `development` until PR1 merges.
