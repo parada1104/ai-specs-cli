@@ -346,8 +346,15 @@ def _load_conflict() -> Any:
 
 
 def check_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
-    mod = _load_conflict()
-    return mod.check_recipe_conflicts(catalog_dir, recipe_ids)
+    """Grade primitive conflicts through the Go authority.
+
+    ``worktree-gate --resolve-primitive-conflicts`` is the primary authority;
+    the retained Python grader runs only when the bridge cannot.
+    """
+    conflicts = go_recipe_conflicts(catalog_dir, recipe_ids)
+    if conflicts is not None:
+        return conflicts
+    return _python_check_recipe_conflicts(catalog_dir, recipe_ids)
 
 
 def check_capability_conflicts(
@@ -510,6 +517,106 @@ def _python_check_tag_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> lis
             continue
         recipes.append(mod.load_recipe_toml(recipe_toml))
     return mod.check_tag_conflicts(recipes)
+
+
+# --- Primitive conflict grading (Go authority, temporary Python fallback) -----
+#
+# The Go gate binary (``--resolve-primitive-conflicts``) owns the primitive
+# conflict DECISION: registering each enabled recipe's skill, command, and MCP
+# primitive ids in flag order and grading every collision fatal. Python keeps
+# the sync blocking messages at the call site. The Python decision survives as
+# a TEMPORARY fail-open fallback (``GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK``)
+# announced by one warning line whenever the bridge cannot run.
+GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK = "GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK"
+GO_PRIMITIVE_CONFLICTS_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_primitive_conflicts_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded primitive-conflict authority."""
+    warn(
+        f"{GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python primitive-conflict authority"
+    )
+
+
+def go_recipe_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any] | None:
+    """Run ``worktree-gate --resolve-primitive-conflicts`` and return its conflicts, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    the output was not JSON, or it was not the documented envelope. The caller
+    then falls back to the temporary Python authority. This function emits the
+    single ``GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK`` warning naming the reason, so a
+    degraded run is never silent and never needs a second warning.
+    """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_bridge_home(catalog_dir))
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_primitive_conflicts_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_primitive_conflicts_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    command = [
+        str(binary),
+        "--resolve-primitive-conflicts",
+        "--catalog-dir",
+        str(catalog_dir),
+    ]
+    for rid in recipe_ids:
+        command += ["--recipe", str(rid)]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            # Locale-proof decode: undecodable Go bytes become U+FFFD (never an
+            # exception), so the JSON parse below degrades to the one fallback.
+            encoding="utf-8",
+            errors="replace",
+            timeout=GO_PRIMITIVE_CONFLICTS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn_primitive_conflicts_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_primitive_conflicts_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_primitive_conflicts_bridge_fallback(
+            f"worktree-gate output was not JSON ({exc})"
+        )
+        return None
+    if (
+        not isinstance(envelope, dict)
+        or not isinstance(envelope.get("conflicts"), list)
+        or not all(isinstance(item, dict) for item in envelope["conflicts"])
+    ):
+        _warn_primitive_conflicts_bridge_fallback(
+            "worktree-gate output did not match the primitive-conflict envelope"
+        )
+        return None
+    return _conflicts_from_envelope(envelope)
+
+
+def _python_check_recipe_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
+    """Detect primitive ID collisions (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK``; ``worktree-gate
+    --resolve-primitive-conflicts`` is the primary authority.
+    """
+    mod = _load_conflict()
+    return mod.check_recipe_conflicts(catalog_dir, recipe_ids)
 
 
 # --- Legacy version key handling ---------------------------------------------

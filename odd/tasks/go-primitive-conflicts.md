@@ -42,7 +42,7 @@ in Go per AGENTS.md; Python keeps a thin fail-open bridge.
 ## Tasks
 
 - [ ] WU1: Go conflict decision core + flag + tests + digests
-- [ ] WU2: Python fail-open bridge + parity tests
+- [x] WU2: Python fail-open bridge + parity tests
 - [ ] Full validation (`./tests/validate.sh`)
 
 ## Evidence
@@ -126,3 +126,73 @@ slice, worth pinning in WU2 parity tests.
   `feat/go-primitive-conflicts` from development d6c820d (user-selected
   destination via gate prompt).
 - PRs against `development` via gh; no direct pushes to development.
+
+### WU2 — Python fail-open bridge + parity tests
+
+**Built**
+
+- `lib/_internal/recipe-materialize.py`: new primitive-conflict bridge section
+  after the tag-conflict section — `GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK` /
+  `GO_PRIMITIVE_CONFLICTS_BRIDGE_TIMEOUT_SECONDS` (60) constants,
+  `_warn_primitive_conflicts_bridge_fallback` (one greppable warning line),
+  `go_recipe_conflicts` (mirrors `go_tag_conflicts`: `_load_gate_binary()` +
+  `resolve_verified_binary(_bridge_home(catalog_dir))`, flag order
+  `--resolve-primitive-conflicts --catalog-dir <dir> [--recipe <id>]...`,
+  locale-proof `encoding="utf-8", errors="replace"` decode, exactly one
+  fallback warning per failure reason, envelope validation accepting an empty
+  list as a clean result) and `_python_check_recipe_conflicts` (TEMPORARY
+  authority docstring).
+- `check_conflicts` (line 348) is now the Go-primary wrapper: Go envelope via
+  `_conflicts_from_envelope` when present, else the Python authority. No other
+  call sites changed (sole production caller remains the sync materialization
+  flow, now line 2515).
+
+**Tests** — `tests/test_recipe_conflict_bridge.py` (13 tests):
+- Go authority (stub binary, no skip): Go grades and Python authority is never
+  reached (mocked to assert); argv flag/order contract; empty envelope is a
+  valid clean result without warning or fallback.
+- Parity (real `dist/worktree-gate-current`, loud skip without it): fixture
+  catalog skill/command/mcp conflicts — Python and Go agree on shape, recipe
+  NAMES, sorting, and skill→command→mcp order; clean catalog returns empty
+  from Go; invalid TOML → exit 2 → fallback → the unchanged Python parse error
+  propagates; missing recipe dir → exit 2 → fallback →
+  `RecipeValidationError` (the exact pre-bridge raise).
+- Fail-open fallback (no usable binary): missing binary / nonzero exit /
+  non-JSON / malformed envelope each produce exactly ONE
+  `GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK` warning and still return the Python
+  result; envelope item without `type` defaults to `capability` via
+  `_conflicts_from_envelope`; source marker pin (TEMPORARY docstring).
+
+**TDD evidence**
+
+- RED: `python3 -m unittest tests.test_recipe_conflict_bridge` → 12 tests,
+  10 errors + 2 failures (bridge did not exist: `check_conflicts` went
+  straight to the Python module; `GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK` and
+  `_python_check_recipe_conflicts` undefined). Observed before implementation.
+- GREEN: same command → 13 tests OK (added a missing-recipe-dir exit-2 case
+  while triangulating, see deviation below). Real Go binary ran the parity
+  and exit-2 tests (no skips).
+- Focused run: `python3 -m unittest tests.test_recipe_conflict_bridge
+  tests.test_recipe_conflicts tests.test_tag_conflict_bridge` → 41 tests,
+  all OK, 0 skips.
+
+**Deviation from the spec (small, verified)**
+
+The spec's invalid-recipe.toml bullet expected `RecipeValidationError` from
+the fallback. The Python authority raises a raw `tomllib.TOMLDecodeError` for
+a TOML *parse* failure; `RecipeValidationError` is for missing files and
+schema errors (`recipe_schema.load_recipe_toml`). Kept the invalid-TOML test
+pinning the unchanged parse error, and added a missing-recipe-dir test that
+pins `RecipeValidationError` exactly — both are Go exit-2 boundaries, so the
+WU1 pin (Go lenient grading never masks a Python raise) holds either way.
+`tests/test_recipe_conflicts.py` needed no changes: it exercises
+`recipe-conflicts.py` directly and asserts nothing about the old
+`check_conflicts` wiring.
+
+**Scope confirmation**
+
+- Only `lib/_internal/recipe-materialize.py` (+109/-2) and new
+  `tests/test_recipe_conflict_bridge.py` changed; the Go gate module,
+  `dist/`, and digests are untouched from WU1.
+- `check_conflicts` at the sync call site keeps byte-identical fatal messages
+  (the `Conflict` dataclass is reused via `_conflicts_from_envelope`).
