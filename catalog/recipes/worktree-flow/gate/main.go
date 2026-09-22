@@ -85,6 +85,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// [recipe] metadata and emits one JSON envelope. Advisory only, so it never
 	// changes the caller's materialization exit behavior.
 	resolveTagConflictsCmd := fs.Bool("resolve-tag-conflicts", false, "grade advisory tag conflicts across enabled recipes (JSON on stdout, exit 0/2)")
+	resolvePrimitiveConflictsCmd := fs.Bool("resolve-primitive-conflicts", false, "grade recipe primitive (skill/command/mcp) conflicts across enabled recipes (JSON on stdout, exit 0/2)")
 	// Orphan planning is another separate command surface: pure set arithmetic
 	// over a JSON envelope on stdin; it never reads the worktree or the catalog.
 	planOrphansCmd := fs.Bool("plan-orphans", false, "plan materialization orphans from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
@@ -169,6 +170,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}, stdout, stderr)
 	case *resolveTagConflictsCmd:
 		return runResolveTagConflicts(tagConflictOptions{
+			catalogDir: *bindingsCatalogDir,
+			recipeIDs:  bindingsRecipeIDs.values,
+		}, stdout, stderr)
+	case *resolvePrimitiveConflictsCmd:
+		return runResolvePrimitiveConflicts(primitiveConflictOptions{
 			catalogDir: *bindingsCatalogDir,
 			recipeIDs:  bindingsRecipeIDs.values,
 		}, stdout, stderr)

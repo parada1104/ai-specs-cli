@@ -72,7 +72,13 @@
 # asset's pyRepr now matches CPython repr() quote selection and control-char
 # escapes; no new asset, no second trust root), with the canonical go1.24.13
 # toolchain via the same command above.
-e04838b1b4c493cf65b8651dfd57fb6eba7a868bc7e4edbb666770d2d138ea87  worktree-gate-darwin-amd64
-6810c5a5230bb8563e9c6c51921d0ce4aa4d35289dfa857bfb65e0edb11eecab  worktree-gate-darwin-arm64
-a7f57434b4467a53a860363a582c0ad492eb895a0f9f350c96a2d565de09f40f  worktree-gate-linux-amd64
-7bce66bf52dc077ec7befd57bc996a09945c48b5626638cddc8686a7a9521c5f  worktree-gate-linux-arm64
+#
+# Regenerated for the go-primitive-conflicts strangler slice (the same four-arch
+# asset gains the Go-owned `--resolve-primitive-conflicts` recipe
+# skill/command/mcp conflict grading; no new asset, no second trust root), with
+# the canonical go1.24.13 toolchain via:
+#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
+a41edf5c1f13f0c53e3c600e81781dc887f9348c08cf26494601fd2c3b35c074  worktree-gate-darwin-amd64
+a9eb1641c83f21275adbb13d8adc7c420b68ddb78484f65587a08ffb3607f269  worktree-gate-darwin-arm64
+f29d3161dd141954c38f0f4b2594a95aa4c92e702ff2cb9e5baa0fec667a6fce  worktree-gate-linux-amd64
+6ff57c9ece82b24088a3c26d17fdd9815af709308edc76a2610fe53b5e8949b1  worktree-gate-linux-arm64
