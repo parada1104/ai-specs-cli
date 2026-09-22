@@ -410,6 +410,91 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
             self.assertIn("is not executable", proc.stderr)
             self.assertIn("refusing", proc.stderr)
 
+class ResolveVerifiedBinaryDigestRecheckTests(unittest.TestCase):
+    """A `.verified` sidecar alone is not evidence: the cache bytes must still
+    match the committed SHA256SUMS trust root.
+
+    The sidecar records the acquisition verdict at acquisition time; it says
+    nothing about bytes replaced afterwards (a stale release left in a reused
+    home fail-opens on new flags, e.g. exits 0 with empty stdout for
+    ``--plan-merge-config``). A mismatched cache binary resolves as not-verified
+    so ``acquire`` refreshes it; the WORKTREE_GATE_BIN override and homes
+    without a committed digest keep their current behavior.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.gb = load_module(
+            ROOT / "lib" / "_internal" / "gate_binary.py",
+            "gate_binary_digest_recheck",
+        )
+        pin = patch.dict(os.environ)
+        pin.start()
+        self.addCleanup(pin.stop)
+        os.environ.pop("WORKTREE_GATE_BIN", None)
+        self.home = Path(tmp.name)
+        goos, goarch = self.gb.detect_platform()
+        if not goos or not goarch:
+            self.skipTest(f"unsupported platform {goos}/{goarch}")
+        self.asset_name = f"worktree-gate-{goos}-{goarch}"
+        self.candidate = self.gb.cache_bin_path(self.home)
+        self.candidate.parent.mkdir(parents=True, exist_ok=True)
+
+    def _cache(self, payload: bytes) -> None:
+        self.candidate.write_bytes(payload)
+        self.candidate.chmod(0o755)
+        self.gb.verification_record_path(self.candidate).touch()
+
+    def _write_sums(self, digest: str) -> None:
+        sums = (
+            self.home / "catalog" / "recipes" / "worktree-flow"
+            / "bin" / "SHA256SUMS"
+        )
+        sums.parent.mkdir(parents=True, exist_ok=True)
+        sums.write_text(f"{digest}  {self.asset_name}\n", encoding="utf-8")
+
+    def test_stale_cache_binary_with_sidecar_is_not_resolved(self):
+        """Bytes differing from the trust root are not-verified despite the
+        sidecar; acquire is then free to refresh the cache."""
+        self._cache(b"#!/bin/sh\nstale-bytes\n")
+        self._write_sums("0" * 64)  # committed digest differs from the bytes
+        self.assertIsNone(self.gb.resolve_verified_binary(self.home))
+
+    def test_matching_cache_binary_with_sidecar_still_resolves(self):
+        self._cache(b"#!/bin/sh\ntrue\n")
+        self._write_sums(self.gb._sha256_of(self.candidate))
+        self.assertEqual(self.gb.resolve_verified_binary(self.home), self.candidate)
+
+    def test_no_committed_digest_keeps_sidecar_acceptance(self):
+        """Homes without a trust root keep the historical sidecar behavior."""
+        self._cache(b"#!/bin/sh\ntrue\n")
+        self.assertEqual(self.gb.resolve_verified_binary(self.home), self.candidate)
+
+    def _write_sums_bytes(self, payload: bytes) -> Path:
+        sums = (
+            self.home / "catalog" / "recipes" / "worktree-flow"
+            / "bin" / "SHA256SUMS"
+        )
+        sums.parent.mkdir(parents=True, exist_ok=True)
+        sums.write_bytes(payload)
+        return sums
+
+    def test_unreadable_sums_degrades_to_not_verified(self):
+        """An unreadable trust root must fail closed (doctor calls the resolver
+        unguarded, so a raise here would crash the doctor ledger check)."""
+        self._cache(b"#!/bin/sh\ntrue\n")
+        sums = self._write_sums_bytes(b"0000  worktree-gate-digest\n")
+        sums.chmod(0o000)
+        self.assertIsNone(self.gb.resolve_verified_binary(self.home))
+
+    def test_non_utf8_sums_degrades_to_not_verified(self):
+        """Non-UTF-8 SHA256SUMS bytes degrade to not-verified, never raise."""
+        self._cache(b"#!/bin/sh\ntrue\n")
+        self._write_sums_bytes(b"\xff\xfe\x00broken\n")
+        self.assertIsNone(self.gb.resolve_verified_binary(self.home))
+
+
 class WorktreeGateRollbackTests(unittest.TestCase):
     """Predecessor rollback rehearsal converted to the bash-rejection contract."""
 

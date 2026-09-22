@@ -95,6 +95,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// Managed-override classification is a read-only grader: it reads the
 	// destination bytes named by the stdin envelope and emits one JSON object.
 	planClassifyCmd := fs.Bool("plan-classify", false, "classify a managed-override destination from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
+	// Config merge is another pure command surface: the Python bridge acquires
+	// the already-loaded Recipe schema and sends it with the manifest config as
+	// an ordered JSON envelope; Go owns the merge decision.
+	planMergeConfigCmd := fs.Bool("plan-merge-config", false, "merge recipe config defaults with manifest overrides from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -178,6 +182,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runPlanResolvedConfig(root, stdout, stderr)
 	case *planClassifyCmd:
 		return runPlanClassify(stdin, stdout, stderr)
+	case *planMergeConfigCmd:
+		return runPlanMergeConfig(stdin, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
 	case *tokenize:

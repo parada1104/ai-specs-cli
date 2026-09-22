@@ -1469,14 +1469,199 @@ def write_tracker_witness(
     return target
 
 
-# --- Config merge -------------------------------------------------------------
-def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]:
-    """Merge recipe config schema defaults with manifest overrides.
+# --- Config merge (Go --plan-merge-config) ------------------------------------
+#
+# Go owns the merge_config DECISION: schema defaults + manifest overrides +
+# structured-config validation. Python keeps ACQUISITION of the already-loaded
+# Recipe and serializes its schema into the Go stdin envelope. The Python
+# decision below is a TEMPORARY fail-open fallback
+# (``GO_MERGE_CONFIG_BRIDGE_FALLBACK``) the strangler deletes once the bridge is
+# proven: it runs only when the binary cannot be acquired, executed, or parsed,
+# and the run is always announced by exactly one warning line.
+GO_MERGE_CONFIG_BRIDGE_FALLBACK = "GO_MERGE_CONFIG_BRIDGE_FALLBACK"
+GO_MERGE_CONFIG_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_merge_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded merge authority."""
+    warn(
+        f"{GO_MERGE_CONFIG_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python merge authority"
+    )
+
+
+def _merge_config_request_envelope(
+    recipe: Any, manifest_config: dict[str, Any]
+) -> dict[str, Any]:
+    """Serialize the already-loaded Recipe schema into the Go stdin envelope.
+
+    Ordered surfaces (schema fields, declared tables, manifest pairs) cross as
+    arrays so Go never depends on map iteration. ``has_default`` transports
+    Python's "default is not None", so defaults of false, 0 and "" apply.
+    Values cross verbatim: anything JSON cannot carry (TOML date/datetime/time,
+    nonfinite floats) fails envelope serialization and the whole merge falls
+    back once to the Python authority, preserving its typed values and
+    validation failures. No coercion happens at this boundary.
+    """
+    schema = getattr(recipe, "config_schema", None)
+    schema_fields = schema.fields if schema is not None else {}
+    schema_tables = getattr(schema, "tables", {}) or {}
+    fields = []
+    for key, field in schema_fields.items():
+        has_default = field.default is not None
+        fields.append(
+            {
+                "key": key,
+                "required": bool(field.required),
+                "has_default": has_default,
+                "default": field.default if has_default else None,
+                "enum": list(field.enum) if field.enum else [],
+            }
+        )
+    tables = [
+        {"key": key, "shape": table.shape} for key, table in schema_tables.items()
+    ]
+    manifest = [
+        {"key": key, "value": value} for key, value in manifest_config.items()
+    ]
+    return {
+        "recipe_name": recipe.name,
+        "fields": fields,
+        "tables": tables,
+        "manifest": manifest,
+    }
+
+
+def _is_merge_config_result(result: Any) -> bool:
+    """True when the decoded stdout is the documented merge-config envelope."""
+    if not isinstance(result, dict):
+        return False
+    warnings = result.get("warnings")
+    return (
+        isinstance(result.get("config"), dict)
+        and isinstance(warnings, list)
+        and all(isinstance(item, str) for item in warnings)
+        and isinstance(result.get("error"), str)
+    )
+
+
+def go_merge_config(
+    recipe: Any,
+    manifest_config: dict[str, Any],
+    *,
+    home: Path | None = None,
+) -> dict[str, Any] | None:
+    """Run ``worktree-gate --plan-merge-config`` and return its result, or None.
+
+    ``home`` is the active CLI home owning the version-keyed gate binary cache
+    (mirroring the sibling bridges); None keeps the historical package-root
+    resolution.
+
+    None means the bridge could not run: no verified binary, the request could
+    not be serialized, the process failed, or the output was not the documented
+    envelope. The caller then falls back to the temporary Python authority. This
+    function emits the single ``GO_MERGE_CONFIG_BRIDGE_FALLBACK`` warning naming
+    the reason, so a degraded run is never silent and never needs a second
+    warning.
+
+    A semantic validation error is NOT a transport failure: Go reports it in
+    the envelope's ``error`` field with exit 0, so the caller raises it without
+    falling back.
+    """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_orphans_bridge_home(home))
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_merge_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_merge_bridge_fallback("no verified worktree-gate binary")
+        return None
+    try:
+        request = json.dumps(
+            _merge_config_request_envelope(recipe, manifest_config),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        _warn_merge_bridge_fallback(
+            f"the config envelope could not be serialized "
+            f"({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        # Locale-proof decode: undecodable Go bytes become U+FFFD (never an
+        # exception), so the JSON parse below degrades to the one fallback.
+        proc = subprocess.run(
+            [str(binary), "--plan-merge-config"],
+            input=request,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=GO_MERGE_CONFIG_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
+        _warn_merge_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_merge_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        result = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_merge_bridge_fallback(f"worktree-gate output was not JSON ({exc})")
+        return None
+    if not _is_merge_config_result(result):
+        _warn_merge_bridge_fallback(
+            "worktree-gate output did not match the merge-config envelope"
+        )
+        return None
+    return result
+
+
+def merge_config(
+    recipe: Any,
+    manifest_config: dict[str, Any],
+    *,
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """Merge recipe config schema defaults with manifest overrides, Go first.
 
     Fails if any required=True field is missing in the final dict. Carries a
     declared structured (table) section such as ``reconcile`` through after
     validating it against the recipe's declarative shape. Warns for any other
     manifest key not in the schema.
+
+    The Go gate binary (``--plan-merge-config``) is the primary authority; the
+    whole response is validated before any warning is emitted or any result is
+    returned, so a degraded run never produces partial output. When the bridge
+    cannot run, ``_python_merge_config`` computes the same decision.
+    """
+    result = go_merge_config(recipe, manifest_config, home=home)
+    if result is not None:
+        for warning in result["warnings"]:
+            warn(warning)
+        if result["error"]:
+            raise RuntimeError(result["error"])
+        return result["config"]
+    return _python_merge_config(recipe, manifest_config)
+
+
+def _python_merge_config(
+    recipe: Any, manifest_config: dict[str, Any]
+) -> dict[str, Any]:
+    """Compute the config merge (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_MERGE_CONFIG_BRIDGE_FALLBACK``; ``worktree-gate --plan-merge-config``
+    is the primary authority.
     """
     result: dict[str, Any] = {}
     schema = getattr(recipe, "config_schema", None)
@@ -2267,7 +2452,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # Config merge (NEW)
         manifest_config = cfg.get("config", {})
         try:
-            merged_cfg = merge_config(recipe, manifest_config)
+            merged_cfg = merge_config(recipe, manifest_config, home=cli_home)
         except RuntimeError as exc:
             fail(str(exc))
         # Project-owned keys win over their legacy recipe alias so every stamp
