@@ -109,6 +109,111 @@ for rid in sys.argv[2:]:
 print(json.dumps(out))
 `
 
+// recipePrimitivesReader is the acquisition boundary for the primitive-conflict
+// grader. It reads only what the grader consumes: the [recipe] id and name (the
+// name owns claims in the conflict registry, never the TOML id) and the ordered
+// skill, command and mcp ids under [provides], preserving TOML array order. It
+// selects nothing: registry ownership, collision pairing and severity stay in
+// Go.
+//
+// Unlike the sibling readers, a recipe this reader cannot fully acquire is a
+// hard parser failure, not an omission: the Python authority
+// (check_recipe_conflicts) raises RecipeValidationError for a missing directory,
+// an unreadable or unparseable recipe.toml, a missing/invalid [recipe] id or
+// name, and a provides entry that is not an object with a non-empty id — so the
+// calling bridge must fall back to Python (exit 2 upstream) instead of acting on
+// a partial decision. Shapes Python swallows are swallowed here too: a
+// non-table [provides] and a non-list skills/commands/mcp value contribute no
+// claims, and ids are stripped exactly as _require_string strips them.
+const recipePrimitivesReader = `import json, os, sys, tomllib
+catalog = sys.argv[1]
+
+def fail(rid, msg):
+    sys.stderr.write("recipe %s: %s\n" % (rid, msg))
+    sys.exit(1)
+
+def require_string(entry, key, rid, where):
+    if not isinstance(entry, dict):
+        fail(rid, "%s: expected object" % where)
+    value = entry.get(key)
+    if not isinstance(value, str) or not value.strip():
+        fail(rid, "%s: missing or invalid required field '%s'" % (where, key))
+    return value.strip()
+
+out = {}
+for rid in sys.argv[2:]:
+    try:
+        with open(os.path.join(catalog, rid, "recipe.toml"), "rb") as handle:
+            data = tomllib.load(handle)
+    except Exception:
+        fail(rid, "recipe.toml not found or not parseable")
+    table = data.get("recipe")
+    if not isinstance(table, dict):
+        fail(rid, "[recipe] must be a table")
+    recipe_id = require_string(table, "id", rid, "[recipe]")
+    name = require_string(table, "name", rid, "[recipe]")
+    provides = data.get("provides", {})
+    if not isinstance(provides, dict):
+        provides = {}
+    claims = {}
+    for kind in ("skills", "commands", "mcp"):
+        raw = provides.get(kind)
+        if not isinstance(raw, list):
+            claims[kind] = []
+            continue
+        claims[kind] = [require_string(item, "id", rid, "provides.%s[%d]" % (kind, idx)) for idx, item in enumerate(raw)]
+    out[rid] = {"id": recipe_id, "name": name, "skills": claims["skills"], "commands": claims["commands"], "mcp": claims["mcp"]}
+print(json.dumps(out))
+`
+
+// recipePrimitives is the acquired primitive declaration one enabled recipe
+// makes: the TOML recipe id, the [recipe].name that owns claims in the conflict
+// registry, and the ordered skill, command and mcp ids under [provides].
+type recipePrimitives struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Skills   []string `json:"skills"`
+	Commands []string `json:"commands"`
+	MCP      []string `json:"mcp"`
+}
+
+// loadRecipePrimitives acquires every enabled recipe's primitive claims in one
+// bounded parser run, preserving the enabled order so conflict ordering is
+// reproducible downstream, and deduplicating repeated recipe ids like the
+// sibling readers. Unlike the sibling readers there is no readable-file
+// pre-check: a recipe whose recipe.toml is missing or unparseable must reach
+// the parser and fail, because the Python authority raises for the same shapes
+// and the calling bridge falls back to it on the exit 2 this loader produces.
+func loadRecipePrimitives(catalogDir string, recipeIDs []string) ([]recipePrimitives, error) {
+	seen := make(map[string]bool, len(recipeIDs))
+	unique := make([]string, 0, len(recipeIDs))
+	for _, rid := range recipeIDs {
+		if seen[rid] {
+			continue
+		}
+		seen[rid] = true
+		unique = append(unique, rid)
+	}
+	if len(unique) == 0 {
+		return []recipePrimitives{}, nil
+	}
+	raw, err := runRecipeTomlReader(catalogDir, unique, recipePrimitivesReader)
+	if err != nil {
+		return nil, err
+	}
+	var byRecipe map[string]recipePrimitives
+	if err := json.Unmarshal(raw, &byRecipe); err != nil {
+		return nil, fmt.Errorf("deserialized recipe primitives: %w", err)
+	}
+	ordered := make([]recipePrimitives, 0, len(unique))
+	for _, rid := range unique {
+		if recipe, ok := byRecipe[rid]; ok {
+			ordered = append(ordered, recipe)
+		}
+	}
+	return ordered, nil
+}
+
 // runRecipeTomlParser runs the capability reader under the bounded TOML
 // execution and deserializes its JSON object.
 func runRecipeTomlParser(catalogDir string, recipeIDs []string) (map[string][]string, error) {
