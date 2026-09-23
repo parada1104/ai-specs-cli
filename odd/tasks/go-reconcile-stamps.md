@@ -125,7 +125,7 @@ Parity assumptions (for parent review before WU2):
   - Parity: Go and Python stamp dicts agree on the fixture catalog (ordered recipes, false/zero defaults, missing fields, unreadable recipe skip).
   - Existing materialization tests stay green.
 - **Checks**: RED `python3 -m unittest tests.test_reconcile_stamps_bridge`; GREEN the same focused suite and `./tests/validate.sh`. Exact full runner is configured in `ai-specs/ai-specs.toml` as `./tests/validate.sh`. The mapper reports `./tests/run.sh` as unit-only (it also invokes Go tests). No known environmental failure is waived; classify a failure as pre-existing only with exact clean-base evidence.
-- **Status**: implemented; focused RED/GREEN + full validation observed; pending parent verification and the maintainer-directed combined WU1+WU2 native review (then one PR with WU1).
+- **Status**: implemented, parent-verified, and committed (final WU2 fix commit `5fbdd3f548627f0642d3de0f668a58da14a11697`); pending the maintainer-directed combined WU1+WU2 native review (then one PR with WU1).
 
 #### WU2 evidence (writer, worktree `.worktrees/go-reconcile-stamps`)
 
@@ -152,18 +152,18 @@ Finding (pre-existing, out of WU2 scope): `update_recipe_config` overwrites exis
 - Fix (minimal, same two edit surfaces): `tests/test_reconcile_stamps_bridge.py` gained `ReconcileStampsFallbackTests.test_invalid_utf8_output_falls_back_with_one_warning` — a `/bin/sh` stub emitting invalid UTF-8 bytes (`\377\376`) on stdout; it asserts exactly one fallback warning and that the Python authority still stamps the fixture. `lib/_internal/recipe-materialize.py` extends the run-failure handler to `except (OSError, subprocess.SubprocessError, UnicodeError)`. Also corrected the fallback-suite comment that wrongly claimed an empty `WORKTREE_GATE_BIN` override short-circuits cache lookup: the override is falsy, so resolution falls through to the temporary catalog home's cache path, which has no binary in the test. Sibling bridges were deliberately not touched (narrow scope; `go_recipe_conflicts` already decodes with `errors="replace"`); the WU1 parity-assumption 2 Go/Python invalid-shape divergence stays documented as-is, and the WU2 evidence above remains the historical pre-fix record (370-line test file → 387 after this fix).
 - RED: `python3 -m unittest tests.test_reconcile_stamps_bridge` with production untouched → `Ran 6 tests ... FAILED (errors=1)`; the new test errored with `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte` propagating out of `subprocess.run` through `go_reconcile_stamps`.
 - GREEN: same command after the handler extension → `Ran 6 tests ... OK` (all 6, including the pre-existing 5).
-- Post-fix full validation: `./tests/validate.sh` → exit 0; `Ran 2331 tests ... OK (skipped=2)` (2330 prior + 1 new test). `git diff --check` → clean.
+- Post-fix full validation: `./tests/validate.sh` → exit 0; `Ran 2331 tests ... OK (skipped=2)` (2330 prior + 1 new test). `git diff --check` → clean. Targeted independent verifier rerun: `python3 -m unittest tests.test_reconcile_stamps_bridge` → `Ran 6 tests ... OK` (6/6).
 - Post-fix combined candidate size (exact count, recomputed by the parent against the current worktree): 898 tracked added+deleted lines (885 insertions + 13 deletions; `git diff --numstat`) + 387 untracked test-file lines (`tests/test_reconcile_stamps_bridge.py`) = 1,285 changed lines vs `origin/development`; candidate scope unchanged.
 
 ## Verification evidence
 
-Recorded per task above: WU1 Go tests/build/digests (see WU1 evidence), WU2 focused bridge suite and full `./tests/validate.sh` (see WU2 evidence), and the WU2 verifier finding/fix with its RED/GREEN + post-fix full validation (see WU2 verifier finding and fix). No required verification command is failing. Parent verification of the combined WU1+WU2 candidate and a fresh `gentle_review assess` over the committed range are pending.
+Recorded per task above: WU1 Go tests/build/digests (see WU1 evidence), WU2 focused bridge suite and full `./tests/validate.sh` (see WU2 evidence), and the WU2 verifier finding/fix with its RED/GREEN + post-fix full validation (see WU2 verifier finding and fix). No required verification command is failing. Parent verification of the combined WU1+WU2 candidate is complete: final WU2 fix commit `5fbdd3f548627f0642d3de0f668a58da14a11697`, writer post-fix full validation `Ran 2331 tests ... OK (skipped=2)`, and a targeted independent verifier rerun of `python3 -m unittest tests.test_reconcile_stamps_bridge` with 6/6 OK. A fresh `gentle_review assess` over the committed range and the native review itself remain pending.
 
 ## Blockers
 
-- The first `gentle_review assess` failed closed on the then-untracked `tests/test_reconcile_stamps_bridge.py`; no lineage was started. Parent verification and a fresh assess over the committed range against `origin/development` remain pending.
+- The first `gentle_review assess` failed closed on the then-untracked `tests/test_reconcile_stamps_bridge.py`; no lineage was started. Parent verification is now complete (see Verification evidence); a fresh assess over the committed range against `origin/development` remains pending.
 - (`./tests/validate.sh` subprocess-spawn timeout history documented in prior slices — classify pre-existing failures on clean HEAD before claiming regression.)
 
 ## Next step
 
-Parent verification of the combined WU1+WU2 candidate, then a fresh native review assess over the committed range against `origin/development` (one full-candidate attempt; it may stop for relay/capture limits). Publishing the single PR remains an explicit human decision.
+Parent verification of the combined WU1+WU2 candidate is complete (commit `5fbdd3f548627f0642d3de0f668a58da14a11697`; see Verification evidence). Next: a fresh native review assess over the committed range against `origin/development`, then the maintainer-directed native review (one full-candidate attempt at the exact recorded size of 1,285 changed lines; it may stop for relay/capture limits; no approval is claimed in advance). Publishing the single PR remains an explicit human decision.
