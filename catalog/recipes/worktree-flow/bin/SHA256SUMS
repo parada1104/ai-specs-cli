@@ -84,7 +84,13 @@
 # planning; no new asset, no second trust root), with the canonical go1.24.13
 # toolchain via:
 #   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
-82f8ecf799e73a42c5712e5a38bd853317c5f662284b984eb7f2097fe505c2a6  worktree-gate-darwin-amd64
-0705c102626590e9796b3ead00d8eeab0e2020b020433c688095fb22b6dc82e2  worktree-gate-darwin-arm64
-24befda18a8b315b6c2e89d577f2a6f0205a34631c9c19581dd4752b02bf9b5e  worktree-gate-linux-amd64
-92cbb9c94a04a11e02ea0d04263cfcc1d2bc9e7a6ece6539905848e91220973f  worktree-gate-linux-arm64
+#
+# Regenerated for the go-apply-orphans strangler slice (the same four-arch asset
+# gains the Go-owned `--apply-orphans` orphan cache-directory deletion actuator;
+# no new asset, no second trust root), with the canonical go1.24.13 toolchain
+# via the same command above.
+#
+6cb124df1d05d296904ee051e707c453524fcc022fb60c6aec9f5d3a55f221af  worktree-gate-darwin-amd64
+917ead8ef923b0221d285695cbc3896a00b2f2575ccb5d92fc64acec765d3c00  worktree-gate-darwin-arm64
+94e326400fcd0a0a09d21b1eadab1745ef727d3ce02e962ffe6aa33f8c938c61  worktree-gate-linux-amd64
+3838b3b3d05f5e7499c1c347cd74b93022b9a2c45f720e69de7819764179d2a0  worktree-gate-linux-arm64
