@@ -24,6 +24,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -420,6 +421,284 @@ class OrphanFailOpenFallbackTests(unittest.TestCase):
         doc = self.mod._python_orphan_plan.__doc__ or ""
         self.assertIn("GO_ORPHANS_BRIDGE_FALLBACK", doc)
         self.assertIn("TEMPORARY", doc)
+
+
+APPLY_PLAN_PAYLOAD = json.dumps(
+    {
+        "orphaned_recipes": ["gone"],
+        "orphaned_deps": [],
+        "orphaned_inproject_deps": [],
+        "stale_lock_recipes": ["old"],
+    }
+)
+
+APPLIED_PAYLOAD = json.dumps(
+    {
+        "status": "applied",
+        "removed": [{"scope": "recipe_skills", "name": "gone"}],
+        "remaining": [],
+        "error": "",
+    }
+)
+
+
+class OrphanApplyBridgeTests(unittest.TestCase):
+    """WU2: clean_orphans delegates deletion to ``--apply-orphans``.
+
+    Every test stubs the gate binary, so no built Go artifact is required. The
+    stub answers ``--plan-orphans`` with a valid plan envelope and
+    ``--apply-orphans`` with the scenario payload. The contract pinned here:
+
+    * the apply call receives the plan input plus the three resolved roots,
+    * an ``applied`` outcome prints today's messages and prunes the lock,
+    * fail-open (legacy Python deletion) happens ONLY when Go provably never
+      ran or reported a clean pre-apply failure,
+    * partial, uncertain, malformed, timeout, and exit-2 outcomes fail CLOSED:
+      no re-deletion, no lock prune, one greppable fail-closed warning.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_module(
+            RECIPE_MATERIALIZE_PATH, "recipe_materialize_orphan_apply"
+        )
+        cls.pc = cls.mod._load_project_cache()
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        self.root = self.tmp / "repo"
+        (self.root / "ai-specs").mkdir(parents=True)
+
+    def _tree(self):
+        """A project whose recipe scope holds one orphan and one kept child."""
+        recipe_dir = self.pc.recipe_skills_root(self.root, cli_home=self.home)
+        deps_dir = self.pc.deps_skills_root(self.root, cli_home=self.home)
+        inproject_dir = self.pc.inproject_deps_root(self.root)
+        recipe_dir.mkdir(parents=True, exist_ok=True)
+        for name in ("a", "gone"):
+            (recipe_dir / name).mkdir()
+        (self.root / "ai-specs" / ".ai-specs.lock").write_text(
+            lock_text("a", "old")
+        )
+        return {"recipe_dir": recipe_dir, "deps_dir": deps_dir,
+                "inproject_dir": inproject_dir}
+
+    def _stub(self, apply_body: str) -> Path:
+        path = self.tmp / "gate-stub"
+        path.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = \"--apply-orphans\" ]; then\n"
+            f"{apply_body}\n"
+            "else\n"
+            f"printf '%s' '{APPLY_PLAN_PAYLOAD}'\n"
+            "fi\n"
+        )
+        path.chmod(0o755)
+        return path
+
+    def _run(self) -> tuple[str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.mod.clean_orphans(self.root, {"a"}, {"x"}, cli_home=self.home)
+        return out.getvalue(), err.getvalue()
+
+    def _orphan_still_there(self, tree: dict) -> bool:
+        return (tree["recipe_dir"] / "gone").is_dir()
+
+    def test_apply_orphans_receives_plan_input_plus_roots(self):
+        tree = self._tree()
+        argv_capture = self.tmp / "argv"
+        stdin_capture = self.tmp / "stdin"
+        stub = self._stub(
+            f"printf '%s' \"$1\" > '{argv_capture}'\n"
+            f"cat > '{stdin_capture}'\n"
+            f"printf '%s' '{APPLIED_PAYLOAD}'\n"
+        )
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertEqual(argv_capture.read_text(), "--apply-orphans")
+        self.assertEqual(
+            json.loads(stdin_capture.read_text()),
+            {
+                "recipe_skills": ["a", "gone"],
+                "deps_skills": [],
+                "inproject_deps": [],
+                "lock_recipes": ["a", "old"],
+                "enabled_recipe_ids": ["a"],
+                "expected_dep_ids": ["x"],
+                "roots": {
+                    "recipe_skills": str(tree["recipe_dir"]),
+                    "deps_skills": str(tree["deps_dir"]),
+                    "inproject_deps": str(tree["inproject_dir"]),
+                },
+            },
+        )
+
+    def test_applied_outcome_prints_todays_messages_and_prunes_lock(self):
+        self._tree()
+        stub = self._stub(f"printf '%s' '{APPLIED_PAYLOAD}'\n")
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertIn("  ✓ removed orphaned cache .recipe/gone", out)
+        self.assertIn("  ✓ removed stale lock entries for recipe 'old'", out)
+        self.assertNotIn("'a'", out)
+        self.assertEqual(err, "")
+        lock = self.mod.load_lock(self.root / "ai-specs" / ".ai-specs.lock")
+        self.assertNotIn("old", lock["recipes"])
+
+    def test_partial_outcome_fails_closed(self):
+        tree = self._tree()
+        payload = json.dumps(
+            {
+                "status": "partial",
+                "removed": [{"scope": "recipe_skills", "name": "gone",
+                             "uncertain": True}],
+                "remaining": [],
+                "error": "remove failed",
+            }
+        )
+        stub = self._stub(f"printf '%s' '{payload}'\nexit 3\n")
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertTrue(self._orphan_still_there(tree), "legacy must not rerun")
+        self.assertNotIn("removed orphaned cache", out)
+        self.assertNotIn(self.mod.GO_ORPHANS_BRIDGE_FALLBACK, err)
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED), 1, err)
+        lock = self.mod.load_lock(self.root / "ai-specs" / ".ai-specs.lock")
+        self.assertIn("old", lock["recipes"], "lock must not be pruned")
+
+    def test_malformed_apply_output_fails_closed(self):
+        tree = self._tree()
+        stub = self._stub("echo not-json\n")
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertTrue(self._orphan_still_there(tree))
+        self.assertNotIn(self.mod.GO_ORPHANS_BRIDGE_FALLBACK, err)
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED), 1, err)
+
+    def test_exit_2_after_invocation_fails_closed(self):
+        tree = self._tree()
+        stub = self._stub("echo bad input >&2\nexit 2\n")
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertTrue(self._orphan_still_there(tree))
+        self.assertNotIn(self.mod.GO_ORPHANS_BRIDGE_FALLBACK, err)
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED), 1, err)
+
+    def test_exit_0_with_non_applied_status_fails_closed(self):
+        tree = self._tree()
+        payload = json.dumps(
+            {
+                "status": "pre_apply_failed",
+                "removed": [],
+                "remaining": [{"scope": "recipe_skills", "name": "gone"}],
+                "error": "x",
+            }
+        )
+        stub = self._stub(f"printf '%s' '{payload}'\n")
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertTrue(self._orphan_still_there(tree))
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED), 1, err)
+
+    def test_clean_pre_apply_failed_falls_back_to_legacy_with_one_warning(self):
+        tree = self._tree()
+        payload = json.dumps(
+            {
+                "status": "pre_apply_failed",
+                "removed": [],
+                "remaining": [{"scope": "recipe_skills", "name": "gone"}],
+                "error": "root not absolute",
+            }
+        )
+        stub = self._stub(f"printf '%s' '{payload}'\nexit 3\n")
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertFalse(self._orphan_still_there(tree), "legacy must run")
+        self.assertIn("  ✓ removed orphaned cache .recipe/gone", out)
+        self.assertIn("  ✓ removed stale lock entries for recipe 'old'", out)
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_BRIDGE_FALLBACK), 1, err)
+        self.assertNotIn(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED, err)
+
+    def test_uncertain_pre_apply_failed_fails_closed(self):
+        tree = self._tree()
+        payload = json.dumps(
+            {
+                "status": "pre_apply_failed",
+                "removed": [],
+                "remaining": [
+                    {"scope": "recipe_skills", "name": "gone",
+                     "uncertain": True}
+                ],
+                "error": "stat failed",
+            }
+        )
+        stub = self._stub(f"printf '%s' '{payload}'\nexit 3\n")
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertTrue(self._orphan_still_there(tree))
+        self.assertNotIn(self.mod.GO_ORPHANS_BRIDGE_FALLBACK, err)
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED), 1, err)
+
+    def _fake_gate(self) -> None:
+        """Make binary resolution succeed without a real gate artifact."""
+
+        class _FakeGB:
+            @staticmethod
+            def resolve_verified_binary(home: Path) -> Path:
+                return self.tmp / "fake-gate"
+
+        patcher = mock.patch.object(
+            self.mod, "_load_gate_binary", return_value=_FakeGB
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _fake_run(self, apply_effect):
+        """Patch the gate resolution and subprocess.run for one scenario."""
+        self._fake_gate()
+        plan_proc = subprocess.CompletedProcess(
+            [], 0, stdout=APPLY_PLAN_PAYLOAD, stderr=""
+        )
+
+        def fake_run(cmd, **kwargs):
+            if cmd[-1] == "--apply-orphans":
+                return apply_effect(cmd, kwargs)
+            return plan_proc
+
+        patcher = mock.patch.object(self.mod.subprocess, "run", side_effect=fake_run)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_spawn_failure_before_apply_falls_back_to_legacy_with_one_warning(self):
+        tree = self._tree()
+
+        def apply_effect(cmd, kwargs):
+            raise FileNotFoundError(2, "No such file or directory")
+
+        self._fake_run(apply_effect)
+        out, err = self._run()
+        self.assertFalse(self._orphan_still_there(tree), "legacy must run")
+        self.assertIn("  ✓ removed orphaned cache .recipe/gone", out)
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_BRIDGE_FALLBACK), 1, err)
+        self.assertNotIn(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED, err)
+
+    def test_timeout_after_invocation_fails_closed(self):
+        tree = self._tree()
+
+        def apply_effect(cmd, kwargs):
+            raise subprocess.TimeoutExpired(cmd="--apply-orphans", timeout=60)
+
+        self._fake_run(apply_effect)
+        out, err = self._run()
+        self.assertTrue(self._orphan_still_there(tree))
+        self.assertNotIn("removed orphaned cache", out)
+        self.assertNotIn(self.mod.GO_ORPHANS_BRIDGE_FALLBACK, err)
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED), 1, err)
 
 
 if __name__ == "__main__":

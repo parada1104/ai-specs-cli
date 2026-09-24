@@ -2100,16 +2100,19 @@ def build_recipe_mcp(
     return merged
 
 
-# --- Orphan cleanup bridge (Go --plan-orphans) --------------------------------
+# --- Orphan cleanup bridge (Go --plan-orphans / --apply-orphans) --------------
 #
-# Go owns the orphan DECISION: which materialized recipe/dep names and which
-# lock recipe ids the manifest no longer expects. Python keeps ACQUISITION
-# (listing the project cache roots and reading the lock) and EXECUTION
-# (``shutil.rmtree``, ``remove_recipe_lock_entries`` + ``write_lock``). The
-# Python decision below is a TEMPORARY fail-open fallback
+# Go owns the orphan DECISION (``--plan-orphans``: which materialized
+# recipe/dep names and which lock recipe ids the manifest no longer expects)
+# and the DELETION actuator (``--apply-orphans``). Python keeps ACQUISITION
+# (listing the project cache roots and reading the lock), the printed
+# messages, and the lock serialization (``remove_recipe_lock_entries`` +
+# ``write_lock``); it never replays a deletion Go may already have started.
+# The Python decision/deletion below is a TEMPORARY fail-open fallback
 # (``GO_ORPHANS_BRIDGE_FALLBACK``) the strangler deletes once the bridge is
-# proven: it runs only when the binary cannot be acquired, executed, or parsed,
-# and the run is always announced by exactly one warning line.
+# proven: it runs only when the binary cannot be acquired or executed, or Go
+# reported a clean pre-apply failure, and every degraded run is announced by
+# exactly one warning line.
 GO_ORPHANS_BRIDGE_FALLBACK = "GO_ORPHANS_BRIDGE_FALLBACK"
 GO_ORPHANS_BRIDGE_TIMEOUT_SECONDS = 60
 
@@ -2260,34 +2263,174 @@ def _python_orphan_plan(
     }
 
 
-def clean_orphans(
-    project_root: Path,
-    enabled_recipe_ids: set[str],
-    expected_dep_ids: set[str],
-    cli_home: Path | None = None,
-) -> None:
-    pc = _load_project_cache()
-    recipe_dir = pc.recipe_skills_root(project_root, cli_home=cli_home)
-    deps_dir = pc.deps_skills_root(project_root, cli_home=cli_home)
-    # In-project toml-dep materialization (ai-specs/.deps/) is pruned for deps
-    # no longer declared in the manifest.
-    inproject_deps = pc.inproject_deps_root(project_root)
-    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
-    lock = load_lock(lock_path) if lock_path.is_file() else {}
+# --- Orphan apply bridge (Go --apply-orphans) ---------------------------------
+#
+# Fail-open (the legacy Python executor) is allowed ONLY when the gate
+# provably never ran (no verified binary, spawn failure) or reported a
+# structurally valid ``pre_apply_failed`` outcome with no completed removal
+# and no uncertain entry. Anything observed after invocation — malformed
+# stdout, a decode error, an unexpected exit code, a timeout, a ``partial``
+# status, or any uncertain entry — fails CLOSED: deletion is never retried
+# and the lock is never pruned, because the filesystem state is unknown.
+GO_ORPHANS_APPLY_FAIL_CLOSED = "GO_ORPHANS_APPLY_FAIL_CLOSED"
 
-    plan = go_orphan_plan(
-        _orphans_bridge_home(cli_home),
-        _orphan_plan_input(
-            recipe_dir, deps_dir, inproject_deps, lock,
-            enabled_recipe_ids, expected_dep_ids,
-        ),
+# Message fragment per scope, preserving the legacy print byte for byte
+# (note: the in-project scope historically prints without the "cache" word).
+_APPLY_SCOPE_MESSAGE_PREFIX = {
+    "recipe_skills": "cache .recipe/",
+    "deps_skills": "cache .deps/",
+    "inproject_deps": "ai-specs/.deps/",
+}
+_APPLY_OUTCOME_STATUSES = ("applied", "pre_apply_failed", "partial")
+
+
+def _warn_orphans_apply_fail_closed(reason: str) -> None:
+    """One greppable warning for a refused (fail-closed) orphan apply."""
+    warn(
+        f"{GO_ORPHANS_APPLY_FAIL_CLOSED}: {reason}; "
+        "orphan deletion was not retried and the lock was not pruned"
     )
-    if plan is None:
-        plan = _python_orphan_plan(
-            recipe_dir, deps_dir, inproject_deps, lock,
-            enabled_recipe_ids, expected_dep_ids,
-        )
 
+
+def _is_orphan_apply_outcome(outcome: Any) -> bool:
+    """True when the decoded stdout is the documented apply outcome."""
+    if not isinstance(outcome, dict):
+        return False
+    if outcome.get("status") not in _APPLY_OUTCOME_STATUSES:
+        return False
+    if not isinstance(outcome.get("error"), str):
+        return False
+    for key in ("removed", "remaining"):
+        entries = outcome.get(key)
+        if not isinstance(entries, list):
+            return False
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return False
+            if entry.get("scope") not in _APPLY_SCOPE_MESSAGE_PREFIX:
+                return False
+            name = entry.get("name")
+            if not isinstance(name, str) or not name:
+                return False
+            if not isinstance(entry.get("uncertain", False), bool):
+                return False
+    return True
+
+
+def _apply_outcome_uncertain(outcome: dict[str, Any]) -> bool:
+    """True when any reported entry leaves the filesystem state unknown."""
+    return any(
+        entry.get("uncertain", False)
+        for key in ("removed", "remaining")
+        for entry in outcome[key]
+    )
+
+
+def go_apply_orphans(
+    home: Path, plan_input: dict[str, Any], roots: dict[str, str]
+) -> tuple[str, dict[str, Any] | None]:
+    """Run ``worktree-gate --apply-orphans`` and return ``(state, outcome)``.
+
+    ``state`` is one of:
+
+    * ``"unavailable"`` — the gate provably never ran (no verified binary, or
+      the spawn itself failed). The single ``GO_ORPHANS_BRIDGE_FALLBACK``
+      warning names the reason; the caller may run the legacy Python path.
+    * ``"failed"`` — the gate ran but its outcome is untrustworthy (timeout,
+      unexpected exit code, undecodable or malformed stdout, exit/status
+      mismatch). The fail-closed warning is emitted and the caller must NOT
+      retry deletion.
+    * ``"ran"`` — outcome is the structurally validated JSON envelope; the
+      caller still decides fail-open (a clean pre-apply failure) versus
+      fail-closed (partial, or any uncertain entry).
+    """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(home)
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_orphans_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return "unavailable", None
+    if binary is None:
+        _warn_orphans_bridge_fallback("no verified worktree-gate binary")
+        return "unavailable", None
+
+    stdin_envelope = dict(plan_input)
+    stdin_envelope["roots"] = roots
+    try:
+        proc = subprocess.run(
+            [str(binary), "--apply-orphans"],
+            input=json.dumps(stdin_envelope),
+            capture_output=True,
+            text=True,
+            timeout=GO_ORPHANS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (FileNotFoundError, PermissionError) as exc:
+        # The exec itself failed: the gate process never existed, so nothing
+        # was deleted and the legacy path is safe to run.
+        _warn_orphans_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return "unavailable", None
+    except (OSError, subprocess.SubprocessError) as exc:
+        # The process may have spawned and deleted before failing: the outcome
+        # is unknown, so deletion must never be retried.
+        _warn_orphans_apply_fail_closed(
+            f"worktree-gate did not run to completion ({type(exc).__name__}: {exc})"
+        )
+        return "failed", None
+
+    def _fail_closed(reason: str) -> tuple[str, None]:
+        _warn_orphans_apply_fail_closed(reason)
+        return "failed", None
+
+    detail = (proc.stderr or "").strip() or "no stderr"
+    if proc.returncode not in (0, 3):
+        return _fail_closed(f"worktree-gate exited {proc.returncode} ({detail})")
+    try:
+        outcome = json.loads(proc.stdout)
+    except ValueError as exc:
+        return _fail_closed(f"worktree-gate output was not JSON ({exc})")
+    if not _is_orphan_apply_outcome(outcome):
+        return _fail_closed("worktree-gate output did not match the apply outcome")
+    status = outcome["status"]
+    if proc.returncode == 0 and status != "applied":
+        return _fail_closed(f"worktree-gate exited 0 but reported {status}")
+    if proc.returncode == 3 and status == "applied":
+        return _fail_closed("worktree-gate exited 3 but reported applied")
+    return "ran", outcome
+
+
+def _prune_stale_lock(
+    lock_path: Path, lock: dict[str, Any], stale_lock_recipes: list[str]
+) -> None:
+    """Clean up stale lock entries for recipes no longer in the manifest."""
+    if not lock_path.is_file():
+        return
+    removed_any = False
+    for rid in stale_lock_recipes:
+        if remove_recipe_lock_entries(lock, rid):
+            removed_any = True
+            print(f"  ✓ removed stale lock entries for recipe '{rid}'")
+    if removed_any:
+        write_lock(lock_path, lock)
+
+
+def _legacy_clean_orphans(
+    plan: dict[str, Any],
+    recipe_dir: Path,
+    deps_dir: Path,
+    inproject_deps: Path,
+    lock: dict[str, Any],
+    lock_path: Path,
+) -> None:
+    """The retained Python executor (TEMPORARY fail-open fallback).
+
+    Runs only when Go provably never ran or reported a clean pre-apply
+    failure; a partial or uncertain Go outcome must never reach this function,
+    because replaying a partially applied deletion is never safe.
+    """
     for name in plan["orphaned_recipes"]:
         child = recipe_dir / name
         if child.is_dir():
@@ -2306,15 +2449,82 @@ def clean_orphans(
             shutil.rmtree(child)
             print(f"  ✓ removed orphaned ai-specs/.deps/{name}")
 
-    # Clean up stale lock entries for recipes no longer in the manifest
-    if lock_path.is_file():
-        removed_any = False
-        for rid in plan["stale_lock_recipes"]:
-            if remove_recipe_lock_entries(lock, rid):
-                removed_any = True
-                print(f"  ✓ removed stale lock entries for recipe '{rid}'")
-        if removed_any:
-            write_lock(lock_path, lock)
+    _prune_stale_lock(lock_path, lock, plan["stale_lock_recipes"])
+
+
+def clean_orphans(
+    project_root: Path,
+    enabled_recipe_ids: set[str],
+    expected_dep_ids: set[str],
+    cli_home: Path | None = None,
+) -> None:
+    pc = _load_project_cache()
+    recipe_dir = pc.recipe_skills_root(project_root, cli_home=cli_home)
+    deps_dir = pc.deps_skills_root(project_root, cli_home=cli_home)
+    # In-project toml-dep materialization (ai-specs/.deps/) is pruned for deps
+    # no longer declared in the manifest.
+    inproject_deps = pc.inproject_deps_root(project_root)
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path) if lock_path.is_file() else {}
+    home = _orphans_bridge_home(cli_home)
+    plan_input = _orphan_plan_input(
+        recipe_dir, deps_dir, inproject_deps, lock,
+        enabled_recipe_ids, expected_dep_ids,
+    )
+
+    plan = go_orphan_plan(home, plan_input)
+    if plan is None:
+        plan = _python_orphan_plan(
+            recipe_dir, deps_dir, inproject_deps, lock,
+            enabled_recipe_ids, expected_dep_ids,
+        )
+        _legacy_clean_orphans(
+            plan, recipe_dir, deps_dir, inproject_deps, lock, lock_path
+        )
+        return
+
+    state, outcome = go_apply_orphans(
+        home,
+        plan_input,
+        {
+            "recipe_skills": str(recipe_dir),
+            "deps_skills": str(deps_dir),
+            "inproject_deps": str(inproject_deps),
+        },
+    )
+    if state == "unavailable":
+        # The gate provably never ran; the fallback warning is already out.
+        _legacy_clean_orphans(
+            plan, recipe_dir, deps_dir, inproject_deps, lock, lock_path
+        )
+        return
+    if state == "ran" and outcome is not None and outcome["status"] == "applied":
+        for entry in outcome["removed"]:
+            prefix = _APPLY_SCOPE_MESSAGE_PREFIX[entry["scope"]]
+            print(f"  ✓ removed orphaned {prefix}{entry['name']}")
+        _prune_stale_lock(lock_path, lock, plan["stale_lock_recipes"])
+        return
+    if (
+        state == "ran"
+        and outcome is not None
+        and outcome["status"] == "pre_apply_failed"
+        and not outcome["removed"]
+        and not _apply_outcome_uncertain(outcome)
+    ):
+        # Structurally proven: Go validated the envelope and attempted nothing.
+        _warn_orphans_bridge_fallback(
+            f"worktree-gate reported pre_apply_failed ({outcome['error'] or 'no error'})"
+        )
+        _legacy_clean_orphans(
+            plan, recipe_dir, deps_dir, inproject_deps, lock, lock_path
+        )
+        return
+    if state == "ran" and outcome is not None:
+        detail = outcome["error"] or outcome["status"]
+        _warn_orphans_apply_fail_closed(
+            f"worktree-gate reported {outcome['status']} after starting ({detail})"
+        )
+    # state "failed" already emitted its fail-closed warning.
 
 
 # --- Main ---------------------------------------------------------------------
