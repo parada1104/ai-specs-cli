@@ -12,14 +12,14 @@ Move deletion of regenerable orphan recipe/dependency cache directories to the G
 - Exclude `update_recipe_config` TOML writer and unrelated copy/template/hook actuators.
 - Worktree `.worktrees/go-apply-orphans`, branch `feat/go-apply-orphans`, base `development` at `94b6ac8`.
 - Configured TDD: enabled by `ai-specs/ai-specs.toml` `[recipes.tdd-flow]`, exact runner `./tests/validate.sh`; record real RED, GREEN, and final full-suite results. Focused Go/Python tests may shorten feedback, not replace the configured runner.
-- Delivery strategy: **one PR for the entire change**, as explicitly selected by the user. The `development...HEAD` diff is 1,239 authored changed lines (1,194 additions + 45 deletions) across 7 paths; the user explicitly accepted a 39-line exception over the prior 1,200-line PR budget. Recheck the size when preparing the PR. No push, PR creation, or merge without a separate instruction. Native review candidates were the individual work-unit commits, not the accumulated branch.
+- Delivery strategy: **one PR for the entire change**, as explicitly selected by the user. The `development...HEAD` diff is 1,239 authored changed lines (1,194 additions + 45 deletions) across 7 paths; the user explicitly accepted a 39-line exception over the prior 1,200-line PR budget. The user separately authorized push and PR #290, now open against `development`; merge still requires explicit instruction. Native review candidates were the individual work-unit commits, not the accumulated branch.
 
 ## Tracker
 
 - **card_id**: `6ab49a73125bec5f97cd7b45`
 - **shortLink**: `csoAF8fa`
 - **url**: https://trello.com/c/csoAF8fa/148-go-06-migrate-orphan-cache-deletion-actuator-to-go
-- **list**: In Progress
+- **list**: Review
 
 ## Tasks
 
@@ -41,4 +41,4 @@ Go-primary and Python fallback produce the same successful removals, stdout and 
 
 ## Next step
 
-Implementation, tests and native reviews are complete locally; both WU1 and corrected WU2 have approved/acknowledged lineages. The user selected one PR for GO-06 and accepted a 39-line size exception. Await explicit instruction to push/open the PR; recheck final size and the tracker pre-merge checkpoint then. No push or PR has been authorized.
+Implementation, tests and native reviews are complete. The user selected one PR for GO-06 and accepted a 39-line size exception. PR #290 is open at https://github.com/parada1104/ai-specs-cli/pull/290; GO-06 is in Review. Await checks/human review; before any explicitly authorized merge, run the tracker pre-merge checkpoint. No merge has been authorized.
