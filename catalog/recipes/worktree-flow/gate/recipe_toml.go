@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -214,6 +215,50 @@ func loadRecipePrimitives(catalogDir string, recipeIDs []string) ([]recipePrimit
 	return ordered, nil
 }
 
+// reconcileStampReader is the acquisition boundary for the reconcile-stamp
+// planner. It reads only what the planner consumes: the raw declared
+// [config.reconcile] table (shape validation is deliberately not replicated —
+// the decision layer type-asserts exactly the pieces it uses) and, for every
+// recognized [config.<name>] config field, its declared default when the
+// default key is present. Recognition follows recipe_schema._parse_config's
+// fields/extra split: only a table section carrying a boolean required key is
+// a config field, so non-standard sections (which land in extra and are
+// invisible to the Python stamp decision) contribute nothing. TOML has no
+// null, so a present default key always holds a non-None value, which is
+// exactly Python's `field.default is not None` test.
+//
+// A recipe the parser cannot deserialize, whose [config] table is absent or
+// not a table, or whose [config.reconcile] is absent or not a table is
+// omitted: the Python stamp authority silently continues for the same shapes.
+// Datetime values (the one TOML type JSON cannot carry) degrade to strings
+// via default=str instead of failing the whole acquisition run.
+const reconcileStampReader = `import json, os, sys, tomllib
+catalog = sys.argv[1]
+out = {}
+for rid in sys.argv[2:]:
+    try:
+        with open(os.path.join(catalog, rid, "recipe.toml"), "rb") as handle:
+            data = tomllib.load(handle)
+    except Exception:
+        continue
+    config = data.get("config")
+    if not isinstance(config, dict):
+        continue
+    reconcile = config.get("reconcile")
+    if not isinstance(reconcile, dict):
+        continue
+    fields = {}
+    for name, section in config.items():
+        if name == "reconcile" or not isinstance(section, dict):
+            continue
+        if not isinstance(section.get("required"), bool):
+            continue
+        if "default" in section:
+            fields[name] = section["default"]
+    out[rid] = {"reconcile": reconcile, "fields": fields}
+print(json.dumps(out, default=str))
+`
+
 // runRecipeTomlParser runs the capability reader under the bounded TOML
 // execution and deserializes its JSON object.
 func runRecipeTomlParser(catalogDir string, recipeIDs []string) (map[string][]string, error) {
@@ -274,6 +319,55 @@ func runRecipeTagMetadataParser(catalogDir string, recipeIDs []string) (map[stri
 		return nil, fmt.Errorf("deserialized tag metadata: %w", err)
 	}
 	return metadata, nil
+}
+
+// acquiredReconcileStamp is one enabled recipe's acquired stamp input, kept in
+// enabled order so the emitted stamps list is deterministic.
+type acquiredReconcileStamp struct {
+	RecipeID string
+	Source   reconcileStampSource
+}
+
+// loadReconcileStampSources acquires every enabled recipe's reconcile stamp
+// inputs in one bounded parser run, preserving the enabled order and
+// deduplicating repeated recipe ids like the sibling readers. A recipe whose
+// recipe.toml is missing or is not a plain file is never handed to the parser
+// and is absent from the result, matching the Python authority that silently
+// continues when read_recipe raises.
+func loadReconcileStampSources(catalogDir string, recipeIDs []string) ([]acquiredReconcileStamp, error) {
+	readable := make([]string, 0, len(recipeIDs))
+	seen := make(map[string]bool, len(recipeIDs))
+	for _, rid := range recipeIDs {
+		if seen[rid] {
+			continue
+		}
+		seen[rid] = true
+		if regularFile(filepath.Join(catalogDir, rid, "recipe.toml")) == nil {
+			readable = append(readable, rid)
+		}
+	}
+	if len(readable) == 0 {
+		return []acquiredReconcileStamp{}, nil
+	}
+	raw, err := runRecipeTomlReader(catalogDir, readable, reconcileStampReader)
+	if err != nil {
+		return nil, err
+	}
+	// UseNumber keeps TOML integers exact through the decode/re-encode round
+	// trip instead of degrading them to float64.
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var byRecipe map[string]reconcileStampSource
+	if err := decoder.Decode(&byRecipe); err != nil {
+		return nil, fmt.Errorf("deserialized reconcile stamps: %w", err)
+	}
+	ordered := make([]acquiredReconcileStamp, 0, len(readable))
+	for _, rid := range readable {
+		if source, ok := byRecipe[rid]; ok {
+			ordered = append(ordered, acquiredReconcileStamp{RecipeID: rid, Source: source})
+		}
+	}
+	return ordered, nil
 }
 
 // runRecipeTomlReader executes one stdlib-TOML recipe reader under the same

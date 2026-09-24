@@ -86,6 +86,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// changes the caller's materialization exit behavior.
 	resolveTagConflictsCmd := fs.Bool("resolve-tag-conflicts", false, "grade advisory tag conflicts across enabled recipes (JSON on stdout, exit 0/2)")
 	resolvePrimitiveConflictsCmd := fs.Bool("resolve-primitive-conflicts", false, "grade recipe primitive (skill/command/mcp) conflicts across enabled recipes (JSON on stdout, exit 0/2)")
+	// Reconcile-stamp planning is another catalog query: it reads the enabled
+	// recipes' declared [config.reconcile] values and config-field defaults and
+	// emits one ordered JSON envelope. Pure planning, no write side effects.
+	planReconcileStampsCmd := fs.Bool("plan-reconcile-stamps", false, "compute the per-recipe reconcile stamp dict from the enabled recipes' declared config schema (JSON on stdout, exit 0/2)")
 	// Orphan planning is another separate command surface: pure set arithmetic
 	// over a JSON envelope on stdin; it never reads the worktree or the catalog.
 	planOrphansCmd := fs.Bool("plan-orphans", false, "plan materialization orphans from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
@@ -175,6 +179,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}, stdout, stderr)
 	case *resolvePrimitiveConflictsCmd:
 		return runResolvePrimitiveConflicts(primitiveConflictOptions{
+			catalogDir: *bindingsCatalogDir,
+			recipeIDs:  bindingsRecipeIDs.values,
+		}, stdout, stderr)
+	case *planReconcileStampsCmd:
+		return runPlanReconcileStamps(reconcileStampOptions{
 			catalogDir: *bindingsCatalogDir,
 			recipeIDs:  bindingsRecipeIDs.values,
 		}, stdout, stderr)

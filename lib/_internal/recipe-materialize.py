@@ -288,17 +288,119 @@ def _load_recipe_config_write() -> Any:
 _recipe_config_write_module: Any = None
 
 
-def stamp_recipe_reconcile_defaults(project_root: Path, catalog_dir: Path, enabled_ids: list[str]) -> None:
-    """Stamp recipe-declared reconcile mapping and the config values it selects
-    into the project manifest, absent keys only.
+# --- Reconcile-stamp planning: Go authority (GO_RECONCILE_STAMPS_BRIDGE_FALLBACK)
+#
+# ``worktree-gate --plan-reconcile-stamps`` owns the DECISION: the per-recipe
+# reconcile stamp dict derived from each enabled recipe's declared
+# ``[config.reconcile]`` table and config-field defaults. Python keeps the
+# existing ``update_recipe_config`` writer behavior and the TEMPORARY fail-open
+# fallback below (``GO_RECONCILE_STAMPS_BRIDGE_FALLBACK``).
+GO_RECONCILE_STAMPS_BRIDGE_FALLBACK = "GO_RECONCILE_STAMPS_BRIDGE_FALLBACK"
+GO_RECONCILE_STAMPS_BRIDGE_TIMEOUT_SECONDS = 60
 
-    The gate reads only the manifest, so the recipe-owned lifecycle mapping
-    (delivery/review/merge) must reach ``[recipes.<id>.config]`` for
-    reconciliation to work out of the box. Explicit project values always win;
-    this helper never overwrites an existing key. Optional fields stamp only
-    when the declared mapping references them, so unrelated defaults keep the
-    old resolved-render behavior.
+
+def _warn_reconcile_stamps_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded reconcile-stamp authority."""
+    warn(
+        f"{GO_RECONCILE_STAMPS_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python stamp authority"
+    )
+
+
+def _is_reconcile_stamps_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented reconcile-stamps envelope."""
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("stamps"), list):
+        return False
+    return all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("id"), str)
+        and isinstance(entry.get("stamp"), dict)
+        for entry in envelope["stamps"]
+    )
+
+
+def go_reconcile_stamps(
+    catalog_dir: Path, recipe_ids: list[str]
+) -> list[dict[str, Any]] | None:
+    """Run ``worktree-gate --plan-reconcile-stamps`` and return its stamps, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    or the output was not the documented envelope. The caller then falls back to
+    the temporary Python stamp authority. This function emits the single
+    ``GO_RECONCILE_STAMPS_BRIDGE_FALLBACK`` warning naming the reason, so a
+    degraded run is never silent and never needs a second warning.
+
+    The bridge is read-only: it only plans stamps, the manifest write stays in
+    Python. Recipes the gate could not read are omitted from the envelope — the
+    Python authority's silent-continue semantics.
     """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_bridge_home(catalog_dir))
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_reconcile_stamps_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_reconcile_stamps_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    command = [
+        str(binary),
+        "--plan-reconcile-stamps",
+        "--catalog-dir",
+        str(catalog_dir),
+    ]
+    for rid in recipe_ids:
+        command += ["--recipe", str(rid)]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=GO_RECONCILE_STAMPS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        _warn_reconcile_stamps_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_reconcile_stamps_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_reconcile_stamps_bridge_fallback(
+            f"worktree-gate output was not JSON ({exc})"
+        )
+        return None
+    if not _is_reconcile_stamps_envelope(envelope):
+        _warn_reconcile_stamps_bridge_fallback(
+            "worktree-gate output did not match the reconcile-stamps envelope"
+        )
+        return None
+    return envelope["stamps"]
+
+
+def _reconcile_stamp_recipe_name(catalog_dir: Path, recipe_id: str) -> str:
+    """The declared recipe name for a writer-failure warning, best effort."""
+    try:
+        return read_recipe(catalog_dir, recipe_id).name
+    except Exception:  # noqa: BLE001 - the warning must never raise
+        return recipe_id
+
+
+def _stamp_recipe_reconcile_defaults_python(
+    project_root: Path, catalog_dir: Path, enabled_ids: list[str]
+) -> None:
+    """TEMPORARY fail-open Python stamp authority, announced by
+    ``GO_RECONCILE_STAMPS_BRIDGE_FALLBACK``; ``worktree-gate
+    --plan-reconcile-stamps`` is the primary decision authority."""
     schema = _load_recipe_schema()
     manifest = project_root / "ai-specs" / "ai-specs.toml"
     writer = _load_recipe_config_write()
@@ -327,6 +429,38 @@ def stamp_recipe_reconcile_defaults(project_root: Path, catalog_dir: Path, enabl
             writer.update_recipe_config(manifest, rid, stamp)
         except Exception as exc:
             warn(f"recipe '{recipe.name}': reconcile defaults not stamped ({type(exc).__name__}: {exc})")
+
+
+def stamp_recipe_reconcile_defaults(project_root: Path, catalog_dir: Path, enabled_ids: list[str]) -> None:
+    """Stamp recipe-declared reconcile mapping and its selected config values.
+
+    ``worktree-gate --plan-reconcile-stamps`` is the Go decision authority; the
+    manifest write stays in Python and any bridge failure degrades to the
+    temporary Python decision authority with one
+    ``GO_RECONCILE_STAMPS_BRIDGE_FALLBACK`` warning.
+
+    The existing ``update_recipe_config`` behavior is unchanged: it writes
+    missing stamp values and replaces existing values when they differ. The
+    gate reads only the manifest, so the recipe-owned lifecycle mapping
+    (delivery/review/merge) must reach ``[recipes.<id>.config]`` for
+    reconciliation to work out of the box. Optional fields stamp only when the
+    declared mapping references them, so unrelated defaults keep the old
+    resolved-render behavior.
+    """
+    stamps = go_reconcile_stamps(catalog_dir, enabled_ids)
+    if stamps is not None:
+        manifest = project_root / "ai-specs" / "ai-specs.toml"
+        writer = _load_recipe_config_write()
+        for entry in stamps:
+            try:
+                writer.update_recipe_config(manifest, entry["id"], entry["stamp"])
+            except Exception as exc:
+                warn(
+                    f"recipe '{_reconcile_stamp_recipe_name(catalog_dir, entry['id'])}': "
+                    f"reconcile defaults not stamped ({type(exc).__name__}: {exc})"
+                )
+        return
+    _stamp_recipe_reconcile_defaults_python(project_root, catalog_dir, enabled_ids)
 
 
 # --- Conflict detection -------------------------------------------------------
