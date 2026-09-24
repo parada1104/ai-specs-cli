@@ -93,6 +93,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// Orphan planning is another separate command surface: pure set arithmetic
 	// over a JSON envelope on stdin; it never reads the worktree or the catalog.
 	planOrphansCmd := fs.Bool("plan-orphans", false, "plan materialization orphans from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
+	// Orphan deletion is the destructive sibling: same stdin envelope plus the
+	// three resolved cache roots; it reuses the plan decision and deletes only
+	// validated direct child directories, stopping on the first filesystem
+	// failure with a structured outcome (never touches any lock file).
+	applyOrphansCmd := fs.Bool("apply-orphans", false, "apply the orphan plan: delete orphaned cache directories under the given roots (JSON on stdout, exit 0/2/3)")
 	// Resolved-config projection is a manifest query: it reads one project root's
 	// ai-specs.toml, projects it in Go, and emits a single JSON envelope.
 	planResolvedConfigCmd := fs.Bool("plan-resolved-config", false, "project the project manifest into the resolved-config JSON envelope (exit 0/2)")
@@ -189,6 +194,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}, stdout, stderr)
 	case *planOrphansCmd:
 		return runPlanOrphans(stdin, stdout, stderr)
+	case *applyOrphansCmd:
+		return runApplyOrphans(stdin, stdout, stderr)
 	case *planResolvedConfigCmd:
 		root := *resolvedProjectRoot
 		if root == "" {
