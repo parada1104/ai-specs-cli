@@ -12,7 +12,7 @@ Move deletion of regenerable orphan recipe/dependency cache directories to the G
 - Exclude `update_recipe_config` TOML writer and unrelated copy/template/hook actuators.
 - Worktree `.worktrees/go-apply-orphans`, branch `feat/go-apply-orphans`, base `development` at `94b6ac8`.
 - Configured TDD: enabled by `ai-specs/ai-specs.toml` `[recipes.tdd-flow]`, exact runner `./tests/validate.sh`; record real RED, GREEN, and final full-suite results. Focused Go/Python tests may shorten feedback, not replace the configured runner.
-- Delivery strategy: one PR for the change was the prior preference, but the current `development...HEAD` diff is 1,239 authored changed lines (1,194 additions + 45 deletions) across 7 paths before this final evidence update. It exceeds the prior 1,200-line PR budget; remeasure and get a new explicit size decision before PR preparation. No push, PR, or merge without instruction. Native review candidates were the individual work-unit commits, not the accumulated branch.
+- Delivery strategy: **one PR for the entire change**, as explicitly selected by the user. The `development...HEAD` diff is 1,239 authored changed lines (1,194 additions + 45 deletions) across 7 paths; the user explicitly accepted a 39-line exception over the prior 1,200-line PR budget. Recheck the size when preparing the PR. No push, PR creation, or merge without a separate instruction. Native review candidates were the individual work-unit commits, not the accumulated branch.
 
 ## Tracker
 
@@ -41,4 +41,4 @@ Go-primary and Python fallback produce the same successful removals, stdout and 
 
 ## Next step
 
-Implementation, tests and native reviews are complete locally; both WU1 and corrected WU2 have approved/acknowledged lineages. Before PR preparation, remeasure the final diff and obtain a delivery-size decision for the >1,200-line change. No push or PR has been authorized.
+Implementation, tests and native reviews are complete locally; both WU1 and corrected WU2 have approved/acknowledged lineages. The user selected one PR for GO-06 and accepted a 39-line size exception. Await explicit instruction to push/open the PR; recheck final size and the tracker pre-merge checkpoint then. No push or PR has been authorized.
