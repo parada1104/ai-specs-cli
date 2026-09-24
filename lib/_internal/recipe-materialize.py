@@ -2373,9 +2373,10 @@ def go_apply_orphans(
             f"worktree-gate did not run ({type(exc).__name__}: {exc})"
         )
         return "unavailable", None
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
         # The process may have spawned and deleted before failing: the outcome
-        # is unknown, so deletion must never be retried.
+        # is unknown, so deletion must never be retried. (UnicodeDecodeError
+        # escapes ``text=True`` decoding as a ValueError subclass.)
         _warn_orphans_apply_fail_closed(
             f"worktree-gate did not run to completion ({type(exc).__name__}: {exc})"
         )
@@ -2498,7 +2499,13 @@ def clean_orphans(
             plan, recipe_dir, deps_dir, inproject_deps, lock, lock_path
         )
         return
-    if state == "ran" and outcome is not None and outcome["status"] == "applied":
+    if (
+        state == "ran"
+        and outcome is not None
+        and outcome["status"] == "applied"
+        and not outcome["remaining"]
+        and not _apply_outcome_uncertain(outcome)
+    ):
         for entry in outcome["removed"]:
             prefix = _APPLY_SCOPE_MESSAGE_PREFIX[entry["scope"]]
             print(f"  ✓ removed orphaned {prefix}{entry['name']}")

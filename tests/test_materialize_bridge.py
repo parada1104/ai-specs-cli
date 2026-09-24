@@ -580,6 +580,58 @@ class OrphanApplyBridgeTests(unittest.TestCase):
         self.assertNotIn(self.mod.GO_ORPHANS_BRIDGE_FALLBACK, err)
         self.assertEqual(err.count(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED), 1, err)
 
+    def test_applied_with_remaining_fails_closed(self):
+        tree = self._tree()
+        payload = json.dumps(
+            {
+                "status": "applied",
+                "removed": [],
+                "remaining": [{"scope": "recipe_skills", "name": "gone"}],
+                "error": "",
+            }
+        )
+        stub = self._stub(f"printf '%s' '{payload}'\n")
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertTrue(self._orphan_still_there(tree))
+        self.assertNotIn("removed orphaned cache", out)
+        self.assertNotIn(self.mod.GO_ORPHANS_BRIDGE_FALLBACK, err)
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED), 1, err)
+        lock = self.mod.load_lock(self.root / "ai-specs" / ".ai-specs.lock")
+        self.assertIn("old", lock["recipes"], "lock must not be pruned")
+
+    def test_applied_with_uncertain_entry_fails_closed(self):
+        tree = self._tree()
+        payload = json.dumps(
+            {
+                "status": "applied",
+                "removed": [
+                    {"scope": "recipe_skills", "name": "gone", "uncertain": True}
+                ],
+                "remaining": [],
+                "error": "",
+            }
+        )
+        stub = self._stub(f"printf '%s' '{payload}'\n")
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertTrue(self._orphan_still_there(tree))
+        self.assertNotIn("removed orphaned cache", out)
+        self.assertNotIn(self.mod.GO_ORPHANS_BRIDGE_FALLBACK, err)
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED), 1, err)
+        lock = self.mod.load_lock(self.root / "ai-specs" / ".ai-specs.lock")
+        self.assertIn("old", lock["recipes"], "lock must not be pruned")
+
+    def test_undecodable_apply_output_fails_closed(self):
+        tree = self._tree()
+        stub = self._stub("printf '\\xff\\xfe not utf-8'\n")
+        with mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(stub)}):
+            out, err = self._run()
+        self.assertTrue(self._orphan_still_there(tree))
+        self.assertNotIn("removed orphaned cache", out)
+        self.assertNotIn(self.mod.GO_ORPHANS_BRIDGE_FALLBACK, err)
+        self.assertEqual(err.count(self.mod.GO_ORPHANS_APPLY_FAIL_CLOSED), 1, err)
+
     def test_exit_2_after_invocation_fails_closed(self):
         tree = self._tree()
         stub = self._stub("echo bad input >&2\nexit 2\n")
