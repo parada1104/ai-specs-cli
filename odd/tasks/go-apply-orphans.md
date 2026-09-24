@@ -12,7 +12,7 @@ Move deletion of regenerable orphan recipe/dependency cache directories to the G
 - Exclude `update_recipe_config` TOML writer and unrelated copy/template/hook actuators.
 - Worktree `.worktrees/go-apply-orphans`, branch `feat/go-apply-orphans`, base `development` at `94b6ac8`.
 - Configured TDD: enabled by `ai-specs/ai-specs.toml` `[recipes.tdd-flow]`, exact runner `./tests/validate.sh`; record real RED, GREEN, and final full-suite results. Focused Go/Python tests may shorten feedback, not replace the configured runner.
-- Delivery strategy: single PR for the change per prior user preference; no push, PR, or merge without explicit instruction. Forecast roughly 500–800 authored changed lines across Go actuator and Python bridge/tests (reassess actual count before commit); review candidate is each work-unit commit or PR slice under the current RDD switch.
+- Delivery strategy: one PR for the change was the prior preference, but the actual `development...HEAD` diff is 1,238 authored changed lines (1,193 additions + 45 deletions) across 7 paths. This exceeds both the ~400-line workload trigger and the prior 1,200-line PR budget by 38; a new explicit delivery-size decision is required before PR preparation. No push, PR, or merge without instruction. Native review candidates were the individual work-unit commits, not the accumulated branch.
 
 ## Tracker
 
@@ -40,4 +40,4 @@ Go-primary and Python fallback produce the same successful removals, stdout and 
 
 ## Next step
 
-Implementation and verification are complete locally. Before any PR/merge, obtain explicit maintainer disposition for WU1 lineage `review-1a68992d6c9770b1` and WU2 lineage `review-1c870cd9168e7590` (both open, no verdict); do not infer approval from the correction-only receipt. No push or PR has been authorized.
+Implementation and verification are complete locally. Before PR preparation, resolve the 1,238-line delivery-size decision and obtain explicit maintainer disposition for WU1 lineage `review-1a68992d6c9770b1` and WU2 lineage `review-1c870cd9168e7590` (both open, no verdict); do not infer approval from the correction-only receipt. No push or PR has been authorized.
