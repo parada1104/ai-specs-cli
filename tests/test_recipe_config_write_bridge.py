@@ -212,15 +212,23 @@ class ConfigWriteFallbackTests(_BridgeTestCase):
         "resolution-raises": lambda self: mock.patch.object(
             self.mod, "_load_gate_binary", side_effect=RuntimeError("unloadable")
         ),
-        # The process never starts.
-        "oserror": lambda self: mock.patch.object(
-            self.mod.subprocess, "run", side_effect=OSError("no exec")
+        # The process never starts. Resolution must yield a binary first, so
+        # the case pins one; its behavior is irrelevant because subprocess.run
+        # is patched.
+        "oserror": lambda self: (
+            self.pin_binary(self.stub("exit 0")),
+            mock.patch.object(
+                self.mod.subprocess, "run", side_effect=OSError("no exec")
+            ),
         ),
-        # The process outlives the bridge timeout.
-        "subprocess-timeout": lambda self: mock.patch.object(
-            self.mod.subprocess,
-            "run",
-            side_effect=subprocess.TimeoutExpired(cmd="gate", timeout=60),
+        # The process outlives the bridge timeout (same pin rationale).
+        "subprocess-timeout": lambda self: (
+            self.pin_binary(self.stub("exit 0")),
+            mock.patch.object(
+                self.mod.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(cmd="gate", timeout=60),
+            ),
         ),
         # text=True decodes stdout strictly; invalid bytes must not escape.
         "invalid-utf8": lambda self: self.pin_binary(
@@ -238,10 +246,25 @@ class ConfigWriteFallbackTests(_BridgeTestCase):
         ),
     }
 
+    # Injected-fault cases: the fallback warning's <reason> must name the
+    # injected fault, not the unrelated missing-binary path.
+    INJECTED_REASON_MARKERS = {
+        "resolution-raises": "unloadable",
+        "oserror": "no exec",
+        "subprocess-timeout": "timed out",
+    }
+
     def test_infrastructure_failures_fall_back_with_one_warning(self):
         for case, prepare in self.INFRASTRUCTURE_CASES.items():
-            with self.subTest(case=case):
-                prepare(self)
+            with self.subTest(case=case), contextlib.ExitStack() as stack:
+                # pin_binary cases return None (already active); the injected
+                # fault cases return patchers, or a (pin, patcher) tuple, that
+                # must be entered to fire.
+                prepared = prepare(self)
+                effects = prepared if isinstance(prepared, tuple) else (prepared,)
+                for effect in effects:
+                    if hasattr(effect, "__enter__"):
+                        stack.enter_context(effect)
                 path = self.manifest(MANIFEST, name=f"{case}.toml")
                 stderr, error = self.run_write(path)
                 self.assertIsNone(error)
@@ -250,6 +273,9 @@ class ConfigWriteFallbackTests(_BridgeTestCase):
                     1,
                     stderr,
                 )
+                marker = self.INJECTED_REASON_MARKERS.get(case)
+                if marker is not None:
+                    self.assertIn(marker, stderr, stderr)
                 self.assertEqual(path.read_bytes(), self.reference_bytes())
 
     def test_fallback_warning_matches_the_bridge_family_format(self):
