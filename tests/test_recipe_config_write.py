@@ -119,12 +119,14 @@ class RecipeConfigWriteTests(unittest.TestCase):
         )
         original = path.read_text(encoding="utf-8")
 
+        # Exercises the Python fallback authority's validate-and-restore path;
+        # the Go writer has its own WU1 parity tests.
         def bad_value(_v):
             return "[[[not-valid"
 
         with patch.object(self.mod._toml_write, "toml_value", side_effect=bad_value):
             with self.assertRaises(self.mod.RecipeConfigWriteError):
-                self.mod.update_recipe_config(path, "x", {"a": "2"})
+                self.mod._update_recipe_config_python(path, "x", {"a": "2"})
         self.assertEqual(path.read_text(encoding="utf-8"), original)
 
     def test_empty_values_is_noop(self):

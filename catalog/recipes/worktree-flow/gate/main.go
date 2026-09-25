@@ -109,6 +109,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// the already-loaded Recipe schema and sends it with the manifest config as
 	// an ordered JSON envelope; Go owns the merge decision.
 	planMergeConfigCmd := fs.Bool("plan-merge-config", false, "merge recipe config defaults with manifest overrides from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
+	// Recipe-config write is the Go strangler slice for the Python authority
+	// recipe-config-write.py: line surgery is decided in Go, parsing and final
+	// validation stay on the bounded standard TOML seam.
+	writeRecipeConfigCmd := fs.Bool("write-recipe-config", false, "apply recipe config values from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -206,6 +210,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runPlanClassify(stdin, stdout, stderr)
 	case *planMergeConfigCmd:
 		return runPlanMergeConfig(stdin, stdout, stderr)
+	case *writeRecipeConfigCmd:
+		return runWriteRecipeConfig(stdin, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
 	case *tokenize:
