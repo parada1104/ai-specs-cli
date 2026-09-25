@@ -10,9 +10,9 @@ Strangler slice 7 prep: contract map + RED test suite for migrating the hook/gat
 
 ## Tasks
 
-- [ ] Scout: exact contract of the hook/gate actuator path (placeholders, state machine, refresh rollback, exact strings, callers, bridge pattern fit). **Status: done — see ## Scout below; commit <sha>**
-- [ ] RED: failing Go parity test suite for the future Go core (hook/gate actuator), following the recipeconfigwrite_test.go pattern. **Status: pending**
-- [ ] ODD doc evidence updated; hand-off note for the implementation session. **Status: pending**
+- [ ] Scout: exact contract of the hook/gate actuator path (placeholders, state machine, refresh rollback, exact strings, callers, bridge pattern fit). **Status: done — see ## Scout below; commit ee36510**
+- [x] RED: failing Go parity test suite for the future Go core (hook/gate actuator), following the recipeconfigwrite_test.go pattern. **Status: done — commit 895df4b; `go vet` fails exactly on the three undefined core symbols (runMaterializeHook first at hookgateactuator_test.go:153); gofmt clean; 17 tests (rel path x1, rendering x7, end-to-end x9)**
+- [x] ODD doc evidence updated; hand-off note for the implementation session. **Status: done — this section and ## Hand-off note above**
 
 ## Rules for this lane
 
