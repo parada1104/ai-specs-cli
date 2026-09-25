@@ -765,16 +765,170 @@ def warn_legacy_version(recipe_id: str, manifest_version: str) -> None:
 
 
 # --- Materialize helpers ------------------------------------------------------
-def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Path, recipe_id: str, cli_home: Path | None = None) -> None:
-    src = recipe_dir / "skills" / skill_id
-    pc = _load_project_cache()
-    dest = pc.recipe_skills_root(project_root, cli_home=cli_home) / recipe_id / "skills" / skill_id
+
+# --- Copy-apply bridge (GO-08 WU2, strangler slice 5) -------------------------
+#
+# ``worktree-gate --apply-copy`` owns the COPY DECISION + EXECUTION for the
+# three blind copiers whose source is a local tree/file: bundled skills,
+# recipe commands, docs. Python keeps hashing (set_recipe_skill_hashes +
+# write_lock, already Go-delegated through the lock bridge), the exact prints
+# and warnings, and the fail-open fallback below.
+# ``materialize_dep_skill`` stays Python (true acquisition through
+# vendor-skills.py) and ``materialize_template`` is out of scope (slice 6
+# owns it).
+GO_COPY_APPLY_BRIDGE_FALLBACK = "GO_COPY_APPLY_BRIDGE_FALLBACK"
+GO_COPY_APPLY_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_copy_apply_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded copy authority."""
+    warn(
+        f"{GO_COPY_APPLY_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python copy authority"
+    )
+
+
+def _copy_apply_bridge_home() -> Path:
+    """The CLI package home owning the gate binary cache (module-home pattern
+    shared with the lock-write bridge)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _is_copy_apply_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented apply-copy envelope."""
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("results"), list):
+        return False
+    return all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("id"), str)
+        and entry.get("status") in ("ok", "source-missing")
+        and (entry.get("overwrite") is None or isinstance(entry.get("overwrite"), bool))
+        for entry in envelope["results"]
+    )
+
+
+def go_apply_copy(items: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Run ``worktree-gate --apply-copy``; return its per-item results, or None.
+
+    None means the bridge could not run: no verified binary, the process
+    failed, a Go refusal, or output that did not match the documented
+    envelope. The caller then falls back to the temporary Python copy body.
+    This function emits the single ``GO_COPY_APPLY_BRIDGE_FALLBACK`` warning
+    naming the reason, so a degraded run is never silent and never needs a
+    second warning.
+
+    A Go refusal (exit 2 with a stdout error envelope) ALSO fails open, like
+    the lock bridge and unlike the orphans deletion: every migrated copy is
+    idempotent — the bundled-skill fallback rmtree+copytree rewrites dest
+    wholesale, so even a partial Go copy is safe to redo, and copy2 is an
+    idempotent overwrite. There is no destructive ambiguity to protect
+    against.
+    """
+    try:
+        envelope_text = json.dumps({"items": items})
+    except (TypeError, ValueError) as exc:
+        _warn_copy_apply_bridge_fallback(
+            f"the copy plan could not be encoded ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_copy_apply_bridge_home())
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_copy_apply_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_copy_apply_bridge_fallback("no verified worktree-gate binary")
+        return None
+    try:
+        proc = subprocess.run(
+            [str(binary), "--apply-copy"],
+            input=envelope_text,
+            capture_output=True,
+            text=True,
+            timeout=GO_COPY_APPLY_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        # UnicodeDecodeError is a UnicodeError subclass: strict text=True
+        # decoding of stdout must degrade, not escape.
+        _warn_copy_apply_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        stdout = json.loads(proc.stdout)
+    except ValueError:
+        stdout = None
+    if proc.returncode != 0:
+        if isinstance(stdout, dict) and isinstance(stdout.get("error"), str):
+            _warn_copy_apply_bridge_fallback(
+                f"worktree-gate refused the copy ({stdout['error']})"
+            )
+        else:
+            detail = (proc.stderr or "").strip() or "no stderr"
+            _warn_copy_apply_bridge_fallback(
+                f"worktree-gate exited {proc.returncode} without a results envelope ({detail})"
+            )
+        return None
+    if not _is_copy_apply_envelope(stdout):
+        _warn_copy_apply_bridge_fallback(
+            "worktree-gate output did not match the apply-copy envelope"
+        )
+        return None
+    return stdout["results"]
+
+
+def _python_bundled_skill_copy(src: Path, dest: Path) -> None:
+    """TEMPORARY fail-open Python copy for a bundled skill, announced by
+    ``GO_COPY_APPLY_BRIDGE_FALLBACK``; ``worktree-gate --apply-copy`` is the
+    primary copy authority."""
     if not src.is_dir():
         raise RuntimeError(f"bundled skill not found: {src}")
     if dest.exists():
         shutil.rmtree(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dest)
+
+
+def _python_command_copy(cmd_id: str, src: Path, dest: Path) -> None:
+    """TEMPORARY fail-open Python copy for a recipe command, announced by
+    ``GO_COPY_APPLY_BRIDGE_FALLBACK``; ``worktree-gate --apply-copy`` is the
+    primary copy authority."""
+    if not src.is_file():
+        raise RuntimeError(f"command source not found: {src}")
+    if dest.exists() and (not dest.is_file() or dest.read_bytes() != src.read_bytes()):
+        warn(f"recipe command '{cmd_id}' overwrites existing managed command at {dest}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+
+
+def _python_doc_copy(src: Path, dest: Path) -> None:
+    """TEMPORARY fail-open Python copy for a recipe doc, announced by
+    ``GO_COPY_APPLY_BRIDGE_FALLBACK``; ``worktree-gate --apply-copy`` is the
+    primary copy authority."""
+    if not src.is_file():
+        raise RuntimeError(f"doc source not found: {src}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+
+
+def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Path, recipe_id: str, cli_home: Path | None = None) -> None:
+    src = recipe_dir / "skills" / skill_id
+    pc = _load_project_cache()
+    dest = pc.recipe_skills_root(project_root, cli_home=cli_home) / recipe_id / "skills" / skill_id
+    # The dispatch loop already iterates per item, so the bridge sends one
+    # item per call: per-item error semantics and the original RuntimeError
+    # ordering are preserved exactly.
+    results = go_apply_copy(
+        [{"kind": "bundled-skill", "id": skill_id, "src": str(src), "dest": str(dest)}]
+    )
+    if results is not None:
+        if results[0]["status"] == "source-missing":
+            raise RuntimeError(f"bundled skill not found: {src}")
+    else:
+        _python_bundled_skill_copy(src, dest)
     print(f"    ✓ bundled skill {skill_id}")
     # Track hashes in lock
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
@@ -816,13 +970,32 @@ def materialize_command(
 ) -> None:
     src = recipe_dir / cmd.path
     pc = _load_project_cache()
-    dest = pc.commands_dir(project_root, cli_home=cli_home) / f"{cmd.id}.md"
-    if not src.is_file():
-        raise RuntimeError(f"command source not found: {src}")
-    if dest.exists() and (not dest.is_file() or dest.read_bytes() != src.read_bytes()):
-        warn(f"recipe command '{cmd.id}' overwrites existing managed command at {dest}")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    commands_dir = pc.commands_dir(project_root, cli_home=cli_home)
+    dest = commands_dir / f"{cmd.id}.md"
+    results = go_apply_copy(
+        [
+            {
+                "kind": "command",
+                "id": cmd.id,
+                "src": str(src),
+                "dest": str(dest),
+                "commands_dir": str(commands_dir),
+            }
+        ]
+    )
+    if results is not None:
+        result = results[0]
+        if result["status"] == "source-missing":
+            raise RuntimeError(f"command source not found: {src}")
+        # The Go decision carries the warn condition: dest existed and is not
+        # a file, or the bytes differ. The warn fires before the copy in the
+        # reference; on the Go path the copy has already executed, but the
+        # warning goes to stderr and the confirmation to stdout, so the
+        # per-stream output is identical.
+        if result.get("overwrite"):
+            warn(f"recipe command '{cmd.id}' overwrites existing managed command at {dest}")
+    else:
+        _python_command_copy(cmd.id, src, dest)
     print(f"    ✓ command {cmd.id}")
 
 
@@ -949,10 +1122,14 @@ def materialize_template(
 def materialize_doc(recipe_dir: Path, doc: Any, project_root: Path) -> None:
     src = recipe_dir / doc.source
     dest = project_root / doc.target
-    if not src.is_file():
-        raise RuntimeError(f"doc source not found: {src}")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    results = go_apply_copy(
+        [{"kind": "doc", "id": doc.target, "src": str(src), "dest": str(dest)}]
+    )
+    if results is not None:
+        if results[0]["status"] == "source-missing":
+            raise RuntimeError(f"doc source not found: {src}")
+    else:
+        _python_doc_copy(src, dest)
     print(f"    ✓ doc {doc.target}")
 
 
