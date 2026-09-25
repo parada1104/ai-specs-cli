@@ -117,6 +117,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// lib/_internal/lock.py write_lock: Go owns the byte-exact TOML emission
 	// and the atomic replace; no parser seam is involved.
 	writeLockCmd := fs.Bool("write-lock", false, "write the ai-specs lock file from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
+	// Copy apply is the Go strangler slice for the materialize blind copiers
+	// (bundled skills, commands, docs): Go owns the copy decision + execution;
+	// Python keeps hashing, lock writes, prints and the fail-open fallback.
+	applyCopyCmd := fs.Bool("apply-copy", false, "execute the materialize copy plan from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -218,6 +222,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runWriteRecipeConfig(stdin, stdout, stderr)
 	case *writeLockCmd:
 		return runWriteLock(stdin, stdout, stderr)
+	case *applyCopyCmd:
+		return runApplyCopy(stdin, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
 	case *tokenize:
