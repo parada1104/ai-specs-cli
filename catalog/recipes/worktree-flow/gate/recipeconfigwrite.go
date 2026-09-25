@@ -276,7 +276,10 @@ func tomlValue(v any) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			parts = append(parts, k+" = "+encoded)
+			// Divergence from the Python reference (toml_write.py emits raw
+			// keys): Go quotes non-bare inline-table keys so the output is
+			// valid TOML and round-trips through tomllib.
+			parts = append(parts, tomlKey(k)+" = "+encoded)
 		}
 		return "{ " + strings.Join(parts, ", ") + " }", nil
 	case nil:
@@ -1073,12 +1076,42 @@ func applyRecipeConfigWrite(manifestPath, recipeID string, values *orderedMap) (
 		return false, "invalid TOML after config write: " + err.Error(), nil
 	}
 	if newText != originalText {
-		if err := os.WriteFile(manifestPath, []byte(newText), 0o644); err != nil {
+		if err := atomicWriteFile(manifestPath, []byte(newText)); err != nil {
 			return false, "", fmt.Errorf("write manifest: %w", err)
 		}
 		return true, "", nil
 	}
 	return false, "", nil
+}
+
+// atomicWriteFile replaces path with data via a temp file in the same
+// directory plus rename, so a crash mid-write can never leave a truncated
+// manifest behind. On any error before the rename the original file is
+// untouched.
+func atomicWriteFile(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".ai-specs-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func sortedPairKeys(pairs *orderedPairs) []string {
