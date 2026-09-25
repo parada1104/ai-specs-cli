@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import json
 import os
+import subprocess
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -83,7 +87,229 @@ def _toml_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _has_control_char(value: str) -> bool:
+    """True when value contains an ASCII control character (< 0x20 or DEL),
+    the same boundary the Go writer enforces (lockwrite.go hasControlChar)."""
+    return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
+
+
+def _refuse_control_chars(lock_path: Path, lock: dict) -> None:
+    """Fallback-authority boundary check, mirroring the Go writer's refusal.
+
+    ``_toml_string`` emits control characters raw inside a quoted TOML string,
+    so a newline in any emitted key or value could break out of the value.
+    The Go authority refuses such envelopes before the bridge can fall back
+    (the fail-closed lock bridge), and this guard gives the TEMPORARY Python
+    fallback writer the identical input validation: same locator wording, same
+    RuntimeError refusal class. Only the emitted surface is walked — the
+    fallback writes exactly what this function inspects.
+    """
+    meta = lock.get("meta") or {}
+    managed = lock.get("managed") or {}
+    agents = lock.get("agents") or {}
+    checks: list[tuple[str, str]] = [("lock_path", str(lock_path))]
+    for key in ("cli_version", "synced_at"):
+        value = meta.get(key)
+        if value:
+            checks.append((f"meta.{key}", str(value)))
+    for path in sorted(managed):
+        checks.append(("managed path", path))
+        entry = managed[path]
+        if not isinstance(entry, dict) or not entry.get("sha256"):
+            continue
+        for key in ("sha256", "recipe", "source", "kind", "policy"):
+            value = entry.get(key)
+            if value is not None and value != "":
+                checks.append((f"managed.{key}", str(value)))
+    for harness in sorted(agents):
+        checks.append(("agents harness", harness))
+        files = agents[harness]
+        if not files:
+            continue
+        for name in sorted(files):
+            checks.append(("agents filename", name))
+            checks.append(("agents hash", str(files[name])))
+    for locator, value in checks:
+        if _has_control_char(value):
+            raise RuntimeError(f"value for {locator} contains a control character")
+
+
+def _load_sibling(name: str):
+    path = Path(__file__).with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load sibling module {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+# --- Go lock-write bridge (GO-08) -------------------------------------------
+# lock.py is imported by many modules, so the gate_binary acquisition helper
+# is loaded lazily and cached, mirroring recipe-config-write.py's bridge
+# family.
+
+GO_LOCK_WRITE_BRIDGE_FALLBACK = "GO_LOCK_WRITE_BRIDGE_FALLBACK"
+GO_LOCK_WRITE_BRIDGE_TIMEOUT_SECONDS = 60
+
+_gate_binary_module = None
+
+
+def _load_gate_binary():
+    """Load the sibling gate_binary.py acquisition module (lazy, cached)."""
+    global _gate_binary_module
+    if _gate_binary_module is None:
+        _gate_binary_module = _load_sibling("gate_binary")
+    return _gate_binary_module
+
+
+def _lock_write_bridge_home() -> Path:
+    """The CLI package home owning the gate binary cache (module-home pattern
+    shared with the recipe-config-write bridge)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _warn_lock_write_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded lock-write authority."""
+    print(
+        f"  ! {GO_LOCK_WRITE_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python lock-write authority",
+        file=sys.stderr,
+    )
+
+
+def _lock_write_envelope(lock_path: Path, lock: dict) -> dict:
+    """Build the --write-lock stdin envelope with str() parity.
+
+    The Go contract accepts strings only, so every scalar is pre-stringified
+    with the same truthiness filters the Python writer applies (meta keys and
+    managed values are skipped when falsy/empty, exactly as write_lock does).
+    """
+    envelope: dict = {"lock_path": str(lock_path), "meta": {}, "managed": {}, "agents": {}}
+    meta = lock.get("meta") or {}
+    if meta.get("cli_version"):
+        envelope["meta"]["cli_version"] = str(meta["cli_version"])
+    if meta.get("synced_at"):
+        envelope["meta"]["synced_at"] = str(meta["synced_at"])
+    managed = lock.get("managed") or {}
+    for path in sorted(managed):
+        entry = managed[path]
+        if not isinstance(entry, dict) or not entry.get("sha256"):
+            continue
+        record: dict = {}
+        for key in ("sha256", "recipe", "source", "kind", "policy"):
+            value = entry.get(key)
+            if value is not None and value != "":
+                record[key] = str(value)
+        envelope["managed"][path] = record
+    agents = lock.get("agents") or {}
+    for harness in sorted(agents):
+        files = agents[harness]
+        if not files:
+            continue
+        envelope["agents"][harness] = {
+            name: str(value) for name, value in files.items()
+        }
+    return envelope
+
+
+def go_write_lock(lock_path: Path, lock: dict) -> bool:
+    """Run ``worktree-gate --write-lock``; True when it handled the write.
+
+    Returns False only on an INFRASTRUCTURE failure, when the caller must fall
+    back to the temporary Python writer: no verified binary, the process
+    failed (OSError/timeout/UnicodeError), non-JSON output, or a stdout
+    envelope that did not match the write-lock contract. Each fallback emits
+    the single ``GO_LOCK_WRITE_BRIDGE_FALLBACK`` warning naming the reason.
+
+    A Go refusal (exit 2 with a stdout error envelope) FAILS CLOSED: it raises
+    ``RuntimeError`` — the refusal is the Go authority's valid decision, and
+    falling back would bypass it (GO-08 findings fix, aligned with the
+    recipe-config bridge).
+    """
+    try:
+        envelope_text = json.dumps(_lock_write_envelope(lock_path, lock))
+    except TypeError:
+        # Not a bridge failure: values the Go envelope cannot represent go
+        # straight to the Python writer so its original TypeError surfaces.
+        return False
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_lock_write_bridge_home())
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_lock_write_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return False
+    if binary is None:
+        _warn_lock_write_bridge_fallback("no verified worktree-gate binary")
+        return False
+    try:
+        proc = subprocess.run(
+            [str(binary), "--write-lock"],
+            input=envelope_text,
+            capture_output=True,
+            text=True,
+            timeout=GO_LOCK_WRITE_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        # UnicodeDecodeError is a UnicodeError subclass: strict text=True
+        # decoding of stdout must degrade, not escape.
+        _warn_lock_write_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return False
+    try:
+        stdout = json.loads(proc.stdout)
+    except ValueError:
+        stdout = None
+    if proc.returncode != 0:
+        if isinstance(stdout, dict) and isinstance(stdout.get("error"), str):
+            # Fail closed: a valid refusal envelope is the Go authority's
+            # decision — no Python fallback may bypass it.
+            raise RuntimeError(
+                f"worktree-gate --write-lock refused: {stdout['error']}"
+            )
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_lock_write_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} without a success envelope ({detail})"
+        )
+        return False
+    if not (isinstance(stdout, dict) and stdout.get("written") is True):
+        if stdout is None:
+            _warn_lock_write_bridge_fallback("worktree-gate output was not JSON")
+        else:
+            _warn_lock_write_bridge_fallback(
+                "worktree-gate output did not match the write-lock envelope"
+            )
+        return False
+    return True
+
+
 def write_lock(lock_path: Path, lock: dict) -> None:
+    """Write the lock file: Go authority first, Python fail-open fallback.
+
+    The write decision belongs to ``worktree-gate --write-lock``; the retained
+    pure-Python writer is the TEMPORARY fail-open fallback authority
+    (``GO_LOCK_WRITE_BRIDGE_FALLBACK``) for infrastructure failures only. A Go
+    refusal (exit 2 with a stdout error envelope) FAILS CLOSED: ``go_write_lock``
+    raises ``RuntimeError`` instead of returning False, so the Python writer
+    can never bypass the Go authority's decision.
+    """
+    if go_write_lock(lock_path, lock):
+        return
+    _write_lock_python(lock_path, lock)
+
+
+def _write_lock_python(lock_path: Path, lock: dict) -> None:
+    """Retained pure-Python lock writer, the TEMPORARY fail-open fallback.
+
+    Input validation mirrors the Go authority: any emitted key or value with
+    an ASCII control character is refused (RuntimeError) before a byte is
+    written, so the fallback can never emit bytes the Go writer would refuse.
+    """
+    _refuse_control_chars(lock_path, lock)
     out = [LOCK_HEADER]
 
     meta = lock.get("meta") or {}

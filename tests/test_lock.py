@@ -148,6 +148,68 @@ class LockRoundTripTests(unittest.TestCase):
         self.assertNotIn("opted_out", reloaded)
 
 
+class FallbackControlCharRefusalTests(unittest.TestCase):
+    """The TEMPORARY Python fallback lock writer enforces the same boundary as
+    the Go authority (``worktree-gate --write-lock``): any emitted key or
+    value containing an ASCII control character (< 0x20 or DEL 0x7f) is
+    refused with RuntimeError using the Go locator wording, so a fallback
+    write can never emit bytes the Go writer would refuse (GO-08 second
+    findings batch)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lock = load_module(LOCK_PATH, "lock_internal_refusal")
+
+    def _fallback_path(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name) / ".ai-specs.lock"
+
+    def test_control_char_in_agents_hash_is_refused(self):
+        path = self._fallback_path()
+        lock = self.lock.load_lock(path)
+        lock["agents"]["claude"] = {"AGENTS.md": "hash\nwith-newline"}
+        with self.assertRaises(RuntimeError) as ctx:
+            self.lock._write_lock_python(path, lock)
+        self.assertEqual(
+            str(ctx.exception),
+            "value for agents hash contains a control character",
+        )
+        self.assertFalse(path.exists(), "nothing written on refusal")
+
+    def test_control_char_in_managed_path_is_refused(self):
+        path = self._fallback_path()
+        lock = self.lock.load_lock(path)
+        lock["managed"]["hooks/pre\x01commit"] = {"sha256": "abc"}
+        with self.assertRaises(RuntimeError) as ctx:
+            self.lock._write_lock_python(path, lock)
+        self.assertEqual(
+            str(ctx.exception),
+            "value for managed path contains a control character",
+        )
+        self.assertFalse(path.exists(), "nothing written on refusal")
+
+    def test_control_char_in_meta_value_is_refused(self):
+        path = self._fallback_path()
+        lock = self.lock.load_lock(path)
+        lock["meta"] = {"cli_version": "0.14.0", "synced_at": "2026\x7f-01-01"}
+        with self.assertRaises(RuntimeError) as ctx:
+            self.lock._write_lock_python(path, lock)
+        self.assertEqual(
+            str(ctx.exception),
+            "value for meta.synced_at contains a control character",
+        )
+
+    def test_clean_lock_still_writes(self):
+        path = self._fallback_path()
+        lock = self.lock.load_lock(path)
+        lock["agents"]["pi"] = {"AGENTS.md": "abc123"}
+        lock["managed"]["AGENTS.md"] = {"sha256": "def456", "kind": "runtime-brief"}
+        self.lock._write_lock_python(path, lock)
+        text = path.read_text()
+        self.assertIn('[agents."pi"]', text)
+        self.assertIn('[managed."AGENTS.md"]', text)
+
 
 if __name__ == "__main__":
     unittest.main()
