@@ -341,8 +341,68 @@ func TestWriteLockCLIStructuredErrors(t *testing.T) {
 			if envelope.Written {
 				t.Errorf("written = true on a refusal")
 			}
+			msg := *envelope.Error
+			if strings.HasPrefix(msg, "lock write: non-string value at ") && strings.HasSuffix(msg, " ") {
+				t.Errorf("typed refusal has an empty field locator: %q", msg)
+			}
 		})
 	}
+}
+
+// TestWriteLockCLIRefusesControlCharacters pins the envelope-boundary
+// validation: any key or value containing a character below 0x20 or DEL
+// (0x7f) is refused with exit 2 and nothing is written. The byte-exact
+// emitter itself keeps emitting raw control characters (Python parity,
+// pinned by TestRenderLockRawControlCharsInValues); the refusal happens at
+// the envelope boundary, before any bytes reach the filesystem.
+func TestWriteLockCLIRefusesControlCharacters(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, ".ai-specs.lock")
+	cases := []struct {
+		name    string
+		envelop string
+	}{
+		{"lock_path newline", `{"lock_path": "` + dir + `/x\nyz.lock"}`},
+		{"meta value newline", `{"lock_path": "` + lockPath + `", "meta": {"cli_version": "0.1\n0"}}`},
+		{"meta value DEL", `{"lock_path": "` + lockPath + `", "meta": {"synced_at": "2026\u007f01"}}`},
+		{"managed path newline", `{"lock_path": "` + lockPath + `", "managed": {"a\nb.md": {"sha256": "abc"}}}`},
+		{"managed value newline", `{"lock_path": "` + lockPath + `", "managed": {"a.md": {"sha256": "abc", "recipe": "wf\nlow"}}}`},
+		{"agents harness newline", `{"lock_path": "` + lockPath + `", "agents": {"cla\nude": {"AGENTS.md": "h"}}}`},
+		{"agents filename newline", `{"lock_path": "` + lockPath + `", "agents": {"claude": {"A\nGENTS.md": "h"}}}`},
+		{"agents hash newline", `{"lock_path": "` + lockPath + `", "agents": {"claude": {"AGENTS.md": "ha\nsh"}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, stderr := runWriteLockCLI(t, tc.envelop)
+			if code != 2 {
+				t.Fatalf("exit = %d (want 2), stderr %q, stdout %q", code, stderr, out)
+			}
+			envelope := decodeLockWriteEnvelope(t, out)
+			if envelope.Error == nil || !strings.Contains(*envelope.Error, "contains a control character") {
+				t.Fatalf("error envelope = %#v, want a control-character refusal", envelope)
+			}
+			if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+				t.Errorf("a refused envelope must not write the lock")
+			}
+		})
+	}
+}
+
+// TestWriteLockCLIAcceptsControlCharFreeEnvelope is the companion to the
+// refusal table: quoted values stay writable when they are clean, including
+// quote/backslash escaping, so the validation is not over-broad.
+func TestWriteLockCLIAcceptsControlCharFreeEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, ".ai-specs.lock")
+	envelope := `{"lock_path": "` + lockPath + `", "meta": {"cli_version": "0.1\"x\\y"}, "managed": {"a.md": {"sha256": "abc"}}, "agents": {"claude": {"AGENTS.md": "agenthash"}}}`
+	code, out, stderr := runWriteLockCLI(t, envelope)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr %q, stdout %q", code, stderr, out)
+	}
+	if envelopeOut := decodeLockWriteEnvelope(t, out); !envelopeOut.Written {
+		t.Fatalf("envelope = %#v, want written true", envelopeOut)
+	}
+	assertFileBytes(t, lockPath, lockHeader+"\n[meta]\ncli_version = \"0.1\\\"x\\\\y\"\n\n[managed.\"a.md\"]\nsha256 = \"abc\"\n\n[agents.\"claude\"]\n\"AGENTS.md\" = \"agenthash\"\n")
 }
 
 // TestWriteLockCLIInfraFailure pins the infra-failure contract: an I/O error

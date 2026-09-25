@@ -18,7 +18,13 @@ The Python copy bodies survive as TEMPORARY fail-open fallbacks
 * the degraded path for every infrastructure failure: one warning, then the
   Python body executes identically (a partial Go bundled-skill copy is safe
   to redo: the fallback rmtree+copytree rewrites dest wholesale; copy2 is an
-  idempotent overwrite).
+  idempotent overwrite), and
+* FAIL CLOSED on a Go refusal (exit 2 with a stdout error envelope): the
+  bridge raises ``RuntimeError`` naming the Go error instead of falling back,
+  so the Python bodies can never bypass the Go authority's decision (GO-08
+  findings fix). A valid exit-0 ``results: []`` envelope is treated as valid
+  with no items to apply (never an IndexError); a results-missing envelope
+  stays an envelope mismatch (fail open).
 
 The Go path needs a built binary (``dist/worktree-gate-current`` or
 ``$WORKTREE_GATE_BIN``); it skips loudly when none exists. Fallback tests run
@@ -154,6 +160,10 @@ class _CopyBridgeTestCase(unittest.TestCase):
                 )
             )
         return stack
+
+    def _dest_command(self, fixture: dict) -> Path:
+        pc = self.mod._load_project_cache()
+        return pc.commands_dir(fixture["root"], cli_home=self.home) / "deploy.md"
 
     def run_materialize(self, fn, *args, **kwargs) -> tuple[str, str]:
         out, err = io.StringIO(), io.StringIO()
@@ -346,24 +356,27 @@ class CopyApplyGoAuthorityTests(_CopyBridgeTestCase):
                     run(fixture)
                 self.assertEqual(str(ctx.exception), f"{prefix}{src_of(fixture)}")
 
-    def test_command_dest_directory_fails_open_and_copies_into_it(self):
-        """A dest directory: Go's decision sees overwrite, its execution fails,
-        the bridge fails open, and the reference copy2 copies INTO the dir."""
+    def test_command_dest_directory_execution_failure_fails_closed(self):
+        """A dest directory: Go's decision sees overwrite, its execution
+        fails, and Go's exit-2 error envelope is a refusal — the bridge fails
+        CLOSED (GO-08 findings fix): no Python fallback copy may override it."""
         fixture = self.recipe_root("go-cmd-dir")
         dest = self._dest_command(fixture)
         dest.mkdir(parents=True)
-        out, err = self.run_materialize(
-            self.mod.materialize_command,
-            fixture["recipe_dir"],
-            SimpleNamespace(id="deploy", path="commands/deploy.md"),
-            fixture["root"],
-            cli_home=self.home,
-        )
-        self.assertEqual(err.count(self.mod.GO_COPY_APPLY_BRIDGE_FALLBACK), 1, err)
-        self.assertIn("    ✓ command deploy", out)
-        self.assertEqual(
-            (dest / "deploy.md").read_bytes(), b"deploy steps v2"
-        )
+        with self.forbid_python_copies():
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                with self.assertRaises(RuntimeError) as ctx:
+                    self.run_materialize(
+                        self.mod.materialize_command,
+                        fixture["recipe_dir"],
+                        SimpleNamespace(id="deploy", path="commands/deploy.md"),
+                        fixture["root"],
+                        cli_home=self.home,
+                    )
+        self.assertIn("worktree-gate refused the copy", str(ctx.exception))
+        self.assertNotIn(self.mod.GO_COPY_APPLY_BRIDGE_FALLBACK, err.getvalue())
+        self.assertFalse((dest / "deploy.md").exists(), "no fallback copy into dest")
 
     def test_envelope_contract_one_item_per_call_with_commands_dir(self):
         fixture = self.recipe_root("go-envelope")
@@ -432,8 +445,10 @@ class CopyApplyFallbackTests(_CopyBridgeTestCase):
             self.stub("printf '\\377\\376not utf8'")
         ),
         "non-json": lambda self: self.pin_binary(self.stub("echo 'not json'")),
-        "exit-two-error-envelope": lambda self: self.pin_binary(
-            self.stub("printf '%s' '{\"error\": \"boom refusal\"}'; exit 2")
+        # Exit 0 with no "results" key: an envelope mismatch (fail open),
+        # distinct from a valid empty results list.
+        "envelope-no-results": lambda self: self.pin_binary(
+            self.stub("printf '%s' '{}'")
         ),
         "envelope-mismatch": lambda self: self.pin_binary(
             self.stub("printf '%s' '{\"results\": \"yes\"}'")
@@ -444,7 +459,6 @@ class CopyApplyFallbackTests(_CopyBridgeTestCase):
         "resolution-raises": "unloadable",
         "oserror": "no exec",
         "subprocess-timeout": "timed out",
-        "exit-two-error-envelope": "boom refusal",
     }
 
     def test_all_failures_fall_back_with_one_warning_and_python_executes(self):
@@ -483,7 +497,10 @@ class CopyApplyFallbackTests(_CopyBridgeTestCase):
         """A partial Go copy (here: none at all) is safe to redo: the fallback
         rmtree+copytree replaces dest wholesale."""
         fixture = self.recipe_root("fb-skill")
-        self.pin_binary(self.stub("printf '%s' '{\"error\": \"partial\"}'; exit 2"))
+        # An infrastructure failure (garbage stdout, exit 0) — refusals fail
+        # closed now, so the idempotent-rewrite fallback contract is proven
+        # against a non-refusal degradation.
+        self.pin_binary(self.stub("printf '%s' 'partial garbage'"))
         dest = fixture["root"] / "cache" / "stale"
         # The pinned binary always fails, so run against the real dest via the
         # normal call; pre-seed a stale dest tree.
@@ -546,6 +563,77 @@ class CopyApplyFallbackTests(_CopyBridgeTestCase):
         self.assertIn("vendor-skills.py", source)
         self.assertIn("sync_dep_target", source)
         self.assertNotIn("go_apply_copy", source)
+
+
+
+class CopyApplyRefusalFailClosedTests(_CopyBridgeTestCase):
+    """A valid Go refusal (exit 2, stdout error envelope) is the authority's
+    decision: the bridge fails CLOSED — RuntimeError, no fallback warning, no
+    Python copy, dest untouched (GO-08 findings fix)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.binary = gate_binary()
+
+    def setUp(self):
+        super().setUp()
+        self.mod._project_cache_module = None  # re-resolve per fixture
+        self.pin_binary(
+            self.stub("printf '%s' '{\"error\": \"boom refusal\"}'; exit 2")
+        )
+
+    def test_refusal_envelope_raises_and_never_falls_back(self):
+        fixture = self.recipe_root("refusal-command")
+        dest = self._dest_command(fixture)
+        with self.forbid_python_copies():
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                with self.assertRaises(RuntimeError) as ctx:
+                    self.mod.materialize_command(
+                        fixture["recipe_dir"],
+                        SimpleNamespace(id="deploy", path="commands/deploy.md"),
+                        fixture["root"],
+                        cli_home=self.home,
+                    )
+        self.assertEqual(
+            str(ctx.exception),
+            "worktree-gate refused the copy: boom refusal",
+        )
+        self.assertNotIn(self.mod.GO_COPY_APPLY_BRIDGE_FALLBACK, err.getvalue())
+        self.assertFalse(dest.exists(), "a refused copy must not touch dest")
+
+
+class CopyApplyEmptyResultsTests(_CopyBridgeTestCase):
+    """A valid exit-0 ``results: []`` envelope is valid with no items to
+    apply — never an IndexError; a results-missing envelope stays an envelope
+    mismatch (fail open), pinned in CopyApplyFallbackTests."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.binary = gate_binary()
+
+    def setUp(self):
+        super().setUp()
+        self.mod._project_cache_module = None  # re-resolve per fixture
+        self.pin_binary(self.stub("printf '%s' '{\"results\": []}'"))
+
+    def test_empty_results_envelope_is_valid_with_no_items(self):
+        fixture = self.recipe_root("empty-results-command")
+        dest = self._dest_command(fixture)
+        with self.forbid_python_copies():
+            out, err = self.run_materialize(
+                self.mod.materialize_command,
+                fixture["recipe_dir"],
+                SimpleNamespace(id="deploy", path="commands/deploy.md"),
+                fixture["root"],
+                cli_home=self.home,
+            )
+        self.assertEqual(err, "", "no fallback warning on a valid envelope")
+        self.assertIn("    ✓ command deploy", out)
+        self.assertFalse(dest.exists(), "no items to apply: dest untouched")
+
 
 
 if __name__ == "__main__":

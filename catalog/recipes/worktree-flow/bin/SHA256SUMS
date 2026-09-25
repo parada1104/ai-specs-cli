@@ -106,7 +106,12 @@
 # GO_COPY_APPLY_BRIDGE_FALLBACK bridge; no new asset, no second trust root),
 # with the canonical go1.24.13 toolchain via the same command above.
 #
-1850035a8cbd58a23b0a9d5638391cb32dd4e4d3c633b9cbbf53c6f59fd20227  worktree-gate-darwin-amd64
-24573be10dc6849a28e93cb3faaf3f882cf6487e4e71f955eef70a590395f271  worktree-gate-darwin-arm64
-5a763682a57b1c328c3242b078c1af680d14923d71e97d7d60aee083e8dff642  worktree-gate-linux-amd64
-9dc3d7471eebe6ace03f97e9232c90d8a76dee885dc5b93f7bb5316cb20a83ac  worktree-gate-linux-arm64
+# Regenerated for the go-lock-copy GO-08 findings-fix batch (the same four-arch
+# asset gains --write-lock envelope-boundary control-character refusal and
+# --apply-copy dir-mode copystat parity; no new asset, no second trust root),
+# with the canonical go1.24.13 toolchain via the same command above.
+#
+d1391af0277e40212be47c2c793747012c529b3375f6fdee2ae81f24d956cd31  worktree-gate-darwin-amd64
+b3e0872e4c210efff296f767d86574fcf53f37129d69accc99ff3668cb6f3598  worktree-gate-darwin-arm64
+ee985bacd9925ba3944f91e854d998ad39dce94a69608ead8cc847e8253d5310  worktree-gate-linux-amd64
+fd591d562e2be5f563207980c521181c8f23a1d27c82833ca5a6225f6ac0a937  worktree-gate-linux-arm64

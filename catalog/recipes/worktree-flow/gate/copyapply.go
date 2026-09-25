@@ -33,9 +33,12 @@ import (
 // a transport failure — Python raises the exact RuntimeError at the same
 // point. Invalid envelope or item execution failure prints {"error": "..."}
 // on stdout with exit 2 (detail on stderr); the Python bridge fails open on
-// both and re-runs the item with its idempotent reference semantics: the
-// bundled-skill fallback rmtree+copytree rewrites dest wholesale, so a
-// partial Go copy is safe to redo, and copy2 is an idempotent overwrite.
+// those with its idempotent reference semantics (the bundled-skill fallback
+// rmtree+copytree rewrites dest wholesale, so a partial Go copy is safe to
+// redo, and copy2 is an idempotent overwrite), but a delivered exit-2 error
+// envelope is a REFUSAL and fails closed on the Python side: it raises
+// RuntimeError naming the Go error instead of falling back (GO-08 findings
+// fix).
 //
 // The Python bridge sends one item per call (its dispatch loop already
 // iterates per item), so per-item error semantics and the original
@@ -66,18 +69,21 @@ type copyResult struct {
 }
 
 // statMode mirrors Python's stat.S_IMODE: permission bits plus setuid/setgid/
-// sticky, which copystat preserves and plain Perm() drops.
+// sticky, which copystat preserves and plain Perm() drops. The special bits
+// are returned as Go FileMode flags (os.ModeSetuid, ...) — not raw 0o4000-
+// style bits — so os.Chmod and os.WriteFile re-apply them through
+// syscallMode; raw bits in the FileMode would be silently dropped.
 func statMode(info os.FileInfo) os.FileMode {
 	mode := info.Mode()
 	perm := mode.Perm()
 	if mode&os.ModeSetuid != 0 {
-		perm |= 0o4000
+		perm |= os.ModeSetuid
 	}
 	if mode&os.ModeSetgid != 0 {
-		perm |= 0o2000
+		perm |= os.ModeSetgid
 	}
 	if mode&os.ModeSticky != 0 {
-		perm |= 0o1000
+		perm |= os.ModeSticky
 	}
 	return perm
 }
@@ -86,6 +92,9 @@ func statMode(info os.FileInfo) os.FileMode {
 // source's S_IMODE permission bits and its mtime. The atime is set to the
 // mtime rather than preserved: every later read refreshes it anyway, and
 // nothing in the CLI consumes atimes (mtime is what copy2 parity needs).
+// The content is read into memory in one piece: the copiers' inputs are
+// bounded config/skill files, and this keeps the byte copy identical to
+// copy2's read-then-write without streaming plumbing.
 func copyFileStat(src, dest string) error {
 	info, err := os.Stat(src)
 	if err != nil {
@@ -111,15 +120,27 @@ func copyFileStat(src, dest string) error {
 // in the reference too); files go through copyFileStat. Symlinks are
 // followed: a symlinked directory is recursed into, a symlinked file is
 // copied as its target's content.
+//
+// Dir-mode parity: copytree creates each directory with makedirs' default
+// mode (0o777 filtered by the process umask) and copystat applies the
+// source's S_IMODE bits only after the children are copied. So the creation
+// mode here is 0o777 (umask applies exactly as in Python) and the source's
+// bits are chmod'ed on after the children — creating with the source bits
+// directly would leave them umask-filtered and diverge from the reference.
+// Child errors propagate immediately (first-error parity with copytree's
+// default collect_errors=False).
 func copyTree(src, dest string) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
 	if !info.IsDir() {
+		// Defensive parity with copytree raising on a non-directory source;
+		// applyCopyDecision already screens the item's source, so this only
+		// fires for direct/internal misuse.
 		return fmt.Errorf("copy tree: %s is not a directory", src)
 	}
-	if err := os.Mkdir(dest, statMode(info)); err != nil {
+	if err := os.Mkdir(dest, 0o777); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(src)
@@ -143,7 +164,11 @@ func copyTree(src, dest string) error {
 			return err
 		}
 	}
-	// copystat for the directory itself, after the children (mtime parity).
+	// copystat for the directory itself, after the children: the source's
+	// S_IMODE bits (including setgid) are applied now, umask-independent.
+	if err := os.Chmod(dest, statMode(info)); err != nil {
+		return err
+	}
 	mtime := info.ModTime()
 	if err := os.Chtimes(dest, mtime, mtime); err != nil {
 		return err
@@ -205,7 +230,8 @@ func applyCopyDecision(item *copyItem) (copyResult, error) {
 // executeCopyItem is the Go COPY EXECUTION for one decided item, mirroring
 // the reference bodies: bundled-skill replaces dest wholesale (rmtree +
 // dest.parent.mkdir + copytree); command and doc are copy2 with a
-// dest.parent.mkdir first.
+// dest.parent.mkdir first. The parent is created with 0o777 so the process
+// umask filters it exactly like Python's default mkdir(parents=True) mode.
 func executeCopyItem(item *copyItem) error {
 	switch item.Kind {
 	case "bundled-skill":
@@ -235,6 +261,10 @@ func executeCopyItem(item *copyItem) error {
 // JSON envelope on stdout. Exit 0 when every item was decided (ok or
 // source-missing); exit 2 with {"error": ...} on stdout for an invalid
 // envelope or an item execution failure. Items execute in envelope order.
+//
+// Trust model: the gate binary is caller-privileged — every flag writes
+// where it is told — so the item src/dest paths are trusted exactly like the
+// other flag inputs; there is deliberately no path confinement.
 func runApplyCopy(stdin io.Reader, stdout, stderr io.Writer) int {
 	raw, err := io.ReadAll(stdin)
 	if err != nil {

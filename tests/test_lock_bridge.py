@@ -8,12 +8,14 @@ Python keeps the retained writer as a TEMPORARY fail-open fallback
 * the bridge-written lock is byte-identical to the retained Python writer's
   lock (including legacy-section dropping and no temp files left behind),
 * the stdout envelope contract (``{"written": true}`` on exit 0),
-* fail open on ALL failures — including a Go refusal (exit 2 with a stdout
-  ``{"error": "<string>"}`` envelope). This is a deliberate divergence from
-  the recipe-config bridge, which fails closed on refusals: the lock write is
-  a full-state idempotent atomic replace, so the Python fallback can only
-  rewrite the same correct state and there is no destructive ambiguity to
-  protect against.
+* fail open on ALL INFRASTRUCTURE failures (no verified binary, the process
+  failed, or the stdout envelope did not match), each emitting the single
+  ``GO_LOCK_WRITE_BRIDGE_FALLBACK`` warning naming the reason, and
+* FAIL CLOSED on a Go refusal (exit 2 with a stdout ``{"error": "<string>"}``
+  envelope): the refusal is the Go authority's valid decision, so the bridge
+  raises ``RuntimeError`` instead of falling back — the Python writer can
+  never bypass Go's decision (GO-08 findings fix, aligning with the
+  recipe-config bridge).
 
 The Go path needs a built binary (``dist/worktree-gate-current`` or
 ``$WORKTREE_GATE_BIN``); it skips loudly when none exists. Every fallback test
@@ -240,11 +242,6 @@ class LockWriteFallbackTests(_BridgeTestCase):
         ),
         # Non-JSON stdout on a successful exit.
         "non-json": lambda self: self.pin_binary(self.stub("echo 'not json'")),
-        # Exit-2 error envelope: a Go refusal must ALSO fail open here (the
-        # pinned divergence from the recipe-config bridge).
-        "exit-two-error-envelope": lambda self: self.pin_binary(
-            self.stub("printf '%s' '{\"error\": \"boom refusal\"}'; exit 2")
-        ),
         # Exit 0 but the documented written envelope shape, violated.
         "envelope-mismatch": lambda self: self.pin_binary(
             self.stub("printf '%s' '{\"written\": \"yes\"}'")
@@ -257,7 +254,6 @@ class LockWriteFallbackTests(_BridgeTestCase):
         "resolution-raises": "unloadable",
         "oserror": "no exec",
         "subprocess-timeout": "timed out",
-        "exit-two-error-envelope": "boom refusal",
     }
 
     def test_all_failures_fall_back_with_one_warning_and_identical_bytes(self):
@@ -297,14 +293,27 @@ class LockWriteFallbackTests(_BridgeTestCase):
             line,
         )
 
-    def test_fallback_on_refusal_keeps_the_lock_untouched_until_the_fallback_writes(self):
-        # The fallback rewrites the same full state, so the end state is the
-        # same correct lock either way — never a partial or missing one.
-        self.pin_binary(self.stub("printf '%s' '{\"error\": \"refused\"}'; exit 2"))
+class LockWriteRefusalFailClosedTests(_BridgeTestCase):
+    """A valid Go refusal (exit 2, stdout error envelope) is the authority's
+    decision: the bridge fails CLOSED — RuntimeError, no fallback warning, no
+    Python writer, lock untouched."""
+
+    def test_refusal_envelope_raises_and_never_falls_back(self):
+        self.pin_binary(
+            self.stub("printf '%s' '{\"error\": \"boom refusal\"}'; exit 2")
+        )
         path = self.tmp / "ai-specs.lock"
-        stderr = self.run_write(path)
-        self.assertEqual(stderr.count(self.mod.GO_LOCK_WRITE_BRIDGE_FALLBACK), 1)
-        self.assertEqual(path.read_bytes(), self.reference_bytes())
+        with self.forbid_python_writer():
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                with self.assertRaises(RuntimeError) as ctx:
+                    self.run_write(path)
+        self.assertEqual(
+            str(ctx.exception),
+            "worktree-gate --write-lock refused: boom refusal",
+        )
+        self.assertEqual(stderr.getvalue(), "", "no fallback warning on a refusal")
+        self.assertFalse(path.exists(), "the lock must stay untouched")
 
 
 if __name__ == "__main__":

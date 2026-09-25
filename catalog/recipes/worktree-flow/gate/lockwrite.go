@@ -26,8 +26,9 @@ import (
 //	 "agents": {"<harness>": {"<filename>": "hash"}}}
 //
 // and prints {"written": true} on stdout with exit 0. Structured/refusal
-// errors (invalid envelope, non-string values, empty lock_path) print
-// {"error": "<string>"} on stdout with exit 2; infrastructure failures (I/O
+// errors (invalid envelope, non-string values, empty lock_path, control
+// characters in any envelope key or value) print {"error": "<string>"} on
+// stdout with exit 2; infrastructure failures (I/O
 // errors) report a diagnostic on stderr with exit 2. All values arrive as
 // strings (the Python bridge pre-stringifies); the nested agents shape
 // matches the Python lock dict {harness: {filename: hash}} byte for byte.
@@ -70,6 +71,83 @@ func lockTOMLString(value string) string {
 	escaped := strings.ReplaceAll(value, `\`, `\\`)
 	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
 	return `"` + escaped + `"`
+}
+
+// hasControlChar reports whether s contains an ASCII control character
+// (below 0x20, or DEL 0x7f).
+func hasControlChar(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// firstControlCharLocator walks every envelope key and value in the emitter's
+// deterministic order and returns a locator naming the first string that
+// contains a control character; "" when the envelope is clean.
+func firstControlCharLocator(req *lockWriteRequest) string {
+	metaKeys := make([]string, 0, len(req.Meta))
+	for key := range req.Meta {
+		metaKeys = append(metaKeys, key)
+	}
+	sort.Strings(metaKeys)
+	for _, key := range metaKeys {
+		if hasControlChar(key) {
+			return "meta key"
+		}
+		if hasControlChar(req.Meta[key]) {
+			return "meta." + key
+		}
+	}
+	paths := make([]string, 0, len(req.Managed))
+	for path := range req.Managed {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		entry := req.Managed[path]
+		if hasControlChar(path) {
+			return "managed path"
+		}
+		for _, kv := range []struct{ key, value string }{
+			{"sha256", entry.SHA256},
+			{"recipe", entry.Recipe},
+			{"source", entry.Source},
+			{"kind", entry.Kind},
+			{"policy", entry.Policy},
+		} {
+			if hasControlChar(kv.value) {
+				return "managed." + kv.key
+			}
+		}
+	}
+	harnesses := make([]string, 0, len(req.Agents))
+	for harness := range req.Agents {
+		harnesses = append(harnesses, harness)
+	}
+	sort.Strings(harnesses)
+	for _, harness := range harnesses {
+		files := req.Agents[harness]
+		if hasControlChar(harness) {
+			return "agents harness"
+		}
+		names := make([]string, 0, len(files))
+		for name := range files {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if hasControlChar(name) {
+				return "agents filename"
+			}
+			if hasControlChar(files[name]) {
+				return "agents hash"
+			}
+		}
+	}
+	return ""
 }
 
 // renderLock is the write_lock body (lib/_internal/lock.py:86-122): fixed
@@ -152,6 +230,11 @@ func renderLock(req *lockWriteRequest) string {
 // 0600 mode, which is exactly tempfile.mkstemp's default — mode parity with
 // the Python reference is intentional. The lock is always rewritten; there
 // is deliberately no byte-equality no-op.
+//
+// Trust model: the gate binary is caller-privileged — every flag writes
+// where it is told (--write-lock's lock_path, --write-recipe-config's
+// target, ...) — so envelope paths are trusted exactly like the flag's other
+// inputs; there is deliberately no path confinement.
 func writeLockFile(req *lockWriteRequest) error {
 	parent := filepath.Dir(req.LockPath)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
@@ -192,7 +275,14 @@ func runWriteLock(stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := json.Unmarshal(raw, &req); err != nil {
 		var typeErr *json.UnmarshalTypeError
 		if errors.As(err, &typeErr) {
-			fmt.Fprintln(stdout, `{"error": `+pyJSONString("lock write: non-string value at "+typeErr.Field)+`}`)
+			// Field is empty when the mismatch is at a container boundary
+			// (e.g. an array where a map was expected); name the envelope
+			// itself rather than emitting a message with a dangling "at ".
+			field := typeErr.Field
+			if field == "" {
+				field = "envelope"
+			}
+			fmt.Fprintln(stdout, `{"error": `+pyJSONString("lock write: non-string value at "+field)+`}`)
 		} else {
 			fmt.Fprintln(stdout, `{"error": `+pyJSONString("lock write: invalid input JSON: "+err.Error())+`}`)
 		}
@@ -200,6 +290,19 @@ func runWriteLock(stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if req.LockPath == "" {
 		fmt.Fprintln(stdout, `{"error": "lock write: lock_path must be a non-empty path"}`)
+		return 2
+	}
+	// Boundary validation (GO-08 findings fix): the byte-exact emitter writes
+	// control characters raw inside a quoted TOML string, so a newline in any
+	// key or value could break out of the value. Python parity forbids
+	// control-char escaping, so the envelope refuses them here instead of in
+	// the emitter.
+	if hasControlChar(req.LockPath) {
+		fmt.Fprintln(stdout, `{"error": "value for lock_path contains a control character"}`)
+		return 2
+	}
+	if locator := firstControlCharLocator(&req); locator != "" {
+		fmt.Fprintln(stdout, `{"error": `+pyJSONString("value for "+locator+" contains a control character")+`}`)
 		return 2
 	}
 	if err := writeLockFile(&req); err != nil {

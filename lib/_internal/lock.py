@@ -170,12 +170,16 @@ def _lock_write_envelope(lock_path: Path, lock: dict) -> dict:
 def go_write_lock(lock_path: Path, lock: dict) -> bool:
     """Run ``worktree-gate --write-lock``; True when it handled the write.
 
-    Returns False whenever the caller must fall back to the temporary Python
-    writer: an infrastructure failure (no verified binary, the process failed,
-    or the stdout envelope did not match) emits the single
-    ``GO_LOCK_WRITE_BRIDGE_FALLBACK`` warning naming the reason. Unlike the
-    recipe-config bridge, a Go refusal (exit 2 with a stdout error envelope)
-    ALSO fails open — see write_lock for the rationale.
+    Returns False only on an INFRASTRUCTURE failure, when the caller must fall
+    back to the temporary Python writer: no verified binary, the process
+    failed (OSError/timeout/UnicodeError), non-JSON output, or a stdout
+    envelope that did not match the write-lock contract. Each fallback emits
+    the single ``GO_LOCK_WRITE_BRIDGE_FALLBACK`` warning naming the reason.
+
+    A Go refusal (exit 2 with a stdout error envelope) FAILS CLOSED: it raises
+    ``RuntimeError`` — the refusal is the Go authority's valid decision, and
+    falling back would bypass it (GO-08 findings fix, aligned with the
+    recipe-config bridge).
     """
     try:
         envelope_text = json.dumps(_lock_write_envelope(lock_path, lock))
@@ -214,17 +218,16 @@ def go_write_lock(lock_path: Path, lock: dict) -> bool:
     except ValueError:
         stdout = None
     if proc.returncode != 0:
-        # Deliberate divergence from the recipe-config bridge: a Go refusal is
-        # fail-open too (write_lock docstring explains why).
         if isinstance(stdout, dict) and isinstance(stdout.get("error"), str):
-            _warn_lock_write_bridge_fallback(
-                f"worktree-gate refused the write ({stdout['error']})"
+            # Fail closed: a valid refusal envelope is the Go authority's
+            # decision — no Python fallback may bypass it.
+            raise RuntimeError(
+                f"worktree-gate --write-lock refused: {stdout['error']}"
             )
-        else:
-            detail = (proc.stderr or "").strip() or "no stderr"
-            _warn_lock_write_bridge_fallback(
-                f"worktree-gate exited {proc.returncode} without a success envelope ({detail})"
-            )
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_lock_write_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} without a success envelope ({detail})"
+        )
         return False
     if not (isinstance(stdout, dict) and stdout.get("written") is True):
         if stdout is None:
@@ -242,11 +245,10 @@ def write_lock(lock_path: Path, lock: dict) -> None:
 
     The write decision belongs to ``worktree-gate --write-lock``; the retained
     pure-Python writer is the TEMPORARY fail-open fallback authority
-    (``GO_LOCK_WRITE_BRIDGE_FALLBACK``). Unlike the recipe-config bridge, a Go
-    refusal ALSO falls back: this is a full-state idempotent atomic replace,
-    so the Python fallback can only rewrite the same correct state and there
-    is no destructive ambiguity to protect against (unlike the orphans
-    deletion, which fails closed on refusals).
+    (``GO_LOCK_WRITE_BRIDGE_FALLBACK``) for infrastructure failures only. A Go
+    refusal (exit 2 with a stdout error envelope) FAILS CLOSED: ``go_write_lock``
+    raises ``RuntimeError`` instead of returning False, so the Python writer
+    can never bypass the Go authority's decision.
     """
     if go_write_lock(lock_path, lock):
         return

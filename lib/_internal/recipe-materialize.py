@@ -811,14 +811,17 @@ def go_apply_copy(items: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
     """Run ``worktree-gate --apply-copy``; return its per-item results, or None.
 
     None means the bridge could not run: no verified binary, the process
-    failed, a Go refusal, or output that did not match the documented
-    envelope. The caller then falls back to the temporary Python copy body.
-    This function emits the single ``GO_COPY_APPLY_BRIDGE_FALLBACK`` warning
-    naming the reason, so a degraded run is never silent and never needs a
-    second warning.
+    failed, or output that did not match the documented envelope (including a
+    results-missing envelope). The caller then falls back to the temporary
+    Python copy body. This function emits the single
+    ``GO_COPY_APPLY_BRIDGE_FALLBACK`` warning naming the reason, so a degraded
+    run is never silent and never needs a second warning.
 
-    A Go refusal (exit 2 with a stdout error envelope) ALSO fails open, like
-    the lock bridge and unlike the orphans deletion: every migrated copy is
+    A Go refusal (exit 2 with a stdout error envelope) FAILS CLOSED: it raises
+    ``RuntimeError`` naming the Go error string instead of returning None —
+    the refusal is the Go authority's valid decision and the Python bodies
+    must never bypass it (GO-08 findings fix). The fail-open rationale below
+    applies to infrastructure failures only: every migrated copy is
     idempotent — the bundled-skill fallback rmtree+copytree rewrites dest
     wholesale, so even a partial Go copy is safe to redo, and copy2 is an
     idempotent overwrite. There is no destructive ambiguity to protect
@@ -863,14 +866,15 @@ def go_apply_copy(items: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
         stdout = None
     if proc.returncode != 0:
         if isinstance(stdout, dict) and isinstance(stdout.get("error"), str):
-            _warn_copy_apply_bridge_fallback(
-                f"worktree-gate refused the copy ({stdout['error']})"
+            # Fail closed: a valid refusal envelope is the Go authority's
+            # decision — no Python fallback may bypass it.
+            raise RuntimeError(
+                f"worktree-gate refused the copy: {stdout['error']}"
             )
-        else:
-            detail = (proc.stderr or "").strip() or "no stderr"
-            _warn_copy_apply_bridge_fallback(
-                f"worktree-gate exited {proc.returncode} without a results envelope ({detail})"
-            )
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_copy_apply_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} without a results envelope ({detail})"
+        )
         return None
     if not _is_copy_apply_envelope(stdout):
         _warn_copy_apply_bridge_fallback(
@@ -924,11 +928,13 @@ def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Pat
     results = go_apply_copy(
         [{"kind": "bundled-skill", "id": skill_id, "src": str(src), "dest": str(dest)}]
     )
-    if results is not None:
+    # results None = infrastructure failure (fallback); results [] = valid
+    # envelope with no items to apply — never an IndexError.
+    if results is None:
+        _python_bundled_skill_copy(src, dest)
+    elif results:
         if results[0]["status"] == "source-missing":
             raise RuntimeError(f"bundled skill not found: {src}")
-    else:
-        _python_bundled_skill_copy(src, dest)
     print(f"    ✓ bundled skill {skill_id}")
     # Track hashes in lock
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
@@ -983,7 +989,11 @@ def materialize_command(
             }
         ]
     )
-    if results is not None:
+    # results None = infrastructure failure (fallback); results [] = valid
+    # envelope with no items to apply — never an IndexError.
+    if results is None:
+        _python_command_copy(cmd.id, src, dest)
+    elif results:
         result = results[0]
         if result["status"] == "source-missing":
             raise RuntimeError(f"command source not found: {src}")
@@ -994,8 +1004,6 @@ def materialize_command(
         # per-stream output is identical.
         if result.get("overwrite"):
             warn(f"recipe command '{cmd.id}' overwrites existing managed command at {dest}")
-    else:
-        _python_command_copy(cmd.id, src, dest)
     print(f"    ✓ command {cmd.id}")
 
 
@@ -1125,11 +1133,13 @@ def materialize_doc(recipe_dir: Path, doc: Any, project_root: Path) -> None:
     results = go_apply_copy(
         [{"kind": "doc", "id": doc.target, "src": str(src), "dest": str(dest)}]
     )
-    if results is not None:
+    # results None = infrastructure failure (fallback); results [] = valid
+    # envelope with no items to apply — never an IndexError.
+    if results is None:
+        _python_doc_copy(src, dest)
+    elif results:
         if results[0]["status"] == "source-missing":
             raise RuntimeError(f"doc source not found: {src}")
-    else:
-        _python_doc_copy(src, dest)
     print(f"    ✓ doc {doc.target}")
 
 
