@@ -90,7 +90,12 @@
 # no new asset, no second trust root), with the canonical go1.24.13 toolchain
 # via the same command above.
 #
-6cb124df1d05d296904ee051e707c453524fcc022fb60c6aec9f5d3a55f221af  worktree-gate-darwin-amd64
-917ead8ef923b0221d285695cbc3896a00b2f2575ccb5d92fc64acec765d3c00  worktree-gate-darwin-arm64
-94e326400fcd0a0a09d21b1eadab1745ef727d3ce02e962ffe6aa33f8c938c61  worktree-gate-linux-amd64
-3838b3b3d05f5e7499c1c347cd74b93022b9a2c45f720e69de7819764179d2a0  worktree-gate-linux-arm64
+# Regenerated for the go-toml-writer strangler slice (the same four-arch asset
+# gains the Go-owned `--write-recipe-config` recipe-config TOML writer core;
+# no new asset, no second trust root), with the canonical go1.24.13 toolchain
+# via the same command above.
+#
+cb7821edaf9fd3fd9ab5d450c51ee36cada9137fb8b309bdab4814603c94472f  worktree-gate-darwin-amd64
+c8e7441bec0b62424cc57016edb3bef96e7c844e2d336bfd8c13927d7ea0dcaf  worktree-gate-darwin-arm64
+16db3c6080d54369b1d6d1d2530528b9a9d46b0011ba4d680662c03ac11a4a07  worktree-gate-linux-amd64
+e9c033cd64e7e1a495e8dd24d38361d836dd24cc83a5ee744aa2224d9a862920  worktree-gate-linux-arm64
