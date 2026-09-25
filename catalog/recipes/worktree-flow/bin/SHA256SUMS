@@ -95,7 +95,12 @@
 # no new asset, no second trust root), with the canonical go1.24.13 toolchain
 # via the same command above.
 #
-e5e4a85ef8c3bcea0af02f20f2890c5be956e4a9bceef3db9de88001b3df9abc  worktree-gate-darwin-amd64
-e234a54c0d11c13407efecbb2fa2dfb672b68c17544dda78b1d6c8567303497c  worktree-gate-darwin-arm64
-ee40de7824521ae304ec76b211255591a22651197db7df77efd5378542bdef4f  worktree-gate-linux-amd64
-a4c6b4ce47380789653770bb9b01aef32285308778553c0994cec15884187eb9  worktree-gate-linux-arm64
+# Regenerated for the go-lock-copy strangler slice (the same four-arch asset
+# gains the Go-owned `--write-lock` lock-file writer core, byte-exact with
+# lib/_internal/lock.py write_lock; no new asset, no second trust root), with
+# the canonical go1.24.13 toolchain via the same command above.
+#
+034f62e1729b8d3556f974bf99057f78f467c2d60c4477c30f5e34896fd92718  worktree-gate-darwin-amd64
+c2eb687e9671d541db50b5198de646b914621b73ecf4b6993648cd203ff5d91c  worktree-gate-darwin-arm64
+6a6d0ac831c6d9ca0006714d8d7f9897a5a8300ef24f8722acce876daf5c8873  worktree-gate-linux-amd64
+4470e6fb57302124148f4b8ecb37e5c92d4e778777a88ffd8d02bbbe1d101301  worktree-gate-linux-arm64

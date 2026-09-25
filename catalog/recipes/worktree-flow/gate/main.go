@@ -113,6 +113,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// recipe-config-write.py: line surgery is decided in Go, parsing and final
 	// validation stay on the bounded standard TOML seam.
 	writeRecipeConfigCmd := fs.Bool("write-recipe-config", false, "apply recipe config values from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
+	// Lock write is the Go strangler slice for the Python authority
+	// lib/_internal/lock.py write_lock: Go owns the byte-exact TOML emission
+	// and the atomic replace; no parser seam is involved.
+	writeLockCmd := fs.Bool("write-lock", false, "write the ai-specs lock file from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -212,6 +216,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runPlanMergeConfig(stdin, stdout, stderr)
 	case *writeRecipeConfigCmd:
 		return runWriteRecipeConfig(stdin, stdout, stderr)
+	case *writeLockCmd:
+		return runWriteLock(stdin, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
 	case *tokenize:
