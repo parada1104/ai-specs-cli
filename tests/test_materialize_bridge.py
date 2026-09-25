@@ -432,6 +432,55 @@ APPLY_PLAN_PAYLOAD = json.dumps(
     }
 )
 
+# The gate's --write-lock branch: the real Go writer (lockwrite.go renderLock)
+# renders the stdin envelope byte-exactly -- fixed header, [meta], sorted
+# [managed."<path>"] with empty values skipped, sorted [agents."<harness>"] --
+# then prints {"written": true} with exit 0. The envelope carries no
+# recipes/skills/deps sections, so the rewritten lock drops them, same as the
+# real gate. Kept free of single quotes so it can be embedded in the sh stub.
+_WRITE_LOCK_STUB_PY = r"""
+import json, sys
+env = json.load(sys.stdin)
+def s(v):
+    return "\"" + v.replace("\\", "\\\\").replace("\"", "\\\\\"") + "\""
+out = [
+    "# Managed by ai-specs. Do not edit by hand.",
+    "# Provenance stamp: [meta] records the CLI version and timestamp of the last",
+    "# sync. [managed.*] records integrity only for CLI-owned override targets;",
+    "# it is not a general content-integrity manifest. git covers the committed",
+    "# project surface; skill/recipe/dep content hashes are not tracked.",
+]
+meta = env.get("meta") or {}
+if meta:
+    out.append("[meta]")
+    if meta.get("cli_version"):
+        out.append("cli_version = " + s(meta["cli_version"]))
+    if meta.get("synced_at"):
+        out.append("synced_at = " + s(meta["synced_at"]))
+    out.append("")
+managed = env.get("managed") or {}
+for p in sorted(managed):
+    e = managed[p]
+    if not e.get("sha256"):
+        continue
+    out.append("[managed." + s(p) + "]")
+    for k in ("sha256", "recipe", "source", "kind", "policy"):
+        if e.get(k):
+            out.append(k + " = " + s(e[k]))
+    out.append("")
+agents = env.get("agents") or {}
+for h in sorted(agents):
+    files = agents[h]
+    if not files:
+        continue
+    out.append("[agents." + s(h) + "]")
+    for n in sorted(files):
+        out.append(s(n) + " = " + s(files[n]))
+    out.append("")
+open(env["lock_path"], "w").write("\n".join(out).rstrip("\n") + "\n")
+print(json.dumps({"written": True}))
+"""
+
 APPLIED_PAYLOAD = json.dumps(
     {
         "status": "applied",
@@ -493,6 +542,8 @@ class OrphanApplyBridgeTests(unittest.TestCase):
             "#!/bin/sh\n"
             "if [ \"$1\" = \"--apply-orphans\" ]; then\n"
             f"{apply_body}\n"
+            "elif [ \"$1\" = \"--write-lock\" ]; then\n"
+            "python3 -c '" + _WRITE_LOCK_STUB_PY + "'\n"
             "else\n"
             f"printf '%s' '{APPLY_PLAN_PAYLOAD}'\n"
             "fi\n"
