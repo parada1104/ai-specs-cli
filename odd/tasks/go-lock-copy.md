@@ -11,8 +11,8 @@ Strangler slice 5: Go owns the lock-file writer and the materialize copy actuato
 ## Tasks
 
 - [ ] Scout: exact contract of lock.py writer + copy actuator + customization preservation. **Status: pending**
-- [ ] WU1: Go lock writer core — port lib/_internal/lock.py:86-136 (hand-rolled TOML emitter + atomic replace) to Go with parity tests. Lock acquisition/serialization semantics preserved. **Status: done (implementation; commit by parent)**
-- [ ] WU2: Go copy actuator — materialize 768-828/949-957 + dispatch 2905-2935; customization preservation (project-cache.py 156-377: CRLF-normalized byte-match, legacy-lock hash) byte-identical; Python fail-open bridge. **Status: pending**
+- [ ] WU1: Go lock writer core — port lib/_internal/lock.py:86-136 (hand-rolled TOML emitter + atomic replace) to Go with parity tests. Lock acquisition/serialization semantics preserved. **Status: done (committed as 2c37373)**
+- [ ] WU2: Go copy actuator — materialize 768-828/949-957 + dispatch 2905-2935; customization preservation (project-cache.py 156-377: CRLF-normalized byte-match, legacy-lock hash) byte-identical; Python fail-open bridge. **Status: pending (lock-write Python bridge done, see evidence; copy actuator still open)**
 - [ ] Validation + native review per WU (serialized lane). **Status: pending**
 
 ## Out of scope
@@ -28,3 +28,8 @@ Strangler slice 5: Go owns the lock-file writer and the materialize copy actuato
 - WU1 differential parity: /tmp/lockwrite-parity-driver.py ran 9 fixtures (empty lock, meta only, meta-header-only edge, managed sorted/skip-empty, agents nested sorted, full lock, quote/backslash escaping, raw control chars, unknown-meta-keys-ignored) through Python write_lock vs `dist/worktree-gate-current --write-lock` → 9/9 byte-identical.
 - WU1 build: `./scripts/build-gate.sh` (canonical go1.24.13, no toolchain warning) → 4 targets + `dist/worktree-gate-current`; `./scripts/verify-gate-sums.sh <generated> catalog/recipes/worktree-flow/bin/SHA256SUMS` → 4/4 digest entries match; SHA256SUMS regenerated in tree with the go-lock-copy provenance note.
 - WU1 files: catalog/recipes/worktree-flow/gate/lockwrite.go (new), gate/lockwrite_test.go (new), gate/main.go (`--write-lock` flag + dispatch, mirroring `--write-recipe-config`), bin/SHA256SUMS (regenerated). No Python files touched.
+- WU2 lock bridge RED: new tests/test_lock_bridge.py (12 tests) run before implementation — all errored (`AttributeError: module 'lock_bridge' has no attribute 'GO_LOCK_WRITE_BRIDGE_FALLBACK'`, 14 errors incl. subtests) against the unbridged write_lock.
+- WU2 lock bridge GREEN: python3 -m unittest tests.test_lock tests.test_lock_bridge → 12 tests OK (no WORKTREE_GATE_BIN); with WORKTREE_GATE_BIN=dist/worktree-gate-current → 12 tests OK. Real-binary success test pins byte-identity vs _write_lock_python, legacy [skills]/[recipes] dropping through load_lock→write_lock, missing-parent creation, and no temp files left in the lock directory.
+- WU2 fail-open divergence pinned: exit-2 {"error": ...} envelopes fall back with exactly one GO_LOCK_WRITE_BRIDGE_FALLBACK warning naming the opaque Go refusal string (documented in write_lock docstring — full-state idempotent atomic replace, no destructive ambiguity, unlike orphans deletion).
+- WU2 caller-surface regression: tests.test_runtime_brief_ownership + tests.test_override_ownership → 51 tests OK with WORKTREE_GATE_BIN set; without it, 6 pre-existing environmental failures fire (GO_CLASSIFY_OVERRIDE_BRIDGE_FALLBACK stderr assertions in test_runtime_brief_ownership, a bridge this WU did not touch — the lock bridge warning never enters those asserted streams).
+- WU2 files: lib/_internal/lock.py (write_lock dispatcher + go_write_lock + lazy _load_gate_binary + _lock_write_bridge_home parents[2] + _write_lock_python rename, all call sites untouched), tests/test_lock_bridge.py (new). No commit (parent owns).
