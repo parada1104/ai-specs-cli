@@ -10,9 +10,9 @@ Strangler slice 6 prep: contract map + RED test suite for migrating the template
 
 ## Tasks
 
-- [x] Scout: exact contract of the template actuator path (inputs, rendering, dest handling, seeding, refusals, exact strings, callers). **Status: done — see ## Scout below**
-- [ ] RED: failing Go parity test suite for the future Go core (template actuator), following the recipeconfigwrite_test.go pattern. **Status: pending**
-- [ ] ODD doc evidence updated; hand-off note for the implementation session. **Status: pending**
+- [x] Scout: exact contract of the template actuator path (inputs, rendering, dest handling, seeding, refusals, exact strings, callers). **Status: done — see ## Scout below; commit 001ef58**
+- [x] RED: failing Go parity test suite for the future Go core (template actuator), following the recipeconfigwrite_test.go pattern. **Status: done — commit 96477f3; `go vet` fails exactly on the three undefined core symbols (runMaterializeTemplate first at templateactuator_test.go:142); gofmt clean; 17 tests (pure rendering x3, dest resolution x4, end-to-end x10)**
+- [x] ODD doc evidence updated; hand-off note for the implementation session. **Status: done — this section**
 
 ## Rules for this lane
 
@@ -79,3 +79,18 @@ The ownership decision (`util.classify_managed_override`, util.py:651 bridge / :
 ### RED suite note
 
 `templateactuator_test.go` references `runMaterializeTemplate`, `resolveTemplateDest`, `renderTemplateBytes` — none exist yet, so the gate package INTENTIONALLY fails to compile on this branch until the implementation WU lands `templateactuator.go`. That is the contract: the tests are written first and define acceptance for slice 6.
+
+## Hand-off note (implementation session, after GO-08 merges)
+
+1. **Rebase this branch** over the post-GO-08 `development` and resolve the gate package compile break by ADDING the core, never by weakening the tests. The suite is the acceptance bar; exact strings are contractual.
+2. **New file** `catalog/recipes/worktree-flow/gate/templateactuator.go` (package main) with: `renderTemplateBytes(src []byte, config map[string]any) []byte` (pure), `resolveTemplateDest(projectRoot, target string) string` (subprocess `git -C <root> rev-parse --git-path <remainder>`, fail-open to the literal join), and `runMaterializeTemplate(stdin io.Reader, stdout, stderr io.Writer) int` (envelope contract as pinned in ## Scout + the test structs).
+3. **Reuse** `classifyManagedOverride` (classify.go) and `sha256Bytes` — no new classification port; slice 7 consumes the same port.
+4. **main.go wiring** (one flag + one case, mirroring `writeRecipeConfigCmd`): `--materialize-template`. This and SHA256SUMS/dist are OUTSIDE this lane — implementation WU only.
+5. **Python bridge** in `recipe-materialize.py`: module constant `GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK`, one warning per degraded run, exit 2 / bad JSON / no binary → run the historical Python path; lock record comes back in `output.record` and Python owns `load_lock`/`set_managed_override`/`write_lock` and all printing (indent + `print_step_output`).
+6. **Validation**: `go test ./...` in the gate dir (suite must go green), `./tests/run.sh`, and an end-to-end `sync` smoke with gate_impl=go for the post-merge hook target in a linked worktree.
+
+### Local commits on feat/go-template-actuator (prep lane)
+
+- `001ef58` docs(go-09): scout template actuator contract in ODD doc
+- `96477f3` test(go-09): RED parity suite for the Go template actuator (slice 6 prep)
+- this commit (ODD evidence + hand-off)
