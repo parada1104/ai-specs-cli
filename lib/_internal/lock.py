@@ -87,6 +87,53 @@ def _toml_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _has_control_char(value: str) -> bool:
+    """True when value contains an ASCII control character (< 0x20 or DEL),
+    the same boundary the Go writer enforces (lockwrite.go hasControlChar)."""
+    return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
+
+
+def _refuse_control_chars(lock_path: Path, lock: dict) -> None:
+    """Fallback-authority boundary check, mirroring the Go writer's refusal.
+
+    ``_toml_string`` emits control characters raw inside a quoted TOML string,
+    so a newline in any emitted key or value could break out of the value.
+    The Go authority refuses such envelopes before the bridge can fall back
+    (the fail-closed lock bridge), and this guard gives the TEMPORARY Python
+    fallback writer the identical input validation: same locator wording, same
+    RuntimeError refusal class. Only the emitted surface is walked — the
+    fallback writes exactly what this function inspects.
+    """
+    meta = lock.get("meta") or {}
+    managed = lock.get("managed") or {}
+    agents = lock.get("agents") or {}
+    checks: list[tuple[str, str]] = [("lock_path", str(lock_path))]
+    for key in ("cli_version", "synced_at"):
+        value = meta.get(key)
+        if value:
+            checks.append((f"meta.{key}", str(value)))
+    for path in sorted(managed):
+        checks.append(("managed path", path))
+        entry = managed[path]
+        if not isinstance(entry, dict) or not entry.get("sha256"):
+            continue
+        for key in ("sha256", "recipe", "source", "kind", "policy"):
+            value = entry.get(key)
+            if value is not None and value != "":
+                checks.append((f"managed.{key}", str(value)))
+    for harness in sorted(agents):
+        checks.append(("agents harness", harness))
+        files = agents[harness]
+        if not files:
+            continue
+        for name in sorted(files):
+            checks.append(("agents filename", name))
+            checks.append(("agents hash", str(files[name])))
+    for locator, value in checks:
+        if _has_control_char(value):
+            raise RuntimeError(f"value for {locator} contains a control character")
+
+
 def _load_sibling(name: str):
     path = Path(__file__).with_name(f"{name}.py")
     spec = importlib.util.spec_from_file_location(name.replace("-", "_"), path)
@@ -256,7 +303,13 @@ def write_lock(lock_path: Path, lock: dict) -> None:
 
 
 def _write_lock_python(lock_path: Path, lock: dict) -> None:
-    """Retained pure-Python lock writer, the TEMPORARY fail-open fallback."""
+    """Retained pure-Python lock writer, the TEMPORARY fail-open fallback.
+
+    Input validation mirrors the Go authority: any emitted key or value with
+    an ASCII control character is refused (RuntimeError) before a byte is
+    written, so the fallback can never emit bytes the Go writer would refuse.
+    """
+    _refuse_control_chars(lock_path, lock)
     out = [LOCK_HEADER]
 
     meta = lock.get("meta") or {}

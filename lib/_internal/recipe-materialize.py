@@ -812,7 +812,9 @@ def go_apply_copy(items: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
 
     None means the bridge could not run: no verified binary, the process
     failed, or output that did not match the documented envelope (including a
-    results-missing envelope). The caller then falls back to the temporary
+    results-missing envelope or a results count that does not match the sent
+    items — an item must never be reported applied without a copy decision).
+    The caller then falls back to the temporary
     Python copy body. This function emits the single
     ``GO_COPY_APPLY_BRIDGE_FALLBACK`` warning naming the reason, so a degraded
     run is never silent and never needs a second warning.
@@ -881,6 +883,12 @@ def go_apply_copy(items: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
             "worktree-gate output did not match the apply-copy envelope"
         )
         return None
+    if len(stdout["results"]) != len(items):
+        _warn_copy_apply_bridge_fallback(
+            f"worktree-gate returned {len(stdout['results'])} result(s) "
+            f"for {len(items)} item(s)"
+        )
+        return None
     return stdout["results"]
 
 
@@ -928,8 +936,9 @@ def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Pat
     results = go_apply_copy(
         [{"kind": "bundled-skill", "id": skill_id, "src": str(src), "dest": str(dest)}]
     )
-    # results None = infrastructure failure (fallback); results [] = valid
-    # envelope with no items to apply — never an IndexError.
+    # results None = infrastructure failure (fallback; a result count that
+    # does not match the one-item plan is an envelope mismatch). The plan
+    # sends exactly one item, so results[0] always exists here.
     if results is None:
         _python_bundled_skill_copy(src, dest)
     elif results:
@@ -989,8 +998,9 @@ def materialize_command(
             }
         ]
     )
-    # results None = infrastructure failure (fallback); results [] = valid
-    # envelope with no items to apply — never an IndexError.
+    # results None = infrastructure failure (fallback; a result count that
+    # does not match the one-item plan is an envelope mismatch). The plan
+    # sends exactly one item, so results[0] always exists here.
     if results is None:
         _python_command_copy(cmd.id, src, dest)
     elif results:
@@ -1133,8 +1143,9 @@ def materialize_doc(recipe_dir: Path, doc: Any, project_root: Path) -> None:
     results = go_apply_copy(
         [{"kind": "doc", "id": doc.target, "src": str(src), "dest": str(dest)}]
     )
-    # results None = infrastructure failure (fallback); results [] = valid
-    # envelope with no items to apply — never an IndexError.
+    # results None = infrastructure failure (fallback; a result count that
+    # does not match the one-item plan is an envelope mismatch). The plan
+    # sends exactly one item, so results[0] always exists here.
     if results is None:
         _python_doc_copy(src, dest)
     elif results:

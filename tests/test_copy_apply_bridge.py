@@ -22,8 +22,9 @@ The Python copy bodies survive as TEMPORARY fail-open fallbacks
 * FAIL CLOSED on a Go refusal (exit 2 with a stdout error envelope): the
   bridge raises ``RuntimeError`` naming the Go error instead of falling back,
   so the Python bodies can never bypass the Go authority's decision (GO-08
-  findings fix). A valid exit-0 ``results: []`` envelope is treated as valid
-  with no items to apply (never an IndexError); a results-missing envelope
+  findings fix). A valid exit-0 envelope whose results count does not match
+  the sent items (``results: []`` for a one-item plan, GO-08 second findings
+  batch) is an envelope mismatch (fail open); a results-missing envelope
   stays an envelope mismatch (fail open).
 
 The Go path needs a built binary (``dist/worktree-gate-current`` or
@@ -604,10 +605,12 @@ class CopyApplyRefusalFailClosedTests(_CopyBridgeTestCase):
         self.assertFalse(dest.exists(), "a refused copy must not touch dest")
 
 
-class CopyApplyEmptyResultsTests(_CopyBridgeTestCase):
-    """A valid exit-0 ``results: []`` envelope is valid with no items to
-    apply — never an IndexError; a results-missing envelope stays an envelope
-    mismatch (fail open), pinned in CopyApplyFallbackTests."""
+class CopyApplyResultsCountMismatchTests(_CopyBridgeTestCase):
+    """A valid exit-0 envelope whose results count does not match the sent
+    items (including ``results: []`` for a one-item plan) is an envelope
+    mismatch: one fallback warning, then the Python body copies — an item
+    must never be reported applied without a copy decision (GO-08 findings
+    fix, second batch)."""
 
     @classmethod
     def setUpClass(cls):
@@ -619,20 +622,21 @@ class CopyApplyEmptyResultsTests(_CopyBridgeTestCase):
         self.mod._project_cache_module = None  # re-resolve per fixture
         self.pin_binary(self.stub("printf '%s' '{\"results\": []}'"))
 
-    def test_empty_results_envelope_is_valid_with_no_items(self):
+    def test_empty_results_for_one_item_is_an_envelope_mismatch(self):
         fixture = self.recipe_root("empty-results-command")
         dest = self._dest_command(fixture)
-        with self.forbid_python_copies():
-            out, err = self.run_materialize(
-                self.mod.materialize_command,
-                fixture["recipe_dir"],
-                SimpleNamespace(id="deploy", path="commands/deploy.md"),
-                fixture["root"],
-                cli_home=self.home,
-            )
-        self.assertEqual(err, "", "no fallback warning on a valid envelope")
+        out, err = self.run_materialize(
+            self.mod.materialize_command,
+            fixture["recipe_dir"],
+            SimpleNamespace(id="deploy", path="commands/deploy.md"),
+            fixture["root"],
+            cli_home=self.home,
+        )
+        self.assertIn(self.mod.GO_COPY_APPLY_BRIDGE_FALLBACK, err)
+        self.assertIn("0 result(s) for 1 item(s)", err)
         self.assertIn("    ✓ command deploy", out)
-        self.assertFalse(dest.exists(), "no items to apply: dest untouched")
+        self.assertTrue(dest.is_file(), "the Python fallback copied the item")
+        self.assertEqual(dest.read_text(), "deploy steps v2")
 
 
 
