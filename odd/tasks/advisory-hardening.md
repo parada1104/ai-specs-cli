@@ -101,7 +101,39 @@ Per lane, in merge-dependency-free order: rebase lane onto current development i
 
 ## Lane C3 evidence
 
-(appended by Lane C3 worker)
+Worker: Lane C3 (template) · branch `feat/adv-template` · base `development` `888a425` · commits `0bb9d61` (guards), `211b2bd` (dedup + test pins). Surfaces touched: `catalog/recipes/worktree-flow/gate/templateactuator.go`, `.../templateactuator_test.go`, `.../bin/SHA256SUMS`, this section.
+
+### Dispositions
+
+| Advisory id | Disposition | Reason / evidence |
+|---|---|---|
+| R1-dest-containment-absent | **fixed** (`0bb9d61`) | Re-located: literal join `filepath.Join(projectRoot, target)` in `resolveTemplateDest` + write in `runMaterializeTemplate`; no containment existed (verified on current tree). Fix: `templatePathContained` lexical check on literal (non-`.git/`) targets → exit-2 refusal `templateEscapingTargetRefusal`. Git-resolved dests are deliberately not contained (linked-worktree shared hooks dir legitimately lives in the main repo). |
+| R1-ancestor-symlink-traversal-deferred | **fixed** (`0bb9d61`) | Re-located: `writeTemplateContent` did `MkdirAll`+`OpenFile` following directory symlinks; a planted symlinked ancestor below the project root redirected the write outside. Fix: `firstSymlinkedAncestor` walk (root→dest, `Lstat` per component) via `ensureTemplateAncestorsReal`, run once per invocation before both write paths → refusal `templateAncestorSymlinkRefusal` (`errAncestorSymlink`). Residual documented in-code: walk→open window narrowed, not eliminated (full fix needs an openat chain). Ancestors at/above root and git-resolved dests outside root are out of scope (resolved project_root; git-trusted emission). |
+| R1-toctou-residual-symlink-race | **fixed** (`0bb9d61`) | Re-located: post-write `os.Chmod(dest, mode)` traversed the path — a link swapped in after the write would be chmod'ed through. Fix: chmod moved onto the open handle (`file.Chmod(mode)`), the exact inode just written. The Lstat→open window is already covered by `O_NOFOLLOW`→`ELOOP`→`errDestSymlink` (earlier batch). RED is not deterministically expressible for a race; before/after code evidence: `grep -n "os.Chmod" templateactuator.go` 1 hit → 0 hits, `file.Chmod` present; full suite green. |
+| R2-emit-refuse-dup | **fixed** (`211b2bd`) | `emit`/`refuse` closures duplicated marshal+diagnose+print; unified into one `emitEnvelope(out, exit)` helper. Behavior-identical (same envelope bytes, same exit taxonomy incl. marshal-failure → 2); full suite green before/after. |
+| R2-render-fallback-asymmetry | **not-a-defect** (Go side) | Compared `renderTemplateBytes` vs Python `render_template_bytes` + `util.render_override_bytes` semantics line by line: topology token default `auto` (nil config or missing key), cleanup stamps only when config non-nil with `str(get(key) or default)` falsiness, nil config leaves cleanup tokens literal, CRLF untouched by rendering. Equivalent. New-guard refusal strings being Go-authority-only is deliberate fail-closed asymmetry — routed to C1 below. |
+| R2-warn-str-dup | **deferred → C1** | The warn strings are Go/Python dual-authority text; single-sourcing lives in the Python bridge (`recipe-materialize.py`), not this lane's surface. Go copies are parity-pinned verbatim by tests (must not be "deduplicated" into divergence). |
+| R2-refusal-string-dual-authority | **deferred → C1** | Verified today `templateSymlinkRefusal` (Go) ≡ `_symlink_refusal` (Python) verbatim, char for char. Keeping them single-sourced is a Python-side maintenance fix. |
+| R3-2 | **deferred → C1** | Location unrecorded for the template lineage (native store keeps id/lens/severity only); no verifiable Go-side claim found. In Lane C4's inventory the same classes landed in Python bridge surfaces. |
+| R3-3 | **deferred → C1** | Same as R3-2. |
+| Unrecorded bridge-tests SUGGESTIONs (review-faee79d90d3f3863, Go surface) | **fixed** (`211b2bd`) | Re-inspection found three untested arms; pinned additively: directory-as-source refusal (`IsRegular` arm), `pyConfigString` str() parity over bools/None/number literals, `templateConfigOr` numeric-zero falsiness fallback. No existing assertion weakened. |
+
+### RED→GREEN evidence (observed)
+
+- RED (guards): new tests added first → `go test -run 'TestTemplateActuatorEscapingTargetRefused\|TestTemplateActuatorSymlinkedAncestorRefused\|TestWriteTemplateContentRefusesSymlinkedAncestor'` → build failed with `undefined: templateEscapingTargetRefusal`, `undefined: templateAncestorSymlinkRefusal`, `undefined: errAncestorSymlink` (symbols are the contract; repo's established RED convention).
+- GREEN (guards): after `0bb9d61` — the three tests PASS; in-root `..` twin (`ai-specs/../stays.sh`) still materializes (containment refuses only escapes); real-directory ancestor chain still writes.
+- GREEN (dedup/pins): after `211b2bd` — `go test -count=1 ./...` in `catalog/recipes/worktree-flow/gate` → `ok ai-specs.dev/worktree-gate 52.8s`, `ok ai-specs.dev/worktree-gate/ledger 2.9s` (run 3× during the lane, all green).
+- Go asset gates: `scripts/build-gate.sh` (canonical `go1.24.13`, no toolchain warning) per work unit; `SHA256SUMS` regenerated with the documented command (`scripts/build-gate.sh` + `cd dist && shasum -a 256 worktree-gate-*`); `scripts/verify-gate-sums.sh <generated> <committed>` → `ok — 4 digest entries match` per commit; `gofmt -l .` empty; `go vet .` clean. Committed digests: `8343f455…` (darwin-amd64), `cdb834ca…` (darwin-arm64), `26bcf44e…` (linux-amd64), `ce4479da…` (linux-arm64).
+- `./tests/validate.sh` NOT run (parent-owned).
+
+### Routed to Lane C1 (Python bridge surfaces)
+
+1. Mirror the two new Go-authority refusals in the Python fallback body if parity is wanted: escaping-target and symlinked-ancestor guards do not exist in `_python_materialize_template` / `write_content` (the bridge fails closed on Go's exit-2 refusal, so the asymmetry direction is safe).
+2. Python fallback residual of R1-toctou: `write_content` in `_python_materialize_template` ends with `os.chmod(dest, src.stat().st_mode)` — path-based chmod, same residual race fixed on the Go side.
+3. R2-warn-str-dup: single-source the warn strings (Go copies are parity-pinned; do not diverge).
+4. R2-refusal-string-dual-authority: single-source `_symlink_refusal`/`templateSymlinkRefusal` (currently verified identical).
+5. R3-2 / R3-3 (template lineage, locations unrecorded): per the C4 precedent these classes live in the Python bridge/test surfaces.
+
 
 ## Lane C4 evidence
 
