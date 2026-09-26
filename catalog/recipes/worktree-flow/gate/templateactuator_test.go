@@ -897,6 +897,63 @@ func TestWriteTemplateContentRefusesSymlinkedAncestor(t *testing.T) {
 	}
 }
 
+// TestTemplateActuatorDirectorySourceRefused pins the non-regular-source arm
+// of the source guard: a source that exists but is a directory refuses with
+// the same "template source not found" reference string (the
+// srcInfo.Mode().IsRegular() check), exit 2.
+func TestTemplateActuatorDirectorySourceRefused(t *testing.T) {
+	in := writeTemplateSource(t, "echo hi\n", 0o644)
+	if err := os.MkdirAll(filepath.Join(in.RecipeDir, "templates", "missing.sh"), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	in.Source = "templates/missing.sh"
+	code, out, stderr := runTemplateActuatorCLI(t, in)
+	if code != 2 {
+		t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+	}
+	want := fmt.Sprintf("template source not found: %s", filepath.Join(in.RecipeDir, "templates", "missing.sh"))
+	if out.Error == nil || *out.Error != want {
+		t.Fatalf("error = %#v, want %q", out.Error, want)
+	}
+}
+
+// TestPyConfigStringDomain pins the Python str() parity of pyConfigString
+// over the whole config value domain the JSON decoder can deliver: strings
+// verbatim, capitalized bools, None for null, and numbers as their literal
+// text (json.Number preserves the decoded literal).
+func TestPyConfigStringDomain(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want string
+	}{
+		{"string", "standalone", "standalone"},
+		{"true", true, "True"},
+		{"false", false, "False"},
+		{"null", nil, "None"},
+		{"int literal", json.Number("42"), "42"},
+		{"float literal", json.Number("1.5"), "1.5"},
+	}
+	for _, tc := range cases {
+		if got := pyConfigString(tc.in); got != tc.want {
+			t.Errorf("%s: pyConfigString(%v) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestTemplateConfigOrNumericZeroFallback pins `str(cfg.get(key) or default)`
+// falsiness for numbers: a numeric zero config value is falsy in Python and
+// falls back to the default, while any other number is used verbatim.
+func TestTemplateConfigOrNumericZeroFallback(t *testing.T) {
+	cfg := map[string]any{"worktrees_dir": json.Number("0"), "integration_branch": json.Number("7")}
+	if got := templateConfigOr(cfg, "worktrees_dir", ".worktrees"); got != ".worktrees" {
+		t.Errorf("numeric zero = %q, want the default", got)
+	}
+	if got := templateConfigOr(cfg, "integration_branch", "main"); got != "7" {
+		t.Errorf("numeric non-zero = %q, want \"7\"", got)
+	}
+}
+
 // TestTemplateActuatorMalformedEnvelope rejects input that is not the
 // documented envelope with exit 2 and a stderr diagnostic (the bridge then
 // falls back to Python).

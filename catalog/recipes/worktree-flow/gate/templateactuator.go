@@ -409,24 +409,20 @@ func runMaterializeTemplate(stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "worktree-gate: --materialize-template: missing project_root or target")
 		return 2
 	}
-	emit := func(out templateActuatorOutput) int {
+	emitEnvelope := func(out templateActuatorOutput, exit int) int {
 		payload, err := json.Marshal(out)
 		if err != nil {
 			fmt.Fprintf(stderr, "worktree-gate: --materialize-template: %v\n", err)
 			return 2
 		}
 		fmt.Fprintln(stdout, string(payload))
-		return 0
+		return exit
+	}
+	emit := func(out templateActuatorOutput) int {
+		return emitEnvelope(out, 0)
 	}
 	refuse := func(message string) int {
-		out := templateActuatorOutput{Error: &message}
-		payload, err := json.Marshal(out)
-		if err != nil {
-			fmt.Fprintf(stderr, "worktree-gate: --materialize-template: %v\n", err)
-			return 2
-		}
-		fmt.Fprintln(stdout, string(payload))
-		return 2
+		return emitEnvelope(templateActuatorOutput{Error: &message}, 2)
 	}
 
 	policy := in.UpdatePolicy
