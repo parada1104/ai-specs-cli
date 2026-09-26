@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,12 +34,22 @@ func writeRecipeConfigFixture(t *testing.T, body string) string {
 }
 
 // runRecipeConfigWriteCLI drives the command the way the Python bridge will:
-// one JSON envelope on stdin, one JSON envelope on stdout, exit 0/2.
+// one JSON envelope on stdin, one JSON envelope on stdout, exit 0/2. The
+// envelope is built with encoding/json (matching the production bridge's
+// json.dumps), not Go %q quoting: %q emits Go escape syntax (\xNN) that is
+// not valid JSON for control characters.
 func runRecipeConfigWriteCLI(t *testing.T, manifestPath, recipeID, valuesJSON string) (int, string, string) {
 	t.Helper()
-	envelope := fmt.Sprintf(`{"manifest_path": %q, "recipe_id": %q, "values": %s}`, manifestPath, recipeID, valuesJSON)
+	envelope, err := json.Marshal(struct {
+		ManifestPath string          `json:"manifest_path"`
+		RecipeID     string          `json:"recipe_id"`
+		Values       json.RawMessage `json:"values"`
+	}{ManifestPath: manifestPath, RecipeID: recipeID, Values: json.RawMessage(valuesJSON)})
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
 	var stdout, stderr bytes.Buffer
-	code := runWriteRecipeConfig(strings.NewReader(envelope), &stdout, &stderr)
+	code := runWriteRecipeConfig(bytes.NewReader(envelope), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -103,7 +112,6 @@ func TestPyJSONStringEscaping(t *testing.T) {
 		{"nl\nx", `"nl\nx"`},
 		{"cr\rx", `"cr\rx"`},
 		{"bs\bx", `"bs\bx"`},
-		{"ff\nx", `"ff\nx"`},
 		{"vt\x0bx", `"vt\u000bx"`},
 		{"ff\x0cx", `"ff\fx"`},
 		{"ctl\x01x", `"ctl\u0001x"`},
@@ -226,6 +234,125 @@ func TestPySplitLines(t *testing.T) {
 	}
 }
 
+// TestPySplitLinesExoticSeparators pins the remaining Python
+// str.splitlines(keepends=True) separators: \v \f \x1c \x1d \x1e \u0085,
+// U+2028 and U+2029, each kept as its own line ending.
+func TestPySplitLinesExoticSeparators(t *testing.T) {
+	got := pySplitLines("a\x0bb\x0cc\x1cd\x1de\x1ef\u0085g\u2028h\u2029")
+	want := []string{"a\x0b", "b\x0c", "c\x1c", "d\x1d", "e\x1e", "f\u0085", "g\u2028", "h\u2029"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("pySplitLines = %#v, want %#v", got, want)
+	}
+}
+
+// TestPyNumEqualNumericEdges covers the numeric branches the parity tests
+// never reach: integers beyond int64 (bigIntEqual), the float64 comparison
+// path, the +Inf overflow edge, and the documented accepted corner
+// (int > 2^53 against a float approximates Python ==).
+func TestPyNumEqualNumericEdges(t *testing.T) {
+	cases := []struct {
+		name       string
+		a, b       string
+		want       bool
+		wantPython bool // what CPython == says; false means the accepted corner
+	}{
+		{"int64 edge equal", "9223372036854775807", "9223372036854775807", true, true},
+		{"beyond int64 equal", "90071992547409930000", "90071992547409930000", true, true},
+		{"beyond int64 differs", "90071992547409930000", "90071992547409930001", false, false},
+		{"leading zeros", "0007", "7", true, true},
+		{"negative zero", "-0", "0", true, true},
+		{"sign differs", "-9223372036854775808", "9223372036854775808", false, false},
+		{"float overflow equal", "1e999", "1e999", true, true},
+		{"float overflow differs", "1e999", "-1e999", false, false},
+		{"accepted corner: huge int vs float", "9007199254740993", "9007199254740992.0", true, false},
+	}
+	for _, tc := range cases {
+		if got := pyNumEqual(tc.a, tc.b); got != tc.want {
+			t.Errorf("%s: pyNumEqual(%q, %q) = %v, want %v", tc.name, tc.a, tc.b, got, tc.want)
+		}
+		if tc.wantPython != tc.want {
+			t.Logf("%s: accepted corner (Python == would say %v)", tc.name, tc.wantPython)
+		}
+	}
+}
+
+// TestMatchKeyLine covers the bare/quoted alternation and indent capture the
+// end-to-end tests only reach through whole manifests.
+func TestMatchKeyLine(t *testing.T) {
+	cases := []struct {
+		line, key string
+		indent    string
+		want      bool
+	}{
+		{"mode = 1", "mode", "", true},
+		{"  mode = 1", "mode", "  ", true},
+		{"\tmode = 1", "mode", "\t", true},
+		{"mode=true", "mode", "", true},
+		{`"my.key" = 1`, "my.key", "", true},
+		{"mode = 1", "ode", "", false},
+		{"mode_x = 1", "mode", "", false},
+		{"mode: 1", "mode", "", false},
+		{"mode = 1", "my.key", "", false},
+		{"", "mode", "", false},
+	}
+	for _, tc := range cases {
+		indent, ok := matchKeyLine(tc.line, tc.key)
+		if ok != tc.want || (ok && indent != tc.indent) {
+			t.Errorf("matchKeyLine(%q, %q) = (%q, %v), want (%q, %v)", tc.line, tc.key, indent, ok, tc.indent, tc.want)
+		}
+	}
+}
+
+// TestNestedGetSet covers the dotted-path helpers: absent segments, non-table
+// intermediates, and the reference's replace-non-table-with-table semantics.
+func TestNestedGetSet(t *testing.T) {
+	m := newOrderedMap()
+	m.set("a", json.Number("1"))
+	if v, ok := nestedGet(m, []string{"a"}); !ok || v != json.Number("1") {
+		t.Errorf("nestedGet existing = (%v, %v)", v, ok)
+	}
+	if _, ok := nestedGet(m, []string{"a", "b"}); ok {
+		t.Errorf("nestedGet through a scalar must be absent")
+	}
+	if _, ok := nestedGet(m, []string{"missing"}); ok {
+		t.Errorf("nestedGet missing must be absent")
+	}
+
+	nestedSet(m, []string{"a", "b"}, "x") // scalar 'a' is replaced by a table
+	table, ok := m.get("a")
+	if !ok {
+		t.Fatalf("nestedSet: key 'a' missing")
+	}
+	asMap, isMap := table.(*orderedMap)
+	if !isMap {
+		t.Fatalf("nestedSet: scalar intermediate not replaced by a table: %T", table)
+	}
+	if v, _ := asMap.get("b"); v != "x" {
+		t.Errorf("nestedSet leaf = %v, want x", v)
+	}
+	nestedSet(m, nil, "ignored") // empty path is a no-op
+}
+
+// TestSubtableHeader covers the quoted-header composition for non-bare
+// table path segments. The recipe key arrives pre-encoded (callers pass
+// tomlKey(recipeID)); path segments are encoded here.
+func TestSubtableHeader(t *testing.T) {
+	cases := []struct {
+		recipeKey string
+		path      []string
+		want      string
+	}{
+		{"reconcile", []string{"opts"}, "[recipes.reconcile.config.opts]"},
+		{`"my.recipe"`, []string{"opts"}, `[recipes."my.recipe".config.opts]`},
+		{"reconcile", []string{"opts", "deep.key"}, `[recipes.reconcile.config.opts."deep.key"]`},
+	}
+	for _, tc := range cases {
+		if got := subtableHeader(tc.recipeKey, tc.path); got != tc.want {
+			t.Errorf("subtableHeader(%q, %v) = %q, want %q", tc.recipeKey, tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestSplitInlineComment(t *testing.T) {
 	cases := []struct{ line, value, comment string }{
 		{`mode = "fast"  # tail`, `mode = "fast"`, `  # tail`},
@@ -261,6 +388,8 @@ func TestValueIsMultiline(t *testing.T) {
 		{`a = [ # comment`, true},
 		{`a = { x = "}" }`, false},
 		{`a = { x = "}`, true},
+		{`a = ]`, false},
+		{`a = { x = 1 }}`, false},
 	}
 	for _, tc := range cases {
 		if got := valueIsMultiline(tc.line); got != tc.want {
@@ -638,6 +767,21 @@ func TestRecipeConfigWriteExoticStrings(t *testing.T) {
 		t.Fatalf("exit = %d, stderr %q, stdout %q", code, stderr, out)
 	}
 	want := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\n\"my key\" = \"new \\\"quoted\\\" # value\"  # keep\n"
+	assertFileBytes(t, path, want)
+}
+
+// TestRecipeConfigWriteControlCharRecipeID drives the CLI helper with a
+// recipe id containing a control character: the envelope must be valid JSON
+// (the bridge's json.dumps produces \u0001), and the block must be created
+// under the quoted key.
+func TestRecipeConfigWriteControlCharRecipeID(t *testing.T) {
+	requireRecipeConfigSeam(t)
+	path := writeRecipeConfigFixture(t, "")
+	code, out, stderr := runRecipeConfigWriteCLI(t, path, "rec\x01ipe", `{"mode": "fast"}`)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr %q, stdout %q", code, stderr, out)
+	}
+	want := "\n[recipes.\"rec\\u0001ipe\"]\nenabled = true\n\n[recipes.\"rec\\u0001ipe\".config]\nmode = \"fast\"\n"
 	assertFileBytes(t, path, want)
 }
 
