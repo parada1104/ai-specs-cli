@@ -1821,21 +1821,43 @@ def _fallback_materialize_and_reconcile(
     cli_home: Path | None,
     refresh: bool,
     reason: str,
+    pre_dest_bytes: bytes | None,
+    announce: bool = True,
 ) -> str:
     """Fall back to the Python body, then reconcile the lock with the disk.
 
-    Go can write the destination and still return an unusable envelope (a
-    null record, or a record failing the plan or disk checks). The fallback
-    body alone then classifies the already-written bytes as "no provenance"
-    and preserves them: exactly the gate-on-disk-with-no-lock-entry state the
-    fail-closed design exists to prevent. When the destination's bytes are
-    identical to what this CLI renders for the hook, record the baseline for
-    those on-disk bytes so the next sync classifies the gate as managed.
-    Bytes the CLI cannot prove it rendered are never overwritten and never
-    recorded; the single bridge warning says so.
+    A degraded bridge run can change the destination and still leave this
+    run without a usable envelope: an infrastructure failure (``output is
+    None`` — crash, timeout, malformed stdout), a null record on a
+    ``wrote: true`` envelope, or a record failing the plan or disk checks.
+    The fallback body alone then classifies the already-written bytes as "no
+    provenance" and preserves them: exactly the gate-on-disk-with-no-lock-
+    entry state the fail-closed design exists to prevent.
+    ``pre_dest_bytes`` is the destination snapshot taken before Go ran
+    (``None`` = absent). When the destination's bytes are identical to what
+    this CLI renders for the hook, the baseline is recorded for those ON-
+    DISK bytes. When they are not provably CLI-rendered:
+
+    * unchanged from the pre-Go snapshot: preserved, never overwritten and
+      never recorded (the historical user-modified / no-provenance behavior);
+    * changed by the degraded run: FAIL CLOSED — the bridge warns, then
+      raises ``RuntimeError`` instead of silently leaving an untracked gate.
+
+    ``announce=True`` (envelope-shaped failures, which emitted no bridge
+    warning yet) emits the single ``GO_HOOK_GATE_BRIDGE_FALLBACK`` warning;
+    ``announce=False`` (infrastructure failures, which already emitted it)
+    emits the same note as a plain warning without the token, so a degraded
+    run never carries two token warnings.
     """
     rel = hook_script_rel_path(recipe_id, hook)
     dest = project_root / rel
+
+    def emit(note: str) -> None:
+        if announce:
+            _warn_hook_bridge_fallback(note)
+        else:
+            warn(note)
+
     result = _python_materialize_hook_script(
         recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home, refresh,
     )
@@ -1853,14 +1875,24 @@ def _fallback_materialize_and_reconcile(
             lock, rel, disk_sha, recipe=recipe_id, source=hook.script,
         )
         write_lock(lock_path, lock)
-        _warn_hook_bridge_fallback(
-            reason + "; reconciled the lock with the on-disk gate bytes"
-        )
-    else:
-        _warn_hook_bridge_fallback(
+        emit(reason + "; reconciled the lock with the on-disk gate bytes")
+        return result
+    post_bytes = dest.read_bytes() if dest.is_file() else None
+    if post_bytes != pre_dest_bytes:
+        emit(
             reason + "; the on-disk bytes are not proven CLI-rendered, so no "
-            "baseline was recorded and no bytes were changed"
+            "baseline was recorded and the destination changed"
         )
+        raise RuntimeError(
+            f"hook {rel}: the degraded bridge run left destination bytes the "
+            "CLI cannot prove it rendered; refusing to leave an untracked "
+            f"gate on disk. Inspect or remove {rel} and run sync again:\n"
+            f"  rm {rel} && ai-specs sync"
+        )
+    emit(
+        reason + "; the on-disk bytes are not proven CLI-rendered, so no "
+        "baseline was recorded and no bytes were changed"
+    )
     return result
 
 
@@ -1889,7 +1921,12 @@ def materialize_hook_script(
       crash, timeout, malformed or mismatched envelope) warns exactly once
       (``GO_HOOK_GATE_BRIDGE_FALLBACK``) and falls back to the historical
       Python body (_python_materialize_hook_script), reconciling the lock
-      with the bytes Go actually left on disk when Go already wrote them.
+      with the bytes the degraded run actually left on disk. Bytes that are
+      provably CLI-rendered get their baseline recorded; bytes that CHANGED
+      from the pre-Go snapshot but cannot be proven CLI-rendered fail closed
+      (RuntimeError) instead of silently leaving an untracked gate; bytes
+      the degraded run never touched keep the historical preserve behavior
+      (user-modified / no provenance).
 
     ``refresh=True`` (the ``--refresh-gates`` flag, never set by ordinary
     sync) replaces a customized gate only after its exact pre-refresh bytes
@@ -1933,6 +1970,10 @@ def materialize_hook_script(
             cli_home=cli_home,
         )
         backup_path = str(backup)
+    # Snapshot the pre-Go destination state (None = absent) so the fallback
+    # reconciliation can tell a degraded run that changed the destination
+    # from one that never touched it.
+    pre_dest_bytes = dest.read_bytes() if dest.is_file() else None
     output = go_materialize_hook(
         {
             "project_root": str(project_root),
@@ -1948,8 +1989,13 @@ def materialize_hook_script(
         }
     )
     if output is None:
-        return _python_materialize_hook_script(
-            recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home, refresh,
+        # Infrastructure failure: go_materialize_hook already emitted the one
+        # GO_HOOK_GATE_BRIDGE_FALLBACK warning, so the reconciliation runs
+        # with announce=False (no second token warning).
+        return _fallback_materialize_and_reconcile(
+            recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
+            refresh, "the Go bridge produced no usable output",
+            pre_dest_bytes=pre_dest_bytes, announce=False,
         )
     for line in output["warnings"]:
         warn(line)
@@ -1962,6 +2008,7 @@ def materialize_hook_script(
         return _fallback_materialize_and_reconcile(
             recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
             refresh, "wrote without a record",
+            pre_dest_bytes=pre_dest_bytes,
         )
     if record is not None:
         mismatch = _hook_record_mismatch(record, rel, hook.script, recipe_id)
@@ -1983,6 +2030,7 @@ def materialize_hook_script(
             return _fallback_materialize_and_reconcile(
                 recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
                 refresh, mismatch,
+                pre_dest_bytes=pre_dest_bytes,
             )
         set_gate_baseline(
             lock,

@@ -542,12 +542,14 @@ class HookGateFallbackTests(_HookBridgeTestCase):
 
 
 class HookGateRepairTests(_HookBridgeTestCase):
-    """An unusable envelope may still follow a Go write of the destination.
+    """An unusable envelope — or no usable output at all — may still follow a
+    Go write of the destination.
 
     The bridge must not leave a gate on disk with no lock entry: when the
     on-disk bytes are exactly what the CLI renders for the hook, the lock is
     reconciled (repair); bytes the CLI cannot prove it rendered are never
-    overwritten and never recorded. Stubs that claim ``wrote: true`` really
+    overwritten and never recorded, and if the degraded run CHANGED them the
+    reconciliation fails closed. Stubs that claim ``wrote: true`` really
     write the destination first, so the repair is proven, not assumed.
     """
 
@@ -558,6 +560,27 @@ class HookGateRepairTests(_HookBridgeTestCase):
         return (
             f"echo '#!/bin/sh' > '{dest}'; "
             f"echo '# gate_mode=always' >> '{dest}'"
+        )
+
+    def stub_writing_rendered_then(self, fixture, tail: str) -> None:
+        """A stub binary that really writes the rendered gate, then does
+        ``tail`` (malformed output, a crash, a sleep for timeout tests)."""
+        dest = self.dest_of(fixture)
+        self.pin_binary(self.stub(
+            f"printf '#!/bin/sh\\n# gate_mode=always\\n' > '{dest}'\n{tail}"
+        ))
+
+    def assert_reconciled_repair(self, fixture, err) -> None:
+        """The repair contract for a Go write followed by no usable output:
+        exactly one bridge warning, on-disk gate unchanged, lock baseline is
+        the digest of the ON-DISK bytes."""
+        self.assertEqual(err.count(self.mod.GO_HOOK_GATE_BRIDGE_FALLBACK), 1, err)
+        self.assertEqual(self.dest_of(fixture).read_bytes(), self.RENDERED)
+        lock = self.lock_of(fixture)
+        self.assertEqual(
+            lock["managed"][REL]["sha256"],
+            self.mod._load_util().sha256_bytes(self.RENDERED),
+            "the lock records the digest of the on-disk bytes (repair)",
         )
 
     def run_with_stub(self, fixture, body, **envelope_overrides):
@@ -634,6 +657,93 @@ class HookGateRepairTests(_HookBridgeTestCase):
         self.assertIn(f"    ✓ hook script {REL}", out)
         lock = self.lock_of(fixture)
         self.assertEqual(lock["managed"][REL]["sha256"], sha)
+
+    def test_malformed_stdout_after_go_write_reconciles_the_lock(self):
+        """D1-C: Go writes the rendered gate, then emits garbage stdout — the
+        ``output is None`` path must reconcile the lock with the on-disk
+        bytes, not leave an untracked gate with 'no provenance'."""
+        fixture = self.fixture("hook-repair-d1-garbage")
+        self.stub_writing_rendered_then(fixture, "printf '%s' 'garbage'")
+        _, err = self.run_materialize(
+            self.mod.materialize_hook_script,
+            fixture["recipe_dir"], self.hook(), fixture["root"],
+            "worktree-flow", MERGED_CFG, cli_home=None,
+        )
+        self.assertIn("did not match the materialize-hook envelope", err)
+        self.assert_reconciled_repair(fixture, err)
+
+    def test_crash_exit_70_after_go_write_reconciles_the_lock(self):
+        """D1-E: Go writes the rendered gate, then crashes with exit 70 and
+        no stdout — same repair contract."""
+        fixture = self.fixture("hook-repair-d1-crash")
+        self.stub_writing_rendered_then(fixture, "exit 70")
+        _, err = self.run_materialize(
+            self.mod.materialize_hook_script,
+            fixture["recipe_dir"], self.hook(), fixture["root"],
+            "worktree-flow", MERGED_CFG, cli_home=None,
+        )
+        self.assertIn("exited 70 without a hook envelope", err)
+        self.assert_reconciled_repair(fixture, err)
+
+    def test_timeout_after_go_write_reconciles_the_lock(self):
+        """D1-D: Go writes the rendered gate, then hangs — the bridge times
+        out (constant patched for speed) and the lock is still reconciled
+        with the bytes Go actually left on disk."""
+        fixture = self.fixture("hook-repair-d1-timeout")
+        self.stub_writing_rendered_then(fixture, "sleep 5")
+        with mock.patch.object(
+            self.mod, "GO_HOOK_GATE_BRIDGE_TIMEOUT_SECONDS", 1,
+        ):
+            _, err = self.run_materialize(
+                self.mod.materialize_hook_script,
+                fixture["recipe_dir"], self.hook(), fixture["root"],
+                "worktree-flow", MERGED_CFG, cli_home=None,
+            )
+        self.assertIn("timed out after 1s", err)
+        self.assert_reconciled_repair(fixture, err)
+
+    def test_infra_failure_with_preexisting_user_gate_preserves_bytes_and_baseline(self):
+        """D1 regression: a preexisting user-modified gate plus an
+        infrastructure failure that never writes leaves the user's bytes and
+        their baseline untouched — no seeding, no overwrite, no raise."""
+        fixture = self.fixture("hook-repair-d1-user")
+        user_bytes = b"#!/bin/sh\n# user edited\n"
+        original = b"#!/bin/sh\n# original\n"
+        self.seed_managed(fixture, original)
+        self.dest_of(fixture).write_bytes(user_bytes)
+        self.pin_binary(self.stub("exit 70"))
+        _, err = self.run_materialize(
+            self.mod.materialize_hook_script,
+            fixture["recipe_dir"], self.hook(), fixture["root"],
+            "worktree-flow", MERGED_CFG, cli_home=None,
+        )
+        self.assertEqual(err.count(self.mod.GO_HOOK_GATE_BRIDGE_FALLBACK), 1, err)
+        self.assertIn("user-modified", err)
+        self.assertEqual(self.dest_of(fixture).read_bytes(), user_bytes)
+        lock = self.lock_of(fixture)
+        self.assertEqual(
+            lock["managed"][REL]["sha256"],
+            self.mod._load_util().sha256_bytes(original),
+        )
+
+    def test_infra_failure_leaving_unproven_changed_bytes_fails_closed(self):
+        """D1 triangulation: an infrastructure failure that CHANGES the
+        destination to bytes the CLI cannot prove it rendered must fail
+        closed (RuntimeError) instead of silently leaving an untracked gate."""
+        fixture = self.fixture("hook-repair-d1-evil")
+        dest = self.dest_of(fixture)
+        self.pin_binary(self.stub(f"printf 'EVIL\\n' > '{dest}'\nexit 70"))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod.materialize_hook_script(
+                    fixture["recipe_dir"], self.hook(), fixture["root"],
+                    "worktree-flow", MERGED_CFG, cli_home=None,
+                )
+        self.assertIn("cannot prove it rendered", str(ctx.exception))
+        self.assertEqual(dest.read_bytes(), b"EVIL\n", "user/unproven bytes are preserved")
+        self.assertNotIn(REL, self.lock_of(fixture).get("managed", {}))
+        self.assertEqual(err.getvalue().count(self.mod.GO_HOOK_GATE_BRIDGE_FALLBACK), 1)
 
     def test_fallback_refresh_refuses_dangling_symlink_destination(self):
         """D2: with no verified binary and refresh=True, a dangling symlink
