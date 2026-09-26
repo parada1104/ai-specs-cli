@@ -254,6 +254,13 @@ class ConfigWriteFallbackTests(_BridgeTestCase):
         "subprocess-timeout": "timed out",
     }
 
+    # The wrong-shape-output cases must quote the offending stdout in the
+    # warning reason, otherwise a misbehaving gate is undiagnosable.
+    OUTPUT_DETAIL_MARKERS = {
+        "non-json": "not json",
+        "wrong-envelope": '"applied"',
+    }
+
     def test_infrastructure_failures_fall_back_with_one_warning(self):
         for case, prepare in self.INFRASTRUCTURE_CASES.items():
             with self.subTest(case=case), contextlib.ExitStack() as stack:
@@ -276,6 +283,9 @@ class ConfigWriteFallbackTests(_BridgeTestCase):
                 marker = self.INJECTED_REASON_MARKERS.get(case)
                 if marker is not None:
                     self.assertIn(marker, stderr, stderr)
+                detail = self.OUTPUT_DETAIL_MARKERS.get(case)
+                if detail is not None:
+                    self.assertIn(detail, stderr, stderr)
                 self.assertEqual(path.read_bytes(), self.reference_bytes())
 
     def test_fallback_warning_matches_the_bridge_family_format(self):
@@ -299,6 +309,21 @@ class ConfigWriteFallbackTests(_BridgeTestCase):
         stderr, error = self.run_write(path, values={"default_list": {1, 2}})
         self.assertIsInstance(error, TypeError)
         self.assertEqual(stderr, "")
+
+    def test_real_gate_hang_hits_the_bridge_timeout_and_falls_back(self):
+        # Gate-hang-latency verification (GO-07 out-of-scope note): a gate
+        # binary that hangs past the bridge timeout is killed by
+        # subprocess.run, the fallback warning names the timeout, and the
+        # Python writer applies the values. Real process, not an injected
+        # TimeoutExpired: the timeout is patched to 1s against `exec sleep 30`.
+        self.pin_binary(self.stub("exec sleep 30"))
+        path = self.manifest(MANIFEST)
+        with mock.patch.object(self.mod, "GO_RECIPE_CONFIG_BRIDGE_TIMEOUT_SECONDS", 1):
+            stderr, error = self.run_write(path)
+        self.assertIsNone(error)
+        self.assertEqual(stderr.count(self.mod.GO_RECIPE_CONFIG_BRIDGE_FALLBACK), 1, stderr)
+        self.assertIn("timed out", stderr, stderr)
+        self.assertEqual(path.read_bytes(), self.reference_bytes())
 
     def test_fallback_bytes_equal_the_pure_python_writer(self):
         self.pin_binary(self.tmp / "no-such-gate")
