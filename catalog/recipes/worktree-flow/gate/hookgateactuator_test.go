@@ -139,8 +139,11 @@ func writeHookSource(t *testing.T, body string) hookGateInput {
 		RecipeDir:   recipeDir,
 		RecipeID:    "worktree-flow",
 		Script:      "hooks/gate.sh",
+		// gate_mode is deliberately ABSENT (R2-fixture-gatemode-context): the two
+		// gate-mode tokens fall back to their defaults ("always"/"warn"), so every
+		// end-to-end test below exercises the default arm of hookConfigGet instead
+		// of restating it. hookFixtureRendered relies on that default.
 		Config: map[string]any{
-			"gate_mode":     "always",
 			"gate_scope":    "auto",
 			"repo_topology": "auto",
 			"gate_impl":     "auto",

@@ -361,26 +361,23 @@ func runMaterializeHook(stdin io.Reader, stdout, stderr io.Writer) int {
 	state := classifyManagedOverride(present, disk, in.ManagedEntry, &wouldWrite).State
 	out := hookActuatorOutput{Rel: rel, Dest: dest, Warnings: []string{}}
 	switch state {
-	case classifyMissing:
+	case classifyMissing, classifyManagedStale:
+		verb := "✓ hook script"
+		if state == classifyManagedStale {
+			// Baseline matches current bytes: the CLI rendered this gate, so an
+			// ordinary sync may force-update it and re-record the baseline.
+			verb = "✓ hook refreshed (baseline matched)"
+		}
 		if err := writeTemplateContent(dest, contentBytes, 0o755); err != nil {
 			return refuse(hookWriteRefusal(rel, dest, err))
 		}
 		out.Wrote = true
 		out.Record = hookRecord(sha256Bytes(contentBytes))
-		out.Message = fmt.Sprintf("✓ hook script %s", rel)
+		out.Message = fmt.Sprintf("%s %s", verb, rel)
 	case classifyManagedCurrent:
 		// Backfill provenance without rewriting the target (idempotent pair).
 		out.Record = hookRecord(sha256Bytes(contentBytes))
 		out.Message = fmt.Sprintf("· hook skipped (current) %s", rel)
-	case classifyManagedStale:
-		// Baseline matches current bytes: the CLI rendered this gate, so an
-		// ordinary sync may force-update it and re-record the baseline.
-		if err := writeTemplateContent(dest, contentBytes, 0o755); err != nil {
-			return refuse(hookWriteRefusal(rel, dest, err))
-		}
-		out.Wrote = true
-		out.Record = hookRecord(sha256Bytes(contentBytes))
-		out.Message = fmt.Sprintf("✓ hook refreshed (baseline matched) %s", rel)
 	case classifyUserModified:
 		out.Warnings = append(out.Warnings, fmt.Sprintf(
 			"hook %s is user-modified; preserving existing bytes. Refresh with:\n"+
