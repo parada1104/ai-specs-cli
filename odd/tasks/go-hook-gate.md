@@ -10,7 +10,7 @@ Strangler slice 7 prep: contract map + RED test suite for migrating the hook/gat
 
 ## Tasks
 
-- [ ] Scout: exact contract of the hook/gate actuator path (placeholders, state machine, refresh rollback, exact strings, callers, bridge pattern fit). **Status: done — see ## Scout below; commit ee36510**
+- [x] Scout: exact contract of the hook/gate actuator path (placeholders, state machine, refresh rollback, exact strings, callers, bridge pattern fit). **Status: done — see ## Scout below; commit ee36510**
 - [x] RED: failing Go parity test suite for the future Go core (hook/gate actuator), following the recipeconfigwrite_test.go pattern. **Status: done — commit 895df4b; `go vet` fails exactly on the three undefined core symbols (runMaterializeHook first at hookgateactuator_test.go:153); gofmt clean; 17 tests (rel path x1, rendering x7, end-to-end x9)**
 - [x] ODD doc evidence updated; hand-off note for the implementation session. **Status: done — this section and ## Hand-off note above**
 
@@ -100,3 +100,25 @@ Mirrors the merged slices (GO_RECIPE_CONFIG_BRIDGE_FALLBACK, GO_TEMPLATE_ACTUATO
 - RED suite: `catalog/recipes/worktree-flow/gate/hookgateactuator_test.go` — does not compile until `hookgateactuator.go` defines `runMaterializeHook`, `hookScriptRelPath`, `renderHookGateContent`. Those tests are the acceptance bar; implement byte-for-byte/string-for-string.
 - Reuse, never re-port: `classifyManagedOverride` + `sha256Bytes` (classify.go). The classification port belongs to slice 6/7 jointly (util.py:651/808).
 - Implement AFTER slice 6 (GO-09) merges, on a rebase of this branch; delivery is serialized through the main session. Do NOT combine with the template actuator in one review (~1000-line budget).
+
+## Implementation evidence (implementation session, feat/go-hook-gate)
+
+**What was implemented**: `gate/hookgateactuator.go` (NEW) — `runMaterializeHook`, `hookScriptRelPath`, `renderHookGateContent` per the contract above; `gate/main.go` wires `--materialize-hook` (envelope in on stdin, JSON out on stdout, exit 0/2, mirroring `--materialize-template`); `lib/_internal/recipe-materialize.py` adds the `GO_HOOK_GATE_BRIDGE_FALLBACK` bridge (envelope build, lock load/record/write, warning/message printing, backup-path precomputation, gate-version resolution, fail-open fallback); `tests/test_hook_gate_bridge.py` (NEW) is the Python bridge suite.
+
+**(a) RED observation (prep session, commit 895df4b; parent-verified inheritance)**: with only `hookgateactuator_test.go` present, `go vet ./...` failed on exactly the three undefined core symbols, first `runMaterializeHook` (hookgateactuator_test.go:153), plus `hookScriptRelPath` and `renderHookGateContent` — the suite could not compile until `hookgateactuator.go` defined them.
+
+**(b) Three RED-suite fixture defects and their minimal repairs** (the actuator logic itself was correct on first pass; no assertion, expected string, warning string, or sha expectation was altered — the test diff touches only fixture setup lines):
+1. **Destination parent not seeded** — end-to-end tests writing a pre-existing gate needed `ai-specs/recipes/worktree-flow/hooks/` to exist; repaired once in `writeHookSource` with a shared `os.MkdirAll` of the dest parent.
+2. **Fixture `gate_mode: ask` → `always`** — the fixture config used a non-actuating mode; repaired to `always` in the `writeHookSource` fixture map.
+3. **user_modified baseline defect** — `TestHookGateActuatorUserModifiedPreserved` set `ManagedEntry.SHA256` to `sha256Bytes(userBytes)`, the SAME bytes written to dest, which classifies as `managed_stale` by definition; repaired by setting the baseline to a DISTINCT prior baseline `sha256Bytes("#!/bin/sh\n# original baseline\n")`. `classifyManagedOverride` was NOT changed.
+
+**(c) GREEN commands and observed results** (all on feat/go-hook-gate, toolchain go1.24.13):
+- `gofmt -l .` (gate/) — clean; `go vet ./...` — clean; `go test -count=1 ./...` — `ok ai-specs.dev/worktree-gate` + `ok ai-specs.dev/worktree-gate/ledger`.
+- `go test -count=1 -run 'Hook' -v .` — 17/17 PASS (rel path x1, rendering x7, actuator end-to-end x9).
+- `python3 -m unittest tests.test_hook_gate_bridge` — Ran 21 tests, OK.
+- `WORKTREE_GATE_BIN=$PWD/dist/worktree-gate-current python3 -m unittest tests.test_hook_gate_bridge` — Ran 21 tests, OK (dist rebuilt via `scripts/build-gate.sh`).
+- `python3 -m unittest tests.test_tracker_card_gate_hook tests.test_trello_mcp_workflow_recipe` — Ran 56 tests, OK.
+
+**(d) No forked decision**: the bridge reuses the slice-6 Go core unchanged — `classifyManagedOverride` (classify.go) for the state machine and `sha256Bytes` for digesting; the hook path only adapts arguments (rendered content as `would_write`). No classification decision is re-ported or forked in Python or in `hookgateactuator.go`.
+
+**Trust root**: `catalog/recipes/worktree-flow/bin/SHA256SUMS` regenerated after `scripts/build-gate.sh` (go1.24.13) via the file's own documented reproduction command (`cd dist && shasum -a 256 worktree-gate-darwin-amd64 worktree-gate-darwin-arm64 worktree-gate-linux-amd64 worktree-gate-linux-arm64`), with one header line for this slice; `scripts/verify-gate-sums.sh` — 4/4 digests match.
