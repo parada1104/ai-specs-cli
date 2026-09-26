@@ -554,6 +554,157 @@ class TemplateActuatorFallbackTests(_TemplateBridgeTestCase):
         lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
         self.assertNotIn(TARGET, lock.get("managed", {}))
 
+    def test_fallback_refuses_escaping_target(self):
+        """Mirror of the Go templateEscapingTargetRefusal guard (lane C3,
+        0bb9d61): a literal target that cleans outside the project root is
+        refused by the Python fallback too — never written outside the
+        project. ``.git/`` targets are git-resolved and exempt, like Go."""
+        fixture = self.fixture("tpl-fb-escaping")
+        self.pin_binary(self.tmp / "no-such-gate")
+        outside = fixture["root"].parent / "outside"
+        with self.assertRaises(RuntimeError) as ctx:
+            self.run_materialize(
+                self.mod.materialize_template,
+                fixture["recipe_dir"],
+                self.tpl(target="../outside/evil.sh"),
+                fixture["root"],
+                MERGED_CFG, recipe_id="worktree-flow",
+            )
+        self.assertEqual(
+            str(ctx.exception),
+            "template target ../outside/evil.sh escapes the project root; "
+            "refusing to write outside the project. Fix the recipe target "
+            "and run sync again",
+        )
+        self.assertFalse(outside.exists(), "nothing may be written outside the root")
+
+    def test_fallback_refuses_symlinked_ancestor(self):
+        """Mirror of the Go templateAncestorSymlinkRefusal guard (lane C3,
+        0bb9d61): a symlinked ancestor directory below the project root is
+        refused before MkdirAll/write can create or traverse it."""
+        fixture = self.fixture("tpl-fb-ancestor")
+        planted = fixture["root"] / "sub"
+        planted.mkdir()
+        link = fixture["root"] / "real-sub"
+        link.mkdir()
+        planted.rmdir()
+        planted.symlink_to(link)
+        self.pin_binary(self.tmp / "no-such-gate")
+        with self.assertRaises(RuntimeError) as ctx:
+            self.run_materialize(
+                self.mod.materialize_template,
+                fixture["recipe_dir"],
+                self.tpl(target="sub/evil.sh"),
+                fixture["root"],
+                MERGED_CFG, recipe_id="worktree-flow",
+            )
+        self.assertEqual(
+            str(ctx.exception),
+            "ancestor path of sub/evil.sh is a symlink; refusing to write "
+            "through it. Replace it with a real directory and run sync again",
+        )
+        self.assertFalse((link / "evil.sh").exists(), "nothing written through the link")
+
+    def test_fallback_chmods_the_open_fd_not_the_path(self):
+        """R1-toctou residual routed from lane C3 (Go moved chmod onto the
+        open handle, ``file.Chmod``): the Python write path must chmod the
+        inode it just wrote (``os.fchmod`` on the open fd), never
+        re-traverse the destination path after close — a link swapped in
+        between must never be chmod'ed through."""
+        fixture = self.fixture("tpl-fb-fchmod")
+
+        def spying_chmod(path, mode):
+            raise AssertionError(f"path-based chmod called: {path} {mode}")
+
+        with mock.patch.object(self.mod.os, "chmod", spying_chmod):
+            out, err = self.run_materialize(
+                self.mod._python_materialize_template,
+                fixture["recipe_dir"], self.tpl(), fixture["root"],
+                MERGED_CFG, recipe_id="worktree-flow",
+            )
+        self.assertIn(f"    ✓ template {TARGET}", out)
+        dest = self.dest_of(fixture)
+        self.assertEqual(dest.stat().st_mode & 0o7777, 0o755)
+
+    def test_fallback_seeds_existing_rendered_copy_without_rewrite(self):
+        """R3-2/R3-3 coverage re-inspection: the untracked-seed arm — an
+        existing file whose bytes are provably the CLI-rendered content but
+        which has no lock entry — is seeded with its actual on-disk bytes,
+        without a rewrite."""
+        fixture = self.fixture("tpl-fb-seed")
+        dest = self.dest_of(fixture)
+        rendered = b"#!/bin/sh\necho hi\n"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(rendered)
+        out, err = self.run_materialize(
+            self.mod._python_materialize_template,
+            fixture["recipe_dir"], self.tpl(), fixture["root"],
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertEqual(dest.read_bytes(), rendered, "seed must not rewrite")
+        self.assertIn("    · template skipped (exists)", out)
+        lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
+        self.assertEqual(
+            lock["managed"][TARGET]["sha256"],
+            self.mod._load_util().sha256_bytes(rendered),
+        )
+
+    def test_fallback_managed_current_backfills_without_rewrite(self):
+        """R3-2/R3-3 coverage re-inspection: the managed-current arm —
+        entry and disk both match the rendered bytes — backfills provenance
+        without rewriting the target."""
+        fixture = self.fixture("tpl-fb-mcurrent")
+        self.seed_managed(fixture, b"#!/bin/sh\necho hi\n")
+        out, err = self.run_materialize(
+            self.mod._python_materialize_template,
+            fixture["recipe_dir"], self.tpl(), fixture["root"],
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertEqual(
+            self.dest_of(fixture).read_bytes(), b"#!/bin/sh\necho hi\n",
+            "managed-current must not rewrite",
+        )
+        self.assertIn("    · template skipped (exists)", out)
+
+    def test_fallback_managed_stale_auto_refreshes(self):
+        """R3-2/R3-3 coverage re-inspection: managed-stale with policy auto
+        force-refreshes the target and re-records the baseline."""
+        fixture = self.fixture("tpl-fb-stale-auto")
+        self.seed_managed(fixture, b"stale managed bytes\n")
+        out, err = self.run_materialize(
+            self.mod._python_materialize_template,
+            fixture["recipe_dir"], self.tpl(), fixture["root"],
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertIn("refreshed managed template", out)
+        self.assertIn("    · template skipped (exists)", out)
+        self.assertEqual(
+            self.dest_of(fixture).read_bytes(), b"#!/bin/sh\necho hi\n"
+        )
+        lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
+        self.assertEqual(
+            lock["managed"][TARGET]["sha256"],
+            self.mod._load_util().sha256_bytes(b"#!/bin/sh\necho hi\n"),
+        )
+
+    def test_fallback_managed_stale_confirm_preserves_with_warn(self):
+        """R3-2/R3-3 coverage re-inspection: managed-stale with a policy
+        requiring confirmation preserves the bytes and warns."""
+        fixture = self.fixture("tpl-fb-stale-confirm")
+        self.seed_managed(fixture, b"stale managed bytes\n")
+        out, err = self.run_materialize(
+            self.mod._python_materialize_template,
+            fixture["recipe_dir"],
+            self.tpl(policy="confirm"), fixture["root"],
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertIn("override managed-stale (confirm-required)", err)
+        self.assertIn("· template skipped (exists)", out)
+        self.assertEqual(
+            self.dest_of(fixture).read_bytes(), b"stale managed bytes\n",
+            "confirm-required stale bytes are preserved",
+        )
+
     def test_fallback_warning_matches_the_bridge_family_format(self):
         fixture = self.fixture("tpl-fb-format")
         _, err = self.run_materialize(

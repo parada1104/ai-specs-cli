@@ -1340,8 +1340,71 @@ def _symlink_refusal(target: str) -> str:
     return (
         f"destination {target} is a symlink; refusing to write through it. "
         "Replace it with a regular file and run sync again:\n"
-        f"  rm {target} && ai-specs sync"
+        f"{_rm_and_resync_hint(target)}"
     )
+
+
+def _rm_and_resync_hint(target: str) -> str:
+    """The single shared recovery hint — remove the path, run sync again.
+
+    R2-warn-str-dup (routed from lane C3): the surrounding warn/refusal
+    strings are Go/Python dual-authority text whose Go copies are parity-
+    pinned verbatim, so only this Python-side repetition is deduplicated;
+    the composed strings stay byte-identical."""
+    return f"  rm {target} && ai-specs sync"
+
+
+def _template_escaping_target_refusal(target: str) -> str:
+    """Actionable refusal for a target whose resolved destination lands
+    outside the project root.
+
+    Both authorities emit this verbatim (Go: templateEscapingTargetRefusal,
+    lane C3 commit 0bb9d61)."""
+    return (
+        f"template target {target} escapes the project root; refusing to "
+        "write outside the project. Fix the recipe target and run sync again"
+    )
+
+
+def _template_ancestor_symlink_refusal(target: str) -> str:
+    """Actionable refusal for a symlinked ancestor directory on the
+    destination path.
+
+    Both authorities emit this verbatim (Go: templateAncestorSymlinkRefusal,
+    lane C3 commit 0bb9d61)."""
+    return (
+        f"ancestor path of {target} is a symlink; refusing to write through "
+        "it. Replace it with a real directory and run sync again"
+    )
+
+
+def _template_path_contained(root: Path, dest: Path) -> bool:
+    """True when dest stays inside root in the cleaned lexical sense (no
+    ``..`` escape). Mirrors Go templatePathContained; symlink escapes are
+    handled separately by _first_symlinked_ancestor and the O_NOFOLLOW
+    open."""
+    rel = os.path.relpath(dest, root)
+    return rel == "." or (rel != ".." and not rel.startswith(".." + os.sep))
+
+
+def _first_symlinked_ancestor(root: Path, dest: Path) -> Path | None:
+    """The first ancestor directory of dest below root that is a symlink
+    (walked top down), or None. Mirrors Go firstSymlinkedAncestor: ancestors
+    at or above root are not inspected (project_root arrives resolved, and a
+    git-resolved destination outside the root — the linked-worktree shared
+    hooks directory — is trusted to git's own emission), and the destination
+    itself is not part of the walk (the dest-symlink guard covers it)."""
+    rel = os.path.relpath(dest, root)
+    if rel == ".." or rel.startswith(".." + os.sep):
+        return None
+    cur = root
+    for part in Path(rel).parts[:-1]:
+        if part in (".", ""):
+            continue
+        cur = cur / part
+        if cur.is_symlink():
+            return cur
+    return None
 
 
 def _python_materialize_template(
@@ -1363,6 +1426,19 @@ def _python_materialize_template(
     dest = resolve_template_dest(project_root, tpl.target)
     if not src.is_file():
         raise RuntimeError(f"template source not found: {src}")
+    # Mirrors the Go authority's destination guards (lane C3, 0bb9d61): a
+    # literal target may not clean itself outside the project root (git-
+    # resolved `.git/` destinations are trusted to git's own emission), and
+    # no ancestor below the root may be a symlink — MkdirAll and the open
+    # would otherwise create or write through the planted link. Both refuse
+    # fail-closed before any filesystem mutation, like the Go exit-2
+    # refusals the bridge never bypasses.
+    if not tpl.target.startswith(".git/") and not _template_path_contained(
+        project_root, dest
+    ):
+        raise RuntimeError(_template_escaping_target_refusal(tpl.target))
+    if _first_symlinked_ancestor(project_root, dest) is not None:
+        raise RuntimeError(_template_ancestor_symlink_refusal(tpl.target))
 
     content = render_template_bytes(src, merged_cfg)
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
@@ -1400,7 +1476,11 @@ def _python_materialize_template(
             raise
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
-        os.chmod(dest, src.stat().st_mode)
+            # R1-toctou residual (routed from lane C3): chmod the inode just
+            # written through its open fd — never re-traverse the destination
+            # path after close, where a swapped link could be chmod'ed
+            # through (Go: file.Chmod on the O_NOFOLLOW-guarded handle).
+            os.fchmod(handle.fileno(), src.stat().st_mode)
 
     if tpl.condition == "not_exists" and dest.exists():
         entry = (lock.get("managed") or {}).get(target)
@@ -1418,7 +1498,7 @@ def _python_materialize_template(
                     f"override metadata missing for {tpl.target}; preserving existing file without assigning ownership. "
                     "To preserve this local file, leave it unchanged. To replace it with the current recipe version, "
                     "remove it and run sync again:\n"
-                    f"  rm {tpl.target} && ai-specs sync"
+                    f"{_rm_and_resync_hint(tpl.target)}"
                 )
         elif state == "managed_stale" and policy == "auto":
             write_content()
@@ -1429,7 +1509,7 @@ def _python_materialize_template(
             warn(
                 f"override {label}: {tpl.target} was not refreshed. "
                 "Refresh with:\n"
-                f"  rm {tpl.target} && ai-specs sync"
+                f"{_rm_and_resync_hint(tpl.target)}"
             )
         elif state == "managed_current":
             # Backfill provenance fields without rewriting the target.
@@ -1902,7 +1982,7 @@ def _fallback_materialize_and_reconcile(
             f"hook {rel}: the degraded bridge run left destination bytes the "
             "CLI cannot prove it rendered; refusing to leave an untracked "
             f"gate on disk. Inspect or remove {rel} and run sync again:\n"
-            f"  rm {rel} && ai-specs sync"
+            f"{_rm_and_resync_hint(rel)}"
         )
     emit(
         reason + "; the on-disk bytes are not proven CLI-rendered, so no "
@@ -2108,7 +2188,9 @@ def _python_materialize_hook_script(
             raise
         with os.fdopen(fd, "wb") as handle:
             handle.write(content.encode())
-        os.chmod(dest, 0o755)
+            # Same fd-chmod contract as the template body: chmod the inode
+            # just written via its open fd, never the path after close.
+            os.fchmod(handle.fileno(), 0o755)
 
     if refresh:
         _refresh_gate(
@@ -2138,14 +2220,14 @@ def _python_materialize_hook_script(
     if state == "user_modified":
         warn(
             f"hook {rel} is user-modified; preserving existing bytes. Refresh with:\n"
-            f"  rm {rel} && ai-specs sync  (or: ai-specs sync --refresh-gates)"
+            f"{_rm_and_resync_hint(rel)}  (or: ai-specs sync --refresh-gates)"
         )
         print(f"    · hook skipped (user-modified) {rel}")
         return rel
     warn(
         f"hook {rel} has no recorded provenance; preserving existing bytes. "
         "A baseline is recorded only when the CLI renders the gate. Refresh with:\n"
-        f"  rm {rel} && ai-specs sync  (or: ai-specs sync --refresh-gates)"
+        f"{_rm_and_resync_hint(rel)}  (or: ai-specs sync --refresh-gates)"
     )
     print(f"    · hook skipped (no provenance) {rel}")
     return rel
