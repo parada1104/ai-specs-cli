@@ -365,9 +365,10 @@ func isIntSyntax(s string) bool {
 }
 
 // pyNumEqual compares two numeric texts the way Python == does: exact for
-// integer pairs, numeric (float64) otherwise. ponytail: int-vs-float equality
-// beyond float64 precision (int > 2^53 against a float) is approximated, an
-// unreachable corner for recipe config values.
+// integer pairs, numeric (float64) otherwise. Accepted corner (recorded in
+// odd/tasks/go-toml-writer.md): int-vs-float equality beyond float64
+// precision (int > 2^53 against a float) is approximated by the float64
+// comparison — a corner recipe config values cannot reach in practice.
 func pyNumEqual(a, b string) bool {
 	if isIntSyntax(a) && isIntSyntax(b) {
 		ai, errA := strconv.ParseInt(a, 10, 64)
@@ -741,22 +742,22 @@ func insertLines(lines []string, at int, inserted []string) []string {
 // applyDottedUpdates is _apply_dotted_updates: an inline-table root updates in
 // place, a header-table root updates leaf lines, an absent root is appended
 // as a new inline table. Refusals are the exact reference strings.
-func applyDottedUpdates(state *recipeConfigWriteState, grouped map[string][]recipeConfigDottedPair, order []string) (string, error) {
+func applyDottedUpdates(state *recipeConfigWriteState, grouped map[string][]recipeConfigDottedPair, order []string) error {
 	inlineLines := map[string]int{}
 	var headerRoots, newRoots []string
-	for _, root := range order {
+	for _, rootKey := range order {
 		idx := -1
 		for candidate := state.configIdx + 1; candidate < state.blockEnd; candidate++ {
-			if _, ok := matchKeyLine(state.lines[candidate], root); ok {
+			if _, ok := matchKeyLine(state.lines[candidate], rootKey); ok {
 				idx = candidate
 				break
 			}
 		}
 		if idx >= 0 {
-			inlineLines[root] = idx
+			inlineLines[rootKey] = idx
 			continue
 		}
-		header := subtableHeader(state.recipeKey, []string{root})
+		header := subtableHeader(state.recipeKey, []string{rootKey})
 		found := false
 		for candidate := state.recipeIdx; candidate < state.regionEnd; candidate++ {
 			if pyTrimSpace(state.lines[candidate]) == header {
@@ -765,26 +766,26 @@ func applyDottedUpdates(state *recipeConfigWriteState, grouped map[string][]reci
 			}
 		}
 		if found {
-			headerRoots = append(headerRoots, root)
+			headerRoots = append(headerRoots, rootKey)
 		} else {
-			newRoots = append(newRoots, root)
+			newRoots = append(newRoots, rootKey)
 		}
 	}
 
-	for _, root := range order {
-		idx, ok := inlineLines[root]
+	for _, rootKey := range order {
+		idx, ok := inlineLines[rootKey]
 		if !ok {
 			continue
 		}
-		if err := setInlinePaths(state, idx, root, grouped[root]); err != nil {
-			return "", err
+		if err := setInlinePaths(state, idx, rootKey, grouped[rootKey]); err != nil {
+			return err
 		}
 	}
 
-	for _, root := range headerRoots {
-		for _, pair := range grouped[root] {
+	for _, rootKey := range headerRoots {
+		for _, pair := range grouped[rootKey] {
 			if err := setHeaderPath(state, pair.path, pair.value); err != nil {
-				return "", err
+				return err
 			}
 		}
 	}
@@ -792,48 +793,57 @@ func applyDottedUpdates(state *recipeConfigWriteState, grouped map[string][]reci
 	if len(newRoots) > 0 {
 		blockEnd := configBlockEnd(state.lines, state.configIdx, state.regionEnd)
 		var newLines []string
-		for _, root := range newRoots {
-			encoded, err := tomlValue(dottedPairsToInlineTable(grouped[root]))
+		for _, rootKey := range newRoots {
+			encoded, err := tomlValue(dottedPairsToInlineTable(grouped[rootKey]))
 			if err != nil {
-				return "", err
+				return err
 			}
-			newLines = append(newLines, tomlKey(root)+" = "+encoded+"\n")
+			newLines = append(newLines, tomlKey(rootKey)+" = "+encoded+"\n")
 		}
 		state.lines = insertLines(state.lines, blockEnd, newLines)
 	}
-	return "", nil
+	return nil
+}
+
+// composeKeyLine rebuilds one `key = value` assignment in place: the encoded
+// value, the line's original indent, its TOML-aware inline comment, and its
+// trailing newline are all preserved. The three rewrite sites (flat-key
+// replacement, inline-table roots, header-table leaves) share this
+// composition so a serialized line always has exactly one shape.
+func composeKeyLine(indent, key string, value any, comment string, hadNewline bool) (string, error) {
+	encoded, err := tomlValue(value)
+	if err != nil {
+		return "", err
+	}
+	newline := ""
+	if hadNewline {
+		newline = "\n"
+	}
+	return indent + tomlKey(key) + " = " + encoded + comment + newline, nil
 }
 
 // setInlinePaths is _set_inline_paths.
-func setInlinePaths(state *recipeConfigWriteState, idx int, root string, pairs []recipeConfigDottedPair) error {
+func setInlinePaths(state *recipeConfigWriteState, idx int, rootKey string, pairs []recipeConfigDottedPair) error {
 	if valueIsMultiline(state.lines[idx]) {
-		return fmt.Errorf("cannot replace multiline value for key '%s'", root)
+		return fmt.Errorf("cannot replace multiline value for key '%s'", rootKey)
 	}
 	indent, valueText, comment, err := assignmentParts(state.lines[idx])
 	if err != nil {
 		return err
 	}
-	parsed, err := parseInlineTomlValue(state.root, valueText)
+	parsed, err := parseInlineTomlValue(state.manifestDir, valueText)
 	if err != nil {
-		return fmt.Errorf("cannot read the existing value for '%s': %v", root, err)
+		return fmt.Errorf("cannot read the existing value for '%s': %v", rootKey, err)
 	}
 	table, ok := parsed.(*orderedMap)
 	if !ok {
-		return fmt.Errorf("cannot update '%s': its value is not an inline table", root)
+		return fmt.Errorf("cannot update '%s': its value is not an inline table", rootKey)
 	}
 	for _, pair := range pairs {
 		nestedSet(table, pair.path[1:], pair.value)
 	}
-	encoded, err := tomlValue(table)
-	if err != nil {
-		return err
-	}
-	newline := ""
-	if strings.HasSuffix(state.lines[idx], "\n") {
-		newline = "\n"
-	}
-	state.lines[idx] = indent + tomlKey(root) + " = " + encoded + comment + newline
-	return nil
+	state.lines[idx], err = composeKeyLine(indent, rootKey, table, comment, strings.HasSuffix(state.lines[idx], "\n"))
+	return err
 }
 
 // setHeaderPath is _set_header_path: replace or append one leaf line inside a
@@ -865,22 +875,14 @@ func setHeaderPath(state *recipeConfigWriteState, path []string, value any) erro
 		if err != nil {
 			return err
 		}
-		encoded, err := tomlValue(value)
-		if err != nil {
-			return err
-		}
-		newline := ""
-		if strings.HasSuffix(state.lines[idx], "\n") {
-			newline = "\n"
-		}
-		state.lines[idx] = indent + tomlKey(leaf) + " = " + encoded + comment + newline
-		return nil
+		state.lines[idx], err = composeKeyLine(indent, leaf, value, comment, strings.HasSuffix(state.lines[idx], "\n"))
+		return err
 	}
-	encoded, err := tomlValue(value)
+	composed, err := composeKeyLine("", leaf, value, "", true)
 	if err != nil {
 		return err
 	}
-	state.lines = insertLines(state.lines, blockEnd, []string{tomlKey(leaf) + " = " + encoded + "\n"})
+	state.lines = insertLines(state.lines, blockEnd, []string{composed})
 	return nil
 }
 
@@ -888,13 +890,13 @@ func setHeaderPath(state *recipeConfigWriteState, path []string, value any) erro
 // through the dotted-update phase, mirroring the reference's in-place list
 // mutation and stale-then-recomputed region indices.
 type recipeConfigWriteState struct {
-	lines     []string
-	recipeIdx int
-	regionEnd int
-	configIdx int
-	blockEnd  int
-	recipeKey string
-	root      string
+	lines       []string
+	recipeIdx   int
+	regionEnd   int
+	configIdx   int
+	blockEnd    int
+	recipeKey   string
+	manifestDir string
 }
 
 // applyRecipeConfigWrite is update_recipe_config. It returns whether the
@@ -903,14 +905,14 @@ func applyRecipeConfigWrite(manifestPath, recipeID string, values *orderedMap) (
 	if values == nil || len(values.keys) == 0 {
 		return false, "", nil
 	}
-	root := filepath.Dir(manifestPath)
+	manifestDir := filepath.Dir(manifestPath)
 	original, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return false, "", fmt.Errorf("read manifest: %w", err)
 	}
 	originalText := string(original)
 
-	current, err := readRecipeConfigTable(root, original, recipeID)
+	current, err := readRecipeConfigTable(manifestDir, original, recipeID)
 	if err != nil {
 		return false, "", err
 	}
@@ -1006,10 +1008,10 @@ func applyRecipeConfigWrite(manifestPath, recipeID string, values *orderedMap) (
 		newText += strings.Join(blockLines, "")
 	} else {
 		state := &recipeConfigWriteState{
-			lines:     lines,
-			recipeIdx: idx,
-			recipeKey: recipeKey,
-			root:      root,
+			lines:       lines,
+			recipeIdx:   idx,
+			recipeKey:   recipeKey,
+			manifestDir: manifestDir,
 		}
 		state.regionEnd = recipeRegionEnd(state.lines, state.recipeIdx, recipeKey)
 		state.configIdx = findConfigHeader(state.lines, state.recipeIdx, state.regionEnd, "[recipes."+recipeKey+".config]")
@@ -1033,15 +1035,11 @@ func applyRecipeConfigWrite(manifestPath, recipeID string, values *orderedMap) (
 					return false, fmt.Sprintf("cannot replace multiline value for key '%s'", key), nil
 				}
 				_, comment := splitInlineComment(state.lines[candidate])
-				newline := ""
-				if strings.HasSuffix(state.lines[candidate], "\n") {
-					newline = "\n"
+				composed, cErr := composeKeyLine(indent, key, value, strings.TrimRight(comment, "\r\n"), strings.HasSuffix(state.lines[candidate], "\n"))
+				if cErr != nil {
+					return false, cErr.Error(), nil
 				}
-				encoded, err := tomlValue(value)
-				if err != nil {
-					return false, err.Error(), nil
-				}
-				state.lines[candidate] = indent + tomlKey(key) + " = " + encoded + strings.TrimRight(comment, "\r\n") + newline
+				state.lines[candidate] = composed
 				replaced = true
 				break
 			}
@@ -1065,14 +1063,14 @@ func applyRecipeConfigWrite(manifestPath, recipeID string, values *orderedMap) (
 		}
 
 		if len(groupedOrder) > 0 {
-			if _, err := applyDottedUpdates(state, grouped, groupedOrder); err != nil {
+			if err := applyDottedUpdates(state, grouped, groupedOrder); err != nil {
 				return false, err.Error(), nil
 			}
 		}
 		newText = strings.Join(state.lines, "")
 	}
 
-	if err := validateTomlText(root, newText); err != nil {
+	if err := validateTomlText(manifestDir, newText); err != nil {
 		return false, "invalid TOML after config write: " + err.Error(), nil
 	}
 	if newText != originalText {
