@@ -13,6 +13,7 @@ Exit 0 on success, 1 on validation/conflict error.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -1295,7 +1296,15 @@ def _python_materialize_template(
         if dest.is_symlink():
             raise RuntimeError(_symlink_refusal(tpl.target))
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(content)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(dest, flags, src.stat().st_mode & 0o777)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise RuntimeError(_symlink_refusal(tpl.target)) from exc
+            raise
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
         os.chmod(dest, src.stat().st_mode)
 
     if tpl.condition == "not_exists" and dest.exists():

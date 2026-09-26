@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // Template actuator for the governed-template materializer (GO-09, strangler
@@ -271,6 +272,12 @@ func writeTemplateRefusal(target, dest string, err error) string {
 // A destination that exists as a symlink (dangling or not) is refused before
 // anything is written: os.WriteFile follows the link, so a planted link could
 // redirect the refresh outside the project.
+//
+// The guard is two layers (R3-toctou-go-dest-guard): the Lstat pre-check
+// yields the early actionable refusal and covers the dangling-link/not_exists
+// path, and the open itself carries syscall.O_NOFOLLOW so no link can be
+// swapped in between the check and the write (ELOOP maps back to
+// errDestSymlink).
 func writeTemplateContent(dest string, content []byte, mode os.FileMode) error {
 	if info, lstatErr := os.Lstat(dest); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
 		return errDestSymlink
@@ -278,7 +285,18 @@ func writeTemplateContent(dest string, content []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(dest, content, mode); err != nil {
+	file, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, mode)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return errDestSymlink
+		}
+		return err
+	}
+	if _, err := file.Write(content); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
 		return err
 	}
 	return os.Chmod(dest, mode)

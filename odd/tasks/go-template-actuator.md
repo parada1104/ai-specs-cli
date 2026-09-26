@@ -158,3 +158,43 @@ GREEN commands (all observed):
 - `WORKTREE_GATE_BIN=$PWD/dist/worktree-gate-current python3 -m unittest tests.test_template_actuator_bridge` — Ran 17 tests, OK.
 - `python3 -m unittest discover -s tests -p 'test_*materialize*.py'` — Ran 97 tests, OK.
 - `scripts/build-gate.sh` — 4 targets built, no toolchain warning (go1.24.13); `scripts/verify-gate-sums.sh <(cd dist && shasum -a 256 worktree-gate-* | grep -v current) catalog/recipes/worktree-flow/bin/SHA256SUMS` — ok, 4 digest entries match.
+
+### Candidate fix batch 2 (native review, GO-09 template actuator)
+
+Fixed exactly the three WARNING findings; the SUGGESTION findings
+(R1-ancestor-symlink-traversal-deferred, R1-toctou-residual-symlink-race,
+R2-refusal-string-dual-authority) remain deliberately deferred to the
+advisory-hardening PR — nothing in this change touches them.
+
+- **R3-toctou-go-dest-guard**: `writeTemplateContent` keeps the Lstat
+  pre-check (early actionable refusal + dangling-link/not_exists path) and
+  now opens the destination with `os.OpenFile(... | syscall.O_NOFOLLOW)`,
+  mapping `syscall.ELOOP` back to `errDestSymlink`, so a link swapped in
+  between the check and the write can no longer be followed.
+- **R3-toctou-py-dest-guard**: the Python fallback `write_content` mirrors
+  the same two layers — `dest.is_symlink()` refusal kept, write switched to
+  `os.open(... | O_NOFOLLOW)` with `errno.ELOOP` mapped to the SAME
+  `_symlink_refusal` string (parity contract).
+- **R2-shasums-command-pruned**: the SHA256SUMS header "Reproduce any digest
+  locally with:" block and the truncated go-binding-witness note now carry
+  the complete two-step command (build-gate.sh + the explicit four-arch
+  shasum invocation); no note reordered or deleted, digests regenerated.
+
+RED observation (before the fix): the new regression tests pass pre-change
+(`TestWriteTemplateContentRefusesSymlinkDest` both subtests OK;
+`test_fallback_refuses_symlinked_destination` extended dangling-case
+assertEqual OK) because the candidate-1 Lstat pre-check already refuses both
+symlink cases. The O_NOFOLLOW layer closes the check-to-open swap window,
+which is not observable by a behavior test without a deliberate race harness
+or an injection hook — both excluded by the batch's no-abstraction scope
+rule — so no pre-implementation failing run was available (justified
+exception; the race-layer fix is pinned indirectly by the ELOOP→refusal
+mapping sharing the same `errDestSymlink`/refusal-string contract the
+existing tests pin).
+
+GREEN commands (all observed):
+- `cd catalog/recipes/worktree-flow/gate && gofmt -l . && go vet ./... && go test ./...` — gofmt empty, vet clean, `ok ai-specs.dev/worktree-gate` + `ok ai-specs.dev/worktree-gate/ledger` (includes new `TestWriteTemplateContentRefusesSymlinkDest` regular-file + dangling subtests).
+- `python3 -m unittest tests.test_template_actuator_bridge tests.test_materialize_bridge tests.test_merge_config_bridge` — Ran 86 tests, OK.
+- `WORKTREE_GATE_BIN=$PWD/dist/worktree-gate-current python3 -m unittest tests.test_template_actuator_bridge` — Ran 17 tests, OK (against the rebuilt binary).
+- `python3 -m unittest discover -s tests -p 'test_*materialize*.py'` — Ran 97 tests, OK.
+- `scripts/build-gate.sh` — 4 targets built, no toolchain warning (go1.24.13); `bash scripts/verify-gate-sums.sh /tmp/gate-sums-generated catalog/recipes/worktree-flow/bin/SHA256SUMS` — ok, 4 digest entries match (digests spliced from the generated shasum output, never hand-edited).

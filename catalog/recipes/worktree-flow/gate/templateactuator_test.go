@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -751,6 +752,52 @@ func TestTemplateActuatorSymlinkDestRefused(t *testing.T) {
 		}
 		assertSymlinkIntact(t, dest, targetPath, false)
 	})
+}
+
+// TestWriteTemplateContentRefusesSymlinkDest pins the destination guard on
+// writeTemplateContent itself (R3-toctou-go-dest-guard): a symlink at the
+// destination — to a regular file or dangling — is refused with errDestSymlink
+// (errors.Is), the link stays a symlink, and the link target is neither
+// created nor modified.
+func TestWriteTemplateContentRefusesSymlinkDest(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		createTarget bool
+	}{
+		{"regular-file target", true},
+		{"dangling target", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			dest := filepath.Join(base, "dest.sh")
+			targetPath := filepath.Join(base, "victim.sh")
+			if tc.createTarget {
+				if err := os.WriteFile(targetPath, []byte("echo victim\n"), 0o644); err != nil {
+					t.Fatalf("write link target: %v", err)
+				}
+			}
+			if err := os.Symlink(targetPath, dest); err != nil {
+				t.Fatalf("symlink creation denied on this platform: %v", err)
+			}
+			err := writeTemplateContent(dest, []byte("echo new\n"), 0o644)
+			if !errors.Is(err, errDestSymlink) {
+				t.Fatalf("err = %v, want errDestSymlink", err)
+			}
+			info, lstatErr := os.Lstat(dest)
+			if lstatErr != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("dest no longer a symlink: %v (%v)", info, lstatErr)
+			}
+			_, statErr := os.Lstat(targetPath)
+			if tc.createTarget {
+				got, readErr := os.ReadFile(targetPath)
+				if readErr != nil || string(got) != "echo victim\n" {
+					t.Fatalf("link target modified: %q (%v)", got, readErr)
+				}
+			} else if !os.IsNotExist(statErr) {
+				t.Fatalf("dangling link target was created: %v", statErr)
+			}
+		})
+	}
 }
 
 // TestTemplateActuatorMalformedEnvelope rejects input that is not the

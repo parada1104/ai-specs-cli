@@ -467,6 +467,10 @@ class TemplateActuatorFallbackTests(_TemplateBridgeTestCase):
                     self.assertEqual(target.read_bytes(), b"echo victim\n")
                 else:
                     self.assertFalse(target.exists(), "dangling link target was created")
+                    # R3-toctou-py-dest-guard: the dangling case must carry the
+                    # EXACT refusal string (the Go/Python parity contract),
+                    # not a wrapped or partial diagnostic.
+                    self.assertEqual(str(ctx.exception), self.mod._symlink_refusal(TARGET))
 
     def test_fallback_never_raises_on_bridge_infrastructure_failures(self):
         """The bridge itself must never raise for infra failures: a raising
