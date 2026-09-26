@@ -4,7 +4,7 @@ description: >
   Isolated git worktree workflow for ai-specs change work. Create a dedicated
   worktree under .worktrees/ for any change that writes files, keep pure
   exploration outside a worktree, and clean up merged worktrees safely after
-  topologies via recipes.worktree-flow.config.repo_topology and topology-aware
+  topologies via the CLI-owned [project].repo_topology and topology-aware
   gate scope via recipes.worktree-flow.config.gate_scope.
 license: MIT
 metadata:
@@ -39,8 +39,11 @@ writes nothing does not need a worktree.
 | `monorepo-apps` | Same as standalone (naming-only) | Same as standalone |
 | `monorepo-submodules` | `git -C <subrepo_path> worktree add <absolute-super>/<worktrees_dir>/<subrepo>-<slug> -b <branch> <integration_branch>` | Enumerate each initialized submodule (`git -C` / `submodule foreach`); never superproject `worktree list` alone |
 
-`repo_topology = "auto"` (default) detects initialized `.gitmodules` entries →
-`monorepo-submodules`, else `standalone`. It never auto-selects `monorepo-apps`.
+Topology is CLI-owned: `[project].repo_topology = "auto"` (default) detects
+initialized `.gitmodules` entries → `monorepo-submodules`, else `standalone`.
+It never auto-selects `monorepo-apps`, it resolves even when this recipe is
+disabled, and the deprecated `recipes.worktree-flow.config.repo_topology` alias
+is read only for one migration window (the project field wins).
 
 ## Gate scope and repository ownership
 
@@ -209,3 +212,12 @@ remove <path>`, then `git branch -D <branch>` after squash/rebase merges.
 Stop without deleting if the worktree is dirty.
 
 This honors the project rule: never revert or discard changes you did not make.
+
+### Candidate-view store (separate)
+
+This cleanup covers `.worktrees/` only. Native review candidate views live under
+the shared git dir (`.git/gentle-ai/candidate-views`) and are controller-owned.
+After the merged-worktree pass, load the `worktree-candidate-cleanup` skill to
+audit that store and, only when every eligibility proof holds, reap stale
+candidate views and their matching `*.owner.json` markers. Never delete candidate
+views or markers ad hoc.

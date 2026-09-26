@@ -181,13 +181,14 @@ bb pr create <branch-name> <base_branch> --title "<title>" --description "<summa
    `bb pr commits` as discovery.
 
 8. Classify `HEAD_BRANCH` (see **Head branch class**). Before the provider merge
-   command, authorize the Tracker item with the direct host mode of the tracker
-   gate script. This is Tracker item authorization, not OpenSpec artifact or
-   archive validation; the bridge is the single shell host to the verified Go
-   `--ledger` predicate, and it is safe when dormant or unbound. Tracker
-   checkpoints only exist when the tracker recipe is installed: if the script is
-   absent, skip this step (there is no tracker lifecycle to authorize). Stop on a
-   non-zero exit:
+   command, report the Tracker item state with the direct host mode of the tracker
+   gate script. This is Tracker item reporting, not OpenSpec artifact or archive
+   validation; the bridge is the single shell host to the verified Go `--ledger`
+   predicate, and it is safe when dormant or unbound. Tracker checkpoints only
+   exist when the tracker recipe is installed: if the script is absent, skip this
+   step (there is no tracker lifecycle to report). The Tracker host is advisory:
+   it reports a `block` / `ask` / `needs-item` verdict on stderr and exits `0`, so
+   a non-zero Tracker verdict never blocks the merge or unrelated source work:
 
 ```bash
 GATE=ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh

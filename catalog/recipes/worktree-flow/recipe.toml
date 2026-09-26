@@ -74,12 +74,15 @@ enum = ["auto", "go"]
 help_text = "Worktree gate implementation: auto (use the Go binary when the CLI can provide it) or go (explicit Go pin). Both acquire the verified binary and fail open with a doctor ERROR when none resolves. The bash value has been removed."
 
 
+# Legacy compatibility alias only. Topology is owned by the project manifest
+# ([project].repo_topology); this key is still read (with a deprecation marker)
+# for one migration window and is never written by new flows.
 [config.repo_topology]
 type = "string"
 required = false
 default = "auto"
 enum = ["auto", "standalone", "monorepo-apps", "monorepo-submodules"]
-help_text = "Repository topology for worktree create/clean: auto (detect initialized submodules → monorepo-submodules, else standalone), standalone, monorepo-apps (naming-only; same mechanics as standalone), or monorepo-submodules (per-submodule worktrees under shared worktrees_dir)."
+help_text = "Deprecated alias of [project].repo_topology (still honored for one migration window; recipe-only values warn). Prefer the project field: auto (detect initialized submodules → monorepo-submodules, else standalone), standalone, monorepo-apps (naming-only; same mechanics as standalone), or monorepo-submodules (per-submodule worktrees under shared worktrees_dir)."
 
 
 [provides]

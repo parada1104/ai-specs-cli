@@ -1,14 +1,22 @@
-"""RED/GREEN tests for the tracker ledger mode configuration (A9).
+"""RED/GREEN tests for the tracker ledger mode boundary (A9).
 
 Covers three things at once:
 
 1. ``catalog/recipes/trello-mcp-workflow/recipe.toml`` declares the project
    ``ledger_mode`` (``always|ask|warn``, default ``warn``).
-2. The A9 mapping the hosts apply: an explicit ``ledger_mode`` wins; otherwise
-   the tracker ``gate_mode`` maps ``off``→skip, ``warn``→``warn``,
-   ``always``→``always``. The worktree gate mode is never read.
-3. The five checkpoint hosts all reach the one Go predicate and honor its
-   verdict (spec "All five checkpoints reach one predicate").
+2. The host boundary: the shell hosts forward the raw stamped legacy gate hint
+   (``--ledger-gate-mode``) and never resolve a mode, never read the manifest,
+   and never skip ``off`` themselves. Effective mode resolution
+   (``TRACKER_LEDGER_MODE`` → witness-bound recipe ``ledger_mode`` → recipe
+   ``gate_mode`` → ``TRACKER_CARD_GATE_MODE`` → raw stamped hint → ``warn``,
+   with ``off`` disabling the checkpoint before grading) is owned by Go in
+   ``ledger_mode.go`` / ``ledger_cmd.go`` and pinned by ``ledger_mode_test.go``
+   and ``TestLedgerEffectiveModeResolutionViaCLI``.
+3. The five checkpoint hosts all reach the one Go predicate. The four Tracker
+   checkpoints are advisory: a ``block``/``ask``/``needs-item`` verdict is
+   reported on stderr and the host still exits 0. The Plan Build ``work-start``
+   host keeps its own blocking authority (spec "All five checkpoints reach one
+   predicate").
 
 The hosts are acquisition/JSON bridges, so every test drives them with a stub
 ``worktree-gate`` binary (``WORKTREE_GATE_BIN``) that records its argv. No host
@@ -97,114 +105,86 @@ class LedgerModeConfigTests(unittest.TestCase):
         self.stub.write_text(STUB_BINARY)
         self.stub.chmod(0o755)
 
-    # --- witness-derived recipe lookup (task 3.1) ---
+    # --- the host boundary: raw hint forwarding, no shell mode policy ---
+    #
+    # Effective mode resolution is Go-owned (ledger_mode.go ResolveLedgerMode,
+    # wired by ledger_cmd.go resolveLedgerMode) and pinned by
+    # ledger_mode_test.go and TestLedgerEffectiveModeResolutionViaCLI. The shell
+    # hosts used to duplicate that policy in `_ledger_mode`/`_resolve_gate_mode`;
+    # the tests below assert only the transport boundary and deliberately do not
+    # re-assert a resolved mode the hosts no longer compute.
 
-    def _witness(self, recipe_id: str) -> None:
-        common = subprocess.run(
-            ["git", "-C", str(self.repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-        ledger_dir = Path(common) / "ai-specs" / "ledger"
-        ledger_dir.mkdir(parents=True, exist_ok=True)
-        (ledger_dir / "witness.json").write_text(json.dumps({
-            "v": 1, "capability": "tracker", "state": "bound", "recipe_id": recipe_id,
-            "candidates": [], "written_at": "2026-01-01T00:00:00Z",
-        }))
-
-    def _manifest_two_recipes(self, *, legacy_gate: str | None, fixture_mode: str | None) -> None:
-        text = (
-            "[project]\nname = 'mode'\n\n[agents]\nenabled = ['claude']\n\n"
-            "[recipes.trello-mcp-workflow]\nenabled = true\n"
-            "[recipes.trello-mcp-workflow.config]\n"
-        )
-        if legacy_gate is not None:
-            text += f'gate_mode = "{legacy_gate}"\n'
-        text += "[recipes.fixture-tracker]\nenabled = true\n[recipes.fixture-tracker.config]\n"
-        if fixture_mode is not None:
-            text += f'ledger_mode = "{fixture_mode}"\n'
-        ai_specs = self.repo / "ai-specs"
-        ai_specs.mkdir(exist_ok=True)
-        (ai_specs / "ai-specs.toml").write_text(text)
-
-    def test_witness_recipe_id_drives_the_tracker_card_gate_mode_lookup(self):
-        self._manifest_two_recipes(legacy_gate="off", fixture_mode="always")
-        self._witness("fixture-tracker")
-        r = self._tracker_path("warn", env=self._env())
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(
-            self._ledger_modes(), ["always"],
-            "the mode must come from the witness-bound recipe's config, not the literal",
-        )
-
-    def test_witness_recipe_id_drives_the_tracker_host_mode_lookup(self):
-        self._manifest_two_recipes(legacy_gate="off", fixture_mode="always")
-        self._witness("fixture-tracker")
-        active = self.repo / "openspec" / "changes" / "demo-change"
-        active.mkdir(parents=True, exist_ok=True)
-        (active / "tasks.md").write_text("Depth: light\n")
-        (active / "proposal.md").write_text("# proposal\n")
+    def test_tracker_host_forwards_the_raw_stamped_hint(self):
+        self._manifest(gate_mode="off")
         r = self._tracker_host("archive-close", env=self._env())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self._ledger_modes(), ["always"],
-                         "the tracker host must read the witness recipe's config too")
+        self.assertEqual(self._logged_checkpoints(), ["archive-close"], r.stderr)
+        self.assertIn("--ledger-gate-mode warn", self.stub_log.read_text())
+        self.assertEqual(self._ledger_modes(), [],
+                         "the host must not resolve an explicit --ledger-mode; Go does")
 
-    def test_witness_recipe_gate_mode_maps_forward(self):
-        self._manifest_two_recipes(legacy_gate="off", fixture_mode=None)
-        ai = self.repo / "ai-specs" / "ai-specs.toml"
-        ai.write_text(ai.read_text() + 'gate_mode = "always"\n')
-        self._witness("fixture-tracker")
-        self._tracker_path("warn", env=self._env())
-        self.assertEqual(self._ledger_modes(), ["always"])
-
-    def test_env_override_still_beats_the_witness_recipe(self):
-        self._manifest_two_recipes(legacy_gate="off", fixture_mode="always")
-        self._witness("fixture-tracker")
-        self._tracker_path("warn", env=self._env(TRACKER_LEDGER_MODE="warn"))
-        self.assertEqual(self._ledger_modes(), ["warn"])
-
-    def test_missing_witness_keeps_the_legacy_lookup(self):
-        self._manifest(ledger_mode="always", gate_mode="off")
+    def test_tracker_path_forwards_the_raw_stamped_off_hint(self):
+        self._manifest(gate_mode="always")
         r = self._tracker_path("off", env=self._env())
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._logged_checkpoints(), ["apply-start"], r.stderr)
-        self.assertEqual(self._ledger_modes(), ["always"], r.stderr)
+        self.assertIn("--ledger-gate-mode off", self.stub_log.read_text(),
+                      "the raw stamped off hint is forwarded, not interpreted")
 
-    def test_witness_recipe_id_drives_the_plan_build_work_start_mode(self):
-        """W6: the last provider literal is gone; work-start resolves the witness."""
-        self._manifest_two_recipes(legacy_gate="warn", fixture_mode="always")
-        self._witness("fixture-tracker")
+    def test_plan_build_forwards_no_mode_flags(self):
+        self._manifest(ledger_mode="always", gate_mode="off")
         r = self._plan_build(env=self._env())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(
-            self._ledger_modes(), ["always"],
-            "work-start must read the witness-bound recipe's config, not a literal",
-        )
+        self.assertEqual(self._logged_checkpoints(), ["work-start"], r.stderr)
+        self.assertEqual(self._ledger_modes(), [])
+        self.assertNotIn("--ledger-gate-mode", self.stub_log.read_text(),
+                         "plan-build has no legacy tracker gate hint to forward")
+
+    def test_env_override_is_not_interpreted_by_the_host(self):
+        self._manifest(ledger_mode="always")
+        r = self._tracker_path("warn", env=self._env(TRACKER_LEDGER_MODE="always"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--ledger-gate-mode warn", self.stub_log.read_text())
+        self.assertEqual(self._ledger_modes(), [],
+                         "TRACKER_LEDGER_MODE is Go's input; the host stays blind")
+
+    def test_hosts_carry_no_shell_mode_policy(self):
+        for label, path in (("tracker-gate", TRACKER_GATE),
+                            ("plan-build-gate", PLAN_BUILD_GATE)):
+            text = path.read_text(encoding="utf-8")
+            for token in ("_ledger_mode", "_resolve_gate_mode", "_ledger_recipe_id"):
+                with self.subTest(site=label, token=token):
+                    self.assertNotIn(token, text,
+                                     "shell mode policy must live in Go, not the host")
+            with self.subTest(site=label, token="tomllib"):
+                self.assertNotIn(token, text,
+                                 "the host must not read the manifest; Go owns the "
+                                 "witness-bound recipe config lookup")
 
     # --- 3.4 / W6: no host resolves its config from a hardcoded recipe id ---
 
     def test_no_hardcoded_recipe_lookup_remains_at_any_host_site(self):
-        sites = (
-            ("tracker-gate", TRACKER_GATE, "_ledger_recipe_id"),
-            ("plan-build-gate", PLAN_BUILD_GATE, "_ledger_recipe_id"),
-            ("doctor", DOCTOR, "recipe_id"),
-        )
-        for label, path, resolver in sites:
+        for label, path in (("tracker-gate", TRACKER_GATE),
+                            ("plan-build-gate", PLAN_BUILD_GATE)):
             with self.subTest(site=label):
                 text = path.read_text(encoding="utf-8")
                 self.assertNotIn(
                     'get("trello-mcp-workflow")', text,
                     f"{path.name} still looks config up by the hardcoded recipe id; the "
-                    "fallback belongs in ledger_bridge.LEGACY_RECIPE_ID",
+                    "witness binding belongs to Go",
                 )
-                self.assertIn(resolver, text, f"{path.name} must resolve the witness recipe id")
+                self.assertIn("_ledger_grade", text, f"{path.name} must still grade")
+        self.assertIn("recipe_id", DOCTOR.read_text(encoding="utf-8"))
 
-    def test_plan_build_gate_uses_the_stamped_bridge_seam(self):
+    def test_plan_build_gate_drops_the_dead_bridge_seam(self):
         plan_build = PLAN_BUILD_GATE.read_text(encoding="utf-8")
         self.assertNotIn(LEGACY_RECIPE, plan_build,
                          "the final provider literal must be gone from plan-build-gate.sh")
-        self.assertIn("__TRACKER_LIB_INTERNAL__", plan_build,
-                      "the gate must resolve the recipe through the stamped ledger_bridge seam")
-        self.assertIn("ledger_bridge", plan_build)
+        # With the shell resolver gone the hook never looks up a recipe id, so the
+        # stamped lib/_internal bridge seam had no remaining consumer here. Go
+        # reads the witness binding itself (ledger_cmd.go resolveLedgerMode).
+        self.assertNotIn("__TRACKER_LIB_INTERNAL__", plan_build)
+        self.assertNotIn("ledger_bridge", plan_build)
         docs = (ROOT / "docs" / "capabilities.md").read_text(encoding="utf-8")
         self.assertIn("plan-build", docs)
         self.assertIn("work-start", docs)
@@ -305,13 +285,9 @@ class LedgerModeConfigTests(unittest.TestCase):
         return path
 
     def _stamped_plan_build_gate(self) -> Path:
-        """The materialized hook: sync stamps the CLI's lib/_internal seam."""
+        """The materialized hook: it carries no per-project stamp."""
         path = Path(self.tmp.name) / "plan-build-gate.sh"
-        path.write_text(
-            PLAN_BUILD_GATE.read_text().replace(
-                "__TRACKER_LIB_INTERNAL__", str(LIB_INTERNAL)
-            )
-        )
+        path.write_text(PLAN_BUILD_GATE.read_text())
         path.chmod(0o755)
         return path
 
@@ -374,46 +350,40 @@ class LedgerModeConfigTests(unittest.TestCase):
                     out.append(parts[i + 1])
         return out
 
-    # --- 5.1: A9 mapping ---
+    # --- 5.1: the A9 mapping is Go-owned (see the boundary note above) ---
 
-    def test_ledger_mode_wins_over_gate_mode(self):
+    def test_host_stamps_reach_the_predicate_without_running_mode_policy(self):
+        # A manifest declaring the opposite of the stamped hint proves the host
+        # no longer reads it: the raw stamp is what Go receives.
         self._manifest(ledger_mode="always", gate_mode="warn")
-        r = self._plan_build(env=self._env())
+        r = self._tracker_path("off", env=self._env())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self._ledger_modes(), ["always"], r.stderr)
+        self.assertIn("--ledger-gate-mode off", self.stub_log.read_text())
+        self.assertEqual(self._ledger_modes(), [])
 
-    def test_gate_mode_off_skips_the_checkpoint(self):
+    def test_shell_does_not_skip_off_before_go(self):
+        # `off` skipping is Go's short-circuit (ledger_cmd.go returns before
+        # grading). The host always invokes the predicate, so the raw off hint
+        # reaches it and TestLedgerEffectiveModeResolutionViaCLI step 2 pins the
+        # skip.
         self._manifest(gate_mode="off")
         r = self._plan_build(env=self._env())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self._logged_checkpoints(), [], "off must skip the ledger entirely")
-
-    def test_gate_mode_warn_maps_to_warn(self):
-        self._manifest(gate_mode="warn")
-        self._plan_build(env=self._env())
-        self.assertEqual(self._ledger_modes(), ["warn"])
-
-    def test_gate_mode_always_maps_to_always(self):
-        self._manifest(gate_mode="always")
-        self._plan_build(env=self._env())
-        self.assertEqual(self._ledger_modes(), ["always"])
-
-    def test_env_override_beats_manifest(self):
-        self._manifest(ledger_mode="always")
-        self._plan_build(env=self._env(TRACKER_LEDGER_MODE="warn"))
-        self.assertEqual(self._ledger_modes(), ["warn"])
+        self.assertEqual(self._logged_checkpoints(), ["work-start"], r.stderr)
 
     def test_worktree_gate_mode_is_never_read(self):
         self._manifest(gate_mode="warn", worktree_gate_mode="always")
         self._plan_build(env=self._env())
-        self.assertEqual(self._ledger_modes(), ["warn"])
+        self.assertEqual(self._ledger_modes(), [])
+        self.assertNotIn("--ledger-gate-mode", self.stub_log.read_text())
 
-    def test_tracker_host_applies_same_mapping(self):
+    def test_tracker_host_forwards_the_same_raw_hint_as_the_path_host(self):
         self._manifest(ledger_mode="always", gate_mode="off")
         r = self._tracker_host("archive-close", env=self._env())
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._logged_checkpoints(), ["archive-close"], r.stderr)
-        self.assertEqual(self._ledger_modes(), ["always"])
+        self.assertIn("--ledger-gate-mode warn", self.stub_log.read_text())
+        self.assertEqual(self._ledger_modes(), [])
 
     def _tracker_host(self, checkpoint: str, *, env: dict,
                       slug: str | None = None) -> subprocess.CompletedProcess:
@@ -478,13 +448,22 @@ class LedgerModeConfigTests(unittest.TestCase):
             ),
         ]
 
-    def test_all_five_hosts_block_on_the_same_verdict(self):
+    def test_work_start_blocks_while_tracker_hosts_report_advisory(self):
         self._manifest(gate_mode="warn")
         env = self._env(STUB_DECISION="block", STUB_REASON="needs-item")
         for checkpoint, cmd, payload, _ in self._five_host_commands():
             with self.subTest(checkpoint=checkpoint):
                 r = subprocess.run(cmd, input=payload, capture_output=True, text=True, env=env)
-                self.assertNotEqual(r.returncode, 0, f"{checkpoint}: {r.stderr}")
+                if checkpoint == "work-start":
+                    self.assertNotEqual(r.returncode, 0, f"{checkpoint}: {r.stderr}")
+                else:
+                    self.assertEqual(
+                        r.returncode, 0,
+                        f"{checkpoint} is a Tracker checkpoint and must stay advisory: {r.stderr}",
+                    )
+                    self.assertIn(checkpoint, r.stderr,
+                                  "the advisory host still reports the verdict")
+                    self.assertIn("advisory", r.stderr.lower())
         self.assertEqual(
             sorted(self._logged_checkpoints()),
             ["apply-start", "archive-close", "pr-review", "pre-merge", "work-start"],

@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -30,6 +31,16 @@ def _load_sibling(name: str):
 
 
 _toml_write = _load_sibling("toml_write")
+
+_gate_binary_module = None
+
+
+def _load_gate_binary():
+    """Load the sibling gate_binary.py acquisition module (lazy, cached)."""
+    global _gate_binary_module
+    if _gate_binary_module is None:
+        _gate_binary_module = _load_sibling("gate_binary")
+    return _gate_binary_module
 
 
 def _toml_key(key: str) -> str:
@@ -347,6 +358,96 @@ def _apply_dotted_updates(
     return lines
 
 
+GO_RECIPE_CONFIG_BRIDGE_FALLBACK = "GO_RECIPE_CONFIG_BRIDGE_FALLBACK"
+GO_RECIPE_CONFIG_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_config_write_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded config-write authority."""
+    print(
+        f"  ! {GO_RECIPE_CONFIG_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python config-write authority",
+        file=sys.stderr,
+    )
+
+
+def _config_write_bridge_home() -> Path:
+    """The CLI package home owning the gate binary cache (module-home pattern
+    shared with the reconcile-stamps/orphans bridges in recipe-materialize.py)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def go_update_recipe_config(manifest_path: Path, recipe_id: str, values: dict) -> bool:
+    """Run ``worktree-gate --write-recipe-config``; True when it handled the write.
+
+    Returns False only when the caller must fall back to the temporary Python
+    writer: an infrastructure failure (no verified binary, the process failed,
+    or the stdout envelope did not match) emits the single
+    ``GO_RECIPE_CONFIG_BRIDGE_FALLBACK`` warning naming the reason, and an
+    unserializable ``values`` payload falls back silently so the Python
+    writer's original TypeError surfaces unchanged. A Go refusal (exit 2 with a
+    stdout ``{"error": "<string>"}`` envelope) fails closed WITHOUT fallback:
+    it raises ``RecipeConfigWriteError`` with the exact Go string.
+    """
+    try:
+        envelope = json.dumps(
+            {
+                "manifest_path": str(manifest_path),
+                "recipe_id": recipe_id,
+                "values": values,
+            }
+        )
+    except TypeError:
+        # Not a bridge failure: values the Go envelope cannot represent go
+        # straight to the Python writer so its original TypeError surfaces.
+        return False
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_config_write_bridge_home())
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_config_write_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return False
+    if binary is None:
+        _warn_config_write_bridge_fallback("no verified worktree-gate binary")
+        return False
+    try:
+        proc = subprocess.run(
+            [str(binary), "--write-recipe-config"],
+            input=envelope,
+            capture_output=True,
+            text=True,
+            timeout=GO_RECIPE_CONFIG_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        _warn_config_write_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return False
+    try:
+        stdout = json.loads(proc.stdout)
+    except ValueError:
+        stdout = None
+    if proc.returncode == 2 and isinstance(stdout, dict) and isinstance(stdout.get("error"), str):
+        raise RecipeConfigWriteError(stdout["error"])
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_config_write_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} without a refusal envelope ({detail})"
+        )
+        return False
+    if not (isinstance(stdout, dict) and isinstance(stdout.get("applied"), bool)):
+        if stdout is None:
+            _warn_config_write_bridge_fallback("worktree-gate output was not JSON")
+        else:
+            _warn_config_write_bridge_fallback(
+                "worktree-gate output did not match the write-recipe-config envelope"
+            )
+        return False
+    return True
+
+
 def update_recipe_config(manifest_path: Path, recipe_id: str, values: dict) -> None:
     """Write values into [recipes.<id>.config], preserving comments and bytes.
 
@@ -354,7 +455,21 @@ def update_recipe_config(manifest_path: Path, recipe_id: str, values: dict) -> N
     structured table) or dotted (`reconcile.max_age_seconds`), which updates one
     nested sub-key of an existing structured table in place. A dotted path and a
     whole-table value for the same root are refused rather than merged.
+
+    The write decision belongs to ``worktree-gate --write-recipe-config``; this
+    retained surgical writer is the TEMPORARY fail-open Python authority
+    (``GO_RECIPE_CONFIG_BRIDGE_FALLBACK``). An empty ``values`` dict is a local
+    no-op: byte-identical to the previous behavior, with no process spawned.
     """
+    if not values:
+        return
+    if go_update_recipe_config(manifest_path, recipe_id, values):
+        return
+    _update_recipe_config_python(manifest_path, recipe_id, values)
+
+
+def _update_recipe_config_python(manifest_path: Path, recipe_id: str, values: dict) -> None:
+    """TEMPORARY fail-open Python authority behind ``go_update_recipe_config``."""
     if not values:
         return
 

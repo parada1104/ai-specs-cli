@@ -6,14 +6,22 @@ binary (``WORKTREE_GATE_BIN``) that records its argv and returns a controlled
 verdict, and assert:
 
 - a production path write grades ``apply-start`` and ``gh pr create`` grades
-  ``pr-review`` through the stub;
-- exit 0 allow / exit 2 block, and fail-open on a missing binary or bad input;
+  ``pr-review`` through the stub, forwarding the raw stamped legacy gate hint as
+  ``--ledger-gate-mode`` and never resolving ``--ledger-mode`` itself;
+- every Tracker verdict is advisory: the host reports a Go ``block``/``ask`` on
+  stderr and still exits 0, and fails open on a missing binary or bad input;
 - ``openspec/**`` and non-production writes never reach the ledger;
 - the shell tokenizer detects only `gh pr create`; the `pre-merge` and
   `archive-close` checkpoints are graded by this same script's direct host mode
   (`--root <root> --checkpoint <name>`), so archive shell actions are not gated
   here;
 - the script still parses and runs under bash 3.2.
+
+Effective mode resolution (env -> witness recipe config -> raw hint -> warn, with
+`off` disabling the checkpoint) is Go-owned (``ledger_mode.go`` /
+``ledger_cmd.go``) and pinned by ``ledger_mode_test.go`` and
+``TestLedgerEffectiveModeResolutionViaCLI``; this suite asserts the transport
+boundary only.
 """
 from __future__ import annotations
 
@@ -189,14 +197,15 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._logged_checkpoints(), ["apply-start"])
 
-    def test_prod_write_blocks_on_block_verdict(self):
+    def test_prod_write_reports_block_advisory_without_blocking(self):
         r = self._run(
             self._event("Write", str(self.repo / "lib" / "foo.py")),
             decision="block",
             gate=self._stamped_gate("always"),
         )
-        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("apply-start", r.stderr)
+        self.assertIn("advisory", r.stderr.lower())
 
     def test_warn_verdict_reports_on_stderr_without_blocking(self):
         r = self._run(
@@ -208,13 +217,13 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.assertTrue(r.stderr.strip(), "expected the verdict on stderr")
         self.assertIn("apply-start", r.stderr)
 
-    def test_ask_without_tty_blocks_without_fabricating_a_decision(self):
+    def test_ask_without_tty_reports_pending_without_fabricating_a_decision(self):
         r = self._run(
             self._event("Edit", str(self.repo / "lib" / "foo.py")),
             decision="ask",
             gate=self._stamped_gate("warn"),
         )
-        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("no terminal", r.stderr)
         self.assertIn("apply-start", r.stderr)
         self.assertNotIn("DECIDE", self.stub_log.read_text())
@@ -261,11 +270,44 @@ class TrackerCardGateHookTests(unittest.TestCase):
         )
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_gate_mode_off_skips_the_ledger(self):
+    def test_gate_mode_off_is_forwarded_raw_not_skipped_by_the_host(self):
+        # `off` skipping is Go's short-circuit (ledger_cmd.go returns before
+        # grading); the host is transport only and must still invoke the
+        # predicate. TestLedgerEffectiveModeResolutionViaCLI step 2 pins the skip.
         r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),
                       decision="block", gate=self._stamped_gate("off"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self._logged_checkpoints(), [])
+        self.assertEqual(self._logged_checkpoints(), ["apply-start"])
+        logged = self.stub_log.read_text()
+        self.assertIn("--ledger-gate-mode off", logged)
+        self.assertNotIn("--ledger-mode", logged,
+                         "the host must never resolve an explicit --ledger-mode")
+
+    def test_host_carries_no_shell_mode_policy_helper(self):
+        text = GATE.read_text(encoding="utf-8")
+        for token in ("_ledger_mode", "_resolve_gate_mode", "_ledger_recipe_id"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, text,
+                                 "mode policy is Go-owned; the host must not duplicate it")
+
+    def test_ask_follow_up_decide_forwards_the_raw_hint(self):
+        # The opt-out re-grade must re-resolve the same mode, so the --decide
+        # invocation forwards the raw stamped hint and never a resolved mode.
+        self.assertIn(
+            '--ledger-gate-mode "$stamped_gate_mode" \\\n'
+            '          --project-root "$root" \\\n'
+            '          --decide',
+            GATE.read_text(encoding="utf-8"),
+        )
+
+    def test_shell_pr_review_forwards_the_raw_stamped_hint(self):
+        r = self._run(self._shell_event("gh pr create --fill"),
+                      gate=self._stamped_gate("always"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["pr-review"])
+        logged = self.stub_log.read_text()
+        self.assertIn("--ledger-gate-mode always", logged)
+        self.assertNotIn("--ledger-mode", logged)
 
     def test_missing_binary_fail_open(self):
         env = self._env(decision="block")
@@ -293,13 +335,15 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._logged_checkpoints(), ["pr-review"])
 
-    def test_gh_pr_create_blocks_on_block_verdict(self):
+    def test_gh_pr_create_reports_block_advisory_without_blocking(self):
         r = self._run(
             self._shell_event("gh pr create --title t --body b"),
             decision="block",
             gate=self._stamped_gate("always"),
         )
-        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("pr-review", r.stderr)
+        self.assertIn("advisory", r.stderr.lower())
 
     def test_cursor_native_shell_pr_create_grades(self):
         r = self._run(
@@ -307,7 +351,8 @@ class TrackerCardGateHookTests(unittest.TestCase):
             decision="block",
             gate=self._stamped_gate("always"),
         )
-        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), ["pr-review"])
 
     def test_ambiguous_shell_commands_fail_open(self):
         for cmd in ("gh pr view 1", "git status", "ls lib"):
@@ -426,13 +471,22 @@ class TrackerCardGateHookTests(unittest.TestCase):
         )
         for label, command, expected_rc in cases:
             with self.subTest(label=label):
-                expected = expected_rc
+                # 2 in the table means "the tokenizer detected the gated command".
+                # The advisory host reports it and still exits 0, so detection is
+                # observed through the graded-checkpoint log, not the exit code.
+                expected_detected = expected_rc == 2
+                before = len(self._logged())
                 r = self._run(
                     self._shell_event(command),
                     decision="block",
                     gate=self._stamped_gate("always"),
                 )
-                self.assertEqual(r.returncode, expected, f"{label}: {command}\n{r.stderr}")
+                self.assertEqual(r.returncode, 0, f"{label}: {command}\n{r.stderr}")
+                detected = len(self._logged()) > before
+                self.assertEqual(
+                    detected, expected_detected,
+                    f"{label}: {command}\nstderr={r.stderr}\nlog={self._logged()[before:]}",
+                )
 
     # --- ledger evidence bridge and tracker.none exemption ---
 
@@ -479,11 +533,12 @@ class TrackerCardGateHookTests(unittest.TestCase):
                          "a failing write surface proves the host issues no exempt write")
         self.assertEqual(len(self._grade_lines()), 1, self.stub_log.read_text())
 
-    def test_tracker_none_cannot_unlock_a_blocking_checkpoint(self):
+    def test_tracker_none_cannot_unlock_a_checkpoint_and_block_is_advisory(self):
         self._change("demo-change", tracker_none="no tracker card for this spike\n")
         r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),
                       decision="block", gate=self._stamped_gate_bridged())
-        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("advisory", r.stderr.lower())
         self.assertEqual(self._write_lines(), [],
                          "writing the exemption the file describes is not the host's call")
 
@@ -589,23 +644,25 @@ class TrackerCardGateHookTests(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertEqual(parsed.returncode, 0, parsed.stderr)
 
-        def test_prod_write_blocks_under_bash_3_2(self):
+        def test_prod_write_reports_advisory_under_bash_3_2(self):
             r = self._run32({
                 "event": "pre-tool-use",
                 "tool_name": "Edit",
                 "tool_input": {"file_path": str(self.repo / "lib" / "foo.py")},
                 "cwd": str(self.repo),
             })
-            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("advisory", r.stderr.lower())
 
-        def test_shell_pr_create_blocks_under_bash_3_2(self):
+        def test_shell_pr_create_reports_advisory_under_bash_3_2(self):
             r = self._run32({
                 "event": "pre-tool-use",
                 "tool_name": "Bash",
                 "tool_input": {"command": "gh pr create --title t --body b"},
                 "cwd": str(self.repo),
             })
-            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("advisory", r.stderr.lower())
 
 
 if __name__ == "__main__":

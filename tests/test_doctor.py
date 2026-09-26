@@ -1542,6 +1542,39 @@ class RepoTopologyDoctorTests(unittest.TestCase):
             self.assertIn("repo-topology", result.stdout)
             self.assertIn("INFO", result.stdout)
 
+    def _set_project_topology(self, target: Path, topology: str) -> None:
+        manifest = target / "ai-specs" / "ai-specs.toml"
+        lines = manifest.read_text().splitlines()
+        lines.insert(lines.index("[project]") + 1, f'repo_topology = "{topology}"')
+        manifest.write_text("\n".join(lines) + "\n")
+
+    def test_project_topology_reports_with_deprecation_when_legacy_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._enable_worktree_flow(target)
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertIn("legacy-recipe", result.stdout)
+            self.assertIn("[project].repo_topology", result.stdout)
+
+    def test_project_field_reports_without_worktree_flow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target)
+            self._set_project_topology(target, "standalone")
+            result = subprocess.run(
+                [str(CLI), "doctor", str(target)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertIn("repo-topology", result.stdout)
+            self.assertIn("standalone", result.stdout)
+            self.assertNotIn("legacy-recipe", result.stdout)
+
     def test_stale_override_warns(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"

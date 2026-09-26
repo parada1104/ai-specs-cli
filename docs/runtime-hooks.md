@@ -344,7 +344,11 @@ call), and the direct tracker host
 (`tracker-card-gate.sh --root <root> --checkpoint archive-close`) remains the
 fallback when the hook is absent. The hook carries the project's configured
 `worktrees_dir`, `integration_branch`, and `repo_topology` stamped at sync, so
-cleanup never silently falls back to `.worktrees`/current HEAD.
+cleanup never silently falls back to `.worktrees`/current HEAD. The stamped
+topology is the CLI-resolved `[project].repo_topology` value (the deprecated
+`recipes.worktree-flow.config.repo_topology` alias is read only when the project
+field is absent) and the `__WORKTREE_REPO_TOPOLOGY__` token contract is
+unchanged.
 
 ## Shell write-bypass coverage (worktree-flow)
 

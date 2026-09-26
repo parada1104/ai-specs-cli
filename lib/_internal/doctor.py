@@ -504,7 +504,10 @@ class Doctor:
             materialize.attach_brief_fragments_to_resolved(resolved, AI_SPECS_HOME)
             # Match materialize_recipes() auto-binding so doctor renders the
             # same structured brief bytes as sync, including recipe-provided
-            # capability bindings that are not explicit in the manifest.
+            # capability bindings that are not explicit in the manifest. The
+            # bridge resolves through the Go authority and is read-only unless
+            # asked to write, so this call passes no project root and no write
+            # opt-in: doctor must never touch the durable witness.
             enabled_ids = list(resolved.get("enabled") or [])
             if enabled_ids:
                 catalog_dir = AI_SPECS_HOME / "catalog" / "recipes"
@@ -777,26 +780,13 @@ class Doctor:
 
         ``WORKTREE_GATE_BIN`` is the debugging/test pin; the version-keyed cache
         candidate is accepted only with its ``.verified`` receipt, matching the
-        checkpoint hosts. An unverified or absent binary is infrastructure.
+        checkpoint hosts. An unverified or absent binary is infrastructure. The
+        resolution order lives once, in ``gate_binary.resolve_verified_binary``.
         """
-        override = os.environ.get("WORKTREE_GATE_BIN", "")
-        if override:
-            candidate = Path(override)
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return candidate
-            return None
         gb = self._load_gate_binary()
         if gb is None:
             return None
-        try:
-            goos, goarch = gb.detect_platform()
-            candidate = gb.cache_bin_path(AI_SPECS_HOME, goos=goos, goarch=goarch)
-        except Exception:
-            return None
-        receipt = candidate.with_name(candidate.name + ".verified")
-        if candidate.is_file() and os.access(candidate, os.X_OK) and receipt.is_file():
-            return candidate
-        return None
+        return gb.resolve_verified_binary(AI_SPECS_HOME)
 
     def _tracker_ledger_guidance(self, reason: str, severity: Severity) -> str:
         """Presentation-only action hint keyed off the Go reason (never a grade)."""
@@ -1122,20 +1112,28 @@ class Doctor:
             return
         recipes = data.get("recipes") or {}
         wf = recipes.get("worktree-flow") or {}
-        if not isinstance(wf, dict) or wf.get("enabled") is not True:
-            return
-        cfg = wf.get("config") or {}
-        configured = str(cfg.get("repo_topology") or "auto")
+        wf_enabled = isinstance(wf, dict) and wf.get("enabled") is True
         try:
-            res = util.resolve_repo_topology(self.root, configured)
+            topo = util.project_repo_topology(self.root, data)
         except Exception:
             return
-        n = len(res.submodules)
+        # A project-owned value always reports; the legacy recipe alias only
+        # reports while worktree-flow is enabled (previous behavior).
+        if topo.source == "default" and not wf_enabled:
+            return
+        n = len(topo.submodules)
         self.checks.append(Check(
             Severity.INFO,
             "repo-topology",
-            f"{res.resolved} (via {res.via}; {n} initialized submodule(s))",
+            f"{topo.resolved} (via {topo.via}; source: {topo.source}; "
+            f"{n} initialized submodule(s))",
         ))
+        if topo.deprecation:
+            self.checks.append(Check(
+                Severity.WARN,
+                "repo-topology-deprecated",
+                topo.deprecation,
+            ))
 
     def _check_stale_template_overrides(self) -> None:
         """Diagnose governed templates using lock-backed ownership state."""
@@ -1190,7 +1188,9 @@ class Doctor:
                 recipe = schema.load_recipe_toml(recipe_toml)
             except Exception:
                 continue
-            merged_cfg = val.get("config") if isinstance(val.get("config"), dict) else {}
+            merged_cfg = util.project_owned_recipe_config(
+                self.root, data, rid, val.get("config") if isinstance(val.get("config"), dict) else {}
+            )
             for tpl in getattr(recipe, "templates", []) or []:
                 if getattr(tpl, "condition", None) != "not_exists":
                     continue

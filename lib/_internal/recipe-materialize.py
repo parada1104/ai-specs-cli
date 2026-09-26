@@ -9,10 +9,18 @@ materializes bundled assets, vendors dep skills, applies templates,
 and writes recipe MCP presets to a temp file for downstream mcp-render.py.
 
 Exit 0 on success, 1 on validation/conflict error.
+
+GO-10 hook/gate bridge contract: the Go ``worktree-gate --materialize-hook``
+actuator is the primary hook authority. A delivered exit-2 refusal envelope
+fails CLOSED — ``RuntimeError`` naming the Go error, never a fallback. Every
+infrastructure failure (no verified binary, process crash, timeout, malformed
+or mismatched envelope) fails OPEN — exactly one
+``GO_HOOK_GATE_BRIDGE_FALLBACK`` warning, then the historical Python body.
 """
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -288,17 +296,119 @@ def _load_recipe_config_write() -> Any:
 _recipe_config_write_module: Any = None
 
 
-def stamp_recipe_reconcile_defaults(project_root: Path, catalog_dir: Path, enabled_ids: list[str]) -> None:
-    """Stamp recipe-declared reconcile mapping and the config values it selects
-    into the project manifest, absent keys only.
+# --- Reconcile-stamp planning: Go authority (GO_RECONCILE_STAMPS_BRIDGE_FALLBACK)
+#
+# ``worktree-gate --plan-reconcile-stamps`` owns the DECISION: the per-recipe
+# reconcile stamp dict derived from each enabled recipe's declared
+# ``[config.reconcile]`` table and config-field defaults. Python keeps the
+# existing ``update_recipe_config`` writer behavior and the TEMPORARY fail-open
+# fallback below (``GO_RECONCILE_STAMPS_BRIDGE_FALLBACK``).
+GO_RECONCILE_STAMPS_BRIDGE_FALLBACK = "GO_RECONCILE_STAMPS_BRIDGE_FALLBACK"
+GO_RECONCILE_STAMPS_BRIDGE_TIMEOUT_SECONDS = 60
 
-    The gate reads only the manifest, so the recipe-owned lifecycle mapping
-    (delivery/review/merge) must reach ``[recipes.<id>.config]`` for
-    reconciliation to work out of the box. Explicit project values always win;
-    this helper never overwrites an existing key. Optional fields stamp only
-    when the declared mapping references them, so unrelated defaults keep the
-    old resolved-render behavior.
+
+def _warn_reconcile_stamps_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded reconcile-stamp authority."""
+    warn(
+        f"{GO_RECONCILE_STAMPS_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python stamp authority"
+    )
+
+
+def _is_reconcile_stamps_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented reconcile-stamps envelope."""
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("stamps"), list):
+        return False
+    return all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("id"), str)
+        and isinstance(entry.get("stamp"), dict)
+        for entry in envelope["stamps"]
+    )
+
+
+def go_reconcile_stamps(
+    catalog_dir: Path, recipe_ids: list[str]
+) -> list[dict[str, Any]] | None:
+    """Run ``worktree-gate --plan-reconcile-stamps`` and return its stamps, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    or the output was not the documented envelope. The caller then falls back to
+    the temporary Python stamp authority. This function emits the single
+    ``GO_RECONCILE_STAMPS_BRIDGE_FALLBACK`` warning naming the reason, so a
+    degraded run is never silent and never needs a second warning.
+
+    The bridge is read-only: it only plans stamps, the manifest write stays in
+    Python. Recipes the gate could not read are omitted from the envelope — the
+    Python authority's silent-continue semantics.
     """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_bridge_home(catalog_dir))
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_reconcile_stamps_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_reconcile_stamps_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    command = [
+        str(binary),
+        "--plan-reconcile-stamps",
+        "--catalog-dir",
+        str(catalog_dir),
+    ]
+    for rid in recipe_ids:
+        command += ["--recipe", str(rid)]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=GO_RECONCILE_STAMPS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        _warn_reconcile_stamps_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_reconcile_stamps_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_reconcile_stamps_bridge_fallback(
+            f"worktree-gate output was not JSON ({exc})"
+        )
+        return None
+    if not _is_reconcile_stamps_envelope(envelope):
+        _warn_reconcile_stamps_bridge_fallback(
+            "worktree-gate output did not match the reconcile-stamps envelope"
+        )
+        return None
+    return envelope["stamps"]
+
+
+def _reconcile_stamp_recipe_name(catalog_dir: Path, recipe_id: str) -> str:
+    """The declared recipe name for a writer-failure warning, best effort."""
+    try:
+        return read_recipe(catalog_dir, recipe_id).name
+    except Exception:  # noqa: BLE001 - the warning must never raise
+        return recipe_id
+
+
+def _stamp_recipe_reconcile_defaults_python(
+    project_root: Path, catalog_dir: Path, enabled_ids: list[str]
+) -> None:
+    """TEMPORARY fail-open Python stamp authority, announced by
+    ``GO_RECONCILE_STAMPS_BRIDGE_FALLBACK``; ``worktree-gate
+    --plan-reconcile-stamps`` is the primary decision authority."""
     schema = _load_recipe_schema()
     manifest = project_root / "ai-specs" / "ai-specs.toml"
     writer = _load_recipe_config_write()
@@ -329,6 +439,38 @@ def stamp_recipe_reconcile_defaults(project_root: Path, catalog_dir: Path, enabl
             warn(f"recipe '{recipe.name}': reconcile defaults not stamped ({type(exc).__name__}: {exc})")
 
 
+def stamp_recipe_reconcile_defaults(project_root: Path, catalog_dir: Path, enabled_ids: list[str]) -> None:
+    """Stamp recipe-declared reconcile mapping and its selected config values.
+
+    ``worktree-gate --plan-reconcile-stamps`` is the Go decision authority; the
+    manifest write stays in Python and any bridge failure degrades to the
+    temporary Python decision authority with one
+    ``GO_RECONCILE_STAMPS_BRIDGE_FALLBACK`` warning.
+
+    The existing ``update_recipe_config`` behavior is unchanged: it writes
+    missing stamp values and replaces existing values when they differ. The
+    gate reads only the manifest, so the recipe-owned lifecycle mapping
+    (delivery/review/merge) must reach ``[recipes.<id>.config]`` for
+    reconciliation to work out of the box. Optional fields stamp only when the
+    declared mapping references them, so unrelated defaults keep the old
+    resolved-render behavior.
+    """
+    stamps = go_reconcile_stamps(catalog_dir, enabled_ids)
+    if stamps is not None:
+        manifest = project_root / "ai-specs" / "ai-specs.toml"
+        writer = _load_recipe_config_write()
+        for entry in stamps:
+            try:
+                writer.update_recipe_config(manifest, entry["id"], entry["stamp"])
+            except Exception as exc:
+                warn(
+                    f"recipe '{_reconcile_stamp_recipe_name(catalog_dir, entry['id'])}': "
+                    f"reconcile defaults not stamped ({type(exc).__name__}: {exc})"
+                )
+        return
+    _stamp_recipe_reconcile_defaults_python(project_root, catalog_dir, enabled_ids)
+
+
 # --- Conflict detection -------------------------------------------------------
 _conflict_module = None
 
@@ -346,19 +488,169 @@ def _load_conflict() -> Any:
 
 
 def check_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
-    mod = _load_conflict()
-    return mod.check_recipe_conflicts(catalog_dir, recipe_ids)
+    """Grade primitive conflicts through the Go authority.
+
+    ``worktree-gate --resolve-primitive-conflicts`` is the primary authority;
+    the retained Python grader runs only when the bridge cannot.
+    """
+    conflicts = go_recipe_conflicts(catalog_dir, recipe_ids)
+    if conflicts is not None:
+        return conflicts
+    return _python_check_recipe_conflicts(catalog_dir, recipe_ids)
 
 
 def check_capability_conflicts(
     catalog_dir: Path, recipe_ids: list[str], manifest_bindings: list[dict[str, str]]
 ) -> list[Any]:
+    """Grade capability conflicts through the Go authority (read-only).
+
+    Fatal (duplicate explicit binding) and warning (ambiguous provider) grades
+    come from the same ``--resolve-bindings`` envelope as the bindings, in the
+    conflict shape the call sites already read. A resolution error reported in
+    the same envelope is ignored here: the conflict grader is independent of the
+    binding grader in both authorities, so a duplicate binding is graded fatal
+    even though resolution aborts. Never writes the witness and never acquires a
+    binary: the read-only bridge call leaves acquisition opt-in off.
+    """
+    envelope = go_binding_resolution(catalog_dir, recipe_ids, manifest_bindings)
+    if envelope is not None:
+        return _conflicts_from_envelope(envelope)
+    return _python_check_capability_conflicts(catalog_dir, recipe_ids, manifest_bindings)
+
+
+def _python_check_capability_conflicts(
+    catalog_dir: Path, recipe_ids: list[str], manifest_bindings: list[dict[str, str]]
+) -> list[Any]:
+    """Grade capability conflicts (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_BINDINGS_BRIDGE_FALLBACK``; the Go grader is the primary authority.
+    """
     mod = _load_conflict()
     return mod.check_capability_conflicts(catalog_dir, recipe_ids, manifest_bindings)
 
 
+# --- Tag conflict grading (Go authority, temporary Python fallback) -----------
+#
+# The Go gate binary (``--resolve-tag-conflicts``) owns the tag-conflict
+# DECISION: grouping enabled recipes by first-seen tag, deduplicating recipe
+# ids, and grading each overlap warning/fatal. ``recipe-materialize.py`` keeps
+# the warning text and the advisory exit behavior at the call site. The Python
+# decision survives as a TEMPORARY fail-open fallback
+# (``GO_TAG_CONFLICTS_BRIDGE_FALLBACK``) announced by one warning line whenever
+# the bridge cannot run.
+GO_TAG_CONFLICTS_BRIDGE_FALLBACK = "GO_TAG_CONFLICTS_BRIDGE_FALLBACK"
+GO_TAG_CONFLICTS_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_tag_conflicts_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded tag-conflict authority."""
+    warn(
+        f"{GO_TAG_CONFLICTS_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python tag-conflict authority"
+    )
+
+
+def _tag_conflicts_from_envelope(envelope: dict[str, Any]) -> list[Any]:
+    """Adapt the Go envelope's conflicts onto the existing ``TagConflict`` type.
+
+    Call sites read ``tag`` / ``recipes`` / ``severity``, so reusing the
+    dataclass keeps the warning and fatal messages byte-identical to the ones
+    the Python grader produced. Go already sorts recipe ids and preserves
+    first-seen tag order, so the mapped list needs no extra ordering.
+    """
+    conflict_cls = _load_conflict().TagConflict
+    return [
+        conflict_cls(
+            tag=str(item.get("tag", "")),
+            recipes=set(item.get("recipes") or []),
+            severity=str(item.get("severity") or "warning"),
+        )
+        for item in envelope.get("conflicts") or []
+    ]
+
+
+def go_tag_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any] | None:
+    """Run ``worktree-gate --resolve-tag-conflicts`` and return its conflicts, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    the output was not JSON, or it was not the documented envelope. The caller
+    then falls back to the temporary Python authority. This function emits the
+    single ``GO_TAG_CONFLICTS_BRIDGE_FALLBACK`` warning naming the reason, so a
+    degraded run is never silent and never needs a second warning.
+    """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_bridge_home(catalog_dir))
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_tag_conflicts_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_tag_conflicts_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    command = [str(binary), "--resolve-tag-conflicts", "--catalog-dir", str(catalog_dir)]
+    for rid in recipe_ids:
+        command += ["--recipe", str(rid)]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=GO_TAG_CONFLICTS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn_tag_conflicts_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_tag_conflicts_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_tag_conflicts_bridge_fallback(
+            f"worktree-gate output was not JSON ({exc})"
+        )
+        return None
+    if (
+        not isinstance(envelope, dict)
+        or not isinstance(envelope.get("conflicts"), list)
+        or not all(isinstance(item, dict) for item in envelope["conflicts"])
+    ):
+        _warn_tag_conflicts_bridge_fallback(
+            "worktree-gate output did not match the tag-conflict envelope"
+        )
+        return None
+    return _tag_conflicts_from_envelope(envelope)
+
+
 def check_tag_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
-    """Load enabled recipes and detect tag-based conflicts between them."""
+    """Grade advisory tag conflicts through the Go authority.
+
+    ``worktree-gate --resolve-tag-conflicts`` is the primary authority; the
+    retained Python grader runs only when the bridge cannot. Tag conflicts are
+    advisory, so neither path changes the materialization exit code.
+    """
+    conflicts = go_tag_conflicts(catalog_dir, recipe_ids)
+    if conflicts is not None:
+        return conflicts
+    return _python_check_tag_conflicts(catalog_dir, recipe_ids)
+
+
+def _python_check_tag_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
+    """Detect tag-based conflicts (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_TAG_CONFLICTS_BRIDGE_FALLBACK``; ``worktree-gate
+    --resolve-tag-conflicts`` is the primary authority.
+    """
     mod = _load_conflict()
     recipes = []
     for rid in recipe_ids:
@@ -367,6 +659,106 @@ def check_tag_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
             continue
         recipes.append(mod.load_recipe_toml(recipe_toml))
     return mod.check_tag_conflicts(recipes)
+
+
+# --- Primitive conflict grading (Go authority, temporary Python fallback) -----
+#
+# The Go gate binary (``--resolve-primitive-conflicts``) owns the primitive
+# conflict DECISION: registering each enabled recipe's skill, command, and MCP
+# primitive ids in flag order and grading every collision fatal. Python keeps
+# the sync blocking messages at the call site. The Python decision survives as
+# a TEMPORARY fail-open fallback (``GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK``)
+# announced by one warning line whenever the bridge cannot run.
+GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK = "GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK"
+GO_PRIMITIVE_CONFLICTS_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_primitive_conflicts_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded primitive-conflict authority."""
+    warn(
+        f"{GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python primitive-conflict authority"
+    )
+
+
+def go_recipe_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any] | None:
+    """Run ``worktree-gate --resolve-primitive-conflicts`` and return its conflicts, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    the output was not JSON, or it was not the documented envelope. The caller
+    then falls back to the temporary Python authority. This function emits the
+    single ``GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK`` warning naming the reason, so a
+    degraded run is never silent and never needs a second warning.
+    """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_bridge_home(catalog_dir))
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_primitive_conflicts_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_primitive_conflicts_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    command = [
+        str(binary),
+        "--resolve-primitive-conflicts",
+        "--catalog-dir",
+        str(catalog_dir),
+    ]
+    for rid in recipe_ids:
+        command += ["--recipe", str(rid)]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            # Locale-proof decode: undecodable Go bytes become U+FFFD (never an
+            # exception), so the JSON parse below degrades to the one fallback.
+            encoding="utf-8",
+            errors="replace",
+            timeout=GO_PRIMITIVE_CONFLICTS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn_primitive_conflicts_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_primitive_conflicts_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_primitive_conflicts_bridge_fallback(
+            f"worktree-gate output was not JSON ({exc})"
+        )
+        return None
+    if (
+        not isinstance(envelope, dict)
+        or not isinstance(envelope.get("conflicts"), list)
+        or not all(isinstance(item, dict) for item in envelope["conflicts"])
+    ):
+        _warn_primitive_conflicts_bridge_fallback(
+            "worktree-gate output did not match the primitive-conflict envelope"
+        )
+        return None
+    return _conflicts_from_envelope(envelope)
+
+
+def _python_check_recipe_conflicts(catalog_dir: Path, recipe_ids: list[str]) -> list[Any]:
+    """Detect primitive ID collisions (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_PRIMITIVE_CONFLICTS_BRIDGE_FALLBACK``; ``worktree-gate
+    --resolve-primitive-conflicts`` is the primary authority.
+    """
+    mod = _load_conflict()
+    return mod.check_recipe_conflicts(catalog_dir, recipe_ids)
 
 
 # --- Legacy version key handling ---------------------------------------------
@@ -381,16 +773,185 @@ def warn_legacy_version(recipe_id: str, manifest_version: str) -> None:
 
 
 # --- Materialize helpers ------------------------------------------------------
-def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Path, recipe_id: str, cli_home: Path | None = None) -> None:
-    src = recipe_dir / "skills" / skill_id
-    pc = _load_project_cache()
-    dest = pc.recipe_skills_root(project_root, cli_home=cli_home) / recipe_id / "skills" / skill_id
+
+# --- Copy-apply bridge (GO-08 WU2, strangler slice 5) -------------------------
+#
+# ``worktree-gate --apply-copy`` owns the COPY DECISION + EXECUTION for the
+# three blind copiers whose source is a local tree/file: bundled skills,
+# recipe commands, docs. Python keeps hashing (set_recipe_skill_hashes +
+# write_lock, already Go-delegated through the lock bridge), the exact prints
+# and warnings, and the fail-open fallback below.
+# ``materialize_dep_skill`` stays Python (true acquisition through
+# vendor-skills.py) and ``materialize_template`` is out of scope (slice 6
+# owns it).
+GO_COPY_APPLY_BRIDGE_FALLBACK = "GO_COPY_APPLY_BRIDGE_FALLBACK"
+GO_COPY_APPLY_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_copy_apply_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded copy authority."""
+    warn(
+        f"{GO_COPY_APPLY_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python copy authority"
+    )
+
+
+def _copy_apply_bridge_home() -> Path:
+    """The CLI package home owning the gate binary cache (module-home pattern
+    shared with the lock-write bridge)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _is_copy_apply_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented apply-copy envelope."""
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("results"), list):
+        return False
+    return all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("id"), str)
+        and entry.get("status") in ("ok", "source-missing")
+        and (entry.get("overwrite") is None or isinstance(entry.get("overwrite"), bool))
+        for entry in envelope["results"]
+    )
+
+
+def go_apply_copy(items: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Run ``worktree-gate --apply-copy``; return its per-item results, or None.
+
+    None means the bridge could not run: no verified binary, the process
+    failed, or output that did not match the documented envelope (including a
+    results-missing envelope or a results count that does not match the sent
+    items — an item must never be reported applied without a copy decision).
+    The caller then falls back to the temporary
+    Python copy body. This function emits the single
+    ``GO_COPY_APPLY_BRIDGE_FALLBACK`` warning naming the reason, so a degraded
+    run is never silent and never needs a second warning.
+
+    A Go refusal (exit 2 with a stdout error envelope) FAILS CLOSED: it raises
+    ``RuntimeError`` naming the Go error string instead of returning None —
+    the refusal is the Go authority's valid decision and the Python bodies
+    must never bypass it (GO-08 findings fix). The fail-open rationale below
+    applies to infrastructure failures only: every migrated copy is
+    idempotent — the bundled-skill fallback rmtree+copytree rewrites dest
+    wholesale, so even a partial Go copy is safe to redo, and copy2 is an
+    idempotent overwrite. There is no destructive ambiguity to protect
+    against.
+    """
+    try:
+        envelope_text = json.dumps({"items": items})
+    except (TypeError, ValueError) as exc:
+        _warn_copy_apply_bridge_fallback(
+            f"the copy plan could not be encoded ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_copy_apply_bridge_home())
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_copy_apply_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_copy_apply_bridge_fallback("no verified worktree-gate binary")
+        return None
+    try:
+        proc = subprocess.run(
+            [str(binary), "--apply-copy"],
+            input=envelope_text,
+            capture_output=True,
+            text=True,
+            timeout=GO_COPY_APPLY_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        # UnicodeDecodeError is a UnicodeError subclass: strict text=True
+        # decoding of stdout must degrade, not escape.
+        _warn_copy_apply_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        stdout = json.loads(proc.stdout)
+    except ValueError:
+        stdout = None
+    if proc.returncode != 0:
+        if isinstance(stdout, dict) and isinstance(stdout.get("error"), str):
+            # Fail closed: a valid refusal envelope is the Go authority's
+            # decision — no Python fallback may bypass it.
+            raise RuntimeError(
+                f"worktree-gate refused the copy: {stdout['error']}"
+            )
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_copy_apply_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} without a results envelope ({detail})"
+        )
+        return None
+    if not _is_copy_apply_envelope(stdout):
+        _warn_copy_apply_bridge_fallback(
+            "worktree-gate output did not match the apply-copy envelope"
+        )
+        return None
+    if len(stdout["results"]) != len(items):
+        _warn_copy_apply_bridge_fallback(
+            f"worktree-gate returned {len(stdout['results'])} result(s) "
+            f"for {len(items)} item(s)"
+        )
+        return None
+    return stdout["results"]
+
+
+def _python_bundled_skill_copy(src: Path, dest: Path) -> None:
+    """TEMPORARY fail-open Python copy for a bundled skill, announced by
+    ``GO_COPY_APPLY_BRIDGE_FALLBACK``; ``worktree-gate --apply-copy`` is the
+    primary copy authority."""
     if not src.is_dir():
         raise RuntimeError(f"bundled skill not found: {src}")
     if dest.exists():
         shutil.rmtree(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dest)
+
+
+def _python_command_copy(cmd_id: str, src: Path, dest: Path) -> None:
+    """TEMPORARY fail-open Python copy for a recipe command, announced by
+    ``GO_COPY_APPLY_BRIDGE_FALLBACK``; ``worktree-gate --apply-copy`` is the
+    primary copy authority."""
+    if not src.is_file():
+        raise RuntimeError(f"command source not found: {src}")
+    if dest.exists() and (not dest.is_file() or dest.read_bytes() != src.read_bytes()):
+        warn(f"recipe command '{cmd_id}' overwrites existing managed command at {dest}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+
+
+def _python_doc_copy(src: Path, dest: Path) -> None:
+    """TEMPORARY fail-open Python copy for a recipe doc, announced by
+    ``GO_COPY_APPLY_BRIDGE_FALLBACK``; ``worktree-gate --apply-copy`` is the
+    primary copy authority."""
+    if not src.is_file():
+        raise RuntimeError(f"doc source not found: {src}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+
+
+def materialize_bundled_skill(recipe_dir: Path, skill_id: str, project_root: Path, recipe_id: str, cli_home: Path | None = None) -> None:
+    src = recipe_dir / "skills" / skill_id
+    pc = _load_project_cache()
+    dest = pc.recipe_skills_root(project_root, cli_home=cli_home) / recipe_id / "skills" / skill_id
+    # The dispatch loop already iterates per item, so the bridge sends one
+    # item per call: per-item error semantics and the original RuntimeError
+    # ordering are preserved exactly.
+    results = go_apply_copy(
+        [{"kind": "bundled-skill", "id": skill_id, "src": str(src), "dest": str(dest)}]
+    )
+    # results None = infrastructure failure (fallback; a result count that
+    # does not match the one-item plan is an envelope mismatch). The plan
+    # sends exactly one item, so results[0] always exists here.
+    if results is None:
+        _python_bundled_skill_copy(src, dest)
+    elif results:
+        if results[0]["status"] == "source-missing":
+            raise RuntimeError(f"bundled skill not found: {src}")
     print(f"    ✓ bundled skill {skill_id}")
     # Track hashes in lock
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
@@ -432,14 +993,178 @@ def materialize_command(
 ) -> None:
     src = recipe_dir / cmd.path
     pc = _load_project_cache()
-    dest = pc.commands_dir(project_root, cli_home=cli_home) / f"{cmd.id}.md"
-    if not src.is_file():
-        raise RuntimeError(f"command source not found: {src}")
-    if dest.exists() and (not dest.is_file() or dest.read_bytes() != src.read_bytes()):
-        warn(f"recipe command '{cmd.id}' overwrites existing managed command at {dest}")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    commands_dir = pc.commands_dir(project_root, cli_home=cli_home)
+    dest = commands_dir / f"{cmd.id}.md"
+    results = go_apply_copy(
+        [
+            {
+                "kind": "command",
+                "id": cmd.id,
+                "src": str(src),
+                "dest": str(dest),
+                "commands_dir": str(commands_dir),
+            }
+        ]
+    )
+    # results None = infrastructure failure (fallback; a result count that
+    # does not match the one-item plan is an envelope mismatch). The plan
+    # sends exactly one item, so results[0] always exists here.
+    if results is None:
+        _python_command_copy(cmd.id, src, dest)
+    elif results:
+        result = results[0]
+        if result["status"] == "source-missing":
+            raise RuntimeError(f"command source not found: {src}")
+        # The Go decision carries the warn condition: dest existed and is not
+        # a file, or the bytes differ. The warn fires before the copy in the
+        # reference; on the Go path the copy has already executed, but the
+        # warning goes to stderr and the confirmation to stdout, so the
+        # per-stream output is identical.
+        if result.get("overwrite"):
+            warn(f"recipe command '{cmd.id}' overwrites existing managed command at {dest}")
     print(f"    ✓ command {cmd.id}")
+
+
+# --- Template actuator: Go authority (GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK)
+#
+# ``worktree-gate --materialize-template`` owns the template actuation
+# DECISION + EXECUTION for governed templates: git-path destination
+# resolution, rendering, the ownership classification (the shared
+# classifyManagedOverride core behind --plan-classify — never re-ported), the
+# write + chmod, and the managed-override record payload. Python keeps the
+# lock load/write (set_managed_override + write_lock), ALL printing (indent +
+# print_step_output compact filtering) and the TEMPORARY fail-open fallback
+# below (``GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK``), announced by one warning
+# line per degraded run. The historical Python body survives as
+# _python_materialize_template.
+GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK = "GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK"
+GO_TEMPLATE_ACTUATOR_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_template_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded template authority."""
+    warn(
+        f"{GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python template authority"
+    )
+
+
+def _template_bridge_home() -> Path:
+    """The CLI package home owning the gate binary cache (module-home pattern
+    shared with the copy-apply bridge)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _is_template_actuator_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented materialize-template
+    envelope."""
+    if not isinstance(envelope, dict):
+        return False
+    if not (
+        isinstance(envelope.get("dest"), str)
+        and isinstance(envelope.get("wrote"), bool)
+        and isinstance(envelope.get("message"), str)
+    ):
+        return False
+    record = envelope.get("record")
+    if record is not None:
+        if not isinstance(record, dict):
+            return False
+        if not all(
+            isinstance(record.get(key), str)
+            for key in ("target", "sha256", "recipe", "source", "kind", "policy")
+        ):
+            return False
+    info_value = envelope.get("info")
+    if info_value is not None and not isinstance(info_value, str):
+        return False
+    warnings = envelope.get("warnings")
+    return isinstance(warnings, list) and all(
+        isinstance(line, str) for line in warnings
+    )
+
+
+def go_materialize_template(plan: dict[str, Any]) -> dict[str, Any] | None:
+    """Run ``worktree-gate --materialize-template``; return its envelope, or None.
+
+    None means the bridge could not run: no verified binary, the process
+    failed, or output that did not match the documented envelope. The caller
+    then falls back to the temporary Python template body. This function emits
+    the single ``GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK`` warning naming the
+    reason, so a degraded run is never silent and never needs a second warning.
+
+    A Go refusal (nonzero exit with a stdout error envelope) FAILS CLOSED: it
+    raises ``RuntimeError`` naming the Go error string instead of returning
+    None — the refusal is the Go authority's valid decision and the Python
+    body must never bypass it (GO-08 findings fix, mirrored for templates).
+    """
+    try:
+        envelope_text = json.dumps(plan)
+    except (TypeError, ValueError) as exc:
+        _warn_template_bridge_fallback(
+            f"the template plan could not be encoded ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_template_bridge_home())
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_template_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_template_bridge_fallback("no verified worktree-gate binary")
+        return None
+    try:
+        proc = subprocess.run(
+            [str(binary), "--materialize-template"],
+            input=envelope_text,
+            capture_output=True,
+            text=True,
+            timeout=GO_TEMPLATE_ACTUATOR_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        # R3-bridge-timeout-double-exec: the Go process may have been killed
+        # mid-write, so this run is ambiguous (a potential double execution).
+        # Keep failing open — the Python body repairs the destination
+        # idempotently — but name the timeout (with the value in seconds) so
+        # an operator can tell a timeout apart from a crash.
+        _warn_template_bridge_fallback(
+            f"worktree-gate timed out after "
+            f"{GO_TEMPLATE_ACTUATOR_BRIDGE_TIMEOUT_SECONDS}s"
+        )
+        return None
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        # UnicodeDecodeError is a UnicodeError subclass: strict text=True
+        # decoding of stdout must degrade, not escape.
+        _warn_template_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        stdout = json.loads(proc.stdout)
+    except ValueError:
+        stdout = None
+    if proc.returncode != 0:
+        if isinstance(stdout, dict) and isinstance(stdout.get("error"), str):
+            # Fail closed: a valid refusal envelope is the Go authority's
+            # decision — no Python fallback may bypass it.
+            raise RuntimeError(
+                f"worktree-gate refused the template: {stdout['error']}"
+            )
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_template_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} without a template "
+            f"envelope ({detail})"
+        )
+        return None
+    if not _is_template_actuator_envelope(stdout):
+        _warn_template_bridge_fallback(
+            "worktree-gate output did not match the materialize-template envelope"
+        )
+        return None
+    return stdout
 
 
 def resolve_template_dest(project_root: Path, target: str) -> Path:
@@ -479,6 +1204,40 @@ def resolve_template_dest(project_root: Path, target: str) -> Path:
     return path
 
 
+def _template_record_mismatch(
+    record: dict[str, Any], target: str, source: str,
+    recipe_id: str | None, policy: str,
+) -> str | None:
+    """Why ``record`` does not match the plan Python sent, or None.
+
+    R1-lock-record-trust: the Go-returned record is only applied to the lock
+    when every field matches what this run actually requested (same spirit as
+    the GO-08 results-count-mismatch guard) and its ``sha256`` is a
+    64-character lowercase hex string. Any mismatch makes the envelope
+    unusable.
+    """
+    for key, want in (
+        ("target", target),
+        ("source", source),
+        ("recipe", recipe_id),
+        ("policy", policy),
+        ("kind", "template"),
+    ):
+        got = record.get(key)
+        if got != want:
+            return (
+                f"the returned record {key} {got!r} does not match the "
+                f"sent {key} {want!r}"
+            )
+    sha = record.get("sha256")
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+        return (
+            f"the returned record sha256 {sha!r} is not 64 lowercase hex "
+            "characters"
+        )
+    return None
+
+
 def materialize_template(
     recipe_dir: Path,
     tpl: Any,
@@ -486,6 +1245,104 @@ def materialize_template(
     merged_cfg: dict[str, Any] | None = None,
     recipe_id: str | None = None,
 ) -> None:
+    """Materialize one governed template through the Go actuator.
+
+    ``worktree-gate --materialize-template`` owns the decision + execution;
+    Python applies the returned record to the lock (set_managed_override +
+    write_lock) and prints the exact reference lines (indent +
+    print_step_output compact filtering stay Python-owned). Two failure
+    shapes:
+
+    * FAIL CLOSED: a delivered exit-2 REFUSAL envelope (nonzero exit with a
+      stdout error envelope) raises ``RuntimeError`` — the Go authority's
+      decision is never bypassed by the Python body.
+    * FAIL OPEN: every infrastructure failure (no verified binary, process
+      crash, timeout, malformed or mismatched envelope) warns exactly once
+      (``GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK``) and falls back to the
+      historical Python body (_python_materialize_template).
+    """
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
+    target = Path(tpl.target).as_posix()
+    policy = getattr(tpl, "update_policy", "auto") or "auto"
+    entry = (lock.get("managed") or {}).get(target)
+    output = go_materialize_template(
+        {
+            "project_root": str(project_root),
+            "recipe_dir": str(recipe_dir),
+            "recipe_id": recipe_id,
+            "source": tpl.source,
+            "target": target,
+            "condition": tpl.condition,
+            "update_policy": policy,
+            "config": merged_cfg,
+            "managed_entry": entry,
+        }
+    )
+    if output is not None:
+        for line in output["warnings"]:
+            warn(line)
+        record = output.get("record")
+        if output.get("wrote") and record is None:
+            # R3-record-null-lock-drift: the Go side reports it wrote the
+            # destination but returned no ownership record; accepting that
+            # would leave the target on disk with no lock entry. The
+            # envelope is unusable: fall back so the Python body rewrites
+            # the destination and records it itself.
+            _warn_template_bridge_fallback("wrote without a record")
+            _python_materialize_template(recipe_dir, tpl, project_root, merged_cfg, recipe_id)
+            return
+        if record is not None:
+            mismatch = _template_record_mismatch(record, target, tpl.source, recipe_id, policy)
+            if mismatch is not None:
+                # R1-lock-record-trust: the returned record must match the
+                # plan this run actually sent; a mismatched envelope must
+                # never write its ownership metadata into the lock.
+                _warn_template_bridge_fallback(mismatch)
+                _python_materialize_template(recipe_dir, tpl, project_root, merged_cfg, recipe_id)
+                return
+            set_managed_override(
+                lock,
+                record["target"],
+                record["sha256"],
+                recipe=record["recipe"],
+                source=record["source"],
+                kind=record["kind"],
+                policy=record["policy"],
+            )
+            write_lock(lock_path, lock)
+        if output.get("info"):
+            info(output["info"])
+        print(f"    {output['message']}")
+        return
+    _python_materialize_template(recipe_dir, tpl, project_root, merged_cfg, recipe_id)
+
+
+def _symlink_refusal(target: str) -> str:
+    """Actionable refusal for a symlinked template destination.
+
+    Both authorities emit this verbatim (Go: templateSymlinkRefusal)."""
+    return (
+        f"destination {target} is a symlink; refusing to write through it. "
+        "Replace it with a regular file and run sync again:\n"
+        f"  rm {target} && ai-specs sync"
+    )
+
+
+def _python_materialize_template(
+    recipe_dir: Path,
+    tpl: Any,
+    project_root: Path,
+    merged_cfg: dict[str, Any] | None = None,
+    recipe_id: str | None = None,
+) -> None:
+    """TEMPORARY fail-open Python template authority (GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK).
+
+    Kept only as the fallback; ``worktree-gate --materialize-template`` is the
+    primary authority. It mirrors the historical materialize_template body
+    exactly. A timed-out Go run may already have written the destination; this
+    body then rewrites it idempotently.
+    """
     util = _load_util()
     src = recipe_dir / tpl.source
     dest = resolve_template_dest(project_root, tpl.target)
@@ -516,8 +1373,18 @@ def materialize_template(
         write_lock(lock_path, lock)
 
     def write_content() -> None:
+        if dest.is_symlink():
+            raise RuntimeError(_symlink_refusal(tpl.target))
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(content)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(dest, flags, src.stat().st_mode & 0o777)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise RuntimeError(_symlink_refusal(tpl.target)) from exc
+            raise
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
         os.chmod(dest, src.stat().st_mode)
 
     if tpl.condition == "not_exists" and dest.exists():
@@ -565,10 +1432,17 @@ def materialize_template(
 def materialize_doc(recipe_dir: Path, doc: Any, project_root: Path) -> None:
     src = recipe_dir / doc.source
     dest = project_root / doc.target
-    if not src.is_file():
-        raise RuntimeError(f"doc source not found: {src}")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    results = go_apply_copy(
+        [{"kind": "doc", "id": doc.target, "src": str(src), "dest": str(dest)}]
+    )
+    # results None = infrastructure failure (fallback; a result count that
+    # does not match the one-item plan is an envelope mismatch). The plan
+    # sends exactly one item, so results[0] always exists here.
+    if results is None:
+        _python_doc_copy(src, dest)
+    elif results:
+        if results[0]["status"] == "source-missing":
+            raise RuntimeError(f"doc source not found: {src}")
     print(f"    ✓ doc {doc.target}")
 
 
@@ -670,6 +1544,11 @@ def _refresh_gate(
     prior bytes; the lock is never partially updated (atomic write_lock).
     """
     util = _load_util()
+    if dest.is_symlink():
+        # D2: refresh reads and writes dest (backup + rewrite); a symlinked
+        # destination is refused before either happens — never through the
+        # link.
+        raise RuntimeError(_symlink_refusal(rel))
     prior = dest.read_bytes() if dest.exists() else None
     created_backup: Path | None = None
     try:
@@ -697,34 +1576,189 @@ def _refresh_gate(
         raise
 
 
-def materialize_hook_script(
+# --- Hook/gate actuator: Go authority (GO_HOOK_GATE_BRIDGE_FALLBACK) ---------
+#
+# ``worktree-gate --materialize-hook`` owns the runtime-hook actuation
+# DECISION + EXECUTION: rendering (the 8 hook placeholders), the ownership
+# classification (the shared classifyManagedOverride core behind
+# --plan-classify — never re-ported), the write + chmod 0755, and the refresh
+# backup/rollback. Python keeps the lock load/write (set_gate_baseline +
+# write_lock), ALL printing, the refresh backup-path precomputation
+# (project-cache ownership), the gate-version resolution, and the TEMPORARY
+# fail-open fallback below (``GO_HOOK_GATE_BRIDGE_FALLBACK``), announced by
+# one warning line per degraded run. The historical Python body survives as
+# _python_materialize_hook_script.
+GO_HOOK_GATE_BRIDGE_FALLBACK = "GO_HOOK_GATE_BRIDGE_FALLBACK"
+GO_HOOK_GATE_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_hook_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded hook authority."""
+    warn(
+        f"{GO_HOOK_GATE_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python hook authority"
+    )
+
+
+def _is_hook_gate_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented materialize-hook
+    envelope."""
+    if not isinstance(envelope, dict):
+        return False
+    if not (
+        isinstance(envelope.get("rel"), str)
+        and isinstance(envelope.get("dest"), str)
+        and isinstance(envelope.get("wrote"), bool)
+        and isinstance(envelope.get("message"), str)
+    ):
+        return False
+    record = envelope.get("record")
+    if record is not None:
+        if not isinstance(record, dict):
+            return False
+        if not all(
+            isinstance(record.get(key), str)
+            for key in ("target", "sha256", "recipe", "source", "kind", "policy")
+        ):
+            return False
+    backup = envelope.get("backup")
+    if backup is not None and not isinstance(backup, str):
+        return False
+    warnings = envelope.get("warnings")
+    return isinstance(warnings, list) and all(
+        isinstance(line, str) for line in warnings
+    )
+
+
+def go_materialize_hook(plan: dict[str, Any]) -> dict[str, Any] | None:
+    """Run ``worktree-gate --materialize-hook``; return its envelope, or None.
+
+    None means the bridge could not run: no verified binary, the process
+    failed, or output that did not match the documented envelope. The caller
+    then falls back to the temporary Python hook body. This function emits the
+    single ``GO_HOOK_GATE_BRIDGE_FALLBACK`` warning naming the reason, so a
+    degraded run is never silent and never needs a second warning.
+
+    A Go refusal (nonzero exit with a stdout error envelope) FAILS CLOSED: it
+    raises ``RuntimeError`` naming the Go error string instead of returning
+    None — the refusal is the Go authority's valid decision and the Python
+    body must never bypass it.
+    """
+    try:
+        envelope_text = json.dumps(plan)
+    except (TypeError, ValueError) as exc:
+        _warn_hook_bridge_fallback(
+            f"the hook plan could not be encoded ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_template_bridge_home())
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_hook_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_hook_bridge_fallback("no verified worktree-gate binary")
+        return None
+    try:
+        proc = subprocess.run(
+            [str(binary), "--materialize-hook"],
+            input=envelope_text,
+            capture_output=True,
+            text=True,
+            timeout=GO_HOOK_GATE_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        # The Go process may have been killed mid-write, so this run is
+        # ambiguous (a potential double execution). Keep failing open — the
+        # Python body repairs the destination idempotently — but name the
+        # timeout (with the value in seconds) so an operator can tell a
+        # timeout apart from a crash.
+        _warn_hook_bridge_fallback(
+            f"worktree-gate timed out after "
+            f"{GO_HOOK_GATE_BRIDGE_TIMEOUT_SECONDS}s"
+        )
+        return None
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        # UnicodeDecodeError is a UnicodeError subclass: strict text=True
+        # decoding of stdout must degrade, not escape.
+        _warn_hook_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        stdout = json.loads(proc.stdout)
+    except ValueError:
+        stdout = None
+    if proc.returncode != 0:
+        if isinstance(stdout, dict) and isinstance(stdout.get("error"), str):
+            # Fail closed: a valid refusal envelope is the Go authority's
+            # decision — no Python fallback may bypass it.
+            raise RuntimeError(
+                f"worktree-gate refused the hook: {stdout['error']}"
+            )
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_hook_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} without a hook "
+            f"envelope ({detail})"
+        )
+        return None
+    if not _is_hook_gate_envelope(stdout):
+        _warn_hook_bridge_fallback(
+            "worktree-gate output did not match the materialize-hook envelope"
+        )
+        return None
+    return stdout
+
+
+def _hook_record_mismatch(
+    record: dict[str, Any], target: str, source: str, recipe_id: str | None,
+) -> str | None:
+    """Why ``record`` does not match the plan Python sent, or None.
+
+    The Go-returned record is only applied to the lock when every field
+    matches what this run actually requested (same spirit as the GO-08
+    results-count-mismatch guard) and its ``sha256`` is a 64-character
+    lowercase hex string. Any mismatch makes the envelope unusable.
+    """
+    for key, want in (
+        ("target", target),
+        ("source", source),
+        ("recipe", recipe_id),
+        ("kind", "gate"),
+        ("policy", "auto"),
+    ):
+        got = record.get(key)
+        if got != want:
+            return (
+                f"the returned record {key} {got!r} does not match the "
+                f"sent {key} {want!r}"
+            )
+    sha = record.get("sha256")
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+        return (
+            f"the returned record sha256 {sha!r} is not 64 lowercase hex "
+            "characters"
+        )
+    return None
+
+
+def _render_hook_content(
     recipe_dir: Path,
     hook: Any,
-    project_root: Path,
-    recipe_id: str,
-    merged_cfg: dict[str, Any] | None = None,
-    cli_home: Path | None = None,
-    refresh: bool = False,
+    merged_cfg: dict[str, Any] | None,
+    cli_home: Path | None,
 ) -> str:
-    """Materialize a generated runtime hook script with gate provenance.
+    """Render a hook script by substituting its gate placeholders.
 
-    Records a lock baseline of the exact bytes the CLI last rendered
-    (``kind="gate"``, ``policy="auto"``) and classifies before writing:
-
-    - baseline match + catalog drift → refresh and re-record (unmodified gate);
-    - byte mismatch (user-modified) → preserve + warn with refresh guidance;
-    - no baseline (unknown provenance) → preserve + warn, never seed.
-
-    ``refresh=True`` (the ``--refresh-gates`` flag, never set by ordinary sync)
-    replaces a customized gate only after its exact pre-refresh bytes are saved
-    to the cache-only immutable backup. Returns the project-relative path.
+    Shared by the Python fallback body and the post-Go lock reconciliation so
+    both always compare against the exact same rendered bytes.
     """
     src = recipe_dir / hook.script
     if not src.is_file():
         raise RuntimeError(f"hook script not found: {src}")
-    rel = hook_script_rel_path(recipe_id, hook)
-    dest = project_root / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
     content = src.read_text()
     for token, default in GATE_MODE_PLACEHOLDERS.items():
         if token in content:
@@ -762,7 +1796,7 @@ def materialize_hook_script(
         if cli_home is not None:
             try:
                 version = _load_cli_version().read_installed_version(Path(cli_home))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 version = "dev"
         content = content.replace(GATE_VERSION_PLACEHOLDER, version)
     if TRACKER_CLI_HOME_PLACEHOLDER in content:
@@ -775,8 +1809,263 @@ def materialize_hook_script(
             else ""
         )
         content = content.replace(TRACKER_LIB_INTERNAL_PLACEHOLDER, internal)
+    return content
 
+
+def _fallback_materialize_and_reconcile(
+    recipe_dir: Path,
+    hook: Any,
+    project_root: Path,
+    recipe_id: str,
+    merged_cfg: dict[str, Any] | None,
+    cli_home: Path | None,
+    refresh: bool,
+    reason: str,
+    pre_dest_bytes: bytes | None,
+    announce: bool = True,
+) -> str:
+    """Fall back to the Python body, then reconcile the lock with the disk.
+
+    A degraded bridge run can change the destination and still leave this
+    run without a usable envelope: an infrastructure failure (``output is
+    None`` — crash, timeout, malformed stdout), a null record on a
+    ``wrote: true`` envelope, or a record failing the plan or disk checks.
+    The fallback body alone then classifies the already-written bytes as "no
+    provenance" and preserves them: exactly the gate-on-disk-with-no-lock-
+    entry state the fail-closed design exists to prevent.
+    ``pre_dest_bytes`` is the destination snapshot taken before Go ran
+    (``None`` = absent). When the destination's bytes are identical to what
+    this CLI renders for the hook, the baseline is recorded for those ON-
+    DISK bytes. When they are not provably CLI-rendered:
+
+    * unchanged from the pre-Go snapshot: preserved, never overwritten and
+      never recorded (the historical user-modified / no-provenance behavior);
+    * changed by the degraded run: FAIL CLOSED — the bridge warns, then
+      raises ``RuntimeError`` instead of silently leaving an untracked gate.
+
+    ``announce=True`` (envelope-shaped failures, which emitted no bridge
+    warning yet) emits the single ``GO_HOOK_GATE_BRIDGE_FALLBACK`` warning;
+    ``announce=False`` (infrastructure failures, which already emitted it)
+    emits the same note as a plain warning without the token, so a degraded
+    run never carries two token warnings.
+    """
+    rel = hook_script_rel_path(recipe_id, hook)
+    dest = project_root / rel
+
+    def emit(note: str) -> None:
+        if announce:
+            _warn_hook_bridge_fallback(note)
+        else:
+            warn(note)
+
+    result = _python_materialize_hook_script(
+        recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home, refresh,
+    )
+    disk_sha = None
+    if dest.is_file():
+        digest = _load_util().sha256_bytes(dest.read_bytes())
+        if digest == _load_util().sha256_bytes(
+            _render_hook_content(recipe_dir, hook, merged_cfg, cli_home).encode()
+        ):
+            disk_sha = digest
+    if disk_sha is not None:
+        lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+        lock = load_lock(lock_path)
+        set_gate_baseline(
+            lock, rel, disk_sha, recipe=recipe_id, source=hook.script,
+        )
+        write_lock(lock_path, lock)
+        emit(reason + "; reconciled the lock with the on-disk gate bytes")
+        return result
+    post_bytes = dest.read_bytes() if dest.is_file() else None
+    if post_bytes != pre_dest_bytes:
+        emit(
+            reason + "; the on-disk bytes are not proven CLI-rendered, so no "
+            "baseline was recorded and the destination changed"
+        )
+        raise RuntimeError(
+            f"hook {rel}: the degraded bridge run left destination bytes the "
+            "CLI cannot prove it rendered; refusing to leave an untracked "
+            f"gate on disk. Inspect or remove {rel} and run sync again:\n"
+            f"  rm {rel} && ai-specs sync"
+        )
+    emit(
+        reason + "; the on-disk bytes are not proven CLI-rendered, so no "
+        "baseline was recorded and no bytes were changed"
+    )
+    return result
+
+
+def materialize_hook_script(
+    recipe_dir: Path,
+    hook: Any,
+    project_root: Path,
+    recipe_id: str,
+    merged_cfg: dict[str, Any] | None = None,
+    cli_home: Path | None = None,
+    refresh: bool = False,
+) -> str:
+    """Materialize a generated runtime hook script through the Go actuator.
+
+    ``worktree-gate --materialize-hook`` owns rendering (the 8 hook
+    placeholders), the managed-override classification (the shared
+    classifyManagedOverride core), the write + chmod 0755, and the refresh
+    backup/rollback; Python keeps the lock load/write (set_gate_baseline +
+    write_lock), all printing, the backup-path precomputation (project-cache
+    ownership) and the gate-version resolution. Two failure shapes:
+
+    * FAIL CLOSED: a delivered exit-2 REFUSAL envelope (nonzero exit with a
+      stdout error envelope) raises ``RuntimeError`` naming the Go error —
+      the Go authority's decision is never bypassed by the Python body.
+    * FAIL OPEN: every infrastructure failure (no verified binary, process
+      crash, timeout, malformed or mismatched envelope) warns exactly once
+      (``GO_HOOK_GATE_BRIDGE_FALLBACK``) and falls back to the historical
+      Python body (_python_materialize_hook_script), reconciling the lock
+      with the bytes the degraded run actually left on disk. Bytes that are
+      provably CLI-rendered get their baseline recorded; bytes that CHANGED
+      from the pre-Go snapshot but cannot be proven CLI-rendered fail closed
+      (RuntimeError) instead of silently leaving an untracked gate; bytes
+      the degraded run never touched keep the historical preserve behavior
+      (user-modified / no provenance).
+
+    ``refresh=True`` (the ``--refresh-gates`` flag, never set by ordinary
+    sync) replaces a customized gate only after its exact pre-refresh bytes
+    are saved to the cache-only immutable backup (the path is precomputed
+    here and handed to Go in the envelope). Returns the project-relative
+    path.
+    """
+    src = recipe_dir / hook.script
+    if not src.is_file():
+        raise RuntimeError(f"hook script not found: {src}")
+    rel = hook_script_rel_path(recipe_id, hook)
+    dest = project_root / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink():
+        # One pre-flight guard for both paths and both authorities: the
+        # fallback body (write + refresh) and Go refuse the same way, before
+        # any read or write of the destination (including the refresh backup
+        # read below).
+        raise RuntimeError(_symlink_refusal(rel))
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
+    entry = (lock.get("managed") or {}).get(rel)
+    # Gate-version resolution stays in Python (the version module is
+    # Python-owned); the envelope carries the resolved value, "dev" on any
+    # resolution failure. The cli home is resolved here for the same reason;
+    # Go substitutes both verbatim.
+    gate_version = "dev"
+    if cli_home is not None:
+        try:
+            gate_version = _load_cli_version().read_installed_version(Path(cli_home))
+        except Exception:  # noqa: BLE001 - version resolution fails open to dev
+            gate_version = "dev"
+    # The immutable refresh backup path is precomputed here (project-cache
+    # ownership): Go only writes the snapshot bytes when the path is absent.
+    backup_path = ""
+    if refresh and dest.is_file():
+        backup = _load_project_cache().gate_backup_path(
+            project_root,
+            rel,
+            _load_util().sha256_bytes(dest.read_bytes()),
+            cli_home=cli_home,
+        )
+        backup_path = str(backup)
+    # Snapshot the pre-Go destination state (None = absent) so the fallback
+    # reconciliation can tell a degraded run that changed the destination
+    # from one that never touched it.
+    pre_dest_bytes = dest.read_bytes() if dest.is_file() else None
+    output = go_materialize_hook(
+        {
+            "project_root": str(project_root),
+            "recipe_dir": str(recipe_dir),
+            "recipe_id": recipe_id,
+            "script": hook.script,
+            "config": merged_cfg,
+            "cli_home": str(Path(cli_home).resolve()) if cli_home is not None else "",
+            "gate_version": gate_version,
+            "refresh": refresh,
+            "managed_entry": entry,
+            "backup_path": backup_path,
+        }
+    )
+    if output is None:
+        # Infrastructure failure: go_materialize_hook already emitted the one
+        # GO_HOOK_GATE_BRIDGE_FALLBACK warning, so the reconciliation runs
+        # with announce=False (no second token warning).
+        return _fallback_materialize_and_reconcile(
+            recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
+            refresh, "the Go bridge produced no usable output",
+            pre_dest_bytes=pre_dest_bytes, announce=False,
+        )
+    for line in output["warnings"]:
+        warn(line)
+    record = output.get("record")
+    if output.get("wrote") and record is None:
+        # The Go side reports it wrote the destination but returned no
+        # ownership record; accepting that would leave the gate on disk with
+        # no lock entry. The envelope is unusable: run the Python body, then
+        # reconcile the lock with the bytes Go actually left on disk.
+        return _fallback_materialize_and_reconcile(
+            recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
+            refresh, "wrote without a record",
+            pre_dest_bytes=pre_dest_bytes,
+        )
+    if record is not None:
+        mismatch = _hook_record_mismatch(record, rel, hook.script, recipe_id)
+        if mismatch is None and (
+            not dest.is_file()
+            or _load_util().sha256_bytes(dest.read_bytes()) != record["sha256"]
+        ):
+            # The record is applied to the lock only after the destination
+            # actually on disk is hashed and matches the recorded digest —
+            # the envelope proves nothing about bytes the CLI never wrote.
+            mismatch = (
+                "the returned record sha256 does not match the destination "
+                "on disk"
+            )
+        if mismatch is not None:
+            # The returned record must match the plan this run actually sent
+            # AND the bytes on disk; a mismatched envelope must never write
+            # its ownership metadata into the lock.
+            return _fallback_materialize_and_reconcile(
+                recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
+                refresh, mismatch,
+                pre_dest_bytes=pre_dest_bytes,
+            )
+        set_gate_baseline(
+            lock,
+            record["target"],
+            record["sha256"],
+            recipe=record["recipe"],
+            source=record["source"],
+        )
+        write_lock(lock_path, lock)
+    print(f"    {output['message']}")
+    return rel
+
+
+def _python_materialize_hook_script(
+    recipe_dir: Path,
+    hook: Any,
+    project_root: Path,
+    recipe_id: str,
+    merged_cfg: dict[str, Any] | None = None,
+    cli_home: Path | None = None,
+    refresh: bool = False,
+) -> str:
+    """TEMPORARY fail-open Python hook authority (GO_HOOK_GATE_BRIDGE_FALLBACK).
+
+    Kept only as the fallback; ``worktree-gate --materialize-hook`` is the
+    primary authority. It is the historical Python hook body, retained as the
+    fallback. A timed-out Go run may already have written the destination;
+    this body then rewrites it idempotently.
+    """
     util = _load_util()
+    rel = hook_script_rel_path(recipe_id, hook)
+    dest = project_root / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    content = _render_hook_content(recipe_dir, hook, merged_cfg, cli_home)
+
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
     lock = load_lock(lock_path)
     target = rel
@@ -789,6 +2078,23 @@ def materialize_hook_script(
         )
         write_lock(lock_path, lock)
 
+    def write_content() -> None:
+        # Two-layer symlink guard (Go: the Lstat pre-check inside
+        # writeTemplateContent + syscall.O_NOFOLLOW): both authorities spell
+        # the same refusal and never write through a link.
+        if dest.is_symlink():
+            raise RuntimeError(_symlink_refusal(rel))
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(dest, flags, 0o755)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise RuntimeError(_symlink_refusal(rel)) from exc
+            raise
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content.encode())
+        os.chmod(dest, 0o755)
+
     if refresh:
         _refresh_gate(
             project_root, dest, target, content, lock, lock_path,
@@ -799,8 +2105,7 @@ def materialize_hook_script(
 
     state = util.classify_managed_override(dest, entry, would_write=content)
     if state == "missing":
-        dest.write_text(content)
-        os.chmod(dest, 0o755)
+        write_content()
         record()
         print(f"    ✓ hook script {rel}")
         return rel
@@ -811,8 +2116,7 @@ def materialize_hook_script(
     if state == "managed_stale":
         # Baseline matches current bytes: the CLI rendered this gate, so an
         # ordinary sync may force-update it and re-record the baseline.
-        dest.write_text(content)
-        os.chmod(dest, 0o755)
+        write_content()
         record()
         print(f"    ✓ hook refreshed (baseline matched) {rel}")
         return rel
@@ -832,11 +2136,301 @@ def materialize_hook_script(
     return rel
 
 
-# --- Binding resolution -------------------------------------------------------
+# --- Binding resolution (Go authority, temporary Python fallback) --------------
+#
+# The Go gate binary (``--resolve-bindings``) owns capability binding
+# resolution, capability conflict grading, and the durable tracker witness
+# write. Python keeps only what is not the decision: TOML acquisition it already
+# performs for other purposes, and the conflict -> error message formatting sync
+# users see. This section is the bridge between them.
+#
+# The Python implementations below are a TEMPORARY fail-open fallback
+# (``GO_BINDINGS_BRIDGE_FALLBACK``): they run only when the binary cannot be
+# acquired, verified, executed, or parsed, and the strangler deletes them once
+# the bridge is proven in the field. Tests pin their contract; they are never
+# the primary authority.
+GO_BINDINGS_BRIDGE_FALLBACK = "GO_BINDINGS_BRIDGE_FALLBACK"
+GO_BINDINGS_BRIDGE_TIMEOUT_SECONDS = 60
+
+# Stable machine-readable classification of the Go resolution errors. Go emits
+# one deterministic message per failure and aborts step 1 on the first one; the
+# prefix is that message's stable contract, so a caller branches on a code
+# instead of matching a whole sentence. An unrecognized error keeps its Go text
+# and classifies as "binding-error" rather than being dropped.
+GO_BINDING_ERROR_CODES = {
+    "duplicate explicit binding for capability": "duplicate-explicit-binding",
+    "references disabled/unknown recipe": "disabled-or-unknown-recipe",
+    "does not declare that capability": "undeclared-capability",
+}
+
+
+class BindingResolutionError(RuntimeError):
+    """Invalid manifest binding, carrying the stable bridge error code.
+
+    Subclasses RuntimeError so every existing ``except RuntimeError`` call site
+    (sync, sync-agent, tests) keeps working unchanged; ``code`` is the
+    machine-readable classification, and ``str(exc)`` stays the exact message
+    the Python authority raised.
+    """
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def binding_error_code(message: str) -> str:
+    """Classify one Go resolution error message into its stable bridge code."""
+    for prefix, code in GO_BINDING_ERROR_CODES.items():
+        if prefix in message:
+            return code
+    return "binding-error"
+
+
+def _bridge_home(catalog_dir: Path) -> Path:
+    """The AI_SPECS_HOME owning a ``<home>/catalog/recipes`` directory."""
+    return Path(catalog_dir).resolve().parents[1]
+
+
+def _warn_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded binding authority."""
+    warn(
+        f"{GO_BINDINGS_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python binding authority"
+    )
+
+
+def _acquire_gate_binary(gb: Any, home: Path) -> Path | None:
+    """Acquire the gate binary for the binding step, then re-resolve.
+
+    Acquisition is opt-in (``go_binding_resolution(acquire_if_missing=True)``),
+    only ever set by the sync binding step: it reuses the exact
+    ``gate_binary.acquire`` the worktree-flow distribution step calls and the
+    same ``AI_SPECS_GATE_OFFLINE`` signal, so there is one acquisition authority.
+    The acquisition warning is deliberately NOT re-emitted here: the sync
+    pipeline already reports acquisition degradation, and this bridge keeps its
+    single ``GO_BINDINGS_BRIDGE_FALLBACK`` line. Never raises: a failed
+    acquisition is a fallback, not a sync error.
+    """
+    try:
+        gb.acquire(
+            gate_impl="auto",
+            ai_specs_home=home,
+            offline=os.environ.get("AI_SPECS_GATE_OFFLINE") == "1",
+        )
+    except Exception:  # noqa: BLE001 - a failed acquisition degrades to fallback
+        return None
+    try:
+        return gb.resolve_verified_binary(home)
+    except Exception:  # noqa: BLE001 - an unloadable helper is "no binary"
+        return None
+
+
+def go_binding_resolution(
+    catalog_dir: Path,
+    enabled_ids: list[str],
+    manifest_bindings: list[dict[str, str]],
+    *,
+    project_root: Path | None = None,
+    write_witness: bool = False,
+    acquire_if_missing: bool = False,
+) -> dict[str, Any] | None:
+    """Run the Go binding authority and return its JSON envelope, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    or the output was not the documented envelope. The caller then falls back to
+    the temporary Python authority. This function emits the single
+    ``GO_BINDINGS_BRIDGE_FALLBACK`` warning naming the reason, so a degraded run
+    is never silent and never needs a second warning.
+
+    ``write_witness`` lets Go own the durable witness in the same invocation.
+    It never applies without ``project_root``: Go defaults the witness root to
+    the process cwd, and a read-only caller must not inherit a write there.
+
+    ``acquire_if_missing`` is the sync binding step's acquisition opt-in: when
+    no verified binary resolves, the bridge acquires through the canonical
+    ``gate_binary`` path (mirroring ``AI_SPECS_GATE_OFFLINE``) and re-resolves,
+    so a fresh project's first sync does not fall back just because the
+    worktree-flow recipe is disabled. Read-only callers (doctor, conflict
+    grading) leave it False and never touch the network.
+    """
+    if project_root is None:
+        write_witness = False
+    try:
+        gb = _load_gate_binary()
+        home = _bridge_home(catalog_dir)
+        binary = gb.resolve_verified_binary(home)
+        if binary is None and acquire_if_missing:
+            binary = _acquire_gate_binary(gb, home)
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_bridge_fallback(f"the gate binary could not be resolved ({type(exc).__name__}: {exc})")
+        return None
+    if binary is None:
+        _warn_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    command = [str(binary), "--resolve-bindings", "--catalog-dir", str(catalog_dir)]
+    for rid in enabled_ids:
+        command += ["--recipe", str(rid)]
+    command += ["--bindings", json.dumps(manifest_bindings)]
+    if project_root is not None:
+        command += ["--project-root", str(project_root)]
+    # One token, not ``--write-witness false``: Go's flag package treats a
+    # boolean flag as valueless, so a separate "false" argument would leave the
+    # write ENABLED and demote the value to an ignored positional argument.
+    write_flag = "true" if write_witness else "false"
+    command += [f"--write-witness={write_flag}"]
+
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=GO_BINDINGS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn_bridge_fallback(f"worktree-gate did not run ({type(exc).__name__}: {exc})")
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_bridge_fallback(f"worktree-gate exited {proc.returncode} ({detail})")
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_bridge_fallback(f"worktree-gate output was not JSON ({exc})")
+        return None
+    if (
+        not isinstance(envelope, dict)
+        or not isinstance(envelope.get("bindings"), dict)
+        or not isinstance(envelope.get("conflicts"), list)
+        or not isinstance(envelope.get("errors"), list)
+    ):
+        _warn_bridge_fallback("worktree-gate output did not match the binding envelope")
+        return None
+    for warning in envelope.get("warnings") or []:
+        # Go's best-effort side effects (a failed witness write) are reported
+        # without demoting a resolution error that is already in ``errors``.
+        warn(str(warning))
+    return envelope
+
+
+def _bindings_from_envelope(envelope: dict[str, Any]) -> dict[str, str]:
+    """Adapt the Go envelope's bindings, raising exactly what Python raised.
+
+    Go aborts step 1 on the first invalid explicit binding with the same
+    deterministic message the Python authority raised, so parity is exact; the
+    classification rides along as ``BindingResolutionError.code``.
+    """
+    errors = [str(error) for error in envelope.get("errors") or []]
+    if errors:
+        raise BindingResolutionError(errors[0], binding_error_code(errors[0]))
+    return {str(cap): str(rid) for cap, rid in envelope["bindings"].items()}
+
+
+def _conflicts_from_envelope(envelope: dict[str, Any]) -> list[Any]:
+    """Adapt the Go envelope's conflicts onto the existing ``Conflict`` type.
+
+    Call sites read ``primitive_type`` / ``primitive_id`` / ``recipes`` /
+    ``severity``, so reusing the dataclass keeps the sync warning and blocking
+    messages byte-identical to the ones the Python grader produced.
+    """
+    conflict_cls = _load_conflict().Conflict
+    return [
+        conflict_cls(
+            primitive_type=str(item.get("type", "capability")),
+            primitive_id=str(item.get("id", "")),
+            recipes=set(item.get("recipes") or []),
+            severity=str(item.get("severity") or "fatal"),
+        )
+        for item in envelope.get("conflicts") or []
+    ]
+
+
+def binding_resolution(
+    catalog_dir: Path,
+    enabled_ids: list[str],
+    manifest_bindings: list[dict[str, str]],
+    *,
+    project_root: Path | None = None,
+    write_witness: bool = False,
+    acquire_if_missing: bool = False,
+) -> tuple[dict[str, str], list[Any]]:
+    """Resolve bindings and grade capability conflicts, Go first.
+
+    One invocation returns both graders and, when ``write_witness`` is set, the
+    durable tracker witness Go writes itself. When the bridge cannot run, the
+    temporary Python authority computes both and writes the witness with the
+    Python writer, so a degraded run still leaves a truthful ledger.
+
+    Go persists the witness before the caller acts on a fatal conflict, exactly
+    as the Python path would have: a fatal conflict is always a duplicate
+    explicit binding, which is also a resolution error, so an unresolved
+    binding is never persisted. Raises ``RuntimeError`` for an invalid manifest
+    binding, exactly as ``resolve_bindings`` does.
+    """
+    envelope = go_binding_resolution(
+        catalog_dir,
+        enabled_ids,
+        manifest_bindings,
+        project_root=project_root,
+        write_witness=write_witness,
+        acquire_if_missing=acquire_if_missing,
+    )
+    if envelope is not None:
+        return _bindings_from_envelope(envelope), _conflicts_from_envelope(envelope)
+    bindings = _python_resolve_bindings(catalog_dir, enabled_ids, manifest_bindings)
+    conflicts = _python_check_capability_conflicts(
+        catalog_dir, enabled_ids, manifest_bindings
+    )
+    if write_witness:
+        write_tracker_witness(project_root, catalog_dir, enabled_ids, bindings)
+    return bindings, conflicts
+
+
 def resolve_bindings(
+    catalog_dir: Path,
+    enabled_ids: list[str],
+    manifest_bindings: list[dict[str, str]],
+    *,
+    project_root: Path | None = None,
+    write_witness: bool = False,
+    acquire_if_missing: bool = False,
+) -> dict[str, str]:
+    """Resolve capability-to-recipe bindings through the Go authority.
+
+    Step 1 (validate explicit bindings) and step 2 (auto-bind a capability
+    exactly one enabled recipe declares) run in ``worktree-gate
+    --resolve-bindings``. Read-only callers (doctor, sync-agent) keep the
+    defaults ``write_witness=False`` and ``acquire_if_missing=False``: they
+    pass ``--write-witness=false`` so no caller other than sync can touch the
+    ledger, and they never acquire or download a binary. Raises
+    ``RuntimeError`` for an invalid manifest binding.
+    """
+    return binding_resolution(
+        catalog_dir,
+        enabled_ids,
+        manifest_bindings,
+        project_root=project_root,
+        write_witness=write_witness,
+        acquire_if_missing=acquire_if_missing,
+    )[0]
+
+
+# --- Binding resolution: TEMPORARY Python authority (GO_BINDINGS_BRIDGE_FALLBACK)
+#
+# Everything below is the fail-open fallback the strangler deletes once the Go
+# bridge is proven: it runs only when the gate binary cannot run, and the run is
+# always announced by a GO_BINDINGS_BRIDGE_FALLBACK warning line.
+#
+# --- Binding resolution -------------------------------------------------------
+def _python_resolve_bindings(
     catalog_dir: Path, enabled_ids: list[str], manifest_bindings: list[dict[str, str]]
 ) -> dict[str, str]:
-    """Resolve capability-to-recipe bindings.
+    """Resolve capability-to-recipe bindings (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_BINDINGS_BRIDGE_FALLBACK``; ``worktree-gate --resolve-bindings`` is the
+    primary authority.
 
     Step 1: Validate explicit bindings (recipe enabled, recipe declares capability).
     Step 2: Auto-bind capabilities declared by exactly one enabled recipe.
@@ -986,6 +2580,12 @@ def write_tracker_witness(
 ) -> Path | None:
     """Atomically persist the resolved tracker binding under the common dir (A4).
 
+    TEMPORARY fail-open fallback (``GO_BINDINGS_BRIDGE_FALLBACK``):
+    ``worktree-gate --resolve-bindings`` normally writes this witness itself in
+    the invocation that resolves the bindings, and the strangler deletes this
+    writer with the rest of the Python binding authority. It stays reachable for
+    the degraded path (no verified binary) and for tests that pin its contract.
+
     ``<git-common-dir>/ai-specs/ledger/witness.json`` — deliberately outside
     ``RESOLVED_CONFIG_TEMP`` so ``lib/sync.sh``'s EXIT trap cannot delete it.
     Best-effort: outside a repository there is no common dir, and a write error
@@ -1030,14 +2630,199 @@ def write_tracker_witness(
     return target
 
 
-# --- Config merge -------------------------------------------------------------
-def merge_config(recipe: Any, manifest_config: dict[str, Any]) -> dict[str, Any]:
-    """Merge recipe config schema defaults with manifest overrides.
+# --- Config merge (Go --plan-merge-config) ------------------------------------
+#
+# Go owns the merge_config DECISION: schema defaults + manifest overrides +
+# structured-config validation. Python keeps ACQUISITION of the already-loaded
+# Recipe and serializes its schema into the Go stdin envelope. The Python
+# decision below is a TEMPORARY fail-open fallback
+# (``GO_MERGE_CONFIG_BRIDGE_FALLBACK``) the strangler deletes once the bridge is
+# proven: it runs only when the binary cannot be acquired, executed, or parsed,
+# and the run is always announced by exactly one warning line.
+GO_MERGE_CONFIG_BRIDGE_FALLBACK = "GO_MERGE_CONFIG_BRIDGE_FALLBACK"
+GO_MERGE_CONFIG_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_merge_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded merge authority."""
+    warn(
+        f"{GO_MERGE_CONFIG_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python merge authority"
+    )
+
+
+def _merge_config_request_envelope(
+    recipe: Any, manifest_config: dict[str, Any]
+) -> dict[str, Any]:
+    """Serialize the already-loaded Recipe schema into the Go stdin envelope.
+
+    Ordered surfaces (schema fields, declared tables, manifest pairs) cross as
+    arrays so Go never depends on map iteration. ``has_default`` transports
+    Python's "default is not None", so defaults of false, 0 and "" apply.
+    Values cross verbatim: anything JSON cannot carry (TOML date/datetime/time,
+    nonfinite floats) fails envelope serialization and the whole merge falls
+    back once to the Python authority, preserving its typed values and
+    validation failures. No coercion happens at this boundary.
+    """
+    schema = getattr(recipe, "config_schema", None)
+    schema_fields = schema.fields if schema is not None else {}
+    schema_tables = getattr(schema, "tables", {}) or {}
+    fields = []
+    for key, field in schema_fields.items():
+        has_default = field.default is not None
+        fields.append(
+            {
+                "key": key,
+                "required": bool(field.required),
+                "has_default": has_default,
+                "default": field.default if has_default else None,
+                "enum": list(field.enum) if field.enum else [],
+            }
+        )
+    tables = [
+        {"key": key, "shape": table.shape} for key, table in schema_tables.items()
+    ]
+    manifest = [
+        {"key": key, "value": value} for key, value in manifest_config.items()
+    ]
+    return {
+        "recipe_name": recipe.name,
+        "fields": fields,
+        "tables": tables,
+        "manifest": manifest,
+    }
+
+
+def _is_merge_config_result(result: Any) -> bool:
+    """True when the decoded stdout is the documented merge-config envelope."""
+    if not isinstance(result, dict):
+        return False
+    warnings = result.get("warnings")
+    return (
+        isinstance(result.get("config"), dict)
+        and isinstance(warnings, list)
+        and all(isinstance(item, str) for item in warnings)
+        and isinstance(result.get("error"), str)
+    )
+
+
+def go_merge_config(
+    recipe: Any,
+    manifest_config: dict[str, Any],
+    *,
+    home: Path | None = None,
+) -> dict[str, Any] | None:
+    """Run ``worktree-gate --plan-merge-config`` and return its result, or None.
+
+    ``home`` is the active CLI home owning the version-keyed gate binary cache
+    (mirroring the sibling bridges); None keeps the historical package-root
+    resolution.
+
+    None means the bridge could not run: no verified binary, the request could
+    not be serialized, the process failed, or the output was not the documented
+    envelope. The caller then falls back to the temporary Python authority. This
+    function emits the single ``GO_MERGE_CONFIG_BRIDGE_FALLBACK`` warning naming
+    the reason, so a degraded run is never silent and never needs a second
+    warning.
+
+    A semantic validation error is NOT a transport failure: Go reports it in
+    the envelope's ``error`` field with exit 0, so the caller raises it without
+    falling back.
+    """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_orphans_bridge_home(home))
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_merge_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_merge_bridge_fallback("no verified worktree-gate binary")
+        return None
+    try:
+        request = json.dumps(
+            _merge_config_request_envelope(recipe, manifest_config),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        _warn_merge_bridge_fallback(
+            f"the config envelope could not be serialized "
+            f"({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        # Locale-proof decode: undecodable Go bytes become U+FFFD (never an
+        # exception), so the JSON parse below degrades to the one fallback.
+        proc = subprocess.run(
+            [str(binary), "--plan-merge-config"],
+            input=request,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=GO_MERGE_CONFIG_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
+        _warn_merge_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_merge_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        result = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_merge_bridge_fallback(f"worktree-gate output was not JSON ({exc})")
+        return None
+    if not _is_merge_config_result(result):
+        _warn_merge_bridge_fallback(
+            "worktree-gate output did not match the merge-config envelope"
+        )
+        return None
+    return result
+
+
+def merge_config(
+    recipe: Any,
+    manifest_config: dict[str, Any],
+    *,
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """Merge recipe config schema defaults with manifest overrides, Go first.
 
     Fails if any required=True field is missing in the final dict. Carries a
     declared structured (table) section such as ``reconcile`` through after
     validating it against the recipe's declarative shape. Warns for any other
     manifest key not in the schema.
+
+    The Go gate binary (``--plan-merge-config``) is the primary authority; the
+    whole response is validated before any warning is emitted or any result is
+    returned, so a degraded run never produces partial output. When the bridge
+    cannot run, ``_python_merge_config`` computes the same decision.
+    """
+    result = go_merge_config(recipe, manifest_config, home=home)
+    if result is not None:
+        for warning in result["warnings"]:
+            warn(warning)
+        if result["error"]:
+            raise RuntimeError(result["error"])
+        return result["config"]
+    return _python_merge_config(recipe, manifest_config)
+
+
+def _python_merge_config(
+    recipe: Any, manifest_config: dict[str, Any]
+) -> dict[str, Any]:
+    """Compute the config merge (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_MERGE_CONFIG_BRIDGE_FALLBACK``; ``worktree-gate --plan-merge-config``
+    is the primary authority.
     """
     result: dict[str, Any] = {}
     schema = getattr(recipe, "config_schema", None)
@@ -1235,6 +3020,359 @@ def build_recipe_mcp(
     return merged
 
 
+# --- Orphan cleanup bridge (Go --plan-orphans / --apply-orphans) --------------
+#
+# Go owns the orphan DECISION (``--plan-orphans``: which materialized
+# recipe/dep names and which lock recipe ids the manifest no longer expects)
+# and the DELETION actuator (``--apply-orphans``). Python keeps ACQUISITION
+# (listing the project cache roots and reading the lock), the printed
+# messages, and the lock serialization (``remove_recipe_lock_entries`` +
+# ``write_lock``); it never replays a deletion Go may already have started.
+# The Python decision/deletion below is a TEMPORARY fail-open fallback
+# (``GO_ORPHANS_BRIDGE_FALLBACK``) the strangler deletes once the bridge is
+# proven: it runs only when the binary cannot be acquired or executed, or Go
+# reported a clean pre-apply failure, and every degraded run is announced by
+# exactly one warning line.
+GO_ORPHANS_BRIDGE_FALLBACK = "GO_ORPHANS_BRIDGE_FALLBACK"
+GO_ORPHANS_BRIDGE_TIMEOUT_SECONDS = 60
+
+_ORPHAN_PLAN_KEYS = (
+    "orphaned_recipes",
+    "orphaned_deps",
+    "orphaned_inproject_deps",
+    "stale_lock_recipes",
+)
+
+
+def _warn_orphans_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded orphan authority."""
+    warn(
+        f"{GO_ORPHANS_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python orphan authority"
+    )
+
+
+def _orphans_bridge_home(cli_home: Path | None) -> Path:
+    """The AI_SPECS_HOME owning the version-keyed gate binary cache."""
+    if cli_home is not None:
+        return Path(cli_home).resolve()
+    return Path(__file__).resolve().parents[2]
+
+
+def _is_orphan_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented sorted-list envelope."""
+    if not isinstance(envelope, dict):
+        return False
+    return all(isinstance(envelope.get(key), list) for key in _ORPHAN_PLAN_KEYS)
+
+
+def go_orphan_plan(home: Path, plan_input: dict[str, Any]) -> dict[str, Any] | None:
+    """Run ``worktree-gate --plan-orphans`` and return its JSON envelope, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    or the output was not the documented envelope. The caller then falls back to
+    the temporary Python authority. This function emits the single
+    ``GO_ORPHANS_BRIDGE_FALLBACK`` warning naming the reason, so a degraded run
+    is never silent and never needs a second warning.
+    """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(home)
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_orphans_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_orphans_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    try:
+        proc = subprocess.run(
+            [str(binary), "--plan-orphans"],
+            input=json.dumps(plan_input),
+            capture_output=True,
+            text=True,
+            timeout=GO_ORPHANS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn_orphans_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_orphans_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_orphans_bridge_fallback(f"worktree-gate output was not JSON ({exc})")
+        return None
+    if not _is_orphan_envelope(envelope):
+        _warn_orphans_bridge_fallback(
+            "worktree-gate output did not match the orphan envelope"
+        )
+        return None
+    return envelope
+
+
+def _dir_child_names(directory: Path) -> list[str]:
+    """Directory child names of one materialized scope, sorted; files ignored."""
+    if not directory.is_dir():
+        return []
+    return sorted(child.name for child in directory.iterdir() if child.is_dir())
+
+
+def _orphan_plan_input(
+    recipe_dir: Path,
+    deps_dir: Path,
+    inproject_deps: Path,
+    lock: dict[str, Any],
+    enabled_recipe_ids: set[str],
+    expected_dep_ids: set[str],
+) -> dict[str, list[str]]:
+    """The stdin envelope: the same names the Python authority used to compare."""
+    return {
+        "recipe_skills": _dir_child_names(recipe_dir),
+        "deps_skills": _dir_child_names(deps_dir),
+        "inproject_deps": _dir_child_names(inproject_deps),
+        "lock_recipes": sorted(lock.get("recipes") or {}),
+        "enabled_recipe_ids": sorted(enabled_recipe_ids),
+        "expected_dep_ids": sorted(expected_dep_ids),
+    }
+
+
+def _python_orphan_plan(
+    recipe_dir: Path,
+    deps_dir: Path,
+    inproject_deps: Path,
+    lock: dict[str, Any],
+    enabled_recipe_ids: set[str],
+    expected_dep_ids: set[str],
+) -> dict[str, list[str]]:
+    """Compute the orphan plan (TEMPORARY Python authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_ORPHANS_BRIDGE_FALLBACK``; ``worktree-gate --plan-orphans`` is the
+    primary authority. Sorted so both paths produce byte-identical output.
+    """
+    return {
+        "orphaned_recipes": [
+            name
+            for name in _dir_child_names(recipe_dir)
+            if name not in enabled_recipe_ids
+        ],
+        "orphaned_deps": [
+            name
+            for name in _dir_child_names(deps_dir)
+            if name not in expected_dep_ids
+        ],
+        "orphaned_inproject_deps": [
+            name
+            for name in _dir_child_names(inproject_deps)
+            if name not in expected_dep_ids
+        ],
+        "stale_lock_recipes": sorted(
+            rid
+            for rid in (lock.get("recipes") or {})
+            if rid not in enabled_recipe_ids
+        ),
+    }
+
+
+# --- Orphan apply bridge (Go --apply-orphans) ---------------------------------
+#
+# Fail-open (the legacy Python executor) is allowed ONLY when the gate
+# provably never ran (no verified binary, spawn failure) or reported a
+# structurally valid ``pre_apply_failed`` outcome with no completed removal
+# and no uncertain entry. Anything observed after invocation — malformed
+# stdout, a decode error, an unexpected exit code, a timeout, a ``partial``
+# status, or any uncertain entry — fails CLOSED: deletion is never retried
+# and the lock is never pruned, because the filesystem state is unknown.
+GO_ORPHANS_APPLY_FAIL_CLOSED = "GO_ORPHANS_APPLY_FAIL_CLOSED"
+
+# Message fragment per scope, preserving the legacy print byte for byte
+# (note: the in-project scope historically prints without the "cache" word).
+_APPLY_SCOPE_MESSAGE_PREFIX = {
+    "recipe_skills": "cache .recipe/",
+    "deps_skills": "cache .deps/",
+    "inproject_deps": "ai-specs/.deps/",
+}
+_APPLY_OUTCOME_STATUSES = ("applied", "pre_apply_failed", "partial")
+
+
+def _warn_orphans_apply_fail_closed(reason: str) -> None:
+    """One greppable warning for a refused (fail-closed) orphan apply."""
+    warn(
+        f"{GO_ORPHANS_APPLY_FAIL_CLOSED}: {reason}; "
+        "orphan deletion was not retried and the lock was not pruned"
+    )
+
+
+def _is_orphan_apply_outcome(outcome: Any) -> bool:
+    """True when the decoded stdout is the documented apply outcome."""
+    if not isinstance(outcome, dict):
+        return False
+    if outcome.get("status") not in _APPLY_OUTCOME_STATUSES:
+        return False
+    if not isinstance(outcome.get("error"), str):
+        return False
+    for key in ("removed", "remaining"):
+        entries = outcome.get(key)
+        if not isinstance(entries, list):
+            return False
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return False
+            if entry.get("scope") not in _APPLY_SCOPE_MESSAGE_PREFIX:
+                return False
+            name = entry.get("name")
+            if not isinstance(name, str) or not name:
+                return False
+            if not isinstance(entry.get("uncertain", False), bool):
+                return False
+    return True
+
+
+def _apply_outcome_uncertain(outcome: dict[str, Any]) -> bool:
+    """True when any reported entry leaves the filesystem state unknown."""
+    return any(
+        entry.get("uncertain", False)
+        for key in ("removed", "remaining")
+        for entry in outcome[key]
+    )
+
+
+def go_apply_orphans(
+    home: Path, plan_input: dict[str, Any], roots: dict[str, str]
+) -> tuple[str, dict[str, Any] | None]:
+    """Run ``worktree-gate --apply-orphans`` and return ``(state, outcome)``.
+
+    ``state`` is one of:
+
+    * ``"unavailable"`` — the gate provably never ran (no verified binary, or
+      the spawn itself failed). The single ``GO_ORPHANS_BRIDGE_FALLBACK``
+      warning names the reason; the caller may run the legacy Python path.
+    * ``"failed"`` — the gate ran but its outcome is untrustworthy (timeout,
+      unexpected exit code, undecodable or malformed stdout, exit/status
+      mismatch). The fail-closed warning is emitted and the caller must NOT
+      retry deletion.
+    * ``"ran"`` — outcome is the structurally validated JSON envelope; the
+      caller still decides fail-open (a clean pre-apply failure) versus
+      fail-closed (partial, or any uncertain entry).
+    """
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(home)
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_orphans_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return "unavailable", None
+    if binary is None:
+        _warn_orphans_bridge_fallback("no verified worktree-gate binary")
+        return "unavailable", None
+
+    stdin_envelope = dict(plan_input)
+    stdin_envelope["roots"] = roots
+    try:
+        proc = subprocess.run(
+            [str(binary), "--apply-orphans"],
+            input=json.dumps(stdin_envelope),
+            capture_output=True,
+            text=True,
+            timeout=GO_ORPHANS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (FileNotFoundError, PermissionError) as exc:
+        # The exec itself failed: the gate process never existed, so nothing
+        # was deleted and the legacy path is safe to run.
+        _warn_orphans_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return "unavailable", None
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        # The process may have spawned and deleted before failing: the outcome
+        # is unknown, so deletion must never be retried. (UnicodeDecodeError
+        # escapes ``text=True`` decoding as a ValueError subclass.)
+        _warn_orphans_apply_fail_closed(
+            f"worktree-gate did not run to completion ({type(exc).__name__}: {exc})"
+        )
+        return "failed", None
+
+    def _fail_closed(reason: str) -> tuple[str, None]:
+        _warn_orphans_apply_fail_closed(reason)
+        return "failed", None
+
+    detail = (proc.stderr or "").strip() or "no stderr"
+    if proc.returncode not in (0, 3):
+        return _fail_closed(f"worktree-gate exited {proc.returncode} ({detail})")
+    try:
+        outcome = json.loads(proc.stdout)
+    except ValueError as exc:
+        return _fail_closed(f"worktree-gate output was not JSON ({exc})")
+    if not _is_orphan_apply_outcome(outcome):
+        return _fail_closed("worktree-gate output did not match the apply outcome")
+    status = outcome["status"]
+    if proc.returncode == 0 and status != "applied":
+        return _fail_closed(f"worktree-gate exited 0 but reported {status}")
+    if proc.returncode == 3 and status == "applied":
+        return _fail_closed("worktree-gate exited 3 but reported applied")
+    return "ran", outcome
+
+
+def _prune_stale_lock(
+    lock_path: Path, lock: dict[str, Any], stale_lock_recipes: list[str]
+) -> None:
+    """Clean up stale lock entries for recipes no longer in the manifest."""
+    if not lock_path.is_file():
+        return
+    removed_any = False
+    for rid in stale_lock_recipes:
+        if remove_recipe_lock_entries(lock, rid):
+            removed_any = True
+            print(f"  ✓ removed stale lock entries for recipe '{rid}'")
+    if removed_any:
+        write_lock(lock_path, lock)
+
+
+def _legacy_clean_orphans(
+    plan: dict[str, Any],
+    recipe_dir: Path,
+    deps_dir: Path,
+    inproject_deps: Path,
+    lock: dict[str, Any],
+    lock_path: Path,
+) -> None:
+    """The retained Python executor (TEMPORARY fail-open fallback).
+
+    Runs only when Go provably never ran or reported a clean pre-apply
+    failure; a partial or uncertain Go outcome must never reach this function,
+    because replaying a partially applied deletion is never safe.
+    """
+    for name in plan["orphaned_recipes"]:
+        child = recipe_dir / name
+        if child.is_dir():
+            shutil.rmtree(child)
+            print(f"  ✓ removed orphaned cache .recipe/{name}")
+
+    for name in plan["orphaned_deps"]:
+        child = deps_dir / name
+        if child.is_dir():
+            shutil.rmtree(child)
+            print(f"  ✓ removed orphaned cache .deps/{name}")
+
+    for name in plan["orphaned_inproject_deps"]:
+        child = inproject_deps / name
+        if child.is_dir():
+            shutil.rmtree(child)
+            print(f"  ✓ removed orphaned ai-specs/.deps/{name}")
+
+    _prune_stale_lock(lock_path, lock, plan["stale_lock_recipes"])
+
+
 def clean_orphans(
     project_root: Path,
     enabled_recipe_ids: set[str],
@@ -1243,45 +3381,203 @@ def clean_orphans(
 ) -> None:
     pc = _load_project_cache()
     recipe_dir = pc.recipe_skills_root(project_root, cli_home=cli_home)
-    if recipe_dir.is_dir():
-        for child in recipe_dir.iterdir():
-            if child.is_dir() and child.name not in enabled_recipe_ids:
-                shutil.rmtree(child)
-                print(f"  ✓ removed orphaned cache .recipe/{child.name}")
-
     deps_dir = pc.deps_skills_root(project_root, cli_home=cli_home)
-    if deps_dir.is_dir():
-        for child in deps_dir.iterdir():
-            if child.is_dir() and child.name not in expected_dep_ids:
-                shutil.rmtree(child)
-                print(f"  ✓ removed orphaned cache .deps/{child.name}")
-
-    # Prune in-project toml-dep materialization (ai-specs/.deps/) for deps no
-    # longer declared in the manifest.
+    # In-project toml-dep materialization (ai-specs/.deps/) is pruned for deps
+    # no longer declared in the manifest.
     inproject_deps = pc.inproject_deps_root(project_root)
-    if inproject_deps.is_dir():
-        for child in inproject_deps.iterdir():
-            if child.is_dir() and child.name not in expected_dep_ids:
-                shutil.rmtree(child)
-                print(f"  ✓ removed orphaned ai-specs/.deps/{child.name}")
-
-    # Clean up stale lock entries for recipes no longer in the manifest
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
-    if lock_path.is_file():
-        lock = load_lock(lock_path)
-        removed_any = False
-        for rid in list(lock.get("recipes", {})):
-            if rid not in enabled_recipe_ids:
-                remove_recipe_lock_entries(lock, rid)
-                removed_any = True
-                print(f"  ✓ removed stale lock entries for recipe '{rid}'")
-        if removed_any:
-            write_lock(lock_path, lock)
+    lock = load_lock(lock_path) if lock_path.is_file() else {}
+    home = _orphans_bridge_home(cli_home)
+    plan_input = _orphan_plan_input(
+        recipe_dir, deps_dir, inproject_deps, lock,
+        enabled_recipe_ids, expected_dep_ids,
+    )
+
+    plan = go_orphan_plan(home, plan_input)
+    if plan is None:
+        plan = _python_orphan_plan(
+            recipe_dir, deps_dir, inproject_deps, lock,
+            enabled_recipe_ids, expected_dep_ids,
+        )
+        _legacy_clean_orphans(
+            plan, recipe_dir, deps_dir, inproject_deps, lock, lock_path
+        )
+        return
+
+    state, outcome = go_apply_orphans(
+        home,
+        plan_input,
+        {
+            "recipe_skills": str(recipe_dir),
+            "deps_skills": str(deps_dir),
+            "inproject_deps": str(inproject_deps),
+        },
+    )
+    if state == "unavailable":
+        # The gate provably never ran; the fallback warning is already out.
+        _legacy_clean_orphans(
+            plan, recipe_dir, deps_dir, inproject_deps, lock, lock_path
+        )
+        return
+    if (
+        state == "ran"
+        and outcome is not None
+        and outcome["status"] == "applied"
+        and not outcome["remaining"]
+        and not _apply_outcome_uncertain(outcome)
+    ):
+        for entry in outcome["removed"]:
+            prefix = _APPLY_SCOPE_MESSAGE_PREFIX[entry["scope"]]
+            print(f"  ✓ removed orphaned {prefix}{entry['name']}")
+        _prune_stale_lock(lock_path, lock, plan["stale_lock_recipes"])
+        return
+    if (
+        state == "ran"
+        and outcome is not None
+        and outcome["status"] == "pre_apply_failed"
+        and not outcome["removed"]
+        and not _apply_outcome_uncertain(outcome)
+    ):
+        # Structurally proven: Go validated the envelope and attempted nothing.
+        _warn_orphans_bridge_fallback(
+            f"worktree-gate reported pre_apply_failed ({outcome['error'] or 'no error'})"
+        )
+        _legacy_clean_orphans(
+            plan, recipe_dir, deps_dir, inproject_deps, lock, lock_path
+        )
+        return
+    if state == "ran" and outcome is not None:
+        detail = outcome["error"] or outcome["status"]
+        _warn_orphans_apply_fail_closed(
+            f"worktree-gate reported {outcome['status']} after starting ({detail})"
+        )
+    # state "failed" already emitted its fail-closed warning.
 
 
 # --- Main ---------------------------------------------------------------------
-def build_resolved_config(project_root: Path) -> dict[str, Any]:
-    """Build a resolved-config JSON blob from raw manifest data.
+# --- Resolved-config projection: Go authority (GO_RESOLVED_CONFIG_BRIDGE_FALLBACK)
+#
+# The Go gate binary (``--plan-resolved-config``) owns the resolved-config
+# PROJECTION: capability bindings, the per-recipe config (flat + config
+# sub-table), the enabled id list, the resolved project root, and the resolved
+# topology. Python keeps only the manifest acquisition it already performs and
+# the TEMPORARY fail-open fallback below
+# (``GO_RESOLVED_CONFIG_BRIDGE_FALLBACK``). This bridge is read-only: it never
+# acquires a binary, so doctor and sync only degrade when no verified binary is
+# already available.
+GO_RESOLVED_CONFIG_BRIDGE_FALLBACK = "GO_RESOLVED_CONFIG_BRIDGE_FALLBACK"
+GO_RESOLVED_CONFIG_BRIDGE_TIMEOUT_SECONDS = 60
+
+_RESOLVED_TOPOLOGY_STRING_KEYS = ("resolved", "configured", "via", "source")
+
+
+def _warn_resolved_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded resolved-config authority."""
+    warn(
+        f"{GO_RESOLVED_CONFIG_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python projection authority"
+    )
+
+
+def _is_str_keyed_mapping(value: Any, value_type: type) -> bool:
+    """True for a ``{str: value_type}`` mapping (empty mappings included)."""
+    if not isinstance(value, dict):
+        return False
+    return all(
+        isinstance(key, str) and isinstance(item, value_type)
+        for key, item in value.items()
+    )
+
+
+def _is_resolved_config_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented resolved-config envelope."""
+    if not isinstance(envelope, dict):
+        return False
+    topology = envelope.get("topology")
+    if not isinstance(topology, dict):
+        return False
+    return (
+        _is_str_keyed_mapping(envelope.get("bindings"), str)
+        and _is_str_keyed_mapping(envelope.get("recipes"), dict)
+        and isinstance(envelope.get("enabled"), list)
+        and isinstance(envelope.get("project_root"), str)
+        and all(
+            isinstance(topology.get(key), str)
+            for key in _RESOLVED_TOPOLOGY_STRING_KEYS
+        )
+        and isinstance(topology.get("submodules"), list)
+        and isinstance(topology.get("gitmodules_present"), bool)
+    )
+
+
+def go_resolved_config(
+    project_root: Path, *, ai_specs_home: Path | None = None
+) -> dict[str, Any] | None:
+    """Run ``worktree-gate --plan-resolved-config`` and return its JSON envelope, or None.
+
+    None means the bridge could not run: no verified binary, the process failed,
+    or the output was not the documented envelope. The caller then falls back to
+    the temporary Python authority. This function emits the single
+    ``GO_RESOLVED_CONFIG_BRIDGE_FALLBACK`` warning naming the reason, so a
+    degraded run is never silent and never needs a second warning.
+
+    This bridge is read-only and never acquires a binary: doctor and sync both
+    either have a verified binary or degrade to the Python projection.
+    """
+    home = (
+        ai_specs_home
+        if ai_specs_home is not None
+        else Path(__file__).resolve().parents[2]
+    )
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(home)
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_resolved_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_resolved_bridge_fallback("no verified worktree-gate binary")
+        return None
+
+    try:
+        proc = subprocess.run(
+            [str(binary), "--plan-resolved-config", "--project", str(project_root)],
+            capture_output=True,
+            text=True,
+            timeout=GO_RESOLVED_CONFIG_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn_resolved_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_resolved_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} ({detail})"
+        )
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError as exc:
+        _warn_resolved_bridge_fallback(f"worktree-gate output was not JSON ({exc})")
+        return None
+    if not _is_resolved_config_envelope(envelope):
+        _warn_resolved_bridge_fallback(
+            "worktree-gate output did not match the resolved-config envelope"
+        )
+        return None
+    return envelope
+
+
+def _python_build_resolved_config(project_root: Path) -> dict[str, Any]:
+    """Build a resolved-config JSON blob from raw manifest data (TEMPORARY authority).
+
+    Kept only as the fail-open fallback announced by
+    ``GO_RESOLVED_CONFIG_BRIDGE_FALLBACK``; ``worktree-gate
+    --plan-resolved-config`` is the primary authority.
 
     Reads [recipes.*] sub-tables directly (no catalog lookup), plus [[bindings]].
     Returns: {bindings: {capability→recipe}, recipes: {id→{raw config keys}}, enabled: [id...]}
@@ -1334,19 +3630,28 @@ def build_resolved_config(project_root: Path) -> dict[str, Any]:
         "enabled": enabled_ids,
         "project_root": str(Path(project_root).resolve()),
     }
-    wf_cfg: dict[str, Any] = {}
-    wf_raw = raw_recipes.get("worktree-flow")
-    if isinstance(wf_raw, dict):
-        wf_cfg = wf_raw.get("config") if isinstance(wf_raw.get("config"), dict) else {
-            k: v for k, v in wf_raw.items() if k not in ("enabled", "version")
-        }
-    configured_topology = str(wf_cfg.get("repo_topology") or "auto")
+    # Topology is project-owned (CLI-resolved), never re-derived per recipe.
     try:
-        topo = _load_util().resolve_repo_topology(project_root, configured_topology)
-        resolved["topology"] = {"resolved": topo.resolved, "via": topo.via}
+        topo = _load_util().project_repo_topology(project_root, manifest_data)
+        resolved["topology"] = topo.as_dict()
     except Exception:
-        resolved["topology"] = {"resolved": "standalone", "via": "auto"}
+        resolved["topology"] = {
+            "resolved": "standalone",
+            "configured": "auto",
+            "via": "auto",
+            "source": "default",
+        }
     return resolved
+
+
+def build_resolved_config(
+    project_root: Path, ai_specs_home: Path | None = None
+) -> dict[str, Any]:
+    """Build the resolved-config blob, Go first with a fail-open Python fallback."""
+    envelope = go_resolved_config(project_root, ai_specs_home=ai_specs_home)
+    if envelope is not None:
+        return envelope
+    return _python_build_resolved_config(project_root)
 
 
 def _enabled_agents(project_root: Path) -> list[str]:
@@ -1395,13 +3700,17 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         pc.remove_recipe_command_leftovers(project_root, cli_home=cli_home)
         # Still clean up orphaned recipes (none expected) and deps not in manifest
         clean_orphans(project_root, set(), expected_dep_ids, cli_home=cli_home)
-        # A shrinking enabled set must overwrite a previously bound witness with the
-        # unbound outcome, or a disabled provider would stay active.
-        write_tracker_witness(project_root, catalog_dir, [], {})
+        # Recover the witness ownership rule for a shrinking enabled set through
+        # the same Go authority as the enabled path, so a disabled provider never
+        # stays active. The fallback writes it in Python when Go cannot run.
+        binding_resolution(
+            catalog_dir, [], [],
+            project_root=project_root, write_witness=True, acquire_if_missing=True,
+        )
         print("  (no [recipes.*] enabled — skipping)")
         # Still write resolved-config if requested (even with no enabled recipes)
         if resolved_config_out is not None:
-            resolved = build_resolved_config(project_root)
+            resolved = build_resolved_config(project_root, ai_specs_home=ai_specs_home)
             with open(resolved_config_out, "w") as f:
                 json.dump(resolved, f, indent=2, sort_keys=True)
                 f.write("\n")
@@ -1418,11 +3727,20 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
     manifest_bindings = load_bindings_from_manifest(project_root)
 
-    # Binding resolution (NEW)
-    resolved_bindings = resolve_bindings(catalog_dir, list(enabled.keys()), manifest_bindings)
-
-    # Capability conflict check (NEW)
-    cap_conflicts = check_capability_conflicts(catalog_dir, list(enabled.keys()), manifest_bindings)
+    # Binding resolution, capability conflict grading, and the durable tracker
+    # witness are ONE Go invocation (single authority, single durable write).
+    # resolve_bindings just computed the binding the Go ledger reads; nothing
+    # downstream re-derives it.
+    resolved_bindings, cap_conflicts = binding_resolution(
+        catalog_dir,
+        list(enabled.keys()),
+        manifest_bindings,
+        project_root=project_root,
+        write_witness=True,
+        # The sync binding step owns acquisition, independent of worktree-flow
+        # enablement, so the first sync of a fresh project does not fall back.
+        acquire_if_missing=True,
+    )
     for c in cap_conflicts:
         if getattr(c, "severity", "fatal") == "fatal":
             fail(
@@ -1438,12 +3756,9 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
                 f"Add an explicit [[bindings]] entry to resolve."
             )
 
-    # Durable tracker binding witness (A4): persist the binding outcome that
-    # resolve_bindings just computed so the Go ledger only ever reads it.
-    # Written outside RESOLVED_CONFIG_TEMP, so the EXIT trap cannot delete it.
-    write_tracker_witness(
-        project_root, catalog_dir, list(enabled.keys()), resolved_bindings
-    )
+    # Durable tracker binding witness (A4): Go persisted the binding outcome
+    # during the invocation above, outside RESOLVED_CONFIG_TEMP, so the EXIT trap
+    # cannot delete it.
 
     # Recipe-owned reconcile mapping reaches the manifest here: the gate reads
     # only the manifest, so declared defaults must be stamped during sync.
@@ -1515,9 +3830,14 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
         # Config merge (NEW)
         manifest_config = cfg.get("config", {})
         try:
-            merged_cfg = merge_config(recipe, manifest_config)
+            merged_cfg = merge_config(recipe, manifest_config, home=cli_home)
         except RuntimeError as exc:
             fail(str(exc))
+        # Project-owned keys win over their legacy recipe alias so every stamp
+        # and rendered template carries one resolved value.
+        merged_cfg = util.project_owned_recipe_config(
+            project_root, None, rid, merged_cfg
+        )
 
         recipe_dir = catalog_dir / rid
 
@@ -1610,7 +3930,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
     # build_resolved_config() provides the recipes/enabled structure; we override the
     # bindings key with the full auto-bound map so downstream renderers see auto-bindings.
     if resolved_config_out is not None:
-        resolved = build_resolved_config(project_root)
+        resolved = build_resolved_config(project_root, ai_specs_home=ai_specs_home)
         resolved["bindings"] = resolved_bindings  # replace explicit-only with auto-bound
         merge_catalog_defaults_into_resolved(resolved, ai_specs_home)
         attach_brief_fragments_to_resolved(resolved, ai_specs_home)
@@ -1644,7 +3964,7 @@ def build_resolved_config_only(project_root: Path, resolved_config_out: Path, ai
     custom/symlinked installs).
     """
     try:
-        resolved = build_resolved_config(project_root)
+        resolved = build_resolved_config(project_root, ai_specs_home=ai_specs_home)
 
         # Attempt catalog-aware auto-binding (same as the full materialize path)
         # so standalone sync-agent forwards the same enriched bindings as sync.sh.

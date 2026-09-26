@@ -1038,6 +1038,63 @@ class RepoTopologyBriefTests(unittest.TestCase):
         text = "\n".join(lines)
         self.assertNotIn("Repo topology", text)
 
+    def test_repo_topology_from_project_field_even_without_worktree_flow(self):
+        """[project].repo_topology is CLI-owned, not gated on the recipe."""
+        import tempfile
+        from pathlib import Path as P
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        project_root = P(tmp.name) / "prj"
+        project_root.mkdir()
+        resolved = {
+            "bindings": {},
+            "enabled": [],
+            "recipes": {},
+            "project_root": str(project_root),
+        }
+        manifest = {
+            "project": {"name": "topo", "repo_topology": "standalone"},
+            "agents": {"enabled": ["claude"]},
+        }
+        lines = self.mod._section_project(manifest, resolved)
+        text = "\n".join(lines)
+        self.assertIn("- **Repo topology**: `standalone` (via config)", text)
+
+    def test_project_field_wins_over_legacy_recipe_alias_in_brief(self):
+        import tempfile
+        from pathlib import Path as P
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_repo_topology import make_super_with_submodule
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        super_repo = make_super_with_submodule(P(tmp.name))
+        resolved = {
+            "bindings": {"worktree-isolation": "worktree-flow"},
+            "enabled": ["worktree-flow"],
+            "recipes": {
+                "worktree-flow": {
+                    "integration_branch": "main",
+                    "repo_topology": "monorepo-apps",
+                }
+            },
+            "project_root": str(super_repo),
+        }
+        manifest = {
+            "project": {"name": "topo", "repo_topology": "standalone"},
+            "agents": {"enabled": ["claude"]},
+            "recipes": {
+                "worktree-flow": {
+                    "enabled": True,
+                    "config": {"repo_topology": "monorepo-apps"},
+                }
+            },
+        }
+        lines = self.mod._section_project(manifest, resolved)
+        text = "\n".join(lines)
+        self.assertIn("- **Repo topology**: `standalone` (via config)", text)
+        self.assertNotIn("monorepo-apps", text)
+
 
 class WorktreeGateModeBriefRenderTests(unittest.TestCase):
     """Rendered brief behavior for the worktree-flow config-aware gate fragment.
