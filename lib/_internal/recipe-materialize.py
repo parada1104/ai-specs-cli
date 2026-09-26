@@ -9,6 +9,13 @@ materializes bundled assets, vendors dep skills, applies templates,
 and writes recipe MCP presets to a temp file for downstream mcp-render.py.
 
 Exit 0 on success, 1 on validation/conflict error.
+
+GO-10 hook/gate bridge contract: the Go ``worktree-gate --materialize-hook``
+actuator is the primary hook authority. A delivered exit-2 refusal envelope
+fails CLOSED — ``RuntimeError`` naming the Go error, never a fallback. Every
+infrastructure failure (no verified binary, process crash, timeout, malformed
+or mismatched envelope) fails OPEN — exactly one
+``GO_HOOK_GATE_BRIDGE_FALLBACK`` warning, then the historical Python body.
 """
 
 from __future__ import annotations
@@ -1537,6 +1544,11 @@ def _refresh_gate(
     prior bytes; the lock is never partially updated (atomic write_lock).
     """
     util = _load_util()
+    if dest.is_symlink():
+        # D2: refresh reads and writes dest (backup + rewrite); a symlinked
+        # destination is refused before either happens — never through the
+        # link.
+        raise RuntimeError(_symlink_refusal(rel))
     prior = dest.read_bytes() if dest.exists() else None
     created_backup: Path | None = None
     try:
@@ -1564,34 +1576,189 @@ def _refresh_gate(
         raise
 
 
-def materialize_hook_script(
+# --- Hook/gate actuator: Go authority (GO_HOOK_GATE_BRIDGE_FALLBACK) ---------
+#
+# ``worktree-gate --materialize-hook`` owns the runtime-hook actuation
+# DECISION + EXECUTION: rendering (the 8 hook placeholders), the ownership
+# classification (the shared classifyManagedOverride core behind
+# --plan-classify — never re-ported), the write + chmod 0755, and the refresh
+# backup/rollback. Python keeps the lock load/write (set_gate_baseline +
+# write_lock), ALL printing, the refresh backup-path precomputation
+# (project-cache ownership), the gate-version resolution, and the TEMPORARY
+# fail-open fallback below (``GO_HOOK_GATE_BRIDGE_FALLBACK``), announced by
+# one warning line per degraded run. The historical Python body survives as
+# _python_materialize_hook_script.
+GO_HOOK_GATE_BRIDGE_FALLBACK = "GO_HOOK_GATE_BRIDGE_FALLBACK"
+GO_HOOK_GATE_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_hook_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded hook authority."""
+    warn(
+        f"{GO_HOOK_GATE_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python hook authority"
+    )
+
+
+def _is_hook_gate_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented materialize-hook
+    envelope."""
+    if not isinstance(envelope, dict):
+        return False
+    if not (
+        isinstance(envelope.get("rel"), str)
+        and isinstance(envelope.get("dest"), str)
+        and isinstance(envelope.get("wrote"), bool)
+        and isinstance(envelope.get("message"), str)
+    ):
+        return False
+    record = envelope.get("record")
+    if record is not None:
+        if not isinstance(record, dict):
+            return False
+        if not all(
+            isinstance(record.get(key), str)
+            for key in ("target", "sha256", "recipe", "source", "kind", "policy")
+        ):
+            return False
+    backup = envelope.get("backup")
+    if backup is not None and not isinstance(backup, str):
+        return False
+    warnings = envelope.get("warnings")
+    return isinstance(warnings, list) and all(
+        isinstance(line, str) for line in warnings
+    )
+
+
+def go_materialize_hook(plan: dict[str, Any]) -> dict[str, Any] | None:
+    """Run ``worktree-gate --materialize-hook``; return its envelope, or None.
+
+    None means the bridge could not run: no verified binary, the process
+    failed, or output that did not match the documented envelope. The caller
+    then falls back to the temporary Python hook body. This function emits the
+    single ``GO_HOOK_GATE_BRIDGE_FALLBACK`` warning naming the reason, so a
+    degraded run is never silent and never needs a second warning.
+
+    A Go refusal (nonzero exit with a stdout error envelope) FAILS CLOSED: it
+    raises ``RuntimeError`` naming the Go error string instead of returning
+    None — the refusal is the Go authority's valid decision and the Python
+    body must never bypass it.
+    """
+    try:
+        envelope_text = json.dumps(plan)
+    except (TypeError, ValueError) as exc:
+        _warn_hook_bridge_fallback(
+            f"the hook plan could not be encoded ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_template_bridge_home())
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_hook_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_hook_bridge_fallback("no verified worktree-gate binary")
+        return None
+    try:
+        proc = subprocess.run(
+            [str(binary), "--materialize-hook"],
+            input=envelope_text,
+            capture_output=True,
+            text=True,
+            timeout=GO_HOOK_GATE_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        # The Go process may have been killed mid-write, so this run is
+        # ambiguous (a potential double execution). Keep failing open — the
+        # Python body repairs the destination idempotently — but name the
+        # timeout (with the value in seconds) so an operator can tell a
+        # timeout apart from a crash.
+        _warn_hook_bridge_fallback(
+            f"worktree-gate timed out after "
+            f"{GO_HOOK_GATE_BRIDGE_TIMEOUT_SECONDS}s"
+        )
+        return None
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        # UnicodeDecodeError is a UnicodeError subclass: strict text=True
+        # decoding of stdout must degrade, not escape.
+        _warn_hook_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        stdout = json.loads(proc.stdout)
+    except ValueError:
+        stdout = None
+    if proc.returncode != 0:
+        if isinstance(stdout, dict) and isinstance(stdout.get("error"), str):
+            # Fail closed: a valid refusal envelope is the Go authority's
+            # decision — no Python fallback may bypass it.
+            raise RuntimeError(
+                f"worktree-gate refused the hook: {stdout['error']}"
+            )
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_hook_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} without a hook "
+            f"envelope ({detail})"
+        )
+        return None
+    if not _is_hook_gate_envelope(stdout):
+        _warn_hook_bridge_fallback(
+            "worktree-gate output did not match the materialize-hook envelope"
+        )
+        return None
+    return stdout
+
+
+def _hook_record_mismatch(
+    record: dict[str, Any], target: str, source: str, recipe_id: str | None,
+) -> str | None:
+    """Why ``record`` does not match the plan Python sent, or None.
+
+    The Go-returned record is only applied to the lock when every field
+    matches what this run actually requested (same spirit as the GO-08
+    results-count-mismatch guard) and its ``sha256`` is a 64-character
+    lowercase hex string. Any mismatch makes the envelope unusable.
+    """
+    for key, want in (
+        ("target", target),
+        ("source", source),
+        ("recipe", recipe_id),
+        ("kind", "gate"),
+        ("policy", "auto"),
+    ):
+        got = record.get(key)
+        if got != want:
+            return (
+                f"the returned record {key} {got!r} does not match the "
+                f"sent {key} {want!r}"
+            )
+    sha = record.get("sha256")
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+        return (
+            f"the returned record sha256 {sha!r} is not 64 lowercase hex "
+            "characters"
+        )
+    return None
+
+
+def _render_hook_content(
     recipe_dir: Path,
     hook: Any,
-    project_root: Path,
-    recipe_id: str,
-    merged_cfg: dict[str, Any] | None = None,
-    cli_home: Path | None = None,
-    refresh: bool = False,
+    merged_cfg: dict[str, Any] | None,
+    cli_home: Path | None,
 ) -> str:
-    """Materialize a generated runtime hook script with gate provenance.
+    """Render a hook script by substituting its gate placeholders.
 
-    Records a lock baseline of the exact bytes the CLI last rendered
-    (``kind="gate"``, ``policy="auto"``) and classifies before writing:
-
-    - baseline match + catalog drift → refresh and re-record (unmodified gate);
-    - byte mismatch (user-modified) → preserve + warn with refresh guidance;
-    - no baseline (unknown provenance) → preserve + warn, never seed.
-
-    ``refresh=True`` (the ``--refresh-gates`` flag, never set by ordinary sync)
-    replaces a customized gate only after its exact pre-refresh bytes are saved
-    to the cache-only immutable backup. Returns the project-relative path.
+    Shared by the Python fallback body and the post-Go lock reconciliation so
+    both always compare against the exact same rendered bytes.
     """
     src = recipe_dir / hook.script
     if not src.is_file():
         raise RuntimeError(f"hook script not found: {src}")
-    rel = hook_script_rel_path(recipe_id, hook)
-    dest = project_root / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
     content = src.read_text()
     for token, default in GATE_MODE_PLACEHOLDERS.items():
         if token in content:
@@ -1629,7 +1796,7 @@ def materialize_hook_script(
         if cli_home is not None:
             try:
                 version = _load_cli_version().read_installed_version(Path(cli_home))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 version = "dev"
         content = content.replace(GATE_VERSION_PLACEHOLDER, version)
     if TRACKER_CLI_HOME_PLACEHOLDER in content:
@@ -1642,8 +1809,263 @@ def materialize_hook_script(
             else ""
         )
         content = content.replace(TRACKER_LIB_INTERNAL_PLACEHOLDER, internal)
+    return content
 
+
+def _fallback_materialize_and_reconcile(
+    recipe_dir: Path,
+    hook: Any,
+    project_root: Path,
+    recipe_id: str,
+    merged_cfg: dict[str, Any] | None,
+    cli_home: Path | None,
+    refresh: bool,
+    reason: str,
+    pre_dest_bytes: bytes | None,
+    announce: bool = True,
+) -> str:
+    """Fall back to the Python body, then reconcile the lock with the disk.
+
+    A degraded bridge run can change the destination and still leave this
+    run without a usable envelope: an infrastructure failure (``output is
+    None`` — crash, timeout, malformed stdout), a null record on a
+    ``wrote: true`` envelope, or a record failing the plan or disk checks.
+    The fallback body alone then classifies the already-written bytes as "no
+    provenance" and preserves them: exactly the gate-on-disk-with-no-lock-
+    entry state the fail-closed design exists to prevent.
+    ``pre_dest_bytes`` is the destination snapshot taken before Go ran
+    (``None`` = absent). When the destination's bytes are identical to what
+    this CLI renders for the hook, the baseline is recorded for those ON-
+    DISK bytes. When they are not provably CLI-rendered:
+
+    * unchanged from the pre-Go snapshot: preserved, never overwritten and
+      never recorded (the historical user-modified / no-provenance behavior);
+    * changed by the degraded run: FAIL CLOSED — the bridge warns, then
+      raises ``RuntimeError`` instead of silently leaving an untracked gate.
+
+    ``announce=True`` (envelope-shaped failures, which emitted no bridge
+    warning yet) emits the single ``GO_HOOK_GATE_BRIDGE_FALLBACK`` warning;
+    ``announce=False`` (infrastructure failures, which already emitted it)
+    emits the same note as a plain warning without the token, so a degraded
+    run never carries two token warnings.
+    """
+    rel = hook_script_rel_path(recipe_id, hook)
+    dest = project_root / rel
+
+    def emit(note: str) -> None:
+        if announce:
+            _warn_hook_bridge_fallback(note)
+        else:
+            warn(note)
+
+    result = _python_materialize_hook_script(
+        recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home, refresh,
+    )
+    disk_sha = None
+    if dest.is_file():
+        digest = _load_util().sha256_bytes(dest.read_bytes())
+        if digest == _load_util().sha256_bytes(
+            _render_hook_content(recipe_dir, hook, merged_cfg, cli_home).encode()
+        ):
+            disk_sha = digest
+    if disk_sha is not None:
+        lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+        lock = load_lock(lock_path)
+        set_gate_baseline(
+            lock, rel, disk_sha, recipe=recipe_id, source=hook.script,
+        )
+        write_lock(lock_path, lock)
+        emit(reason + "; reconciled the lock with the on-disk gate bytes")
+        return result
+    post_bytes = dest.read_bytes() if dest.is_file() else None
+    if post_bytes != pre_dest_bytes:
+        emit(
+            reason + "; the on-disk bytes are not proven CLI-rendered, so no "
+            "baseline was recorded and the destination changed"
+        )
+        raise RuntimeError(
+            f"hook {rel}: the degraded bridge run left destination bytes the "
+            "CLI cannot prove it rendered; refusing to leave an untracked "
+            f"gate on disk. Inspect or remove {rel} and run sync again:\n"
+            f"  rm {rel} && ai-specs sync"
+        )
+    emit(
+        reason + "; the on-disk bytes are not proven CLI-rendered, so no "
+        "baseline was recorded and no bytes were changed"
+    )
+    return result
+
+
+def materialize_hook_script(
+    recipe_dir: Path,
+    hook: Any,
+    project_root: Path,
+    recipe_id: str,
+    merged_cfg: dict[str, Any] | None = None,
+    cli_home: Path | None = None,
+    refresh: bool = False,
+) -> str:
+    """Materialize a generated runtime hook script through the Go actuator.
+
+    ``worktree-gate --materialize-hook`` owns rendering (the 8 hook
+    placeholders), the managed-override classification (the shared
+    classifyManagedOverride core), the write + chmod 0755, and the refresh
+    backup/rollback; Python keeps the lock load/write (set_gate_baseline +
+    write_lock), all printing, the backup-path precomputation (project-cache
+    ownership) and the gate-version resolution. Two failure shapes:
+
+    * FAIL CLOSED: a delivered exit-2 REFUSAL envelope (nonzero exit with a
+      stdout error envelope) raises ``RuntimeError`` naming the Go error —
+      the Go authority's decision is never bypassed by the Python body.
+    * FAIL OPEN: every infrastructure failure (no verified binary, process
+      crash, timeout, malformed or mismatched envelope) warns exactly once
+      (``GO_HOOK_GATE_BRIDGE_FALLBACK``) and falls back to the historical
+      Python body (_python_materialize_hook_script), reconciling the lock
+      with the bytes the degraded run actually left on disk. Bytes that are
+      provably CLI-rendered get their baseline recorded; bytes that CHANGED
+      from the pre-Go snapshot but cannot be proven CLI-rendered fail closed
+      (RuntimeError) instead of silently leaving an untracked gate; bytes
+      the degraded run never touched keep the historical preserve behavior
+      (user-modified / no provenance).
+
+    ``refresh=True`` (the ``--refresh-gates`` flag, never set by ordinary
+    sync) replaces a customized gate only after its exact pre-refresh bytes
+    are saved to the cache-only immutable backup (the path is precomputed
+    here and handed to Go in the envelope). Returns the project-relative
+    path.
+    """
+    src = recipe_dir / hook.script
+    if not src.is_file():
+        raise RuntimeError(f"hook script not found: {src}")
+    rel = hook_script_rel_path(recipe_id, hook)
+    dest = project_root / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink():
+        # One pre-flight guard for both paths and both authorities: the
+        # fallback body (write + refresh) and Go refuse the same way, before
+        # any read or write of the destination (including the refresh backup
+        # read below).
+        raise RuntimeError(_symlink_refusal(rel))
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
+    entry = (lock.get("managed") or {}).get(rel)
+    # Gate-version resolution stays in Python (the version module is
+    # Python-owned); the envelope carries the resolved value, "dev" on any
+    # resolution failure. The cli home is resolved here for the same reason;
+    # Go substitutes both verbatim.
+    gate_version = "dev"
+    if cli_home is not None:
+        try:
+            gate_version = _load_cli_version().read_installed_version(Path(cli_home))
+        except Exception:  # noqa: BLE001 - version resolution fails open to dev
+            gate_version = "dev"
+    # The immutable refresh backup path is precomputed here (project-cache
+    # ownership): Go only writes the snapshot bytes when the path is absent.
+    backup_path = ""
+    if refresh and dest.is_file():
+        backup = _load_project_cache().gate_backup_path(
+            project_root,
+            rel,
+            _load_util().sha256_bytes(dest.read_bytes()),
+            cli_home=cli_home,
+        )
+        backup_path = str(backup)
+    # Snapshot the pre-Go destination state (None = absent) so the fallback
+    # reconciliation can tell a degraded run that changed the destination
+    # from one that never touched it.
+    pre_dest_bytes = dest.read_bytes() if dest.is_file() else None
+    output = go_materialize_hook(
+        {
+            "project_root": str(project_root),
+            "recipe_dir": str(recipe_dir),
+            "recipe_id": recipe_id,
+            "script": hook.script,
+            "config": merged_cfg,
+            "cli_home": str(Path(cli_home).resolve()) if cli_home is not None else "",
+            "gate_version": gate_version,
+            "refresh": refresh,
+            "managed_entry": entry,
+            "backup_path": backup_path,
+        }
+    )
+    if output is None:
+        # Infrastructure failure: go_materialize_hook already emitted the one
+        # GO_HOOK_GATE_BRIDGE_FALLBACK warning, so the reconciliation runs
+        # with announce=False (no second token warning).
+        return _fallback_materialize_and_reconcile(
+            recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
+            refresh, "the Go bridge produced no usable output",
+            pre_dest_bytes=pre_dest_bytes, announce=False,
+        )
+    for line in output["warnings"]:
+        warn(line)
+    record = output.get("record")
+    if output.get("wrote") and record is None:
+        # The Go side reports it wrote the destination but returned no
+        # ownership record; accepting that would leave the gate on disk with
+        # no lock entry. The envelope is unusable: run the Python body, then
+        # reconcile the lock with the bytes Go actually left on disk.
+        return _fallback_materialize_and_reconcile(
+            recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
+            refresh, "wrote without a record",
+            pre_dest_bytes=pre_dest_bytes,
+        )
+    if record is not None:
+        mismatch = _hook_record_mismatch(record, rel, hook.script, recipe_id)
+        if mismatch is None and (
+            not dest.is_file()
+            or _load_util().sha256_bytes(dest.read_bytes()) != record["sha256"]
+        ):
+            # The record is applied to the lock only after the destination
+            # actually on disk is hashed and matches the recorded digest —
+            # the envelope proves nothing about bytes the CLI never wrote.
+            mismatch = (
+                "the returned record sha256 does not match the destination "
+                "on disk"
+            )
+        if mismatch is not None:
+            # The returned record must match the plan this run actually sent
+            # AND the bytes on disk; a mismatched envelope must never write
+            # its ownership metadata into the lock.
+            return _fallback_materialize_and_reconcile(
+                recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
+                refresh, mismatch,
+                pre_dest_bytes=pre_dest_bytes,
+            )
+        set_gate_baseline(
+            lock,
+            record["target"],
+            record["sha256"],
+            recipe=record["recipe"],
+            source=record["source"],
+        )
+        write_lock(lock_path, lock)
+    print(f"    {output['message']}")
+    return rel
+
+
+def _python_materialize_hook_script(
+    recipe_dir: Path,
+    hook: Any,
+    project_root: Path,
+    recipe_id: str,
+    merged_cfg: dict[str, Any] | None = None,
+    cli_home: Path | None = None,
+    refresh: bool = False,
+) -> str:
+    """TEMPORARY fail-open Python hook authority (GO_HOOK_GATE_BRIDGE_FALLBACK).
+
+    Kept only as the fallback; ``worktree-gate --materialize-hook`` is the
+    primary authority. It is the historical Python hook body, retained as the
+    fallback. A timed-out Go run may already have written the destination;
+    this body then rewrites it idempotently.
+    """
     util = _load_util()
+    rel = hook_script_rel_path(recipe_id, hook)
+    dest = project_root / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    content = _render_hook_content(recipe_dir, hook, merged_cfg, cli_home)
+
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
     lock = load_lock(lock_path)
     target = rel
@@ -1656,6 +2078,23 @@ def materialize_hook_script(
         )
         write_lock(lock_path, lock)
 
+    def write_content() -> None:
+        # Two-layer symlink guard (Go: the Lstat pre-check inside
+        # writeTemplateContent + syscall.O_NOFOLLOW): both authorities spell
+        # the same refusal and never write through a link.
+        if dest.is_symlink():
+            raise RuntimeError(_symlink_refusal(rel))
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(dest, flags, 0o755)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise RuntimeError(_symlink_refusal(rel)) from exc
+            raise
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content.encode())
+        os.chmod(dest, 0o755)
+
     if refresh:
         _refresh_gate(
             project_root, dest, target, content, lock, lock_path,
@@ -1666,8 +2105,7 @@ def materialize_hook_script(
 
     state = util.classify_managed_override(dest, entry, would_write=content)
     if state == "missing":
-        dest.write_text(content)
-        os.chmod(dest, 0o755)
+        write_content()
         record()
         print(f"    ✓ hook script {rel}")
         return rel
@@ -1678,8 +2116,7 @@ def materialize_hook_script(
     if state == "managed_stale":
         # Baseline matches current bytes: the CLI rendered this gate, so an
         # ordinary sync may force-update it and re-record the baseline.
-        dest.write_text(content)
-        os.chmod(dest, 0o755)
+        write_content()
         record()
         print(f"    ✓ hook refreshed (baseline matched) {rel}")
         return rel

@@ -123,7 +123,20 @@
 # syscall.O_NOFOLLOW so no link can be swapped in between the Lstat pre-check
 # and the write; no new asset, no second trust root), with the canonical
 # go1.24.13 toolchain via the same command above.
-70f22ba8ccc2ed7238e4f35306b2673828dd881187353e2f058fee20fd456d2e  worktree-gate-darwin-amd64
-a93fb6b6a2bc9f79043fd43011072e97478fdd0209d9b6b47941711f8f8a263e  worktree-gate-darwin-arm64
-091854c964017bc7543abea1bce7fd34b2a4ba35e50f667616b0a5e7a1d46fec  worktree-gate-linux-amd64
-f21d11ed8cc4b37c69a84be073695124a1dcf3a5baaa2dac8e5389be67b77239  worktree-gate-linux-arm64
+#
+#
+# Regenerated for the go-hook-gate strangler slice (the same four-arch asset
+# gains the Go-owned `--materialize-hook` runtime hook-gate actuator: shared
+# classify core, 8-placeholder rendering, write/chmod 0755 and refresh
+# backup/rollback; no new asset, no second trust root), with the canonical
+# go1.24.13 toolchain via the same command above.
+#
+# Regenerated for the go-hook-gate review correction R4-001 (the same four-arch
+# asset's refresh now verifies snapshot completeness against the content-hash
+# key and writes partial/missing snapshots atomically via temp+Sync+rename; no
+# new asset, no second trust root), with the canonical go1.24.13 toolchain via
+# the same command above.
+82525ba88964317cac6a317dd7fba8c00487e9b6697fa182afb13e69aceede37  worktree-gate-darwin-amd64
+d64953e00fbdd0587927e77c35f0465dcb484aaf672f2c6201fa1252a03c6948  worktree-gate-darwin-arm64
+7d515feddaec7afbc281b4ae3a6e761e69b92871e3f383224fbc46435c4a127d  worktree-gate-linux-amd64
+aa7c1cd3bd79436f987610e3853be9080383a560cf539de485141aad1027ac9a  worktree-gate-linux-arm64

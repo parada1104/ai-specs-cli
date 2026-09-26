@@ -127,6 +127,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// and the record payload; Python keeps lock load/write, prints and the
 	// fail-open fallback.
 	materializeTemplateCmd := fs.Bool("materialize-template", false, "materialize one governed template from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
+	// Hook/gate actuator is the Go strangler slice for the Python
+	// materialize_hook_script authority: Go owns the 8-placeholder rendering,
+	// classification (the shared classify core), the write + chmod 0755 and
+	// the refresh backup/rollback; Python keeps lock load/write, prints,
+	// backup-path precomputation, version resolution and the fail-open
+	// fallback.
+	materializeHookCmd := fs.Bool("materialize-hook", false, "materialize one runtime hook gate script from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -232,6 +239,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runApplyCopy(stdin, stdout, stderr)
 	case *materializeTemplateCmd:
 		return runMaterializeTemplate(stdin, stdout, stderr)
+	case *materializeHookCmd:
+		return runMaterializeHook(stdin, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
 	case *tokenize:
