@@ -261,7 +261,11 @@ func TestResolveTemplateDestLiteralJoin(t *testing.T) {
 	}
 	for _, tc := range cases {
 		want := filepath.Join(root, filepath.FromSlash(tc.wantRel))
-		if got := resolveTemplateDest(root, tc.target); got != want {
+		got, gitResolved := resolveTemplateDest(root, tc.target)
+		if gitResolved {
+			t.Errorf("resolveTemplateDest(%q) reported gitResolved for a literal target", tc.target)
+		}
+		if got != want {
 			t.Errorf("resolveTemplateDest(%q) = %q, want %q", tc.target, got, want)
 		}
 	}
@@ -278,8 +282,42 @@ func TestResolveTemplateDestGitPathPlainRepo(t *testing.T) {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	want := filepath.Join(root, ".git", "hooks", "post-merge")
-	if got := resolveTemplateDest(root, ".git/hooks/post-merge"); got != want {
+	got, gitResolved := resolveTemplateDest(root, ".git/hooks/post-merge")
+	if !gitResolved {
+		t.Errorf("resolveTemplateDest = %q, gitResolved = false, want a clean git resolution", got)
+	}
+	if got != want {
 		t.Errorf("resolveTemplateDest = %q, want %q", got, want)
+	}
+}
+
+// TestResolveTemplateDestGitPathUncleanRemainder pins the containment
+// semantics of the git resolution: inside a REAL repository,
+// `git rev-parse --git-path` honors parent-directory components (it exits 0
+// emitting an escaping path for "../../outside/evil"), so an unclean
+// ".git/" remainder must never count as git-resolved and must fall back to
+// the literal join — keeping the target subject to containment.
+func TestResolveTemplateDestGitPathUncleanRemainder(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	cmd := exec.Command("git", "-C", root, "init", "-q")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	cases := []struct{ target, wantRel string }{
+		{".git/../../escape.sh", "../escape.sh"},
+		{".git/hooks/../../../escape.sh", "../escape.sh"},
+		{".git/../hooks/x", "hooks/x"},
+	}
+	for _, tc := range cases {
+		want := filepath.Join(root, filepath.FromSlash(tc.wantRel))
+		got, gitResolved := resolveTemplateDest(root, tc.target)
+		if gitResolved {
+			t.Errorf("resolveTemplateDest(%q) reported gitResolved for an unclean remainder", tc.target)
+		}
+		if got != want {
+			t.Errorf("resolveTemplateDest(%q) = %q, want literal join %q", tc.target, got, want)
+		}
 	}
 }
 
@@ -312,7 +350,11 @@ func TestResolveTemplateDestGitPathLinkedWorktree(t *testing.T) {
 	run("-C", main, "worktree", "add", "-q", "-b", "feature", wt)
 
 	want := filepath.Join(main, ".git", "hooks", "post-merge")
-	if got := resolveTemplateDest(wt, ".git/hooks/post-merge"); got != want {
+	got, gitResolved := resolveTemplateDest(wt, ".git/hooks/post-merge")
+	if !gitResolved {
+		t.Errorf("resolveTemplateDest(worktree) = %q, gitResolved = false, want a clean git resolution", got)
+	}
+	if got != want {
 		t.Errorf("resolveTemplateDest(worktree) = %q, want shared hooks dir %q", got, want)
 	}
 }
@@ -324,7 +366,11 @@ func TestResolveTemplateDestFallback(t *testing.T) {
 	requireGit(t)
 	root := t.TempDir() // not a git repository
 	want := filepath.Join(root, ".git", "hooks", "post-merge")
-	if got := resolveTemplateDest(root, ".git/hooks/post-merge"); got != want {
+	got, gitResolved := resolveTemplateDest(root, ".git/hooks/post-merge")
+	if gitResolved {
+		t.Errorf("resolveTemplateDest(non-repo) reported gitResolved on the fallback path")
+	}
+	if got != want {
 		t.Errorf("resolveTemplateDest(non-repo) = %q, want literal %q", got, want)
 	}
 }
@@ -797,6 +843,190 @@ func TestWriteTemplateContentRefusesSymlinkDest(t *testing.T) {
 				t.Fatalf("dangling link target was created: %v", statErr)
 			}
 		})
+	}
+}
+
+// TestTemplateActuatorEscapingTargetRefused pins R1-dest-containment-absent:
+// a target containing `..` that resolves OUTSIDE the project root is refused
+// with an exit-2 decision envelope, and nothing is written outside the
+// project (the literal join used to clean the path and write wherever it
+// landed). A target whose `..` stays inside the root ("a/../b.sh") remains
+// allowed — only escapes are refusals.
+func TestTemplateActuatorEscapingTargetRefused(t *testing.T) {
+	in := writeTemplateSource(t, "echo hi\n", 0o644)
+	in.Target = "../outside/escape.sh"
+	code, out, stderr := runTemplateActuatorCLI(t, in)
+	if code != 2 {
+		t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+	}
+	if out.Error == nil || *out.Error != templateEscapingTargetRefusal(in.Target) {
+		t.Fatalf("error = %#v, want %q", out.Error, templateEscapingTargetRefusal(in.Target))
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(in.ProjectRoot), "outside", "escape.sh")); !os.IsNotExist(err) {
+		t.Errorf("file written outside the project root: %v", err)
+	}
+	// The in-root twin of the same escape shape must keep materializing.
+	passed := writeTemplateSource(t, "echo hi\n", 0o644)
+	passed.Target = "ai-specs/../stays.sh"
+	code, out, stderr = runTemplateActuatorCLI(t, passed)
+	if code != 0 {
+		t.Fatalf("in-root `..` target: exit = %d, stderr %q, out %#v", code, stderr, out)
+	}
+	if _, err := os.Stat(filepath.Join(passed.ProjectRoot, "stays.sh")); err != nil {
+		t.Errorf("in-root target not materialized: %v", err)
+	}
+}
+
+// TestTemplateActuatorGitPrefixEscapeRefused pins R1-git-prefix-containment-bypass:
+// a ".git/"-prefixed target whose remainder is an UNCLEAN path (carries `..`
+// components) must be refused. `git rev-parse --git-path` honors
+// parent-directory components (it exits 0 emitting an escaping path for
+// "../../outside/evil"), and both git-failure fallbacks return the literal
+// join, which filepath.Join also cleans — so a target like
+// ".git/../../escape.sh" must never claim the ".git/" prefix exemption from
+// destination containment.
+func TestTemplateActuatorGitPrefixEscapeRefused(t *testing.T) {
+	for _, target := range []string{
+		".git/../../escape.sh",
+		".git/hooks/../../../escape.sh",
+	} {
+		t.Run(target, func(t *testing.T) {
+			in := writeTemplateSource(t, "echo hi\n", 0o644)
+			in.Target = target
+			code, out, stderr := runTemplateActuatorCLI(t, in)
+			if code != 2 {
+				t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+			}
+			if out.Error == nil || *out.Error != templateEscapingTargetRefusal(in.Target) {
+				t.Fatalf("error = %#v, want %q", out.Error, templateEscapingTargetRefusal(in.Target))
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(in.ProjectRoot), "escape.sh")); !os.IsNotExist(err) {
+				t.Errorf("file written outside the project root: %v", err)
+			}
+		})
+	}
+}
+
+// TestTemplateActuatorSymlinkedAncestorRefused pins R1-ancestor-symlink-traversal-deferred
+// end to end: a symlinked ANCESTOR directory of the destination (ai-specs →
+// outside the project) redirects the write outside the project even though
+// the destination path is lexically contained. The actuator refuses with an
+// exit-2 decision envelope and nothing is created through the link.
+func TestTemplateActuatorSymlinkedAncestorRefused(t *testing.T) {
+	in := writeTemplateSource(t, "echo hi\n", 0o644)
+	outside := filepath.Join(filepath.Dir(in.ProjectRoot), "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(in.ProjectRoot, "ai-specs")); err != nil {
+		t.Fatalf("symlink creation denied on this platform: %v", err)
+	}
+	code, out, stderr := runTemplateActuatorCLI(t, in)
+	if code != 2 {
+		t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+	}
+	if out.Error == nil || *out.Error != templateAncestorSymlinkRefusal(in.Target) {
+		t.Fatalf("error = %#v, want %q", out.Error, templateAncestorSymlinkRefusal(in.Target))
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "recipes")); !os.IsNotExist(err) {
+		t.Errorf("directory created through the symlinked ancestor: %v", err)
+	}
+}
+
+// TestWriteTemplateContentRefusesSymlinkedAncestor pins the ancestor walk on
+// its guard unit (R1-ancestor-symlink-traversal-deferred): an ancestor
+// directory of dest below the containment root that is a symlink is refused
+// with errAncestorSymlink before MkdirAll can create anything through the
+// link, and a real-directory ancestor chain still writes.
+func TestWriteTemplateContentRefusesSymlinkedAncestor(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "project")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "ai-specs")); err != nil {
+		t.Fatalf("symlink creation denied on this platform: %v", err)
+	}
+	dest := filepath.Join(root, "ai-specs", "recipes", "x.sh")
+	err := ensureTemplateAncestorsReal(root, dest)
+	if !errors.Is(err, errAncestorSymlink) {
+		t.Fatalf("err = %v, want errAncestorSymlink", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(outside, "recipes")); !os.IsNotExist(statErr) {
+		t.Errorf("directory created through the symlinked ancestor: %v", statErr)
+	}
+	// The happy path is unchanged: a real-directory ancestor chain passes the
+	// walk and writeTemplateContent writes through it.
+	ok := filepath.Join(root, "ai-specs-real", "recipes", "x.sh")
+	if err := ensureTemplateAncestorsReal(root, ok); err != nil {
+		t.Fatalf("real ancestors: err = %v", err)
+	}
+	if err := writeTemplateContent(ok, []byte("echo x\n"), 0o644); err != nil {
+		t.Fatalf("real ancestors: write err = %v", err)
+	}
+	if got, readErr := os.ReadFile(ok); readErr != nil || string(got) != "echo x\n" {
+		t.Errorf("real-ancestor write = %q (%v)", got, readErr)
+	}
+}
+
+// TestTemplateActuatorDirectorySourceRefused pins the non-regular-source arm
+// of the source guard: a source that exists but is a directory refuses with
+// the same "template source not found" reference string (the
+// srcInfo.Mode().IsRegular() check), exit 2.
+func TestTemplateActuatorDirectorySourceRefused(t *testing.T) {
+	in := writeTemplateSource(t, "echo hi\n", 0o644)
+	if err := os.MkdirAll(filepath.Join(in.RecipeDir, "templates", "missing.sh"), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	in.Source = "templates/missing.sh"
+	code, out, stderr := runTemplateActuatorCLI(t, in)
+	if code != 2 {
+		t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+	}
+	want := fmt.Sprintf("template source not found: %s", filepath.Join(in.RecipeDir, "templates", "missing.sh"))
+	if out.Error == nil || *out.Error != want {
+		t.Fatalf("error = %#v, want %q", out.Error, want)
+	}
+}
+
+// TestPyConfigStringDomain pins the Python str() parity of pyConfigString
+// over the whole config value domain the JSON decoder can deliver: strings
+// verbatim, capitalized bools, None for null, and numbers as their literal
+// text (json.Number preserves the decoded literal).
+func TestPyConfigStringDomain(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want string
+	}{
+		{"string", "standalone", "standalone"},
+		{"true", true, "True"},
+		{"false", false, "False"},
+		{"null", nil, "None"},
+		{"int literal", json.Number("42"), "42"},
+		{"float literal", json.Number("1.5"), "1.5"},
+	}
+	for _, tc := range cases {
+		if got := pyConfigString(tc.in); got != tc.want {
+			t.Errorf("%s: pyConfigString(%v) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestTemplateConfigOrNumericZeroFallback pins `str(cfg.get(key) or default)`
+// falsiness for numbers: a numeric zero config value is falsy in Python and
+// falls back to the default, while any other number is used verbatim.
+func TestTemplateConfigOrNumericZeroFallback(t *testing.T) {
+	cfg := map[string]any{"worktrees_dir": json.Number("0"), "integration_branch": json.Number("7")}
+	if got := templateConfigOr(cfg, "worktrees_dir", ".worktrees"); got != ".worktrees" {
+		t.Errorf("numeric zero = %q, want the default", got)
+	}
+	if got := templateConfigOr(cfg, "integration_branch", "main"); got != "7" {
+		t.Errorf("numeric non-zero = %q, want \"7\"", got)
 	}
 }
 
