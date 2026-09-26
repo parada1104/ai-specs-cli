@@ -111,7 +111,13 @@
 # --apply-copy dir-mode copystat parity; no new asset, no second trust root),
 # with the canonical go1.24.13 toolchain via the same command above.
 #
-d1391af0277e40212be47c2c793747012c529b3375f6fdee2ae81f24d956cd31  worktree-gate-darwin-amd64
-b3e0872e4c210efff296f767d86574fcf53f37129d69accc99ff3668cb6f3598  worktree-gate-darwin-arm64
-ee985bacd9925ba3944f91e854d998ad39dce94a69608ead8cc847e8253d5310  worktree-gate-linux-amd64
-fd591d562e2be5f563207980c521181c8f23a1d27c82833ca5a6225f6ac0a937  worktree-gate-linux-arm64
+# Regenerated for the go-template-actuator strangler slice (the same four-arch
+# asset gains the Go-owned ``--materialize-template`` template actuator: git-path
+# dest resolution, rendering, the shared classify core, write + chmod and the
+# record payload; no new asset, no second trust root), with the canonical
+# go1.24.13 toolchain via the same command above.
+#
+6d615f8b8f937c6542cabef3f7adf38fe554d69b52b77fd339f49ba1b06ac312  worktree-gate-darwin-amd64
+b979f57ff2546f69dd1eccefae6540cdbbd5ddfc6d2e55d3b1cb4d7e9575d900  worktree-gate-darwin-arm64
+662e122366eaf1b7f6a5474461051a166bd008e43363ac3c0de163ce76e5abbc  worktree-gate-linux-amd64
+84a699b409f8d8eb55d8f68f9393e0ee5d1e6a21a780a77cb4db66484459e754  worktree-gate-linux-arm64
