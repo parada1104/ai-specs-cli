@@ -246,6 +246,15 @@ func resolveTemplateDest(projectRoot, target string) string {
 // authority agree.
 var errDestSymlink = errors.New("destination is a symlink")
 
+// errAncestorSymlink reports a symlinked ANCESTOR directory of the
+// destination (below the containment root). MkdirAll and the open follow
+// directory symlinks, so a planted link in the path would silently redirect
+// the write outside the project even though the destination path is lexically
+// contained. The Python fallback body has no equivalent guard yet — this
+// refusal is Go-authority-only and the bridge fails closed on it (safe
+// direction); Lane C1 is asked to mirror it.
+var errAncestorSymlink = errors.New("ancestor path is a symlink")
+
 // templateSymlinkRefusal is the actionable refusal for a symlinked destination.
 // Both authorities emit it verbatim.
 func templateSymlinkRefusal(target string) string {
@@ -255,13 +264,84 @@ func templateSymlinkRefusal(target string) string {
 		target, target)
 }
 
-// writeTemplateRefusal renders a write failure, mapping the symlink guard to
-// its actionable refusal instead of the generic write diagnostic.
+// templateAncestorSymlinkRefusal is the actionable refusal for a symlinked
+// ancestor directory on the destination path.
+func templateAncestorSymlinkRefusal(target string) string {
+	return fmt.Sprintf(
+		"ancestor path of %s is a symlink; refusing to write through it. "+
+			"Replace it with a real directory and run sync again", target)
+}
+
+// templateEscapingTargetRefusal is the actionable refusal for a target whose
+// resolved destination lands outside the project root.
+func templateEscapingTargetRefusal(target string) string {
+	return fmt.Sprintf(
+		"template target %s escapes the project root; refusing to write outside the project. "+
+			"Fix the recipe target and run sync again", target)
+}
+
+// writeTemplateRefusal renders a write failure, mapping the symlink guards to
+// their actionable refusals instead of the generic write diagnostic.
 func writeTemplateRefusal(target, dest string, err error) string {
+	if errors.Is(err, errAncestorSymlink) {
+		return templateAncestorSymlinkRefusal(target)
+	}
 	if errors.Is(err, errDestSymlink) {
 		return templateSymlinkRefusal(target)
 	}
 	return fmt.Sprintf("write template %s: %v", dest, err)
+}
+
+// templatePathContained reports whether dest stays inside root in the cleaned
+// lexical sense (no `..` escape). Symlink escapes are handled separately by
+// firstSymlinkedAncestor and the O_NOFOLLOW open.
+func templatePathContained(root, dest string) bool {
+	rel, err := filepath.Rel(root, dest)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// firstSymlinkedAncestor walks the ancestor directories of dest below the
+// containment root, top down, and returns the first one that is a symlink.
+// Ancestors at or above root are not inspected: project_root arrives resolved
+// from Python, and a git-resolved destination outside the root (the linked-
+// worktree shared hooks directory) is trusted to git's own emission. The walk
+// runs before MkdirAll so nothing is ever created through a planted link;
+// the window between this walk and the open is narrowed, not eliminated
+// (a full fix needs an openat chain), which the residual-race note documents.
+func firstSymlinkedAncestor(root, dest string) (string, bool) {
+	rel, err := filepath.Rel(root, dest)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	dir := filepath.Dir(rel)
+	if dir == "." {
+		return "", false
+	}
+	cur := root
+	for _, part := range strings.Split(dir, string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		if info, statErr := os.Lstat(cur); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return cur, true
+		}
+	}
+	return "", false
+}
+
+// ensureTemplateAncestorsReal refuses a destination whose ancestor chain below
+// the containment root carries a symlink, before MkdirAll can create anything
+// through the link. Called once per --materialize-template run, covering both
+// write paths (fresh write and managed_stale refresh).
+func ensureTemplateAncestorsReal(root, dest string) error {
+	if ancestor, isLink := firstSymlinkedAncestor(root, dest); isLink {
+		return fmt.Errorf("%w: %s", errAncestorSymlink, ancestor)
+	}
+	return nil
 }
 
 // writeTemplateContent mirrors Python write_content: mkdir -p the parent,
@@ -269,15 +349,16 @@ func writeTemplateRefusal(target, dest string, err error) string {
 // (os.WriteFile applies the mode only at creation, so the explicit chmod is
 // the os.chmod(dest, src.st_mode) parity).
 //
-// A destination that exists as a symlink (dangling or not) is refused before
-// anything is written: os.WriteFile follows the link, so a planted link could
-// redirect the refresh outside the project.
-//
-// The guard is two layers (R3-toctou-go-dest-guard): the Lstat pre-check
-// yields the early actionable refusal and covers the dangling-link/not_exists
-// path, and the open itself carries syscall.O_NOFOLLOW so no link can be
-// swapped in between the check and the write (ELOOP maps back to
-// errDestSymlink).
+// The guard is three layers (R3-toctou-go-dest-guard, R1-dest-containment-absent,
+// R1-ancestor-symlink-traversal-deferred, R1-toctou-residual-symlink-race):
+// the caller runs the containment + ancestor-symlink checks
+// (ensureTemplateAncestorsReal) before calling this, the Lstat pre-check here
+// yields the early actionable refusal for a symlinked destination itself and
+// covers the dangling-link/not_exists path, and the open itself carries
+// syscall.O_NOFOLLOW so no link can be swapped in between the check and the
+// write (ELOOP maps back to errDestSymlink). The chmod goes through the OPEN
+// FILE HANDLE (file.Chmod) instead of the path, so a link swapped in after
+// the write can never be chmod'ed through.
 func writeTemplateContent(dest string, content []byte, mode os.FileMode) error {
 	if info, lstatErr := os.Lstat(dest); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
 		return errDestSymlink
@@ -296,10 +377,17 @@ func writeTemplateContent(dest string, content []byte, mode os.FileMode) error {
 		file.Close()
 		return err
 	}
+	// Handle-based chmod: os.Chmod(dest, ...) would follow a link swapped in
+	// between the check and the chmod (the residual Lstat→write race); the open
+	// handle is the exact inode this function just wrote.
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
+		return err
+	}
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Chmod(dest, mode)
+	return nil
 }
 
 // runMaterializeTemplate is the --materialize-template command: one JSON
@@ -362,6 +450,20 @@ func runMaterializeTemplate(stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	content := renderTemplateBytes(srcBytes, in.Config)
 	dest := resolveTemplateDest(in.ProjectRoot, in.Target)
+	// R1-dest-containment-absent: a literal target containing `..` could clean
+	// itself outside the project root. Git-resolved destinations are trusted to
+	// git's own emission (the shared hooks dir of a linked worktree lives in
+	// the main repository by design), so only literal targets are contained.
+	if !strings.HasPrefix(in.Target, ".git/") && !templatePathContained(in.ProjectRoot, dest) {
+		return refuse(templateEscapingTargetRefusal(in.Target))
+	}
+	// R1-ancestor-symlink-traversal-deferred: MkdirAll and the open follow
+	// directory symlinks, so a planted link in the ancestor chain would
+	// redirect the write outside the project even though the destination is
+	// lexically contained.
+	if err := ensureTemplateAncestorsReal(in.ProjectRoot, dest); err != nil {
+		return refuse(writeTemplateRefusal(in.Target, dest, err))
+	}
 	record := func(sha string) *templateActuatorRecord {
 		return &templateActuatorRecord{
 			Target: in.Target,

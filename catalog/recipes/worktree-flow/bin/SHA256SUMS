@@ -136,7 +136,14 @@
 # key and writes partial/missing snapshots atomically via temp+Sync+rename; no
 # new asset, no second trust root), with the canonical go1.24.13 toolchain via
 # the same command above.
-82525ba88964317cac6a317dd7fba8c00487e9b6697fa182afb13e69aceede37  worktree-gate-darwin-amd64
-d64953e00fbdd0587927e77c35f0465dcb484aaf672f2c6201fa1252a03c6948  worktree-gate-darwin-arm64
-7d515feddaec7afbc281b4ae3a6e761e69b92871e3f383224fbc46435c4a127d  worktree-gate-linux-amd64
-aa7c1cd3bd79436f987610e3853be9080383a560cf539de485141aad1027ac9a  worktree-gate-linux-arm64
+#
+# Regenerated for the go-template-actuator advisory-hardening batch (the same
+# four-arch asset now refuses a template target whose resolved destination
+# escapes the project root, refuses a symlinked ancestor directory on the
+# destination path, and chmods through the open file handle instead of the
+# destination path; no new asset, no second trust root), with the canonical
+# go1.24.13 toolchain via the same command above.
+2703846de17de1bf14c0a682b9c6344488626f495ce65abccb2ca8d9239a6680  worktree-gate-darwin-amd64
+e6cb7c0dacdf7cccd47a59076cace365d69169592805a7db9d1ee31de468f8c2  worktree-gate-darwin-arm64
+84384ea1a6046280347328b19930bb8f8cd5427ff6ec3ab2756bdcdc2d861e03  worktree-gate-linux-amd64
+92968521541cca6c0ef496a89f2b5d0f755e3259d3680b844a63b2f4f030c331  worktree-gate-linux-arm64

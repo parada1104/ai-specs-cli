@@ -800,6 +800,103 @@ func TestWriteTemplateContentRefusesSymlinkDest(t *testing.T) {
 	}
 }
 
+// TestTemplateActuatorEscapingTargetRefused pins R1-dest-containment-absent:
+// a target containing `..` that resolves OUTSIDE the project root is refused
+// with an exit-2 decision envelope, and nothing is written outside the
+// project (the literal join used to clean the path and write wherever it
+// landed). A target whose `..` stays inside the root ("a/../b.sh") remains
+// allowed — only escapes are refusals.
+func TestTemplateActuatorEscapingTargetRefused(t *testing.T) {
+	in := writeTemplateSource(t, "echo hi\n", 0o644)
+	in.Target = "../outside/escape.sh"
+	code, out, stderr := runTemplateActuatorCLI(t, in)
+	if code != 2 {
+		t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+	}
+	if out.Error == nil || *out.Error != templateEscapingTargetRefusal(in.Target) {
+		t.Fatalf("error = %#v, want %q", out.Error, templateEscapingTargetRefusal(in.Target))
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(in.ProjectRoot), "outside", "escape.sh")); !os.IsNotExist(err) {
+		t.Errorf("file written outside the project root: %v", err)
+	}
+	// The in-root twin of the same escape shape must keep materializing.
+	passed := writeTemplateSource(t, "echo hi\n", 0o644)
+	passed.Target = "ai-specs/../stays.sh"
+	code, out, stderr = runTemplateActuatorCLI(t, passed)
+	if code != 0 {
+		t.Fatalf("in-root `..` target: exit = %d, stderr %q, out %#v", code, stderr, out)
+	}
+	if _, err := os.Stat(filepath.Join(passed.ProjectRoot, "stays.sh")); err != nil {
+		t.Errorf("in-root target not materialized: %v", err)
+	}
+}
+
+// TestTemplateActuatorSymlinkedAncestorRefused pins R1-ancestor-symlink-traversal-deferred
+// end to end: a symlinked ANCESTOR directory of the destination (ai-specs →
+// outside the project) redirects the write outside the project even though
+// the destination path is lexically contained. The actuator refuses with an
+// exit-2 decision envelope and nothing is created through the link.
+func TestTemplateActuatorSymlinkedAncestorRefused(t *testing.T) {
+	in := writeTemplateSource(t, "echo hi\n", 0o644)
+	outside := filepath.Join(filepath.Dir(in.ProjectRoot), "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(in.ProjectRoot, "ai-specs")); err != nil {
+		t.Fatalf("symlink creation denied on this platform: %v", err)
+	}
+	code, out, stderr := runTemplateActuatorCLI(t, in)
+	if code != 2 {
+		t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+	}
+	if out.Error == nil || *out.Error != templateAncestorSymlinkRefusal(in.Target) {
+		t.Fatalf("error = %#v, want %q", out.Error, templateAncestorSymlinkRefusal(in.Target))
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "recipes")); !os.IsNotExist(err) {
+		t.Errorf("directory created through the symlinked ancestor: %v", err)
+	}
+}
+
+// TestWriteTemplateContentRefusesSymlinkedAncestor pins the ancestor walk on
+// its guard unit (R1-ancestor-symlink-traversal-deferred): an ancestor
+// directory of dest below the containment root that is a symlink is refused
+// with errAncestorSymlink before MkdirAll can create anything through the
+// link, and a real-directory ancestor chain still writes.
+func TestWriteTemplateContentRefusesSymlinkedAncestor(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "project")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "ai-specs")); err != nil {
+		t.Fatalf("symlink creation denied on this platform: %v", err)
+	}
+	dest := filepath.Join(root, "ai-specs", "recipes", "x.sh")
+	err := ensureTemplateAncestorsReal(root, dest)
+	if !errors.Is(err, errAncestorSymlink) {
+		t.Fatalf("err = %v, want errAncestorSymlink", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(outside, "recipes")); !os.IsNotExist(statErr) {
+		t.Errorf("directory created through the symlinked ancestor: %v", statErr)
+	}
+	// The happy path is unchanged: a real-directory ancestor chain passes the
+	// walk and writeTemplateContent writes through it.
+	ok := filepath.Join(root, "ai-specs-real", "recipes", "x.sh")
+	if err := ensureTemplateAncestorsReal(root, ok); err != nil {
+		t.Fatalf("real ancestors: err = %v", err)
+	}
+	if err := writeTemplateContent(ok, []byte("echo x\n"), 0o644); err != nil {
+		t.Fatalf("real ancestors: write err = %v", err)
+	}
+	if got, readErr := os.ReadFile(ok); readErr != nil || string(got) != "echo x\n" {
+		t.Errorf("real-ancestor write = %q (%v)", got, readErr)
+	}
+}
+
 // TestTemplateActuatorMalformedEnvelope rejects input that is not the
 // documented envelope with exit 2 and a stderr diagnostic (the bridge then
 // falls back to Python).
