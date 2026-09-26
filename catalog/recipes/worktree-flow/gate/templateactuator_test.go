@@ -132,6 +132,19 @@ func writeTemplateSource(t *testing.T, body string, mode os.FileMode) templateIn
 	}
 }
 
+// seedDest writes a pre-existing destination for the not_exists cases. The
+// actuator creates parent directories for its own writes, but a seeded
+// destination needs its parent to exist before the file itself can be written.
+func seedDest(t *testing.T, dest string, body []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatalf("mkdir dest parent: %v", err)
+	}
+	if err := os.WriteFile(dest, body, 0o644); err != nil {
+		t.Fatalf("write dest: %v", err)
+	}
+}
+
 func runTemplateActuatorCLI(t *testing.T, in templateInput) (int, templateOutput, string) {
 	t.Helper()
 	payload, err := json.Marshal(in)
@@ -377,9 +390,7 @@ func TestTemplateActuatorNotExistsSeedsRenderedCopy(t *testing.T) {
 	body := "echo seed\n"
 	in := writeTemplateSource(t, body, 0o644)
 	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
-	if err := os.WriteFile(dest, []byte(body), 0o644); err != nil {
-		t.Fatalf("write dest: %v", err)
-	}
+	seedDest(t, dest, []byte(body))
 	code, out, stderr := runTemplateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -403,9 +414,7 @@ func TestTemplateActuatorNotExistsSeedsLegacyPlaceholder(t *testing.T) {
 	in := writeTemplateSource(t, body, 0o644)
 	in.Config["repo_topology"] = "superrepo" // rendered differs from the raw source
 	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
-	if err := os.WriteFile(dest, []byte(body), 0o644); err != nil {
-		t.Fatalf("write dest: %v", err)
-	}
+	seedDest(t, dest, []byte(body))
 	code, out, stderr := runTemplateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -431,9 +440,7 @@ func TestTemplateActuatorNotExistsSeedsLegacyPlaceholder(t *testing.T) {
 func TestTemplateActuatorNotExistsPreservesUntracked(t *testing.T) {
 	in := writeTemplateSource(t, "echo hi\n", 0o644)
 	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
-	if err := os.WriteFile(dest, []byte("user stuff\n"), 0o644); err != nil {
-		t.Fatalf("write dest: %v", err)
-	}
+	seedDest(t, dest, []byte("user stuff\n"))
 	code, out, stderr := runTemplateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -464,9 +471,7 @@ func TestTemplateActuatorManagedStaleAutoRefresh(t *testing.T) {
 	body := "echo new\n"
 	in := writeTemplateSource(t, body, 0o644)
 	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
-	if err := os.WriteFile(dest, []byte("echo old\n"), 0o644); err != nil {
-		t.Fatalf("write dest: %v", err)
-	}
+	seedDest(t, dest, []byte("echo old\n"))
 	in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte("echo old\n"))}
 	code, out, stderr := runTemplateActuatorCLI(t, in)
 	if code != 0 {
@@ -498,9 +503,7 @@ func TestTemplateActuatorStaleRefusalPolicies(t *testing.T) {
 			in := writeTemplateSource(t, "echo new\n", 0o644)
 			in.UpdatePolicy = policy
 			dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
-			if err := os.WriteFile(dest, []byte("echo old\n"), 0o644); err != nil {
-				t.Fatalf("write dest: %v", err)
-			}
+			seedDest(t, dest, []byte("echo old\n"))
 			in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte("echo old\n"))}
 			code, out, stderr := runTemplateActuatorCLI(t, in)
 			if code != 0 {
@@ -528,9 +531,7 @@ func TestTemplateActuatorStaleRefusalPolicies(t *testing.T) {
 func TestTemplateActuatorUserModifiedRefusal(t *testing.T) {
 	in := writeTemplateSource(t, "echo new\n", 0o644)
 	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
-	if err := os.WriteFile(dest, []byte("user edited\n"), 0o644); err != nil {
-		t.Fatalf("write dest: %v", err)
-	}
+	seedDest(t, dest, []byte("user edited\n"))
 	in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte("echo old\n"))}
 	code, out, stderr := runTemplateActuatorCLI(t, in)
 	if code != 0 {
@@ -553,9 +554,7 @@ func TestTemplateActuatorManagedCurrentBackfill(t *testing.T) {
 	body := "echo same\n"
 	in := writeTemplateSource(t, body, 0o644)
 	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
-	if err := os.WriteFile(dest, []byte(body), 0o644); err != nil {
-		t.Fatalf("write dest: %v", err)
-	}
+	seedDest(t, dest, []byte(body))
 	in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte(body))}
 	code, out, stderr := runTemplateActuatorCLI(t, in)
 	if code != 0 {
@@ -581,9 +580,7 @@ func TestTemplateActuatorCRLFShaParity(t *testing.T) {
 	t.Run("backfill normalizes", func(t *testing.T) {
 		in := writeTemplateSource(t, "echo same\n", 0o644)
 		dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
-		if err := os.WriteFile(dest, []byte("echo same\r\n"), 0o644); err != nil {
-			t.Fatalf("write dest: %v", err)
-		}
+		seedDest(t, dest, []byte("echo same\r\n"))
 		in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte("echo same\n"))}
 		code, out, _ := runTemplateActuatorCLI(t, in)
 		if code != 0 {
@@ -621,9 +618,7 @@ func TestTemplateActuatorAlwaysConditionOverwrites(t *testing.T) {
 	in := writeTemplateSource(t, body, 0o644)
 	in.Condition = "always"
 	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
-	if err := os.WriteFile(dest, []byte("user stuff\n"), 0o644); err != nil {
-		t.Fatalf("write dest: %v", err)
-	}
+	seedDest(t, dest, []byte("user stuff\n"))
 	code, out, stderr := runTemplateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
