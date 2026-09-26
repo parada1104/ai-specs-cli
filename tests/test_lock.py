@@ -9,11 +9,13 @@ recipe-bundled skills.
 """
 
 import importlib.util
+import os
 import sys
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -200,6 +202,71 @@ class FallbackControlCharRefusalTests(unittest.TestCase):
             "value for meta.synced_at contains a control character",
         )
 
+    def test_control_char_in_lock_path_is_refused(self):
+        path = self._fallback_path() / "loc\x1fck.ai-specs.lock"
+        lock = self.lock.load_lock(self._fallback_path())
+        with self.assertRaises(RuntimeError) as ctx:
+            self.lock._write_lock_python(path, lock)
+        self.assertEqual(
+            str(ctx.exception),
+            "value for lock_path contains a control character",
+        )
+        self.assertFalse(path.exists(), "nothing written on refusal")
+
+    def test_control_char_in_meta_cli_version_is_refused(self):
+        path = self._fallback_path()
+        lock = self.lock.load_lock(path)
+        lock["meta"] = {"cli_version": "0.14.0\n"}
+        with self.assertRaises(RuntimeError) as ctx:
+            self.lock._write_lock_python(path, lock)
+        self.assertEqual(
+            str(ctx.exception),
+            "value for meta.cli_version contains a control character",
+        )
+        self.assertFalse(path.exists(), "nothing written on refusal")
+
+    def test_control_char_in_managed_entry_value_is_refused(self):
+        """Every emitted managed value is walked, not only the path key."""
+        for key in ("sha256", "recipe", "source", "kind", "policy"):
+            with self.subTest(key=key):
+                path = self._fallback_path()
+                lock = self.lock.load_lock(path)
+                lock["managed"]["AGENTS.md"] = {
+                    "sha256": "abc",
+                    key: f"bad\t{key}",
+                }
+                with self.assertRaises(RuntimeError) as ctx:
+                    self.lock._write_lock_python(path, lock)
+                self.assertEqual(
+                    str(ctx.exception),
+                    f"value for managed.{key} contains a control character",
+                )
+                self.assertFalse(path.exists(), "nothing written on refusal")
+
+    def test_control_char_in_agents_harness_is_refused(self):
+        path = self._fallback_path()
+        lock = self.lock.load_lock(path)
+        lock["agents"]["cl\x02ude"] = {"AGENTS.md": "hash"}
+        with self.assertRaises(RuntimeError) as ctx:
+            self.lock._write_lock_python(path, lock)
+        self.assertEqual(
+            str(ctx.exception),
+            "value for agents harness contains a control character",
+        )
+        self.assertFalse(path.exists(), "nothing written on refusal")
+
+    def test_control_char_in_agents_filename_is_refused(self):
+        path = self._fallback_path()
+        lock = self.lock.load_lock(path)
+        lock["agents"]["claude"] = {"AGE\x03NTS.md": "hash"}
+        with self.assertRaises(RuntimeError) as ctx:
+            self.lock._write_lock_python(path, lock)
+        self.assertEqual(
+            str(ctx.exception),
+            "value for agents filename contains a control character",
+        )
+        self.assertFalse(path.exists(), "nothing written on refusal")
+
     def test_clean_lock_still_writes(self):
         path = self._fallback_path()
         lock = self.lock.load_lock(path)
@@ -209,6 +276,75 @@ class FallbackControlCharRefusalTests(unittest.TestCase):
         text = path.read_text()
         self.assertIn('[agents."pi"]', text)
         self.assertIn('[managed."AGENTS.md"]', text)
+
+    def test_write_lock_fallback_route_refuses_control_chars(self):
+        """The user-facing ``write_lock`` entry refuses too, on the fallback
+        route (no usable Go binary): the Go authority would refuse the same
+        envelope, so the fail-closed decision must survive degradation."""
+        path = self._fallback_path()
+        lock = self.lock.load_lock(path)
+        lock["agents"]["claude"] = {"AGENTS.md": "hash\nwith-newline"}
+        pin = mock.patch.dict(os.environ, {"WORKTREE_GATE_BIN": str(path / "no-such-gate")})
+        with pin:
+            with self.assertRaises(RuntimeError) as ctx:
+                self.lock.write_lock(path, lock)
+        self.assertEqual(
+            str(ctx.exception),
+            "value for agents hash contains a control character",
+        )
+        self.assertFalse(path.exists(), "nothing written on refusal")
+
+    def test_skip_branches_write_without_refusal(self):
+        """The refusal walk mirrors the emitter's skip guards: a managed entry
+        without a sha256 and an empty agents harness are skipped by both, so
+        neither triggers a refusal nor reaches the output."""
+        path = self._fallback_path()
+        lock = self.lock.load_lock(path)
+        lock["managed"]["dropped.md"] = {"recipe": "x"}  # no sha256: skipped
+        lock["managed"]["kept.md"] = {"sha256": "abc"}
+        lock["agents"]["empty"] = {}  # no files: skipped
+        lock["agents"]["pi"] = {"AGENTS.md": "abc123"}
+        self.lock._write_lock_python(path, lock)
+        text = path.read_text()
+        self.assertNotIn("dropped.md", text)
+        self.assertIn("[managed.\"kept.md\"]", text)
+        self.assertNotIn("[agents.\"empty\"]", text)
+        self.assertIn("[agents.\"pi\"]", text)
+
+    def test_non_dict_managed_entry_is_skipped_not_refused(self):
+        """A malformed managed entry is dropped exactly like the emitter's
+        isinstance guard, never crashed on and never emitted."""
+        path = self._fallback_path()
+        lock = self.lock.load_lock(path)
+        lock["managed"]["bad.md"] = "not-a-dict"
+        lock["managed"]["kept.md"] = {"sha256": "abc"}
+        self.lock._write_lock_python(path, lock)
+        text = path.read_text()
+        self.assertNotIn("bad.md", text)
+        self.assertIn("[managed.\"kept.md\"]", text)
+
+
+class RemoveRecipeLockEntriesTests(unittest.TestCase):
+    """Pin the results guard of ``remove_recipe_lock_entries``: True exactly
+    when a recipe section existed and was removed, False otherwise — the
+    caller relies on this boolean to decide whether the rewrite is needed."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lock = load_module(LOCK_PATH, "lock_internal_remove")
+
+    def test_removing_present_recipe_returns_true_and_deletes(self):
+        lock = {"recipes": {"worktree-flow": {"SKILL.md": {"SKILL.md": "h"}}}}
+        self.assertTrue(self.lock.remove_recipe_lock_entries(lock, "worktree-flow"))
+        self.assertNotIn("worktree-flow", lock["recipes"])
+
+    def test_removing_absent_recipe_returns_false_and_keeps_others(self):
+        lock = {"recipes": {"other": {}}}
+        self.assertFalse(self.lock.remove_recipe_lock_entries(lock, "worktree-flow"))
+        self.assertEqual(lock["recipes"], {"other": {}})
+
+    def test_removing_from_missing_recipes_group_returns_false(self):
+        self.assertFalse(self.lock.remove_recipe_lock_entries({}, "worktree-flow"))
 
 
 if __name__ == "__main__":
