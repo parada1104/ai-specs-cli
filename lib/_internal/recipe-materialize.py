@@ -1239,6 +1239,17 @@ def materialize_template(
     _python_materialize_template(recipe_dir, tpl, project_root, merged_cfg, recipe_id)
 
 
+def _symlink_refusal(target: str) -> str:
+    """Actionable refusal for a symlinked template destination.
+
+    Both authorities emit this verbatim (Go: templateSymlinkRefusal)."""
+    return (
+        f"destination {target} is a symlink; refusing to write through it. "
+        "Replace it with a regular file and run sync again:\n"
+        f"  rm {target} && ai-specs sync"
+    )
+
+
 def _python_materialize_template(
     recipe_dir: Path,
     tpl: Any,
@@ -1281,6 +1292,8 @@ def _python_materialize_template(
         write_lock(lock_path, lock)
 
     def write_content() -> None:
+        if dest.is_symlink():
+            raise RuntimeError(_symlink_refusal(tpl.target))
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(content)
         os.chmod(dest, src.stat().st_mode)

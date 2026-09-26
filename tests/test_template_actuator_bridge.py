@@ -433,6 +433,41 @@ class TemplateActuatorFallbackTests(_TemplateBridgeTestCase):
             "expected auto | confirm | never-force",
         )
 
+    def test_fallback_refuses_symlinked_destination(self):
+        """R1 parity: the Python fallback authority refuses a symlinked
+        destination with the same actionable refusal (Go:
+        templateSymlinkRefusal) and never writes through the link."""
+        cases = [
+            # A link to a regular file with the overwrite path (condition
+            # "always"): the write must be refused, target bytes untouched.
+            ("always", True),
+            # A dangling link with condition not_exists: os.Stat-style exists
+            # reads it as missing, so the write falls through — and must be
+            # refused without creating the link target.
+            ("not_exists", False),
+        ]
+        for i, (condition, regular) in enumerate(cases):
+            with self.subTest(condition=condition, regular=regular):
+                fixture = self.fixture(f"tpl-fb-symlink-{i}")
+                dest = self.dest_of(fixture)
+                target = fixture["root"] / "victim.sh"
+                if regular:
+                    target.write_bytes(b"echo victim\n")
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(target, dest)
+                with self.assertRaises(RuntimeError) as ctx:
+                    self.run_materialize(
+                        self.mod._python_materialize_template,
+                        fixture["recipe_dir"],
+                        self.tpl(condition=condition), fixture["root"],
+                        MERGED_CFG, recipe_id="worktree-flow",
+                    )
+                self.assertIn(self.mod._symlink_refusal(TARGET), str(ctx.exception))
+                if regular:
+                    self.assertEqual(target.read_bytes(), b"echo victim\n")
+                else:
+                    self.assertFalse(target.exists(), "dangling link target was created")
+
     def test_fallback_never_raises_on_bridge_infrastructure_failures(self):
         """The bridge itself must never raise for infra failures: a raising
         stub binary still degrades to the Python body."""

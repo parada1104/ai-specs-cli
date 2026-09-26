@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -31,11 +32,22 @@ import (
 //	{"dest": "...", "wrote": true|false, "record": {...}|null,
 //	 "message": "...", "info": "...", "warnings": [...], "error": null}
 //
-// A refusal (invalid update policy, missing source, execution failure) prints
-// {"error": "<exact reference string>"} on stdout with exit 2 and touches no
-// file. The Python bridge fails CLOSED on a delivered exit-2 error envelope
-// (the GO-08 findings fix) and falls back to its historical Python body on
-// infrastructure failures (no binary, bad JSON, malformed stdout envelope).
+// A refusal (invalid update policy, missing source, symlinked destination,
+// execution failure) prints {"error": "<exact reference string>"} on stdout
+// with exit 2 and touches no file. The Python bridge fails CLOSED on a
+// delivered exit-2 error envelope (the GO-08 findings fix) and falls back to
+// its historical Python body on infrastructure failures (no binary, bad JSON,
+// malformed stdout envelope).
+//
+// Exit-2 taxonomy (the split is deliberate and is what the bridge routes on):
+//
+//   - INPUT/INFRASTRUCTURE failures print a stderr diagnostic and NO envelope:
+//     unreadable stdin, malformed input JSON, a missing project_root/target, an
+//     unreadable destination, an unreadable source file. Python reads "the Go
+//     authority could not run" and falls back to its historical body.
+//   - DECISION refusals emit the error envelope on stdout: invalid update
+//     policy, missing source, symlinked destination, write failure. Python
+//     fails closed and never bypasses the decision.
 
 // The shared render tokens. __WORKTREE_REPO_TOPOLOGY__ is owned by the shared
 // Python render_override_bytes contract; the cleanup stamps are the narrow
@@ -225,11 +237,44 @@ func resolveTemplateDest(projectRoot, target string) string {
 	return resolved
 }
 
+// errDestSymlink reports a destination that already exists as a symlink.
+// Writing through it would follow the link and rewrite whatever it points at
+// (for a dangling link, os.WriteFile would create that target instead), so the
+// actuator refuses the write and hands the decision back as a refusal. The
+// Python fallback authority mirrors this refusal, so both spellings of the
+// authority agree.
+var errDestSymlink = errors.New("destination is a symlink")
+
+// templateSymlinkRefusal is the actionable refusal for a symlinked destination.
+// Both authorities emit it verbatim.
+func templateSymlinkRefusal(target string) string {
+	return fmt.Sprintf(
+		"destination %s is a symlink; refusing to write through it. "+
+			"Replace it with a regular file and run sync again:\n  rm %s && ai-specs sync",
+		target, target)
+}
+
+// writeTemplateRefusal renders a write failure, mapping the symlink guard to
+// its actionable refusal instead of the generic write diagnostic.
+func writeTemplateRefusal(target, dest string, err error) string {
+	if errors.Is(err, errDestSymlink) {
+		return templateSymlinkRefusal(target)
+	}
+	return fmt.Sprintf("write template %s: %v", dest, err)
+}
+
 // writeTemplateContent mirrors Python write_content: mkdir -p the parent,
 // write the rendered bytes, then chmod to the source permission bits
 // (os.WriteFile applies the mode only at creation, so the explicit chmod is
 // the os.chmod(dest, src.st_mode) parity).
+//
+// A destination that exists as a symlink (dangling or not) is refused before
+// anything is written: os.WriteFile follows the link, so a planted link could
+// redirect the refresh outside the project.
 func writeTemplateContent(dest string, content []byte, mode os.FileMode) error {
+	if info, lstatErr := os.Lstat(dest); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return errDestSymlink
+	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
@@ -344,7 +389,7 @@ func runMaterializeTemplate(stdin io.Reader, stdout, stderr io.Writer) int {
 			case classifyManagedStale:
 				if policy == templatePolicyAuto {
 					if err := writeTemplateContent(dest, content, sourceMode); err != nil {
-						return refuse(fmt.Sprintf("write template %s: %v", dest, err))
+						return refuse(writeTemplateRefusal(in.Target, dest, err))
 					}
 					out.Wrote = true
 					out.Record = record(sha256Bytes(content))
@@ -371,7 +416,7 @@ func runMaterializeTemplate(stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if err := writeTemplateContent(dest, content, sourceMode); err != nil {
-		return refuse(fmt.Sprintf("write template %s: %v", dest, err))
+		return refuse(writeTemplateRefusal(in.Target, dest, err))
 	}
 	return emit(templateActuatorOutput{
 		Dest:     dest,

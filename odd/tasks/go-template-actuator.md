@@ -124,3 +124,37 @@ Ten test cases fail in their own fixture setup, before the actuator is ever invo
 
 - `resolveTemplateDest` runs `git rev-parse --path-format=relative --git-path <remainder>` (retrying without the flag for git < 2.31). The Python reference emits absolute paths, which canonizes symlinks — on macOS the RED worktree test's `t.TempDir()` path (`/var/folders/...`) would never equal git's real-path output (`/private/var/...`). The relative emission keeps the path lexical (anchored at the caller's project root), which is what the test pins and what a caller expects; the resolved file is identical. The Python fallback keeps its historical absolute behavior.
 - Exit-2 routing: the ODD doc's "exit 2 → Python fallback" was superseded (per the parent's instruction and the GO-08 native review) by fail-CLOSED on a valid exit-2 error envelope (policy refusal, missing source, execution failure) and fail-open only on infrastructure failures. No RED test pinned the conflicting fallback behavior; the conflict did not materialize in the suite.
+
+### Candidate-1 findings fix (native review, GO-09 template actuator)
+
+Fixed exactly the three WARNING findings; the six SUGGESTION findings
+(R1-dest-containment-absent, R2-emit-refuse-dup, R2-render-fallback-asymmetry,
+R2-warn-str-dup, R3-2, R3-3) remain deliberately deferred to a later
+hardening PR — nothing in this change touches them.
+
+- **R1-symlink-following-dest-write** + **R3-1**: `writeTemplateContent` now
+  Lstats the destination first and refuses any symlink (dangling or not) with
+  `errDestSymlink`; both write-failure call sites (managed_stale policy-auto
+  refresh and the final write) render through `writeTemplateRefusal`, mapping
+  the guard to the actionable `templateSymlinkRefusal`. The Python fallback
+  authority mirrors the refusal verbatim (`_symlink_refusal`) and guards
+  `write_content` with `dest.is_symlink()`, raising `RuntimeError` (the same
+  class the bridge fails closed on).
+- **R2-exit2-shape-split**: the file-header comment now documents the
+  deliberate exit-2 taxonomy (INPUT/INFRASTRUCTURE stderr diagnostics vs
+  DECISION error envelopes). Behavior unchanged.
+
+RED observation (before the fix): `go test ./...` failed with
+`undefined: templateSymlinkRefusal` (templateactuator_test.go:749) — the suite
+does not compile without the guard; the behavior it pins was a through-link
+write (pre-fix run of the overwrite/refresh subtests showed exit 0 + link
+target rewritten, and the Python test failed `AssertionError: RuntimeError not
+raised`, i.e. the fallback wrote through the link and created the dangling
+link's target).
+
+GREEN commands (all observed):
+- `cd catalog/recipes/worktree-flow/gate && gofmt -l . && go vet ./... && go test ./...` — gofmt empty, vet clean, `ok ai-specs.dev/worktree-gate` + `ok ai-specs.dev/worktree-gate/ledger` (includes the new TestTemplateActuatorSymlinkDestRefused: overwrite, managed_stale auto refresh, and dangling-link subtests).
+- `python3 -m unittest tests.test_template_actuator_bridge tests.test_materialize_bridge tests.test_merge_config_bridge` — Ran 86 tests, OK.
+- `WORKTREE_GATE_BIN=$PWD/dist/worktree-gate-current python3 -m unittest tests.test_template_actuator_bridge` — Ran 17 tests, OK.
+- `python3 -m unittest discover -s tests -p 'test_*materialize*.py'` — Ran 97 tests, OK.
+- `scripts/build-gate.sh` — 4 targets built, no toolchain warning (go1.24.13); `scripts/verify-gate-sums.sh <(cd dist && shasum -a 256 worktree-gate-* | grep -v current) catalog/recipes/worktree-flow/bin/SHA256SUMS` — ok, 4 digest entries match.

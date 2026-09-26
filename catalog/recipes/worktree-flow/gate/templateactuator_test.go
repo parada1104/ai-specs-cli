@@ -668,6 +668,91 @@ func TestTemplateActuatorMissingSource(t *testing.T) {
 	}
 }
 
+// TestTemplateActuatorSymlinkDestRefused pins the candidate-1 findings fix
+// (R1-symlink-following-dest-write, R3-1): os.WriteFile follows a symlink at
+// the destination, so a link planted at the managed target would redirect the
+// refresh outside the project (and for a dangling link, os.WriteFile CREATES
+// the link target). The actuator refuses instead: exit 2 with the exact
+// refusal, the link target's bytes untouched, and the link itself still a
+// symlink. Symlink creation failure fails loudly (no silent skip).
+func TestTemplateActuatorSymlinkDestRefused(t *testing.T) {
+	linkBody := "echo victim\n"
+	plant := func(t *testing.T, in templateInput, targetPath string, createTarget bool) string {
+		t.Helper()
+		dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			t.Fatalf("mkdir dest parent: %v", err)
+		}
+		if createTarget {
+			if err := os.WriteFile(targetPath, []byte(linkBody), 0o644); err != nil {
+				t.Fatalf("write link target: %v", err)
+			}
+		}
+		if err := os.Symlink(targetPath, dest); err != nil {
+			t.Fatalf("symlink creation denied on this platform: %v", err)
+		}
+		return dest
+	}
+	assertSymlinkIntact := func(t *testing.T, dest, targetPath string, targetCreated bool) {
+		t.Helper()
+		info, lstatErr := os.Lstat(dest)
+		if lstatErr != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("dest no longer a symlink: %v (%v)", info, lstatErr)
+		}
+		_, statErr := os.Lstat(targetPath)
+		if targetCreated && statErr != nil {
+			t.Fatalf("link target missing: %v", statErr)
+		}
+		if !targetCreated && !os.IsNotExist(statErr) {
+			t.Fatalf("dangling link target was created: %v", statErr)
+		}
+	}
+
+	t.Run("regular target, overwrite path", func(t *testing.T) {
+		in := writeTemplateSource(t, "echo new\n", 0o644)
+		in.Condition = "always"
+		targetPath := filepath.Join(in.ProjectRoot, "victim.sh")
+		dest := plant(t, in, targetPath, true)
+		code, out, stderr := runTemplateActuatorCLI(t, in)
+		if code != 2 {
+			t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+		}
+		if out.Error == nil || *out.Error != templateSymlinkRefusal(in.Target) {
+			t.Fatalf("error = %#v, want %q", out.Error, templateSymlinkRefusal(in.Target))
+		}
+		assertSymlinkIntact(t, dest, targetPath, true)
+	})
+
+	t.Run("regular target, managed_stale auto refresh path", func(t *testing.T) {
+		in := writeTemplateSource(t, "echo new\n", 0o644)
+		targetPath := filepath.Join(in.ProjectRoot, "victim.sh")
+		dest := plant(t, in, targetPath, true)
+		in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte(linkBody))}
+		code, out, stderr := runTemplateActuatorCLI(t, in)
+		if code != 2 {
+			t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+		}
+		if out.Error == nil || *out.Error != templateSymlinkRefusal(in.Target) {
+			t.Fatalf("error = %#v, want %q", out.Error, templateSymlinkRefusal(in.Target))
+		}
+		assertSymlinkIntact(t, dest, targetPath, true)
+	})
+
+	t.Run("dangling link, not_exists fall-through", func(t *testing.T) {
+		in := writeTemplateSource(t, "echo new\n", 0o644)
+		targetPath := filepath.Join(in.ProjectRoot, "victim.sh")
+		dest := plant(t, in, targetPath, false) // the link target is never created
+		code, out, stderr := runTemplateActuatorCLI(t, in)
+		if code != 2 {
+			t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+		}
+		if out.Error == nil || *out.Error != templateSymlinkRefusal(in.Target) {
+			t.Fatalf("error = %#v, want %q", out.Error, templateSymlinkRefusal(in.Target))
+		}
+		assertSymlinkIntact(t, dest, targetPath, false)
+	})
+}
+
 // TestTemplateActuatorMalformedEnvelope rejects input that is not the
 // documented envelope with exit 2 and a stderr diagnostic (the bridge then
 // falls back to Python).
