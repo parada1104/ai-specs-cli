@@ -9,6 +9,13 @@ materializes bundled assets, vendors dep skills, applies templates,
 and writes recipe MCP presets to a temp file for downstream mcp-render.py.
 
 Exit 0 on success, 1 on validation/conflict error.
+
+GO-10 hook/gate bridge contract: the Go ``worktree-gate --materialize-hook``
+actuator is the primary hook authority. A delivered exit-2 refusal envelope
+fails CLOSED — ``RuntimeError`` naming the Go error, never a fallback. Every
+infrastructure failure (no verified binary, process crash, timeout, malformed
+or mismatched envelope) fails OPEN — exactly one
+``GO_HOOK_GATE_BRIDGE_FALLBACK`` warning, then the historical Python body.
 """
 
 from __future__ import annotations
@@ -1537,6 +1544,11 @@ def _refresh_gate(
     prior bytes; the lock is never partially updated (atomic write_lock).
     """
     util = _load_util()
+    if dest.is_symlink():
+        # D2: refresh reads and writes dest (backup + rewrite); a symlinked
+        # destination is refused before either happens — never through the
+        # link.
+        raise RuntimeError(_symlink_refusal(rel))
     prior = dest.read_bytes() if dest.exists() else None
     created_backup: Path | None = None
     try:
@@ -1562,141 +1574,6 @@ def _refresh_gate(
             except OSError:
                 pass
         raise
-
-
-def materialize_hook_script(
-    recipe_dir: Path,
-    hook: Any,
-    project_root: Path,
-    recipe_id: str,
-    merged_cfg: dict[str, Any] | None = None,
-    cli_home: Path | None = None,
-    refresh: bool = False,
-) -> str:
-    """Materialize a generated runtime hook script with gate provenance.
-
-    Records a lock baseline of the exact bytes the CLI last rendered
-    (``kind="gate"``, ``policy="auto"``) and classifies before writing:
-
-    - baseline match + catalog drift → refresh and re-record (unmodified gate);
-    - byte mismatch (user-modified) → preserve + warn with refresh guidance;
-    - no baseline (unknown provenance) → preserve + warn, never seed.
-
-    ``refresh=True`` (the ``--refresh-gates`` flag, never set by ordinary sync)
-    replaces a customized gate only after its exact pre-refresh bytes are saved
-    to the cache-only immutable backup. Returns the project-relative path.
-    """
-    src = recipe_dir / hook.script
-    if not src.is_file():
-        raise RuntimeError(f"hook script not found: {src}")
-    rel = hook_script_rel_path(recipe_id, hook)
-    dest = project_root / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    content = src.read_text()
-    for token, default in GATE_MODE_PLACEHOLDERS.items():
-        if token in content:
-            mode = default
-            if merged_cfg is not None:
-                mode = str(merged_cfg.get("gate_mode", default))
-            content = content.replace(token, mode)
-    if GATE_SCOPE_PLACEHOLDER in content:
-        scope = "auto"
-        if merged_cfg is not None:
-            scope = str(merged_cfg.get("gate_scope") or "auto")
-        if scope not in GATE_SCOPE_VALUES:
-            raise RuntimeError(
-                f"invalid gate_scope '{scope}'; allowed: auto | superrepo | subrepo"
-            )
-        content = content.replace(GATE_SCOPE_PLACEHOLDER, scope)
-    if REPO_TOPOLOGY_PLACEHOLDER in content:
-        topology = "auto"
-        if merged_cfg is not None:
-            topology = str(merged_cfg.get("repo_topology") or "auto")
-        if topology not in REPO_TOPOLOGY_VALUES:
-            raise RuntimeError(
-                f"invalid repo_topology '{topology}'; allowed: auto | standalone | monorepo-apps | monorepo-submodules"
-            )
-        content = content.replace(REPO_TOPOLOGY_PLACEHOLDER, topology)
-    if GATE_IMPL_PLACEHOLDER in content:
-        impl = "auto"
-        if merged_cfg is not None:
-            impl = str(merged_cfg.get("gate_impl") or "auto")
-        if impl not in GATE_IMPL_VALUES:
-            raise _invalid_gate_impl_error(impl)
-        content = content.replace(GATE_IMPL_PLACEHOLDER, impl)
-    if GATE_VERSION_PLACEHOLDER in content:
-        version = "dev"
-        if cli_home is not None:
-            try:
-                version = _load_cli_version().read_installed_version(Path(cli_home))
-            except Exception:
-                version = "dev"
-        content = content.replace(GATE_VERSION_PLACEHOLDER, version)
-    if TRACKER_CLI_HOME_PLACEHOLDER in content:
-        home_val = str(Path(cli_home).resolve()) if cli_home is not None else ""
-        content = content.replace(TRACKER_CLI_HOME_PLACEHOLDER, home_val)
-    if TRACKER_LIB_INTERNAL_PLACEHOLDER in content:
-        internal = (
-            str((Path(cli_home) / "lib" / "_internal").resolve())
-            if cli_home is not None
-            else ""
-        )
-        content = content.replace(TRACKER_LIB_INTERNAL_PLACEHOLDER, internal)
-
-    util = _load_util()
-    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
-    lock = load_lock(lock_path)
-    target = rel
-    entry = (lock.get("managed") or {}).get(target)
-
-    def record(written: bytes = content.encode()) -> None:
-        set_gate_baseline(
-            lock, target, util.sha256_bytes(written),
-            recipe=recipe_id, source=hook.script,
-        )
-        write_lock(lock_path, lock)
-
-    if refresh:
-        _refresh_gate(
-            project_root, dest, target, content, lock, lock_path,
-            recipe_id, hook, cli_home,
-        )
-        print(f"    ✓ hook refreshed {rel}")
-        return rel
-
-    state = util.classify_managed_override(dest, entry, would_write=content)
-    if state == "missing":
-        dest.write_text(content)
-        os.chmod(dest, 0o755)
-        record()
-        print(f"    ✓ hook script {rel}")
-        return rel
-    if state == "managed_current":
-        record()
-        print(f"    · hook skipped (current) {rel}")
-        return rel
-    if state == "managed_stale":
-        # Baseline matches current bytes: the CLI rendered this gate, so an
-        # ordinary sync may force-update it and re-record the baseline.
-        dest.write_text(content)
-        os.chmod(dest, 0o755)
-        record()
-        print(f"    ✓ hook refreshed (baseline matched) {rel}")
-        return rel
-    if state == "user_modified":
-        warn(
-            f"hook {rel} is user-modified; preserving existing bytes. Refresh with:\n"
-            f"  rm {rel} && ai-specs sync  (or: ai-specs sync --refresh-gates)"
-        )
-        print(f"    · hook skipped (user-modified) {rel}")
-        return rel
-    warn(
-        f"hook {rel} has no recorded provenance; preserving existing bytes. "
-        "A baseline is recorded only when the CLI renders the gate. Refresh with:\n"
-        f"  rm {rel} && ai-specs sync  (or: ai-specs sync --refresh-gates)"
-    )
-    print(f"    · hook skipped (no provenance) {rel}")
-    return rel
 
 
 # --- Hook/gate actuator: Go authority (GO_HOOK_GATE_BRIDGE_FALLBACK) ---------
@@ -1868,143 +1745,20 @@ def _hook_record_mismatch(
     return None
 
 
-def materialize_hook_script(
+def _render_hook_content(
     recipe_dir: Path,
     hook: Any,
-    project_root: Path,
-    recipe_id: str,
-    merged_cfg: dict[str, Any] | None = None,
-    cli_home: Path | None = None,
-    refresh: bool = False,
+    merged_cfg: dict[str, Any] | None,
+    cli_home: Path | None,
 ) -> str:
-    """Materialize a generated runtime hook script through the Go actuator.
+    """Render a hook script by substituting its gate placeholders.
 
-    ``worktree-gate --materialize-hook`` owns rendering (the 8 hook
-    placeholders), the managed-override classification (the shared
-    classifyManagedOverride core), the write + chmod 0755, and the refresh
-    backup/rollback; Python keeps the lock load/write (set_gate_baseline +
-    write_lock), all printing, the backup-path precomputation (project-cache
-    ownership) and the gate-version resolution. Two failure shapes:
-
-    * FAIL CLOSED: a delivered exit-2 REFUSAL envelope (nonzero exit with a
-      stdout error envelope) raises ``RuntimeError`` naming the Go error —
-      the Go authority's decision is never bypassed by the Python body.
-    * FAIL OPEN: every infrastructure failure (no verified binary, process
-      crash, timeout, malformed or mismatched envelope) warns exactly once
-      (``GO_HOOK_GATE_BRIDGE_FALLBACK``) and falls back to the historical
-      Python body (_python_materialize_hook_script).
-
-    ``refresh=True`` (the ``--refresh-gates`` flag, never set by ordinary
-    sync) replaces a customized gate only after its exact pre-refresh bytes
-    are saved to the cache-only immutable backup (the path is precomputed
-    here and handed to Go in the envelope). Returns the project-relative
-    path.
+    Shared by the Python fallback body and the post-Go lock reconciliation so
+    both always compare against the exact same rendered bytes.
     """
     src = recipe_dir / hook.script
     if not src.is_file():
         raise RuntimeError(f"hook script not found: {src}")
-    rel = hook_script_rel_path(recipe_id, hook)
-    dest = project_root / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
-    lock = load_lock(lock_path)
-    entry = (lock.get("managed") or {}).get(rel)
-    # Gate-version resolution stays in Python (the version module is
-    # Python-owned); the envelope carries the resolved value, "dev" on any
-    # resolution failure. The cli home is resolved here for the same reason;
-    # Go substitutes both verbatim.
-    gate_version = "dev"
-    if cli_home is not None:
-        try:
-            gate_version = _load_cli_version().read_installed_version(Path(cli_home))
-        except Exception:  # noqa: BLE001 - version resolution fails open to dev
-            gate_version = "dev"
-    # The immutable refresh backup path is precomputed here (project-cache
-    # ownership): Go only writes the snapshot bytes when the path is absent.
-    backup_path = ""
-    if refresh and dest.is_file():
-        backup = _load_project_cache().gate_backup_path(
-            project_root,
-            rel,
-            _load_util().sha256_bytes(dest.read_bytes()),
-            cli_home=cli_home,
-        )
-        backup_path = str(backup)
-    output = go_materialize_hook(
-        {
-            "project_root": str(project_root),
-            "recipe_dir": str(recipe_dir),
-            "recipe_id": recipe_id,
-            "script": hook.script,
-            "config": merged_cfg,
-            "cli_home": str(Path(cli_home).resolve()) if cli_home is not None else "",
-            "gate_version": gate_version,
-            "refresh": refresh,
-            "managed_entry": entry,
-            "backup_path": backup_path,
-        }
-    )
-    if output is None:
-        return _python_materialize_hook_script(
-            recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home, refresh,
-        )
-    for line in output["warnings"]:
-        warn(line)
-    record = output.get("record")
-    if output.get("wrote") and record is None:
-        # The Go side reports it wrote the destination but returned no
-        # ownership record; accepting that would leave the gate on disk with
-        # no lock entry. The envelope is unusable: fall back so the Python
-        # body rewrites the destination and records it itself.
-        _warn_hook_bridge_fallback("wrote without a record")
-        return _python_materialize_hook_script(
-            recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home, refresh,
-        )
-    if record is not None:
-        mismatch = _hook_record_mismatch(record, rel, hook.script, recipe_id)
-        if mismatch is not None:
-            # The returned record must match the plan this run actually sent;
-            # a mismatched envelope must never write its ownership metadata
-            # into the lock.
-            _warn_hook_bridge_fallback(mismatch)
-            return _python_materialize_hook_script(
-                recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home, refresh,
-            )
-        set_gate_baseline(
-            lock,
-            record["target"],
-            record["sha256"],
-            recipe=record["recipe"],
-            source=record["source"],
-        )
-        write_lock(lock_path, lock)
-    print(f"    {output['message']}")
-    return rel
-
-
-def _python_materialize_hook_script(
-    recipe_dir: Path,
-    hook: Any,
-    project_root: Path,
-    recipe_id: str,
-    merged_cfg: dict[str, Any] | None = None,
-    cli_home: Path | None = None,
-    refresh: bool = False,
-) -> str:
-    """TEMPORARY fail-open Python hook authority (GO_HOOK_GATE_BRIDGE_FALLBACK).
-
-    Kept only as the fallback; ``worktree-gate --materialize-hook`` is the
-    primary authority. It mirrors the historical materialize_hook_script body
-    exactly. A timed-out Go run may already have written the destination;
-    this body then rewrites it idempotently.
-    """
-    util = _load_util()
-    src = recipe_dir / hook.script
-    if not src.is_file():
-        raise RuntimeError(f"hook script not found: {src}")
-    rel = hook_script_rel_path(recipe_id, hook)
-    dest = project_root / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
     content = src.read_text()
     for token, default in GATE_MODE_PLACEHOLDERS.items():
         if token in content:
@@ -2055,6 +1809,214 @@ def _python_materialize_hook_script(
             else ""
         )
         content = content.replace(TRACKER_LIB_INTERNAL_PLACEHOLDER, internal)
+    return content
+
+
+def _fallback_materialize_and_reconcile(
+    recipe_dir: Path,
+    hook: Any,
+    project_root: Path,
+    recipe_id: str,
+    merged_cfg: dict[str, Any] | None,
+    cli_home: Path | None,
+    refresh: bool,
+    reason: str,
+) -> str:
+    """Fall back to the Python body, then reconcile the lock with the disk.
+
+    Go can write the destination and still return an unusable envelope (a
+    null record, or a record failing the plan or disk checks). The fallback
+    body alone then classifies the already-written bytes as "no provenance"
+    and preserves them: exactly the gate-on-disk-with-no-lock-entry state the
+    fail-closed design exists to prevent. When the destination's bytes are
+    identical to what this CLI renders for the hook, record the baseline for
+    those on-disk bytes so the next sync classifies the gate as managed.
+    Bytes the CLI cannot prove it rendered are never overwritten and never
+    recorded; the single bridge warning says so.
+    """
+    rel = hook_script_rel_path(recipe_id, hook)
+    dest = project_root / rel
+    result = _python_materialize_hook_script(
+        recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home, refresh,
+    )
+    disk_sha = None
+    if dest.is_file():
+        digest = _load_util().sha256_bytes(dest.read_bytes())
+        if digest == _load_util().sha256_bytes(
+            _render_hook_content(recipe_dir, hook, merged_cfg, cli_home).encode()
+        ):
+            disk_sha = digest
+    if disk_sha is not None:
+        lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+        lock = load_lock(lock_path)
+        set_gate_baseline(
+            lock, rel, disk_sha, recipe=recipe_id, source=hook.script,
+        )
+        write_lock(lock_path, lock)
+        _warn_hook_bridge_fallback(
+            reason + "; reconciled the lock with the on-disk gate bytes"
+        )
+    else:
+        _warn_hook_bridge_fallback(
+            reason + "; the on-disk bytes are not proven CLI-rendered, so no "
+            "baseline was recorded and no bytes were changed"
+        )
+    return result
+
+
+def materialize_hook_script(
+    recipe_dir: Path,
+    hook: Any,
+    project_root: Path,
+    recipe_id: str,
+    merged_cfg: dict[str, Any] | None = None,
+    cli_home: Path | None = None,
+    refresh: bool = False,
+) -> str:
+    """Materialize a generated runtime hook script through the Go actuator.
+
+    ``worktree-gate --materialize-hook`` owns rendering (the 8 hook
+    placeholders), the managed-override classification (the shared
+    classifyManagedOverride core), the write + chmod 0755, and the refresh
+    backup/rollback; Python keeps the lock load/write (set_gate_baseline +
+    write_lock), all printing, the backup-path precomputation (project-cache
+    ownership) and the gate-version resolution. Two failure shapes:
+
+    * FAIL CLOSED: a delivered exit-2 REFUSAL envelope (nonzero exit with a
+      stdout error envelope) raises ``RuntimeError`` naming the Go error —
+      the Go authority's decision is never bypassed by the Python body.
+    * FAIL OPEN: every infrastructure failure (no verified binary, process
+      crash, timeout, malformed or mismatched envelope) warns exactly once
+      (``GO_HOOK_GATE_BRIDGE_FALLBACK``) and falls back to the historical
+      Python body (_python_materialize_hook_script), reconciling the lock
+      with the bytes Go actually left on disk when Go already wrote them.
+
+    ``refresh=True`` (the ``--refresh-gates`` flag, never set by ordinary
+    sync) replaces a customized gate only after its exact pre-refresh bytes
+    are saved to the cache-only immutable backup (the path is precomputed
+    here and handed to Go in the envelope). Returns the project-relative
+    path.
+    """
+    src = recipe_dir / hook.script
+    if not src.is_file():
+        raise RuntimeError(f"hook script not found: {src}")
+    rel = hook_script_rel_path(recipe_id, hook)
+    dest = project_root / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink():
+        # One pre-flight guard for both paths and both authorities: the
+        # fallback body (write + refresh) and Go refuse the same way, before
+        # any read or write of the destination (including the refresh backup
+        # read below).
+        raise RuntimeError(_symlink_refusal(rel))
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
+    entry = (lock.get("managed") or {}).get(rel)
+    # Gate-version resolution stays in Python (the version module is
+    # Python-owned); the envelope carries the resolved value, "dev" on any
+    # resolution failure. The cli home is resolved here for the same reason;
+    # Go substitutes both verbatim.
+    gate_version = "dev"
+    if cli_home is not None:
+        try:
+            gate_version = _load_cli_version().read_installed_version(Path(cli_home))
+        except Exception:  # noqa: BLE001 - version resolution fails open to dev
+            gate_version = "dev"
+    # The immutable refresh backup path is precomputed here (project-cache
+    # ownership): Go only writes the snapshot bytes when the path is absent.
+    backup_path = ""
+    if refresh and dest.is_file():
+        backup = _load_project_cache().gate_backup_path(
+            project_root,
+            rel,
+            _load_util().sha256_bytes(dest.read_bytes()),
+            cli_home=cli_home,
+        )
+        backup_path = str(backup)
+    output = go_materialize_hook(
+        {
+            "project_root": str(project_root),
+            "recipe_dir": str(recipe_dir),
+            "recipe_id": recipe_id,
+            "script": hook.script,
+            "config": merged_cfg,
+            "cli_home": str(Path(cli_home).resolve()) if cli_home is not None else "",
+            "gate_version": gate_version,
+            "refresh": refresh,
+            "managed_entry": entry,
+            "backup_path": backup_path,
+        }
+    )
+    if output is None:
+        return _python_materialize_hook_script(
+            recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home, refresh,
+        )
+    for line in output["warnings"]:
+        warn(line)
+    record = output.get("record")
+    if output.get("wrote") and record is None:
+        # The Go side reports it wrote the destination but returned no
+        # ownership record; accepting that would leave the gate on disk with
+        # no lock entry. The envelope is unusable: run the Python body, then
+        # reconcile the lock with the bytes Go actually left on disk.
+        return _fallback_materialize_and_reconcile(
+            recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
+            refresh, "wrote without a record",
+        )
+    if record is not None:
+        mismatch = _hook_record_mismatch(record, rel, hook.script, recipe_id)
+        if mismatch is None and (
+            not dest.is_file()
+            or _load_util().sha256_bytes(dest.read_bytes()) != record["sha256"]
+        ):
+            # The record is applied to the lock only after the destination
+            # actually on disk is hashed and matches the recorded digest —
+            # the envelope proves nothing about bytes the CLI never wrote.
+            mismatch = (
+                "the returned record sha256 does not match the destination "
+                "on disk"
+            )
+        if mismatch is not None:
+            # The returned record must match the plan this run actually sent
+            # AND the bytes on disk; a mismatched envelope must never write
+            # its ownership metadata into the lock.
+            return _fallback_materialize_and_reconcile(
+                recipe_dir, hook, project_root, recipe_id, merged_cfg, cli_home,
+                refresh, mismatch,
+            )
+        set_gate_baseline(
+            lock,
+            record["target"],
+            record["sha256"],
+            recipe=record["recipe"],
+            source=record["source"],
+        )
+        write_lock(lock_path, lock)
+    print(f"    {output['message']}")
+    return rel
+
+
+def _python_materialize_hook_script(
+    recipe_dir: Path,
+    hook: Any,
+    project_root: Path,
+    recipe_id: str,
+    merged_cfg: dict[str, Any] | None = None,
+    cli_home: Path | None = None,
+    refresh: bool = False,
+) -> str:
+    """TEMPORARY fail-open Python hook authority (GO_HOOK_GATE_BRIDGE_FALLBACK).
+
+    Kept only as the fallback; ``worktree-gate --materialize-hook`` is the
+    primary authority. It is the historical Python hook body, retained as the
+    fallback. A timed-out Go run may already have written the destination;
+    this body then rewrites it idempotently.
+    """
+    util = _load_util()
+    rel = hook_script_rel_path(recipe_id, hook)
+    dest = project_root / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    content = _render_hook_content(recipe_dir, hook, merged_cfg, cli_home)
 
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
     lock = load_lock(lock_path)

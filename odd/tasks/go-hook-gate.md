@@ -114,7 +114,7 @@ Mirrors the merged slices (GO_RECIPE_CONFIG_BRIDGE_FALLBACK, GO_TEMPLATE_ACTUATO
 
 **(c) GREEN commands and observed results** (all on feat/go-hook-gate, toolchain go1.24.13):
 - `gofmt -l .` (gate/) — clean; `go vet ./...` — clean; `go test -count=1 ./...` — `ok ai-specs.dev/worktree-gate` + `ok ai-specs.dev/worktree-gate/ledger`.
-- `go test -count=1 -run 'Hook' -v .` — 17/17 PASS (rel path x1, rendering x7, actuator end-to-end x9).
+- `go test -count=1 -run 'Hook' -v .` — 19/19 PASS (rel path x1, rendering x7, actuator end-to-end x11). Corrected from the stale 17/17 recorded before the R4-001 Go-side correction added two refresh tests.
 - `python3 -m unittest tests.test_hook_gate_bridge` — Ran 21 tests, OK.
 - `WORKTREE_GATE_BIN=$PWD/dist/worktree-gate-current python3 -m unittest tests.test_hook_gate_bridge` — Ran 21 tests, OK (dist rebuilt via `scripts/build-gate.sh`).
 - `python3 -m unittest tests.test_tracker_card_gate_hook tests.test_trello_mcp_workflow_recipe` — Ran 56 tests, OK.
@@ -122,3 +122,22 @@ Mirrors the merged slices (GO_RECIPE_CONFIG_BRIDGE_FALLBACK, GO_TEMPLATE_ACTUATO
 **(d) No forked decision**: the bridge reuses the slice-6 Go core unchanged — `classifyManagedOverride` (classify.go) for the state machine and `sha256Bytes` for digesting; the hook path only adapts arguments (rendered content as `would_write`). No classification decision is re-ported or forked in Python or in `hookgateactuator.go`.
 
 **Trust root**: `catalog/recipes/worktree-flow/bin/SHA256SUMS` regenerated after `scripts/build-gate.sh` (go1.24.13) via the file's own documented reproduction command (`cd dist && shasum -a 256 worktree-gate-darwin-amd64 worktree-gate-darwin-arm64 worktree-gate-linux-amd64 worktree-gate-linux-arm64`), with one header line for this slice; `scripts/verify-gate-sums.sh` — 4/4 digests match.
+
+## Review-fix evidence (review-mandated fix batch, feat/go-hook-gate)
+
+Native review of d5a91ee could not close (review-risk lens deterministically inadmissible), so its findings were recovered from the native store and fixed here in one batch. The existing suite's wrote-without-record and record-mismatch cases had passed vacuously: their stubs claimed `wrote: true` WITHOUT writing the file, so the fallback's repair was assumed, not proven. The new tests below use stubs that really write the destination before lying.
+
+- **R4-001 (CRITICAL, resilience) + R3-wrote-no-record-fallback-gap (WARNING)** — the post-Go failure path now REPAIRS: on an unusable envelope (null record after `wrote: true`; record mismatching plan or disk), `_fallback_materialize_and_reconcile` runs the Python body and, when the destination's bytes equal exactly what the CLI renders, records the baseline for the ON-DISK bytes (`set_gate_baseline` + `write_lock`); when they do not match, nothing is changed, nothing is recorded, and the single bridge warning says so. Proven by `HookGateRepairTests.test_wrote_true_null_record_with_written_dest_reconciles_the_lock` (stub writes the gate, then returns `record: null` → lock records the on-disk digest).
+- **R3-record-without-wrote-guard (WARNING) + R1-lock-baseline-unverified-disk (WARNING)** — the dispatcher now verifies every returned record against the destination actually on disk (`sha256` of the bytes must equal `record["sha256"]`, dest must exist) before applying it to the lock; existing plan-vs-record field checks kept. Proven by `test_record_sha_mismatching_disk_preserves_user_bytes_and_lock` (user bytes untouched, no baseline gained) and the regression guard `test_record_matching_disk_is_applied_as_before`.
+- **R2-shadowed-original-body (WARNING, readability)** — the shadowed historical `materialize_hook_script` body (no O_NOFOLLOW/ELOOP guard, dead since the dispatcher rebinds the name) is deleted; exactly one dispatcher and one `_python_materialize_hook_script` remain. The placeholder rendering both use is extracted into `_render_hook_content`. Proven by `test_exactly_one_materialize_hook_script_definition_remains` (import-level guard).
+- **D2 (new defect, fallback refresh symlink write-through)** — `_refresh_gate` and the dispatcher both refuse a symlinked destination (`_symlink_refusal`, same wording as the non-refresh fallback and Go) BEFORE any read or write, so the refresh path can no longer create or rewrite the victim through the link. Proven by `test_fallback_refresh_refuses_dangling_symlink_destination` (victim never created) and `test_fallback_refresh_refuses_symlink_to_existing_file` (victim bytes unchanged).
+- **Module docstring** — now states the two-path contract (fail CLOSED on a delivered exit-2 refusal envelope → RuntimeError, no fallback; fail OPEN on infrastructure failure → exactly one `GO_HOOK_GATE_BRIDGE_FALLBACK` warning, then the historical body), where a reader looks first.
+
+Commands run on feat/go-hook-gate (toolchain go1.24.13), all observed:
+
+- `python3 -m py_compile lib/_internal/recipe-materialize.py tests/test_hook_gate_bridge.py` — clean.
+- `python3 -m unittest tests.test_hook_gate_bridge` — Ran 27 tests, OK (21 prior + 6 new).
+- `WORKTREE_GATE_BIN=$PWD/dist/worktree-gate-current python3 -m unittest tests.test_hook_gate_bridge` — Ran 27 tests, OK.
+- `python3 -m unittest tests.test_materialize_bridge tests.test_template_actuator_bridge tests.test_tracker_card_gate_hook tests.test_trello_mcp_workflow_recipe` — Ran 102 tests, OK.
+- `go test -count=1 -run Hook ./...` (in catalog/recipes/worktree-flow/gate) — `ok ai-specs.dev/worktree-gate` + `ok .../ledger [no tests to run]`; verbose count 19/19 PASS.
+- Single-definition grep — `def materialize_hook_script(` x1 (dispatcher), `def _python_materialize_hook_script(` x1.

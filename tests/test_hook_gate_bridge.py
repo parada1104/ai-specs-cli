@@ -239,8 +239,20 @@ class HookGateGoAuthorityTests(_HookBridgeTestCase):
         fixture = self.fixture("hook-envelope")
         argv_capture = self.tmp / "argv"
         stdin_capture = self.tmp / "stdin"
-        payload = self.stub_envelope(fixture)
+        record = {
+            "target": REL,
+            "sha256": self.mod._load_util().sha256_bytes(
+                b"#!/bin/sh\n# gate_mode=always\n"
+            ),
+            "recipe": "worktree-flow", "source": "hooks/gate.sh",
+            "kind": "gate", "policy": "auto",
+        }
+        payload = self.stub_envelope(fixture, record=record)
         self.pin_binary(self.stub(
+            # A record is only applied to the lock when its sha256 matches the
+            # destination actually on disk: the fake writes those bytes first.
+            f"echo '#!/bin/sh' > '{self.dest_of(fixture)}'; "
+            f"echo '# gate_mode=always' >> '{self.dest_of(fixture)}'\n"
             f"printf '%s\\n' \"$1\" >> '{argv_capture}'\n"
             f"cat > \"{stdin_capture}.$1\"\n"
             f"printf '%s' '{payload}'\n"
@@ -269,7 +281,7 @@ class HookGateGoAuthorityTests(_HookBridgeTestCase):
         )
         self.assertIn(f"    ✓ hook script {REL}", out)
         lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
-        self.assertEqual(lock["managed"][REL]["sha256"], "a" * 64)
+        self.assertEqual(lock["managed"][REL]["sha256"], record["sha256"])
 
     def test_stub_refusal_envelope_fails_closed(self):
         """A valid Go refusal (exit 2, stdout error envelope) is the
@@ -527,6 +539,169 @@ class HookGateFallbackTests(_HookBridgeTestCase):
         )
         self.assertEqual(err.count(self.mod.GO_HOOK_GATE_BRIDGE_FALLBACK), 1, err)
         self.assertTrue(self.dest_of(fixture).is_file())
+
+
+class HookGateRepairTests(_HookBridgeTestCase):
+    """An unusable envelope may still follow a Go write of the destination.
+
+    The bridge must not leave a gate on disk with no lock entry: when the
+    on-disk bytes are exactly what the CLI renders for the hook, the lock is
+    reconciled (repair); bytes the CLI cannot prove it rendered are never
+    overwritten and never recorded. Stubs that claim ``wrote: true`` really
+    write the destination first, so the repair is proven, not assumed.
+    """
+
+    RENDERED = b"#!/bin/sh\n# gate_mode=always\n"
+
+    def write_rendered_stub_body(self, fixture) -> str:
+        dest = self.dest_of(fixture)
+        return (
+            f"echo '#!/bin/sh' > '{dest}'; "
+            f"echo '# gate_mode=always' >> '{dest}'"
+        )
+
+    def run_with_stub(self, fixture, body, **envelope_overrides):
+        payload = self.stub_envelope(fixture, **envelope_overrides)
+        self.pin_binary(self.stub(f"{body}\nprintf '%s' '{payload}'"))
+        return self.run_materialize(
+            self.mod.materialize_hook_script,
+            fixture["recipe_dir"], self.hook(), fixture["root"],
+            "worktree-flow", MERGED_CFG, cli_home=None,
+        )
+
+    def lock_of(self, fixture):
+        return self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
+
+    def test_wrote_true_null_record_with_written_dest_reconciles_the_lock(self):
+        """R4-001 / R3-wrote-no-record-fallback-gap: Go really wrote the gate
+        and returned ``record: null`` — the lock must record the digest of
+        the on-disk bytes (repair), never leave an unrecorded gate."""
+        fixture = self.fixture("hook-repair-wrote-null")
+        dest = self.dest_of(fixture)
+        out, err = self.run_with_stub(
+            fixture, self.write_rendered_stub_body(fixture), record=None,
+        )
+        self.assertEqual(err.count(self.mod.GO_HOOK_GATE_BRIDGE_FALLBACK), 1, err)
+        self.assertIn("wrote without a record", err)
+        self.assertEqual(dest.read_bytes(), self.RENDERED)
+        lock = self.lock_of(fixture)
+        self.assertEqual(
+            lock["managed"][REL]["sha256"],
+            self.mod._load_util().sha256_bytes(self.RENDERED),
+            "the lock records the digest of the on-disk bytes (repair)",
+        )
+
+    def test_record_sha_mismatching_disk_preserves_user_bytes_and_lock(self):
+        """R3-record-without-wrote-guard / R1-lock-baseline-unverified-disk:
+        a record whose digest does not match the destination on disk is never
+        applied; user bytes are untouched and the lock gains no baseline."""
+        fixture = self.fixture("hook-repair-sha-mismatch")
+        dest = self.dest_of(fixture)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"user bytes\n")
+        out, err = self.run_with_stub(
+            fixture,
+            "true",
+            wrote=False,
+            record={
+                "target": REL, "sha256": "b" * 64, "recipe": "worktree-flow",
+                "source": "hooks/gate.sh", "kind": "gate", "policy": "auto",
+            },
+        )
+        self.assertEqual(err.count(self.mod.GO_HOOK_GATE_BRIDGE_FALLBACK), 1, err)
+        self.assertIn("does not match the destination on disk", err)
+        self.assertEqual(dest.read_bytes(), b"user bytes\n")
+        lock = self.lock_of(fixture)
+        self.assertNotIn(REL, lock.get("managed", {}))
+
+    def test_record_matching_disk_is_applied_as_before(self):
+        """Regression guard: a record whose digest matches the destination on
+        disk is applied to the lock exactly as before, with no fallback."""
+        fixture = self.fixture("hook-repair-match")
+        sha = self.mod._load_util().sha256_bytes(self.RENDERED)
+        out, err = self.run_with_stub(
+            fixture,
+            self.write_rendered_stub_body(fixture),
+            record={
+                "target": REL, "sha256": sha, "recipe": "worktree-flow",
+                "source": "hooks/gate.sh", "kind": "gate", "policy": "auto",
+            },
+        )
+        self.assertNotIn(
+            self.mod.GO_HOOK_GATE_BRIDGE_FALLBACK, err,
+            "a matching record must be applied directly, with no fallback",
+        )
+        self.assertIn(f"    ✓ hook script {REL}", out)
+        lock = self.lock_of(fixture)
+        self.assertEqual(lock["managed"][REL]["sha256"], sha)
+
+    def test_fallback_refresh_refuses_dangling_symlink_destination(self):
+        """D2: with no verified binary and refresh=True, a dangling symlink
+        destination is refused before any read or write — the victim file is
+        never created."""
+        fixture = self.fixture("hook-repair-refresh-dangling")
+        dest = self.dest_of(fixture)
+        victim = fixture["root"] / "victim.sh"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(victim, dest)
+        self.pin_binary(self.tmp / "no-such-gate")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod.materialize_hook_script(
+                    fixture["recipe_dir"], self.hook(), fixture["root"],
+                    "worktree-flow", MERGED_CFG, cli_home=None, refresh=True,
+                )
+        self.assertEqual(
+            str(ctx.exception),
+            f"destination {REL} is a symlink; refusing to write through it. "
+            "Replace it with a regular file and run sync again:\n"
+            f"  rm {REL} && ai-specs sync",
+        )
+        self.assertTrue(dest.is_symlink(), "the symlink itself was replaced")
+        self.assertFalse(victim.exists(), "the symlink target was created")
+
+    def test_fallback_refresh_refuses_symlink_to_existing_file(self):
+        """D2: a symlink pointing at an existing file is refused the same way
+        and the victim's bytes are unchanged."""
+        fixture = self.fixture("hook-repair-refresh-victim")
+        dest = self.dest_of(fixture)
+        victim = fixture["root"] / "victim.sh"
+        victim.write_bytes(b"victim bytes\n")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(victim, dest)
+        self.pin_binary(self.tmp / "no-such-gate")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod.materialize_hook_script(
+                    fixture["recipe_dir"], self.hook(), fixture["root"],
+                    "worktree-flow", MERGED_CFG, cli_home=None, refresh=True,
+                )
+        self.assertEqual(
+            str(ctx.exception),
+            f"destination {REL} is a symlink; refusing to write through it. "
+            "Replace it with a regular file and run sync again:\n"
+            f"  rm {REL} && ai-specs sync",
+        )
+        self.assertEqual(victim.read_bytes(), b"victim bytes\n")
+
+    def test_exactly_one_materialize_hook_script_definition_remains(self):
+        """R2-shadowed-original-body: the shadowed historical body stays
+        deleted — exactly one dispatcher and one Python fallback body."""
+        source = RECIPE_MATERIALIZE_PATH.read_text()
+        self.assertEqual(
+            source.count("def materialize_hook_script("), 1,
+            "materialize_hook_script must be defined exactly once",
+        )
+        self.assertEqual(
+            source.count("def _python_materialize_hook_script("), 1,
+            "_python_materialize_hook_script must be defined exactly once",
+        )
+        self.assertNotIn(
+            "hook script with gate provenance", source,
+            "the shadowed body's docstring is gone",
+        )
 
 
 if __name__ == "__main__":
