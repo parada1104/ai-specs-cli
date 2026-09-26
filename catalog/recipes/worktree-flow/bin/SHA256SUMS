@@ -145,7 +145,14 @@
 # go1.24.13 toolchain via the same command above. The follow-up work unit
 # dedupes the run's stdout-envelope emit/refuse closures and adds bridge-test
 # pinning coverage; same toolchain and command.
-8343f4551e8b52141026dc13c37b8366ad5f8987b0389eb1d32af2553431d923  worktree-gate-darwin-amd64
-cdb834ca79b476a3ffabe4eedc0bc05ee244bcb83284dd05460b41befab34239  worktree-gate-darwin-arm64
-26bcf44e182150b67ed591420ab66e11a72e9f7a7d6d7642c14af880be76b04f  worktree-gate-linux-amd64
-ce4479da5cf25eb32fe049d89fec3c404e999d2564136843ef0fd4e574087b25  worktree-gate-linux-arm64
+#
+# Regenerated for the review correction R1-git-prefix-containment-bypass (the
+# same four-arch asset now keys the template destination-containment exemption
+# on an actual clean `git rev-parse --git-path` resolution instead of the
+# literal ".git/" string prefix, refusing ".git/"-prefixed targets with
+# unclean, escaping remainders; no new asset, no second trust root), with the
+# canonical go1.24.13 toolchain via the same command above.
+c253d5fdcbb3032c71be35d7cbd6b597bc04a55090109f71b5beebf8f2b889ed  worktree-gate-darwin-amd64
+250f53552e82ef47db322b9e8c3baa9c05d460150f457d2834a808bb8ce2855b  worktree-gate-darwin-arm64
+2cf0d4824daf63e179a1586966ba7898a668a0db40e0cadfdfcf9eff34ff0be3  worktree-gate-linux-amd64
+423d2134d91e514da8d315cfe97e816e3db34988bd5123ab40446d6e6603762c  worktree-gate-linux-arm64

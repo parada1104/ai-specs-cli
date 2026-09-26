@@ -205,15 +205,33 @@ func renderTemplateBytes(src []byte, config map[string]any) []byte {
 // target (a Git hook) resolves through `git rev-parse --git-path`, because in
 // a linked worktree `.git` is a gitfile and hooks land in the SHARED hooks
 // directory of the main repository. Git emits a repo-relative path for the
-// main worktree; the invocation anchors it at the project root. Anything else
-// stays project-relative, and ANY failure (missing git, nonzero exit, empty
-// stdout) fails open to the literal project-relative join.
-func resolveTemplateDest(projectRoot, target string) string {
+// main worktree; the invocation anchors it at the project root. The second
+// return reports an ACTUAL clean git resolution: the exemption from
+// destination containment is keyed on this flag, never on the literal
+// ".git/" string prefix — `git rev-parse --git-path` honors parent-directory
+// components (an unclean remainder like "../../outside/evil" exits 0 emitting
+// an escaping path), and every fallback below lands on the literal join,
+// which filepath.Join cleans. The remainder must therefore be a clean,
+// non-escaping relative path (filepath.FromSlash + filepath.Clean equals it,
+// no leading ".." component, not absolute, not ".") for git resolution to
+// even be attempted. Every fallback (non-.git target, unclean remainder,
+// missing git, nonzero exit, empty stdout) returns the literal
+// project-relative join with gitResolved=false, keeping such targets subject
+// to the caller's containment check.
+func resolveTemplateDest(projectRoot, target string) (dest string, gitResolved bool) {
 	literal := filepath.Join(projectRoot, filepath.FromSlash(target))
 	if !strings.HasPrefix(target, ".git/") {
-		return literal
+		return literal, false
 	}
 	remainder := target[len(".git/"):]
+	if filepath.IsAbs(remainder) {
+		return literal, false
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(remainder))
+	if cleaned == "." || filepath.ToSlash(cleaned) != remainder ||
+		cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return literal, false
+	}
 	// --path-format=relative (git >= 2.31) keeps the emitted path LEXICAL: the
 	// default absolute emission canonizes symlinks, which on macOS turns the
 	// fixture's /var/... project root into /private/var/... and would re-anchor
@@ -226,16 +244,16 @@ func resolveTemplateDest(projectRoot, target string) string {
 		out, err = exec.Command("git", "-C", projectRoot, "rev-parse", "--git-path", remainder).Output()
 	}
 	if err != nil {
-		return literal
+		return literal, false
 	}
 	resolved := strings.TrimSpace(string(out))
 	if resolved == "" {
-		return literal
+		return literal, false
 	}
 	if !filepath.IsAbs(resolved) {
 		resolved = filepath.Join(projectRoot, resolved)
 	}
-	return resolved
+	return resolved, true
 }
 
 // errDestSymlink reports a destination that already exists as a symlink.
@@ -445,12 +463,15 @@ func runMaterializeTemplate(stdin io.Reader, stdout, stderr io.Writer) int {
 			policy, in.Target))
 	}
 	content := renderTemplateBytes(srcBytes, in.Config)
-	dest := resolveTemplateDest(in.ProjectRoot, in.Target)
-	// R1-dest-containment-absent: a literal target containing `..` could clean
-	// itself outside the project root. Git-resolved destinations are trusted to
-	// git's own emission (the shared hooks dir of a linked worktree lives in
-	// the main repository by design), so only literal targets are contained.
-	if !strings.HasPrefix(in.Target, ".git/") && !templatePathContained(in.ProjectRoot, dest) {
+	dest, gitResolved := resolveTemplateDest(in.ProjectRoot, in.Target)
+	// R1-dest-containment-absent + R1-git-prefix-containment-bypass: the
+	// containment exemption is keyed on an ACTUAL clean git resolution, never
+	// on the literal ".git/" string prefix. A git-resolved destination (the
+	// shared hooks dir of a linked worktree, outside the worktree root) is
+	// trusted to git's own clean emission; a ".git/"-prefixed target with an
+	// unclean remainder never resolves through git and falls back to the
+	// literal join, which is contained like any other literal target.
+	if !gitResolved && !templatePathContained(in.ProjectRoot, dest) {
 		return refuse(templateEscapingTargetRefusal(in.Target))
 	}
 	// R1-ancestor-symlink-traversal-deferred: MkdirAll and the open follow

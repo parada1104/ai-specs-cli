@@ -261,7 +261,11 @@ func TestResolveTemplateDestLiteralJoin(t *testing.T) {
 	}
 	for _, tc := range cases {
 		want := filepath.Join(root, filepath.FromSlash(tc.wantRel))
-		if got := resolveTemplateDest(root, tc.target); got != want {
+		got, gitResolved := resolveTemplateDest(root, tc.target)
+		if gitResolved {
+			t.Errorf("resolveTemplateDest(%q) reported gitResolved for a literal target", tc.target)
+		}
+		if got != want {
 			t.Errorf("resolveTemplateDest(%q) = %q, want %q", tc.target, got, want)
 		}
 	}
@@ -278,8 +282,42 @@ func TestResolveTemplateDestGitPathPlainRepo(t *testing.T) {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	want := filepath.Join(root, ".git", "hooks", "post-merge")
-	if got := resolveTemplateDest(root, ".git/hooks/post-merge"); got != want {
+	got, gitResolved := resolveTemplateDest(root, ".git/hooks/post-merge")
+	if !gitResolved {
+		t.Errorf("resolveTemplateDest = %q, gitResolved = false, want a clean git resolution", got)
+	}
+	if got != want {
 		t.Errorf("resolveTemplateDest = %q, want %q", got, want)
+	}
+}
+
+// TestResolveTemplateDestGitPathUncleanRemainder pins the containment
+// semantics of the git resolution: inside a REAL repository,
+// `git rev-parse --git-path` honors parent-directory components (it exits 0
+// emitting an escaping path for "../../outside/evil"), so an unclean
+// ".git/" remainder must never count as git-resolved and must fall back to
+// the literal join — keeping the target subject to containment.
+func TestResolveTemplateDestGitPathUncleanRemainder(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	cmd := exec.Command("git", "-C", root, "init", "-q")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	cases := []struct{ target, wantRel string }{
+		{".git/../../escape.sh", "../escape.sh"},
+		{".git/hooks/../../../escape.sh", "../escape.sh"},
+		{".git/../hooks/x", "hooks/x"},
+	}
+	for _, tc := range cases {
+		want := filepath.Join(root, filepath.FromSlash(tc.wantRel))
+		got, gitResolved := resolveTemplateDest(root, tc.target)
+		if gitResolved {
+			t.Errorf("resolveTemplateDest(%q) reported gitResolved for an unclean remainder", tc.target)
+		}
+		if got != want {
+			t.Errorf("resolveTemplateDest(%q) = %q, want literal join %q", tc.target, got, want)
+		}
 	}
 }
 
@@ -312,7 +350,11 @@ func TestResolveTemplateDestGitPathLinkedWorktree(t *testing.T) {
 	run("-C", main, "worktree", "add", "-q", "-b", "feature", wt)
 
 	want := filepath.Join(main, ".git", "hooks", "post-merge")
-	if got := resolveTemplateDest(wt, ".git/hooks/post-merge"); got != want {
+	got, gitResolved := resolveTemplateDest(wt, ".git/hooks/post-merge")
+	if !gitResolved {
+		t.Errorf("resolveTemplateDest(worktree) = %q, gitResolved = false, want a clean git resolution", got)
+	}
+	if got != want {
 		t.Errorf("resolveTemplateDest(worktree) = %q, want shared hooks dir %q", got, want)
 	}
 }
@@ -324,7 +366,11 @@ func TestResolveTemplateDestFallback(t *testing.T) {
 	requireGit(t)
 	root := t.TempDir() // not a git repository
 	want := filepath.Join(root, ".git", "hooks", "post-merge")
-	if got := resolveTemplateDest(root, ".git/hooks/post-merge"); got != want {
+	got, gitResolved := resolveTemplateDest(root, ".git/hooks/post-merge")
+	if gitResolved {
+		t.Errorf("resolveTemplateDest(non-repo) reported gitResolved on the fallback path")
+	}
+	if got != want {
 		t.Errorf("resolveTemplateDest(non-repo) = %q, want literal %q", got, want)
 	}
 }
@@ -828,6 +874,36 @@ func TestTemplateActuatorEscapingTargetRefused(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(passed.ProjectRoot, "stays.sh")); err != nil {
 		t.Errorf("in-root target not materialized: %v", err)
+	}
+}
+
+// TestTemplateActuatorGitPrefixEscapeRefused pins R1-git-prefix-containment-bypass:
+// a ".git/"-prefixed target whose remainder is an UNCLEAN path (carries `..`
+// components) must be refused. `git rev-parse --git-path` honors
+// parent-directory components (it exits 0 emitting an escaping path for
+// "../../outside/evil"), and both git-failure fallbacks return the literal
+// join, which filepath.Join also cleans — so a target like
+// ".git/../../escape.sh" must never claim the ".git/" prefix exemption from
+// destination containment.
+func TestTemplateActuatorGitPrefixEscapeRefused(t *testing.T) {
+	for _, target := range []string{
+		".git/../../escape.sh",
+		".git/hooks/../../../escape.sh",
+	} {
+		t.Run(target, func(t *testing.T) {
+			in := writeTemplateSource(t, "echo hi\n", 0o644)
+			in.Target = target
+			code, out, stderr := runTemplateActuatorCLI(t, in)
+			if code != 2 {
+				t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
+			}
+			if out.Error == nil || *out.Error != templateEscapingTargetRefusal(in.Target) {
+				t.Fatalf("error = %#v, want %q", out.Error, templateEscapingTargetRefusal(in.Target))
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(in.ProjectRoot), "escape.sh")); !os.IsNotExist(err) {
+				t.Errorf("file written outside the project root: %v", err)
+			}
+		})
 	}
 }
 
