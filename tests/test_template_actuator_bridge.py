@@ -29,6 +29,7 @@ with no usable binary, because failing open is the contract they pin.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -239,11 +240,18 @@ class TemplateActuatorGoAuthorityTests(_TemplateBridgeTestCase):
         fixture = self.fixture("tpl-envelope")
         argv_capture = self.tmp / "argv"
         stdin_capture = self.tmp / "stdin"
+        # The record must be truthful for this stub (no real Go write): its
+        # sha256 is the rendered body's digest and the stub writes those
+        # bytes to dest first, so the record survives the disk verification
+        # (R1-lock-baseline-unverified-disk) and still lands in the lock.
+        rendered = b"#!/bin/sh\necho hi\n"
+        rendered_sha = hashlib.sha256(rendered).hexdigest()
+        dest = self.dest_of(fixture)
         payload = json.dumps({
-            "dest": str(self.dest_of(fixture)),
+            "dest": str(dest),
             "wrote": True,
             "record": {
-                "target": TARGET, "sha256": "a" * 64, "recipe": "worktree-flow",
+                "target": TARGET, "sha256": rendered_sha, "recipe": "worktree-flow",
                 "source": "templates/post-merge.sh", "kind": "template",
                 "policy": "auto",
             },
@@ -252,6 +260,8 @@ class TemplateActuatorGoAuthorityTests(_TemplateBridgeTestCase):
             "error": None,
         })
         self.pin_binary(self.stub(
+            f"mkdir -p '{dest.parent}'\n"
+            f"printf '#!/bin/sh\\necho hi\\n' > '{dest}'\n"
             f"printf '%s\\n' \"$1\" >> '{argv_capture}'\n"
             f"cat > \"{stdin_capture}.$1\"\n"
             f"printf '%s' '{payload}'\n"
@@ -281,7 +291,7 @@ class TemplateActuatorGoAuthorityTests(_TemplateBridgeTestCase):
         )
         self.assertIn(f"    ✓ template {TARGET}", out)
         lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
-        self.assertEqual(lock["managed"][TARGET]["sha256"], "a" * 64)
+        self.assertEqual(lock["managed"][TARGET]["sha256"], rendered_sha)
 
     def test_invalid_policy_refusal_envelope_fails_closed(self):
         """A valid Go refusal (exit 2, stdout error envelope) is the
@@ -510,6 +520,39 @@ class TemplateActuatorFallbackTests(_TemplateBridgeTestCase):
             lock["managed"][TARGET]["sha256"],
             self.mod._load_util().sha256_bytes(b"#!/bin/sh\necho hi\n"),
         )
+
+    def test_record_sha_mismatching_disk_falls_back_without_lock_write(self):
+        """R1-lock-baseline-unverified-disk (template parity with the hook
+        bridge): a record whose digest does not match the destination on
+        disk is never applied; user bytes are untouched and the lock gains
+        no managed override."""
+        fixture = self.fixture("tpl-fb-rec-disk")
+        dest = self.dest_of(fixture)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"user bytes\n")
+        payload = json.dumps({
+            "dest": str(dest),
+            "wrote": True,
+            "record": {
+                "target": TARGET, "sha256": "b" * 64,
+                "recipe": "worktree-flow", "source": "templates/post-merge.sh",
+                "kind": "template", "policy": "auto",
+            },
+            "message": f"✓ template {TARGET}",
+            "warnings": [],
+            "error": None,
+        })
+        self.pin_binary(self.stub(f"printf '%s' '{payload}'"))
+        out, err = self.run_materialize(
+            self.mod.materialize_template,
+            fixture["recipe_dir"], self.tpl(), fixture["root"],
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertEqual(err.count(self.mod.GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK), 1, err)
+        self.assertIn("does not match the destination on disk", err)
+        self.assertEqual(dest.read_bytes(), b"user bytes\n")
+        lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
+        self.assertNotIn(TARGET, lock.get("managed", {}))
 
     def test_fallback_warning_matches_the_bridge_family_format(self):
         fixture = self.fixture("tpl-fb-format")

@@ -1294,6 +1294,21 @@ def materialize_template(
             return
         if record is not None:
             mismatch = _template_record_mismatch(record, target, tpl.source, recipe_id, policy)
+            if mismatch is None:
+                dest = resolve_template_dest(project_root, target)
+                if not dest.is_file() or _load_util().sha256_bytes(
+                    dest.read_bytes()
+                ) != record["sha256"]:
+                    # R1-lock-baseline-unverified-disk (template parity with
+                    # the hook bridge): the returned record is applied to
+                    # the lock only after the destination actually on disk
+                    # is hashed and matches the recorded digest — the
+                    # envelope proves nothing about bytes the CLI never
+                    # wrote.
+                    mismatch = (
+                        "the returned record sha256 does not match the "
+                        "destination on disk"
+                    )
             if mismatch is not None:
                 # R1-lock-record-trust: the returned record must match the
                 # plan this run actually sent; a mismatched envelope must
