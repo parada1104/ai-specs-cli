@@ -5,7 +5,8 @@
 #
 # Reproduce any digest locally with:
 #   scripts/build-gate.sh
-#   shasum -a 256 dist/worktree-gate-*
+#   cd dist && shasum -a 256 worktree-gate-darwin-amd64 worktree-gate-darwin-arm64 \
+#     worktree-gate-linux-amd64 worktree-gate-linux-arm64
 #
 # CANONICAL TOOLCHAIN: Go builds are deterministic for a given toolchain, but
 # different Go releases compile different stdlib bytes. These digests were
@@ -24,15 +25,16 @@
 # Regenerated for the go-binding-witness strangler slice (the same four-arch asset
 # gains the Go-owned `--resolve-bindings` capability binding/conflict grading and
 # the Go-written durable tracker witness; no new asset, no second trust root), with
-# the canonical go1.24.13 toolchain via scripts/build-gate.sh && (cd dist && shasum
-# -a 256 worktree-gate-* | grep -v current).
+# the canonical go1.24.13 toolchain via:
+#   scripts/build-gate.sh
+#   cd dist && shasum -a 256 worktree-gate-darwin-amd64 worktree-gate-darwin-arm64 \
+#     worktree-gate-linux-amd64 worktree-gate-linux-arm64
 #
 # Regenerated after trello-ledger-integration (the same four-arch asset gains the
 # `--write open|link|close|exempt` verb and the bounded store lock; no new asset, no
 # second trust root) and again after ledger-remote-reconciliation (the same
 # four-arch asset gains Go-owned remote-observation reconciliation; no new asset,
 # no second trust root) with the canonical go1.24.13 toolchain via:
-#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
 #
 # Regenerated again after the tracker-ledger follow-ups (the same four-arch asset gains
 # the optional `config_field_when_set` reconcile mapping and the corroborated closed-item
@@ -47,27 +49,22 @@
 # Regenerated for the go-orphan-cleanup strangler slice (the same four-arch asset
 # gains the Go-owned `--plan-orphans` materialization orphan planning; no new
 # asset, no second trust root), with the canonical go1.24.13 toolchain via:
-#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
 # Regenerated for the go-resolved-config strangler slice (the same four-arch
 # asset gains the Go-owned `--plan-resolved-config` manifest projection query;
 # no new asset, no second trust root), with the canonical go1.24.13 toolchain
 # via:
-#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
 #
 # Regenerated for the go-classify-override strangler slice (the same four-arch
 # asset gains the Go-owned `--plan-classify` managed-override classification;
 # no new asset, no second trust root), with the canonical go1.24.13 toolchain
 # via:
-#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
 # Regenerated for the materialization-sync-tag-conflicts strangler slice (the same
 # four-arch asset gains the Go-owned `--resolve-tag-conflicts` advisory recipe
 # tag-conflict grading; no new asset, no second trust root), with the canonical
 # go1.24.13 toolchain via:
-#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
 # Regenerated for the go-merge-config strangler slice (the same four-arch asset
 # gains the Go-owned `--plan-merge-config` recipe merge_config decision; no new
 # asset, no second trust root), with the canonical go1.24.13 toolchain via:
-#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
 # Regenerated for the merge-config CPython repr parity fix (the same four-arch
 # asset's pyRepr now matches CPython repr() quote selection and control-char
 # escapes; no new asset, no second trust root), with the canonical go1.24.13
@@ -77,13 +74,11 @@
 # asset gains the Go-owned `--resolve-primitive-conflicts` recipe
 # skill/command/mcp conflict grading; no new asset, no second trust root), with
 # the canonical go1.24.13 toolchain via:
-#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
 #
 # Regenerated for the go-reconcile-stamps strangler slice (the same four-arch
 # asset gains the Go-owned `--plan-reconcile-stamps` per-recipe reconcile stamp
 # planning; no new asset, no second trust root), with the canonical go1.24.13
 # toolchain via:
-#   scripts/build-gate.sh && (cd dist && shasum -a 256 worktree-gate-* | grep -v current)
 #
 # Regenerated for the go-apply-orphans strangler slice (the same four-arch asset
 # gains the Go-owned `--apply-orphans` orphan cache-directory deletion actuator;
@@ -111,7 +106,24 @@
 # --apply-copy dir-mode copystat parity; no new asset, no second trust root),
 # with the canonical go1.24.13 toolchain via the same command above.
 #
-d1391af0277e40212be47c2c793747012c529b3375f6fdee2ae81f24d956cd31  worktree-gate-darwin-amd64
-b3e0872e4c210efff296f767d86574fcf53f37129d69accc99ff3668cb6f3598  worktree-gate-darwin-arm64
-ee985bacd9925ba3944f91e854d998ad39dce94a69608ead8cc847e8253d5310  worktree-gate-linux-amd64
-fd591d562e2be5f563207980c521181c8f23a1d27c82833ca5a6225f6ac0a937  worktree-gate-linux-arm64
+# Regenerated for the go-template-actuator strangler slice (the same four-arch
+# asset gains the Go-owned ``--materialize-template`` template actuator: git-path
+# dest resolution, rendering, the shared classify core, write + chmod and the
+# record payload; no new asset, no second trust root), with the canonical
+# go1.24.13 toolchain via the same command above.
+#
+# Regenerated for the go-template-actuator candidate-1 findings fix (the same
+# four-arch asset refuses a symlinked template destination instead of writing
+# through it; no new asset, no second trust root), with the canonical
+# go1.24.13 toolchain via the same command above.
+#
+#
+# Regenerated for the go-template-actuator fix batch 2 (the same four-arch
+# asset's template-destination guard now opens the destination with
+# syscall.O_NOFOLLOW so no link can be swapped in between the Lstat pre-check
+# and the write; no new asset, no second trust root), with the canonical
+# go1.24.13 toolchain via the same command above.
+70f22ba8ccc2ed7238e4f35306b2673828dd881187353e2f058fee20fd456d2e  worktree-gate-darwin-amd64
+a93fb6b6a2bc9f79043fd43011072e97478fdd0209d9b6b47941711f8f8a263e  worktree-gate-darwin-arm64
+091854c964017bc7543abea1bce7fd34b2a4ba35e50f667616b0a5e7a1d46fec  worktree-gate-linux-amd64
+f21d11ed8cc4b37c69a84be073695124a1dcf3a5baaa2dac8e5389be67b77239  worktree-gate-linux-arm64

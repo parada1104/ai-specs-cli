@@ -121,6 +121,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// (bundled skills, commands, docs): Go owns the copy decision + execution;
 	// Python keeps hashing, lock writes, prints and the fail-open fallback.
 	applyCopyCmd := fs.Bool("apply-copy", false, "execute the materialize copy plan from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
+	// Template actuator is the Go strangler slice for the Python
+	// materialize_template authority: Go owns git-path dest resolution,
+	// rendering, classification (the shared classify core), the write + chmod
+	// and the record payload; Python keeps lock load/write, prints and the
+	// fail-open fallback.
+	materializeTemplateCmd := fs.Bool("materialize-template", false, "materialize one governed template from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -224,6 +230,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runWriteLock(stdin, stdout, stderr)
 	case *applyCopyCmd:
 		return runApplyCopy(stdin, stdout, stderr)
+	case *materializeTemplateCmd:
+		return runMaterializeTemplate(stdin, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
 	case *tokenize:
