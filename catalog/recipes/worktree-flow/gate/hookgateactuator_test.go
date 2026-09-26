@@ -124,6 +124,12 @@ func writeHookSource(t *testing.T, body string) hookGateInput {
 	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
 		t.Fatalf("mkdir project root: %v", err)
 	}
+	// Seed the destination parent so the end-to-end tests can write a
+	// pre-existing gate (managed_current/stale, user-modified, refresh)
+	// without each test repeating the mkdir.
+	if err := os.MkdirAll(filepath.Join(projectRoot, "ai-specs", "recipes", "worktree-flow", "hooks"), 0o755); err != nil {
+		t.Fatalf("mkdir dest parent: %v", err)
+	}
 	src := filepath.Join(recipeDir, "hooks", "gate.sh")
 	if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
@@ -134,7 +140,7 @@ func writeHookSource(t *testing.T, body string) hookGateInput {
 		RecipeID:    "worktree-flow",
 		Script:      "hooks/gate.sh",
 		Config: map[string]any{
-			"gate_mode":     "ask",
+			"gate_mode":     "always",
 			"gate_scope":    "auto",
 			"repo_topology": "auto",
 			"gate_impl":     "auto",
@@ -471,7 +477,7 @@ func TestHookGateActuatorUserModifiedPreserved(t *testing.T) {
 	if err := os.WriteFile(dest, []byte(userBytes), 0o755); err != nil {
 		t.Fatalf("write dest: %v", err)
 	}
-	in.ManagedEntry = &hookGateManagedEntry{SHA256: sha256Bytes([]byte(userBytes))}
+	in.ManagedEntry = &hookGateManagedEntry{SHA256: sha256Bytes([]byte("#!/bin/sh\n# original baseline\n"))}
 	code, out, stderr := runHookGateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -573,6 +579,85 @@ func TestHookGateActuatorRefreshBacksUpAndRewrites(t *testing.T) {
 // TestHookGateActuatorRefreshRollback: a refresh that cannot complete the
 // write restores the prior bytes and removes the backup it created (exit 2,
 // all-or-nothing, lock never handed a record).
+// TestHookGateActuatorRefreshRepairsPartialBackup: a truncated snapshot at
+// the content-hash key (crash/short write) is repaired atomically with the
+// full prior bytes, never mistaken for the complete immutable snapshot.
+func TestHookGateActuatorRefreshRepairsPartialBackup(t *testing.T) {
+	in := writeHookSource(t, hookFixtureBody)
+	dest := hookFixtureDest(in)
+	prior := "#!/bin/sh\n# user customization\n"
+	if err := os.WriteFile(dest, []byte(prior), 0o755); err != nil {
+		t.Fatalf("write dest: %v", err)
+	}
+	in.Refresh = true
+	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", sha256Bytes([]byte(prior))+".sh")
+	if err := os.MkdirAll(filepath.Dir(in.BackupPath), 0o755); err != nil {
+		t.Fatalf("mkdir backups: %v", err)
+	}
+	if err := os.WriteFile(in.BackupPath, []byte("#!/bin"), 0o644); err != nil {
+		t.Fatalf("seed partial backup: %v", err)
+	}
+	code, out, stderr := runHookGateActuatorCLI(t, in)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
+	}
+	if !out.Wrote {
+		t.Errorf("wrote = false, want refreshed")
+	}
+	if got, err := os.ReadFile(dest); err != nil || string(got) != hookFixtureRendered {
+		t.Errorf("dest bytes = %q, %v, want %q", got, err, hookFixtureRendered)
+	}
+	backup, err := os.ReadFile(in.BackupPath)
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(backup) != prior {
+		t.Errorf("backup bytes = %q, want repaired prior %q", backup, prior)
+	}
+	nameDigest := strings.TrimSuffix(filepath.Base(in.BackupPath), filepath.Ext(in.BackupPath))
+	if sha256Bytes(backup) != nameDigest {
+		t.Errorf("backup sha256 = %q, want path digest %q", sha256Bytes(backup), nameDigest)
+	}
+}
+
+// TestHookGateActuatorRefreshKeepsCompleteBackup: a COMPLETE snapshot at the
+// content-hash key is never rewritten (immutable snapshot contract) — proven
+// by inode identity across the refresh.
+func TestHookGateActuatorRefreshKeepsCompleteBackup(t *testing.T) {
+	in := writeHookSource(t, hookFixtureBody)
+	dest := hookFixtureDest(in)
+	prior := "#!/bin/sh\n# user customization\n"
+	if err := os.WriteFile(dest, []byte(prior), 0o755); err != nil {
+		t.Fatalf("write dest: %v", err)
+	}
+	in.Refresh = true
+	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", sha256Bytes([]byte(prior))+".sh")
+	if err := os.MkdirAll(filepath.Dir(in.BackupPath), 0o755); err != nil {
+		t.Fatalf("mkdir backups: %v", err)
+	}
+	if err := os.WriteFile(in.BackupPath, []byte(prior), 0o644); err != nil {
+		t.Fatalf("seed complete backup: %v", err)
+	}
+	before, err := os.Stat(in.BackupPath)
+	if err != nil {
+		t.Fatalf("stat backup before: %v", err)
+	}
+	code, out, stderr := runHookGateActuatorCLI(t, in)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
+	}
+	if !out.Wrote {
+		t.Errorf("wrote = false, want refreshed")
+	}
+	after, err := os.Stat(in.BackupPath)
+	if err != nil {
+		t.Fatalf("stat backup after: %v", err)
+	}
+	if !os.SameFile(before, after) {
+		t.Errorf("complete snapshot was rewritten; content-hash snapshots are immutable")
+	}
+}
+
 func TestHookGateActuatorRefreshRollback(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("write refusal via file mode does not work as root")
