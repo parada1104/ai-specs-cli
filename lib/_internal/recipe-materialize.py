@@ -1017,6 +1017,137 @@ def materialize_command(
     print(f"    ✓ command {cmd.id}")
 
 
+# --- Template actuator: Go authority (GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK)
+#
+# ``worktree-gate --materialize-template`` owns the template actuation
+# DECISION + EXECUTION for governed templates: git-path destination
+# resolution, rendering, the ownership classification (the shared
+# classifyManagedOverride core behind --plan-classify — never re-ported), the
+# write + chmod, and the managed-override record payload. Python keeps the
+# lock load/write (set_managed_override + write_lock), ALL printing (indent +
+# print_step_output compact filtering) and the TEMPORARY fail-open fallback
+# below (``GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK``), announced by one warning
+# line per degraded run. The historical Python body survives as
+# _python_materialize_template.
+GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK = "GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK"
+GO_TEMPLATE_ACTUATOR_BRIDGE_TIMEOUT_SECONDS = 60
+
+
+def _warn_template_bridge_fallback(reason: str) -> None:
+    """One greppable warning line for a degraded template authority."""
+    warn(
+        f"{GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK}: {reason}; "
+        "using the temporary Python template authority"
+    )
+
+
+def _template_bridge_home() -> Path:
+    """The CLI package home owning the gate binary cache (module-home pattern
+    shared with the copy-apply bridge)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _is_template_actuator_envelope(envelope: Any) -> bool:
+    """True when the decoded stdout is the documented materialize-template
+    envelope."""
+    if not isinstance(envelope, dict):
+        return False
+    if not (
+        isinstance(envelope.get("dest"), str)
+        and isinstance(envelope.get("wrote"), bool)
+        and isinstance(envelope.get("message"), str)
+    ):
+        return False
+    record = envelope.get("record")
+    if record is not None:
+        if not isinstance(record, dict):
+            return False
+        if not all(
+            isinstance(record.get(key), str)
+            for key in ("target", "sha256", "recipe", "source", "kind", "policy")
+        ):
+            return False
+    info_value = envelope.get("info")
+    if info_value is not None and not isinstance(info_value, str):
+        return False
+    warnings = envelope.get("warnings")
+    return isinstance(warnings, list) and all(
+        isinstance(line, str) for line in warnings
+    )
+
+
+def go_materialize_template(plan: dict[str, Any]) -> dict[str, Any] | None:
+    """Run ``worktree-gate --materialize-template``; return its envelope, or None.
+
+    None means the bridge could not run: no verified binary, the process
+    failed, or output that did not match the documented envelope. The caller
+    then falls back to the temporary Python template body. This function emits
+    the single ``GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK`` warning naming the
+    reason, so a degraded run is never silent and never needs a second warning.
+
+    A Go refusal (nonzero exit with a stdout error envelope) FAILS CLOSED: it
+    raises ``RuntimeError`` naming the Go error string instead of returning
+    None — the refusal is the Go authority's valid decision and the Python
+    body must never bypass it (GO-08 findings fix, mirrored for templates).
+    """
+    try:
+        envelope_text = json.dumps(plan)
+    except (TypeError, ValueError) as exc:
+        _warn_template_bridge_fallback(
+            f"the template plan could not be encoded ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        gb = _load_gate_binary()
+        binary = gb.resolve_verified_binary(_template_bridge_home())
+    except Exception as exc:  # noqa: BLE001 - an unloadable helper is "no binary"
+        _warn_template_bridge_fallback(
+            f"the gate binary could not be resolved ({type(exc).__name__}: {exc})"
+        )
+        return None
+    if binary is None:
+        _warn_template_bridge_fallback("no verified worktree-gate binary")
+        return None
+    try:
+        proc = subprocess.run(
+            [str(binary), "--materialize-template"],
+            input=envelope_text,
+            capture_output=True,
+            text=True,
+            timeout=GO_TEMPLATE_ACTUATOR_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        # UnicodeDecodeError is a UnicodeError subclass: strict text=True
+        # decoding of stdout must degrade, not escape.
+        _warn_template_bridge_fallback(
+            f"worktree-gate did not run ({type(exc).__name__}: {exc})"
+        )
+        return None
+    try:
+        stdout = json.loads(proc.stdout)
+    except ValueError:
+        stdout = None
+    if proc.returncode != 0:
+        if isinstance(stdout, dict) and isinstance(stdout.get("error"), str):
+            # Fail closed: a valid refusal envelope is the Go authority's
+            # decision — no Python fallback may bypass it.
+            raise RuntimeError(
+                f"worktree-gate refused the template: {stdout['error']}"
+            )
+        detail = (proc.stderr or "").strip() or "no stderr"
+        _warn_template_bridge_fallback(
+            f"worktree-gate exited {proc.returncode} without a template "
+            f"envelope ({detail})"
+        )
+        return None
+    if not _is_template_actuator_envelope(stdout):
+        _warn_template_bridge_fallback(
+            "worktree-gate output did not match the materialize-template envelope"
+        )
+        return None
+    return stdout
+
+
 def resolve_template_dest(project_root: Path, target: str) -> Path:
     """Resolve a governed template target to its real path.
 
@@ -1061,6 +1192,65 @@ def materialize_template(
     merged_cfg: dict[str, Any] | None = None,
     recipe_id: str | None = None,
 ) -> None:
+    """Materialize one governed template through the Go actuator.
+
+    ``worktree-gate --materialize-template`` owns the decision + execution;
+    Python applies the returned record to the lock (set_managed_override +
+    write_lock), prints the exact reference lines (indent + print_step_output
+    compact filtering stay Python-owned), and falls back to the historical
+    Python body (_python_materialize_template) on any infrastructure failure.
+    """
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
+    target = Path(tpl.target).as_posix()
+    entry = (lock.get("managed") or {}).get(target)
+    output = go_materialize_template(
+        {
+            "project_root": str(project_root),
+            "recipe_dir": str(recipe_dir),
+            "recipe_id": recipe_id,
+            "source": tpl.source,
+            "target": target,
+            "condition": tpl.condition,
+            "update_policy": getattr(tpl, "update_policy", "auto") or "auto",
+            "config": merged_cfg,
+            "managed_entry": entry,
+        }
+    )
+    if output is not None:
+        for line in output["warnings"]:
+            warn(line)
+        record = output.get("record")
+        if record is not None:
+            set_managed_override(
+                lock,
+                record["target"],
+                record["sha256"],
+                recipe=record["recipe"],
+                source=record["source"],
+                kind=record["kind"],
+                policy=record["policy"],
+            )
+            write_lock(lock_path, lock)
+        if output.get("info"):
+            info(output["info"])
+        print(f"    {output['message']}")
+        return
+    _python_materialize_template(recipe_dir, tpl, project_root, merged_cfg, recipe_id)
+
+
+def _python_materialize_template(
+    recipe_dir: Path,
+    tpl: Any,
+    project_root: Path,
+    merged_cfg: dict[str, Any] | None = None,
+    recipe_id: str | None = None,
+) -> None:
+    """TEMPORARY fail-open Python template authority (GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK).
+
+    Kept only as the fallback; ``worktree-gate --materialize-template`` is the
+    primary authority. It mirrors the historical materialize_template body
+    exactly."""
     util = _load_util()
     src = recipe_dir / tpl.source
     dest = resolve_template_dest(project_root, tpl.target)

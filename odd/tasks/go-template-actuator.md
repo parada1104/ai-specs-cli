@@ -94,3 +94,33 @@ The ownership decision (`util.classify_managed_override`, util.py:651 bridge / :
 - `001ef58` docs(go-09): scout template actuator contract in ODD doc
 - `96477f3` test(go-09): RED parity suite for the Go template actuator (slice 6 prep)
 - this commit (ODD evidence + hand-off)
+
+## Implementation evidence (slice 6, implementation session)
+
+Commits: the delivery lane owns them (working-tree hand-off, nothing committed by this session).
+
+### What landed
+
+- `catalog/recipes/worktree-flow/gate/templateactuator.go` (NEW): `renderTemplateBytes` (pure; topology token with the `str(cfg.get(key, "auto"))` semantics, cleanup tokens ONLY when config is non-nil, CRLF byte surgery only), `resolveTemplateDest` (fail-open git-path resolution), `runMaterializeTemplate` (one JSON envelope in/out, exit 0/2), reusing `classifyManagedOverride` and `sha256Bytes` from classify.go — no second classification port. The actuator types are `templateActuatorRequest/Record/Output` because the RED suite owns the `templateInput/...` names in its own file.
+- `catalog/recipes/worktree-flow/gate/main.go`: one flag (`--materialize-template`) + one case, mirroring `writeRecipeConfigCmd`.
+- `lib/_internal/recipe-materialize.py`: `GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK` + `go_materialize_template` bridge (exit-2-with-error-envelope FAILS CLOSED per the GO-08 findings fix; infra failures warn exactly once and fall back), `materialize_template` dispatcher (Python keeps lock load/write, all printing), historical body preserved as `_python_materialize_template`.
+- `tests/test_template_actuator_bridge.py` (NEW): 16 tests — Go-path parity (fresh write, seed, stale auto refresh, user-modified), envelope contract, refusal fail-closed, and the fallback matrix (missing binary, garbage stdout, exit 2 without error envelope, envelope mismatch, exact RuntimeError strings).
+- `catalog/recipes/worktree-flow/bin/SHA256SUMS`: regenerated via `scripts/build-gate.sh` with the canonical go1.24.13 toolchain (no toolchain warning emitted), 4/4 digests.
+
+### RED/GREEN evidence (observed)
+
+- RED (before implementation): `cd catalog/recipes/worktree-flow/gate && go vet ./...` failed on the undefined symbols (`undefined: runMaterializeTemplate` first at templateactuator_test.go:142) — the suite did not compile.
+- GREEN: `cd catalog/recipes/worktree-flow/gate && gofmt -l .` → empty; `go vet ./...` → clean; `go test ./...` → 22 of the suite's behaviors pass; 10 fixture-seeded cases fail INSIDE THE TEST'S OWN SETUP (see defect below).
+- `env -u WORKTREE_GATE_BIN python3 -m unittest tests.test_template_actuator_bridge tests.test_materialize_bridge tests.test_merge_config_bridge` → Ran 85 tests, OK.
+- `WORKTREE_GATE_BIN=$PWD/dist/worktree-gate-current python3 -m unittest tests.test_template_actuator_bridge tests.test_materialize_bridge tests.test_merge_config_bridge` → Ran 85 tests, OK.
+- `python3 -m unittest discover -s tests -p 'test_*materialize*.py'` → Ran 97 tests, OK.
+- Extra focused parity: `python3 -m unittest tests.test_override_ownership` OK both without the binary (Python fallback) and with it (Go path) — the retained authority suite is behavior-identical through the bridge.
+
+### RED suite defect (reported, NOT fixed — suite treated as read-only)
+
+Ten test cases fail in their own fixture setup, before the actuator is ever invoked: they call `os.WriteFile(dest, ...)` without creating the destination's parent directories (os.WriteFile never creates parents), so no implementation can make them pass. Exact sites: TestTemplateActuatorNotExistsSeedsRenderedCopy (:381), TestTemplateActuatorNotExistsSeedsLegacyPlaceholder (:407), TestTemplateActuatorNotExistsPreservesUntracked (:435), TestTemplateActuatorManagedStaleAutoRefresh (:468), TestTemplateActuatorStaleRefusalPolicies/confirm + /never-force (:502), TestTemplateActuatorUserModifiedRefusal (:532), TestTemplateActuatorManagedCurrentBackfill (:557), TestTemplateActuatorCRLFShaParity/backfill_normalizes (:585), TestTemplateActuatorAlwaysConditionOverwrites (:625). Minimal fix (delivery lane): add `os.MkdirAll(filepath.Dir(dest), 0o755)` before each seeded `os.WriteFile`. The behaviors they pin are implemented and verified: legacy-placeholder seeding, managed-current backfill, CRLF backfill, and the always-overwrite path were smoke-verified through the real binary / the Python bridge tests.
+
+### Contract deviation to review
+
+- `resolveTemplateDest` runs `git rev-parse --path-format=relative --git-path <remainder>` (retrying without the flag for git < 2.31). The Python reference emits absolute paths, which canonizes symlinks — on macOS the RED worktree test's `t.TempDir()` path (`/var/folders/...`) would never equal git's real-path output (`/private/var/...`). The relative emission keeps the path lexical (anchored at the caller's project root), which is what the test pins and what a caller expects; the resolved file is identical. The Python fallback keeps its historical absolute behavior.
+- Exit-2 routing: the ODD doc's "exit 2 → Python fallback" was superseded (per the parent's instruction and the GO-08 native review) by fail-CLOSED on a valid exit-2 error envelope (policy refusal, missing source, execution failure) and fail-open only on infrastructure failures. No RED test pinned the conflicting fallback behavior; the conflict did not materialize in the suite.
