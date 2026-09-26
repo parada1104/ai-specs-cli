@@ -116,9 +116,9 @@ Commits: the delivery lane owns them (working-tree hand-off, nothing committed b
 - `python3 -m unittest discover -s tests -p 'test_*materialize*.py'` → Ran 97 tests, OK.
 - Extra focused parity: `python3 -m unittest tests.test_override_ownership` OK both without the binary (Python fallback) and with it (Go path) — the retained authority suite is behavior-identical through the bridge.
 
-### RED suite defect (reported, NOT fixed — suite treated as read-only)
+### RED suite defect (resolved — fixed in the test file)
 
-Ten test cases fail in their own fixture setup, before the actuator is ever invoked: they call `os.WriteFile(dest, ...)` without creating the destination's parent directories (os.WriteFile never creates parents), so no implementation can make them pass. Exact sites: TestTemplateActuatorNotExistsSeedsRenderedCopy (:381), TestTemplateActuatorNotExistsSeedsLegacyPlaceholder (:407), TestTemplateActuatorNotExistsPreservesUntracked (:435), TestTemplateActuatorManagedStaleAutoRefresh (:468), TestTemplateActuatorStaleRefusalPolicies/confirm + /never-force (:502), TestTemplateActuatorUserModifiedRefusal (:532), TestTemplateActuatorManagedCurrentBackfill (:557), TestTemplateActuatorCRLFShaParity/backfill_normalizes (:585), TestTemplateActuatorAlwaysConditionOverwrites (:625). Minimal fix (delivery lane): add `os.MkdirAll(filepath.Dir(dest), 0o755)` before each seeded `os.WriteFile`. The behaviors they pin are implemented and verified: legacy-placeholder seeding, managed-current backfill, CRLF backfill, and the always-overwrite path were smoke-verified through the real binary / the Python bridge tests.
+Ten test cases originally failed in their own fixture setup, before the actuator was ever invoked: they called `os.WriteFile(dest, ...)` without creating the destination's parent directories (os.WriteFile never creates parents). That fixture-seeding defect was fixed in the Go test file during implementation (parent directories are created before each seeded `os.WriteFile`); no assertion was changed. The suite is green on this branch: `go test ./...` passes the full behavior set, including legacy-placeholder seeding, managed-current backfill, CRLF backfill, and the always-overwrite path.
 
 ### Contract deviation to review
 
@@ -198,3 +198,49 @@ GREEN commands (all observed):
 - `WORKTREE_GATE_BIN=$PWD/dist/worktree-gate-current python3 -m unittest tests.test_template_actuator_bridge` — Ran 17 tests, OK (against the rebuilt binary).
 - `python3 -m unittest discover -s tests -p 'test_*materialize*.py'` — Ran 97 tests, OK.
 - `scripts/build-gate.sh` — 4 targets built, no toolchain warning (go1.24.13); `bash scripts/verify-gate-sums.sh /tmp/gate-sums-generated catalog/recipes/worktree-flow/bin/SHA256SUMS` — ok, 4 digest entries match (digests spliced from the generated shasum output, never hand-edited).
+
+### Candidate fix batch 3 (native review, GO-09 template actuator bridge)
+
+Fixed exactly the five WARNING findings of lineage review-23e32be9a662e564
+(candidate = the bridge module commit); every SUGGESTION from this lineage and
+from review-faee79d90d3f3863 / review-53597d8ba46f3a25 remains deferred to the
+advisory-hardening PR — nothing in this change touches them.
+
+- **R1-lock-record-trust**: the Go-returned record is now validated against
+  the plan Python actually sent (`_template_record_mismatch`): target (posix),
+  source, recipe, policy, kind == "template", and sha256 as 64-char lowercase
+  hex (same spirit as the GO-08 results-count-mismatch guard). Any mismatch →
+  exactly ONE fallback warning naming the mismatch, then the historical Python
+  body; the unvalidated record never reaches the lock.
+- **R3-record-null-lock-drift**: `wrote: true` with `record: null` is now an
+  envelope mismatch — one fallback warning naming "wrote without a record",
+  then the Python body (which rewrites the destination and records it itself).
+- **R3-bridge-timeout-double-exec**: `subprocess.TimeoutExpired` is caught
+  separately; the single fallback warning names the timeout with the value in
+  seconds (`timed out after 60s`), and the fallback docstring notes the
+  timed-out Go run may already have written the destination, which the Python
+  body rewrites idempotently. No retries, timeout value unchanged.
+- **R2-docstring-omits-fail-closed**: the `materialize_template` docstring now
+  states both failure shapes — fail-CLOSED RuntimeError on a delivered exit-2
+  REFUSAL envelope, fail-OPEN one-warning fallback on infrastructure failures
+  (no verified binary, crash, timeout, malformed/mismatched envelope).
+- **R3-red-parity-suite-broken**: the stale "RED suite defect (reported, NOT
+  fixed)" paragraph now states the truth — the fixture-seeding defect was
+  fixed in the Go test file (no assertion changed) and the Go suite is green
+  on this branch.
+
+RED observation (before the fix): the four new stub-envelope tests failed —
+`err.count(GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK)` was 0 for the mismatching
+`record.target`/`record.source`/non-hex `sha256` cases (the record was trusted
+and written into the lock as-is) and for `wrote: true, record: null` (the lock
+update was silently skipped) — `env -u WORKTREE_GATE_BIN python3 -m unittest
+tests.test_template_actuator_bridge -k record -k wrote` → Ran 5, FAILED
+(failures=4, 1 pre-existing skip). No existing assertion was changed or
+weakened.
+
+GREEN commands (all observed):
+- `python3 -m unittest tests.test_template_actuator_bridge tests.test_materialize_bridge tests.test_merge_config_bridge` — Ran 90 tests, OK.
+- `WORKTREE_GATE_BIN=$PWD/dist/worktree-gate-current python3 -m unittest tests.test_template_actuator_bridge` — Ran 21 tests, OK.
+- `python3 -m unittest discover -s tests -p 'test_*materialize*.py'` — Ran 97 tests, OK.
+- `python3 -m unittest tests.test_override_ownership` — Ran 18 tests, OK.
+- Gate asset unchanged: no Go file touched, no rebuild run.

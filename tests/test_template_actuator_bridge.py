@@ -386,6 +386,131 @@ class TemplateActuatorFallbackTests(_TemplateBridgeTestCase):
         self.assertIn("did not match the materialize-template envelope", err)
         self.assertTrue(self.dest_of(fixture).is_file())
 
+    def test_record_target_mismatch_falls_back_without_lock_write(self):
+        """R1-lock-record-trust: a structurally valid envelope whose record
+        target does not match the sent plan is unusable — one warning, the
+        Python body runs, and the mismatched record never reaches the lock."""
+        fixture = self.fixture("tpl-fb-rec-target")
+        payload = json.dumps({
+            "dest": str(self.dest_of(fixture)),
+            "wrote": True,
+            "record": {
+                "target": "other/evil-target.sh", "sha256": "a" * 64,
+                "recipe": "worktree-flow", "source": "templates/post-merge.sh",
+                "kind": "template", "policy": "auto",
+            },
+            "message": f"✓ template {TARGET}",
+            "warnings": [],
+            "error": None,
+        })
+        self.pin_binary(self.stub(f"printf '%s' '{payload}'"))
+        out, err = self.run_materialize(
+            self.mod.materialize_template,
+            fixture["recipe_dir"], self.tpl(), fixture["root"],
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertEqual(err.count(self.mod.GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK), 1, err)
+        self.assertIn("does not match the sent target", err)
+        self.assertIn("other/evil-target.sh", err)
+        self.assertIn(f"    ✓ template {TARGET}", out)
+        self.assertEqual(self.dest_of(fixture).read_bytes(), b"#!/bin/sh\necho hi\n")
+        lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
+        self.assertNotIn("other/evil-target.sh", lock.get("managed", {}))
+        self.assertEqual(
+            lock["managed"][TARGET]["sha256"],
+            self.mod._load_util().sha256_bytes(b"#!/bin/sh\necho hi\n"),
+            "the Python body's own record is what lands in the lock",
+        )
+
+    def test_record_source_mismatch_falls_back_without_lock_write(self):
+        """R1-lock-record-trust: a record source that does not match the sent
+        plan is unusable — one warning, Python body, no lock write from it."""
+        fixture = self.fixture("tpl-fb-rec-source")
+        payload = json.dumps({
+            "dest": str(self.dest_of(fixture)),
+            "wrote": True,
+            "record": {
+                "target": TARGET, "sha256": "a" * 64,
+                "recipe": "worktree-flow", "source": "templates/evil.sh",
+                "kind": "template", "policy": "auto",
+            },
+            "message": f"✓ template {TARGET}",
+            "warnings": [],
+            "error": None,
+        })
+        self.pin_binary(self.stub(f"printf '%s' '{payload}'"))
+        out, err = self.run_materialize(
+            self.mod.materialize_template,
+            fixture["recipe_dir"], self.tpl(), fixture["root"],
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertEqual(err.count(self.mod.GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK), 1, err)
+        self.assertIn("does not match the sent source", err)
+        self.assertIn("templates/evil.sh", err)
+        self.assertIn(f"    ✓ template {TARGET}", out)
+        lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
+        self.assertEqual(lock["managed"][TARGET]["source"], "templates/post-merge.sh")
+
+    def test_wrote_true_without_record_falls_back(self):
+        """R3-record-null-lock-drift: ``wrote: true`` with ``record: null``
+        would leave the target on disk with no ownership record — the
+        envelope is unusable: one warning naming it, then the Python body
+        whose own record ends up in the lock."""
+        fixture = self.fixture("tpl-fb-wrote-null")
+        payload = json.dumps({
+            "dest": str(self.dest_of(fixture)),
+            "wrote": True,
+            "record": None,
+            "message": f"✓ template {TARGET}",
+            "warnings": [],
+            "error": None,
+        })
+        self.pin_binary(self.stub(f"printf '%s' '{payload}'"))
+        out, err = self.run_materialize(
+            self.mod.materialize_template,
+            fixture["recipe_dir"], self.tpl(), fixture["root"],
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertEqual(err.count(self.mod.GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK), 1, err)
+        self.assertIn("wrote without a record", err)
+        self.assertIn(f"    ✓ template {TARGET}", out)
+        self.assertEqual(self.dest_of(fixture).read_bytes(), b"#!/bin/sh\necho hi\n")
+        lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
+        self.assertEqual(
+            lock["managed"][TARGET]["sha256"],
+            self.mod._load_util().sha256_bytes(b"#!/bin/sh\necho hi\n"),
+        )
+
+    def test_record_sha_not_lowercase_hex_falls_back(self):
+        """R1-lock-record-trust: a record sha256 that is not 64 lowercase
+        hex characters is unusable — fallback, no lock write from it."""
+        fixture = self.fixture("tpl-fb-rec-sha")
+        payload = json.dumps({
+            "dest": str(self.dest_of(fixture)),
+            "wrote": True,
+            "record": {
+                "target": TARGET, "sha256": "A" * 64,
+                "recipe": "worktree-flow", "source": "templates/post-merge.sh",
+                "kind": "template", "policy": "auto",
+            },
+            "message": f"✓ template {TARGET}",
+            "warnings": [],
+            "error": None,
+        })
+        self.pin_binary(self.stub(f"printf '%s' '{payload}'"))
+        out, err = self.run_materialize(
+            self.mod.materialize_template,
+            fixture["recipe_dir"], self.tpl(), fixture["root"],
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertEqual(err.count(self.mod.GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK), 1, err)
+        self.assertIn("64 lowercase hex characters", err)
+        lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
+        self.assertEqual(
+            lock["managed"][TARGET]["sha256"],
+            self.mod._load_util().sha256_bytes(b"#!/bin/sh\necho hi\n"),
+        )
+
     def test_fallback_warning_matches_the_bridge_family_format(self):
         fixture = self.fixture("tpl-fb-format")
         _, err = self.run_materialize(

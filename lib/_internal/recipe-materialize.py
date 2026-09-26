@@ -1117,6 +1117,17 @@ def go_materialize_template(plan: dict[str, Any]) -> dict[str, Any] | None:
             text=True,
             timeout=GO_TEMPLATE_ACTUATOR_BRIDGE_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired:
+        # R3-bridge-timeout-double-exec: the Go process may have been killed
+        # mid-write, so this run is ambiguous (a potential double execution).
+        # Keep failing open — the Python body repairs the destination
+        # idempotently — but name the timeout (with the value in seconds) so
+        # an operator can tell a timeout apart from a crash.
+        _warn_template_bridge_fallback(
+            f"worktree-gate timed out after "
+            f"{GO_TEMPLATE_ACTUATOR_BRIDGE_TIMEOUT_SECONDS}s"
+        )
+        return None
     except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
         # UnicodeDecodeError is a UnicodeError subclass: strict text=True
         # decoding of stdout must degrade, not escape.
@@ -1186,6 +1197,40 @@ def resolve_template_dest(project_root: Path, target: str) -> Path:
     return path
 
 
+def _template_record_mismatch(
+    record: dict[str, Any], target: str, source: str,
+    recipe_id: str | None, policy: str,
+) -> str | None:
+    """Why ``record`` does not match the plan Python sent, or None.
+
+    R1-lock-record-trust: the Go-returned record is only applied to the lock
+    when every field matches what this run actually requested (same spirit as
+    the GO-08 results-count-mismatch guard) and its ``sha256`` is a
+    64-character lowercase hex string. Any mismatch makes the envelope
+    unusable.
+    """
+    for key, want in (
+        ("target", target),
+        ("source", source),
+        ("recipe", recipe_id),
+        ("policy", policy),
+        ("kind", "template"),
+    ):
+        got = record.get(key)
+        if got != want:
+            return (
+                f"the returned record {key} {got!r} does not match the "
+                f"sent {key} {want!r}"
+            )
+    sha = record.get("sha256")
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+        return (
+            f"the returned record sha256 {sha!r} is not 64 lowercase hex "
+            "characters"
+        )
+    return None
+
+
 def materialize_template(
     recipe_dir: Path,
     tpl: Any,
@@ -1197,13 +1242,22 @@ def materialize_template(
 
     ``worktree-gate --materialize-template`` owns the decision + execution;
     Python applies the returned record to the lock (set_managed_override +
-    write_lock), prints the exact reference lines (indent + print_step_output
-    compact filtering stay Python-owned), and falls back to the historical
-    Python body (_python_materialize_template) on any infrastructure failure.
+    write_lock) and prints the exact reference lines (indent +
+    print_step_output compact filtering stay Python-owned). Two failure
+    shapes:
+
+    * FAIL CLOSED: a delivered exit-2 REFUSAL envelope (nonzero exit with a
+      stdout error envelope) raises ``RuntimeError`` — the Go authority's
+      decision is never bypassed by the Python body.
+    * FAIL OPEN: every infrastructure failure (no verified binary, process
+      crash, timeout, malformed or mismatched envelope) warns exactly once
+      (``GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK``) and falls back to the
+      historical Python body (_python_materialize_template).
     """
     lock_path = project_root / "ai-specs" / ".ai-specs.lock"
     lock = load_lock(lock_path)
     target = Path(tpl.target).as_posix()
+    policy = getattr(tpl, "update_policy", "auto") or "auto"
     entry = (lock.get("managed") or {}).get(target)
     output = go_materialize_template(
         {
@@ -1213,7 +1267,7 @@ def materialize_template(
             "source": tpl.source,
             "target": target,
             "condition": tpl.condition,
-            "update_policy": getattr(tpl, "update_policy", "auto") or "auto",
+            "update_policy": policy,
             "config": merged_cfg,
             "managed_entry": entry,
         }
@@ -1222,7 +1276,24 @@ def materialize_template(
         for line in output["warnings"]:
             warn(line)
         record = output.get("record")
+        if output.get("wrote") and record is None:
+            # R3-record-null-lock-drift: the Go side reports it wrote the
+            # destination but returned no ownership record; accepting that
+            # would leave the target on disk with no lock entry. The
+            # envelope is unusable: fall back so the Python body rewrites
+            # the destination and records it itself.
+            _warn_template_bridge_fallback("wrote without a record")
+            _python_materialize_template(recipe_dir, tpl, project_root, merged_cfg, recipe_id)
+            return
         if record is not None:
+            mismatch = _template_record_mismatch(record, target, tpl.source, recipe_id, policy)
+            if mismatch is not None:
+                # R1-lock-record-trust: the returned record must match the
+                # plan this run actually sent; a mismatched envelope must
+                # never write its ownership metadata into the lock.
+                _warn_template_bridge_fallback(mismatch)
+                _python_materialize_template(recipe_dir, tpl, project_root, merged_cfg, recipe_id)
+                return
             set_managed_override(
                 lock,
                 record["target"],
@@ -1262,7 +1333,9 @@ def _python_materialize_template(
 
     Kept only as the fallback; ``worktree-gate --materialize-template`` is the
     primary authority. It mirrors the historical materialize_template body
-    exactly."""
+    exactly. A timed-out Go run may already have written the destination; this
+    body then rewrites it idempotently.
+    """
     util = _load_util()
     src = recipe_dir / tpl.source
     dest = resolve_template_dest(project_root, tpl.target)
