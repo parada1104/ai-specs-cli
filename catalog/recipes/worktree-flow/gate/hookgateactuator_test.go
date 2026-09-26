@@ -718,6 +718,114 @@ func TestHookGateActuatorRefreshMissingDestNoBackup(t *testing.T) {
 
 // TestHookGateActuatorSourceMissing: a missing recipe source refuses with
 // exit 2, the exact historical message, and no destination touched.
+// --- hardening: rel-path traversal guard and guarded rollback restore ---
+
+// TestHookRelPathEscapes pins the traversal guard behind the materialized rel
+// path: recipe_id is interpolated verbatim into the fixed
+// ai-specs/recipes/{recipe_id}/hooks/ prefix, so a separator or dot segment
+// in it escapes the managed tree, and a script whose basename is a dot
+// segment joins to a parent directory.
+func TestHookRelPathEscapes(t *testing.T) {
+	cases := []struct {
+		recipeID, script string
+		want             bool
+	}{
+		{"worktree-flow", "hooks/gate.sh", false},
+		{"trello-mcp-workflow", "scripts/tracker-card-gate.sh", false},
+		{"../escape", "hooks/gate.sh", true},
+		{"sub/dir", "hooks/gate.sh", true},
+		{"..", "gate.sh", true},
+		{".", "gate.sh", true},
+		{"worktree-flow", "..", true},
+		{"worktree-flow", "sub/..", true},
+	}
+	for _, tc := range cases {
+		if got := hookRelPathEscapes(tc.recipeID, tc.script); got != tc.want {
+			t.Errorf("hookRelPathEscapes(%q, %q) = %v, want %v", tc.recipeID, tc.script, got, tc.want)
+		}
+	}
+}
+
+// TestHookGateActuatorRefusesEscapingRelPath: a recipe_id that would push the
+// materialized rel path outside the managed ai-specs/recipes tree is a
+// decision refusal (exit 2, error envelope, no file written anywhere).
+func TestHookGateActuatorRefusesEscapingRelPath(t *testing.T) {
+	cases := []struct{ name, recipeID string }{
+		{"traversal recipe id escapes the recipes tree", "../escape"},
+		{"separator recipe id escapes the recipe directory", "sub/dir"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := writeHookSource(t, hookFixtureBody)
+			in.RecipeID = tc.recipeID
+			code, out, stderr := runHookGateActuatorCLI(t, in)
+			if code != 2 {
+				t.Fatalf("exit = %d, want 2 (stderr %q, out %#v)", code, stderr, out)
+			}
+			if out.Error == nil || *out.Error == "" {
+				t.Errorf("error = %#v, want a refusal envelope", out.Error)
+			}
+			escaped := filepath.Join(in.ProjectRoot, "ai-specs", "recipes", tc.recipeID)
+			if _, err := os.Stat(escaped); !os.IsNotExist(err) {
+				t.Errorf("escaped destination %s created despite refusal: %v", escaped, err)
+			}
+		})
+	}
+}
+
+// TestHookGateActuatorRefreshRollbackNeverWritesThroughSymlink: a destination
+// swapped to a symlink between the entry guard and the write (a race that
+// cannot be injected through the filesystem alone, so the write step is
+// injected) must be rolled back through the same guarded writer as the
+// primary path — the bystander file the link points at is never written, the
+// link itself is preserved, and the refresh refuses with exit 2.
+func TestHookGateActuatorRefreshRollbackNeverWritesThroughSymlink(t *testing.T) {
+	in := writeHookSource(t, hookFixtureBody)
+	dest := hookFixtureDest(in)
+	prior := "#!/bin/sh\n# user customization\n"
+	if err := os.WriteFile(dest, []byte(prior), 0o755); err != nil {
+		t.Fatalf("write dest: %v", err)
+	}
+	bystander := filepath.Join(filepath.Dir(dest), "bystander.sh")
+	if err := os.WriteFile(bystander, []byte("#!/bin/sh\n# innocent\n"), 0o755); err != nil {
+		t.Fatalf("write bystander: %v", err)
+	}
+	realWrite := hookGateRefreshWrite
+	hookGateRefreshWrite = func(dest string, content []byte, mode os.FileMode) error {
+		// The race: after the entry guard and the pre-refresh read, the dest
+		// is replaced by a symlink to the bystander; the guarded writer then
+		// fails exactly as it would on a real swap (ELOOP -> errDestSymlink).
+		if err := os.Remove(dest); err != nil {
+			t.Errorf("swap: remove dest: %v", err)
+		}
+		if err := os.Symlink(bystander, dest); err != nil {
+			t.Errorf("swap: symlink dest: %v", err)
+		}
+		return errDestSymlink
+	}
+	t.Cleanup(func() { hookGateRefreshWrite = realWrite })
+	in.Refresh = true
+	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", sha256Bytes([]byte(prior))+".sh")
+	code, out, stderr := runHookGateActuatorCLI(t, in)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (stderr %q, out %#v)", code, stderr, out)
+	}
+	if out.Error == nil || !strings.Contains(*out.Error, "symlink") {
+		t.Errorf("error = %#v, want the symlink refusal", out.Error)
+	}
+	got, err := os.ReadFile(bystander)
+	if err != nil {
+		t.Fatalf("read bystander: %v", err)
+	}
+	if string(got) != "#!/bin/sh\n# innocent\n" {
+		t.Errorf("bystander bytes = %q, want untouched (restore wrote through the symlink)", got)
+	}
+	if info, err := os.Lstat(dest); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("dest = %v, %v, want the symlink preserved", info, err)
+	}
+	_ = os.Remove(dest) // cleanup for t.TempDir removal
+}
+
 func TestHookGateActuatorSourceMissing(t *testing.T) {
 	in := writeHookSource(t, hookFixtureBody)
 	if err := os.Remove(filepath.Join(in.RecipeDir, filepath.FromSlash(in.Script))); err != nil {

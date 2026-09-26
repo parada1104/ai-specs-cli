@@ -85,6 +85,26 @@ func hookScriptRelPath(recipeID, script string) string {
 	return fmt.Sprintf("ai-specs/recipes/%s/hooks/%s", recipeID, filepath.Base(script))
 }
 
+// hookRelPathEscapes reports whether the rel path built from recipe_id +
+// script would leave the managed ai-specs/recipes tree: recipe_id is
+// interpolated verbatim into the prefix (R1-hook-rel-path-unsanitized), so a
+// separator or dot segment in it escapes the recipes directory, and a script
+// whose basename is a dot segment joins to a parent directory. Recipe ids are
+// catalog slugs, so refusing these inputs never rejects a real recipe.
+func hookRelPathEscapes(recipeID, script string) bool {
+	if recipeID == "" || recipeID == "." || recipeID == ".." {
+		return true
+	}
+	if strings.ContainsAny(recipeID, `/\`) {
+		return true
+	}
+	switch filepath.Base(script) {
+	case ".", "..":
+		return true
+	}
+	return false
+}
+
 // renderHookGateContent is the pure hook renderer: the eight placeholders in
 // the documented order, each replaced only when its token is present. The
 // three validated tokens (gate_scope, repo_topology, gate_impl) raise the
@@ -275,14 +295,18 @@ func runMaterializeHook(stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	refuse := func(message string) int {
-		out := hookActuatorOutput{Error: &message}
-		payload, err := json.Marshal(out)
-		if err != nil {
-			fmt.Fprintf(stderr, "worktree-gate: --materialize-hook: %v\n", err)
-			return 2
+		// A refusal is the error envelope emit already knows how to print; the
+		// only difference is the exit code (2 either way — emit's 2 is its
+		// marshal-failure diagnostic, a refusal's 2 is the decision).
+		if code := emit(hookActuatorOutput{Error: &message}); code != 0 {
+			return code
 		}
-		fmt.Fprintln(stdout, string(payload))
 		return 2
+	}
+	if hookRelPathEscapes(in.RecipeID, in.Script) {
+		return refuse(fmt.Sprintf(
+			"hook rel path would escape ai-specs/recipes/: recipe_id %q, script %q",
+			in.RecipeID, in.Script))
 	}
 
 	rel := hookScriptRelPath(in.RecipeID, in.Script)
@@ -314,7 +338,16 @@ func runMaterializeHook(stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if in.Refresh {
-		return runHookGateRefresh(in, rel, dest, contentBytes, hookRecord, emit, refuse, stderr)
+		return runHookGateRefresh(hookRefreshCall{
+			in:           in,
+			rel:          rel,
+			dest:         dest,
+			contentBytes: contentBytes,
+			record:       hookRecord,
+			emit:         emit,
+			refuse:       refuse,
+			stderr:       stderr,
+		})
 	}
 
 	present, disk, err := readRegularFile(dest)
@@ -364,70 +397,84 @@ func runMaterializeHook(stdin io.Reader, stdout, stderr io.Writer) int {
 	return emit(out)
 }
 
+// hookRefreshCall bundles one --refresh-gates invocation: the stdin envelope,
+// the derived identity (rel/dest/rendered bytes/record constructor), and the
+// I/O sinks. The previous eight-parameter signature flattened into one
+// readable value (R2-refresh-signature).
+type hookRefreshCall struct {
+	in           hookActuatorRequest
+	rel, dest    string
+	contentBytes []byte
+	record       func(sha string) *hookActuatorRecord
+	emit         func(hookActuatorOutput) int
+	refuse       func(message string) int
+	stderr       io.Writer
+}
+
+// hookGateRefreshWrite is the refresh write step. It is a package variable so
+// the rollback path can be exercised in-process: a destination swapped to a
+// symlink between the entry guard and the write cannot be injected through
+// the filesystem alone. Production always uses writeTemplateContent.
+var hookGateRefreshWrite = writeTemplateContent
+
 // runHookGateRefresh is the --refresh-gates path: cache backup -> gate write,
 // all-or-nothing. Classification is skipped — a refresh replaces even a
 // user-modified gate after its exact pre-refresh bytes land in the
 // Python-precomputed immutable backup. On ANY Go-side failure before success
 // the prior bytes are restored (best effort), the backup is removed, and the
 // actuator refuses with exit 2 so Python never writes a lock record.
-func runHookGateRefresh(
-	in hookActuatorRequest,
-	rel, dest string,
-	contentBytes []byte,
-	hookRecord func(sha string) *hookActuatorRecord,
-	emit func(hookActuatorOutput) int,
-	refuse func(message string) int,
-	stderr io.Writer,
-) int {
-	if info, statErr := os.Lstat(dest); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return refuse(templateSymlinkRefusal(rel))
+func runHookGateRefresh(c hookRefreshCall) int {
+	if info, statErr := os.Lstat(c.dest); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return c.refuse(templateSymlinkRefusal(c.rel))
 	}
 	var prior []byte
 	hadPrior := false
-	if info, statErr := os.Stat(dest); statErr == nil && info.Mode().IsRegular() {
-		data, readErr := os.ReadFile(dest)
+	if info, statErr := os.Stat(c.dest); statErr == nil && info.Mode().IsRegular() {
+		data, readErr := os.ReadFile(c.dest)
 		if readErr != nil {
-			fmt.Fprintf(stderr, "worktree-gate: --materialize-hook: dest %s: %v\n", dest, readErr)
+			fmt.Fprintf(c.stderr, "worktree-gate: --materialize-hook: dest %s: %v\n", c.dest, readErr)
 			return 2
 		}
 		prior = data
 		hadPrior = true
 	}
 	backup := ""
-	if hadPrior && in.BackupPath != "" {
+	if hadPrior && c.in.BackupPath != "" {
 		// The path is content-hash keyed (immutable): a COMPLETE snapshot is
 		// never rewritten. A missing or PARTIAL one (a crash or short write can
 		// leave truncated bytes at the key) is (re)written atomically so a
 		// partial file never appears at the final path.
-		if err := os.MkdirAll(filepath.Dir(in.BackupPath), 0o755); err != nil {
-			fmt.Fprintf(stderr, "worktree-gate: --materialize-hook: backup %s: %v\n", in.BackupPath, err)
+		if err := os.MkdirAll(filepath.Dir(c.in.BackupPath), 0o755); err != nil {
+			fmt.Fprintf(c.stderr, "worktree-gate: --materialize-hook: backup %s: %v\n", c.in.BackupPath, err)
 			return 2
 		}
-		if !hookBackupComplete(in.BackupPath) {
-			if err := writeHookBackupSnapshot(in.BackupPath, prior); err != nil {
-				fmt.Fprintf(stderr, "worktree-gate: --materialize-hook: backup %s: %v\n", in.BackupPath, err)
+		if !hookBackupComplete(c.in.BackupPath) {
+			if err := writeHookBackupSnapshot(c.in.BackupPath, prior); err != nil {
+				fmt.Fprintf(c.stderr, "worktree-gate: --materialize-hook: backup %s: %v\n", c.in.BackupPath, err)
 				return 2
 			}
 		}
-		backup = in.BackupPath
+		backup = c.in.BackupPath
 	}
-	if err := writeTemplateContent(dest, contentBytes, 0o755); err != nil {
+	if err := hookGateRefreshWrite(c.dest, c.contentBytes, 0o755); err != nil {
 		if hadPrior {
-			if restoreErr := os.WriteFile(dest, prior, 0o755); restoreErr == nil {
-				_ = os.Chmod(dest, 0o755)
-			}
+			// The rollback goes through the SAME guarded writer as the primary
+			// path: a destination swapped to a symlink mid-refresh is refused
+			// (Lstat + O_NOFOLLOW), never written through (R4-002). Best effort —
+			// the refusal below already hands the decision back to Python.
+			_ = writeTemplateContent(c.dest, prior, 0o755)
 		}
 		if backup != "" {
 			_ = os.Remove(backup)
 		}
-		return refuse(hookWriteRefusal(rel, dest, err))
+		return c.refuse(hookWriteRefusal(c.rel, c.dest, err))
 	}
-	return emit(hookActuatorOutput{
-		Rel:      rel,
-		Dest:     dest,
+	return c.emit(hookActuatorOutput{
+		Rel:      c.rel,
+		Dest:     c.dest,
 		Wrote:    true,
-		Record:   hookRecord(sha256Bytes(contentBytes)),
-		Message:  fmt.Sprintf("✓ hook refreshed %s", rel),
+		Record:   c.record(sha256Bytes(c.contentBytes)),
+		Message:  fmt.Sprintf("✓ hook refreshed %s", c.rel),
 		Warnings: []string{},
 		Backup:   backup,
 	})
