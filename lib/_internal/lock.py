@@ -18,7 +18,8 @@ LOCK_HEADER = """\
 # Provenance stamp: [meta] records the CLI version and timestamp of the last
 # sync. [managed.*] records integrity only for CLI-owned override targets;
 # it is not a general content-integrity manifest. git covers the committed
-# project surface; skill/recipe/dep content hashes are not tracked.
+# project surface; dep content hashes ([deps.*]) are tracked for drift
+# detection; recipe/skill content hashes are not tracked.
 """
 
 
@@ -129,6 +130,16 @@ def _refuse_control_chars(lock_path: Path, lock: dict) -> None:
         for name in sorted(files):
             checks.append(("agents filename", name))
             checks.append(("agents hash", str(files[name])))
+    deps = lock.get("deps") or {}
+    for dep_id in sorted(deps):
+        checks.append(("deps dep id", dep_id))
+        skills = deps[dep_id] or {}
+        for skill_name in sorted(skills):
+            checks.append(("deps skill name", skill_name))
+            files = skills[skill_name] or {}
+            for rel in sorted(files):
+                checks.append(("deps rel", rel))
+                checks.append(("deps hash", str(files[rel])))
     for locator, value in checks:
         if _has_control_char(value):
             raise RuntimeError(f"value for {locator} contains a control character")
@@ -186,7 +197,13 @@ def _lock_write_envelope(lock_path: Path, lock: dict) -> dict:
     with the same truthiness filters the Python writer applies (meta keys and
     managed values are skipped when falsy/empty, exactly as write_lock does).
     """
-    envelope: dict = {"lock_path": str(lock_path), "meta": {}, "managed": {}, "agents": {}}
+    envelope: dict = {
+        "lock_path": str(lock_path),
+        "meta": {},
+        "managed": {},
+        "deps": {},
+        "agents": {},
+    }
     meta = lock.get("meta") or {}
     if meta.get("cli_version"):
         envelope["meta"]["cli_version"] = str(meta["cli_version"])
@@ -203,6 +220,19 @@ def _lock_write_envelope(lock_path: Path, lock: dict) -> dict:
             if value is not None and value != "":
                 record[key] = str(value)
         envelope["managed"][path] = record
+    deps = lock.get("deps") or {}
+    for dep_id in sorted(deps):
+        skills = deps[dep_id] or {}
+        dep_entry: dict = {}
+        for skill_name in sorted(skills):
+            files = skills[skill_name] or {}
+            if not files:
+                continue
+            dep_entry[skill_name] = {
+                str(rel): str(files[rel]) for rel in sorted(files)
+            }
+        if dep_entry:
+            envelope["deps"][dep_id] = dep_entry
     agents = lock.get("agents") or {}
     for harness in sorted(agents):
         files = agents[harness]
@@ -333,6 +363,18 @@ def _write_lock_python(lock_path: Path, lock: dict) -> None:
                 out.append(f"{key} = {_toml_string(str(value))}")
         out.append("")
 
+    deps = lock.get("deps") or {}
+    for dep_id in sorted(deps):
+        skills = deps[dep_id] or {}
+        for skill_name in sorted(skills):
+            files = skills[skill_name] or {}
+            if not files:
+                continue
+            out.append(f"[deps.{_toml_string(dep_id)}.skills.{_toml_string(skill_name)}]")
+            for rel in sorted(files):
+                out.append(f"{_toml_string(rel)} = {_toml_string(str(files[rel]))}")
+            out.append("")
+
     agents = lock.get("agents") or {}
     for harness in sorted(agents):
         files = agents[harness]
@@ -435,5 +477,14 @@ def remove_recipe_lock_entries(lock: dict, recipe_id: str) -> bool:
     recipes = lock.get("recipes") or {}
     if recipe_id in recipes:
         del recipes[recipe_id]
+        return True
+    return False
+
+
+def remove_dep_lock_entries(lock: dict, dep_id: str) -> bool:
+    """Remove all lock entries for a dep. Returns True if anything was removed."""
+    deps = lock.get("deps") or {}
+    if dep_id in deps:
+        del deps[dep_id]
         return True
     return False

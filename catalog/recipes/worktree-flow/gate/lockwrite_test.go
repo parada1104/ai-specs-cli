@@ -38,16 +38,17 @@ func runWriteLockCLI(t *testing.T, envelopeJSON string) (int, string, string) {
 // --- header byte identity ---
 
 // TestLockHeaderByteIdentity pins LOCK_HEADER character-for-character against
-// the Python authority: lib/_internal/lock.py:9-15. A divergence here fails
+// the Python authority: lib/_internal/lock.py:9-17. A divergence here fails
 // the test — the lock header is part of the emitted format and slices 6/7
 // read these bytes.
 func TestLockHeaderByteIdentity(t *testing.T) {
-	// Copied verbatim from LOCK_HEADER in lib/_internal/lock.py:9-15.
+	// Copied verbatim from LOCK_HEADER in lib/_internal/lock.py:9-17.
 	want := "# Managed by ai-specs. Do not edit by hand.\n" +
 		"# Provenance stamp: [meta] records the CLI version and timestamp of the last\n" +
 		"# sync. [managed.*] records integrity only for CLI-owned override targets;\n" +
 		"# it is not a general content-integrity manifest. git covers the committed\n" +
-		"# project surface; skill/recipe/dep content hashes are not tracked.\n"
+		"# project surface; dep content hashes ([deps.*]) are tracked for drift\n" +
+		"# detection; recipe/skill content hashes are not tracked.\n"
 	if lockHeader != want {
 		t.Fatalf("lockHeader diverges from lib/_internal/lock.py:9-15\n--- got ---\n%q\n--- want ---\n%q", lockHeader, want)
 	}
@@ -255,14 +256,15 @@ func TestRenderLockRawControlCharsInValues(t *testing.T) {
 
 // TestRenderLockNoLegacySections pins the legacy read-but-dropped contract
 // (tests/test_lock.py:31-122): the writer never emits [skills], [recipes.*],
-// [deps.*], [commands] or [opted-out].
+// [commands] or [opted-out]. [deps.*] is NOT legacy anymore: D17 re-extends
+// it for dep content hashes (pinned by TestWriteLockCLISuccess).
 func TestRenderLockNoLegacySections(t *testing.T) {
 	out := renderLock(&lockWriteRequest{
 		Meta:    map[string]string{"cli_version": "0.14.0"},
 		Managed: map[string]lockManagedEntry{"a.md": {SHA256: "aaa"}},
 		Agents:  map[string]map[string]string{"claude": {"AGENTS.md": "agenthash"}},
 	})
-	for _, legacy := range []string{"[skills.", "[recipes.", "[deps.", "[commands]", "[opted-out]"} {
+	for _, legacy := range []string{"[skills.", "[recipes.", "[commands]", "[opted-out]"} {
 		if strings.Contains(out, legacy) {
 			t.Errorf("legacy section %q emitted: %q", legacy, out)
 		}
@@ -277,7 +279,7 @@ func TestRenderLockNoLegacySections(t *testing.T) {
 func TestWriteLockCLISuccess(t *testing.T) {
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, ".ai-specs.lock")
-	envelope := `{"lock_path": "` + lockPath + `", "meta": {"cli_version": "0.24.0", "synced_at": "2026-07-14T00:00:00Z"}, "managed": {"AGENTS.md": {"sha256": "abc", "recipe": "worktree-flow", "source": "tpl.md", "kind": "template", "policy": "auto"}}, "agents": {"claude": {"AGENTS.md": "agenthash"}}}`
+	envelope := `{"lock_path": "` + lockPath + `", "meta": {"cli_version": "0.24.0", "synced_at": "2026-07-14T00:00:00Z"}, "managed": {"AGENTS.md": {"sha256": "abc", "recipe": "worktree-flow", "source": "tpl.md", "kind": "template", "policy": "auto"}}, "deps": {"vendored-demo": {"vendored-demo": {"SKILL.md": "skillhash", "scripts/run.sh": "scripthash"}}}, "agents": {"claude": {"AGENTS.md": "agenthash"}}}`
 	code, out, stderr := runWriteLockCLI(t, envelope)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, stdout %q", code, stderr, out)
@@ -297,6 +299,12 @@ func TestWriteLockCLISuccess(t *testing.T) {
 		"source = \"tpl.md\"\n" +
 		"kind = \"template\"\n" +
 		"policy = \"auto\"\n" +
+		"\n" +
+		// deps is the re-extended D17 section: emitted between managed and
+		// agents, sorted dep id → skill → rel.
+		"[deps.\"vendored-demo\".skills.\"vendored-demo\"]\n" +
+		"\"SKILL.md\" = \"skillhash\"\n" +
+		"\"scripts/run.sh\" = \"scripthash\"\n" +
 		"\n" +
 		"[agents.\"claude\"]\n" +
 		"\"AGENTS.md\" = \"agenthash\"\n"
@@ -370,6 +378,7 @@ func TestWriteLockCLIRefusesControlCharacters(t *testing.T) {
 		{"agents harness newline", `{"lock_path": "` + lockPath + `", "agents": {"cla\nude": {"AGENTS.md": "h"}}}`},
 		{"agents filename newline", `{"lock_path": "` + lockPath + `", "agents": {"claude": {"A\nGENTS.md": "h"}}}`},
 		{"agents hash newline", `{"lock_path": "` + lockPath + `", "agents": {"claude": {"AGENTS.md": "ha\nsh"}}}`},
+		{"deps hash newline", `{"lock_path": "` + lockPath + `", "deps": {"my-dep": {"my-dep": {"SKILL.md": "ha\nsh"}}}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
