@@ -260,7 +260,8 @@ def _run_noninteractive(target: Path) -> int:
     print("Commands:")
     for _act, title, desc in _MENU:
         print(f"  {title:12s}  {desc}")
-    return 0
+    # D5 fix: propagate the real Doctor exit code instead of always 0.
+    return summary.exit_code
 
 
 # ── Widget layer (lazy questionary / input) ──────────────────────────────────
