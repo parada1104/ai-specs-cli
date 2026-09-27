@@ -208,6 +208,75 @@ class SkillsRemoveCliTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("missing", proc.stderr)
 
+    def test_remove_tolerates_already_invalid_manifest(self):
+        """FROZEN parity: removal still works on a manifest that is not valid TOML."""
+        project = self._project_with_manifest()
+        toml = self._toml_path(project)
+        toml.write_text(
+            '[project]\nname = "test"\nbroken line\n[[deps]]\nid = "my-skill"\n',
+            encoding="utf-8",
+        )
+        proc = self._run("my-skill", str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("[[deps]]", toml.read_text(encoding="utf-8"))
+
+    def test_remove_preserves_multiline_string_blank_lines(self):
+        """D2: untouched regions (even inside multi-line strings) survive byte-identical."""
+        project = self._project_with_manifest(
+            '[project]\n'
+            'name = "test"\n'
+            '\n'
+            '[other]\n'
+            'notes = """\n'
+            'first\n'
+            '\n'
+            '\n'
+            'third\n'
+            '"""\n'
+            '\n'
+            '[[deps]]\n'
+            'id = "my-skill"\n'
+            'source = "https://github.com/test/repo.git"\n'
+        )
+        proc = self._run("my-skill", str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        with open(self._toml_path(project), "rb") as f:
+            data = tomllib.load(f)
+        self.assertEqual(
+            data["other"]["notes"], "first\n\n\nthird\n",
+            "blank lines inside an untouched multi-line string were collapsed",
+        )
+        self.assertEqual(data.get("deps") or [], [])
+
+    def test_remove_invalid_result_restores_manifest(self):
+        """A deletion that breaks a valid manifest is refused; original bytes intact."""
+        project = self._project_with_manifest()
+        toml = self._toml_path(project)
+        # The [[deps]] id sits inside a multi-line string of [other]; the
+        # segmenter treats the embedded line as a header and deleting it cuts
+        # the string open.
+        toml.write_text(
+            '[other]\n'
+            'doc = """\n'
+            '[[deps]]\n'
+            'id = "my-skill"\n'
+            'inner\n'
+            '"""\n'
+            '\n'
+            '[[deps]]\n'
+            'id = "my-skill"\n',
+            encoding="utf-8",
+        )
+        before = toml.read_bytes()
+
+        proc = self._run("my-skill", str(project))
+        self.assertNotEqual(
+            proc.returncode, 0,
+            "removal that would produce invalid TOML must fail, not write the broken result",
+        )
+        self.assertEqual(before, toml.read_bytes(), "manifest bytes were modified by a refused removal")
+
     def test_remove_help_exits_zero(self):
         project = self._project_with_manifest()
         proc = subprocess.run(

@@ -61,15 +61,25 @@ fi
 # '[' at column 0. Drop any segment whose header matches [recipes.<id>] or
 # [recipes.<id>.*] (sub-tables), including all lines until the next top-level
 # header.
+#
+# Everything outside the removed segments is preserved byte-for-byte (no
+# whole-file whitespace normalization), the result is validated before writing
+# (a deletion that would break a previously valid manifest is refused), and
+# the write is atomic (mkstemp + os.replace, mirroring lib/_internal/lock.py).
 python3 - "$TOML_PATH" "$RECIPE_ID" <<'PY'
-import sys, pathlib, re
+import os
+import pathlib
+import re
+import sys
+import tempfile
+import tomllib
 
 toml_path = sys.argv[1]
 recipe_id = sys.argv[2]
 
 p = pathlib.Path(toml_path)
-content = p.read_text()
-lines = content.splitlines(keepends=True)
+original = p.read_text(encoding="utf-8")
+lines = original.splitlines(keepends=True)
 
 # Build segments: a new segment begins at each line that starts with '[' at
 # column 0. The text before the first header (preamble) is its own segment.
@@ -100,72 +110,88 @@ for i, seg in enumerate(segments):
         target_indices.append(i)
 
 if not target_indices:
-    print(f"  \u2717 recipe '{recipe_id}' not found in {toml_path}", file=sys.stderr)
+    print(f"  ✗ recipe '{recipe_id}' not found in {toml_path}", file=sys.stderr)
     sys.exit(1)
 
-# Remove matching segments in reverse index order (preserves earlier indices)
+# Remove matching segments in reverse index order (preserves earlier indices).
 for idx in reversed(target_indices):
     del segments[idx]
 
 new_content = "".join("".join(seg["lines"]) for seg in segments)
 
-# Collapse 3+ consecutive newlines left by removal into a single blank line.
-new_content = re.sub(r"\n{3,}", "\n\n", new_content)
+# Validate the result before writing (mirrors recipe-config-write.py): a
+# deletion that would break a previously valid manifest is refused and the
+# original bytes stay untouched. Removal must still tolerate a manifest that
+# is NOT currently valid TOML (frozen parity contract): only the regression
+# from valid to invalid is guarded.
+try:
+    tomllib.loads(original)
+    original_was_valid = True
+except tomllib.TOMLDecodeError:
+    original_was_valid = False
+if original_was_valid:
+    try:
+        tomllib.loads(new_content)
+    except tomllib.TOMLDecodeError as exc:
+        print(
+            f"ERROR: removing recipe '{recipe_id}' would produce invalid TOML: {exc}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-p.write_text(new_content)
+# Atomic replace (mirrors lock.py): a failed write never leaves a partially
+# updated manifest behind, and the original file mode is preserved.
+original_mode = p.stat().st_mode & 0o7777
+fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".ai-specs.toml.", suffix=".tmp")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(new_content)
+    os.chmod(tmp, original_mode)
+    os.replace(tmp, p)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
 
-print(f"  \u2713 removed {len(target_indices)} section(s) for recipe '{recipe_id}' from {toml_path}")
+print(f"  ✓ removed {len(target_indices)} section(s) for recipe '{recipe_id}' from {toml_path}")
 PY
 
 # Also clean up stale lock entries for this recipe.
 LOCK_PATH="$TARGET_PATH/ai-specs/.ai-specs.lock"
 if [[ -f "$LOCK_PATH" ]]; then
-    python3 - "$LOCK_PATH" "$RECIPE_ID" <<'PY'
-import sys, pathlib, tomllib
+    # Delegate to lock.py, the module that owns lock writes: canonical
+    # sections, _toml_string escaping, single LOCK_HEADER, the Go
+    # worktree-gate --write-lock authority, and an atomic mkstemp+os.replace
+    # write. Unrelated sections ([managed.*], [agents.*]) are preserved; only
+    # this recipe's entries are removed, and the lock is only rewritten when
+    # something was actually removed.
+    python3 - "$SCRIPT_DIR/_internal" "$LOCK_PATH" "$RECIPE_ID" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
 
-lock_path = sys.argv[1]
-recipe_id = sys.argv[2]
+internal_dir = Path(sys.argv[1])
+lock_path = Path(sys.argv[2])
+recipe_id = sys.argv[3]
 
-lock_path = pathlib.Path(lock_path)
-content = lock_path.read_bytes()
-data = tomllib.loads(content.decode("utf-8"))
+spec = importlib.util.spec_from_file_location(
+    "lock_internal", internal_dir / "lock.py"
+)
+if spec is None or spec.loader is None:
+    print(
+        f"ERROR: unable to load lock module from {internal_dir / 'lock.py'}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+lock_mod = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = lock_mod
+spec.loader.exec_module(lock_mod)
 
-recipes = data.get("recipes") or {}
-if recipe_id not in recipes:
-    sys.exit(0)
-
-del recipes[recipe_id]
-
-# Re-serialize as a provenance stamp (mirrors lock.py:write_lock). Skill/recipe/
-# dep content hashes, and legacy [commands]/[opted-out] sections, are no
-# longer tracked; any such legacy sections are dropped here.
-out = []
-out.append("# Managed by ai-specs. Do not edit by hand.")
-out.append("# Provenance stamp: [meta] records the CLI version and last sync.")
-out.append("# git covers integrity of the committed surface; skill/recipe/dep")
-out.append("# hashes are not tracked.")
-out.append("")
-
-meta = data.get("meta") or {}
-if meta:
-    out.append("[meta]")
-    if meta.get("cli_version"):
-        out.append(f'cli_version = "{meta["cli_version"]}"')
-    if meta.get("synced_at"):
-        out.append(f'synced_at = "{meta["synced_at"]}"')
-    out.append("")
-
-agents = data.get("agents") or {}
-for harness in sorted(agents):
-    files = agents[harness]
-    if not files:
-        continue
-    out.append(f'[agents."{harness}"]')
-    for name in sorted(files):
-        out.append(f'"{name}" = "{files[name]}"')
-    out.append("")
-
-lock_path.write_text("\n".join(out).rstrip("\n") + "\n")
-print(f"  \u2713 cleaned lock entries for recipe '{recipe_id}'")
+lock = lock_mod.load_lock(lock_path)
+if lock_mod.remove_recipe_lock_entries(lock, recipe_id):
+    lock_mod.write_lock(lock_path, lock)
+    print(f"  ✓ cleaned lock entries for recipe '{recipe_id}'")
 PY
 fi
