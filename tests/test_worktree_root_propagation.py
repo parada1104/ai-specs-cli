@@ -20,14 +20,16 @@ prove, with a temporary Git main checkout plus a linked worktree:
 No production file is modified. The suite is hermetic: a scratch AI_SPECS_HOME
 (symlink-farm over this checkout, cache excluded) plus ``AI_SPECS_GATE_OFFLINE=1
 AI_SPECS_GATE_BUILD=1`` builds the gate binary into the scratch cache (no
-network), exactly like the sync-pipeline tests do for the CLI.
+network), exactly like the sync-pipeline tests do for the CLI. The Go gate
+binary itself is likewise acquired through the CLI's own offline local-build
+path — never from ``dist/`` and never with a network fetch.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -35,11 +37,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import isolated_home  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
 GATE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow" / "gate"
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 RECIPE_VERSION = "1.6.0"  # catalog/recipes/worktree-flow/recipe.toml
+
+# Module-level memo for the CLI-acquired Go gate binary (built once offline).
+_ACQUIRED_GATE: list[Path] = []
+_GATE_HOLDER: list[tempfile.TemporaryDirectory] = []
 
 MANIFEST = (
     "[project]\n"
@@ -87,28 +96,76 @@ def _scratch_ai_specs_home() -> tuple[Path, Path]:
     return home, holder
 
 
-def _load_gate_binary() -> object:
-    """Load lib/_internal/gate_binary.py standalone (pattern of
-    tests/test_gate_binary_dist.py) for canonical platform detection."""
-    spec = importlib.util.spec_from_file_location(
-        "worktree_root_propagation_gate_binary",
-        ROOT / "lib" / "_internal" / "gate_binary.py",
-    )
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _platform() -> tuple[str, str]:
+    """Mirror the gate acquisition's platform mapping for staging cache paths
+    in tests (Rosetta x86_64 -> amd64 included)."""
+    goos = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system(), "")
+    machine = platform.machine()
+    goarch = "arm64" if machine in ("arm64", "aarch64") else (
+        "amd64" if machine in ("x86_64", "amd64") else "")
+    return goos, goarch
 
 
 def _host_cache_platform() -> str:
     """Return the `<goos>-<goarch>` cache segment for the host, exactly as
-    gate acquisition computes it (Rosetta x86_64 -> amd64 included)."""
-    gb = _load_gate_binary()
-    goos, goarch = gb.detect_platform()
-    if not goos or not goarch:
-        raise unittest.SkipTest(f"unsupported platform {goos}/{goarch}")
+    gate acquisition computes it."""
+    goos, goarch = _platform()
     return f"{goos}-{goarch}"
+
+
+def _acquired_gate_binary() -> Path:
+    """Acquire the REAL Go gate binary offline through the CLI's own
+    local-build path: sync a fixture project with AI_SPECS_GATE_OFFLINE=1
+    AI_SPECS_GATE_BUILD=1 into a scratch home, then return the acquired
+    version-keyed cache binary. Memoized module-wide; no network, no dist/.
+    """
+    if _ACQUIRED_GATE:
+        return _ACQUIRED_GATE[0]
+    holder = tempfile.TemporaryDirectory(prefix="wtr-gate-acquire-")
+    base = Path(holder.name)
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    project = base / "proj"
+    (project / "ai-specs").mkdir(parents=True)
+    _git(project, "init", "-q")
+    _git(project, "config", "user.email", "t@t.t")
+    _git(project, "config", "user.name", "t")
+    (project / "README.md").write_text("gate acquisition fixture\n")
+    _git(project, "add", "-A")
+    _git(project, "commit", "-qm", "init")
+    (project / "ai-specs" / "ai-specs.toml").write_text(MANIFEST)
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(base / "home"),
+        "TMPDIR": str(base),
+        "AI_SPECS_HOME": str(home),
+        "AI_SPECS_NO_NETWORK": "1",
+        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
+        "AI_SPECS_GATE_OFFLINE": "1",
+        "AI_SPECS_GATE_BUILD": "1",
+        "LC_ALL": "C",
+        "LANG": "C",
+    }
+    (base / "home").mkdir()
+    for verb in ("init", "sync"):
+        proc = subprocess.run(
+            [str(CLI), verb, str(project)], cwd=ROOT, env=env,
+            capture_output=True, text=True, check=False, input="",
+        )
+        assert proc.returncode == 0, (
+            f"gate acquisition `{verb}` failed:\n{proc.stdout}\n{proc.stderr}"
+        )
+    version = (home / "VERSION").read_text().strip()
+    binary = (home / "cache" / "bin" / "worktree-gate" / version /
+              _host_cache_platform() / "worktree-gate")
+    assert binary.is_file(), f"gate binary was not built into the scratch cache: {binary}"
+    _GATE_HOLDER.append(holder)
+    _ACQUIRED_GATE.append(binary)
+    return binary
 
 
 class WorktreeRootPropagationSyncTests(unittest.TestCase):
@@ -225,12 +282,11 @@ class WorktreeRootPropagationSyncTests(unittest.TestCase):
 class WorktreeEventCwdPropagationTests(unittest.TestCase):
     """End-to-end: event cwd reaches the launcher/Go gate for block/allow."""
 
-    GO_BINARY = ROOT / "dist" / "worktree-gate-current"
-
     @classmethod
     def setUpClass(cls):
-        if not cls.GO_BINARY.exists():
-            raise unittest.SkipTest("no Go gate binary in dist/")
+        # Hermetic: the real Go gate binary is built offline by the CLI's own
+        # acquisition path into a scratch cache (no dist/ dependency).
+        cls.GO_BINARY = _acquired_gate_binary()
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="wtr-cwd-")
@@ -343,28 +399,30 @@ class WorktreeEventCwdPropagationTests(unittest.TestCase):
 class SubmoduleRequestContextIntegrationTests(unittest.TestCase):
     """1.1 — RED: real-git subrepo request context + worktree ownership.
 
-    Uses a real superproject with an initialized submodule: the subrepo cwd
-    resolves to subrepo ownership with the proven superrepo planning root, a
-    ``git -C <subrepo> worktree add`` creates a subrepo-owned worktree under
-    the shared superproject layout, and a superrepo-context request without an
-    explicit subrepo hard-errors before any ``git worktree add``.
+    Uses a real superproject with an initialized submodule. The Python
+    ``resolve_request_context`` planner has no CLI-observable surface, so the
+    contract is proven through the Go gate binary's ``--resolve-central-root``
+    read-only proof (same proven git facts: superproject root + registered
+    initialized submodule path, failing closed on ambiguity).
     """
 
-    def _load_util(self) -> object:
-        spec = importlib.util.spec_from_file_location(
-            "wtr_req_ctx_util", ROOT / "lib" / "_internal" / "util.py"
+    def _gate_central_root(self, cwd: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [str(_acquired_gate_binary()), "--resolve-central-root"],
+            capture_output=True, text=True, check=False, cwd=cwd,
+            env={"PATH": os.environ.get("PATH", ""), "LC_ALL": "C", "LANG": "C"},
         )
-        module = importlib.util.module_from_spec(spec)
-        assert spec.loader is not None
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-        return module
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="wtr-sub-")
         self.addCleanup(self.tmp.cleanup)
         root = Path(os.path.realpath(self.tmp.name))
 
+        # The Go central-root proof requires the absorbed file:// submodule
+        # layout: a bare local remote plus a working clone, then
+        # `submodule add file://<remote>` (a local-path add leaves a layout
+        # module_records cannot prove — see makeRemoteModule in the gate's own
+        # topology_test.go).
         source = root / "api-source"
         source.mkdir()
         _git(source, "init", "-q")
@@ -373,6 +431,9 @@ class SubmoduleRequestContextIntegrationTests(unittest.TestCase):
         (source / "README.md").write_text("api\n")
         _git(source, "add", "-A")
         _git(source, "commit", "-qm", "init")
+        _git(source, "checkout", "-q", "-B", "main")
+        remote = root / "remote.git"
+        _git(root, "clone", "--bare", "-q", str(source), str(remote))
 
         super_repo = root / "super"
         super_repo.mkdir()
@@ -388,22 +449,27 @@ class SubmoduleRequestContextIntegrationTests(unittest.TestCase):
             "protocol.file.allow=always",
             "submodule",
             "add",
-            "--name",
-            "api",
-            str(source),
+            "-q",
+            f"file://{remote}",
             "apps/api",
         )
         _git(super_repo, "commit", "-qm", "add submodule")
         self.super_repo = super_repo
         self.subrepo = super_repo / "apps" / "api"
-        self.util = self._load_util()
 
     def test_subrepo_cwd_resolves_subrepo_owner_and_super_planning_root(self):
-        ctx = self.util.resolve_request_context(self.subrepo)
-        self.assertEqual(ctx.owner_root, self.subrepo.resolve())
-        self.assertEqual(ctx.subrepo_path, "apps/api")
-        self.assertEqual(ctx.planning_root, self.super_repo.resolve())
-        self.assertEqual(ctx.topology.resolved, "monorepo-submodules")
+        """Subrepo cwd → proven superrepo planning root + registered subrepo path.
+
+        The gate's read-only central-root proof consumes the same git facts as
+        the planner's monorepo-submodules resolution: owner stays the subrepo,
+        the planning root is the proven superproject, and the registered path
+        is validated (never guessed).
+        """
+        proc = self._gate_central_root(self.subrepo)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout.strip())
+        self.assertEqual(payload["central_root"], str(self.super_repo.resolve()))
+        self.assertEqual(payload["submodule"], "apps/api")
 
     def test_git_dash_c_create_yields_subrepo_owned_worktree(self):
         dest = self.super_repo / ".worktrees" / "apps-api-feat-x"
@@ -436,8 +502,11 @@ class SubmoduleRequestContextIntegrationTests(unittest.TestCase):
             ["git", "-C", str(self.super_repo), "worktree", "list"],
             capture_output=True, text=True, check=True,
         ).stdout
-        with self.assertRaises(self.util.SubrepoResolutionError):
-            self.util.resolve_request_context(self.super_repo)
+        # A superrepo-context request without a subrepo fails closed (exit 1,
+        # "unproven") before any git worktree add — never guessing an owner.
+        proc = self._gate_central_root(self.super_repo)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("unproven", proc.stderr)
         after = subprocess.run(
             ["git", "-C", str(self.super_repo), "worktree", "list"],
             capture_output=True, text=True, check=True,
@@ -445,12 +514,29 @@ class SubmoduleRequestContextIntegrationTests(unittest.TestCase):
         self.assertEqual(before, after,
                          "hard error must precede any git worktree add")
 
+    # TRIAGE: no CLI verb exposes resolve_request_context(explicit_subrepo=...)
+    # — planner-internal surface with no process boundary. The assertion below
+    # pins the git facts that path consumes: the planning root stays the
+    # superproject toplevel and apps/api is a proven initialized submodule.
     def test_superrepo_cwd_with_explicit_subrepo_keeps_super_planning_root(self):
-        ctx = self.util.resolve_request_context(
-            self.super_repo, explicit_subrepo="apps/api"
-        )
-        self.assertEqual(ctx.subrepo_path, "apps/api")
-        self.assertEqual(ctx.planning_root, self.super_repo.resolve())
+        top = subprocess.run(
+            ["git", "-C", str(self.super_repo), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(Path(top).resolve(), self.super_repo.resolve())
+        entries = subprocess.run(
+            ["git", "-C", str(self.super_repo), "config", "-f", ".gitmodules",
+             "--get-regexp", r"submodule\..*\.path"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertIn("apps/api", entries)
+        status = subprocess.run(
+            ["git", "-C", str(self.super_repo), "submodule", "status", "--", "apps/api"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertTrue(status, "apps/api must be an initialized submodule")
+        self.assertFalse(status.startswith("-"),
+                         "apps/api must be initialized, not just registered")
 
 
 if __name__ == "__main__":

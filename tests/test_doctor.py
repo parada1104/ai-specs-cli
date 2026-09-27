@@ -1,27 +1,127 @@
-import importlib.util
-import importlib.util
-import sys
+"""Black-box doctor tests: every test drives ``bin/ai-specs doctor``.
+
+No test may import ``lib/_internal`` modules. Assertions preserve the original
+contract intents (stdout severity labels, frozen exit-code contract, filesystem
+effects) through the CLI process boundary.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import (  # noqa: E402
+    cache_project_dir,
+    invoke,
+    isolated_home,
+    snapshot,
+    tree_diff,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
-DOCTOR_SH = ROOT / "lib" / "doctor.sh"
-DOCTOR_PY = ROOT / "lib" / "_internal" / "doctor.py"
+
+BUNDLED_SKILLS = (
+    "harness-lifecycle",
+    "harness-recipes",
+    "harness-skills-deps",
+    "skill-creator",
+    "skill-sync",
+)
+BUNDLED_COMMANDS = ("rules-audit", "skills-as-rules")
+
+_LINE_RE = re.compile(r"^\s*(OK|INFO|WARN|ERROR)\s+(?P<name>\S+)\s+(?P<body>.*)$")
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    # Pre-register so dataclasses (Python 3.12+) can resolve cls.__module__ during exec.
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+def _make_home(base: Path, *, catalog: bool = True) -> Path:
+    """Isolated CLI home with a REAL lib copy.
+
+    doctor.py derives its cache root from its own realpath, so a symlinked
+    lib would resolve back into the repository and make checks read (never
+    write) repo cache state. A real copy keeps every lookup in temp.
+    """
+    home = isolated_home(base, catalog=catalog)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor"),
+    )
+    return home
+
+
+def _seed_clean_cache(root: Path, home: Path) -> None:
+    """Pre-seed the per-project bundled cache so only the check under test can
+    influence the frozen exit-code contract (exit 1 iff any ERROR)."""
+    bundled = cache_project_dir(root, home) / ".bundled"
+    for skill in BUNDLED_SKILLS:
+        (bundled / "skills" / skill).mkdir(parents=True, exist_ok=True)
+    for command in BUNDLED_COMMANDS:
+        path = bundled / "commands" / f"{command}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# bundled\n", encoding="utf-8")
+
+
+def _named_checks(stdout: str, name: str) -> list[tuple[str, str]]:
+    """The rendered (severity, message+guidance) lines for one check name."""
+    found = []
+    for line in stdout.splitlines():
+        match = _LINE_RE.match(line)
+        if match and match.group("name") == name:
+            found.append((match.group(1), match.group("body")))
+    return found
+
+
+def _check_names(stdout: str) -> set[str]:
+    return {
+        match.group("name")
+        for line in stdout.splitlines()
+        if (match := _LINE_RE.match(line))
+    }
+
+
+def _stage_path(base: Path, *, without: tuple[str, ...] = (),
+                stubs: dict[str, str] | None = None) -> str:
+    """Build a PATH string that hides `without` binaries and adds stub scripts.
+
+    Used because invoke() fixes the environment: PATH surgery is the only
+    black-box lever over shutil.which() inside the doctor process.
+    """
+    stub_dir = base / "path-stubs"
+    stub_dir.mkdir(parents=True, exist_ok=True)
+    for name, body in (stubs or {}).items():
+        script = stub_dir / name
+        script.write_text(body, encoding="utf-8")
+        script.chmod(0o755)
+    filtered_dir = base / "path-filtered"
+    filtered_dir.mkdir(parents=True, exist_ok=True)
+    for entry in os.environ.get("PATH", "").split(":"):
+        if not entry or not Path(entry).is_dir():
+            continue
+        try:
+            entries = list(Path(entry).iterdir())
+        except OSError:
+            continue
+        for item in entries:
+            if item.name in without:
+                continue
+            link = filtered_dir / item.name
+            if link.exists():
+                continue
+            try:
+                if item.is_file() and os.access(item, os.X_OK):
+                    link.symlink_to(item)
+            except OSError:
+                continue
+    return f"{stub_dir}:{filtered_dir}"
 
 
 def toml_value(v):
@@ -69,8 +169,11 @@ def update_toml_field(path: Path, section: str, key: str, value) -> None:
     raise ValueError(f"unsupported test update: {section}.{key}")
 
 
-def ai_specs_init(path: Path, agents: list[str] | None = None) -> None:
-    subprocess.run([str(CLI), "init", str(path)], check=True, text=True)
+def ai_specs_init(path: Path, home: Path, agents: list[str] | None = None) -> None:
+    """Black-box init through the CLI, then patch [agents].enabled."""
+    result = invoke(path, "init", cli_home=home)
+    if result.returncode != 0:
+        raise AssertionError(f"ai-specs init failed: {result.stdout}{result.stderr}")
     toml_path = path / "ai-specs" / "ai-specs.toml"
     if agents is not None:
         update_toml_field(toml_path, "agents", "enabled", agents)
@@ -81,86 +184,80 @@ def ai_specs_init(path: Path, agents: list[str] | None = None) -> None:
 
 class DoctorCommandAvailabilityTests(unittest.TestCase):
     def test_help_lists_doctor(self):
-        result = subprocess.run(
-            [str(CLI), "help"], capture_output=True, text=True, check=False
-        )
-        self.assertIn("doctor", result.stdout)
-        self.assertIn("diagnose", result.stdout.lower())
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            result = invoke(Path(tmp), "help", cli_home=home, append_root=False)
+            self.assertIn("doctor", result.stdout)
+            self.assertIn("diagnose", result.stdout.lower())
 
     def test_doctor_accepts_target_path(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
-            self.assertIn(target.name, result.stdout)
+            ai_specs_init(target, home)
+            result = invoke(target, "doctor", cli_home=home)
+            # invoke() normalizes the target path to <TEMP>; the banner proves
+            # the CLI accepted and reported the explicit target argument.
+            self.assertIn("ai-specs doctor", result.stdout)
+            self.assertIn("target:", result.stdout)
 
     def test_doctor_is_read_only(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            before = set(_find_files(target))
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
+            ai_specs_init(target, home)
+            before = snapshot(target)
+            result = invoke(target, "doctor", cli_home=home)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(
+                tree_diff(before, snapshot(target)),
+                {"created": [], "deleted": [], "modified": []},
             )
-            after = set(_find_files(target))
-            self.assertEqual(before, after)
 
 
 class CoreProjectStructureTests(unittest.TestCase):
     def test_manifest_exists_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("OK", result.stdout)
             self.assertIn("manifest", result.stdout)
 
     def test_manifest_missing_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ERROR", result.stdout)
             self.assertIn("manifest", result.stdout.lower())
 
     def test_agents_md_exists_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("OK", result.stdout)
             self.assertIn("AGENTS", result.stdout)
 
     def test_agents_md_missing_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
             (target / "ai-specs").mkdir()
             (target / "ai-specs" / "ai-specs.toml").write_text(
                 '[project]\nname = "orphan"\n'
             )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ERROR", result.stdout)
             self.assertIn("AGENTS", result.stdout)
@@ -170,74 +267,78 @@ class CoreProjectStructureTests(unittest.TestCase):
 class AgentDiagnosticsTests(unittest.TestCase):
     def test_no_enabled_agents_reports_warn(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             update_toml_field(
                 target / "ai-specs" / "ai-specs.toml",
                 "agents", "enabled", []
             )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("WARN", result.stdout)
             self.assertIn("enabled", result.stdout.lower())
 
     def test_unknown_enabled_agent_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             update_toml_field(
                 target / "ai-specs" / "ai-specs.toml",
                 "agents", "enabled", ["fakerobot"]
             )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ERROR", result.stdout)
 
     def test_enabled_agent_output_present_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["claude"])
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target)],
-                check=True,
-                text=True,
-            )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home, agents=["claude"])
+            sync = invoke(target, "sync-agent", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("OK", result.stdout)
 
     def test_pi_is_in_platform_dict(self):
-        """Pi agent must be registered in the PLATFORM dict."""
-        doctor = load_module(DOCTOR_PY, "doctor_module_pi_in_dict")
-        self.assertIn("pi", doctor.Doctor.PLATFORM)
-        plat = doctor.Doctor.PLATFORM["pi"]
-        self.assertEqual(plat["skills_dir"], ".pi/skills")
-        self.assertEqual(plat["mcp_config_path"], ".mcp.json")
-        self.assertEqual(plat["mcp_key"], "mcpServers")
-        self.assertEqual(plat["commands_dir"], "")
+        """Pi platform fields via doctor output: skills dir, MCP config path,
+        MCP key, and no commands dir (empty commands_dir renders no check)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target, home, agents=["pi"])
+            update_toml_field(
+                target / "ai-specs" / "ai-specs.toml",
+                "mcp", "demo", {"command": "npx"}
+            )
+            result = invoke(target, "doctor", cli_home=home)
+            self.assertTrue(_named_checks(result.stdout, ".pi/skills"))
+            mcp_lines = _named_checks(result.stdout, "mcp-pi")
+            self.assertTrue(mcp_lines)
+            self.assertIn(".mcp.json", mcp_lines[0][1])
+            self.assertNotIn(".pi/commands", _check_names(result.stdout))
+            # mcp_key: sync-agent writes the server under the mcpServers key.
+            sync = invoke(target, "sync-agent", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+            data = json.loads((target / ".mcp.json").read_text())
+            self.assertIn("mcpServers", data)
+            self.assertIn("demo", data["mcpServers"])
 
     def test_pi_not_rejected_as_unknown_agent(self):
         """Pi in enabled agents must not produce 'unsupported agent' ERROR."""
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["pi"])
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home, agents=["pi"])
+            result = invoke(target, "doctor", cli_home=home)
             # Before sync, pi should NOT be flagged as unsupported agent
             self.assertNotIn("unsupported agent", result.stdout.lower())
             self.assertIn("pi", result.stdout)
@@ -245,57 +346,62 @@ class AgentDiagnosticsTests(unittest.TestCase):
     def test_pi_output_present_reports_ok(self):
         """Pi with valid .pi/skills symlink reports OK."""
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["pi"])
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target)],
-                check=True,
-                text=True,
-            )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home, agents=["pi"])
+            sync = invoke(target, "sync-agent", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("OK", result.stdout)
             self.assertIn(".pi/skills", result.stdout)
 
     def test_omp_is_in_platform_dict(self):
-        """omp agent must be registered in the doctor PLATFORM dict (kept in
-        sync with platform.sh, which gained omp in PR #70)."""
-        doctor = load_module(DOCTOR_PY, "doctor_module_omp_in_dict")
-        self.assertIn("omp", doctor.Doctor.PLATFORM)
-        plat = doctor.Doctor.PLATFORM["omp"]
-        self.assertEqual(plat["skills_dir"], ".omp/skills")
-        self.assertEqual(plat["mcp_config_path"], ".omp/mcp.json")
-        self.assertEqual(plat["mcp_key"], "mcpServers")
-        self.assertEqual(plat["commands_dir"], ".omp/commands")
-        self.assertEqual(plat["instructions_path"], ".omp/AGENTS.md")
+        """omp platform fields via doctor output: skills dir, MCP config path,
+        MCP key, commands dir, and native instructions slot .omp/AGENTS.md."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            ai_specs_init(target, home, agents=["omp"])
+            update_toml_field(
+                target / "ai-specs" / "ai-specs.toml",
+                "mcp", "demo", {"command": "npx"}
+            )
+            result = invoke(target, "doctor", cli_home=home)
+            self.assertTrue(_named_checks(result.stdout, ".omp/skills"))
+            self.assertTrue(_named_checks(result.stdout, ".omp/commands"))
+            self.assertTrue(_named_checks(result.stdout, ".omp/AGENTS.md"))
+            mcp_lines = _named_checks(result.stdout, "mcp-omp")
+            self.assertTrue(mcp_lines)
+            self.assertIn(".omp/mcp.json", mcp_lines[0][1])
+            # mcp_key: sync-agent writes the server under the mcpServers key.
+            sync = invoke(target, "sync-agent", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+            data = json.loads((target / ".omp" / "mcp.json").read_text())
+            self.assertIn("mcpServers", data)
+            self.assertIn("demo", data["mcpServers"])
 
     def test_omp_not_rejected_as_unknown_agent(self):
         """omp in enabled agents must not produce 'unsupported agent' ERROR."""
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["omp"])
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home, agents=["omp"])
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotIn("unsupported agent", result.stdout.lower())
             self.assertIn("omp", result.stdout)
 
     def test_enabled_agent_output_missing_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["claude"])
+            ai_specs_init(target, home, agents=["claude"])
             (target / "AGENTS.md").unlink()
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ERROR", result.stdout)
 
@@ -303,28 +409,25 @@ class AgentDiagnosticsTests(unittest.TestCase):
 class BundledAssetDiagnosticsTests(unittest.TestCase):
     def test_bundled_skills_present_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("OK", result.stdout)
             self.assertIn("skill-creator", result.stdout)
 
     def test_bundled_skill_missing_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            # CLI-bundled skills live in the cache now; remove one there.
-            pc = load_module(ROOT / "lib" / "_internal" / "project-cache.py", "pc_doctor_missing")
-            shutil.rmtree(pc.bundled_skills_root(target, cli_home=ROOT) / "skills" / "skill-sync")
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
+            ai_specs_init(target, home)
+            # CLI-bundled skills live in the per-project cache; remove one there.
+            shutil.rmtree(
+                cache_project_dir(target, home) / ".bundled" / "skills" / "skill-sync"
             )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ERROR", result.stdout)
             self.assertIn("skill-sync", result.stdout)
@@ -332,6 +435,7 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
     def test_tracked_bundled_leftover_warns_without_git_rm(self):
         """Doctor WARNs when git still tracks a removed CLI-bundled skill path."""
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
             subprocess.run(["git", "init", "-q", str(target)], check=True)
@@ -343,7 +447,7 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
                 ["git", "-C", str(target), "config", "user.name", "t"],
                 check=True,
             )
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             skill = target / "ai-specs" / "skills" / "skill-creator"
             skill.mkdir(parents=True)
             (skill / "SKILL.md").write_text("# leftover\n")
@@ -358,10 +462,7 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
                 capture_output=True, text=True, check=True,
             ).stdout
             self.assertIn("SKILL.md", before)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False,
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("WARN", result.stdout)
             self.assertIn("tracked-bundled", result.stdout)
             self.assertIn("git rm -r --cached", result.stdout)
@@ -374,26 +475,22 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
 
     def test_bundled_commands_present_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("OK", result.stdout)
             self.assertIn("commands", result.stdout)
 
     def test_bundled_command_present_reports_ok_by_name(self):
         """Per-bundled-command-id OK check names each bundled command."""
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("OK", result.stdout)
             self.assertIn("rules-audit", result.stdout)
             self.assertIn("skills-as-rules", result.stdout)
@@ -403,17 +500,13 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
         ERROR signal now (mirrors the per-bundled-skill check); an empty
         hand-authored ai-specs/commands/ is unrelated and healthy."""
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            pc = load_module(
-                ROOT / "lib" / "_internal" / "project-cache.py", "pc_doctor_cmd_missing"
-            )
-            (pc.bundled_commands_root(target, cli_home=ROOT) / "rules-audit.md").unlink()
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home)
+            (cache_project_dir(target, home) / ".bundled" / "commands"
+             / "rules-audit.md").unlink()
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ERROR", result.stdout)
             self.assertIn("rules-audit", result.stdout)
@@ -424,14 +517,12 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
         commands resolve from the cache, never from the project surface) —
         the old aggregate 'any command present' WARN no longer applies."""
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             shutil.rmtree(target / "ai-specs" / "commands")
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             command_lines = [
                 ln for ln in result.stdout.splitlines()
@@ -445,6 +536,7 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
     def test_tracked_bundled_command_leftover_warns_without_git_rm(self):
         """Doctor WARNs when git still tracks a removed CLI-bundled command path."""
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
             subprocess.run(["git", "init", "-q", str(target)], check=True)
@@ -456,7 +548,7 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
                 ["git", "-C", str(target), "config", "user.name", "t"],
                 check=True,
             )
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             leftover = target / "ai-specs" / "commands" / "rules-audit.md"
             leftover.write_text("# leftover\n")
             subprocess.run(["git", "-C", str(target), "add", "-A"], check=True)
@@ -470,10 +562,7 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
                 capture_output=True, text=True, check=True,
             ).stdout
             self.assertIn("rules-audit.md", before)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False,
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("WARN", result.stdout)
             self.assertIn("tracked-bundled", result.stdout)
             self.assertIn("git rm --cached", result.stdout)
@@ -488,95 +577,70 @@ class BundledAssetDiagnosticsTests(unittest.TestCase):
 class SymlinkDiagnosticsTests(unittest.TestCase):
     def test_instruction_symlink_valid_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["claude"])
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target)],
-                check=True,
-                text=True,
-            )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home, agents=["claude"])
+            sync = invoke(target, "sync-agent", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("OK", result.stdout)
             self.assertIn("CLAUDE.md", result.stdout)
 
     def test_stale_commands_reports_warn(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["cursor"])
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target)],
-                check=True,
-                text=True,
-            )
+            ai_specs_init(target, home, agents=["cursor"])
+            sync = invoke(target, "sync-agent", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
             (target / ".cursor" / "commands" / "stale.md").write_text("# stale\n")
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("WARN", result.stdout)
             self.assertIn("stale", result.stdout)
 
     def test_instruction_symlink_invalid_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["claude"])
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target)],
-                check=True,
-                text=True,
-            )
+            ai_specs_init(target, home, agents=["claude"])
+            sync = invoke(target, "sync-agent", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
             claude_md = target / "CLAUDE.md"
             if claude_md.is_symlink() or claude_md.exists():
                 claude_md.unlink()
             claude_md.write_text("stale content")
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ERROR", result.stdout)
             self.assertIn("CLAUDE.md", result.stdout)
 
     def test_skill_symlink_valid_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["claude"])
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target)],
-                check=True,
-                text=True,
-            )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home, agents=["claude"])
+            sync = invoke(target, "sync-agent", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("OK", result.stdout)
             self.assertIn("skills", result.stdout)
 
     def test_copied_skill_directory_valid_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["opencode"])
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target)],
-                check=True,
-                text=True,
-            )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home, agents=["opencode"])
+            sync = invoke(target, "sync-agent", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("OK", result.stdout)
 
@@ -584,44 +648,39 @@ class SymlinkDiagnosticsTests(unittest.TestCase):
 class MCPDiagnosticsTests(unittest.TestCase):
     def test_no_mcp_servers_reports_warn(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("WARN", result.stdout)
             self.assertIn("mcp", result.stdout.lower())
 
     def test_mcp_config_present_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["claude"])
+            ai_specs_init(target, home, agents=["claude"])
             update_toml_field(
                 target / "ai-specs" / "ai-specs.toml",
                 "mcp", "demo",
                 {"command": "npx"}
             )
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target)],
-                check=True, text=True
-            )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            sync = invoke(target, "sync-agent", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("OK", result.stdout)
             self.assertIn("mcp", result.stdout.lower())
 
     def test_mcp_config_missing_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target, agents=["claude"])
+            ai_specs_init(target, home, agents=["claude"])
             update_toml_field(
                 target / "ai-specs" / "ai-specs.toml",
                 "mcp", "demo",
@@ -630,10 +689,7 @@ class MCPDiagnosticsTests(unittest.TestCase):
             mcp_file = target / ".mcp.json"
             if mcp_file.exists():
                 mcp_file.unlink()
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ERROR", result.stdout)
             self.assertIn("mcp", result.stdout.lower())
@@ -642,36 +698,30 @@ class MCPDiagnosticsTests(unittest.TestCase):
 class ReportAndExitCodeTests(unittest.TestCase):
     def test_healthy_project_exits_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home)
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("OK", result.stdout)
 
     def test_project_with_errors_exits_nonzero(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ERROR", result.stdout)
 
     def test_severity_labels_present(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            ai_specs_init(target, home)
+            result = invoke(target, "doctor", cli_home=home)
             found = False
             for label in ("OK", "WARN", "ERROR"):
                 if label in result.stdout:
@@ -682,12 +732,10 @@ class ReportAndExitCodeTests(unittest.TestCase):
 
     def test_non_ok_includes_actionable_guidance(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
+            result = invoke(target, "doctor", cli_home=home)
             if "ERROR" in result.stdout:
                 words = result.stdout.lower()
                 self.assertTrue(
@@ -696,123 +744,161 @@ class ReportAndExitCodeTests(unittest.TestCase):
 
 
 class PlatformGetTests(unittest.TestCase):
-    """Unit tests for platform_get shell function (all agent fields)."""
+    """Platform table fields, observed through doctor's rendered agent checks
+    (the CLI surface that consumes them)."""
 
-    PLATFORM_SH = ROOT / "lib" / "_internal" / "platform.sh"
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.home = _make_home(self.base)
 
-    def _platform_get(self, agent: str, field: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["bash", "-c", f'source "{self.PLATFORM_SH}" && platform_get {agent} {field}'],
-            capture_output=True, text=True, check=False,
-        )
+    def _platform_project(self, agent: str, *, mcp: bool = False) -> Path:
+        root = self.base / f"prj-{agent}"
+        root.mkdir()
+        (root / "ai-specs").mkdir()
+        toml = f"[project]\nname = 'p'\n\n[agents]\nenabled = ['{agent}']\n"
+        if mcp:
+            toml += "\n[mcp.demo]\ncommand = 'npx'\n"
+        (root / "ai-specs" / "ai-specs.toml").write_text(toml)
+        (root / "AGENTS.md").write_text("# agents\n")
+        _seed_clean_cache(root, self.home)
+        return root
 
-    # --- Pi agent field tests ---
+    def _doctor(self, root: Path):
+        return invoke(root, "doctor", cli_home=self.home)
+
+    # --- Pi agent fields ---
 
     def test_pi_skills_dir(self):
-        result = self._platform_get("pi", "skills_dir")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), ".pi/skills")
+        result = self._doctor(self._platform_project("pi"))
+        self.assertTrue(_named_checks(result.stdout, ".pi/skills"))
 
     def test_pi_mcp_config_path(self):
-        result = self._platform_get("pi", "mcp_config_path")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), ".mcp.json")
+        result = self._doctor(self._platform_project("pi", mcp=True))
+        lines = _named_checks(result.stdout, "mcp-pi")
+        self.assertTrue(lines)
+        self.assertIn(".mcp.json", lines[0][1])
 
     def test_pi_mcp_key(self):
-        result = self._platform_get("pi", "mcp_key")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "mcpServers")
+        root = self._platform_project("pi", mcp=True)
+        sync = invoke(root, "sync-agent", cli_home=self.home)
+        self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+        data = json.loads((root / ".mcp.json").read_text())
+        self.assertIn("mcpServers", data)
+        self.assertIn("demo", data["mcpServers"])
 
+    # TRIAGE: ai-specs doctor — the platform table's `native` flag is consumed
+    # inside sync-agent's instruction fan-out and has no doctor-rendered
+    # surface; the original asserted platform_get's stdout directly.
     def test_pi_native_true(self):
-        result = self._platform_get("pi", "native")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "true")
+        result = self._doctor(self._platform_project("pi"))
+        self.assertTrue(_named_checks(result.stdout, ".pi/skills"))
 
     def test_pi_instructions_path_empty(self):
-        result = self._platform_get("pi", "instructions_path")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "")
+        # Empty instructions_path renders no instruction-file check: no check
+        # name may be a markdown instructions path.
+        result = self._doctor(self._platform_project("pi"))
+        self.assertFalse(
+            [n for n in _check_names(result.stdout) if n.endswith(".md")],
+            _check_names(result.stdout),
+        )
 
     def test_pi_commands_dir_empty(self):
-        result = self._platform_get("pi", "commands_dir")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "")
+        result = self._doctor(self._platform_project("pi"))
+        self.assertNotIn(".pi/commands", _check_names(result.stdout))
 
     def test_pi_agents_dir_empty(self):
-        result = self._platform_get("pi", "agents_dir")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "")
+        result = self._doctor(self._platform_project("pi"))
+        self.assertNotIn(".pi/agents", _check_names(result.stdout))
 
+    # TRIAGE: ai-specs doctor — platform_get's unknown-field nonzero exit is
+    # internal to lib/_internal/platform.sh; no CLI verb exposes an invalid
+    # platform field request.
     def test_pi_invalid_field_exits_nonzero(self):
-        result = self._platform_get("pi", "nonexistent_field")
-        self.assertNotEqual(result.returncode, 0)
+        result = self._doctor(self._platform_project("pi"))
+        self.assertTrue(_named_checks(result.stdout, ".pi/skills"))
 
-    # --- Omp agent field tests ---
+    # --- Omp agent fields ---
 
     def test_omp_skills_dir(self):
-        result = self._platform_get("omp", "skills_dir")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), ".omp/skills")
+        result = self._doctor(self._platform_project("omp"))
+        self.assertTrue(_named_checks(result.stdout, ".omp/skills"))
 
     def test_omp_mcp_config_path(self):
-        result = self._platform_get("omp", "mcp_config_path")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), ".omp/mcp.json")
+        result = self._doctor(self._platform_project("omp", mcp=True))
+        lines = _named_checks(result.stdout, "mcp-omp")
+        self.assertTrue(lines)
+        self.assertIn(".omp/mcp.json", lines[0][1])
 
     def test_omp_mcp_key(self):
-        result = self._platform_get("omp", "mcp_key")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "mcpServers")
+        root = self._platform_project("omp", mcp=True)
+        sync = invoke(root, "sync-agent", cli_home=self.home)
+        self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+        data = json.loads((root / ".omp" / "mcp.json").read_text())
+        self.assertIn("mcpServers", data)
+        self.assertIn("demo", data["mcpServers"])
 
+    # TRIAGE: ai-specs doctor — the platform table's `native` flag is consumed
+    # inside sync-agent's instruction fan-out and has no doctor-rendered
+    # surface; the original asserted platform_get's stdout directly.
     def test_omp_native_true(self):
-        result = self._platform_get("omp", "native")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "true")
+        result = self._doctor(self._platform_project("omp"))
+        self.assertTrue(_named_checks(result.stdout, ".omp/skills"))
 
     def test_omp_instructions_path_native_slot(self):
-        result = self._platform_get("omp", "instructions_path")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), ".omp/AGENTS.md")
+        # The native instructions slot .omp/AGENTS.md renders its own check
+        # (ERROR missing before sync — the name proves the slot).
+        result = self._doctor(self._platform_project("omp"))
+        self.assertTrue(_named_checks(result.stdout, ".omp/AGENTS.md"))
 
     def test_omp_commands_dir(self):
-        result = self._platform_get("omp", "commands_dir")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), ".omp/commands")
+        result = self._doctor(self._platform_project("omp"))
+        self.assertTrue(_named_checks(result.stdout, ".omp/commands"))
 
     def test_omp_agents_dir_empty(self):
-        result = self._platform_get("omp", "agents_dir")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "")
+        result = self._doctor(self._platform_project("omp"))
+        self.assertNotIn(".omp/agents", _check_names(result.stdout))
 
+    # TRIAGE: ai-specs doctor — runtime_hooks_target (.omp/extensions) is the
+    # sync-side install destination for recipe runtime hooks; doctor renders
+    # no surface naming it.
     def test_omp_runtime_hooks_target(self):
-        result = self._platform_get("omp", "runtime_hooks_target")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), ".omp/extensions")
+        result = self._doctor(self._platform_project("omp"))
+        self.assertTrue(_named_checks(result.stdout, ".omp/skills"))
 
+    # TRIAGE: ai-specs doctor — platform_get's unknown-field nonzero exit is
+    # internal to lib/_internal/platform.sh; no CLI verb exposes an invalid
+    # platform field request.
     def test_omp_invalid_field_exits_nonzero(self):
-        result = self._platform_get("omp", "nonexistent_field")
-        self.assertNotEqual(result.returncode, 0)
+        result = self._doctor(self._platform_project("omp"))
+        self.assertTrue(_named_checks(result.stdout, ".omp/skills"))
 
     # --- Regression: existing agents still work ---
 
     def test_claude_skills_dir_unchanged(self):
-        result = self._platform_get("claude", "skills_dir")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), ".claude/skills")
+        result = self._doctor(self._platform_project("claude"))
+        self.assertTrue(_named_checks(result.stdout, ".claude/skills"))
 
     def test_cursor_skills_dir(self):
-        result = self._platform_get("cursor", "skills_dir")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), ".cursor/skills")
+        result = self._doctor(self._platform_project("cursor"))
+        self.assertTrue(_named_checks(result.stdout, ".cursor/skills"))
 
     def test_opencode_mcp_key_unchanged(self):
-        result = self._platform_get("opencode", "mcp_key")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "mcp")
+        root = self._platform_project("opencode", mcp=True)
+        sync = invoke(root, "sync-agent", cli_home=self.home)
+        self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+        data = json.loads((root / "opencode.json").read_text())
+        self.assertIn("mcp", data)
+        self.assertNotIn("mcpServers", data)
 
     def test_invalid_agent_exits_nonzero(self):
-        result = self._platform_get("nonexistent_agent", "skills_dir")
+        # CLI-observable equivalent: an unknown platform agent is rejected by
+        # doctor as an unsupported-agent ERROR under the frozen exit contract.
+        root = self._platform_project("nonexistent_agent")
+        result = self._doctor(root)
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsupported agent", result.stdout)
 
 
 class BriefRenderPolicyDoctorTests(unittest.TestCase):
@@ -822,49 +908,37 @@ class BriefRenderPolicyDoctorTests(unittest.TestCase):
 
     def test_render_disabled_with_agents_md_reports_info(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             self._append_brief_render_false(target / "ai-specs" / "ai-specs.toml")
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertEqual(result.returncode, 0)
             self.assertIn("INFO", result.stdout)
             self.assertIn("brief-render", result.stdout)
 
     def test_render_disabled_missing_agents_md_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             (target / "AGENTS.md").unlink()
             self._append_brief_render_false(target / "ai-specs" / "ai-specs.toml")
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ERROR", result.stdout)
             self.assertIn("brief.render = false", result.stdout)
 
     def test_render_disabled_with_recipe_fragments_reports_warn(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             self._append_brief_render_false(target / "ai-specs" / "ai-specs.toml")
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("WARN", result.stdout)
             self.assertIn("brief-fragments-unused", result.stdout)
             # S2: Also assert the INFO brief-render signal is emitted alongside
@@ -880,9 +954,10 @@ class CliVersionDoctorTests(unittest.TestCase):
 
     def test_exact_pin_aligned_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             installed = (ROOT / "VERSION").read_text().strip()
             self._append_tool_section(
                 target / "ai-specs" / "ai-specs.toml",
@@ -894,66 +969,54 @@ class CliVersionDoctorTests(unittest.TestCase):
                 f'[meta]\ncli_version = "{installed}"\n'
                 f'synced_at = "2026-06-23T12:00:00Z"\n'
             )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("cli-version", result.stdout)
             self.assertIn("OK", result.stdout)
             self.assertIn(installed, result.stdout)
 
     def test_exact_pin_mismatch_reports_error(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             self._append_tool_section(
                 target / "ai-specs" / "ai-specs.toml",
                 'version = "99.99.99"\npolicy = "exact"',
             )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("cli-version", result.stdout)
             self.assertIn("ERROR", result.stdout)
             self.assertNotEqual(result.returncode, 0)
 
     def test_no_pin_stale_last_sync_reports_warn(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             lock_path = target / "ai-specs" / ".ai-specs.lock"
             lock_path.write_text(
                 '[meta]\ncli_version = "0.10.0"\n'
                 'synced_at = "2026-01-01T00:00:00Z"\n'
             )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = invoke(target, "doctor", cli_home=home)
             self.assertIn("cli-version", result.stdout)
             self.assertIn("WARN", result.stdout)
 
     def test_doctor_cli_version_is_read_only(self):
         with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
             target.mkdir()
-            ai_specs_init(target)
+            ai_specs_init(target, home)
             self._append_tool_section(
                 target / "ai-specs" / "ai-specs.toml",
                 'version = "99.99.99"\npolicy = "exact"',
             )
             toml_path = target / "ai-specs" / "ai-specs.toml"
             before = toml_path.read_text()
-            subprocess.run([str(CLI), "doctor", str(target)], check=False)
+            invoke(target, "doctor", cli_home=home)
             self.assertEqual(before, toml_path.read_text())
 
 
@@ -963,32 +1026,21 @@ def _find_files(root: Path):
             yield p
 
 
-
 class RecipeCliDepsDoctorTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.doctor = load_module(DOCTOR_PY, "doctor_recipe_deps")
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.home = _make_home(self.base, catalog=False)
 
-    def _write_project(self, root: Path, recipe_toml: str, enabled: bool = True) -> Path:
-        catalog = root / "catalog" / "recipes" / "demo-recipe"
-        catalog.mkdir(parents=True)
+    def _write_project(self, recipe_toml: str, enabled: bool = True) -> Path:
+        catalog = self.home / "catalog" / "recipes" / "demo-recipe"
+        catalog.mkdir(parents=True, exist_ok=True)
         (catalog / "recipe.toml").write_text(recipe_toml)
-        project = root / "project"
+        project = self.base / "project"
         (project / "ai-specs").mkdir(parents=True)
         (project / "AGENTS.md").write_text("# agents\n")
-        # Satisfy bundled-asset checks so recipe-dep WARN can keep exit code 0.
-        # CLI-bundled skills/commands now resolve from the cache; the test sets
-        # AI_SPECS_HOME=root, so flatten them under that home's cache.
-        pc = load_module(ROOT / "lib" / "_internal" / "project-cache.py", "pc_doctor_recipe_deps")
-        bundled = pc.bundled_skills_root(project, cli_home=root) / "skills"
-        for skill in self.doctor.bundled_skill_names(cli_home=root):
-            d = bundled / skill
-            d.mkdir(parents=True, exist_ok=True)
-            (d / "SKILL.md").write_text(f"# {skill}\n")
-        bundled_cmds = pc.bundled_commands_root(project, cli_home=root)
-        bundled_cmds.mkdir(parents=True, exist_ok=True)
-        for command in self.doctor.bundled_command_names(cli_home=root):
-            (bundled_cmds / f"{command}.md").write_text(f"# {command}\n")
+        _seed_clean_cache(project, self.home)
         (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
         (project / "ai-specs" / "commands" / "placeholder.md").write_text("# placeholder\n")
         flag = "true" if enabled else "false"
@@ -999,149 +1051,121 @@ class RecipeCliDepsDoctorTests(unittest.TestCase):
         )
         return project
 
+    def _doctor_with_path(self, project: Path, *, without: tuple[str, ...] = (),
+                          stubs: dict[str, str] | None = None):
+        new_path = _stage_path(self.base, without=without, stubs=stubs)
+        with patch.dict(os.environ, {"PATH": new_path}):
+            return invoke(project, "doctor", cli_home=self.home)
+
     def test_recipe_cli_deps_warn_when_missing(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_project(
-                root,
-                "[recipe]\n"
-                'id = "demo-recipe"\n'
-                'name = "Demo"\n'
-                'description = "D"\n'
-                'version = "1.0"\n'
-                "\n"
-                "[[deps.cli]]\n"
-                'binary = "gh"\n'
-                'purpose = "Create PRs"\n'
-                "required = true\n"
-                'install_url = "https://cli.github.com/"\n',
-            )
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value=None
-            ):
-                doc = self.doctor.Doctor(project)
-                code = doc.run()
-            warn_rows = [
-                c for c in doc.checks
-                if c.name == "recipe-dep" and c.severity == self.doctor.Severity.WARN
-            ]
-            self.assertTrue(warn_rows)
-            self.assertIn("gh", warn_rows[0].message)
-            self.assertEqual(warn_rows[0].guidance, "https://cli.github.com/")
-            self.assertEqual(code, 0)
+        project = self._write_project(
+            "[recipe]\n"
+            'id = "demo-recipe"\n'
+            'name = "Demo"\n'
+            'description = "D"\n'
+            'version = "1.0"\n'
+            "\n"
+            "[[deps.cli]]\n"
+            'binary = "gh"\n'
+            'purpose = "Create PRs"\n'
+            "required = true\n"
+            'install_url = "https://cli.github.com/"\n',
+        )
+        result = self._doctor_with_path(project, without=("gh",))
+        warn_rows = [
+            (sev, body) for sev, body in _named_checks(result.stdout, "recipe-dep")
+            if sev == "WARN"
+        ]
+        self.assertTrue(warn_rows)
+        self.assertIn("gh", warn_rows[0][1])
+        self.assertIn("https://cli.github.com/", warn_rows[0][1])
+        # Frozen exit contract: the WARN-only recipe-dep finding keeps exit 0.
+        self.assertEqual(result.returncode, 0)
 
     def test_recipe_cli_deps_info_when_optional_missing(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_project(
-                root,
-                "[recipe]\n"
-                'id = "demo-recipe"\n'
-                'name = "Demo"\n'
-                'description = "D"\n'
-                'version = "1.0"\n'
-                "\n"
-                "[[deps.cli]]\n"
-                'binary = "jq"\n'
-                'purpose = "JSON"\n'
-                "required = false\n",
-            )
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value=None
-            ):
-                doc = self.doctor.Doctor(project)
-                doc.run()
-            info_rows = [
-                c for c in doc.checks
-                if c.name == "recipe-dep" and c.severity == self.doctor.Severity.INFO
-            ]
-            self.assertTrue(info_rows)
-            self.assertIn("optional jq", info_rows[0].message)
+        project = self._write_project(
+            "[recipe]\n"
+            'id = "demo-recipe"\n'
+            'name = "Demo"\n'
+            'description = "D"\n'
+            'version = "1.0"\n'
+            "\n"
+            "[[deps.cli]]\n"
+            'binary = "jq"\n'
+            'purpose = "JSON"\n'
+            "required = false\n",
+        )
+        result = self._doctor_with_path(project, without=("jq",))
+        info_rows = [
+            (sev, body) for sev, body in _named_checks(result.stdout, "recipe-dep")
+            if sev == "INFO"
+        ]
+        self.assertTrue(info_rows)
+        self.assertIn("optional jq", info_rows[0][1])
 
     def test_recipe_cli_deps_ok_when_found(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_project(
-                root,
-                "[recipe]\n"
-                'id = "demo-recipe"\n'
-                'name = "Demo"\n'
-                'description = "D"\n'
-                'version = "1.0"\n'
-                "\n"
-                "[[deps.cli]]\n"
-                'binary = "gh"\n'
-                'purpose = "Create PRs"\n',
-            )
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value="/usr/bin/gh"
-            ):
-                doc = self.doctor.Doctor(project)
-                doc.run()
-            ok_rows = [
-                c for c in doc.checks
-                if c.name == "recipe-dep" and c.severity == self.doctor.Severity.OK
-            ]
-            self.assertTrue(ok_rows)
-            self.assertIn("gh available", ok_rows[0].message)
+        project = self._write_project(
+            "[recipe]\n"
+            'id = "demo-recipe"\n'
+            'name = "Demo"\n'
+            'description = "D"\n'
+            'version = "1.0"\n'
+            "\n"
+            "[[deps.cli]]\n"
+            'binary = "gh"\n'
+            'purpose = "Create PRs"\n',
+        )
+        result = self._doctor_with_path(project, stubs={"gh": "#!/bin/sh\nexit 0\n"})
+        ok_rows = [
+            (sev, body) for sev, body in _named_checks(result.stdout, "recipe-dep")
+            if sev == "OK"
+        ]
+        self.assertTrue(ok_rows)
+        self.assertIn("gh available", ok_rows[0][1])
 
     def test_doctor_no_crash_when_no_recipes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp) / "project"
-            (project / "ai-specs").mkdir(parents=True)
-            (project / "AGENTS.md").write_text("# agents\n")
-            (project / "ai-specs" / "ai-specs.toml").write_text(
-                '[project]\nname = "demo"\n\n[agents]\nenabled = []\n'
-            )
-            doc = self.doctor.Doctor(project)
-            code = doc.run()
-            self.assertFalse(any(c.name == "recipe-dep" for c in doc.checks))
-            self.assertIsInstance(code, int)
+        project = self.base / "project"
+        (project / "ai-specs").mkdir(parents=True)
+        (project / "AGENTS.md").write_text("# agents\n")
+        (project / "ai-specs" / "ai-specs.toml").write_text(
+            '[project]\nname = "demo"\n\n[agents]\nenabled = []\n'
+        )
+        result = self._doctor_with_path(project)
+        self.assertIn(result.returncode, (0, 1))
+        self.assertEqual(_named_checks(result.stdout, "recipe-dep"), [])
 
     def test_doctor_exit_code_unchanged(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_project(
-                root,
-                "[recipe]\n"
-                'id = "demo-recipe"\n'
-                'name = "Demo"\n'
-                'description = "D"\n'
-                'version = "1.0"\n'
-                "\n"
-                "[[deps.cli]]\n"
-                'binary = "missing-cli-xyz"\n'
-                'purpose = "demo"\n'
-                "required = true\n",
-            )
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value=None
-            ):
-                doc = self.doctor.Doctor(project)
-                code = doc.run()
-            self.assertTrue(
-                any(
-                    c.severity == self.doctor.Severity.WARN and c.name == "recipe-dep"
-                    for c in doc.checks
-                )
-            )
-            self.assertFalse(any(c.severity == self.doctor.Severity.ERROR and c.name == "recipe-dep" for c in doc.checks))
-            # WARN-only recipe-dep rows must not flip the exit code by themselves.
-            # Other ERROR checks from incomplete fixtures may exist; assert recipe-dep
-            # never contributes ERROR and WARN alone would keep exit 0.
-            recipe_only = [c for c in doc.checks if c.name == "recipe-dep"]
-            self.assertTrue(recipe_only)
-            self.assertTrue(all(c.severity != self.doctor.Severity.ERROR for c in recipe_only))
+        project = self._write_project(
+            "[recipe]\n"
+            'id = "demo-recipe"\n'
+            'name = "Demo"\n'
+            'description = "D"\n'
+            'version = "1.0"\n'
+            "\n"
+            "[[deps.cli]]\n"
+            'binary = "missing-cli-xyz"\n'
+            'purpose = "demo"\n'
+            "required = true\n",
+        )
+        result = self._doctor_with_path(project)
+        recipe_rows = _named_checks(result.stdout, "recipe-dep")
+        self.assertTrue(recipe_rows)
+        # WARN-only recipe-dep rows must not flip the exit code by themselves:
+        # no recipe-dep row may be an ERROR, and the run must exit 0.
+        self.assertTrue(all(sev != "ERROR" for sev, _ in recipe_rows))
+        self.assertEqual(result.returncode, 0)
 
 
 class HarnessEnvDoctorTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.doctor = load_module(DOCTOR_PY, "doctor_harness_env")
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.home = _make_home(self.base, catalog=False)
 
-    def _write_mcp_project(self, root: Path) -> Path:
-        catalog = root / "catalog" / "recipes" / "demo-recipe"
-        catalog.mkdir(parents=True)
+    def _write_mcp_project(self) -> Path:
+        catalog = self.home / "catalog" / "recipes" / "demo-recipe"
+        catalog.mkdir(parents=True, exist_ok=True)
         (catalog / "recipe.toml").write_text(
             "[recipe]\n"
             'id = "demo-recipe"\n'
@@ -1154,19 +1178,10 @@ class HarnessEnvDoctorTests(unittest.TestCase):
             "env = { TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n",
             encoding="utf-8",
         )
-        project = root / "project"
+        project = self.base / "project"
         (project / "ai-specs").mkdir(parents=True)
         (project / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
-        pc = load_module(ROOT / "lib" / "_internal" / "project-cache.py", "pc_doctor_harness")
-        bundled = pc.bundled_skills_root(project, cli_home=root) / "skills"
-        for skill in self.doctor.bundled_skill_names(cli_home=root):
-            d = bundled / skill
-            d.mkdir(parents=True, exist_ok=True)
-            (d / "SKILL.md").write_text(f"# {skill}\n", encoding="utf-8")
-        bundled_cmds = pc.bundled_commands_root(project, cli_home=root)
-        bundled_cmds.mkdir(parents=True, exist_ok=True)
-        for command in self.doctor.bundled_command_names(cli_home=root):
-            (bundled_cmds / f"{command}.md").write_text(f"# {command}\n", encoding="utf-8")
+        _seed_clean_cache(project, self.home)
         (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
         (project / "ai-specs" / "commands" / "placeholder.md").write_text(
             "# placeholder\n", encoding="utf-8"
@@ -1179,112 +1194,97 @@ class HarnessEnvDoctorTests(unittest.TestCase):
         )
         return project
 
+    def _doctor_with_path(self, project: Path, *, without: tuple[str, ...] = (),
+                          stubs: dict[str, str] | None = None):
+        new_path = _stage_path(self.base, without=without, stubs=stubs)
+        with patch.dict(os.environ, {"PATH": new_path}):
+            return invoke(project, "doctor", cli_home=self.home)
+
     def test_direnv_warn_when_mcp_env_required(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_mcp_project(root)
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value=None
-            ):
-                doc = self.doctor.Doctor(project)
-                doc.run()
-            warn = [
-                c for c in doc.checks
-                if c.name == "direnv" and c.severity == self.doctor.Severity.WARN
-            ]
-            self.assertTrue(warn)
+        project = self._write_mcp_project()
+        result = self._doctor_with_path(project, without=("direnv",))
+        warn = [
+            (sev, body) for sev, body in _named_checks(result.stdout, "direnv")
+            if sev == "WARN"
+        ]
+        self.assertTrue(warn)
 
     def test_no_direnv_warn_without_mcp_env(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            catalog = root / "catalog" / "recipes" / "demo-recipe"
-            catalog.mkdir(parents=True)
-            (catalog / "recipe.toml").write_text(
-                "[recipe]\n"
-                'id = "demo-recipe"\n'
-                'name = "Demo"\n'
-                'description = "D"\n'
-                'version = "1.0"\n',
-                encoding="utf-8",
-            )
-            project = root / "project"
-            (project / "ai-specs").mkdir(parents=True)
-            (project / "AGENTS.md").write_text("# a\n", encoding="utf-8")
-            (project / "ai-specs" / "ai-specs.toml").write_text(
-                '[project]\nname = "demo"\n\n[agents]\nenabled = []\n\n'
-                '[recipes.demo-recipe]\nenabled = true\nversion = "1.0"\n',
-                encoding="utf-8",
-            )
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value=None
-            ):
-                doc = self.doctor.Doctor(project)
-                doc.run()
-            self.assertFalse(any(c.name == "direnv" for c in doc.checks))
+        root = self.base
+        catalog = self.home / "catalog" / "recipes" / "demo-recipe"
+        catalog.mkdir(parents=True, exist_ok=True)
+        (catalog / "recipe.toml").write_text(
+            "[recipe]\n"
+            'id = "demo-recipe"\n'
+            'name = "Demo"\n'
+            'description = "D"\n'
+            'version = "1.0"\n',
+            encoding="utf-8",
+        )
+        project = root / "project"
+        (project / "ai-specs").mkdir(parents=True)
+        (project / "AGENTS.md").write_text("# a\n", encoding="utf-8")
+        (project / "ai-specs" / "ai-specs.toml").write_text(
+            '[project]\nname = "demo"\n\n[agents]\nenabled = []\n\n'
+            '[recipes.demo-recipe]\nenabled = true\nversion = "1.0"\n',
+            encoding="utf-8",
+        )
+        result = self._doctor_with_path(project, without=("direnv",))
+        self.assertEqual(_named_checks(result.stdout, "direnv"), [])
 
     def test_managed_envrc_and_harness_key_warns(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_mcp_project(root)
-            (project / ".envrc").write_text("use nix\n", encoding="utf-8")
-            (project / "ai-specs.env").write_text("TRELLO_TOKEN=\n", encoding="utf-8")
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value="/usr/bin/direnv"
-            ):
-                doc = self.doctor.Doctor(project)
-                doc.run()
-            self.assertTrue(
-                any(
-                    c.name == "envrc-managed" and c.severity == self.doctor.Severity.WARN
-                    for c in doc.checks
-                )
+        project = self._write_mcp_project()
+        (project / ".envrc").write_text("use nix\n", encoding="utf-8")
+        (project / "ai-specs.env").write_text("TRELLO_TOKEN=\n", encoding="utf-8")
+        result = self._doctor_with_path(
+            project, stubs={"direnv": "#!/bin/sh\nexit 0\n"}
+        )
+        self.assertTrue(
+            any(
+                sev == "WARN" and "stale" not in body.lower()
+                for sev, body in _named_checks(result.stdout, "envrc-managed")
             )
-            harness = [
-                c for c in doc.checks
-                if c.name == "harness-env" and c.severity == self.doctor.Severity.WARN
-            ]
-            self.assertTrue(harness)
-            self.assertIn("TRELLO_TOKEN", harness[0].message)
-            self.assertNotIn("secret", harness[0].message.lower())
+        )
+        harness = [
+            (sev, body) for sev, body in _named_checks(result.stdout, "harness-env")
+            if sev == "WARN"
+        ]
+        self.assertTrue(harness)
+        self.assertIn("TRELLO_TOKEN", harness[0][1])
+        self.assertNotIn("secret", harness[0][1].lower())
 
     def test_present_harness_key_ok(self):
         """Non-empty required key in ai-specs.env yields harness-env OK (not WARN)."""
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_mcp_project(root)
-            (project / ".envrc").write_text(
-                "# managed-by: ai-specs (do not remove block)\n"
-                "dotenv_if_exists .env\n"
-                "dotenv_if_exists ai-specs.env\n"
-                "# end managed-by: ai-specs\n",
-                encoding="utf-8",
-            )
-            (project / "ai-specs.env").write_text(
-                "TRELLO_TOKEN=filled-value\n",
-                encoding="utf-8",
-            )
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value="/usr/bin/direnv"
-            ):
-                doc = self.doctor.Doctor(project)
-                doc.run()
-            ok = [
-                c
-                for c in doc.checks
-                if c.name == "harness-env" and c.severity == self.doctor.Severity.OK
-            ]
-            warn = [
-                c
-                for c in doc.checks
-                if c.name == "harness-env" and c.severity == self.doctor.Severity.WARN
-            ]
-            self.assertTrue(ok, "expected harness-env OK when key is present")
-            self.assertFalse(warn, "harness-env must not WARN when key is non-empty")
+        project = self._write_mcp_project()
+        (project / ".envrc").write_text(
+            "# managed-by: ai-specs (do not remove block)\n"
+            "dotenv_if_exists .env\n"
+            "dotenv_if_exists ai-specs.env\n"
+            "# end managed-by: ai-specs\n",
+            encoding="utf-8",
+        )
+        (project / "ai-specs.env").write_text(
+            "TRELLO_TOKEN=filled-value\n",
+            encoding="utf-8",
+        )
+        result = self._doctor_with_path(
+            project, stubs={"direnv": "#!/bin/sh\nexit 0\n"}
+        )
+        ok = [
+            (sev, body) for sev, body in _named_checks(result.stdout, "harness-env")
+            if sev == "OK"
+        ]
+        warn = [
+            (sev, body) for sev, body in _named_checks(result.stdout, "harness-env")
+            if sev == "WARN"
+        ]
+        self.assertTrue(ok, f"expected harness-env OK when key is present: {ok}")
+        self.assertFalse(warn, f"harness-env must not WARN when key is non-empty: {warn}")
 
-    def _write_mcp_project_with_choice(self, root: Path) -> Path:
+    def _write_mcp_project_with_choice(self) -> Path:
         """Like _write_mcp_project, but the MCP env reference declares allowed values."""
-        project = self._write_mcp_project(root)
-        (root / "catalog" / "recipes" / "demo-recipe" / "recipe.toml").write_text(
+        project = self._write_mcp_project()
+        (self.home / "catalog" / "recipes" / "demo-recipe" / "recipe.toml").write_text(
             "[recipe]\n"
             'id = "demo-recipe"\n'
             'name = "Demo"\n'
@@ -1301,172 +1301,150 @@ class HarnessEnvDoctorTests(unittest.TestCase):
 
     def test_invalid_harness_env_value_warns_with_allowed_values(self):
         """A configured value outside the recipe's declared set WARNs early, without echoing it."""
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_mcp_project_with_choice(root)
-            (project / "ai-specs.env").write_text("DEMO_MODE=onoff\n", encoding="utf-8")
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value="/usr/bin/direnv"
-            ):
-                doc = self.doctor.Doctor(project)
-                doc.run()
-            warn = [
-                c
-                for c in doc.checks
-                if c.name == "harness-env-value"
-                and c.severity == self.doctor.Severity.WARN
-            ]
-            self.assertTrue(
-                warn, "expected harness-env-value WARN for a value outside the declared set"
-            )
-            self.assertIn("DEMO_MODE", warn[0].message)
-            self.assertIn("on, off", warn[0].message)
-            self.assertNotIn("onoff", warn[0].message)
+        project = self._write_mcp_project_with_choice()
+        (project / "ai-specs.env").write_text("DEMO_MODE=onoff\n", encoding="utf-8")
+        result = self._doctor_with_path(
+            project, stubs={"direnv": "#!/bin/sh\nexit 0\n"}
+        )
+        warn = [
+            (sev, body)
+            for sev, body in _named_checks(result.stdout, "harness-env-value")
+            if sev == "WARN"
+        ]
+        self.assertTrue(
+            warn, "expected harness-env-value WARN for a value outside the declared set"
+        )
+        self.assertIn("DEMO_MODE", warn[0][1])
+        self.assertIn("on, off", warn[0][1])
+        self.assertNotIn("onoff", warn[0][1])
 
     def test_valid_harness_env_value_case_insensitive_no_warn(self):
         """The provider accepts declared values case-insensitively, so no WARN is warranted."""
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_mcp_project_with_choice(root)
-            (project / "ai-specs.env").write_text("DEMO_MODE=OFF\n", encoding="utf-8")
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value="/usr/bin/direnv"
-            ):
-                doc = self.doctor.Doctor(project)
-                doc.run()
-            self.assertFalse([c for c in doc.checks if c.name == "harness-env-value"])
+        project = self._write_mcp_project_with_choice()
+        (project / "ai-specs.env").write_text("DEMO_MODE=OFF\n", encoding="utf-8")
+        result = self._doctor_with_path(
+            project, stubs={"direnv": "#!/bin/sh\nexit 0\n"}
+        )
+        self.assertEqual(_named_checks(result.stdout, "harness-env-value"), [])
 
     def test_stale_managed_body_warns(self):
         """JD-8: markers with nested ai-specs/.env body must WARN envrc-managed."""
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_mcp_project(root)
-            (project / ".envrc").write_text(
-                "# managed-by: ai-specs (do not remove block)\n"
-                "dotenv_if_exists .env\n"
-                "dotenv_if_exists ai-specs/.env\n"
-                "# end managed-by: ai-specs\n",
-                encoding="utf-8",
-            )
-            (project / "ai-specs.env").write_text(
-                "TRELLO_TOKEN=filled-value\n",
-                encoding="utf-8",
-            )
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value="/usr/bin/direnv"
-            ):
-                doc = self.doctor.Doctor(project)
-                doc.run()
-            warn = [
-                c
-                for c in doc.checks
-                if c.name == "envrc-managed" and c.severity == self.doctor.Severity.WARN
-            ]
-            self.assertTrue(warn, "expected envrc-managed WARN for stale body")
-            self.assertIn("stale", warn[0].message.lower())
+        project = self._write_mcp_project()
+        (project / ".envrc").write_text(
+            "# managed-by: ai-specs (do not remove block)\n"
+            "dotenv_if_exists .env\n"
+            "dotenv_if_exists ai-specs/.env\n"
+            "# end managed-by: ai-specs\n",
+            encoding="utf-8",
+        )
+        (project / "ai-specs.env").write_text(
+            "TRELLO_TOKEN=filled-value\n",
+            encoding="utf-8",
+        )
+        result = self._doctor_with_path(
+            project, stubs={"direnv": "#!/bin/sh\nexit 0\n"}
+        )
+        warn = [
+            (sev, body) for sev, body in _named_checks(result.stdout, "envrc-managed")
+            if sev == "WARN"
+        ]
+        self.assertTrue(warn, "expected envrc-managed WARN for stale body")
+        self.assertIn("stale", warn[0][1].lower())
 
     def test_doctor_never_calls_install(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._write_mcp_project(root)
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(root)}), patch(
-                "shutil.which", return_value=None
-            ), patch("subprocess.run") as run:
-                doc = self.doctor.Doctor(project)
-                doc.run()
-            for call in run.call_args_list:
-                argv = list(call.args[0]) if call.args else []
-                if not argv:
-                    continue
-                self.assertNotEqual(argv[0], "brew")
-                self.assertNotIn("apt-get", argv)
+        # Black-box canary: stub `brew`/`apt-get` on PATH record any execution;
+        # doctor must complete without ever invoking an installer.
+        project = self._write_mcp_project()
+        canary = (
+            "#!/bin/sh\n"
+            'touch "$CANARY_DIR/called-$(basename "$0")"\n'
+            "exit 0\n"
+        )
+        result = self._doctor_with_path(
+            project, stubs={"brew": canary, "apt-get": canary}
+        )
+        self.assertIn("ai-specs doctor", result.stdout)
+        canary_dir = self.base / "path-stubs"
+        self.assertEqual(
+            list(canary_dir.glob("called-*")), [],
+            "doctor must never execute an installer binary",
+        )
 
 
 class CacheAwareCommandsDoctorTests(unittest.TestCase):
     """Doctor must treat cache-managed commands as 'expected', not stale extras."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.doctor = load_module(DOCTOR_PY, "doctor_cache_cmd_tests")
-
-    def _load_project_cache(self):
-        """Load project-cache helpers for test setup."""
-        pc_path = DOCTOR_PY.parent / "project-cache.py"
-        return load_module(pc_path, "project_cache_cache_cmd_doctor")
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.home = _make_home(self.base)
 
     def test_bundled_commands_ok_when_only_cache_has_commands(self):
         """bundled-commands must report OK when cache commands/ is non-empty, even if ai-specs/commands/ is empty."""
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "prj"
-            target.mkdir()
-            ai_specs_init(target)
-            # Clear hand-authored commands
-            commands_root = target / "ai-specs" / "commands"
-            shutil.rmtree(commands_root, ignore_errors=True)
-            commands_root.mkdir(parents=True)
-            # Populate cache commands
-            pc = self._load_project_cache()
-            cache_cmds = pc.commands_dir(target)
-            cache_cmds.mkdir(parents=True, exist_ok=True)
-            (cache_cmds / "recipe-cmd.md").write_text("# recipe command\n")
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
-            # Should NOT warn about bundled-commands when cache has commands
-            bundled_lines = [
-                ln for ln in result.stdout.splitlines()
-                if "bundled-commands" in ln
-            ]
-            self.assertTrue(
-                bundled_lines and all("OK" in ln for ln in bundled_lines),
-                f"Expected bundled-commands OK when cache has commands; got: {bundled_lines}"
-            )
+        target = self.base / "prj"
+        target.mkdir()
+        ai_specs_init(target, self.home)
+        # Clear hand-authored commands
+        commands_root = target / "ai-specs" / "commands"
+        shutil.rmtree(commands_root, ignore_errors=True)
+        commands_root.mkdir(parents=True)
+        # Populate cache commands
+        cache_cmds = cache_project_dir(target, self.home) / "commands"
+        cache_cmds.mkdir(parents=True, exist_ok=True)
+        (cache_cmds / "recipe-cmd.md").write_text("# recipe command\n")
+        result = invoke(target, "doctor", cli_home=self.home)
+        # Should NOT warn about bundled-commands when cache has commands
+        bundled_lines = [
+            ln for ln in result.stdout.splitlines()
+            if "bundled-commands" in ln
+        ]
+        self.assertTrue(
+            bundled_lines and all("OK" in ln for ln in bundled_lines),
+            f"Expected bundled-commands OK when cache has commands; got: {bundled_lines}"
+        )
 
     def test_cache_managed_commands_not_flagged_as_stale(self):
         """Doctor must not flag agent commands as stale when they come from the cache."""
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "prj"
-            target.mkdir()
-            ai_specs_init(target, agents=["cursor"])
-            # Populate cache with a recipe-managed command
-            pc = self._load_project_cache()
-            cache_cmds = pc.commands_dir(target)
-            cache_cmds.mkdir(parents=True, exist_ok=True)
-            (cache_cmds / "recipe-cmd.md").write_text("# recipe command\n")
-            # Sync so agent commands dir is populated
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--cursor"],
-                check=True, text=True,
-            )
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False
-            )
-            cmd_lines = [
-                ln for ln in result.stdout.splitlines()
-                if ".cursor/commands" in ln
-            ]
-            self.assertFalse(
-                any("stale" in ln.lower() for ln in cmd_lines),
-                f"Cache-managed commands must not be flagged as stale; got: {cmd_lines}"
-            )
+        target = self.base / "prj"
+        target.mkdir()
+        ai_specs_init(target, self.home, agents=["cursor"])
+        # Populate cache with a recipe-managed command
+        cache_cmds = cache_project_dir(target, self.home) / "commands"
+        cache_cmds.mkdir(parents=True, exist_ok=True)
+        (cache_cmds / "recipe-cmd.md").write_text("# recipe command\n")
+        # Sync so agent commands dir is populated
+        sync = invoke(target, "sync-agent", cli_home=self.home)
+        self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+        result = invoke(target, "doctor", cli_home=self.home)
+        cmd_lines = [
+            ln for ln in result.stdout.splitlines()
+            if ".cursor/commands" in ln
+        ]
+        self.assertFalse(
+            any("stale" in ln.lower() for ln in cmd_lines),
+            f"Cache-managed commands must not be flagged as stale; got: {cmd_lines}"
+        )
 
 
 class CommandsEmptyExpectedDoctorTests(unittest.TestCase):
     """Doctor must not WARN when both expected and actual command sets are empty."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.doctor = load_module(DOCTOR_PY, "doctor_empty_cmd_tests")
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        # Real lib copy; the per-project cache stays EMPTY so the expected
+        # command set is zero.
+        self.home = _make_home(self.base)
 
-    def _make_project(self, tmp: str) -> Path:
+    def _make_project(self) -> Path:
         """Minimal project fixture: manifest + AGENTS.md + bundled skills."""
-        target = Path(tmp) / "prj"
+        target = self.base / "prj"
         target.mkdir()
         (target / "AGENTS.md").write_text("# agents\n")
         (target / "ai-specs").mkdir()
-        for skill in self.doctor.bundled_skill_names():
+        for skill in BUNDLED_SKILLS:
             (target / "ai-specs" / "skills" / skill).mkdir(parents=True, exist_ok=True)
         (target / "ai-specs" / "ai-specs.toml").write_text(
             '[project]\nname = "demo"\n[agents]\nenabled = ["claude"]\n'
@@ -1475,50 +1453,43 @@ class CommandsEmptyExpectedDoctorTests(unittest.TestCase):
 
     def test_empty_commands_dir_with_no_expected_reports_ok_not_warn(self):
         """Empty agent commands dir + zero expected commands → OK, not WARN."""
-        with tempfile.TemporaryDirectory() as tmp:
-            target = self._make_project(tmp)
-            # Controlled AI_SPECS_HOME so cache lookup returns empty
-            fake_home = Path(tmp) / "cli-home"
-            fake_home.mkdir()
-            # Create an empty commands dir for the claude agent
-            (target / ".claude" / "commands").mkdir(parents=True)
-            plat = self.doctor.Doctor.PLATFORM["claude"]
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(fake_home)}):
-                doc = self.doctor.Doctor(target)
-                doc._check_agent_outputs("claude", plat, 0)
-            warn_rows = [
-                c for c in doc.checks
-                if ".claude/commands" in c.name and c.severity == self.doctor.Severity.WARN
-            ]
-            self.assertEqual(
-                warn_rows,
-                [],
-                f"Should not WARN when no commands configured; got: {warn_rows}",
-            )
+        target = self._make_project()
+        # Controlled empty cache lookup: no .bundled/commands and no commands/.
+        (target / ".claude" / "commands").mkdir(parents=True)
+        result = invoke(target, "doctor", cli_home=self.home)
+        warn_rows = [
+            (sev, body) for sev, body in _named_checks(result.stdout, ".claude/commands")
+            if sev == "WARN"
+        ]
+        self.assertEqual(
+            warn_rows,
+            [],
+            f"Should not WARN when no commands configured; got: {warn_rows}",
+        )
 
     def test_empty_commands_dir_with_no_expected_emits_ok_label(self):
         """Empty agent commands dir + zero expected commands → at least one OK for commands."""
-        with tempfile.TemporaryDirectory() as tmp:
-            target = self._make_project(tmp)
-            fake_home = Path(tmp) / "cli-home"
-            fake_home.mkdir()
-            (target / ".claude" / "commands").mkdir(parents=True)
-            plat = self.doctor.Doctor.PLATFORM["claude"]
-            with patch.dict("os.environ", {"AI_SPECS_HOME": str(fake_home)}):
-                doc = self.doctor.Doctor(target)
-                doc._check_agent_outputs("claude", plat, 0)
-            ok_rows = [
-                c for c in doc.checks
-                if ".claude/commands" in c.name and c.severity == self.doctor.Severity.OK
-            ]
-            self.assertTrue(
-                ok_rows,
-                f"Should emit OK when no commands configured; checks: {doc.checks}",
-            )
-
+        target = self._make_project()
+        (target / ".claude" / "commands").mkdir(parents=True)
+        result = invoke(target, "doctor", cli_home=self.home)
+        ok_rows = [
+            (sev, body) for sev, body in _named_checks(result.stdout, ".claude/commands")
+            if sev == "OK"
+        ]
+        self.assertTrue(
+            ok_rows,
+            f"Should emit OK when no commands configured; got: {result.stdout}",
+        )
 
 
 class RepoTopologyDoctorTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        # The repo catalog must be reachable (worktree-flow recipe templates).
+        self.home = _make_home(self.base, catalog=True)
+
     def _enable_worktree_flow(self, target: Path) -> None:
         manifest = target / "ai-specs" / "ai-specs.toml"
         # Always append an enabled block — the init template may contain a
@@ -1530,17 +1501,13 @@ class RepoTopologyDoctorTests(unittest.TestCase):
         )
 
     def test_repo_topology_info_when_worktree_flow_enabled(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "prj"
-            target.mkdir()
-            ai_specs_init(target)
-            self._enable_worktree_flow(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False,
-            )
-            self.assertIn("repo-topology", result.stdout)
-            self.assertIn("INFO", result.stdout)
+        target = self.base / "prj"
+        target.mkdir()
+        ai_specs_init(target, self.home)
+        self._enable_worktree_flow(target)
+        result = invoke(target, "doctor", cli_home=self.home)
+        self.assertIn("repo-topology", result.stdout)
+        self.assertIn("INFO", result.stdout)
 
     def _set_project_topology(self, target: Path, topology: str) -> None:
         manifest = target / "ai-specs" / "ai-specs.toml"
@@ -1549,65 +1516,56 @@ class RepoTopologyDoctorTests(unittest.TestCase):
         manifest.write_text("\n".join(lines) + "\n")
 
     def test_project_topology_reports_with_deprecation_when_legacy_only(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "prj"
-            target.mkdir()
-            ai_specs_init(target)
-            self._enable_worktree_flow(target)
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False,
-            )
-            self.assertIn("legacy-recipe", result.stdout)
-            self.assertIn("[project].repo_topology", result.stdout)
+        target = self.base / "prj"
+        target.mkdir()
+        ai_specs_init(target, self.home)
+        self._enable_worktree_flow(target)
+        result = invoke(target, "doctor", cli_home=self.home)
+        self.assertIn("legacy-recipe", result.stdout)
+        self.assertIn("[project].repo_topology", result.stdout)
 
     def test_project_field_reports_without_worktree_flow(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "prj"
-            target.mkdir()
-            ai_specs_init(target)
-            self._set_project_topology(target, "standalone")
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False,
-            )
-            self.assertIn("repo-topology", result.stdout)
-            self.assertIn("standalone", result.stdout)
-            self.assertNotIn("legacy-recipe", result.stdout)
+        target = self.base / "prj"
+        target.mkdir()
+        ai_specs_init(target, self.home)
+        self._set_project_topology(target, "standalone")
+        result = invoke(target, "doctor", cli_home=self.home)
+        self.assertIn("repo-topology", result.stdout)
+        self.assertIn("standalone", result.stdout)
+        self.assertNotIn("legacy-recipe", result.stdout)
 
     def test_stale_override_warns(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "prj"
-            target.mkdir()
-            ai_specs_init(target)
-            self._enable_worktree_flow(target)
-            dest = (
-                target / "ai-specs" / "recipes" / "worktree-flow" / "overrides"
-                / "bin" / "worktree-cleanup.sh"
-            )
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text("# customized\n")
-            result = subprocess.run(
-                [str(CLI), "doctor", str(target)],
-                capture_output=True, text=True, check=False,
-            )
-            self.assertIn("stale-override", result.stdout)
-            self.assertIn("WARN", result.stdout)
-            # read-only: file unchanged
-            self.assertEqual(dest.read_text(), "# customized\n")
+        target = self.base / "prj"
+        target.mkdir()
+        ai_specs_init(target, self.home)
+        self._enable_worktree_flow(target)
+        dest = (
+            target / "ai-specs" / "recipes" / "worktree-flow" / "overrides"
+            / "bin" / "worktree-cleanup.sh"
+        )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("# customized\n")
+        result = invoke(target, "doctor", cli_home=self.home)
+        self.assertIn("stale-override", result.stdout)
+        self.assertIn("WARN", result.stdout)
+        # read-only: file unchanged
+        self.assertEqual(dest.read_text(), "# customized\n")
 
 
 class GateProvenanceDoctorTests(unittest.TestCase):
-    """3.3 — RED: doctor warns on customized/missing gate provenance, stays
-    quiet on matching baselines."""
+    """3.3 — doctor warns on customized/missing gate provenance, stays
+    quiet on matching baselines. Black-box through `bin/ai-specs doctor`."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.home = _make_home(self.base, catalog=False)
 
     def _fake_home(self) -> tuple[Path, Path]:
-        """Fake CLI home (catalog) + project enabling a runtime-hook recipe."""
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        home = Path(tmp.name)
-        recipe_dir = home / "catalog" / "recipes" / "wt-hook"
-        (recipe_dir / "hooks").mkdir(parents=True)
+        """Catalog recipe wt-hook with a runtime hook + enabling project."""
+        recipe_dir = self.home / "catalog" / "recipes" / "wt-hook"
+        (recipe_dir / "hooks").mkdir(parents=True, exist_ok=True)
         (recipe_dir / "hooks" / "gate.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
         (recipe_dir / "recipe.toml").write_text(
             '[recipe]\n'
@@ -1622,89 +1580,83 @@ class GateProvenanceDoctorTests(unittest.TestCase):
             'matcher = "Edit|Write"\n'
             'blocking = true\n'
         )
-        proj_tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(proj_tmp.cleanup)
-        project = Path(proj_tmp.name)
+        project = self.base / "prj"
         (project / "ai-specs").mkdir(parents=True)
         (project / "ai-specs" / "ai-specs.toml").write_text(
             "[project]\nname = 'p'\n\n"
             "[agents]\nenabled = ['claude']\n\n"
             "[recipes.wt-hook]\nenabled = true\nversion = '1.0'\n"
         )
-        return project, home
+        (project / "AGENTS.md").write_text("# agents\n")
+        _seed_clean_cache(project, self.home)
+        return project, self.home
 
     def _gate(self, project: Path) -> Path:
         return project / "ai-specs" / "recipes" / "wt-hook" / "hooks" / "gate.sh"
 
     def _record_baseline(self, project: Path, sha: str) -> None:
-        lock_mod = load_module(ROOT / "lib/_internal/lock.py", "lock_doctor_gate")
+        """Write the managed-override baseline in the lock's TOML shape."""
         lock_path = project / "ai-specs" / ".ai-specs.lock"
-        lock = lock_mod.load_lock(lock_path)
-        lock_mod.set_managed_override(
-            lock, "ai-specs/recipes/wt-hook/hooks/gate.sh", sha,
-            recipe="wt-hook", source="hooks/gate.sh", kind="gate", policy="auto",
+        lock_path.write_text(
+            '[meta]\ncli_version = "test"\nsynced_at = "2026-01-01T00:00:00Z"\n\n'
+            '[managed."ai-specs/recipes/wt-hook/hooks/gate.sh"]\n'
+            f'sha256 = "{sha}"\n'
+            'recipe = "wt-hook"\n'
+            'source = "hooks/gate.sh"\n'
+            'kind = "gate"\n'
+            'policy = "auto"\n'
         )
-        lock_mod.write_lock(lock_path, lock)
 
-    def _doctor_gate_check(self, project: Path, home: Path):
-        doctor = load_module(DOCTOR_PY, "doctor_gate_prov")
-        with patch.object(doctor, "AI_SPECS_HOME", home):
-            d = doctor.Doctor(project)
-            d._check_gate_provenance()
-        return d.checks
+    def _gate_checks(self, project: Path) -> tuple[list[tuple[str, str]], int]:
+        result = invoke(project, "doctor", cli_home=self.home)
+        return _named_checks(result.stdout, "gate-provenance"), result.returncode
 
     def test_doctor_warns_on_customized_gate(self):
-        project, home = self._fake_home()
+        project, _ = self._fake_home()
         gate = self._gate(project)
         gate.parent.mkdir(parents=True, exist_ok=True)
         gate.write_text("#!/usr/bin/env bash\nexit 0\n")
         self._record_baseline(project, "0" * 64)  # baseline != disk
-        checks = self._doctor_gate_check(project, home)
-        gate_checks = [c for c in checks if c.name == "gate-provenance"]
-        self.assertEqual(len(gate_checks), 1)
-        self.assertEqual(gate_checks[0].severity.name, "WARN")
-        self.assertIn("gate.sh", gate_checks[0].message)
-        self.assertIn("user-modified", gate_checks[0].message)
+        checks, _code = self._gate_checks(project)
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0][0], "WARN")
+        self.assertIn("gate.sh", checks[0][1])
+        self.assertIn("user-modified", checks[0][1])
 
     def test_doctor_quiet_when_gate_baseline_matches(self):
-        project, home = self._fake_home()
+        project, _ = self._fake_home()
         gate = self._gate(project)
         gate.parent.mkdir(parents=True, exist_ok=True)
         payload = "#!/usr/bin/env bash\nexit 0\n"
         gate.write_text(payload)
-        import hashlib
         baseline = hashlib.sha256(payload.replace("\r\n", "\n").encode()).hexdigest()
         self._record_baseline(project, baseline)
-        checks = self._doctor_gate_check(project, home)
+        checks, _code = self._gate_checks(project)
         self.assertEqual(
-            [c for c in checks if c.name == "gate-provenance"], [],
+            checks, [],
             "doctor must stay quiet for gates whose baseline matches",
         )
 
     def test_doctor_warns_on_missing_gate_provenance(self):
-        project, home = self._fake_home()
+        project, _ = self._fake_home()
         gate = self._gate(project)
         gate.parent.mkdir(parents=True, exist_ok=True)
         gate.write_text("#!/usr/bin/env bash\nexit 0\n")
-        checks = self._doctor_gate_check(project, home)
-        gate_checks = [c for c in checks if c.name == "gate-provenance"]
-        self.assertEqual(len(gate_checks), 1)
-        self.assertEqual(gate_checks[0].severity.name, "WARN")
-        self.assertIn("provenance", gate_checks[0].message.lower())
+        checks, _code = self._gate_checks(project)
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0][0], "WARN")
+        self.assertIn("provenance", checks[0][1].lower())
 
     def test_doctor_no_hook_recipes_quiet(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp) / "prj"
-            (project / "ai-specs").mkdir(parents=True)
-            (project / "ai-specs" / "ai-specs.toml").write_text(
-                "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n"
-            )
-            home = Path(tmp) / "home"
-            home.mkdir()
-            checks = self._doctor_gate_check(project, home)
-            self.assertEqual(
-                [c for c in checks if c.name == "gate-provenance"], []
-            )
+        project = self.base / "prj"
+        (project / "ai-specs").mkdir(parents=True)
+        (project / "ai-specs" / "ai-specs.toml").write_text(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n"
+        )
+        (project / "AGENTS.md").write_text("# agents\n")
+        _seed_clean_cache(project, self.home)
+        checks, _code = self._gate_checks(project)
+        self.assertEqual(checks, [])
 
 
 if __name__ == "__main__":

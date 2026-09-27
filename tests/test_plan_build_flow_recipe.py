@@ -1,27 +1,81 @@
-"""Validation + materialization tests for the plan-build-flow catalog recipe."""
+"""Black-box plan-build-flow recipe tests: every behavioral test drives ``bin/ai-specs``.
 
-import importlib.util
+No test may import ``lib/_internal`` modules. Assertions preserve the original
+contract intents (schema validation, declared config/hooks/brief tables,
+materialization of skill + doc, config resolution into the rendered brief, and
+golden skill/README/catalog content) through the CLI process boundary:
+
+- Recipe schema validity and declared primitives are observable via
+  ``recipe add`` (validation + exact id + "The next sync will materialize:"
+  plan) and via ``tomllib`` reads of the catalog recipe.toml.
+- Materialization and config handling are observable via ``sync``: the
+  bundled skill lands under the per-project CLI cache, the README doc under
+  ``ai-specs/recipes/plan-build-flow/``, and the rendered AGENTS.md brief
+  resolves ``{config.artifact_store_default}`` while rejecting values outside
+  the declared enum.
+- Golden content checks read the recipe surfaces directly (read-only).
+"""
+from __future__ import annotations
+
 import re
+import shutil
 import sys
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 CATALOG = ROOT / "catalog" / "recipes"
+RECIPE_DIR = CATALOG / "plan-build-flow"
 RECIPE_ID = "plan-build-flow"
-import sys
-from pathlib import Path as _P
-sys.path.insert(0, str(_P(__file__).resolve().parent))
-from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 
 FORBIDDEN_TERMS = ("sdd", "spec-driven")
 FORBIDDEN_SLASH = ("/plan", "/build")
 STORE_ENUM = ["openspec", "engram", "both"]
+
+
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root with a REAL lib copy.
+
+    sync/materialize derive cache and catalog roots from their own realpath,
+    so a symlinked lib would resolve back into the repository and let the CLI
+    touch repo cache state. A real copy keeps every lookup and write in temp.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    return home
+
+
+def _make_manifest(root: Path, name: str = "fixture") -> None:
+    """Minimal initialized project (manifest + harness dirs) in temp."""
+    (root / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (root / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+    (root / "ai-specs" / "ai-specs.toml").write_text(
+        f"[project]\nname = {name!r}\n\n[agents]\nenabled = ['claude']\n"
+    )
+
+
+def _recipe_toml() -> dict:
+    return tomllib.loads((CATALOG / RECIPE_ID / "recipe.toml").read_text())
+
+
+def _version_of(recipe_id: str) -> str:
+    text = (CATALOG / recipe_id / "recipe.toml").read_text()
+    match = re.search(r'^\s*version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    assert match, f"could not find version in {recipe_id}/recipe.toml"
+    return match.group(1)
+
+
+def _recipe_version() -> str:
+    return _version_of(RECIPE_ID)
 
 
 def _without_store_config_table(raw: str) -> str:
@@ -46,111 +100,222 @@ def _recipe_surface_text(recipe_dir: Path) -> str:
     skill = (recipe_dir / "skills" / RECIPE_ID / "SKILL.md").read_text()
     return "\n".join((recipe, readme, skill)).lower()
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
+class _CliFixtureMixin:
+    """One shared isolated cli_home and temp project per test command sequence."""
 
-def _version_of(recipe_id: str) -> str:
-    text = (CATALOG / recipe_id / "recipe.toml").read_text()
-    match = re.search(r'^\s*version\s*=\s*"([^"]+)"', text, re.MULTILINE)
-    assert match, f"could not find version in {recipe_id}/recipe.toml"
-    return match.group(1)
-
-
-def _recipe_version() -> str:
-    return _version_of(RECIPE_ID)
-
-
-class PlanBuildFlowRecipeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_pbf")
-        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_pbf")
-
-    def _make_project(self, extra_recipes: str = "") -> Path:
-        tmp = tempfile.TemporaryDirectory()
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-planbuild-")
         self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-        manifest = ai_specs / "ai-specs.toml"
-        manifest.write_text(
-            "[project]\nname = 'fixture'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            f'[recipes.{RECIPE_ID}]\nenabled = true\nversion = "{_recipe_version()}"\n'
-            + extra_recipes
-        )
-        return root
-    def _render_agents(self, root: Path) -> str:
-        resolved = root / "resolved-config.json"
+        self.base = Path(tmp.name)
+        self.home = _make_home(self.base)
+        self.root = self.base / "proj"
+        _make_manifest(self.root)
+
+    def recipe_add(self, recipe_id: str):
+        result = invoke(self.root, "recipe", "add", recipe_id, cli_home=self.home)
         self.assertEqual(
-            self.mod.materialize_recipes(root, ROOT, resolved_config_out=resolved), 0
+            result.returncode, 0,
+            f"recipe add {recipe_id} failed: {result.stdout}{result.stderr}",
         )
-        renderer = load_module(
-            ROOT / "lib" / "_internal" / "agents-render.py", "agents_render_pbf_e2e"
-        )
-        agents = root / "AGENTS.md"
-        renderer.render(
-            root / "ai-specs" / "ai-specs.toml",
-            agents,
-            preserve_if_marker=False,
-            resolved_config_path=resolved,
-        )
-        return agents.read_text()
+        return result
 
+    def sync(self):
+        return invoke(self.root, "sync", cli_home=self.home)
+
+    def sync_ok(self):
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def set_config(self, old: str, new: str) -> None:
+        """Override a recipe default written by `recipe add` in the manifest."""
+        manifest = self.root / "ai-specs" / "ai-specs.toml"
+        manifest.write_text(manifest.read_text().replace(old, new))
+
+    def agents_md(self) -> str:
+        return (self.root / "AGENTS.md").read_text()
+
+    def cache(self) -> Path:
+        return cache_project_dir(self.root, self.home)
+
+    def materialized_readme(self) -> Path:
+        return self.root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
+
+    def materialized_skill(self) -> Path:
+        return self.cache() / ".recipe" / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md"
+
+
+class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
     def test_recipe_materializes_skill_only(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        self.assertEqual(recipe.id, RECIPE_ID)
-        self.assertEqual(len(recipe.commands), 0)
-        skill_ids = [(s.id, s.source) for s in recipe.skills]
+        """Recipe validates, declares zero commands and one bundled skill, and
+        sync materializes only that skill — never plan/build/archive commands."""
+        result = self.recipe_add(RECIPE_ID)
+        raw = _recipe_toml()
+        self.assertEqual(raw["recipe"]["id"], RECIPE_ID)
+        self.assertNotIn("commands", raw["provides"])
+        skill_ids = [(s["id"], s["source"]) for s in raw["provides"]["skills"]]
         self.assertIn(("plan-build-flow", "bundled"), skill_ids)
+        self.assertIn("- skills: plan-build-flow", result.stdout)
+        self.assertNotIn("- commands:", result.stdout)
 
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-
-        skill = (
-            recipe_root(root, RECIPE_ID)
-            / "skills" / "plan-build-flow" / "SKILL.md"
-        )
-        self.assertTrue(skill.is_file())
+        self.sync_ok()
+        skill = self.materialized_skill()
+        self.assertTrue(skill.is_file(), f"missing materialized skill at {skill}")
         for forbidden in ("plan.md", "build.md", "archive.md"):
             self.assertFalse(
-                (root / "ai-specs" / "commands" / forbidden).exists(),
+                (self.cache() / "commands" / forbidden).exists(),
+                f"unexpected command {forbidden}",
+            )
+            self.assertFalse(
+                (self.root / "ai-specs" / "commands" / forbidden).exists(),
                 f"unexpected command {forbidden}",
             )
 
     def test_recipe_declares_exact_store_schema_and_hook_pair(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        self.assertEqual(list(recipe.config_schema.fields), ["artifact_store_default"])
-        field = recipe.config_schema.fields["artifact_store_default"]
-        self.assertFalse(field.required)
-        self.assertEqual(field.type, "string")
-        self.assertEqual(field.default, "openspec")
-        self.assertEqual(field.enum, STORE_ENUM)
-        self.assertTrue(field.help_text.strip())
-        hook_pairs = [(h.event, h.action) for h in recipe.hooks]
+        """`recipe add` validates the schema; the declared config schema is
+        exactly the artifact_store_default field and the only hook is the
+        on-sync validate-config pair (read from the catalog declaration)."""
+        self.recipe_add(RECIPE_ID)
+        raw = _recipe_toml()
+        fields = raw["config"]
+        self.assertEqual(list(fields), ["artifact_store_default"])
+        field = fields["artifact_store_default"]
+        self.assertFalse(field["required"])
+        self.assertEqual(field["type"], "string")
+        self.assertEqual(field["default"], "openspec")
+        self.assertEqual(field["enum"], STORE_ENUM)
+        self.assertTrue(field["help_text"].strip())
+        hook_pairs = [(h["event"], h["action"]) for h in raw["hooks"]]
         self.assertEqual(hook_pairs, [("on-sync", "validate-config")])
 
-        raw = (recipe_dir / "recipe.toml").read_text()
-        self.assertEqual(raw.count("[config.artifact_store_default]"), 1)
-        self.assertIn('enum = ["openspec", "engram", "both"]', raw)
+        raw_text = (CATALOG / RECIPE_ID / "recipe.toml").read_text()
+        self.assertEqual(raw_text.count("[config.artifact_store_default]"), 1)
+        self.assertIn('enum = ["openspec", "engram", "both"]', raw_text)
+
+    def test_brief_and_readme_vocabulary_clean(self):
+        """Brief workflow rules and the materialized README carry no forbidden
+        vocabulary (SDD/spec-driven terms)."""
+        rules = _recipe_toml()["provides"]["brief"]["workflow_rules"]
+        fragments = "\n".join(rules).lower()
+        for term in FORBIDDEN_TERMS:
+            self.assertNotIn(term, fragments)
+        for slash in FORBIDDEN_SLASH:
+            self.assertNotIn(slash, fragments)
+
+        self.recipe_add(RECIPE_ID)
+        self.sync_ok()
+        readme = self.materialized_readme().read_text()
+        for term in FORBIDDEN_TERMS:
+            self.assertNotIn(term, _without_delivery_contracts_section(readme).lower())
+
+    def test_store_defaults_override_and_enum_rejection(self):
+        """The store config resolves into the rendered brief: the manifest
+        default renders `openspec`, an override renders the overridden value,
+        and a value outside the declared enum fails sync naming the field."""
+        self.recipe_add(RECIPE_ID)
+        self.sync_ok()
+        self.assertIn("`openspec`", self.agents_md())
+
+        self.set_config('artifact_store_default = "openspec"', "artifact_store_default = 'both'")
+        self.sync_ok()
+        content = self.agents_md()
+        self.assertIn("`both`", content)
+        self.assertNotIn("`openspec`", content)
+
+        self.set_config("artifact_store_default = 'both'", "artifact_store_default = 'vault'")
+        failed = self.sync()
+        self.assertNotEqual(
+            failed.returncode, 0,
+            "a value outside the declared enum must be rejected",
+        )
+        self.assertIn("artifact_store_default", failed.stdout + failed.stderr)
+
+    def test_materialization_renders_manifest_store_override_into_agents(self):
+        self.recipe_add(RECIPE_ID)
+        self.set_config('artifact_store_default = "openspec"', "artifact_store_default = 'both'")
+        self.sync_ok()
+        content = self.agents_md()
+        self.assertIn("Default artifact store", content)
+        self.assertIn("`both`", content)
+        self.assertNotIn("{config.artifact_store_default}", content)
+        self.assertLess(
+            content.index("Classify each substantial change"),
+            content.index("Default artifact store"),
+        )
+
+    def test_materialization_renders_default_store_into_agents(self):
+        self.recipe_add(RECIPE_ID)
+        self.sync_ok()
+        content = self.agents_md()
+        self.assertIn("`openspec`", content)
+        self.assertNotIn("{config.artifact_store_default}", content)
+
+    def test_validate_config_hook_accepts_each_store_enum(self):
+        """The on-sync validate-config hook accepts every declared enum value:
+        each store choice syncs cleanly in a fresh project sequence."""
+        for value in STORE_ENUM:
+            with self.subTest(value=value):
+                tmp = tempfile.TemporaryDirectory()
+                self.addCleanup(tmp.cleanup)
+                base = Path(tmp.name)
+                home = _make_home(base)
+                root = base / "proj"
+                _make_manifest(root)
+                added = invoke(root, "recipe", "add", RECIPE_ID, cli_home=home)
+                self.assertEqual(added.returncode, 0, added.stdout + added.stderr)
+                if value != "openspec":
+                    manifest = root / "ai-specs" / "ai-specs.toml"
+                    manifest.write_text(manifest.read_text().replace(
+                        'artifact_store_default = "openspec"',
+                        f'artifact_store_default = "{value}"',
+                    ))
+                synced = invoke(root, "sync", cli_home=home)
+                self.assertEqual(
+                    synced.returncode, 0,
+                    f"validate-config must accept {value}: {synced.stdout}{synced.stderr}",
+                )
+
+    def test_materialization_preserves_cross_repo_guidance(self):
+        """Sync materializes the topology guidance into both the recipe README
+        and the bundled skill."""
+        self.recipe_add(RECIPE_ID)
+        self.sync_ok()
+        generated_readme = self.materialized_readme().read_text().lower()
+        generated_skill = self.materialized_skill().read_text().lower()
+        for text in (generated_readme, generated_skill):
+            self.assertIn("topology", text)
+            self.assertIn("central", text)
+            self.assertIn("superproject", text)
+            self.assertIn("standalone", text)
+            self.assertIn("fail-safe", text)
+        self.assertIn("openspec/changes", generated_skill)
+        self.assertIn("no duplication", generated_skill)
+        self.assertIn("orchestration", generated_skill)
+
+    def test_classic_sdd_commands_unchanged(self):
+        """Sync must not touch pre-existing legacy commands or skills."""
+        commands = self.root / "ai-specs" / "commands"
+        legacy = commands / "legacy-sdd-cmd.md"
+        legacy.write_text("# Legacy\n")
+        (self.root / "ai-specs" / "skills" / "legacy-sdd-skill").mkdir()
+        (self.root / "ai-specs" / "skills" / "legacy-sdd-skill" / "SKILL.md").write_text(
+            "---\nname: legacy\n---\n"
+        )
+        before = legacy.read_text()
+        self.recipe_add(RECIPE_ID)
+        self.sync_ok()
+        self.assertEqual(legacy.read_text(), before)
+
+
+class PlanBuildFlowGoldenContentTests(unittest.TestCase):
+    """Golden content checks over the recipe's own catalog surfaces (read-only)."""
 
     def test_recipe_brief_rules_preserve_store_and_add_phase_guidance(self):
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        rules = recipe.brief_fragments.workflow_rules
+        rules = _recipe_toml()["provides"]["brief"]["workflow_rules"]
         self.assertEqual(len(rules), 11)
-        self.assertEqual([fragment.key for fragment in rules], [None] * 11)
         self.assertEqual(
-            [fragment.text for fragment in rules[:5]],
+            rules[:5],
             [
                 "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; compute the signal depth, compare any explicit requested depth, ask on conflicts, and annotate requested/signal/decided depth in tasks.md before authorization.",
                 "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
@@ -159,16 +324,16 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
                 "Before merge on the review branch: run verify evidence (Standard/Full block without a conforming verify-report.md; Light is advisory), then promote canonical specs so every delta under specs/<domain>/spec.md is composed into openspec/specs/<domain>/spec.md (the promoter is the only writer and the guardian only validates), then pass the pre-archive guardian, then archive the change folder at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, then run the pre-merge guardian again; an unpromoted or unresolved delta blocks Standard/Full, exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.",
             ],
         )
-        self.assertIn("{config.artifact_store_default}", rules[5].text)
-        self.assertEqual(rules[5].text.count("{config.artifact_store_default}"), 1)
-        self.assertIn("topology", rules[6].text.lower())
-        self.assertIn("superproject", rules[6].text.lower())
-        self.assertIn("Full planning", rules[7].text)
-        self.assertIn("inline", rules[7].text)
-        self.assertIn("malformed", rules[8].text)
-        self.assertIn("Standard and Light", rules[8].text)
-        self.assertIn("session-level preflight", rules[9].text)
-        self.assertIn("artifact-derived plan", rules[10].text)
+        self.assertIn("{config.artifact_store_default}", rules[5])
+        self.assertEqual(rules[5].count("{config.artifact_store_default}"), 1)
+        self.assertIn("topology", rules[6].lower())
+        self.assertIn("superproject", rules[6].lower())
+        self.assertIn("Full planning", rules[7])
+        self.assertIn("inline", rules[7])
+        self.assertIn("malformed", rules[8])
+        self.assertIn("Standard and Light", rules[8])
+        self.assertIn("session-level preflight", rules[9])
+        self.assertIn("artifact-derived plan", rules[10])
 
     def test_skill_documents_minima_explore_and_staged_verify_modes(self):
         skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
@@ -220,15 +385,13 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertNotRegex(text, r"(?m)^Depth: (?:light|standard|full) \(")
 
     def test_brief_describes_adversarial_depth_conflicts(self):
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        rules = [fragment.text for fragment in (recipe.brief_fragments.workflow_rules or [])]
+        rules = list(_recipe_toml()["provides"]["brief"]["workflow_rules"])
         combined = "\n".join(rules).lower()
         self.assertIn("compare any explicit requested depth", combined)
         self.assertIn("ask on conflicts", combined)
         self.assertIn("annotate requested/signal/decided depth", combined)
         self.assertIn("{config.artifact_store_default}", rules[5])
         self.assertEqual(rules[5].count("{config.artifact_store_default}"), 1)
-
 
     def test_skill_has_ambient_auto_invoke(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
@@ -237,53 +400,24 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertIn("substantial", text.lower())
         self.assertNotIn("/plan", text.split("auto_invoke")[0])  # frontmatter ok
 
-    def test_brief_and_readme_vocabulary_clean(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        brief = recipe.brief_fragments
-        self.assertIsNotNone(brief)
-        rules = [fragment.text for fragment in (brief.workflow_rules or [])]
-        fragments = "\n".join(rules).lower()
-        for term in FORBIDDEN_TERMS:
-            self.assertNotIn(term, fragments)
-        for slash in FORBIDDEN_SLASH:
-            self.assertNotIn(slash, fragments)
-
-        root = self._make_project()
-        self.mod.materialize_recipes(root, ROOT)
-        readme = (root / "ai-specs" / "recipes" / RECIPE_ID / "README.md").read_text()
-        for term in FORBIDDEN_TERMS:
-            self.assertNotIn(term, _without_delivery_contracts_section(readme).lower())
-
-    def test_store_defaults_override_and_enum_rejection(self):
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        self.assertEqual(self.mod.merge_config(recipe, {}), {"artifact_store_default": "openspec"})
-        self.assertEqual(
-            self.mod.merge_config(recipe, {"artifact_store_default": "both"}),
-            {"artifact_store_default": "both"},
-        )
-        with self.assertRaisesRegex(RuntimeError, "artifact_store_default"):
-            self.mod.merge_config(recipe, {"artifact_store_default": "vault"})
-
     def test_recipe_surface_excludes_session_controls_and_removed_contract(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        schema_keys = set(recipe.config_schema.fields)
+        raw = _recipe_toml()
+        schema_keys = set(raw["config"])
         self.assertNotIn("chained_" + "pr_default", schema_keys)
         self.assertFalse(any("mode" in key.lower() for key in schema_keys))
 
-        surface = _recipe_surface_text(recipe_dir)
+        surface = _recipe_surface_text(CATALOG / RECIPE_ID)
         removed_root = "bud" + "get"
         removed_key = "review_" + removed_root
         # The generic phrase "review budget" is intentionally present as a
         # preflight field (see test_preflight_and_presentation_contracts_are_composed);
         # only the retired review-budget session-control marker must be absent, below.
         self.assertNotIn(removed_key, surface)
-        skill = (recipe_dir / "skills" / RECIPE_ID / "SKILL.md").read_text()
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
         self.assertNotRegex(skill, r"(?im)^#{1,6}\s*7\.5\b")
         self.assertNotRegex(skill, r"(?im)^#{1,6}\s*Review workload budget\b")
         self.assertNotRegex(skill, r"(?im)^\s*WARN:\s*review budget\b")
-        gate = (recipe_dir / "hooks" / "plan-build-gate.sh").read_text().lower()
+        gate = (CATALOG / RECIPE_ID / "hooks" / "plan-build-gate.sh").read_text().lower()
         self.assertNotIn(removed_root, gate)
         self.assertNotIn("forecast", gate)
         external_terms = ("gentle-" + "ai", "gentle-" + "pi")
@@ -292,38 +426,13 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             self.assertNotIn(term, surface)
             self.assertNotIn(term, catalog_section)
 
-    def test_materialization_renders_manifest_store_override_into_agents(self):
-        root = self._make_project(
-            "\n[recipes.plan-build-flow.config]\nartifact_store_default = 'both'\n"
-        )
-        content = self._render_agents(root)
-        self.assertIn("Default artifact store", content)
-        self.assertIn("`both`", content)
-        self.assertNotIn("{config.artifact_store_default}", content)
-        self.assertLess(content.index("Classify each substantial change"), content.index("Default artifact store"))
-
-    def test_materialization_renders_default_store_into_agents(self):
-        content = self._render_agents(self._make_project())
-        self.assertIn("`openspec`", content)
-        self.assertNotIn("{config.artifact_store_default}", content)
-
-    def test_validate_config_hook_accepts_each_store_enum(self):
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        for value in STORE_ENUM:
-            with self.subTest(value=value):
-                self.mod.execute_hooks(recipe, {"artifact_store_default": value}, Path(tmp.name))
-
     def test_config_help_text_states_persistence_preference(self):
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        field = recipe.config_schema.fields["artifact_store_default"]
-        self.assertIn("persistence preference", field.help_text)
-        self.assertIn("readiness", field.help_text)
+        field = _recipe_toml()["config"]["artifact_store_default"]
+        self.assertIn("persistence preference", field["help_text"])
+        self.assertIn("readiness", field["help_text"])
 
     def test_brief_rule_six_states_persistence_preference_and_readiness_invariant(self):
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        rules = [fragment.text for fragment in recipe.brief_fragments.workflow_rules]
+        rules = list(_recipe_toml()["provides"]["brief"]["workflow_rules"])
         rule6 = rules[5]
         self.assertEqual(rule6.count("{config.artifact_store_default}"), 1)
         self.assertIn("persistence preference", rule6)
@@ -377,9 +486,8 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
 
     def test_promotion_open_spec_archive_and_tracker_closure_are_distinguished(self):
         """W6: Plan Build owns the OpenSpec archive; Tracker owns item closure."""
-        recipe_dir = CATALOG / RECIPE_ID
         surfaces = (
-            (recipe_dir / "README.md").read_text(),
+            (CATALOG / RECIPE_ID / "README.md").read_text(),
             (ROOT / "docs" / "recipes-catalog.md").read_text(),
         )
         for raw in surfaces:
@@ -389,9 +497,8 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
             self.assertIn("openspec", text)
 
     def test_success_criteria_source_selection_contract_is_documented(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        readme = (recipe_dir / "README.md").read_text()
-        skill = (recipe_dir / "skills" / RECIPE_ID / "SKILL.md").read_text()
+        readme = (CATALOG / RECIPE_ID / "README.md").read_text()
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
 
         self.assertIn("authoritative source", readme)
         self.assertIn("when present, otherwise `design.md`", readme)
@@ -399,9 +506,8 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertIn("Duplicate `## Success Criteria` headings", skill)
 
     def test_cross_repo_artifact_scope_recipe_contract(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        readme = (recipe_dir / "README.md").read_text().lower()
-        skill = (recipe_dir / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
+        readme = (CATALOG / RECIPE_ID / "README.md").read_text().lower()
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
         catalog = (ROOT / "docs" / "recipes-catalog.md").read_text().lower()
         surface = "\n".join((readme, skill, catalog))
 
@@ -418,69 +524,23 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         for forbidden in ("[sdd]", "decision matrix", "artifact_root", "per-subrepository"):
             self.assertNotIn(forbidden, surface)
 
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+        raw = _recipe_toml()
         self.assertEqual(
-            [(h.id, h.event, h.matcher, h.blocking) for h in recipe.runtime_hooks],
+            [(h["id"], h["event"], h["matcher"], h["blocking"]) for h in raw["provides"]["hooks"]],
             [("plan-build-gate", "pre-tool-use", "Edit|Write|MultiEdit|NotebookEdit", True)],
         )
         self.assertEqual(
-            [(h.event, h.action) for h in recipe.hooks],
+            [(h["event"], h["action"]) for h in raw["hooks"]],
             [("on-sync", "validate-config")],
         )
 
-    def test_materialization_preserves_cross_repo_guidance(self):
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        generated_readme = (
-            root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
-        ).read_text().lower()
-        generated_skill = (
-            recipe_root(root, RECIPE_ID) / "skills" / RECIPE_ID / "SKILL.md"
-        ).read_text().lower()
-        for text in (generated_readme, generated_skill):
-            self.assertIn("topology", text)
-            self.assertIn("central", text)
-            self.assertIn("superproject", text)
-            self.assertIn("standalone", text)
-            self.assertIn("fail-safe", text)
-        self.assertIn("openspec/changes", generated_skill)
-        self.assertIn("no duplication", generated_skill)
-        self.assertIn("orchestration", generated_skill)
-
-
     def test_implementation_brief_references_worktree_flow(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        brief = recipe.brief_fragments
-        self.assertIsNotNone(brief)
-        rules = [fragment.text for fragment in (brief.workflow_rules or [])]
+        raw = _recipe_toml()
+        rules = list(raw["provides"]["brief"]["workflow_rules"])
         combined = "\n".join(rules).lower()
         self.assertIn("worktree", combined)
         self.assertNotIn("/build", combined)
-        self.assertNotIn("worktree-flow", recipe.conflicts_with)
-
-    def test_classic_sdd_commands_unchanged(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        commands = ai_specs / "commands"
-        commands.mkdir()
-        legacy = commands / "legacy-sdd-cmd.md"
-        legacy.write_text("# Legacy\n")
-        (ai_specs / "skills" / "legacy-sdd-skill").mkdir()
-        (ai_specs / "skills" / "legacy-sdd-skill" / "SKILL.md").write_text("---\nname: legacy\n---\n")
-
-        manifest = ai_specs / "ai-specs.toml"
-        manifest.write_text(
-            "[project]\nname = 'fixture'\n\n[agents]\nenabled = ['claude']\n\n"
-            f'[recipes.{RECIPE_ID}]\nenabled = true\nversion = "{_recipe_version()}"\n'
-        )
-        before = legacy.read_text()
-        self.mod.materialize_recipes(root, ROOT)
-        self.assertEqual(legacy.read_text(), before)
+        self.assertNotIn("worktree-flow", raw.get("conflicts_with", []))
 
     def test_skill_has_change_depth_classifier(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
@@ -506,18 +566,16 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertIn("before moving", text)
 
     def test_recipe_does_not_stage_premerge_guardian_into_project(self):
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        targets = [t.target for t in recipe.templates]
+        targets = [
+            t["target"] for t in _recipe_toml().get("provides", {}).get("templates", [])
+        ]
         self.assertNotIn("ai-specs/bin/premerge_guardian.py", targets)
         self.assertTrue(
             (ROOT / "lib" / "_internal" / "premerge_guardian.py").is_file()
         )
 
     def test_brief_mentions_depth_and_pr_gate(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        brief = recipe.brief_fragments
-        rules = [fragment.text for fragment in (brief.workflow_rules or [])]
+        rules = list(_recipe_toml()["provides"]["brief"]["workflow_rules"])
         combined = "\n".join(rules).lower()
         self.assertIn("classify", combined)
         self.assertIn("tasks-only", combined)
@@ -551,9 +609,8 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
                 self.assertIn(phrase, normalized)
 
     def test_preflight_and_presentation_contracts_are_composed(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        skill = (recipe_dir / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
-        readme = (recipe_dir / "README.md").read_text().lower()
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
+        readme = (CATALOG / RECIPE_ID / "README.md").read_text().lower()
         combined = " ".join("\n".join((skill, readme)).split())
         for phrase in (
             "one session-level authority",
@@ -590,9 +647,9 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertNotIn("light planning runs explore", skill)
 
     def test_phase_contract_stays_out_of_recipe_config_and_named_vocabulary(self):
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        self.assertEqual(list(recipe.config_schema.fields), ["artifact_store_default"])
-        rules = "\n".join(fragment.text for fragment in recipe.brief_fragments.workflow_rules)
+        raw = _recipe_toml()
+        self.assertEqual(list(raw["config"]), ["artifact_store_default"])
+        rules = "\n".join(raw["provides"]["brief"]["workflow_rules"])
         surface = _recipe_surface_text(CATALOG / RECIPE_ID)
         for term in ("gentle-ai", "gentle ai"):
             self.assertNotIn(term, rules.lower())
@@ -640,8 +697,7 @@ class PlanBuildFlowRecipeTests(unittest.TestCase):
         self.assertIn("read-only", normalized)
 
     def test_brief_rule_orders_promotion_before_the_pre_archive_guardian(self):
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        rules = [fragment.text for fragment in recipe.brief_fragments.workflow_rules]
+        rules = list(_recipe_toml()["provides"]["brief"]["workflow_rules"])
         gate_rule = " ".join(rules[4].split())
         self.assertIn("promote canonical specs", gate_rule)
         promote_at = gate_rule.index("promote canonical specs")

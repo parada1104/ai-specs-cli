@@ -6,36 +6,44 @@ recipe's bundled skill. After consolidation:
   - card templates no longer reference an external dogfood skill path,
   - a `card-decision` template exists and materializes,
   - no catalog recipe template points at `ai-specs/skills/**` (no dangling refs).
+
+All tests are black-box: filesystem assertions on catalog files, and the
+materialization contract driven through ``bin/ai-specs sync`` via
+``_blackbox`` (no lib/_internal import).
 """
 
-import importlib.util
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home  # noqa: E402
+
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "trello-mcp-workflow"
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 CATALOG_RECIPES = ROOT / "catalog" / "recipes"
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root with a REAL lib copy.
+
+    Mirrors the proven staging pattern (test_recipe_materialize.py):
+    sync/materialize derive roots from their own realpath, so a symlinked
+    lib would resolve back into the repository and let the CLI touch repo
+    state. A real copy keeps every lookup and write in temp.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    return home
 
 
 class TrelloConsolidationTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.materialize = load_module(
-            RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal_trello"
-        )
 
     def test_card_feature_has_no_external_skill_path(self):
         text = (RECIPE_DIR / "templates" / "card-feature.md").read_text()
@@ -59,12 +67,14 @@ class TrelloConsolidationTests(unittest.TestCase):
                 offenders.append(str(tpl.relative_to(ROOT)))
         self.assertEqual(offenders, [], f"templates with dangling skill paths: {offenders}")
 
-    def _make_project(self) -> Path:
+    def _make_project(self) -> tuple[Path, Path]:
+        """Fixture project plus its isolated CLI home; both cleaned up."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
+        base = Path(tmp.name)
+        root = base / "project"
         ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
+        ai_specs.mkdir(parents=True)
         (ai_specs / "skills").mkdir()
         (ai_specs / "commands").mkdir()
         version = self._recipe_version()
@@ -75,7 +85,7 @@ class TrelloConsolidationTests(unittest.TestCase):
             "[recipes.trello-mcp-workflow.config]\n"
             "board_id = '69ec097f13e2d38ecd89a557'\n"
         )
-        return root
+        return root, _make_home(base)
 
     def _recipe_version(self) -> str:
         import tomllib
@@ -84,8 +94,11 @@ class TrelloConsolidationTests(unittest.TestCase):
             return tomllib.load(fh)["recipe"]["version"]
 
     def test_card_decision_template_materializes(self):
-        root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
+        root, home = self._make_project()
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(
+            result.returncode, 0, result.stdout + result.stderr
+        )
         dest = (
             root / "ai-specs" / "recipes" / "trello-mcp-workflow"
             / "overrides" / "templates" / "card-decision.md"

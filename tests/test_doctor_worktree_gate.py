@@ -1,4 +1,4 @@
-"""Doctor worktree-gate check tests (Phase 3, task 3.14).
+"""Doctor worktree-gate check tests (Phase 3, task 3.14), black-box via the CLI.
 
 Severity table (design §6.5 / spec "Diagnostics for gate implementation
 health"):
@@ -7,69 +7,127 @@ health"):
   WARN  gate_impl=auto falling back to Bash / version mismatch
   ERROR gate_impl=go with no usable binary (failing open)
   ERROR digest mismatch recorded at last acquisition
+
+Every test drives `bin/ai-specs doctor` and asserts on its rendered output.
 """
 from __future__ import annotations
 
-import importlib.util
-import os
+import platform
+import re
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import (  # noqa: E402
+    cache_project_dir,
+    invoke,
+    isolated_home,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCTOR_PY = ROOT / "lib" / "_internal" / "doctor.py"
+
+BUNDLED_SKILLS = (
+    "harness-lifecycle",
+    "harness-recipes",
+    "harness-skills-deps",
+    "skill-creator",
+    "skill-sync",
+)
+BUNDLED_COMMANDS = ("rules-audit", "skills-as-rules")
+
+_LINE_RE = re.compile(r"^\s*(OK|INFO|WARN|ERROR)\s+(?P<name>\S+)\s+(?P<body>.*)$")
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+def _platform() -> tuple[str, str]:
+    """Mirror gate_binary.detect_platform for staging cache paths in tests."""
+    goos = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system(), "")
+    machine = platform.machine()
+    goarch = "arm64" if machine in ("arm64", "aarch64") else (
+        "amd64" if machine in ("x86_64", "amd64") else "")
+    return goos, goarch
 
 
-class FakeGateBinary:
-    """Stand-in for lib/_internal/gate_binary.py (doctor's sibling load)."""
+def _make_home(base: Path) -> Path:
+    """Isolated CLI home with a REAL lib copy and an empty catalog.
 
-    def __init__(self, root: Path):
-        self.root = root
-        self._binary = root / "cache" / "worktree-gate"
-        self._mismatch = root / "no-mismatch.txt"
-        self.version_out = "9.9.9"
-        self.selftest_out = None  # None = pass
-        self.platform = ("darwin", "arm64")
+    doctor.py derives its cache root from its own realpath, so a symlinked
+    lib would resolve back into the repository and make the gate check read
+    (never write) repo cache state. A real copy keeps every cache lookup
+    (binary, verification receipt, digest-mismatch record) inside temp; the
+    empty catalog removes the SHA256SUMS trust root so a receipt-backed stub
+    binary is accepted exactly like an acquired one.
+    """
+    home = isolated_home(base, catalog=False)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor"),
+    )
+    return home
 
-    def detect_platform(self):
-        return self.platform
 
-    def cache_bin_path(self, _home, goos=None, goarch=None):
-        return self._binary
+def _seed_clean_cache(root: Path, home: Path) -> None:
+    """Pre-seed the per-project bundled cache so only the worktree-gate check
+    can influence the frozen exit-code contract (exit 1 iff any ERROR)."""
+    bundled = cache_project_dir(root, home) / ".bundled"
+    for skill in BUNDLED_SKILLS:
+        (bundled / "skills" / skill).mkdir(parents=True, exist_ok=True)
+    for command in BUNDLED_COMMANDS:
+        path = bundled / "commands" / f"{command}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# bundled\n", encoding="utf-8")
 
-    def digest_mismatch_record_path(self, _home):
-        return self._mismatch
 
-    def binary_version(self, _path):
-        return self.version_out
+def _gate_cache_dir(home: Path) -> Path:
+    version = (home / "VERSION").read_text(encoding="utf-8").strip()
+    goos, goarch = _platform()
+    return home / "cache" / "bin" / "worktree-gate" / version / f"{goos}-{goarch}"
 
-    def _run_selftest(self, _path):
-        return self.selftest_out
 
-    def cache_size(self, _home):
-        return 4096
+def _stage_gate_stub(home: Path, *, version: str) -> None:
+    """Install a receipt-backed stub binary answering --version.
+
+    doctor runs `--version` and `--selftest` against the resolved binary; the
+    stub reports the given version and passes everything else.
+    """
+    bindir = _gate_cache_dir(home)
+    bindir.mkdir(parents=True, exist_ok=True)
+    stub = bindir / "worktree-gate"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then\n'
+        f'  printf \'%s\\n\' "{version}"\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    (bindir / "worktree-gate.verified").write_text("status=verified\n", encoding="utf-8")
+
+
+def _named_checks(stdout: str, name: str) -> list[tuple[str, str]]:
+    """The rendered (severity, message+guidance) lines for one check name."""
+    found = []
+    for line in stdout.splitlines():
+        match = _LINE_RE.match(line)
+        if match and match.group("name") == name:
+            found.append((match.group(1), match.group("body")))
+    return found
 
 
 class WorktreeGateDoctorTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.doctor = load_module(DOCTOR_PY, "doctor_worktree_gate_under_test")
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.home = _make_home(self.base)
 
     def _project(self, *, gate_impl: str | None = None, enabled: bool = True) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name) / "prj"
+        root = self.base / "prj"
         root.mkdir(exist_ok=True)
         ai = root / "ai-specs"
         ai.mkdir()
@@ -82,40 +140,48 @@ class WorktreeGateDoctorTests(unittest.TestCase):
             f"[recipes.worktree-flow]\nenabled = {'true' if enabled else 'false'}\n"
             + cfg
         )
+        (root / "AGENTS.md").write_text("# agents\n")
+        _seed_clean_cache(root, self.home)
         return root
 
-    def _checks(self, root: Path, fake: FakeGateBinary):
-        doc = self.doctor.Doctor(root)
-        with mock.patch.object(self.doctor, "AI_SPECS_HOME", root), \
-             mock.patch.object(doc, "_load_gate_binary", return_value=fake):
-            doc._check_worktree_gate()
-        return [c for c in doc.checks if c.name == "worktree-gate"]
+    def _write_launcher(self, root: Path, body: str) -> None:
+        launcher = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        launcher.write_text(body, encoding="utf-8")
+
+    def _checks(self, root: Path) -> tuple[list[tuple[str, str]], int]:
+        result = invoke(root, "doctor", cli_home=self.home)
+        return _named_checks(result.stdout, "worktree-gate"), result.returncode
 
     def test_recipe_disabled_skips_check(self):
         root = self._project(enabled=False)
-        self.assertEqual(self._checks(root, FakeGateBinary(root)), [])
+        checks, code = self._checks(root)
+        self.assertEqual(checks, [])
+        self.assertEqual(code, 0)
 
     def test_gate_impl_bash_reports_retired_error(self):
         root = self._project(gate_impl="bash")
-        checks = self._checks(root, FakeGateBinary(root))
-        errors = [c for c in checks if c.severity == self.doctor.Severity.ERROR]
+        checks, code = self._checks(root)
+        errors = [body for sev, body in checks if sev == "ERROR"]
         self.assertEqual(len(errors), 1)
-        self.assertIn("retired", errors[0].message)
-        self.assertIn("auto", errors[0].message)
-        self.assertIn("go", errors[0].message)
-        self.assertIn("sync", errors[0].message)
-        blob = " ".join(f"{c.severity} {c.message} {c.guidance}" for c in checks)
+        self.assertIn("retired", errors[0])
+        self.assertIn("auto", errors[0])
+        self.assertIn("go", errors[0])
+        self.assertIn("sync", errors[0])
+        blob = " ".join(f"{sev} {body}" for sev, body in checks)
         self.assertNotIn("rollback lever", blob)
+        # Frozen exit contract: exit 1 iff at least one ERROR was rendered.
+        self.assertEqual(code, 1)
 
     def test_stamped_bash_reports_retired_error(self):
         root = self._project(gate_impl="auto")
-        launcher = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-        launcher.parent.mkdir(parents=True)
-        launcher.write_text('stamped_gate_impl="bash"\nstamped_gate_version="9.9.9"\n')
-        checks = self._checks(root, FakeGateBinary(root))
-        errors = [c for c in checks if c.severity == self.doctor.Severity.ERROR]
+        self._write_launcher(
+            root, 'stamped_gate_impl="bash"\nstamped_gate_version="9.9.9"\n')
+        checks, code = self._checks(root)
+        errors = [body for sev, body in checks if sev == "ERROR"]
         self.assertTrue(errors)
-        self.assertIn("retired", errors[0].message)
+        self.assertIn("retired", errors[0])
+        self.assertEqual(code, 1)
 
     def test_leftover_legacy_file_reports_info_with_rm_hint(self):
         root = self._project(gate_impl="auto")
@@ -125,82 +191,80 @@ class WorktreeGateDoctorTests(unittest.TestCase):
         )
         leftover.parent.mkdir(parents=True)
         leftover.write_text("inert leftover\n")
-        fake = FakeGateBinary(root)
-        fake._binary.parent.mkdir(parents=True)
-        fake._binary.write_bytes(b"bin")
-        os.chmod(fake._binary, 0o755)
-        launcher = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-        launcher.write_text('stamped_gate_version="9.9.9"\n')
-        checks = self._checks(root, fake)
-        infos = [c for c in checks if c.severity == self.doctor.Severity.INFO]
+        self._write_launcher(root, 'stamped_gate_version="9.9.9"\n')
+        _stage_gate_stub(self.home, version="9.9.9")
+        checks, code = self._checks(root)
+        infos = [body for sev, body in checks if sev == "INFO"]
         self.assertEqual(len(infos), 1)
-        self.assertIn("leftover", infos[0].message)
+        self.assertIn("leftover", infos[0])
         self.assertIn("rm ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh",
-                      infos[0].guidance)
-        self.assertNotIn("stale", infos[0].message.lower())
+                      infos[0])
+        self.assertNotIn("stale", infos[0].lower())
+        self.assertEqual(code, 0)
 
     def test_go_without_binary_reports_error_failing_open(self):
         root = self._project(gate_impl="go")
-        fake = FakeGateBinary(root)
-        fake._binary = root / "no" / "binary"  # never created
-        checks = self._checks(root, fake)
+        checks, code = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.ERROR)
-        self.assertIn("failing open", checks[0].message)
-        self.assertIn(str(root / "no" / "binary"), checks[0].message)
+        self.assertEqual(checks[0][0], "ERROR")
+        self.assertIn("failing open", checks[0][1])
+        version = (self.home / "VERSION").read_text(encoding="utf-8").strip()
+        goos, goarch = _platform()
+        expected_suffix = f"cache/bin/worktree-gate/{version}/{goos}-{goarch}/worktree-gate"
+        self.assertIn(expected_suffix, checks[0][1])
+        self.assertEqual(code, 1)
 
     def test_auto_without_binary_reports_error_failing_open(self):
         root = self._project(gate_impl="auto")
-        fake = FakeGateBinary(root)
-        fake._binary = root / "no" / "binary"
-        checks = self._checks(root, fake)
+        checks, code = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.ERROR)
-        self.assertIn("failing open", checks[0].message)
-        self.assertNotIn("Bash", checks[0].message)
-        self.assertNotIn("rollback lever", checks[0].message)
+        self.assertEqual(checks[0][0], "ERROR")
+        self.assertIn("failing open", checks[0][1])
+        self.assertNotIn("Bash", checks[0][1])
+        self.assertNotIn("rollback lever", checks[0][1])
+        self.assertEqual(code, 1)
 
     def test_healthy_binary_reports_ok(self):
         root = self._project()
-        launcher = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-        launcher.parent.mkdir(parents=True)
-        launcher.write_text('stamped_gate_version="9.9.9"\n')
-        fake = FakeGateBinary(root)
-        fake._binary.parent.mkdir(parents=True)
-        fake._binary.write_bytes(b"bin")
-        os.chmod(fake._binary, 0o755)
-        checks = self._checks(root, fake)
+        self._write_launcher(root, 'stamped_gate_version="9.9.9"\n')
+        _stage_gate_stub(self.home, version="9.9.9")
+        checks, code = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.OK)
-        self.assertIn("9.9.9", checks[0].message)
+        self.assertEqual(checks[0][0], "OK")
+        self.assertIn("9.9.9", checks[0][1])
+        self.assertEqual(code, 0)
 
     def test_version_mismatch_reports_warn(self):
         root = self._project()
-        launcher = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-        launcher.parent.mkdir(parents=True)
-        launcher.write_text('stamped_gate_version="8.8.8"\n')
-        fake = FakeGateBinary(root)
-        fake._binary.parent.mkdir(parents=True)
-        fake._binary.write_bytes(b"bin")
-        os.chmod(fake._binary, 0o755)
-        checks = self._checks(root, fake)
+        self._write_launcher(root, 'stamped_gate_version="8.8.8"\n')
+        _stage_gate_stub(self.home, version="9.9.9")
+        checks, code = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.WARN)
-        self.assertIn("8.8.8", checks[0].message)
+        self.assertEqual(checks[0][0], "WARN")
+        self.assertIn("8.8.8", checks[0][1])
+        # Frozen exit contract: WARN never affects the exit code.
+        self.assertEqual(code, 0)
 
     def test_digest_mismatch_record_reports_error(self):
         root = self._project()
-        fake = FakeGateBinary(root)
-        fake._mismatch.parent.mkdir(parents=True, exist_ok=True)
-        fake._mismatch.write_text(
-            "worktree-gate: digest mismatch for worktree-gate-darwin-arm64; "
-            "artifact deleted and never executed"
+        version = (self.home / "VERSION").read_text(encoding="utf-8").strip()
+        goos, goarch = _platform()
+        mismatch = (
+            self.home / "cache" / "bin" / "worktree-gate" / version
+            / "last-digest-mismatch.txt"
         )
-        checks = self._checks(root, fake)
+        mismatch.parent.mkdir(parents=True, exist_ok=True)
+        mismatch.write_text(
+            f"worktree-gate: digest mismatch for worktree-gate-{goos}-{goarch}; "
+            "artifact deleted and never executed",
+            encoding="utf-8",
+        )
+        checks, code = self._checks(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor.Severity.ERROR)
-        self.assertIn("digest mismatch", checks[0].message)
-        self.assertIn("never executed", checks[0].message)
+        self.assertEqual(checks[0][0], "ERROR")
+        self.assertIn("digest mismatch", checks[0][1])
+        self.assertIn("never executed", checks[0][1])
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

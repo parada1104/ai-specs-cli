@@ -1,75 +1,225 @@
-import importlib.util
-import io
+"""Black-box external-dirs / cache-layout / skill-resolution tests.
+
+Every test drives ``bin/ai-specs`` verbs (init / sync / sync-agent /
+refresh-bundled / doctor) through the process boundary via ``_blackbox``.
+No test may import ``lib/_internal`` modules. Assertions preserve the
+original contract intents (cache dir layout, external dir placement, skill
+resolution precedence, warnings, leftovers migration) through the CLI.
+
+Internal-only surfaces with no CLI-observable equivalent are kept as
+process-boundary probes of the isolated home's own lib copy, each marked
+with a distinct ``# TRIAGE:`` comment.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import (  # noqa: E402
+    cache_project_dir,
+    invoke,
+    isolated_home,
+    populate_catalog,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tests"))
-from _fixture_catalog import allow_internal_test_recipes_env, populate_catalog  # noqa: E402
-
-CLI = ROOT / "bin" / "ai-specs"
-REFRESH_BUNDLED_PATH = ROOT / "lib" / "_internal" / "refresh-bundled.py"
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-VENDOR_SKILLS_PATH = ROOT / "lib" / "_internal" / "vendor-skills.py"
-SKILL_RESOLUTION_PATH = ROOT / "lib" / "_internal" / "skill-resolution.py"
 CATALOG = ROOT / "catalog" / "recipes"
-_FIXTURE_HOME: Path | None = None
 
 
-def _fixture_home() -> Path:
-    global _FIXTURE_HOME
-    if _FIXTURE_HOME is None:
-        _FIXTURE_HOME = Path(tempfile.mkdtemp(prefix="ai-specs-ext-fixture-home-"))
-        populate_catalog(_FIXTURE_HOME / "catalog" / "recipes")
-    return _FIXTURE_HOME
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root with a REAL lib copy.
+
+    sync/materialize/doctor derive cache and catalog roots from their own
+    realpath, so a symlinked lib would resolve back into the repository and
+    let the CLI touch repo cache state. A real copy keeps every lookup and
+    write in temp.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    return home
 
 
-def load_module(path: Path, name: str):
-    # Ensure lib/_internal is on sys.path for sibling imports (skill_contract, etc.)
-    internal_dir = str(path.parent)
-    if internal_dir not in sys.path:
-        sys.path.insert(0, internal_dir)
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-def _pc():
-    return load_module(ROOT / "lib" / "_internal" / "project-cache.py", "project_cache_ext")
+_HOMES: dict[str, Path] = {}
 
 
-def cache_recipe_skill(project_root, recipe_id, skill_id, cli_home=None):
-    home = _fixture_home() if cli_home is None else cli_home
-    return _pc().recipe_skills_root(project_root, cli_home=home) / recipe_id / "skills" / skill_id
+def _home_for(project: Path) -> Path:
+    """One shared isolated install root per command sequence (memoized by
+    the project's parent dir, which is unique per temp workspace)."""
+    base = project.parent
+    key = str(base)
+    if key not in _HOMES:
+        _HOMES[key] = _make_home(base)
+    return _HOMES[key]
 
 
-def cache_dep_skill(project_root, dep_id, skill_id=None, cli_home=None):
-    home = ROOT if cli_home is None else cli_home
-    sid = dep_id if skill_id is None else skill_id
-    return _pc().deps_skills_root(project_root, cli_home=home) / dep_id / "skills" / sid
+def _new_project(name: str = "prj") -> tuple[tempfile.TemporaryDirectory, Path]:
+    tmp = tempfile.TemporaryDirectory(prefix="ai-specs-ext-")
+    root = Path(tmp.name) / name
+    root.mkdir(parents=True)
+    return tmp, root
 
 
-def cache_command(project_root, cmd_id, cli_home=None):
-    home = _fixture_home() if cli_home is None else cli_home
-    return _pc().commands_dir(project_root, cli_home=home) / f"{cmd_id}.md"
+def _write_manifest(root: Path, sections: str = "") -> None:
+    (root / "ai-specs" / "ai-specs.toml").write_text(
+        "[project]\nname = 'ext-dirs-fixture'\n\n"
+        "[agents]\nenabled = ['cursor']\n\n" + sections
+    )
 
 
-def cache_bundled_skill(project_root, skill_id, cli_home=None):
-    home = ROOT if cli_home is None else cli_home
-    return _pc().bundled_skills_root(project_root, cli_home=home) / "skills" / skill_id
+def _make_dep_repo(tmp: Path, name: str, body: str | None = None) -> Path:
+    """Local git repo shipping one SKILL.md (offline vendor source)."""
+    repo = tmp if name == "." else tmp / name
+    repo.mkdir(parents=True, exist_ok=True)
+    (repo / "SKILL.md").write_text(
+        body if body is not None else f"# {name}\n"
+    )
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, text=True,
+                   capture_output=True, input="")
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Fixture"],
+                   check=True, text=True, capture_output=True, input="")
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "f@example.com"],
+                   check=True, text=True, capture_output=True, input="")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, text=True,
+                   capture_output=True, input="")
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"],
+                   check=True, text=True, capture_output=True, input="")
+    return repo
 
 
-def inproject_dep_skill(project_root, dep_id, skill_id=None):
-    sid = dep_id if skill_id is None else skill_id
-    return _pc().inproject_deps_root(project_root) / dep_id / "skills" / sid
+def _recipe_toml(
+    recipe_id: str,
+    *,
+    skills: tuple[str, ...] = (),
+    dep_skills: tuple[tuple[str, str], ...] = (),
+    commands: tuple[str, ...] = (),
+) -> str:
+    lines = [
+        "[recipe]",
+        f'id = "{recipe_id}"',
+        f'name = "{recipe_id}"',
+        'description = "external-dirs fixture recipe"',
+        'version = "1.0.0"',
+    ]
+    provides = []
+    if skills or dep_skills:
+        entries = [f'{{ id = "{s}", source = "bundled" }}' for s in skills]
+        entries += [
+            f'{{ id = "{s}", source = "dep", url = "{u}" }}'
+            for s, u in dep_skills
+        ]
+        provides.append("skills = [\n    " + ",\n    ".join(entries) + ",\n]")
+    if commands:
+        entries = [f'{{ id = "{c}", path = "commands/{c}.md" }}' for c in commands]
+        provides.append("commands = [\n    " + ",\n    ".join(entries) + ",\n]")
+    if provides:
+        lines.append("[provides]")
+        lines.extend(provides)
+    return "\n".join(lines) + "\n"
+
+
+def _seed_recipe(
+    home: Path,
+    recipe_id: str,
+    *,
+    skills: tuple[str, ...] = (),
+    dep_skills: tuple[tuple[str, str], ...] = (),
+    commands: tuple[str, ...] = (),
+    files: dict[str, str] | None = None,
+) -> Path:
+    """Seed a fresh-unique recipe into the isolated home's catalog.
+
+    Fresh ids only: an existing repo recipe id would write through the
+    catalog symlink into the repository.
+    """
+    rdir = populate_catalog(home, recipe_id, toml=_recipe_toml(
+        recipe_id, skills=skills, dep_skills=dep_skills, commands=commands))
+    for rel, content in (files or {}).items():
+        path = rdir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    return rdir
+
+
+def _recipe_cache_skill(project: Path, home: Path, recipe: str, skill: str) -> Path:
+    return cache_project_dir(project, home) / ".recipe" / recipe / "skills" / skill
+
+
+def _cache_dep_skill(project: Path, home: Path, dep: str) -> Path:
+    return cache_project_dir(project, home) / ".deps" / dep / "skills" / dep
+
+
+def _inproject_dep_skill(project: Path, dep: str) -> Path:
+    return project / "ai-specs" / ".deps" / dep / "skills" / dep
+
+
+def _cache_command(project: Path, home: Path, cmd: str) -> Path:
+    return cache_project_dir(project, home) / "commands" / f"{cmd}.md"
+
+
+def _resolved_skill(project: Path, home: Path, skill: str) -> Path:
+    return cache_project_dir(project, home) / "resolved-skills" / skill / "SKILL.md"
+
+
+def _skill_resolution_probe(project: Path, home: Path, calls: str) -> subprocess.CompletedProcess:
+    """Process-boundary probe used only by # TRIAGE tests below.
+
+    Runs the isolated home's OWN ``skill-resolution.py`` copy in a hermetic
+    subprocess; ``calls`` is python code that must print JSON to stdout.
+    stdin is closed (input='') so the probe can never block.
+    """
+    sr = home / "lib" / "_internal" / "skill-resolution.py"
+    script = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        f"src = open({str(sr)!r}).read()\n"
+        "mod = type(sys)('skill_resolution_probe')\n"
+        f"mod.__file__ = {str(sr)!r}\n"
+        "exec(compile(src, mod.__file__, 'exec'), mod.__dict__)\n"
+        f"project = Path({str(project)!r})\n"
+        f"home = Path({str(home)!r})\n"
+        + calls + "\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="ai-specs-probe-") as tmp:
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": str(Path(tmp) / "home"),
+            "TMPDIR": tmp,
+            "AI_SPECS_HOME": str(home),
+            "AI_SPECS_NO_NETWORK": "1",
+            "LC_ALL": "C",
+            "LANG": "C",
+        }
+        (Path(tmp) / "home").mkdir()
+        return subprocess.run(
+            [sys.executable, "-"], input=script, env=env, text=True,
+            capture_output=True, check=False,
+        )
+
+
+def _git_project() -> tuple[tempfile.TemporaryDirectory, Path]:
+    tmp = tempfile.TemporaryDirectory(prefix="ai-specs-ext-")
+    root = Path(tmp.name) / "prj"
+    root.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True, text=True,
+                   capture_output=True, input="")
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "t@example.com"],
+                   check=True, text=True, capture_output=True, input="")
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "t"],
+                   check=True, text=True, capture_output=True, input="")
+    return tmp, root
 
 
 class InitExternalDirsTests(unittest.TestCase):
@@ -77,7 +227,8 @@ class InitExternalDirsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            result = invoke(target, "init", "--no-tui", cli_home=_home_for(target))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse((target / "ai-specs" / ".recipe").exists())
             self.assertFalse((target / "ai-specs" / ".deps").exists())
 
@@ -85,8 +236,11 @@ class InitExternalDirsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
-            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            home = _home_for(target)
+            result = invoke(target, "init", "--no-tui", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = invoke(target, "init", "--no-tui", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue((target / "ai-specs" / "ai-specs.toml").is_file())
             self.assertFalse((target / "ai-specs" / ".recipe").exists())
 
@@ -94,7 +248,8 @@ class InitExternalDirsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            result = invoke(target, "init", "--no-tui", cli_home=_home_for(target))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             gitignore = (target / ".gitignore").read_text()
             self.assertNotIn("ai-specs/.recipe/", gitignore)
             self.assertNotIn("ai-specs/.deps/", gitignore)
@@ -104,8 +259,10 @@ class InitExternalDirsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run(["git", "init", "-q", str(target)], check=True, text=True, capture_output=True)
-            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            subprocess.run(["git", "init", "-q", str(target)], check=True, text=True,
+                           capture_output=True, input="")
+            result = invoke(target, "init", "--no-tui", cli_home=_home_for(target))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             ai_specs = target / "ai-specs"
             # A bundled recipe doc should be ignored; a declared override committed.
             (ai_specs / "recipes" / "demo").mkdir(parents=True)
@@ -118,7 +275,7 @@ class InitExternalDirsTests(unittest.TestCase):
             def ignored(rel: str) -> bool:
                 r = subprocess.run(
                     ["git", "check-ignore", "-q", rel],
-                    cwd=target, capture_output=True,
+                    cwd=target, capture_output=True, input="",
                 )
                 return r.returncode == 0
 
@@ -130,8 +287,11 @@ class InitExternalDirsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
-            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            home = _home_for(target)
+            result = invoke(target, "init", "--no-tui", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = invoke(target, "init", "--no-tui", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             gitignore = (target / ".gitignore").read_text()
             lines = [ln.strip() for ln in gitignore.splitlines()]
             self.assertEqual(lines.count("ai-specs/.recipe/"), 0)
@@ -142,8 +302,10 @@ class InitExternalDirsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run(["git", "init", "-q", str(target)], check=True, text=True, capture_output=True)
-            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
+            subprocess.run(["git", "init", "-q", str(target)], check=True, text=True,
+                           capture_output=True, input="")
+            result = invoke(target, "init", "--no-tui", cli_home=_home_for(target))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             ai_specs = target / "ai-specs"
 
             trello_ovr = (
@@ -167,7 +329,7 @@ class InitExternalDirsTests(unittest.TestCase):
             def ignored(rel: str) -> bool:
                 r = subprocess.run(
                     ["git", "check-ignore", "-q", rel],
-                    cwd=target, capture_output=True,
+                    cwd=target, capture_output=True, input="",
                 )
                 return r.returncode == 0
 
@@ -205,8 +367,6 @@ class CatalogConditionalTemplateTargetLintTests(unittest.TestCase):
     }
 
     def test_not_exists_recipe_template_targets_use_overrides(self):
-        import re
-
         found = []
         for recipe_toml in sorted(CATALOG.glob("*/recipe.toml")):
             recipe_id = recipe_toml.parent.name
@@ -237,200 +397,151 @@ class CatalogConditionalTemplateTargetLintTests(unittest.TestCase):
 
 
 class VendorSkillsPathTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(VENDOR_SKILLS_PATH, "vendor_skills_internal")
+    """toml-declared [[deps]] vendor in-project (ai-specs/.deps/), never into
+    ai-specs/skills/ nor the CLI cache — observed through `ai-specs sync`."""
 
-    def _make_dep_repo(self, tmp: Path, name: str) -> Path:
-        repo = tmp / name
-        repo.mkdir()
-        (repo / "SKILL.md").write_text(
-            "---\n"
-            f"name: {name}\n"
-            "description: Vendored skill.\n"
-            "---\n\n"
-            f"# {name}\n"
+    def _project_with_dep(self, tmp: Path) -> Path:
+        project = tmp / "project"
+        project.mkdir()
+        dep_repo = _make_dep_repo(tmp, "my-dep")
+        result = invoke(project, "init", "--no-tui", cli_home=_home_for(project))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        _write_manifest(
+            project,
+            "[[deps]]\n"
+            'id = "my-dep"\n'
+            f'source = "{dep_repo.as_posix()}"\n',
         )
-        subprocess.run(["git", "init", "-q", str(repo)], check=True, text=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "config", "user.name", "Fixture"], check=True, text=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "config", "user.email", "f@example.com"], check=True, text=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "add", "."], check=True, text=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True, text=True, capture_output=True)
-        return repo
+        return project
 
     def test_vendor_writes_to_deps_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            project = tmp_path / "project"
-            project.mkdir()
-            ai_specs = project / "ai-specs"
-            ai_specs.mkdir()
-            (ai_specs / "ai-specs.toml").write_text(
-                "[project]\nname = 'fixture'\n\n"
-                "[[deps]]\n"
-                'id = "my-dep"\n'
-                f'source = "{self._make_dep_repo(tmp_path, "my-dep")}"\n'
-            )
-            self.mod.sync_vendored_skills(project, self.mod.load_deps(project))
+            project = self._project_with_dep(tmp_path)
+            home = _home_for(project)
+            result = invoke(project, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # toml-deps ([[deps]]) are project-governed → in-project ai-specs/.deps/
-            skill = inproject_dep_skill(project, "my-dep") / "SKILL.md"
+            skill = _inproject_dep_skill(project, "my-dep") / "SKILL.md"
             self.assertTrue(skill.is_file())
             self.assertIn("name: my-dep", skill.read_text())
             # and NOT staged under the CLI cache
-            self.assertFalse((cache_dep_skill(project, "my-dep") / "SKILL.md").is_file())
+            self.assertFalse((_cache_dep_skill(project, home, "my-dep") / "SKILL.md").is_file())
 
     def test_vendor_does_not_write_to_ai_specs_skills(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            project = tmp_path / "project"
-            project.mkdir()
-            ai_specs = project / "ai-specs"
-            ai_specs.mkdir()
-            (ai_specs / "ai-specs.toml").write_text(
-                "[project]\nname = 'fixture'\n\n"
-                "[[deps]]\n"
-                'id = "my-dep"\n'
-                f'source = "{self._make_dep_repo(tmp_path, "my-dep")}"\n'
-            )
-            self.mod.sync_vendored_skills(project, self.mod.load_deps(project))
+            project = self._project_with_dep(tmp_path)
+            home = _home_for(project)
+            result = invoke(project, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse((project / "ai-specs" / "skills" / "my-dep").exists())
 
 
 class RecipeMaterializePathTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal")
+    """Recipe materialization lands in the per-project cache — observed
+    through `ai-specs sync` with a fresh-unique recipe in the isolated home."""
 
-    def setUp(self):
-        self._allow = mock.patch.dict(os.environ, allow_internal_test_recipes_env())
-        self._allow.start()
-        self.addCleanup(self._allow.stop)
-
-    def _make_dep_repo(self, tmp: Path, name: str) -> Path:
-        repo = tmp / name
-        repo.mkdir()
-        (repo / "SKILL.md").write_text(
-            "---\n"
-            f"name: {name}\n"
-            "description: Recipe dep skill.\n"
-            "---\n\n"
-            f"# {name}\n"
-        )
-        subprocess.run(["git", "init", "-q", str(repo)], check=True, text=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "config", "user.name", "Fixture"], check=True, text=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "config", "user.email", "f@example.com"], check=True, text=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "add", "."], check=True, text=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True, text=True, capture_output=True)
-        return repo
-
-    def _make_project(self, recipe_section: str) -> Path:
-        tmp = tempfile.TemporaryDirectory()
+    def _project_with_recipe(self, home: Path, recipe_id: str, **kwargs) -> Path:
+        _seed_recipe(home, recipe_id, **kwargs)
+        tmp, root = _new_project()
         self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-        manifest = ai_specs / "ai-specs.toml"
-        manifest.write_text(
-            "[project]\nname = 'fixture'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            + recipe_section
-            + "\n"
+        result = invoke(root, "init", "--no-tui", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        _write_manifest(
+            root,
+            f"[recipes.{recipe_id}]\nenabled = true\nversion = \"1.0.0\"\n",
         )
         return root
 
     def test_materializes_bundled_skill_to_recipe_dir(self):
-        root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
-        )
-        home = _fixture_home()
-        self.assertEqual(self.mod.materialize_recipes(root, home), 0)
-        skill_dir = cache_recipe_skill(root, "test-fixture", "test-skill", cli_home=home)
-        self.assertTrue(skill_dir.is_dir())
-        self.assertTrue((skill_dir / "SKILL.md").is_file())
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            root = self._project_with_recipe(
+                home, "ext-mat-skill", skills=("ext-skill-a",),
+                files={"skills/ext-skill-a/SKILL.md": "# ext-skill-a\n"},
+            )
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            skill_dir = _recipe_cache_skill(root, home, "ext-mat-skill", "ext-skill-a")
+            self.assertTrue(skill_dir.is_dir())
+            self.assertTrue((skill_dir / "SKILL.md").is_file())
 
     def test_materializes_command_to_cache(self):
-        root = self._make_project(
-            "[recipes.test-fixture]\nenabled = true\n"
-        )
-        home = _fixture_home()
-        self.assertEqual(self.mod.materialize_recipes(root, home), 0)
-        cmd = cache_command(root, "test-command", cli_home=home)
-        self.assertTrue(cmd.is_file())
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            root = self._project_with_recipe(
+                home, "ext-mat-cmd", commands=("ext-command-a",),
+                files={"commands/ext-command-a.md": "# ext-command-a\n"},
+            )
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            cmd = _cache_command(root, home, "ext-command-a")
+            self.assertTrue(cmd.is_file())
 
     def test_warns_when_recipe_command_overwrites_existing_managed_command(self):
-        root = self._make_project(
-            "[recipes.test-fixture]\nenabled = true\n"
-        )
-        home = _fixture_home()
-        cmd = cache_command(root, "test-command", cli_home=home)
-        cmd.parent.mkdir(parents=True, exist_ok=True)
-        cmd.write_text("# previous managed\n")
-        import io
-        captured = io.StringIO()
-        old_stderr = sys.stderr
-        sys.stderr = captured
-        try:
-            self.assertEqual(self.mod.materialize_recipes(root, home), 0)
-        finally:
-            sys.stderr = old_stderr
-        self.assertIn("overwrites existing managed command", captured.getvalue())
-        self.assertNotEqual(cmd.read_text(), "# previous managed\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            root = self._project_with_recipe(
+                home, "ext-mat-cmd-ow", commands=("ext-command-ow",),
+                files={"commands/ext-command-ow.md": "# new managed\n"},
+            )
+            # Pre-seed the managed cache copy the recipe is about to replace.
+            cmd = _cache_command(root, home, "ext-command-ow")
+            cmd.parent.mkdir(parents=True, exist_ok=True)
+            cmd.write_text("# previous managed\n")
+
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("overwrites existing managed command", result.stderr)
+            self.assertNotEqual(cmd.read_text(), "# previous managed\n")
 
     def test_materializes_recipe_dep_skill_to_deps_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            dep_repo = self._make_dep_repo(tmp_path, "dep-skill")
-            home = tmp_path / "home"
-            recipe_dir = home / "catalog" / "recipes" / "dep-fixture"
-            recipe_dir.mkdir(parents=True)
-            (recipe_dir / "recipe.toml").write_text(
-                "[recipe]\n"
-                'id = "dep-fixture"\n'
-                'name = "Dep Fixture"\n'
-                'description = "Recipe with dep skill."\n'
-                'version = "1.0.0"\n\n'
-                "[provides]\n"
-                "skills = [\n"
-                f'    {{ id = "dep-skill", source = "dep", url = "{dep_repo.as_posix()}" }},\n'
-                "]\n"
+            home = _make_home(tmp_path / "home-base")
+            dep_repo = _make_dep_repo(tmp_path, "dep-skill")
+            root = self._project_with_recipe(
+                home, "ext-mat-dep",
+                dep_skills=(("dep-skill", dep_repo.as_posix()),),
             )
-            root = self._make_project(
-                '[recipes.dep-fixture]\nenabled = true\nversion = "1.0.0"\n'
-            )
-            self.assertEqual(self.mod.materialize_recipes(root, home), 0)
-            dep_skill = cache_dep_skill(root, "dep-skill", cli_home=home) / "SKILL.md"
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            dep_skill = _cache_dep_skill(root, home, "dep-skill") / "SKILL.md"
             self.assertTrue(dep_skill.is_file())
             self.assertFalse((root / "ai-specs" / "skills" / "dep-skill").exists())
 
     def test_local_skills_untouched_by_materialization(self):
-        root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
-        )
-        home = _fixture_home()
-        local_skill = root / "ai-specs" / "skills" / "local-only"
-        local_skill.mkdir()
-        (local_skill / "SKILL.md").write_text("local")
-        self.assertEqual(self.mod.materialize_recipes(root, home), 0)
-        self.assertEqual((local_skill / "SKILL.md").read_text(), "local")
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            root = self._project_with_recipe(
+                home, "ext-mat-local", skills=("ext-skill-local",),
+                files={"skills/ext-skill-local/SKILL.md": "# ext-skill-local\n"},
+            )
+            local_skill = root / "ai-specs" / "skills" / "local-only"
+            local_skill.mkdir(parents=True)
+            (local_skill / "SKILL.md").write_text("local")
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((local_skill / "SKILL.md").read_text(), "local")
 
 
 class BundledLeftoverCleanupTests(unittest.TestCase):
-    """remove_legacy_origin deletes materialized bundled-skill copies from the
+    """`ai-specs sync` deletes materialized bundled-skill copies from the
     project surface, but never genuine local skills or customized copies."""
 
-    def _project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
+    def _project(self) -> tuple[Path, Path]:
+        tmp, root = _new_project()
         self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        (root / "ai-specs" / "skills").mkdir(parents=True)
-        return root
+        home = _home_for(root)
+        result = invoke(root, "init", "--no-tui", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return root, home
 
     def test_removes_bundled_leftover_keeps_local_and_customized(self):
-        root = self._project()
+        root, home = self._project()
         skills = root / "ai-specs" / "skills"
-        bundled_src = ROOT / "bundled-skills"
+        bundled_src = home / "bundled-skills"
 
         # 1. Materialized bundled copy (byte-identical to CLI source) → remove.
         leftover = skills / "harness-lifecycle"
@@ -449,7 +560,8 @@ class BundledLeftoverCleanupTests(unittest.TestCase):
         customized.mkdir()
         (customized / "SKILL.md").write_text("# skill-creator (locally edited)\n")
 
-        _pc().remove_legacy_origin(root, cli_home=ROOT)
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         self.assertFalse(leftover.exists(), "bundled leftover should be removed")
         self.assertTrue(local.exists(), "genuine local skill must be preserved")
@@ -458,47 +570,48 @@ class BundledLeftoverCleanupTests(unittest.TestCase):
     def test_removes_untouched_old_version_copy_via_lock_hash(self):
         """Migration: a copy from an older CLI (differs from current source) but
         recorded untouched in the legacy lock is safe to remove."""
-        import hashlib
-        root = self._project()
+        root, home = self._project()
         old = root / "ai-specs" / "skills" / "skill-creator"
-        old.mkdir()
+        old.mkdir(parents=True)
         old_content = "# skill-creator (older CLI version, untouched)\n"
         (old / "SKILL.md").write_text(old_content)
         h = hashlib.sha256(old_content.encode()).hexdigest()
         (root / "ai-specs" / ".ai-specs.lock").write_text(
             f'[skills."skill-creator"]\n"SKILL.md" = "{h}"\n'
         )
-        _pc().remove_legacy_origin(root, cli_home=ROOT)
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(old.exists(), "untouched managed copy should be removed via lock hash")
 
     def test_keeps_edited_copy_not_matching_source_or_lock(self):
-        root = self._project()
+        root, home = self._project()
         edited = root / "ai-specs" / "skills" / "skill-creator"
-        edited.mkdir()
+        edited.mkdir(parents=True)
         (edited / "SKILL.md").write_text("# genuinely edited by the user\n")
         (root / "ai-specs" / ".ai-specs.lock").write_text(
             '[skills."skill-creator"]\n"SKILL.md" = "0000000000000000"\n'
         )
-        _pc().remove_legacy_origin(root, cli_home=ROOT)
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(edited.exists(), "user-edited copy must be preserved")
 
 
 class BundledCommandLeftoverCleanupTests(unittest.TestCase):
-    """remove_bundled_command_leftovers deletes materialized bundled-command
-    copies from the project surface, but never genuine local commands or
-    customized copies."""
+    """`ai-specs sync` deletes materialized bundled-command copies from the
+    project surface, but never genuine local commands or customized copies."""
 
-    def _project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
+    def _project(self) -> tuple[Path, Path]:
+        tmp, root = _new_project()
         self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        (root / "ai-specs" / "commands").mkdir(parents=True)
-        return root
+        home = _home_for(root)
+        result = invoke(root, "init", "--no-tui", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return root, home
 
     def test_removes_bundled_leftover_keeps_local_and_customized(self):
-        root = self._project()
+        root, home = self._project()
         commands = root / "ai-specs" / "commands"
-        bundled_src = ROOT / "bundled-commands"
+        bundled_src = home / "bundled-commands"
 
         # 1. Materialized bundled copy (byte-identical to CLI source) → remove.
         leftover = commands / "rules-audit.md"
@@ -512,7 +625,8 @@ class BundledCommandLeftoverCleanupTests(unittest.TestCase):
         customized = commands / "skills-as-rules.md"
         customized.write_text("# skills-as-rules (locally edited)\n")
 
-        _pc().remove_bundled_command_leftovers(root / "ai-specs", ROOT)
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         self.assertFalse(leftover.exists(), "bundled leftover should be removed")
         self.assertTrue(local.exists(), "genuine local command must be preserved")
@@ -521,496 +635,670 @@ class BundledCommandLeftoverCleanupTests(unittest.TestCase):
     def test_removes_untouched_old_version_copy_via_lock_hash(self):
         """Migration: a copy from an older CLI (differs from current source) but
         recorded untouched in the legacy lock is safe to remove."""
-        import hashlib
-        root = self._project()
+        root, home = self._project()
         old = root / "ai-specs" / "commands" / "rules-audit.md"
         old_content = "# rules-audit (older CLI version, untouched)\n"
         old.write_text(old_content)
         h = hashlib.sha256(old_content.encode()).hexdigest()
-        _pc().remove_bundled_command_leftovers(
-            root / "ai-specs", ROOT, lock_commands={"rules-audit.md": h}
+        (root / "ai-specs" / ".ai-specs.lock").write_text(
+            f'[commands]\n"rules-audit.md" = "{h}"\n'
         )
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(old.exists(), "untouched managed copy should be removed via lock hash")
 
     def test_keeps_edited_copy_not_matching_source_or_lock(self):
-        root = self._project()
+        root, home = self._project()
         edited = root / "ai-specs" / "commands" / "rules-audit.md"
         edited.write_text("# genuinely edited by the user\n")
-        _pc().remove_bundled_command_leftovers(
-            root / "ai-specs", ROOT, lock_commands={"rules-audit.md": "0000000000000000"}
+        (root / "ai-specs" / ".ai-specs.lock").write_text(
+            '[commands]\n"rules-audit.md" = "0000000000000000"\n'
         )
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(edited.exists(), "user-edited copy must be preserved")
 
     def test_no_bundled_counterpart_is_untouched(self):
-        root = self._project()
+        root, home = self._project()
         only_local = root / "ai-specs" / "commands" / "totally-local.md"
         only_local.write_text("# no bundled counterpart\n")
-        _pc().remove_bundled_command_leftovers(root / "ai-specs", ROOT)
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(only_local.exists())
 
 
 class RecipeCommandLeftoverCleanupTests(unittest.TestCase):
-    """Recipe-managed command copies migrate out of ai-specs/commands safely."""
+    """Recipe-managed command copies migrate out of ai-specs/commands safely
+    (observed through `ai-specs sync` / `ai-specs refresh-bundled`)."""
 
-    def _project(self) -> tuple[Path, Path, Path]:
-        tmp = tempfile.TemporaryDirectory()
+    def _project_with_recipe_command(
+        self, home: Path, recipe_id: str, cmd_id: str, cmd_content: str,
+    ) -> Path:
+        _seed_recipe(
+            home, recipe_id, commands=(cmd_id,),
+            files={f"commands/{cmd_id}.md": cmd_content},
+        )
+        tmp, root = _new_project()
         self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name) / "project"
-        (root / "ai-specs" / "commands").mkdir(parents=True)
-        home = Path(tmp.name) / "home"
-        home.mkdir()
-        managed = _pc().commands_dir(root, cli_home=home)
-        managed.mkdir(parents=True)
-        return root, home, managed
+        result = invoke(root, "init", "--no-tui", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        _write_manifest(
+            root,
+            f"[recipes.{recipe_id}]\nenabled = true\nversion = \"1.0.0\"\n",
+        )
+        return root
 
     def test_removes_untouched_recipe_copy_and_merge_stays_silent(self):
-        root, home, managed = self._project()
-        content = "# recipe command\n"
-        (managed / "pr-create.md").write_text(content)
-        local = root / "ai-specs" / "commands" / "pr-create.md"
-        local.write_text(content)
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            content = "# recipe command\n"
+            root = self._project_with_recipe_command(
+                home, "ext-cmd-clean", "pr-create", content,
+            )
+            local = root / "ai-specs" / "commands" / "pr-create.md"
+            local.write_text(content)
 
-        _pc().remove_recipe_command_leftovers(root, cli_home=home)
-        self.assertFalse(local.exists())
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-        dest = Path(tempfile.mkdtemp())
-        self.addCleanup(lambda: __import__("shutil").rmtree(dest, ignore_errors=True))
-        captured = io.StringIO()
-        old = sys.stderr
-        sys.stderr = captured
-        try:
-            self.assertEqual(_pc().merge_commands(root, dest, cli_home=home), 1)
-        finally:
-            sys.stderr = old
-        self.assertEqual(captured.getvalue(), "")
+            self.assertFalse(local.exists())
+            self.assertNotIn("local hand-authored wins", result.stdout + result.stderr)
+            # The cache now carries the recipe-managed copy.
+            self.assertEqual(_cache_command(root, home, "pr-create").read_text(), content)
 
     def test_preserves_customized_recipe_copy_with_local_warning(self):
-        root, home, managed = self._project()
-        (managed / "pr-create.md").write_text("# recipe command\n")
-        local = root / "ai-specs" / "commands" / "pr-create.md"
-        local.write_text("# customized locally\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            root = self._project_with_recipe_command(
+                home, "ext-cmd-custom", "pr-create", "# recipe command\n",
+            )
+            local = root / "ai-specs" / "commands" / "pr-create.md"
+            local.write_text("# customized locally\n")
 
-        captured = io.StringIO()
-        old = sys.stderr
-        sys.stderr = captured
-        try:
-            _pc().remove_recipe_command_leftovers(root, cli_home=home)
-        finally:
-            sys.stderr = old
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-        self.assertTrue(local.exists())
-        self.assertIn("local/customized", captured.getvalue())
+            self.assertTrue(local.exists())
+            self.assertIn("local/customized", result.stderr)
 
     def test_refresh_migrates_cached_recipe_copy(self):
-        root = Path(tempfile.mkdtemp()) / "project"
-        self.addCleanup(lambda: shutil.rmtree(root.parent, ignore_errors=True))
-        (root / "ai-specs" / "commands").mkdir(parents=True)
-        (root / "ai-specs" / "ai-specs.toml").write_text(
-            '[project]\nname = "refresh-recipe-leftover"\n'
-        )
-        managed = _pc().commands_dir(root, cli_home=ROOT)
-        managed.mkdir(parents=True)
-        content = "# recipe-managed command\n"
-        (managed / "pr-create.md").write_text(content)
-        local = root / "ai-specs" / "commands" / "pr-create.md"
-        local.write_text(content)
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            tmp2, root = _new_project()
+            self.addCleanup(tmp2.cleanup)
+            result = invoke(root, "init", "--no-tui", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            managed = _cache_command(root, home, "pr-create")
+            managed.parent.mkdir(parents=True, exist_ok=True)
+            content = "# recipe-managed command\n"
+            managed.write_text(content)
+            local = root / "ai-specs" / "commands" / "pr-create.md"
+            local.write_text(content)
 
-        result = subprocess.run(
-            [sys.executable, str(REFRESH_BUNDLED_PATH), str(root), str(ROOT)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
-        self.assertFalse(local.exists())
-        self.assertNotIn("local hand-authored wins", result.stdout + result.stderr)
+            result = invoke(root, "refresh-bundled", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(local.exists())
+            self.assertNotIn("local hand-authored wins", result.stdout + result.stderr)
 
     def test_sync_migrates_first_recipe_copy_before_cache_exists(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name) / "project"
-        root.mkdir()
-        init = subprocess.run(
-            [str(CLI), "init", str(root)], check=False, capture_output=True, text=True
-        )
-        self.assertEqual(init.returncode, 0, init.stderr or init.stdout)
-        (root / "ai-specs" / "ai-specs.toml").write_text(
-            '[project]\nname = "sync-recipe-leftover"\n\n'
-            '[agents]\nenabled = ["cursor"]\n\n'
-            '[recipes.tdd-flow]\nenabled = true\n\n'
-            '[recipes.tdd-flow.config]\ntest_command = "python3 -m unittest"\n'
-        )
-        local = root / "ai-specs" / "commands" / "tdd.md"
-        content = (ROOT / "catalog" / "recipes" / "tdd-flow" / "commands" / "tdd.md").read_text()
-        local.write_text(content)
-        managed = _pc().commands_dir(root, cli_home=ROOT)
-        self.assertFalse((managed / "tdd.md").exists())
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            tmp2, root = _new_project()
+            self.addCleanup(tmp2.cleanup)
+            result = invoke(root, "init", "--no-tui", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            _write_manifest(
+                root,
+                "[recipes.tdd-flow]\nenabled = true\n\n"
+                "[recipes.tdd-flow.config]\ntest_command = \"python3 -m unittest\"\n",
+            )
+            local = root / "ai-specs" / "commands" / "tdd.md"
+            content = (ROOT / "catalog" / "recipes" / "tdd-flow" / "commands" / "tdd.md").read_text()
+            local.write_text(content)
+            managed = _cache_command(root, home, "tdd")
+            self.assertFalse(managed.exists())
 
-        result = subprocess.run(
-            [str(CLI), "sync", str(root)], check=False, capture_output=True, text=True
-        )
-        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
-        self.assertFalse(local.exists())
-        self.assertNotIn("local hand-authored wins", result.stdout + result.stderr)
-        self.assertEqual((managed / "tdd.md").read_text(), content)
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(local.exists())
+            self.assertNotIn("local hand-authored wins", result.stdout + result.stderr)
+            self.assertEqual(managed.read_text(), content)
 
     def test_removes_untouched_recipe_copy_via_legacy_lock_hash(self):
-        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            tmp2, root = _new_project()
+            self.addCleanup(tmp2.cleanup)
+            result = invoke(root, "init", "--no-tui", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            local = root / "ai-specs" / "commands" / "pr-create.md"
+            content = "# older recipe command\n"
+            local.write_text(content)
+            digest = hashlib.sha256(content.encode()).hexdigest()
+            (root / "ai-specs" / ".ai-specs.lock").write_text(
+                f'[commands]\n"pr-create.md" = "{digest}"\n'
+            )
+            # No managed cache copy exists (fresh cache) — same shape as the
+            # original test, which removed the managed dir before migrating.
 
-        root, home, managed = self._project()
-        local = root / "ai-specs" / "commands" / "pr-create.md"
-        content = "# older recipe command\n"
-        local.write_text(content)
-        managed.rmdir()
-        digest = hashlib.sha256(content.encode()).hexdigest()
-        (root / "ai-specs" / ".ai-specs.lock").write_text(
-            f'[commands]\n"pr-create.md" = "{digest}"\n'
-        )
-
-        _pc().remove_recipe_command_leftovers(root, cli_home=home)
-        self.assertFalse(local.exists())
+            result = invoke(root, "refresh-bundled", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(local.exists())
 
 
 class TrackedBundledCommandLeftoverTests(unittest.TestCase):
-    """tracked_bundled_command_leftovers finds git-tracked bundled-command
-    copies whose working-tree file is gone; never mutates the index."""
+    """`ai-specs doctor` WARNs when git still tracks bundled commands whose
+    working-tree copy is gone; doctor never mutates the index."""
 
-    def _git_project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        subprocess.run(["git", "init", "-q", str(root)], check=True)
-        subprocess.run(
-            ["git", "-C", str(root), "config", "user.email", "t@example.com"], check=True
-        )
-        subprocess.run(["git", "-C", str(root), "config", "user.name", "t"], check=True)
-        return root
+    def _doctor_lines(self, root: Path, home: Path) -> list[str]:
+        result = invoke(root, "doctor", cli_home=home)
+        lines = [
+            ln for ln in result.stdout.splitlines()
+            if "tracked-bundled-leftover" in ln
+        ]
+        return lines
 
     def test_finds_tracked_command_with_missing_working_tree_copy(self):
-        root = self._git_project()
+        tmp, root = _git_project()
+        self.addCleanup(tmp.cleanup)
+        home = _home_for(root)
         commands = root / "ai-specs" / "commands"
         commands.mkdir(parents=True)
         (commands / "rules-audit.md").write_text("# leftover\n")
-        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
-        subprocess.run(["git", "-C", str(root), "commit", "-qm", "track"], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True,
+                       capture_output=True, input="")
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "track"],
+                       check=True, capture_output=True, input="")
         (commands / "rules-audit.md").unlink()
 
-        ids = _pc().tracked_bundled_command_leftovers(root, cli_home=ROOT)
-        self.assertIn("rules-audit", ids)
+        lines = self._doctor_lines(root, home)
+        self.assertTrue(lines, "doctor must report tracked-bundled-leftover")
+        self.assertTrue(
+            any("rules-audit" in ln for ln in lines),
+            f"tracked-bundled-leftover must name rules-audit: {lines}",
+        )
 
     def test_empty_when_working_tree_copy_exists(self):
-        root = self._git_project()
+        tmp, root = _git_project()
+        self.addCleanup(tmp.cleanup)
+        home = _home_for(root)
         commands = root / "ai-specs" / "commands"
         commands.mkdir(parents=True)
         (commands / "rules-audit.md").write_text("# still here\n")
-        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
-        subprocess.run(["git", "-C", str(root), "commit", "-qm", "track"], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True,
+                       capture_output=True, input="")
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "track"],
+                       check=True, capture_output=True, input="")
 
-        ids = _pc().tracked_bundled_command_leftovers(root, cli_home=ROOT)
-        self.assertEqual(ids, [])
+        self.assertEqual(self._doctor_lines(root, home), [])
 
     def test_empty_when_not_a_git_work_tree(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        (root / "ai-specs" / "commands").mkdir(parents=True)
-        ids = _pc().tracked_bundled_command_leftovers(root, cli_home=ROOT)
-        self.assertEqual(ids, [])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "prj"
+            (root / "ai-specs" / "commands").mkdir(parents=True)
+            home = _home_for(root)
+            self.assertEqual(self._doctor_lines(root, home), [])
 
 
 class SkillResolutionTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(SKILL_RESOLUTION_PATH, "skill_resolution_internal")
+    """Multi-source skill resolution precedence, observed through the CLI:
+    `ai-specs sync` / `ai-specs sync-agent --all` flatten the resolved skill
+    set into the cache ``resolved-skills/`` tree, and tier warnings surface
+    on stderr."""
 
-    def _make_project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-        (ai_specs / "ai-specs.toml").write_text("[project]\nname = 'fixture'\n")
+    def _project(self) -> tuple[tempfile.TemporaryDirectory, Path, Path]:
+        tmp, root = _new_project()
+        home = _home_for(root)
+        result = invoke(root, "init", "--no-tui", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return tmp, root, home
+
+    def _write_local_skill(self, root: Path, name: str, body: str) -> None:
+        d = root / "ai-specs" / "skills" / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(body)
+
+    def _recipe_project(
+        self, home: Path, recipe_id: str, skill: str, body: str,
+        root: Path | None = None,
+    ) -> Path:
+        """Seed a fresh-unique recipe providing `skill` and enable it."""
+        _seed_recipe(
+            home, recipe_id, skills=(skill,),
+            files={f"skills/{skill}/SKILL.md": body},
+        )
+        if root is None:
+            tmp2, root = _new_project()
+            self.addCleanup(tmp2.cleanup)
+            result = invoke(root, "init", "--no-tui", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        _write_manifest(
+            root,
+            f"[recipes.{recipe_id}]\nenabled = true\nversion = \"1.0.0\"\n",
+        )
         return root
 
-    def _write_local_skill(self, root: Path, name: str) -> None:
-        d = root / "ai-specs" / "skills" / name
-        d.mkdir(parents=True)
-        (d / "SKILL.md").write_text(f"# {name}")
-
-    def _write_recipe_skill(self, root: Path, recipe: str, name: str) -> None:
-        d = cache_recipe_skill(root, recipe, name, cli_home=ROOT)
-        d.mkdir(parents=True)
-        (d / "SKILL.md").write_text(f"# {name}")
-
-    def _write_dep_skill(self, root: Path, dep: str, name: str) -> None:
-        d = cache_dep_skill(root, dep, skill_id=name, cli_home=ROOT)
-        d.mkdir(parents=True)
-        (d / "SKILL.md").write_text(f"# {name}")
-
-    def _write_bundled_skill(self, root: Path, name: str) -> None:
-        d = cache_bundled_skill(root, name, cli_home=ROOT)
-        d.mkdir(parents=True)
-        (d / "SKILL.md").write_text(f"# {name}")
+    def _dep_project(
+        self, root: Path, tmp: Path, dep_id: str, body: str,
+        sections: str = "",
+    ) -> Path:
+        repo = _make_dep_repo(tmp, f"repo-{dep_id}", body=body)
+        _write_manifest(
+            root,
+            sections
+            + "[[deps]]\n"
+            f'id = "{dep_id}"\n'
+            f'source = "{repo.as_posix()}"\n',
+        )
+        return root
 
     def test_bundled_fallback_when_no_other_source(self):
-        root = self._make_project()
-        self._write_bundled_skill(root, "harness-lifecycle")
-        resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        self.assertEqual(resolved["harness-lifecycle"][0], "bundled")
+        tmp, root, home = self._project()
+        with tmp:
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            resolved = _resolved_skill(root, home, "harness-lifecycle")
+            self.assertTrue(resolved.is_file())
+            self.assertEqual(
+                resolved.read_text(),
+                (home / "bundled-skills" / "harness-lifecycle" / "SKILL.md").read_text(),
+                "bundled content must win when no local/recipe/dep source exists",
+            )
 
     def test_dep_precedence_over_bundled(self):
-        root = self._make_project()
-        self._write_dep_skill(root, "d1", "shared")
-        self._write_bundled_skill(root, "shared")
-        resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        self.assertEqual(resolved["shared"][0], "dep")
+        tmp, root, home = self._project()
+        with tmp:
+            self._dep_project(root, Path(tmp.name), "harness-lifecycle", "# dep harness\n")
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            resolved = _resolved_skill(root, home, "harness-lifecycle").read_text()
+            vendored = _inproject_dep_skill(root, "harness-lifecycle") / "SKILL.md"
+            self.assertEqual(resolved, vendored.read_text())
+            self.assertNotEqual(
+                resolved,
+                (home / "bundled-skills" / "harness-lifecycle" / "SKILL.md").read_text(),
+                "dep tier must beat the bundled tier",
+            )
 
     def test_local_precedence_over_bundled(self):
-        root = self._make_project()
-        self._write_local_skill(root, "skill-creator")
-        self._write_bundled_skill(root, "skill-creator")
-        resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        self.assertEqual(resolved["skill-creator"][0], "local")
+        tmp, root, home = self._project()
+        with tmp:
+            self._write_local_skill(root, "skill-creator", "# local skill-creator\n")
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            resolved = _resolved_skill(root, home, "skill-creator").read_text()
+            self.assertEqual(resolved, "# local skill-creator\n")
+            self.assertNotEqual(
+                resolved,
+                (home / "bundled-skills" / "skill-creator" / "SKILL.md").read_text(),
+                "local tier must beat the bundled tier",
+            )
 
     def test_local_precedence_over_recipe(self):
-        root = self._make_project()
-        self._write_local_skill(root, "shared")
-        self._write_recipe_skill(root, "r1", "shared")
-        resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        self.assertEqual(resolved["shared"][0], "local")
+        tmp, root, home = self._project()
+        with tmp:
+            root = self._recipe_project(
+                home, "ext-res-local-recipe", "shared", "# recipe shared\n", root=root,
+            )
+            self._write_local_skill(root, "shared", "# local shared\n")
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            resolved = _resolved_skill(root, home, "shared").read_text()
+            self.assertEqual(resolved, "# local shared\n")
+            self.assertNotIn("# recipe shared", resolved)
 
     def test_recipe_precedence_over_dep(self):
-        root = self._make_project()
-        self._write_recipe_skill(root, "r1", "shared")
-        self._write_dep_skill(root, "d1", "shared")
-        resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        self.assertEqual(resolved["shared"][0], "recipe")
+        tmp, root, home = self._project()
+        with tmp:
+            root = self._recipe_project(
+                home, "ext-res-recipe-dep", "shared", "# recipe shared\n", root=root,
+            )
+            root = self._dep_project(
+                root, Path(tmp.name), "shared", "# dep shared\n",
+                sections="[recipes.ext-res-recipe-dep]\nenabled = true\nversion = \"1.0.0\"\n\n",
+            )
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            resolved = _resolved_skill(root, home, "shared").read_text()
+            self.assertIn("# recipe shared", resolved)
+            self.assertNotIn("# dep shared", resolved)
 
     def test_local_precedence_over_all(self):
-        root = self._make_project()
-        self._write_local_skill(root, "shared")
-        self._write_recipe_skill(root, "r1", "shared")
-        self._write_dep_skill(root, "d1", "shared")
-        resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        self.assertEqual(resolved["shared"][0], "local")
+        tmp, root, home = self._project()
+        with tmp:
+            root = self._recipe_project(
+                home, "ext-res-local-all", "shared", "# recipe shared\n", root=root,
+            )
+            root = self._dep_project(
+                root, Path(tmp.name), "shared", "# dep shared\n",
+                sections="[recipes.ext-res-local-all]\nenabled = true\nversion = \"1.0.0\"\n\n",
+            )
+            self._write_local_skill(root, "shared", "# local shared\n")
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            resolved = _resolved_skill(root, home, "shared").read_text()
+            self.assertEqual(resolved, "# local shared\n")
+            self.assertNotIn("# recipe shared", resolved)
+            self.assertNotIn("# dep shared", resolved)
 
     def test_dep_fallback_when_no_other_source(self):
-        root = self._make_project()
-        self._write_dep_skill(root, "d1", "only-dep")
-        resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        self.assertEqual(resolved["only-dep"][0], "dep")
+        tmp, root, home = self._project()
+        with tmp:
+            self._dep_project(root, Path(tmp.name), "only-dep", "# only-dep body\n")
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            resolved = _resolved_skill(root, home, "only-dep")
+            self.assertTrue(resolved.is_file())
+            self.assertEqual(
+                resolved.read_text(),
+                (_inproject_dep_skill(root, "only-dep") / "SKILL.md").read_text(),
+            )
 
     def test_inproject_toml_dep_resolves_as_dep(self):
-        root = self._make_project()
-        d = inproject_dep_skill(root, "d1", "only-toml-dep")
-        d.mkdir(parents=True)
-        (d / "SKILL.md").write_text("# only-toml-dep")
-        resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        self.assertEqual(resolved["only-toml-dep"][0], "dep")
+        tmp, root, home = self._project()
+        with tmp:
+            self._dep_project(root, Path(tmp.name), "only-toml-dep", "# only-toml-dep\n")
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            vendored = _inproject_dep_skill(root, "only-toml-dep") / "SKILL.md"
+            self.assertTrue(vendored.is_file())
+            resolved = _resolved_skill(root, home, "only-toml-dep")
+            self.assertEqual(resolved.read_text(), vendored.read_text())
 
     def test_first_seen_recipe_wins_with_warning(self):
-        root = self._make_project()
-        self._write_recipe_skill(root, "r1", "dup")
-        self._write_recipe_skill(root, "r2", "dup")
-        import io
-        captured = io.StringIO()
-        old_stderr = sys.stderr
-        sys.stderr = captured
-        try:
-            resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        finally:
-            sys.stderr = old_stderr
-        self.assertEqual(resolved["dup"][0], "recipe")
-        # Should warn about duplicate
-        self.assertIn("dup", captured.getvalue())
-        self.assertIn("r1", captured.getvalue())
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            tmp2, root = _new_project()
+            self.addCleanup(tmp2.cleanup)
+            result = invoke(root, "init", "--no-tui", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # Stage the recipe tier directly in the per-project cache: two
+            # recipe dirs claiming the same skill id. A real `sync` refuses
+            # this state (primitive conflict), so resolution is exercised
+            # through `sync-agent`, which only reads the staged tiers.
+            for recipe_id, body in (
+                ("ext-res-dup-a", "# dup from ext-res-dup-a\n"),
+                ("ext-res-dup-b", "# dup from ext-res-dup-b\n"),
+            ):
+                d = _recipe_cache_skill(root, home, recipe_id, "dup")
+                d.mkdir(parents=True)
+                (d / "SKILL.md").write_text(body)
+
+            # sync-agent runs recipe materialize unless --recipe-mcp is
+            # passed; an empty preset file keeps the staged tiers untouched.
+            mcp_file = root.parent / "empty-recipe-mcp.json"
+            mcp_file.write_text("{}")
+            result = invoke(root, "sync-agent", "--all", "--recipe-mcp", str(mcp_file),
+                            cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("dup", result.stderr)
+            self.assertIn("ext-res-dup-a", result.stderr)
+            resolved = _resolved_skill(root, home, "dup").read_text()
+            self.assertEqual(resolved, "# dup from ext-res-dup-a\n")
 
     def test_first_seen_dep_wins_with_warning(self):
-        root = self._make_project()
-        self._write_dep_skill(root, "d1", "dup")
-        self._write_dep_skill(root, "d2", "dup")
-        import io
-        captured = io.StringIO()
-        old_stderr = sys.stderr
-        sys.stderr = captured
-        try:
-            resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        finally:
-            sys.stderr = old_stderr
-        self.assertEqual(resolved["dup"][0], "dep")
-        self.assertIn("dup", captured.getvalue())
-        self.assertIn("d1", captured.getvalue())
+        tmp, root, home = self._project()
+        with tmp:
+            repos = {
+                "d1": _make_dep_repo(Path(tmp.name), "repo-d1", body="# d1 body\n"),
+                "d2": _make_dep_repo(Path(tmp.name), "repo-d2", body="# d2 body\n"),
+            }
+            _write_manifest(
+                root,
+                "[[deps]]\n" f'id = "d1"\n' f'source = "{repos["d1"].as_posix()}"\n\n'
+                "[[deps]]\n" f'id = "d2"\n' f'source = "{repos["d2"].as_posix()}"\n',
+            )
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            # Stage the same skill id inside two dep dirs (dep skill ids are
+            # dep ids when vendored, so the duplicate-id state is staged).
+            for dep_id, body in (("d1", "# dup from d1\n"), ("d2", "# dup from d2\n")):
+                dup = root / "ai-specs" / ".deps" / dep_id / "skills" / "dup"
+                dup.mkdir(parents=True)
+                (dup / "SKILL.md").write_text(body)
+
+            mcp_file = root.parent / "empty-recipe-mcp.json"
+            mcp_file.write_text("{}")
+            result = invoke(root, "sync-agent", "--all", "--recipe-mcp", str(mcp_file),
+                            cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("dup", result.stderr)
+            self.assertIn("d1", result.stderr)
+            resolved = _resolved_skill(root, home, "dup").read_text()
+            self.assertEqual(resolved, "# dup from d1\n")
 
     def test_missing_skill_raises(self):
-        root = self._make_project()
-        with self.assertRaises(RuntimeError) as ctx:
-            self.mod.resolve_skill(root, "missing", cli_home=ROOT)
-        self.assertIn("missing", str(ctx.exception))
+        # TRIAGE: ai-specs sync — single-skill resolution (resolve_skill) has
+        # no CLI surface; the failure contract is probed against the isolated
+        # home's own skill-resolution.py copy in a subprocess.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            tmp2, root = _new_project()
+            self.addCleanup(tmp2.cleanup)
+            probe = _skill_resolution_probe(root, home, (
+                "try:\n"
+                "    mod.resolve_skill(project, 'missing', cli_home=home)\n"
+                "    print(json.dumps({'error': None}))\n"
+                "except RuntimeError as exc:\n"
+                "    print(json.dumps({'error': str(exc)}))\n"
+            ))
+            self.assertEqual(probe.returncode, 0, probe.stderr)
+            payload = json.loads(probe.stdout)
+            self.assertIsNotNone(payload["error"])
+            self.assertIn("missing", payload["error"])
 
     def test_local_override_silent_no_warning(self):
-        root = self._make_project()
-        self._write_local_skill(root, "shared")
-        self._write_recipe_skill(root, "r1", "shared")
-        import io
-        captured = io.StringIO()
-        old_stderr = sys.stderr
-        sys.stderr = captured
-        try:
-            resolved = self.mod.collect_skills(root, cli_home=ROOT)
-        finally:
-            sys.stderr = old_stderr
-        self.assertEqual(resolved["shared"][0], "local")
-        # No warning should be emitted for local override
-        self.assertEqual(captured.getvalue(), "")
+        tmp, root, home = self._project()
+        with tmp:
+            root = self._recipe_project(
+                home, "ext-res-silent", "shared", "# recipe shared\n", root=root,
+            )
+            self._write_local_skill(root, "shared", "# local shared\n")
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            resolved = _resolved_skill(root, home, "shared").read_text()
+            self.assertEqual(resolved, "# local shared\n")
+            # No warning should be emitted for local override
+            self.assertNotIn("found in multiple", result.stderr)
+            self.assertNotIn("using first-seen", result.stderr)
 
     def test_local_precedence_does_not_backfill_files_from_recipe(self):
-        root = self._make_project()
-        self._write_local_skill(root, "shared")
-        self._write_recipe_skill(root, "r1", "shared")
-        recipe_asset = cache_recipe_skill(root, "r1", "shared", cli_home=ROOT) / "assets" / "helper.md"
-        recipe_asset.parent.mkdir(parents=True)
-        recipe_asset.write_text("recipe asset")
-        self.assertIsNone(self.mod.resolve_skill_template(root, "shared", "assets/helper.md"))
+        # TRIAGE: ai-specs sync — resolve_skill_template has no CLI surface;
+        # the no-backfill contract is probed against the isolated home's own
+        # skill-resolution.py copy in a subprocess.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            tmp2, root = _new_project()
+            self.addCleanup(tmp2.cleanup)
+            # Local skill wins; recipe tier holds an asset the local skill lacks.
+            local = root / "ai-specs" / "skills" / "shared"
+            local.mkdir(parents=True)
+            (local / "SKILL.md").write_text("# local shared")
+            staged = _recipe_cache_skill(root, home, "ext-res-backfill", "shared")
+            staged.mkdir(parents=True)
+            (staged / "SKILL.md").write_text("# recipe shared")
+            (staged / "assets").mkdir()
+            (staged / "assets" / "helper.md").write_text("recipe asset")
+            probe = _skill_resolution_probe(root, home, (
+                "p = mod.resolve_skill_template(project, 'shared', 'assets/helper.md', cli_home=home)\n"
+                "print(json.dumps(str(p) if p else None))\n"
+            ))
+            self.assertEqual(probe.returncode, 0, probe.stderr)
+            self.assertIsNone(json.loads(probe.stdout))
 
 
 class OverrideLoadingTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(SKILL_RESOLUTION_PATH, "skill_resolution_internal")
+    """Recipe-skill override loading (config.toml merge, template override).
 
-    def _make_project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
+    # TRIAGE: ai-specs sync — load_skill_config / resolve_skill_template have
+    # no CLI surface (no verb or rendered artifact consumes them); each test
+    # probes the isolated home's own skill-resolution.py copy in a hermetic
+    # subprocess and asserts on its JSON output.
+    """
+
+    def _project(self) -> tuple[Path, Path]:
+        tmp, root = _new_project()
         self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "ai-specs.toml").write_text("[project]\nname = 'fixture'\n")
-        return root
+        home = _home_for(root)
+        (root / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+        return root, home
 
-    def _write_recipe_skill(self, root: Path, recipe: str, name: str) -> None:
-        d = cache_recipe_skill(root, recipe, name, cli_home=ROOT)
-        d.mkdir(parents=True)
-        (d / "SKILL.md").write_text(f"# {name}")
+    def _stage_recipe_skill(
+        self, root: Path, home: Path, recipe: str, skill: str,
+        files: dict[str, str] | None = None,
+    ) -> Path:
+        d = _recipe_cache_skill(root, home, recipe, skill)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(f"# {skill}")
+        for rel, content in (files or {}).items():
+            p = d / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        return d
+
+    def _overrides_file(self, root: Path, recipe: str, rel: str, content: str) -> Path:
+        p = root / "ai-specs" / "recipes" / recipe / "overrides" / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+        return p
 
     def test_override_config_merged(self):
-        root = self._make_project()
-        self._write_recipe_skill(root, "my-recipe", "my-skill")
-        overrides = root / "ai-specs" / "recipes" / "my-recipe" / "overrides" / "config.toml"
-        overrides.parent.mkdir(parents=True)
-        overrides.write_text('timeout = 99\n')
-        cfg = self.mod.load_skill_config(root, "my-skill", {"timeout": 30})
-        self.assertEqual(cfg["timeout"], 99)
+        root, home = self._project()
+        self._stage_recipe_skill(root, home, "ext-ovr-merged", "my-skill")
+        self._overrides_file(root, "ext-ovr-merged", "config.toml", "timeout = 99\n")
+        probe = _skill_resolution_probe(root, home, (
+            "cfg = mod.load_skill_config(project, 'my-skill', {'timeout': 30}, cli_home=home)\n"
+            "print(json.dumps(cfg))\n"
+        ))
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        self.assertEqual(json.loads(probe.stdout)["timeout"], 99)
 
     def test_override_config_missing_uses_defaults(self):
-        root = self._make_project()
-        self._write_recipe_skill(root, "my-recipe", "my-skill")
-        cfg = self.mod.load_skill_config(root, "my-skill", {"timeout": 30})
-        self.assertEqual(cfg["timeout"], 30)
+        root, home = self._project()
+        self._stage_recipe_skill(root, home, "ext-ovr-default", "my-skill")
+        probe = _skill_resolution_probe(root, home, (
+            "cfg = mod.load_skill_config(project, 'my-skill', {'timeout': 30}, cli_home=home)\n"
+            "print(json.dumps(cfg))\n"
+        ))
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        self.assertEqual(json.loads(probe.stdout)["timeout"], 30)
 
     def test_override_config_isolated_between_recipes(self):
-        root = self._make_project()
-        self._write_recipe_skill(root, "recipe-a", "shared-skill")
-        self._write_recipe_skill(root, "recipe-b", "shared-skill")
-        overrides_a = root / "ai-specs" / "recipes" / "recipe-a" / "overrides" / "config.toml"
-        overrides_a.parent.mkdir(parents=True)
-        overrides_a.write_text('timeout = 99\n')
-        # For recipe-b skill, override from recipe-a should not apply
-        # Since first-seen wins, recipe-a's skill is used
-        cfg = self.mod.load_skill_config(root, "shared-skill", {"timeout": 30})
-        self.assertEqual(cfg["timeout"], 99)
-        # Now simulate using recipe-b's skill directly (not via resolution)
-        # The helper uses resolved path, so it follows first-seen
-        # To test isolation, we'll create a distinct skill in recipe-b
-        self._write_recipe_skill(root, "recipe-b", "other-skill")
-        cfg_b = self.mod.load_skill_config(root, "other-skill", {"timeout": 30})
-        self.assertEqual(cfg_b["timeout"], 30)
+        root, home = self._project()
+        self._stage_recipe_skill(root, home, "ext-ovr-iso-a", "shared-skill")
+        self._stage_recipe_skill(root, home, "ext-ovr-iso-b", "shared-skill")
+        self._stage_recipe_skill(root, home, "ext-ovr-iso-b", "other-skill")
+        self._overrides_file(root, "ext-ovr-iso-a", "config.toml", "timeout = 99\n")
+        # For ext-ovr-iso-b's other-skill, the override from ext-ovr-iso-a
+        # must not apply; first-seen resolution picks ext-ovr-iso-a for
+        # shared-skill.
+        probe = _skill_resolution_probe(root, home, (
+            "cfg = mod.load_skill_config(project, 'shared-skill', {'timeout': 30}, cli_home=home)\n"
+            "cfg_b = mod.load_skill_config(project, 'other-skill', {'timeout': 30}, cli_home=home)\n"
+            "print(json.dumps({'shared': cfg, 'other': cfg_b}))\n"
+        ))
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        payload = json.loads(probe.stdout)
+        self.assertEqual(payload["shared"]["timeout"], 99)
+        self.assertEqual(payload["other"]["timeout"], 30)
 
     def test_override_template_preferred(self):
-        root = self._make_project()
-        self._write_recipe_skill(root, "my-recipe", "my-skill")
-        bundled_tpl = cache_recipe_skill(root, "my-recipe", "my-skill", cli_home=ROOT) / "template.md"
-        bundled_tpl.write_text("bundled")
-        override_tpl = root / "ai-specs" / "recipes" / "my-recipe" / "overrides" / "templates" / "template.md"
-        override_tpl.parent.mkdir(parents=True)
-        override_tpl.write_text("override")
-        resolved = self.mod.resolve_skill_template(root, "my-skill", "template.md")
-        self.assertEqual(resolved.read_text(), "override")
+        root, home = self._project()
+        self._stage_recipe_skill(
+            root, home, "ext-ovr-tpl", "my-skill",
+            files={"template.md": "bundled"},
+        )
+        self._overrides_file(
+            root, "ext-ovr-tpl", "templates/template.md", "override",
+        )
+        probe = _skill_resolution_probe(root, home, (
+            "p = mod.resolve_skill_template(project, 'my-skill', 'template.md', cli_home=home)\n"
+            "print(json.dumps(str(p) if p else None))\n"
+        ))
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        resolved = json.loads(probe.stdout)
+        self.assertIsNotNone(resolved)
+        self.assertEqual(Path(resolved).read_text(), "override")
 
     def test_override_template_fallback_to_bundled(self):
-        root = self._make_project()
-        self._write_recipe_skill(root, "my-recipe", "my-skill")
-        bundled_tpl = cache_recipe_skill(root, "my-recipe", "my-skill", cli_home=ROOT) / "template.md"
-        bundled_tpl.write_text("bundled")
-        resolved = self.mod.resolve_skill_template(root, "my-skill", "template.md")
-        self.assertEqual(resolved.read_text(), "bundled")
+        root, home = self._project()
+        self._stage_recipe_skill(
+            root, home, "ext-ovr-tpl-fb", "my-skill",
+            files={"template.md": "bundled"},
+        )
+        probe = _skill_resolution_probe(root, home, (
+            "p = mod.resolve_skill_template(project, 'my-skill', 'template.md', cli_home=home)\n"
+            "print(json.dumps(str(p) if p else None))\n"
+        ))
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        resolved = json.loads(probe.stdout)
+        self.assertIsNotNone(resolved)
+        self.assertEqual(Path(resolved).read_text(), "bundled")
 
     def test_override_template_missing_returns_none(self):
-        root = self._make_project()
-        self._write_recipe_skill(root, "my-recipe", "my-skill")
-        resolved = self.mod.resolve_skill_template(root, "my-skill", "nonexistent.md")
-        self.assertIsNone(resolved)
+        root, home = self._project()
+        self._stage_recipe_skill(root, home, "ext-ovr-tpl-miss", "my-skill")
+        probe = _skill_resolution_probe(root, home, (
+            "p = mod.resolve_skill_template(project, 'my-skill', 'nonexistent.md', cli_home=home)\n"
+            "print(json.dumps(str(p) if p else None))\n"
+        ))
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        self.assertIsNone(json.loads(probe.stdout))
 
 
 class OrphanCleanupTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal")
+    """Orphaned origin dirs are cleaned by `ai-specs sync`; referenced recipe
+    dirs survive materialization."""
 
-    def setUp(self):
-        self._allow = mock.patch.dict(os.environ, allow_internal_test_recipes_env())
-        self._allow.start()
-        self.addCleanup(self._allow.stop)
-
-    def _make_project(self, recipe_section: str = "", deps_section: str = "") -> Path:
-        tmp = tempfile.TemporaryDirectory()
+    def _project(self, sections: str = "") -> tuple[Path, Path]:
+        tmp, root = _new_project()
         self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-        manifest = ai_specs / "ai-specs.toml"
-        manifest.write_text(
-            "[project]\nname = 'fixture'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            + deps_section
-            + recipe_section
-            + "\n"
-        )
-        return root
+        home = _home_for(root)
+        result = invoke(root, "init", "--no-tui", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        if sections:
+            _write_manifest(root, sections)
+        return root, home
 
     def test_orphan_recipe_directory_removed(self):
-        root = self._make_project()
+        root, home = self._project()
         orphan = root / "ai-specs" / ".recipe" / "old-recipe"
         orphan.mkdir(parents=True)
         (orphan / "keep.txt").write_text("stale")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(orphan.exists())
 
     def test_orphan_dep_directory_removed(self):
-        root = self._make_project()
+        root, home = self._project()
         orphan = root / "ai-specs" / ".deps" / "old-dep"
         orphan.mkdir(parents=True)
         (orphan / "keep.txt").write_text("stale")
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        result = invoke(root, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(orphan.exists())
 
     def test_referenced_recipe_preserved(self):
-        root = self._make_project(
-            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
-        )
-        home = _fixture_home()
-        recipe_dir = _pc().recipe_skills_root(root, cli_home=home) / "test-fixture"
-        recipe_dir.mkdir(parents=True)
-        (recipe_dir / "keep.txt").write_text("keep")
-        self.assertEqual(self.mod.materialize_recipes(root, home), 0)
-        # keep.txt is wiped when skill materialize replaces the skill tree, but recipe dir remains
-        self.assertTrue(
-            cache_recipe_skill(root, "test-fixture", "test-skill", cli_home=home).is_dir()
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _make_home(Path(tmp))
+            _seed_recipe(
+                home, "ext-orphan-ref", skills=("ext-skill-ref",),
+                files={"skills/ext-skill-ref/SKILL.md": "# ext-skill-ref\n"},
+            )
+            root, _ = self._project(
+                "[recipes.ext-orphan-ref]\nenabled = true\nversion = \"1.0.0\"\n",
+            )
+            recipe_dir = cache_project_dir(root, home) / ".recipe" / "ext-orphan-ref"
+            recipe_dir.mkdir(parents=True)
+            (recipe_dir / "keep.txt").write_text("keep")
+            result = invoke(root, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # keep.txt is wiped when skill materialize replaces the skill tree,
+            # but the recipe dir remains and the skill is materialized.
+            self.assertTrue(
+                _recipe_cache_skill(root, home, "ext-orphan-ref", "ext-skill-ref").is_dir()
+            )
 
 
 class ResyncIdempotencyTests(unittest.TestCase):
@@ -1018,15 +1306,18 @@ class ResyncIdempotencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
             target.mkdir()
-            subprocess.run([str(CLI), "init", "--no-tui", str(target)], check=True, text=True, capture_output=True)
-            subprocess.run([str(CLI), "sync", str(target)], check=True, text=True, capture_output=True)
+            home = _home_for(target)
+            result = invoke(target, "init", "--no-tui", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = invoke(target, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             first = self._hash_tree(target)
-            subprocess.run([str(CLI), "sync", str(target)], check=True, text=True, capture_output=True)
+            result = invoke(target, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             second = self._hash_tree(target)
             self.assertEqual(first, second)
 
     def _hash_tree(self, root: Path) -> str:
-        import hashlib
         hashes = []
         for p in sorted(root.rglob("*")):
             if p.is_file() and ".git" not in str(p):
@@ -1043,23 +1334,28 @@ class CommandRelocationMigrationSmokeTest(unittest.TestCase):
     command set still includes the bundled command from the cache."""
 
     def test_pre_upgrade_project_migrates_cleanly_on_sync(self):
-        import hashlib
-
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         target = Path(tmp.name) / "prj"
         target.mkdir()
-        subprocess.run(["git", "init", "-q", str(target)], check=True)
+        home = _home_for(target)
+        subprocess.run(["git", "init", "-q", str(target)], check=True,
+                       capture_output=True, input="")
         subprocess.run(
-            ["git", "-C", str(target), "config", "user.email", "t@example.com"], check=True
+            ["git", "-C", str(target), "config", "user.email", "t@example.com"],
+            check=True, capture_output=True, input="",
         )
-        subprocess.run(["git", "-C", str(target), "config", "user.name", "t"], check=True)
+        subprocess.run(
+            ["git", "-C", str(target), "config", "user.name", "t"],
+            check=True, capture_output=True, input="",
+        )
 
         # `ai-specs init` on a current CLI never materializes bundled commands;
         # simulate the pre-upgrade (0.16.0-era) committed state by hand.
-        subprocess.run([str(CLI), "init", str(target)], check=True, capture_output=True, text=True)
+        result = invoke(target, "init", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         commands_dir = target / "ai-specs" / "commands"
-        bundled_src = ROOT / "bundled-commands"
+        bundled_src = home / "bundled-commands"
 
         # 1. Byte-identical committed bundled copy → must be removed as a leftover.
         rules_audit_content = (bundled_src / "rules-audit.md").read_text()
@@ -1084,21 +1380,20 @@ class CommandRelocationMigrationSmokeTest(unittest.TestCase):
             'files = ["commands/some-other-file.md"]\n'
         )
 
+        subprocess.run(["git", "-C", str(target), "add", "-A"], check=True,
+                       capture_output=True, input="")
         subprocess.run(
-            ["git", "-C", str(target), "add", "-A"], check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "-C", str(target), "commit", "-qm", "pre-upgrade snapshot"], check=True
+            ["git", "-C", str(target), "commit", "-qm", "pre-upgrade snapshot"],
+            check=True, capture_output=True, input="",
         )
 
+        _write_manifest(target)  # default agents first (unused; rewritten below)
         (target / "ai-specs" / "ai-specs.toml").write_text(
             "[project]\nname = 'migration-fixture'\n\n"
             "[agents]\nenabled = ['cursor', 'opencode']\n"
         )
-        result = subprocess.run(
-            [str(CLI), "sync", str(target)],
-            check=True, capture_output=True, text=True,
-        )
+        result = invoke(target, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         out = result.stdout + result.stderr
 
         # Byte-identical bundled copy removed.

@@ -1,23 +1,45 @@
-import importlib.util
+"""Black-box rules-audit tests: every scan drives ``bin/ai-specs rules-audit``.
+
+No test imports ``lib/_internal`` modules. The single scan contract is the
+CLI's JSON stdout inventory (``rules-inventory.py main()`` prints exactly
+``RulesInventory(root).scan()``), so module-level scan assertions are preserved
+verbatim through the process boundary. The bundled-commands distribution test
+drives ``refresh-bundled`` + ``init`` + ``sync`` through the CLI against a
+shared isolated install root with a real lib copy.
+"""
+from __future__ import annotations
+
 import json
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
-RULES_AUDIT_PY = ROOT / "lib" / "_internal" / "rules-inventory.py"
-REFRESH_BUNDLED_PY = ROOT / "lib" / "_internal" / "refresh-bundled.py"
+KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 
 
-def load_rules_inventory():
-    spec = importlib.util.spec_from_file_location("rules_inventory", RULES_AUDIT_PY)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root with a REAL lib copy.
+
+    sync/materialize derive cache and catalog roots from their own realpath,
+    so a symlinked lib would resolve back into the repository and let the CLI
+    touch repo cache state. A real copy keeps every lookup and write in temp.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    return home
 
 
 def snapshot_fs(root: Path) -> dict[str, tuple[int, int]]:
@@ -31,21 +53,22 @@ def snapshot_fs(root: Path) -> dict[str, tuple[int, int]]:
 
 
 class RulesAuditTests(unittest.TestCase):
-    def setUp(self):
-        if not RULES_AUDIT_PY.is_file():
-            self.skipTest("rules-inventory.py not implemented yet")
-        self.mod = load_rules_inventory()
+    @classmethod
+    def setUpClass(cls):
+        # One shared isolated install root for the whole class: rules-audit is
+        # read-only and refresh/init/sync share its project cache.
+        cls._home_holder = tempfile.TemporaryDirectory(prefix="rules-audit-home-")
+        cls.home = _make_home(Path(cls._home_holder.name))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._home_holder.cleanup()
 
     def _scan(self, root: Path) -> dict:
-        return self.mod.RulesInventory(root).scan()
+        return self._scan_stdout(root)
 
     def _scan_stdout(self, root: Path) -> dict:
-        result = subprocess.run(
-            [sys.executable, str(RULES_AUDIT_PY), str(root)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = invoke(root, "rules-audit", cli_home=self.home)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
@@ -71,11 +94,14 @@ class RulesAuditTests(unittest.TestCase):
             '[project]\nname = "fixture"\n\n[agents]\nenabled = ["cursor"]\n'
         )
 
-    def test_placeholder(self):
-        self.assertTrue(RULES_AUDIT_PY.is_file())
+    def test_rules_audit_cli_surface_exists(self):
+        """The rules-audit verb exists and scans a bare project successfully."""
+        root = self._fixture_dir()
+        data = self._scan_stdout(root)
+        self.assertIn("schema_version", data)
 
     def test_read_only_invariant(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         self._write_mode_a_fixture(root)
         before = snapshot_fs(root)
         self._scan(root)
@@ -83,7 +109,7 @@ class RulesAuditTests(unittest.TestCase):
         self.assertEqual(before, after)
 
     def test_json_shape(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         self._write_mode_a_fixture(root)
         data = self._scan_stdout(root)
         for key in (
@@ -97,28 +123,28 @@ class RulesAuditTests(unittest.TestCase):
             self.assertIn(key, data)
 
     def test_mode_a_detection(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         self._write_mode_a_fixture(root)
         data = self._scan(root)
         self.assertEqual(data["mode"], "A")
         self.assertTrue(data["sources"]["cursor_rules"])
 
     def test_mode_b_detection(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "package-lock.json").write_text("{}")
         data = self._scan(root)
         self.assertEqual(data["mode"], "B")
         self.assertIsInstance(data["stack_hints"], list)
 
     def test_mode_b_with_agents_md_is_mode_a(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "package-lock.json").write_text("{}")
         (root / "AGENTS.md").write_text("# Runtime brief\n")
         data = self._scan(root)
         self.assertEqual(data["mode"], "A")
 
     def test_benign_rule_has_no_false_recipe_matches(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         rules_dir = root / ".cursor" / "rules"
         rules_dir.mkdir(parents=True)
         (rules_dir / "benign.mdc").write_text(
@@ -130,7 +156,7 @@ class RulesAuditTests(unittest.TestCase):
         self.assertEqual(item["candidate_recipes"], [])
 
     def test_always_apply_false_from_string_frontmatter(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         rules_dir = root / ".cursor" / "rules"
         rules_dir.mkdir(parents=True)
         (rules_dir / "scoped.mdc").write_text(
@@ -145,7 +171,7 @@ class RulesAuditTests(unittest.TestCase):
         self.assertFalse(item["always_apply"])
 
     def test_tolerant_frontmatter_extracts_despite_bad_line(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         rules_dir = root / ".cursor" / "rules"
         rules_dir.mkdir(parents=True)
         (rules_dir / "partial.mdc").write_text(
@@ -164,7 +190,7 @@ class RulesAuditTests(unittest.TestCase):
         self.assertFalse(item["always_apply"])
 
     def test_missing_sources_absent(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         self._write_mode_a_fixture(root, include_cursorrules=False)
         data = self._scan(root)
         cursorrules = data["sources"]["cursorrules"]
@@ -176,7 +202,7 @@ class RulesAuditTests(unittest.TestCase):
             )
 
     def test_manifest_recipes_table_schema_enabled(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         manifest_dir = root / "ai-specs"
         manifest_dir.mkdir()
         (manifest_dir / "ai-specs.toml").write_text(
@@ -189,7 +215,7 @@ class RulesAuditTests(unittest.TestCase):
         self.assertIn("worktree-flow", recipes)
 
     def test_standalone_keywords_do_not_false_positive(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         rules_dir = root / ".cursor" / "rules"
         rules_dir.mkdir(parents=True)
         for name, body in (
@@ -202,7 +228,7 @@ class RulesAuditTests(unittest.TestCase):
             self.assertEqual(item["candidate_recipes"], [], item["path"])
 
     def test_project_heading_with_vault_is_keep_in_brief(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "AGENTS.md").write_text(
             "# AGENTS\n\n## Project\n\nUse the Vault for canonical notes.\n"
         )
@@ -213,7 +239,7 @@ class RulesAuditTests(unittest.TestCase):
         self.assertEqual(section["classification"], "keep_in_brief")
 
     def test_agents_md_h1_h3_and_preamble_sections(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "AGENTS.md").write_text(
             "Intro before headings.\n\n"
             "# Runtime Brief\n\n"
@@ -229,7 +255,7 @@ class RulesAuditTests(unittest.TestCase):
         self.assertIn("Workflow Rules", headings)
 
     def test_keyword_heuristic(self):
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         rules_dir = root / ".cursor" / "rules"
         rules_dir.mkdir(parents=True)
         (rules_dir / "testing.mdc").write_text(
@@ -243,89 +269,71 @@ class RulesAuditTests(unittest.TestCase):
         self.assertIn("worktree-flow", recipes)
 
     def test_cli_help_lists_rules_audit(self):
-        result = subprocess.run(
-            [str(CLI), "help"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = invoke(ROOT, "help", cli_home=self.home, append_root=False)
         self.assertIn("rules-audit", result.stdout)
 
     def test_bundled_commands_distribution_after_refresh(self):
-        import shutil
-        import tempfile
+        # Refresh through the CLI verb: bundled commands flatten into the
+        # isolated project cache — never the project surface, never the repo.
+        td = tempfile.TemporaryDirectory(prefix="rules-audit-bundled-")
+        self.addCleanup(td.cleanup)
+        project = Path(td.name) / "project"
+        (project / "ai-specs").mkdir(parents=True)
 
-        pc_spec = importlib.util.spec_from_file_location(
-            "pc_rules_audit_cmd_dist", ROOT / "lib" / "_internal" / "project-cache.py"
+        result = invoke(project, "refresh-bundled", "--init", cli_home=self.home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        # Bundled commands flatten into the cache — never the project surface.
+        bundled_commands_root = cache_project_dir(project, self.home) / ".bundled" / "commands"
+        self.assertTrue((bundled_commands_root / "rules-audit.md").is_file())
+        skills_text = (bundled_commands_root / "skills-as-rules.md").read_text(encoding="utf-8")
+        self.assertNotIn("auto-invoke table", skills_text.lower())
+        local_commands_dir = project / "ai-specs" / "commands"
+        local_names = (
+            sorted(p.name for p in local_commands_dir.glob("*.md"))
+            if local_commands_dir.is_dir() else []
         )
-        pc = importlib.util.module_from_spec(pc_spec)
-        assert pc_spec.loader is not None
-        pc_spec.loader.exec_module(pc)
+        self.assertEqual(
+            local_names, [],
+            "bundled commands must not be materialized into ai-specs/commands/",
+        )
 
-        project = Path(tempfile.mkdtemp())
-        try:
-            (project / "ai-specs").mkdir()
-            subprocess.run(
-                [sys.executable, str(REFRESH_BUNDLED_PY), str(project), str(ROOT), "--init"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            # Bundled commands flatten into the cache — never the project surface.
-            bundled_commands_root = pc.bundled_commands_root(project, cli_home=ROOT)
-            self.assertTrue((bundled_commands_root / "rules-audit.md").is_file())
-            skills_text = (bundled_commands_root / "skills-as-rules.md").read_text(encoding="utf-8")
-            self.assertNotIn("auto-invoke table", skills_text.lower())
-            local_commands_dir = project / "ai-specs" / "commands"
-            local_names = (
-                sorted(p.name for p in local_commands_dir.glob("*.md"))
-                if local_commands_dir.is_dir() else []
-            )
-            self.assertEqual(
-                local_names, [],
-                "bundled commands must not be materialized into ai-specs/commands/",
-            )
+        result = invoke(project, "init", cli_home=self.home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (project / "ai-specs" / "ai-specs.toml").write_text(
+            "[project]\nname = 'fixture'\n\n[agents]\nenabled = ['cursor', 'opencode']\n"
+        )
+        result = invoke(project, "sync", cli_home=self.home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-            subprocess.run([str(CLI), "init", str(project)], check=True, text=True)
-            (project / "ai-specs" / "ai-specs.toml").write_text(
-                "[project]\nname = 'fixture'\n\n[agents]\nenabled = ['cursor', 'opencode']\n"
-            )
-            subprocess.run([str(CLI), "sync", str(project)], check=True, text=True)
-
-            # A project with no local commands still has an empty/absent
-            # ai-specs/commands/ after init+sync — bundled commands never land there.
-            local_names = (
-                sorted(p.name for p in local_commands_dir.glob("*.md"))
-                if local_commands_dir.is_dir() else []
-            )
-            self.assertEqual(local_names, [])
-            for rel in (
-                ".cursor/commands/rules-audit.md",
-                ".cursor/commands/skills-as-rules.md",
-                ".opencode/commands/rules-audit.md",
-                ".opencode/commands/skills-as-rules.md",
-            ):
-                path = project / rel
-                self.assertTrue(path.is_file(), rel)
-                if path.name == "skills-as-rules.md":
-                    self.assertNotIn("auto-invoke table", path.read_text(encoding="utf-8").lower())
-        finally:
-            shutil.rmtree(project)
+        # A project with no local commands still has an empty/absent
+        # ai-specs/commands/ after init+sync — bundled commands never land there.
+        local_names = (
+            sorted(p.name for p in local_commands_dir.glob("*.md"))
+            if local_commands_dir.is_dir() else []
+        )
+        self.assertEqual(local_names, [])
+        for rel in (
+            ".cursor/commands/rules-audit.md",
+            ".cursor/commands/skills-as-rules.md",
+            ".opencode/commands/rules-audit.md",
+            ".opencode/commands/skills-as-rules.md",
+        ):
+            path = project / rel
+            self.assertTrue(path.is_file(), rel)
+            if path.name == "skills-as-rules.md":
+                self.assertNotIn("auto-invoke table", path.read_text(encoding="utf-8").lower())
 
     def test_cli_missing_path_exits_nonzero(self):
-        result = subprocess.run(
-            [str(CLI), "rules-audit", "/nonexistent-path-rules-audit"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = invoke(Path("/nonexistent-path-rules-audit"), "rules-audit",
+                        cli_home=self.home)
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(result.stderr.strip())
 
     # ------------------------------------------------------------------ N1
     def test_agents_md_no_headings_still_produces_section(self):
         """N1: monolithic AGENTS.md with no markdown headings must not be dropped."""
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "AGENTS.md").write_text(
             "Use the Vault for canonical notes.\n"
             "Always run tests before opening a PR.\n"
@@ -337,7 +345,7 @@ class RulesAuditTests(unittest.TestCase):
     # ------------------------------------------------------------------ N2
     def test_run_tests_alone_does_not_match_tdd_flow(self):
         """N2: generic 'run tests' text must NOT trigger tdd-flow."""
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         rules_dir = root / ".cursor" / "rules"
         rules_dir.mkdir(parents=True)
         (rules_dir / "ci.mdc").write_text(
@@ -350,7 +358,7 @@ class RulesAuditTests(unittest.TestCase):
 
     def test_tdd_intentional_phrases_still_match_tdd_flow(self):
         """N2: intentional TDD phrases must still match tdd-flow."""
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         rules_dir = root / ".cursor" / "rules"
         rules_dir.mkdir(parents=True)
         (rules_dir / "tdd.mdc").write_text(
@@ -364,7 +372,7 @@ class RulesAuditTests(unittest.TestCase):
     # ------------------------------------------------------------------ keep_in_brief word-boundary
     def test_reproject_heading_does_not_match_project_token(self):
         """_classify keep_in_brief guard must use word boundary, not substring match."""
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "AGENTS.md").write_text(
             "# AGENTS\n\n## Reproject\n\nSome body text here.\n"
         )
@@ -378,7 +386,7 @@ class RulesAuditTests(unittest.TestCase):
     # ------------------------------------------------------------------ fenced code blocks
     def test_heading_inside_fenced_code_block_not_captured(self):
         """# headings inside fenced code blocks must not produce spurious sections."""
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "AGENTS.md").write_text(
             "# Real Section\n\n"
             "Here is an example:\n\n"
@@ -398,7 +406,7 @@ class RulesAuditTests(unittest.TestCase):
     # ------------------------------------------------------------------ array-form manifest enabled filter
     def test_manifest_array_form_respects_enabled_flag(self):
         """_scan_manifest array-form must filter enabled=false entries."""
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         manifest_dir = root / "ai-specs"
         manifest_dir.mkdir()
         (manifest_dir / "ai-specs.toml").write_text(
@@ -422,7 +430,7 @@ class RulesAuditTests(unittest.TestCase):
         heading shrinks text_no_fences vs text, so heading offsets computed on
         text_no_fences slice the wrong bytes from the original text.
         """
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "AGENTS.md").write_text(
             "```\n"
             "# fake heading inside fence\n"
@@ -447,7 +455,7 @@ class RulesAuditTests(unittest.TestCase):
     # ------------------------------------------------------------------ tilde fence
     def test_heading_inside_tilde_fenced_block_not_captured(self):
         """# headings inside ~~~ fenced code blocks must not produce spurious sections."""
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "AGENTS.md").write_text(
             "# Real Section\n\n"
             "Example:\n\n"
@@ -467,7 +475,7 @@ class RulesAuditTests(unittest.TestCase):
     # ------------------------------------------------------------------ unterminated fence
     def test_heading_inside_unterminated_fence_not_captured(self):
         """# headings inside an unterminated ``` block must not produce spurious sections."""
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "AGENTS.md").write_text(
             "# Real Section\n\n"
             "Some body text.\n\n"
@@ -485,7 +493,7 @@ class RulesAuditTests(unittest.TestCase):
         """A close fence must be whitespace-only; trailing text after the fence
         chars (e.g. ``` # done) must not prematurely close the block and leak
         following # lines as spurious sections."""
-        root = Path(self._fixture_dir())
+        root = self._fixture_dir()
         (root / "AGENTS.md").write_text(
             "# Real Section\n\n"
             "Example:\n\n"
@@ -503,10 +511,10 @@ class RulesAuditTests(unittest.TestCase):
         self.assertNotIn("this is a shell comment, not a heading", headings)
         self.assertIn("Real Section", headings)
 
-    def _fixture_dir(self):
-        import tempfile
-
-        return tempfile.mkdtemp()
+    def _fixture_dir(self) -> Path:
+        td = tempfile.TemporaryDirectory(prefix="rules-audit-fixture-")
+        self.addCleanup(td.cleanup)
+        return Path(td.name)
 
 
 if __name__ == "__main__":
