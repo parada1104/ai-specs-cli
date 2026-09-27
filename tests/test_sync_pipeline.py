@@ -3021,7 +3021,12 @@ class FanOutDriftTests(unittest.TestCase):
         workspace.mkdir()
         return workspace
 
-    def test_command_fanout_removes_stale_files(self):
+    def test_command_fanout_preserves_nonmanaged_files(self):
+        """D3' — user-added command files survive resync (rm -rf removed).
+
+        Behavior change from the false-success card: the old contract here
+        (non-managed files deleted on every sync) was the recorded defect D3.
+        """
         workspace = self.make_workspace()
         try:
             subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
@@ -3031,12 +3036,22 @@ class FanOutDriftTests(unittest.TestCase):
             )
             subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
 
-            stale = workspace / ".cursor" / "commands" / "stale.md"
-            stale.write_text("# stale\n")
-            self.assertTrue(stale.is_file())
+            nonmanaged = workspace / ".cursor" / "commands" / "stale.md"
+            nonmanaged.write_text("# stale\n")
+            self.assertTrue(nonmanaged.is_file())
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            self.assertFalse(stale.exists())
+            proc = subprocess.run(
+                [str(CLI), "sync", str(workspace)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(
+                nonmanaged.is_file(),
+                "non-managed command file must survive resync (D3')",
+            )
+            self.assertIn("stale.md", proc.stderr)
         finally:
             shutil.rmtree(workspace.parent)
 

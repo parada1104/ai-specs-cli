@@ -401,6 +401,10 @@ else
 fi
 
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
+    # D24 fix: ensure the target workspace before reporting success, so a
+    # subrepo still receives AGENTS.md / ai-specs/.gitignore, and a root
+    # workspace missing AGENTS.md fails instead of exiting 0.
+    ensure_target_workspace
     echo "WARNING: no agents to sync. Set [agents].enabled in ai-specs.toml." >&2
     exit 0
 fi
@@ -493,13 +497,35 @@ sync_one_agent() {
     cmd_dir="$(platform_get "$agent" commands_dir)" || return $?
     if [[ -n "$cmd_dir" && -d "$COMMANDS_SOURCE" ]]; then
         dest="$TARGET_PATH/$cmd_dir"
-        rm -rf "$dest" || return $?
+        # D3' fix: never rm -rf the agent commands dir — user-added files are
+        # preserved with a warning, not destroyed. CLI-managed files are
+        # overwritten in place.
         mkdir -p "$dest" || return $?
         copied=0
+        local managed_list="" target_file
         for src in "$COMMANDS_SOURCE"/*.md; do
             [[ -f "$src" ]] || continue
-            cp "$src" "$dest/$(basename "$src")" || return $?
+            target_file="$dest/$(basename "$src")"
+            # Never write through an existing symlink or non-regular file
+            # occupying a managed name: unlink it first so cp cannot escape
+            # the commands dir (the old rm -rf removed the link outright;
+            # preservation must not reintroduce write-through).
+            if [[ -L "$target_file" ]]; then
+                rm -f "$target_file" || return $?
+            elif [[ -e "$target_file" && ! -f "$target_file" ]]; then
+                rm -rf "$target_file" || return $?
+            fi
+            cp "$src" "$target_file" || return $?
+            managed_list+="$(basename "$src")"$'\n'
             copied=$((copied + 1))
+        done
+        local extra base
+        for extra in "$dest"/*; do
+            [[ -f "$extra" ]] || continue
+            base="$(basename "$extra")"
+            if ! printf '%s' "$managed_list" | grep -Fxq -- "$base"; then
+                echo "    ! preserved non-managed file $cmd_dir/$base (move it to ai-specs/commands/ to manage it)" >&2
+            fi
         done
         if [[ $copied -gt 0 ]]; then
             echo "    ✓ commands     $cmd_dir/ ($copied file(s))"

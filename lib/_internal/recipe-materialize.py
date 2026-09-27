@@ -1548,20 +1548,87 @@ def _python_materialize_template(
     print(f"    ✓ template {tpl.target}")
 
 
-def materialize_doc(recipe_dir: Path, doc: Any, project_root: Path) -> None:
+def materialize_doc(
+    recipe_dir: Path, doc: Any, project_root: Path, recipe_id: str | None = None
+) -> None:
     src = recipe_dir / doc.source
     dest = project_root / doc.target
-    results = go_apply_copy(
-        [{"kind": "doc", "id": doc.target, "src": str(src), "dest": str(dest)}]
-    )
-    # results None = infrastructure failure (fallback; a result count that
-    # does not match the one-item plan is an envelope mismatch). The plan
-    # sends exactly one item, so results[0] always exists here.
-    if results is None:
-        _python_doc_copy(src, dest)
-    elif results:
-        if results[0]["status"] == "source-missing":
-            raise RuntimeError(f"doc source not found: {src}")
+    util = _load_util()
+    if not src.is_file():
+        raise RuntimeError(f"doc source not found: {src}")
+    src_bytes = src.read_bytes()
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
+    target = Path(doc.target).as_posix()
+    entry = (lock.get("managed") or {}).get(target)
+
+    def record(written: bytes) -> None:
+        set_managed_override(
+            lock,
+            target,
+            util.sha256_bytes(written),
+            recipe=recipe_id,
+            source=doc.source,
+            kind="doc",
+            policy="auto",
+        )
+        write_lock(lock_path, lock)
+
+    def copy_via_bridge() -> None:
+        results = go_apply_copy(
+            [{"kind": "doc", "id": doc.target, "src": str(src), "dest": str(dest)}]
+        )
+        # results None = infrastructure failure (fallback; a result count that
+        # does not match the one-item plan is an envelope mismatch). The plan
+        # sends exactly one item, so results[0] always exists here.
+        if results is None:
+            _python_doc_copy(src, dest)
+        elif results:
+            if results[0]["status"] == "source-missing":
+                raise RuntimeError(f"doc source not found: {src}")
+
+    if dest.exists():
+        # D4' fix: docs follow the same lock-tracked preservation policy as
+        # templates — a user-edited doc is never clobbered by re-sync.
+        if dest.is_dir() or dest.is_symlink():
+            warn(
+                f"override metadata missing for {doc.target}; preserving existing "
+                f"{'directory' if dest.is_dir() else 'symlink'} without assigning ownership."
+            )
+            return
+        state = util.classify_managed_override(dest, entry, would_write=src_bytes)
+        if state == "managed_stale" and (entry or {}).get("policy", "auto") == "auto":
+            copy_via_bridge()
+            record(src_bytes)
+            info(f"refreshed managed doc {doc.target}")
+        elif state in ("user_modified", "managed_stale"):
+            label = "user-modified" if state == "user_modified" else "managed-stale (confirm-required)"
+            warn(
+                f"override {label}: {doc.target} was not refreshed. "
+                "Refresh with:\n"
+                f"{_rm_and_resync_hint(doc.target)}"
+            )
+        elif state == "managed_current":
+            # Backfill provenance fields without rewriting the target.
+            record(src_bytes)
+        elif state == "untracked":
+            disk_bytes = dest.read_bytes()
+            if disk_bytes == src_bytes:
+                # Pre-lock install already carrying the exact doc bytes: seed
+                # provenance instead of assigning ownership over a rewrite.
+                record(disk_bytes)
+            else:
+                warn(
+                    f"override metadata missing for {doc.target}; preserving existing file without assigning ownership. "
+                    "To preserve this local file, leave it unchanged. To replace it with the current recipe version, "
+                    "remove it and run sync again:\n"
+                    f"{_rm_and_resync_hint(doc.target)}"
+                )
+        print(f"    · doc skipped (exists) {doc.target}")
+        return
+
+    copy_via_bridge()
+    record(src_bytes)
     print(f"    ✓ doc {doc.target}")
 
 
@@ -3981,7 +4048,7 @@ def materialize_recipes(project_root: Path, ai_specs_home: Path, recipe_mcp_out:
 
         # Docs
         for doc in recipe.docs:
-            materialize_doc(recipe_dir, doc, project_root)
+            materialize_doc(recipe_dir, doc, project_root, recipe_id=rid)
 
         # Hook execution (sync-time [[hooks]])
         execute_hooks(recipe, merged_cfg, project_root, cli_home=cli_home)
