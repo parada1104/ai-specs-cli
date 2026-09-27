@@ -68,6 +68,27 @@ func TestRouteBareInvocationRewritesToHub(t *testing.T) {
 	}
 }
 
+// TestRunBareInvocationRoutesToHub executes the bare-invocation path
+// end-to-end: Route(nil) rewrites to hub and runShim must pass the ORIGINAL
+// (empty) argv to hub.sh (legacy no-shift semantics) instead of panicking on
+// args[1:]. With an uninitialized temp cwd and buffered (non-TTY) writers,
+// hub.sh's pre-guard fires: exit 2, no Python launch.
+func TestRunBareInvocationRoutesToHub(t *testing.T) {
+	home, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir()) // uninitialized project: pre-guard fires before Python
+	var stdout, stderr bytes.Buffer
+	code := Run(nil, home, nil, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("exit = %d, want 2 (uninitialized + non-TTY pre-guard)", code)
+	}
+	if !strings.Contains(strings.ToLower(stderr.String()), "no ai-specs project at") {
+		t.Errorf("stderr = %q, want hub.sh pre-guard message\"no ai-specs project at ...\"", stderr.String())
+	}
+}
+
 func TestRouteUnknownCommand(t *testing.T) {
 	r := Route([]string{"bogus", "extra"})
 	if r.kind != routeUnknown {

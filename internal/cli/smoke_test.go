@@ -153,6 +153,9 @@ func TestDifferentialSmoke(t *testing.T) {
 		{"recipe-usage", []string{"recipe"}, "", false},
 		{"skills-usage", []string{"skills"}, "", false},
 		{"add-dep-noargs", []string{"add-dep"}, "", false},
+		// Bare invocation must reach hub.sh with the original (empty) argv —
+		// legacy no-shift semantics — not panic on the verb slice shift.
+		{"hub-bare-nontty", []string{}, "", false},
 		{"hub-uninitialized-nontty", []string{"hub"}, "", false},
 		{"doctor-missing-path", []string{"doctor", "does-not-exist"}, "", false},
 		{"rules-audit-missing-path", []string{"rules-audit", "does-not-exist"}, "", false},
