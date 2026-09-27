@@ -502,10 +502,20 @@ sync_one_agent() {
         # overwritten in place.
         mkdir -p "$dest" || return $?
         copied=0
-        local managed_list=""
+        local managed_list="" target_file
         for src in "$COMMANDS_SOURCE"/*.md; do
             [[ -f "$src" ]] || continue
-            cp "$src" "$dest/$(basename "$src")" || return $?
+            target_file="$dest/$(basename "$src")"
+            # Never write through an existing symlink or non-regular file
+            # occupying a managed name: unlink it first so cp cannot escape
+            # the commands dir (the old rm -rf removed the link outright;
+            # preservation must not reintroduce write-through).
+            if [[ -L "$target_file" ]]; then
+                rm -f "$target_file" || return $?
+            elif [[ -e "$target_file" && ! -f "$target_file" ]]; then
+                rm -rf "$target_file" || return $?
+            fi
+            cp "$src" "$target_file" || return $?
             managed_list+="$(basename "$src")"$'\n'
             copied=$((copied + 1))
         done

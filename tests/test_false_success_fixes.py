@@ -124,6 +124,47 @@ class TestSyncAgentPreservesUserCommandFiles(unittest.TestCase):
             combined = first.stdout + first.stderr + second.stdout + second.stderr
             self.assertIn("my-user-cmd.md", combined)
 
+    def test_managed_copy_never_writes_through_user_symlink(self):
+        """A symlink occupying a managed command name must be unlinked, not
+        written through — cp must never escape the commands dir (review
+        blocker, native review-6f612cea7cb160f5)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "prj"
+            root.mkdir()
+            self._init_with_claude(root)
+
+            first = _run("sync-agent", str(root), "--claude")
+            self.assertEqual(first.returncode, 0, first.stderr)
+
+            victim = root / "victim-brief.md"
+            victim.write_text("# victim content\n", encoding="utf-8")
+            commands_dir = root / ".claude" / "commands"
+            commands_dir.mkdir(parents=True, exist_ok=True)
+            (commands_dir / "local-cmd.md").symlink_to(victim)
+
+            (root / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+            (root / "ai-specs" / "commands" / "local-cmd.md").write_text(
+                "# managed content\n", encoding="utf-8"
+            )
+
+            second = _run("sync-agent", str(root), "--claude")
+            self.assertEqual(second.returncode, 0, second.stderr)
+
+            self.assertEqual(
+                victim.read_text(encoding="utf-8"),
+                "# victim content\n",
+                "copying a managed command must never write through a symlink "
+                "to a file outside the commands dir",
+            )
+            copied = commands_dir / "local-cmd.md"
+            self.assertFalse(
+                copied.is_symlink(),
+                "the symlink occupying a managed name must be unlinked before copy",
+            )
+            self.assertEqual(
+                copied.read_text(encoding="utf-8"), "# managed content\n"
+            )
+
     def test_managed_command_files_still_synced(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "prj"
