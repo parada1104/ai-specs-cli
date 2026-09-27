@@ -11,6 +11,8 @@ bash "$ROOT/tests/test_vault_fs_mcp.sh"
 if command -v go >/dev/null 2>&1; then
     echo "run.sh: go found — running Go gate tests (go test ./catalog/recipes/worktree-flow/gate/...)"
     go -C catalog/recipes/worktree-flow/gate test ./...
+    echo "run.sh: running root Go module tests (go test ./cmd/... ./internal/...)"
+    go test ./cmd/... ./internal/...
 else
     echo "run.sh: WARNING: 'go' not found on PATH — skipping Go gate tests (catalog/recipes/worktree-flow/gate/...)" >&2
 fi
