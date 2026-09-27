@@ -137,22 +137,13 @@
 # new asset, no second trust root), with the canonical go1.24.13 toolchain via
 # the same command above.
 #
-# Regenerated for the go-template-actuator advisory-hardening batch (the same
-# four-arch asset now refuses a template target whose resolved destination
-# escapes the project root, refuses a symlinked ancestor directory on the
-# destination path, and chmods through the open file handle instead of the
-# destination path; no new asset, no second trust root), with the canonical
-# go1.24.13 toolchain via the same command above. The follow-up work unit
-# dedupes the run's stdout-envelope emit/refuse closures and adds bridge-test
-# pinning coverage; same toolchain and command.
-#
-# Regenerated for the review correction R1-git-prefix-containment-bypass (the
-# same four-arch asset now keys the template destination-containment exemption
-# on an actual clean `git rev-parse --git-path` resolution instead of the
-# literal ".git/" string prefix, refusing ".git/"-prefixed targets with
-# unclean, escaping remainders; no new asset, no second trust root), with the
-# canonical go1.24.13 toolchain via the same command above.
-c253d5fdcbb3032c71be35d7cbd6b597bc04a55090109f71b5beebf8f2b889ed  worktree-gate-darwin-amd64
-250f53552e82ef47db322b9e8c3baa9c05d460150f457d2834a808bb8ce2855b  worktree-gate-darwin-arm64
-2cf0d4824daf63e179a1586966ba7898a668a0db40e0cadfdfcf9eff34ff0be3  worktree-gate-linux-amd64
-423d2134d91e514da8d315cfe97e816e3db34988bd5123ab40446d6e6603762c  worktree-gate-linux-arm64
+# Regenerated for the advisory-hardening Lane C2 (hookact) fixes: the hook
+# actuator refuses a recipe_id/script whose rel path would escape the managed
+# ai-specs/recipes tree, and the refresh rollback restores prior bytes through
+# the same symlink-guarded writer as the primary path; no new asset, no second
+# trust root, with the canonical go1.24.13 toolchain via the same command
+# above.
+3b902c747dec36b8cbbc7c66db9bc84217f464c04e1de0b8f691980b204852ba  worktree-gate-darwin-amd64
+cfb4967f6720af4ff9697b281d38ba1ac4b46a9e28f41e3e7208c04eaafd429d  worktree-gate-darwin-arm64
+d54a5bade6774bb5ec3becb969c38392e9c2c9ca14da1d825b2e27c50c705c08  worktree-gate-linux-amd64
+50367941aca6007b0ecfd61f8c54ab59822bc16f4e2063eb9a4583bcee3fb1f2  worktree-gate-linux-arm64
