@@ -1426,16 +1426,16 @@ def _python_materialize_template(
     dest = resolve_template_dest(project_root, tpl.target)
     if not src.is_file():
         raise RuntimeError(f"template source not found: {src}")
-    # Mirrors the Go authority's destination guards (lane C3, 0bb9d61): a
-    # literal target may not clean itself outside the project root (git-
-    # resolved `.git/` destinations are trusted to git's own emission), and
-    # no ancestor below the root may be a symlink — MkdirAll and the open
-    # would otherwise create or write through the planted link. Both refuse
-    # fail-closed before any filesystem mutation, like the Go exit-2
-    # refusals the bridge never bypasses.
-    if not tpl.target.startswith(".git/") and not _template_path_contained(
-        project_root, dest
-    ):
+    # Mirrors the Go authority's destination guards (lane C3, 0bb9d61; Go
+    # containment corrected in PR #297): the fallback authority never
+    # git-resolves — only the Go authority does that, trusting its
+    # shared-hooks outside-root dests — so EVERY literal target is
+    # contained: no `.git/` prefix may bypass parent-directory escapes.
+    # No ancestor below the root may be a symlink either — MkdirAll and
+    # the open would otherwise create or write through the planted link.
+    # Both refuse fail-closed before any filesystem mutation, like the Go
+    # exit-2 refusals the bridge never bypasses.
+    if not _template_path_contained(project_root, dest):
         raise RuntimeError(_template_escaping_target_refusal(tpl.target))
     if _first_symlinked_ancestor(project_root, dest) is not None:
         raise RuntimeError(_template_ancestor_symlink_refusal(tpl.target))

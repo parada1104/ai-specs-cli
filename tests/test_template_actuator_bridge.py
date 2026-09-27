@@ -558,7 +558,8 @@ class TemplateActuatorFallbackTests(_TemplateBridgeTestCase):
         """Mirror of the Go templateEscapingTargetRefusal guard (lane C3,
         0bb9d61): a literal target that cleans outside the project root is
         refused by the Python fallback too — never written outside the
-        project. ``.git/`` targets are git-resolved and exempt, like Go."""
+        project. ``.git/`` targets get no exemption either: the fallback
+        contains every literal target (see the git parent-escape test)."""
         fixture = self.fixture("tpl-fb-escaping")
         self.pin_binary(self.tmp / "no-such-gate")
         outside = fixture["root"].parent / "outside"
@@ -577,6 +578,53 @@ class TemplateActuatorFallbackTests(_TemplateBridgeTestCase):
             "and run sync again",
         )
         self.assertFalse(outside.exists(), "nothing may be written outside the root")
+
+    def test_fallback_refuses_git_parent_directory_escape(self):
+        """Parity with the corrected Go containment semantics (PR #297): a
+        ``.git/`` prefix must not exempt a target from containment —
+        ``git rev-parse`` honors parent-directory components, and the
+        fallback authority never git-resolves anyway, so
+        ``.git/../../escape.sh`` must be refused, never written outside
+        the project root."""
+        fixture = self.fixture("tpl-fb-git-escape")
+        # root/.git/../.. cleans to the shared tmp root: the escape lands
+        # there if the old string-prefix exemption ever runs.
+        outside = self.tmp / "escape.sh"
+        with self.assertRaises(RuntimeError) as ctx:
+            self.run_materialize(
+                self.mod.materialize_template,
+                fixture["recipe_dir"],
+                self.tpl(target=".git/../../escape.sh"),
+                fixture["root"],
+                MERGED_CFG, recipe_id="worktree-flow",
+            )
+        self.assertEqual(
+            str(ctx.exception),
+            "template target .git/../../escape.sh escapes the project "
+            "root; refusing to write outside the project. Fix the recipe "
+            "target and run sync again",
+        )
+        self.assertFalse(outside.exists(), "nothing may be written outside the root")
+        self.assertFalse((fixture["root"] / ".git").exists(), "no .git tree may be created")
+
+    def test_fallback_materializes_git_hook_target_inside_root(self):
+        """A legitimate ``.git/hooks/...`` fallback target stays allowed:
+        it resolves inside the project root and materializes like any
+        other contained target."""
+        fixture = self.fixture("tpl-fb-git-hook")
+        out, err = self.run_materialize(
+            self.mod.materialize_template,
+            fixture["recipe_dir"],
+            self.tpl(target=".git/hooks/example.sh"),
+            fixture["root"],
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertEqual(err.count(self.mod.GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK), 1, err)
+        dest = fixture["root"] / ".git" / "hooks" / "example.sh"
+        self.assertEqual(dest.read_bytes(), b"#!/bin/sh\necho hi\n")
+        self.assertIn("    ✓ template .git/hooks/example.sh", out)
+        lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
+        self.assertIn(".git/hooks/example.sh", lock["managed"])
 
     def test_fallback_refuses_symlinked_ancestor(self):
         """Mirror of the Go templateAncestorSymlinkRefusal guard (lane C3,
