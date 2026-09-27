@@ -136,7 +136,7 @@
 # key and writes partial/missing snapshots atomically via temp+Sync+rename; no
 # new asset, no second trust root), with the canonical go1.24.13 toolchain via
 # the same command above.
-90fcee0e5a6b4a414cc206a42e1572f521cafe21e966ca6a2c06d723b89aaaf3  worktree-gate-darwin-amd64
-f2dc32564dd5f665351f53460f8b07b11aab904ef0f86d6f7b8fed1776cbac37  worktree-gate-darwin-arm64
-82f9e538959f2af4ddd61ac75706f5f525d730b3b4161ec4044a976e96d5a6cb  worktree-gate-linux-amd64
-3e7ab92ea12bdbf46d491b4f85bc5afedccd55c7b213bf64f6e12ff30c57fdd6  worktree-gate-linux-arm64
+4aa86f535638ac696aba9e74dcb8ee2e4ceb8d40de8b0069c2644b42350d34be  worktree-gate-darwin-amd64
+4015239fe89e5a04c79557681c2121899336943ce9e943c74329a9a0bd0f7219  worktree-gate-darwin-arm64
+963a9dcfab2fe92060a8bf4afcde6d30ce41c456ef89cb8e27537887e49a4969  worktree-gate-linux-amd64
+e2495643d804f381e14d8a2e3f0b9f5dcbd41d212cd64477da7e7d47a0ce26ca  worktree-gate-linux-arm64
