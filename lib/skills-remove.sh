@@ -52,6 +52,24 @@ fi
 TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"
 TOML_PATH="$TARGET_PATH/ai-specs/ai-specs.toml"
 
+# Refuse ids that could escape the managed ai-specs/.deps tree (C2-style
+# guard, mirroring hookRelPathEscapes in the gate): dep ids are kebab-case
+# slugs, so refusing empty/dot/separator/control-char ids never rejects a
+# real dep. A hand-edited manifest can carry a traversal id; removal must
+# never turn it into an rm -rf outside .deps/.
+invalid_dep_id() {
+    local sanitized
+    sanitized="$(printf '%s' "$1" | LC_ALL=C tr -c ' -~' '?')"
+    echo "ERROR: refusing invalid dep id: '$sanitized'" >&2
+    exit 2
+}
+case "$DEP_ID" in
+    ""|"."|".."|*/*|*\\*) invalid_dep_id "$DEP_ID" ;;
+esac
+if printf '%s' "$DEP_ID" | LC_ALL=C grep -q '[^ -~]'; then
+    invalid_dep_id "$DEP_ID"
+fi
+
 if [[ ! -f "$TOML_PATH" ]]; then
     echo "ERROR: $TOML_PATH not found." >&2
     exit 1

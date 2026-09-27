@@ -277,6 +277,64 @@ class SkillsRemoveCliTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("ai-specs/.deps", proc.stdout)
 
+    # ── Review fix: dep-id traversal guard (review-5305f4e593fa69dd) ──
+
+    def _project_with_raw_manifest(self, content: str) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        project = Path(tmp.name)
+        ai_specs = project / "ai-specs"
+        ai_specs.mkdir()
+        (ai_specs / "ai-specs.toml").write_text(content, encoding="utf-8")
+        return project
+
+    def test_remove_refuses_traversal_id_and_preserves_outside_tree(self):
+        """A dep id with '..' segments must be refused before any deletion;
+        nothing outside ai-specs/.deps/ may be removed (data-loss guard)."""
+        manifest = (
+            '[project]\nname = "test"\n'
+            "\n[[deps]]\n"
+            'id = "../../pwned"\n'
+            'source = "https://github.com/test/repo.git"\n'
+            'scope = ["root"]\n'
+            "\n"
+            "[[deps]]\n"
+            'id = "real-skill"\n'
+            'source = "https://github.com/test/real.git"\n'
+            'scope = ["root"]\n'
+        )
+        project = self._project_with_raw_manifest(manifest)
+        marker = project / "pwned"
+        marker.mkdir()
+        (marker / "keep-me.txt").write_text("data", encoding="utf-8")
+
+        proc = self._run("../../pwned", str(project))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("invalid dep id", proc.stderr)
+        self.assertTrue(marker.is_dir(), "rm -rf escaped ai-specs/.deps via '..' segments")
+        self.assertTrue((marker / "keep-me.txt").exists())
+        # Manifest untouched by the refused run.
+        self.assertIn("../../pwned", (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
+
+    def test_remove_refuses_separator_and_dot_ids(self):
+        manifest = (
+            '[project]\nname = "test"\n'
+            "\n[[deps]]\n"
+            'id = "real-skill"\n'
+            'source = "https://github.com/test/real.git"\n'
+            'scope = ["root"]\n'
+        )
+        for bad_id in ("..", ".", "sub/dir", "/etc", "back\\slash"):
+            project = self._project_with_raw_manifest(manifest)
+            proc = self._run(bad_id, str(project))
+            self.assertNotEqual(proc.returncode, 0, f"id {bad_id!r} must be refused")
+            self.assertIn("invalid dep id", proc.stderr)
+            # Manifest untouched by the refused run.
+            self.assertIn(
+                "real-skill",
+                (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

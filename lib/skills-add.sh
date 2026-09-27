@@ -110,6 +110,25 @@ if [[ -z "$ATTRIBUTION" ]]; then
     ATTRIBUTION="${no_host%%/*}"
 fi
 
+# Refuse ids that could escape the managed ai-specs/.deps tree (C2-style
+# guard, mirroring hookRelPathEscapes in the gate): dep ids are kebab-case
+# slugs, so refusing empty/dot/separator/control-char ids never rejects a
+# real dep. The kebab-case check below already rejects most of these; this
+# guard makes the refusal explicit and covers non-ASCII/control chars it
+# would miss.
+invalid_dep_id() {
+    local sanitized
+    sanitized="$(printf '%s' "$1" | LC_ALL=C tr -c ' -~' '?')"
+    echo "ERROR: refusing invalid dep id: '$sanitized'" >&2
+    exit 2
+}
+case "$ID" in
+    ""|"."|".."|*/*|*\\*) invalid_dep_id "$ID" ;;
+esac
+if printf '%s' "$ID" | LC_ALL=C grep -q '[^ -~]'; then
+    invalid_dep_id "$ID"
+fi
+
 # Validate ID
 if ! [[ "$ID" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
     echo "ERROR: derived/provided id is not kebab-case: '$ID' — pass --id explicitly." >&2

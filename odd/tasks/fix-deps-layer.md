@@ -91,3 +91,44 @@ hashes).
 - D18 — `test_remove_prunes_inproject_deps_dir` FAIL: `AssertionError: True is not false` (`.deps/my-skill` survives removal).
 - D18 — `test_remove_prunes_dep_lock_section` FAIL: `AssertionError: 'my-skill' unexpectedly found in {'my-skill': {'skills': {'my-skill': {'SKILL.md': 'hash-my'}}}, 'other-skill': {'skills': {'other-skill': {'SKILL.md': 'hash-other'}}}}`.
 - D18 — `test_remove_help_names_deps_path` FAIL: `AssertionError: 'ai-specs/.deps' not found in ...` (help names the stale `ai-specs/skills/<id>/` path).
+
+## Review-fix evidence: dep-id traversal guard
+
+Review lineage review-5305f4e593fa69dd: `lib/skills-remove.sh` prunes with
+`rm -rf "$TARGET_PATH/ai-specs/.deps/$DEP_ID"` where DEP_ID is unvalidated; a
+hand-edited manifest carrying `id = "../../pwned"` deletes outside `.deps/`.
+Fix mirrors the C2 `hookRelPathEscapes` guard (refuse ""/"."/".."/separators /
+control chars; dep ids are slugs, refusal never rejects a real one).
+
+### RED (pre-implementation), suite: `python3 -m unittest tests.test_skills_remove tests.test_skills_add -v` → `Ran 31 tests ... FAILED (failures=3)`
+
+Genuinely RED assertions:
+
+- `test_remove_refuses_traversal_id_and_preserves_outside_tree` — `AssertionError: 0 == 0` at `assertNotEqual(proc.returncode, 0)`: removal of a traversal id exits 0 and mutates the manifest.
+- `test_remove_refuses_separator_and_dot_ids` — `AssertionError: 'invalid dep id' not found in "  ✗ dep '..' not found in .../ai-specs/ai-specs.toml\n"`: no refusal message for `..`/`.`/separator ids.
+- `test_add_refuses_traversal_and_separator_ids` — `AssertionError: 'invalid dep id' not found in "ERROR: derived/provided id is not kebab-case: '../pwned' — pass --id explicitly.\n"`: refusal happens via the kebab regex, but the message is the wrong one (the GENUINE RED named in the finding).
+
+Already-green pins (exercises the current tree, stay green post-fix):
+
+- skills-add exit/no-write assertions: the kebab regex `^[a-z0-9][a-z0-9_-]*$` already rejects dots/slashes, so `assertNotEqual(returncode, 0)` and the no-`[[deps]]`-write assertion passed pre-fix for `../pwned`, `sub/dir`, `/abs`, `..`, `.`.
+
+Direct data-loss observation (manual reproduction of the traversal test, with
+`ai-specs/.deps/` present so the `..` segments resolve):
+
+- `bash lib/skills-remove.sh "../../pwned" .` → `EXIT:0`, prints
+  `✓ pruned ai-specs/.deps/../../pwned/`, and the OUTSIDE marker
+  `proj/pwned/keep-me.txt` is deleted (`ls: pwned: No such file or directory`);
+  the manifest is also rewritten (grep count 0). Without a pre-existing
+  `.deps/` the kernel's component-wise `..` resolution fails (ENOENT) and the
+  marker survives — the unit test's returncode/manifest assertions are the
+  deterministic RED either way.
+
+### GREEN (post-implementation)
+
+- `python3 -m unittest tests.test_skills_remove tests.test_skills_add -v` →
+  `Ran 31 tests ... OK` (3 fixed tests + 28 pins green).
+- Manual repro above now prints `ERROR: refusing invalid dep id: '../../pwned'`,
+  `EXIT:2`, before any manifest write or deletion.
+- `./tests/run.sh > /tmp/deps-guard-runsh.log 2>&1; echo EXIT:$?` → **EXIT:0** —
+  `Ran 2474 tests in 881.968s` / `OK (skipped=2)`, zero FAIL/ERROR lines.
+- `git status --short`: only the five allowed surfaces, all unstaged.

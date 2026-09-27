@@ -184,6 +184,25 @@ class SkillsAddCliTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("kebab-case", proc.stderr)
 
+    def test_add_refuses_traversal_and_separator_ids(self):
+        """Registration must refuse ids that could escape the managed .deps
+        tree (C2-style guard): '..', separators, absolute paths — with a
+        clear refusal message and NO manifest write."""
+        for bad_id in ("../pwned", "sub/dir", "/abs", "..", "."):
+            with tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp)
+                ai = project / "ai-specs"
+                ai.mkdir()
+                (ai / "ai-specs.toml").write_text('[project]\nname = "test"\n', encoding="utf-8")
+                proc = self._run(
+                    "https://github.com/test/repo.git", str(project),
+                    "--id", bad_id,
+                )
+                self.assertNotEqual(proc.returncode, 0, f"id {bad_id!r} must be refused")
+                self.assertIn("invalid dep id", proc.stderr)
+                # No manifest write: the [[deps]] block must be absent.
+                self.assertNotIn("[[deps]]", (ai / "ai-specs.toml").read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
