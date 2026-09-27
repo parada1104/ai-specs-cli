@@ -122,9 +122,9 @@ def cli_version(cli_home: Path | None = None) -> str:
     home = cli_home if cli_home is not None else _ai_specs_home()
     version_path = home / "VERSION"
     if not version_path.is_file():
-        return "dev"
+        return "unknown"
     text = version_path.read_text(encoding="utf-8").strip()
-    return text or "dev"
+    return text or "unknown"
 
 
 def cache_bin_path(

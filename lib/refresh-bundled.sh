@@ -4,12 +4,13 @@
 # Usage:
 #   ai-specs refresh-bundled [path] [--init]
 #
-# Behavior: a pure cache-repair verb. Every CLI-bundled skill and command is
+# Behavior: a cache-repair verb. Every CLI-bundled skill and command is
 # flattened into {cache}/.bundled/skills/ and {cache}/.bundled/commands/
-# respectively — never written into the project surface, never a `.new`
-# sidecar. A pre-relocation project's committed bundled-skill/command copies
-# (byte-identical to the CLI source, or matching a legacy lock hash) are
-# removed as leftovers; genuinely customized or hand-authored files are kept.
+# respectively — never written outside the project's ai-specs/ directory
+# and the CLI cache, never a `.new` sidecar. A pre-relocation project's
+# committed bundled-skill/command copies (byte-identical to the CLI source,
+# or matching a legacy lock hash) are removed as leftovers; genuinely
+# customized or hand-authored files are kept.
 #
 # The lock (<path>/ai-specs/.ai-specs.lock) is stamped with [meta] provenance
 # only — no per-file content hashes are tracked.
@@ -24,11 +25,12 @@ usage() {
 Usage: ai-specs refresh-bundled [path] [--init]
 
 Flatten CLI-bundled skills and commands into the cache
-({cache}/.bundled/skills/, {cache}/.bundled/commands/). Pure cache repair:
-zero in-project writes, zero .new sidecars. Removes pre-relocation leftover
-copies from ai-specs/skills/ and ai-specs/commands/ when byte-identical to
-the bundled source (or a legacy lock hash); customized or hand-authored
-files are kept.
+({cache}/.bundled/skills/, {cache}/.bundled/commands/). No .new sidecars.
+Writes only under the project's ai-specs/ directory and the CLI cache:
+removes pre-relocation leftover copies from ai-specs/skills/ and
+ai-specs/commands/ when byte-identical to the bundled source (or a legacy
+lock hash); customized or hand-authored files are kept; the project lock
+(<path>/ai-specs/.ai-specs.lock) is restamped with [meta] provenance.
 
 Arguments:
   path      Project root (default: current directory)

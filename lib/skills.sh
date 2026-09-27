@@ -28,7 +28,7 @@ subcmd="${1:-}"
 shift || true
 
 case "$subcmd" in
-    add) bash "$LIB_DIR/skills-add.sh" "$@" ;;
+    add) AI_SPECS_INVOKED_AS="ai-specs skills add" bash "$LIB_DIR/skills-add.sh" "$@" ;;
     list) bash "$LIB_DIR/skills-list.sh" "$@" ;;
     remove) bash "$LIB_DIR/skills-remove.sh" "$@" ;;
     --help|-h|help) usage; exit 0 ;;

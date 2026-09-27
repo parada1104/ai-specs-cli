@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# doctor.sh — read-only diagnostic for ai-specs projects.
+# doctor.sh — project health diagnostic for ai-specs projects.
 #
 # Diagnostics include template-override ownership and generated gate-hook
 # provenance (baseline match → quiet; byte mismatch or missing provenance →
-# WARN with refresh guidance). The command is read-only and never modifies files.
+# WARN with refresh guidance). The command never modifies project files, but
+# it is not fully read-only: it writes Python bytecode caches into the CLI
+# home and executes recipe dep version checks plus the gate binary selftest.
 #
 # Usage:
 # ai-specs doctor [path] [--help]
@@ -15,7 +17,8 @@ usage() {
     cat <<'EOF'
 Usage: ai-specs doctor [path] [--help]
 Diagnose whether an ai-specs project is correctly initialized and in a
-consistent state. This command is read-only and never modifies any files.
+consistent state. Never modifies project files; runs external version
+checks (recipe deps, gate binary selftest).
 Arguments:
   path    Target project root (default: current directory)
 Flags:

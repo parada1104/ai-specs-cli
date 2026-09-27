@@ -35,7 +35,7 @@ Flags:
 Exit codes:
   0   Success or dry-run completed.
   1   Broken or missing installation.
-  2   Dev / non-standard checkout.
+  2   Dev / non-standard checkout, or invalid usage (unknown argument).
   3   Pre-flight check failed (dirty tree, non-fast-forward, etc.).
   4   Git fetch or merge failed.
   5   Post-upgrade verification failed (symlink broken).
@@ -52,13 +52,15 @@ for arg in "$@"; do
         --force) FORCE=true ;;
         -v|--verbose) VERBOSE=1 ;;
         -h|--help) usage; exit 0 ;;
-        *) echo "Unknown argument: $arg" >&2; usage >&2; exit 1 ;;
+        *) echo "Unknown argument: $arg" >&2; usage >&2; exit 2 ;;
     esac
 done
 
 # --- helpers -----------------------------------------------------------------
 abort() {
-    echo "ai-specs upgrade: $1" >&2
+    # %b renders escape sequences (e.g. \n in the dirty-tree file listing) —
+    # messages without escapes are unchanged.
+    printf '%b\n' "ai-specs upgrade: $1" >&2
     exit "${2:-1}"
 }
 
