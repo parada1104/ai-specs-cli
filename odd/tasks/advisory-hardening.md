@@ -166,38 +166,44 @@ Worker: Lane C3 (template) · branch `feat/adv-template` · base `development` `
 
 ## Lane C4 evidence
 
-(appended by Lane C4 worker)
+Branch `feat/adv-toml` (base development `888a425`). Method: recorded locations re-located by symbol against the review candidate trees (`git show 6c4c73f:...` WU1a, `3888306:...` WU1b, `ebc87ea:...` WU2 — all reachable in this clone) and every finding re-verified on the current tree before disposition.
+
+### Disposition table
+
+| Advisory | Recorded location | Disposition | Evidence / reason |
+|---|---|---|---|
+| R2-dead-return | recipeconfigwrite.go:743 (applyDottedUpdates head, candidate 6c4c73f) | **fixed** | `applyDottedUpdates` returned `(string, error)` whose string was always `""` and discarded by its single caller; signature is now `error`. Commit 51c297a. |
+| R2-enabled-default | :981-987 (new-recipe blockLines, candidate 6c4c73f) | **not-a-defect** | Byte-exact reference parity verified live: Go writer vs `_update_recipe_config_python` with `{"enabled": false}` on a fresh manifest produce identical bytes (`[recipes.x] enabled = true` + `[recipes.x.config] enabled = false` — distinct tables, valid TOML, no duplicate key). The writer's contract is config-value writes; `enabled = true` on block creation is deliberate and pinned by TestRecipeConfigWriteBlockCreation. |
+| R2-ponytail-tag | :367-369 (pyNumEqual comment, candidate 6c4c73f) | **fixed** | The `ponytail:` deferral tag was misplaced (the corner is recorded as an accepted corner in odd/tasks/go-toml-writer.md, not an open deferral) and the "unreachable" claim was an overclaim; comment reworded to the accepted-corner wording. Commit 51c297a. |
+| R2-rewrite-dup | :1035-1044 (plain-key rewrite block, candidate 6c4c73f) | **fixed** | The three in-place rewrite sites (flat-key loop, setInlinePaths, setHeaderPath ×2) duplicated the `indent + tomlKey(k) + " = " + encoded + comment + newline` composition; extracted `composeKeyLine`, all three call it. Suite + tomllib parity byte-identical. Commit 51c297a. |
+| R2-root-shadow | :968-973 (candidate 6c4c73f) | **fixed** | Same-function "root" name collision between the filesystem manifest dir (`state.root`, local `root`) and the dotted-path TOML root key (`root` loop vars / setInlinePaths param, which also referenced `state.root`): renamed to `state.manifestDir` / `rootKey`. Commit 51c297a. |
+| R3-recipeRegionEnd-unclosed-prefix | :698 (candidate 6c4c73f) | **not-a-defect** | Byte-exact reference parity: Python `_recipe_region_end` uses the same unclosed prefix `f"[recipes.{_toml_key(recipe_id)}"` (lib/_internal/recipe-config-write.py). All lookups (config header, subtable headers, key lines) are exact-match, so the absorbed neighbor region is never written to; live parity experiment on a `[recipes.reconcile2]` neighbor produced byte-identical Go/Python output. Already documented as reference behavior in the function comment. |
+| R3-missing-test-coverage | file-wide (WU1a) | **fixed (bounded)** | Added pure-unit tests for the branches the end-to-end suite never reaches: TestPyNumEqualNumericEdges (int64 overflow/bigIntEqual, +Inf, leading zeros, signed zero, documented accepted corner), TestMatchKeyLine (bare/quoted alternation, tab indent, negatives), TestNestedGetSet (absent segments, non-table intermediate replacement, empty path), TestSubtableHeader (quoting, pre-encoded recipe-key contract), TestPySplitLinesExoticSeparators (\v \f \x1c \x1d \x1e \u0085 U+2028 U+2029), valueIsMultiline unbalanced-bracket guards. Commit 11555b0. **Remaining uncovered** (capped): atomicWriteFile error branches (temp create/write/chmod/rename failures), runRecipeConfigPython timeout/truncation/classifyManifestParserError paths, reader payload error propagation (python-side reader failures), decodeOrdered error paths in the three readers, CRLF-only manifests through the full pipeline. |
+| R3-build-deps | recipeconfigwrite_test.go:42 | **fixed** | Same helper as R3-envelope-quote: the stdin envelope was hand-built with `fmt.Sprintf`; it is now marshaled with encoding/json matching the production bridge's `json.dumps`. Commit 11555b0. |
+| R3-envelope-quote | recipeconfigwrite_test.go:40-41 | **fixed (RED→GREEN)** | Go `%q` emits `\xNN` escapes that are invalid JSON for control characters (verified: `%q` of `"rec\x01ipe"` → `"rec\x01ipe"`). RED: new TestRecipeConfigWriteControlCharRecipeID failed — `exit = 2, stderr "...invalid character 'x' in string escape code"`. GREEN: envelope built with `json.Marshal` (json.RawMessage values); the control-char recipe id writes `[recipes."rec\u0001ipe"]`. Commit 11555b0. |
+| R3-ff-dup | recipeconfigwrite_test.go:101-107 | **fixed** | Removed the duplicated `{"ff\nx"}` case: newline escaping is already pinned by the `"nl\nx"` case and form feed by `"ff\x0cx"`; the "ff" name duplicated the real form-feed case. Pure deletion; suite green. Commit 11555b0. |
+| R3-doc-checkbox | odd/tasks/go-toml-writer.md:14 | **stale** | At the WU1b candidate (3888306) line 14 was `- [ ] WU2 … awaiting parent review/commit`; the GO-07 close-out flipped WU2 and full-validation to `[x] … Status: done` (current lines 14-15). Nothing left to fix. |
+| R3-2 | tests/test_recipe_config_write_bridge.py:241-253 (candidate ebc87ea) | **stale** | The recorded region is the fallback test loop whose patchers were never entered — the exact class the ee309a9 WU2 correction fixed (`git diff ebc87ea ee309a9`): ExitStack enters every patcher and INJECTED_REASON_MARKERS pins each injected fault's reason. Current tree already contains the corrected version. |
+| R3-3 | lib/_internal/recipe-config-write.py:440-448 | **fixed (RED→GREEN)** | The not-JSON / wrong-envelope fallback warnings carried no diagnostic detail. RED: new OUTPUT_DETAIL_MARKERS assertions — `AssertionError: '"applied"' not found in '  ! GO_RECIPE_CONFIG_BRIDGE_FALLBACK: worktree-gate output did not match the write-recipe-config envelope; …'`. GREEN: both reasons now quote the offending stdout truncated to 200 bytes. Commit 4d9e493. |
+| gate-hang-latency timeout | GO-07 out-of-scope note | **verified, no gap (test added)** | The 60s `GO_RECIPE_CONFIG_BRIDGE_TIMEOUT_SECONDS` wraps `subprocess.run` and covers a hung gate end-to-end (TimeoutExpired → one fallback warning → Python writer). New test_real_gate_hang_hits_the_bridge_timeout_and_falls_back proves it with a REAL hanging process (`exec sleep 30` stub, timeout patched to 1s): killed, `"timed out"` in the warning, Python writer applies. No uncovered hang class found: on timeout `subprocess.run` kills the child and waits only for the child (POSIX), so a gate's own tomllib grandchild cannot hang the bridge; the Go side independently bounds the seam (manifestParseTimeout + WaitDelay + capped pipes). Commit 4d9e493. |
+
+### Commands and observed results
+
+- RED (envelope-quote): `go test -run TestRecipeConfigWriteControlCharRecipeID .` → FAIL `exit = 2, stderr "worktree-gate: --write-recipe-config: invalid input JSON: invalid character 'x' in string escape code"`.
+- RED (R3-3): `python3 -m unittest tests.test_recipe_config_write_bridge` → `FAILED (failures=2)` (non-json / wrong-envelope detail markers absent).
+- GREEN: `gofmt -l .` (gate dir) empty; `go vet .` clean; `go test -count=1 ./...` → `ok ai-specs.dev/worktree-gate 48.4s`, `ok .../ledger 2.8s`.
+- Assets: `scripts/build-gate.sh` with go1.24.13 (0 toolchain warnings); SHA256SUMS regenerated per the documented reproduction command (`scripts/build-gate.sh`; `cd dist && shasum -a 256 worktree-gate-darwin-amd64 …`); `scripts/verify-gate-sums.sh <generated> <committed>` → `ok — 4 digest entries match the committed trust root`.
+- Focused Python suites, with binary: `python3 -m unittest tests.test_recipe_config_write tests.test_recipe_config_write_bridge` → OK (12 tests incl. the real-hang timeout test); without binary (`env -u WORKTREE_GATE_BIN`) → OK. Regression `tests.test_recipe_configure tests.test_config_wizard tests.test_reconcile_stamps_bridge` → OK.
+- Parity spot-check (live, both experiments above): Go `--write-recipe-config` vs `_update_recipe_config_python` byte-identical for the enabled-default block creation and the unclosed-prefix neighbor region.
+
+### Commits (feat/adv-toml, no push)
+
+- `51c297a` refactor(worktree-gate): WU1a code advisories (dead-return, root-shadow, rewrite-dup, ponytail-tag) + SHA256SUMS regen.
+- `11555b0` test(worktree-gate): WU1b envelope/ff-dup + WU1a bounded coverage.
+- `4d9e493` fix(recipes): WU2 R3-3 warning detail + real gate-hang timeout test.
+
+No existing assertion weakened; no file outside the C4 surfaces touched.
 
 ## Lane C5 evidence
 
-Worktree `.worktrees/adv-lock`, branch `feat/adv-lock`, base `development` `888a425`. Surfaces touched: `tests/test_lock.py` only (no defect in `lib/_internal/lock.py` survived verification; see S1–S2).
-
-### WARNING guard-branch test coverage (tests/test_lock.py) — **fixed** (`acc60fd`)
-
-**Identification.** Re-located on the current tree by symbol. The lock writer's guard surface is the control-char refusal batch (`_has_control_char` / `_refuse_control_chars`, `lib/_internal/lock.py`, mirroring `lockwrite.go hasControlChar` + `firstControlCharLocator` + the `lock_path` check). The pre-existing `FallbackControlCharRefusalTests` pinned only 3 of the guard's locator branches (`agents hash`, `managed path`, `meta.synced_at`) plus a clean write. Uncovered guard branches: `lock_path`, `meta.cli_version`, every `managed.<key>` value (sha256/recipe/source/kind/policy), `agents harness`, `agents filename`, the user-facing `write_lock` fallback route, and the emitter skip guards the refusal walk must mirror.
-
-**The "results-count guard" half is not in this surface.** `grep -n "count\|Count" lib/_internal/lock.py` → no match. The GO-08 results-count-mismatch guard lives in the copy bridge: `lib/_internal/recipe-materialize.py:894` (`len(stdout["results"]) != len(items)` inside `go_apply_copy`) and is already covered on that surface by `tests/test_copy_apply_bridge.py` (ResultsCountMismatchTests / `test_empty_results_for_one_item_is_an_envelope_mismatch`, :609-626). Disposition for C5: stale (region belongs to Lane C1's files and is already pinned there); reported to the parent for confirmation — no C1 file was edited.
-
-**RED (mutation checks — the guard already exists, so the tests are proven to pin it):**
-
-1. `_has_control_char` body neutered (`return False  # MUTATION`):
-   `python3 -m unittest tests.test_lock` → `Ran 20 tests ... FAILED (failures=13)` — all new refusal-locator tests catch the neutered guard.
-2. managed sha256 skip guard dropped from `_write_lock_python` (`not entry.get("sha256")` removed):
-   → `Ran 20 tests ... FAILED (failures=1)` — `test_skip_branches_write_without_refusal` catches it.
-
-**GREEN (mutation reverted, tree verified clean vs `888a425` apart from `tests/test_lock.py`):**
-
-- `python3 -m unittest tests.test_lock` → `Ran 20 tests ... OK`
-- `python3 -m unittest tests.test_lock tests.test_lock_bridge` (no binary) → `Ran 23 tests ... OK (skipped=1)` (loud skip: no Go authority)
-- `WORKTREE_GATE_BIN=<throwaway binary built from this worktree's unchanged Go sources with go1.24.13 into /tmp only; no repo artifacts, no SHA256SUMS touched> python3 -m unittest tests.test_lock tests.test_lock_bridge` → `Ran 27 tests ... OK`
-- Note: the main checkout's `dist/worktree-gate-current` is stale (v0.24.0, predates `--write-lock`: `flag provided but not defined`), so a local throwaway binary was used for the with-binary run only.
-
-New pinning tests (all assert the exact Go-parity locator wording and `nothing written on refusal`): `test_control_char_in_lock_path_is_refused`, `test_control_char_in_meta_cli_version_is_refused`, `test_control_char_in_managed_entry_value_is_refused` (subTest per key ×5), `test_control_char_in_agents_harness_is_refused`, `test_control_char_in_agents_filename_is_refused`, `test_write_lock_fallback_route_refuses_control_chars`, `test_skip_branches_write_without_refusal`, `test_non_dict_managed_entry_is_skipped_not_refused`, and `RemoveRecipeLockEntriesTests` (pins the boolean results guard of `remove_recipe_lock_entries`: True exactly when a recipe section existed and was removed).
-
-### Unrecorded candidate-6 SUGGESTIONs (re-inspection of the frozen classes around the refusal batch)
-
-- **S1 — refusal-wording dual authority (Python `_refuse_control_chars` vs Go writer).** Verified branch-by-branch against `lockwrite.go`: `lock_path`, `meta.<key>`, `managed path`, `managed.<key>` (sha256, recipe, source, kind, policy), `agents harness`, `agents filename`, `agents hash` — wording and boundary (0x20 / 0x7F) identical; Python checks `meta` values for exactly the two keys the envelope builder emits (`cli_version`, `synced_at`), so the Go meta-key walk has no reachable Python counterpart. **not-a-defect**: parity holds and is now pinned per branch by exact-message assertions. A cross-authority runtime parity test (Python vs live Go refusal strings) would belong in `tests/test_lock_bridge.py` — outside C5's surfaces; reported to the parent.
-- **S2 — check-then-act double walk** (`_refuse_control_chars` validates, then `_write_lock_python` re-walks to emit). **not-a-defect**: single-threaded call on an unchanged dict; the docstring states the contract ("Only the emitted surface is walked — the fallback writes exactly what this function inspects"); verified every `_toml_string` call-site input appears in the refusal walk's checks list, so there is no emit-without-inspect gap. Folding validation into emission would obscure the Go-parity boundary for no shrink in code.
-- **S3 — skip-branch / refusal interplay coverage.** **fixed** (`acc60fd`): the emitter skip guards (managed entry without sha256, non-dict entry, empty agents harness) are now pinned to be skipped — never refused, never emitted — and the fallback route through the public `write_lock` is pinned to refuse.
-
-**Suites run:** `python3 -m unittest tests.test_lock tests.test_lock_bridge`, with and without `WORKTREE_GATE_BIN` — all green (see above). `./tests/validate.sh` not run (parent-owned). No push, no PR.
+(appended by Lane C5 worker)

@@ -439,10 +439,13 @@ def go_update_recipe_config(manifest_path: Path, recipe_id: str, values: dict) -
         return False
     if not (isinstance(stdout, dict) and isinstance(stdout.get("applied"), bool)):
         if stdout is None:
-            _warn_config_write_bridge_fallback("worktree-gate output was not JSON")
+            _warn_config_write_bridge_fallback(
+                f"worktree-gate output was not JSON ({proc.stdout[:200]!r})"
+            )
         else:
             _warn_config_write_bridge_fallback(
-                "worktree-gate output did not match the write-recipe-config envelope"
+                "worktree-gate output did not match the write-recipe-config envelope "
+                f"({proc.stdout[:200]!r})"
             )
         return False
     return True
