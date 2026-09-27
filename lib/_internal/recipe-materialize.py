@@ -23,6 +23,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -1167,21 +1168,40 @@ def go_materialize_template(plan: dict[str, Any]) -> dict[str, Any] | None:
     return stdout
 
 
-def resolve_template_dest(project_root: Path, target: str) -> Path:
+def resolve_template_dest(project_root: Path, target: str) -> tuple[Path, bool]:
     """Resolve a governed template target to its real path.
 
     A ``.git/...`` target (a Git hook) is resolved through Git's own
-    ``rev-parse --git-path``, because in a linked worktree ``.git`` is a gitfile,
-    not a directory: the naive ``project_root/.git/hooks`` join raises
-    ``NotADirectoryError``. Git resolves hooks to the shared hooks directory, so
-    the hook lands where Git will actually run it. Anything else stays
-    project-relative, and a missing/unavailable Git falls back to the literal
-    project-relative path (fixtures outside a repository still materialize).
+    ``rev-parse --git-path``, because in a linked worktree ``.git`` is a
+    gitfile, not a directory: the naive ``project_root/.git/hooks`` join
+    raises ``NotADirectoryError``. Git resolves hooks to the shared hooks
+    directory, so the hook lands where Git will actually run it. The second
+    return reports an ACTUAL clean git resolution — the containment
+    exemption in ``_python_materialize_template`` is keyed on this flag,
+    never on the literal ``.git/`` string prefix: ``git rev-parse --git-path``
+    honors parent-directory components (an unclean remainder like
+    ``../../outside/evil`` exits 0 emitting an escaping path), and every
+    fallback lands on the literal join. The remainder must therefore be a
+    clean, non-escaping relative path (equal to its ``posixpath.normpath``
+    form, no leading ``..``, not absolute, not ``.``/empty) for git
+    resolution to even be attempted. Every fallback (non-``.git/`` target,
+    unclean remainder, missing git, nonzero exit, empty stdout) returns the
+    literal project-relative path with ``git_resolved=False``, keeping such
+    targets subject to the caller's containment check.
     """
     literal = project_root / target
     if not target.startswith(".git/"):
-        return literal
+        return literal, False
     remainder = target[len(".git/") :]
+    cleaned = posixpath.normpath(remainder)
+    if (
+        not remainder
+        or os.path.isabs(remainder)
+        or cleaned in (".", "..")
+        or cleaned.startswith("../")
+        or cleaned != remainder
+    ):
+        return literal, False
     try:
         proc = subprocess.run(
             ["git", "-C", str(project_root), "rev-parse", "--git-path", remainder],
@@ -1190,18 +1210,18 @@ def resolve_template_dest(project_root: Path, target: str) -> Path:
             check=False,
         )
     except OSError:
-        return literal
+        return literal, False
     if proc.returncode != 0:
-        return literal
+        return literal, False
     resolved = proc.stdout.strip()
     if not resolved:
-        return literal
+        return literal, False
     path = Path(resolved)
     if not path.is_absolute():
         # Git emits a repo-relative path for the main worktree; we invoked it
         # with `-C project_root`, so anchor there.
         path = project_root / path
-    return path
+    return path, True
 
 
 def _template_record_mismatch(
@@ -1295,7 +1315,7 @@ def materialize_template(
         if record is not None:
             mismatch = _template_record_mismatch(record, target, tpl.source, recipe_id, policy)
             if mismatch is None:
-                dest = resolve_template_dest(project_root, target)
+                dest, _git_resolved = resolve_template_dest(project_root, target)
                 if not dest.is_file() or _load_util().sha256_bytes(
                     dest.read_bytes()
                 ) != record["sha256"]:
@@ -1423,19 +1443,23 @@ def _python_materialize_template(
     """
     util = _load_util()
     src = recipe_dir / tpl.source
-    dest = resolve_template_dest(project_root, tpl.target)
+    dest, git_resolved = resolve_template_dest(project_root, tpl.target)
     if not src.is_file():
         raise RuntimeError(f"template source not found: {src}")
-    # Mirrors the Go authority's destination guards (lane C3, 0bb9d61; Go
-    # containment corrected in PR #297): the fallback authority never
-    # git-resolves — only the Go authority does that, trusting its
-    # shared-hooks outside-root dests — so EVERY literal target is
-    # contained: no `.git/` prefix may bypass parent-directory escapes.
-    # No ancestor below the root may be a symlink either — MkdirAll and
-    # the open would otherwise create or write through the planted link.
-    # Both refuse fail-closed before any filesystem mutation, like the Go
-    # exit-2 refusals the bridge never bypasses.
-    if not _template_path_contained(project_root, dest):
+    # Mirrors the Go authority's corrected destination guards (lane C3,
+    # 0bb9d61; Go containment keyed on git resolution in 38b3b2d): the
+    # exemption from containment keys on an ACTUAL clean git resolution —
+    # a git-resolved dest outside the root is trusted to git's own clean
+    # emission (the linked-worktree shared hooks dir lives in the main
+    # repository by design) — never on the literal ``.git/`` prefix. A
+    # ``.git/``-prefixed target with an unclean remainder never resolves
+    # through git and falls back to the literal join, which is contained
+    # like any other literal target. No ancestor below the root may be a
+    # symlink either — MkdirAll and the open would otherwise create or
+    # write through the planted link. Both refuse fail-closed before any
+    # filesystem mutation, like the Go exit-2 refusals the bridge never
+    # bypasses.
+    if not git_resolved and not _template_path_contained(project_root, dest):
         raise RuntimeError(_template_escaping_target_refusal(tpl.target))
     if _first_symlinked_ancestor(project_root, dest) is not None:
         raise RuntimeError(_template_ancestor_symlink_refusal(tpl.target))

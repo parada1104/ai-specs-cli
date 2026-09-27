@@ -34,6 +34,8 @@ import importlib.util
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -625,6 +627,67 @@ class TemplateActuatorFallbackTests(_TemplateBridgeTestCase):
         self.assertIn("    ✓ template .git/hooks/example.sh", out)
         lock = self.mod.load_lock(fixture["root"] / "ai-specs" / ".ai-specs.lock")
         self.assertIn(".git/hooks/example.sh", lock["managed"])
+
+    def test_fallback_materializes_linked_worktree_shared_hook(self):
+        """Parity with the Go actuator's corrected semantics (38b3b2d): the
+        fallback git-resolves a clean ``.git/`` remainder exactly like the
+        Go authority, so a target that resolves through git OUTSIDE the
+        worktree root — the linked-worktree shared hooks directory of the
+        main checkout — materializes at the resolved path instead of being
+        refused by the containment guard. Only an UNCLEAN remainder (parent
+        directories, redundant separators) may never claim the git
+        resolution: it falls back to the literal join and stays contained
+        (see the git parent-escape test)."""
+        if shutil.which("git") is None:
+            self.skipTest("git not available for linked-worktree fixtures")
+        base = self.tmp / "tpl-fb-git-shared"
+        main = base / "main"
+        linked = base / "wt"
+        main.mkdir(parents=True)
+
+        def run_git(*args: str) -> None:
+            subprocess.run(
+                ["git", "-C", str(main), *args],
+                check=True,
+                capture_output=True,
+            )
+
+        run_git("init", "-q")
+        run_git("config", "user.email", "t@example.com")
+        run_git("config", "user.name", "t")
+        (main / "f.txt").write_text("x\n")
+        run_git("add", ".")
+        run_git("commit", "-qm", "init")
+        subprocess.run(
+            ["git", "-C", str(main), "worktree", "add", "-q", "-b", "feature", str(linked)],
+            check=True,
+            capture_output=True,
+        )
+        # The fixture template lives next to the linked worktree; the project
+        # root under test is the LINKED worktree, whose `.git` is a gitfile
+        # resolving to the shared hooks dir of the main checkout — outside
+        # the worktree root by design.
+        recipe_dir = base / "catalog" / "worktree-flow"
+        (recipe_dir / "templates").mkdir(parents=True)
+        source = recipe_dir / "templates" / "post-merge.sh"
+        source.write_text("#!/bin/sh\necho hi\n")
+        os.chmod(source, 0o755)
+        self.pin_binary(self.tmp / "no-such-gate")
+        out, err = self.run_materialize(
+            self.mod.materialize_template,
+            recipe_dir,
+            self.tpl(target=".git/hooks/post-merge"),
+            linked,
+            MERGED_CFG, recipe_id="worktree-flow",
+        )
+        self.assertEqual(err.count(self.mod.GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK), 1, err)
+        self.assertIn("    ✓ template .git/hooks/post-merge", out)
+        resolved = main / ".git" / "hooks" / "post-merge"
+        self.assertEqual(resolved.read_bytes(), b"#!/bin/sh\necho hi\n")
+        self.assertFalse((linked / ".git" / "hooks").exists(),
+                         "nothing may be written inside the worktree's gitfile path")
+        lock = self.mod.load_lock(linked / "ai-specs" / ".ai-specs.lock")
+        self.assertIn(".git/hooks/post-merge", lock["managed"])
 
     def test_fallback_refuses_symlinked_ancestor(self):
         """Mirror of the Go templateAncestorSymlinkRefusal guard (lane C3,
