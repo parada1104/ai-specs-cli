@@ -277,6 +277,28 @@ class CopyApplyGoAuthorityTests(_CopyBridgeTestCase):
             self._dest_command(py).read_bytes(),
         )
 
+    def test_command_go_path_missing_dest_copies_without_warn(self):
+        """R3-untested-missing-dest-arm: a fresh command copy on the Go path
+        (dest absent) writes the source bytes and emits no overwrite
+        warning — the warn condition is dest-exists-only, mirroring the
+        Python reference body."""
+        fixture = self.recipe_root("go-cmd-fresh")
+        self.assertFalse(self._dest_command(fixture).exists())
+        with self.forbid_python_copies():
+            out, err = self.run_materialize(
+                self.mod.materialize_command,
+                fixture["recipe_dir"],
+                SimpleNamespace(id="deploy", path="commands/deploy.md"),
+                fixture["root"],
+                cli_home=self.home,
+            )
+        self.assertIn("    ✓ command deploy", out)
+        self.assertEqual(err, "")
+        self.assertEqual(
+            self._dest_command(fixture).read_bytes(),
+            (fixture["recipe_dir"] / "commands" / "deploy.md").read_bytes(),
+        )
+
     def test_command_go_path_identical_dest_does_not_warn(self):
         fixture = self.recipe_root("go-cmd-quiet")
         dest = self._dest_command(fixture)

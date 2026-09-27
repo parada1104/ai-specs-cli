@@ -527,6 +527,25 @@ class HookGateFallbackTests(_HookBridgeTestCase):
         )
         self.assertFalse(victim.exists(), "dangling link target was created")
 
+    def test_fallback_chmods_the_open_fd_not_the_path(self):
+        """Same fd-chmod contract as the template body (R1-toctou residual
+        routed from lane C3): the hook write path chmods the inode it just
+        wrote via its open fd, never re-traverses the destination path
+        after close."""
+        fixture = self.fixture("hook-fb-fchmod")
+
+        def spying_chmod(path, mode):
+            raise AssertionError(f"path-based chmod called: {path} {mode}")
+
+        with mock.patch.object(self.mod.os, "chmod", spying_chmod):
+            out, err = self.run_materialize(
+                self.mod._python_materialize_hook_script,
+                fixture["recipe_dir"], self.hook(), fixture["root"],
+                "worktree-flow", MERGED_CFG, cli_home=None,
+            )
+        self.assertIn(f"    ✓ hook script {REL}", out)
+        self.assertEqual(self.dest_of(fixture).stat().st_mode & 0o7777, 0o755)
+
     def test_fallback_never_raises_on_bridge_infrastructure_failures(self):
         """The bridge itself must never raise for infra failures: a raising
         stub binary still degrades to the Python body."""
