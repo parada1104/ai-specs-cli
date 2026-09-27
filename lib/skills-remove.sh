@@ -63,15 +63,25 @@ fi
 # section/table headers. Array VALUE lines like `scope = ["root"]` never start
 # with '[' at column 0, so they stay attached to their owning block. We drop
 # exactly the one [[deps]] segment whose id matches the target.
+#
+# Everything outside the removed segment is preserved byte-for-byte (no
+# whole-file whitespace normalization), the result is validated before writing
+# (a deletion that would break a previously valid manifest is refused), and
+# the write is atomic (mkstemp + os.replace, mirroring lib/_internal/lock.py).
 python3 - "$TOML_PATH" "$DEP_ID" <<'PY'
-import sys, pathlib, re
+import os
+import pathlib
+import re
+import sys
+import tempfile
+import tomllib
 
 toml_path = sys.argv[1]
 dep_id = sys.argv[2]
 
 p = pathlib.Path(toml_path)
-content = p.read_text()
-lines = content.splitlines(keepends=True)
+original = p.read_text(encoding="utf-8")
+lines = original.splitlines(keepends=True)
 
 # Build segments: a new segment begins at each line that starts with '[' at
 # column 0. The text before the first header (preamble) is its own segment.
@@ -107,9 +117,41 @@ if target_idx is None:
 del segments[target_idx]
 new_content = "".join("".join(seg["lines"]) for seg in segments)
 
-# Collapse 3+ consecutive newlines left by removal into a single blank line.
-new_content = re.sub(r"\n{3,}", "\n\n", new_content)
+# Validate the result before writing (mirrors recipe-config-write.py): a
+# deletion that would break a previously valid manifest is refused and the
+# original bytes stay untouched. Removal must still tolerate a manifest that
+# is NOT currently valid TOML (frozen parity contract): only the regression
+# from valid to invalid is guarded.
+try:
+    tomllib.loads(original)
+    original_was_valid = True
+except tomllib.TOMLDecodeError:
+    original_was_valid = False
+if original_was_valid:
+    try:
+        tomllib.loads(new_content)
+    except tomllib.TOMLDecodeError as exc:
+        print(
+            f"ERROR: removing skill '{dep_id}' would produce invalid TOML: {exc}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-p.write_text(new_content)
+# Atomic replace (mirrors lock.py): a failed write never leaves a partially
+# updated manifest behind, and the original file mode is preserved.
+original_mode = p.stat().st_mode & 0o7777
+fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".ai-specs.toml.", suffix=".tmp")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(new_content)
+    os.chmod(tmp, original_mode)
+    os.replace(tmp, p)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+
 print(f"  ✓ removed [[deps]] '{dep_id}' from {toml_path}")
 PY
