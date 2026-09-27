@@ -24,6 +24,7 @@ Flags:
   --scope <s1,s2,...>   Comma-list for metadata.scope (default: root)
   --license <license>   License string (default: empty)
   --attribution <auth>  vendor_attribution (default: URL author)
+  --ref <ref>           Git ref to pin (tag/branch/sha; default: none)
   --trigger <text>      auto_invoke entry (default: "When working on <id>")
   --no-sync             Don't run 'ai-specs sync' after registering
 EOF
@@ -36,6 +37,7 @@ SUBDIR=""
 SCOPE="root"
 LICENSE=""
 ATTRIBUTION=""
+REF=""
 TRIGGER=""
 RUN_SYNC=1
 
@@ -51,6 +53,8 @@ while [[ $# -gt 0 ]]; do
         --license=*)       LICENSE="${1#*=}"; shift ;;
         --attribution)     ATTRIBUTION="$2"; shift 2 || { echo "ERROR: --attribution requires a value" >&2; exit 2; } ;;
         --attribution=*)   ATTRIBUTION="${1#*=}"; shift ;;
+        --ref)             REF="$2"; shift 2 || { echo "ERROR: --ref requires a value" >&2; exit 2; } ;;
+        --ref=*)           REF="${1#*=}"; shift ;;
         --trigger)         TRIGGER="$2"; shift 2 || { echo "ERROR: --trigger requires a value" >&2; exit 2; } ;;
         --trigger=*)       TRIGGER="${1#*=}"; shift ;;
         --no-sync)         RUN_SYNC=0; shift ;;
@@ -138,13 +142,14 @@ echo "  subdir:      ${SUBDIR:-(none)}"
 echo "  scope:       $SCOPE"
 echo "  license:     ${LICENSE:-(none)}"
 echo "  attribution: $ATTRIBUTION"
+echo "  ref:         ${REF:-(none)}"
 echo ""
 
 # Append [[deps]] block
-python3 - "$TOML_PATH" "$ID" "$URL" "$SUBDIR" "$SCOPE" "$TRIGGER" "$LICENSE" "$ATTRIBUTION" <<'PY'
+python3 - "$TOML_PATH" "$ID" "$URL" "$SUBDIR" "$SCOPE" "$TRIGGER" "$LICENSE" "$ATTRIBUTION" "$REF" <<'PY'
 import sys, pathlib
 
-toml_path, dep_id, url, subdir, scope_csv, trigger, license_, attribution = sys.argv[1:9]
+toml_path, dep_id, url, subdir, scope_csv, trigger, license_, attribution, ref = sys.argv[1:10]
 
 def s(x: str) -> str:
     return '"' + x.replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -163,6 +168,8 @@ if license_:
     block.append(f"license = {s(license_)}")
 if attribution:
     block.append(f"vendor_attribution = {s(attribution)}")
+if ref:
+    block.append(f"ref = {s(ref)}")
 block.append("")
 
 p = pathlib.Path(toml_path)

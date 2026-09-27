@@ -41,8 +41,10 @@ class LockRoundTripTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         return Path(tmp.name) / ".ai-specs.lock"
 
-    def test_skill_recipe_dep_hashes_not_emitted(self):
-        """The lock is a provenance stamp: content hashes are no longer tracked."""
+    def test_dep_hashes_emitted_skill_recipe_dropped(self):
+        """D17 re-extended [deps.*] (fix-deps-layer): dep content hashes are
+        tracked for drift detection, while skills/recipes remain dropped
+        legacy groups (the c4c6d18 provenance-stamp collapse stands for them)."""
         path = self._lock_path()
         lock = self.lock.load_lock(path)
         lock["skills"]["skill-creator"] = {"SKILL.md": "zzz"}
@@ -55,15 +57,18 @@ class LockRoundTripTests(unittest.TestCase):
         text = path.read_text()
         self.assertNotIn("[skills.", text)
         self.assertNotIn("[recipes.", text)
-        self.assertNotIn("[deps.", text)
+        self.assertIn('[deps."my-dep".skills."my-dep"]', text)
+        self.assertIn('"SKILL.md" = "eee"', text)
 
         reloaded = self.lock.load_lock(path)
         self.assertEqual(reloaded["skills"], {})
         self.assertEqual(reloaded["recipes"], {})
-        self.assertEqual(reloaded["deps"], {})
+        self.assertEqual(reloaded["deps"], {"my-dep": {"my-dep": {"SKILL.md": "eee"}}})
 
-    def test_legacy_hash_sections_dropped_on_rewrite(self):
-        """A lock written by an older CLI (with hash sections) is normalized."""
+    def test_legacy_rewrite_drops_skills_recipes_keeps_deps(self):
+        """A legacy lock file (with hash sections) is normalized: skills and
+        recipes are dropped (c4c6d18 provenance-stamp collapse), while deps is
+        preserved and re-emitted (D17 re-extension, fix-deps-layer)."""
         path = self._lock_path()
         path.write_text(
             '[meta]\ncli_version = "0.14.0"\nsynced_at = "2026-07-01T00:00:00Z"\n\n'
@@ -77,8 +82,14 @@ class LockRoundTripTests(unittest.TestCase):
         text = path.read_text()
         self.assertNotIn("[skills.", text)
         self.assertNotIn("[recipes.", text)
-        self.assertNotIn("[deps.", text)
+        self.assertIn('[deps."my-dep".skills."my-dep"]', text)
+        self.assertIn('"SKILL.md" = "eee"', text)
         self.assertIn('cli_version = "0.14.0"', text)
+
+        reloaded = self.lock.load_lock(path)
+        self.assertEqual(reloaded["skills"], {})
+        self.assertEqual(reloaded["recipes"], {})
+        self.assertEqual(reloaded["deps"], {"my-dep": {"my-dep": {"SKILL.md": "eee"}}})
 
     def test_legacy_commands_opted_out_dropped_on_write(self):
         """[commands]/[opted-out] were the last non-[meta]/[agents.*] legacy

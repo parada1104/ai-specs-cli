@@ -136,7 +136,12 @@
 # key and writes partial/missing snapshots atomically via temp+Sync+rename; no
 # new asset, no second trust root), with the canonical go1.24.13 toolchain via
 # the same command above.
-4aa86f535638ac696aba9e74dcb8ee2e4ceb8d40de8b0069c2644b42350d34be  worktree-gate-darwin-amd64
-4015239fe89e5a04c79557681c2121899336943ce9e943c74329a9a0bd0f7219  worktree-gate-darwin-arm64
-963a9dcfab2fe92060a8bf4afcde6d30ce41c456ef89cb8e27537887e49a4969  worktree-gate-linux-amd64
-e2495643d804f381e14d8a2e3f0b9f5dcbd41d212cd64477da7e7d47a0ce26ca  worktree-gate-linux-arm64
+# Regenerated for the fix-deps-layer deps lock re-extension (the same four-arch
+# asset's --write-lock now emits the re-extended [deps."<id>".skills."<skill>"]
+# dep content-hash section, byte-identical with lib/_internal/lock.py; no new
+# asset, no second trust root), with the canonical go1.24.13 toolchain via the
+# same command above.
+36d203cf6064525742442069c244d0c26805b4b01e4eaa9c644c75d296e28e3f  worktree-gate-darwin-amd64
+c9b8d35cfd1ed72e21a679c38b5c242f6e71dda709bc0c192da296d65085004d  worktree-gate-darwin-arm64
+4ae219f5f179b679f4b855836e5f836163fa452e71da59ddb1c538c910b74644  worktree-gate-linux-amd64
+b3a990c1482edc680afea6e8500f63e96c8c5e96ffeac0c59255ed51bb7d3113  worktree-gate-linux-arm64

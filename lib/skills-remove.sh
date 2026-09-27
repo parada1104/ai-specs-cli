@@ -5,14 +5,15 @@
 #   ai-specs skills remove <id> [path] [--help]
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
     cat <<'EOF'
 Usage: ai-specs skills remove <id> [path] [--help]
 Remove a vendored skill ([[deps]]) from ai-specs.toml.
 
-The on-disk skill directory under ai-specs/skills/<id>/ is preserved.
-Run 'ai-specs sync' afterwards to clean up if needed.
+Removes the [[deps]] block and prunes the vendored copy under
+ai-specs/.deps/<id>/ (gitignored).
 
 Arguments:
   id      Skill identifier matching [[deps]].id
@@ -112,4 +113,39 @@ new_content = re.sub(r"\n{3,}", "\n\n", new_content)
 
 p.write_text(new_content)
 print(f"  ✓ removed [[deps]] '{dep_id}' from {toml_path}")
+PY
+
+# Prune the vendored copy (D18): the in-project .deps tree is regenerable
+# from the declared source, so removal deletes it instead of orphaning it.
+if [[ -d "$TARGET_PATH/ai-specs/.deps/$DEP_ID" ]]; then
+    rm -rf "$TARGET_PATH/ai-specs/.deps/$DEP_ID"
+    echo "  ✓ pruned ai-specs/.deps/$DEP_ID/"
+fi
+
+# Drop the dep's recorded content hashes from the lock (D17 schema).
+python3 - "$TARGET_PATH/ai-specs/.ai-specs.lock" "$DEP_ID" \
+    "$AI_SPECS_HOME/lib/_internal/lock.py" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+lock_path = Path(sys.argv[1])
+dep_id = sys.argv[2]
+lock_module_path = Path(sys.argv[3])
+
+if not lock_path.is_file():
+    sys.exit(0)
+
+spec = importlib.util.spec_from_file_location("lock_remove_dep", lock_module_path)
+if spec is None or spec.loader is None:
+    print(f"ERROR: unable to load lock.py at {lock_module_path}", file=sys.stderr)
+    sys.exit(1)
+lock_mod = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = lock_mod
+spec.loader.exec_module(lock_mod)
+
+lock = lock_mod.load_lock(lock_path)
+if lock_mod.remove_dep_lock_entries(lock, dep_id):
+    lock_mod.write_lock(lock_path, lock)
+    print(f"  ✓ removed lock hashes for '{dep_id}'")
 PY

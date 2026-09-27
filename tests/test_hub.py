@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -454,6 +456,23 @@ class TestSkillsListBundledSection(unittest.TestCase):
                     f"---\nname: {name}\ndescription: desc-{name}\n---\n# {name}\n",
                     encoding="utf-8",
                 )
+            # Bundled skills live in the flattened cache tier, not the project
+            # (D8): {home}/cache/projects/<cache_key(project)>/.bundled/skills/.
+            # cache_key mirrors project-cache.cache_key black-box:
+            # sha256(realpath)[:12]-<sanitized basename>.
+            real = str(project.resolve())
+            digest = hashlib.sha256(real.encode("utf-8")).hexdigest()[:12]
+            safe = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(real).name).strip("-._") or "project"
+            for name in ("skill-creator", "skill-sync"):
+                d = (
+                    home / "cache" / "projects" / f"{digest}-{safe}"
+                    / ".bundled" / "skills" / name
+                )
+                d.mkdir(parents=True)
+                (d / "SKILL.md").write_text(
+                    f"---\nname: {name}\ndescription: desc-{name}\n---\n# {name}\n",
+                    encoding="utf-8",
+                )
             env = {**os.environ, "AI_SPECS_HOME": str(home)}
             # Point script at real repo script but override home
             script = ROOT / "lib" / "skills-list.sh"
@@ -469,7 +488,9 @@ class TestSkillsListBundledSection(unittest.TestCase):
             self.assertIn("Bundled skills", out)
             bundled = out.split("Bundled skills")[1].split("Local skills")[0]
             self.assertIn("skill-creator", bundled)
+            self.assertIn("desc-skill-creator", bundled)
             self.assertIn("skill-sync", bundled)
+            self.assertIn("desc-skill-sync", bundled)
             local = out.split("Local skills")[1].split("Available catalog")[0]
             self.assertNotIn("skill-creator", local)
             self.assertNotIn("skill-sync", local)

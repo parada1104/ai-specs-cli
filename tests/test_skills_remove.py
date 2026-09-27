@@ -225,6 +225,58 @@ class SkillsRemoveCliTests(unittest.TestCase):
         )
         self.assertNotEqual(proc.returncode, 0)
 
+    # ── D18: removal must prune the real .deps layout + lock section ──
+
+    def test_remove_prunes_inproject_deps_dir(self):
+        """Removing a dep prunes ai-specs/.deps/<id>/ and leaves siblings."""
+        project = self._project_with_manifest()
+        removed = project / "ai-specs" / ".deps" / "my-skill" / "skills" / "my-skill"
+        kept = project / "ai-specs" / ".deps" / "other-skill" / "skills" / "other-skill"
+        removed.mkdir(parents=True)
+        (removed / "SKILL.md").write_text("---\nname: my-skill\n---\n", encoding="utf-8")
+        kept.mkdir(parents=True)
+        (kept / "SKILL.md").write_text("---\nname: other-skill\n---\n", encoding="utf-8")
+
+        proc = self._run("my-skill", str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse((project / "ai-specs" / ".deps" / "my-skill").exists())
+        self.assertTrue(kept.exists())
+
+    def test_remove_prunes_dep_lock_section(self):
+        """Removing a dep drops its [deps."<id>".skills."<id>"] lock hashes and
+        keeps the sibling dep's hashes."""
+        project = self._project_with_manifest()
+        lock_path = project / "ai-specs" / ".ai-specs.lock"
+        lock_path.write_text(
+            "[deps.\"my-skill\".skills.\"my-skill\"]\n"
+            "\"SKILL.md\" = \"hash-my\"\n"
+            "\n"
+            "[deps.\"other-skill\".skills.\"other-skill\"]\n"
+            "\"SKILL.md\" = \"hash-other\"\n"
+            "\n",
+            encoding="utf-8",
+        )
+
+        proc = self._run("my-skill", str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        import tomllib
+        with open(lock_path, "rb") as f:
+            data = tomllib.load(f)
+        deps = data.get("deps", {})
+        self.assertNotIn("my-skill", deps)
+        self.assertIn("other-skill", deps)
+
+    def test_remove_help_names_deps_path(self):
+        """--help must describe the real .deps pruning behavior (D18)."""
+        project = self._project_with_manifest()
+        proc = subprocess.run(
+            ["bash", str(SKILLS_REMOVE_SCRIPT), "--help"],
+            capture_output=True, text=True, cwd=str(project), check=False,
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("ai-specs/.deps", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

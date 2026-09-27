@@ -1,6 +1,8 @@
 """Tests for ai-specs skills list (lib/skills-list.sh)."""
 
+import hashlib
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -128,7 +130,8 @@ class SkillsListTests(unittest.TestCase):
         self.assertIn("unknown subcommand", proc.stderr)
 
     def test_local_skills_excludes_registered_deps(self):
-        """Vendored deps (synced) must NOT appear in the Local skills section."""
+        """Vendored deps (real layout: ai-specs/.deps/<id>/) must NOT appear in
+        the Local skills section; only genuine local skills do."""
         manifest = (
             '[project]\nname = "test"\n'
             "\n[[deps]]\n"
@@ -138,22 +141,131 @@ class SkillsListTests(unittest.TestCase):
         )
         project = self._project(
             manifest=manifest,
-            skills={
-                "vendored-skill": "Should NOT appear in local",
-                "local-skill": "Real local skill",
-            },
+            skills={"local-skill": "Real local skill"},
+        )
+        deps_dir = project / "ai-specs" / ".deps" / "vendored-skill" / "skills" / "vendored-skill"
+        deps_dir.mkdir(parents=True)
+        (deps_dir / "SKILL.md").write_text(
+            SKILL_MD.format(name="vendored-skill", desc="Vendored desc"),
+            encoding="utf-8",
         )
         proc = self._run(str(project))
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout
-        # Vendored dep should appear in "Registered deps"
+        local_section = out.split("Local skills")[1].split("Available catalog")[0]
+        self.assertNotIn("vendored-skill", local_section)
+        self.assertIn("local-skill", local_section)
+
+    # ── D7: dep installed status must check the real .deps layout ──
+
+    def test_dep_status_installed_reports_real_deps_layout(self):
+        """A dep synced to ai-specs/.deps/<id>/skills/<id>/ reports installed."""
+        manifest = (
+            '[project]\nname = "test"\n'
+            "\n[[deps]]\n"
+            'id = "vendored-skill"\n'
+            'source = "https://github.com/test/repo.git"\n'
+            'scope = ["root"]\n'
+        )
+        project = self._project(manifest=manifest)
+        deps_dir = project / "ai-specs" / ".deps" / "vendored-skill" / "skills" / "vendored-skill"
+        deps_dir.mkdir(parents=True)
+        (deps_dir / "SKILL.md").write_text(
+            SKILL_MD.format(name="vendored-skill", desc="Vendored desc"),
+            encoding="utf-8",
+        )
+        proc = self._run(str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
         self.assertIn("vendored-skill", out)
-        # Split out the Local skills section
-        if "Local skills" in out:
-            local_section = out.split("Local skills")[1].split("Available catalog")[0]
-            self.assertNotIn("vendored-skill", local_section)
-        # Local skill should still appear
-        self.assertIn("local-skill", out)
+        self.assertIn("✓ installed", out)
+        self.assertNotIn("✗ not synced", out)
+
+    def test_dep_status_not_synced_ignores_stale_skills_dir(self):
+        """A legacy copy under ai-specs/skills/<id>/ does NOT satisfy the
+        installed status; only the real .deps layout counts."""
+        manifest = (
+            '[project]\nname = "test"\n'
+            "\n[[deps]]\n"
+            'id = "vendored-skill"\n'
+            'source = "https://github.com/test/repo.git"\n'
+            'scope = ["root"]\n'
+        )
+        project = self._project(
+            manifest=manifest,
+            skills={"vendored-skill": "Stale legacy copy"},
+        )
+        proc = self._run(str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("✗ not synced", proc.stdout)
+        self.assertNotIn("✓ installed", proc.stdout)
+
+    def test_dep_listing_shows_pinned_ref(self):
+        """A [[deps]] entry with a pinned ref surfaces it (D16)."""
+        manifest = (
+            '[project]\nname = "test"\n'
+            "\n[[deps]]\n"
+            'id = "vendored-skill"\n'
+            'source = "https://github.com/test/repo.git"\n'
+            'ref = "v1.2.3"\n'
+            'scope = ["root"]\n'
+        )
+        project = self._project(manifest=manifest)
+        proc = self._run(str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("v1.2.3", proc.stdout)
+
+    # ── D8: bundled section must scan the cache tier ──
+
+    @staticmethod
+    def _cache_key(project: Path) -> str:
+        """Mirror project-cache.cache_key without importing lib/_internal
+        (new tests stay black-box): sha256(realpath)[:12]-<sanitized name>."""
+        real = str(project.resolve())
+        digest = hashlib.sha256(real.encode("utf-8")).hexdigest()[:12]
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(real).name).strip("-._") or "project"
+        return f"{digest}-{safe}"
+
+    def test_bundled_section_scans_cache_bundled_skills(self):
+        """CLI-shipped bundled skills live in {cache}/.bundled/skills/ — the
+        bundled section must list them from there, not from the project."""
+        bundled = self.home / "bundled-skills" / "skill-creator"
+        bundled.mkdir(parents=True)
+        (bundled / "SKILL.md").write_text(
+            SKILL_MD.format(name="skill-creator", desc="Bundled desc"),
+            encoding="utf-8",
+        )
+        project = self._project(manifest='[project]\nname = "test"\n')
+        cache_bundled = (
+            self.home / "cache" / "projects" / self._cache_key(project)
+            / ".bundled" / "skills" / "skill-creator"
+        )
+        cache_bundled.mkdir(parents=True)
+        (cache_bundled / "SKILL.md").write_text(
+            SKILL_MD.format(name="skill-creator", desc="Bundled desc"),
+            encoding="utf-8",
+        )
+        proc = self._run(str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        bundled_section = proc.stdout.split("Bundled skills")[1].split("Local skills")[0]
+        self.assertIn("skill-creator", bundled_section)
+        self.assertIn("Bundled desc", bundled_section)
+        self.assertNotIn("(none)", bundled_section)
+
+    def test_bundled_section_empty_when_cache_missing(self):
+        """Without a flattened cache the bundled section reports (none)."""
+        bundled = self.home / "bundled-skills" / "skill-creator"
+        bundled.mkdir(parents=True)
+        (bundled / "SKILL.md").write_text(
+            SKILL_MD.format(name="skill-creator", desc="Bundled desc"),
+            encoding="utf-8",
+        )
+        project = self._project(manifest='[project]\nname = "test"\n')
+        proc = self._run(str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        bundled_section = proc.stdout.split("Bundled skills")[1].split("Local skills")[0]
+        self.assertIn("(none)", bundled_section)
+        self.assertNotIn("skill-creator", bundled_section)
 
     def test_help_exits_zero(self):
         proc = subprocess.run(

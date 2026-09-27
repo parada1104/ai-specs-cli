@@ -76,11 +76,12 @@ echo ""
 # ── Registered deps from ai-specs.toml ──
 echo "── Registered deps ([[deps]]) ──"
 if [[ -f "$TOML_PATH" ]]; then
-    python3 - "$TOML_PATH" "$SKILLS_DIR" <<'PY'
+    python3 - "$TOML_PATH" "$SKILLS_DIR" "$TARGET_PATH/ai-specs/.deps" <<'PY'
 import sys, tomllib, pathlib
 
 toml_path = sys.argv[1]
 skills_dir = pathlib.Path(sys.argv[2])
+deps_root = pathlib.Path(sys.argv[3])
 
 try:
     with open(toml_path, "rb") as f:
@@ -98,12 +99,15 @@ else:
         dep_id = dep.get("id", "?")
         source = dep.get("source", "?")
         subdir = dep.get("path", "")
-        installed = (skills_dir / dep_id).is_dir()
+        installed = (deps_root / dep_id / "skills" / dep_id / "SKILL.md").is_file()
         status = "✓ installed" if installed else "✗ not synced"
         print(f"  {dep_id}")
         print(f"    source:     {source}")
         if subdir:
             print(f"    subdir:     {subdir}")
+        ref = dep.get("ref") or dep.get("rev")
+        if ref:
+            print(f"    ref:        {ref}")
         print(f"    status:     {status}")
         license_ = dep.get("license", "")
         if license_:
@@ -127,37 +131,61 @@ else
 fi
 
 # ── Bundled skills (CLI-shipped) ──
+# Bundled skills live in the CLI cache ({cache}/.bundled/skills/), not in the
+# project — derive the path via project-cache.py (single cache authority).
 echo "── Bundled skills (CLI-shipped) ──"
-if [[ -d "$SKILLS_DIR" ]]; then
-    has_bundled=0
-    for d in "$SKILLS_DIR"/*/; do
-        [[ -d "$d" ]] || continue
-        name="$(basename "$d")"
-        is_bundled=0
-        for bid in "${BUNDLED_IDS[@]}"; do
-            if [[ "$name" == "$bid" ]]; then
-                is_bundled=1
-                break
-            fi
-        done
-        [[ $is_bundled -eq 1 ]] || continue
-        has_bundled=1
-        if [[ -f "$d/SKILL.md" ]]; then
-            desc="$(skill_description "$d/SKILL.md")"
-            echo "  $name"
-            if [[ -n "$desc" ]]; then
-                echo "    $desc"
-            fi
-        else
-            echo "  $name  (no SKILL.md)"
-        fi
-    done
-    if [[ $has_bundled -eq 0 ]]; then
-        echo "  (none)"
-    fi
-else
-    echo "  (none)"
-fi
+# project-cache.py comes from the CLI script tree (the script's own home);
+# the cache tier it reads is keyed to AI_SPECS_HOME, which may be overridden.
+python3 - "$TARGET_PATH" "$AI_SPECS_HOME" \
+    "$SCRIPT_DIR/../lib/_internal/project-cache.py" <<'PY'
+import importlib.util
+import re
+import sys
+from pathlib import Path
+
+project_root = Path(sys.argv[1])
+home = Path(sys.argv[2])
+module_path = Path(sys.argv[3])
+
+spec = importlib.util.spec_from_file_location("project_cache_list", module_path)
+if spec is None or spec.loader is None:
+    print("  (none)")
+    sys.exit(0)
+pc = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = pc
+spec.loader.exec_module(pc)
+
+skills_root = pc.bundled_skills_root(project_root, cli_home=home) / "skills"
+if not skills_root.is_dir():
+    print("  (none)")
+    sys.exit(0)
+
+entries = sorted(
+    d for d in skills_root.iterdir() if d.is_dir() and (d / "SKILL.md").is_file()
+)
+if not entries:
+    print("  (none)")
+    sys.exit(0)
+
+for entry in entries:
+    try:
+        text = (entry / "SKILL.md").read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    desc = ""
+    m = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
+    if m:
+        dm = re.search(r'^description:\s*(.+?)\s*$', m.group(1), re.MULTILINE)
+        if dm:
+            desc = dm.group(1).strip()
+            if desc.startswith('"') and desc.endswith('"'):
+                desc = desc[1:-1].replace('\\"', '"').replace('\\\\', '\\')
+            elif desc.startswith("'") and desc.endswith("'"):
+                desc = desc[1:-1]
+    print(f"  {entry.name}")
+    if desc:
+        print(f"    {desc[:80]}")
+PY
 echo ""
 
 # ── Local skills in ai-specs/skills/ ──

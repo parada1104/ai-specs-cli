@@ -18,7 +18,7 @@ Subcommands:
                              Flags: --id, --subdir, --scope, --license,
                                     --attribution, --trigger, --no-sync
   list [path]                List registered and installed skills
-  remove <id> [path]         Remove a vendored skill from the manifest
+  remove <id> [path]         Remove a vendored skill and prune ai-specs/.deps/<id>/
 Path defaults to current directory. Run 'ai-specs skills add --help' for
 full add flags.
 EOF

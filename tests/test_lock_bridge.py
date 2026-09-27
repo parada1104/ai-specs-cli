@@ -42,8 +42,9 @@ LOCK_PATH = ROOT / "lib" / "_internal" / "lock.py"
 DIST_BINARY = ROOT / "dist" / "worktree-gate-current"
 
 # Realistic lock dict: meta scalars, managed overrides, per-harness agent
-# files, plus legacy skills/recipes/deps groups that neither authority may
-# re-emit.
+# files, plus legacy skills/recipes groups that neither authority may re-emit.
+# deps is NOT legacy: D17 re-extends [deps.*] for dep content hashes in both
+# writers (skills/recipes stay collapsed).
 LOCK = {
     "skills": {"trello-mcp-workflow": {"SKILL.md": {"SKILL.md": "legacyhash"}}},
     "meta": {"cli_version": "0.42.0", "synced_at": "2026-01-15T10:00:00Z"},
@@ -278,6 +279,58 @@ class LockWriteFallbackTests(_BridgeTestCase):
                 if marker is not None:
                     self.assertIn(marker, stderr, stderr)
                 self.assertEqual(path.read_bytes(), self.reference_bytes())
+
+    def test_fallback_writer_reemits_deps_between_managed_and_agents(self):
+        """D17 re-extends [deps.*]: the fallback writer emits dep hash sections
+        between managed and agents, and tomllib round-trips the deps group."""
+        lock = self.lock_copy()
+        lock["deps"] = {
+            "vendored-demo": {
+                "vendored-demo": {
+                    "SKILL.md": "skillhash-b",
+                    "scripts/run.sh": "scripthash-b",
+                }
+            },
+            "alpha-dep": {"alpha-dep": {"SKILL.md": "skillhash-a"}},
+        }
+        path = self.tmp / "deps.ai-specs.lock"
+        self.mod._write_lock_python(path, lock)
+
+        text = path.read_text(encoding="utf-8")
+        managed_at = text.index('[managed."pi/AGENTS.md"]')
+        deps_at = text.index("\n[deps.")
+        agents_at = text.index("\n[agents.")
+        self.assertLess(managed_at, deps_at)
+        self.assertLess(deps_at, agents_at)
+        self.assertIn('[deps."alpha-dep".skills."alpha-dep"]', text)
+        self.assertIn('[deps."vendored-demo".skills."vendored-demo"]', text)
+        # Dep id sort order: alpha-dep section precedes vendored-demo.
+        self.assertLess(text.index('[deps."alpha-dep"'), text.index('[deps."vendored-demo"'))
+        # Rel sort order within a section.
+        self.assertLess(
+            text.index('"SKILL.md" = "skillhash-b"'),
+            text.index('"scripts/run.sh" = "scripthash-b"'),
+        )
+
+        import tomllib
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        # Raw on-disk TOML shape: [deps."<dep>".skills."<skill>"] nests under
+        # a "skills" table per dep id.
+        self.assertEqual(
+            data.get("deps"),
+            {
+                "alpha-dep": {"skills": {"alpha-dep": {"SKILL.md": "skillhash-a"}}},
+                "vendored-demo": {
+                    "skills": {
+                        "vendored-demo": {
+                            "SKILL.md": "skillhash-b",
+                            "scripts/run.sh": "scripthash-b",
+                        }
+                    }
+                },
+            },
+        )
 
     def test_fallback_warning_matches_the_bridge_family_format(self):
         self.pin_binary(self.tmp / "no-such-gate")

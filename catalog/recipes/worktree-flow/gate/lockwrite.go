@@ -23,6 +23,7 @@ import (
 //	 "meta": {"cli_version": "...", "synced_at": "..."},
 //	 "managed": {"<path>": {"sha256": "...", "recipe": "...", "source": "...",
 //	                        "kind": "...", "policy": "..."}},
+//	 "deps": {"<dep_id>": {"<skill>": {"<rel>": "hash"}}},
 //	 "agents": {"<harness>": {"<filename>": "hash"}}}
 //
 // and prints {"written": true} on stdout with exit 0. Structured/refusal
@@ -40,7 +41,8 @@ const lockHeader = `# Managed by ai-specs. Do not edit by hand.
 # Provenance stamp: [meta] records the CLI version and timestamp of the last
 # sync. [managed.*] records integrity only for CLI-owned override targets;
 # it is not a general content-integrity manifest. git covers the committed
-# project surface; skill/recipe/dep content hashes are not tracked.
+# project surface; dep content hashes ([deps.*]) are tracked for drift
+# detection; recipe/skill content hashes are not tracked.
 `
 
 // lockWriteRequest is the stdin envelope. Values are typed as strings so a
@@ -48,10 +50,11 @@ const lockHeader = `# Managed by ai-specs. Do not edit by hand.
 // reports as a structured refusal (the future Python bridge pre-stringifies
 // everything with str() parity).
 type lockWriteRequest struct {
-	LockPath string                       `json:"lock_path"`
-	Meta     map[string]string            `json:"meta"`
-	Managed  map[string]lockManagedEntry  `json:"managed"`
-	Agents   map[string]map[string]string `json:"agents"`
+	LockPath string                                  `json:"lock_path"`
+	Meta     map[string]string                       `json:"meta"`
+	Managed  map[string]lockManagedEntry             `json:"managed"`
+	Deps     map[string]map[string]map[string]string `json:"deps"`
+	Agents   map[string]map[string]string            `json:"agents"`
 }
 
 // lockManagedEntry is one [managed."<path>"] record; empty values are
@@ -147,13 +150,54 @@ func firstControlCharLocator(req *lockWriteRequest) string {
 			}
 		}
 	}
+	depIDs := make([]string, 0, len(req.Deps))
+	for depID := range req.Deps {
+		depIDs = append(depIDs, depID)
+	}
+	sort.Strings(depIDs)
+	for _, depID := range depIDs {
+		if hasControlChar(depID) {
+			return "deps dep id"
+		}
+		skills := req.Deps[depID]
+		skillNames := make([]string, 0, len(skills))
+		for skill := range skills {
+			skillNames = append(skillNames, skill)
+		}
+		sort.Strings(skillNames)
+		for _, skill := range skillNames {
+			if hasControlChar(skill) {
+				return "deps skill name"
+			}
+			files := skills[skill]
+			rels := make([]string, 0, len(files))
+			for rel := range files {
+				rels = append(rels, rel)
+			}
+			sort.Strings(rels)
+			for _, rel := range rels {
+				if hasControlChar(rel) {
+					return "deps rel"
+				}
+				if hasControlChar(files[rel]) {
+					return "deps hash"
+				}
+			}
+		}
+	}
 	return ""
 }
 
 // renderLock is the write_lock body (lib/_internal/lock.py:86-122): fixed
 // section order [meta] → [managed."<path>"] (sorted, empty values skipped) →
+// [deps."<dep_id>".skills."<skill>"] (sorted, empty file maps skipped) →
 // [agents."<harness>"] (sorted, filenames sorted), assembled as
 // "\n".join(lines).rstrip("\n") + "\n".
+//
+// deps is the re-extended section: c4c6d18 collapsed it to the provenance
+// stamp, and D17 re-extends deps only (recipes stay collapsed) for dep
+// content-hash drift detection, byte-format identical to the Python
+// fallback writer.
 func renderLock(req *lockWriteRequest) string {
 	lines := []string{lockHeader}
 
@@ -196,6 +240,38 @@ func renderLock(req *lockWriteRequest) string {
 			}
 		}
 		lines = append(lines, "")
+	}
+
+	// deps between managed and agents (sorted dep id → skill → rel, empty
+	// file maps skipped, blank line after each section).
+	depIDs := make([]string, 0, len(req.Deps))
+	for depID := range req.Deps {
+		depIDs = append(depIDs, depID)
+	}
+	sort.Strings(depIDs)
+	for _, depID := range depIDs {
+		skills := req.Deps[depID]
+		skillNames := make([]string, 0, len(skills))
+		for skill := range skills {
+			skillNames = append(skillNames, skill)
+		}
+		sort.Strings(skillNames)
+		for _, skill := range skillNames {
+			files := skills[skill]
+			if len(files) == 0 {
+				continue
+			}
+			lines = append(lines, "[deps."+lockTOMLString(depID)+".skills."+lockTOMLString(skill)+"]")
+			rels := make([]string, 0, len(files))
+			for rel := range files {
+				rels = append(rels, rel)
+			}
+			sort.Strings(rels)
+			for _, rel := range rels {
+				lines = append(lines, lockTOMLString(rel)+" = "+lockTOMLString(files[rel]))
+			}
+			lines = append(lines, "")
+		}
 	}
 
 	harnesses := make([]string, 0, len(req.Agents))

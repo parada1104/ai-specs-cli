@@ -2,15 +2,17 @@
 """Vendor external skills declared in [[deps]] of ai-specs.toml.
 
 For each entry:
-  - shallow-clone `source` into a tempdir
+  - shallow-clone `source` into a tempdir (an optional `ref`/`rev` manifest
+    key pins the clone to a tag, branch, or commit SHA)
   - locate SKILL.md at repo root or under optional `path`
   - copy SKILL.md + ancillary dirs (assets/, references/, scripts/) to
-    <project>/ai-specs/skills/<id>/
+    <project>/ai-specs/.deps/<id>/skills/<id>/
   - replace the upstream YAML frontmatter with a standardized block
     (preserves the upstream body verbatim)
+  - record dep content hashes in <project>/ai-specs/.ai-specs.lock
 
 Root sync remains the ONLY place that vendors external skills. Multi-target
-fan-out mirrors the already-vendored root ai-specs/skills tree into subrepos.
+fan-out mirrors the already-vendored root ai-specs/.deps tree into subrepos.
 
 Usage:
   vendor-skills.py <project_root>
@@ -18,6 +20,7 @@ Usage:
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -47,6 +50,14 @@ sha256_of = _lock_mod.sha256_of
 
 ANCILLARY_DIRS = ("assets", "references", "scripts")
 
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+
+def _dep_ref(dep: dict) -> str | None:
+    """D16 revision pin: `ref` key, `rev` accepted as alias."""
+    value = str(dep.get("ref") or dep.get("rev") or "").strip()
+    return value or None
+
 
 def fail(msg: str) -> None:
     print(f"  ✗ {msg}", file=sys.stderr)
@@ -69,7 +80,7 @@ def _resolve_clone_source(source: str) -> str:
     return source
 
 
-def clone(source: str, dest: Path) -> None:
+def clone(source: str, dest: Path, ref: str | None = None) -> None:
     resolved = _resolve_clone_source(source)
     resolved_path = Path(resolved)
     # Local fixture dirs used by tests may be plain trees (no .git).
@@ -78,10 +89,32 @@ def clone(source: str, dest: Path) -> None:
             shutil.rmtree(dest)
         shutil.copytree(resolved_path, dest)
         return
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--quiet", resolved, str(dest)],
-        check=True,
-    )
+    if ref is not None and _SHA_RE.fullmatch(ref):
+        # Raw SHAs are not branch names: shallow-fetch the exact commit.
+        subprocess.run(["git", "init", "--quiet", str(dest)], check=True)
+        subprocess.run(
+            ["git", "-C", str(dest), "remote", "add", "origin", resolved], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(dest), "fetch", "--depth", "1", "--quiet", "origin", ref],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(dest), "checkout", "--quiet", "FETCH_HEAD"], check=True
+        )
+    elif ref is not None:
+        subprocess.run(
+            [
+                "git", "clone", "--depth", "1", "--quiet",
+                "--branch", ref, resolved, str(dest),
+            ],
+            check=True,
+        )
+    else:
+        subprocess.run(
+            ["git", "clone", "--depth", "1", "--quiet", resolved, str(dest)],
+            check=True,
+        )
 
 
 def _load_toml_read_module():
@@ -109,17 +142,20 @@ def sync_dep_target(
     project_root: Path,
     cli_home: Path | None = None,
     in_project: bool = False,
-) -> None:
+) -> Path:
     """Vendor one dependency skill.
 
     ``in_project=True`` (toml-declared deps) materializes under the project's
     ``ai-specs/.deps/`` (gitignored, project governance). ``in_project=False``
     (recipe-deps) stages under the CLI cache ``{cache}/.deps/``.
+
+    Returns the vendored target directory (D17 callers hash its files).
     """
     dep_id = dep.get("id")
     source = dep.get("source")
     if not dep_id or not source:
         fail(f"dep missing id/source: {dep!r}")
+    ref = _dep_ref(dep)
 
     skill_subpath = dep.get("path", "").strip("/")
     cache_mod_path = Path(__file__).with_name("project-cache.py")
@@ -136,11 +172,15 @@ def sync_dep_target(
         deps_root = pc.deps_skills_root(project_root, cli_home=cli_home)
     target_dir = deps_root / dep_id / "skills" / dep_id
 
-    print(f"  ▸ {dep_id}  ←  {source}" + (f"  (path: {skill_subpath})" if skill_subpath else ""))
+    print(
+        f"  ▸ {dep_id}  ←  {source}"
+        + (f"  (path: {skill_subpath})" if skill_subpath else "")
+        + (f"  (ref: {ref})" if ref else "")
+    )
 
     with tempfile.TemporaryDirectory(prefix="ai-specs-vendor-") as tmp:
         tmp_path = Path(tmp)
-        clone(source, tmp_path)
+        clone(source, tmp_path, ref=ref)
 
         src_dir = tmp_path / skill_subpath if skill_subpath else tmp_path
         skill_md = src_dir / "SKILL.md"
@@ -160,15 +200,24 @@ def sync_dep_target(
             if a_src.is_dir():
                 shutil.copytree(a_src, target_dir / ancillary, dirs_exist_ok=False)
 
+    return target_dir
+
 
 def sync_vendored_skills(project_root: Path, deps: list[dict], cli_home: Path | None = None) -> int:
     if not deps:
         print("  (no [[deps]] declared — nothing to vendor)")
         return 0
 
+    lock_path = project_root / "ai-specs" / ".ai-specs.lock"
+    lock = load_lock(lock_path)
     for dep in deps:
-        sync_dep_target(dep, project_root, cli_home=cli_home, in_project=True)
-
+        target_dir = sync_dep_target(dep, project_root, cli_home=cli_home, in_project=True)
+        hashes = {
+            str(p.relative_to(target_dir)): sha256_of(p)
+            for p in sorted(target_dir.rglob("*")) if p.is_file()
+        }
+        set_dep_skill_hashes(lock, dep["id"], dep["id"], hashes)
+    write_lock(lock_path, lock)
     print(f"  ✓ vendored {len(deps)} dep(s)")
     return 0
 
