@@ -1,0 +1,27 @@
+ai-specs — declarative per-project AI agent config
+Usage: ai-specs <command> [args]
+Commands:
+  init [path] Bootstrap ai-specs/ in a project (TTY opens onboarding)
+  sync [path] Refresh bundled + vendor deps + regen AGENTS.md + sync agents
+               use --adopt-brief for an explicit existing-brief handoff
+  sync-agent [path] [--all | --<agent>] Fan out per-agent configs only
+  refresh-bundled [path] Flatten CLI-bundled skills/commands into the cache;
+               remove leftover copies under ai-specs/ and restamp the lock
+  add-dep <url> [path] Register a vendored skill (alias for 'skills add')
+  doctor [path] Diagnose project health (no project writes)
+  rules-audit [path] Inventory legacy rules for migration planning (read-only)
+  skills add <url> [path] [flags] Register a vendored skill ([[deps]]) and sync
+  skills list [path]          List registered and installed skills
+  skills remove <id> [path]   Remove a vendored skill from the manifest
+  recipe list [path]          List available and installed recipes
+  recipe add <id> [path]      Add a recipe to the manifest
+  recipe init <id> [path]     Print a read-only recipe init brief
+  recipe configure <id> [path]  Inspect or apply recipe config non-interactively
+  configure-recipes [path]    Configure recipe config, CLI deps, harness env
+  upgrade [--dry-run] [--force] Upgrade the global installation safely
+  version Print CLI version
+  hub [path] Interactive status + command menu (also bare `ai-specs`;
+               can rewrite ai-specs.toml and run commands)
+  help Show this help
+Path defaults to current directory. Run any subcommand with --help for details.
+Repo: https://github.com/parada1104/ai-specs-cli
