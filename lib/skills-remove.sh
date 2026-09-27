@@ -23,22 +23,28 @@ EOF
 
 DEP_ID=""
 TARGET_PATH=""
+take_positional() {
+    if [[ -z "$DEP_ID" ]]; then
+        DEP_ID="$1"
+    elif [[ -z "$TARGET_PATH" ]]; then
+        TARGET_PATH="$1"
+    else
+        echo "ERROR: unexpected positional argument: $1" >&2
+        exit 2
+    fi
+}
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h) usage; exit 0 ;;
-        --) shift; break ;;
+        --)
+            shift
+            # Positionals after -- are real arguments, not discardable.
+            while [[ $# -gt 0 ]]; do take_positional "$1"; shift; done
+            break ;;
         -*) echo "ERROR: unknown flag: $1" >&2
             echo "Run 'ai-specs skills remove --help' for usage." >&2
             exit 2 ;;
-        *)  if [[ -z "$DEP_ID" ]]; then
-                DEP_ID="$1"
-            elif [[ -z "$TARGET_PATH" ]]; then
-                TARGET_PATH="$1"
-            else
-                echo "ERROR: unexpected positional argument: $1" >&2
-                exit 2
-            fi
-            shift ;;
+        *)  take_positional "$1"; shift ;;
     esac
 done
 

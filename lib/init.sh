@@ -6,11 +6,10 @@
 #
 # Flags:
 #   --name <name>   Project name baked into ai-specs.toml (default: basename of path)
-#   --force         Regenerate AGENTS.md and refresh the agent-block in
-#                   <path>/.gitignore. Default behavior preserves user-edited
-#                   files (idempotent). CLI-bundled skills/commands never copy
-#                   into the project either way — they resolve from the cache
-#                   via refresh-bundled.
+#   --force         Refresh the managed agent-block in <path>/.gitignore.
+#                   AGENTS.md handling is identical with and without it.
+#                   CLI-bundled skills/commands never copy into the project —
+#                   they resolve from the cache via refresh-bundled.
 #
 # NEVER overwritten (user-owned, source of truth):
 #   <path>/ai-specs/ai-specs.toml   — mutated only by `add-dep` or by the user.
@@ -49,8 +48,8 @@ Arguments:
 
 Flags:
   --name <name>     Project name in ai-specs.toml (default: basename of path)
-  --force           Re-render templates even if present (CLI-bundled
-                    skills/commands never copy into the project either way)
+  --force           Refresh the managed agent-block in the root .gitignore
+                    (AGENTS.md handling is identical with and without it)
   --adopt-brief     Explicitly adopt the current AGENTS.md as the managed
                     runtime-brief baseline
   --tui             Force interactive onboarding (Rich prompts)
@@ -67,7 +66,7 @@ Examples:
   ai-specs init --no-tui               # classic non-interactive bootstrap
   ai-specs init --tui --name my-app    # wizard with name prefilled
   ai-specs init ~/code/my-app          # initialize specific path
-  ai-specs init --force                # re-render templates (destructive)
+  ai-specs init --force                # refresh the root .gitignore agent-block
 EOF
 }
 

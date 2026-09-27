@@ -7,10 +7,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+CMD_LABEL="${AI_SPECS_INVOKED_AS:-ai-specs skills add}"
 
 usage() {
-    cat <<'EOF'
-Usage: ai-specs skills add <git-url> [path] [flags]
+    cat <<EOF
+Usage: ${CMD_LABEL} <git-url> [path] [flags]
 
 Register a vendored skill in ai-specs.toml (under [[deps]]) and run sync.
 
@@ -62,7 +63,7 @@ while [[ $# -gt 0 ]]; do
         --)                shift; break ;;
         -*)
             echo "ERROR: unknown flag: $1" >&2
-            echo "Run 'ai-specs skills add --help' for usage." >&2
+            echo "Run '${CMD_LABEL} --help' for usage." >&2
             exit 2
             ;;
         *)
@@ -84,6 +85,7 @@ done
 
 if [[ -z "$URL" ]]; then
     echo "ERROR: <git-url> is required." >&2
+    echo "Run '${CMD_LABEL} --help' for usage." >&2
     usage
     exit 2
 fi
@@ -154,7 +156,7 @@ case "$existing" in
 esac
 
 echo ""
-echo "ai-specs skills add"
+echo "$CMD_LABEL"
 echo "  url:         $URL"
 echo "  id:          $ID"
 echo "  subdir:      ${SUBDIR:-(none)}"

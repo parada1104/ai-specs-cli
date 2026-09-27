@@ -535,30 +535,47 @@ def _run_agents_submenu(console, target: Path) -> int | None:
     if selected is None:
         return None
 
+    # Route values through toml_write (D12) and never append a second
+    # [agents] block: if the existing [agents] table lacks an `enabled` key,
+    # the key is inserted inside that table instead.
+    toml_write = _load_sibling("toml_write")
+    enabled_value = toml_write.toml_value(selected)
+
     text = manifest_path.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
-    in_agents = False
-    written = False
     new_lines: list[str] = []
+    in_agents = False
+    agents_seen = False
+    enabled_written = False
     for line in lines:
         stripped = line.strip()
-        if stripped == "[agents]":
-            in_agents = True
-            new_lines.append(line)
+        if stripped.startswith("["):
+            if in_agents and not enabled_written:
+                # [agents] had no `enabled` key: insert it inside the table,
+                # before the next header.
+                if new_lines and not new_lines[-1].endswith("\n"):
+                    new_lines[-1] += "\n"
+                new_lines.append(f"enabled = {enabled_value}\n")
+                enabled_written = True
+            in_agents = stripped == "[agents]"
+            agents_seen = agents_seen or in_agents
+        elif in_agents and not enabled_written and stripped.startswith("enabled"):
+            new_lines.append(f"enabled = {enabled_value}\n")
+            enabled_written = True
             continue
-        if in_agents and stripped.startswith("enabled"):
-            new_lines.append(f'enabled = [{", ".join(repr(a) for a in selected)}]\n')
-            in_agents = False
-            written = True
-            continue
-        if in_agents and stripped.startswith("["):
-            new_lines.append(f'enabled = [{", ".join(repr(a) for a in selected)}]\n')
-            in_agents = False
-            written = True
         new_lines.append(line)
 
-    if not written:
-        new_lines.append(f"[agents]\nenabled = [{', '.join(repr(a) for a in selected)}]\n")
+    if in_agents and not enabled_written:
+        # [agents] is the last table and has no `enabled` key.
+        if new_lines and not new_lines[-1].endswith("\n"):
+            new_lines[-1] += "\n"
+        new_lines.append(f"enabled = {enabled_value}\n")
+        enabled_written = True
+
+    if not agents_seen:
+        if new_lines and not new_lines[-1].endswith("\n"):
+            new_lines[-1] += "\n"
+        new_lines.append(f"\n[agents]\nenabled = {enabled_value}\n")
 
     manifest_path.write_text("".join(new_lines), encoding="utf-8")
     print(f"  ✓ agents updated: {', '.join(selected) if selected else '(none)'}")

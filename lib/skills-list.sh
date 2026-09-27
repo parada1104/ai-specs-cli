@@ -21,20 +21,26 @@ EOF
 }
 
 TARGET_PATH=""
+take_positional() {
+    if [[ -z "$TARGET_PATH" ]]; then
+        TARGET_PATH="$1"
+    else
+        echo "ERROR: unexpected positional argument: $1" >&2
+        exit 2
+    fi
+}
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h) usage; exit 0 ;;
-        --) shift; break ;;
+        --)
+            shift
+            # Positionals after -- are real arguments, not discardable.
+            while [[ $# -gt 0 ]]; do take_positional "$1"; shift; done
+            break ;;
         -*) echo "ERROR: unknown flag: $1" >&2
             echo "Run 'ai-specs skills list --help' for usage." >&2
             exit 2 ;;
-        *)  if [[ -z "$TARGET_PATH" ]]; then
-                TARGET_PATH="$1"
-            else
-                echo "ERROR: unexpected positional argument: $1" >&2
-                exit 2
-            fi
-            shift ;;
+        *)  take_positional "$1"; shift ;;
     esac
 done
 
@@ -194,9 +200,25 @@ if [[ -d "$SKILLS_DIR" ]]; then
     # Collect registered dep IDs to exclude from local skills listing
     REGISTERED_IDS=()
     if [[ -f "$TOML_PATH" ]]; then
-        while IFS='"' read -r _ id _; do
-            [[ -n "$id" ]] && REGISTERED_IDS+=("$id")
-        done < <(grep -E '^id = "' "$TOML_PATH" 2>/dev/null || true)
+        # Parse the manifest instead of grepping: a top-level `id = "..."` in
+        # any other table (e.g. [meta]) must not shadow a local skill, and
+        # indented/quoted dep ids must still match.
+        while IFS= read -r rid; do
+            [[ -n "$rid" ]] && REGISTERED_IDS+=("$rid")
+        done < <(python3 - "$TOML_PATH" <<'PY'
+import sys, tomllib
+
+try:
+    with open(sys.argv[1], "rb") as f:
+        data = tomllib.load(f)
+except Exception:  # noqa: BLE001 - listing degrades, never crashes
+    sys.exit(0)
+for dep in data.get("deps", []) or []:
+    dep_id = dep.get("id")
+    if isinstance(dep_id, str):
+        print(dep_id)
+PY
+)
     fi
     has_entries=0
     for d in "$SKILLS_DIR"/*/; do
