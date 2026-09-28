@@ -77,13 +77,17 @@ def _cli_env(home: Path, base: Path) -> dict:
 
 
 def _run_hub(project: Path, home: Path, base: Path,
-             *args: str, cwd: Path | None = None) -> tuple[int, str, str]:
+             *args: str, cwd: Path | None = None,
+             extra_env: dict | None = None) -> tuple[int, str, str]:
     """Run bare ``ai-specs [args…]`` from ``project`` (bare == hub)."""
     (base / "home").mkdir(exist_ok=True)
+    env = _cli_env(home, base)
+    if extra_env:
+        env.update(extra_env)
     proc = subprocess.run(
         [str(CLI), *args],
         cwd=str(cwd or project),
-        env=_cli_env(home, base),
+        env=env,
         text=True,
         capture_output=True,
         input="",
@@ -339,7 +343,11 @@ class TestIsInitialized(unittest.TestCase):
             (bare / "ai-specs").mkdir()
             (bare / "ai-specs" / "ai-specs.toml").write_text("[project]\nname = 'x'\n")
             rc2, out2, _ = _run_hub(bare, home, base)
-            self.assertEqual(rc2, 0)
+            # Presence drives the mode: the hub enters summary mode even for a
+            # hand-written manifest. Exit code propagates Doctor's verdict (D5):
+            # the bare fixture has ERROR findings (missing AGENTS.md, unbundled
+            # cache), so the hub exits 1 — never a false 0 on a broken project.
+            self.assertEqual(rc2, 1)
             self.assertIn("Summary", out2)
 
 
@@ -757,7 +765,7 @@ class TestSkillsListBundledSection(unittest.TestCase):
             # (D8): {home}/cache/projects/<cache_key(project)>/.bundled/skills/.
             # cache_key mirrors project-cache.cache_key black-box:
             # sha256(realpath)[:12]-<sanitized basename>.
-            real = str(project.resolve())
+            real = str(root.resolve())
             digest = hashlib.sha256(real.encode("utf-8")).hexdigest()[:12]
             safe = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(real).name).strip("-._") or "project"
             for name in ("skill-creator", "skill-sync"):
@@ -852,6 +860,12 @@ class TestWidgetHelpers(unittest.TestCase):
 
 
 class TestTopologySurfacing(unittest.TestCase):
+    # The worktree-flow recipe materializes gate hooks; without a verified
+    # binary doctor records a digest-mismatch ERROR and the hub would
+    # honestly exit 1 (D5). Build the real gate binary offline so the
+    # fixture is doctor-green and rc 0 is HONEST.
+    _GATE_LOCAL_BUILD_ENV = {"AI_SPECS_GATE_OFFLINE": "1", "AI_SPECS_GATE_BUILD": "1"}
+
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
@@ -871,7 +885,26 @@ class TestTopologySurfacing(unittest.TestCase):
             "[recipes.worktree-flow]\nenabled = true\n\n"
             f"[recipes.worktree-flow.config]\nrepo_topology = \"{topology}\"\n"
         )
-        (root / "AGENTS.md").write_text("# brief\n")
+
+    def _green_fixture(self, root: Path, topology: str = "auto",
+                       rewrite=None) -> Path:
+        """Make the fixture doctor-green before hub runs (D5 exit honesty).
+
+        The hub propagates Doctor's verdict (D5): a hand-written manifest with
+        no lock/bundled cache has ERROR findings, so the hub would honestly
+        exit 1. Baseline = real `init` + `sync`; then the topology variant is
+        applied and a re-sync keeps the lock fresh, so rc 0 is HONEST.
+        """
+        self._write_wf_manifest(root, topology)
+        rc, _, err = _run_hub(root, self.home, self.base, "init", "--name", root.name,
+                              extra_env=self._GATE_LOCAL_BUILD_ENV)
+        self.assertEqual(rc, 0, err)
+        if rewrite is not None:
+            rewrite(root)
+        rc, _, err = _run_hub(root, self.home, self.base, "sync",
+                              extra_env=self._GATE_LOCAL_BUILD_ENV)
+        self.assertEqual(rc, 0, err)
+        return root
 
     def _topology_line(self, root: Path, home: Path) -> str:
         rc, out, err = _run_hub(root, home, self.base)
@@ -885,42 +918,45 @@ class TestTopologySurfacing(unittest.TestCase):
         from test_repo_topology import make_super_with_submodule
 
         super_repo = make_super_with_submodule(self.base / "a")
-        self._write_wf_manifest(super_repo, "auto")
+        self._green_fixture(super_repo, "auto")
         line = self._topology_line(super_repo, self.home)
         self.assertEqual(line, "topology: monorepo-submodules (auto)")
 
     def test_topology_explicit_standalone_via_config(self):
-        root = self.base / "standalone-prj"
-        self._write_wf_manifest(root, "standalone")
+        root = self._green_fixture(self.base / "standalone-prj", "standalone")
         line = self._topology_line(root, self.home)
         self.assertEqual(line, "topology: standalone (config)")
 
     def test_project_topology_surfaces_with_worktree_flow_disabled(self):
-        root = self.base / "wf-disabled-prj"
-        self._write_wf_manifest(root, "standalone")
-        manifest = root / "ai-specs" / "ai-specs.toml"
-        text = manifest.read_text().replace(
-            "[recipes.worktree-flow]\nenabled = true",
-            "[recipes.worktree-flow]\nenabled = false",
-        ).replace(
-            "name = 'topo'",
-            "name = 'topo'\nrepo_topology = \"monorepo-apps\"",
-        )
-        manifest.write_text(text)
+        def rewrite(root: Path) -> None:
+            manifest = root / "ai-specs" / "ai-specs.toml"
+            text = manifest.read_text().replace(
+                "[recipes.worktree-flow]\nenabled = true",
+                "[recipes.worktree-flow]\nenabled = false",
+            ).replace(
+                "name = 'topo'",
+                "name = 'topo'\nrepo_topology = \"monorepo-apps\"",
+            )
+            manifest.write_text(text)
+
+        root = self._green_fixture(self.base / "wf-disabled-prj", "standalone",
+                                   rewrite=rewrite)
         # [project].repo_topology still surfaces with the worktree-flow
         # recipe disabled (source != default keeps the line printed).
         line = self._topology_line(root, self.home)
         self.assertEqual(line, "topology: monorepo-apps (config)")
 
     def test_project_topology_wins_over_legacy_recipe_alias(self):
-        root = self.base / "wins-prj"
-        self._write_wf_manifest(root, "standalone")
-        manifest = root / "ai-specs" / "ai-specs.toml"
-        text = manifest.read_text().replace(
-            "name = 'topo'",
-            "name = 'topo'\nrepo_topology = \"monorepo-apps\"",
-        )
-        manifest.write_text(text)
+        def rewrite(root: Path) -> None:
+            manifest = root / "ai-specs" / "ai-specs.toml"
+            text = manifest.read_text().replace(
+                "name = 'topo'",
+                "name = 'topo'\nrepo_topology = \"monorepo-apps\"",
+            )
+            manifest.write_text(text)
+
+        root = self._green_fixture(self.base / "wins-prj", "standalone",
+                                   rewrite=rewrite)
         line = self._topology_line(root, self.home)
         self.assertEqual(line, "topology: monorepo-apps (config)")
 
