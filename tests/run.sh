@@ -16,4 +16,6 @@ if command -v go >/dev/null 2>&1; then
 else
     echo "run.sh: WARNING: 'go' not found on PATH — skipping Go gate tests (catalog/recipes/worktree-flow/gate/...)" >&2
 fi
+echo "run.sh: differential parity harness (legacy vs Go) — tests/parity/run.py"
+python3 tests/parity/run.py
 python3 -m unittest discover -s tests -p 'test_*.py'
