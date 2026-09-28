@@ -16,8 +16,11 @@ semantics, golden skill/command content) through the CLI process boundary:
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -83,6 +86,36 @@ class _CliFixtureMixin:
 
     def cache(self) -> Path:
         return cache_project_dir(self.root, self.home)
+
+    def resolved_bindings(self) -> dict:
+        """Bindings map from the resolved-config JSON at the materialize
+        process boundary (the isolated home's OWN lib copy — never a repo
+        import). This is the only observable the [[bindings]] capability
+        selection controls: cache artifacts materialize per enabled recipe
+        regardless of the binding, so the map is the honest stand-in for the
+        old white-box resolve_bindings() assertion.
+        """
+        out = self.base / "resolved-config.json"
+        (self.base / "home").mkdir(parents=True, exist_ok=True)
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": str(self.base / "home"),
+            "TMPDIR": str(self.base),
+            "AI_SPECS_HOME": str(self.home),
+            "AI_SPECS_NO_NETWORK": "1",
+            "LC_ALL": "C",
+            "LANG": "C",
+        }
+        argv = [
+            sys.executable,
+            str(self.home / "lib" / "_internal" / "recipe-materialize.py"),
+            str(self.root), str(self.home), "--resolved-config-out", str(out),
+        ]
+        proc = subprocess.run(argv, cwd=ROOT, env=env, text=True,
+                              capture_output=True, check=False, input="")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(out.is_file(), proc.stdout + proc.stderr)
+        return json.loads(out.read_text()).get("bindings", {})
 
 
 class BitbucketPrFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
@@ -347,18 +380,34 @@ class BitbucketPrFlowBindingTests(_CliFixtureMixin, unittest.TestCase):
             sync.stderr,
             "an explicit [[bindings]] entry must resolve the vcs-pr-flow ambiguity",
         )
-        # Positive selection observable (old white-box assertion:
-        # bindings['vcs-pr-flow'] == 'bitbucket-pr-flow'): the bound recipe's
-        # primitives must actually materialize under the per-project cache.
-        cache = self.cache()
-        self.assertTrue(
-            (cache / ".recipe" / RECIPE_ID / "skills" / "bitbucket-merge-workflow"
-             / "SKILL.md").is_file(),
-            "the explicitly bound bitbucket-pr-flow recipe must materialize its skill",
+        # Binding-discriminating observable (old white-box assertion:
+        # bindings['vcs-pr-flow'] == 'bitbucket-pr-flow'). Cache-file
+        # presence is NOT discriminating — every enabled recipe materializes
+        # its primitives regardless of the binding — so the assertion must
+        # read the resolved-config bindings map, the surface the binding
+        # actually controls.
+        self.assertEqual(
+            self.resolved_bindings().get("vcs-pr-flow"),
+            "bitbucket-pr-flow",
+            "the explicit [[bindings]] entry must select bitbucket-pr-flow "
+            "for the vcs-pr-flow capability",
         )
-        self.assertTrue(
-            (cache / "commands" / "bb-pr-create.md").is_file(),
-            "the explicitly bound bitbucket-pr-flow recipe must materialize its command",
+        # In-test discrimination proof: flipping the binding to the sibling
+        # provider flips the resolved selection — this assertion would fail
+        # if the observable were binding-insensitive.
+        manifest.write_text(
+            manifest.read_text().replace(
+                'recipe = "bitbucket-pr-flow"', 'recipe = "git-pr-flow"'
+            )
+        )
+        flipped = self.resolved_bindings()
+        self.assertEqual(
+            flipped.get("vcs-pr-flow"), "git-pr-flow",
+            "the flipped binding must select git-pr-flow (discrimination proof)",
+        )
+        self.assertNotIn(
+            "bitbucket-pr-flow", flipped.values(),
+            "the flipped binding must no longer select bitbucket-pr-flow",
         )
 
 
