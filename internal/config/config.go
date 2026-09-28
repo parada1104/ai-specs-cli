@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode"
 
 	"ai-specs.dev/ai-specs/internal/toml"
 )
@@ -191,8 +192,12 @@ func pyReprTable(t *toml.Table) string {
 	return "{" + strings.Join(parts, ", ") + "}"
 }
 
-// pyReprString mirrors Python repr of a str: single quotes unless the
-// string contains ' and no ".
+// pyReprString mirrors Python repr() for strings: quote switches to '"' when
+// the value contains ' but no "; \\ \n \r \t and the active quote are escaped;
+// every non-printable character becomes \\xNN / \\uNNNN / \\UNNNNNNNN (lowercase
+// hex). Probe-pinned against Python 3.14 repr(): chars < 0x20 and 0x7f-0x9f
+// emit \\xNN (e.g. '\\x85'); printable non-ASCII like é and non-BMP emoji stay
+// raw; NBSP and U+2028 are non-printable and are escaped.
 func pyReprString(s string) string {
 	quote := byte('\'')
 	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
@@ -210,15 +215,41 @@ func pyReprString(s string) string {
 			sb.WriteString(`\r`)
 		case '\t':
 			sb.WriteString(`\t`)
+		case rune(quote):
+			sb.WriteByte('\\')
+			sb.WriteByte(quote)
 		default:
-			if rune(r) == rune(quote) {
-				sb.WriteByte('\\')
+			if r < 0x20 || (r >= 0x7f && r <= 0x9f) || !unicode.IsPrint(r) {
+				sb.WriteString(pyUnicodeEscape(r))
+			} else {
+				sb.WriteRune(r)
 			}
-			sb.WriteRune(r)
 		}
 	}
 	sb.WriteByte(quote)
 	return sb.String()
+}
+
+// pyUnicodeEscape renders one non-printable rune in Python repr escape form
+// (lowercase hex, \x for < 0x100, \u for the BMP, \U beyond).
+func pyUnicodeEscape(r rune) string {
+	const hex = "0123456789abcdef"
+	digits := func(n int) string {
+		out := make([]byte, n)
+		for i := n - 1; i >= 0; i-- {
+			out[i] = hex[r&0xf]
+			r >>= 4
+		}
+		return string(out)
+	}
+	switch {
+	case r < 0x100:
+		return `\x` + digits(2)
+	case r < 0x10000:
+		return `\u` + digits(4)
+	default:
+		return `\U` + digits(8)
+	}
 }
 
 // --- section readers -------------------------------------------------------

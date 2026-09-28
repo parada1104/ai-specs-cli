@@ -647,3 +647,44 @@ go test ./... -count=1         → exit 0 (cli 2.245s, config 8.746s, home 0.518
   Ran 2358 tests in 1937.445s
   OK (skipped=164)
 ```
+
+## Evidence — config pyReprString escaping fix (round-1 completion)
+
+The JD round-1 escaping fix was applied to internal/schema/recipe.go,
+internal/lock/lock.go, and internal/target/json.go but missed the 4th copy at
+internal/config/config.go:196 (pyReprString), whose default case passed raw
+runes — so a recipes-section version = "\u0001" rendered a raw control byte
+where Python renders '\x01'.
+
+RED — added internal/config/repr_test.go TestPyReprStringDifferential
+(mirroring internal/target/repr_test.go's case list, differential vs
+`python3 -c` repr per case). Pre-fix run:
+
+```
+go test ./internal/config/ -run TestPyReprStringDifferential -count=1
+--- FAIL: TestPyReprStringDifferential (0.58s)
+    repr_test.go:56: pyReprString("\x01") = '', want '\x01'
+    repr_test.go:56: pyReprString("\x1f") = '', want '\x1f'
+    repr_test.go:56: pyReprString("\x7f") = '', want '\x7f'
+    repr_test.go:56: pyReprString("\u0085") = '', want '\x85'
+    repr_test.go:56: pyReprString("\u009f") = '', want '\x9f'
+    repr_test.go:56: pyReprString("\u00a0") = ' ', want '\xa0'
+    repr_test.go:56: pyReprString("\u2028") = ' ', want '\u2028'
+FAIL
+FAIL	ai-specs.dev/ai-specs/internal/config	0.989s
+```
+
+GREEN — replaced config.pyReprString with the fixed semantics from
+internal/schema/recipe.go and copied its pyUnicodeEscape helper verbatim
+(escape set: < 0x20, 0x7f-0x9f, !unicode.IsPrint → \xNN/\uNNNN/\UNNNNNNNN
+lowercase hex; quote-switch when contains ' and no "; `case rune(quote)`
+writes backslash + quote). awk-extracted function bodies confirmed identical
+between internal/schema/recipe.go and internal/config/config.go.
+
+```
+CGO_ENABLED=0 go build ./...                                    → exit 0
+go vet ./internal/config/...                                    → exit 0
+go test ./internal/config/... -count=1                          → ok, exit 0
+go test ./internal/config/ -run TestPyReprStringDifferential -count=1 -v
+--- PASS: TestPyReprStringDifferential (0.51s)
+```
