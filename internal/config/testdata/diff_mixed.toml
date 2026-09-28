@@ -1,0 +1,20 @@
+# Synthetic differential fixture: mixed array types, non-string command,
+# int/float timeouts, large integers, floats in deps.
+[mcp.x]
+command = 5
+args = [1, "a", true]
+env = {A = "1"}
+timeout = 9007199254740993
+
+[mcp.y]
+command = ["python", "-m"]
+timeout = 5e-05
+
+[mcp.z]
+command = ["npx", 1, true]
+
+[[deps]]
+id = "flo"
+source = "u"
+weight = 1.0
+scale = 1e21

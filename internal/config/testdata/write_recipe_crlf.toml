@@ -1,0 +1,18 @@
+# Write-corpus fixture: CRLF manifest for segment removal. python's
+# read_text translates CRLF to LF in memory, so the round-trip output is
+# LF-normalized on both sides — including inside multi-line strings.
+[project]
+name = "crlf-test"
+
+[recipes.a]
+enabled = true
+desc = """
+multi
+line
+"""
+
+[recipes.a.config]
+k = "v"
+
+[recipes.b]
+enabled = false

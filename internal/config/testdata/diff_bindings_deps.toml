@@ -1,0 +1,25 @@
+# Synthetic differential fixture: bindings filtering, deps with nested
+# inline tables and verbatim extra keys.
+[[bindings]]
+capability = "tracker"
+recipe = "trello"
+
+[[bindings]]
+capability = "orphan"
+
+[[bindings]]
+capability = "half"
+recipe = 5
+
+[[deps]]
+id = "first"
+source = "git::https://example.com/a"
+scope = ["root"]
+
+[[deps]]
+id = "second"
+source = "git::https://example.com/b"
+scope = ["a", "b"]
+vendor = {pin = "v1", nested = {x = 2}}
+ratio = 1.5
+ref = "main"

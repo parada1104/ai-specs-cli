@@ -1,0 +1,9 @@
+# Synthetic differential fixture: non-ASCII strings (ensure_ascii \uXXXX,
+# astral surrogate pairs), stripped subrepos.
+[project]
+name = "café ☕ 🚀"
+subrepos = ["  x  ", "", "y"]
+
+[mcp.unicode]
+command = "eñe"
+args = ["táb"]

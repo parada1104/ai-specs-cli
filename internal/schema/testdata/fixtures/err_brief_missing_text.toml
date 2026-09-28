@@ -1,0 +1,8 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[[provides.brief.runtime_flow]]
+key = "k"

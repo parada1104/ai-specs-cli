@@ -1,0 +1,10 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[config.board_isolation]
+forbidden_tools = ["a", "b"]
+restricted_tools = ["c"]
+card_validation_required = true

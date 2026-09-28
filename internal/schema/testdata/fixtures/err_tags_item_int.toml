@@ -1,0 +1,6 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+tags = [1]

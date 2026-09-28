@@ -1,0 +1,4 @@
+# Write-corpus fixture: ALREADY-INVALID TOML dep case — removal proceeds.
+[[deps]]
+id = "x"
+broken = =

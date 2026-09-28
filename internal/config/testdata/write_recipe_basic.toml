@@ -1,0 +1,12 @@
+# Write-corpus fixture: recipes with sub-tables (config) for segment removal.
+[project]
+name = "write-test"
+
+[recipes.a]
+enabled = true
+
+[recipes.a.config]
+k = "v"
+
+[recipes.b]
+enabled = false

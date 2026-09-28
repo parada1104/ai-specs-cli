@@ -1,0 +1,10 @@
+# Write-corpus fixture: CRLF manifest whose removal regresses to invalid.
+# The valid→invalid guard refuses, so the ORIGINAL CRLF bytes must stay
+# untouched on disk on both sides (the heredoc exits before writing).
+[recipes.doom]
+items = [
+["x"],
+]
+
+[after]
+y = 1

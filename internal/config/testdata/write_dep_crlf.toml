@@ -1,0 +1,12 @@
+# Write-corpus fixture: CRLF manifest with two [[deps]] blocks for
+# first-of-two removal; output must come out LF-normalized on both sides.
+[agents]
+enabled = ["claude"]
+
+[[deps]]
+id = "first"
+source = "u"
+
+[[deps]]
+id = "second"
+source = "v"

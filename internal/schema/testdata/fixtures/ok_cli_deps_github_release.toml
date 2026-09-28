@@ -1,0 +1,20 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[[deps.cli]]
+binary = "jprovider"
+purpose = "Jinna provider"
+installer = "github-release"
+repository = "parada1104/jinna-provider"
+release_policy = "latest-stable"
+
+[[deps.cli]]
+binary = "npx"
+purpose = "Run server"
+required = false
+install_url = "https://example.com"
+version_check = "npx --version"
+min_version = "8.0.0"
