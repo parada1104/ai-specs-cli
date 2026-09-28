@@ -14,8 +14,8 @@ type wantShim struct {
 	invokedAs string
 }
 
-// TestRouteTableCoversEveryVerb checks the full dispatcher table: 12 shimmed
-// verbs + 2 native verbs + their aliases, mirroring the case statement of
+// TestRouteTableCoversEveryVerb checks the full dispatcher table: 11 shimmed
+// verbs + 3 native verbs + their aliases, mirroring the case statement of
 // bin/ai-specs.
 func TestRouteTableCoversEveryVerb(t *testing.T) {
 	shims := map[string]wantShim{
@@ -23,7 +23,6 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 		"init":              {script: "init.sh"},
 		"sync":              {script: "sync.sh"},
 		"sync-agent":        {script: "sync-agent.sh"},
-		"refresh-bundled":   {script: "refresh-bundled.sh"},
 		"add-dep":           {script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 		"skills":            {script: "skills.sh"},
 		"doctor":            {script: "doctor.sh"},
@@ -47,12 +46,13 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 	}
 
 	natives := map[string]routeKind{
-		"version":   routeVersion,
-		"-v":        routeVersion,
-		"--version": routeVersion,
-		"help":      routeHelp,
-		"-h":        routeHelp,
-		"--help":    routeHelp,
+		"refresh-bundled": routeRefreshBundled,
+		"version":         routeVersion,
+		"-v":              routeVersion,
+		"--version":       routeVersion,
+		"help":            routeHelp,
+		"-h":              routeHelp,
+		"--help":          routeHelp,
 	}
 	for verb, want := range natives {
 		if got := Route([]string{verb}).kind; got != want {
