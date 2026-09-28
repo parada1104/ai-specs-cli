@@ -581,6 +581,26 @@ class RecipeMaterializeTests(unittest.TestCase):
         result = self._sync(root, home)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("unknown config key", result.stderr)
+        # The old white-box assertion was merged-cfg equality:
+        # cfg['reconcile'] == the declared table. The honest observable is the
+        # resolved-config JSON — the merged config the pipeline consumes —
+        # pinned at the materialize process boundary (no verb exposes it).
+        out = root.parent / "reconcile-carry.json"
+        resolved = _materialize_process(root, home, "--resolved-config-out", str(out))
+        self.assertEqual(resolved.returncode, 0, resolved.stdout + resolved.stderr)
+        carried = json.loads(out.read_text())["recipes"]["reconcile-recipe"]["reconcile"]
+        self.assertEqual(
+            carried,
+            {
+                "scope_field": "board_id",
+                "max_age_seconds": 900,
+                "expectations": [
+                    {"event": "delivery", "property": "list",
+                     "config_field": "default_list"},
+                ],
+            },
+            "the merged config must carry exactly the declared reconcile table",
+        )
 
     def test_merge_config_rejects_malformed_reconcile_table(self):
         root, home = self._project(

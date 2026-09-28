@@ -347,6 +347,19 @@ class BitbucketPrFlowBindingTests(_CliFixtureMixin, unittest.TestCase):
             sync.stderr,
             "an explicit [[bindings]] entry must resolve the vcs-pr-flow ambiguity",
         )
+        # Positive selection observable (old white-box assertion:
+        # bindings['vcs-pr-flow'] == 'bitbucket-pr-flow'): the bound recipe's
+        # primitives must actually materialize under the per-project cache.
+        cache = self.cache()
+        self.assertTrue(
+            (cache / ".recipe" / RECIPE_ID / "skills" / "bitbucket-merge-workflow"
+             / "SKILL.md").is_file(),
+            "the explicitly bound bitbucket-pr-flow recipe must materialize its skill",
+        )
+        self.assertTrue(
+            (cache / "commands" / "bb-pr-create.md").is_file(),
+            "the explicitly bound bitbucket-pr-flow recipe must materialize its command",
+        )
 
 
 class BitbucketPrFlowGoldenContentTests(unittest.TestCase):

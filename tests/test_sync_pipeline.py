@@ -92,6 +92,36 @@ def run_cli_env(project, *args, home: Path, tmpdir: Path, extra_env=None,
                           capture_output=True, check=False, input="")
 
 
+def _resolved_config_process(project_root: Path, home: Path, out: Path,
+                             *extra: str) -> subprocess.CompletedProcess:
+    """Run the ISOLATED HOME'S OWN lib copy of recipe-materialize.py.
+
+    Mirror of test_recipe_materialize.py::_materialize_process — never a
+    repository import. Used only by ``# TRIAGE:`` tests whose contract (the
+    standalone ``--resolved-config-only`` bindings map) is observable solely
+    at the materialize process boundary via ``--resolved-config-out``.
+    """
+    tmpdir = project_root.parent
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmpdir / "home"),
+        "TMPDIR": str(tmpdir),
+        "AI_SPECS_HOME": str(home),
+        "AI_SPECS_NO_NETWORK": "1",
+        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
+        "LC_ALL": "C",
+        "LANG": "C",
+    }
+    (tmpdir / "home").mkdir(parents=True, exist_ok=True)
+    argv = [
+        sys.executable, str(home / "lib" / "_internal" / "recipe-materialize.py"),
+        str(project_root), str(home),
+        "--resolved-config-out", str(out), *extra,
+    ]
+    return subprocess.run(argv, cwd=ROOT, env=env, text=True,
+                          capture_output=True, check=False, input="")
+
+
 class SyncPipelineTests(unittest.TestCase):
     def test_sync_workspace_root_fixture_exists_with_declared_subrepos(self):
         self.assertTrue(FIXTURE_ROOT.is_dir())
@@ -1943,6 +1973,36 @@ class TestMissingScenarios(unittest.TestCase):
                 f"standalone sync-agent failed:\n{result.stderr}\n{result.stdout}"
             )
 
+            # TRIAGE: JSON bindings-map parity, observable only at the
+            # materialize process boundary (the old 'identical output'
+            # guarantee). Full materialize path vs standalone
+            # --resolved-config-only, each dumping resolved-config JSON.
+            full_out = parent / "rc-full.json"
+            standalone_out = parent / "rc-standalone.json"
+            proc = _resolved_config_process(workspace, home, full_out)
+            self.assertEqual(
+                proc.returncode, 0,
+                f"full materialize resolved-config run failed:\n{proc.stderr}"
+            )
+            proc = _resolved_config_process(
+                workspace, home, standalone_out, "--resolved-config-only")
+            self.assertEqual(
+                proc.returncode, 0,
+                f"standalone --resolved-config-only run failed:\n{proc.stderr}"
+            )
+            full_data = json.loads(full_out.read_text())
+            standalone_data = json.loads(standalone_out.read_text())
+            self.assertEqual(
+                full_data["bindings"], standalone_data["bindings"],
+                "standalone --resolved-config-only bindings map must exactly "
+                "match the full materialize path bindings map",
+            )
+            # Auto-binding sanity: enabled catalog recipes must appear in both.
+            self.assertIn("tracker", full_data["bindings"])
+            self.assertIn("tracker", standalone_data["bindings"])
+            self.assertIn("test-runner", full_data["bindings"])
+            self.assertIn("test-runner", standalone_data["bindings"])
+
             root_agents = (workspace / "AGENTS.md").read_text()
             standalone_agents = (workspace / "sub" / "a" / "AGENTS.md").read_text()
 
@@ -2842,6 +2902,31 @@ class TestJudgmentDayFixes(unittest.TestCase):
                 "references disabled/unknown recipe", combined,
                 "The invalid-binding validation error must be surfaced, not swallowed.\n"
                 f"stderr: {result.stderr}\nstdout: {result.stdout}",
+            )
+
+            # TRIAGE: standalone --resolved-config-only restoration. The
+            # standalone path must not swallow the binding validation error
+            # either: it must exit non-zero, surface the cause, and write no
+            # resolved-config output.
+            resolved_out = parent / "invalid-binding-resolved.json"
+            proc = _resolved_config_process(
+                workspace, home, resolved_out, "--resolved-config-only")
+            self.assertNotEqual(
+                proc.returncode, 0,
+                "standalone --resolved-config-only must not swallow the "
+                "binding validation error and exit 0\n"
+                f"stderr: {proc.stderr}\nstdout: {proc.stdout}",
+            )
+            self.assertIn(
+                "references disabled/unknown recipe", proc.stderr,
+                "standalone --resolved-config-only must surface the binding "
+                "validation error\n"
+                f"stderr: {proc.stderr}\nstdout: {proc.stdout}",
+            )
+            self.assertFalse(
+                resolved_out.exists(),
+                "resolved-config output must not be written when binding "
+                "validation fails",
             )
         finally:
             shutil.rmtree(parent)
