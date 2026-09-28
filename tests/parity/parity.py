@@ -25,9 +25,12 @@ Design constraints (from the card):
     isolated ``HOME``/``TMPDIR``/``AI_SPECS_HOME`` per leg);
   * reuses ``tests/_blackbox.py`` helpers (install-root isolation, capture
     conventions) instead of reimplementing them;
-  * the Go build side, when absent or failing to build, falls back to the
-    legacy launcher for BOTH legs ("identical-by-shim" self-test mode):
-    legacy-vs-legacy must then report ZERO deltas (acceptance a).
+  * the Go build side never silently substitutes the legacy launcher in
+    the wired CI phase: run.py REQUIRES the build and fails loudly (exit 2)
+    when go is absent or the build fails; the legacy-vs-legacy
+    "identical-by-shim" mode (both legs legacy, must report ZERO deltas,
+    acceptance a) exists ONLY as run.py's explicit ``--self-test`` flag,
+    never as a silent fallback.
 
 The known help-heredoc quirk (card 04 finding) and every normalization rule
 carry a written justification in NORMALIZATIONS below; nothing is silently
@@ -233,7 +236,11 @@ NORMALIZATIONS = (
                       "is deliberately UNCONDITIONAL (not only when nonempty) "
                       "so both legs normalize to the same constant; it is "
                       "scoped to argv[0]=='help' only — every other verb's "
-                      "stderr is compared verbatim.",
+                      "stderr is compared verbatim. Tradeoff (reviewer-noted, "
+                      "accepted deliberately): the constant would mask a "
+                      "hypothetical future Go-side help stderr channel; "
+                      "revisit N6 if the Go implementation ever gains native "
+                      "help-stderr output.",
         fn=_norm_help_stderr,
     ),
 )
@@ -578,8 +585,9 @@ def build_go_binary(dest_dir: Path) -> Path | None:
     """Build the card-04 Go root-module binary (CGO_ENABLED=0).
 
     Returns the binary path, or None when go is unavailable or the build
-    fails — the caller then falls back to the identical-by-shim self-test
-    (both legs = legacy launcher), which must report ZERO deltas.
+    fails. Policy is the CALLER's: the wired suite entry (run.py) requires
+    the build and fails loudly (exit 2); run.py --self-test uses None
+    explicitly as the legacy-vs-legacy identical-by-shim mode (acceptance a).
     Build artifacts stay in the temp dir and are never committed.
     """
     if shutil.which("go") is None:
@@ -617,7 +625,7 @@ def run_comparison(fixture: Fixture, go_cli: Path | None,
     mode = "legacy-vs-go"
     cli_b = go_cli if go_cli is not None else ROOT / "bin" / "ai-specs"
     if go_cli is None:
-        mode = "legacy-vs-legacy (identical-by-shim: Go build absent)"
+        mode = "legacy-vs-legacy (identical-by-shim: explicit --self-test)"
     leg_b = run_leg("other", cli_b, fixture, scratch_b)
     if mutate is not None:
         leg_b = mutate(leg_b, scratch_b)
@@ -645,8 +653,8 @@ def run_corpus(go_cli: Path | None, workdir: Path, fixtures=CORPUS) -> tuple[int
             lines.append(f"✓ {fixture.name} [{mode}] — zero deltas")
         lines.append("")
     if go_cli is None:
-        lines.append("note: Go build unavailable — identical-by-shim self-test "
-                     "mode (both legs legacy); acceptance (a) path.")
+        lines.append("note: identical-by-shim self-test mode (--self-test): both "
+                     "legs legacy; acceptance (a) path.")
     lines.append(f"fixtures: {len(fixtures)}, failing: {failures}")
     report = "\n".join(lines)
     return (1 if failures else 0), report

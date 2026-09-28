@@ -5,15 +5,19 @@ when the two legs genuinely differ. Stdlib only.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "parity"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import parity  # noqa: E402
+import run as parity_run  # noqa: E402  (tests/parity/run.py; no stdlib collision)
 
 
 def _help_legacy() -> str:
@@ -143,6 +147,31 @@ class NegativeMutationTests(unittest.TestCase):
         deltas = self._mutation_deltas(_mutate_rc)
         self.assertTrue(deltas)
         self.assertTrue(any("exit code" in d for d in deltas))
+
+
+class RunEntrypointTests(unittest.TestCase):
+    """Entrypoint contract: default mode FAILS LOUDLY without a Go build;
+    legacy-vs-legacy is only reachable via the EXPLICIT --self-test flag
+    (reliability fix: the old silent identical-by-shim fallback defeated
+    acceptance (d))."""
+
+    def test_default_mode_fails_loudly_when_go_build_unavailable(self):
+        err, out = io.StringIO(), io.StringIO()
+        with mock.patch.object(parity, "build_go_binary", return_value=None), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+            rc = parity_run.main([])
+        self.assertEqual(rc, 2)
+        self.assertIn("Go build (cmd/ai-specs) is REQUIRED", err.getvalue())
+        self.assertIn("--self-test", err.getvalue())
+
+    def test_self_test_mode_is_explicit_legacy_vs_legacy(self):
+        out = io.StringIO()
+        with mock.patch.object(parity, "build_go_binary", return_value=None), \
+                contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(out):
+            rc = parity_run.main(["--self-test"])
+        self.assertEqual(rc, 0)
+        self.assertIn("legacy-vs-legacy", out.getvalue())
 
 
 if __name__ == "__main__":
