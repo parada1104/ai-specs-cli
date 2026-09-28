@@ -1,0 +1,13 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[[provides.hooks]]
+id = "h1"
+event = "pre-tool-use"
+script = "hooks/ok.sh"
+matcher = "Edit|Write"
+blocking = true
+description = "gate"

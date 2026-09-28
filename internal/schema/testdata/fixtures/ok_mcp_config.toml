@@ -1,0 +1,12 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[[provides.mcp]]
+id = "m"
+command = "npx"
+args = ["-y", "@x/y"]
+env = { A = "$A", B = "1" }
+timeout = 30000

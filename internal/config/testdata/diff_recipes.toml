@@ -1,0 +1,20 @@
+# Synthetic differential fixture: recipes with/without version+config,
+# non-string enabled/version values.
+[recipes.a]
+enabled = true
+version = "1.0.0"
+config = {x = 1}
+
+[recipes.b]
+version = 42
+
+[recipes.c]
+enabled = "yes"
+version = true
+
+[recipes.d]
+config = {nested = {deep = [1, 2]}}
+
+[recipes."quoted.id"]
+enabled = false
+version = 1.5

@@ -1,0 +1,10 @@
+# Write-corpus fixture: VALID TOML whose dep removal regresses to invalid
+# (same multi-line-array segmenter trick as write_recipe_guard.toml).
+[[deps]]
+id = "doom"
+items = [
+["x"],
+]
+
+[after]
+y = 1

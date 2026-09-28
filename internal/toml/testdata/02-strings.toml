@@ -1,0 +1,23 @@
+# Differential corpus 02: string flavors, escapes, multi-line strings.
+
+basic = "a\"b\\c\u00e9"
+literal = 'no \escapes \here'
+multi = """
+line one
+line two \
+continued"""
+literal_multi = '''
+raw \n text
+'''
+
+[deps]
+ids = ["alpha"]
+
+[[deps.servers]]
+name = "one"
+args = ["-y", "@scope/pkg"]
+nested = { a = 1, b = "x", c = [true, false] }
+
+[[deps.servers]]
+name = "two"
+empty = []

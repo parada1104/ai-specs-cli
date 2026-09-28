@@ -1,0 +1,12 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[[deps.cli]]
+binary = "b"
+purpose = "p"
+installer = "github-release"
+repository = "other/repo"
+release_policy = "latest-stable"

@@ -1,0 +1,5 @@
+# Write-corpus fixture: ALREADY-INVALID TOML — removal proceeds because the
+# guard only refuses a valid→invalid regression.
+[recipes.x]
+enabled = true
+broken = =

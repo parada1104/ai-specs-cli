@@ -1,0 +1,22 @@
+# Synthetic differential fixture: mcp env-list form, environment fallback,
+# timeout/enabled variants, extra keys verbatim.
+[mcp.alpha]
+command = "npx"
+args = ["-y", "server"]
+env = ["FOO", "BAR ", "", 42]
+timeout = 30
+enabled = true
+
+[mcp.beta]
+command = ["python", "-m"]
+env = "not-a-dict"
+timeout = 1.5
+custom = "kept"
+
+[mcp.gamma]
+environment = {A = "1", B = "2"}
+
+[mcp.delta]
+command = 5
+enabled = "yes"
+timeout = true

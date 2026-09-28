@@ -1,0 +1,3 @@
+# Synthetic differential fixture: only partial sections present.
+[project]
+subrepos = ["  a  ", "", "b", 5]

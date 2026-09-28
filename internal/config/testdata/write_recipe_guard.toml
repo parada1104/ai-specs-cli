@@ -1,0 +1,11 @@
+# Write-corpus fixture: VALID TOML whose removal regresses to invalid.
+# The multi-line array contains column-0 '[' lines, which the segmenter
+# treats as headers; removing the [recipes.doom] header segment orphans the
+# array lines and the valid→invalid guard must fire.
+[recipes.doom]
+items = [
+["x"],
+]
+
+[after]
+y = 1
