@@ -89,7 +89,13 @@ func posixNormpath(path string) string {
 func normalizeDeclaredRelpath(raw any) (string, error) {
 	s, isStr := raw.(string)
 	if !isStr {
-		return "", &ResolutionError{Rel: pyRepr(raw), Reason: "must be a string"}
+		r, err := pyRepr(raw)
+		if err != nil {
+			// Python raises RecursionError for absurd nesting; surface the
+			// same condition as a plain error, not a ResolutionError.
+			return "", err
+		}
+		return "", &ResolutionError{Rel: r, Reason: "must be a string"}
 	}
 
 	candidate := strings.TrimSpace(s)
@@ -161,7 +167,9 @@ func validateTarget(root, rel string) (string, error) {
 // worktreesDir mirrors _worktree_flow_config + the worktrees_dir fallback:
 // [recipes.worktree-flow.config].worktrees_dir when config is a dict, else
 // flat-style keys under [recipes.worktree-flow]; falsy → ".worktrees".
-func worktreesDir(data *toml.Table) string {
+// An error means the value's nesting exceeds pyReprMaxDepth (Python raises
+// RecursionError inside str()).
+func worktreesDir(data *toml.Table) (string, error) {
 	var v any
 	var ok bool
 	if recipes := tableOf(data, "recipes"); recipes != nil {
@@ -178,7 +186,7 @@ func worktreesDir(data *toml.Table) string {
 	if ok && pythonTruthy(v) {
 		return pyStr(v)
 	}
-	return ".worktrees"
+	return ".worktrees", nil
 }
 
 // pythonTruthy mirrors Python truthiness for tomllib value types.
@@ -292,6 +300,10 @@ func ResolveTargetPlan(projectRoot string) (*obj, error) {
 	gitmodules.set("mode", "advisory-only")
 	gitmodules.set("present", isFile(gitmodulesPath))
 
+	wtDir, err := worktreesDir(data)
+	if err != nil {
+		return nil, err
+	}
 	plan := newObj()
 	plan.set("root", root)
 	plan.set("manifest", tomlPath)
@@ -299,7 +311,7 @@ func ResolveTargetPlan(projectRoot string) (*obj, error) {
 	plan.set("topology", topologyObj)
 	plan.set("declared_only", true)
 	plan.set("fanout_targets", fanout)
-	plan.set("worktrees_dir", worktreesDir(data))
+	plan.set("worktrees_dir", wtDir)
 	plan.set("gitmodules", gitmodules)
 	plan.set("targets", targets)
 	return plan, nil

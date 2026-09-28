@@ -411,21 +411,63 @@ func TestDifferentialAgainstPython(t *testing.T) {
 	// Fixtures listed here run with a fresh temp recipe dir (FS-resolved
 	// checks); everything else runs with recipe_dir=None.
 	tempNames := map[string]bool{
-		"ok_hooks_full.toml":             true,
-		"ok_hooks_dotted_path.toml":      true,
-		"ok_init_full.toml":              true,
-		"err_hooks_escape_dir.toml":      true,
-		"err_init_prompt_not_found.toml": true,
-		"err_init_prompt_is_dir.toml":    true,
-		"err_init_prompt_absolute.toml":  true,
-		"err_init_prompt_escape.toml":    true,
+		"ok_hooks_full.toml":                  true,
+		"ok_hooks_dotted_path.toml":           true,
+		"ok_init_full.toml":                   true,
+		"err_hooks_escape_dir.toml":           true,
+		"err_hooks_escape_symlink.toml":       true,
+		"ok_hooks_symlink_inside.toml":        true,
+		"err_init_prompt_not_found.toml":      true,
+		"err_init_prompt_is_dir.toml":         true,
+		"err_init_prompt_absolute.toml":       true,
+		"err_init_prompt_escape.toml":         true,
+		"err_init_prompt_symlink_escape.toml": true,
+		"ok_init_prompt_symlink_inside.toml":  true,
 	}
-	setup := map[string]func(dir string) error{
-		"ok_init_full.toml": func(dir string) error {
+	setup := map[string]func(t *testing.T, dir string) error{
+		"ok_init_full.toml": func(t *testing.T, dir string) error {
 			return os.WriteFile(filepath.Join(dir, "init.md"), []byte("# init\n"), 0o644)
 		},
-		"err_init_prompt_is_dir.toml": func(dir string) error {
+		"err_init_prompt_is_dir.toml": func(t *testing.T, dir string) error {
 			return os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
+		},
+		// err_hooks_escape_symlink: hooks is a symlinked INTERMEDIATE component
+		// pointing outside the recipe dir; Path.resolve() must follow it.
+		"err_hooks_escape_symlink.toml": func(t *testing.T, dir string) error {
+			outside := t.TempDir()
+			if err := os.WriteFile(filepath.Join(outside, "x.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+				return err
+			}
+			return os.Symlink(outside, filepath.Join(dir, "hooks"))
+		},
+		// ok_hooks_symlink_inside: the symlink stays INSIDE the recipe dir and
+		// must remain legal.
+		"ok_hooks_symlink_inside.toml": func(t *testing.T, dir string) error {
+			real := filepath.Join(dir, "real")
+			if err := os.MkdirAll(real, 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(real, "x.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+				return err
+			}
+			return os.Symlink(real, filepath.Join(dir, "hooks"))
+		},
+		"err_init_prompt_symlink_escape.toml": func(t *testing.T, dir string) error {
+			outside := t.TempDir()
+			if err := os.WriteFile(filepath.Join(outside, "p.md"), []byte("# p\n"), 0o644); err != nil {
+				return err
+			}
+			return os.Symlink(outside, filepath.Join(dir, "prompts"))
+		},
+		"ok_init_prompt_symlink_inside.toml": func(t *testing.T, dir string) error {
+			real := filepath.Join(dir, "prompts-real")
+			if err := os.MkdirAll(real, 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(real, "p.md"), []byte("# p\n"), 0o644); err != nil {
+				return err
+			}
+			return os.Symlink(real, filepath.Join(dir, "prompts"))
 		},
 	}
 	fixtures, err := filepath.Glob(filepath.Join(root, "internal", "schema", "testdata", "fixtures", "*.toml"))
@@ -443,7 +485,7 @@ func TestDifferentialAgainstPython(t *testing.T) {
 			if tempNames[name] {
 				dir := t.TempDir()
 				if fn := setup[name]; fn != nil {
-					if err := fn(dir); err != nil {
+					if err := fn(t, dir); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -515,5 +557,29 @@ func TestLoadRecipeTomlMissingFile(t *testing.T) {
 	var ve *ValidationError
 	if !errors.As(err, &ve) {
 		t.Errorf("expected *ValidationError, got %T", err)
+	}
+}
+
+// TestPyReprDepthCapGoOnly pins the recursion guard on the pyRepr surface:
+// a TOML document whose update_policy nests beyond pyReprMaxDepth produces a
+// descriptive error (Python raises RecursionError inside repr() there
+// instead of emitting any validation message), and moderate nesting keeps
+// rendering.
+func TestPyReprDepthCapGoOnly(t *testing.T) {
+	// pyReprMaxDepth+2 nested arrays: the TOML form reaches the cap one
+	// level earlier than a programmatic chain (the innermost array is empty).
+	depth := pyReprMaxDepth + 2
+	src := "[recipe]\nid = \"x\"\nname = \"N\"\ndescription = \"D\"\nversion = \"1.0\"\n\n[[provides.templates]]\nsource = \"a\"\ntarget = \"b\"\nupdate_policy = " +
+		strings.Repeat("[", depth) + strings.Repeat("]", depth) + "\n"
+	tbl, err := toml.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("toml parse: %v", err)
+	}
+	_, err = ValidateRecipeToml(tbl, "")
+	if err == nil {
+		t.Fatal("ValidateRecipeToml beyond pyReprMaxDepth must error")
+	}
+	if !strings.Contains(err.Error(), "recursion depth") {
+		t.Errorf("depth-cap error = %.120q, want a recursion-depth message", err.Error())
 	}
 }

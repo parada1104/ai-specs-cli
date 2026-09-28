@@ -110,6 +110,20 @@ func guardValidToInvalid(original, newContent, errPrefix string) error {
 	return nil
 }
 
+// readManifestText ports pathlib.Path.read_text's universal-newline
+// translation: \r\n and lone \r become \n in memory before any
+// segmentation — including inside multi-line string values. This is why a
+// CRLF manifest round-tripped through a write op comes out LF-normalized,
+// mirroring the python3 heredocs byte-for-byte.
+func readManifestText(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	s := strings.ReplaceAll(string(data), "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n"), nil
+}
+
 // atomicWrite replaces path with content via a temp file in the target's
 // parent directory + rename, preserving the original file mode (0o7777
 // mask, mirroring mkstemp + chmod + os.replace in the heredocs).
@@ -189,11 +203,10 @@ func AppendDepsBlock(manifestPath, depID, url, subdir, scopeCSV, trigger, licens
 	}
 	block = append(block, "")
 
-	content, err := os.ReadFile(manifestPath)
+	text, err := readManifestText(manifestPath)
 	if err != nil {
 		return "", err
 	}
-	text := string(content)
 	if !strings.HasSuffix(text, "\n") {
 		text += "\n"
 	}
@@ -208,11 +221,11 @@ func AppendDepsBlock(manifestPath, depID, url, subdir, scopeCSV, trigger, licens
 // ALL [recipes.<id>] / [recipes.<id>.*] segments matching the heredoc's
 // header regex. When no segment matches, the file is untouched.
 func RemoveRecipeSegments(manifestPath, recipeID string) (int, string, error) {
-	original, err := os.ReadFile(manifestPath)
+	original, err := readManifestText(manifestPath)
 	if err != nil {
 		return 0, "", err
 	}
-	segments := splitSegments(string(original))
+	segments := splitSegments(original)
 
 	pattern := regexp.MustCompile(
 		`^\s*\[\s*recipes\s*\.\s*` + regexp.QuoteMeta(recipeID) + `(\s*[.\]]|\s*$)`)
@@ -256,11 +269,11 @@ func RemoveRecipeSegments(manifestPath, recipeID string) (int, string, error) {
 // FIRST [[deps]] segment whose id line matches the target depID. When no
 // segment matches, the file is untouched.
 func RemoveDepSegment(manifestPath, depID string) (string, error) {
-	original, err := os.ReadFile(manifestPath)
+	original, err := readManifestText(manifestPath)
 	if err != nil {
 		return "", err
 	}
-	segments := splitSegments(string(original))
+	segments := splitSegments(original)
 
 	idRe := regexp.MustCompile(`(?m)^\s*id\s*=\s*"` + regexp.QuoteMeta(depID) + `"\s*$`)
 	targetIdx := -1

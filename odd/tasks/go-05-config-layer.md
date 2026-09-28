@@ -346,3 +346,304 @@ go vet ./internal/target/...   → exit 0
 go test ./internal/target/...  → exit 0 (ok 2.955s)
 go test ./...                  → exit 0 (cli, config, home, lock, schema, target, toml all ok)
 ```
+
+### JD round-1 fixes (CRLF parity) — 2026-02
+
+Scope: JD-GO05-1 (internal/toml CRLF line endings, severe) + JD config-side
+CRLF write round-trip and read-corpus skip whitelist. Autonomous parity-faithful
+execution; no commits (parent owns git).
+
+#### Fix 1 — internal/toml CRLF (JD-GO05-1)
+
+RED (re-verified before implementing):
+
+```
+go test ./internal/toml/... -run TestParseDifferentialCorpus
+  --- FAIL: TestParseDifferentialCorpus/04-crlf.toml
+      toml_test.go:106: Go Parse failed on testdata/04-crlf.toml:
+      toml: line 5: expected key, found "\r"
+```
+
+Implementation (mirrors python3.14.7 tomllib behavior pinned by the parent):
+- `skipBlank`: new case `c == '\r' && p.hasPrefix("\r\n")` consuming 2 bytes,
+  line++ (before the bare '\n' case) — fixes blank lines, comments, and
+  multi-line arrays via parseArray's reuse of skipBlank.
+- `expectLineEnd`: accepts "\r\n" (consume 2, line++) in addition to '\n'.
+- `parseMultilineBasic` / `parseMultilineLiteral`: content '\r' followed by
+  '\n' writes '\n' into the value (CRLF→LF normalization inside multi-line
+  string values, matching tomllib) instead of the raw '\r'.
+- Kept unchanged after verification: global bare-CR pre-scan in Parse,
+  `trimLeadingNewline` (already accepts \r\n), `isLineEndingBackslash` +
+  continuation trim loop (already accept \r), skipComment consuming \r as
+  comment content (harmless).
+- Empirically verified against python3 3.14.7 tomllib: CRLF inside a
+  single-line basic/literal string is an ERROR on both sides; lone \r is an
+  ERROR everywhere (pre-scan); multi-line CRLF content normalizes to \n;
+  backslash continuation with \r\n yields 'cont joined'.
+
+GREEN:
+
+```
+go test ./internal/toml/... -count=1 -v -run 'TestCRLFLineEndings|TestParseDifferentialCorpus'
+  --- PASS: TestParseDifferentialCorpus (0.81s)   [34 corpus entries incl. 04-crlf.toml, 05-crlf-strings.toml]
+  --- PASS: TestCRLFLineEndings (0.00s)
+  ok  ai-specs.dev/ai-specs/internal/toml 1.026s
+```
+
+New coverage: `TestCRLFLineEndings` (CRLF after kv/header/comment/blank/
+array/AOT; multiline basic+literal CRLF→\n; \r\n continuation; lone \r and
+raw \r inside basic/literal strings rejected) + testdata/05-crlf-strings.toml
+(real CRLF bytes, multi-line strings with CRLF content + continuation) in the
+byte-identical differential corpus vs tomllib.
+
+#### Fix 2 — internal/config
+
+(a) CRLF write round-trip. Parity target: the heredocs' actual output.
+python `Path.read_text` applies universal-newline translation (\r\n and lone
+\r → \n in memory, including inside multi-line strings) before
+splitlines(keepends=True) and the write-back, so a CRLF manifest round-trips
+LF-normalized. Go replicated this exactly: new `readManifestText` helper
+replaces the three raw `os.ReadFile` read paths in writes.go (AppendDepsBlock,
+RemoveRecipeSegments, RemoveDepSegment); segmenting, guard validation, and
+output all operate on translated text. Audit of remaining '\n' assumptions:
+splitLinesKeepEnds already ports splitlines(keepends=True) fully; Go RE2 `\s`
+includes \r like Python re; strings.TrimSpace strips \r like Python .strip().
+The valid→invalid guard on a CRLF manifest leaves the ORIGINAL CRLF bytes
+untouched on disk on both sides (both refuse before writing).
+
+RED (4 new differential cases, before implementation):
+
+```
+go test ./internal/config/... -run TestDifferentialWrites
+  --- FAIL: .../remove_recipe_from_CRLF_manifest_(output_LF-normalized)
+  --- FAIL: .../remove_dep_first-of-two_from_CRLF_manifest
+  --- FAIL: .../append_to_CRLF_manifest
+  --- FAIL: .../append_to_CRLF_manifest_without_trailing_newline
+  (file bytes diverge: python "a = 1\nb = 2\n\n[[deps]]..." vs go "a = 1\r\nb = 2\r\n\n[[deps]]...")
+```
+
+GREEN:
+
+```
+go test ./internal/config/... -run TestDifferentialWrites -count=1
+  ok  ai-specs.dev/ai-specs/internal/config 1.089s
+```
+
+New fixtures (real CRLF bytes): write_recipe_crlf.toml, write_recipe_crlf_guard.toml
+(guard fires; file untouched on both sides — passes before and after the fix,
+pinning untouched-CRLF behavior), write_dep_crlf.toml, plus two inline CRLF
+append cases (with and without trailing newline).
+
+(b) Read-corpus skip whitelist (differential_test.go TestDifferentialReadSections):
+any non-zero python exit is no longer logged-and-skipped. Whitelist is the
+tight, explicit `strings.Contains(name, "invalid_base")` — for those, Go
+LoadManifest is asserted to fail too (both-fail parity); any OTHER non-zero
+python exit now t.Errorf and FAILs loudly. Dead `skips` slice removed.
+
+GREEN:
+
+```
+go test ./internal/config/... -run TestDifferentialReadSections -count=1 -v
+  differential read: compared 174 (file, section) pairs; 12 whitelisted
+  invalid-base entries asserted both-fail
+  ok  ai-specs.dev/ai-specs/internal/config 6.854s
+```
+
+(compared rose 156 → 174: the 3 new CRLF fixtures × 6 sections; the former
+12 silent skips are now explicit both-fail assertions.)
+
+#### Verification (observed exit codes)
+
+```
+CGO_ENABLED=0 go build ./...                          → exit 0
+go vet ./internal/toml/... ./internal/config/...      → exit 0
+go test ./internal/toml/... ./internal/config/... -count=1 → exit 0 (toml ok 1.178s, config ok 7.526s)
+go test ./... -count=1                                → exit 0 (cli, config, home, lock, schema, target, toml all ok)
+```
+
+### JD round 1 — parity fixes (lock pyStr / schema+target repr / symlink containment / recursion)
+
+Scope: internal/lock, internal/schema, internal/target only. Python probes
+(python3 3.14.7) pinned: repr() quote switching + `\xNN` (0x00-0x1f,
+0x7f-0x9f) / `\uNNNN` / `\UNNNNNNNN` for non-printables (NBSP, U+2028
+escaped; é/emoji raw); str(float) shortest form; nested-list repr succeeds
+to depth ~69709 and raises RecursionError at ~69710 on the default 8 MiB
+stack; self-referential containers render `[[...]]`/`{...}` ellipsis;
+shared (acyclic) containers render in full.
+
+#### Fix A — internal/lock pyStr non-string formatting
+
+RED (differential, TestWriteLockDifferential new cases + json.loads-parity
+spec conversion in lockFromSpec):
+
+```
+go test ./internal/lock -run 'TestWriteLockDifferential/(agents_hash_scalar_types|agents_hash_list_and_dict|deps_hash_non-string|managed_fields_non-string|managed_sha256_falsy|agents_hash_falsy)' -count=1
+  agents_hash_scalar_types:  byte mismatch go "true"/"false"/"100"/"-0" vs py "True"/"False"/"100.0"/"-0.0"
+  agents_hash_list_and_dict: go write failed: value for agents hash contains a control character (python succeeded)
+  deps_hash_non-string:      go write failed: ... control character (python succeeded)
+  managed_fields_non-string: byte mismatch go kind="true"/policy="false" vs py "True"/"False"
+  managed_sha256_falsy:      go wrote zero/false/empty entries, python skipped them (plain truthiness gate)
+  agents_hash_falsy:         byte mismatch go "false" vs py "False"
+```
+
+GREEN:
+
+```
+go test ./internal/lock -count=1 → ok 1.649s (all differential + refusal + atomicity tests)
+```
+
+Implementation: pyStr → (string, bool, error) with bool→True/False, int64
+decimal, float64 via package-local pyFloatStr (config copy, no internal
+import), []any / []*toml.Table / *toml.Table (document-order Keys()) /
+map[string]any (sorted; Table.Any() normalizes away document order —
+noted divergence) through a repr-composing pyReprDepth; pyReprString with
+probe-pinned escaping; pyTruthy for the Python `entry.get("sha256")`
+plain-truthiness gate (False/0/[]/{} now skipped on both sides). Note:
+meta.cli_version/synced_at stay string-only by the Go Lock type AND by
+Python load_lock (isinstance str) — non-strings cannot reach that slot on
+either side, so the slot was covered by strings only.
+
+#### Fix B — internal/schema pyRepr string escaping
+
+RED (6 new update_policy fixtures driven through driver.py):
+
+```
+go test ./internal/schema -run 'TestDifferentialAgainstPython/err_templates_policy_(apostrophe|quote|both_quotes|backslash|controls|unicode)' -count=1
+  6× error mismatch: go 'au'to' vs py "au'to"; go 'back\\slash' vs py 'back\\\\slash';
+  go raw \x01/\x7f/\x85/\n vs py '\x01'/'\x7f'/'\x85'/'\n'
+```
+
+GREEN:
+
+```
+go test ./internal/schema -count=1 → ok 5.373s
+  differential: clean corpus 21 recipes ok both sides; fixtures 92 byte-identical (20 ok, 72 error)
+```
+
+Fixtures: err_templates_policy_{apostrophe,quote,both_quotes,backslash,
+controls,unicode}.toml. pyReprString implements quote switching, \\ \n \r
+\t + active-quote escapes, and \x/\u/\U lowercase-hex escapes for every
+non-printable rune (unicode.IsPrint boundary).
+
+#### Fix C — schema symlink containment (Path.resolve parity)
+
+RED (empirical differential; both Python and Go run against the same temp
+recipe dir with a symlinked intermediate component):
+
+```
+go test ./internal/schema -run 'TestDifferentialAgainstPython/(err_hooks_escape_symlink|ok_hooks_symlink_inside|err_init_prompt_symlink_escape|ok_init_prompt_symlink_inside)' -count=1
+  err_hooks_escape_symlink.toml:     python errored but go succeeded
+    py: [provides].hooks[0].script: hook script paths must stay inside the recipe directory (got 'hooks/x.sh')
+  err_init_prompt_symlink_escape.toml: python errored but go succeeded
+    py: [init].prompt: init prompt paths must stay inside the recipe directory
+  (both symlink-to-INSIDE ok-cases passed on both sides: 2 ok)
+```
+
+GREEN:
+
+```
+go test ./internal/schema -count=1 → ok 5.373s (all 4 symlink fixtures byte-identical)
+```
+
+resolveDir replaced by resolvePy (Path.resolve(strict=False) port: deepest
+existing ancestor resolved via EvalSymlinks, dangling final symlink
+followed, remainder re-joined; 40-level MAXSYMLINKS cap). Runtime-hook and
+init-prompt containment now compares resolvePy(recipeDir) vs
+resolvePy(recipeDir/script); init stats the RESOLVED target like Python's
+target.exists()/is_file(). Setup helpers in differential_test.go now take
+t to allocate outside dirs.
+
+#### Fix D — internal/target pyReprString control chars
+
+RED:
+
+```
+go test ./internal/target -run TestPyReprStringDifferential -count=1
+  7 mismatches: \x01 \x1f \x7f \u0085 \u009f \u00a0 \u2028 emitted raw, want \xNN/\uNNNN escapes
+  (raw-byte \x85/\x9f argv cases dropped: surrogateescape artifact, not TOML-reachable)
+```
+
+GREEN:
+
+```
+go test ./internal/target -count=1 → ok 3.768s
+```
+
+#### Fix E — recursion probes (all three packages)
+
+Probes: python3 repr() of nested lists — ok to ~69709, RecursionError at
+~69710 (8 MiB stack); self-referential list/dict render `[[...]]`/`{...}`;
+shared acyclic containers render in full.
+
+RED (target — stack overflow via mutual pyStr↔pyRepr recursion on
+*toml.Table, reachable through worktrees_dir = {a = 1}):
+
+```
+go test ./internal/target -run 'TestDifferentialPlanJSON/worktrees-dict' -count=1
+  runtime: goroutine stack exceeds 1000000000-byte limit
+  fatal error: stack overflow   (exit status 2)
+```
+
+RED (schema — giant message instead of a recursion error):
+
+```
+go test ./internal/schema -run TestPyReprDepthCapGoOnly -count=1
+  depth-cap error = "[provides].templates[0].update_policy: invalid value [[[[..." (want recursion-depth message)
+```
+
+GREEN (all three packages share the same design; separate copies per
+package by module convention): pyReprDepth core with pyReprMaxDepth =
+100000 (probe-pinned, above the observed Python failure point so Go never
+errors where the probe machine's Python succeeds) returning a descriptive
+`value nesting exceeds the maximum recursion depth (100000)` error, and a
+`{...}` ellipsis for *toml.Table re-entered on the active path (Python
+parity; not producible by toml.Parse, pinned via pre-seeded active set).
+pyRepr/pyStr signatures now carry the error and every call site propagates
+(schema: pyStr callers + update_policy repr; target: normalizeDeclaredRelpath
+plain error + worktreesDir → ResolveTargetPlan; lock: refusal walk +
+renderLock → WriteLock).
+
+```
+go test ./internal/target -run 'TestPyRepr' -count=1 → PASS (string differential, nested depth-1000 differential vs python3, depth cap + ellipsis)
+go test ./internal/lock -run TestPyReprUnitsGoOnly -count=1 → PASS (composition, probe pins, depth cap, ellipsis)
+go test ./internal/schema -run TestPyReprDepthCapGoOnly -count=1 → PASS
+```
+
+#### Verification (observed exit codes)
+
+```
+CGO_ENABLED=0 go build ./...                                          → exit 0
+go vet ./internal/lock/... ./internal/schema/... ./internal/target/... → exit 0
+go test ./internal/lock/... ./internal/schema/... ./internal/target/... -count=1 → exit 0 (lock 1.704s, schema 5.620s, target 3.768s)
+go test ./... -count=1                                                → exit 0 (cli, config, home, lock, schema, target, toml all ok)
+```
+
+Differential counts (schema TestDifferentialAgainstPython): clean corpus 21
+recipes ok both sides; fixtures 92 byte-identical (20 ok, 72 error). Lock
+differential: 23 spec cases + round-trip, byte-equal incl. refusal parity.
+Target differential: 23 plan subtests incl. worktrees-dict + symlink classes,
+byte-equal stdout/stderr/exit.
+
+## JD round-1 verification (final gate, observed)
+
+Documentation: ADR 0002 (`docs/go-adr/0002-toml-line-editor.md`) updated with
+the empirically pinned tomllib line-ending semantics (\r\n accepted everywhere,
+lone \r rejected everywhere, CRLF in multi-line string values normalized to \n)
+and the write-ops universal-newline read translation (\r\n and lone \r → \n in
+memory, CRLF manifests round-trip LF-normalized, guard-refused writes leave
+original bytes untouched). Consequences section had no conflict; left as-is.
+Formatting: gofmt flagged four files; gofmt applied. Three were pure
+alignment/import-order fixes; `internal/toml/value_parse.go` was flagged only
+for a doc comment (`'''...'''`), which gofmt would smart-quote and corrupt —
+the comment was reworded ("delimited by three single quotes") so gofmt output
+is clean without changing the documented meaning. `gofmt -l internal cmd` is
+now empty.
+
+```
+CGO_ENABLED=0 go build ./...   → exit 0
+go vet ./...                   → exit 0
+go test ./... -count=1         → exit 0 (cli 2.245s, config 8.746s, home 0.518s, lock 2.052s, schema 6.466s, target 4.241s, toml 1.464s)
+./tests/run.sh                 → exit 0; unittest phase final line:
+  Ran 2358 tests in 1937.445s
+  OK (skipped=164)
+```

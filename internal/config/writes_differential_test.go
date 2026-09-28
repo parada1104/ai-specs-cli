@@ -179,6 +179,54 @@ func TestDifferentialWrites(t *testing.T) {
 			errPrefix: true,
 		},
 		{
+			name:         "remove recipe from CRLF manifest (output LF-normalized)",
+			manifestFile: "write_recipe_crlf.toml",
+			refScript:    "recipe_remove_ref.py",
+			refArgs:      func(p string) []string { return []string{p, "a"} },
+			goOp: func(p string) (string, error) {
+				_, msg, err := RemoveRecipeSegments(p, "a")
+				return msg, err
+			},
+		},
+		{
+			name:         "remove recipe CRLF valid→invalid guard fires (file untouched)",
+			manifestFile: "write_recipe_crlf_guard.toml",
+			refScript:    "recipe_remove_ref.py",
+			refArgs:      func(p string) []string { return []string{p, "doom"} },
+			goOp: func(p string) (string, error) {
+				_, msg, err := RemoveRecipeSegments(p, "doom")
+				return msg, err
+			},
+			errPrefix: true,
+		},
+		{
+			name:         "remove dep first-of-two from CRLF manifest",
+			manifestFile: "write_dep_crlf.toml",
+			refScript:    "skills_remove_ref.py",
+			refArgs:      func(p string) []string { return []string{p, "first"} },
+			goOp: func(p string) (string, error) {
+				return RemoveDepSegment(p, "first")
+			},
+		},
+		{
+			name:      "append to CRLF manifest",
+			manifest:  "a = 1\r\nb = 2\r\n",
+			refScript: "skills_add_ref.py",
+			refArgs: func(p string) []string {
+				return []string{p, "dep", "url", "", "", "", "", "", ""}
+			},
+			goOp: appendOp("dep", "url", "", "", "", "", "", ""),
+		},
+		{
+			name:      "append to CRLF manifest without trailing newline",
+			manifest:  "a = 1\r\nb = 2\r",
+			refScript: "skills_add_ref.py",
+			refArgs: func(p string) []string {
+				return []string{p, "dep", "url", "", "", "", "", "", ""}
+			},
+			goOp: appendOp("dep", "url", "", "", "", "", "", ""),
+		},
+		{
 			name:         "remove recipe from real repo manifest (sub-table configs)",
 			manifestFile: "_repo", // special-cased below
 			refScript:    "recipe_remove_ref.py",
@@ -226,8 +274,8 @@ func TestDifferentialWrites(t *testing.T) {
 			},
 		},
 		{
-			name:     "append with all fields",
-			manifest: "a = 1\n",
+			name:      "append with all fields",
+			manifest:  "a = 1\n",
 			refScript: "skills_add_ref.py",
 			refArgs: func(p string) []string {
 				return []string{p, "my-dep", "git::https://x/y", "sub/dir", "root,dev", "on-sync", "MIT", "vendor notes", "main"}
@@ -235,8 +283,8 @@ func TestDifferentialWrites(t *testing.T) {
 			goOp: appendOp("my-dep", "git::https://x/y", "sub/dir", "root,dev", "on-sync", "MIT", "vendor notes", "main"),
 		},
 		{
-			name:     "append minimal",
-			manifest: "a = 1\n",
+			name:      "append minimal",
+			manifest:  "a = 1\n",
 			refScript: "skills_add_ref.py",
 			refArgs: func(p string) []string {
 				return []string{p, "dep", "url", "", "", "", "", "", ""}
@@ -244,8 +292,8 @@ func TestDifferentialWrites(t *testing.T) {
 			goOp: appendOp("dep", "url", "", "", "", "", "", ""),
 		},
 		{
-			name:     "append to file not ending in newline",
-			manifest: "a = 1",
+			name:      "append to file not ending in newline",
+			manifest:  "a = 1",
 			refScript: "skills_add_ref.py",
 			refArgs: func(p string) []string {
 				return []string{p, "dep", "url", "", "", "", "", "", ""}
@@ -253,8 +301,8 @@ func TestDifferentialWrites(t *testing.T) {
 			goOp: appendOp("dep", "url", "", "", "", "", "", ""),
 		},
 		{
-			name:     "append scope CSV with spaces and empties",
-			manifest: "a = 1\n",
+			name:      "append scope CSV with spaces and empties",
+			manifest:  "a = 1\n",
 			refScript: "skills_add_ref.py",
 			refArgs: func(p string) []string {
 				return []string{p, "dep", "url", "", " root , , dev ,", "", "", "", ""}
@@ -262,8 +310,8 @@ func TestDifferentialWrites(t *testing.T) {
 			goOp: appendOp("dep", "url", "", " root , , dev ,", "", "", "", ""),
 		},
 		{
-			name:     "append escaping quotes and backslashes",
-			manifest: "a = 1\n",
+			name:      "append escaping quotes and backslashes",
+			manifest:  "a = 1\n",
 			refScript: "skills_add_ref.py",
 			refArgs: func(p string) []string {
 				return []string{p, `a"b\c`, `he said "hi" \ ok`, "", "", "", "", "", ""}

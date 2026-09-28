@@ -353,6 +353,13 @@ func (p *parser) parseMultilineBasic() (string, error) {
 			}
 			continue
 		}
+		if p.data[p.pos] == '\r' && p.hasPrefix("\r\n") {
+			// Normalize CRLF to \n inside the value, mirroring tomllib.
+			sb.WriteByte('\n')
+			p.line++
+			p.pos += 2
+			continue
+		}
 		if p.data[p.pos] == '\n' {
 			p.line++
 		}
@@ -407,7 +414,8 @@ func (p *parser) parseLiteralString() (string, error) {
 	}
 }
 
-// parseMultilineLiteral parses '''...''' with no escapes.
+// parseMultilineLiteral parses a multi-line literal string delimited by three
+// single quotes, with no escapes.
 func (p *parser) parseMultilineLiteral() (string, error) {
 	p.pos += 3
 	p.trimLeadingNewline()
@@ -426,6 +434,13 @@ func (p *parser) parseMultilineLiteral() (string, error) {
 			}
 			p.pos += run
 			return sb.String(), nil
+		}
+		if p.data[p.pos] == '\r' && p.hasPrefix("\r\n") {
+			// Normalize CRLF to \n inside the value, mirroring tomllib.
+			sb.WriteByte('\n')
+			p.line++
+			p.pos += 2
+			continue
 		}
 		if p.data[p.pos] == '\n' {
 			p.line++

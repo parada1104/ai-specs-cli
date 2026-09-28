@@ -20,11 +20,11 @@ import (
 )
 
 const (
-	legacyTopologyRecipeID = "worktree-flow"
-	repoTopologyKey        = "repo_topology"
-	topologySourceProject  = "project"
-	topologySourceLegacy   = "legacy-recipe"
-	topologySourceDefault  = "default"
+	legacyTopologyRecipeID        = "worktree-flow"
+	repoTopologyKey               = "repo_topology"
+	topologySourceProject         = "project"
+	topologySourceLegacy          = "legacy-recipe"
+	topologySourceDefault         = "default"
 	legacyRepoTopologyDeprecation = "recipes.worktree-flow.config.repo_topology is deprecated; set " +
 		"[project].repo_topology instead"
 )

@@ -305,6 +305,14 @@ func TestDifferentialPlanJSON(t *testing.T) {
 			},
 		},
 		{
+			// A table value goes through str(dict): document-order keys,
+			// repr-composed values.
+			name: "worktrees-dict",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\n[recipes.worktree-flow.config]\nworktrees_dir = {a = 1, b = \"two\"}\n",
+			},
+		},
+		{
 			// Explicit monorepo-apps config: via=config, source=project.
 			name: "topology-project",
 			tree: tree{

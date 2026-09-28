@@ -15,13 +15,26 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"ai-specs.dev/ai-specs/internal/toml"
 )
+
+// pyReprMaxDepth pins the Python recursion boundary for str()/repr() of
+// nested values. Probe (Python 3.14.7, default 8 MiB stack): repr() of a
+// nested list succeeds to depth ~69709 and raises RecursionError at ~69710.
+// The cap sits above that failure point so Go never errors where Python
+// succeeds on the probe machine, and returns a descriptive error instead of
+// crashing at extreme depths. Self-referential *toml.Table sharing (not
+// producible by toml.Parse, which builds trees) renders Python's ellipsis
+// form instead.
+const pyReprMaxDepth = 100000
 
 // LockHeader is LOCK_HEADER from lib/_internal/lock.py, copied
 // character-for-character. TestLockHeaderByteIdentity pins it.
@@ -216,18 +229,273 @@ func loadSkillGroups(root *toml.Table, key string) map[string]map[string]map[str
 	return result
 }
 
-// pyStr mirrors the Python writer's `value is not None and value != ""`
-// truthiness plus str(): nil and empty strings are falsy, everything else
-// stringifies.
-func pyStr(v any) (string, bool) {
+// pyStr mirrors the Python writer's str() plus its `value is not None and
+// value != ""` truthiness (the bool return): nil and empty strings are
+// falsy, everything else stringifies. bool → True/False, int64 → decimal,
+// float64 → str(float) shortest form, list/dict → repr composition.
+// An error means the nesting exceeds pyReprMaxDepth (Python raises
+// RecursionError inside str()).
+func pyStr(v any) (string, bool, error) {
 	switch x := v.(type) {
 	case nil:
-		return "", false
+		return "", false, nil
 	case string:
-		return x, x != ""
+		return x, x != "", nil
+	case bool:
+		if x {
+			return "True", true, nil
+		}
+		return "False", true, nil
+	case int64:
+		return strconv.FormatInt(x, 10), true, nil
+	case float64:
+		return pyFloatStr(x), true, nil
 	default:
-		return fmt.Sprint(x), true
+		s, err := pyReprDepth(v, 0, nil)
+		return s, true, err
 	}
+}
+
+// pyTruthy mirrors Python truthiness for the sha256 entry gate
+// (`entry.get("sha256")` plain truthiness, which skips False/0/[]/{}).
+func pyTruthy(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return x
+	case string:
+		return x != ""
+	case int64:
+		return x != 0
+	case float64:
+		return x != 0
+	case []any:
+		return len(x) > 0
+	case []*toml.Table:
+		return len(x) > 0
+	case *toml.Table:
+		return x != nil && len(x.Keys()) > 0
+	case map[string]any:
+		return len(x) > 0
+	default:
+		return true
+	}
+}
+
+// pyRepr mirrors Python repr() for the composite value kinds reachable from
+// TOML (str(list) == repr(list) composition).
+func pyRepr(v any) (string, error) {
+	return pyReprDepth(v, 0, nil)
+}
+
+// pyReprDepth is the shared recursion core: depth-capped (descriptive error
+// instead of a stack overflow) and cycle-aware for *toml.Table (Python's
+// '{...}' ellipsis for a table re-entered on the active path).
+func pyReprDepth(v any, depth int, active map[*toml.Table]bool) (string, error) {
+	if depth > pyReprMaxDepth {
+		return "", fmt.Errorf("value nesting exceeds the maximum recursion depth (%d)", pyReprMaxDepth)
+	}
+	switch x := v.(type) {
+	case string:
+		return pyReprString(x), nil
+	case nil:
+		return "None", nil
+	case bool:
+		if x {
+			return "True", nil
+		}
+		return "False", nil
+	case int64:
+		return strconv.FormatInt(x, 10), nil
+	case float64:
+		return pyFloatStr(x), nil
+	case []any:
+		parts := make([]string, len(x))
+		for i, e := range x {
+			p, err := pyReprDepth(e, depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts[i] = p
+		}
+		return "[" + strings.Join(parts, ", ") + "]", nil
+	case []*toml.Table:
+		parts := make([]string, len(x))
+		for i, e := range x {
+			p, err := pyReprDepth(e, depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts[i] = p
+		}
+		return "[" + strings.Join(parts, ", ") + "]", nil
+	case *toml.Table:
+		if x == nil {
+			return "{}", nil
+		}
+		if active[x] {
+			return "{...}", nil
+		}
+		if active == nil {
+			active = make(map[*toml.Table]bool)
+		}
+		active[x] = true
+		defer delete(active, x)
+		tableKeys := x.Keys()
+		parts := make([]string, 0, len(tableKeys))
+		for _, k := range tableKeys {
+			val, _ := x.Get(k)
+			p, err := pyReprDepth(val, depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, pyReprString(k)+": "+p)
+		}
+		return "{" + strings.Join(parts, ", ") + "}", nil
+	case map[string]any:
+		// ponytail: maps normalized by Table.Any() lose document order; emit
+		// in sorted key order — byte-identical to Python's insertion order
+		// whenever the producer wrote keys in sorted order.
+		mapKeys := make([]string, 0, len(x))
+		for k := range x {
+			mapKeys = append(mapKeys, k)
+		}
+		sort.Strings(mapKeys)
+		parts := make([]string, 0, len(mapKeys))
+		for _, k := range mapKeys {
+			p, err := pyReprDepth(x[k], depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, pyReprString(k)+": "+p)
+		}
+		return "{" + strings.Join(parts, ", ") + "}", nil
+	default:
+		return pyReprString(fmt.Sprintf("%v", v)), nil
+	}
+}
+
+// pyReprString mirrors Python repr() for strings: quote switches to '"' when
+// the value contains ' but no "; \\ \n \r \t and the active quote are escaped;
+// every non-printable character becomes \\xNN / \\uNNNN / \\UNNNNNNNN (lowercase
+// hex). Probe-pinned against Python 3.14 repr(): chars < 0x20 and 0x7f-0x9f
+// emit \\xNN (e.g. '\\x85'); printable non-ASCII like é and non-BMP emoji stay
+// raw; NBSP and U+2028 are non-printable and are escaped.
+func pyReprString(s string) string {
+	quote := byte('\'')
+	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
+		quote = '"'
+	}
+	var sb strings.Builder
+	sb.WriteByte(quote)
+	for _, r := range s {
+		switch r {
+		case '\\':
+			sb.WriteString(`\\`)
+		case '\n':
+			sb.WriteString(`\n`)
+		case '\r':
+			sb.WriteString(`\r`)
+		case '\t':
+			sb.WriteString(`\t`)
+		case rune(quote):
+			sb.WriteByte('\\')
+			sb.WriteByte(quote)
+		default:
+			if r < 0x20 || (r >= 0x7f && r <= 0x9f) || !unicode.IsPrint(r) {
+				sb.WriteString(pyUnicodeEscape(r))
+			} else {
+				sb.WriteRune(r)
+			}
+		}
+	}
+	sb.WriteByte(quote)
+	return sb.String()
+}
+
+// pyUnicodeEscape renders one non-printable rune in Python repr escape form
+// (lowercase hex, \x for < 0x100, \u for the BMP, \U beyond).
+func pyUnicodeEscape(r rune) string {
+	const hex = "0123456789abcdef"
+	digits := func(n int) string {
+		out := make([]byte, n)
+		for i := n - 1; i >= 0; i-- {
+			out[i] = hex[r&0xf]
+			r >>= 4
+		}
+		return string(out)
+	}
+	switch {
+	case r < 0x100:
+		return `\x` + digits(2)
+	case r < 0x10000:
+		return `\u` + digits(4)
+	default:
+		return `\U` + digits(8)
+	}
+}
+
+// pyFloatStr renders f like Python str(float) (shortest round-trip repr):
+// scientific notation when the decimal point position is <= -4 or > 16,
+// otherwise decimal notation with a forced ".0" on integral values.
+// Replicated from internal/config's formatPyFloat, which is outside this
+// package's allowed edit surface.
+func pyFloatStr(f float64) string {
+	switch {
+	case math.IsNaN(f):
+		return "nan"
+	case math.IsInf(f, 1):
+		return "inf"
+	case math.IsInf(f, -1):
+		return "-inf"
+	}
+	neg := math.Signbit(f)
+	a := math.Abs(f)
+	if a == 0 {
+		if neg {
+			return "-0.0"
+		}
+		return "0.0"
+	}
+	e := strconv.FormatFloat(a, 'e', -1, 64) // e.g. "1.5e+22"
+	marker := strings.IndexByte(e, 'e')
+	digits := strings.Replace(e[:marker], ".", "", 1)
+	exp10, _ := strconv.Atoi(e[marker+1:])
+	decpt := exp10 + 1
+
+	var s string
+	if decpt <= -4 || decpt > 16 {
+		mant := digits
+		if len(digits) > 1 {
+			mant = digits[:1] + "." + digits[1:]
+		}
+		expStr := strconv.Itoa(exp10)
+		if exp10 < 0 {
+			expStr = strconv.Itoa(-exp10)
+		}
+		if len(expStr) < 2 {
+			expStr = "0" + expStr
+		}
+		signChar := byte('+')
+		if exp10 < 0 {
+			signChar = '-'
+		}
+		s = mant + "e" + string(signChar) + expStr
+	} else {
+		switch {
+		case decpt <= 0:
+			s = "0." + strings.Repeat("0", -decpt) + digits
+		case decpt >= len(digits):
+			s = digits + strings.Repeat("0", decpt-len(digits)) + ".0"
+		default:
+			s = digits[:decpt] + "." + digits[decpt:]
+		}
+	}
+	if neg {
+		s = "-" + s
+	}
+	return s
 }
 
 // refuseControlChars is _refuse_control_chars: walk every string that reaches
@@ -256,11 +524,15 @@ func refuseControlChars(lockPath string, lock *Lock) error {
 	for _, path := range managedPaths {
 		appendCheck("managed path", path)
 		entry := lock.Managed[path]
-		if sha, ok := pyStr(entry["sha256"]); !ok || sha == "" {
+		if !pyTruthy(entry["sha256"]) {
 			continue
 		}
 		for _, key := range []string{"sha256", "recipe", "source", "kind", "policy"} {
-			if value, ok := pyStr(entry[key]); ok {
+			value, ok, err := pyStr(entry[key])
+			if err != nil {
+				return err
+			}
+			if ok {
 				appendCheck("managed."+key, value)
 			}
 		}
@@ -283,7 +555,11 @@ func refuseControlChars(lockPath string, lock *Lock) error {
 		sort.Strings(names)
 		for _, name := range names {
 			appendCheck("agents filename", name)
-			appendCheck("agents hash", pyStrValue(files[name]))
+			s, err := pyStrValue(files[name])
+			if err != nil {
+				return err
+			}
+			appendCheck("agents hash", s)
 		}
 	}
 	depIDs := make([]string, 0, len(lock.Deps))
@@ -309,7 +585,11 @@ func refuseControlChars(lockPath string, lock *Lock) error {
 			sort.Strings(rels)
 			for _, rel := range rels {
 				appendCheck("deps rel", rel)
-				appendCheck("deps hash", pyStrValue(files[rel]))
+				s, err := pyStrValue(files[rel])
+				if err != nil {
+					return err
+				}
+				appendCheck("deps hash", s)
 			}
 		}
 	}
@@ -322,20 +602,22 @@ func refuseControlChars(lockPath string, lock *Lock) error {
 	return nil
 }
 
-// pyStrValue is str(v) for the refusal walk, which stringifies unconditionally.
-func pyStrValue(v any) string {
-	s, _ := pyStr(v)
-	return s
+// pyStrValue is str(v) for the refusal walk, which stringifies
+// unconditionally. An error means the nesting exceeds pyReprMaxDepth.
+func pyStrValue(v any) (string, error) {
+	s, _, err := pyStr(v)
+	return s, err
 }
 
 // renderLock is the _write_lock_python body: fixed section order
-// [meta] → [managed."<path>"] (sorted, sha256-less entries and empty values
+// [meta] → [managed."<path>"] (sorted, falsy-sha256 entries and empty values
 // skipped) → [deps."<id>".skills."<skill>"] (sorted, empty file maps
 // skipped) → [agents."<harness>"] (sorted, empty maps skipped), assembled as
 // "\n".join(lines).rstrip("\n") + "\n". The legacy [recipes] and [skills]
 // sections are read but never emitted, on both sides (recorded-defect
-// behavior, do not fix).
-func renderLock(lock *Lock) string {
+// behavior, do not fix). An error means a value's nesting exceeds
+// pyReprMaxDepth.
+func renderLock(lock *Lock) (string, error) {
 	lines := []string{LockHeader}
 
 	if len(lock.Meta) > 0 {
@@ -356,12 +638,16 @@ func renderLock(lock *Lock) string {
 	sort.Strings(paths)
 	for _, path := range paths {
 		entry := lock.Managed[path]
-		if _, ok := pyStr(entry["sha256"]); !ok {
+		if !pyTruthy(entry["sha256"]) {
 			continue
 		}
 		lines = append(lines, "[managed."+TOMLString(path)+"]")
 		for _, key := range []string{"sha256", "recipe", "source", "kind", "policy"} {
-			if value, ok := pyStr(entry[key]); ok {
+			value, ok, err := pyStr(entry[key])
+			if err != nil {
+				return "", err
+			}
+			if ok {
 				lines = append(lines, key+" = "+TOMLString(value))
 			}
 		}
@@ -392,7 +678,11 @@ func renderLock(lock *Lock) string {
 			}
 			sort.Strings(rels)
 			for _, rel := range rels {
-				lines = append(lines, TOMLString(rel)+" = "+TOMLString(pyStrValue(files[rel])))
+				s, err := pyStrValue(files[rel])
+				if err != nil {
+					return "", err
+				}
+				lines = append(lines, TOMLString(rel)+" = "+TOMLString(s))
 			}
 			lines = append(lines, "")
 		}
@@ -415,12 +705,16 @@ func renderLock(lock *Lock) string {
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			lines = append(lines, TOMLString(name)+" = "+TOMLString(pyStrValue(files[name])))
+			s, err := pyStrValue(files[name])
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, TOMLString(name)+" = "+TOMLString(s))
 		}
 		lines = append(lines, "")
 	}
 
-	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n", nil
 }
 
 // WriteLock is the write side of _write_lock_python: the control-character
@@ -436,6 +730,10 @@ func WriteLock(lockPath string, lock *Lock) error {
 	if err := refuseControlChars(lockPath, lock); err != nil {
 		return err
 	}
+	text, err := renderLock(lock)
+	if err != nil {
+		return err
+	}
 	parent := filepath.Dir(lockPath)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
@@ -445,7 +743,7 @@ func WriteLock(lockPath string, lock *Lock) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	if _, err := tmp.WriteString(renderLock(lock)); err != nil {
+	if _, err := tmp.WriteString(text); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
 		return err

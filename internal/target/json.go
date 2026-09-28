@@ -8,11 +8,25 @@ package target
 // this package's allowed edit surface).
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf16"
+
+	"ai-specs.dev/ai-specs/internal/toml"
 )
+
+// pyReprMaxDepth pins the Python recursion boundary for repr()/str() of
+// nested values. Probe (Python 3.14.7, default 8 MiB stack): repr() of a
+// nested list succeeds to depth ~69709 and raises RecursionError at ~69710.
+// The cap sits above that failure point so Go never errors where Python
+// succeeds on the probe machine, and returns a descriptive error instead of
+// crashing at extreme depths. Self-referential *toml.Table sharing (not
+// producible by toml.Parse, which builds trees) renders Python's ellipsis
+// form instead.
+const pyReprMaxDepth = 100000
 
 // obj is an insertion-ordered object mirroring Python dict insertion order.
 type obj struct {
@@ -214,52 +228,94 @@ func jsonString(s string) string {
 // --- Python str()/repr() mirrors for TOML scalar values ----------------------
 
 // pyStr mirrors Python str() for the value types internal/toml produces.
-func pyStr(v any) string {
+// Non-string composites go through repr composition (Python str(list) ==
+// repr(list)); an error means the nesting exceeds pyReprMaxDepth where
+// Python raises RecursionError.
+func pyStr(v any) (string, error) {
+	if s, ok := v.(string); ok {
+		return s, nil
+	}
+	return pyReprDepth(v, 0, nil)
+}
+
+// pyRepr mirrors Python repr() for TOML value types. An error means the
+// nesting exceeds pyReprMaxDepth where Python raises RecursionError.
+func pyRepr(v any) (string, error) {
+	return pyReprDepth(v, 0, nil)
+}
+
+// pyReprDepth is the shared recursion core: depth-capped (descriptive error
+// instead of a stack overflow) and cycle-aware for *toml.Table (Python's
+// '{...}' ellipsis for a table re-entered on the active path).
+func pyReprDepth(v any, depth int, active map[*toml.Table]bool) (string, error) {
+	if depth > pyReprMaxDepth {
+		return "", fmt.Errorf("value nesting exceeds the maximum recursion depth (%d)", pyReprMaxDepth)
+	}
 	switch x := v.(type) {
 	case nil:
-		return ""
+		return "None", nil
 	case string:
-		return x
+		return pyReprString(x), nil
 	case bool:
 		if x {
-			return "True"
+			return "True", nil
 		}
-		return "False"
+		return "False", nil
 	case int:
-		return strconv.Itoa(x)
+		return strconv.Itoa(x), nil
 	case int64:
-		return strconv.FormatInt(x, 10)
+		return strconv.FormatInt(x, 10), nil
 	case float64:
-		return formatPyFloat(x)
+		return formatPyFloat(x), nil
 	case []any:
 		parts := make([]string, len(x))
 		for i, e := range x {
-			parts[i] = pyRepr(e)
+			p, err := pyReprDepth(e, depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts[i] = p
 		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case *obj:
-		return pyRepr(v)
-	default:
-		return pyRepr(v)
-	}
-}
-
-// pyRepr mirrors Python repr() for TOML value types.
-func pyRepr(v any) string {
-	switch x := v.(type) {
-	case string:
-		return pyReprString(x)
+		return "[" + strings.Join(parts, ", ") + "]", nil
+	case *toml.Table:
+		if x == nil {
+			return "{}", nil
+		}
+		if active[x] {
+			return "{...}", nil
+		}
+		if active == nil {
+			active = make(map[*toml.Table]bool)
+		}
+		active[x] = true
+		defer delete(active, x)
+		tableKeys := x.Keys()
+		parts := make([]string, 0, len(tableKeys))
+		for _, k := range tableKeys {
+			val, _ := x.Get(k)
+			p, err := pyReprDepth(val, depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, pyReprString(k)+": "+p)
+		}
+		return "{" + strings.Join(parts, ", ") + "}", nil
 	case *obj:
 		if x == nil {
-			return "{}"
+			return "{}", nil
 		}
 		parts := make([]string, 0, len(x.keys))
 		for _, k := range x.keys {
-			parts = append(parts, pyRepr(k)+": "+pyRepr(x.vals[k]))
+			p, err := pyReprDepth(x.vals[k], depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, pyReprString(k)+": "+p)
 		}
-		return "{" + strings.Join(parts, ", ") + "}"
+		return "{" + strings.Join(parts, ", ") + "}", nil
+	default:
+		return pyReprString(fmt.Sprintf("%v", v)), nil
 	}
-	return pyStr(v)
 }
 
 func pyReprString(s string) string {
@@ -279,15 +335,45 @@ func pyReprString(s string) string {
 			sb.WriteString(`\r`)
 		case '\t':
 			sb.WriteString(`\t`)
+		case rune(quote):
+			sb.WriteByte('\\')
+			sb.WriteByte(quote)
 		default:
-			if rune(r) == rune(quote) {
-				sb.WriteByte('\\')
+			// Python repr() escapes every non-printable char (\xNN for
+			// < 0x100, \uNNNN on the BMP, \UNNNNNNNN beyond): chars < 0x20
+			// and 0x7f-0x9f always, plus non-printable Unicode (NBSP, U+2028);
+			// printable non-ASCII like é and non-BMP emoji stay raw.
+			if r < 0x20 || (r >= 0x7f && r <= 0x9f) || !unicode.IsPrint(r) {
+				sb.WriteString(pyUnicodeEscape(r))
+			} else {
+				sb.WriteRune(r)
 			}
-			sb.WriteRune(r)
 		}
 	}
 	sb.WriteByte(quote)
 	return sb.String()
+}
+
+// pyUnicodeEscape renders one non-printable rune in Python repr escape form
+// (lowercase hex, \x for < 0x100, \u for the BMP, \U beyond).
+func pyUnicodeEscape(r rune) string {
+	const hex = "0123456789abcdef"
+	digits := func(n int) string {
+		out := make([]byte, n)
+		for i := n - 1; i >= 0; i-- {
+			out[i] = hex[r&0xf]
+			r >>= 4
+		}
+		return string(out)
+	}
+	switch {
+	case r < 0x100:
+		return `\x` + digits(2)
+	case r < 0x10000:
+		return `\u` + digits(4)
+	default:
+		return `\U` + digits(8)
+	}
 }
 
 // formatPyFloat renders f like Python str(float) (shortest round-trip

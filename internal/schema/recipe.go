@@ -12,8 +12,10 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"ai-specs.dev/ai-specs/internal/toml"
 )
@@ -280,53 +282,178 @@ func pyTypeName(v any) string {
 	}
 }
 
+// pyReprMaxDepth pins the Python recursion boundary for repr()/str() of
+// nested values. Probe (Python 3.14.7, default 8 MiB stack): repr() of a
+// nested list succeeds to depth ~69709 and raises RecursionError at ~69710.
+// The cap sits above that failure point so Go never errors where Python
+// succeeds on the probe machine, and returns a descriptive error instead of
+// crashing at extreme depths. Self-referential *toml.Table sharing (not
+// producible by toml.Parse, which builds trees) renders Python's ellipsis
+// form instead.
+const pyReprMaxDepth = 100000
+
 // pyRepr mirrors Python repr() for the value kinds reachable from TOML.
-func pyRepr(v any) string {
+// An error means the nesting exceeds pyReprMaxDepth where Python raises
+// RecursionError.
+func pyRepr(v any) (string, error) {
+	return pyReprDepth(v, 0, nil)
+}
+
+// pyReprDepth is the shared recursion core: depth-capped (descriptive error
+// instead of a stack overflow) and cycle-aware for *toml.Table (Python's
+// '{...}' ellipsis for a table re-entered on the active path).
+func pyReprDepth(v any, depth int, active map[*toml.Table]bool) (string, error) {
+	if depth > pyReprMaxDepth {
+		return "", fmt.Errorf("value nesting exceeds the maximum recursion depth (%d)", pyReprMaxDepth)
+	}
 	switch x := v.(type) {
 	case nil:
-		return "None"
+		return "None", nil
 	case string:
-		return "'" + x + "'"
+		return pyReprString(x), nil
 	case bool:
 		if x {
-			return "True"
+			return "True", nil
 		}
-		return "False"
+		return "False", nil
 	case int64:
-		return strconv.FormatInt(x, 10)
+		return strconv.FormatInt(x, 10), nil
 	case float64:
-		return pyFloatStr(x)
+		return pyFloatStr(x), nil
 	case []any:
 		parts := make([]string, len(x))
 		for i, e := range x {
-			parts[i] = pyRepr(e)
+			p, err := pyReprDepth(e, depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts[i] = p
 		}
-		return "[" + strings.Join(parts, ", ") + "]"
+		return "[" + strings.Join(parts, ", ") + "]", nil
 	case []*toml.Table:
 		parts := make([]string, len(x))
 		for i, e := range x {
-			parts[i] = pyRepr(e)
+			p, err := pyReprDepth(e, depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts[i] = p
 		}
-		return "[" + strings.Join(parts, ", ") + "]"
+		return "[" + strings.Join(parts, ", ") + "]", nil
 	case *toml.Table:
-		parts := make([]string, 0, len(keys(x)))
-		for _, k := range keys(x) {
-			v, _ := get(x, k)
-			parts = append(parts, pyRepr(k)+": "+pyRepr(v))
+		if x == nil {
+			return "{}", nil
 		}
-		return "{" + strings.Join(parts, ", ") + "}"
+		if active[x] {
+			return "{...}", nil
+		}
+		if active == nil {
+			active = make(map[*toml.Table]bool)
+		}
+		active[x] = true
+		defer delete(active, x)
+		tableKeys := x.Keys()
+		parts := make([]string, 0, len(tableKeys))
+		for _, k := range tableKeys {
+			val, _ := x.Get(k)
+			p, err := pyReprDepth(val, depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, pyReprString(k)+": "+p)
+		}
+		return "{" + strings.Join(parts, ", ") + "}", nil
+	case map[string]any:
+		// ponytail: maps normalized by rawTableMap lose document order; emit
+		// in sorted key order — byte-identical to Python's insertion order
+		// whenever the producer wrote keys in sorted order.
+		mapKeys := make([]string, 0, len(x))
+		for k := range x {
+			mapKeys = append(mapKeys, k)
+		}
+		sort.Strings(mapKeys)
+		parts := make([]string, 0, len(mapKeys))
+		for _, k := range mapKeys {
+			p, err := pyReprDepth(x[k], depth+1, active)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, pyReprString(k)+": "+p)
+		}
+		return "{" + strings.Join(parts, ", ") + "}", nil
 	default:
-		return fmt.Sprintf("%v", v)
+		return pyReprString(fmt.Sprintf("%v", v)), nil
+	}
+}
+
+// pyReprString mirrors Python repr() for strings: quote switches to '"' when
+// the value contains ' but no "; \\ \n \r \t and the active quote are escaped;
+// every non-printable character becomes \\xNN / \\uNNNN / \\UNNNNNNNN (lowercase
+// hex). Probe-pinned against Python 3.14 repr(): chars < 0x20 and 0x7f-0x9f
+// emit \\xNN (e.g. '\\x85'); printable non-ASCII like é and non-BMP emoji stay
+// raw; NBSP and U+2028 are non-printable and are escaped.
+func pyReprString(s string) string {
+	quote := byte('\'')
+	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
+		quote = '"'
+	}
+	var sb strings.Builder
+	sb.WriteByte(quote)
+	for _, r := range s {
+		switch r {
+		case '\\':
+			sb.WriteString(`\\`)
+		case '\n':
+			sb.WriteString(`\n`)
+		case '\r':
+			sb.WriteString(`\r`)
+		case '\t':
+			sb.WriteString(`\t`)
+		case rune(quote):
+			sb.WriteByte('\\')
+			sb.WriteByte(quote)
+		default:
+			if r < 0x20 || (r >= 0x7f && r <= 0x9f) || !unicode.IsPrint(r) {
+				sb.WriteString(pyUnicodeEscape(r))
+			} else {
+				sb.WriteRune(r)
+			}
+		}
+	}
+	sb.WriteByte(quote)
+	return sb.String()
+}
+
+// pyUnicodeEscape renders one non-printable rune in Python repr escape form
+// (lowercase hex, \x for < 0x100, \u for the BMP, \U beyond).
+func pyUnicodeEscape(r rune) string {
+	const hex = "0123456789abcdef"
+	digits := func(n int) string {
+		out := make([]byte, n)
+		for i := n - 1; i >= 0; i-- {
+			out[i] = hex[r&0xf]
+			r >>= 4
+		}
+		return string(out)
+	}
+	switch {
+	case r < 0x100:
+		return `\x` + digits(2)
+	case r < 0x10000:
+		return `\u` + digits(4)
+	default:
+		return `\U` + digits(8)
 	}
 }
 
 // pyStr mirrors Python str(): strings pass through, everything else takes its
-// repr form.
-func pyStr(v any) string {
+// repr form. An error means the nesting exceeds pyReprMaxDepth where Python
+// raises RecursionError inside str().
+func pyStr(v any) (string, error) {
 	if s, ok := v.(string); ok {
-		return s
+		return s, nil
 	}
-	return pyRepr(v)
+	return pyReprDepth(v, 0, nil)
 }
 
 // pyFloatStr renders f like Python str(float) (shortest round-trip repr):
@@ -481,8 +608,14 @@ func parseSkills(raw any, context string) ([]*SkillRef, error) {
 		if err != nil {
 			return nil, err
 		}
-		url := pyStr(getOr(tbl, "url", ""))
-		path := pyStr(getOr(tbl, "path", ""))
+		url, err := pyStr(getOr(tbl, "url", ""))
+		if err != nil {
+			return nil, err
+		}
+		path, err := pyStr(getOr(tbl, "path", ""))
+		if err != nil {
+			return nil, err
+		}
 		if source == "dep" && url == "" {
 			return nil, ve("%s: source='dep' requires 'url'", itemCtx)
 		}
@@ -565,12 +698,21 @@ func parseTemplates(raw any, context string) ([]*TemplateRef, error) {
 		if err != nil {
 			return nil, err
 		}
-		condition := pyStr(getOr(tbl, "condition", "not_exists"))
+		condition, err := pyStr(getOr(tbl, "condition", "not_exists"))
+		if err != nil {
+			return nil, err
+		}
 		policyRaw := getOr(tbl, "update_policy", "auto")
 		policy, isStr := policyRaw.(string)
 		if !isStr || !allowedPolicies[policy] {
+			policyRepr, err := pyRepr(policyRaw)
+			if err != nil {
+				// Python raises RecursionError inside repr(); surface the
+				// same condition as a plain descriptive error.
+				return nil, err
+			}
 			return nil, ve("%s.update_policy: invalid value %s; expected auto | confirm | never-force",
-				itemCtx, pyRepr(policyRaw))
+				itemCtx, policyRepr)
 		}
 		out = append(out, &TemplateRef{Source: source, Target: target, Condition: condition, UpdatePolicy: policy})
 	}
@@ -602,16 +744,41 @@ func parseDocs(raw any, context string) ([]*DocRef, error) {
 	return out, nil
 }
 
-// resolveDir mirrors Path.resolve() closely enough for containment checks:
-// resolve symlinks when the directory exists, else clean the absolute path.
-func resolveDir(dir string) string {
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+// resolvePy mirrors Path.resolve(strict=False) (Python 3.14): follow
+// symlinks in every existing component, keep the non-existent tail.
+// filepath.EvalSymlinks alone fails when the final component is missing or a
+// dangling symlink, so resolve the deepest existing ancestor (following a
+// dangling final symlink to its target) and re-join the remainder — the same
+// algorithm internal/target uses for its resolve() surface.
+func resolvePy(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	// ponytail: depth cap 40 mirrors kernel MAXSYMLINKS; deeper chains
+	// degrade to the un-resolved tail instead of looping.
+	return resolvePyDepth(abs, 40)
+}
+
+func resolvePyDepth(abs string, depth int) string {
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		return resolved
 	}
-	if abs, err := filepath.Abs(dir); err == nil {
-		return filepath.Clean(abs)
+	if depth > 0 {
+		if fi, err := os.Lstat(abs); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			if tgt, err := os.Readlink(abs); err == nil {
+				if !filepath.IsAbs(tgt) {
+					tgt = filepath.Join(filepath.Dir(abs), tgt)
+				}
+				return resolvePyDepth(tgt, depth-1)
+			}
+		}
 	}
-	return filepath.Clean(dir)
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		return abs
+	}
+	return filepath.Join(resolvePyDepth(parent, depth-1), filepath.Base(abs))
 }
 
 func withinDir(root, target string) bool {
@@ -664,8 +831,11 @@ func parseRuntimeHooks(raw any, context, recipeDir string) ([]*RuntimeHook, erro
 				ctx, script)
 		}
 		if recipeDir != "" {
-			root := resolveDir(recipeDir)
-			target := filepath.Join(root, filepath.Clean(script))
+			// Python parity: root and target both go through Path.resolve(),
+			// which follows symlinks in INTERMEDIATE components too; the fully
+			// resolved target is what the containment compares.
+			root := resolvePy(recipeDir)
+			target := resolvePy(filepath.Join(recipeDir, filepath.Clean(script)))
 			if !withinDir(root, target) {
 				return nil, ve("%s.script: hook script paths must stay inside the recipe directory (got '%s')",
 					ctx, script)
@@ -680,13 +850,19 @@ func parseRuntimeHooks(raw any, context, recipeDir string) ([]*RuntimeHook, erro
 			}
 		}
 
-		matcher := pyStr(getOr(tbl, "matcher", ""))
+		matcher, err := pyStr(getOr(tbl, "matcher", ""))
+		if err != nil {
+			return nil, err
+		}
 		blockingRaw := getOr(tbl, "blocking", false)
 		blocking, isBool := blockingRaw.(bool)
 		if !isBool {
 			return nil, ve("%s.blocking: expected boolean, got %s", ctx, pyTypeName(blockingRaw))
 		}
-		description := pyStr(getOr(tbl, "description", ""))
+		description, err := pyStr(getOr(tbl, "description", ""))
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, &RuntimeHook{
 			ID:          hookID,
 			Event:       event,
@@ -878,7 +1054,10 @@ func parseConfig(raw any, context string) (*ConfigSchema, error) {
 		if !isBool {
 			return nil, ve("%s.config.%s: missing or invalid 'required' (must be boolean)", context, key)
 		}
-		fieldType := pyStr(getOr(sub, "type", ""))
+		fieldType, err := pyStr(getOr(sub, "type", ""))
+		if err != nil {
+			return nil, err
+		}
 		// Catalog recipes historically use type = "boolean"; wizard expects "bool".
 		if fieldType == "boolean" {
 			fieldType = "bool"
@@ -1068,11 +1247,12 @@ func parseInit(raw any, context, recipeDir string) (*InitWorkflow, error) {
 		if filepath.IsAbs(prompt) {
 			return nil, ve("%s.prompt: init prompt paths must be relative to the recipe directory", context)
 		}
-		root := resolveDir(recipeDir)
-		target := filepath.Join(root, filepath.Clean(prompt))
+		root := resolvePy(recipeDir)
+		target := resolvePy(filepath.Join(recipeDir, filepath.Clean(prompt)))
 		if !withinDir(root, target) {
 			return nil, ve("%s.prompt: init prompt paths must stay inside the recipe directory", context)
 		}
+		// Python stats the RESOLVED target (target.exists()/target.is_file()).
 		info, statErr := os.Stat(target)
 		if statErr != nil {
 			return nil, ve("%s.prompt: init prompt file not found: %s", context, prompt)
@@ -1216,8 +1396,14 @@ func ValidateRecipeToml(data *toml.Table, recipeDir string) (*Recipe, error) {
 	if err != nil {
 		return nil, err
 	}
-	author := pyStr(getOr(recipeTable, "author", ""))
-	license := pyStr(getOr(recipeTable, "license", ""))
+	author, err := pyStr(getOr(recipeTable, "author", ""))
+	if err != nil {
+		return nil, err
+	}
+	license, err := pyStr(getOr(recipeTable, "license", ""))
+	if err != nil {
+		return nil, err
+	}
 	tags, err := parseTags(getOrNil(recipeTable, "tags"), ctx)
 	if err != nil {
 		return nil, err

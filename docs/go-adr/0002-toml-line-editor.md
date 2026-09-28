@@ -34,7 +34,12 @@ Two purpose-built components under the root module, no third-party code:
    TOML 1.0 subset that ai-specs manifests, recipe manifests, and lock files
    actually use: tables and array-of-tables, dotted and quoted keys, basic /
    literal / multi-line strings, integers (dec/hex/oct/bin), floats, booleans,
-   arrays (including multi-line), and inline tables. It is a *reader only*:
+   arrays (including multi-line), and inline tables. Line endings follow
+   tomllib's empirically pinned semantics: `\r\n` is accepted as a line ending
+   everywhere (key/value pairs, table headers, comments, blank lines, and
+   multi-line strings), a lone `\r` is rejected everywhere, and CRLF inside
+   multi-line string values is normalized to `\n`, as tomllib does. It is a
+   *reader only*:
    nothing in the ported layer ever re-serializes a parsed document, so
    round-trip fidelity of the writer question does not arise. Datetime values
    are out of the subset: ai-specs manifests never contain them, and Python's
@@ -51,7 +56,11 @@ Two purpose-built components under the root module, no third-party code:
      must parse too or the write is refused and the original bytes stay
      untouched;
    - atomic replace (temp file in the target's directory + rename) preserving
-     the original file mode.
+     the original file mode;
+   - universal-newline read translation: the write ops replicate Python
+     `Path.read_text` semantics, so `\r\n` and lone `\r` become `\n` in memory
+     and a CRLF manifest round-trips LF-normalized, matching the heredocs;
+     guard-refused writes leave the original bytes untouched.
 
 Rationale:
 

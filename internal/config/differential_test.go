@@ -108,7 +108,7 @@ func TestDifferentialReadSections(t *testing.T) {
 
 	tmp := t.TempDir()
 	compared := 0
-	var skips []string
+	whitelisted := 0
 	for i, entry := range corpus {
 		copyPath := filepath.Join(tmp, fmt.Sprintf("%03d_%s", i, entry.name))
 		if err := os.WriteFile(copyPath, entry.data, 0o644); err != nil {
@@ -117,7 +117,18 @@ func TestDifferentialReadSections(t *testing.T) {
 		for _, section := range sections {
 			pyOut, _, code := runPython(t, root, "lib/_internal/toml-read.py", copyPath, section)
 			if code != 0 {
-				skips = append(skips, fmt.Sprintf("%s [%s]: python exited %d", entry.name, section, code))
+				// Only deliberately invalid fixtures may be skipped: python
+				// refuses them, so Go must refuse them too (both-fail parity).
+				// Any other non-zero python exit is a differential failure and
+				// must fail loudly, never silently shrink the corpus.
+				if strings.Contains(entry.name, "invalid_base") {
+					whitelisted++
+					if _, err := LoadManifest(copyPath); err == nil {
+						t.Errorf("%s: python rejected the fixture but Go LoadManifest accepted it", entry.name)
+					}
+				} else {
+					t.Errorf("%s [%s]: python toml-read.py exited %d — unexpected refusal, not a whitelisted invalid fixture", entry.name, section, code)
+				}
 				continue
 			}
 			data, err := LoadManifest(copyPath)
@@ -138,10 +149,7 @@ func TestDifferentialReadSections(t *testing.T) {
 		}
 	}
 
-	t.Logf("differential read: compared %d (file, section) pairs, skipped %d", compared, len(skips))
-	for _, s := range skips {
-		t.Logf("skip: %s", s)
-	}
+	t.Logf("differential read: compared %d (file, section) pairs; %d whitelisted invalid-base entries asserted both-fail", compared, whitelisted)
 	if compared < 100 {
 		t.Fatalf("only %d (file, section) pairs compared — corpus unexpectedly small", compared)
 	}

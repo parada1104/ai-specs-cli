@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 // --- shared assertions (mirroring the gate module's test helpers) ---
@@ -163,13 +165,19 @@ func writeSpecFile(t *testing.T, dir, name, rawJSON string) string {
 }
 
 // lockFromSpec builds the Go *Lock from the same JSON spec the Python driver
-// consumes, so both sides start from identical inputs.
+// consumes, so both sides start from identical inputs. JSON scalars convert
+// to the Python-equivalent kinds (json.loads parity): integral numbers →
+// int64, decimals → float64, bools → bool, arrays → []any, objects →
+// map[string]any.
 func lockFromSpec(t *testing.T, raw string) *Lock {
 	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
 	var spec map[string]any
-	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+	if err := dec.Decode(&spec); err != nil {
 		t.Fatalf("spec json: %v", err)
 	}
+	spec = pyJSONValues(t, spec).(map[string]any)
 	lk := NewLock()
 	if meta, ok := spec["meta"].(map[string]any); ok {
 		for k, v := range meta {
@@ -217,6 +225,42 @@ func lockFromSpec(t *testing.T, raw string) *Lock {
 	return lk
 }
 
+// pyJSONValues mirrors json.loads type coercion for the differential: whole
+// numbers arrive as Python ints, decimals as floats, so the Go side must see
+// the same kinds before pyStr renders them.
+func pyJSONValues(t *testing.T, v any) any {
+	t.Helper()
+	switch x := v.(type) {
+	case json.Number:
+		if !strings.ContainsAny(x.String(), ".eE") {
+			n, err := x.Int64()
+			if err != nil {
+				t.Fatalf("spec number %s: %v", x, err)
+			}
+			return n
+		}
+		f, err := x.Float64()
+		if err != nil {
+			t.Fatalf("spec number %s: %v", x, err)
+		}
+		return f
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = pyJSONValues(t, e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = pyJSONValues(t, e)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
 // TestWriteLockDifferential runs the Python emission authority against copy A
 // and the Go WriteLock against copy B and byte-compares the results. Refusal
 // cases require BOTH sides to fail with the identical message.
@@ -242,6 +286,15 @@ func TestWriteLockDifferential(t *testing.T) {
 		{"refusal deps skill name newline", `{"deps": {"d": {"s\nk": {"a.md": "h"}}}}`},
 		{"refusal deps hash newline", `{"deps": {"d": {"s": {"a.md": "h\nash"}}}}`},
 		{"refusal order agents before deps", `{"agents": {"cl\naude": {"A.md": "h"}}, "deps": {"d": {"s": {"a\n.md": "h"}}}}`},
+		// Non-string values reach the emitted surface exactly as Python
+		// str() renders them (bool → True/False, int → decimal, float →
+		// str(float) shortest form, list/dict → repr composition).
+		{"agents hash scalar types", `{"agents": {"claude": {"a.md": true, "b.md": false, "c.md": 42, "d.md": 1.5, "e.md": 1e22, "f.md": 100.0, "g.md": 0.1, "h.md": -0.0}}}`},
+		{"agents hash list and dict", `{"agents": {"claude": {"l.md": ["a", 1], "n.md": ["x", ["y"]], "d.md": {"k": "v", "n": 1}, "nd.md": ["a\nb"]}}}`},
+		{"deps hash non-string", `{"deps": {"d": {"s": {"a.md": 7, "b.md": ["x\ny"]}}}}`},
+		{"managed fields non-string", `{"managed": {"a.md": {"sha256": "s", "recipe": 3, "source": 2.5, "kind": true, "policy": false}}}`},
+		{"managed sha256 falsy entries skipped", `{"managed": {"zero.md": {"sha256": 0, "recipe": "r"}, "false.md": {"sha256": false}, "empty.md": {"sha256": []}, "ok.md": {"sha256": "s"}}}`},
+		{"agents hash falsy stringified", `{"agents": {"c": {"z.md": 0, "a.md": false, "e.md": []}}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -474,7 +527,7 @@ func TestControlCharRefusalOrder(t *testing.T) {
 		}, "agents harness"},
 		{"sorted first wins", &Lock{
 			Agents: map[string]map[string]any{
-				"a-clean": {"A.md": "h"},
+				"a-clean":      {"A.md": "h"},
 				"z" + ctrl(""): {"A.md": "h"},
 			},
 		}, "agents harness"},
@@ -710,4 +763,65 @@ func TestMutationHelpers(t *testing.T) {
 			t.Errorf("set on nil lock maps failed: %v", nilLK.Recipes)
 		}
 	})
+}
+
+// --- pyRepr units: composition, depth cap, table ellipsis (Fix E) ---
+
+// TestPyReprUnitsGoOnly pins the composite str()/repr() core against
+// probe-derived literals: TOML-parsed lists and tables render as Python
+// str() composition in document order, nesting beyond pyReprMaxDepth yields
+// a descriptive error (Python raises RecursionError there), and a
+// *toml.Table re-entered on the active path renders Python's '{...}'
+// ellipsis (self-referential tables are not producible by toml.Parse, so
+// the ellipsis is pinned with a pre-seeded active set).
+func TestPyReprUnitsGoOnly(t *testing.T) {
+	root, err := toml.Parse([]byte("k = [\"a\", 1, true, 1.5]\n\n[t]\nx = \"s\"\ny = [\"n\", [\"deep\"]]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, _ := root.Get("k")
+	if got, ok, err := pyStr(k); err != nil || !ok || got != "['a', 1, True, 1.5]" {
+		t.Errorf("pyStr(list) = %q, %v, %v; want repr composition", got, ok, err)
+	}
+	tbl, _ := root.Table("t")
+	if got, err := pyRepr(tbl); err != nil || got != `{'x': 's', 'y': ['n', ['deep']]}` {
+		t.Errorf("pyRepr(table) = %q, %v; want document-order dict str", got, err)
+	}
+	// pyReprString probe pins (python3 3.14 repr()).
+	reprCases := []struct{ in, want string }{
+		{"it's", `"it's"`},
+		{`say "hi"`, `'say "hi"'`},
+		{"a\x01b", `'a\x01b'`},
+		{"a\nb", `'a\nb'`},
+		{"café", "'café'"},
+		{"back\\slash", `'back\\slash'`},
+	}
+	for _, tc := range reprCases {
+		if got := pyReprString(tc.in); got != tc.want {
+			t.Errorf("pyReprString(%q) = %s, want %s", tc.in, got, tc.want)
+		}
+	}
+	// Depth cap: build 100001 nested lists; must error, not crash.
+	var deep any
+	for i := 0; i <= pyReprMaxDepth; i++ {
+		deep = []any{deep}
+	}
+	if _, err := pyRepr(deep); err == nil {
+		t.Error("pyRepr beyond pyReprMaxDepth must error")
+	} else if !strings.Contains(err.Error(), "recursion depth") {
+		t.Errorf("depth-cap error = %v, want a recursion-depth message", err)
+	}
+	// Moderate nesting succeeds (Python succeeds to ~69709 on the probe).
+	var okDeep any
+	for i := 0; i < 1000; i++ {
+		okDeep = []any{okDeep}
+	}
+	if _, err := pyRepr(okDeep); err != nil {
+		t.Errorf("pyRepr at depth 1000 must succeed: %v", err)
+	}
+	// Table ellipsis on the active path.
+	active := map[*toml.Table]bool{tbl: true}
+	if got, err := pyReprDepth(tbl, 0, active); err != nil || got != "{...}" {
+		t.Errorf("pyReprDepth(active table) = %q, %v; want '{...}'", got, err)
+	}
 }

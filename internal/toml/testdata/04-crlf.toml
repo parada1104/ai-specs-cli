@@ -1,0 +1,32 @@
+# Differential corpus 04: CRLF line endings (tomllib accepts \r\n everywhere,
+# normalizes CRLF to \n inside multi-line string values, rejects lone \r).
+# This file uses CRLF line endings (written with \r\n by the test tooling
+# contract) — kept in repo with CRLF bytes intact.
+
+title = "crlf-fixture"   # inline comment
+
+[project]
+name = "fixture-crlf"
+subrepos = [
+    "packages/a",
+    "packages/b",
+]
+
+[agents]
+enabled = ["claude"]
+
+desc = """
+line one
+line two \
+continued"""
+literal = '''
+raw \n text
+'''
+
+[[deps.servers]]
+name = "one"
+args = ["-y", "@scope/pkg"]
+
+[[deps.servers]]
+name = "two"
+nested = { a = 1, b = "x" }

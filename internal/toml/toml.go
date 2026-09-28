@@ -218,6 +218,9 @@ func (p *parser) skipBlank() {
 		switch {
 		case c == ' ' || c == '\t':
 			p.pos++
+		case c == '\r' && p.hasPrefix("\r\n"):
+			p.line++
+			p.pos += 2
 		case c == '\n':
 			p.line++
 			p.pos++
@@ -235,6 +238,11 @@ func (p *parser) expectLineEnd() error {
 	p.skipSpaces()
 	p.skipComment()
 	if p.pos >= len(p.data) {
+		return nil
+	}
+	if p.hasPrefix("\r\n") {
+		p.line++
+		p.pos += 2
 		return nil
 	}
 	if p.data[p.pos] == '\n' {

@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"path/filepath"
 	"io/fs"
 	"math"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -305,6 +305,87 @@ func TestTOMLValue(t *testing.T) {
 	// Error case names the Go type.
 	if _, err := TOMLValue(struct{}{}); err == nil || !strings.Contains(err.Error(), "cannot serialize") {
 		t.Fatalf("TOMLValue(struct{}{}) error = %v, want 'cannot serialize ...'", err)
+	}
+}
+
+// TestCRLFLineEndings pins tomllib's observed CRLF behavior: \r\n is a line
+// ending everywhere, lone \r is an error everywhere, and CRLF inside
+// multi-line string values is normalized to \n.
+func TestCRLFLineEndings(t *testing.T) {
+	CRLF := "\r\n"
+
+	// CRLF after key/value pairs, table headers, comments, blank lines,
+	// multi-line arrays, and array-of-tables headers.
+	src := strings.Join([]string{
+		"# comment" + CRLF,
+		CRLF,
+		"title = \"crlf\" # inline" + CRLF,
+		CRLF,
+		"[project]" + CRLF,
+		"name = \"x\"" + CRLF,
+		"items = [" + CRLF,
+		"  \"a\"," + CRLF,
+		"  \"b\", # trailing" + CRLF,
+		"]" + CRLF,
+		CRLF,
+		"[[deps.servers]]" + CRLF,
+		"args = [\"-y\"]" + CRLF,
+	}, "")
+	root, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("CRLF document: Parse: %v", err)
+	}
+	if v, _ := root.String("title"); v != "crlf" {
+		t.Fatalf("title = %q", v)
+	}
+	proj, _ := root.Table("project")
+	if v, _ := proj.String("name"); v != "x" {
+		t.Fatalf("project.name = %q", v)
+	}
+	if items, _ := proj.Array("items"); len(items) != 2 {
+		t.Fatalf("project.items = %v", items)
+	}
+	deps, _ := root.Table("deps")
+	if servers, _ := deps.Tables("servers"); len(servers) != 1 {
+		t.Fatalf("deps.servers = %v", servers)
+	}
+
+	// Multi-line basic and literal strings normalize CRLF content to \n;
+	// line-ending backslash continuation works with CRLF too.
+	mlSrc := "a = \"\"\"" + CRLF +
+		"line one" + CRLF +
+		"line two" + CRLF +
+		"\"\"\"" + CRLF +
+		"b = '''" + CRLF +
+		"raw" + CRLF +
+		"text'''" + CRLF +
+		"c = \"\"\"cont \\" + CRLF +
+		"   joined\"\"\"" + CRLF
+	mlRoot, err := Parse([]byte(mlSrc))
+	if err != nil {
+		t.Fatalf("CRLF multiline: Parse: %v", err)
+	}
+	if v, _ := mlRoot.String("a"); v != "line one\nline two\n" {
+		t.Fatalf("a = %q, want %q", v, "line one\nline two\n")
+	}
+	if v, _ := mlRoot.String("b"); v != "raw\ntext" {
+		t.Fatalf("b = %q, want %q", v, "raw\ntext")
+	}
+	if v, _ := mlRoot.String("c"); v != "cont joined" {
+		t.Fatalf("c = %q, want %q", v, "cont joined")
+	}
+
+	// Lone \r is rejected everywhere.
+	for _, c := range []struct{ name, src string }{
+		{"lone CR after value", "a = 1\r"},
+		{"lone CR alone", "\r"},
+		{"raw CR in basic string", "a = \"x\ry\"\n"},
+		{"CRLF in basic string", "a = \"x\r\ny\"\n"},
+		{"raw CR in literal string", "a = 'x\ry'\n"},
+	} {
+		if _, err := Parse([]byte(c.src)); err == nil {
+			t.Fatalf("%s: Parse accepted invalid input %q", c.name, c.src)
+		}
 	}
 }
 
