@@ -16,10 +16,11 @@ import (
 type routeKind int
 
 const (
-	routeShim    routeKind = iota // exec bash <home>/lib/<script>
-	routeVersion                  // native: print <home>/VERSION
-	routeHelp                     // native: print embedded help.txt
-	routeUnknown                  // unknown command: usage error, exit 2
+	routeShim           routeKind = iota // exec bash <home>/lib/<script>
+	routeVersion                         // native: print <home>/VERSION
+	routeHelp                            // native: print embedded help.txt
+	routeRefreshBundled                  // native compatibility stub (card [Go 06]): reports embedded provenance
+	routeUnknown                         // unknown command: usage error, exit 2
 )
 
 // route is one dispatcher decision.
@@ -36,7 +37,6 @@ var shims = map[string]route{
 	"init":              {kind: routeShim, script: "init.sh"},
 	"sync":              {kind: routeShim, script: "sync.sh"},
 	"sync-agent":        {kind: routeShim, script: "sync-agent.sh"},
-	"refresh-bundled":   {kind: routeShim, script: "refresh-bundled.sh"},
 	"add-dep":           {kind: routeShim, script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 	"skills":            {kind: routeShim, script: "skills.sh"},
 	"doctor":            {kind: routeShim, script: "doctor.sh"},
@@ -46,16 +46,17 @@ var shims = map[string]route{
 	"upgrade":           {kind: routeShim, script: "upgrade.sh"},
 }
 
-// native maps the version/help verbs and their aliases to their route kind.
+// native maps the native verbs and their aliases to their route kind.
 // Like the legacy dispatcher, version and help ignore any extra arguments
 // (the verb runs and the rest is dropped).
 var native = map[string]route{
-	"version":   {kind: routeVersion},
-	"-v":        {kind: routeVersion},
-	"--version": {kind: routeVersion},
-	"help":      {kind: routeHelp},
-	"-h":        {kind: routeHelp},
-	"--help":    {kind: routeHelp},
+	"refresh-bundled": {kind: routeRefreshBundled},
+	"version":         {kind: routeVersion},
+	"-v":              {kind: routeVersion},
+	"--version":       {kind: routeVersion},
+	"help":            {kind: routeHelp},
+	"-h":              {kind: routeHelp},
+	"--help":          {kind: routeHelp},
 }
 
 // Route resolves the dispatcher decision for args. Bare invocation (no args)
@@ -82,6 +83,8 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		return runVersion(home, stdout)
 	case routeHelp:
 		return runHelp(stdout)
+	case routeRefreshBundled:
+		return runRefreshBundled(args, stdout, stderr)
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
