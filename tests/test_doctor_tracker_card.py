@@ -2,7 +2,8 @@
 
 The tracker ledger has exactly one authoritative grader — the Go `--ledger`
 predicate — and doctor is a JSON-consumption host with no write side effect
-(A8/A10/D15). These tests pin:
+(A8/A10/D15). These tests pin, through the `bin/ai-specs doctor` process
+boundary:
 
   * doctor renders the verdict's ``doctor`` finding under the check name
     ``tracker-ledger`` with the A10 severities (INFO unbound, WARN ambiguous /
@@ -14,40 +15,118 @@ predicate — and doctor is a JSON-consumption host with no write side effect
 """
 from __future__ import annotations
 
-import importlib.util
 import json
-import os
+import platform
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import (  # noqa: E402
+    cache_project_dir,
+    invoke,
+    isolated_home,
+    snapshot,
+    tree_diff,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCTOR_PY = ROOT / "lib" / "_internal" / "doctor.py"
 
-STUB_BINARY = """#!/usr/bin/env bash
-# Emits the canned verdict in $STUB_JSON (already a full JSON object).
-printf '%s\\n' "${STUB_JSON}"
-[ "${STUB_EXIT:-0}" = 2 ] && exit 2
-exit 0
-"""
+BUNDLED_SKILLS = (
+    "harness-lifecycle",
+    "harness-recipes",
+    "harness-skills-deps",
+    "skill-creator",
+    "skill-sync",
+)
+BUNDLED_COMMANDS = ("rules-audit", "skills-as-rules")
 
-STUB_ENV_KEYS = ("WORKTREE_GATE_BIN", "STUB_JSON", "STUB_EXIT")
-
-
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+_LINE_RE = re.compile(r"^\s*(OK|INFO|WARN|ERROR)\s+(?P<name>\S+)\s+(?P<body>.*)$")
 
 
-def verdict(*, severity: str, message: str, reason: str = "") -> str:
-    return json.dumps({
+def _platform() -> tuple[str, str]:
+    """Mirror gate_binary.detect_platform for staging cache paths in tests."""
+    goos = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system(), "")
+    machine = platform.machine()
+    goarch = "arm64" if machine in ("arm64", "aarch64") else (
+        "amd64" if machine in ("x86_64", "amd64") else "")
+    return goos, goarch
+
+
+def _make_home(base: Path) -> Path:
+    """Isolated CLI home with a REAL lib copy and an empty catalog.
+
+    doctor.py derives its cache root from its own realpath, so a symlinked
+    lib would resolve back into the repository and make the gate checks read
+    (never write) repo cache state. A real copy keeps every lookup in temp;
+    the empty catalog keeps the SHA256SUMS trust root out of the way so a
+    receipt-backed stub binary is accepted exactly like an acquired one.
+    """
+    home = isolated_home(base, catalog=False)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor"),
+    )
+    return home
+
+
+def _seed_clean_cache(root: Path, home: Path) -> None:
+    """Pre-seed the per-project bundled cache so only the check under test can
+    influence the frozen exit-code contract (exit 1 iff any ERROR)."""
+    bundled = cache_project_dir(root, home) / ".bundled"
+    for skill in BUNDLED_SKILLS:
+        (bundled / "skills" / skill).mkdir(parents=True, exist_ok=True)
+    for command in BUNDLED_COMMANDS:
+        path = bundled / "commands" / f"{command}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# bundled\n", encoding="utf-8")
+
+
+def _stage_gate_stub(
+    home: Path,
+    *,
+    ledger_payload: dict | None = None,
+    ledger_stdout: str | None = None,
+) -> None:
+    """Install a receipt-backed stub binary at the version-keyed cache path.
+
+    The CLI environment is fixed, so the canned verdict is embedded in the
+    stub script itself instead of being handed over via an env pin.
+    """
+    version = (home / "VERSION").read_text(encoding="utf-8").strip()
+    goos, goarch = _platform()
+    bindir = home / "cache" / "bin" / "worktree-gate" / version / f"{goos}-{goarch}"
+    bindir.mkdir(parents=True, exist_ok=True)
+    stub = bindir / "worktree-gate"
+    lines = ["#!/bin/sh"]
+    if ledger_payload is not None:
+        lines += ["cat <<'JSON'", json.dumps(ledger_payload), "JSON"]
+    elif ledger_stdout is not None:
+        lines.append(f"printf '%s\\n' '{ledger_stdout}'")
+    lines.append("exit 0")
+    stub.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    stub.chmod(0o755)
+    (bindir / "worktree-gate.verified").write_text("status=verified\n", encoding="utf-8")
+
+
+def _named_checks(stdout: str, name: str) -> list[tuple[str, str]]:
+    """The rendered (severity, message+guidance) lines for one check name."""
+    found = []
+    for line in stdout.splitlines():
+        match = _LINE_RE.match(line)
+        if match and match.group("name") == name:
+            found.append((match.group(1), match.group("body")))
+    return found
+
+
+def verdict(*, severity: str, message: str, reason: str = "") -> dict:
+    return {
         "capability": "tracker",
         "active": severity == "OK",
         "checkpoint": "work-start",
@@ -59,18 +138,15 @@ def verdict(*, severity: str, message: str, reason: str = "") -> str:
         "conflict": None,
         "prompt": None,
         "doctor": {"severity": severity, "name": "tracker-ledger", "message": message},
-    })
+    }
 
 
 class DoctorTrackerLedgerTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.doctor_mod = load_module(DOCTOR_PY, "doctor_tracker_ledger_under_test")
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self._env: dict = {}
+        self.base = Path(self.tmp.name)
+        self.home = _make_home(self.base)
 
     def _project(
         self,
@@ -79,7 +155,7 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         declaration: bool = False,
         init_git: bool = False,
     ) -> Path:
-        root = Path(self.tmp.name) / "prj"
+        root = self.base / "prj"
         root.mkdir()
         ai = root / "ai-specs"
         ai.mkdir()
@@ -99,6 +175,7 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         if init_git:
             subprocess.run(["git", "-C", str(root), "init", "-q"], check=True,
                            capture_output=True, text=True)
+        _seed_clean_cache(root, self.home)
         return root
 
     def _write_witness(self, root: Path, payload: object) -> None:
@@ -106,111 +183,114 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         ledger_dir.mkdir(parents=True, exist_ok=True)
         (ledger_dir / "witness.json").write_text(json.dumps(payload))
 
-    def _stub(self, payload: str, *, exit_code: int = 0) -> Path:
-        path = Path(self.tmp.name) / "worktree-gate-stub"
-        path.write_text(STUB_BINARY)
-        path.chmod(0o755)
-        self._env = dict(self._env)
-        self._env.update({
-            "WORKTREE_GATE_BIN": str(path),
-            "STUB_JSON": payload,
-            "STUB_EXIT": str(exit_code),
-        })
-        return path
-
-    def _checks(self, root: Path) -> list:
-        doc = self.doctor_mod.Doctor(root)
-        clean = {k: v for k, v in os.environ.items() if k not in STUB_ENV_KEYS}
-        clean.update(self._env)
-        with mock.patch.dict(os.environ, clean, clear=True):
-            doc._check_tracker_ledger()
-        return [c for c in doc.checks if c.name == "tracker-ledger"]
-
-    def _render(self, root: Path) -> list:
-        return self._checks(root)
+    def _render(self, root: Path) -> tuple[list[tuple[str, str]], int]:
+        result = invoke(root, "doctor", cli_home=self.home)
+        return _named_checks(result.stdout, "tracker-ledger"), result.returncode
 
     # --- severity rendering (one grader: doctor renders the Go finding) ---
 
     def test_bound_healthy_renders_ok(self):
         root = self._project()
-        self._stub(verdict(severity="OK", message=""))
-        checks = self._render(root)
+        _stage_gate_stub(self.home, ledger_payload=verdict(severity="OK", message=""))
+        checks, code = self._render(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor_mod.Severity.OK)
+        self.assertEqual(checks[0][0], "OK")
 
     def test_unbound_renders_info_with_guidance(self):
         root = self._project()
-        self._stub(verdict(severity="INFO", reason="unbound",
-                           message="no tracker recipe bound; enable one or ignore"))
-        checks = self._render(root)
-        self.assertEqual(checks[0].severity, self.doctor_mod.Severity.INFO)
-        self.assertIn("no tracker recipe bound", checks[0].message)
-        self.assertIn("enable one tracker recipe or ignore", checks[0].guidance)
+        _stage_gate_stub(self.home, ledger_payload=verdict(
+            severity="INFO", reason="unbound",
+            message="no tracker recipe bound; enable one or ignore"))
+        checks, code = self._render(root)
+        self.assertEqual(checks[0][0], "INFO")
+        self.assertIn("no tracker recipe bound", checks[0][1])
+        self.assertIn("enable one tracker recipe or ignore", checks[0][1])
+        # Frozen exit contract: INFO never affects the exit code.
+        self.assertEqual(code, 0)
 
     def test_missing_witness_renders_warn(self):
         root = self._project()
-        self._stub(verdict(severity="WARN", reason="witness-missing",
-                           message="witness missing; run ai-specs sync"))
-        checks = self._render(root)
-        self.assertEqual(checks[0].severity, self.doctor_mod.Severity.WARN)
-        self.assertIn("ai-specs sync", checks[0].guidance)
+        _stage_gate_stub(self.home, ledger_payload=verdict(
+            severity="WARN", reason="witness-missing",
+            message="witness missing; run ai-specs sync"))
+        checks, code = self._render(root)
+        self.assertEqual(checks[0][0], "WARN")
+        self.assertIn("ai-specs sync", checks[0][1])
+        # Frozen exit contract: WARN never affects the exit code.
+        self.assertEqual(code, 0)
 
     def test_ambiguous_renders_warn_with_binding_guidance(self):
         root = self._project()
-        self._stub(verdict(severity="WARN", reason="ambiguous",
-                           message="ambiguous tracker binding"))
-        checks = self._render(root)
-        self.assertEqual(checks[0].severity, self.doctor_mod.Severity.WARN)
-        self.assertIn('[[bindings]] capability="tracker"', checks[0].guidance)
+        _stage_gate_stub(self.home, ledger_payload=verdict(
+            severity="WARN", reason="ambiguous",
+            message="ambiguous tracker binding"))
+        checks, code = self._render(root)
+        self.assertEqual(checks[0][0], "WARN")
+        self.assertIn('[[bindings]] capability="tracker"', checks[0][1])
+        self.assertEqual(code, 0)
 
     def test_declared_not_bound_renders_warn(self):
         root = self._project(recipe_enabled=False, declaration=True)
-        self._stub(verdict(severity="WARN", reason="declared-not-bound",
-                           message="tracking is declared but no tracker recipe is bound"))
-        checks = self._render(root)
-        self.assertEqual(checks[0].severity, self.doctor_mod.Severity.WARN)
-        self.assertIn("remove the tracking declaration", checks[0].guidance)
+        _stage_gate_stub(self.home, ledger_payload=verdict(
+            severity="WARN", reason="declared-not-bound",
+            message="tracking is declared but no tracker recipe is bound"))
+        checks, code = self._render(root)
+        self.assertEqual(checks[0][0], "WARN")
+        self.assertIn("remove the tracking declaration", checks[0][1])
+        self.assertEqual(code, 0)
 
     def test_conflict_renders_warn(self):
         root = self._project()
-        self._stub(verdict(severity="WARN", reason="conflict",
-                           message="conflict recorded; adjudicate at the next checkpoint"))
-        checks = self._render(root)
-        self.assertEqual(checks[0].severity, self.doctor_mod.Severity.WARN)
-        self.assertIn("adjudicate", checks[0].guidance)
+        _stage_gate_stub(self.home, ledger_payload=verdict(
+            severity="WARN", reason="conflict",
+            message="conflict recorded; adjudicate at the next checkpoint"))
+        checks, code = self._render(root)
+        self.assertEqual(checks[0][0], "WARN")
+        self.assertIn("adjudicate", checks[0][1])
+        self.assertEqual(code, 0)
 
     def test_infra_unevaluable_renders_error(self):
         root = self._project()
-        self._stub(verdict(severity="ERROR", reason="store-corrupt",
-                           message="ledger store unreadable; run ai-specs sync"))
-        checks = self._render(root)
-        self.assertEqual(checks[0].severity, self.doctor_mod.Severity.ERROR)
+        _stage_gate_stub(self.home, ledger_payload=verdict(
+            severity="ERROR", reason="store-corrupt",
+            message="ledger store unreadable; run ai-specs sync"))
+        checks, code = self._render(root)
+        self.assertEqual(checks[0][0], "ERROR")
+        # Frozen exit contract: exit 1 iff at least one ERROR was rendered.
+        self.assertEqual(code, 1)
 
     # --- relevance gate: nothing to report when the ledger is not in play ---
 
     def test_irrelevant_project_is_silent(self):
         root = self._project(recipe_enabled=False)
-        self.assertEqual(self._render(root), [])
+        _stage_gate_stub(self.home, ledger_payload=verdict(severity="OK", message=""))
+        checks, code = self._render(root)
+        self.assertEqual(checks, [])
+        self.assertEqual(code, 0)
 
     def test_declaration_keeps_the_ledger_visible(self):
         root = self._project(recipe_enabled=False, declaration=True)
-        self._stub(verdict(severity="WARN", reason="declared-not-bound",
-                           message="tracking is declared but no tracker recipe is bound"))
-        self.assertEqual(len(self._render(root)), 1)
+        _stage_gate_stub(self.home, ledger_payload=verdict(
+            severity="WARN", reason="declared-not-bound",
+            message="tracking is declared but no tracker recipe is bound"))
+        checks, code = self._render(root)
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(code, 0)
 
     def test_witness_keeps_the_ledger_visible(self):
         root = self._project(recipe_enabled=False, init_git=True)
         self._write_witness(root, {"v": 1, "capability": "tracker", "state": "bound"})
-        self._stub(verdict(severity="OK", message=""))
-        checks = self._render(root)
+        _stage_gate_stub(self.home, ledger_payload=verdict(severity="OK", message=""))
+        checks, code = self._render(root)
         # The Go finding plus the unhosted work-start INFO (task 3.3).
-        self.assertTrue(any(c.severity == self.doctor_mod.Severity.OK for c in checks), checks)
-        self.assertTrue(any("work-start is unhosted" in c.message for c in checks), checks)
+        self.assertTrue(any(sev == "OK" for sev, _ in checks), checks)
+        self.assertTrue(any("work-start is unhosted" in body for _, body in checks), checks)
+        self.assertEqual(code, 0)
 
     # --- witness-derived recipe lookup and the unhosted work-start (3.1/3.3) ---
 
     def _project_with_fixture_recipe(self) -> Path:
-        root = Path(self.tmp.name) / "fixture-prj"
+        root = self.base / "fixture-prj"
         root.mkdir()
         ai = root / "ai-specs"
         ai.mkdir()
@@ -224,6 +304,7 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         (root / "AGENTS.md").write_text("# agents\n")
         subprocess.run(["git", "-C", str(root), "init", "-q"], check=True,
                        capture_output=True, text=True)
+        _seed_clean_cache(root, self.home)
         return root
 
     def _bound_fixture_witness(self, root: Path) -> None:
@@ -233,70 +314,89 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         })
 
     def test_doctor_resolves_the_recipe_id_from_the_witness(self):
+        # CLI-observable surface: with the witness bound to the custom recipe
+        # (and the legacy recipe disabled), the ledger stays in play and the
+        # Go finding renders under its witness-bound recipe id.
         root = self._project_with_fixture_recipe()
         self._bound_fixture_witness(root)
-        doc = self.doctor_mod.Doctor(root)
-        self.assertEqual(doc._tracker_recipe_id(), "fixture-tracker")
+        _stage_gate_stub(self.home, ledger_payload=verdict(severity="OK", message=""))
+        checks, code = self._render(root)
+        findings = [(sev, body) for sev, body in checks if "work-start is unhosted" not in body]
+        unhosted = [body for _, body in checks if "work-start is unhosted" in body]
+        self.assertEqual(len(findings), 1, checks)
+        self.assertEqual(findings[0][0], "OK")
+        self.assertEqual(len(unhosted), 1, checks)
+        self.assertEqual(code, 0)
 
     def test_doctor_falls_back_to_the_legacy_recipe_id_without_a_witness(self):
+        # CLI-observable surface: without a witness the legacy recipe id is the
+        # relevance fallback. It is disabled in this manifest, so the ledger is
+        # not in play and nothing renders — proving the fallback selected the
+        # legacy id rather than any enabled recipe.
         root = self._project_with_fixture_recipe()
-        doc = self.doctor_mod.Doctor(root)
-        self.assertEqual(doc._tracker_recipe_id(), "trello-mcp-workflow")
+        _stage_gate_stub(self.home, ledger_payload=verdict(severity="OK", message=""))
+        checks, code = self._render(root)
+        self.assertEqual(checks, [])
+        self.assertEqual(code, 0)
 
     def test_bound_witness_without_plan_build_reports_unhosted_work_start(self):
         root = self._project_with_fixture_recipe()
         self._bound_fixture_witness(root)
-        self._stub(verdict(severity="OK", message=""))
-        checks = self._render(root)
-        unhosted = [c for c in checks if "work-start is unhosted" in c.message]
+        _stage_gate_stub(self.home, ledger_payload=verdict(severity="OK", message=""))
+        checks, code = self._render(root)
+        unhosted = [body for _, body in checks if "work-start is unhosted" in body]
         self.assertEqual(len(unhosted), 1, checks)
-        self.assertEqual(unhosted[0].name, "tracker-ledger")
-        self.assertEqual(unhosted[0].severity, self.doctor_mod.Severity.INFO)
+        self.assertIn("enable plan-build-flow", unhosted[0])
+        self.assertEqual(code, 0)
 
     def test_no_unhosted_info_when_plan_build_flow_is_enabled(self):
         root = self._project_with_fixture_recipe()
         manifest = root / "ai-specs" / "ai-specs.toml"
         manifest.write_text(manifest.read_text() + "[recipes.plan-build-flow]\nenabled = true\n")
         self._bound_fixture_witness(root)
-        self._stub(verdict(severity="OK", message=""))
-        checks = self._render(root)
-        self.assertFalse(any("work-start is unhosted" in c.message for c in checks), checks)
+        _stage_gate_stub(self.home, ledger_payload=verdict(severity="OK", message=""))
+        checks, code = self._render(root)
+        self.assertFalse(any("work-start is unhosted" in body for _, body in checks), checks)
+        self.assertEqual(code, 0)
 
     def test_no_unhosted_info_without_a_bound_witness(self):
         root = self._project_with_fixture_recipe()
-        self._stub(verdict(severity="WARN", reason="witness-missing",
-                           message="witness missing; run ai-specs sync"))
-        checks = self._render(root)
-        self.assertFalse(any("work-start is unhosted" in c.message for c in checks), checks)
+        _stage_gate_stub(self.home, ledger_payload=verdict(
+            severity="WARN", reason="witness-missing",
+            message="witness missing; run ai-specs sync"))
+        checks, code = self._render(root)
+        self.assertFalse(any("work-start is unhosted" in body for _, body in checks), checks)
+        self.assertEqual(code, 0)
 
     def test_doctor_still_issues_no_writes(self):
         root = self._project_with_fixture_recipe()
         self._bound_fixture_witness(root)
-        self._stub(verdict(severity="OK", message=""))
-
-        def walk(base: Path):
-            return sorted(str(p.relative_to(base)) for p in base.rglob("*") if p.is_file())
-
-        before = walk(root)
+        _stage_gate_stub(self.home, ledger_payload=verdict(severity="OK", message=""))
+        before = snapshot(root)
         self._render(root)
-        self.assertEqual(before, walk(root))
+        self.assertEqual(tree_diff(before, snapshot(root)),
+                         {"created": [], "deleted": [], "modified": []})
 
     # --- infra fail-closed ---
 
     def test_missing_binary_renders_error(self):
+        # CLI-observable equivalent of the WORKTREE_GATE_BIN pin to a missing
+        # path: with no verified binary resolvable at all, the check fails
+        # closed to ERROR.
         root = self._project()
-        missing = Path(self.tmp.name) / "does-not-exist"
-        self._env = {"WORKTREE_GATE_BIN": str(missing)}
-        checks = self._render(root)
+        checks, code = self._render(root)
         self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0].severity, self.doctor_mod.Severity.ERROR)
-        self.assertIn("failing open", checks[0].message)
+        self.assertEqual(checks[0][0], "ERROR")
+        self.assertIn("failing open", checks[0][1])
+        self.assertEqual(code, 1)
 
     def test_unparseable_verdict_renders_error(self):
         root = self._project()
-        self._stub("not json at all")
-        checks = self._render(root)
-        self.assertEqual(checks[0].severity, self.doctor_mod.Severity.ERROR)
+        _stage_gate_stub(self.home, ledger_stdout="not json at all")
+        checks, code = self._render(root)
+        self.assertEqual(checks[0][0], "ERROR")
+        self.assertIn("failing open", checks[0][1])
+        self.assertEqual(code, 1)
 
     # --- legacy compatibility: doctor no longer grades the ## Tracker section ---
 
@@ -309,13 +409,15 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
             change = root / "openspec" / "changes" / slug
             change.mkdir(parents=True)
             (change / "proposal.md").write_text(body)
-        self._stub(verdict(severity="WARN", reason="witness-missing",
-                           message="witness missing; run ai-specs sync"))
-        checks = self._render(root)
+        _stage_gate_stub(self.home, ledger_payload=verdict(
+            severity="WARN", reason="witness-missing",
+            message="witness missing; run ai-specs sync"))
+        checks, code = self._render(root)
         self.assertEqual(len(checks), 1)
-        blob = " ".join(c.message for c in checks)
+        blob = " ".join(body for _, body in checks)
         self.assertNotIn("## Tracker", blob)
         self.assertNotIn("link section", blob)
+        self.assertEqual(code, 0)
 
     def test_legacy_grader_is_gone(self):
         source = DOCTOR_PY.read_text(encoding="utf-8")
@@ -327,15 +429,13 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         root = self._project()
         (root / "openspec" / "changes" / "no-card").mkdir(parents=True)
         (root / "openspec" / "changes" / "no-card" / "proposal.md").write_text("# p\n")
-        self._stub(verdict(severity="WARN", reason="witness-missing",
-                           message="witness missing; run ai-specs sync"))
-
-        def walk(base: Path):
-            return sorted(str(p.relative_to(base)) for p in base.rglob("*") if p.is_file())
-
-        before = walk(root)
+        _stage_gate_stub(self.home, ledger_payload=verdict(
+            severity="WARN", reason="witness-missing",
+            message="witness missing; run ai-specs sync"))
+        before = snapshot(root)
         self._render(root)
-        self.assertEqual(before, walk(root))
+        self.assertEqual(tree_diff(before, snapshot(root)),
+                         {"created": [], "deleted": [], "modified": []})
 
     # --- D15: no static dormancy line in the runtime brief / agent files ---
 

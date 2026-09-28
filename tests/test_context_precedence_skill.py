@@ -1,17 +1,16 @@
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
-import sys
-from pathlib import Path as _P
-sys.path.insert(0, str(_P(__file__).resolve().parent))
-from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
 SKILL = ROOT / "catalog" / "skills" / "context-precedence" / "SKILL.md"
 README = ROOT / "README.md"
@@ -62,9 +61,11 @@ class ContextPrecedenceSkillTests(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="ai-specs-precedence-"))
         workspace = tmp / "workspace"
         upstream = tmp / "upstream-catalog"
+        home = isolated_home(tmp)
         try:
             shutil.copytree(FIXTURE_ROOT, workspace)
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            init = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(init.returncode, 0, init.stdout + init.stderr)
             # Local `git clone` only sees committed files — use a tiny upstream repo fixture.
             skill_src = ROOT / "catalog" / "skills" / "context-precedence"
             dst_skill = upstream / "catalog" / "skills" / "context-precedence"
@@ -97,15 +98,18 @@ class ContextPrecedenceSkillTests(unittest.TestCase):
                 'auto_invoke = ["Resolving conflicts between documentation, skills, memory, and proposed context"]\n'
             )
             (workspace / "ai-specs" / "ai-specs.toml").write_text(toml)
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            sync = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
 
             agents = (workspace / "AGENTS.md").read_text()
             self.assertNotIn("## Context Precedence", agents)
-            # Verify the dep skill is flattened into the CLI project cache
-            from _cache_paths import resolved_skills_dir
-
+            # Verify the dep skill is flattened into the per-project CLI cache
+            # (frozen cache-key contract, parity contract §4).
             resolved_skill = (
-                resolved_skills_dir(workspace) / "context-precedence" / "SKILL.md"
+                cache_project_dir(workspace, home)
+                / "resolved-skills"
+                / "context-precedence"
+                / "SKILL.md"
             )
             self.assertTrue(resolved_skill.is_file())
         finally:

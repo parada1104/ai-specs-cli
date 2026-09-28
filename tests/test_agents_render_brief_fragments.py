@@ -1,857 +1,935 @@
-"""Tests for recipe brief_fragments support in agents-render.py.
+"""Black-box tests for recipe brief_fragments support in the rendered AGENTS.md.
 
-Tests cover:
-  - substitute_config: {config.KEY} resolution, missing key verbatim, bare key verbatim,
-    {{ }} escape, mixed escape+sub, lone unbalanced brace
-  - collect_recipe_brief_fragments: ordering, key-dedup, exact-string dedup,
-    no fragments, disabled recipe, empty brief_fragments
-  - Section merge: APPEND default, REPLACE opt-in, REPLACE isolation,
-    manifest prose never substituted, empty manifest [brief] end-to-end
-  - _validate_brief_modes: unknown mode value → error
+Every test drives ``bin/ai-specs sync`` through its process boundary: recipe
+brief fragments are staged into an isolated catalog (real recipe dirs, never
+written through symlinks into the repository catalog), the manifest is written
+to the temp project, and assertions observe AGENTS.md content, sync exit
+codes, and sync stderr. No test may import ``lib/_internal`` modules.
+
+Coverage preserved from the original white-box suite:
+  - {config.KEY} substitution semantics in recipe fragments (resolved value,
+    missing key verbatim, bare key verbatim, {{ }} escape, mixed escape+sub,
+    lone unbalanced brace, empty text)
+  - fragment collection ordering, key-dedup, exact-string dedup, disabled
+    recipes, empty/absent [provides.brief]
+  - section merge: APPEND default (recipe before manifest), REPLACE opt-in,
+    REPLACE isolation per section, manifest prose never substituted,
+    empty manifest [brief] populated by recipe fragments
+  - brief mode validation: unknown <section>_mode value fails sync with the
+    key and valid values named
   - mcp_descriptions override-fills-gap: project wins, recipe fills gap,
     no descriptions → no crash, multi-recipe non-overlapping
+  - end-to-end marker suppression, idempotency, backward compatibility
+  - VCS fragment isolation to the bound vcs-pr-flow recipe
+  - repo topology line in ## Project
+  - worktree gate_mode brief rendering (real catalog recipe source)
 """
 from __future__ import annotations
 
-import importlib.util
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home, temp_project  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-AGENTS_RENDER_PATH = ROOT / "lib" / "_internal" / "agents-render.py"
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+# ---------------------------------------------------------------------------
+# Staging helpers
+# ---------------------------------------------------------------------------
+
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root with a REAL lib copy.
+
+    sync/materialize derive cache and catalog roots from their own realpath,
+    so a symlinked lib would resolve back into the repository and let the CLI
+    touch repo cache state. A real copy keeps every lookup and write in temp.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    return home
 
 
-class SubstituteConfigTests(unittest.TestCase):
-    """Tests for substitute_config(text, cfg_ns) -> str."""
+def _toml_str(text: str) -> str:
+    """Escape a Python string as a TOML basic string (JSON-compatible for ASCII/UTF-8)."""
+    return json.dumps(text, ensure_ascii=False)
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_brief_fragments_substitute")
 
+def recipe_toml(recipe_id: str, *, fragments: dict | None = None,
+                capabilities: tuple[str, ...] = ()) -> str:
+    """Build a minimal catalog recipe.toml.
+
+    fragments maps a [provides.brief] section name to a list of items; an item
+    is a plain string (key=None) or a (key, text) tuple (inline-table form).
+    """
+    parts = [
+        f'[recipe]\nid = "{recipe_id}"\nname = "{recipe_id}"\n'
+        f'description = "test recipe {recipe_id}"\nversion = "1.0.0"\n'
+    ]
+    for cap in capabilities:
+        parts.append(f'\n[[capabilities]]\nid = "{cap}"\n')
+    if fragments:
+        parts.append("\n[provides.brief]\n")
+        for section, items in fragments.items():
+            entries = ", ".join(
+                f'{{ key = {_toml_str(key)}, text = {_toml_str(text)} }}'
+                if key is not None else _toml_str(text)
+                for key, text in ((i if isinstance(i, tuple) else (None, i)) for i in items)
+            )
+            parts.append(f"{section} = [{entries}]\n")
+    return "".join(parts)
+
+
+def catalog_recipe(cli_home: Path, recipe_id: str, toml: str) -> Path:
+    """Seed or override one catalog recipe with a REAL (non-symlinked) dir.
+
+    The isolated home's catalog starts as a symlink to the repository catalog;
+    it is materialized once into a real dir of per-recipe symlinks, and every
+    test recipe is then written as a real directory, so no test ever writes
+    through a symlink into the repository's own catalog.
+    """
+    catalog = cli_home / "catalog"
+    if catalog.is_symlink():
+        target = catalog.resolve()
+        catalog.unlink()
+        catalog.mkdir()
+        for entry in target.iterdir():
+            if entry.name == "recipes":
+                (catalog / "recipes").mkdir()
+                for recipe in entry.iterdir():
+                    (catalog / "recipes" / recipe.name).symlink_to(recipe)
+            else:
+                (catalog / entry.name).symlink_to(entry)
+    rdir = catalog / "recipes" / recipe_id
+    if rdir.is_symlink():
+        rdir.unlink()
+    rdir.mkdir(parents=True, exist_ok=True)
+    (rdir / "recipe.toml").write_text(toml)
+    return rdir
+
+
+class BriefFragmentCLITest(unittest.TestCase):
+    """Shared staging: one temp project + one isolated install root per test."""
+
+    def setUp(self):
+        self._td, self.project = temp_project(
+            name=self.__class__.__name__.lower(), agents=("claude",)
+        )
+        # The install root lives in its own temp dir: isolated_home builds
+        # cli-home inside `base`, mirroring test_sync_pipeline staging.
+        self._home_base = Path(tempfile.mkdtemp(prefix="ai-specs-homebase-"))
+        self.home = _make_home(self._home_base)
+
+    def tearDown(self):
+        self._td.cleanup()
+        shutil.rmtree(self._home_base, ignore_errors=True)
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def write_manifest(self, body: str) -> None:
+        (self.project / "ai-specs" / "ai-specs.toml").write_text(body)
+
+    def sync(self):
+        return invoke(self.project, "sync", cli_home=self.home)
+
+    def agents_md(self) -> str:
+        path = self.project / "AGENTS.md"
+        return path.read_text() if path.exists() else ""
+
+    def seed_recipe(self, recipe_id: str, toml: str) -> None:
+        catalog_recipe(self.home, recipe_id, toml)
+
+    def section_text(self, title: str) -> str:
+        """Return the rendered body of one '## <title>' section, or ''."""
+        text = self.agents_md()
+        marker = f"## {title}\n"
+        start = text.find(marker)
+        if start < 0:
+            return ""
+        tail = text[start + len(marker):]
+        end = tail.find("\n## ")
+        return tail[:end] if end >= 0 else tail
+
+
+# ---------------------------------------------------------------------------
+# {config.KEY} substitution in recipe fragments
+# ---------------------------------------------------------------------------
+
+class SubstituteConfigTests(BriefFragmentCLITest):
+    """{config.KEY} substitution semantics, observed through rendered fragments.
+
+    Each test stages one catalog recipe whose workflow_rules fragment carries
+    the prose under test plus (optionally) a manifest config value, then
+    asserts on the rendered Workflow Rules section of AGENTS.md.
+    """
+
+    def _sync_fragment(self, text: str, cfg: dict | None = None) -> str:
+        self.seed_recipe("sub-recipe", recipe_toml(
+            "sub-recipe", fragments={"workflow_rules": [text]}
+        ))
+        lines = [
+            "[project]\nname = 'sub'\n\n[agents]\nenabled = ['claude']\n\n",
+            "[recipes.sub-recipe]\nenabled = true\n",
+        ]
+        if cfg:
+            lines.append("[recipes.sub-recipe.config]\n")
+            for key, value in cfg.items():
+                lines.append(f"{key} = {_toml_str(value)}\n")
+        self.write_manifest("".join(lines))
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return self.section_text("Workflow Rules")
     def test_known_key_resolves(self):
-        cfg = {"config.integration_branch": "development"}
-        result = self.mod.substitute_config(
-            "Do not push to `{config.integration_branch}` without a PR.", cfg
+        section = self._sync_fragment(
+            "Do not push to `{config.integration_branch}` without a PR.",
+            cfg={"integration_branch": "development"},
         )
-        self.assertEqual(result, "Do not push to `development` without a PR.")
+        self.assertIn("Do not push to `development` without a PR.", section)
+
     def test_artifact_store_enum_value_resolves(self):
-        result = self.mod.substitute_config(
+        section = self._sync_fragment(
             "Default artifact store: `{config.artifact_store_default}`.",
-            {"config.artifact_store_default": "both"},
+            cfg={"artifact_store_default": "both"},
         )
-        self.assertEqual(result, "Default artifact store: `both`.")
-        self.assertNotIn("{config.artifact_store_default}", result)
+        self.assertIn("Default artifact store: `both`.", section)
+        self.assertNotIn("{config.artifact_store_default}", section)
 
     def test_missing_key_verbatim(self):
-        cfg = {}
-        result = self.mod.substitute_config("Run {config.test_command} first.", cfg)
-        self.assertEqual(result, "Run {config.test_command} first.")
+        section = self._sync_fragment("Run {config.test_command} first.")
+        self.assertIn("Run {config.test_command} first.", section)
 
     def test_missing_key_no_crash(self):
-        cfg = {}
-        # Must not raise
-        result = self.mod.substitute_config("{config.missing_key}", cfg)
-        self.assertEqual(result, "{config.missing_key}")
+        # Must not raise: sync exits 0 and the placeholder is re-emitted verbatim
+        section = self._sync_fragment("{config.missing_key}")
+        self.assertIn("{config.missing_key}", section)
 
     def test_bare_key_verbatim(self):
-        cfg = {"config.integration_branch": "main"}
-        result = self.mod.substitute_config("See {integration_branch}.", cfg)
-        self.assertEqual(result, "See {integration_branch}.")
+        section = self._sync_fragment(
+            "See {integration_branch}.", cfg={"integration_branch": "main"}
+        )
+        self.assertIn("See {integration_branch}.", section)
 
     def test_double_brace_escape(self):
-        result = self.mod.substitute_config("Use {{config.KEY}} to reference.", {})
-        self.assertEqual(result, "Use {config.KEY} to reference.")
+        section = self._sync_fragment("Use {{config.KEY}} to reference.")
+        self.assertIn("Use {config.KEY} to reference.", section)
 
     def test_mixed_escape_and_substitution(self):
-        cfg = {"config.test_command": "./run.sh"}
-        result = self.mod.substitute_config(
-            "Run `{config.test_command}` (not {{skip}}).", cfg
+        section = self._sync_fragment(
+            "Run `{config.test_command}` (not {{skip}}).",
+            cfg={"test_command": "./run.sh"},
         )
-        self.assertEqual(result, "Run `./run.sh` (not {skip}).")
+        self.assertIn("Run `./run.sh` (not {skip}).", section)
 
     def test_lone_unbalanced_brace_no_crash(self):
-        result = self.mod.substitute_config("Some prose { with brace.", {})
-        # Must not crash; returns text untouched
-        self.assertIsInstance(result, str)
+        # Must not crash: sync exits 0 and the prose is rendered untouched
+        section = self._sync_fragment("Some prose { with brace.")
+        self.assertIn("Some prose { with brace.", section)
 
     def test_empty_string(self):
-        result = self.mod.substitute_config("", {"config.x": "y"})
-        self.assertEqual(result, "")
+        # Must not crash: an empty fragment text keeps sync green and renders
+        # the section pipeline without raising
+        self._sync_fragment("")
+        self.assertIn("## Workflow Rules", self.agents_md())
 
 
 # ---------------------------------------------------------------------------
 
-class CollectRecipeBriefFragmentsTests(unittest.TestCase):
-    """Tests for collect_recipe_brief_fragments(resolved, section) -> list[dict]."""
+class CollectRecipeBriefFragmentsTests(BriefFragmentCLITest):
+    """Fragment collection ordering/dedup/enabling, observed via AGENTS.md."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_brief_fragments_collect")
+    def _wf_section(self) -> str:
+        return self.section_text("Workflow Rules")
 
-    def _resolved(self, enabled, recipes):
-        return {"enabled": enabled, "recipes": recipes}
+    def _ctx_section(self) -> str:
+        return self.section_text("Context Sources")
 
     def test_single_recipe_fragment_returned(self):
-        resolved = self._resolved(
-            ["recipe-a"],
-            {"recipe-a": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "Rule A."}]}}},
+        self.seed_recipe("recipe-a", recipe_toml(
+            "recipe-a", fragments={"workflow_rules": ["Rule A."]}
+        ))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.recipe-a]\nenabled = true\n"
         )
-        result = self.mod.collect_recipe_brief_fragments(resolved, "workflow_rules")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["text"], "Rule A.")
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        section = self._wf_section()
+        self.assertIn("- Rule A.", section)
+
+    def _sync_two_recipe_order(self, enabled_first: str, enabled_second: str):
+        for rid in ("wf", "tdd"):
+            self.seed_recipe(rid, recipe_toml(rid, fragments={
+                "workflow_rules": [f"{rid.upper()} rule."]
+            }))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            f"[recipes.{enabled_first}]\nenabled = true\n\n"
+            f"[recipes.{enabled_second}]\nenabled = true\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return self._wf_section()
 
     def test_enabled_order_preserved(self):
-        resolved = self._resolved(
-            ["wf", "tdd"],
-            {
-                "wf": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "WF rule."}]}},
-                "tdd": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "TDD rule."}]}},
-            },
-        )
-        result = self.mod.collect_recipe_brief_fragments(resolved, "workflow_rules")
-        self.assertEqual([f["text"] for f in result], ["WF rule.", "TDD rule."])
+        section = self._sync_two_recipe_order("wf", "tdd")
+        self.assertLess(section.index("WF rule."), section.index("TDD rule."))
 
     def test_reversed_enabled_order(self):
-        resolved = self._resolved(
-            ["tdd", "wf"],
-            {
-                "wf": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "WF rule."}]}},
-                "tdd": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "TDD rule."}]}},
-            },
-        )
-        result = self.mod.collect_recipe_brief_fragments(resolved, "workflow_rules")
-        self.assertEqual([f["text"] for f in result], ["TDD rule.", "WF rule."])
+        section = self._sync_two_recipe_order("tdd", "wf")
+        self.assertLess(section.index("TDD rule."), section.index("WF rule."))
 
     def test_key_dedup_first_wins(self):
-        resolved = self._resolved(
-            ["recipe-a", "recipe-b"],
-            {
-                "recipe-a": {"brief_fragments": {"context_sources": [{"key": "trello-sot", "text": "Trello is the source of truth."}]}},
-                "recipe-b": {"brief_fragments": {"context_sources": [{"key": "trello-sot", "text": "Trello: source of truth — updated wording."}]}},
-            },
+        self.seed_recipe("recipe-a", recipe_toml("recipe-a", fragments={
+            "context_sources": [("trello-sot", "Trello is the source of truth.")]
+        }))
+        self.seed_recipe("recipe-b", recipe_toml("recipe-b", fragments={
+            "context_sources": [("trello-sot", "Trello: source of truth — updated wording.")]
+        }))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.recipe-a]\nenabled = true\n\n"
+            "[recipes.recipe-b]\nenabled = true\n"
         )
-        result = self.mod.collect_recipe_brief_fragments(resolved, "context_sources")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["text"], "Trello is the source of truth.")
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        section = self._ctx_section()
+        self.assertIn("Trello is the source of truth.", section)
+        self.assertNotIn("Trello: source of truth — updated wording.", section)
 
     def test_exact_string_dedup_across_recipes(self):
-        resolved = self._resolved(
-            ["recipe-a", "recipe-b"],
-            {
-                "recipe-a": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "Run tests before committing."}]}},
-                "recipe-b": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "Run tests before committing."}]}},
-            },
+        for rid in ("recipe-a", "recipe-b"):
+            self.seed_recipe(rid, recipe_toml(rid, fragments={
+                "workflow_rules": ["Run tests before committing."]
+            }))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.recipe-a]\nenabled = true\n\n"
+            "[recipes.recipe-b]\nenabled = true\n"
         )
-        result = self.mod.collect_recipe_brief_fragments(resolved, "workflow_rules")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["text"], "Run tests before committing.")
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self._wf_section().count("Run tests before committing."), 1)
 
     def test_recipe_without_brief_fragments_key(self):
-        resolved = self._resolved(
-            ["recipe-a"],
-            {"recipe-a": {}},
+        # Must not raise: a recipe with no [provides.brief] keeps sync green
+        self.seed_recipe("recipe-a", recipe_toml("recipe-a"))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.recipe-a]\nenabled = true\n"
         )
-        # Must not raise
-        result = self.mod.collect_recipe_brief_fragments(resolved, "workflow_rules")
-        self.assertEqual(result, [])
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self._wf_section(), "")
 
     def test_recipe_with_empty_brief_fragments(self):
-        resolved = self._resolved(
-            ["recipe-a"],
-            {"recipe-a": {"brief_fragments": {}}},
+        self.seed_recipe("recipe-a", (
+            '[recipe]\nid = "recipe-a"\nname = "recipe-a"\n'
+            'description = "test recipe recipe-a"\nversion = "1.0.0"\n\n'
+            "[provides.brief]\n"
+        ))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.recipe-a]\nenabled = true\n"
         )
-        result = self.mod.collect_recipe_brief_fragments(resolved, "workflow_rules")
-        self.assertEqual(result, [])
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self._wf_section(), "")
 
     def test_disabled_recipe_not_in_enabled(self):
-        # recipe-b is in recipes but NOT in enabled
-        resolved = self._resolved(
-            ["recipe-a"],
-            {
-                "recipe-a": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "A rule."}]}},
-                "recipe-b": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "B rule."}]}},
-            },
+        # recipe-b is declared but NOT enabled
+        self.seed_recipe("recipe-a", recipe_toml("recipe-a", fragments={
+            "workflow_rules": ["A rule."]
+        }))
+        self.seed_recipe("recipe-b", recipe_toml("recipe-b", fragments={
+            "workflow_rules": ["B rule."]
+        }))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.recipe-a]\nenabled = true\n\n"
+            "[recipes.recipe-b]\nenabled = false\n"
         )
-        result = self.mod.collect_recipe_brief_fragments(resolved, "workflow_rules")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["text"], "A rule.")
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        section = self._wf_section()
+        self.assertIn("A rule.", section)
+        self.assertNotIn("B rule.", section)
 
     def test_recipe_not_in_recipes_dict(self):
-        # enabled references a recipe not in recipes dict — should not crash
-        resolved = self._resolved(["missing-recipe"], {})
-        result = self.mod.collect_recipe_brief_fragments(resolved, "workflow_rules")
-        self.assertEqual(result, [])
+        # TRIAGE: ai-specs sync — the CLI derives the enabled list from the
+        # [recipes.*] manifest entries, so an enabled id absent from the recipes
+        # map is unreachable black-box; this pins the no-crash contract at the
+        # renderer process boundary using the isolated home's own lib copy.
+        tmp = self.project / "ai-specs"
+        toml_path = tmp / "ai-specs.toml"
+        output_path = self.project / "AGENTS.md"
+        resolved_path = tmp / "resolved-config.json"
+        toml_path.write_text("[project]\nname = 'p'\n")
+        resolved_path.write_text(json.dumps({
+            "enabled": ["missing-recipe"], "recipes": {}, "bindings": {},
+        }))
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": str(self.project.parent / "home"),
+            "TMPDIR": str(self.project.parent),
+            "AI_SPECS_HOME": str(self.home),
+            "AI_SPECS_NO_NETWORK": "1",
+            "LC_ALL": "C",
+            "LANG": "C",
+        }
+        (self.project.parent / "home").mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run(
+            [sys.executable, str(self.home / "lib" / "_internal" / "agents-render.py"),
+             str(toml_path), str(output_path), "--resolved-config", str(resolved_path)],
+            cwd=str(ROOT), env=env, text=True, capture_output=True, check=False, input="",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # Must not crash: rendering an enabled id without recipe config succeeds
+        self.assertTrue(output_path.exists())
 
     def test_substitution_applied(self):
-        resolved = self._resolved(
-            ["wf"],
-            {
-                "wf": {
-                    "integration_branch": "main",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Do not push to `{config.integration_branch}` without a PR."}
-                        ]
-                    },
-                }
-            },
+        self.seed_recipe("wf", recipe_toml("wf", fragments={
+            "workflow_rules": [
+                "Do not push to `{config.integration_branch}` without a PR."
+            ]
+        }))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.wf]\nenabled = true\n"
+            "[recipes.wf.config]\nintegration_branch = 'main'\n"
         )
-        result = self.mod.collect_recipe_brief_fragments(resolved, "workflow_rules")
-        self.assertEqual(result[0]["text"], "Do not push to `main` without a PR.")
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(
+            "Do not push to `main` without a PR.", self._wf_section()
+        )
 
     def test_empty_enabled_list(self):
-        resolved = self._resolved([], {"recipe-a": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "X"}]}}})
-        result = self.mod.collect_recipe_brief_fragments(resolved, "workflow_rules")
-        self.assertEqual(result, [])
+        self.seed_recipe("recipe-a", recipe_toml("recipe-a", fragments={
+            "workflow_rules": ["X"]
+        }))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.recipe-a]\nenabled = false\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self._wf_section(), "")
 
     def test_section_not_present_in_fragments(self):
-        resolved = self._resolved(
-            ["recipe-a"],
-            {"recipe-a": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "WF."}]}}},
+        # context_sources not declared by the recipe — no Context Sources section
+        self.seed_recipe("recipe-a", recipe_toml("recipe-a", fragments={
+            "workflow_rules": ["WF."]
+        }))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.recipe-a]\nenabled = true\n"
         )
-        # context_sources not declared — should return []
-        result = self.mod.collect_recipe_brief_fragments(resolved, "context_sources")
-        self.assertEqual(result, [])
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self._ctx_section(), "")
 
 
 # ---------------------------------------------------------------------------
 
-class SectionMergeTests(unittest.TestCase):
-    """Tests for _section_* functions after resolved threading + merge logic."""
+class SectionMergeTests(BriefFragmentCLITest):
+    """Section merge behavior (APPEND default / REPLACE opt-in) via AGENTS.md."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_brief_fragments_section")
+    def _wf_section(self) -> str:
+        return self.section_text("Workflow Rules")
 
-    def _resolved_with_wf(self, frags, extra_cfg=None):
-        cfg = {"brief_fragments": {"workflow_rules": [{"key": None, "text": f} for f in frags]}}
-        if extra_cfg:
-            cfg.update(extra_cfg)
-        return {
-            "enabled": ["wf"],
-            "recipes": {"wf": cfg},
-            "bindings": {},
-        }
+    def _sync_recipe_and_manifest(self, recipe_frags: dict, manifest_brief: str,
+                                  recipe_id: str = "wf") -> str:
+        self.seed_recipe(recipe_id, recipe_toml(recipe_id, fragments=recipe_frags))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            + manifest_brief +
+            f"\n[recipes.{recipe_id}]\nenabled = true\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return self.agents_md()
 
     def test_append_default_recipe_before_manifest(self):
-        brief = {"workflow_rules": ["Manifest rule."]}
-        resolved = self._resolved_with_wf(["Recipe rule."])
-        lines = self.mod._section_workflow_rules(brief, resolved)
-        # Find bullet positions
-        recipe_pos = next(i for i, l in enumerate(lines) if "Recipe rule." in l)
-        manifest_pos = next(i for i, l in enumerate(lines) if "Manifest rule." in l)
-        self.assertLess(recipe_pos, manifest_pos)
+        agents = self._sync_recipe_and_manifest(
+            {"workflow_rules": ["Recipe rule."]},
+            "[brief]\nworkflow_rules = ['Manifest rule.']\n",
+        )
+        section = self.section_text("Workflow Rules")
+        self.assertLess(section.index("Recipe rule."), section.index("Manifest rule."))
 
     def test_replace_mode_suppresses_recipe_fragments(self):
-        brief = {"workflow_rules_mode": "replace", "workflow_rules": ["Only this rule."]}
-        resolved = self._resolved_with_wf(["Recipe rule."])
-        lines = self.mod._section_workflow_rules(brief, resolved)
-        content = "\n".join(lines)
-        self.assertIn("Only this rule.", content)
-        self.assertNotIn("Recipe rule.", content)
+        agents = self._sync_recipe_and_manifest(
+            {"workflow_rules": ["Recipe rule."]},
+            "[brief]\nworkflow_rules_mode = 'replace'\nworkflow_rules = ['Only this rule.']\n",
+        )
+        self.assertIn("Only this rule.", agents)
+        self.assertNotIn("Recipe rule.", agents)
 
     def test_replace_mode_isolates_other_sections(self):
         # workflow_rules REPLACE, but runtime_flow should still get recipe fragments
-        brief = {"workflow_rules_mode": "replace", "workflow_rules": ["WF only."]}
-        resolved = {
-            "enabled": ["wf"],
-            "recipes": {
-                "wf": {
-                    "brief_fragments": {
-                        "workflow_rules": [{"key": None, "text": "WF recipe."}],
-                        "runtime_flow": [{"key": None, "text": "RF recipe."}],
-                    }
-                }
+        agents = self._sync_recipe_and_manifest(
+            {
+                "workflow_rules": ["WF recipe."],
+                "runtime_flow": ["RF recipe."],
             },
-            "bindings": {},
-        }
-        wf_lines = self.mod._section_workflow_rules(brief, resolved)
-        rf_lines = self.mod._section_runtime_flow(brief, resolved)
-        self.assertNotIn("- WF recipe.", wf_lines)
-        self.assertIn("- RF recipe.", rf_lines)
+            "[brief]\nworkflow_rules_mode = 'replace'\nworkflow_rules = ['WF only.']\n",
+        )
+        self.assertNotIn("- WF recipe.", self.section_text("Workflow Rules"))
+        self.assertIn("- RF recipe.", self.section_text("Runtime Flow"))
 
     def test_manifest_prose_never_substituted(self):
-        brief = {"workflow_rules": ["Check {config.test_command}"]}
-        resolved = self._resolved_with_wf([])
-        lines = self.mod._section_workflow_rules(brief, resolved)
-        content = "\n".join(lines)
-        self.assertIn("Check {config.test_command}", content)
+        agents = self._sync_recipe_and_manifest(
+            {"workflow_rules": ["Recipe filler."]},
+            "[brief]\nworkflow_rules = ['Check {config.test_command}']\n",
+        )
+        self.assertIn("Check {config.test_command}", agents)
 
     def test_empty_manifest_brief_populated_by_recipe_fragments(self):
-        brief = {}
-        resolved = self._resolved_with_wf(["Create a worktree.", "Do not merge directly."])
-        lines = self.mod._section_workflow_rules(brief, resolved)
-        content = "\n".join(lines)
-        self.assertIn("Create a worktree.", content)
-        self.assertIn("Do not merge directly.", content)
+        agents = self._sync_recipe_and_manifest(
+            {"workflow_rules": ["Create a worktree.", "Do not merge directly."]},
+            "",  # no [brief] section at all
+        )
+        self.assertIn("Create a worktree.", agents)
+        self.assertIn("Do not merge directly.", agents)
 
     def test_recipe_without_fragments_unchanged_output(self):
-        brief = {"workflow_rules": ["Static rule."]}
-        resolved_with = self._resolved_with_wf(["Recipe frag."])
-        resolved_without = {
-            "enabled": ["wf"],
-            "recipes": {"wf": {}},
-            "bindings": {},
-        }
-        lines_with = self.mod._section_workflow_rules(brief, resolved_with)
-        lines_without = self.mod._section_workflow_rules(brief, resolved_without)
-        # Without fragments, should still emit the manifest rule
-        content_without = "\n".join(lines_without)
-        self.assertIn("Static rule.", content_without)
+        agents = self._sync_recipe_and_manifest(
+            None,
+            "[brief]\nworkflow_rules = ['Static rule.']\n",
+        )
+        # Without fragments, the manifest rule is still emitted
+        self.assertIn("Static rule.", agents)
 
     def test_idempotent_collection(self):
-        brief = {"workflow_rules": ["Manifest rule."]}
-        resolved = self._resolved_with_wf(["Recipe rule."])
-        lines1 = self.mod._section_workflow_rules(brief, resolved)
-        lines2 = self.mod._section_workflow_rules(brief, resolved)
-        self.assertEqual(lines1, lines2)
+        self.seed_recipe("wf", recipe_toml("wf", fragments={
+            "workflow_rules": ["Recipe rule."]
+        }))
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[brief]\nworkflow_rules = ['Manifest rule.']\n\n"
+            "[recipes.wf]\nenabled = true\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        first = (self.project / "AGENTS.md").read_bytes()
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        second = (self.project / "AGENTS.md").read_bytes()
+        self.assertEqual(first, second)
 
     def test_exact_string_dedup_recipe_vs_manifest(self):
         # Same text in recipe and manifest → appears once
-        brief = {"workflow_rules": ["Create a worktree."]}
-        resolved = self._resolved_with_wf(["Create a worktree."])
-        lines = self.mod._section_workflow_rules(brief, resolved)
-        count = sum(1 for l in lines if "Create a worktree." in l)
-        self.assertEqual(count, 1)
+        agents = self._sync_recipe_and_manifest(
+            {"workflow_rules": ["Create a worktree."]},
+            "[brief]\nworkflow_rules = ['Create a worktree.']\n",
+        )
+        self.assertEqual(
+            self.section_text("Workflow Rules").count("Create a worktree."), 1
+        )
 
     def test_context_sources_append(self):
-        brief = {"context_sources": ["Manifest ctx."]}
-        resolved = {
-            "enabled": ["r"],
-            "recipes": {"r": {"brief_fragments": {"context_sources": [{"key": None, "text": "Recipe ctx."}]}}},
-            "bindings": {},
-        }
-        lines = self.mod._section_context_sources(brief, resolved)
-        content = "\n".join(lines)
-        self.assertIn("Recipe ctx.", content)
-        self.assertIn("Manifest ctx.", content)
+        agents = self._sync_recipe_and_manifest(
+            {"context_sources": ["Recipe ctx."]},
+            "[brief]\ncontext_sources = ['Manifest ctx.']\n",
+        )
+        section = self.section_text("Context Sources")
+        self.assertIn("Recipe ctx.", section)
+        self.assertIn("Manifest ctx.", section)
 
     def test_conflict_policy_append(self):
-        brief = {"conflict_policy": ["Manifest policy."]}
-        resolved = {
-            "enabled": ["r"],
-            "recipes": {"r": {"brief_fragments": {"conflict_policy": [{"key": None, "text": "Recipe policy."}]}}},
-            "bindings": {},
-        }
-        lines = self.mod._section_conflict_policy(brief, resolved)
-        content = "\n".join(lines)
-        self.assertIn("Recipe policy.", content)
-        self.assertIn("Manifest policy.", content)
+        agents = self._sync_recipe_and_manifest(
+            {"conflict_policy": ["Recipe policy."]},
+            "[brief]\nconflict_policy = ['Manifest policy.']\n",
+        )
+        section = self.section_text("Conflict Policy")
+        self.assertIn("Recipe policy.", section)
+        self.assertIn("Manifest policy.", section)
 
     def test_useful_commands_append(self):
-        brief = {"useful_commands": ["Manifest cmd."]}
-        resolved = {
-            "enabled": ["r"],
-            "recipes": {"r": {"brief_fragments": {"useful_commands": [{"key": None, "text": "Recipe cmd."}]}}},
-            "bindings": {"test-runner": ""},
-        }
-        lines = self.mod._section_useful_commands(brief, resolved)
-        content = "\n".join(lines)
-        self.assertIn("Recipe cmd.", content)
-        self.assertIn("Manifest cmd.", content)
+        agents = self._sync_recipe_and_manifest(
+            {"useful_commands": ["Recipe cmd."]},
+            "[brief]\nuseful_commands = ['Manifest cmd.']\n",
+        )
+        section = self.section_text("Useful Commands")
+        self.assertIn("Recipe cmd.", section)
+        self.assertIn("Manifest cmd.", section)
 
     def test_no_section_header_when_no_bullets(self):
         # Both recipe and manifest have no workflow_rules → section not emitted
-        brief = {}
-        resolved = {"enabled": [], "recipes": {}, "bindings": {}}
-        lines = self.mod._section_workflow_rules(brief, resolved)
-        self.assertEqual(lines, [])
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("## Workflow Rules", self.agents_md())
 
 
 # ---------------------------------------------------------------------------
 
-class ValidateBriefModesTests(unittest.TestCase):
-    """Tests for _validate_brief_modes(brief)."""
+class ValidateBriefModesTests(BriefFragmentCLITest):
+    """[brief].<section>_mode validation, observed through sync exit codes."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_brief_fragments_validate")
+    def _sync_brief(self, brief_body: str):
+        self.write_manifest(
+            "[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n\n"
+            + brief_body
+        )
+        return self.sync()
 
     def test_valid_append_mode_no_error(self):
-        brief = {"workflow_rules_mode": "append"}
-        # Must not raise
-        self.mod._validate_brief_modes(brief)
+        result = self._sync_brief("[brief]\nworkflow_rules_mode = 'append'\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_valid_replace_mode_no_error(self):
-        brief = {"workflow_rules_mode": "replace"}
-        self.mod._validate_brief_modes(brief)
+        result = self._sync_brief("[brief]\nworkflow_rules_mode = 'replace'\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_unknown_mode_raises(self):
-        brief = {"workflow_rules_mode": "merge"}
-        with self.assertRaises((ValueError, SystemExit)) as ctx:
-            self.mod._validate_brief_modes(brief)
-        # error message must mention the key and list valid values
-        if isinstance(ctx.exception, ValueError):
-            msg = str(ctx.exception)
-            self.assertIn("workflow_rules_mode", msg)
+        result = self._sync_brief("[brief]\nworkflow_rules_mode = 'merge'\n")
+        self.assertNotEqual(result.returncode, 0)
+        # error message must mention the key
+        self.assertIn("workflow_rules_mode", result.stderr)
 
     def test_unknown_mode_error_mentions_valid_values(self):
-        brief = {"context_sources_mode": "upsert"}
-        with self.assertRaises((ValueError, SystemExit)) as ctx:
-            self.mod._validate_brief_modes(brief)
-        if isinstance(ctx.exception, ValueError):
-            msg = str(ctx.exception)
-            self.assertTrue("append" in msg or "replace" in msg)
+        result = self._sync_brief("[brief]\ncontext_sources_mode = 'upsert'\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue("append" in result.stderr or "replace" in result.stderr)
 
     def test_no_mode_keys_no_error(self):
-        brief = {"workflow_rules": ["rule."]}
-        self.mod._validate_brief_modes(brief)
+        result = self._sync_brief("[brief]\nworkflow_rules = ['rule.']\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_empty_brief_no_error(self):
-        self.mod._validate_brief_modes({})
+        result = self._sync_brief("")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 # ---------------------------------------------------------------------------
 
-class McpDescriptionsOverrideFillsGapTests(unittest.TestCase):
-    """Tests for mcp_descriptions override-fills-gap in _render_lines / _section_mcp."""
+class McpDescriptionsOverrideFillsGapTests(BriefFragmentCLITest):
+    """mcp_descriptions override-fills-gap, observed in ## Runtime MCPs."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_brief_fragments_mcp")
-
-    def _make_manifest(self, mcp_desc=None, mcp_servers=None):
-        manifest = {
-            "project": {"name": "fixture"},
-            "brief": {},
-        }
-        if mcp_desc is not None:
-            manifest["brief"]["mcp_descriptions"] = mcp_desc
-        if mcp_servers is not None:
-            manifest["mcp"] = mcp_servers
-        return manifest
-
-    def _make_resolved(self, recipe_mcp_frags=None, enabled=None):
-        recipes = {}
-        if recipe_mcp_frags:
-            for rid, frags in recipe_mcp_frags.items():
-                recipes[rid] = {"brief_fragments": {"mcp_descriptions": frags}}
-        return {
-            "enabled": enabled or list(recipes.keys()),
-            "recipes": recipes,
-            "bindings": {},
-        }
+    def _sync_mcp(self, recipe_descriptions: dict[str, list[tuple[str, str]]] | None,
+                  manifest_mcp_desc: dict | None, mcp_servers: dict) -> str:
+        if recipe_descriptions:
+            for rid, frags in recipe_descriptions.items():
+                self.seed_recipe(rid, recipe_toml(rid, fragments={
+                    "mcp_descriptions": frags
+                }))
+        lines = ["[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n"]
+        if manifest_mcp_desc:
+            lines.append("[brief.mcp_descriptions]\n")
+            for server, desc in manifest_mcp_desc.items():
+                lines.append(f"{server} = {_toml_str(desc)}\n")
+        for server, body in mcp_servers.items():
+            lines.append(f"\n[mcp.{server}]\n{body}")
+        for rid in (recipe_descriptions or {}):
+            lines.append(f"\n[recipes.{rid}]\nenabled = true\n")
+        self.write_manifest("".join(lines))
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return self.section_text("Runtime MCPs")
 
     def test_project_override_wins(self):
-        manifest = self._make_manifest(
-            mcp_desc={"trello": "Project override."},
-            mcp_servers={"trello": {}},
+        section = self._sync_mcp(
+            recipe_descriptions={"recipe-a": [("trello", "Recipe default.")]},
+            manifest_mcp_desc={"trello": "Project override."},
+            mcp_servers={"trello": "command = 'npx'\nargs = ['-y', '@t/m']\n"},
         )
-        resolved = self._make_resolved(
-            recipe_mcp_frags={"recipe-a": [{"key": "trello", "text": "Recipe default."}]}
-        )
-        lines = self.mod._render_lines(manifest, resolved)
-        content = "\n".join(lines)
-        self.assertIn("Project override.", content)
-        self.assertNotIn("Recipe default.", content)
+        self.assertIn("Project override.", section)
+        self.assertNotIn("Recipe default.", section)
 
     def test_recipe_fills_gap(self):
-        manifest = self._make_manifest(
-            mcp_servers={"trello": {}},
+        section = self._sync_mcp(
+            recipe_descriptions={"recipe-a": [("trello", "Recipe default.")]},
+            manifest_mcp_desc=None,
+            mcp_servers={"trello": "command = 'npx'\nargs = ['-y', '@t/m']\n"},
         )
-        resolved = self._make_resolved(
-            recipe_mcp_frags={"recipe-a": [{"key": "trello", "text": "Recipe default."}]}
-        )
-        lines = self.mod._render_lines(manifest, resolved)
-        content = "\n".join(lines)
-        self.assertIn("Recipe default.", content)
+        self.assertIn("Recipe default.", section)
 
     def test_no_mcp_descriptions_no_crash(self):
-        manifest = self._make_manifest(mcp_servers={"vault": {}})
-        resolved = self._make_resolved()
-        # Must not crash
-        lines = self.mod._render_lines(manifest, resolved)
-        content = "\n".join(lines)
-        self.assertIn("vault", content)
+        # Must not crash: an MCP server without any description renders fine
+        section = self._sync_mcp(
+            recipe_descriptions=None,
+            manifest_mcp_desc=None,
+            mcp_servers={"vault": "command = 'npx'\nargs = ['-y', '@v']\n"},
+        )
+        self.assertIn("vault", section)
 
     def test_multi_recipe_non_overlapping_keys(self):
-        manifest = self._make_manifest(
-            mcp_servers={"trello": {}, "engram": {}},
+        section = self._sync_mcp(
+            recipe_descriptions={
+                "recipe-a": [("trello", "Trello desc.")],
+                "recipe-b": [("engram", "Engram desc.")],
+            },
+            manifest_mcp_desc=None,
+            mcp_servers={
+                "trello": "command = 'npx'\nargs = ['-y', '@t']\n",
+                "engram": "command = 'npx'\nargs = ['-y', '@e']\n",
+            },
         )
-        resolved = self._make_resolved(
-            recipe_mcp_frags={
-                "recipe-a": [{"key": "trello", "text": "Trello desc."}],
-                "recipe-b": [{"key": "engram", "text": "Engram desc."}],
-            }
-        )
-        lines = self.mod._render_lines(manifest, resolved)
-        content = "\n".join(lines)
-        self.assertIn("Trello desc.", content)
-        self.assertIn("Engram desc.", content)
+        self.assertIn("Trello desc.", section)
+        self.assertIn("Engram desc.", section)
 
     def test_manifest_override_does_not_affect_other_servers(self):
-        manifest = self._make_manifest(
-            mcp_desc={"trello": "Project trello."},
-            mcp_servers={"trello": {}, "engram": {}},
+        section = self._sync_mcp(
+            recipe_descriptions={
+                "recipe-a": [("trello", "Recipe trello."), ("engram", "Recipe engram.")],
+            },
+            manifest_mcp_desc={"trello": "Project trello."},
+            mcp_servers={
+                "trello": "command = 'npx'\nargs = ['-y', '@t']\n",
+                "engram": "command = 'npx'\nargs = ['-y', '@e']\n",
+            },
         )
-        resolved = self._make_resolved(
-            recipe_mcp_frags={
-                "recipe-a": [
-                    {"key": "trello", "text": "Recipe trello."},
-                    {"key": "engram", "text": "Recipe engram."},
-                ]
-            }
-        )
-        lines = self.mod._render_lines(manifest, resolved)
-        content = "\n".join(lines)
-        self.assertIn("Project trello.", content)
-        self.assertNotIn("Recipe trello.", content)
-        self.assertIn("Recipe engram.", content)
+        self.assertIn("Project trello.", section)
+        self.assertNotIn("Recipe trello.", section)
+        self.assertIn("Recipe engram.", section)
 
 
 # ---------------------------------------------------------------------------
 
-class EndToEndRenderTests(unittest.TestCase):
-    """End-to-end tests via render() function using temp files."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_brief_fragments_e2e")
-
-    def _run_render(self, toml_content: str, resolved_data: dict) -> str:
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            toml_path = tmp / "ai-specs.toml"
-            output_path = tmp / "AGENTS.md"
-            resolved_path = tmp / "resolved-config.json"
-            toml_path.write_text(toml_content)
-            resolved_path.write_text(json.dumps(resolved_data))
-            self.mod.render(
-                toml_path,
-                output_path,
-                preserve_if_marker=False,
-                resolved_config_path=resolved_path,
-            )
-            return output_path.read_text()
+class EndToEndRenderTests(BriefFragmentCLITest):
+    """End-to-end render contracts through full sync runs."""
 
     def test_runtime_brief_marker_suppresses_regeneration(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            toml_path = tmp / "ai-specs.toml"
-            output_path = tmp / "AGENTS.md"
-            resolved_path = tmp / "resolved-config.json"
-            toml_path.write_text("[project]\nname = 'test'\n")
-            resolved_path.write_text(json.dumps({
-                "enabled": ["wf"],
-                "recipes": {"wf": {"brief_fragments": {"workflow_rules": [{"key": None, "text": "New fragment."}]}}},
-                "bindings": {},
-            }))
-            # Pre-existing AGENTS.md with marker
-            existing = "# Existing\n<!-- ai-specs:runtime-brief -->\nHand-written content.\n"
-            output_path.write_text(existing)
-            self.mod.render(
-                toml_path,
-                output_path,
-                preserve_if_marker=True,
-                resolved_config_path=resolved_path,
-            )
-            self.assertEqual(output_path.read_text(), existing)
+        self.seed_recipe("wf", recipe_toml("wf", fragments={
+            "workflow_rules": ["New fragment."]
+        }))
+        self.write_manifest("[project]\nname = 'test'\n\n[recipes.wf]\nenabled = true\n")
+        # Pre-existing AGENTS.md with marker
+        existing = "# Existing\n<!-- ai-specs:runtime-brief -->\nHand-written content.\n"
+        (self.project / "AGENTS.md").write_text(existing)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.project / "AGENTS.md").read_text(), existing)
 
     def test_idempotent_render_with_fragments(self):
-        toml = "[project]\nname = 'test'\n\n[brief]\n"
-        resolved = {
-            "enabled": ["wf"],
-            "recipes": {
-                "wf": {
-                    "integration_branch": "main",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Do not push to `{config.integration_branch}` without a PR."}
-                        ]
-                    },
-                }
-            },
-            "bindings": {},
-        }
-        out1 = self._run_render(toml, resolved)
-        out2 = self._run_render(toml, resolved)
-        self.assertEqual(out1, out2)
+        self.seed_recipe("wf", recipe_toml("wf", fragments={
+            "workflow_rules": [
+                "Do not push to `{config.integration_branch}` without a PR."
+            ]
+        }))
+        self.write_manifest(
+            "[project]\nname = 'test'\n\n[brief]\n\n"
+            "[recipes.wf]\nenabled = true\n"
+            "[recipes.wf.config]\nintegration_branch = 'main'\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        first = (self.project / "AGENTS.md").read_bytes()
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        second = (self.project / "AGENTS.md").read_bytes()
+        self.assertEqual(first, second)
 
     def test_empty_brief_populated_by_recipe_fragments(self):
-        toml = "[project]\nname = 'test'\n\n[brief]\nintro = 'Test project.'\npurpose = 'For testing.'\n"
-        resolved = {
-            "enabled": ["wf"],
-            "recipes": {
-                "wf": {
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Create a worktree."},
-                            {"key": None, "text": "Do not merge directly."},
-                        ]
-                    }
-                }
-            },
-            "bindings": {},
-        }
-        content = self._run_render(toml, resolved)
-        self.assertIn("Create a worktree.", content)
-        self.assertIn("Do not merge directly.", content)
+        self.seed_recipe("wf", recipe_toml("wf", fragments={
+            "workflow_rules": ["Create a worktree.", "Do not merge directly."]
+        }))
+        self.write_manifest(
+            "[project]\nname = 'test'\n\n"
+            "[brief]\nintro = 'Test project.'\npurpose = 'For testing.'\n\n"
+            "[recipes.wf]\nenabled = true\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        agents = self.agents_md()
+        self.assertIn("Create a worktree.", agents)
+        self.assertIn("Do not merge directly.", agents)
 
     def test_no_fragments_backward_compat(self):
-        toml = "[project]\nname = 'test'\n\n[brief]\nworkflow_rules = ['Static rule.']\n"
-        resolved = {
-            "enabled": ["wf"],
-            "recipes": {"wf": {}},
-            "bindings": {},
-        }
-        content = self._run_render(toml, resolved)
-        self.assertIn("Static rule.", content)
+        self.seed_recipe("wf", recipe_toml("wf"))
+        self.write_manifest(
+            "[project]\nname = 'test'\n\n"
+            "[brief]\nworkflow_rules = ['Static rule.']\n\n"
+            "[recipes.wf]\nenabled = true\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Static rule.", self.agents_md())
 
     def test_replace_mode_in_full_render(self):
-        toml = (
+        self.seed_recipe("wf", recipe_toml("wf", fragments={
+            "workflow_rules": ["Recipe rule — should not appear."]
+        }))
+        self.write_manifest(
             "[project]\nname = 'test'\n\n"
             "[brief]\nworkflow_rules_mode = 'replace'\n"
-            "workflow_rules = ['Only this rule.']\n"
+            "workflow_rules = ['Only this rule.']\n\n"
+            "[recipes.wf]\nenabled = true\n"
         )
-        resolved = {
-            "enabled": ["wf"],
-            "recipes": {
-                "wf": {
-                    "brief_fragments": {
-                        "workflow_rules": [{"key": None, "text": "Recipe rule — should not appear."}]
-                    }
-                }
-            },
-            "bindings": {},
-        }
-        content = self._run_render(toml, resolved)
-        self.assertIn("Only this rule.", content)
-        self.assertNotIn("Recipe rule — should not appear.", content)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        agents = self.agents_md()
+        self.assertIn("Only this rule.", agents)
+        self.assertNotIn("Recipe rule — should not appear.", agents)
 
     def test_validate_brief_modes_called_from_render(self):
-        toml = "[project]\nname = 'test'\n\n[brief]\nworkflow_rules_mode = 'invalid_mode'\n"
-        resolved = {"enabled": [], "recipes": {}, "bindings": {}}
-        with self.assertRaises((ValueError, SystemExit)):
-            self._run_render(toml, resolved)
+        self.write_manifest(
+            "[project]\nname = 'test'\n\n"
+            "[brief]\nworkflow_rules_mode = 'invalid_mode'\n"
+        )
+        result = self.sync()
+        self.assertNotEqual(result.returncode, 0)
 
 
 # ---------------------------------------------------------------------------
 # Batch 6 — Regression & Idempotency
 # ---------------------------------------------------------------------------
 
-class B6RegressionTests(unittest.TestCase):
-    """Batch 6 regression tests: marker suppression, idempotency, minimal manifest,
-    recipe-without-fragments compatibility. These exercise the full render() pipeline."""
+class B6RegressionTests(BriefFragmentCLITest):
+    """Batch 6 regression contracts via full sync runs: marker suppression,
+    idempotency, minimal manifest, recipe-without-fragments compatibility."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_b6_regression")
-
-    def _run_render(self, toml_content: str, resolved_data: dict) -> str:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            toml_path = tmp / "ai-specs.toml"
-            output_path = tmp / "AGENTS.md"
-            resolved_path = tmp / "resolved-config.json"
-            toml_path.write_text(toml_content)
-            resolved_path.write_text(json.dumps(resolved_data))
-            self.mod.render(
-                toml_path,
-                output_path,
-                preserve_if_marker=False,
-                resolved_config_path=resolved_path,
-            )
-            return output_path.read_text()
-
-    # 6.1 / 6.2 — marker suppression intact after resolved threading
     def test_marker_suppresses_regeneration_with_recipe_fragments(self):
         """AGENTS.md with <!-- ai-specs:runtime-brief --> must NOT be modified even when
         recipes now contribute [provides.brief] fragments (B6 regression for 6.1/6.2)."""
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            toml_path = tmp / "ai-specs.toml"
-            output_path = tmp / "AGENTS.md"
-            resolved_path = tmp / "resolved-config.json"
-            toml_path.write_text(
-                "[project]\nname = 'test'\n\n[brief]\nintro = 'Intro.'\npurpose = 'Purpose.'\n"
-            )
-            resolved_path.write_text(json.dumps({
-                "enabled": ["worktree-flow", "tdd-flow"],
-                "recipes": {
-                    "worktree-flow": {
-                        "integration_branch": "main",
-                        "brief_fragments": {
-                            "workflow_rules": [
-                                {"key": None, "text": "Create worktree for every change."},
-                                {"key": None, "text": "Do not push to `{config.integration_branch}` without a PR."},
-                            ]
-                        },
-                    },
-                    "tdd-flow": {
-                        "test_command": "./tests/run.sh",
-                        "brief_fragments": {
-                            "workflow_rules": [
-                                {"key": None, "text": "Write failing tests first."},
-                            ],
-                            "useful_commands": [
-                                {"key": None, "text": "Run tests: `{config.test_command}`"},
-                            ],
-                        },
-                    },
-                },
-                "bindings": {},
-            }))
-            # Pre-existing AGENTS.md with the runtime-brief marker (hand-managed)
-            hand_managed = (
-                "# Hand-Managed Brief\n"
-                "<!-- ai-specs:runtime-brief -->\n"
-                "This content is hand-written and MUST NOT be replaced.\n"
-            )
-            output_path.write_text(hand_managed)
-            self.mod.render(
-                toml_path,
-                output_path,
-                preserve_if_marker=True,
-                resolved_config_path=resolved_path,
-            )
-            # Must be byte-identical to the original hand-managed content
-            self.assertEqual(output_path.read_text(), hand_managed)
-
-    # 6.3 / 6.4 — idempotency with config substitution
-    def test_idempotency_with_config_substitution(self):
-        """Two consecutive renders with config substitution must produce byte-identical output."""
-        toml = (
+        self.seed_recipe("worktree-flow", recipe_toml("worktree-flow", fragments={
+            "workflow_rules": [
+                "Create worktree for every change.",
+                "Do not push to `{config.integration_branch}` without a PR.",
+            ]
+        }))
+        self.seed_recipe("tdd-flow", recipe_toml("tdd-flow", fragments={
+            "workflow_rules": ["Write failing tests first."],
+            "useful_commands": ["Run tests: `{config.test_command}`"],
+        }))
+        self.write_manifest(
             "[project]\nname = 'test'\n\n"
-            "[brief]\nintro = 'Test project.'\npurpose = 'Testing.'\n"
+            "[brief]\nintro = 'Intro.'\npurpose = 'Purpose.'\n\n"
+            "[recipes.worktree-flow]\nenabled = true\n"
+            "[recipes.worktree-flow.config]\nintegration_branch = 'main'\n\n"
+            "[recipes.tdd-flow]\nenabled = true\n"
+            "[recipes.tdd-flow.config]\ntest_command = './tests/run.sh'\n"
         )
-        resolved = {
-            "enabled": ["worktree-flow", "git-pr-flow"],
-            "recipes": {
-                "worktree-flow": {
-                    "integration_branch": "main",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Create worktree. Branch: `{config.integration_branch}`."},
-                            {"key": None, "text": "Preserve unrelated changes."},
-                        ]
-                    },
-                },
-                "git-pr-flow": {
-                    "base_branch": "main",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Use GitHub PRs to merge into `{config.base_branch}`."},
-                        ]
-                    },
-                },
-            },
-            "bindings": {},
-        }
-        out1 = self._run_render(toml, resolved)
-        out2 = self._run_render(toml, resolved)
-        # Must be byte-identical — no ordering drift or duplicate bullets
-        self.assertEqual(out1, out2, "Render output must be idempotent (byte-identical on two runs)")
+        # Pre-existing AGENTS.md with the runtime-brief marker (hand-managed)
+        hand_managed = (
+            "# Hand-Managed Brief\n"
+            "<!-- ai-specs:runtime-brief -->\n"
+            "This content is hand-written and MUST NOT be replaced.\n"
+        )
+        (self.project / "AGENTS.md").write_text(hand_managed)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Must be byte-identical to the original hand-managed content
+        self.assertEqual((self.project / "AGENTS.md").read_text(), hand_managed)
 
-    # 6.8 — minimal manifest: only intro+purpose in [brief], populated by recipe fragments
+    def test_idempotency_with_config_substitution(self):
+        """Two consecutive syncs with config substitution must produce byte-identical output."""
+        self.seed_recipe("worktree-flow", recipe_toml("worktree-flow", fragments={
+            "workflow_rules": [
+                "Create worktree. Branch: `{config.integration_branch}`.",
+                "Preserve unrelated changes.",
+            ]
+        }))
+        self.seed_recipe("git-pr-flow", recipe_toml("git-pr-flow", fragments={
+            "workflow_rules": [
+                "Use GitHub PRs to merge into `{config.base_branch}`.",
+            ]
+        }))
+        self.write_manifest(
+            "[project]\nname = 'test'\n\n"
+            "[brief]\nintro = 'Test project.'\npurpose = 'Testing.'\n\n"
+            "[recipes.worktree-flow]\nenabled = true\n"
+            "[recipes.worktree-flow.config]\nintegration_branch = 'main'\n\n"
+            "[recipes.git-pr-flow]\nenabled = true\n"
+            "[recipes.git-pr-flow.config]\nbase_branch = 'main'\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        first = (self.project / "AGENTS.md").read_bytes()
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        second = (self.project / "AGENTS.md").read_bytes()
+        # Must be byte-identical — no ordering drift or duplicate bullets
+        self.assertEqual(first, second, "Render output must be idempotent (byte-identical on two runs)")
+
     def test_minimal_brief_with_config_key_substitution(self):
         """Minimal [brief] (only intro+purpose) + recipe with {config.KEY} → rendered output
         contains substituted values, not raw placeholders (B6 scenario 6.8)."""
-        toml = (
+        self.seed_recipe("tdd-flow", recipe_toml("tdd-flow", fragments={
+            "workflow_rules": [
+                "Write failing tests first.",
+                "Run the suite before committing.",
+            ],
+            "useful_commands": ["Run tests: `{config.test_command}`"],
+        }))
+        self.write_manifest(
             "[project]\nname = 'test'\n\n"
-            "[brief]\n"
-            "intro = 'Test intro.'\n"
-            "purpose = 'Test purpose.'\n"
+            "[brief]\nintro = 'Test intro.'\npurpose = 'Test purpose.'\n\n"
+            "[recipes.tdd-flow]\nenabled = true\n"
+            "[recipes.tdd-flow.config]\ntest_command = './tests/run.sh'\n"
         )
-        resolved = {
-            "enabled": ["tdd-flow"],
-            "recipes": {
-                "tdd-flow": {
-                    "test_command": "./tests/run.sh",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Write failing tests first."},
-                            {"key": None, "text": "Run the suite before committing."},
-                        ],
-                        "useful_commands": [
-                            {"key": None, "text": "Run tests: `{config.test_command}`"},
-                        ],
-                    },
-                }
-            },
-            "bindings": {},
-        }
-        content = self._run_render(toml, resolved)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        agents = self.agents_md()
         # Substituted value must appear (not the placeholder)
-        self.assertIn("./tests/run.sh", content)
-        self.assertNotIn("{config.test_command}", content)
+        self.assertIn("./tests/run.sh", agents)
+        self.assertNotIn("{config.test_command}", agents)
         # Section populated entirely from recipe fragments
-        self.assertIn("Write failing tests first.", content)
-        self.assertIn("Run the suite before committing.", content)
-        self.assertIn("Run tests: `./tests/run.sh`", content)
+        self.assertIn("Write failing tests first.", agents)
+        self.assertIn("Run the suite before committing.", agents)
+        self.assertIn("Run tests: `./tests/run.sh`", agents)
 
-    # 6.5 — recipe without [provides.brief] must not break rendering
     def test_recipe_without_provides_brief_does_not_break_render(self):
-        """Enabled recipe with no brief_fragments key → render succeeds, other sections intact."""
-        toml = (
+        """Enabled recipe with no brief_fragments key → sync succeeds, other sections intact."""
+        self.seed_recipe("no-brief-recipe", recipe_toml("no-brief-recipe"))
+        self.seed_recipe("with-brief-recipe", recipe_toml("with-brief-recipe", fragments={
+            "workflow_rules": ["Recipe rule."]
+        }))
+        self.write_manifest(
             "[project]\nname = 'test'\n\n"
-            "[brief]\nworkflow_rules = ['Static manifest rule.']\n"
+            "[brief]\nworkflow_rules = ['Static manifest rule.']\n\n"
+            "[recipes.no-brief-recipe]\nenabled = true\n\n"
+            "[recipes.with-brief-recipe]\nenabled = true\n"
         )
-        resolved = {
-            "enabled": ["no-brief-recipe", "with-brief-recipe"],
-            "recipes": {
-                # no brief_fragments at all
-                "no-brief-recipe": {"some_config": "value"},
-                # has brief_fragments
-                "with-brief-recipe": {
-                    "brief_fragments": {
-                        "workflow_rules": [{"key": None, "text": "Recipe rule."}]
-                    }
-                },
-            },
-            "bindings": {},
-        }
-        content = self._run_render(toml, resolved)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        agents = self.agents_md()
         # Recipe rule still appears
-        self.assertIn("Recipe rule.", content)
+        self.assertIn("Recipe rule.", agents)
         # Manifest rule appears (deduped, not duplicated)
-        self.assertIn("Static manifest rule.", content)
-        self.assertEqual(content.count("Static manifest rule."), 1)
+        self.assertIn("Static manifest rule.", agents)
+        self.assertEqual(agents.count("Static manifest rule."), 1)
 
-    # 6.3 extended — exact-string dedup prevents duplicates on repeated fragments
     def test_exact_string_dedup_idempotency(self):
-        """Same fragment text from two recipes → appears exactly once; render is idempotent."""
-        toml = "[project]\nname = 'test'\n\n[brief]\n"
-        resolved = {
-            "enabled": ["recipe-a", "recipe-b"],
-            "recipes": {
-                "recipe-a": {
-                    "brief_fragments": {
-                        "workflow_rules": [{"key": None, "text": "Shared rule."}]
-                    }
-                },
-                "recipe-b": {
-                    "brief_fragments": {
-                        "workflow_rules": [{"key": None, "text": "Shared rule."}]
-                    }
-                },
-            },
-            "bindings": {},
-        }
-        out1 = self._run_render(toml, resolved)
-        out2 = self._run_render(toml, resolved)
-        self.assertEqual(out1, out2, "Must be idempotent")
+        """Same fragment text from two recipes → appears exactly once; sync is idempotent."""
+        for rid in ("recipe-a", "recipe-b"):
+            self.seed_recipe(rid, recipe_toml(rid, fragments={
+                "workflow_rules": ["Shared rule."]
+            }))
+        self.write_manifest(
+            "[project]\nname = 'test'\n\n[brief]\n\n"
+            "[recipes.recipe-a]\nenabled = true\n\n"
+            "[recipes.recipe-b]\nenabled = true\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        first = (self.project / "AGENTS.md").read_text()
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        second = (self.project / "AGENTS.md").read_text()
+        self.assertEqual(first, second, "Must be idempotent")
         # "Shared rule." must appear exactly once
-        self.assertEqual(out1.count("Shared rule."), 1)
+        self.assertEqual(first.count("Shared rule."), 1)
 
 
 # ---------------------------------------------------------------------------
 
-class VcsFragmentIsolationTests(unittest.TestCase):
+class VcsFragmentIsolationTests(BriefFragmentCLITest):
     """VCS workflow_rules fragments stay isolated to the bound recipe.
 
     When multiple VCS sibling recipes are enabled but only one is bound to
@@ -860,282 +938,170 @@ class VcsFragmentIsolationTests(unittest.TestCase):
     Non-VCS recipes always contribute regardless of VCS binding state.
     """
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_vcs_fragment_isolation")
+    def _seed_vcs_siblings(self) -> None:
+        """3 VCS siblings + 1 non-VCS recipe in the isolated catalog."""
+        for rid, branch, rule in (
+            ("git-pr-flow", "main", "Use GitHub PRs to merge."),
+            ("gitlab-mr-flow", "development", "Use GitLab MRs to merge."),
+            ("bitbucket-pr-flow", "develop", "Use Bitbucket PRs to merge."),
+        ):
+            self.seed_recipe(rid, recipe_toml(
+                rid,
+                capabilities=("vcs-pr-flow",),
+                fragments={"workflow_rules": [rule]},
+            ))
+        self.seed_recipe("worktree-flow", recipe_toml("worktree-flow", fragments={
+            "workflow_rules": ["Create a worktree for every change."]
+        }))
 
-    def _resolved_with_vcs_siblings(self, bound_vcs_id: str | None):
-        """Build resolved config with 3 VCS siblings + 1 non-VCS recipe."""
-        bindings = {}
-        if bound_vcs_id:
-            bindings["vcs-pr-flow"] = bound_vcs_id
-        return {
-            "enabled": ["git-pr-flow", "gitlab-mr-flow", "bitbucket-pr-flow", "worktree-flow"],
-            "recipes": {
-                "git-pr-flow": {
-                    "base_branch": "main",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Use GitHub PRs to merge."},
-                        ],
-                    },
-                },
-                "gitlab-mr-flow": {
-                    "base_branch": "development",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Use GitLab MRs to merge."},
-                        ],
-                    },
-                },
-                "bitbucket-pr-flow": {
-                    "base_branch": "develop",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Use Bitbucket PRs to merge."},
-                        ],
-                    },
-                },
-                "worktree-flow": {
-                    "integration_branch": "main",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Create a worktree for every change."},
-                        ],
-                    },
-                },
-            },
-            "bindings": bindings,
-        }
+    def _enable(self, *recipe_ids: str, binding: str | None = None) -> None:
+        blocks = ["[project]\nname = 'p'\n\n[agents]\nenabled = ['claude']\n"]
+        for rid in recipe_ids:
+            blocks.append(f"\n[recipes.{rid}]\nenabled = true\n")
+        if binding:
+            blocks.append(
+                "\n[[bindings]]\ncapability = 'vcs-pr-flow'\n"
+                f"recipe = '{binding}'\n"
+            )
+        self.write_manifest("".join(blocks))
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_bound_gitlab_only_gitlab_fragments_in_workflow_rules(self):
         """3 VCS recipes enabled, bound to gitlab-mr-flow → only GitLab fragments."""
-        resolved = self._resolved_with_vcs_siblings("gitlab-mr-flow")
-        brief = {}
-        lines = self.mod._section_workflow_rules(brief, resolved)
-        content = "\n".join(lines)
+        self._seed_vcs_siblings()
+        self._enable("git-pr-flow", "gitlab-mr-flow", "bitbucket-pr-flow",
+                     "worktree-flow", binding="gitlab-mr-flow")
+        section = self.section_text("Workflow Rules")
         # GitLab fragments MUST appear
-        self.assertIn("Use GitLab MRs to merge.", content)
+        self.assertIn("Use GitLab MRs to merge.", section)
         # GitHub and Bitbucket fragments MUST NOT appear
-        self.assertNotIn("Use GitHub PRs to merge.", content)
-        self.assertNotIn("Use Bitbucket PRs to merge.", content)
+        self.assertNotIn("Use GitHub PRs to merge.", section)
+        self.assertNotIn("Use Bitbucket PRs to merge.", section)
         # Non-VCS fragments MUST still appear
-        self.assertIn("Create a worktree for every change.", content)
+        self.assertIn("Create a worktree for every change.", section)
 
     def test_no_vcs_binding_no_vcs_fragments(self):
         """VCS siblings enabled but no vcs-pr-flow binding → no VCS fragments."""
-        resolved = self._resolved_with_vcs_siblings(None)
-        brief = {}
-        lines = self.mod._section_workflow_rules(brief, resolved)
-        content = "\n".join(lines)
+        self._seed_vcs_siblings()
+        self._enable("git-pr-flow", "gitlab-mr-flow", "bitbucket-pr-flow",
+                     "worktree-flow")
+        section = self.section_text("Workflow Rules")
         # No VCS fragments should appear when unbound
-        self.assertNotIn("Use GitHub PRs to merge.", content)
-        self.assertNotIn("Use GitLab MRs to merge.", content)
-        self.assertNotIn("Use Bitbucket PRs to merge.", content)
+        self.assertNotIn("Use GitHub PRs to merge.", section)
+        self.assertNotIn("Use GitLab MRs to merge.", section)
+        self.assertNotIn("Use Bitbucket PRs to merge.", section)
         # Non-VCS fragments MUST still appear
-        self.assertIn("Create a worktree for every change.", content)
+        self.assertIn("Create a worktree for every change.", section)
 
     def test_bound_custom_recipe_contributes_own_fragments(self):
         """Custom recipe bound to vcs-pr-flow → its own fragments still appear."""
-        resolved = {
-            "enabled": ["my-custom-vcs", "git-pr-flow", "worktree-flow"],
-            "recipes": {
-                "my-custom-vcs": {
-                    "base_branch": "trunk",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Use custom VCS flow."},
-                        ],
-                    },
-                },
-                "git-pr-flow": {
-                    "base_branch": "main",
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Use GitHub PRs to merge."},
-                        ],
-                    },
-                },
-                "worktree-flow": {
-                    "brief_fragments": {
-                        "workflow_rules": [
-                            {"key": None, "text": "Create a worktree."},
-                        ],
-                    },
-                },
-            },
-            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
-        }
-        brief = {}
-        lines = self.mod._section_workflow_rules(brief, resolved)
-        content = "\n".join(lines)
+        self.seed_recipe("my-custom-vcs", recipe_toml(
+            "my-custom-vcs",
+            capabilities=("vcs-pr-flow",),
+            fragments={"workflow_rules": ["Use custom VCS flow."]},
+        ))
+        self.seed_recipe("git-pr-flow", recipe_toml(
+            "git-pr-flow",
+            capabilities=("vcs-pr-flow",),
+            fragments={"workflow_rules": ["Use GitHub PRs to merge."]},
+        ))
+        self.seed_recipe("worktree-flow", recipe_toml("worktree-flow", fragments={
+            "workflow_rules": ["Create a worktree."]
+        }))
+        self._enable("my-custom-vcs", "git-pr-flow", "worktree-flow",
+                     binding="my-custom-vcs")
+        section = self.section_text("Workflow Rules")
         # Custom recipe fragments MUST appear (it's the bound recipe)
-        self.assertIn("Use custom VCS flow.", content)
+        self.assertIn("Use custom VCS flow.", section)
         # Known VCS sibling fragments MUST NOT appear (not the bound recipe)
-        self.assertNotIn("Use GitHub PRs to merge.", content)
+        self.assertNotIn("Use GitHub PRs to merge.", section)
         # Non-VCS fragments MUST still appear
-        self.assertIn("Create a worktree.", content)
+        self.assertIn("Create a worktree.", section)
 
 
+class RepoTopologyBriefTests(BriefFragmentCLITest):
+    """Repo topology line in ## Project, observed through full sync runs."""
 
-class RepoTopologyBriefTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.mod = load_module(
-            ROOT / "lib" / "_internal" / "agents-render.py",
-            "agents_render_topology",
-        )
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_repo_topology import make_super_with_submodule  # noqa: F401
+        cls._make_super = staticmethod(make_super_with_submodule)
+
+    def _super_project(self) -> Path:
+        """Build a super repo with one submodule and stage ai-specs inside it."""
+        super_repo = self._make_super(self.project)
+        (super_repo / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+        (super_repo / "ai-specs" / "commands").mkdir(exist_ok=True)
+        (super_repo / "ai-specs" / "ai-specs.toml").write_text("")
+        return super_repo
+
+    def _sync_super(self, manifest_body: str) -> str:
+        super_repo = self._super_project()
+        (super_repo / "ai-specs" / "ai-specs.toml").write_text(manifest_body)
+        result = invoke(super_repo, "sync", cli_home=self.home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return (super_repo / "AGENTS.md").read_text()
 
     def test_repo_topology_line_in_project_section(self):
-        import tempfile
-        from pathlib import Path as P
-        import sys
-        sys.path.insert(0, str(ROOT / "tests"))
-        from test_repo_topology import make_super_with_submodule
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        super_repo = make_super_with_submodule(P(tmp.name))
-        resolved = {
-            "bindings": {"worktree-isolation": "worktree-flow"},
-            "enabled": ["worktree-flow"],
-            "recipes": {
-                "worktree-flow": {
-                    "integration_branch": "main",
-                    "repo_topology": "auto",
-                }
-            },
-            "project_root": str(super_repo),
-        }
-        manifest = {"project": {"name": "topo"}, "agents": {"enabled": ["claude"]}}
-        lines = self.mod._section_project(manifest, resolved)
-        text = "\n".join(lines)
+        text = self._sync_super(
+            "[project]\nname = 'topo'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.worktree-flow]\nenabled = true\n"
+        )
         self.assertIn("- **Repo topology**: `monorepo-submodules` (via auto)", text)
 
 
     def test_repo_topology_omitted_when_worktree_flow_disabled(self):
         """Config dict alone must not surface Repo topology when recipe disabled."""
-        import tempfile
-        from pathlib import Path as P
-        import sys
-        sys.path.insert(0, str(ROOT / "tests"))
-        from test_repo_topology import make_super_with_submodule
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        super_repo = make_super_with_submodule(P(tmp.name))
-        resolved = {
-            "bindings": {},
-            "enabled": [],  # worktree-flow NOT enabled
-            "recipes": {
-                "worktree-flow": {
-                    "integration_branch": "main",
-                    "repo_topology": "auto",
-                }
-            },
-            "project_root": str(super_repo),
-        }
-        manifest = {"project": {"name": "topo"}, "agents": {"enabled": ["claude"]}}
-        lines = self.mod._section_project(manifest, resolved)
-        text = "\n".join(lines)
+        text = self._sync_super(
+            "[project]\nname = 'topo'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.worktree-flow]\nenabled = false\n"
+        )
         self.assertNotIn("Repo topology", text)
 
     def test_repo_topology_from_project_field_even_without_worktree_flow(self):
         """[project].repo_topology is CLI-owned, not gated on the recipe."""
-        import tempfile
-        from pathlib import Path as P
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        project_root = P(tmp.name) / "prj"
-        project_root.mkdir()
-        resolved = {
-            "bindings": {},
-            "enabled": [],
-            "recipes": {},
-            "project_root": str(project_root),
-        }
-        manifest = {
-            "project": {"name": "topo", "repo_topology": "standalone"},
-            "agents": {"enabled": ["claude"]},
-        }
-        lines = self.mod._section_project(manifest, resolved)
-        text = "\n".join(lines)
+        self.write_manifest(
+            "[project]\nname = 'topo'\nrepo_topology = 'standalone'\n\n"
+            "[agents]\nenabled = ['claude']\n"
+        )
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = self.agents_md()
         self.assertIn("- **Repo topology**: `standalone` (via config)", text)
 
     def test_project_field_wins_over_legacy_recipe_alias_in_brief(self):
-        import tempfile
-        from pathlib import Path as P
-        import sys
-        sys.path.insert(0, str(ROOT / "tests"))
-        from test_repo_topology import make_super_with_submodule
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        super_repo = make_super_with_submodule(P(tmp.name))
-        resolved = {
-            "bindings": {"worktree-isolation": "worktree-flow"},
-            "enabled": ["worktree-flow"],
-            "recipes": {
-                "worktree-flow": {
-                    "integration_branch": "main",
-                    "repo_topology": "monorepo-apps",
-                }
-            },
-            "project_root": str(super_repo),
-        }
-        manifest = {
-            "project": {"name": "topo", "repo_topology": "standalone"},
-            "agents": {"enabled": ["claude"]},
-            "recipes": {
-                "worktree-flow": {
-                    "enabled": True,
-                    "config": {"repo_topology": "monorepo-apps"},
-                }
-            },
-        }
-        lines = self.mod._section_project(manifest, resolved)
-        text = "\n".join(lines)
+        text = self._sync_super(
+            "[project]\nname = 'topo'\nrepo_topology = 'standalone'\n\n"
+            "[agents]\nenabled = ['claude']\n\n"
+            "[recipes.worktree-flow]\nenabled = true\n"
+            "[recipes.worktree-flow.config]\nrepo_topology = 'monorepo-apps'\n"
+        )
         self.assertIn("- **Repo topology**: `standalone` (via config)", text)
         self.assertNotIn("monorepo-apps", text)
 
 
-class WorktreeGateModeBriefRenderTests(unittest.TestCase):
+class WorktreeGateModeBriefRenderTests(BriefFragmentCLITest):
     """Rendered brief behavior for the worktree-flow config-aware gate fragment.
 
     Uses the real catalog recipe fragments so the recipe source is exercised
-    end-to-end through the renderer for each gate_mode value.
+    end-to-end through the CLI for each gate_mode value.
     """
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_worktree_gate_mode")
-
-    def _workflow_fragments(self) -> list[dict]:
-        import tomllib
-
-        recipe_toml = (
-            ROOT / "catalog" / "recipes" / "worktree-flow" / "recipe.toml"
+    def _sync_gate_mode(self, gate_mode: str) -> str:
+        self.write_manifest(
+            "[project]\nname = 'fixture'\n\n[agents]\nenabled = ['claude']\n\n"
+            "[recipes.worktree-flow]\nenabled = true\n"
+            "[recipes.worktree-flow.config]\n"
+            f"gate_mode = '{gate_mode}'\n"
         )
-        with open(recipe_toml, "rb") as fh:
-            data = tomllib.load(fh)
-        rules = data["provides"]["brief"]["workflow_rules"]
-        return [{"key": None, "text": rule} for rule in rules]
-
-    def _render(self, gate_mode: str) -> str:
-        manifest = {"project": {"name": "fixture"}, "brief": {}}
-        resolved = {
-            "enabled": ["worktree-flow"],
-            "recipes": {
-                "worktree-flow": {
-                    "gate_mode": gate_mode,
-                    "brief_fragments": {
-                        "workflow_rules": self._workflow_fragments()
-                    },
-                }
-            },
-            "bindings": {},
-        }
-        return "\n".join(self.mod._render_lines(manifest, resolved))
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return self.agents_md()
 
     def test_ask_mode_brief_uses_user_mediated_destinations(self):
-        text = self._render("ask")
+        text = self._sync_gate_mode("ask")
         self.assertIn("`gate_mode = ask`", text)
         self.assertIn("ask the user to choose a destination", text)
         self.assertIn("feature branch in the current checkout", text)
@@ -1147,12 +1113,12 @@ class WorktreeGateModeBriefRenderTests(unittest.TestCase):
         )
 
     def test_always_mode_brief_requires_dedicated_worktree(self):
-        text = self._render("always")
+        text = self._sync_gate_mode("always")
         self.assertIn("`gate_mode = always`", text)
         self.assertIn("`always` requires a dedicated worktree", text)
 
     def test_off_mode_brief_defers_to_user_direction(self):
-        text = self._render("off")
+        text = self._sync_gate_mode("off")
         self.assertIn("`gate_mode = off`", text)
         self.assertIn("where the user directs", text)
 

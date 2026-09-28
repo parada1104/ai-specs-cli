@@ -1,95 +1,143 @@
-import importlib.util
-import re
+"""Black-box tdd-flow recipe tests: every behavioral test drives ``bin/ai-specs``.
+
+No test may import ``lib/_internal`` modules. Assertions preserve the original
+contract intents (schema declarations, materialized artifacts) through the CLI
+process boundary:
+
+- Recipe schema validity and declared primitives are observable via
+  ``recipe add`` (validation + exact id + "The next sync will materialize:"
+  plan) and via ``tomllib`` reads of the catalog recipe.toml.
+- Materialization is observable via ``sync``: bundled skill under the
+  per-project CLI cache, command in the cache commands dir, and the doc under
+  the project harness tree.
+"""
+from __future__ import annotations
+
+import shutil
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 CATALOG = ROOT / "catalog" / "recipes"
 RECIPE_ID = "tdd-flow"
-import sys
-from pathlib import Path as _P
-sys.path.insert(0, str(_P(__file__).resolve().parent))
-from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root with a REAL lib copy.
+
+    sync/materialize derive cache and catalog roots from their own realpath,
+    so a symlinked lib would resolve back into the repository and let the CLI
+    touch repo cache state. A real copy keeps every lookup and write in temp.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    return home
 
 
-def _recipe_version() -> str:
-    """Read the recipe version dynamically from recipe.toml."""
-    text = (CATALOG / RECIPE_ID / "recipe.toml").read_text()
-    match = re.search(r'^\s*version\s*=\s*"([^"]+)"', text, re.MULTILINE)
-    assert match, "could not find version in recipe.toml"
-    return match.group(1)
+def _make_manifest(root: Path, name: str = "fixture") -> None:
+    """Minimal initialized project (manifest + harness dirs) in temp."""
+    (root / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (root / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+    (root / "ai-specs" / "ai-specs.toml").write_text(
+        f"[project]\nname = {name!r}\n\n[agents]\nenabled = ['claude']\n"
+    )
 
 
-class TddFlowRecipeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal")
-        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_for_tdd_flow")
+class _CliFixtureMixin:
+    """One shared isolated cli_home and temp project per test command sequence."""
 
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-tdd-")
+        self.addCleanup(tmp.cleanup)
+        self.base = Path(tmp.name)
+        self.home = _make_home(self.base)
+        self.root = self.base / "proj"
+        _make_manifest(self.root)
+
+    def recipe_add(self, recipe_id: str):
+        result = invoke(self.root, "recipe", "add", recipe_id, cli_home=self.home)
+        self.assertEqual(
+            result.returncode, 0,
+            f"recipe add {recipe_id} failed: {result.stdout}{result.stderr}",
+        )
+        return result
+
+    def sync(self):
+        return invoke(self.root, "sync", cli_home=self.home)
+
+    def cache(self) -> Path:
+        return cache_project_dir(self.root, self.home)
+
+
+class TddFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
     def test_recipe_validates_and_declares_capability(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        self.assertEqual(recipe.id, RECIPE_ID)
-        cap_ids = [c.id for c in recipe.capabilities]
+        """Recipe validates through the CLI and declares its primitives.
+
+        ``recipe add`` runs schema validation and adds by the exact id; the
+        declared capability/skill/command/config shapes are read from the
+        recipe's catalog declaration (recipe.toml).
+        """
+        result = self.recipe_add(RECIPE_ID)
+        self.assertIn(
+            f"Recipe '{RECIPE_ID}' added to the manifest.", result.stdout,
+            "tdd-flow must pass schema validation and add by its exact id",
+        )
+        self.assertIn(
+            "The next sync will materialize:", result.stdout,
+            "recipe add must print the declared primitives",
+        )
+        self.assertIn(
+            "- skills: tdd-flow", result.stdout,
+            "bundled tdd-flow skill must be declared by the recipe",
+        )
+        self.assertIn(
+            "- commands: tdd", result.stdout,
+            "tdd command must be declared by the recipe",
+        )
+        raw = tomllib.loads((CATALOG / RECIPE_ID / "recipe.toml").read_text())
+        self.assertEqual(raw["recipe"]["id"], RECIPE_ID)
+        cap_ids = [c["id"] for c in raw["capabilities"]]
         self.assertIn("test-runner", cap_ids)
-        # Bundled skill is declared
-        skill_ids = [(s.id, s.source) for s in recipe.skills]
+        skill_ids = [(s["id"], s["source"]) for s in raw["provides"]["skills"]]
         self.assertIn(("tdd-flow", "bundled"), skill_ids)
-        # Command is declared
-        cmd_ids = [c.id for c in recipe.commands]
+        cmd_ids = [c["id"] for c in raw["provides"]["commands"]]
         self.assertIn("tdd", cmd_ids)
         # test_command config is declared, optional, no default (project-specific)
-        fields = recipe.config_schema.fields
+        fields = raw["config"]
         self.assertIn("test_command", fields)
-        self.assertFalse(fields["test_command"].required)
-        self.assertEqual(fields["test_command"].type, "string")
-        self.assertIsNone(fields["test_command"].default)
-
-    def _make_project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-        manifest = ai_specs / "ai-specs.toml"
-        version = _recipe_version()
-        manifest.write_text(
-            "[project]\nname = 'fixture'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            f'[recipes.{RECIPE_ID}]\nenabled = true\nversion = "{version}"\n'
+        self.assertFalse(fields["test_command"]["required"])
+        self.assertEqual(fields["test_command"]["type"], "string")
+        self.assertNotIn(
+            "default", fields["test_command"],
+            "test_command must not carry an invented default",
         )
-        return root
 
     def test_materialize_produces_skill_command_and_doc(self):
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        """Sync materializes the bundled skill, the command, and the doc."""
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         skill = (
-            recipe_root(root, RECIPE_ID)
+            self.cache() / ".recipe" / RECIPE_ID
             / "skills" / "tdd-flow" / "SKILL.md"
         )
         self.assertTrue(skill.is_file(), f"missing bundled skill at {skill}")
 
-        cmd = cache_command(root, "tdd")
+        cmd = self.cache() / "commands" / "tdd.md"
         self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
-        doc = root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
+        doc = self.root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
         self.assertTrue(doc.is_file(), f"missing doc at {doc}")
 
 

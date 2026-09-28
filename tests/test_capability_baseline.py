@@ -8,14 +8,12 @@ is the precedent this phase pins, and ``jinna-mcp-recipe`` must stay a
 standalone MCP recipe (no ``tracker`` capability) until a later adapter phase.
 """
 
-import importlib.util
 import re
-import sys
+import tomllib
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 CATALOG = ROOT / "catalog" / "recipes"
 CAPABILITIES_DOC = ROOT / "docs" / "capabilities.md"
 
@@ -37,22 +35,42 @@ BASELINE_CONFIG_KEYS = ("base_branch", "expected_owner", "auto_switch_account")
 JINNA_RECIPE = "jinna-mcp-recipe"
 
 
-def load_schema():
-    spec = importlib.util.spec_from_file_location(
-        "recipe_schema_capability_baseline", RECIPE_SCHEMA_PATH
-    )
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def load_recipes():
+    """Read every catalog recipe.toml straight from disk.
+
+    The asserted dimensions (capability ids, provided asset ids, config
+    keys) map 1:1 onto the raw TOML tables, so no lib/_internal loader is
+    involved: these are pure filesystem contract assertions.
+    """
+    recipes = {}
+    for path in sorted(CATALOG.glob("*/recipe.toml")):
+        with path.open("rb") as fh:
+            recipes[path.parent.name] = tomllib.load(fh)
+    return recipes
 
 
-def discover_recipes(schema):
-    """Load every catalog recipe from its directory shape, not a hardcoded list."""
+def capability_ids(recipe):
+    return {c["id"] for c in recipe.get("capabilities", [])}
+
+
+def provide_ids(recipe, kind):
+    return {item["id"] for item in recipe.get("provides", {}).get(kind, [])}
+
+
+def config_keys(recipe):
+    return set(recipe.get("config", {}))
+
+
+def config_field_keys(recipe):
+    """Config entries that are standard fields.
+
+    Mirrors the schema's own detection rule: an entry carrying ``required``
+    is a standard ConfigField (see _parse_config in the schema module).
+    """
     return {
-        path.parent.name: schema.load_recipe_toml(path)
-        for path in sorted(CATALOG.glob("*/recipe.toml"))
+        key
+        for key, value in recipe.get("config", {}).items()
+        if isinstance(value, dict) and "required" in value
     }
 
 
@@ -60,7 +78,7 @@ def providers_of(recipes, capability_id):
     return {
         rid
         for rid, recipe in recipes.items()
-        if capability_id in {c.id for c in recipe.capabilities}
+        if capability_id in capability_ids(recipe)
     }
 
 
@@ -91,7 +109,7 @@ class CapabilityBaselineRecipeTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.recipes = discover_recipes(load_schema())
+        cls.recipes = load_recipes()
 
     def test_git_and_bitbucket_both_provide_vcs_pr_flow(self):
         providers = providers_of(self.recipes, VCS_CAPABILITY)
@@ -104,7 +122,7 @@ class CapabilityBaselineRecipeTests(unittest.TestCase):
         providers = providers_of(self.recipes, VCS_CAPABILITY)
         self.assertTrue(providers, "no provider discovered for vcs-pr-flow")
         for rid in sorted(providers):
-            fields = set(self.recipes[rid].config_schema.fields)
+            fields = config_field_keys(self.recipes[rid])
             missing = [key for key in BASELINE_CONFIG_KEYS if key not in fields]
             self.assertFalse(
                 missing,
@@ -116,7 +134,7 @@ class CapabilityBaselineRecipeTests(unittest.TestCase):
         providers = providers_of(self.recipes, VCS_CAPABILITY)
         shared = None
         for rid in sorted(providers):
-            keys = set(self.recipes[rid].config_schema.fields)
+            keys = config_field_keys(self.recipes[rid])
             shared = keys if shared is None else shared & keys
         self.assertGreaterEqual(
             shared,
@@ -131,10 +149,10 @@ class CapabilityBaselineRecipeTests(unittest.TestCase):
         for rid, expected in VCS_ADAPTERS.items():
             recipe = self.recipes[rid]
             self.assertIn(
-                expected["command"], {c.id for c in recipe.commands}, f"{rid} command"
+                expected["command"], provide_ids(recipe, "commands"), f"{rid} command"
             )
             self.assertIn(
-                expected["skill"], {s.id for s in recipe.skills}, f"{rid} skill"
+                expected["skill"], provide_ids(recipe, "skills"), f"{rid} skill"
             )
             seen_commands[rid] = expected["command"]
             seen_skills[rid] = expected["skill"]
@@ -152,9 +170,7 @@ class CapabilityBaselineRecipeTests(unittest.TestCase):
     def test_capability_id_is_never_promoted_into_an_asset_id(self):
         for rid in sorted(providers_of(self.recipes, VCS_CAPABILITY)):
             recipe = self.recipes[rid]
-            asset_ids = {c.id for c in recipe.commands} | {
-                s.id for s in recipe.skills
-            }
+            asset_ids = provide_ids(recipe, "commands") | provide_ids(recipe, "skills")
             self.assertNotIn(
                 VCS_CAPABILITY,
                 asset_ids,
@@ -167,21 +183,24 @@ class JinnaStandaloneBoundaryTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.recipes = discover_recipes(load_schema())
+        cls.recipes = load_recipes()
         cls.jinna = cls.recipes[JINNA_RECIPE]
 
     def test_jinna_remains_mcp_only(self):
-        self.assertEqual([m.id for m in self.jinna.mcp], ["jinna"])
+        self.assertEqual(
+            [m["id"] for m in self.jinna.get("provides", {}).get("mcp", [])],
+            ["jinna"],
+        )
 
     def test_jinna_does_not_declare_tracker_capability(self):
         self.assertNotIn(
-            "tracker", {c.id for c in self.jinna.capabilities},
+            "tracker", capability_ids(self.jinna),
             "jinna-mcp-recipe must not declare tracker in this phase",
         )
 
     def test_jinna_declares_no_ledger_adapter_config(self):
-        self.assertNotIn("reconcile", self.jinna.config_schema.tables)
-        self.assertNotIn("ledger_mode", self.jinna.config_schema.fields)
+        self.assertNotIn("reconcile", config_keys(self.jinna))
+        self.assertNotIn("ledger_mode", config_field_keys(self.jinna))
 
 
 class CapabilityBaselineDocTests(unittest.TestCase):

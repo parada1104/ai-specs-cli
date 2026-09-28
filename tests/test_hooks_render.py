@@ -1,118 +1,176 @@
-"""Tests for hooks-render.py — per-harness runtime-hook wiring.
+"""Black-box tests for per-harness runtime-hook wiring.
 
-See openspec/changes/recipe-runtime-hooks/specs/runtime-hook-distribution/spec.md.
+Every test drives ``bin/ai-specs sync`` through its process boundary:
+hook-declaring recipes are staged into an isolated catalog (fresh recipe ids,
+real non-symlinked recipe dirs, never touching the repository catalog), the
+project manifest enables the agents under test, and the assertions observe
+the per-agent hook artifacts ``sync`` writes (.claude/settings.json, .cursor
+wrappers + hooks.json, .opencode plugins, .pi/.omp extensions) plus sync
+stderr warnings. No test may import ``lib/_internal`` modules.
+
+Contract reference: openspec/changes/recipe-runtime-hooks/specs/
+runtime-hook-distribution/spec.md.
+
+WorkspaceContextProcessBoundaryTests relocate the sync-generated adapter into
+a temporary materialized installation and execute it through the Node harness
+with a recording ``spawnSync`` double, observing the actual process boundary
+(executable path, event cwd, options cwd, fail-open behavior) — never
+generated source text.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home, populate_catalog  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
-HOOKS_RENDER_PATH = ROOT / "lib" / "_internal" / "hooks-render.py"
 
 NODE_HARNESS = (
     ROOT / "tests" / "fixtures" / "workspace-context" / "opencode_process_boundary.mjs"
 )
 NODE = shutil.which("node")
 
+# Fresh catalog recipe ids (never colliding with repository catalog recipes).
+RECIPE_SHELL = "hookbb-shell"
+RECIPE_FILEWRITE = "hookbb-filewrite"
+RECIPE_STOP = "hookbb-stop"
+HOOK_SCRIPT_REL = "hooks/gate.sh"
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-SHELL_HOOK = {
-    "recipe": "demo",
-    "id": "shell-gate",
-    "event": "pre-tool-use",
-    "matcher": "Bash",
-    "blocking": True,
-    "script_path": "ai-specs/recipes/demo/hooks/gate.sh",
-    "env": {"DEMO_VAR": "v1"},
-}
-
-FILEWRITE_HOOK = {
-    "recipe": "worktree-flow",
-    "id": "worktree-gate",
-    "event": "pre-tool-use",
-    "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-    "blocking": True,
-    "script_path": "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh",
-    "env": {"WORKTREE_GATE_PROTECTED": "main development"},
-}
+HOOK_SCRIPT_BODY = "#!/usr/bin/env bash\n# launcher marker\nexit 0\n"
 
 
-class HooksRenderTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(HOOKS_RENDER_PATH, "hooks_render_internal")
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root with a REAL lib copy.
 
-    def _project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
+    sync/materialize derive cache and catalog roots from their own realpath,
+    so a symlinked lib would resolve back into the repository and let the CLI
+    touch repo cache state. A real copy keeps every lookup and write in temp.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    return home
+
+
+def _hook_recipe_toml(recipe_id: str, hook_id: str, event: str, matcher: str) -> str:
+    return (
+        f'[recipe]\nid = "{recipe_id}"\nname = "{recipe_id}"\n'
+        f'description = "test recipe {recipe_id}"\nversion = "1.0.0"\n\n'
+        "[[provides.hooks]]\n"
+        f'id = "{hook_id}"\n'
+        f'event = "{event}"\n'
+        f'script = "{HOOK_SCRIPT_REL}"\n'
+        f'matcher = "{matcher}"\n'
+        "blocking = true\n"
+        f'description = "test hook {hook_id}"\n'
+    )
+
+
+class _HookFixtureMixin:
+    """One shared isolated cli_home and temp project per test command sequence."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-hooksbb-")
         self.addCleanup(tmp.cleanup)
-        return Path(tmp.name)
+        self.base = Path(tmp.name)
+        self.home = _make_home(self.base)
+        self.root = self.base / "proj"
+        (self.root / "ai-specs" / "skills").mkdir(parents=True)
+        (self.root / "ai-specs" / "commands").mkdir()
+        self._recipe_id = ""
 
-    def _write_resolved(self, project: Path, agents, hooks) -> Path:
-        p = project / "resolved-hooks.json"
-        p.write_text(json.dumps({"enabled_agents": agents, "hooks": hooks}))
-        return p
+    def seed_recipe(self, recipe_id: str, hook_id: str, *,
+                    event: str = "pre-tool-use", matcher: str = "Bash") -> None:
+        """Stage one hook-declaring catalog recipe into the isolated home."""
+        rdir = populate_catalog(
+            self.home, recipe_id, _hook_recipe_toml(recipe_id, hook_id, event, matcher)
+        )
+        script = rdir / HOOK_SCRIPT_REL
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(HOOK_SCRIPT_BODY)
+        self._recipe_id = recipe_id
 
+    @property
+    def script_path(self) -> str:
+        """Project-relative materialized launcher path for the seeded recipe."""
+        return f"ai-specs/recipes/{self._recipe_id}/{HOOK_SCRIPT_REL}"
+
+    @property
+    def shim_base(self) -> str:
+        return f"{self._recipe_id}-{self._hook_id}"
+
+    def write_manifest(self, *agents: str) -> None:
+        enabled = ", ".join(f"'{a}'" for a in agents)
+        (self.root / "ai-specs" / "ai-specs.toml").write_text(
+            f"[project]\nname = 'hookbb'\n\n[agents]\nenabled = [{enabled}]\n\n"
+            f"[recipes.{self._recipe_id}]\nenabled = true\n"
+        )
+
+    def sync(self):
+        result = invoke(self.root, "sync", cli_home=self.home)
+        self.assertEqual(
+            result.returncode, 0,
+            f"sync failed: {result.stdout}{result.stderr}",
+        )
+        return result
+
+    def seed_and_sync(self, recipe_id: str, hook_id: str, *agents: str, **kw) -> object:
+        self._hook_id = hook_id
+        self.seed_recipe(recipe_id, hook_id, **kw)
+        self.write_manifest(*agents)
+        return self.sync()
+
+
+class HooksRenderTests(_HookFixtureMixin, unittest.TestCase):
     def test_claude_pretooluse_managed_block(self):
-        project = self._project()
-        resolved = self._write_resolved(project, ["claude"], [SHELL_HOOK])
-        self.mod.render(resolved, "claude", project)
-        settings = json.loads((project / ".claude" / "settings.json").read_text())
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude")
+        settings = json.loads((self.root / ".claude" / "settings.json").read_text())
         pre = settings["hooks"]["PreToolUse"]
         # Find the managed entry for this hook
         entry = next(e for e in pre if e.get("matcher") == "Bash")
         cmd = entry["hooks"][0]["command"]
-        self.assertIn("ai-specs/recipes/demo/hooks/gate.sh", cmd)
+        self.assertIn(self.script_path, cmd)
         self.assertEqual(entry["hooks"][0]["type"], "command")
 
     def test_cursor_hooks_json(self):
-        project = self._project()
         # Use a Bash-matcher hook so Cursor has a real target (beforeShellExecution)
-        resolved = self._write_resolved(project, ["cursor"], [SHELL_HOOK])
-        self.mod.render(resolved, "cursor", project)
-        wrapper = project / ".cursor" / "hooks" / "demo-shell-gate.sh"
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", "cursor")
+        wrapper = self.root / ".cursor" / "hooks" / f"{self.shim_base}.sh"
         self.assertTrue(wrapper.is_file(), "cursor wrapper should be generated")
         wtext = wrapper.read_text()
         self.assertIn("GENERATED by ai-specs", wtext)
         self.assertIn('"permission":"deny"', wtext.replace(" ", ""))
-        hooks_json = json.loads((project / ".cursor" / "hooks.json").read_text())
+        hooks_json = json.loads((self.root / ".cursor" / "hooks.json").read_text())
         self.assertIn("beforeShellExecution", json.dumps(hooks_json))
 
     def test_opencode_plugin_shim(self):
-        project = self._project()
-        resolved = self._write_resolved(project, ["opencode"], [SHELL_HOOK])
-        self.mod.render(resolved, "opencode", project)
-        plugin = project / ".opencode" / "plugin" / "demo-shell-gate.ts"
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", "opencode")
+        plugin = self.root / ".opencode" / "plugin" / f"{self.shim_base}.ts"
         self.assertTrue(plugin.is_file(), "opencode plugin should be generated")
         text = plugin.read_text()
         self.assertIn("// GENERATED by ai-specs", text)
         self.assertIn("tool.execute.before", text)
         self.assertIn("throw", text)
-        self.assertIn("ai-specs/recipes/demo/hooks/gate.sh", text)
+        self.assertIn(self.script_path, text)
         # OpenCode tool ids may be lowercase while recipe matchers use
         # Claude-style names — same case-insensitive contract as pi/omp.
         self.assertIn('new RegExp(`^(?:${MATCHER})$`, "i")', text)
 
     def test_pi_extension_shim(self):
-        project = self._project()
-        resolved = self._write_resolved(project, ["pi"], [SHELL_HOOK])
-        self.mod.render(resolved, "pi", project)
-        ext = project / ".pi" / "extensions" / "demo-shell-gate.ts"
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", "pi")
+        ext = self.root / ".pi" / "extensions" / f"{self.shim_base}.ts"
         self.assertTrue(ext.is_file(), "pi extension should be generated")
         text = ext.read_text()
         self.assertIn("// GENERATED by ai-specs", text)
@@ -132,10 +190,8 @@ class HooksRenderTests(unittest.TestCase):
         self.assertIn("rawInput.file_path ?? rawInput.path ?? rawInput.notebook_path", text)
 
     def test_omp_extension_shim(self):
-        project = self._project()
-        resolved = self._write_resolved(project, ["omp"], [SHELL_HOOK])
-        self.mod.render(resolved, "omp", project)
-        ext = project / ".omp" / "extensions" / "demo-shell-gate.ts"
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", "omp")
+        ext = self.root / ".omp" / "extensions" / f"{self.shim_base}.ts"
         self.assertTrue(ext.is_file(), "omp extension should be generated")
         text = ext.read_text()
         self.assertIn("// GENERATED by ai-specs", text)
@@ -152,45 +208,41 @@ class HooksRenderTests(unittest.TestCase):
         self.assertIn("rawInput.file_path ?? rawInput.path ?? rawInput.notebook_path", text)
 
     def test_unsupported_event_warns_and_skips(self):
-        project = self._project()
         # `stop` has no opencode mapping -> warn + skip for opencode, present for claude
-        stop_hook = dict(SHELL_HOOK, id="stopper", event="stop", matcher="")
-        resolved = self._write_resolved(project, ["opencode", "claude"], [stop_hook])
-        warnings_oc = self.mod.render(resolved, "opencode", project)
+        result = self.seed_and_sync(RECIPE_STOP, "stopper", "opencode", "claude",
+                                    event="stop", matcher="")
         # No plugin file emitted for opencode
-        self.assertFalse((project / ".opencode" / "plugin" / "demo-stopper.ts").exists())
-        joined = " ".join(warnings_oc)
-        self.assertIn("demo", joined)
+        self.assertFalse((self.root / ".opencode" / "plugin" / f"{self.shim_base}.ts").exists())
+        joined = result.stderr
+        self.assertIn(RECIPE_STOP, joined)
         self.assertIn("stopper", joined)
         self.assertIn("stop", joined)
         self.assertIn("opencode", joined)
         # claude supports stop
-        self.mod.render(resolved, "claude", project)
-        settings = json.loads((project / ".claude" / "settings.json").read_text())
+        settings = json.loads((self.root / ".claude" / "settings.json").read_text())
         self.assertIn("Stop", settings["hooks"])
 
     def test_cursor_no_prefilewrite_target_warns_and_skips(self):
-        project = self._project()
-        resolved = self._write_resolved(project, ["cursor"], [FILEWRITE_HOOK])
-        warnings = self.mod.render(resolved, "cursor", project)
-        wrapper = project / ".cursor" / "hooks" / "worktree-flow-worktree-gate.sh"
+        result = self.seed_and_sync(RECIPE_FILEWRITE, "worktree-gate", "cursor",
+                                    matcher="Edit|Write|MultiEdit|NotebookEdit")
+        wrapper = self.root / ".cursor" / "hooks" / f"{self.shim_base}.sh"
         self.assertFalse(wrapper.exists(), "cursor must skip file-write gates")
-        joined = " ".join(warnings).lower()
+        joined = result.stderr.lower()
         self.assertIn("cursor", joined)
-        self.assertIn("worktree-gate", " ".join(warnings))
+        self.assertIn("worktree-gate", result.stderr)
 
     def test_render_idempotent(self):
-        project = self._project()
-        resolved = self._write_resolved(project, ["claude"], [SHELL_HOOK])
-        self.mod.render(resolved, "claude", project)
-        first = (project / ".claude" / "settings.json").read_bytes()
-        self.mod.render(resolved, "claude", project)
-        second = (project / ".claude" / "settings.json").read_bytes()
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude")
+        settings_path = self.root / ".claude" / "settings.json"
+        first = settings_path.read_bytes()
+        self.sync()
+        second = settings_path.read_bytes()
         self.assertEqual(first, second, "second render must be byte-identical")
 
     def test_user_hook_preserved(self):
-        project = self._project()
-        claude_dir = project / ".claude"
+        self._hook_id = "shell-gate"
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        claude_dir = self.root / ".claude"
         claude_dir.mkdir(parents=True)
         (claude_dir / "settings.json").write_text(json.dumps({
             "model": "opus",
@@ -202,8 +254,8 @@ class HooksRenderTests(unittest.TestCase):
                 ]
             }
         }, indent=2))
-        resolved = self._write_resolved(project, ["claude"], [SHELL_HOOK])
-        self.mod.render(resolved, "claude", project)
+        self.write_manifest("claude")
+        self.sync()
         settings = json.loads((claude_dir / "settings.json").read_text())
         # Sibling user key preserved
         self.assertEqual(settings["model"], "opus")
@@ -212,16 +264,15 @@ class HooksRenderTests(unittest.TestCase):
         self.assertIn("Bash", matchers)       # managed hook added
 
 
-@unittest.skipUnless(NODE and NODE_HARNESS.is_file(),
-                     "node and the process-boundary harness fixture are required")
-class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
+class WorkspaceContextProcessBoundaryTests(_HookFixtureMixin, unittest.TestCase):
     """Deterministic Node process-boundary tests for generated adapters.
 
-    Render the generated adapter for a real hook, relocate it into a temporary
-    installation (as sync would materialize it), and execute it through the
-    Node harness with a recording ``spawnSync`` double. The assertions observe
-    the actual process boundary: executable path, event cwd, options cwd, and
-    fail-open behavior — never generated source text.
+    Render the generated adapter for a real hook through ``bin/ai-specs sync``,
+    relocate it into a temporary installation (as sync would materialize it),
+    and execute it through the Node harness with a recording ``spawnSync``
+    double. The assertions observe the actual process boundary: executable
+    path, event cwd, options cwd, and fail-open behavior — never generated
+    source text.
 
     Covers OpenCode directory normalization and child cwd (1.2), Pi/OMP
     module-location launcher paths with process-cwd events (1.3), and the
@@ -234,49 +285,31 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
         "omp": Path(".omp") / "extensions",
     }
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(HOOKS_RENDER_PATH, "hooks_render_internal")
-
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
-        self.unrelated = self.root / "unrelated-cwd"
+        super().setUp()
+        self.assertTrue(NODE, "node is required for the process-boundary harness")
+        self.assertTrue(NODE_HARNESS.is_file(),
+                        f"missing harness fixture: {NODE_HARNESS.relative_to(ROOT)}")
+        self.unrelated = self.base / "unrelated-cwd"
         self.unrelated.mkdir()
         # Node's chdir resolves symlinks (macOS /var -> /private/var), so the
         # process-cwd value the adapter sees is the real path.
         self.unrelated_real = str(self.unrelated.resolve())
-        self.valid_dir = self.root / "valid-dir"
+        self.valid_dir = self.base / "valid-dir"
         self.valid_dir.mkdir()
-
-    def _project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        return Path(tmp.name)
-
-    def _write_resolved(self, project: Path, agents, hooks) -> Path:
-        p = project / "resolved-hooks.json"
-        p.write_text(json.dumps({"enabled_agents": agents, "hooks": hooks}))
-        return p
 
     # --- helpers -----------------------------------------------------------
 
-    def _render(self, agent: str, hook: dict, project: Path) -> Path:
-        resolved = project / "resolved-hooks.json"
-        resolved.write_text(json.dumps({"enabled_agents": [agent], "hooks": [hook]}))
-        self.mod.render(resolved, agent, project)
-        base = f"{hook['recipe']}-{hook['id']}"
-        if agent == "opencode":
-            return project / ".opencode" / "plugin" / f"{base}.ts"
-        return project / f".{agent}" / "extensions" / f"{base}.ts"
+    def _render(self, agent: str) -> Path:
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", agent)
+        return self.root / self.RUNTIME_DIRS[agent] / f"{self.shim_base}.ts"
 
     def _install(self) -> tuple[Path, Path]:
         """Temporary materialized installation: launcher + relocated adapter."""
-        install = self.root / "install"
-        launcher = install / SHELL_HOOK["script_path"]
+        install = self.base / "install"
+        launcher = install / self.script_path
         launcher.parent.mkdir(parents=True, exist_ok=True)
-        launcher.write_text("#!/usr/bin/env bash\n# launcher marker\nexit 0\n")
+        launcher.write_text(HOOK_SCRIPT_BODY)
         launcher.chmod(0o755)
         return install, launcher
 
@@ -310,7 +343,8 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
             cmd += ["--error", error]
         if throw is not None:
             cmd += ["--throw", throw]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False,
+                              input="")
         self.assertEqual(proc.returncode, 0,
                          f"harness failed: {proc.stderr}\nstdout: {proc.stdout}")
         return json.loads(proc.stdout)
@@ -322,8 +356,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
     # --- OpenCode directory normalization and child cwd (1.2) --------------
 
     def test_opencode_valid_directory_trimmed_for_event_and_child_cwd(self):
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, launcher = self._install()
         relocated = self._relocate("opencode", generated, install)
         # Directory carries outer whitespace; the normalized value must drive
@@ -345,8 +378,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
     def test_opencode_unrelated_process_cwd_still_finds_launcher(self):
         # Harness runs from unrelated-cwd; the valid directory is the event
         # target. The launcher must come from module location, not $PWD.
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, launcher = self._install()
         relocated = self._relocate("opencode", generated, install)
         res = self._run_harness(
@@ -359,8 +391,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(rec["optionsCwd"], str(self.valid_dir))
 
     def test_opencode_absent_directory_falls_back_to_process_cwd(self):
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, _ = self._install()
         relocated = self._relocate("opencode", generated, install)
         res = self._run_harness("opencode", relocated, args_json={"file_path": "x.py"})
@@ -369,8 +400,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(rec["optionsCwd"], self.unrelated_real)
 
     def test_opencode_non_string_directory_falls_back(self):
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, _ = self._install()
         relocated = self._relocate("opencode", generated, install)
         res = self._run_harness(
@@ -381,8 +411,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(rec["optionsCwd"], self.unrelated_real)
 
     def test_opencode_whitespace_only_directory_falls_back(self):
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, _ = self._install()
         relocated = self._relocate("opencode", generated, install)
         res = self._run_harness(
@@ -393,8 +422,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(rec["optionsCwd"], self.unrelated_real)
 
     def test_opencode_relative_directory_falls_back(self):
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, _ = self._install()
         relocated = self._relocate("opencode", generated, install)
         res = self._run_harness(
@@ -405,24 +433,22 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(rec["optionsCwd"], self.unrelated_real)
 
     def test_opencode_nonexistent_directory_falls_back(self):
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, _ = self._install()
         relocated = self._relocate("opencode", generated, install)
         res = self._run_harness(
             "opencode", relocated,
-            directory=str(self.root / "does-not-exist"),
+            directory=str(self.base / "does-not-exist"),
             args_json={"file_path": "x.py"})
         rec = self._assert_single_record(res)
         self.assertEqual(rec["input"]["cwd"], self.unrelated_real)
         self.assertEqual(rec["optionsCwd"], self.unrelated_real)
 
     def test_opencode_non_directory_value_falls_back(self):
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, _ = self._install()
         relocated = self._relocate("opencode", generated, install)
-        plain_file = self.root / "plain-file.txt"
+        plain_file = self.base / "plain-file.txt"
         plain_file.write_text("x")
         res = self._run_harness(
             "opencode", relocated, directory=str(plain_file),
@@ -432,8 +458,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(rec["optionsCwd"], self.unrelated_real)
 
     def test_opencode_status_two_is_the_only_block(self):
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, _ = self._install()
         relocated = self._relocate("opencode", generated, install)
         res = self._run_harness(
@@ -444,8 +469,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
         self.assertIn("blocked by fixture", res["outcome"]["error"])
 
     def test_opencode_child_error_fails_open(self):
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, _ = self._install()
         relocated = self._relocate("opencode", generated, install)
         res = self._run_harness(
@@ -455,8 +479,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
                          "a child spawn error must fail open, not throw")
 
     def test_opencode_child_throw_fails_open(self):
-        project = self._project()
-        generated = self._render("opencode", SHELL_HOOK, project)
+        generated = self._render("opencode")
         install, _ = self._install()
         relocated = self._relocate("opencode", generated, install)
         res = self._run_harness(
@@ -478,8 +501,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
         self.assertFalse(res["outcome"]["block"], res)
 
     def test_pi_relocated_extension_finds_launcher_from_module_location(self):
-        project = self._project()
-        generated = self._render("pi", SHELL_HOOK, project)
+        generated = self._render("pi")
         install, launcher = self._install()
         relocated = self._relocate("pi", generated, install)
         res = self._run_harness("pi", relocated, tool="bash",
@@ -491,8 +513,7 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
         self.assertNotEqual(res["records"][0]["input"]["cwd"], str(install))
 
     def test_omp_relocated_extension_finds_launcher_from_module_location(self):
-        project = self._project()
-        generated = self._render("omp", SHELL_HOOK, project)
+        generated = self._render("omp")
         install, launcher = self._install()
         relocated = self._relocate("omp", generated, install)
         res = self._run_harness("omp", relocated, tool="bash",
@@ -503,32 +524,27 @@ class WorkspaceContextProcessBoundaryTests(unittest.TestCase):
     # --- preserved Claude/Cursor wiring (1.4) ------------------------------
 
     def test_claude_script_keeps_project_dir_variable(self):
-        project = self._project()
-        resolved = self._write_resolved(project, ["claude"], [SHELL_HOOK])
-        self.mod.render(resolved, "claude", project)
-        settings = json.loads((project / ".claude" / "settings.json").read_text())
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude")
+        settings = json.loads((self.root / ".claude" / "settings.json").read_text())
         entry = next(e for e in settings["hooks"]["PreToolUse"]
                      if e.get("matcher") == "Bash")
         cmd = entry["hooks"][0]["command"]
         self.assertIn("$CLAUDE_PROJECT_DIR/", cmd)
-        self.assertIn(SHELL_HOOK["script_path"], cmd)
+        self.assertIn(self.script_path, cmd)
 
     def test_cursor_wrapper_keeps_project_dir_variable(self):
-        project = self._project()
-        resolved = self._write_resolved(project, ["cursor"], [SHELL_HOOK])
-        self.mod.render(resolved, "cursor", project)
-        wrapper = project / ".cursor" / "hooks" / "demo-shell-gate.sh"
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", "cursor")
+        wrapper = self.root / ".cursor" / "hooks" / f"{self.shim_base}.sh"
         self.assertIn("$CURSOR_PROJECT_DIR/", wrapper.read_text())
 
     def test_cursor_filewrite_limitation_preserved(self):
         # The adapter change must not replace Cursor's missing pre-file-write
         # hook: a file-write matcher still warns and skips for cursor.
-        project = self._project()
-        resolved = self._write_resolved(project, ["cursor"], [FILEWRITE_HOOK])
-        warnings = self.mod.render(resolved, "cursor", project)
-        wrapper = project / ".cursor" / "hooks" / "worktree-flow-worktree-gate.sh"
+        result = self.seed_and_sync(RECIPE_FILEWRITE, "worktree-gate", "cursor",
+                                    matcher="Edit|Write|MultiEdit|NotebookEdit")
+        wrapper = self.root / ".cursor" / "hooks" / f"{self.shim_base}.sh"
         self.assertFalse(wrapper.exists())
-        self.assertIn("no pre-file-write hook", " ".join(warnings))
+        self.assertIn("no pre-file-write hook", result.stderr)
 
 
 if __name__ == "__main__":

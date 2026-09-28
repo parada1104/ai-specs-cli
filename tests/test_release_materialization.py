@@ -1,14 +1,16 @@
 """Isolated clean-materialization gate for a release candidate.
 
-Evidence comes from init + sync of a temporary consumer project with
-``AI_SPECS_HOME`` pointing at this tree. The candidate's dogfood
-``ai-specs/.ai-specs.lock`` is snapshotted and must not change.
+Evidence comes from init + sync + doctor of a temporary consumer project via
+the ``bin/ai-specs`` process boundary, with ``AI_SPECS_HOME`` pointing at a
+symlink-farm install root over this tree (real lib copy, cache excluded). The
+candidate's dogfood ``ai-specs/.ai-specs.lock`` is snapshotted and must not
+change.
 """
 from __future__ import annotations
 
-import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,10 +18,11 @@ import tomllib
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
-DOCTOR_PY = ROOT / "lib" / "_internal" / "doctor.py"
 SHA256SUMS = ROOT / "catalog" / "recipes" / "worktree-flow" / "bin" / "SHA256SUMS"
 DOGFOOD_LOCK = ROOT / "ai-specs" / ".ai-specs.lock"
 
@@ -44,6 +47,17 @@ DIGEST_LINE = re.compile(
     r"^[0-9a-f]{64}  (worktree-gate-(?:darwin-arm64|darwin-amd64|linux-amd64|linux-arm64))$",
     re.MULTILINE,
 )
+
+# Generated output paths the CLI contract materializes per enabled agent
+# (the doctor PLATFORM table, mirrored as fixture data — no lib/_internal
+# import). Empty paths are omitted.
+AGENT_OUTPUT_PATHS = {
+    "claude": ("CLAUDE.md", ".claude/skills", ".claude/commands"),
+    "cursor": (".cursor/skills", ".cursor/commands"),
+    "opencode": (".opencode/skills", ".opencode/commands"),
+    "pi": (".pi/skills",),
+    "omp": (".omp/AGENTS.md", ".omp/skills", ".omp/commands"),
+}
 
 CONSUMER_MANIFEST = """\
 [project]
@@ -76,13 +90,22 @@ enabled = true
 """
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+def _make_home(base: Path) -> Path:
+    """Symlink-farm install root over this tree with a REAL lib copy.
+
+    The candidate install tree IS this checkout (catalog/VERSION/etc. are
+    symlinks), but sync/materialize derive cache roots from their own
+    realpath, so a symlinked lib would resolve back into the repository and
+    let the CLI touch repo cache state. A real lib copy keeps every cache
+    write in temp while the dogfood lock check stays meaningful.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    return home
 
 
 def candidate_version() -> str:
@@ -95,45 +118,51 @@ def snapshot_dogfood_lock() -> bytes:
     return b""
 
 
-def platform_output_relpaths(platform: dict, agents: tuple[str, ...]) -> list[str]:
+def platform_output_relpaths(agents: tuple[str, ...]) -> list[str]:
     # No [mcp.*] in the representative manifest: doctor WARNs and sync
     # does not materialize MCP adapter files. Do not require them.
-    keys = ("instructions_path", "skills_dir", "commands_dir")
     seen: list[str] = []
     for agent in agents:
-        plat = platform[agent]
-        for key in keys:
-            value = plat.get(key) or ""
-            if value and value not in seen:
-                seen.append(value)
+        for rel in AGENT_OUTPUT_PATHS[agent]:
+            if rel not in seen:
+                seen.append(rel)
     return seen
 
 
 class ReleaseMaterializationTests(unittest.TestCase):
     """Hermetic gate: isolated consumer project is the evidence surface."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.doctor = load_module(DOCTOR_PY, "doctor_release_materialization")
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="release-materialization-")
         self.addCleanup(self.tmp.cleanup)
         self.workspace = Path(self.tmp.name) / "workspace"
         self.workspace.mkdir()
+        self.home = _make_home(Path(self.tmp.name))
 
     def _env(self) -> dict:
-        env = dict(os.environ, AI_SPECS_HOME=str(ROOT), AI_SPECS_GATE_OFFLINE="1")
-        env.pop("AI_SPECS_GATE_BUILD", None)
-        return env
+        return {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": str(Path(self.tmp.name) / "home"),
+            "TMPDIR": str(self.tmp.name),
+            "AI_SPECS_HOME": str(self.home),
+            "AI_SPECS_NO_NETWORK": "1",
+            "AI_SPECS_GATE_OFFLINE": "1",
+            "AI_SPECS_VENDOR_FIXTURE_ROOT": str(
+                ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
+            ),
+            "LC_ALL": "C",
+            "LANG": "C",
+        }
 
     def _run_cli(self, *args: str) -> subprocess.CompletedProcess:
+        # stdin is a closed pipe so the CLI can never block on a prompt.
         return subprocess.run(
             [str(CLI), *args, str(self.workspace)],
             capture_output=True,
             text=True,
             env=self._env(),
             check=False,
+            input="",
         )
 
     def test_sha256sums_declares_candidate_version_and_four_platforms(self):
@@ -179,8 +208,7 @@ class ReleaseMaterializationTests(unittest.TestCase):
 
         self.assertTrue((self.workspace / "AGENTS.md").exists())
 
-        platform = self.doctor.Doctor.PLATFORM
-        for rel in platform_output_relpaths(platform, ENABLED_AGENTS):
+        for rel in platform_output_relpaths(ENABLED_AGENTS):
             path = self.workspace / rel
             self.assertTrue(path.exists(), f"missing generated output: {rel}")
 
@@ -200,3 +228,7 @@ class ReleaseMaterializationTests(unittest.TestCase):
             lock_before,
             "clean-materialization gate must not rewrite the candidate dogfood lock",
         )
+
+
+if __name__ == "__main__":
+    unittest.main()

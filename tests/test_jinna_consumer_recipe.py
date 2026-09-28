@@ -33,7 +33,7 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _cache_paths import resolved_skills_dir
+from _blackbox import cache_project_dir  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
@@ -122,7 +122,12 @@ class JinnaConsumerRecipeFlowTests(unittest.TestCase):
             self.assertTrue(readme.is_file(), "the recipe README was not materialized")
             self.assertTrue(readme.read_text(encoding="utf-8").strip())
 
-            skill = resolved_skills_dir(consumer, cli_home=cli_home) / JINNA_SKILL_ID / "SKILL.md"
+            skill = (
+                cache_project_dir(consumer, cli_home)
+                / "resolved-skills"
+                / JINNA_SKILL_ID
+                / "SKILL.md"
+            )
             self.assertTrue(skill.is_file(), "the Jinna recipe skill was not materialized")
 
             self._assert_mcp_json(consumer / ".mcp.json")

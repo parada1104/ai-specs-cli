@@ -1,22 +1,42 @@
-"""Validation + materialization tests for the worktree-flow catalog recipe."""
+"""Black-box worktree-flow recipe tests: every behavioral test drives ``bin/ai-specs``.
 
-import importlib.util
+No test may import ``lib/_internal`` modules. Assertions preserve the original
+contract intents (schema validation, config defaults/validation, stamped
+gate/post-merge hooks, materialized skill/commands/scripts, rendered brief
+policies, and golden skill/command content) through the CLI process boundary:
+
+- Recipe schema validity and declared primitives are observable via
+  ``recipe add`` (validation + exact id + materialization plan) and via
+  ``tomllib`` reads of the catalog recipe.toml.
+- Config defaults, overrides, and enum rejection are observable via ``sync``:
+  the stamped ``worktree-gate.sh`` hook carries the resolved gate_mode /
+  gate_scope / repo_topology, values outside a declared enum fail sync naming
+  the value, and the rendered AGENTS.md brief states the configured policy.
+- Materialization is observable via ``sync``: bundled skill + commands under
+  the per-project CLI cache, the cleanup launcher under
+  ``ai-specs/recipes/worktree-flow/overrides/bin/``, and the managed
+  post-merge hook under ``.git/hooks/post-merge``.
+- Golden content checks read the recipe surfaces directly (read-only).
+"""
+from __future__ import annotations
+
 import os
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-import sys
-from pathlib import Path as _P
-sys.path.insert(0, str(_P(__file__).resolve().parent))
-from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
-RECIPE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow"
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
-AGENTS_RENDER_PATH = ROOT / "lib" / "_internal" / "agents-render.py"
+CATALOG = ROOT / "catalog" / "recipes"
+RECIPE_DIR = CATALOG / "worktree-flow"
+RECIPE_ID = "worktree-flow"
 
 UNCONDITIONAL_WORKTREE_RULE = (
     "Create a dedicated worktree for changes that write artifacts or modify code."
@@ -27,170 +47,155 @@ PROJECT_RUNTIME_FLOW_WORKTREE_RULE = (
 )
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root with a REAL lib copy.
+
+    sync/materialize derive cache and catalog roots from their own realpath,
+    so a symlinked lib would resolve back into the repository and let the CLI
+    touch repo cache state. A real copy keeps every lookup and write in temp.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    return home
 
 
-class WorktreeFlowRecipeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_internal")
-        cls.materialize = load_module(
-            RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal_wtf"
+def _make_manifest(root: Path, name: str = "fixture") -> None:
+    """Minimal initialized project (manifest + harness dirs) in temp."""
+    (root / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (root / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+    (root / "ai-specs" / "ai-specs.toml").write_text(
+        f"[project]\nname = {name!r}\n\n[agents]\nenabled = ['claude']\n"
+    )
+
+
+def _recipe_toml() -> dict:
+    return tomllib.loads((RECIPE_DIR / "recipe.toml").read_text())
+
+
+def _run_quiet(argv: list[str], **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    return subprocess.run(argv, capture_output=True, text=True, **kwargs)
+
+
+class _CliFixtureMixin:
+    """One shared isolated cli_home and temp project per test command sequence."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-worktree-")
+        self.addCleanup(tmp.cleanup)
+        self.base = Path(tmp.name)
+        self.home = _make_home(self.base)
+        self.root = self.base / "proj"
+        _make_manifest(self.root)
+
+    def recipe_add(self, recipe_id: str):
+        result = invoke(self.root, "recipe", "add", recipe_id, cli_home=self.home)
+        self.assertEqual(
+            result.returncode, 0,
+            f"recipe add {recipe_id} failed: {result.stdout}{result.stderr}",
         )
-        cls.agents_render = load_module(AGENTS_RENDER_PATH, "agents_render_wtf")
+        return result
 
+    def sync(self):
+        return invoke(self.root, "sync", cli_home=self.home)
+
+
+    def set_config(self, old: str, new: str) -> None:
+        """Override a recipe default written by `recipe add` in the manifest."""
+        manifest = self.root / "ai-specs" / "ai-specs.toml"
+        manifest.write_text(manifest.read_text().replace(old, new))
+
+    def agents_md(self) -> str:
+        return (self.root / "AGENTS.md").read_text()
+
+    def cache(self) -> Path:
+        return cache_project_dir(self.root, self.home)
+
+    def stamped_gate_hook(self) -> Path:
+        return (
+            self.root / "ai-specs" / "recipes" / RECIPE_ID
+            / "hooks" / "worktree-gate.sh"
+        )
+
+    def post_merge_hook(self) -> Path:
+        return self.root / ".git" / "hooks" / "post-merge"
+
+
+class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
     def test_recipe_validates(self):
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        self.assertEqual(recipe.id, "worktree-flow")
-        cap_ids = {c.id for c in recipe.capabilities}
+        """`recipe add` validates the recipe by its exact id; the catalog
+        declaration carries the worktree-isolation capability."""
+        result = self.recipe_add(RECIPE_ID)
+        self.assertIn(
+            f"Recipe '{RECIPE_ID}' added to the manifest.", result.stdout,
+            "worktree-flow must pass schema validation and add by its exact id",
+        )
+        raw = _recipe_toml()
+        self.assertEqual(raw["recipe"]["id"], RECIPE_ID)
+        cap_ids = {c["id"] for c in raw["capabilities"]}
         self.assertIn("worktree-isolation", cap_ids)
 
-    def _make_project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-        import tomllib
-
-        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
-            version = tomllib.load(fh)["recipe"]["version"]
-        (ai_specs / "ai-specs.toml").write_text(
-            "[project]\nname = 'fixture'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            f'[recipes.worktree-flow]\nenabled = true\nversion = "{version}"\n'
-        )
-        return root
-
-    def _make_project_with_config(self, config_block: str = "") -> Path:
-        root = self._make_project()
-        manifest = root / "ai-specs" / "ai-specs.toml"
-        text = manifest.read_text()
-        if config_block:
-            text = text.rstrip() + "\n" + config_block + "\n"
-        manifest.write_text(text)
-        return root
-
     def test_sync_defaults_to_always(self):
-        root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        hook = (
-            root / "ai-specs" / "recipes" / "worktree-flow" / "hooks"
-            / "worktree-gate.sh"
-        )
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        hook = self.stamped_gate_hook()
         self.assertTrue(hook.is_file())
         content = hook.read_text()
         self.assertIn('stamped_gate_mode="always"', content)
 
     def test_sync_materializes_gate_mode_into_hook(self):
-        root = self._make_project_with_config(
-            '[recipes.worktree-flow.config]\ngate_mode = "ask"'
-        )
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        hook = (
-            root / "ai-specs" / "recipes" / "worktree-flow" / "hooks"
-            / "worktree-gate.sh"
-        )
-        content = hook.read_text()
+        self.recipe_add(RECIPE_ID)
+        self.set_config('gate_mode = "always"', 'gate_mode = "ask"')
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        content = self.stamped_gate_hook().read_text()
         self.assertIn('stamped_gate_mode="ask"', content)
         self.assertNotIn("__WORKTREE_GATE_MODE__", content)
 
     def test_sync_rejects_invalid_gate_mode(self):
-        root = self._make_project_with_config(
-            '[recipes.worktree-flow.config]\ngate_mode = "bogus"'
-        )
-        with self.assertRaises(SystemExit) as ctx:
-            self.materialize.materialize_recipes(root, ROOT)
-        self.assertEqual(ctx.exception.code, 1)
-        combined = ""
-        # materialize_recipes calls fail() which prints to stderr then exits
-        # Re-run via subprocess to capture diagnostic text.
-        import subprocess
-        proc = subprocess.run(
-            [
-                "python3",
-                str(RECIPE_MATERIALIZE_PATH),
-                str(root),
-                str(ROOT),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(proc.returncode, 1)
-        combined = proc.stderr + proc.stdout
+        self.recipe_add(RECIPE_ID)
+        self.set_config('gate_mode = "always"', 'gate_mode = "bogus"')
+        result = self.sync()
+        combined = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1)
         self.assertIn("bogus", combined)
         self.assertRegex(combined, r"always.*ask.*off|always \| ask \| off")
 
     def test_materializes_skill_commands_and_script(self):
-        root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-
-        skill = (
-            recipe_root(root, "worktree-flow") / "skills"
-            / "worktree-flow" / "SKILL.md"
-        )
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        skill = self.cache() / ".recipe" / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md"
         self.assertTrue(skill.is_file(), "bundled skill should materialize")
-
         for cmd in ("worktree-new", "worktree-clean"):
-            path = cache_command(root, cmd)
+            path = self.cache() / "commands" / f"{cmd}.md"
             self.assertTrue(path.is_file(), f"command {cmd} should materialize")
-
         script = (
-            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides" / "bin"
+            self.root / "ai-specs" / "recipes" / RECIPE_ID / "overrides" / "bin"
             / "worktree-cleanup.sh"
         )
         self.assertTrue(script.is_file(), "cleanup script should materialize")
 
-
-    def test_skill_mentions_sdd_artifact_phases(self):
-        skill = RECIPE_DIR / "skills" / "worktree-flow" / "SKILL.md"
-        text = skill.read_text()
-        self.assertIn("SDD artifact phases", text)
-
-
-    def test_repo_topology_config_is_documented_as_deprecated_alias(self):
-        """T4 — `[project].repo_topology` owns topology; the recipe key is legacy."""
-        text = (RECIPE_DIR / "recipe.toml").read_text()
-        self.assertIn("[config.repo_topology]", text)
-        self.assertIn("[project].repo_topology", text)
-        self.assertIn("deprecated", text.lower())
-
     def test_sync_defaults_repo_topology_to_auto(self):
-        root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        import tomllib
-        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
-            manifest = tomllib.load(fh)
-        user_cfg = (manifest.get("recipes") or {}).get("worktree-flow", {}).get("config") or {}
-        merged = self.materialize.merge_config(recipe, user_cfg)
-        self.assertEqual(merged.get("repo_topology"), "auto")
+        """With no project override, sync resolves repo_topology to the
+        declared `auto` default — observable in the stamped gate hook."""
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        content = self.stamped_gate_hook().read_text()
+        self.assertIn('stamped_repo_topology="auto"', content)
 
     def test_sync_rejects_invalid_repo_topology(self):
-        root = self._make_project_with_config(
-            '[recipes.worktree-flow.config]\nrepo_topology = "nested"'
-        )
-        import subprocess
-        proc = subprocess.run(
-            [
-                "python3",
-                str(RECIPE_MATERIALIZE_PATH),
-                str(root),
-                str(ROOT),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(proc.returncode, 1)
-        combined = proc.stderr + proc.stdout
+        self.recipe_add(RECIPE_ID)
+        self.set_config('repo_topology = "auto"', 'repo_topology = "nested"')
+        result = self.sync()
+        combined = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1)
         self.assertIn("nested", combined)
         self.assertRegex(
             combined,
@@ -199,21 +204,236 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         )
 
     def test_sync_materializes_with_repo_topology_default(self):
-        root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        skill = (
-            recipe_skill_dir(root, "worktree-flow", "worktree-flow") / "SKILL.md"
-        )
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        skill = self.cache() / ".recipe" / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md"
         self.assertTrue(skill.is_file(), "skill should materialize with default topology")
         for cmd in ("worktree-new", "worktree-clean"):
-            path = cache_command(root, cmd)
+            path = self.cache() / "commands" / f"{cmd}.md"
             self.assertTrue(path.is_file(), f"command {cmd} should materialize")
         script = (
-            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides" / "bin"
+            self.root / "ai-specs" / "recipes" / RECIPE_ID / "overrides" / "bin"
             / "worktree-cleanup.sh"
         )
         self.assertTrue(script.is_file(), "cleanup script should materialize")
 
+    def test_gate_scope_defaults_to_auto_and_is_independent(self):
+        """gate_scope stays `auto` (its own default) even when gate_mode and
+        repo_topology are configured — the resolved values land in the stamp."""
+        self.recipe_add(RECIPE_ID)
+        self.set_config('repo_topology = "auto"', 'repo_topology = "monorepo-submodules"')
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        content = self.stamped_gate_hook().read_text()
+        self.assertIn('stamped_gate_scope="auto"', content)
+        self.assertIn('stamped_gate_mode="always"', content)
+        self.assertIn('stamped_repo_topology="monorepo-submodules"', content)
+
+    def test_gate_scope_materializes_stamp(self):
+        self.recipe_add(RECIPE_ID)
+        self.set_config('gate_scope = "auto"', 'gate_scope = "superrepo"')
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        content = self.stamped_gate_hook().read_text()
+        self.assertIn('stamped_gate_scope="superrepo"', content)
+        self.assertIn('stamped_repo_topology="auto"', content)
+        self.assertNotIn("__WORKTREE_REPO_TOPOLOGY__", content)
+        self.assertNotIn("__WORKTREE_GATE_SCOPE__", content)
+
+    def test_gate_scope_rejects_invalid_value(self):
+        self.recipe_add(RECIPE_ID)
+        self.set_config('gate_scope = "auto"', 'gate_scope = "super-repo"')
+        result = self.sync()
+        combined = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("super-repo", combined)
+        self.assertIn("auto | superrepo | subrepo", combined)
+
+    def test_stale_gate_hook_is_preserved_with_refresh_guidance(self):
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        hook = self.stamped_gate_hook()
+        hook.write_text("custom legacy hook\n")
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(hook.read_text(), "custom legacy hook\n")
+
+    # --- Rendered brief gate-mode policies (card AImzsLWw) ------------------
+
+    def test_rendered_brief_states_always_policy(self):
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = self.agents_md()
+        self.assertIn("`gate_mode = always`", text)
+        self.assertIn("`always` requires a dedicated worktree", text)
+
+    def test_rendered_brief_states_ask_policy_without_bypass(self):
+        self.recipe_add(RECIPE_ID)
+        self.set_config('gate_mode = "always"', 'gate_mode = "ask"')
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = self.agents_md()
+        self.assertIn("`gate_mode = ask`", text)
+        self.assertIn("ask the user to choose a destination", text)
+        self.assertIn("feature branch in the current checkout", text)
+        self.assertIn("explicit protected-branch override", text)
+        self.assertNotIn("WORKTREE_GATE_MODE=off", text)
+        self.assertNotIn(UNCONDITIONAL_WORKTREE_RULE, text)
+
+    def test_rendered_brief_states_off_policy(self):
+        self.recipe_add(RECIPE_ID)
+        self.set_config('gate_mode = "always"', 'gate_mode = "off"')
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = self.agents_md()
+        self.assertIn("`gate_mode = off`", text)
+        self.assertIn("where the user directs", text)
+
+    # --- Managed VCS post-merge close hook (card AImzsLWw, T3) ---------------
+
+    POST_MERGE_TARGET = ".git/hooks/post-merge"
+
+    def test_sync_materializes_post_merge_hook(self):
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        hook = self.post_merge_hook()
+        self.assertTrue(hook.is_file(), "managed post-merge hook should materialize")
+        self.assertTrue(
+            os.access(hook, os.X_OK), "post-merge hook must be executable for Git"
+        )
+        content = hook.read_text()
+        self.assertIn("worktree-cleanup.sh", content)
+        self.assertIn("exit 0", content)
+        self.assertNotIn("__WORKTREE_", content)
+
+    def test_post_merge_hook_fails_open_without_launcher(self):
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        proc = _run_quiet(["bash", str(self.post_merge_hook())], cwd=self.root)
+        self.assertEqual(
+            proc.returncode, 0, "hook must fail open and never break the merge"
+        )
+
+    def test_sync_preserves_existing_post_merge_hook(self):
+        hook = self.post_merge_hook()
+        hook.parent.mkdir(parents=True)
+        hook.write_text("#!/bin/sh\necho user hook\n")
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(hook.read_text(), "#!/bin/sh\necho user hook\n")
+
+    # --- Post-merge hook stamps configured cleanup config (T4) ---------------
+
+    def test_post_merge_hook_stamps_configured_cleanup_config(self):
+        self.recipe_add(RECIPE_ID)
+        self.set_config('worktrees_dir = ".worktrees"', 'worktrees_dir = "custom-wt"')
+        self.set_config('integration_branch = "main"', 'integration_branch = "trunk"')
+        self.set_config('repo_topology = "auto"', 'repo_topology = "monorepo-submodules"')
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        content = self.post_merge_hook().read_text()
+        self.assertNotIn("__WORKTREE_", content)
+        self.assertIn('worktrees_dir="custom-wt"', content)
+        self.assertIn('integration_branch="trunk"', content)
+        self.assertIn('topology="monorepo-submodules"', content)
+
+    def test_post_merge_hook_stamps_catalog_defaults(self):
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        content = self.post_merge_hook().read_text()
+        self.assertNotIn("__WORKTREE_", content)
+        self.assertIn('worktrees_dir=".worktrees"', content)
+        self.assertIn('integration_branch="main"', content)
+        self.assertIn('topology="auto"', content)
+
+    def test_post_merge_hook_materializes_in_linked_worktree(self):
+        """A linked worktree's `.git` is a gitfile, not a directory: the managed
+        hook must resolve to the shared hooks dir instead of crashing on a
+        bogus `.git/hooks` directory."""
+        hold = tempfile.TemporaryDirectory()
+        self.addCleanup(hold.cleanup)
+        main = Path(hold.name) / "main"
+        main.mkdir()
+
+        def git(*args):
+            subprocess.run(
+                ["git", "-C", str(main), *args],
+                check=True,
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+            )
+
+        git("init", "-q")
+        git("config", "user.email", "t@t.t")
+        git("config", "user.name", "t")
+        (main / "README.md").write_text("main\n")
+        git("add", "-A")
+        git("commit", "-qm", "init")
+        git("checkout", "-q", "-B", "main")
+        wt = Path(hold.name) / "wt"
+        git("worktree", "add", "-q", "-b", "feat", str(wt))
+
+        _make_manifest(wt)
+        result = invoke(wt, "recipe", "add", RECIPE_ID, cli_home=self.home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        synced = invoke(wt, "sync", cli_home=self.home)
+        self.assertEqual(synced.returncode, 0, synced.stdout + synced.stderr)
+        hook = main / ".git" / "hooks" / "post-merge"
+        self.assertTrue(hook.is_file(), "hook must materialize in the shared git dir")
+        self.assertTrue(os.access(hook, os.X_OK))
+
+
+    def test_post_merge_hook_passes_stamped_config_to_launcher(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True,
+                       capture_output=True, stdin=subprocess.DEVNULL)
+        self.recipe_add(RECIPE_ID)
+        self.set_config('worktrees_dir = ".worktrees"', 'worktrees_dir = "custom-wt"')
+        self.set_config('integration_branch = "main"', 'integration_branch = "trunk"')
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        launcher = (
+            self.root / "ai-specs" / "recipes" / RECIPE_ID / "overrides"
+            / "bin" / "worktree-cleanup.sh"
+        )
+        captured = self.root / "captured-args.txt"
+        launcher.write_text(
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > " + str(captured) + "\n"
+        )
+        launcher.chmod(0o755)
+
+        proc = _run_quiet(["bash", str(self.post_merge_hook())], cwd=self.root)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        args = captured.read_text().splitlines()
+        self.assertIn("--dir", args)
+        self.assertEqual(args[args.index("--dir") + 1], "custom-wt")
+        self.assertIn("--base", args)
+        self.assertEqual(args[args.index("--base") + 1], "trunk")
+
+
+class WorktreeFlowGoldenContentTests(unittest.TestCase):
+    """Golden content checks over the recipe's own catalog surfaces (read-only)."""
+
+    POST_MERGE_TARGET = ".git/hooks/post-merge"
+
+    def test_skill_mentions_sdd_artifact_phases(self):
+        text = (RECIPE_DIR / "skills" / "worktree-flow" / "SKILL.md").read_text()
+        self.assertIn("SDD artifact phases", text)
+
+    def test_repo_topology_config_is_documented_as_deprecated_alias(self):
+        """T4 — `[project].repo_topology` owns topology; the recipe key is legacy."""
+        text = (RECIPE_DIR / "recipe.toml").read_text()
+        self.assertIn("[config.repo_topology]", text)
+        self.assertIn("[project].repo_topology", text)
+        self.assertIn("deprecated", text.lower())
 
     def test_worktree_new_documents_submodule_create_contract(self):
         """Doc-content only — live git worktree add under submodules is manual/agent."""
@@ -260,23 +480,11 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertNotIn("bin/worktree-new", skill)
 
     def test_brief_workflow_rules_require_which_repo_check(self):
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        frags = recipe.brief_fragments
-        self.assertIsNotNone(frags)
-        rules = " ".join(
-            f.text if hasattr(f, "text") else str(f)
-            for f in (frags.workflow_rules or [])
-        )
-        if not rules:
-            # fragments may be plain strings depending on schema version
-            raw = (RECIPE_DIR / "recipe.toml").read_text()
-            start = raw.index("workflow_rules")
-            rules = raw[start:start + 800]
-        self.assertIn("which", rules.lower())
-        self.assertIn("show-toplevel", rules)
-        self.assertIn("monorepo-submodules", rules)
-
-
+        rules = _recipe_toml()["provides"]["brief"]["workflow_rules"]
+        joined = " ".join(rules)
+        self.assertIn("which", joined.lower())
+        self.assertIn("show-toplevel", joined)
+        self.assertIn("monorepo-submodules", joined)
 
     def test_skill_md_create_block_matches_worktree_new_contract(self):
         """SKILL.md create block must stay byte-consistent with worktree-new.md."""
@@ -290,70 +498,6 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertNotIn("$super_abs/.worktrees/", skill)
         self.assertNotIn("git worktree add .worktrees/", skill)
 
-    def test_gate_scope_defaults_to_auto_and_is_independent(self):
-        root = self._make_project_with_config(
-            '[recipes.worktree-flow.config]\ngate_mode = "always"\nrepo_topology = "monorepo-submodules"'
-        )
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        import tomllib
-        with open(root / "ai-specs" / "ai-specs.toml", "rb") as fh:
-            manifest = tomllib.load(fh)
-        merged = self.materialize.merge_config(recipe, manifest["recipes"]["worktree-flow"]["config"])
-        self.assertEqual(merged.get("gate_scope"), "auto")
-        self.assertEqual(merged.get("gate_mode"), "always")
-        self.assertEqual(merged.get("repo_topology"), "monorepo-submodules")
-
-    def test_gate_scope_materializes_stamp(self):
-        root = self._make_project_with_config(
-            '[recipes.worktree-flow.config]\ngate_scope = "superrepo"'
-        )
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-        content = hook.read_text()
-        self.assertIn('stamped_gate_scope="superrepo"', content)
-        self.assertIn('stamped_repo_topology="auto"', content)
-        self.assertNotIn("__WORKTREE_REPO_TOPOLOGY__", content)
-        self.assertNotIn("__WORKTREE_GATE_SCOPE__", content)
-
-    def test_gate_scope_rejects_invalid_value(self):
-        root = self._make_project_with_config(
-            '[recipes.worktree-flow.config]\ngate_scope = "super-repo"'
-        )
-        import subprocess
-        proc = subprocess.run(["python3", str(RECIPE_MATERIALIZE_PATH), str(root), str(ROOT)], capture_output=True, text=True)
-        self.assertEqual(proc.returncode, 1)
-        combined = proc.stderr + proc.stdout
-        self.assertIn("super-repo", combined)
-        self.assertIn("auto | superrepo | subrepo", combined)
-    def test_stale_gate_hook_is_preserved_with_refresh_guidance(self):
-        root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        hook = root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-        hook.write_text("custom legacy hook\n")
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        self.assertEqual(hook.read_text(), "custom legacy hook\n")
-
-    # --- Gate-mode brief reconciliation (card AImzsLWw) -------------------
-
-    def _resolved_worktree_brief(self, gate_mode: str) -> dict:
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        frags = self.materialize._fragments_to_json(recipe.brief_fragments)
-        return {
-            "enabled": ["worktree-flow"],
-            "recipes": {
-                "worktree-flow": {
-                    "gate_mode": gate_mode,
-                    "integration_branch": "development",
-                    "brief_fragments": frags,
-                }
-            },
-            "bindings": {},
-        }
-
-    def _rendered_workflow_rules(self, gate_mode: str) -> str:
-        resolved = self._resolved_worktree_brief(gate_mode)
-        return "\n".join(self.agents_render._section_workflow_rules({}, resolved))
-
     def test_recipe_brief_fragment_is_config_aware(self):
         raw = (RECIPE_DIR / "recipe.toml").read_text()
         self.assertIn("{config.gate_mode}", raw)
@@ -364,174 +508,13 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         text = (ROOT / "ai-specs" / "ai-specs.toml").read_text()
         self.assertNotIn(PROJECT_RUNTIME_FLOW_WORKTREE_RULE, text)
 
-    def test_rendered_brief_states_always_policy(self):
-        text = self._rendered_workflow_rules("always")
-        self.assertIn("`gate_mode = always`", text)
-        self.assertIn("`always` requires a dedicated worktree", text)
-
-    def test_rendered_brief_states_ask_policy_without_bypass(self):
-        text = self._rendered_workflow_rules("ask")
-        self.assertIn("`gate_mode = ask`", text)
-        self.assertIn("ask the user to choose a destination", text)
-        self.assertIn("feature branch in the current checkout", text)
-        self.assertIn("explicit protected-branch override", text)
-        self.assertNotIn("WORKTREE_GATE_MODE=off", text)
-        self.assertNotIn(UNCONDITIONAL_WORKTREE_RULE, text)
-
-    def test_rendered_brief_states_off_policy(self):
-        text = self._rendered_workflow_rules("off")
-        self.assertIn("`gate_mode = off`", text)
-        self.assertIn("where the user directs", text)
-
-    # --- Managed VCS post-merge close hook (card AImzsLWw, T3) ---------------
-
-    POST_MERGE_TARGET = ".git/hooks/post-merge"
-
     def test_recipe_registers_managed_post_merge_template(self):
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        targets = {t.target: t for t in recipe.templates}
+        raw = _recipe_toml()
+        targets = {t["target"]: t for t in raw["provides"]["templates"]}
         self.assertIn(self.POST_MERGE_TARGET, targets)
         entry = targets[self.POST_MERGE_TARGET]
-        self.assertEqual(entry.source, "templates/post-merge.sh")
-        self.assertEqual(entry.condition, "not_exists")
-
-    def test_sync_materializes_post_merge_hook(self):
-        root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        hook = root / ".git" / "hooks" / "post-merge"
-        self.assertTrue(hook.is_file(), "managed post-merge hook should materialize")
-        self.assertTrue(
-            os.access(hook, os.X_OK), "post-merge hook must be executable for Git"
-        )
-        content = hook.read_text()
-        self.assertIn("worktree-cleanup.sh", content)
-        self.assertIn("exit 0", content)
-        self.assertNotIn("__WORKTREE_", content)
-
-    def test_post_merge_hook_fails_open_without_launcher(self):
-        import subprocess
-
-        root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        hook = root / ".git" / "hooks" / "post-merge"
-        proc = subprocess.run(
-            ["bash", str(hook)], cwd=root, capture_output=True, text=True
-        )
-        self.assertEqual(
-            proc.returncode, 0, "hook must fail open and never break the merge"
-        )
-
-    def test_sync_preserves_existing_post_merge_hook(self):
-        root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        hook = root / ".git" / "hooks" / "post-merge"
-        hook.write_text("#!/bin/sh\necho user hook\n")
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        self.assertEqual(hook.read_text(), "#!/bin/sh\necho user hook\n")
-
-    # --- Post-merge hook stamps configured cleanup config (T4) ---------------
-
-    def test_post_merge_hook_stamps_configured_cleanup_config(self):
-        root = self._make_project_with_config(
-            '[recipes.worktree-flow.config]\n'
-            'worktrees_dir = "custom-wt"\n'
-            'integration_branch = "trunk"\n'
-            'repo_topology = "monorepo-submodules"'
-        )
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        content = (root / ".git" / "hooks" / "post-merge").read_text()
-        self.assertNotIn("__WORKTREE_", content)
-        self.assertIn('worktrees_dir="custom-wt"', content)
-        self.assertIn('integration_branch="trunk"', content)
-        self.assertIn('topology="monorepo-submodules"', content)
-
-    def test_post_merge_hook_stamps_catalog_defaults(self):
-        root = self._make_project()
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-        content = (root / ".git" / "hooks" / "post-merge").read_text()
-        self.assertNotIn("__WORKTREE_", content)
-        self.assertIn('worktrees_dir=".worktrees"', content)
-        self.assertIn('integration_branch="main"', content)
-        self.assertIn('topology="auto"', content)
-
-    def test_post_merge_hook_materializes_in_linked_worktree(self):
-        import subprocess
-
-        hold = tempfile.TemporaryDirectory()
-        self.addCleanup(hold.cleanup)
-        main = Path(hold.name) / "main"
-        main.mkdir()
-
-        def git(*args):
-            subprocess.run(
-                ["git", "-C", str(main), *args],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-
-        git("init", "-q")
-        git("config", "user.email", "t@t.t")
-        git("config", "user.name", "t")
-        (main / "README.md").write_text("main\n")
-        git("add", "-A")
-        git("commit", "-qm", "init")
-        git("checkout", "-q", "-B", "main")
-        wt = Path(hold.name) / "wt"
-        git("worktree", "add", "-q", "-b", "feat", str(wt))
-
-        ai_specs = wt / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-        import tomllib
-
-        with open(RECIPE_DIR / "recipe.toml", "rb") as fh:
-            version = tomllib.load(fh)["recipe"]["version"]
-        (ai_specs / "ai-specs.toml").write_text(
-            "[project]\nname = 'fixture'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            f'[recipes.worktree-flow]\nenabled = true\nversion = "{version}"\n'
-        )
-        self.assertEqual(self.materialize.materialize_recipes(wt, ROOT), 0)
-        # A linked worktree's `.git` is a gitfile, not a directory: the managed
-        # hook must resolve to the shared hooks dir instead of crashing on a
-        # bogus `.git/hooks` directory.
-        hook = main / ".git" / "hooks" / "post-merge"
-        self.assertTrue(hook.is_file(), "hook must materialize in the shared git dir")
-        self.assertTrue(os.access(hook, os.X_OK))
-
-    def test_post_merge_hook_passes_stamped_config_to_launcher(self):
-        import subprocess
-
-        root = self._make_project_with_config(
-            '[recipes.worktree-flow.config]\n'
-            'worktrees_dir = "custom-wt"\n'
-            'integration_branch = "trunk"'
-        )
-        subprocess.run(["git", "init", "-q", str(root)], check=True)
-        self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)
-
-        launcher = (
-            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides"
-            / "bin" / "worktree-cleanup.sh"
-        )
-        captured = root / "captured-args.txt"
-        launcher.write_text(
-            "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > " + str(captured) + "\n"
-        )
-        launcher.chmod(0o755)
-
-        hook = root / ".git" / "hooks" / "post-merge"
-        proc = subprocess.run(
-            ["bash", str(hook)], cwd=root, capture_output=True, text=True
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        args = captured.read_text().splitlines()
-        self.assertIn("--dir", args)
-        self.assertEqual(args[args.index("--dir") + 1], "custom-wt")
-        self.assertIn("--base", args)
-        self.assertEqual(args[args.index("--base") + 1], "trunk")
+        self.assertEqual(entry["source"], "templates/post-merge.sh")
+        self.assertEqual(entry["condition"], "not_exists")
 
 
 if __name__ == "__main__":

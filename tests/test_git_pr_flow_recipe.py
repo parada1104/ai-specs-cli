@@ -1,31 +1,34 @@
-import importlib.util
+"""Black-box git-pr-flow recipe tests: every behavioral test drives ``bin/ai-specs``.
+
+No test may import ``lib/_internal`` modules. Assertions preserve the original
+contract intents (schema validation and declared primitives, materialized
+artifacts, guardian placement, golden skill content, account-extraction awk)
+through the CLI process boundary:
+
+- Recipe schema validity and declared primitives are observable via
+  ``recipe add`` (validation + "The next sync will materialize:" plan) and via
+  ``sync`` (the vcs-pr-flow capability ambiguity warning pairing this recipe
+  with the sibling provider, plus materialized artifacts under the per-project
+  CLI cache).
+- The canonical pre-merge guardian is observable through the isolated CLI-home
+  layout (lib/_internal copy), never through in-process imports.
+"""
+from __future__ import annotations
+
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 CATALOG = ROOT / "catalog" / "recipes"
 RECIPE_ID = "git-pr-flow"
-import sys
-from pathlib import Path as _P
-sys.path.insert(0, str(_P(__file__).resolve().parent))
-from _cache_paths import recipe_skill_dir, recipe_root, cache_command, resolved_skills_dir
-
-
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def extract_awk(text: str, anchor: str) -> list[str]:
@@ -48,92 +51,158 @@ def run_awk(script: str, sample: str) -> str:
     return proc.stdout
 
 
-class GitPrFlowRecipeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_internal")
-        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_for_git_pr_flow")
+def _normalize(script: str) -> str:
+    return "\n".join(line.strip() for line in script.strip().splitlines())
 
+
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root with a REAL lib copy.
+
+    sync/materialize derive cache and catalog roots from their own realpath,
+    so a symlinked lib would resolve back into the repository and let the CLI
+    touch repo cache state. A real copy keeps every lookup and write in temp.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink()
+    shutil.copytree(
+        ROOT / "lib", home / "lib", symlinks=True,
+        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
+    )
+    return home
+
+
+def _make_manifest(root: Path, name: str = "fixture") -> None:
+    """Minimal initialized project (manifest + harness dirs) in temp."""
+    (root / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (root / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+    (root / "ai-specs" / "ai-specs.toml").write_text(
+        f"[project]\nname = {name!r}\n\n[agents]\nenabled = ['claude']\n"
+    )
+
+
+class _CliFixtureMixin:
+    """One shared isolated cli_home and temp project per test command sequence."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-gitpr-")
+        self.addCleanup(tmp.cleanup)
+        self.base = Path(tmp.name)
+        self.home = _make_home(self.base)
+        self.root = self.base / "proj"
+        _make_manifest(self.root)
+
+    def recipe_add(self, recipe_id: str):
+        result = invoke(self.root, "recipe", "add", recipe_id, cli_home=self.home)
+        self.assertEqual(
+            result.returncode, 0,
+            f"recipe add {recipe_id} failed: {result.stdout}{result.stderr}",
+        )
+        return result
+
+    def sync(self):
+        result = invoke(self.root, "sync", cli_home=self.home)
+        return result
+
+    def cache(self) -> Path:
+        return cache_project_dir(self.root, self.home)
+
+
+class GitPrFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
     def test_recipe_has_no_provider_config(self):
         """Config must not declare provider — recipe id is the provider identity."""
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
+        self.recipe_add(RECIPE_ID)
+        manifest = (self.root / "ai-specs" / "ai-specs.toml").read_text()
+        self.assertIn(
+            f"[recipes.{RECIPE_ID}.config]", manifest,
+            "recipe add must write the config section for config-field recipes",
+        )
+        config_section = manifest.split(f"[recipes.{RECIPE_ID}.config]", 1)[1]
         self.assertNotIn(
             "provider",
-            recipe.config_schema.fields,
+            config_section,
             "provider config field must not exist on sibling VCS recipes",
         )
 
     def test_recipe_validates_and_declares_capability(self):
-        recipe_dir = CATALOG / RECIPE_ID
-        recipe = self.schema.load_recipe_toml(recipe_dir / "recipe.toml")
-        self.assertEqual(recipe.id, RECIPE_ID)
-        cap_ids = [c.id for c in recipe.capabilities]
-        self.assertIn("vcs-pr-flow", cap_ids)
-        # Bundled skill is declared
-        skill_ids = [(s.id, s.source) for s in recipe.skills]
-        self.assertIn(("git-merge-workflow", "bundled"), skill_ids)
-        # Command is declared
-        cmd_ids = [c.id for c in recipe.commands]
-        self.assertIn("pr-create", cmd_ids)
+        """Recipe validates under its exact id and declares the vcs-pr-flow
+        capability plus its bundled skill and command.
+
+        ``recipe add`` validates the schema and prints the declared primitives;
+        pairing the recipe with the sibling vcs-pr-flow provider makes sync
+        surface the capability declaration as an ambiguity warning naming both.
+        """
+        result = self.recipe_add(RECIPE_ID)
+        self.assertIn(
+            f"Recipe '{RECIPE_ID}' added to the manifest.", result.stdout,
+            "git-pr-flow must pass schema validation and add by its exact id",
+        )
+        self.assertIn(
+            "- skills: git-merge-workflow", result.stdout,
+            "bundled git-merge-workflow skill must be declared by the recipe",
+        )
+        self.assertIn(
+            "- commands: pr-create", result.stdout,
+            "pr-create command must be declared by the recipe",
+        )
+        self.recipe_add("gitlab-mr-flow")
+        sync = self.sync()
+        self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+        self.assertIn(
+            "capability ambiguity: capability.id='vcs-pr-flow' "
+            "declared by git-pr-flow, gitlab-mr-flow",
+            sync.stderr,
+            "git-pr-flow must declare the vcs-pr-flow capability",
+        )
 
     def test_brief_surfaces_postmerge_sync_and_cleanup(self):
         """The always-on brief must surface both a post-merge base-sync rule
         (git pull --ff-only) and a post-merge cleanup rule."""
-        recipe = self.schema.load_recipe_toml(CATALOG / RECIPE_ID / "recipe.toml")
-        brief = recipe.brief_fragments
-        self.assertIsNotNone(brief)
-        rules = [f.text for f in (brief.workflow_rules or [])]
+        self.recipe_add(RECIPE_ID)
+        sync = self.sync()
+        self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+        agents = (self.root / "AGENTS.md").read_text()
         self.assertTrue(
-            any("ff-only" in r.lower() for r in rules),
+            any("ff-only" in line.lower() for line in agents.splitlines()),
             "post-merge base-sync workflow_rule missing (git pull --ff-only)",
         )
         self.assertTrue(
-            any("worktree" in r.lower() and "merged" in r.lower() for r in rules),
+            any(
+                "worktree" in line.lower() and "merged" in line.lower()
+                for line in agents.splitlines()
+            ),
             "post-merge cleanup workflow_rule missing",
         )
 
-    def _make_project(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-        with (CATALOG / RECIPE_ID / "recipe.toml").open("rb") as fh:
-            recipe_version = tomllib.load(fh)["recipe"]["version"]
-        manifest = ai_specs / "ai-specs.toml"
-        manifest.write_text(
-            "[project]\nname = 'fixture'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            f'[recipes.{RECIPE_ID}]\nenabled = true\nversion = "{recipe_version}"\n'
-        )
-        return root
+    def _synced_project(self):
+        """Project with git-pr-flow added and synced; returns the sync result."""
+        self.recipe_add(RECIPE_ID)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
 
     def test_materialize_produces_skill_command_and_doc(self):
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        """Sync materializes the bundled skill, command, and README doc."""
+        self._synced_project()
 
         skill = (
-            recipe_root(root, RECIPE_ID)
+            self.cache() / ".recipe" / RECIPE_ID
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
         self.assertTrue(skill.is_file(), f"missing bundled skill at {skill}")
 
-        cmd = cache_command(root, "pr-create")
+        cmd = self.cache() / "commands" / "pr-create.md"
         self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
-        doc = root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
+        doc = self.root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
         self.assertTrue(doc.is_file(), f"missing doc at {doc}")
 
     def test_materialize_does_not_stage_premerge_guardian_into_project(self):
-        root = self._make_project()
-        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
-        helper = root / "ai-specs" / "bin" / "premerge_guardian.py"
+        """Sync never stages the Plan Build guardian into the project."""
+        self._synced_project()
+        helper = self.root / "ai-specs" / "bin" / "premerge_guardian.py"
         self.assertFalse(helper.exists(), f"unexpected in-project guardian at {helper}")
         skill = (
-            recipe_root(root, RECIPE_ID)
+            self.cache() / ".recipe" / RECIPE_ID
             / "skills" / "git-merge-workflow" / "SKILL.md"
         )
         text = skill.read_text()
@@ -143,9 +212,14 @@ class GitPrFlowRecipeTests(unittest.TestCase):
         self.assertNotIn("ai-specs/bin/premerge_guardian.py", text)
 
     def test_canonical_guardian_lives_in_cli_home(self):
-        canon = ROOT / "lib" / "_internal" / "premerge_guardian.py"
+        """The canonical guardian ships in the CLI home's lib/_internal, never
+        in the project. Observable through the isolated CLI-home layout the
+        CLI actually runs against."""
+        canon = self.home / "lib" / "_internal" / "premerge_guardian.py"
         self.assertTrue(canon.is_file())
         self.assertIn("pre-merge guardian", canon.read_text().lower())
+
+
 class GitPrFlowGoldenContentTests(unittest.TestCase):
     """Golden text checks for pre-merge archive guidance."""
 
@@ -334,10 +408,6 @@ class GitPrFlowAccountExtractionTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(scripts), 2, scripts)
         self.assertEqual(len(set(scripts)), 1, scripts)
-
-
-def _normalize(script: str) -> str:
-    return "\n".join(line.strip() for line in script.strip().splitlines())
 
 
 if __name__ == "__main__":
