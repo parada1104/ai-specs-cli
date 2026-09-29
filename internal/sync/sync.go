@@ -101,7 +101,10 @@ func parseFlags(args []string, stdout, stderr io.Writer) (options, int, bool) {
 		case arg == "-v" || arg == "--verbose":
 			opts.verbose = true
 		case arg == "--":
-			// `shift; break`: stop parsing and ignore the remainder.
+			// `shift; break` (lib/sync.sh:57): stop parsing and discard the
+			// remainder. This is frozen parity, not a gap — legacy also leaves
+			// TARGET_PATH empty for `sync -- <path>` and falls back to pwd
+			// (lib/sync.sh:75). Pinned by TestParseFlagsDashDashParity.
 			return opts, 0, false
 		case strings.HasPrefix(arg, "-"):
 			fmt.Fprintf(stderr, "ERROR: unknown flag: %s\n", arg)
