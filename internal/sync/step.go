@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -210,8 +211,24 @@ func runExitCode(cmd *exec.Cmd, errW io.Writer, name string) int {
 			return 128 + int(ws.Signal())
 		}
 	}
-	fmt.Fprintf(errW, "%s: command not found\n", name)
-	return 127
+	if isNotFound(err) {
+		fmt.Fprintf(errW, "%s: command not found\n", name)
+		return 127
+	}
+	fmt.Fprintf(errW, "%s: %s\n", name, strerrorText(err))
+	return 126
+}
+
+// isNotFound reports whether an exec start failure means "no such command":
+// exec.LookPath's ErrNotFound (nothing on PATH) or ENOENT from an explicit
+// path. Anything else (EACCES, ENOTDIR, EISDIR, ENOEXEC, ...) is a
+// found-but-refused command, which the shell reports with status 126.
+func isNotFound(err error) bool {
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && errno == syscall.ENOENT
 }
 
 // childEnv mirrors internal/cli/shim.go's childEnv: the parent environment
