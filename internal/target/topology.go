@@ -251,6 +251,13 @@ func projectRepoTopology(projectRoot string, data *toml.Table) ProjectTopology {
 	}
 }
 
+// ProjectRepoTopology is the exported entry point for callers outside the
+// package (doctor) that already hold a parsed manifest. It is a thin wrapper
+// over projectRepoTopology and changes no behavior.
+func ProjectRepoTopology(projectRoot string, data *toml.Table) ProjectTopology {
+	return projectRepoTopology(projectRoot, data)
+}
+
 // --- small fs / toml helpers --------------------------------------------------
 
 // isFile mirrors Path.is_file(): exists and not a directory (follows symlinks).
