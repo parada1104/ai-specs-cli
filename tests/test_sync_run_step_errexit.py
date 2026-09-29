@@ -1,321 +1,206 @@
-"""Errexit contract for `run_step` in sync.sh and sync-agent.sh.
+"""Errexit contract for the sync spine, driven at the CLI boundary.
 
 `run_step` disables errexit to capture the wrapped command's exit status. When
-it restores errexit matters:
+it restores errexit matters: restore too early and a failure in the helper's
+own output handling aborts from inside the helper (leaking temp files and
+returning the wrong status); never restore and errexit stays off for the rest
+of the pipeline.
 
-- restore too early and a failure inside the helper's own output handling
-  (SIGPIPE on an early-closed stdout, a full disk) aborts the script from
-  inside the helper — leaking both temp files, skipping the caller's error
-  handling, and returning bash's status instead of the command's;
-- never restore and errexit stays off for the rest of the script, because
-  `set` options are shell-global rather than function-local.
-
-Both helpers are intentionally twins, so every case runs against both.
+The original suite extracted `run_step`/`print_step_output` bodies out of
+`lib/sync.sh` and `lib/sync-agent.sh` and ran them under bash. That subject is
+Bash source structure, which stops being authoritative now that `sync` is
+native: the tests silently stopped gating the port. They are replaced here by
+the same observable contracts exercised through the real CLI, with PATH stubs
+for `python3` (scripted module output/rc) and `mktemp` (recorded probe paths).
+Both spines resolve those two names through PATH, so the seam is
+implementation-independent — `test_compact_filter_is_implementation_independent`
+proves that explicitly by running the same scenario against both.
 """
 
 from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 
-from test_sync_output_verbosity import (  # reuse the established harness
-    SYNC_AGENT_SH,
-    SYNC_SH,
-    _extract_bash_functions,
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _go_cli  # noqa: E402
+import _sync_stub  # noqa: E402
+
+CLI = _go_cli.cli()
+
+# The first two sync steps (and the label of the third), used to observe
+# whether errexit aborted the pipeline at the right point.
+STEP_ONE = "gitignore-render.py"
+STEP_TWO = "gitignore-root-refresh.py"
+STEP_ONE_LABEL = "  syncing ai-specs/.gitignore"
+STEP_TWO_LABEL = "  syncing root .gitignore (agent block)"
+STEP_THREE_LABEL = "  syncing bundled skills + commands"
+
+# The compact filter's exact classification: drop these leading glyphs, keep
+# the notices, on their original streams.
+GLYPH_LINES = (
+    "    ✓ ok-detail",
+    "    · dot-noise",
+    "    ⇢ arrow-noise",
+    "    ▸ recipe-noise",
 )
+NOTICE_LINES = ("  ! warning", "  ✗ error", "  ℹ notice")
 
 
-SCRIPTS = (SYNC_SH, SYNC_AGENT_SH)
+class _SyncCliCase(unittest.TestCase):
+    """Build a temp project, install the PATH stubs, run one `sync`."""
+
+    def stub_sync(self, intercepts=(), *, args=(), fail_from=None, cli=None):
+        base = Path(tempfile.mkdtemp(prefix="ai-specs-errc-"))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        stubs = _sync_stub.SyncStubs(base)
+        project = _sync_stub.minimal_project(base)
+        for module, kwargs in intercepts:
+            stubs.intercept(module, **kwargs)
+        if fail_from is not None:
+            stubs.mktemp_fail_from(fail_from)
+        proc = subprocess.run(
+            [str(cli or CLI), "sync", str(project), *args],
+            env=stubs.env(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return proc, stubs
 
 
-def run_harness(script: Path, body: str, *, verbose: int = 0):
-    """Run run_step + print_step_output from `script` against `body`.
-
-    The prelude mirrors the real scripts: both guard `shopt -s inherit_errexit`
-    behind a support check before defining `run_step` (sync.sh:84, sync-agent.sh
-    :200). Omitting it here would let an inherit_errexit-dependent regression
-    pass unnoticed in the harness while failing in production.
-    """
-    fns = _extract_bash_functions(script, ("print_step_output", "run_step"))
-    bash = (
-        "set -euo pipefail\n"
-        'if [[ -n "$(shopt -p inherit_errexit 2>/dev/null)" ]]; then\n'
-        "    shopt -s inherit_errexit\n"
-        "fi\n"
-        f"VERBOSE={verbose}\n"
-        f"{fns}\n"
-        f"{body}\n"
-    )
-    return subprocess.run(
-        ["bash", "-c", bash], text=True, capture_output=True, check=False
-    )
-
-
-class RunStepErrexitTests(unittest.TestCase):
+class RunStepErrexitTests(_SyncCliCase):
     def test_errexit_is_active_after_a_successful_step(self):
-        body = textwrap.dedent(
-            """
-            run_step "ok" true
-            false
-            echo "REACHED"
-            """
+        """A later step's failure must abort the pipeline, not be swallowed."""
+        proc, _ = self.stub_sync(
+            [
+                (STEP_ONE, {"rc": 0}),
+                (STEP_TWO, {"rc": 7}),
+            ]
         )
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                self.assertNotIn(
-                    "REACHED",
-                    result.stdout,
-                    "errexit was left disabled after a successful step",
-                )
-                self.assertNotEqual(result.returncode, 0)
-
-    def test_errexit_is_active_after_a_handled_failing_step(self):
-        body = textwrap.dedent(
-            """
-            if ! run_step "boom" bash -c 'exit 3'; then
-                echo "HANDLED"
-            fi
-            false
-            echo "REACHED"
-            """
+        self.assertEqual(proc.returncode, 7, proc.stderr)
+        self.assertNotIn(
+            STEP_THREE_LABEL,
+            proc.stdout,
+            "errexit was left disabled after a successful step",
         )
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                self.assertIn("HANDLED", result.stdout)
-                self.assertNotIn(
-                    "REACHED",
-                    result.stdout,
-                    "errexit was left disabled after a handled failure",
-                )
 
-    def test_a_bare_failing_step_still_aborts(self):
-        body = textwrap.dedent(
-            """
-            run_step "boom" bash -c 'exit 7'
-            echo "REACHED"
-            """
+    def test_a_bare_failing_step_keeps_the_wrapped_status(self):
+        """The wrapped command's status must survive, not collapse to 1."""
+        proc, _ = self.stub_sync([(STEP_ONE, {"rc": 7})])
+        self.assertEqual(proc.returncode, 7, proc.stderr)
+        self.assertNotIn(STEP_TWO_LABEL, proc.stdout)
+
+    def test_a_failing_step_prints_its_full_output(self):
+        """Failure replays the full captured stdout/stderr, unfiltered."""
+        proc, _ = self.stub_sync(
+            [
+                (
+                    STEP_ONE,
+                    {
+                        "rc": 5,
+                        "stdout": "STDOUT_MARK\n    ✓ detail\n",
+                        "stderr": "STDERR_MARK\n",
+                    },
+                )
+            ]
         )
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                self.assertNotIn("REACHED", result.stdout)
-                self.assertEqual(
-                    result.returncode, 7, "the wrapped command's status must survive"
-                )
+        self.assertEqual(proc.returncode, 5, proc.stderr)
+        self.assertIn("STDOUT_MARK", proc.stdout)
+        self.assertIn("STDERR_MARK", proc.stderr)
+        # The glyph line is printed RAW: compact filtering only applies to the
+        # success path.
+        self.assertIn("    ✓ detail\n", proc.stdout)
 
-    def test_a_guarded_failing_step_yields_the_real_status(self):
-        body = textwrap.dedent(
-            """
-            rc=0
-            run_step "boom" bash -c 'exit 42' || rc=$?
-            echo "RC=$rc"
-            """
+    def test_no_temporary_files_survive_success_or_failure(self):
+        proc, stubs = self.stub_sync()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(stubs.survivors(), [], "success path stranded temps")
+
+        proc, stubs = self.stub_sync([(STEP_ONE, {"rc": 7})])
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(stubs.survivors(), [], "failure path stranded temps")
+
+    def test_partial_mktemp_failure_runs_the_step_and_removes_the_first_temp(self):
+        """First mktemp ok, second fails: the step still runs, no leak."""
+        proc, stubs = self.stub_sync(
+            [(STEP_ONE, {"rc": 0, "stdout": "STEP_RAN\n"})], fail_from=2
         )
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                self.assertIn("RC=42", result.stdout)
-
-    def _leak_probe(self, script: Path, step: str, *, extra: str = "") -> str:
-        """Track the exact temp paths run_step creates, not a directory count.
-
-        A `ls "$TMPDIR" | wc -l` delta is a shared-directory oracle: any other
-        process writing to the same TMPDIR at that instant flips the result.
-        Shadowing `mktemp` to hand out known paths makes the assertion exact.
-        """
-        probe_dir = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, probe_dir, True)
-        body = textwrap.dedent(
-            f"""
-            PROBE_DIR="{probe_dir}"
-            _n=0
-            mktemp() {{
-                _n=$((_n+1))
-                {extra}
-                : > "$PROBE_DIR/temp$_n"
-                echo "$PROBE_DIR/temp$_n"
-            }}
-            {step}
-            for f in "$PROBE_DIR"/temp*; do
-                [[ -e "$f" ]] && echo "SURVIVED=$(basename "$f")"
-            done
-            echo "PROBE_DONE"
-            """
+        self.assertIn(STEP_ONE_LABEL, proc.stdout)
+        self.assertIn("STEP_RAN", proc.stdout, "the step must still run")
+        self.assertIn(
+            "  ! cannot create temporary files",
+            proc.stderr,
+            "the degraded path must announce itself",
         )
-        return run_harness(script, body).stdout
-
-    def test_no_temporary_files_survive_a_successful_step(self):
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                out = self._leak_probe(script, 'run_step "ok" bash -c \'echo hello\'')
-                self.assertIn("PROBE_DONE", out)
-                self.assertNotIn("SURVIVED", out)
-
-    def test_no_temporary_files_survive_a_failing_step(self):
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                out = self._leak_probe(
-                    script,
-                    "run_step \"boom\" bash -c 'echo out; echo err >&2; exit 5' || true",
-                )
-                self.assertIn("PROBE_DONE", out)
-                self.assertNotIn("SURVIVED", out)
-
-    def test_partial_mktemp_failure_does_not_leak_the_first_file(self):
-        """JD: the branch where the FIRST mktemp succeeds and the second fails.
-
-        `! A || ! B` short-circuits, so a stub that always fails never reaches
-        the second call — that asymmetric branch, the only one where a real
-        temp file must be cleaned up by `rm -f "${out_file:-}"`, was untested.
-        """
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                out = self._leak_probe(
-                    script,
-                    "run_step \"step\" bash -c 'echo RAN' || true",
-                    extra='[[ $_n -ge 2 ]] && return 1',
-                )
-                self.assertIn("RAN", out, "the step must still run")
-                self.assertIn("PROBE_DONE", out)
-                self.assertNotIn(
-                    "SURVIVED", out, "the first temp file leaked when the second failed"
-                )
-
-    def test_mktemp_failure_still_forwards_a_failing_status(self):
-        """The degraded path must not swallow the wrapped command's failure."""
-        body = textwrap.dedent(
-            """
-            mktemp() { return 1; }
-            rc=0
-            run_step "boom" bash -c 'exit 17' || rc=$?
-            echo "RC=$rc"
-            false
-            echo "REACHED"
-            """
+        self.assertEqual(
+            stubs.survivors(), [], "the first temp leaked when the second failed"
         )
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                self.assertIn("RC=17", result.stdout)
-                self.assertNotIn(
-                    "REACHED",
-                    result.stdout,
-                    "errexit was not restored on the degraded path",
-                )
+
+    def test_degraded_path_forwards_the_wrapped_status(self):
+        """A mktemp failure must not swallow the wrapped command's rc."""
+        proc, _ = self.stub_sync([(STEP_ONE, {"rc": 17})], fail_from=1)
+        self.assertEqual(proc.returncode, 17, proc.stderr)
+        self.assertNotIn(
+            STEP_TWO_LABEL,
+            proc.stdout,
+            "errexit was not honored on the degraded path",
+        )
 
     def test_degraded_path_output_is_documented_as_unfiltered(self):
-        """Compact filtering cannot apply to output that is never captured.
-
-        When temp files are unavailable the step runs unbuffered, so detail
-        markers reach the terminal. That is a deliberate trade — the warning
-        must say so rather than leaving the raw output unexplained.
-        """
-        body = textwrap.dedent(
-            """
-            mktemp() { return 1; }
-            run_step "step" bash -c 'echo "  ✓ detail line"' || true
-            """
+        """No captures means no filtering; the warning must say so."""
+        proc, _ = self.stub_sync(
+            [(STEP_ONE, {"rc": 0, "stdout": "  ✓ detail line\n"})], fail_from=1
         )
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                combined = result.stdout + result.stderr
-                self.assertIn("✓ detail line", combined, "output must not be lost")
-                self.assertIn(
-                    "unfiltered",
-                    combined.lower(),
-                    "the warning must state that output is unfiltered",
-                )
-
-    def test_a_failing_step_still_prints_its_full_output(self):
-        """The existing contract must not regress while moving the restore."""
-        body = textwrap.dedent(
-            """
-            run_step "boom" bash -c 'echo STDOUT_MARK; echo STDERR_MARK >&2; exit 1' || true
-            """
+        self.assertIn("  ✓ detail line", proc.stdout, "output must not be lost")
+        self.assertIn(
+            "unfiltered",
+            (proc.stdout + proc.stderr).lower(),
+            "the warning must state that output is unfiltered",
         )
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                self.assertIn("STDOUT_MARK", result.stdout)
-                self.assertIn("STDERR_MARK", result.stderr)
-
-    def test_a_failing_cat_does_not_abort_from_inside_the_helper(self):
-        """The actual defect: errexit restored before the helper's own `cat`.
-
-        `[[ -s f ]] && cat f` does not trip errexit when `[[` fails — a
-        non-final command in an && list is exempt. It DOES trip when `cat`
-        itself fails, which is reachable via SIGPIPE on an early-closed stdout
-        or a full disk. With errexit already restored, that aborts the script
-        from inside the helper: the wrapped command's status is lost and the
-        temp files leak.
-
-        A guarded call (`if ! run_step`) is exempt — bash suspends errexit for
-        the whole invocation — so the defect is only reachable from a BARE call
-        site, which is 5 of the 6 in sync.sh and all 4 in sync-agent.sh.
-        """
-        body = textwrap.dedent(
-            """
-            cat() { return 1; }          # simulate SIGPIPE / full disk
-            before="$(ls "${TMPDIR:-/tmp}" | wc -l)"
-            run_step "boom" bash -c 'echo out; exit 5'
-            echo "NOT_REACHED"
-            """
-        )
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                self.assertNotIn("NOT_REACHED", result.stdout)
-                self.assertEqual(
-                    result.returncode,
-                    5,
-                    "aborted from inside the helper on the failing cat, losing "
-                    "the wrapped command's status",
-                )
-
-    def test_a_failing_cat_still_returns_the_real_status(self):
-        body = textwrap.dedent(
-            """
-            cat() { return 1; }
-            rc=0
-            run_step "boom" bash -c 'echo out; exit 9' || rc=$?
-            echo "RC=$rc"
-            """
-        )
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                self.assertIn("RC=9", result.stdout)
 
     def test_mktemp_failure_names_itself(self):
-        """A TMPDIR problem must not masquerade as the wrapped command failing.
-
-        `mktemp` is shadowed rather than pointing TMPDIR at a bad path: macOS
-        `mktemp` ignores TMPDIR entirely (it uses the Darwin confstr temp dir),
-        so a TMPDIR-based test would silently pass without ever exercising the
-        guard.
-        """
-        body = textwrap.dedent(
-            """
-            mktemp() { return 1; }
-            run_step "step" bash -c 'echo RAN' || true
-            """
+        """A TMPDIR problem must not masquerade as the wrapped command failing."""
+        proc, _ = self.stub_sync([(STEP_ONE, {"rc": 0})], fail_from=1)
+        combined = (proc.stdout + proc.stderr).lower()
+        self.assertTrue(
+            "temporary" in combined or "tmpdir" in combined,
+            msg=f"mktemp failure was not named:\n{proc.stdout}\n{proc.stderr}",
         )
-        for script in SCRIPTS:
-            with self.subTest(script=script.name):
-                result = run_harness(script, body)
-                combined = (result.stdout + result.stderr).lower()
-                self.assertTrue(
-                    "temporary" in combined or "tmpdir" in combined,
-                    msg=f"mktemp failure was not named:\n{result.stdout}\n{result.stderr}",
-                )
-                self.assertIn("RAN", result.stdout, "the step must still run")
+
+    def test_compact_filter_is_implementation_independent(self):
+        """The PATH seam makes one test cover both spines identically."""
+        payload = (
+            "\n".join(GLYPH_LINES)
+            + "\n\n   \nkeep-me\n"
+            + "\n".join(NOTICE_LINES)
+            + "\n"
+        )
+        results: dict[str, tuple[list[str], list[str]]] = {}
+        stdouts: dict[str, str] = {}
+        for name, cli in (("go", _go_cli.cli()), ("legacy", _go_cli.legacy_cli())):
+            proc, _ = self.stub_sync(
+                [(STEP_ONE, {"rc": 0, "stdout": payload})], cli=cli
+            )
+            self.assertEqual(proc.returncode, 0, f"{name}: {proc.stderr}")
+            stdouts[name] = proc.stdout
+            dropped = [line for line in GLYPH_LINES if line not in proc.stdout]
+            kept = [line for line in NOTICE_LINES if line in proc.stdout]
+            results[name] = (dropped, kept)
+        self.assertEqual(results["go"][0], list(GLYPH_LINES), "glyph lines not dropped")
+        self.assertEqual(results["go"][1], list(NOTICE_LINES), "notices not kept")
+        self.assertIn("keep-me", stdouts["go"], "ordinary lines must survive")
+        self.assertEqual(
+            results["go"],
+            results["legacy"],
+            "the two spines classify the compact output differently",
+        )
 
 
 if __name__ == "__main__":
