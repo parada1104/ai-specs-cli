@@ -121,6 +121,13 @@ func abort(stderr io.Writer, msg string, code int) int {
 }
 
 // ResolveBinary walks symlinks from start and returns the absolute real path.
+//
+// FROZEN PARITY (oracle-wins): this intentionally mirrors resolve_binary()
+// in lib/upgrade.sh:149-160 byte-for-byte, including the unbounded
+// `while [[ -L "$source" ]]` walk. A symlink cycle hangs the legacy shell
+// implementation identically; that behavior is preserved until the
+// post-cutover parity amendment (Trello card [Go 12][frozen quirk]).
+// Tests below pin the non-cyclic chain semantics only.
 func ResolveBinary(start string) string {
 	source := start
 	for {

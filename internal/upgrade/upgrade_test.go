@@ -412,3 +412,34 @@ func TestRealDiverged(t *testing.T) {
 		t.Fatalf("stderr = %q", errb.String())
 	}
 }
+
+// TestResolveBinarySymlinkChainParity pins the frozen oracle semantics of
+// resolve_binary() in lib/upgrade.sh:149-160: a non-cyclic chain of relative
+// and absolute symlinks resolves to the same real path the shell oracle
+// produces. The unbounded cycle walk is frozen parity behavior (both
+// implementations hang on a cycle) and is deliberately NOT exercised here.
+func TestResolveBinarySymlinkChainParity(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "release", "bin", "ai-specs")
+	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// absolute link -> relative link -> real
+	abs := filepath.Join(dir, "abs-link")
+	if err := os.Symlink(filepath.Join("release", "bin", "ai-specs"), abs); err != nil {
+		t.Fatal(err)
+	}
+	rel := filepath.Join(dir, "bin-link")
+	if err := os.Symlink("abs-link", rel); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveBinary(rel); got != real {
+		t.Fatalf("ResolveBinary(%s) = %q, want %q", rel, got, real)
+	}
+	if got := ResolveBinary(real); got != real {
+		t.Fatalf("ResolveBinary(real) = %q, want unchanged", got)
+	}
+}
