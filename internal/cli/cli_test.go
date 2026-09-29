@@ -14,8 +14,8 @@ type wantShim struct {
 	invokedAs string
 }
 
-// TestRouteTableCoversEveryVerb checks the full dispatcher table: 11 shimmed
-// verbs + 3 native verbs + their aliases, mirroring the case statement of
+// TestRouteTableCoversEveryVerb checks the full dispatcher table: 10 shimmed
+// verbs + 4 native verbs + their aliases, mirroring the case statement of
 // bin/ai-specs.
 func TestRouteTableCoversEveryVerb(t *testing.T) {
 	shims := map[string]wantShim{
@@ -25,8 +25,6 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 		"sync-agent":        {script: "sync-agent.sh"},
 		"add-dep":           {script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 		"skills":            {script: "skills.sh"},
-		"doctor":            {script: "doctor.sh"},
-		"rules-audit":       {script: "rules-audit.sh"},
 		"recipe":            {script: "recipe.sh"},
 		"configure-recipes": {script: "recipe-config.sh"},
 		"upgrade":           {script: "upgrade.sh"},
@@ -47,6 +45,7 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 
 	natives := map[string]routeKind{
 		"refresh-bundled": routeRefreshBundled,
+		"rules-audit":     routeRulesAudit,
 		"version":         routeVersion,
 		"-v":              routeVersion,
 		"--version":       routeVersion,
@@ -58,6 +57,18 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 		if got := Route([]string{verb}).kind; got != want {
 			t.Errorf("verb %q: kind = %v, want %v", verb, got, want)
 		}
+	}
+
+	// `doctor` is native now (card [Go 08]): it must resolve to routeDoctor and
+	// must not be served by the legacy doctor.sh shim.
+	if got := Route([]string{"doctor"}).kind; got != routeDoctor {
+		t.Errorf("verb %q: kind = %v, want %v", "doctor", got, routeDoctor)
+	}
+
+	// `rules-audit` is native now (card [Go 08]): it must resolve to
+	// routeRulesAudit and must not be served by the legacy rules-audit.sh shim.
+	if got := Route([]string{"rules-audit"}).kind; got != routeRulesAudit {
+		t.Errorf("verb %q: kind = %v, want %v", "rules-audit", got, routeRulesAudit)
 	}
 }
 

@@ -157,7 +157,6 @@ func TestDifferentialSmoke(t *testing.T) {
 		// legacy no-shift semantics — not panic on the verb slice shift.
 		{"hub-bare-nontty", []string{}, "", false},
 		{"hub-uninitialized-nontty", []string{"hub"}, "", false},
-		{"doctor-missing-path", []string{"doctor", "does-not-exist"}, "", false},
 		{"rules-audit-missing-path", []string{"rules-audit", "does-not-exist"}, "", false},
 		{"sync-missing-path", []string{"sync", "does-not-exist"}, "", false},
 		// The repo root is an initialized ai-specs project; without a TTY
@@ -209,5 +208,55 @@ func TestDifferentialSmoke(t *testing.T) {
 				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
 			}
 		})
+	}
+}
+
+// TestDoctorMissingPathDeviation pins the one DOCUMENTED deviation between the
+// legacy launcher and the native doctor port for a nonexistent target path, so
+// the differential table above does not need to hide it.
+//
+// lib/doctor.sh resolves the target with `cd "$TARGET_PATH" && pwd` and has no
+// `-d` guard, so a nonexistent path dies inside bash: its own `cd:` diagnostic
+// (with a script line number) goes to stderr and the process exits 1. The
+// Python `is not a directory` guard is therefore dead code on the legacy path.
+// The port skips the bash layer, preserves the frozen exit code 1, and reports
+// the message the Python guard intended instead of fabricating a bash line
+// number.
+func TestDoctorMissingPathDeviation(t *testing.T) {
+	bin, root := smokeSetup(t)
+	env := smokeEnv(root)
+	legacy := filepath.Join(root, "bin", "ai-specs")
+
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "does-not-exist")
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%s): %v", dir, err)
+	}
+	resolvedMissing := filepath.Join(resolvedDir, "does-not-exist")
+
+	goOut, goErr, goCode := runOne(bin, []string{"doctor", missing}, env, dir)
+	legOut, legErr, legCode := runOne("bash", []string{legacy, "doctor", missing}, env, dir)
+
+	// The frozen exit code is preserved on both sides; neither writes stdout.
+	if goCode != 1 || legCode != 1 {
+		t.Errorf("exit codes: go = %d, bash = %d; want 1 for both", goCode, legCode)
+	}
+	if len(goOut) != 0 || len(legOut) != 0 {
+		t.Errorf("stdout: go = %q, bash = %q; want empty", goOut, legOut)
+	}
+
+	// Legacy: bash's own cd diagnostic names the missing path. The line number
+	// is a bash artifact and is deliberately not matched.
+	if !strings.Contains(string(legErr), "cd:") ||
+		!strings.Contains(string(legErr), missing) ||
+		!strings.Contains(string(legErr), "No such file or directory") {
+		t.Errorf("legacy stderr = %q; want bash's `cd: <path>: No such file or directory`", legErr)
+	}
+
+	// Port: the Python guard's intended message, on the resolved target.
+	want := "ERROR: " + resolvedMissing + " is not a directory.\n"
+	if string(goErr) != want {
+		t.Errorf("go stderr = %q, want %q", goErr, want)
 	}
 }

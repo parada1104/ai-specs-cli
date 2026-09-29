@@ -20,6 +20,8 @@ const (
 	routeVersion                         // native: print <home>/VERSION
 	routeHelp                            // native: print embedded help.txt
 	routeRefreshBundled                  // native compatibility stub (card [Go 06]): reports embedded provenance
+	routeDoctor                          // native: `doctor` health diagnostic (card [Go 08])
+	routeRulesAudit                      // native: `rules-audit` legacy rules inventory (card [Go 08])
 	routeUnknown                         // unknown command: usage error, exit 2
 )
 
@@ -39,8 +41,6 @@ var shims = map[string]route{
 	"sync-agent":        {kind: routeShim, script: "sync-agent.sh"},
 	"add-dep":           {kind: routeShim, script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 	"skills":            {kind: routeShim, script: "skills.sh"},
-	"doctor":            {kind: routeShim, script: "doctor.sh"},
-	"rules-audit":       {kind: routeShim, script: "rules-audit.sh"},
 	"recipe":            {kind: routeShim, script: "recipe.sh"},
 	"configure-recipes": {kind: routeShim, script: "recipe-config.sh"},
 	"upgrade":           {kind: routeShim, script: "upgrade.sh"},
@@ -51,6 +51,8 @@ var shims = map[string]route{
 // (the verb runs and the rest is dropped).
 var native = map[string]route{
 	"refresh-bundled": {kind: routeRefreshBundled},
+	"doctor":          {kind: routeDoctor},
+	"rules-audit":     {kind: routeRulesAudit},
 	"version":         {kind: routeVersion},
 	"-v":              {kind: routeVersion},
 	"--version":       {kind: routeVersion},
@@ -85,6 +87,10 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		return runHelp(stdout)
 	case routeRefreshBundled:
 		return runRefreshBundled(args, stdout, stderr)
+	case routeDoctor:
+		return runDoctor(args, home, stdout, stderr)
+	case routeRulesAudit:
+		return runRulesAudit(args, home, stdout, stderr)
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
