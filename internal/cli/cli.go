@@ -10,6 +10,8 @@ package cli
 import (
 	"fmt"
 	"io"
+
+	"ai-specs.dev/ai-specs/internal/sync"
 )
 
 // routeKind classifies a dispatcher decision.
@@ -20,6 +22,7 @@ const (
 	routeVersion                         // native: print <home>/VERSION
 	routeHelp                            // native: print embedded help.txt
 	routeRefreshBundled                  // native compatibility stub (card [Go 06]): reports embedded provenance
+	routeSync                            // native sync spine (card [Go 07.S1])
 	routeUnknown                         // unknown command: usage error, exit 2
 )
 
@@ -35,7 +38,6 @@ type route struct {
 var shims = map[string]route{
 	"hub":               {kind: routeShim, script: "hub.sh"},
 	"init":              {kind: routeShim, script: "init.sh"},
-	"sync":              {kind: routeShim, script: "sync.sh"},
 	"sync-agent":        {kind: routeShim, script: "sync-agent.sh"},
 	"add-dep":           {kind: routeShim, script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 	"skills":            {kind: routeShim, script: "skills.sh"},
@@ -50,7 +52,9 @@ var shims = map[string]route{
 // Like the legacy dispatcher, version and help ignore any extra arguments
 // (the verb runs and the rest is dropped).
 var native = map[string]route{
+	// sync is native; sync-agent deliberately remains a shim in this slice.
 	"refresh-bundled": {kind: routeRefreshBundled},
+	"sync":            {kind: routeSync},
 	"version":         {kind: routeVersion},
 	"-v":              {kind: routeVersion},
 	"--version":       {kind: routeVersion},
@@ -85,6 +89,8 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		return runHelp(stdout)
 	case routeRefreshBundled:
 		return runRefreshBundled(args, stdout, stderr)
+	case routeSync:
+		return sync.Run(args, home, stdin, stdout, stderr)
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")

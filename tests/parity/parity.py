@@ -30,7 +30,13 @@ Design constraints (from the card):
     when go is absent or the build fails; the legacy-vs-legacy
     "identical-by-shim" mode (both legs legacy, must report ZERO deltas,
     acceptance a) exists ONLY as run.py's explicit ``--self-test`` flag,
-    never as a silent fallback.
+    never as a silent fallback;
+  * the corpus runs in TWO gate modes (plan finding F3 / risk R7):
+    ``gate-absent`` (no verified gate binary, every bridge takes its Python
+    fallback) and ``gate-present`` (a locally built worktree-gate pinned via
+    ``WORKTREE_GATE_BIN`` for both legs, exercising the Go-authority path).
+    The mode is recorded in the report, never ambient; the built binary stays
+    in the temp dir and is never committed.
 
 The known help-heredoc quirk (card 04 finding) and every normalization rule
 carry a written justification in NORMALIZATIONS below; nothing is silently
@@ -61,6 +67,17 @@ BASE_ENV = {
     "LC_ALL": "C",
     "LANG": "C",
 }
+
+# Gate modes: whether the corpus runs with a locally built worktree-gate binary
+# pinned via WORKTREE_GATE_BIN for BOTH legs. `gate-absent` is the historical
+# behavior (isolated home with an empty cache/ and no binary, so every bridge
+# degrades to the Python fallback); `gate-present` builds the nested
+# worktree-flow gate module once and exercises the real Go-authority bridge
+# path (plan finding F3 / risk R7). AI_SPECS_GATE_OFFLINE stays set in both
+# modes: it only prevents NETWORK acquisition, never a pinned local binary.
+GATE_ABSENT = "gate-absent"
+GATE_PRESENT = "gate-present"
+GATE_MODULE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow" / "gate"
 
 
 # ── Normalization registry ────────────────────────────────────────────────
@@ -512,8 +529,14 @@ def make_home(base: Path) -> Path:
     return home
 
 
-def run_leg(label: str, cli_path: Path, fixture: Fixture, scratch: Path) -> LegResult:
-    """Run one implementation against one fixture in an isolated scratch root."""
+def run_leg(label: str, cli_path: Path, fixture: Fixture, scratch: Path,
+            gate_bin: Path | None = None) -> LegResult:
+    """Run one implementation against one fixture in an isolated scratch root.
+
+    ``gate_bin`` pins WORKTREE_GATE_BIN for the leg when provided (gate-present
+    mode); when None the ambient isolated home has no verified gate binary and
+    every bridge takes its Python fallback (gate-absent mode).
+    """
     home = make_home(scratch / "home")
     home_str = str(home)
     project = scratch / "project"
@@ -523,6 +546,8 @@ def run_leg(label: str, cli_path: Path, fixture: Fixture, scratch: Path) -> LegR
            "scratch": str(scratch)}
     env = {**BASE_ENV, "HOME": str(scratch / "user-home"), "TMPDIR": str(scratch),
            "AI_SPECS_HOME": home_str}
+    if gate_bin is not None:
+        env["WORKTREE_GATE_BIN"] = str(gate_bin)
     (scratch / "user-home").mkdir()
     leg = LegResult(label=label, cli_path=str(cli_path))
     for step in fixture.steps:
@@ -606,41 +631,85 @@ def build_go_binary(dest_dir: Path) -> Path | None:
     return dest
 
 
+def build_gate_binary(dest_dir: Path) -> Path | None:
+    """Build the nested worktree-gate module (CGO_ENABLED=0) into dest_dir.
+
+    Returns the binary path, or None when go is unavailable or the build
+    fails. The module is `catalog/recipes/worktree-flow/gate` (its own go.mod,
+    module ai-specs.dev/worktree-gate) and is built with the same hermetic
+    temp GOCACHE/GOPATH pattern as build_go_binary.
+
+    Policy is the CALLER's: the wired suite entry (run.py) requires this build
+    in its default path and fails loudly (exit 2); the explicit --self-test
+    mode reports gate-present as unavailable instead. Build artifacts stay in
+    the temp dir and are never committed.
+    """
+    if shutil.which("go") is None:
+        return None
+    dest = dest_dir / "worktree-gate"
+    env = {**BASE_ENV, "CGO_ENABLED": "0", "HOME": os.environ.get("HOME", ""),
+           "GOPATH": os.environ.get("GOPATH", str(dest_dir / "gopath")),
+           "GOCACHE": str(dest_dir / "gocache")}
+    proc = subprocess.run(
+        ["go", "-C", str(GATE_MODULE_DIR), "build", "-o", str(dest), "."],
+        env=env, text=True, capture_output=True, check=False)
+    if proc.returncode != 0:
+        sys.stderr.write(f"parity: worktree-gate build failed\n{proc.stderr}\n")
+        return None
+    return dest
+
+
 # ── Comparison runner ─────────────────────────────────────────────────────
 
 
 def run_comparison(fixture: Fixture, go_cli: Path | None,
                    workdir: Path,
-                   mutate=None) -> tuple[list[str], str]:
+                   mutate=None, gate_mode: str = GATE_ABSENT,
+                   gate_bin: Path | None = None) -> tuple[list[str], str]:
     """Run both legs for one fixture; return (deltas, mode-note).
 
     `mutate` is a TEST-ONLY hook applied to the second leg's results after
     capture (never used by the suite runner): it exists so the negative
     self-tests can deliberately inject a behavioral change and prove the
     harness flags it.
+
+    `gate_mode` names the gate condition and `gate_bin` pins WORKTREE_GATE_BIN
+    for BOTH legs when provided. The mode-note records the leg pairing AND the
+    gate mode, so a zero-delta result can never be read without knowing which
+    gate authority produced it.
     """
     scratch_a = workdir / "leg-legacy"
     scratch_b = workdir / "leg-other"
-    leg_a = run_leg("legacy", ROOT / "bin" / "ai-specs", fixture, scratch_a)
-    mode = "legacy-vs-go"
+    leg_a = run_leg("legacy", ROOT / "bin" / "ai-specs", fixture, scratch_a,
+                    gate_bin=gate_bin)
+    leg_mode = "legacy-vs-go"
     cli_b = go_cli if go_cli is not None else ROOT / "bin" / "ai-specs"
     if go_cli is None:
-        mode = "legacy-vs-legacy (identical-by-shim: explicit --self-test)"
-    leg_b = run_leg("other", cli_b, fixture, scratch_b)
+        leg_mode = "legacy-vs-legacy (identical-by-shim: explicit --self-test)"
+    leg_b = run_leg("other", cli_b, fixture, scratch_b, gate_bin=gate_bin)
     if mutate is not None:
         leg_b = mutate(leg_b, scratch_b)
-    return diff_legs(leg_a, leg_b), mode
+    return diff_legs(leg_a, leg_b), f"{leg_mode} | {gate_mode}"
 
 
-def run_corpus(go_cli: Path | None, workdir: Path, fixtures=CORPUS) -> tuple[int, str]:
-    """Run the corpus; return (exit_code, report). Exit 1 on ANY delta."""
-    lines: list[str] = ["differential parity harness", ""]
+def run_corpus(go_cli: Path | None, workdir: Path, fixtures=CORPUS,
+               gate_mode: str = GATE_ABSENT,
+               gate_bin: Path | None = None) -> tuple[int, str]:
+    """Run the corpus in one gate mode; return (exit_code, report).
+
+    Exit 1 on ANY delta. `gate_mode`/`gate_bin` are recorded in the header and
+    forwarded to every comparison, so the mode that produced each result is
+    part of the report rather than ambient state.
+    """
+    lines: list[str] = ["differential parity harness", f"gate mode: {gate_mode}",
+                        ""]
     failures = 0
     for fixture in fixtures:
         fdir = workdir / fixture.name
         fdir.mkdir(parents=True, exist_ok=True)
         try:
-            deltas, mode = run_comparison(fixture, go_cli, fdir)
+            deltas, mode = run_comparison(fixture, go_cli, fdir,
+                                          gate_mode=gate_mode, gate_bin=gate_bin)
         except Exception as exc:  # a crashed leg is a delta too
             failures += 1
             lines.append(f"✗ {fixture.name}: harness error: {exc!r}")
