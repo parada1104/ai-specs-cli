@@ -21,7 +21,6 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 	shims := map[string]wantShim{
 		"hub":               {script: "hub.sh"},
 		"init":              {script: "init.sh"},
-		"sync":              {script: "sync.sh"},
 		"sync-agent":        {script: "sync-agent.sh"},
 		"add-dep":           {script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 		"skills":            {script: "skills.sh"},
@@ -47,6 +46,7 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 
 	natives := map[string]routeKind{
 		"refresh-bundled": routeRefreshBundled,
+		"sync":            routeSync,
 		"version":         routeVersion,
 		"-v":              routeVersion,
 		"--version":       routeVersion,
