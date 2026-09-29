@@ -11,6 +11,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -18,8 +19,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
-SYNC_SH = ROOT / "lib" / "sync.sh"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _go_cli  # noqa: E402
+import _sync_stub  # noqa: E402
+
+# The native Go binary: these suites must exercise the `sync` route, not the
+# legacy Bash launcher (kept only for the parity harness's legacy leg).
+CLI = _go_cli.cli()
 SYNC_AGENT_SH = ROOT / "lib" / "sync-agent.sh"
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
@@ -30,6 +37,7 @@ BODY_NEEDLE = 'TOML_PATH="$SOURCE_ROOT/ai-specs/ai-specs.toml"'
 def _sync_env(extra: dict | None = None) -> dict:
     env = {
         **os.environ,
+        "AI_SPECS_HOME": str(ROOT),
         "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
     }
     if extra:
@@ -37,65 +45,9 @@ def _sync_env(extra: dict | None = None) -> dict:
     return env
 
 
-def _bash_version(binary: Path) -> tuple[int, int] | None:
-    proc = subprocess.run(
-        [
-            str(binary),
-            "-c",
-            'printf "%s.%s\\n" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"',
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    parts = proc.stdout.strip().split(".")
-    if len(parts) != 2:
-        return None
-    try:
-        return int(parts[0]), int(parts[1])
-    except ValueError:
-        return None
-
-
-def _supports_inherit_errexit(binary: Path) -> bool:
-    proc = subprocess.run(
-        [str(binary), "-c", "shopt -s inherit_errexit"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    return proc.returncode == 0
-
-
-def _extract_bash_functions(script: Path, names: tuple[str, ...]) -> str:
-    """Extract named function bodies from a bash script (brace-counted)."""
-    text = script.read_text()
-    chunks: list[str] = []
-    for name in names:
-        start = text.find(f"{name}() {{")
-        if start < 0:
-            start = text.find(f"{name}(){{")
-        if start < 0:
-            raise AssertionError(f"function {name} not found in {script}")
-        depth = 0
-        i = text.find("{", start)
-        end = None
-        while i < len(text):
-            ch = text[i]
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-            i += 1
-        if end is None:
-            raise AssertionError(f"unterminated function {name} in {script}")
-        chunks.append(text[start:end])
-    return "\n\n".join(chunks)
+# The Bash-source harness helpers (_bash_version, _supports_inherit_errexit,
+# _extract_bash_functions) are retired with the re-point: extracting function
+# bodies out of lib/sync.sh tests the orphaned script, not the native spine.
 
 
 class _WorkspaceMixin:
@@ -143,6 +95,7 @@ class _WorkspaceMixin:
             check=True,
             text=True,
             capture_output=True,
+            env=_sync_env(),
         )
         agent_list = agents if agents is not None else ["claude", "cursor", "opencode"]
         repo_list = (
@@ -325,169 +278,137 @@ class FanOutTerminationTests(_WorkspaceMixin, unittest.TestCase):
 
 
 
-class StepOutputContractTests(unittest.TestCase):
-    """P2 — compact/verbose/failure contract for print_step_output + run_step."""
+class _CliSyncStubMixin:
+    """Install PATH stubs, build a temp project, run one `sync` at the CLI."""
 
-    def _harness(self, script: Path, *, verbose: int, body: str) -> subprocess.CompletedProcess:
-        fns = _extract_bash_functions(script, ("print_step_output", "run_step"))
-        bash = (
-            "set -euo pipefail\n"
-            f"VERBOSE={verbose}\n"
-            f"{fns}\n"
-            f"{body}\n"
-        )
-        return subprocess.run(
-            ["bash", "-c", bash],
+    def run_stubbed_sync(self, *, intercepts=(), args=()):
+        base = Path(tempfile.mkdtemp(prefix="ai-specs-verb-"))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        stubs = _sync_stub.SyncStubs(base)
+        project = _sync_stub.minimal_project(base)
+        for module, kwargs in intercepts:
+            stubs.intercept(module, **kwargs)
+        proc = subprocess.run(
+            [str(CLI), "sync", str(project), *args],
+            env=stubs.env(),
             text=True,
             capture_output=True,
             check=False,
         )
+        return proc, stubs
+
+
+class StepOutputContractCliTests(_CliSyncStubMixin, unittest.TestCase):
+    """P2 — compact/verbose/failure contract, driven at the CLI boundary.
+
+    The Bash-harness halves of the old P2 tests are replaced here: the first
+    sync step (`gitignore-render.py`) is stubbed through PATH, so what these
+    tests observe is the spine's own capture + filter + replay path rather
+    than an extracted copy of `run_step`.
+    """
+
+    FIRST_STEP = "gitignore-render.py"
+    FIRST_LABEL = "  syncing ai-specs/.gitignore"
+
+    def _run(self, *, stdout: str = "", stderr: str = "", rc: int = 0, args=()):
+        proc, _ = self.run_stubbed_sync(
+            intercepts=[
+                (self.FIRST_STEP, {"rc": rc, "stdout": stdout, "stderr": stderr})
+            ],
+            args=args,
+        )
+        return proc
 
     def test_t2_1_compact_suppresses_success_detail_and_blank_lines(self):
         """T2.1: compact mode drops ✓/·/⇢/▸ lines and blank lines."""
-        for script in (SYNC_SH, SYNC_AGENT_SH):
-            with self.subTest(script=script.name):
-                body = textwrap.dedent(
-                    r"""
-                    f="$(mktemp)"
-                    printf '%s\n' \
-                        '    ✓ bundled skill worktree-flow' \
-                        '    · symlink ok' \
-                        '    ⇢ flattened 1' \
-                        '    ▸ recipe session-context' \
-                        '' \
-                        '   ' \
-                        'keep-me' \
-                        '  ! warning' \
-                        '  ✗ error' \
-                        '  ℹ notice' >"$f"
-                    print_step_output "$f"
-                    rm -f "$f"
-                    """
-                )
-                proc = self._harness(script, verbose=0, body=body)
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertEqual(
-                    proc.stdout,
-                    "keep-me\n  ! warning\n  ✗ error\n  ℹ notice\n",
-                )
-                for marker in ("✓", "·", "⇢", "▸"):
-                    self.assertNotIn(marker, proc.stdout)
+        stdout = (
+            "    ✓ bundled skill worktree-flow\n"
+            "    · symlink ok\n"
+            "    ⇢ flattened 1\n"
+            "    ▸ recipe session-context\n"
+            "\n"
+            "   \n"
+            "keep-me\n"
+            "  ! warning\n"
+            "  ✗ error\n"
+            "  ℹ notice\n"
+        )
+        proc = self._run(stdout=stdout)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("keep-me\n", proc.stdout)
+        self.assertIn("  ! warning\n", proc.stdout)
+        self.assertIn("  ✗ error\n", proc.stdout)
+        self.assertIn("  ℹ notice\n", proc.stdout)
+        for marker in (
+            "    ✓ bundled skill worktree-flow",
+            "    · symlink ok",
+            "    ⇢ flattened 1",
+            "    ▸ recipe session-context",
+        ):
+            self.assertNotIn(marker, proc.stdout)
 
     def test_t2_2_compact_preserves_notice_markers_on_original_streams(self):
         """T2.2: !/✗/ℹ survive byte-identically on their original streams."""
-        for script in (SYNC_SH, SYNC_AGENT_SH):
-            with self.subTest(script=script.name):
-                body = textwrap.dedent(
-                    r"""
-                    step() {
-                        printf '%s\n' '    ✓ detail' '  ! warn-stdout' 'plain-out'
-                        printf '%s\n' '  ✗ err-stderr' '  ℹ note-stderr' >&2
-                    }
-                    run_step "demo" step
-                    """
-                )
-                proc = self._harness(script, verbose=0, body=body)
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertIn("  syncing demo\n", proc.stdout)
-                self.assertIn("  ! warn-stdout\n", proc.stdout)
-                self.assertIn("plain-out\n", proc.stdout)
-                self.assertNotIn("✓ detail", proc.stdout)
-                self.assertEqual(proc.stderr, "  ✗ err-stderr\n  ℹ note-stderr\n")
-                # Stream separation: notice markers must not cross streams.
-                self.assertNotIn("✗", proc.stdout)
-                self.assertNotIn("ℹ", proc.stdout)
-                self.assertNotIn("!", proc.stderr)
+        proc = self._run(
+            stdout="    ✓ detail\n  ! warn-stdout\nplain-out\n",
+            stderr="  ✗ err-stderr\n  ℹ note-stderr\n",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(self.FIRST_LABEL + "\n", proc.stdout)
+        self.assertIn("  ! warn-stdout\n", proc.stdout)
+        self.assertIn("plain-out\n", proc.stdout)
+        self.assertNotIn("✓ detail", proc.stdout)
+        self.assertEqual(proc.stderr, "  ✗ err-stderr\n  ℹ note-stderr\n")
+        # Stream separation: the stub's notice markers must not cross streams.
+        # (Later real steps legitimately emit their own ℹ notices on stdout.)
+        self.assertNotIn("  ✗ err-stderr", proc.stdout)
+        self.assertNotIn("  ℹ note-stderr", proc.stdout)
+        self.assertNotIn("  ! warn-stdout", proc.stderr)
 
     def test_t2_3_verbose_reproduces_full_step_output(self):
         """T2.3: --verbose prints the step's full unfiltered output."""
-        for script in (SYNC_SH, SYNC_AGENT_SH):
-            with self.subTest(script=script.name):
-                body = textwrap.dedent(
-                    r"""
-                    step() {
-                        printf '%s\n' '    ✓ a' '    · b' '  ! c'
-                        printf '%s\n' '  ✗ d' >&2
-                    }
-                    run_step "demo" step
-                    """
-                )
-                proc = self._harness(script, verbose=1, body=body)
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertEqual(
-                    proc.stdout,
-                    "  syncing demo\n    ✓ a\n    · b\n  ! c\n",
-                )
-                self.assertEqual(proc.stderr, "  ✗ d\n")
+        proc = self._run(
+            stdout="    ✓ a\n    · b\n  ! c\n",
+            stderr="  ✗ d\n",
+            args=("-v",),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(
+            self.FIRST_LABEL + "\n    ✓ a\n    · b\n  ! c\n", proc.stdout
+        )
+        self.assertEqual(proc.stderr, "  ✗ d\n")
 
     def test_m3_verbose_preserves_trailing_blank_lines(self):
         """M3/F5: verbose replay must be byte-identical, including trailing blanks.
 
-        `printf '%s\n' "$(cat out_file)"` strips ALL trailing newlines from the
-        captured step output; a step that ends with blank lines must still
+        `printf '%s\n' "$(cat out_file)"` strips ALL trailing newlines from
+        the captured step output; a step that ends with blank lines must still
         reproduce them under --verbose.
         """
-        for script in (SYNC_SH, SYNC_AGENT_SH):
-            with self.subTest(script=script.name):
-                fns = _extract_bash_functions(
-                    script, ("print_step_output", "run_step")
-                )
-                # Emit: "line\n\n\n" (one content line + two trailing blank lines)
-                # via a real temp file written with trailing newlines, then run_step.
-                body = (
-                    "set -euo pipefail\n"
-                    "VERBOSE=1\n"
-                    + fns
-                    + "\n"
-                    + "step() {\n"
-                    + "  # exact bytes: 'detail' + newline + blank + blank\n"
-                    + "  printf 'detail\n\n\n'\n"
-                    + "}\n"
-                    + "run_step \"demo\" step\n"
-                )
-                proc = subprocess.run(
-                    ["bash", "-c", body],
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                # Expect: syncing line, then detail, then two trailing blanks
-                # exactly as the step printed (byte-identical replay).
-                self.assertEqual(
-                    proc.stdout,
-                    "  syncing demo\ndetail\n\n\n",
-                    f"verbose must preserve trailing blank lines; got:\n"
-                    f"{proc.stdout!r}",
-                )
-
+        proc = self._run(stdout="detail\n\n\n", args=("-v",))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(
+            self.FIRST_LABEL + "\ndetail\n\n\n",
+            proc.stdout,
+            f"verbose must preserve trailing blank lines; got:\n{proc.stdout!r}",
+        )
 
     def test_t2_4_failing_step_prints_full_output_and_status_both_modes(self):
         """T2.4: failure always prints full stdout+stderr and propagates status."""
-        for script in (SYNC_SH, SYNC_AGENT_SH):
-            for verbose in (0, 1):
-                with self.subTest(script=script.name, verbose=verbose):
-                    body = textwrap.dedent(
-                        r"""
-                        bad() {
-                            printf '%s\n' '    ✓ detail' '    · more'
-                            printf '%s\n' 'diag on stderr' >&2
-                            return 7
-                        }
-                        # Invoke in ||-list so run_step's restored set -e does
-                        # not abort the harness before we can observe $?.
-                        rc=0
-                        run_step "demo" bad || rc=$?
-                        printf 'EXIT:%s\n' "$rc"
-                        """
-                    )
-                    proc = self._harness(script, verbose=verbose, body=body)
-                    self.assertEqual(proc.returncode, 0, proc.stderr)
-                    self.assertIn("  syncing demo\n", proc.stdout)
-                    self.assertIn("    ✓ detail\n", proc.stdout)
-                    self.assertIn("    · more\n", proc.stdout)
-                    self.assertIn("EXIT:7\n", proc.stdout)
-                    self.assertEqual(proc.stderr, "diag on stderr\n")
+        for verbose in (False, True):
+            args = ("-v",) if verbose else ()
+            with self.subTest(verbose=verbose):
+                proc = self._run(
+                    stdout="    ✓ detail\n    · more\n",
+                    stderr="diag on stderr\n",
+                    rc=7,
+                    args=args,
+                )
+                self.assertEqual(proc.returncode, 7, proc.stderr)
+                self.assertIn(self.FIRST_LABEL + "\n", proc.stdout)
+                self.assertIn("    ✓ detail\n", proc.stdout)
+                self.assertIn("    · more\n", proc.stdout)
+                self.assertEqual(proc.stderr, "diag on stderr\n")
 
 
 class VerboseFlagIntegrationTests(_WorkspaceMixin, unittest.TestCase):
@@ -675,6 +596,9 @@ class VerboseFlagIntegrationTests(_WorkspaceMixin, unittest.TestCase):
                     text=True,
                     capture_output=True,
                     check=False,
+                    # The Go binary is built outside the repo, so pin the
+                    # install root explicitly (assertions unchanged).
+                    env=_sync_env(),
                 )
                 self.assertNotEqual(proc.returncode, 0)
                 self.assertIn("unknown flag", proc.stderr.lower())
@@ -917,44 +841,20 @@ class MarkerHygieneTests(_WorkspaceMixin, unittest.TestCase):
             shutil.rmtree(workspace.parent, ignore_errors=True)
 
 
-class DotMarkerAuditTests(unittest.TestCase):
-    """P3 T3.3 — remaining · echoes are intentional compact-mode noise."""
-
-    def test_t3_3_remaining_dot_markers_are_classified_noise(self):
-        """Every ·-prefixed echo in sync*.sh is classified (noise vs notice)."""
-        pattern = re.compile(r'echo\s+"([^"]*·[^"]*)"')
-        found: dict[str, list[str]] = {}
-        for script in (SYNC_SH, SYNC_AGENT_SH):
-            lines = script.read_text().splitlines()
-            for i, line in enumerate(lines, 1):
-                m = pattern.search(line)
-                if not m:
-                    continue
-                # Require an immediately preceding classification comment.
-                prev = lines[i - 2] if i >= 2 else ""
-                self.assertRegex(
-                    prev,
-                    r"Noise \(keep ·\)|Notice \(not noise\)",
-                    f"{script.name}:{i} has unclassified · echo: {line.strip()}",
-                )
-                found.setdefault(script.name, []).append(m.group(1))
-        # sync.sh has no · echoes today; sync-agent keeps only symlink-ok noise.
-        self.assertEqual(found.get("sync.sh", []), [])
-        self.assertTrue(
-            all("symlink ok" in msg for msg in found.get("sync-agent.sh", [])),
-            found,
-        )
-        # mcp skipped must not remain on ·.
-        joined = " ".join(found.get("sync-agent.sh", []))
-        self.assertNotIn("mcp skipped", joined)
+# DotMarkerAuditTests is retired: it audited `·` echo comments in
+# lib/sync*.sh, which is Bash source structure, not the native spine's
+# behavior. The observable intent — compact mode suppresses `·` noise — is
+# covered by CompactModeLeakTests, MarkerHygieneTests and
+# StepOutputContractCliTests above.
 
 
-
-class TemplateSkippedClassificationTests(unittest.TestCase):
+class TemplateSkippedClassificationTests(_CliSyncStubMixin, unittest.TestCase):
     """M1 / T3.3 gap — classify recipe-materialize 'template skipped (exists)'."""
 
-    def test_m1_template_skipped_is_noise_filtered_in_compact(self):
-        """Keep · (noise): idempotent 'already exists' detail, like symlink ok.
+    SAMPLE = "    · template skipped (exists) ai-specs/foo.md"
+
+    def test_m1_template_skipped_is_classified_as_noise(self):
+        """Static half: the producer marks it `·` noise, not a `ℹ` notice.
 
         Precedent (daad3aa): promote to ℹ only for user-facing policy/absence
         notices ('skipped AGENTS.md', 'mcp skipped'). Template-skipped reports
@@ -980,221 +880,68 @@ class TemplateSkippedClassificationTests(unittest.TestCase):
         self.assertIn("· template skipped (exists)", lines[hit])
         self.assertNotIn("ℹ template skipped", lines[hit])
 
-        sample = "    · template skipped (exists) ai-specs/foo.md"
-        for script in (SYNC_SH, SYNC_AGENT_SH):
-            with self.subTest(script=script.name):
-                fns = _extract_bash_functions(
-                    script, ("print_step_output", "run_step")
-                )
-                body = (
-                    "set -euo pipefail\n"
-                    "VERBOSE=0\n"
-                    + fns
-                    + "\n"
-                    + 'f="$(mktemp)"\n'
-                    + "printf '%s\n' '"
-                    + sample
-                    + "' 'keep-me' >\"$f\"\n"
-                    + "print_step_output \"$f\"\n"
-                    + "rm -f \"$f\"\n"
-                )
-                proc = subprocess.run(
-                    ["bash", "-c", body],
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertEqual(proc.stdout, "keep-me\n")
-                self.assertNotIn("template skipped", proc.stdout)
-
-                body_v = (
-                    "set -euo pipefail\n"
-                    "VERBOSE=1\n"
-                    + fns
-                    + "\n"
-                    + 'f="$(mktemp)"\n'
-                    + "printf '%s\n' '"
-                    + sample
-                    + "' >\"$f\"\n"
-                    + "print_step_output \"$f\"\n"
-                    + "rm -f \"$f\"\n"
-                )
-                proc_v = subprocess.run(
-                    ["bash", "-c", body_v],
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
-                self.assertEqual(proc_v.returncode, 0, proc_v.stderr)
-                self.assertIn(sample, proc_v.stdout)
-
-
-class ErrexitInteractionTests(_WorkspaceMixin, unittest.TestCase):
-    """P4 — inherit_errexit + sync_one_agent || return $? failure propagation."""
-
-    def test_t4_0_bash_3_2_runs_both_sync_entry_points(self):
-        """T4.0: stock macOS Bash reaches both sync activation paths."""
-        interpreter = Path("/bin/bash")
-        version = _bash_version(interpreter) if interpreter.is_file() else None
-        if version != (3, 2):
-            self.skipTest(
-                "legacy Bash 3.2 matrix leg omitted: /bin/bash is unavailable "
-                f"or reports {version!r}"
-            )
-
-        for script in (SYNC_SH, SYNC_AGENT_SH):
-            with self.subTest(script=script.name):
-                workspace = self.make_workspace()
-                try:
-                    self.init_workspace(workspace, agents=["claude"], subrepos=[])
-                    command = [str(interpreter), str(script), str(workspace)]
-                    command.append(
-                        "--ignore-cli-version"
-                        if script == SYNC_SH
-                        else "--claude"
-                    )
-                    proc = subprocess.run(
-                        command,
-                        text=True,
-                        capture_output=True,
-                        check=False,
-                        env=_sync_env(),
-                    )
-                    combined = proc.stdout + proc.stderr
-                    self.assertEqual(
-                        proc.returncode,
-                        0,
-                        f"{script.name} under /bin/bash 3.2 failed:\n{combined}",
-                    )
-                    self.assertNotIn("invalid shell option name", combined)
-                finally:
-                    shutil.rmtree(workspace.parent, ignore_errors=True)
-
-    def test_t4_1_command_substitution_failure_hard_fails_under_inherit_errexit(self):
-        """T4.1: failing $(...) below inherit_errexit is not silently swallowed."""
-        modern_binary = shutil.which("bash")
-        modern = Path(modern_binary) if modern_binary else None
-        version = _bash_version(modern) if modern else None
-        if version is None or version < (4, 4) or not _supports_inherit_errexit(modern):
-            self.skipTest(
-                "modern Bash >=4.4 matrix leg omitted: interpreter unavailable "
-                f"or lacks inherit_errexit (detected {version!r})"
-            )
-
-        harness_dir = Path(tempfile.mkdtemp(prefix="ai-specs-errexit-env-"))
-        self.addCleanup(shutil.rmtree, harness_dir, ignore_errors=True)
-        bash_env = harness_dir / "bash-env"
-        bash_env.write_text(
-            textwrap.dedent(
-                r"""
-                python3() {
-                    case "${2:-}" in
-                        *'["root"]'*) printf 'ERREXIT_PROBE\n' >&2; false ;;
-                    esac
-                    case "${1:-}:${3:-}" in
-                        *project-cache.py:path) printf 'ERREXIT_PROBE\n' >&2; false ;;
-                    esac
-                    command python3 "$@"
-                }
-                """
-            )
-        )
-
-        # The actual scripts must still inherit errexit on a modern Bash. The
-        # injected helper fails inside an unguarded command substitution; with
-        # inherit_errexit enabled, the scripts stop before their success marker.
-        for script in (SYNC_SH, SYNC_AGENT_SH):
-            with self.subTest(script=f"{script.name}:modern-runtime"):
-                workspace = self.make_workspace()
-                try:
-                    self.init_workspace(workspace, agents=["claude"], subrepos=[])
-                    command = [str(modern), str(script), str(workspace)]
-                    command.append(
-                        "--ignore-cli-version"
-                        if script == SYNC_SH
-                        else "--claude"
-                    )
-                    proc = subprocess.run(
-                        command,
-                        text=True,
-                        capture_output=True,
-                        check=False,
-                        env=_sync_env({"BASH_ENV": str(bash_env)}),
-                    )
-                    combined = proc.stdout + proc.stderr
-                    self.assertNotEqual(
-                        proc.returncode,
-                        0,
-                        f"{script.name} did not preserve inherited errexit:\n{combined}",
-                    )
-                    self.assertIn("ERREXIT_PROBE", combined)
-                    self.assertNotIn("complete", combined)
-                finally:
-                    shutil.rmtree(workspace.parent, ignore_errors=True)
-
-        # Mirror the scripts' shell options and the sync_one_agent pattern:
-        #   local x; x="$(cmd)" || return $?
-        bash = textwrap.dedent(
-            r"""
-            set -euo pipefail
-            shopt -s inherit_errexit
-            sync_one_agent_like() {
-                local x
-                x="$(false)" || return $?
-                printf 'REACHED\n'
-                return 0
-            }
-            rc=0
-            sync_one_agent_like || rc=$?
-            printf 'STATUS:%s\n' "$rc"
-            """
-        )
-        proc = subprocess.run(
-            [str(modern), "-c", bash], text=True, capture_output=True, check=False
-        )
+    def test_m1_template_skipped_cli_compact_drops_and_verbose_keeps(self):
+        """CLI half: the stub's `·` line is filtered in compact, kept in -v."""
+        intercepts = [
+            ("gitignore-render.py", {"rc": 0, "stdout": self.SAMPLE + "\nkeep-me\n"})
+        ]
+        proc, _ = self.run_stubbed_sync(intercepts=intercepts)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(proc.stdout, "STATUS:1\n")
-        self.assertNotIn("REACHED", proc.stdout)
+        self.assertIn("keep-me\n", proc.stdout)
+        self.assertNotIn("template skipped", proc.stdout)
 
-        # Same pattern as exercised inside the real scripts after their shopt line:
-        # a run_step whose body uses a failing command substitution must surface
-        # the failure (not continue as success).
-        for script in (SYNC_SH, SYNC_AGENT_SH):
-            with self.subTest(script=script.name):
-                fns = _extract_bash_functions(
-                    script, ("print_step_output", "run_step")
-                )
-                body_tail = textwrap.dedent(
-                    r"""
-                    bad_step() {
-                        # Fail inside a command substitution below inherit_errexit.
-                        local x
-                        x="$(false)" || return $?
-                        printf 'should-not-print\n'
-                    }
-                    rc=0
-                    run_step "demo" bad_step || rc=$?
-                    printf 'EXIT:%s\n' "$rc"
-                    """
-                )
-                body = (
-                    "set -euo pipefail\n"
-                    "shopt -s inherit_errexit\n"
-                    "VERBOSE=0\n"
-                    + fns
-                    + "\n"
-                    + body_tail
-                )
-                proc = subprocess.run(
-                    [str(modern), "-c", body],
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertIn("EXIT:1\n", proc.stdout)
-                self.assertNotIn("should-not-print", proc.stdout)
+        proc_v, _ = self.run_stubbed_sync(intercepts=intercepts, args=("-v",))
+        self.assertEqual(proc_v.returncode, 0, proc_v.stderr)
+        self.assertIn(self.SAMPLE, proc_v.stdout)
+
+
+class ErrexitInteractionTests(_WorkspaceMixin, _CliSyncStubMixin, unittest.TestCase):
+    """P4 — failure propagation, driven at the CLI boundary.
+
+    `test_t4_0_bash_3_2_runs_both_sync_entry_points` is retired with the
+    Bash-3.2 matrix: it only proved the shell scripts run under a legacy
+    interpreter, which stops being authoritative once `sync` is native. The
+    direct-script halves of the old `test_t4_1_*` are replaced by CLI stub
+    tests; the `|| return $?` count audit on sync-agent.sh is retired as Bash
+    source structure (its behavioral replacement is the symlink test below).
+    """
+
+    def test_t4_1_target_resolution_failure_aborts_before_the_header(self):
+        """A failing target-resolve must abort before any writes or header."""
+        proc, stubs = self.run_stubbed_sync(
+            intercepts=[("target-resolve.py", {"rc": 1, "stderr": "ERREXIT_PROBE\n"})]
+        )
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertIn(
+            "ERROR: target resolution failed before any writes.", proc.stderr
+        )
+        self.assertIn("ERREXIT_PROBE", proc.stderr)
+        self.assertNotIn("ai-specs sync", proc.stdout)
+        self.assertFalse(
+            any("project-cache.py" in line for line in stubs.invocations()),
+            "resolution failed before any write work began",
+        )
+
+    def test_t4_1_project_cache_failure_in_the_fanout_propagates(self):
+        """A failing child step in the fan-out exits non-zero with no footer."""
+        proc, stubs = self.run_stubbed_sync(
+            intercepts=[
+                ("brief-render-policy.py", {"rc": 0, "stdout": "true\n"}),
+                ("project-cache.py", {"rc": 1, "stderr": "ERREXIT_PROBE\n"}),
+            ]
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("ERREXIT_PROBE", proc.stdout + proc.stderr)
+        self.assertNotIn("✓ ai-specs sync complete", proc.stdout)
+        self.assertNotIn("✓ ai-specs sync complete", proc.stderr)
+        # The flow reached both the policy gate and the fan-out's failing step.
+        invocations = stubs.invocations()
+        self.assertTrue(
+            any("brief-render-policy.py" in line for line in invocations), invocations
+        )
+        self.assertTrue(
+            any("project-cache.py" in line for line in invocations), invocations
+        )
 
     def test_t4_2_sync_one_agent_return_sites_propagate_symlink_failure(self):
         """T4.2: make_relative_symlink failure exits sync-agent via || return $?."""
@@ -1221,55 +968,11 @@ class ErrexitInteractionTests(_WorkspaceMixin, unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent, ignore_errors=True)
 
-    def test_t4_2_sync_one_agent_return_sites_propagate_skills_symlink_failure(
-        self,
-    ):
-        """T4.2: make_skills_symlink failure also propagates (not swallowed)."""
-        workspace = self.make_workspace()
-        try:
-            self.init_workspace(workspace, agents=["claude"], subrepos=[])
-            # Plant a non-symlink at the skills link path (.claude/skills).
-            skills_link = workspace / ".claude" / "skills"
-            skills_link.parent.mkdir(parents=True, exist_ok=True)
-            if skills_link.is_symlink() or skills_link.exists():
-                if skills_link.is_dir() and not skills_link.is_symlink():
-                    shutil.rmtree(skills_link)
-                else:
-                    skills_link.unlink()
-            # After sync_one_agent removes a non-symlink dir, it recreates the
-            # symlink. To force make_skills_symlink to fail, plant a non-symlink
-            # FILE at the link path after ensuring parent exists — but the
-            # function rm -rf's non-symlink dirs first. Plant a file that is
-            # not a dir: rm -rf will remove a file too. The refuse path is when
-            # the existing path is neither missing nor a symlink to the right
-            # target... read make_skills_symlink.
-            #
-            # make_skills_symlink refuses when link_path exists and is NOT a
-            # symlink. sync_one_agent rm -rf's non-symlink paths first for
-            # skills, so that path is covered. Use instructions symlink
-            # refusal as the representative || return $? site already above,
-            # and additionally assert every || return $? site still exists.
-            text = SYNC_AGENT_SH.read_text()
-            start = text.index("sync_one_agent() {")
-            end = text.index("\nfor agent in", start)
-            body = text[start:end]
-            returns = body.count("|| return $?")
-            self.assertGreaterEqual(
-                returns,
-                10,
-                f"expected the sync_one_agent || return $? sites; found {returns}",
-            )
-            # No bare command substitutions without || return in the critical path.
-            for line in body.splitlines():
-                stripped = line.strip()
-                if "platform_get" in stripped and "$(" in stripped:
-                    self.assertIn(
-                        "|| return $?",
-                        stripped,
-                        f"platform_get substitution missing || return $?: {stripped}",
-                    )
-        finally:
-            shutil.rmtree(workspace.parent, ignore_errors=True)
+    # Retired: the skills-symlink leg was a static `|| return $?` count audit
+    # over sync-agent.sh's source (`body.count(...)`), i.e. Bash source
+    # structure rather than observed behavior. The behavioral replacement is
+    # `test_t4_2_sync_one_agent_return_sites_propagate_symlink_failure` above,
+    # which drives the CLI and asserts the failure surfaces.
 
 
 if __name__ == "__main__":
