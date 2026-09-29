@@ -286,3 +286,27 @@ func TestSwapBinaryWindowsMissingSrc(t *testing.T) {
 		t.Errorf("target bytes = %q, want %q (original must be restored)", got, "OLD")
 	}
 }
+
+// TestSwapBinaryWindowsPreservesBackup pins R3-002: when the current binary
+// is missing but a .old backup exists (a previous failed swap), the backup is
+// never deleted; a failed direct install leaves it intact.
+func TestSwapBinaryWindowsPreservesBackup(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "app.old")
+	good := []byte("good-bytes")
+	if err := os.WriteFile(old, good, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "app")
+	err := SwapBinary(filepath.Join(dir, "missing-src"), target, "windows")
+	if err == nil {
+		t.Fatal("SwapBinary succeeded with a missing src, want error")
+	}
+	got, rerr := os.ReadFile(old)
+	if rerr != nil || string(got) != string(good) {
+		t.Fatalf("backup was modified or deleted: content=%q err=%v", got, rerr)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatalf("target unexpectedly exists after failed swap: %v", err)
+	}
+}

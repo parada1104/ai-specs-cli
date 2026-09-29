@@ -230,17 +230,21 @@ func SwapBinary(src, target, goos string) error {
 
 func swapWindows(src, target string) error {
 	old := target + ".old"
+	if _, err := os.Lstat(target); err != nil {
+		// No current binary: never touch an existing .old backup (it may be
+		// the only good copy a previous failed swap left behind); attempt a
+		// direct install instead.
+		return os.Rename(src, target)
+	}
 	_ = os.Remove(old)
-	backedUp := false
-	if _, err := os.Lstat(target); err == nil {
-		if err := os.Rename(target, old); err != nil {
-			return err
-		}
-		backedUp = true
+	if err := os.Rename(target, old); err != nil {
+		return err
 	}
 	if err := os.Rename(src, target); err != nil {
-		if backedUp {
-			_ = os.Rename(old, target)
+		if rerr := os.Rename(old, target); rerr != nil {
+			// Surface the failed restore: the caller must not believe the
+			// original binary is intact when it is not.
+			return errors.Join(err, rerr)
 		}
 		return err
 	}
