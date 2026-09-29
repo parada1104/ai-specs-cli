@@ -115,26 +115,44 @@ safety engine.
   closed `approved`; exact acknowledgement burned (`authority: burned`,
   `consumed_revision sha256:92262f30…`). 10 informational advisories (see the
   report); no correction required.
-- [ ] **WU2 — `internal/cliversion` byte-identical port.** `ReadInstalledVersion`,
+- [x] **WU2 — `internal/cliversion` byte-identical port.** `ReadInstalledVersion`,
   `ParseVersionTuple`, `CompareVersions`, `ParseToolPolicy`, `CheckPolicy`,
-  `ReadLockMeta`, `EvaluateCLIVersion`, `check-sync` CLI. Differential driver
-  under `testdata/` + corpus; focused unit tests.
-- [ ] **WU3 — upgrade flags + dirty detection + dry-run planning.** Port flag
-  parsing, usage text, exit codes, install detection, dirty/mode-only-dirt
-  remediation, dry-run report. No network, no replacement. Tests with temp
-  git installs.
-- [ ] **WU4 — verified acquisition + atomic self-replacement + failure tests.**
-  Trust-root parsing, platform detection, httptest download, digest verify
-  before replace, atomic rename, Unix + Windows branches, tamper rejection,
-  interrupted-download and failed-rename recovery. Tests never touch the real
-  binary or the network.
+  `ReadLockMeta`, `EvaluateCLIVersion`. Differential driver under `testdata/`
+  + corpus; focused unit tests. Evidence: `go test ./internal/cliversion/ -count=1`
+  exit 0; differential `testdata/version_ref.py` compared ~90 corpus cases
+  (compare/parse/policy/checkpolicy/evaluate/installed/lockmeta) byte-for-byte
+  against `python3 lib/_internal/cli_version.py`; `gofmt`/`go vet` clean.
+  Commit `3428c8c` (782 changed lines). The `check-sync`/`stamp-meta` CLI
+  shims remain Python (stamp-meta is a lock write). **Native review PENDING
+  provider quota** (lineage `review-6bbcfd2f629d27d3` created; order 0
+  `review-risk` hit `429 GoUsageLimitError`; waiting for the human's signal).
+- [x] **WU3 — upgrade flags + dirty detection + dry-run.** Port flag parsing,
+  usage text, exit codes, install detection, dirty/mode-only-dirt remediation,
+  dry-run report, and the legacy fetch/ff-merge + changelog release report.
+  Evidence: `go test ./internal/upgrade/ -count=1` exit 0 (16 tests, real-git
+  temp installs); `gofmt`/`go vet` clean. Commit `2a7fb92` (779 changed lines).
+  **Native review PENDING** (queued behind WU2).
+- [x] **WU4 — verified acquisition + atomic self-replacement.** `acquire.go`:
+  trust-root parse, platform/asset resolution, httptest-verified download,
+  SHA-256 check BEFORE replacement, atomic swap with the Windows
+  backup/restore branch. Evidence: `go test ./internal/upgrade/ -count=1` exit
+  0 (25 tests: verified install, tampered rejection with target untouched,
+  interrupted download, missing digest, both swap branches); `gofmt`/`go vet`
+  clean. Commit `ca24dc1` (536 changed lines). **Native review PENDING**
+  (queued behind WU2).
 - [ ] **Close:** `gofmt -l .`, `go vet ./...`, `go test ./...`, then one
   full `./tests/run.sh` with a 3600s timeout; record real exit codes; leave
   dispatcher wiring as remaining.
 
 ## Evidence
 
-(recorded as each work unit closes: commit sha, RED/GREEN exit codes, review lineage)
+- WU1: commit `32e8aab`; `go test ./internal/changelog/ -count=1` exit 0;
+  differential 252 invocations byte-for-byte; review `review-c88527d9eb75ac35`
+  approved + burned.
+- WU2: commit `3428c8c`; `go test ./internal/cliversion/ -count=1` exit 0;
+  differential ~90 cases; review `review-6bbcfd2f629d27d3` PENDING quota.
+- WU3: commit `2a7fb92`; `go test ./internal/upgrade/ -count=1` exit 0.
+- WU4: commit `ca24dc1`; `go test ./internal/upgrade/ -count=1` exit 0.
 
 ## Findings
 
