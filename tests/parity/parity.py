@@ -145,6 +145,17 @@ def _norm_help_stderr(text: str, ctx: dict) -> str:
     return text
 
 
+# The legacy Python modules announce their degraded Python authority on stderr
+# when no verified worktree-gate binary is present in the install. Anchored to
+# the two exact notice prefixes; nothing else is touched.
+_BRIDGE_FALLBACK_NOTICE_RE = re.compile(
+    r"^(?:  ! )?GO_[A-Z_]+_BRIDGE_FALLBACK: .*$\n?", re.MULTILINE)
+
+
+def _norm_bridge_fallback_notice(text: str, ctx: dict) -> str:
+    return _BRIDGE_FALLBACK_NOTICE_RE.sub("", text)
+
+
 NORMALIZATIONS = (
     Normalization(
         rule_id="N1-temp-paths",
@@ -242,6 +253,25 @@ NORMALIZATIONS = (
                       "revisit N6 if the Go implementation ever gains native "
                       "help-stderr output.",
         fn=_norm_help_stderr,
+    ),
+    Normalization(
+        rule_id="N7-legacy-bridge-fallback-notice",
+        surfaces=("stderr",),
+        description="Remove only the legacy GO_*_BRIDGE_FALLBACK announcement "
+                    "lines, with or without the '  ! ' prefix, from stderr.",
+        justification="The legacy Python modules announce their degraded "
+                      "Python authority on stderr when no verified "
+                      "worktree-gate binary is present in the install "
+                      "(`GO_RESOLVED_CONFIG_BRIDGE_FALLBACK`, "
+                      "`GO_CLASSIFY_OVERRIDE_BRIDGE_FALLBACK`, and the other "
+                      "`GO_*_BRIDGE_FALLBACK` notices). The Go port performs "
+                      "those projections and classifications natively, so it "
+                      "has no temporary authority to announce and must never "
+                      "claim to be using Python. Only the announcement lines "
+                      "are removed; the check roster, severities, messages, "
+                      "exit codes and report formatting stay compared "
+                      "verbatim.",
+        fn=_norm_bridge_fallback_notice,
     ),
 )
 
@@ -362,6 +392,47 @@ def _setup_fresh(project: Path) -> None:
     _write(project, "README.md", "# fresh project\n")
 
 
+def _setup_rules_audit_bare(project: Path) -> None:
+    """Bare project: only a README, so `rules-audit` emits the minimal
+    (mode B) inventory."""
+    _write(project, "README.md", "# bare project\n")
+
+
+def _setup_rules_audit_inventory(project: Path) -> None:
+    """Rich legacy surface for the rules-audit scanner: .cursor rules with and
+    without frontmatter, a .cursorrules, AGENTS.md headings, an enabled
+    manifest, a local skill, and node/python/go lockfiles."""
+    _write(project, ".cursor/rules/with-frontmatter.mdc",
+           "---\n"
+           "description: TDD workflow rules\n"
+           'globs: ["src/**/*.ts"]\n'
+           "alwaysApply: true\n"
+           "---\n"
+           "# Workflow rules\n"
+           "Run tests first.\n")
+    _write(project, ".cursor/rules/plain.mdc",
+           "# Plain rules\n"
+           "Deprecate this obsolete rule file.\n")
+    _write(project, ".cursorrules",
+           "Use the vault and open a pull request.\n")
+    _write(project, "AGENTS.md",
+           "# Project overview\n"
+           "See the `tdd-flow` skill.\n"
+           "\n"
+           "## Runtime notes\n"
+           "The Trello board is the source of truth.\n"
+           "\n"
+           "### Conflict policy\n"
+           "Follow the worktree flow.\n")
+    _write(project, "ai-specs/ai-specs.toml", _manifest(
+        agents=("claude", "pi"),
+        recipes=("tdd-flow", "session-context")))
+    _write(project, "ai-specs/skills/local-skill/SKILL.md", "# local skill\n")
+    _write(project, "package-lock.json", "{}\n")
+    _write(project, "pyproject.toml", "[project]\nname = 'fixture'\n")
+    _write(project, "go.mod", "module fixture\n")
+
+
 def _setup_manifest_only(project: Path) -> None:
     _write(project, "ai-specs/ai-specs.toml", _manifest())
     (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
@@ -398,6 +469,53 @@ def _setup_missing_dep(project: Path) -> None:
         'path = "skills/ghost"\n'
         'scope = ["root"]\n'
     )))
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+
+
+def _setup_doctor_degraded(project: Path) -> None:
+    """Legacy recipe version pin, [brief].render = false with the runtime-brief
+    marker, a stale managed .envrc, and declared MCP env missing from
+    ai-specs.env."""
+    _write(project, "ai-specs/ai-specs.toml", _manifest(
+        agents=("claude",),
+        recipes=("trello-mcp-workflow",),
+        extra=(
+            "\n[recipes.trello-mcp-workflow.config]\n"
+            'board_id = "69ec097f13e2d38ecd89a557"\n'
+            "\n[recipes.tdd-flow]\n"
+            "enabled = true\n"
+            'version = "9.9.9"\n'
+            "\n[brief]\n"
+            "render = false\n"
+        ),
+    ))
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    _write(project, "AGENTS.md",
+           "# project brief\n\n<!-- ai-specs:runtime-brief -->\n")
+    # Managed block present but body stale: doctor must WARN stale, not missing.
+    _write(project, ".envrc",
+           "# .envrc - direnv entry for this project\n"
+           "# managed-by: ai-specs (do not remove block)\n"
+           "dotenv\n"
+           "# end managed-by: ai-specs\n")
+
+
+def _setup_doctor_healthy(project: Path) -> None:
+    """Synced project: sync + sync-agent --all, then doctor must agree on the
+    generated surface.
+
+    Deliberately excludes the tracker recipe. Its required board_id makes sync
+    materialize a path-stamped tracker-card-gate.sh whose raw hash the lock
+    records, so the lock can never agree between two isolated scratch roots
+    (an environment artifact, not port behavior). The tracker recipe's own dep
+    and env coverage lives in doctor-degraded, which is zero-delta.
+    """
+    _write(project, "ai-specs/ai-specs.toml", _manifest(
+        agents=("claude", "pi"),
+        recipes=("tdd-flow", "session-context", "worktree-flow"),
+    ))
     (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
     (project / "ai-specs" / "commands").mkdir(exist_ok=True)
 
@@ -472,6 +590,54 @@ CORPUS: tuple[Fixture, ...] = (
             Step(("recipe", "add", "tdd-flow")),
             Step(("recipe", "list")),
         ),
+    ),
+    Fixture(
+        name="doctor-broken",
+        description="Manifest without any sync: `doctor` must report the "
+                    "missing generated surface.",
+        setup=_setup_manifest_only,
+        steps=(Step(("doctor",)),),
+    ),
+    Fixture(
+        name="doctor-degraded",
+        description="Legacy recipe `version=`, `[brief].render = false` with "
+                    "the runtime-brief marker, a stale managed `.envrc`, and "
+                    "declared MCP env missing from `ai-specs.env`.",
+        setup=_setup_doctor_degraded,
+        steps=(Step(("doctor",)),),
+    ),
+    Fixture(
+        name="doctor-healthy",
+        description="Synced project: `sync`, `sync-agent --all`, then "
+                    "`doctor` must agree on the generated surface. Enables "
+                    "`tdd-flow`, `session-context` and `worktree-flow` only: "
+                    "the tracker recipe's required `board_id` makes sync "
+                    "materialize a path-stamped `tracker-card-gate.sh` whose "
+                    "raw hash the lock records, so the lock can never agree "
+                    "between two isolated scratch roots; the tracker recipe's "
+                    "own dep and env coverage lives in `doctor-degraded`, "
+                    "which is zero-delta.",
+        setup=_setup_doctor_healthy,
+        steps=(Step(("sync",)), Step(("sync-agent", "--all")),
+               Step(("doctor",))),
+    ),
+    Fixture(
+        name="rules-audit-bare",
+        description="Empty project: `rules-audit` must emit the minimal "
+                    "inventory.",
+        setup=_setup_rules_audit_bare,
+        steps=(Step(("rules-audit",)),),
+    ),
+    Fixture(
+        name="rules-audit-inventory",
+        description="Rich legacy surface: `.cursor/rules/*.mdc` with and "
+                    "without frontmatter, a `.cursorrules`, an `AGENTS.md` "
+                    "with 1-3 hash headings and a backticked skill id, a "
+                    "manifest with enabled agents/recipes, a local "
+                    "`ai-specs/skills/<id>/SKILL.md`, and node/python/go "
+                    "lockfiles must produce the same inventory.",
+        setup=_setup_rules_audit_inventory,
+        steps=(Step(("rules-audit",)),),
     ),
 )
 
