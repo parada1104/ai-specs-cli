@@ -864,6 +864,14 @@ func findOpenFence(text string, pos int) (start int, fenceChar byte, fenceLen, b
 	return 0, 0, 0, 0, false
 }
 
+// FROZEN PARITY (oracle-wins): a closing fence line ending in \r (CRLF) or a
+// closing run longer than the opening run is rejected here, exactly like the
+// frozen oracle regex `^(?P=fence)[ \t]*$` in
+// lib/_internal/rules-inventory.py:417-420 ( \r is neither space nor tab, and
+// the backreference pins the exact run length). Both implementations then
+// treat the fence as unterminated and blank to EOF. Pinned by
+// TestBlankFencesFrozenFenceParity; revisit only in the post-cutover parity
+// amendment (Trello card [Go 08][frozen quirk]).
 // findCloseFence returns the end offset (index of the terminating newline or
 // len(text)) of the first closing fence line for the given run.
 func findCloseFence(text string, bodyStart int, fenceChar byte, fenceLen int) (int, bool) {

@@ -220,3 +220,43 @@ func TestEmptyProjectPayload(t *testing.T) {
 		t.Fatalf("payload mismatch:\n--- got ---\n%s\n--- want ---\n%s", stdout.String(), want)
 	}
 }
+
+// TestBlankFencesFrozenFenceParity pins R3-001 as frozen parity: CRLF closing
+// fences and longer closing runs leave the fence unterminated in BOTH the Go
+// port and the frozen oracle (lib/_internal/rules-inventory.py:417-420 —
+// `^(?P=fence)[ \t]*$` matches neither \r nor a longer run), so both blank
+// from the opening fence to EOF. Do NOT "fix" this before the post-cutover
+// parity amendment.
+func TestBlankFencesFrozenFenceParity(t *testing.T) {
+	blankAll := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if r == '\n' {
+				return '\n'
+			}
+			return ' '
+		}, s)
+	}
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"control: LF fence closes", "```\nbody\n```\n# Heading\n"},
+		{"CRLF closing fence stays unterminated", "```\nbody\r\n```\r\n# Heading\n"},
+		{"longer closing run stays unterminated", "```\nbody\n````\n# Heading\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := blankFences(tc.text)
+			switch tc.name {
+			case "control: LF fence closes":
+				if got != "   \n    \n   \n# Heading\n" {
+					t.Fatalf("control fence should close with heading preserved, got %q", got)
+				}
+			default:
+				if want := blankAll(tc.text); got != want {
+					t.Fatalf("unterminated-fence blank-to-EOF parity broken:\n got %q\nwant %q", got, want)
+				}
+			}
+		})
+	}
+}
