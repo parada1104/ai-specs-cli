@@ -66,6 +66,11 @@ BASE_ENV = {
     "AI_SPECS_GATE_OFFLINE": "1",
     "LC_ALL": "C",
     "LANG": "C",
+    # Per-step strangler selection (GO-07). Forwarded from the operator's
+    # environment so the corpus can be run with GO_SYNC_STEP_GITIGNORE=go (and
+    # friends): the legacy leg ignores these vars entirely, while the Go spine
+    # routes the named step through its native implementation.
+    **{k: v for k, v in os.environ.items() if k.startswith("GO_SYNC_STEP_")},
 }
 
 # Gate modes: whether the corpus runs with a locally built worktree-gate binary
@@ -490,6 +495,29 @@ def _setup_missing_dep(project: Path) -> None:
     (project / "ai-specs" / "commands").mkdir(exist_ok=True)
 
 
+def _setup_deps_gitignore(project: Path) -> None:
+    """Manifest with two [[deps]] pointing at nonexistent local paths.
+
+    Sync renders ai-specs/.gitignore (step 1) and the root agent block (step 2)
+    BEFORE deps materialization (step 4) fails, so both legs must still emit
+    byte-identical gitignore files despite the later failure.
+    """
+    _write(project, "ai-specs/ai-specs.toml", _manifest(extra=(
+        "\n[[deps]]\n"
+        'id = "ghost-one"\n'
+        f'source = "{project / "nowhere" / "ghost-one"}"\n'
+        'path = "skills/ghost-one"\n'
+        'scope = ["root"]\n'
+        "\n[[deps]]\n"
+        'id = "ghost-two"\n'
+        f'source = "{project / "nowhere" / "ghost-two"}"\n'
+        'path = "skills/ghost-two"\n'
+        'scope = ["root"]\n'
+    )))
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+
+
 def _setup_doctor_degraded(project: Path) -> None:
     """Legacy recipe version pin, [brief].render = false with the runtime-brief
     marker, a stale managed .envrc, and declared MCP env missing from
@@ -581,6 +609,16 @@ CORPUS: tuple[Fixture, ...] = (
                     "`doctor` then `sync` must degrade identically.",
         setup=_setup_missing_dep,
         steps=(Step(("doctor",)), Step(("sync",))),
+    ),
+    Fixture(
+        name="deps-gitignore",
+        description="Manifest with two [[deps]] pointing at nonexistent local "
+                    "paths: `sync` renders ai-specs/.gitignore (step 1) and the "
+                    "root agent block (step 2) before deps materialization "
+                    "fails, so both gitignore files must be byte-identical in "
+                    "both legs.",
+        setup=_setup_deps_gitignore,
+        steps=(Step(("sync",)),),
     ),
     Fixture(
         name="surface-verbs",
