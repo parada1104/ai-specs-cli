@@ -245,18 +245,30 @@ func (r *runner) run(opts options) int {
 		return filepath.Join(r.home, "lib", "_internal", name)
 	}
 
-	// Step a: the only step wired through the per-step strangler flag in S1.
-	if mode := stepMode("gitignore"); mode != "python" {
-		fmt.Fprintf(r.stderr, "ERROR: %s=%s is not implemented in this slice\n", stepKey("gitignore"), mode)
-		return 1
+	// Steps a-b are the first ported steps: GO_SYNC_STEP_GITIGNORE and
+	// GO_SYNC_STEP_GITIGNORE_ROOT select the native Go renderers, while
+	// "python" (the default) still execs the module. Any other value is
+	// refused loudly rather than silently falling back.
+	for _, name := range [...]string{"gitignore", "gitignore-root"} {
+		if mode := stepMode(name); mode != "python" && mode != "go" {
+			fmt.Fprintf(r.stderr, "ERROR: %s=%s is not implemented in this slice\n", stepKey(name), mode)
+			return 1
+		}
 	}
+	rootTemplate := filepath.Join(r.home, "templates", "gitignore-root.tmpl")
 	if rc := r.runStep("ai-specs/.gitignore", func(out, errW io.Writer) int {
+		if stepMode("gitignore") == "go" {
+			return RenderAiSpecsGitignore(tomlPath, aiGitignore, out)
+		}
 		return r.exec([]string{"python3", internal("gitignore-render.py"), tomlPath, aiGitignore}, out, errW)
 	}); rc != 0 {
 		return rc
 	}
 	if rc := r.runStep("root .gitignore (agent block)", func(out, errW io.Writer) int {
-		return r.exec([]string{"python3", internal("gitignore-root-refresh.py"), root, filepath.Join(r.home, "templates", "gitignore-root.tmpl")}, out, errW)
+		if stepMode("gitignore-root") == "go" {
+			return RefreshRootGitignore(root, rootTemplate, out, errW)
+		}
+		return r.exec([]string{"python3", internal("gitignore-root-refresh.py"), root, rootTemplate}, out, errW)
 	}); rc != 0 {
 		return rc
 	}
