@@ -245,11 +245,12 @@ func (r *runner) run(opts options) int {
 		return filepath.Join(r.home, "lib", "_internal", name)
 	}
 
-	// Steps a-b are the first ported steps: GO_SYNC_STEP_GITIGNORE and
-	// GO_SYNC_STEP_GITIGNORE_ROOT select the native Go renderers, while
-	// "python" (the default) still execs the module. Any other value is
-	// refused loudly rather than silently falling back.
-	for _, name := range [...]string{"gitignore", "gitignore-root"} {
+	// Strangler flags a-c: GO_SYNC_STEP_GITIGNORE and GO_SYNC_STEP_GITIGNORE_ROOT
+	// select the native Go gitignore renderers; GO_SYNC_STEP_AGENTS_RENDER
+	// selects the native brief-render-policy + agents-render pair. "python" (the
+	// default) still execs the modules; any other value is refused loudly rather
+	// than silently falling back.
+	for _, name := range [...]string{"gitignore", "gitignore-root", "agents-render"} {
 		if mode := stepMode(name); mode != "python" && mode != "go" {
 			fmt.Fprintf(r.stderr, "ERROR: %s=%s is not implemented in this slice\n", stepKey(name), mode)
 			return 1
@@ -372,6 +373,9 @@ func (r *runner) run(opts options) int {
 	// AGENTS.md: policy gate then render. The policy child's exit code is
 	// ignored, matching `$(...)` inside `[[ ]]`.
 	if rc := r.runStep("AGENTS.md", func(out, errW io.Writer) int {
+		if stepMode("agents-render") == "go" {
+			return renderAgentsStep(tomlPath, filepath.Join(root, "AGENTS.md"), resolvedConfigTemp, opts.adoptBrief, out, errW)
+		}
 		var policyOut bytes.Buffer
 		r.exec([]string{"python3", internal("brief-render-policy.py"), tomlPath}, &policyOut, errW)
 		if strings.TrimRight(policyOut.String(), "\n") == "true" {

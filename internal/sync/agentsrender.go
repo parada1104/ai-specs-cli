@@ -21,9 +21,12 @@ package sync
 // *toml.Table, so this also matches the established convention.
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -31,6 +34,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/target"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
@@ -1038,4 +1042,361 @@ func pySplitLines(s string) []string {
 		out = append(out, s[start:])
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// S3b: write governance (classify / adopt / preserve) + render entry
+// ---------------------------------------------------------------------------
+
+// runtimeBriefMarker is RUNTIME_BRIEF_MARKER. A file containing it is always
+// preserved (design D5 makes the marker unconditional).
+const runtimeBriefMarker = "<!-- ai-specs:runtime-brief -->"
+
+// briefPreserveMessage is BRIEF_PRESERVE_MESSAGE: the three-line stderr notice
+// _brief_preserve prints, with the final newline print() adds.
+const briefPreserveMessage = "  \u2139 AGENTS.md left unchanged (%s; preserving existing file)\n" +
+	"    to let ai-specs manage it:  ai-specs sync --adopt-brief\n" +
+	"    to keep it yours forever:   add <!-- ai-specs:runtime-brief --> at the top\n"
+
+// RenderAgentsOptions configures RenderAgentsFile.
+type RenderAgentsOptions struct {
+	// PreserveIfRuntimeBrief is --preserve-if-runtime-brief. It is deliberately
+	// inert (design D5): the marker in _brief_decision preserves unconditionally,
+	// so the flag can never turn preservation off.
+	PreserveIfRuntimeBrief bool
+	// AdoptBrief is --adopt-brief: a one-time handoff that records an existing
+	// user file as the managed baseline without overwriting its bytes.
+	AdoptBrief bool
+	// ResolvedConfigPath is --resolved-config; "" renders without structured
+	// fields, exactly like render() with resolved_config_path=None.
+	ResolvedConfigPath string
+}
+
+// briefLockPath is _brief_lock_path.
+func briefLockPath(tomlPath string) string {
+	return filepath.Join(filepath.Dir(tomlPath), ".ai-specs.lock")
+}
+
+// briefLockKey is _brief_lock_key: the project-relative lock key for a rendered
+// brief, resolved the same non-strict way Python's Path.resolve() does. An
+// output outside the manifest's project is refused (ValueError parity).
+func briefLockKey(tomlPath, outputPath string) (string, error) {
+	parent := filepath.Dir(tomlPath)
+	projectRoot := filepath.Dir(parent)
+	if filepath.Base(parent) != "ai-specs" {
+		projectRoot = parent
+	}
+	projectRoot = resolveNonStrict(projectRoot)
+	out := resolveNonStrict(outputPath)
+	rel, err := filepath.Rel(projectRoot, out)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("brief target is outside project root: %s", outputPath)
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+// resolveNonStrict mirrors Path.resolve(): it canonicalizes symlinks for the
+// longest existing prefix and appends the non-existent tail unchanged.
+func resolveNonStrict(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = filepath.Clean(path)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	dir := filepath.Dir(abs)
+	if dir == abs {
+		return abs
+	}
+	return filepath.Join(resolveNonStrict(dir), filepath.Base(abs))
+}
+
+// classifyManagedOverride is the decision half of
+// _python_classify_managed_override (the historical Python authority): disk vs
+// lock baseline vs the exact would-write bytes.
+func classifyManagedOverride(outputPath string, entry map[string]any, wouldWrite []byte) string {
+	fi, err := os.Stat(outputPath)
+	if err != nil || !fi.Mode().IsRegular() {
+		return "missing"
+	}
+	disk, err := os.ReadFile(outputPath)
+	if err != nil {
+		return "missing"
+	}
+	diskSHA := lock.Sha256Bytes(disk)
+	sha, _ := entry["sha256"].(string)
+	if entry == nil || sha == "" {
+		return "untracked"
+	}
+	if diskSHA != sha {
+		return "user_modified"
+	}
+	if wouldWrite == nil {
+		return "managed_current"
+	}
+	if diskSHA == lock.Sha256Bytes(wouldWrite) {
+		return "managed_current"
+	}
+	return "managed_stale"
+}
+
+// classifyBriefState is classify_brief(): the marker check first, then the
+// lock-backed managed-override decision. Every failure mode collapses to
+// "undetermined" (the Python `except Exception`).
+func classifyBriefState(tomlPath, outputPath string, wouldWrite []byte, lockPath string, lk *lock.Lock) string {
+	if _, err := os.Stat(outputPath); err == nil {
+		data, rerr := os.ReadFile(outputPath)
+		if rerr != nil || !utf8.Valid(data) {
+			return "undetermined"
+		}
+		if strings.Contains(string(data), runtimeBriefMarker) {
+			return "marker"
+		}
+	}
+	if lk == nil {
+		loaded, err := lock.LoadLock(lockPath)
+		if err != nil {
+			return "undetermined"
+		}
+		lk = loaded
+	}
+	key, err := briefLockKey(tomlPath, outputPath)
+	if err != nil {
+		return "undetermined"
+	}
+	return classifyManagedOverride(outputPath, lk.Managed[key], wouldWrite)
+}
+
+// briefIsOurOutput is _brief_is_our_output: disk bytes byte-identical to what
+// we would write, compared through the same normalization the classifier uses.
+func briefIsOurOutput(outputPath string, content []byte) bool {
+	var disk []byte
+	if fi, err := os.Stat(outputPath); err == nil && fi.Mode().IsRegular() {
+		if b, rerr := os.ReadFile(outputPath); rerr == nil {
+			disk = b
+		}
+	}
+	return lock.Sha256Bytes(disk) == lock.Sha256Bytes(content)
+}
+
+// briefEffectiveState is brief_effective_state(): the state sync would ACT on.
+// A brief with no baseline whose bytes are already ours is silently adopted by
+// sync, so it reports as managed_current rather than untracked/user_modified.
+func briefEffectiveState(tomlPath, outputPath string, wouldWrite []byte, lockPath string, lk *lock.Lock) string {
+	state := classifyBriefState(tomlPath, outputPath, wouldWrite, lockPath, lk)
+	if state == "untracked" || state == "user_modified" {
+		if briefIsOurOutput(outputPath, wouldWrite) {
+			return "managed_current"
+		}
+	}
+	return state
+}
+
+// briefOwnershipState is the deprecated brief_ownership_state alias; it must
+// stay one decision with briefEffectiveState (design D1), never a second
+// inline marker check.
+func briefOwnershipState(tomlPath, outputPath string, wouldWrite []byte, lockPath string, lk *lock.Lock) string {
+	return briefEffectiveState(tomlPath, outputPath, wouldWrite, lockPath, lk)
+}
+
+// briefDecision is _brief_decision(): classify one brief and return the
+// internal action plus the loaded lock. Classification errors fail closed as
+// preservation with an empty lock.
+func briefDecision(tomlPath, outputPath, lockPath string, content []byte, adoptBrief bool) (string, *lock.Lock) {
+	lk, err := lock.LoadLock(lockPath)
+	if err != nil {
+		return "preserve-undetermined", nil
+	}
+	state := classifyBriefState(tomlPath, outputPath, content, lockPath, lk)
+	if state == "marker" {
+		return "preserved", lk
+	}
+	if state == "missing" {
+		return "write", lk
+	}
+	isOurOutput := briefIsOurOutput(outputPath, content)
+	switch state {
+	case "untracked":
+		if isOurOutput || adoptBrief {
+			return "adopt", lk
+		}
+		return "preserve-untracked", lk
+	case "user_modified":
+		if isOurOutput || adoptBrief {
+			return "adopt", lk
+		}
+		return "preserve-user_modified", lk
+	case "managed_current":
+		return "current", lk
+	case "managed_stale":
+		return "write", lk
+	default:
+		return "preserve-" + state, lk
+	}
+}
+
+// loadResolvedConfig is render()'s resolved-config read: a missing, non-file,
+// unreadable, non-dict or malformed JSON path degrades to the empty dict, then
+// the three inner fields are coerced to their expected types.
+func loadResolvedConfig(path string) map[string]any {
+	resolved := map[string]any{}
+	if path == "" {
+		return resolved
+	}
+	fi, err := os.Stat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return resolved
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return resolved
+	}
+	var parsed any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return resolved
+	}
+	m, ok := parsed.(map[string]any)
+	if !ok {
+		return resolved
+	}
+	if _, ok := m["bindings"].(map[string]any); !ok {
+		m["bindings"] = map[string]any{}
+	}
+	if _, ok := m["recipes"].(map[string]any); !ok {
+		m["recipes"] = map[string]any{}
+	}
+	if _, ok := m["enabled"].([]any); !ok {
+		m["enabled"] = []any{}
+	}
+	return m
+}
+
+// loadAgentsRenderInputs is render()'s prelude: parse the manifest, load and
+// coerce the resolved-config JSON, then setdefault project_root to the
+// manifest's grandparent (ai-specs.toml lives under <root>/ai-specs/).
+func loadAgentsRenderInputs(tomlPath, resolvedConfigPath string) (*toml.Table, map[string]any, error) {
+	data, err := os.ReadFile(tomlPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	manifest, err := toml.Parse(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	resolved := loadResolvedConfig(resolvedConfigPath)
+	if _, ok := resolved["project_root"]; !ok {
+		resolved["project_root"] = filepath.Dir(filepath.Dir(resolveNonStrict(tomlPath)))
+	}
+	return manifest, resolved, nil
+}
+
+// warnUnknownVCS reproduces the one stderr warning _section_runtime_flow emits
+// for a bound VCS recipe outside _VCS_RECIPE_LABELS. The Python de-dupe is a
+// per-call local set, so at most one line is emitted per render.
+func warnUnknownVCS(resolved map[string]any, stderr io.Writer) {
+	raw := mapGetAny(resolvedMap(resolved, "bindings"), "vcs-pr-flow")
+	id, ok := raw.(string)
+	if !ok || id == "" {
+		return
+	}
+	if _, known := vcsRecipeLabels[id]; known {
+		return
+	}
+	fmt.Fprintf(stderr, "\u26a0 ai-specs: VCS recipe '%s' is not in the known label set; using generic label 'VCS PR (custom)'\n", id)
+}
+
+// writeBriefPreserve is _brief_preserve: print the state notice to stderr.
+func writeBriefPreserve(stderr io.Writer, state string) {
+	fmt.Fprintf(stderr, briefPreserveMessage, state)
+}
+
+// RenderAgentsFile is render(): classify the AGENTS.md target and act on it.
+// It returns the action render() returned ("written"/"adopted"/"preserved"/
+// "current"), whether write_bytes ran, and the process exit status main()
+// would produce. stdout carries nothing (main() prints no stdout), so the only
+// writer side effects are the preserve notice and the unknown-VCS warning on
+// stderr plus the AGENTS.md and lock bytes.
+func RenderAgentsFile(tomlPath, outputPath string, opts RenderAgentsOptions, stdout, stderr io.Writer) (action string, wrote bool, rc int) {
+	manifest, resolved, err := loadAgentsRenderInputs(tomlPath, opts.ResolvedConfigPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return "", false, 1
+	}
+	warnUnknownVCS(resolved, stderr)
+	content := RenderAgentsMarkdown(manifest, resolved)
+	if content == nil {
+		brief, _ := manifest.Table("brief")
+		if verr := ValidateBriefModes(brief); verr != nil {
+			fmt.Fprintln(stderr, verr.Error())
+			return "", false, 1
+		}
+		content = []byte{}
+	}
+
+	lockPath := briefLockPath(tomlPath)
+	decision, lk := briefDecision(tomlPath, outputPath, lockPath, content, opts.AdoptBrief)
+	switch {
+	case decision == "preserved":
+		writeBriefPreserve(stderr, "marker")
+		return "preserved", false, 0
+	case strings.HasPrefix(decision, "preserve-"):
+		writeBriefPreserve(stderr, strings.TrimPrefix(decision, "preserve-"))
+		return "preserved", false, 0
+	case decision == "current":
+		return "current", false, 0
+	}
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return "", false, 1
+	}
+	if decision == "write" {
+		if err := os.WriteFile(outputPath, content, 0o644); err != nil {
+			fmt.Fprintf(stderr, "%v\n", err)
+			return "", false, 1
+		}
+		wrote = true
+	}
+	var baseline []byte
+	if decision == "write" {
+		baseline = content
+	} else {
+		baseline, _ = os.ReadFile(outputPath)
+	}
+	key, err := briefLockKey(tomlPath, outputPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return "", wrote, 1
+	}
+	lock.SetBriefBaseline(lk, key, lock.Sha256Bytes(baseline))
+	if err := lock.WriteLock(lockPath, lk); err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return "", wrote, 1
+	}
+	if decision == "adopt" {
+		return "adopted", false, 0
+	}
+	return "written", true, 0
+}
+
+// renderAgentsStep is the native path of the sync AGENTS.md step: the
+// brief-render-policy.py gate first, then the renderer. A missing or
+// unparseable manifest prints `error: ...` and skips, matching the shell's
+// `$(...)`-ignored policy exit status.
+func renderAgentsStep(tomlPath, outputPath, resolvedConfigPath string, adoptBrief bool, out, errW io.Writer) int {
+	enabled, err := EvaluateBriefRender(tomlPath)
+	if err != nil {
+		fmt.Fprintf(errW, "error: %v\n", err)
+		enabled = false
+	}
+	if !enabled {
+		fmt.Fprintln(out, "  \u2139 skipped AGENTS.md (brief.render = false)")
+		return 0
+	}
+	_, _, rc := RenderAgentsFile(tomlPath, outputPath, RenderAgentsOptions{
+		AdoptBrief:         adoptBrief,
+		ResolvedConfigPath: resolvedConfigPath,
+	}, out, errW)
+	return rc
 }

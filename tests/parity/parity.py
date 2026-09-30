@@ -547,6 +547,25 @@ def _setup_doctor_degraded(project: Path) -> None:
            "# end managed-by: ai-specs\n")
 
 
+def _setup_adopt_brief(project: Path) -> None:
+    """User-owned AGENTS.md without the runtime-brief marker and with no lock
+    baseline: `sync --adopt-brief` must record the existing bytes as the
+    managed baseline without overwriting them (design D6 user-issued handoff)."""
+    _write(project, "ai-specs/ai-specs.toml", _manifest())
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    _write(project, "AGENTS.md", "# my own brief\n\nHand-written notes.\n")
+
+
+def _setup_brief_render_false(project: Path) -> None:
+    """[brief].render = false: sync's policy gate must skip the AGENTS.md step
+    entirely (no file written, skip notice on stdout)."""
+    _write(project, "ai-specs/ai-specs.toml",
+           _manifest(extra="\n[brief]\nrender = false\n"))
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+
+
 def _setup_doctor_healthy(project: Path) -> None:
     """Synced project: sync + sync-agent --all, then doctor must agree on the
     generated surface.
@@ -693,6 +712,22 @@ CORPUS: tuple[Fixture, ...] = (
                     "lockfiles must produce the same inventory.",
         setup=_setup_rules_audit_inventory,
         steps=(Step(("rules-audit",)),),
+    ),
+    Fixture(
+        name="sync-adopt-brief",
+        description="User-owned AGENTS.md with no runtime-brief marker and no "
+                    "lock baseline: `sync --adopt-brief` must adopt the existing "
+                    "bytes as the managed baseline without overwriting them.",
+        setup=_setup_adopt_brief,
+        steps=(Step(("sync", "--adopt-brief")),),
+    ),
+    Fixture(
+        name="sync-brief-render-false",
+        description="[brief].render = false: sync's policy gate must skip the "
+                    "AGENTS.md step entirely (no file written, skip notice on "
+                    "stdout).",
+        setup=_setup_brief_render_false,
+        steps=(Step(("sync",)),),
     ),
 )
 
