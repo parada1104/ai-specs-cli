@@ -82,7 +82,11 @@ func RefreshRootGitignore(root, templatePath string, stdout, stderr io.Writer) i
 		fmt.Fprintf(stderr, "ERROR: template not found: %s\n", templatePath)
 		return 1
 	}
-	template := readTextUniversal(templatePath)
+	template, err := readTextUniversal(templatePath)
+	if err != nil {
+		fmt.Fprintf(stderr, "ERROR: cannot read %s: %v\n", templatePath, err)
+		return 1
+	}
 	if !strings.HasSuffix(template, "\n") {
 		template += "\n"
 	}
@@ -90,7 +94,11 @@ func RefreshRootGitignore(root, templatePath string, stdout, stderr io.Writer) i
 	gitignore := filepath.Join(root, ".gitignore")
 	text := ""
 	if fi, err := os.Stat(gitignore); err == nil && fi.Mode().IsRegular() {
-		text = readTextUniversal(gitignore)
+		text, err = readTextUniversal(gitignore)
+		if err != nil {
+			fmt.Fprintf(stderr, "ERROR: cannot read %s: %v\n", gitignore, err)
+			return 1
+		}
 	}
 
 	begin := strings.Index(text, gitignoreRootMarkerBegin)
@@ -134,12 +142,13 @@ func RefreshRootGitignore(root, templatePath string, stdout, stderr io.Writer) i
 
 // readTextUniversal reads path the way Python's Path.read_text() does: bytes
 // decoded as text with universal-newline translation (\r\n and lone \r become
-// \n). A read error yields "" (the caller only reaches this after a successful
-// Stat).
-func readTextUniversal(path string) string {
+// \n). A read error is returned, never swallowed: Python raises on a failed
+// read, and treating an unreadable existing file as empty would let the
+// caller overwrite content it failed to load.
+func readTextUniversal(path string) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
+	return strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n"), nil
 }

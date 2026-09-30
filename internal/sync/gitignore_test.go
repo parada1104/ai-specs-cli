@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -279,4 +280,169 @@ func TestGitignoreDifferential(t *testing.T) {
 			}
 		})
 	}
+}
+
+// makeUnreadable makes path impossible to read for this process and returns the
+// target to pass to the port under test plus whether it is still a regular file
+// whose bytes must be preserved. chmod 000 is used when it actually denies
+// reads (any non-root process); root bypasses file permissions, so the file is
+// replaced with a directory, which os.ReadFile rejects at any privilege level.
+func makeUnreadable(t *testing.T, path string) (target string, regular bool) {
+	t.Helper()
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatalf("chmod 000 %s: %v", path, err)
+	}
+	if _, err := os.ReadFile(path); err != nil {
+		return path, true
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("restore %s: %v", path, err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove %s: %v", path, err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+	return path, false
+}
+
+// readFileAfterUnreadable restores read permissions before reading, so the
+// caller can compare bytes that the operation under test must not have touched.
+func readFileAfterUnreadable(t *testing.T, path string) []byte {
+	t.Helper()
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("restore perms on %s: %v", path, err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s after restore: %v", path, err)
+	}
+	return b
+}
+
+// assertUnchanged verifies the read target was not rewritten. A regular file is
+// compared byte-for-byte; a directory fixture must simply remain a directory.
+func assertUnchanged(t *testing.T, label string, target string, regular bool, want string) {
+	t.Helper()
+	if regular {
+		if got := readFileAfterUnreadable(t, target); string(got) != want {
+			t.Errorf("%s changed unreadable file: got %q want %q", label, got, want)
+		}
+		return
+	}
+	if fi, err := os.Stat(target); err != nil || !fi.IsDir() {
+		t.Errorf("%s changed directory fixture %s (err=%v)", label, target, err)
+	}
+}
+
+// runGitignoreModule execs one real lib/_internal module directly and returns
+// its exit code and captured streams. Unlike runGitignoreRef it tolerates a
+// non-zero exit, which is exactly what the read-failure cases expect.
+func runGitignoreModule(t *testing.T, root, module string, args ...string) (int, string, string) {
+	t.Helper()
+	path := filepath.Join(root, "lib", "_internal", module)
+	cmd := exec.Command("python3", append([]string{path}, args...)...)
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	rc := 0
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("run %s: %v", module, err)
+		}
+		rc = exitErr.ExitCode()
+	}
+	return rc, out.String(), errBuf.String()
+}
+
+// TestReadTextUniversalPropagatesReadError pins the core fix of
+// R4-SilentReadSwallowDataLoss directly: a read failure must be reported, not
+// converted into an empty string. A directory is used because os.ReadFile
+// rejects it regardless of process privileges.
+func TestReadTextUniversalPropagatesReadError(t *testing.T) {
+	dir := t.TempDir()
+	if got, err := readTextUniversal(dir); err == nil {
+		t.Fatalf("readTextUniversal(directory) = %q, nil; want error", got)
+	}
+}
+
+// TestGitignoreDifferentialReadFailures covers R4-SilentReadSwallowDataLoss: a
+// failed read of the root .gitignore or of the template must surface as rc 1
+// with no write, matching the Python authority, which raises. Unlike
+// TestGitignoreDifferential, stderr is not compared byte-for-byte because the
+// Python leg emits an uncaught traceback while the Go port prints one line; the
+// frozen properties are a non-zero rc and preserved bytes.
+func TestGitignoreDifferentialReadFailures(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 not available: %v", err)
+	}
+	root := gitignoreRepoRoot(t)
+	repoTemplate := filepath.Join(root, "templates", "gitignore-root.tmpl")
+
+	const existing = "keep-existing-root-content\n"
+
+	t.Run("root .gitignore unreadable", func(t *testing.T) {
+		goDir, refDir := t.TempDir(), t.TempDir()
+		goGitignore := filepath.Join(goDir, ".gitignore")
+		writeGitignoreInput(t, goGitignore, existing)
+		goTarget, goRegular := makeUnreadable(t, goGitignore)
+
+		var goOut, goErr bytes.Buffer
+		goRC := RefreshRootGitignore(goDir, repoTemplate, &goOut, &goErr)
+		if goRC == 0 {
+			t.Errorf("go rc = 0, want non-zero (stdout=%q)", goOut.String())
+		}
+		if goErr.Len() == 0 {
+			t.Errorf("go printed no stderr diagnostic")
+		}
+		assertUnchanged(t, "go", goTarget, goRegular, existing)
+
+		refGitignore := filepath.Join(refDir, ".gitignore")
+		writeGitignoreInput(t, refGitignore, existing)
+		refTarget, refRegular := makeUnreadable(t, refGitignore)
+
+		refRC, _, _ := runGitignoreModule(t, root, "gitignore-root-refresh.py", refDir, repoTemplate)
+		if refRC == 0 {
+			t.Errorf("ref rc = 0, want non-zero")
+		}
+		assertUnchanged(t, "ref", refTarget, refRegular, existing)
+	})
+
+	t.Run("template unreadable", func(t *testing.T) {
+		goDir, refDir := t.TempDir(), t.TempDir()
+		goGitignore := filepath.Join(goDir, ".gitignore")
+		writeGitignoreInput(t, goGitignore, existing)
+		goTemplate := filepath.Join(goDir, "template.tmpl")
+		writeGitignoreInput(t, goTemplate, "# template\n")
+		goTemplate, _ = makeUnreadable(t, goTemplate)
+
+		var goOut, goErr bytes.Buffer
+		goRC := RefreshRootGitignore(goDir, goTemplate, &goOut, &goErr)
+		if goRC == 0 {
+			t.Errorf("go rc = 0, want non-zero (stdout=%q)", goOut.String())
+		}
+		if goErr.Len() == 0 {
+			t.Errorf("go printed no stderr diagnostic")
+		}
+		if got, err := os.ReadFile(goGitignore); err != nil || string(got) != existing {
+			t.Errorf("go changed root .gitignore: got %q err=%v want %q", got, err, existing)
+		}
+
+		refGitignore := filepath.Join(refDir, ".gitignore")
+		writeGitignoreInput(t, refGitignore, existing)
+		refTemplate := filepath.Join(refDir, "template.tmpl")
+		writeGitignoreInput(t, refTemplate, "# template\n")
+		refTemplate, _ = makeUnreadable(t, refTemplate)
+
+		refRC, _, _ := runGitignoreModule(t, root, "gitignore-root-refresh.py", refDir, refTemplate)
+		if refRC == 0 {
+			t.Errorf("ref rc = 0, want non-zero")
+		}
+		if got, err := os.ReadFile(refGitignore); err != nil || string(got) != existing {
+			t.Errorf("ref changed root .gitignore: got %q err=%v want %q", got, err, existing)
+		}
+	})
 }
