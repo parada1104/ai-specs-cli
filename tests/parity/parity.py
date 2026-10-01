@@ -374,6 +374,10 @@ class Fixture:
 
 
 ALL_AGENTS = ("claude", "cursor", "opencode", "pi", "omp")
+# Every selector that has an mcp_config_path/mcp_key pair (platform.sh);
+# copilot has no native MCP and is included only as an enabled selector.
+ALL_MCP_AGENTS = ("claude", "cursor", "opencode", "codex", "copilot",
+                  "gemini", "pi", "omp")
 ALL_RECIPES = (
     "bitbucket-pr-flow", "git-pr-flow", "gitlab-mr-flow", "jinna-mcp-recipe",
     "plan-build-flow", "playwright-mcp", "playwright-ui-flow",
@@ -557,6 +561,44 @@ def _setup_adopt_brief(project: Path) -> None:
     _write(project, "AGENTS.md", "# my own brief\n\nHand-written notes.\n")
 
 
+def _setup_mcp_per_agent(project: Path) -> None:
+    """Every MCP-capable agent selector with two manifest servers (one local
+    with env refs, one HTTP with a header) and pre-seeded target files carrying
+    foreign keys / a foreign codex table, so `sync-agent --all` exercises every
+    mcp_key/path pair (incl. opencode `mcp` and codex `mcp_servers`) through the
+    merge-and-preserve path. Today both legs run the Python renderer via
+    sync-agent.sh; this fixture becomes the Go gate when the fan-out is ported
+    in S15."""
+    _write(project, "ai-specs/ai-specs.toml", _manifest(
+        agents=ALL_MCP_AGENTS,
+        extra=(
+            "\n[mcp.alpha]\n"
+            "command = 'npx'\n"
+            "args = ['-y', '@scope/server']\n"
+            "env = { TOKEN = '${ALPHA_TOKEN}', PLAIN = 'value' }\n"
+            "\n[mcp.beta]\n"
+            "type = 'http'\n"
+            "url = 'https://example.test/mcp'\n"
+            "headers = { Authorization = '${env:BETA_TOKEN}' }\n"
+            "timeout = 30\n"
+        ),
+    ))
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    # Foreign keys + a foreign codex table must survive the merge.
+    _write(project, ".mcp.json",
+           '{"foreignTop": 1, "mcpServers": {"stale": {"command": "old"}}}\n')
+    _write(project, ".cursor/mcp.json", '{"cursorOnly": true}\n')
+    _write(project, "opencode.json",
+           '{"theme": "dark", "$schema": "https://opencode.ai/config.json",'
+           ' "mcp": {"stale": {"type": "local"}}}\n')
+    _write(project, ".codex/config.toml",
+           '# user comment\n\n[user_table]\nx = 1\n\n'
+           '[mcp_servers.stale]\ncommand = "old"\n')
+    _write(project, ".gemini/settings.json", '{"geminiOnly": true}\n')
+    _write(project, ".omp/mcp.json", '{"ompOnly": true}\n')
+
+
 def _setup_brief_render_false(project: Path) -> None:
     """[brief].render = false: sync's policy gate must skip the AGENTS.md step
     entirely (no file written, skip notice on stdout)."""
@@ -728,6 +770,17 @@ CORPUS: tuple[Fixture, ...] = (
                     "stdout).",
         setup=_setup_brief_render_false,
         steps=(Step(("sync",)),),
+    ),
+    Fixture(
+        name="mcp-per-agent",
+        description="All eight agent selectors enabled with two [mcp.*] "
+                    "servers and pre-seeded target files carrying foreign keys "
+                    "and a foreign codex table: `sync` then `sync-agent --all` "
+                    "must render every mcp_key/path pair (claude/cursor/pi "
+                    "mcpServers, opencode mcp, codex mcp_servers, gemini, omp) "
+                    "while preserving the foreign content.",
+        setup=_setup_mcp_per_agent,
+        steps=(Step(("sync",)), Step(("sync-agent", "--all"))),
     ),
 )
 

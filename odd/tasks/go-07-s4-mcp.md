@@ -62,7 +62,26 @@ Validation:
 
 ### T2 — `mcp-per-agent` parity fixture
 
-(pending)
+- `python3 tests/parity/run.py` (builds Go + gate, runs the corpus in both
+  gate modes) → `fixtures: 17, failing: 0` for `gate-absent` AND
+  `gate-present`; `parity summary: gate-absent failing=0, gate-present
+  failing=0 — PASS`. The new `mcp-per-agent` fixture reports zero deltas in
+  both modes.
+- Confirmed the fixture exercises every pair: after `sync-agent --all` the
+  tree holds `.mcp.json` (claude + pi), `.cursor/mcp.json`, `opencode.json`
+  (`$schema` promoted first, `mcp` key), `.codex/config.toml`
+  (`mcp_servers` tables before the trailing foreign `[user_table]`),
+  `.gemini/settings.json` and `.omp/mcp.json`; every foreign key survived.
+
+Today both legs run the Python renderer through `sync-agent.sh` (a shim until
+S15); this fixture becomes the Go gate once the fan-out is ported.
+
+### T3 — Evidence summary
+
+- `go test ./... -count=1` → `ok` for every package.
+- `python3 tests/parity/run.py` → zero deltas, both gate modes (above).
+- Commits: T1 = `3695349`, T2 = recorded in the follow-up doc commit, T3 = that
+  same follow-up doc commit.
 
 ## Deviations/Quirks
 
