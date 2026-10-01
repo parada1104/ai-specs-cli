@@ -666,6 +666,18 @@ func hooksRenderCases() []hooksRefCase {
 			resolved: hooksStr(hooksBlob(map[string]any{
 				"recipe": "r", "id": "i", "event": "pre-tool-use", "matcher": "Bash", "script_path": hooksScriptPath, "env": []any{0, 1},
 			}))},
+		{name: "cursor env list negative index tolerated", agent: "cursor", resolvedRel: rel,
+			resolved: hooksStr(hooksBlob(map[string]any{
+				"recipe": "r", "id": "i", "event": "pre-tool-use", "matcher": "Bash", "script_path": hooksScriptPath, "env": []any{-1},
+			}))},
+		{name: "cursor env list negative and positive index tolerated", agent: "cursor", resolvedRel: rel,
+			resolved: hooksStr(hooksBlob(map[string]any{
+				"recipe": "r", "id": "i", "event": "pre-tool-use", "matcher": "Bash", "script_path": hooksScriptPath, "env": []any{-2, 1},
+			}))},
+		{name: "cursor env list negative out of range indexerror", agent: "cursor", resolvedRel: rel,
+			resolved: hooksStr(hooksBlob(map[string]any{
+				"recipe": "r", "id": "i", "event": "pre-tool-use", "matcher": "Bash", "script_path": hooksScriptPath, "env": []any{-3, 1},
+			})), tracebackStderr: true, pythonExc: "IndexError"},
 		{name: "cursor env empty list tolerated", agent: "cursor", resolvedRel: rel,
 			resolved: hooksStr(hooksBlob(map[string]any{
 				"recipe": "r", "id": "i", "event": "pre-tool-use", "matcher": "Bash", "script_path": hooksScriptPath, "env": []any{},

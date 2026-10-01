@@ -361,8 +361,11 @@ func hooksEnvAssignmentsList(list []any) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("TypeError: list indices must be integers or slices, not %s", hooksPyType(k))
 		}
-		if idx < 0 || idx >= len(list) {
+		if idx < -len(list) || idx >= len(list) {
 			return "", fmt.Errorf("IndexError: list index out of range")
+		}
+		if idx < 0 {
+			idx += len(list)
 		}
 		v := strings.ReplaceAll(pyStr(list[idx]), `"`, `\"`)
 		parts = append(parts, pyStr(k)+`="`+v+`"`)
