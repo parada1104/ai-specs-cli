@@ -13,6 +13,7 @@ package sync
 // and str.splitlines() boundaries).
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -103,6 +104,18 @@ func mcpToOrdered(v any) any {
 // precision) instead of degrading to an approximate float64.
 type mcpBigInt string
 
+// mcpJSONMaxDepth bounds the decoder's nesting depth. Python's json.loads
+// raises RecursionError at a stack- and version-dependent depth (100000
+// accepted, 200000 rejected on CPython 3.14); Go's unbounded recursion would
+// instead die with a fatal stack overflow (rc 2), losing the port's rc 1.
+const mcpJSONMaxDepth = 100000
+
+// errMCPJSONTooDeep is the fatal depth-overflow error. Unlike an ordinary JSON
+// syntax error it must NOT degrade to {} (nor be silently ignored for a
+// --recipe-mcp file): Python lets RecursionError escape uncaught, so it
+// propagates as `error: …` rc 1 with nothing written.
+var errMCPJSONTooDeep = errors.New("json: maximum recursion depth exceeded")
+
 // mcpParseJSONOrdered mirrors json.loads with its defaults: insertion-ordered
 // objects (duplicate keys keep the first position and the last value), int64 for
 // integer literals (mcpBigInt when wider than int64), float64 otherwise, the
@@ -131,8 +144,20 @@ func mcpParseJSONOrdered(data []byte) (any, error) {
 }
 
 type mcpJSONDecoder struct {
-	s   string
-	pos int
+	s     string
+	pos   int
+	depth int
+}
+
+// nested runs one object()/array() recursion level under the depth bound.
+func (d *mcpJSONDecoder) nested(parse func() (any, error)) (any, error) {
+	d.depth++
+	if d.depth > mcpJSONMaxDepth {
+		return nil, errMCPJSONTooDeep
+	}
+	v, err := parse()
+	d.depth--
+	return v, err
 }
 
 func (d *mcpJSONDecoder) ws() {
@@ -165,9 +190,9 @@ func (d *mcpJSONDecoder) value() (any, error) {
 	}
 	switch {
 	case c == '{':
-		return d.object()
+		return d.nested(d.object)
 	case c == '[':
-		return d.array()
+		return d.nested(d.array)
 	case c == '"':
 		s, err := d.str()
 		if err != nil {
@@ -771,11 +796,13 @@ func mcpLoadServers(root *toml.Table, recipeMCPPath string) (*mcpObj, error) {
 		return nil, err
 	}
 	// Invalid JSON (json.JSONDecodeError) and non-object JSON are silently
-	// ignored; a read error is not.
+	// ignored; a read error is not. A depth overflow (RecursionError) is fatal.
 	if parsed, perr := mcpParseJSONOrdered([]byte(text)); perr == nil {
 		if rm, ok := parsed.(*mcpObj); ok {
 			mcp = mcpMergeObjs(mcp, rm)
 		}
+	} else if errors.Is(perr, errMCPJSONTooDeep) {
+		return nil, perr
 	}
 	return mcp, nil
 }
@@ -1040,6 +1067,8 @@ func mcpMergeIntoJSON(targetPath, mcpKey string, servers *mcpObj, agent string) 
 			if obj, ok := parsed.(*mcpObj); ok {
 				existing = obj
 			}
+		} else if errors.Is(perr, errMCPJSONTooDeep) {
+			return "", perr
 		}
 	}
 
@@ -1223,7 +1252,15 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		// encodes, so the file is left created/truncated empty; reproduce that
 		// side effect and fail like the uncaught exception (rc 1).
 		if !opts.DryRun {
-			_ = os.WriteFile(targetPath, nil, 0o666)
+			// write_text() opens (and truncates) the target before it encodes;
+			// if that open fails (e.g. PermissionError) Python reports it, not
+			// the encode error, so surface the open error here.
+			f, ferr := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+			if ferr != nil {
+				fmt.Fprintf(stderr, "error: %s\n", ferr)
+				return 1
+			}
+			_ = f.Close()
 		}
 		fmt.Fprintf(stderr, "error: %s: rendered content is not UTF-8 encodable (lone surrogate)\n", targetPath)
 		return 1

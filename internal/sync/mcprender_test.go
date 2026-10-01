@@ -279,6 +279,99 @@ func TestMCPRenderDryRunSurrogateFails(t *testing.T) {
 	}
 }
 
+// mcpDeepJSON returns a JSON document nested `depth` arrays deep, generated
+// programmatically (100k levels is ~200 KB, too heavy to ship as a Python
+// differential fixture).
+func mcpDeepJSON(depth int) string {
+	return strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth)
+}
+
+// mcpRunRender writes the base manifest into dir and runs RenderMCPFile with
+// recipe ("" = flag absent), returning stdout, rc and stderr.
+func mcpRunRender(t *testing.T, dir, agent, target, mcpKey, recipe string) (string, int, string) {
+	t.Helper()
+	manifestPath := filepath.Join(dir, "ai-specs.toml")
+	if err := os.WriteFile(manifestPath, []byte(mcpBaseManifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	var out, errBuf bytes.Buffer
+	rc := RenderMCPFile(manifestPath, agent, target, mcpKey, RenderMCPOptions{RecipeMCPPath: recipe}, &out, &errBuf)
+	return out.String(), rc, errBuf.String()
+}
+
+// TestMCPRenderJSONDepthLimit pins the decoder's nesting bound. Python's
+// json.loads raises RecursionError at a stack/version-dependent depth (100000
+// accepted on 3.14); unbounded Go recursion dies with a fatal stack overflow
+// (rc 2) instead of the port's rc 1, and a depth overflow must NOT degrade to
+// {} (nor be silently ignored for --recipe-mcp).
+func TestMCPRenderJSONDepthLimit(t *testing.T) {
+	dir := t.TempDir()
+	over := mcpDeepJSON(mcpJSONMaxDepth + 1)
+
+	atLimit := filepath.Join(dir, "at-limit.json")
+	if err := os.WriteFile(atLimit, []byte(mcpDeepJSON(mcpJSONMaxDepth)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, rc, stderr := mcpRunRender(t, dir, "claude", atLimit, "mcpServers", ""); rc != 0 {
+		t.Fatalf("at limit: rc=%d want 0 (stderr: %s)", rc, stderr)
+	}
+
+	target := filepath.Join(dir, "over-limit.json")
+	if err := os.WriteFile(target, []byte(over), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, rc, stderr := mcpRunRender(t, dir, "claude", target, "mcpServers", ""); rc != 1 || out != "" || !strings.HasPrefix(stderr, "error: ") {
+		t.Fatalf("target over limit: rc=%d stdout=%q stderr=%q", rc, out, stderr)
+	}
+	if got, _ := os.ReadFile(target); string(got) != over {
+		t.Errorf("target changed: got %d bytes want %d", len(got), len(over))
+	}
+
+	recipe := filepath.Join(dir, "deep-recipe.json")
+	if err := os.WriteFile(recipe, []byte(over), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fresh := filepath.Join(dir, "fresh.json")
+	if out, rc, stderr := mcpRunRender(t, dir, "claude", fresh, "mcpServers", recipe); rc != 1 || out != "" || !strings.HasPrefix(stderr, "error: ") {
+		t.Fatalf("recipe over limit: rc=%d stdout=%q stderr=%q", rc, out, stderr)
+	}
+	if _, err := os.Stat(fresh); !os.IsNotExist(err) {
+		t.Errorf("recipe failure must write nothing: stat err=%v", err)
+	}
+}
+
+// TestMCPRenderSurrogateWriteReportsOpenError pins the F5 write path: Python's
+// write_text() opens (and truncates) the target BEFORE encoding, so a failing
+// open is reported first (PermissionError), not the surrogate encode error.
+// Non-root only: mode bits are not enforced for root.
+func TestMCPRenderSurrogateWriteReportsOpenError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only file is not enforced as root")
+	}
+	dir := t.TempDir()
+	recipe := filepath.Join(dir, "recipe-mcp.json")
+	if err := os.WriteFile(recipe, []byte(`{"\ud800": {"command": "d"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "config.toml")
+	original := "[user]\nx = 1\n"
+	if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(target, 0o644)
+
+	out, rc, stderr := mcpRunRender(t, dir, "codex", target, "mcp_servers", recipe)
+	if rc != 1 || out != "" || !strings.Contains(stderr, "permission denied") || strings.Contains(stderr, "lone surrogate") {
+		t.Fatalf("rc=%d stdout=%q stderr=%q", rc, out, stderr)
+	}
+	if got, _ := os.ReadFile(target); string(got) != original {
+		t.Errorf("target changed: got %q want %q", got, original)
+	}
+}
+
 func mcpRenderCases() []mcpRefCase {
 	return []mcpRefCase{
 		// --- every MCP agent in the platform.sh matrix, real path/key ---

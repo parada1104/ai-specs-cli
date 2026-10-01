@@ -147,6 +147,34 @@ For F1–F3 Python's stderr is a traceback, which is not byte-reproducible: Go
 emits one `error: …` line; the differential pins rc 1, empty stdout, target
 bytes unchanged/absent, and Python stderr containing the exception class.
 
+### Review advisories (review-180e10985536fd3c)
+
+- [x] R1-UnboundedJSONRecursion / R4-001 — the hand-written recursive decoder
+  had no depth bound, so extreme nesting made Go die with a fatal stack overflow
+  (rc 2) where Python's `json.loads` raises `RecursionError` (uncaught → rc 1,
+  target untouched). Fixed with one named constant `mcpJSONMaxDepth = 100000`
+  (Python's limit is stack/version-dependent; 100000 accepted on 3.14) and the
+  fatal error `errMCPJSONTooDeep`, which propagates through `mcpLoadServers`
+  (`--recipe-mcp`) and `mcpMergeIntoJSON` instead of degrading to `{}`. Go-only
+  tests generate 100000 (accepted) and 100001 (rc 1, target bytes unchanged /
+  nothing written) inputs; no Python differential (the fixture would be huge).
+- [x] R3-surrogate-open-error-masked / R4-002 / R4-003 — the lone-surrogate
+  write path swallowed the truncating open (`_ = os.WriteFile(targetPath, nil,
+  0o666)`). Python's `write_text()` opens before it encodes and raises the open
+  error first (e.g. `PermissionError`), so the port now opens explicitly and
+  reports that error (rc 1), keeping the surrogate message only when the open
+  succeeds. Test (non-root): read-only target + surrogate key → rc 1 with the
+  permission error.
+- R2-001 (mcprender.go:155-163, `value()`) and R2-002 (:295, the escape
+  helper): readability suggestions reviewed and left as-is — the literal-table
+  lookup and the single-use escape byte are already the clearest form inside
+  this frozen byte-port shape.
+
+TDD: with the constant but no bound/fix, `go test ./internal/sync/ -run
+'TestMCPRenderJSONDepthLimit|TestMCPRenderSurrogateWriteReportsOpenError'`
+fails (RED: over-limit rc 0, surrogate open error reported as the encode error);
+the same command passes once the bound and open-error handling land (GREEN).
+
 ### Evidence (Strict TDD)
 
 - RED: `go test ./internal/sync/ -run TestMCPRenderDifferential -count=1`
