@@ -710,7 +710,39 @@ func hooksRenderCases() []hooksRefCase {
 			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "not float"},
 		{name: "cursor env list big vs string typeerror", agent: "cursor", resolvedRel: rel,
 			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[100000000000000000000,"a"]}`)),
+			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "'str' and 'int'"},
+		// Python's sort names the compared pair in REVERSE input order:
+		// [1,'a'] -> "'str' and 'int'", ['a',1] -> "'int' and 'str'".
+		{name: "sort int vs str typeerror", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[1,"a"]}`)),
+			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "'str' and 'int'"},
+		{name: "sort str vs int typeerror", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":["a",1]}`)),
 			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "'int' and 'str'"},
+		{name: "sort float vs str typeerror", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[1.5,"b"]}`)),
+			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "'str' and 'float'"},
+		{name: "sort str vs float typeerror", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":["b",1.5]}`)),
+			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "'float' and 'str'"},
+		{name: "sort str vs big typeerror", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":["a",100000000000000000000]}`)),
+			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "'int' and 'str'"},
+		// NaN compares equal, so the sort preserves input order; ±Inf compare
+		// exactly. The env-list path then indexes the first element, which is the
+		// observable consequence of that order.
+		{name: "sort big vs nan preserves order index cannot fit", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[100000000000000000000,NaN]}`)),
+			tracebackStderr: true, pythonExc: "IndexError", goErrContains: "cannot fit 'int' into an index-sized integer"},
+		{name: "sort nan vs big preserves order float index typeerror", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[NaN,100000000000000000000]}`)),
+			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "not float"},
+		{name: "sort inf vs big index cannot fit", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[Infinity,100000000000000000000]}`)),
+			tracebackStderr: true, pythonExc: "IndexError", goErrContains: "cannot fit 'int' into an index-sized integer"},
+		{name: "sort neg inf vs big float index typeerror", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[-Infinity,100000000000000000000]}`)),
+			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "not float"},
 
 		// --- event unhashable (list/dict) → TypeError in EVENT_MAP.get ---
 		{name: "claude event list typeerror", agent: "claude", resolvedRel: rel,

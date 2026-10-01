@@ -478,6 +478,10 @@ func hooksPyRat(v any) (*big.Rat, bool) {
 // comparisons stay exact (never rounded through float64). A NaN compares equal
 // (Python: both < and > are False) and ±Inf follow Python.
 func hooksBigIntCompare(a, b any) (int, error) {
+	// Python names the TypeError operands in the order the sort comparison
+	// received them (the reverse of the input pair for a two-element list), so
+	// keep the pre-swap operands for the error path.
+	origA, origB := a, b
 	sign := 1
 	if _, ok := a.(mcpBigInt); !ok {
 		a, b = b, a
@@ -485,7 +489,7 @@ func hooksBigIntCompare(a, b any) (int, error) {
 	}
 	ar, ok := hooksPyRat(a)
 	if !ok {
-		return 0, hooksCompareTypeError(a, b)
+		return 0, hooksCompareTypeError(origA, origB)
 	}
 	if y, isFloat := b.(float64); isFloat && (math.IsNaN(y) || math.IsInf(y, 0)) {
 		switch {
@@ -499,7 +503,7 @@ func hooksBigIntCompare(a, b any) (int, error) {
 	}
 	br, ok := hooksPyRat(b)
 	if !ok {
-		return 0, hooksCompareTypeError(a, b)
+		return 0, hooksCompareTypeError(origA, origB)
 	}
 	return sign * ar.Cmp(br), nil
 }

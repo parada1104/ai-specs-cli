@@ -268,7 +268,10 @@ step 2, and both legs are byte-identical in both steps.
     so it wins over "list index out of range"); as a sort operand it compares
     numerically and exactly against int/bool/float (`big.Rat`, since float64
     rounding would flip `10**20+1` vs `1e20`) and against another `mcpBigInt`,
-    but against a str it is `TypeError` naming the int type.
+    but against a str it is `TypeError` naming the int type. That message also
+    names the compared pair in REVERSE input order (Python's sort compares
+    `x1 < x0`: `[1,'a']` → `'str' and 'int'`), and NaN compares equal so the sort
+    preserves input order while `+Inf`/`-Inf` compare exactly.
 
 ## Divergences / residual risk
 
@@ -278,7 +281,14 @@ same rc, the same already-written tree, and the same exception class (traceback
 mode); every tolerated input produces the same bytes. The only deliberate
 boundary is scope, not behavior:
 
-- Review advisory **R3-hooks-bigint-envlist** is fixed (see quirk 19).
+- Review advisories **R3-hooks-bigint-envlist** (see quirk 19),
+  **R3-mcpbigint-error-order** (TypeError operands now in Python's reverse-input
+  order on the big-int path) and **R3-mcpbigint-naninf-coverage** (NaN/±Inf sort
+  pins) are fixed.
+- Accepted boundary: with MULTIPLE mismatched pairs in one list, which pair the
+  sort compares first — and therefore which TypeError/IndexError is raised —
+  depends on the sort algorithm's comparison order, which Go's
+  `sort.SliceStable` does not replicate; the exception class and rc still match.
 - `main()`'s argv/usage/exit-2 contract stays in Bash until S15 (a library entry
   receives the three already-resolved arguments), so there is nothing left to
   reproduce for that leg.
