@@ -110,3 +110,84 @@ verbatim by the JSON and TOML writers; `ParseFloat` `ErrRange` overflow now
 yields `±Inf` (Python `float()`), rendered `Infinity`/`-Infinity`/`inf`.
 TDD: `go test ./internal/sync/ -run TestMCPRenderDifferential -count=1` failed
 on the 3 new cases (RED) and passes with the fix (GREEN).
+
+## Follow-ups (branch `fix/go-07-s4-followups`, base `183f2d8`)
+
+Policy: the next slice (S5) does not start until these are closed. Triage of
+the 7 informational advisories of `review-9d29cb088f632a95`, each checked
+against the real Python:
+
+- [x] F1 — Unreadable / invalid-UTF-8 existing target (JSON and TOML paths):
+  Python `read_text()` raises → rc 1, file untouched; Go swallowed the error and
+  rewrote the user's config (advisories R4-SilentReadFailureRewrite, R1-001).
+- [x] F2 — Unreadable / invalid-UTF-8 `--recipe-mcp` file: Python raises → rc 1,
+  nothing written; Go skipped it silently (R4-RecipeInputSilentlySkipped).
+- [x] F3 — Manifest read error reported as "not found"
+  (R4-MisattributedManifestReadError).
+- [x] F4 — JSON literals `NaN` / `Infinity` / `-Infinity` and lone-surrogate
+  escapes (`\ud800`): Python `json.loads` accepts and round-trips them; Go's
+  decoder rejected the file and discarded it to `{}` (R3-json-nan-infinity-parse).
+- [x] F5 — A lone surrogate that reaches the rendered content raw (a raw TOML
+  table name `[mcp_servers.<name>]` or inline-table key from a `--recipe-mcp`
+  JSON key like `"\ud800"`): Python `write_text()` re-encodes and raises
+  UnicodeEncodeError → rc 1, and the target is left created/truncated empty
+  (write_text opens before it encodes); `--dry-run`'s `print()` raises the same
+  on a real UTF-8 stdout. Go wrote the raw WTF-8 bytes (rc 0). JSON and TOML
+  *values* escape the surrogate via `json.dumps`, so only raw keys leak it.
+- Accepted, no change: R4-InPlaceConfigOverwrite (Python `write_text` is the
+  same non-atomic in-place write; an atomic rename would change file
+  mode/inode semantics vs the frozen oracle) and R4-DifferentialGateSilentSkip
+  (same `python3`-absent skip as every differential in the package; CI always
+  has python3).
+
+Accepted: Python `read_text` uses the locale encoding; Go assumes UTF-8
+(harness runs `PYTHONUTF8=1`).
+
+For F1–F3 Python's stderr is a traceback, which is not byte-reproducible: Go
+emits one `error: …` line; the differential pins rc 1, empty stdout, target
+bytes unchanged/absent, and Python stderr containing the exception class.
+
+### Evidence (Strict TDD)
+
+- RED: `go test ./internal/sync/ -run TestMCPRenderDifferential -count=1`
+  against base `183f2d8`'s `mcprender.go` (16 new cases, fix reverted) fails
+  on exactly the 12 F1–F4 cases: `target_unreadable_json` (go rc 0 + rewritten
+  file vs ref rc 1 + `{"keep": 1}` untouched), `target_unreadable_toml`,
+  `target_invalid_utf8_json`, `target_invalid_utf8_toml`, `recipe_mcp_unreadable`,
+  `recipe_mcp_invalid_utf8`, `manifest_unreadable` (go `error: … not found` vs
+  PermissionError), `json_nan_infinity_literals`, `json_lone_surrogate_escape`
+  (go `\ufffd` vs ref `\ud800`), `recipe_json_nan_json_agent`,
+  `recipe_json_nan_codex_toml`, `recipe_lone_surrogate_codex_toml`.
+- GREEN: the same command passes — 49 differential cases (29 pre-existing + 16
+  F1–F4 + 4 F5). Four new cases already matched the base and stay as regression pins:
+  `manifest_invalid_utf8` (invalid UTF-8 already rejected), `target_is_a_directory`
+  (Python `IsADirectoryError`; go rc 1, one error line),
+  `json_raw_control_char_rejected` (`json.loads(strict=True)` → JSONDecodeError
+  → `{}`), `recipe_mcp_invalid_json_ignored` (JSONDecodeError caught).
+- Note: the unreadable cases chmod `0200` (read-denied, write-allowed), not
+  `000`; under `000` the rewrite also failed and the base's silent-read bug was
+  masked. Skipped when euid 0.
+- F5 RED: with only the five new cases/tests added (fix reverted) the focused
+  command fails: `surrogate server name codex toml truncates existing target`,
+  `... creates empty target` and `surrogate env key codex toml ...` all report
+  `rc: go=0 ref=1`, `stdout differs`, `target bytes differ`; `TestMCPRenderDryRunSurrogateFails`
+  reports `rc: got 0 want 1`. The JSON case passes (already escaped).
+- F5 GREEN: the same command passes. Fix: one `mcpHasLoneSurrogate(content)`
+  check before print/write; on a non-dry-run hit the port mimics Python's
+  open-before-encode by creating/truncating the target empty, then emits one
+  `error: …` line and rc 1.
+
+Fixes: `mcpReadTextFile` (read + strict UTF-8) now surfaces read errors from the
+manifest (F3, `error: <reason>`), the `--recipe-mcp` input (F2) and both target
+writers (F1) instead of swallowing them. F4 replaces the `encoding/json` token
+loop with a small recursive-descent decoder: bare `NaN`/`Infinity`/`-Infinity`,
+`\uXXXX` lone surrogates kept as WTF-8 so `mcpJSONString` re-emits them verbatim
+(valid pairs still combine), raw control characters rejected, Python's exact
+whitespace set and duplicate-key/int64/`mcpBigInt`/±Inf semantics preserved.
+
+Known divergence closed by F5: a TOML object *key* holding a lone surrogate
+(raw table name or inline key) made Python `write_text` raise
+UnicodeEncodeError (rc 1, target created/truncated empty), while Go wrote the
+raw WTF-8 bytes (rc 0). Reachable with the codex TOML target and a
+`--recipe-mcp` JSON whose key is `"\ud800"`; `mcpHasLoneSurrogate` now fails it
+rc 1 like the script.
