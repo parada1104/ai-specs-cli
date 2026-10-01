@@ -599,6 +599,39 @@ def _setup_mcp_per_agent(project: Path) -> None:
     _write(project, ".omp/mcp.json", '{"ompOnly": true}\n')
 
 
+def _setup_hooks_five_runtimes(project: Path) -> None:
+    """All five runtimes enabled with a hook-declaring catalog recipe
+    (`worktree-flow`: one file-write matcher plus one shell matcher) so `sync`
+    then `sync-agent --all` renders native runtime-hook wiring for every
+    harness: claude settings.json, the cursor wrapper + hooks.json (the
+    file-write hook has no Cursor pre-file-write target, so it warns and skips),
+    and the opencode/pi/omp TS adapters. Pre-seeded foreign keys and a previous
+    managed entry per harness must be preserved / replaced in place, and stale
+    adapters must survive. Today both legs run the Python renderer via
+    sync-agent.sh; this fixture becomes the Go gate when the fan-out is ported
+    in S15."""
+    _write(project, "ai-specs/ai-specs.toml", _manifest(
+        agents=ALL_AGENTS,
+        recipes=("worktree-flow",),
+    ))
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    # Foreign keys + a previous managed entry per harness.
+    _write(project, ".claude/settings.json",
+           '{"model": "opus", "foreign": {"keep": [1, 2]}, "hooks": {'
+           '"PreToolUse": [{"_ai_specs_managed":'
+           ' "ai-specs:hooks:worktree-flow:worktree-gate", "matcher": "Stale"}]}}\n')
+    _write(project, ".cursor/hooks.json",
+           '{"version": 1, "hooks": {"beforeShellExecution": ['
+           '{"_ai_specs_managed":'
+           ' "ai-specs:hooks:worktree-flow:worktree-gate-shell",'
+           ' "command": "./.cursor/hooks/old.sh"}]}}\n')
+    _write(project, ".cursor/hooks/old.sh", "#!/usr/bin/env bash\necho stale\n")
+    _write(project, ".opencode/plugin/old.ts", "// stale adapter\n")
+    _write(project, ".pi/extensions/old.ts", "// stale adapter\n")
+    _write(project, ".omp/extensions/old.ts", "// stale adapter\n")
+
+
 def _setup_brief_render_false(project: Path) -> None:
     """[brief].render = false: sync's policy gate must skip the AGENTS.md step
     entirely (no file written, skip notice on stdout)."""
@@ -780,6 +813,17 @@ CORPUS: tuple[Fixture, ...] = (
                     "mcpServers, opencode mcp, codex mcp_servers, gemini, omp) "
                     "while preserving the foreign content.",
         setup=_setup_mcp_per_agent,
+        steps=(Step(("sync",)), Step(("sync-agent", "--all"))),
+    ),
+    Fixture(
+        name="hooks-five-runtimes",
+        description="All five runtimes enabled with the hook-declaring "
+                    "`worktree-flow` recipe (file-write + shell matchers): "
+                    "`sync` then `sync-agent --all` must render claude "
+                    "settings.json, the cursor wrapper + hooks.json (skipping "
+                    "the file-write hook), and the opencode/pi/omp TS adapters "
+                    "while preserving foreign config and stale adapters.",
+        setup=_setup_hooks_five_runtimes,
         steps=(Step(("sync",)), Step(("sync-agent", "--all"))),
     ),
 )
