@@ -216,6 +216,12 @@ func mcpRenderCases() []mcpRefCase {
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
 			target: mcpStr(`{"emoji": "🚀", "café": "naïve", "dup": 1, "z": 2, "dup": 3, "pi": 3.14, "n": 7, "whole": 2.0, "exp": 1e3, "neg": -0, "mcpServers": {"keep": {"command": "x"}}}`),
 		},
+		{
+			name:      "existing json numeric extremes round-trip",
+			manifest:  mcpStr(mcpBaseManifest),
+			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
+			target: mcpStr(`{"big": 123456789012345678901234567890, "ovf": 1e400, "novf": -1e400, "negzero": -0, "tiny": 1e-400, "mcpServers": {}}`),
+		},
 		{name: "invalid json becomes empty object", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
 			target: mcpStr(`{not valid json`)},
@@ -244,6 +250,20 @@ func mcpRenderCases() []mcpRefCase {
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
 			recipeRel: "recipe-mcp.json",
 			recipe:    mcpStr(`{"alpha": {"command": "override", "args": ["z"]}, "delta": {"command": "d", "env": {"K": "$D_VAR"}}}`),
+		},
+		{
+			name:      "recipe mcp big integer json agent",
+			manifest:  mcpStr(mcpBaseManifest),
+			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
+			recipeRel: "recipe-mcp.json",
+			recipe:    mcpStr(`{"big": {"command": "d", "timeout": 123456789012345678901234567890}}`),
+		},
+		{
+			name:      "recipe mcp big integer codex toml",
+			manifest:  mcpStr(mcpBaseManifest),
+			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
+			recipeRel: "recipe-mcp.json",
+			recipe:    mcpStr(`{"big": {"command": "d", "timeout": 123456789012345678901234567890}}`),
 		},
 		{
 			name:      "recipe mcp non-object json ignored",

@@ -96,8 +96,17 @@ S15); this fixture becomes the Go gate once the fan-out is ported.
 - Reproduced: opencode URL values are NOT env-substituted — `_translate_opencode`
   copies `url` verbatim for the remote branch; pinned by
   `opencode remote url stays literal`.
-- Known limitation (not exercised by the corpus): an integer JSON literal wider
-  than int64 is parsed as float64 (Python keeps arbitrary precision).
 - `RenderMCPFile` mirrors `main()`'s body, not its argv parsing; the
   `--dry-run` / `--recipe-mcp` flags and the usage/rc-2 path stay in the Bash
   caller until S15 wiring.
+
+## Native review correction (R3-json-int-overflow)
+
+Lineage `review-9d29cb088f632a95` (CRITICAL, reliability): integer literals
+wider than int64 degraded to an approximate float, and an overflow float
+literal (`1e400`) errored and discarded the whole existing target file to `{}`.
+Fix: `mcpBigInt` keeps over-range integers as canonical decimal digits emitted
+verbatim by the JSON and TOML writers; `ParseFloat` `ErrRange` overflow now
+yields `±Inf` (Python `float()`), rendered `Infinity`/`-Infinity`/`inf`.
+TDD: `go test ./internal/sync/ -run TestMCPRenderDifferential -count=1` failed
+on the 3 new cases (RED) and passes with the fix (GREEN).

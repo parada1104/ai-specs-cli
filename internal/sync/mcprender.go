@@ -100,9 +100,9 @@ func mcpToOrdered(v any) any {
 // ---------------------------------------------------------------------------
 
 // mcpParseJSONOrdered mirrors json.loads: ordered objects (duplicate keys keep
-// the first position and the last value), int64 for integer literals, float64
-// otherwise. Any structural error (including trailing data) is returned so the
-// caller can degrade to {}.
+// the first position and the last value), int64 for integer literals (mcpBigInt
+// when wider than int64), float64 otherwise. Any structural error (including
+// trailing data) is returned so the caller can degrade to {}.
 func mcpParseJSONOrdered(data []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
@@ -175,15 +175,26 @@ func mcpDecodeJSONValue(dec *json.Decoder) (any, error) {
 	return nil, fmt.Errorf("json: unexpected token")
 }
 
+// mcpBigInt is an integer literal that overflows int64, kept as its canonical
+// decimal digits so it round-trips exactly like a Python int (arbitrary
+// precision) instead of degrading to an approximate float64.
+type mcpBigInt string
+
 func mcpJSONNumber(n json.Number) (any, error) {
 	s := n.String()
 	if !strings.ContainsAny(s, ".eE") {
 		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
 			return i, nil
 		}
+		return mcpBigInt(s), nil
 	}
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
+		// Python float() overflows an out-of-range literal to ±inf; only
+		// overflow can reach here (underflow returns 0 without error).
+		if math.IsInf(f, 0) {
+			return f, nil
+		}
 		return nil, err
 	}
 	return f, nil
@@ -256,6 +267,8 @@ func mcpWriteJSONCompact(sb *strings.Builder, v any) {
 		sb.WriteString(strconv.Itoa(x))
 	case int64:
 		sb.WriteString(strconv.FormatInt(x, 10))
+	case mcpBigInt:
+		sb.WriteString(string(x))
 	case float64:
 		sb.WriteString(mcpJSONFloat(x))
 	default:
@@ -341,6 +354,9 @@ func mcpTOMLValue(v any) (string, error) {
 			parts = append(parts, k+" = "+s)
 		}
 		return "{ " + strings.Join(parts, ", ") + " }", nil
+	case mcpBigInt:
+		// Python str(int): exact decimal digits.
+		return string(x), nil
 	default:
 		// Scalars (bool/int/float/string) delegate to the existing port.
 		return toml.TOMLValue(v)
