@@ -776,6 +776,12 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 				continue
 			}
 			dest := filepath.Join(aiSpecs, "recipes", name, "overrides")
+			// FROZEN retry semantics (project-cache.py L497-531): a recipe whose
+			// destination already exists is skipped, never re-migrated. A prior
+			// run that failed left a partial destination, so this retry skips it,
+			// no migration fails in this run, and ai-specs/.recipe/ is removed
+			// even though the destination may be incomplete. This is the oracle's
+			// deliberate behavior; do not add a partial-destination guard here.
 			if exists(dest) {
 				continue
 			}
@@ -865,8 +871,10 @@ func MergeCommands(projectRoot, destDir, cliHome string, stdout, stderr io.Write
 	if isDir(bundled) {
 		for _, src := range globMDFiles(bundled) {
 			name := filepath.Base(src)
+			// Python's copy2 is not guarded: an unreadable source aborts the
+			// whole merge, leaving the files copied before the failure.
 			if err := copy2(src, filepath.Join(destDir, name)); err != nil {
-				warn(stderr, err.Error())
+				return count, err
 			}
 			seen[name] = true
 			count++
@@ -878,7 +886,7 @@ func MergeCommands(projectRoot, destDir, cliHome string, stdout, stderr io.Write
 		for _, src := range globMDFiles(managed) {
 			name := filepath.Base(src)
 			if err := copy2(src, filepath.Join(destDir, name)); err != nil {
-				warn(stderr, err.Error())
+				return count, err
 			}
 			if !seen[name] {
 				count++
@@ -897,7 +905,7 @@ func MergeCommands(projectRoot, destDir, cliHome string, stdout, stderr io.Write
 					pyStem(name)))
 			}
 			if err := copy2(src, filepath.Join(destDir, name)); err != nil {
-				warn(stderr, err.Error())
+				return count, err
 			}
 			if !seen[name] {
 				count++

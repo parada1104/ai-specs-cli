@@ -241,4 +241,53 @@ func mustSymlink(t *testing.T, target, link string) {
 	}
 }
 
+// TestRemoveLegacyOriginRetryPreservesThenRemovesDotRecipe pins the FROZEN
+// retry flow of RemoveLegacyOrigin (project-cache.py L497-531). The first run
+// fails a migration, so ai-specs/.recipe/ is retained for a later sync; the
+// retry then sees the partial destination (dest.exists() -> continue), nothing
+// fails in that run, and .recipe/ is removed. The unreadable 0o000 file is the
+// deterministic failure trigger at this point in the history; the dangling
+// symlink only becomes a failure source once copyTree follows links (the later
+// copyTree fix). Both runs are oracle behavior - do not guard the partial dest.
+func TestRemoveLegacyOriginRetryPreservesThenRemovesDotRecipe(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	overrides := filepath.Join(root, "ai-specs", ".recipe", "recipeA", "overrides")
+	if err := os.MkdirAll(overrides, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(overrides, "ok.md"), []byte("ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "ai-specs", "missing", "nope"), filepath.Join(overrides, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	unreadable := filepath.Join(overrides, "blocked.md")
+	if err := os.WriteFile(unreadable, []byte("secret\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+
+	// First run: the unreadable source aborts the migration -> .recipe retained.
+	var out1, err1 bytes.Buffer
+	RemoveLegacyOrigin(root, home, &out1, &err1)
+	if !isDir(filepath.Join(root, "ai-specs", ".recipe")) {
+		t.Fatalf("first run removed .recipe despite a failed migration; stderr=%q", err1.String())
+	}
+	if !strings.Contains(err1.String(), "failed to migrate overrides for 'recipeA': ") {
+		t.Errorf("first run stderr = %q, want the migration-failure warning", err1.String())
+	}
+	// The partial destination exists, so the retry skips this recipe.
+	dest := filepath.Join(root, "ai-specs", "recipes", "recipeA", "overrides")
+	if !isDir(dest) {
+		t.Fatalf("expected a partial destination after the failed migration")
+	}
+
+	// Second run: dest.exists() skips migration, nothing fails -> .recipe removed.
+	var out2, err2 bytes.Buffer
+	RemoveLegacyOrigin(root, home, &out2, &err2)
+	if isDir(filepath.Join(root, "ai-specs", ".recipe")) {
+		t.Fatalf("second run kept .recipe although the retry had nothing to migrate; stdout=%q stderr=%q", out2.String(), err2.String())
+	}
+}
+
 // ============================================================================
