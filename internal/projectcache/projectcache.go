@@ -374,11 +374,18 @@ func warn(w io.Writer, msg string) {
 // --- Commit B: mutations, git-aware remediation, merge, CLI -----------------
 
 // removeTreePy mirrors shutil.rmtree: it refuses a symbolic link (shutil's
-// guard so a symlink-to-directory is never silently unlinked) where
-// os.RemoveAll would remove the link itself.
+// guard so a symlink-to-directory is never silently unlinked) and refuses a
+// non-directory (a regular file raises NotADirectoryError). os.RemoveAll would
+// remove either silently.
 func removeTreePy(path string) error {
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("Cannot call rmtree on a symbolic link: %s", path)
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("Cannot call rmtree on a symbolic link: %s", path)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("Not a directory: %s", path)
+		}
 	}
 	return os.RemoveAll(path)
 }
@@ -532,7 +539,7 @@ func RemoveBundledCommandLeftovers(aiSpecs, cliHome string, lockCommands map[str
 	}
 	for _, name := range readDirNames(localDir) {
 		child := filepath.Join(localDir, name)
-		if !isFile(child) || filepath.Ext(child) != ".md" {
+		if !isFile(child) || pySuffix(name) != ".md" {
 			continue
 		}
 		srcCmd := filepath.Join(bundledSrc, name)
@@ -588,7 +595,7 @@ func RemoveRecipeCommandLeftovers(projectRoot, cliHome string, lockCommands map[
 	}
 	for _, name := range readDirNames(localDir) {
 		child := filepath.Join(localDir, name)
-		if !isFile(child) || filepath.Ext(child) != ".md" {
+		if !isFile(child) || pySuffix(name) != ".md" {
 			continue
 		}
 		managed := filepath.Join(managedDir, name)
@@ -675,6 +682,18 @@ func pyStem(name string) string {
 		}
 	}
 	return name
+}
+
+// pySuffix mirrors PurePath.suffix for a bare file name. Only the trailing
+// suffix after the last dot counts once leading dots are stripped, so `.md` and
+// `..md` have an EMPTY suffix (unlike filepath.Ext, which returns ".md"). The
+// command-leftover filters rely on this to keep those files.
+func pySuffix(name string) string {
+	trimmed := strings.TrimLeft(name, ".")
+	if i := strings.LastIndex(trimmed, "."); i != -1 {
+		return trimmed[i:]
+	}
+	return ""
 }
 
 // IsGitWorkTree mirrors _is_git_work_tree.
@@ -962,43 +981,86 @@ func copy2(src, dst string) error {
 	return os.Chtimes(dst, info.ModTime(), info.ModTime())
 }
 
-// copyTree mirrors shutil.copytree(dst must not exist).
-func copyTree(src, dst string) error {
-	info, err := os.Lstat(src)
+// copyTreeError mirrors shutil.Error: the accumulated per-entry failures from
+// a copytree walk. The rendered text is not byte-reproducible (errno strerror),
+// so callers only rely on it being an error.
+type copyTreeError struct{ entries []string }
+
+func (e *copyTreeError) Error() string { return "[" + strings.Join(e.entries, ", ") + "]" }
+
+// appendCopyErr merges one walk failure into errs, flattening a nested
+// copyTreeError so a failed subtree does not hide the entries under it.
+func appendCopyErr(errs *[]string, src, dst string, err error) {
+	if ce, ok := err.(*copyTreeError); ok {
+		*errs = append(*errs, ce.entries...)
+		return
+	}
+	*errs = append(*errs, fmt.Sprintf("(%q, %q, %q)", src, dst, err.Error()))
+}
+
+// copyStat mirrors shutil.copystat for mode bits and times (follows symlinks,
+// as copystat does by default).
+func copyStat(src, dst string) error {
+	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("copytree: %s is not a directory", src)
-	}
-	if err := os.Mkdir(dst, info.Mode().Perm()); err != nil {
+	if err := os.Chmod(dst, info.Mode()); err != nil {
 		return err
 	}
-	for _, name := range readDirNames(src) {
-		s := filepath.Join(src, name)
-		d := filepath.Join(dst, name)
-		childInfo, err := os.Lstat(s)
-		if err != nil {
-			return err
-		}
+	return os.Chtimes(dst, info.ModTime(), info.ModTime())
+}
+
+// copyTree mirrors shutil.copytree(src, dst) with the default symlinks=False:
+// the tree is recreated as real directories and regular files. A symlink to a
+// file copies its target CONTENT (copy2 semantics: mode/mtime), a symlink to a
+// directory recurses the TARGET as a real directory, and a dangling symlink is
+// collected as a failure. Like shutil.copytree, per-entry failures accumulate
+// and the tree is raised only after the walk (and the final copystat) finish,
+// so the destination keeps everything copied before the failure.
+func copyTree(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	if err := os.Mkdir(dst, 0o777); err != nil {
+		return err
+	}
+	var errs []string
+	for _, entry := range entries {
+		s := filepath.Join(src, entry.Name())
+		d := filepath.Join(dst, entry.Name())
 		switch {
-		case childInfo.IsDir():
+		case entry.Type()&os.ModeSymlink != 0:
+			info, statErr := os.Stat(s) // follows the link
+			if statErr != nil {
+				appendCopyErr(&errs, s, d, statErr)
+				continue
+			}
+			if info.IsDir() {
+				if err := copyTree(s, d); err != nil {
+					appendCopyErr(&errs, s, d, err)
+				}
+			} else {
+				if err := copy2(s, d); err != nil {
+					appendCopyErr(&errs, s, d, err)
+				}
+			}
+		case entry.IsDir():
 			if err := copyTree(s, d); err != nil {
-				return err
-			}
-		case childInfo.Mode()&os.ModeSymlink != 0:
-			target, err := os.Readlink(s)
-			if err != nil {
-				return err
-			}
-			if err := os.Symlink(target, d); err != nil {
-				return err
+				appendCopyErr(&errs, s, d, err)
 			}
 		default:
 			if err := copy2(s, d); err != nil {
-				return err
+				appendCopyErr(&errs, s, d, err)
 			}
 		}
+	}
+	if err := copyStat(src, dst); err != nil {
+		appendCopyErr(&errs, src, dst, err)
+	}
+	if len(errs) > 0 {
+		return &copyTreeError{entries: errs}
 	}
 	return nil
 }
@@ -1009,8 +1071,16 @@ func copyTree(src, dst string) error {
 // len(argv) < 3 usage branch (no project root) stays in the caller.
 //
 // Exit codes: 0 on success, 2 for a usage/unknown-kind/unknown-action error,
-// 1 when ensure_cache fails (Python's uncaught RuntimeError traceback).
+// 1 when ensure_cache fails (Python's uncaught RuntimeError traceback) or when
+// AI_SPECS_HOME is unset (the port's accepted deviation: Python falls back to
+// its module repo root, which has no Go source-layout equivalent; the binary's
+// shim always pins AI_SPECS_HOME, so this fails loudly instead of silently
+// resolving the cache CWD-relative).
 func RenderProjectCache(projectRoot, action, arg string, stdout, stderr io.Writer) int {
+	if AISpecsHome("") == "" {
+		fmt.Fprintln(stderr, "error: AI_SPECS_HOME is not set")
+		return 1
+	}
 	root := ResolvePath(projectRoot)
 
 	switch action {

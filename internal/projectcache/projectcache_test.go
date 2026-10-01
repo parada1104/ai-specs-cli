@@ -59,6 +59,41 @@ func TestPyStem(t *testing.T) {
 	}
 }
 
+// TestPySuffix pins PurePath.suffix: `.md` and `..md` have an EMPTY suffix, so
+// the command-leftover filters must keep them (filepath.Ext would drop both).
+func TestPySuffix(t *testing.T) {
+	cases := map[string]string{
+		"x.md":       ".md",
+		"x.tar.md":   ".md",
+		".md":        "",
+		"..md":       "",
+		".hidden.md": ".md",
+		"a.md.bak":   ".bak",
+		"a.":         ".",
+		"a":          "",
+		"":           "",
+	}
+	for in, want := range cases {
+		if got := pySuffix(in); got != want {
+			t.Errorf("pySuffix(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestRenderProjectCacheMissingHome pins the accepted loud failure: with no
+// cli_home and no AI_SPECS_HOME the port refuses instead of silently resolving
+// the cache CWD-relative (Python falls back to its module repo root).
+func TestRenderProjectCacheMissingHome(t *testing.T) {
+	t.Setenv("AI_SPECS_HOME", "")
+	var out, errBuf bytes.Buffer
+	if rc := RenderProjectCache(t.TempDir(), "ensure", "", &out, &errBuf); rc != 1 {
+		t.Errorf("rc = %d, want 1", rc)
+	}
+	if got := errBuf.String(); got != "error: AI_SPECS_HOME is not set\n" {
+		t.Errorf("stderr = %q, want the missing-home error line", got)
+	}
+}
+
 // TestCacheKeyFrozen pins the FROZEN derivation against a value computed by the
 // real Python module (python3 -c "import project-cache; cache_key(Path('/'))").
 func TestCacheKeyFrozen(t *testing.T) {
@@ -744,7 +779,11 @@ func pcSnapshot(t *testing.T, T string) (map[string]string, map[string]int, []st
 		case info.Mode().IsRegular():
 			data, err := os.ReadFile(p)
 			if err != nil {
-				return err
+				// Permission-denied cases keep the file on disk but unreadable;
+				// both snapshots mark it identically instead of aborting.
+				files[key] = "<unreadable>"
+				modes[key] = pcModeBits(info.Mode())
+				return nil
 			}
 			files[key] = base64.StdEncoding.EncodeToString(pcCreatedAt.ReplaceAll(data, []byte(`created_at = "<TIME>"`)))
 			modes[key] = pcModeBits(info.Mode())
@@ -913,6 +952,32 @@ func pcCases(t *testing.T) []pcCase {
 				}
 			},
 			tracebackStderr: true, pythonExc: "OSError"},
+		{name: "cli merge regular-file dest rmtree refuses", cliAction: "merge-commands", cliDest: "destfile",
+			seed: func(t *testing.T, root, home string) {
+				pcWrite(t, filepath.Join(root, "destfile"), "keep\n", 0o644)
+			},
+			tracebackStderr: true, pythonExc: "Error"},
+		{name: "cli merge unreadable command aborts", cliAction: "merge-commands", cliDest: "out",
+			seed: func(t *testing.T, root, home string) {
+				cache := CacheRoot(root, home)
+				pcWrite(t, filepath.Join(cache, ".bundled", "commands", "a.md"), "# a\n", 0o644)
+				pcWrite(t, filepath.Join(cache, ".bundled", "commands", "b.md"), "# b\n", 0o000)
+				pcWrite(t, filepath.Join(cache, "commands", "c.md"), "# c\n", 0o644)
+			},
+			tracebackStderr: true, pythonExc: "PermissionError"},
+		{name: "cli merge bundled managed duplicate", cliAction: "merge-commands", cliDest: "out",
+			seed: func(t *testing.T, root, home string) {
+				cache := CacheRoot(root, home)
+				pcWrite(t, filepath.Join(cache, ".bundled", "commands", "dup.md"), "# bundled\n", 0o644)
+				pcWrite(t, filepath.Join(cache, "commands", "dup.md"), "# managed\n", 0o644)
+			}},
+		{name: "cli merge preserves source modes", cliAction: "merge-commands", cliDest: "out",
+			seed: func(t *testing.T, root, home string) {
+				cache := CacheRoot(root, home)
+				pcWrite(t, filepath.Join(cache, ".bundled", "commands", "script.md"), "#!/bin/sh\n", 0o755)
+				pcWrite(t, filepath.Join(cache, ".bundled", "commands", "ro.md"), "ro\n", 0o444)
+				pcWrite(t, filepath.Join(root, "ai-specs", "commands", "local.md"), "local\n", 0o600)
+			}},
 
 		// ---- remove_bundled_skill_leftovers ----
 		{name: "remove bundled skill matches", fn: "remove_bundled_skill_leftovers",
@@ -989,6 +1054,14 @@ func pcCases(t *testing.T) []pcCase {
 					"[commands]\n\"cmd1.md\" = \""+sha256Hex([]byte("# old cmd1\n"))+"\"\n", 0o644)
 			},
 		},
+		{name: "remove bundled command suffix filter", fn: "remove_bundled_command_leftovers",
+			args: map[string]any{"ai_specs": "ai-specs"},
+			seed: func(t *testing.T, root, home string) {
+				for _, n := range []string{".md", "..md", ".hidden.md", "a.md.bak"} {
+					pcWrite(t, filepath.Join(home, "bundled-commands", n), "# "+n+"\n", 0o644)
+					pcWrite(t, filepath.Join(root, "ai-specs", "commands", n), "# "+n+"\n", 0o644)
+				}
+			}},
 
 		// ---- remove_recipe_command_leftovers ----
 		{name: "remove recipe command leftovers", fn: "remove_recipe_command_leftovers",
@@ -1008,6 +1081,15 @@ func pcCases(t *testing.T) []pcCase {
 				pcWrite(t, filepath.Join(cmdDir, "src.md"), "# recipe source\n", 0o644)
 				pcWrite(t, filepath.Join(cmdDir, "keep.md"), "# local keep\n", 0o644)
 				pcWrite(t, filepath.Join(root, "catalog", "src.md"), "# recipe source\n", 0o644)
+			}},
+		{name: "remove recipe command suffix filter", fn: "remove_recipe_command_leftovers",
+			args: map[string]any{"project_root": "."},
+			seed: func(t *testing.T, root, home string) {
+				cache := CacheRoot(root, home)
+				for _, n := range []string{".md", "..md", ".hidden.md", "a.md.bak"} {
+					pcWrite(t, filepath.Join(cache, "commands", n), "# "+n+"\n", 0o644)
+					pcWrite(t, filepath.Join(root, "ai-specs", "commands", n), "# "+n+"\n", 0o644)
+				}
 			}},
 
 		// ---- bundled id listings ----
@@ -1115,6 +1197,35 @@ func pcCases(t *testing.T) []pcCase {
 				}
 			},
 			stderrPrefix: "  ! failed to remove leftover ai-specs/.resolved-skills/: "},
+		{name: "remove legacy origin symlinks resolved", fn: "remove_legacy_origin",
+			args: map[string]any{"project_root": "."},
+			seed: func(t *testing.T, root, home string) {
+				ov := filepath.Join(root, "ai-specs", ".recipe", "recipeA", "overrides")
+				pcWrite(t, filepath.Join(ov, "real.md"), "# real\n", 0o644)
+				pcWrite(t, filepath.Join(ov, "sub", "inner.md"), "# inner\n", 0o755)
+				mustSymlink(t, "real.md", filepath.Join(ov, "filelink.md"))
+				mustSymlink(t, "sub", filepath.Join(ov, "dirlink"))
+			}},
+		{name: "remove legacy origin dangling symlink warns", fn: "remove_legacy_origin",
+			args: map[string]any{"project_root": "."},
+			seed: func(t *testing.T, root, home string) {
+				ai := filepath.Join(root, "ai-specs")
+				for _, rec := range []string{"recipeA", "recipeB"} {
+					ov := filepath.Join(ai, ".recipe", rec, "overrides")
+					pcWrite(t, filepath.Join(ov, "ok.md"), "# ok "+rec+"\n", 0o644)
+					mustSymlink(t, filepath.Join(ai, "missing", "nope"), filepath.Join(ov, "dangling"))
+				}
+			},
+			stderrPrefix: "  ! failed to migrate overrides for 'recipeA': "},
+		{name: "remove legacy origin regular-file leftovers", fn: "remove_legacy_origin",
+			args: map[string]any{"project_root": "."},
+			seed: func(t *testing.T, root, home string) {
+				ai := filepath.Join(root, "ai-specs")
+				pcWrite(t, filepath.Join(ai, ".recipe"), "file\n", 0o644)
+				pcWrite(t, filepath.Join(ai, ".resolved-skills"), "file\n", 0o644)
+				pcWrite(t, filepath.Join(ai, ".internal"), "file\n", 0o644)
+			},
+			stderrPrefix: "  ! failed to remove leftover ai-specs/.recipe/: "},
 
 		// ---- gate_backup_path ----
 		{name: "gate backup path", fn: "gate_backup_path",

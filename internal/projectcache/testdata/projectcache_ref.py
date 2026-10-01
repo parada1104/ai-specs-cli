@@ -79,7 +79,14 @@ def snapshot(root: Path) -> dict:
         elif p.is_dir():
             dirs.append(rel)
         else:
-            files[rel] = base64.b64encode(_norm_bytes(p.read_bytes())).decode("ascii")
+            try:
+                data = _norm_bytes(p.read_bytes())
+            except OSError:
+                # Permission-denied cases keep the file on disk but unreadable;
+                # both snapshots mark it identically instead of aborting.
+                files[rel] = "<unreadable>"
+            else:
+                files[rel] = base64.b64encode(data).decode("ascii")
             modes[rel] = p.stat().st_mode & 0o7777
     return {"files": files, "modes": modes, "dirs": dirs, "links": links}
 
