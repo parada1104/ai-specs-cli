@@ -3,6 +3,10 @@
 
 Reads ONE JSON object from stdin describing a sandbox:
 
+Optional keys: ``target_dir`` (create the target as a directory) and
+``unreadable_rel`` (chmod 0200, read-denied but write-allowed, that path
+before running).
+
     {"manifest_rel": "ai-specs/ai-specs.toml",
      "manifest_b64": <b64 | null>,      # null -> do not create (missing manifest)
      "recipe_rel": "recipe-mcp.json",   # or null/"" -> no --recipe-mcp flag
@@ -32,6 +36,7 @@ import io
 import json
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 
 # testdata/ -> internal/sync/ -> internal/ -> repo root
@@ -73,6 +78,12 @@ def main() -> int:
     if case.get("recipe_rel"):
         recipe_path = _write(root, case["recipe_rel"], case.get("recipe_b64"))
     target_path = _write(root, case["target_rel"], case.get("target_b64"))
+    if case.get("target_dir"):
+        target_path.mkdir(parents=True, exist_ok=True)
+    if case.get("unreadable_rel"):
+        # 0200: read denied, write allowed — the permission state where a
+        # swallowed read error would let the script clobber the user's file.
+        (root / case["unreadable_rel"]).chmod(0o200)
 
     argv = [str(manifest_path), case["agent"], str(target_path), case["mcp_key"]]
     if recipe_path is not None:
@@ -87,8 +98,21 @@ def main() -> int:
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rc = mod.main()
+    except BaseException:
+        # Unreadable / invalid-UTF-8 inputs surface in the real script as an
+        # uncaught traceback (rc 1). Catch it here so the differential can pin
+        # rc, stdout, target bytes and the exception class instead of comparing
+        # an unreproducible stack trace byte for byte.
+        traceback.print_exc(file=err)
+        rc = 1
     finally:
         sys.argv = saved_argv
+
+    if case.get("unreadable_rel"):
+        try:
+            (root / case["unreadable_rel"]).chmod(0o644)
+        except OSError:
+            pass
 
     prefix = str(root)
     result = {

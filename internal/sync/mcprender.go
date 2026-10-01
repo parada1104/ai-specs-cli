@@ -13,8 +13,7 @@ package sync
 // and str.splitlines() boundaries).
 
 import (
-	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -24,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"ai-specs.dev/ai-specs/internal/toml"
 )
@@ -99,96 +99,349 @@ func mcpToOrdered(v any) any {
 // JSON: ordered decode + json.dumps(indent=2) encode
 // ---------------------------------------------------------------------------
 
-// mcpParseJSONOrdered mirrors json.loads: ordered objects (duplicate keys keep
-// the first position and the last value), int64 for integer literals (mcpBigInt
-// when wider than int64), float64 otherwise. Any structural error (including
-// trailing data) is returned so the caller can degrade to {}.
-func mcpParseJSONOrdered(data []byte) (any, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	v, err := mcpDecodeJSONValue(dec)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		if err == nil {
-			return nil, fmt.Errorf("json: trailing data")
-		}
-		return nil, err
-	}
-	return v, nil
-}
-
-func mcpDecodeJSONValue(dec *json.Decoder) (any, error) {
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, err
-	}
-	switch t := tok.(type) {
-	case json.Delim:
-		switch t {
-		case '{':
-			obj := newMCPObj()
-			for dec.More() {
-				kt, err := dec.Token()
-				if err != nil {
-					return nil, err
-				}
-				key, ok := kt.(string)
-				if !ok {
-					return nil, fmt.Errorf("json: object key is not a string")
-				}
-				val, err := mcpDecodeJSONValue(dec)
-				if err != nil {
-					return nil, err
-				}
-				obj.set(key, val)
-			}
-			if _, err := dec.Token(); err != nil {
-				return nil, err
-			}
-			return obj, nil
-		case '[':
-			arr := []any{}
-			for dec.More() {
-				val, err := mcpDecodeJSONValue(dec)
-				if err != nil {
-					return nil, err
-				}
-				arr = append(arr, val)
-			}
-			if _, err := dec.Token(); err != nil {
-				return nil, err
-			}
-			return arr, nil
-		}
-		return nil, fmt.Errorf("json: unexpected delimiter %v", t)
-	case string:
-		return t, nil
-	case json.Number:
-		return mcpJSONNumber(t)
-	case bool:
-		return t, nil
-	case nil:
-		return nil, nil
-	}
-	return nil, fmt.Errorf("json: unexpected token")
-}
-
 // mcpBigInt is an integer literal that overflows int64, kept as its canonical
 // decimal digits so it round-trips exactly like a Python int (arbitrary
 // precision) instead of degrading to an approximate float64.
 type mcpBigInt string
 
-func mcpJSONNumber(n json.Number) (any, error) {
-	s := n.String()
-	if !strings.ContainsAny(s, ".eE") {
-		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+// mcpJSONMaxDepth bounds the decoder's nesting depth. Python's json.loads
+// raises RecursionError at a stack- and version-dependent depth (100000
+// accepted, 200000 rejected on CPython 3.14); Go's unbounded recursion would
+// instead die with a fatal stack overflow (rc 2), losing the port's rc 1.
+const mcpJSONMaxDepth = 100000
+
+// errMCPJSONTooDeep is the fatal depth-overflow error. Unlike an ordinary JSON
+// syntax error it must NOT degrade to {} (nor be silently ignored for a
+// --recipe-mcp file): Python lets RecursionError escape uncaught, so it
+// propagates as `error: …` rc 1 with nothing written.
+var errMCPJSONTooDeep = errors.New("json: maximum recursion depth exceeded")
+
+// mcpParseJSONOrdered mirrors json.loads with its defaults: insertion-ordered
+// objects (duplicate keys keep the first position and the last value), int64 for
+// integer literals (mcpBigInt when wider than int64), float64 otherwise, the
+// bare NaN / Infinity / -Infinity constants, and \uXXXX lone-surrogate escapes
+// kept verbatim (a valid surrogate pair still combines). Any structural error
+// (including trailing data or invalid UTF-8) is returned so the caller can
+// degrade to {}.
+//
+// encoding/json cannot express the last two, so this is a hand-written
+// recursive-descent decoder. Python's json scanner accepts exactly the
+// whitespace set ' ', '\t', '\n', '\r'.
+func mcpParseJSONOrdered(data []byte) (any, error) {
+	if !utf8.Valid(data) {
+		return nil, fmt.Errorf("json: invalid UTF-8")
+	}
+	d := &mcpJSONDecoder{s: string(data)}
+	v, err := d.value()
+	if err != nil {
+		return nil, err
+	}
+	d.ws()
+	if d.pos != len(d.s) {
+		return nil, fmt.Errorf("json: trailing data")
+	}
+	return v, nil
+}
+
+type mcpJSONDecoder struct {
+	s     string
+	pos   int
+	depth int
+}
+
+// nested runs one object()/array() recursion level under the depth bound.
+func (d *mcpJSONDecoder) nested(parse func() (any, error)) (any, error) {
+	d.depth++
+	if d.depth > mcpJSONMaxDepth {
+		return nil, errMCPJSONTooDeep
+	}
+	v, err := parse()
+	d.depth--
+	return v, err
+}
+
+func (d *mcpJSONDecoder) ws() {
+	for d.pos < len(d.s) && strings.IndexByte(" \t\n\r", d.s[d.pos]) >= 0 {
+		d.pos++
+	}
+}
+
+// mcpJSONLiterals are the bare literals json.loads accepts beyond the number
+// grammar: NaN / ±Infinity arrive through parse_constant.
+var mcpJSONLiterals = map[byte]struct {
+	lit string
+	val any
+}{
+	't': {"true", true},
+	'f': {"false", false},
+	'n': {"null", nil},
+	'N': {"NaN", math.NaN()},
+	'I': {"Infinity", math.Inf(1)},
+}
+
+func (d *mcpJSONDecoder) value() (any, error) {
+	d.ws()
+	if d.pos >= len(d.s) {
+		return nil, fmt.Errorf("json: unexpected end of input")
+	}
+	c := d.s[d.pos]
+	if l, ok := mcpJSONLiterals[c]; ok {
+		return d.literal(l.lit, l.val)
+	}
+	switch {
+	case c == '{':
+		return d.nested(d.object)
+	case c == '[':
+		return d.nested(d.array)
+	case c == '"':
+		s, err := d.str()
+		if err != nil {
+			return nil, err
+		}
+		return s, nil
+	case c == '-' || (c >= '0' && c <= '9'):
+		return d.number()
+	}
+	return nil, fmt.Errorf("json: unexpected character %q", c)
+}
+
+func (d *mcpJSONDecoder) literal(lit string, v any) (any, error) {
+	if !strings.HasPrefix(d.s[d.pos:], lit) {
+		return nil, fmt.Errorf("json: invalid literal")
+	}
+	d.pos += len(lit)
+	return v, nil
+}
+
+func (d *mcpJSONDecoder) object() (any, error) {
+	d.pos++ // '{'
+	obj := newMCPObj()
+	d.ws()
+	if d.pos < len(d.s) && d.s[d.pos] == '}' {
+		d.pos++
+		return obj, nil
+	}
+	for {
+		d.ws()
+		if d.pos >= len(d.s) || d.s[d.pos] != '"' {
+			return nil, fmt.Errorf("json: expected object key")
+		}
+		k, err := d.str()
+		if err != nil {
+			return nil, err
+		}
+		d.ws()
+		if d.pos >= len(d.s) || d.s[d.pos] != ':' {
+			return nil, fmt.Errorf("json: expected ':'")
+		}
+		d.pos++
+		v, err := d.value()
+		if err != nil {
+			return nil, err
+		}
+		obj.set(k, v)
+		d.ws()
+		if d.pos >= len(d.s) {
+			return nil, fmt.Errorf("json: unexpected end of input")
+		}
+		switch d.s[d.pos] {
+		case ',':
+			d.pos++
+		case '}':
+			d.pos++
+			return obj, nil
+		default:
+			return nil, fmt.Errorf("json: expected ',' or '}'")
+		}
+	}
+}
+
+func (d *mcpJSONDecoder) array() (any, error) {
+	d.pos++ // '['
+	arr := []any{}
+	d.ws()
+	if d.pos < len(d.s) && d.s[d.pos] == ']' {
+		d.pos++
+		return arr, nil
+	}
+	for {
+		v, err := d.value()
+		if err != nil {
+			return nil, err
+		}
+		arr = append(arr, v)
+		d.ws()
+		if d.pos >= len(d.s) {
+			return nil, fmt.Errorf("json: unexpected end of input")
+		}
+		switch d.s[d.pos] {
+		case ',':
+			d.pos++
+		case ']':
+			d.pos++
+			return arr, nil
+		default:
+			return nil, fmt.Errorf("json: expected ',' or ']'")
+		}
+	}
+}
+
+func (d *mcpJSONDecoder) str() (string, error) {
+	d.pos++ // '"'
+	var sb strings.Builder
+	for {
+		if d.pos >= len(d.s) {
+			return "", fmt.Errorf("json: unterminated string")
+		}
+		c := d.s[d.pos]
+		switch {
+		case c == '"':
+			d.pos++
+			return sb.String(), nil
+		case c == '\\':
+			if err := d.escape(&sb); err != nil {
+				return "", err
+			}
+		case c < 0x20:
+			// json.loads(strict=True) rejects raw control characters.
+			return "", fmt.Errorf("json: invalid control character")
+		case c < 0x80:
+			sb.WriteByte(c)
+			d.pos++
+		default:
+			r, size := utf8.DecodeRuneInString(d.s[d.pos:])
+			if r == utf8.RuneError && size == 1 {
+				return "", fmt.Errorf("json: invalid UTF-8")
+			}
+			sb.WriteString(d.s[d.pos : d.pos+size])
+			d.pos += size
+		}
+	}
+}
+
+func (d *mcpJSONDecoder) escape(sb *strings.Builder) error {
+	d.pos++ // '\\'
+	if d.pos >= len(d.s) {
+		return fmt.Errorf("json: unterminated escape")
+	}
+	e := d.s[d.pos]
+	d.pos++
+	switch e {
+	case '"', '\\', '/':
+		sb.WriteByte(e)
+	case 'b':
+		sb.WriteByte('\b')
+	case 'f':
+		sb.WriteByte('\f')
+	case 'n':
+		sb.WriteByte('\n')
+	case 'r':
+		sb.WriteByte('\r')
+	case 't':
+		sb.WriteByte('\t')
+	case 'u':
+		r, err := d.hex4()
+		if err != nil {
+			return err
+		}
+		if !mcpIsSurrogate(r) {
+			sb.WriteRune(r)
+			return nil
+		}
+		// A high surrogate followed by a low-surrogate escape is one astral
+		// character; any other lone surrogate stays a lone surrogate (WTF-8)
+		// so mcpJSONString re-emits it as \uXXXX like json.dumps.
+		if d.pos+1 < len(d.s) && d.s[d.pos] == '\\' && d.s[d.pos+1] == 'u' {
+			save := d.pos
+			d.pos += 2
+			r2, err := d.hex4()
+			if err != nil {
+				return err
+			}
+			if dec := utf16.DecodeRune(r, r2); dec != utf8.RuneError {
+				sb.WriteRune(dec)
+				return nil
+			}
+			d.pos = save
+		}
+		sb.WriteString(mcpWTF8Surrogate(r))
+	default:
+		return fmt.Errorf("json: invalid escape")
+	}
+	return nil
+}
+
+func (d *mcpJSONDecoder) hex4() (rune, error) {
+	if d.pos+4 > len(d.s) {
+		return 0, fmt.Errorf("json: invalid \\u escape")
+	}
+	var r rune
+	for i := 0; i < 4; i++ {
+		v, ok := mcpHexVal(d.s[d.pos+i])
+		if !ok {
+			return 0, fmt.Errorf("json: invalid \\u escape")
+		}
+		r = r<<4 | rune(v)
+	}
+	d.pos += 4
+	return r, nil
+}
+
+func mcpHexVal(c byte) (byte, bool) {
+	if c >= '0' && c <= '9' {
+		return c - '0', true
+	}
+	if lc := c | 0x20; lc >= 'a' && lc <= 'f' {
+		return lc - 'a' + 10, true
+	}
+	return 0, false
+}
+
+func (d *mcpJSONDecoder) number() (any, error) {
+	start := d.pos
+	if d.s[d.pos] == '-' {
+		d.pos++
+		if strings.HasPrefix(d.s[d.pos:], "Infinity") {
+			d.pos += len("Infinity")
+			return math.Inf(-1), nil
+		}
+	}
+	if d.pos >= len(d.s) || d.s[d.pos] < '0' || d.s[d.pos] > '9' {
+		return nil, fmt.Errorf("json: invalid number")
+	}
+	if d.s[d.pos] == '0' {
+		d.pos++
+	} else {
+		for d.pos < len(d.s) && d.s[d.pos] >= '0' && d.s[d.pos] <= '9' {
+			d.pos++
+		}
+	}
+	isFloat := false
+	if d.pos < len(d.s) && d.s[d.pos] == '.' {
+		isFloat = true
+		d.pos++
+		if err := d.digits(); err != nil {
+			return nil, err
+		}
+	}
+	if d.pos < len(d.s) && (d.s[d.pos] == 'e' || d.s[d.pos] == 'E') {
+		isFloat = true
+		d.pos++
+		if d.pos < len(d.s) && (d.s[d.pos] == '+' || d.s[d.pos] == '-') {
+			d.pos++
+		}
+		if err := d.digits(); err != nil {
+			return nil, err
+		}
+	}
+	text := d.s[start:d.pos]
+	if !isFloat {
+		if i, err := strconv.ParseInt(text, 10, 64); err == nil {
 			return i, nil
 		}
-		return mcpBigInt(s), nil
+		return mcpBigInt(text), nil
 	}
-	f, err := strconv.ParseFloat(s, 64)
+	f, err := strconv.ParseFloat(text, 64)
 	if err != nil {
 		// Python float() overflows an out-of-range literal to ±inf; only
 		// overflow can reach here (underflow returns 0 without error).
@@ -198,6 +451,32 @@ func mcpJSONNumber(n json.Number) (any, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+func (d *mcpJSONDecoder) digits() error {
+	if d.pos >= len(d.s) || d.s[d.pos] < '0' || d.s[d.pos] > '9' {
+		return fmt.Errorf("json: invalid number")
+	}
+	for d.pos < len(d.s) && d.s[d.pos] >= '0' && d.s[d.pos] <= '9' {
+		d.pos++
+	}
+	return nil
+}
+
+func mcpIsSurrogate(r rune) bool { return r >= 0xD800 && r <= 0xDFFF }
+
+// mcpWTF8Surrogate encodes a lone surrogate as its 3-byte WTF-8 sequence. That
+// byte pattern is invalid UTF-8, so it can only come from a lone-surrogate
+// escape: mcpDecodeRune recognizes it and mcpJSONString re-emits \uXXXX.
+func mcpWTF8Surrogate(r rune) string {
+	return string([]byte{0xE0 | byte(r>>12), 0x80 | byte(r>>6&0x3F), 0x80 | byte(r&0x3F)})
+}
+
+func mcpDecodeRune(s string) (rune, int) {
+	if len(s) >= 3 && s[0] == 0xED && s[1] >= 0xA0 && s[1] <= 0xBF && s[2] >= 0x80 && s[2] <= 0xBF {
+		return rune(s[0]&0x0F)<<12 | rune(s[1]&0x3F)<<6 | rune(s[2]&0x3F), 3
+	}
+	return utf8.DecodeRuneInString(s)
 }
 
 // mcpJSONDumpsIndent2 renders v exactly like json.dumps(v, indent=2): default
@@ -292,10 +571,13 @@ func mcpJSONFloat(f float64) string {
 }
 
 // mcpJSONString renders s exactly like json.dumps(s) with ensure_ascii=True.
+// Lone surrogates (WTF-8, from a \uXXXX escape) re-emit as \uXXXX; a valid
+// astral character is emitted as its surrogate pair.
 func mcpJSONString(s string) string {
 	var sb strings.Builder
 	sb.WriteByte('"')
-	for _, r := range s {
+	for i := 0; i < len(s); {
+		r, size := mcpDecodeRune(s[i:])
 		switch r {
 		case '"':
 			sb.WriteString(`\"`)
@@ -312,14 +594,18 @@ func mcpJSONString(s string) string {
 		case '\t':
 			sb.WriteString(`\t`)
 		default:
-			if r < 0x20 || r > 0x7e {
+			switch {
+			case mcpIsSurrogate(r):
+				fmt.Fprintf(&sb, `\u%04x`, r)
+			case r < 0x20 || r > 0x7e:
 				for _, u := range utf16.Encode([]rune{r}) {
 					fmt.Fprintf(&sb, `\u%04x`, u)
 				}
-			} else {
+			default:
 				sb.WriteRune(r)
 			}
 		}
+		i += size
 	}
 	sb.WriteByte('"')
 	return sb.String()
@@ -357,6 +643,10 @@ func mcpTOMLValue(v any) (string, error) {
 	case mcpBigInt:
 		// Python str(int): exact decimal digits.
 		return string(x), nil
+	case string:
+		// toml_write.toml_value uses json.dumps for strings; this copy is the
+		// same algorithm but also re-emits lone-surrogate escapes.
+		return mcpJSONString(x), nil
 	default:
 		// Scalars (bool/int/float/string) delegate to the existing port.
 		return toml.TOMLValue(v)
@@ -370,6 +660,21 @@ func mcpTOMLValue(v any) (string, error) {
 func mcpIsFile(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.Mode().IsRegular()
+}
+
+// mcpReadTextFile mirrors Python's Path.read_text(): the file must be readable
+// and valid UTF-8 (strict), otherwise the error is propagated so the caller
+// fails like the script's uncaught PermissionError / UnicodeDecodeError instead
+// of silently rewriting the user's file.
+func mcpReadTextFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if !utf8.Valid(data) {
+		return "", fmt.Errorf("%s: invalid UTF-8", path)
+	}
+	return string(data), nil
 }
 
 // mcpReadServers mirrors toml-read.read_mcp: the [mcp.*] table, with each
@@ -481,18 +786,25 @@ func mcpNormalizeEnv(raw any) *mcpObj {
 // mcpLoadServers mirrors mcp-render.load_mcp: manifest servers, then a recipe
 // MCP JSON file (when present) merged with recipe values taking precedence and
 // new keys appended.
-func mcpLoadServers(root *toml.Table, recipeMCPPath string) *mcpObj {
+func mcpLoadServers(root *toml.Table, recipeMCPPath string) (*mcpObj, error) {
 	mcp := mcpReadServers(root)
-	if recipeMCPPath != "" && mcpIsFile(recipeMCPPath) {
-		if data, err := os.ReadFile(recipeMCPPath); err == nil {
-			if parsed, perr := mcpParseJSONOrdered(data); perr == nil {
-				if rm, ok := parsed.(*mcpObj); ok {
-					mcp = mcpMergeObjs(mcp, rm)
-				}
-			}
-		}
+	if recipeMCPPath == "" || !mcpIsFile(recipeMCPPath) {
+		return mcp, nil
 	}
-	return mcp
+	text, err := mcpReadTextFile(recipeMCPPath)
+	if err != nil {
+		return nil, err
+	}
+	// Invalid JSON (json.JSONDecodeError) and non-object JSON are silently
+	// ignored; a read error is not. A depth overflow (RecursionError) is fatal.
+	if parsed, perr := mcpParseJSONOrdered([]byte(text)); perr == nil {
+		if rm, ok := parsed.(*mcpObj); ok {
+			mcp = mcpMergeObjs(mcp, rm)
+		}
+	} else if errors.Is(perr, errMCPJSONTooDeep) {
+		return nil, perr
+	}
+	return mcp, nil
 }
 
 func mcpMergeObjs(a, b *mcpObj) *mcpObj {
@@ -747,12 +1059,16 @@ func mcpSlimConfigForWrite(cfg *mcpObj) *mcpObj {
 func mcpMergeIntoJSON(targetPath, mcpKey string, servers *mcpObj, agent string) (string, error) {
 	existing := newMCPObj()
 	if mcpIsFile(targetPath) {
-		if data, err := os.ReadFile(targetPath); err == nil {
-			if parsed, perr := mcpParseJSONOrdered(data); perr == nil {
-				if obj, ok := parsed.(*mcpObj); ok {
-					existing = obj
-				}
+		text, err := mcpReadTextFile(targetPath)
+		if err != nil {
+			return "", err
+		}
+		if parsed, perr := mcpParseJSONOrdered([]byte(text)); perr == nil {
+			if obj, ok := parsed.(*mcpObj); ok {
+				existing = obj
 			}
+		} else if errors.Is(perr, errMCPJSONTooDeep) {
+			return "", perr
 		}
 	}
 
@@ -781,9 +1097,11 @@ func mcpMergeIntoJSON(targetPath, mcpKey string, servers *mcpObj, agent string) 
 func mcpMergeIntoTOML(targetPath, mcpKey string, servers *mcpObj) (string, error) {
 	var existingLines []string
 	if mcpIsFile(targetPath) {
-		if data, err := os.ReadFile(targetPath); err == nil {
-			existingLines = pySplitLines(string(data))
+		text, err := mcpReadTextFile(targetPath)
+		if err != nil {
+			return "", err
 		}
+		existingLines = pySplitLines(text)
 	}
 
 	outLines := []string{}
@@ -850,6 +1168,22 @@ func mcpPathSuffix(p string) string {
 	return base[i:]
 }
 
+// mcpHasLoneSurrogate reports whether s holds a lone surrogate — the one
+// character Python's UTF-8 write_text()/print() cannot encode. mcpJSONString
+// escapes every surrogate it re-emits and all inputs are validated UTF-8, so
+// only a raw TOML table name or inline-table key can leak a WTF-8 surrogate
+// into the rendered content.
+func mcpHasLoneSurrogate(s string) bool {
+	for i := 0; i < len(s); {
+		r, size := mcpDecodeRune(s[i:])
+		if mcpIsSurrogate(r) {
+			return true
+		}
+		i += size
+	}
+	return false
+}
+
 // RenderMCPFile is the byte-exact port of mcp-render.py's main() body: it
 // returns the process exit code and writes the same stdout/stderr the script
 // would. It is a library entry point only; the Bash spine still execs the
@@ -859,18 +1193,22 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		fmt.Fprintf(stderr, "error: %s not found\n", tomlPath)
 		return 1
 	}
-	data, err := os.ReadFile(tomlPath)
+	text, err := mcpReadTextFile(tomlPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %s not found\n", tomlPath)
+		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
 	}
-	root, err := toml.Parse(data)
+	root, err := toml.Parse([]byte(text))
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
 	}
 
-	servers := mcpLoadServers(root, opts.RecipeMCPPath)
+	servers, err := mcpLoadServers(root, opts.RecipeMCPPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %s\n", err)
+		return 1
+	}
 	if servers.len() == 0 {
 		fmt.Fprintf(stderr, "info: no [mcp.*] entries \u2014 skipping %s\n", agent)
 		return 0
@@ -897,18 +1235,43 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		return 1
 	}
 
+	if !opts.DryRun {
+		if dir := filepath.Dir(targetPath); dir != "" {
+			if err := os.MkdirAll(dir, 0o777); err != nil {
+				fmt.Fprintf(stderr, "error: %s\n", err)
+				return 1
+			}
+		}
+	}
+
+	if mcpHasLoneSurrogate(content) {
+		// mcp-render.py lets the rendered text reach write_text()/print(), which
+		// re-encode it and raise UnicodeEncodeError on a lone surrogate. Only a
+		// raw TOML key leaks one here (JSON and TOML *values* go through
+		// json.dumps, which escapes it). write_text() opens the target before it
+		// encodes, so the file is left created/truncated empty; reproduce that
+		// side effect and fail like the uncaught exception (rc 1).
+		if !opts.DryRun {
+			// write_text() opens (and truncates) the target before it encodes;
+			// if that open fails (e.g. PermissionError) Python reports it, not
+			// the encode error, so surface the open error here.
+			f, ferr := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+			if ferr != nil {
+				fmt.Fprintf(stderr, "error: %s\n", ferr)
+				return 1
+			}
+			_ = f.Close()
+		}
+		fmt.Fprintf(stderr, "error: %s: rendered content is not UTF-8 encodable (lone surrogate)\n", targetPath)
+		return 1
+	}
+
 	if opts.DryRun {
 		fmt.Fprintf(stdout, "--- %s (dry-run) ---\n", targetPath)
 		fmt.Fprintln(stdout, content)
 		return 0
 	}
 
-	if dir := filepath.Dir(targetPath); dir != "" {
-		if err := os.MkdirAll(dir, 0o777); err != nil {
-			fmt.Fprintf(stderr, "error: %s\n", err)
-			return 1
-		}
-	}
 	if err := os.WriteFile(targetPath, []byte(content), 0o666); err != nil {
 		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
