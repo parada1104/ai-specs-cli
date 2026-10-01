@@ -26,6 +26,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -357,6 +359,11 @@ func hooksEnvAssignmentsList(list []any) (string, error) {
 	}
 	parts := make([]string, 0, len(sorted))
 	for _, k := range sorted {
+		if _, ok := k.(mcpBigInt); ok {
+			// CPython fits the index into an ssize_t before the range check; a
+			// value wider than int64 always overflows, so the fit error wins.
+			return "", fmt.Errorf("IndexError: cannot fit 'int' into an index-sized integer")
+		}
 		idx, ok := hooksPyIntIndex(k)
 		if !ok {
 			return "", fmt.Errorf("TypeError: list indices must be integers or slices, not %s", hooksPyType(k))
@@ -412,6 +419,15 @@ func hooksPyNumeric(v any) (float64, bool) {
 }
 
 func hooksPyCompare(a, b any) (int, error) {
+	// An arbitrary-precision mcpBigInt must compare numerically and exactly:
+	// float64 rounding can flip an order (10**20+1 == 1e20 as float64, but
+	// 10**20+1 > 1e20 exactly).
+	if _, ok := a.(mcpBigInt); ok {
+		return hooksBigIntCompare(a, b)
+	}
+	if _, ok := b.(mcpBigInt); ok {
+		return hooksBigIntCompare(a, b)
+	}
 	if an, ok := hooksPyNumeric(a); ok {
 		if bn, ok := hooksPyNumeric(b); ok {
 			switch {
@@ -429,7 +445,67 @@ func hooksPyCompare(a, b any) (int, error) {
 	if aok && bok {
 		return strings.Compare(as, bs), nil
 	}
-	return 0, fmt.Errorf("TypeError: '<' not supported between instances of '%s' and '%s'",
+	return 0, hooksCompareTypeError(a, b)
+}
+
+// hooksPyRat returns the exact rational value of a JSON number, or false for a
+// NaN/Inf float or a non-number.
+func hooksPyRat(v any) (*big.Rat, bool) {
+	switch x := v.(type) {
+	case mcpBigInt:
+		r, ok := new(big.Rat).SetString(string(x))
+		return r, ok
+	case bool:
+		if x {
+			return new(big.Rat).SetInt64(1), true
+		}
+		return new(big.Rat).SetInt64(0), true
+	case int:
+		return new(big.Rat).SetInt64(int64(x)), true
+	case int64:
+		return new(big.Rat).SetInt64(x), true
+	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return nil, false
+		}
+		return new(big.Rat).SetFloat64(x), true
+	}
+	return nil, false
+}
+
+// hooksBigIntCompare mirrors Python's exact ordering when one side is an
+// mcpBigInt: it swaps so the big int is on the left and negates, so int/float
+// comparisons stay exact (never rounded through float64). A NaN compares equal
+// (Python: both < and > are False) and ±Inf follow Python.
+func hooksBigIntCompare(a, b any) (int, error) {
+	sign := 1
+	if _, ok := a.(mcpBigInt); !ok {
+		a, b = b, a
+		sign = -1
+	}
+	ar, ok := hooksPyRat(a)
+	if !ok {
+		return 0, hooksCompareTypeError(a, b)
+	}
+	if y, isFloat := b.(float64); isFloat && (math.IsNaN(y) || math.IsInf(y, 0)) {
+		switch {
+		case math.IsNaN(y):
+			return 0, nil
+		case math.IsInf(y, 1):
+			return -sign, nil
+		default:
+			return sign, nil
+		}
+	}
+	br, ok := hooksPyRat(b)
+	if !ok {
+		return 0, hooksCompareTypeError(a, b)
+	}
+	return sign * ar.Cmp(br), nil
+}
+
+func hooksCompareTypeError(a, b any) error {
+	return fmt.Errorf("TypeError: '<' not supported between instances of '%s' and '%s'",
 		hooksPyType(a), hooksPyType(b))
 }
 

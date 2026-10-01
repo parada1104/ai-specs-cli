@@ -40,9 +40,12 @@ type hooksRefCase struct {
 	// tracebackStderr marks the cases where Python fails with an uncaught
 	// traceback: only rc / stdout / written tree+modes are byte-compared,
 	// Python stderr must contain pythonExc and Go stderr must be one
-	// "error: " line.
+	// "error: " line. goErrContains additionally pins that the port reproduces
+	// the specific Python failure mode (the exception message is otherwise
+	// free-form, so rc+tree alone cannot distinguish TypeError from IndexError).
 	tracebackStderr bool
 	pythonExc       string
+	goErrContains   string
 }
 
 const hooksScriptPath = "ai-specs/recipes/hookdemo/hooks/gate.sh"
@@ -277,6 +280,9 @@ func TestHooksRenderDifferential(t *testing.T) {
 				lines := strings.Split(strings.TrimSuffix(goErr, "\n"), "\n")
 				if len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
 					t.Errorf("go stderr is not exactly one `error: ` line: %q", goErr)
+				}
+				if tc.goErrContains != "" && !strings.Contains(goErr, tc.goErrContains) {
+					t.Errorf("go stderr missing %q: %q", tc.goErrContains, goErr)
 				}
 				return
 			}
@@ -682,6 +688,29 @@ func hooksRenderCases() []hooksRefCase {
 			resolved: hooksStr(hooksBlob(map[string]any{
 				"recipe": "r", "id": "i", "event": "pre-tool-use", "matcher": "Bash", "script_path": hooksScriptPath, "env": []any{},
 			}))},
+
+		// --- mcpBigInt (> int64) in the cursor env-list path ---
+		{name: "cursor env list negative index tolerated", agent: "cursor", resolvedRel: rel,
+			resolved: hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[-1]}`))},
+		{name: "cursor env list big index cannot fit", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[100000000000000000000]}`)),
+			tracebackStderr: true, pythonExc: "IndexError", goErrContains: "cannot fit 'int' into an index-sized integer"},
+		{name: "cursor env list negative big index cannot fit", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[-100000000000000000000]}`)),
+			tracebackStderr: true, pythonExc: "IndexError", goErrContains: "cannot fit 'int' into an index-sized integer"},
+		// The sort must compare the big int numerically (not error), so the
+		// first out-of-range int index decides the failure.
+		{name: "cursor env list big vs int sorts then index out of range", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[100000000000000000000,5]}`)),
+			tracebackStderr: true, pythonExc: "IndexError", goErrContains: "list index out of range"},
+		// float64 rounding would put 10**20+1 before 1e20 (equal as float64) and
+		// change the failure mode; the exact order puts 1e20 first (float index).
+		{name: "cursor env list exact big float order", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[100000000000000000001,1e20]}`)),
+			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "not float"},
+		{name: "cursor env list big vs string typeerror", agent: "cursor", resolvedRel: rel,
+			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[100000000000000000000,"a"]}`)),
+			tracebackStderr: true, pythonExc: "TypeError", goErrContains: "'int' and 'str'"},
 
 		// --- event unhashable (list/dict) → TypeError in EVENT_MAP.get ---
 		{name: "claude event list typeerror", agent: "claude", resolvedRel: rel,

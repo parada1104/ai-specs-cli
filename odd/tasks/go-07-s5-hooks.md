@@ -262,6 +262,13 @@ step 2, and both legs are byte-identical in both steps.
     wrapper/TS header, a cursor env value) `write_text` opens/truncates first, so
     the target is left as an empty file, then rc 1. json.dumps-escaped values
     (claude `settings.json`, TS `ENV` lines) tolerate the same surrogate.
+19. **`mcpBigInt` (JSON integers wider than int64)** in the cursor env-list path:
+    as a list index it is `IndexError: cannot fit 'int' into an index-sized
+    integer` (CPython fits the index into an ssize_t *before* the range check,
+    so it wins over "list index out of range"); as a sort operand it compares
+    numerically and exactly against int/bool/float (`big.Rat`, since float64
+    rounding would flip `10**20+1` vs `1e20`) and against another `mcpBigInt`,
+    but against a str it is `TypeError` naming the int type.
 
 ## Divergences / residual risk
 
@@ -271,12 +278,13 @@ same rc, the same already-written tree, and the same exception class (traceback
 mode); every tolerated input produces the same bytes. The only deliberate
 boundary is scope, not behavior:
 
+- Review advisory **R3-hooks-bigint-envlist** is fixed (see quirk 19).
 - `main()`'s argv/usage/exit-2 contract stays in Bash until S15 (a library entry
   receives the three already-resolved arguments), so there is nothing left to
   reproduce for that leg.
 - Size: T1 is ~1863 lines (port 971 + tests 759 + ref driver 133), above the
   ~1000 aim, because the two generated TS adapters are ~110 lines of exact
-  template each and the required matrix now spans 79 differential cases. T1 and
+  template each and the required matrix now spans 88 differential cases. T1 and
   T2 stay separable (T2 is only the 44-line parity fixture), so the parent can
   make the two planned commits.
 
