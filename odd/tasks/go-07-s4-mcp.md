@@ -21,7 +21,7 @@ treatment `gitignore-render.py` received in S2). No reverse bridge from Bash.
 
 ## Tasks
 
-- [ ] T1 — Go port of `mcp-render.py` (`load_mcp` incl. recipe-mcp merge,
+- [x] T1 — Go port of `mcp-render.py` (`load_mcp` incl. recipe-mcp merge,
   env-var translation, generic/opencode translators, slim-write,
   `merge_into_json` with key-order preservation, `$schema`-first for opencode,
   `json.dumps(indent=2)` byte format incl. `ensure_ascii` and float repr,
@@ -31,10 +31,10 @@ treatment `gitignore-render.py` received in S2). No reverse bridge from Bash.
   `platform.sh` matrix (claude, cursor, opencode, codex, gemini, pi, omp; copilot
   has no MCP) and the edge cases (existing file preserved keys, invalid/non-object
   JSON, duplicate keys, non-ASCII, prior `[mcp_servers.*]` blocks, empty servers).
-- [ ] T2 — `mcp-per-agent` parity fixture in `tests/parity/parity.py` (every
+- [x] T2 — `mcp-per-agent` parity fixture in `tests/parity/parity.py` (every
   `mcp_key`/path pair incl. opencode `mcp` and codex `mcp_servers`), zero deltas
   × both gate modes.
-- [ ] T3 — Evidence: `go test ./...`, parity corpus, and this document updated
+- [x] T3 — Evidence: `go test ./...`, parity corpus, and this document updated
   with commit ids.
 
 ## Evidence
@@ -80,8 +80,7 @@ S15); this fixture becomes the Go gate once the fan-out is ported.
 
 - `go test ./... -count=1` → `ok` for every package.
 - `python3 tests/parity/run.py` → zero deltas, both gate modes (above).
-- Commits: T1 = `3695349`, T2 = recorded in the follow-up doc commit, T3 = that
-  same follow-up doc commit.
+- Commits: T1 = `3695349`, T2 = `1228c25`, T3 = this document commit.
 
 ## Deviations/Quirks
 
