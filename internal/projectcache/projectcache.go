@@ -49,60 +49,109 @@ func SanitizeBasename(name string) string {
 	return cleaned
 }
 
-// ResolvePath mirrors Path(p).resolve() with strict=False: absolute, symlinks
-// resolved as far as possible, dangling symlinks resolving to their target.
+// ResolvePath mirrors Path(p).resolve() with strict=False. Python uses
+// posixpath.realpath(strict=False): a component-by-component pathwalk that
+// resolves each component's symlinks BEFORE `..` pops against the resolved
+// prefix. A dangling component leaves the remaining tail unresolved and a
+// symlink loop returns the looping link unresolved (the `seen` map).
+//
+// A Clean-first implementation (filepath.Abs/filepath.Clean) is WRONG here: it
+// collapses `..` before symlink resolution, so `link/../x` diverges whenever
+// the link points at a different depth than its parent.
 // Kept package-local so projectcache does not depend on internal/skills (the
 // other owner of a ported project-cache derivation).
 func ResolvePath(p string) string {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return filepath.Clean(p)
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved
-	}
-	return resolveNonStrict(abs, 0)
+	return realpathPy(p)
 }
 
-// resolveNonStrict resolves every component of an absolute POSIX path,
-// following symlinks even when their target does not exist. The link budget
-// mirrors the kernel's 40-link bound so a symlink loop terminates.
-func resolveNonStrict(path string, links int) string {
-	if links > 40 {
-		return filepath.Clean(path)
+// realpathPy mirrors posixpath.realpath(filename, strict=False). The stack of
+// pending parts uses a NUL sentinel in place of CPython's None marker: when a
+// sentinel pops, the next stack entry is the symlink path whose fully-resolved
+// target (the current path) is recorded in seen. The seen map both terminates
+// symlink loops and caches resolved links.
+func realpathPy(filename string) string {
+	const (
+		sep    = "/"
+		root   = "/"
+		curdir = "."
+		pardir = ".."
+		marker = "\x00"
+	)
+	parts := strings.Split(filename, sep)
+	rest := make([]string, len(parts))
+	for i, part := range parts {
+		rest[len(parts)-1-i] = part
 	}
-	clean := filepath.Clean(path)
-	if !strings.HasPrefix(clean, "/") {
-		return clean
+	partCount := len(rest)
+
+	path := root
+	if !strings.HasPrefix(filename, sep) {
+		if wd, err := os.Getwd(); err == nil {
+			path = wd
+		}
 	}
-	comps := strings.Split(clean[1:], "/")
-	current := "/"
-	for i, comp := range comps {
-		if comp == "" {
+
+	seen := map[string]*string{}
+	for partCount > 0 {
+		name := rest[len(rest)-1]
+		rest = rest[:len(rest)-1]
+		if name == marker {
+			key := rest[len(rest)-1]
+			rest = rest[:len(rest)-1]
+			resolved := path
+			seen[key] = &resolved
 			continue
 		}
-		if comp == ".." {
-			current = filepath.Dir(current)
+		partCount--
+		if name == "" || name == curdir {
 			continue
 		}
-		candidate := filepath.Join(current, comp)
-		info, err := os.Lstat(candidate)
-		if err != nil || info.Mode()&os.ModeSymlink == 0 {
-			current = candidate
+		if name == pardir {
+			if idx := strings.LastIndex(path, sep); idx > 0 {
+				path = path[:idx]
+			} else {
+				path = root
+			}
 			continue
 		}
-		target, err := os.Readlink(candidate)
+		newpath := path + sep + name
+		if path == root {
+			newpath = path + name
+		}
+		info, err := os.Lstat(newpath)
 		if err != nil {
-			current = candidate
+			path = newpath
 			continue
 		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(current, target)
+		if info.Mode()&os.ModeSymlink == 0 {
+			path = newpath
+			continue
 		}
-		remainder := append([]string{target}, comps[i+1:]...)
-		return resolveNonStrict(filepath.Join(remainder...), links+1)
+		if cached, ok := seen[newpath]; ok {
+			if cached != nil {
+				path = *cached
+			} else {
+				path = newpath
+			}
+			continue
+		}
+		target, err := os.Readlink(newpath)
+		if err != nil {
+			path = newpath
+			continue
+		}
+		if strings.HasPrefix(target, sep) {
+			path = root
+		}
+		seen[newpath] = nil
+		rest = append(rest, newpath, marker)
+		targetParts := strings.Split(target, sep)
+		for i := len(targetParts) - 1; i >= 0; i-- {
+			rest = append(rest, targetParts[i])
+		}
+		partCount += len(targetParts)
 	}
-	return current
+	return path
 }
 
 // CacheKey mirrors cache_key: 12-char sha256 of realpath + sanitized basename.
