@@ -3,12 +3,16 @@ package projectcache
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -33,6 +37,24 @@ func TestSanitizeBasename(t *testing.T) {
 	for in, want := range cases {
 		if got := SanitizeBasename(in); got != want {
 			t.Errorf("SanitizeBasename(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestPyStem(t *testing.T) {
+	cases := map[string]string{
+		"x.md":       "x",
+		"x.tar.md":   "x.tar",
+		".md":        ".md",
+		".hidden.md": ".hidden",
+		"..md":       "..md",
+		"a.":         "a",
+		"a":          "a",
+		".a.md":      ".a",
+	}
+	for in, want := range cases {
+		if got := pyStem(in); got != want {
+			t.Errorf("pyStem(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -208,7 +230,7 @@ func TestResolvePathMatchesPythonRealpath(t *testing.T) {
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(dir, "deep", "a", "b", "target.txt"), "t\n")
+	pcWrite(t, filepath.Join(dir, "deep", "a", "b", "target.txt"), "t\n", 0o644)
 	mustSymlink(t, deep, filepath.Join(dir, "abslink"))
 	mustSymlink(t, filepath.Join("deep", "a", "b", "c"), filepath.Join(dir, "rellink"))
 	mustSymlink(t, filepath.Join(dir, "missing", "nope"), filepath.Join(dir, "dangling"))
@@ -291,3 +313,812 @@ func TestRemoveLegacyOriginRetryPreservesThenRemovesDotRecipe(t *testing.T) {
 }
 
 // ============================================================================
+// Commit B: full differential against the real Python module
+// ============================================================================
+
+type pcSpec struct {
+	Mode        string         `json:"mode"`
+	CLIAction   string         `json:"cli_action,omitempty"`
+	CLIKind     string         `json:"cli_kind,omitempty"`
+	CLIDest     string         `json:"cli_dest,omitempty"`
+	FN          string         `json:"fn,omitempty"`
+	Args        map[string]any `json:"args,omitempty"`
+	AISpecsHome string         `json:"ai_specs_home,omitempty"`
+	CLIHome     string         `json:"cli_home,omitempty"`
+	Root        string         `json:"root"`
+	Home        string         `json:"home"`
+	Sandbox     string         `json:"sandbox"`
+}
+
+type pcRef struct {
+	Stdout string            `json:"stdout"`
+	Stderr string            `json:"stderr"`
+	RC     int               `json:"rc"`
+	Files  map[string]string `json:"files"`
+	Modes  map[string]int    `json:"modes"`
+	Dirs   []string          `json:"dirs"`
+	Links  map[string]string `json:"links"`
+	Result json.RawMessage   `json:"result"`
+}
+
+type pcCase struct {
+	name string
+	fn   string
+	// CLI fields when fn == "".
+	cliAction string
+	cliKind   *string
+	cliDest   string
+	args      map[string]any
+
+	seed      func(t *testing.T, root, home string)
+	gitAdd    bool
+	gitDetach bool
+	afterGit  func(t *testing.T, root, home string)
+
+	tracebackStderr bool
+	pythonExc       string
+	goErrContains   string
+	stderrPrefix    string
+}
+
+func TestProjectCacheDifferential(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 not available: %v", err)
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refScript := filepath.Join(repoRoot, "internal", "projectcache", "testdata", "projectcache_ref.py")
+
+	for _, tc := range pcCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			T := t.TempDir()
+			t.Cleanup(func() { pcChmodWritable(T) })
+			root := filepath.Join(T, "project")
+			home := filepath.Join(T, "home")
+
+			spec := pcSpec{
+				Mode:        "lib",
+				FN:          tc.fn,
+				Args:        tc.args,
+				AISpecsHome: home,
+				CLIHome:     home,
+				Root:        root,
+				Home:        home,
+				Sandbox:     T,
+			}
+			if tc.fn == "" {
+				spec.Mode = "cli"
+				spec.CLIAction = tc.cliAction
+				spec.CLIDest = tc.cliDest
+				if tc.cliKind != nil {
+					spec.CLIKind = *tc.cliKind
+				}
+			}
+
+			// Leg 1: the real Python module (CLI subprocess or importlib call).
+			pcSeedLeg(t, T, root, home, tc)
+			ref := pcRunRef(t, refScript, spec)
+
+			// Leg 2: the Go port on an identical, freshly reset tree.
+			pcSeedLeg(t, T, root, home, tc)
+			goOut, goErr, goRC, goResult := pcRunGo(t, spec, root, home)
+			goFiles, goModes, goDirs, goLinks := pcSnapshot(t, T)
+
+			if goOut != ref.Stdout {
+				t.Errorf("stdout differs\n--- go ---\n%q\n--- ref ---\n%q", goOut, ref.Stdout)
+			}
+			if goRC != ref.RC {
+				t.Errorf("rc: go=%d ref=%d", goRC, ref.RC)
+			}
+			if !pcTreeEqual(goFiles, ref.Files) {
+				t.Errorf("files differ:\n%s", pcTreeDiff(goFiles, ref.Files))
+			}
+			if !pcModesEqual(goModes, ref.Modes) {
+				t.Errorf("modes differ:\n  go:  %v\n  ref: %v", goModes, ref.Modes)
+			}
+			if !pcStringsEqual(goDirs, ref.Dirs) {
+				t.Errorf("dirs differ:\n  go:  %v\n  ref: %v", goDirs, ref.Dirs)
+			}
+			if !pcTreeEqual(goLinks, ref.Links) {
+				t.Errorf("links differ:\n  go:  %v\n  ref: %v", goLinks, ref.Links)
+			}
+
+			var refRes, goRes any
+			if len(ref.Result) > 0 {
+				_ = json.Unmarshal(ref.Result, &refRes)
+			}
+			if len(goResult) > 0 {
+				_ = json.Unmarshal(goResult, &goRes)
+			}
+			if !reflect.DeepEqual(refRes, goRes) {
+				t.Errorf("result differs: go=%v ref=%v", goRes, refRes)
+			}
+
+			if tc.tracebackStderr {
+				if !strings.Contains(ref.Stderr, tc.pythonExc) {
+					t.Errorf("ref stderr missing %q:\n%s", tc.pythonExc, ref.Stderr)
+				}
+				lines := strings.Split(strings.TrimSuffix(goErr, "\n"), "\n")
+				if len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
+					t.Errorf("go stderr is not exactly one `error: ` line: %q", goErr)
+				}
+				if tc.goErrContains != "" && !strings.Contains(goErr, tc.goErrContains) {
+					t.Errorf("go stderr missing %q: %q", tc.goErrContains, goErr)
+				}
+				return
+			}
+			if tc.stderrPrefix != "" {
+				if !strings.HasPrefix(ref.Stderr, tc.stderrPrefix) {
+					t.Errorf("ref stderr missing prefix %q:\n%s", tc.stderrPrefix, ref.Stderr)
+				}
+				if !strings.HasPrefix(goErr, tc.stderrPrefix) {
+					t.Errorf("go stderr missing prefix %q: %q", tc.stderrPrefix, goErr)
+				}
+				return
+			}
+			if goErr != ref.Stderr {
+				t.Errorf("stderr differs\n--- go ---\n%q\n--- ref ---\n%q", goErr, ref.Stderr)
+			}
+		})
+	}
+}
+
+// pcSeedLeg resets T and applies the case seed (plus optional git setup).
+func pcSeedLeg(t *testing.T, T, root, home string, tc pcCase) {
+	t.Helper()
+	resetTree(t, T)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if tc.seed != nil {
+		tc.seed(t, root, home)
+	}
+	if tc.gitAdd || tc.gitDetach {
+		pcGit(t, root, "init", "-q")
+		pcGit(t, root, "add", "-A")
+	}
+	if tc.gitDetach {
+		pcGit(t, root, "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "x")
+		pcGit(t, root, "checkout", "-q", "--detach")
+	}
+	if tc.afterGit != nil {
+		tc.afterGit(t, root, home)
+	}
+}
+
+// resetTree makes every directory traversable again (a failed-removal case can
+// leave a 0500 dir behind) and empties T.
+func resetTree(t *testing.T, dir string) {
+	t.Helper()
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			_ = os.Chmod(p, 0o755)
+		} else {
+			_ = os.Chmod(p, 0o644)
+		}
+		return nil
+	})
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			t.Fatalf("reset %s: %v", dir, err)
+		}
+	}
+}
+
+// pcChmodWritable restores traversable permissions so TempDir cleanup can
+// remove a tree left read-only by a failed-removal case.
+func pcChmodWritable(dir string) {
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			_ = os.Chmod(p, 0o755)
+		}
+		return nil
+	})
+}
+
+func pcGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func pcRunRef(t *testing.T, refScript string, spec pcSpec) pcRef {
+	t.Helper()
+	payload, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatalf("marshal spec: %v", err)
+	}
+	cmd := exec.Command("python3", refScript)
+	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	cmd.Stdin = bytes.NewReader(payload)
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("ref driver failed: %v\nstderr: %s", err, errBuf.String())
+	}
+	var ref pcRef
+	if err := json.Unmarshal(out.Bytes(), &ref); err != nil {
+		t.Fatalf("parse ref JSON: %v\nraw: %s", err, out.String())
+	}
+	return ref
+}
+
+// pcRunGo invokes the Go port with the same inputs the driver received.
+func pcRunGo(t *testing.T, spec pcSpec, root, home string) (string, string, int, []byte) {
+	t.Helper()
+	var out, errBuf bytes.Buffer
+	var result any
+	rc := 0
+
+	if spec.Mode == "cli" {
+		t.Setenv("AI_SPECS_HOME", spec.AISpecsHome)
+		arg := ""
+		switch spec.CLIAction {
+		case "path":
+			if spec.CLIKind != "" {
+				arg = spec.CLIKind
+			}
+		case "merge-commands":
+			if spec.CLIDest != "" {
+				arg = filepath.Join(root, spec.CLIDest)
+			}
+		}
+		rc = RenderProjectCache(root, spec.CLIAction, arg, &out, &errBuf)
+	} else {
+		rc = pcDispatchLib(t, spec, root, spec.CLIHome, &out, &errBuf, &result)
+	}
+
+	resultJSON, _ := json.Marshal(result)
+	return out.String(), errBuf.String(), rc, resultJSON
+}
+
+func pcDispatchLib(t *testing.T, spec pcSpec, root, cliHome string, out, errBuf *bytes.Buffer, result *any) int {
+	t.Helper()
+	args := spec.Args
+	switch spec.FN {
+	case "remove_bundled_skill_leftovers":
+		RemoveBundledSkillLeftovers(filepath.Join(root, args["ai_specs"].(string)), cliHome,
+			pcLockSkills(args), out, errBuf)
+	case "remove_bundled_command_leftovers":
+		RemoveBundledCommandLeftovers(filepath.Join(root, args["ai_specs"].(string)), cliHome,
+			pcLockCommands(args), out, errBuf)
+	case "remove_recipe_command_leftovers":
+		RemoveRecipeCommandLeftovers(filepath.Join(root, pcArgStr(args, "project_root", "project")), cliHome,
+			pcLockCommands(args), pcRecipeSources(args, root), out, errBuf)
+	case "bundled_skill_ids":
+		*result = BundledSkillIDs(cliHome)
+	case "bundled_command_ids":
+		*result = BundledCommandIDs(cliHome)
+	case "_is_git_work_tree":
+		*result = IsGitWorkTree(filepath.Join(root, args["project_root"].(string)))
+	case "_git_ls_files":
+		*result = GitLsFiles(filepath.Join(root, args["project_root"].(string)), args["pathspec"].(string))
+	case "tracked_bundled_skill_leftovers":
+		*result = TrackedBundledSkillLeftovers(filepath.Join(root, args["project_root"].(string)), cliHome)
+	case "tracked_bundled_command_leftovers":
+		*result = TrackedBundledCommandLeftovers(filepath.Join(root, args["project_root"].(string)), cliHome)
+	case "format_tracked_bundled_remediation":
+		*result = FormatTrackedBundledRemediation(
+			pcArgStrs(args, "bundled_ids"), pcArgStr(args, "kind", "skill"),
+			pcArgStr(args, "path_template", "ai-specs/skills/{name}"), pcArgBool(args, "recursive", true))
+	case "remove_legacy_origin":
+		RemoveLegacyOrigin(filepath.Join(root, args["project_root"].(string)), cliHome, out, errBuf)
+	case "gate_backup_path":
+		*result = GateBackupPath(filepath.Join(root, args["project_root"].(string)),
+			args["rel_path"].(string), args["content_sha"].(string), cliHome)
+	default:
+		t.Fatalf("unknown lib function %q", spec.FN)
+	}
+	return 0
+}
+
+func pcLockSkills(args map[string]any) map[string]map[string]string {
+	v, ok := args["lock_skills"]
+	if !ok {
+		return nil
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil // "disk" or null
+	}
+	out := map[string]map[string]string{}
+	for sid, fv := range m {
+		files := map[string]string{}
+		for name, hv := range fv.(map[string]any) {
+			files[name] = hv.(string)
+		}
+		out[sid] = files
+	}
+	return out
+}
+
+func pcLockCommands(args map[string]any) map[string]string {
+	v, ok := args["lock_commands"]
+	if !ok {
+		return nil
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := map[string]string{}
+	for name, hv := range m {
+		out[name] = hv.(string)
+	}
+	return out
+}
+
+func pcRecipeSources(args map[string]any, root string) map[string]string {
+	v, ok := args["recipe_sources"]
+	if !ok {
+		return nil
+	}
+	m := v.(map[string]any)
+	out := map[string]string{}
+	for name, rel := range m {
+		out[name] = filepath.Join(root, rel.(string))
+	}
+	return out
+}
+
+func pcArgStr(args map[string]any, key, def string) string {
+	if v, ok := args[key].(string); ok {
+		return v
+	}
+	return def
+}
+
+func pcArgStrs(args map[string]any, key string) []string {
+	v, ok := args[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, len(v))
+	for i, x := range v {
+		out[i] = x.(string)
+	}
+	return out
+}
+
+func pcArgBool(args map[string]any, key string, def bool) bool {
+	if v, ok := args[key].(bool); ok {
+		return v
+	}
+	return def
+}
+
+var pcCreatedAt = regexp.MustCompile(`created_at = "[^"]*"`)
+
+// pcSnapshot mirrors the reference driver's snapshot: relative files (base64
+// with created_at collapsed), mode bits, directory list and symlink targets,
+// excluding .git/.
+func pcSnapshot(t *testing.T, T string) (map[string]string, map[string]int, []string, map[string]string) {
+	t.Helper()
+	files := map[string]string{}
+	modes := map[string]int{}
+	links := map[string]string{}
+	dirs := []string{}
+	err := filepath.WalkDir(T, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == ".git" {
+			return fs.SkipDir
+		}
+		rel, err := filepath.Rel(T, p)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		key := filepath.ToSlash(rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			links[key] = target
+		case d.IsDir():
+			dirs = append(dirs, key)
+		case info.Mode().IsRegular():
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			files[key] = base64.StdEncoding.EncodeToString(pcCreatedAt.ReplaceAll(data, []byte(`created_at = "<TIME>"`)))
+			modes[key] = pcModeBits(info.Mode())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot %s: %v", T, err)
+	}
+	sort.Strings(dirs)
+	return files, modes, dirs, links
+}
+
+func pcModeBits(m os.FileMode) int {
+	b := int(m.Perm())
+	if m&os.ModeSetuid != 0 {
+		b |= 0o4000
+	}
+	if m&os.ModeSetgid != 0 {
+		b |= 0o2000
+	}
+	if m&os.ModeSticky != 0 {
+		b |= 0o1000
+	}
+	return b
+}
+
+func pcTreeEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func pcModesEqual(a, b map[string]int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func pcStringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func pcTreeDiff(a, b map[string]string) string {
+	var sb strings.Builder
+	keys := map[string]bool{}
+	for k := range a {
+		keys[k] = true
+	}
+	for k := range b {
+		keys[k] = true
+	}
+	var sorted []string
+	for k := range keys {
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+	for _, k := range sorted {
+		if a[k] != b[k] {
+			sb.WriteString("  " + k + "\n    go:  " + a[k] + "\n    ref: " + b[k] + "\n")
+		}
+	}
+	return sb.String()
+}
+
+// ============================================================================
+// Differential cases
+// ============================================================================
+
+func pcWrite(t *testing.T, path, content string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func pcStr(s string) *string { return &s }
+
+// pcSeedBundled writes a small bundled-skills/commands surface.
+func pcSeedBundled(t *testing.T, home string) {
+	pcWrite(t, filepath.Join(home, "bundled-skills", "alpha", "SKILL.md"), "# alpha\n", 0o644)
+	pcWrite(t, filepath.Join(home, "bundled-skills", "beta", "SKILL.md"), "# beta\n", 0o644)
+	pcWrite(t, filepath.Join(home, "bundled-commands", "cmd1.md"), "# cmd1\n", 0o644)
+}
+
+func pcCases(t *testing.T) []pcCase {
+	shaOld := sha256Hex([]byte("# old alpha\n"))
+
+	return []pcCase{
+		// ---- CLI: path kinds ----
+		{name: "cli path root", cliAction: "path", cliKind: pcStr("root")},
+		{name: "cli path recipe", cliAction: "path", cliKind: pcStr("recipe")},
+		{name: "cli path deps", cliAction: "path", cliKind: pcStr("deps")},
+		{name: "cli path bundled", cliAction: "path", cliKind: pcStr("bundled")},
+		{name: "cli path commands", cliAction: "path", cliKind: pcStr("commands")},
+		{name: "cli path resolved-skills", cliAction: "path", cliKind: pcStr("resolved-skills")},
+		{name: "cli path unknown kind", cliAction: "path", cliKind: pcStr("nope")},
+		{name: "cli path missing kind", cliAction: "path"},
+		{name: "cli unknown action", cliAction: "bogus"},
+
+		// ---- CLI: ensure ----
+		{name: "cli ensure fresh", cliAction: "ensure"},
+		{name: "cli ensure refresh stale root", cliAction: "ensure",
+			seed: func(t *testing.T, root, home string) {
+				meta := filepath.Join(CacheRoot(root, home), "meta.toml")
+				pcWrite(t, meta, "project_root = \"/old\"\nfoo = 1\nproject_rootish = 2\n", 0o644)
+			}},
+		{name: "cli ensure blocked parent", cliAction: "ensure",
+			seed: func(t *testing.T, root, home string) {
+				pcWrite(t, filepath.Join(home, "cache"), "block", 0o644)
+			},
+			tracebackStderr: true, pythonExc: "RuntimeError"},
+
+		// ---- CLI: merge-commands ----
+		{name: "cli merge fresh dest", cliAction: "merge-commands", cliDest: "out",
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				pcWrite(t, filepath.Join(home, "bundled-commands", "cmd1.md"), "# cmd1\n", 0o755)
+				pcWrite(t, filepath.Join(CacheRoot(root, home), "commands", "cmd2.md"), "# recipe cmd2\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", "commands", "cmd2.md"), "# local cmd2\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", "commands", "local.md"), "# local\n", 0o644)
+			}},
+		{name: "cli merge existing dest", cliAction: "merge-commands", cliDest: "out",
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				pcWrite(t, filepath.Join(root, "out", "stale.md"), "stale\n", 0o644)
+				if err := os.MkdirAll(filepath.Join(root, "out", "nested"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				pcWrite(t, filepath.Join(root, "out", "nested", "deep.md"), "deep\n", 0o644)
+			}},
+		{name: "cli merge missing dest", cliAction: "merge-commands"},
+		{name: "cli merge symlink dest rmtree refuses", cliAction: "merge-commands", cliDest: "linkdest",
+			seed: func(t *testing.T, root, home string) {
+				if err := os.MkdirAll(filepath.Join(root, "realdest"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(root, "realdest"), filepath.Join(root, "linkdest")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			tracebackStderr: true, pythonExc: "OSError"},
+
+		// ---- remove_bundled_skill_leftovers ----
+		{name: "remove bundled skill matches", fn: "remove_bundled_skill_leftovers",
+			args: map[string]any{"ai_specs": "ai-specs"},
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "alpha", "SKILL.md"), "# alpha\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "beta", "SKILL.md"), "# edited\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "local", "SKILL.md"), "# local\n", 0o644)
+			}},
+		{name: "remove bundled skill lock hash", fn: "remove_bundled_skill_leftovers",
+			args: map[string]any{"ai_specs": "ai-specs"},
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "alpha", "SKILL.md"), "# old alpha\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "beta", "SKILL.md"), "# beta\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", ".ai-specs.lock"),
+					"[skills.\"alpha\"]\n\"SKILL.md\" = \""+shaOld+"\"\n", 0o644)
+			}},
+		{name: "remove bundled skill malformed lock", fn: "remove_bundled_skill_leftovers",
+			args: map[string]any{"ai_specs": "ai-specs"},
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "alpha", "SKILL.md"), "# alpha\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "beta", "SKILL.md"), "# edited\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", ".ai-specs.lock"), "[skills.\n", 0o644)
+			}},
+		{name: "remove bundled skill git tracked", fn: "remove_bundled_skill_leftovers",
+			args: map[string]any{"ai_specs": "ai-specs"},
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "alpha", "SKILL.md"), "# alpha\n", 0o644)
+			},
+			gitAdd: true},
+		{name: "remove bundled skill oserror keeps dir", fn: "remove_bundled_skill_leftovers",
+			args: map[string]any{"ai_specs": "ai-specs"},
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "alpha", "SKILL.md"), "# alpha\n", 0o644)
+				if err := os.Chmod(filepath.Join(root, "ai-specs", "skills", "alpha"), 0o500); err != nil {
+					t.Fatal(err)
+				}
+			},
+			stderrPrefix: "  ! failed to remove leftover ai-specs/skills/alpha/: "},
+		{name: "remove bundled skill symlink dir kept", fn: "remove_bundled_skill_leftovers",
+			args: map[string]any{"ai_specs": "ai-specs"},
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				real := filepath.Join(root, "realalpha")
+				pcWrite(t, filepath.Join(real, "SKILL.md"), "# alpha\n", 0o644)
+				if err := os.MkdirAll(filepath.Join(root, "ai-specs", "skills"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(real, filepath.Join(root, "ai-specs", "skills", "alpha")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			stderrPrefix: "  ! failed to remove leftover ai-specs/skills/alpha/: "},
+
+		// ---- remove_bundled_command_leftovers ----
+		{name: "remove bundled command matches", fn: "remove_bundled_command_leftovers",
+			args: map[string]any{"ai_specs": "ai-specs"},
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				pcWrite(t, filepath.Join(root, "ai-specs", "commands", "cmd1.md"), "# cmd1\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", "commands", "user.md"), "# user\n", 0o644)
+			}},
+		{name: "remove bundled command lock hash", fn: "remove_bundled_command_leftovers",
+			args: map[string]any{"ai_specs": "ai-specs"},
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				pcWrite(t, filepath.Join(root, "ai-specs", "commands", "cmd1.md"), "# old cmd1\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", ".ai-specs.lock"),
+					"[commands]\n\"cmd1.md\" = \""+sha256Hex([]byte("# old cmd1\n"))+"\"\n", 0o644)
+			},
+		},
+
+		// ---- remove_recipe_command_leftovers ----
+		{name: "remove recipe command leftovers", fn: "remove_recipe_command_leftovers",
+			args: map[string]any{
+				"project_root":   "project",
+				"lock_commands":  map[string]any{"locked.md": sha256Hex([]byte("# locked\n"))},
+				"recipe_sources": map[string]any{"src.md": "catalog/src.md"},
+			},
+			seed: func(t *testing.T, root, home string) {
+				cache := CacheRoot(root, home)
+				pcWrite(t, filepath.Join(cache, "commands", "managed.md"), "# managed\n", 0o644)
+				pcWrite(t, filepath.Join(cache, "commands", "edited.md"), "# managed edited\n", 0o644)
+				cmdDir := filepath.Join(root, "ai-specs", "commands")
+				pcWrite(t, filepath.Join(cmdDir, "managed.md"), "# managed\n", 0o644)
+				pcWrite(t, filepath.Join(cmdDir, "edited.md"), "# user edited\n", 0o644)
+				pcWrite(t, filepath.Join(cmdDir, "locked.md"), "# locked\n", 0o644)
+				pcWrite(t, filepath.Join(cmdDir, "src.md"), "# recipe source\n", 0o644)
+				pcWrite(t, filepath.Join(cmdDir, "keep.md"), "# local keep\n", 0o644)
+				pcWrite(t, filepath.Join(root, "catalog", "src.md"), "# recipe source\n", 0o644)
+			}},
+
+		// ---- bundled id listings ----
+		{name: "bundled skill ids", fn: "bundled_skill_ids",
+			seed: func(t *testing.T, root, home string) {
+				pcWrite(t, filepath.Join(home, "bundled-skills", "alpha", "SKILL.md"), "# a\n", 0o644)
+				pcWrite(t, filepath.Join(home, "bundled-skills", "zeta", "SKILL.md"), "# z\n", 0o644)
+				pcWrite(t, filepath.Join(home, "bundled-skills", "gamma", "README.md"), "# g\n", 0o644)
+				pcWrite(t, filepath.Join(home, "bundled-skills", "note.txt"), "n\n", 0o644)
+			}},
+		{name: "bundled command ids", fn: "bundled_command_ids",
+			seed: func(t *testing.T, root, home string) {
+				pcWrite(t, filepath.Join(home, "bundled-commands", "cmd1.md"), "# 1\n", 0o644)
+				pcWrite(t, filepath.Join(home, "bundled-commands", "x.tar.md"), "# 2\n", 0o644)
+				pcWrite(t, filepath.Join(home, "bundled-commands", ".hidden.md"), "# 3\n", 0o644)
+				pcWrite(t, filepath.Join(home, "bundled-commands", "..md"), "# 4\n", 0o644)
+				pcWrite(t, filepath.Join(home, "bundled-commands", "README.txt"), "# 5\n", 0o644)
+				if err := os.MkdirAll(filepath.Join(home, "bundled-commands", "dir.md"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}},
+
+		// ---- git surface ----
+		{name: "is git work tree true", fn: "_is_git_work_tree",
+			args: map[string]any{"project_root": "project"},
+			seed: func(t *testing.T, root, home string) {
+				pcWrite(t, filepath.Join(root, "README.md"), "# r\n", 0o644)
+			}, gitAdd: true},
+		{name: "is git work tree false", fn: "_is_git_work_tree",
+			args: map[string]any{"project_root": "project"},
+			seed: func(t *testing.T, root, home string) { pcWrite(t, filepath.Join(root, "README.md"), "# r\n", 0o644) }},
+		{name: "git ls files", fn: "_git_ls_files",
+			args: map[string]any{"project_root": "project", "pathspec": "ai-specs/skills/alpha"},
+			seed: func(t *testing.T, root, home string) {
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "alpha", "SKILL.md"), "# a\n", 0o644)
+				pcWrite(t, filepath.Join(root, "other.txt"), "o\n", 0o644)
+			}, gitAdd: true},
+		{name: "tracked skill leftovers", fn: "tracked_bundled_skill_leftovers",
+			args: map[string]any{"project_root": "project"},
+			seed: func(t *testing.T, root, home string) {
+				pcWrite(t, filepath.Join(home, "bundled-skills", "alpha", "SKILL.md"), "# a\n", 0o644)
+				pcWrite(t, filepath.Join(home, "bundled-skills", "beta", "SKILL.md"), "# b\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "alpha", "SKILL.md"), "# a\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "beta", "SKILL.md"), "# b\n", 0o644)
+			},
+			gitAdd: true,
+			afterGit: func(t *testing.T, root, home string) {
+				if err := os.Remove(filepath.Join(root, "ai-specs", "skills", "alpha", "SKILL.md")); err != nil {
+					t.Fatal(err)
+				}
+			}},
+		{name: "tracked command leftovers detached", fn: "tracked_bundled_command_leftovers",
+			args: map[string]any{"project_root": "project"},
+			seed: func(t *testing.T, root, home string) {
+				pcWrite(t, filepath.Join(home, "bundled-commands", "cmd1.md"), "# c\n", 0o644)
+				pcWrite(t, filepath.Join(root, "ai-specs", "commands", "cmd1.md"), "# c\n", 0o644)
+			},
+			gitAdd: true, gitDetach: true,
+			afterGit: func(t *testing.T, root, home string) {
+				if err := os.Remove(filepath.Join(root, "ai-specs", "commands", "cmd1.md")); err != nil {
+					t.Fatal(err)
+				}
+			}},
+		{name: "tracked skill leftovers non-git", fn: "tracked_bundled_skill_leftovers",
+			args: map[string]any{"project_root": "project"},
+			seed: func(t *testing.T, root, home string) {
+				pcWrite(t, filepath.Join(home, "bundled-skills", "alpha", "SKILL.md"), "# a\n", 0o644)
+			}},
+
+		// ---- remediation text ----
+		{name: "remediation skill", fn: "format_tracked_bundled_remediation",
+			args: map[string]any{"bundled_ids": []any{"a", "b"}}},
+		{name: "remediation command", fn: "format_tracked_bundled_remediation",
+			args: map[string]any{"bundled_ids": []any{"a", "b"}, "kind": "command",
+				"path_template": "ai-specs/commands/{name}.md", "recursive": false}},
+
+		// ---- remove_legacy_origin ----
+		{name: "remove legacy origin", fn: "remove_legacy_origin",
+			args: map[string]any{"project_root": "project"},
+			seed: func(t *testing.T, root, home string) {
+				pcSeedBundled(t, home)
+				ai := filepath.Join(root, "ai-specs")
+				pcWrite(t, filepath.Join(ai, ".recipe", "recipeA", "overrides", "ov.md"), "# ov\n", 0o644)
+				pcWrite(t, filepath.Join(ai, ".recipe", "recipeB", "overrides", "ov.md"), "# ov b\n", 0o644)
+				pcWrite(t, filepath.Join(ai, "recipes", "recipeB", "overrides", "keep.md"), "# keep\n", 0o644)
+				pcWrite(t, filepath.Join(ai, ".resolved-skills", "x", "SKILL.md"), "# x\n", 0o644)
+				pcWrite(t, filepath.Join(ai, ".internal", "y", "z"), "# z\n", 0o644)
+				pcWrite(t, filepath.Join(ai, "bin", "premerge_guardian.py"), "# stale\n", 0o644)
+				pcWrite(t, filepath.Join(ai, ".deps", "dep", "marker"), "# d\n", 0o644)
+				pcWrite(t, filepath.Join(ai, "skills", "alpha", "SKILL.md"), "# alpha\n", 0o644)
+				pcWrite(t, filepath.Join(ai, "skills", "beta", "SKILL.md"), "# edited\n", 0o644)
+			}},
+		{name: "remove legacy origin symlink dir kept", fn: "remove_legacy_origin",
+			args: map[string]any{"project_root": "project"},
+			seed: func(t *testing.T, root, home string) {
+				real := filepath.Join(root, "realrs")
+				if err := os.MkdirAll(real, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Join(root, "project", "ai-specs"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(real, filepath.Join(root, "project", "ai-specs", ".resolved-skills")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			stderrPrefix: "  ! failed to remove leftover ai-specs/.resolved-skills/: "},
+
+		// ---- gate_backup_path ----
+		{name: "gate backup path", fn: "gate_backup_path",
+			args: map[string]any{"project_root": "project", "rel_path": "ai-specs/hooks/gate.sh",
+				"content_sha": "deadbeef"}},
+	}
+}
