@@ -222,6 +222,9 @@ def main() -> int:
         "stderr": err.getvalue(),
         "rc": rc,
         "result": _jsonable(result),
+        # Interpreter identity of the oracle leg, reported by the Go
+        # divergence pins (R3-001); never used to branch behavior.
+        "python_version": list(sys.version_info[:2]),
         **snap,
     }
     sys.stdout.write(json.dumps(payload))

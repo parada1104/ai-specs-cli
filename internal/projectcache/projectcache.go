@@ -672,26 +672,26 @@ func BundledCommandIDs(cliHome string) []string {
 	return ids
 }
 
-// pyStem mirrors PurePath.stem for a bare file name.
+// pyStem mirrors PurePath.stem for a bare file name under the epic's Python
+// reference (3.11-3.13): the name minus its suffix when that suffix is
+// non-empty, else the whole name. Python 3.14 changed leading-dot handling and
+// would report '..md' here; the epic reference does not.
 func pyStem(name string) string {
-	if i := strings.LastIndex(name, "."); i != -1 {
-		stem := name[:i]
-		// Stem must contain at least one non-dot character.
-		if strings.TrimLeft(stem, ".") != "" {
-			return stem
-		}
+	if suf := pySuffix(name); suf != "" {
+		return name[:len(name)-len(suf)]
 	}
 	return name
 }
 
-// pySuffix mirrors PurePath.suffix for a bare file name. Only the trailing
-// suffix after the last dot counts once leading dots are stripped, so `.md` and
-// `..md` have an EMPTY suffix (unlike filepath.Ext, which returns ".md"). The
-// command-leftover filters rely on this to keep those files.
+// pySuffix mirrors PurePath.suffix for a bare file name under the epic's Python
+// reference (3.11-3.13): with i = name.rfind('.'), the suffix is name[i:] only
+// when 0 < i < len(name)-1, else "". So '.md' has an EMPTY suffix (kept by the
+// command-leftover filters) and '..md' has '.md' (removed). Python 3.14 changed
+// leading-dot handling ('..md' -> ""); the epic reference is <=3.13.
 func pySuffix(name string) string {
-	trimmed := strings.TrimLeft(name, ".")
-	if i := strings.LastIndex(trimmed, "."); i != -1 {
-		return trimmed[i:]
+	i := strings.LastIndex(name, ".")
+	if 0 < i && i < len(name)-1 {
+		return name[i:]
 	}
 	return ""
 }
@@ -777,7 +777,12 @@ func FormatTrackedBundledRemediation(bundledIDs []string, kind, pathTemplate str
 		"    # then commit when ready"
 }
 
-// RemoveLegacyOrigin mirrors remove_legacy_origin.
+// RemoveLegacyOrigin mirrors remove_legacy_origin with ONE user-authorized
+// safety divergence (GO-07.S6): an existing overrides destination is not
+// treated as proof that a previous migration completed. Python treats it that
+// way and then deletes ai-specs/.recipe/; the port keeps the legacy originals
+// and warns, so a retry cannot silently drop entries a failed copy never
+// transferred. Every other behavior matches the oracle.
 func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 	root := projectRoot
 	aiSpecs := filepath.Join(root, "ai-specs")
@@ -795,12 +800,6 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 				continue
 			}
 			dest := filepath.Join(aiSpecs, "recipes", name, "overrides")
-			// FROZEN retry semantics (project-cache.py L497-531): a recipe whose
-			// destination already exists is skipped, never re-migrated. A prior
-			// run that failed left a partial destination, so this retry skips it,
-			// no migration fails in this run, and ai-specs/.recipe/ is removed
-			// even though the destination may be incomplete. This is the oracle's
-			// deliberate behavior; do not add a partial-destination guard here.
 			if exists(dest) {
 				continue
 			}
