@@ -993,7 +993,7 @@ func pcCases(t *testing.T) []pcCase {
 		// ---- remove_recipe_command_leftovers ----
 		{name: "remove recipe command leftovers", fn: "remove_recipe_command_leftovers",
 			args: map[string]any{
-				"project_root":   "project",
+				"project_root":   ".",
 				"lock_commands":  map[string]any{"locked.md": sha256Hex([]byte("# locked\n"))},
 				"recipe_sources": map[string]any{"src.md": "catalog/src.md"},
 			},
@@ -1032,21 +1032,21 @@ func pcCases(t *testing.T) []pcCase {
 
 		// ---- git surface ----
 		{name: "is git work tree true", fn: "_is_git_work_tree",
-			args: map[string]any{"project_root": "project"},
+			args: map[string]any{"project_root": "."},
 			seed: func(t *testing.T, root, home string) {
 				pcWrite(t, filepath.Join(root, "README.md"), "# r\n", 0o644)
 			}, gitAdd: true},
 		{name: "is git work tree false", fn: "_is_git_work_tree",
-			args: map[string]any{"project_root": "project"},
+			args: map[string]any{"project_root": "."},
 			seed: func(t *testing.T, root, home string) { pcWrite(t, filepath.Join(root, "README.md"), "# r\n", 0o644) }},
 		{name: "git ls files", fn: "_git_ls_files",
-			args: map[string]any{"project_root": "project", "pathspec": "ai-specs/skills/alpha"},
+			args: map[string]any{"project_root": ".", "pathspec": "ai-specs/skills/alpha"},
 			seed: func(t *testing.T, root, home string) {
 				pcWrite(t, filepath.Join(root, "ai-specs", "skills", "alpha", "SKILL.md"), "# a\n", 0o644)
 				pcWrite(t, filepath.Join(root, "other.txt"), "o\n", 0o644)
 			}, gitAdd: true},
 		{name: "tracked skill leftovers", fn: "tracked_bundled_skill_leftovers",
-			args: map[string]any{"project_root": "project"},
+			args: map[string]any{"project_root": "."},
 			seed: func(t *testing.T, root, home string) {
 				pcWrite(t, filepath.Join(home, "bundled-skills", "alpha", "SKILL.md"), "# a\n", 0o644)
 				pcWrite(t, filepath.Join(home, "bundled-skills", "beta", "SKILL.md"), "# b\n", 0o644)
@@ -1060,7 +1060,7 @@ func pcCases(t *testing.T) []pcCase {
 				}
 			}},
 		{name: "tracked command leftovers detached", fn: "tracked_bundled_command_leftovers",
-			args: map[string]any{"project_root": "project"},
+			args: map[string]any{"project_root": "."},
 			seed: func(t *testing.T, root, home string) {
 				pcWrite(t, filepath.Join(home, "bundled-commands", "cmd1.md"), "# c\n", 0o644)
 				pcWrite(t, filepath.Join(root, "ai-specs", "commands", "cmd1.md"), "# c\n", 0o644)
@@ -1072,7 +1072,7 @@ func pcCases(t *testing.T) []pcCase {
 				}
 			}},
 		{name: "tracked skill leftovers non-git", fn: "tracked_bundled_skill_leftovers",
-			args: map[string]any{"project_root": "project"},
+			args: map[string]any{"project_root": "."},
 			seed: func(t *testing.T, root, home string) {
 				pcWrite(t, filepath.Join(home, "bundled-skills", "alpha", "SKILL.md"), "# a\n", 0o644)
 			}},
