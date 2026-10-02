@@ -632,6 +632,24 @@ def _setup_hooks_five_runtimes(project: Path) -> None:
     _write(project, ".omp/extensions/old.ts", "// stale adapter\n")
 
 
+def _setup_cache_layout(project: Path) -> None:
+    """Bundled + recipe-managed + hand-authored commands and skills: `sync`
+    then `sync-agent --all` must materialize recipes into the per-project CLI
+    cache (ensure_cache / .recipe / .bundled), flatten resolved skills, and
+    merge commands with local precedence (the colliding `tdd.md` warns and the
+    local copy wins). Both legs still run `project-cache.py`; this fixture
+    becomes the Go gate when sync-agent's cache calls move to Go."""
+    _write(project, "ai-specs/ai-specs.toml", _manifest(
+        agents=ALL_AGENTS,
+        recipes=("worktree-flow", "tdd-flow"),
+    ))
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    # A local command colliding with the recipe-managed `tdd` command (local
+    # hand-authored must win and warn) plus one local-only command.
+    _write(project, "ai-specs/commands/tdd.md", "# local tdd override\n")
+    _write(project, "ai-specs/commands/local-only.md", "# local only\n")
+
+
 def _setup_brief_render_false(project: Path) -> None:
     """[brief].render = false: sync's policy gate must skip the AGENTS.md step
     entirely (no file written, skip notice on stdout)."""
@@ -813,6 +831,16 @@ CORPUS: tuple[Fixture, ...] = (
                     "mcpServers, opencode mcp, codex mcp_servers, gemini, omp) "
                     "while preserving the foreign content.",
         setup=_setup_mcp_per_agent,
+        steps=(Step(("sync",)), Step(("sync-agent", "--all"))),
+    ),
+    Fixture(
+        name="cache-layout",
+        description="Bundled + recipe + local commands: `sync` then "
+                    "`sync-agent --all` materializes the per-project cache "
+                    "(.recipe/.bundled/commands/resolved-skills), flattens "
+                    "resolved skills, and merges commands with local "
+                    "precedence (colliding `tdd.md` warns).",
+        setup=_setup_cache_layout,
         steps=(Step(("sync",)), Step(("sync-agent", "--all"))),
     ),
     Fixture(
