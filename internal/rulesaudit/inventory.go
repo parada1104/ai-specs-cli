@@ -20,6 +20,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/skills"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
@@ -103,7 +104,7 @@ var mdcFallbackRE = []struct {
 // concern): non-directories exit 2, scan failures exit 1. home is the CLI home
 // (AI_SPECS_HOME) used for recipe/dep/bundled skill resolution.
 func Run(projectRoot, home string, stdout, stderr io.Writer) int {
-	root := skills.ResolvePath(projectRoot)
+	root := projectcache.ResolvePath(projectRoot)
 	if !isDir(root) {
 		fmt.Fprintf(stderr, "ERROR: not a directory: %s\n", root)
 		return 2

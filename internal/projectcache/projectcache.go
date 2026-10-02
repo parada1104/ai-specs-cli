@@ -60,9 +60,8 @@ func SanitizeBasename(name string) string {
 //
 // A Clean-first implementation (filepath.Abs/filepath.Clean) is WRONG here: it
 // collapses `..` before symlink resolution, so `link/../x` diverges whenever
-// the link points at a different depth than its parent.
-// Kept package-local so projectcache does not depend on internal/skills (the
-// other owner of a ported project-cache derivation).
+// the link points at a different depth than its parent. Single owner: skills,
+// doctor and rulesaudit all derive paths through this package.
 func ResolvePath(p string) string {
 	return realpathPy(p)
 }

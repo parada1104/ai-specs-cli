@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"ai-specs.dev/ai-specs/internal/skills"
+	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
 func writeFileT(t *testing.T, path, content string) {
@@ -215,7 +215,7 @@ func TestEmptyProjectPayload(t *testing.T) {
 	if code := Run(root, home, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, stderr.String())
 	}
-	want := fmt.Sprintf(emptyProjectJSON, skills.ResolvePath(root))
+	want := fmt.Sprintf(emptyProjectJSON, projectcache.ResolvePath(root))
 	if stdout.String() != want {
 		t.Fatalf("payload mismatch:\n--- got ---\n%s\n--- want ---\n%s", stdout.String(), want)
 	}

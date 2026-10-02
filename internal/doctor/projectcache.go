@@ -10,18 +10,18 @@ import (
 	"strings"
 
 	"ai-specs.dev/ai-specs"
-	"ai-specs.dev/ai-specs/internal/skills"
+	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
 // Native port of the project-cache.py surface doctor uses. The cache layout is
 // frozen (`{AI_SPECS_HOME}/cache/projects/<key>/{commands,.bundled,resolved-skills}`).
-// The cache key and root derivation are now owned by internal/skills (the
+// The cache key and root derivation are owned by internal/projectcache (the
 // ported project-cache.py); doctor only appends its own trailing path segments.
 
-// cacheKey delegates to internal/skills, the single owner of the ported
+// cacheKey delegates to internal/projectcache, the single owner of the ported
 // project-cache.cache_key derivation.
 func cacheKey(projectRoot string) string {
-	return skills.CacheKey(projectRoot)
+	return projectcache.CacheKey(projectRoot)
 }
 
 // projectCache memoizes the derived cache paths for one Doctor run.
@@ -32,7 +32,7 @@ type projectCache struct {
 
 func (d *Doctor) cacheRoot() string {
 	if !d.projectCache.rootReady {
-		d.projectCache.root = skills.CacheRoot(d.Root, d.Home)
+		d.projectCache.root = projectcache.CacheRoot(d.Root, d.Home)
 		d.projectCache.rootReady = true
 	}
 	return d.projectCache.root

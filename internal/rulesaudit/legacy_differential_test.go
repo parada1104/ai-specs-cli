@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"ai-specs.dev/ai-specs/internal/skills"
+	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
 // Full-payload differential: run the native scanner and the legacy
@@ -138,7 +138,7 @@ func differentialTrees() []treeCase {
 			name:       "skills-cache-atl",
 			compareErr: true,
 			build: func(t *testing.T, root, home string) {
-				cache := skills.CacheRoot(root, home)
+				cache := projectcache.CacheRoot(root, home)
 				writeSkill(t, filepath.Join(root, "ai-specs", "skills", "local-skill"))
 				writeSkill(t, filepath.Join(root, "ai-specs", "skills", "worktree-flow"))
 				writeSkill(t, filepath.Join(cache, ".recipe", "rec-a", "skills", "recipe-skill"))

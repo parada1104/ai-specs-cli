@@ -9,7 +9,9 @@
 //	                                    _strip_quotes, _split_inline_list,
 //	                                    SkillContractError
 //	lib/_internal/skill-resolution.py — collect_skills and its scanners
-//	lib/_internal/project-cache.py   — cache_key / cache_root / *_skills_root
+//
+// Cache roots (cache_key / cache_root / *_skills_root) come from
+// internal/projectcache, the single owner of the frozen cache key.
 package skills
 
 import "strings"
