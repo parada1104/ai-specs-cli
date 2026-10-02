@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
 func writeFileT(t *testing.T, path, content string) {
@@ -28,7 +30,14 @@ func buildSkillTree(t *testing.T) (string, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	home := t.TempDir()
-	cache := CacheRoot(root, home)
+	return root, home, buildSkillTreeAt(t, root, home)
+}
+
+// buildSkillTreeAt seeds the four-tier tree into existing root/home dirs and
+// returns the cache root.
+func buildSkillTreeAt(t *testing.T, root, home string) string {
+	t.Helper()
+	cache := projectcache.CacheRoot(root, home)
 
 	writeSkill(t, filepath.Join(root, "ai-specs", "skills", "shared"))
 	writeSkill(t, filepath.Join(root, "ai-specs", "skills", "localonly"))
@@ -44,7 +53,7 @@ func buildSkillTree(t *testing.T) (string, string, string) {
 	writeSkill(t, filepath.Join(cache, ".bundled", "skills", "shared"))
 	writeSkill(t, filepath.Join(cache, ".bundled", "skills", "bundledonly"))
 
-	return root, home, cache
+	return cache
 }
 
 func TestCollectSkillsPrecedence(t *testing.T) {
@@ -80,7 +89,7 @@ func TestCollectSkillsPrecedence(t *testing.T) {
 func TestCollectSkillsDepTierFirstSeen(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
-	cache := CacheRoot(root, home)
+	cache := projectcache.CacheRoot(root, home)
 
 	// Same id in the in-project dep root and the cache dep root: the
 	// in-project root is scanned first.
@@ -160,31 +169,5 @@ func TestStripQuotesAndInlineList(t *testing.T) {
 	}
 	if out := SplitInlineList("[]"); len(out) != 0 {
 		t.Errorf("SplitInlineList([]) = %#v", out)
-	}
-}
-
-// TestSanitizeBasename pins project-cache._sanitize_basename (moved from
-// internal/doctor, which no longer owns a copy).
-func TestSanitizeBasename(t *testing.T) {
-	cases := map[string]string{
-		"my project":  "my-project",
-		"..-weird-..": "weird",
-		"":            "project",
-		"...":         "project",
-		"a.b_c-d":     "a.b_c-d",
-		"ñandú":       "and",
-		"a  b//c":     "a-b-c",
-	}
-	for in, want := range cases {
-		if got := SanitizeBasename(in); got != want {
-			t.Errorf("SanitizeBasename(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestCacheKeyStable(t *testing.T) {
-	root := t.TempDir()
-	if CacheKey(root) != CacheKey(root+"/.") {
-		t.Errorf("cache key should be stable across equivalent paths")
 	}
 }
