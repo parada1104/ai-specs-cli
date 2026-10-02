@@ -329,6 +329,22 @@ type pcRef struct {
 	Dirs   []string          `json:"dirs"`
 	Links  map[string]string `json:"links"`
 	Result json.RawMessage   `json:"result"`
+	// PythonVersion is sys.version_info[:2] of the interpreter the oracle ran
+	// on. Reported with the reference-gap pin, never branched on.
+	PythonVersion []int `json:"python_version"`
+}
+
+// refDivergence pins the epic-reference gap documented by R3-001: Go mirrors
+// the epic's Python reference (3.11-3.13, pathlib's rfind suffix rule) while a
+// 3.14+ interpreter changed leading-dot handling. Under <=3.13 `..md` has
+// suffix ".md" (the filters remove it; bundled_command_ids reports stem ".");
+// the local 3.14 oracle gives suffix "" (keeps the file, reports "..md").
+type refDivergence struct {
+	// removed lists sandbox-relative files Go removes but Python 3.14 keeps.
+	removed []string
+	// goIDs/pythonIDs pin the diverging id lists for the ids surface (nil when
+	// the divergence is a removed file instead).
+	goIDs, pythonIDs []string
 }
 
 type pcCase struct {
@@ -349,6 +365,12 @@ type pcCase struct {
 	pythonExc       string
 	goErrContains   string
 	stderrPrefix    string
+
+	// refDivergence pins the user-decided Python reference gap (R3-001): Go
+	// follows the epic's <=3.13 pathlib semantics, the local 3.14 oracle
+	// changed leading-dot handling. Both legs still run; everything outside the
+	// named gap stays byte-strict.
+	refDivergence *refDivergence
 }
 
 func TestProjectCacheDifferential(t *testing.T) {
@@ -363,10 +385,6 @@ func TestProjectCacheDifferential(t *testing.T) {
 
 	for _, tc := range pcCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
-			switch tc.name {
-			case "remove bundled command suffix filter", "remove recipe command suffix filter", "bundled command ids":
-				t.Skip("leading-dot suffix divergence vs the local Python 3.14 oracle; pinned by the refDivergence harness in the next commit")
-			}
 			T := t.TempDir()
 			t.Cleanup(func() { pcChmodWritable(T) })
 			root := filepath.Join(T, "project")
@@ -399,6 +417,11 @@ func TestProjectCacheDifferential(t *testing.T) {
 			pcSeedLeg(t, T, root, home, tc)
 			goOut, goErr, goRC, goResult := pcRunGo(t, spec, root, home)
 			goFiles, goModes, goDirs, goLinks := pcSnapshot(t, T)
+
+			if tc.refDivergence != nil {
+				pcAssertRefDivergence(t, tc, ref, goOut, goErr, goFiles, goModes, goDirs, goLinks, goResult)
+				return
+			}
 
 			if goOut != ref.Stdout {
 				t.Errorf("stdout differs\n--- go ---\n%q\n--- ref ---\n%q", goOut, ref.Stdout)
@@ -828,6 +851,115 @@ func pcTreeDiff(a, b map[string]string) string {
 	return sb.String()
 }
 
+// pcAssertRefDivergence pins the R3-001 reference gap. Both legs ran on the
+// same tree; only the leading-dot names in tc.refDivergence may differ. The
+// pin records (never branches on) the oracle interpreter version.
+func pcAssertRefDivergence(t *testing.T, tc pcCase, ref pcRef, goOut, goErr string, goFiles map[string]string, goModes map[string]int, goDirs []string, goLinks map[string]string, goResult []byte) {
+	t.Helper()
+	d := tc.refDivergence
+	t.Logf("reference-gap pin %q: compared against Python %v and the epic's <=3.13 reference", tc.name, ref.PythonVersion)
+
+	if d.goIDs != nil {
+		// ids surface: disk/streams are identical, only the reported stem differs.
+		if !pcTreeEqual(goFiles, ref.Files) {
+			t.Errorf("files differ outside the reference gap:\n%s", pcTreeDiff(goFiles, ref.Files))
+		}
+		if !pcModesEqual(goModes, ref.Modes) {
+			t.Errorf("modes differ:\n  go:  %v\n  ref: %v", goModes, ref.Modes)
+		}
+		if !pcStringsEqual(goDirs, ref.Dirs) {
+			t.Errorf("dirs differ:\n  go:  %v\n  ref: %v", goDirs, ref.Dirs)
+		}
+		if !pcTreeEqual(goLinks, ref.Links) {
+			t.Errorf("links differ:\n  go:  %v\n  ref: %v", goLinks, ref.Links)
+		}
+		if goOut != ref.Stdout {
+			t.Errorf("stdout differs\n--- go ---\n%q\n--- ref ---\n%q", goOut, ref.Stdout)
+		}
+		if goErr != ref.Stderr {
+			t.Errorf("stderr differs\n--- go ---\n%q\n--- ref ---\n%q", goErr, ref.Stderr)
+		}
+		var goIDs, refIDs []string
+		_ = json.Unmarshal(goResult, &goIDs)
+		_ = json.Unmarshal(ref.Result, &refIDs)
+		if !reflect.DeepEqual(goIDs, d.goIDs) {
+			t.Errorf("Go ids = %v, want %v (<=3.13 stem for '..md')", goIDs, d.goIDs)
+		}
+		if !reflect.DeepEqual(refIDs, d.pythonIDs) {
+			t.Errorf("Python %v ids = %v, want %v (3.14 leading-dot stem)", ref.PythonVersion, refIDs, d.pythonIDs)
+		}
+		return
+	}
+
+	// Filter surface: Go removes d.removed under the <=3.13 suffix rule; the
+	// local 3.14 oracle keeps those files. Everything else must stay strict.
+	for _, p := range d.removed {
+		if _, ok := goFiles[p]; ok {
+			t.Errorf("Go kept %s; the <=3.13 suffix rule removes it", p)
+		}
+		if _, ok := ref.Files[p]; !ok {
+			t.Errorf("Python %v did not keep %s; this pin targets the 3.14 leading-dot behavior", ref.PythonVersion, p)
+		}
+		if !strings.Contains(goOut, filepath.Base(p)) {
+			t.Errorf("Go removed %s but did not report it; stdout=%q", p, goOut)
+		}
+		if strings.Contains(ref.Stdout, filepath.Base(p)) {
+			t.Errorf("Python %v reported removing %s; the 3.14 oracle keeps it", ref.PythonVersion, p)
+		}
+	}
+	if !pcTreeEqual(goFiles, pcDropPaths(ref.Files, d.removed)) {
+		t.Errorf("files outside the reference gap differ:\n%s", pcTreeDiff(goFiles, pcDropPaths(ref.Files, d.removed)))
+	}
+	if !pcModesEqual(goModes, pcDropPaths(ref.Modes, d.removed)) {
+		t.Errorf("modes outside the reference gap differ:\n  go:  %v\n  ref: %v", goModes, pcDropPaths(ref.Modes, d.removed))
+	}
+	if !pcStringsEqual(goDirs, ref.Dirs) {
+		t.Errorf("dirs differ:\n  go:  %v\n  ref: %v", goDirs, ref.Dirs)
+	}
+	if !pcTreeEqual(goLinks, ref.Links) {
+		t.Errorf("links differ:\n  go:  %v\n  ref: %v", goLinks, ref.Links)
+	}
+	if got, want := pcStripLinesWithBase(goOut, d.removed), pcStripLinesWithBase(ref.Stdout, d.removed); got != want {
+		t.Errorf("stdout outside the reference gap differs\n--- go ---\n%q\n--- ref ---\n%q", got, want)
+	}
+	if goErr != ref.Stderr {
+		t.Errorf("stderr differs\n--- go ---\n%q\n--- ref ---\n%q", goErr, ref.Stderr)
+	}
+}
+
+// pcDropPaths returns m without the exact named keys.
+func pcDropPaths[T any](m map[string]T, paths []string) map[string]T {
+	drop := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		drop[p] = true
+	}
+	out := make(map[string]T, len(m))
+	for k, v := range m {
+		if !drop[k] {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// pcStripLinesWithBase drops lines mentioning the base name of any path.
+func pcStripLinesWithBase(s string, paths []string) string {
+	var kept []string
+	for _, line := range strings.Split(s, "\n") {
+		drop := false
+		for _, p := range paths {
+			if strings.Contains(line, filepath.Base(p)) {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
 // ============================================================================
 // Differential cases
 // ============================================================================
@@ -1015,6 +1147,9 @@ func pcCases(t *testing.T) []pcCase {
 		},
 		{name: "remove bundled command suffix filter", fn: "remove_bundled_command_leftovers",
 			args: map[string]any{"ai_specs": "ai-specs"},
+			// R3-001: Go follows the epic's <=3.13 suffix rule, so '..md' has
+			// suffix ".md" and is removed; the local 3.14 oracle keeps it.
+			refDivergence: &refDivergence{removed: []string{"project/ai-specs/commands/..md"}},
 			seed: func(t *testing.T, root, home string) {
 				for _, n := range []string{".md", "..md", ".hidden.md", "a.md.bak"} {
 					pcWrite(t, filepath.Join(home, "bundled-commands", n), "# "+n+"\n", 0o644)
@@ -1043,6 +1178,9 @@ func pcCases(t *testing.T) []pcCase {
 			}},
 		{name: "remove recipe command suffix filter", fn: "remove_recipe_command_leftovers",
 			args: map[string]any{"project_root": "."},
+			// R3-001: same <=3.13 vs 3.14 gap; the cached '..md' provenance
+			// matches so Go removes the project copy, Python 3.14 keeps it.
+			refDivergence: &refDivergence{removed: []string{"project/ai-specs/commands/..md"}},
 			seed: func(t *testing.T, root, home string) {
 				cache := CacheRoot(root, home)
 				for _, n := range []string{".md", "..md", ".hidden.md", "a.md.bak"} {
@@ -1060,6 +1198,12 @@ func pcCases(t *testing.T) []pcCase {
 				pcWrite(t, filepath.Join(home, "bundled-skills", "note.txt"), "n\n", 0o644)
 			}},
 		{name: "bundled command ids", fn: "bundled_command_ids",
+			// R3-001: '..md' reports stem "." under the <=3.13 rule, "..md"
+			// under the local 3.14 oracle; everything else is identical.
+			refDivergence: &refDivergence{
+				goIDs:     []string{".", ".hidden", "cmd1", "x.tar"},
+				pythonIDs: []string{"..md", ".hidden", "cmd1", "x.tar"},
+			},
 			seed: func(t *testing.T, root, home string) {
 				pcWrite(t, filepath.Join(home, "bundled-commands", "cmd1.md"), "# 1\n", 0o644)
 				pcWrite(t, filepath.Join(home, "bundled-commands", "x.tar.md"), "# 2\n", 0o644)
@@ -1125,7 +1269,7 @@ func pcCases(t *testing.T) []pcCase {
 			args: map[string]any{"bundled_ids": []any{"a", "b"}, "kind": "command",
 				"path_template": "ai-specs/commands/{name}.md", "recursive": false}},
 
-		// byte outside ai-specs/.recipe/ strict.
+		// ---- remove_legacy_origin ----
 		{name: "remove legacy origin", fn: "remove_legacy_origin",
 			args: map[string]any{"project_root": "."},
 			seed: func(t *testing.T, root, home string) {
