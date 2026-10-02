@@ -47,3 +47,6 @@ catalog/recipes/worktree-flow/gate/worktree-gate
 
 # CodeGraph local symbol index (machine-local, see skill codegraph-worktree).
 .codegraph/
+
+# qodana-pr-review: baseline, results, temp clone and token are all local
+.qodana/
