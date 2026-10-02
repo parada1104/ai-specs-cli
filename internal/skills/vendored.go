@@ -93,6 +93,9 @@ func VendoredSkillMarkdown(dep *toml.Table, upstreamText string) (string, error)
 	out := []string{
 		"---",
 		"name: " + depID,
+		// Frozen parity (S8 review R3-multiline-description-yaml): a newline in the
+		// description (only reachable via a TOML vendor_attribution; frontmatter
+		// block scalars are folded) breaks the folded scalar exactly as in Python.
 		"description: >",
 		"  " + pyStrip(description),
 		"license: " + license,

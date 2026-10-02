@@ -35,3 +35,12 @@ Base: `004a538` (S7 merge) · Plan: `odd/tasks/go-07-sync-plan.md` (S8 row)
 - Mutations killed (9/9): backslash escape, `rstrip(". ")`, `strip()` →
   `TrimSpace`, root scope default, list-description repr, version default, …
 - `go vet ./... && go test ./...` rc 0; `./tests/validate.sh` → see PR.
+
+## Review
+
+`review-fef585839ebe366a` (372 lines, reliability): `R3-multiline-description-yaml`
+(CRITICAL) — a newline in the description breaks the `description: >` block.
+Measured against the oracle: only reachable through a TOML
+`vendor_attribution` containing `\n`, and the Python emits the identical bytes.
+Oracle-wins disposition (S1/Go 08 precedent): comment + differential case
+`multiline-attribution-frozen`, zero executable lines changed.
