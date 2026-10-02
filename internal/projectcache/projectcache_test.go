@@ -302,6 +302,154 @@ func mustSymlink(t *testing.T, target, link string) {
 	}
 }
 
+// The RemoveLegacyOrigin tests below pin the user-authorized SAFETY EXCEPTION
+// (GO-07.S6): Python's remove_legacy_origin (project-cache.py L497-531) treats
+// an existing destination as proof of a complete migration, so a retry after a
+// failed (partial) copy deletes ai-specs/.recipe/ and silently loses the files
+// the first run never copied. The Go port intentionally diverges: an existing
+// destination whose completeness is unproven keeps the legacy originals and
+// warns. Fresh fully-successful migrations still remove .recipe/.
+
+// TestRemoveLegacyOriginRetryPreservesDotRecipe: a migration that fails partway
+// leaves a PARTIAL destination; every retry (second and third) must keep
+// ai-specs/.recipe/ (including the entry the first run never copied) and warn,
+// never claim the origin was removed. The trigger is a dangling symlink, which
+// is root-safe and persists across runs.
+func TestRemoveLegacyOriginRetryPreservesDotRecipe(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	legacy := filepath.Join(root, "ai-specs", ".recipe")
+	overrides := filepath.Join(legacy, "recipeA", "overrides")
+	if err := os.MkdirAll(overrides, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pcWrite(t, filepath.Join(overrides, "ok.md"), "ok\n", 0o644)
+	mustSymlink(t, filepath.Join(root, "ai-specs", "missing", "nope"), filepath.Join(overrides, "dangling"))
+
+	// First run: the dangling symlink fails the walk -> .recipe retained.
+	var out1, err1 bytes.Buffer
+	RemoveLegacyOrigin(root, home, &out1, &err1)
+	if !isDir(legacy) {
+		t.Fatalf("first run removed .recipe despite a failed migration; stderr=%q", err1.String())
+	}
+	if !strings.Contains(err1.String(), "failed to migrate overrides for 'recipeA': ") {
+		t.Errorf("first run stderr = %q, want the migration-failure warning", err1.String())
+	}
+	if !isDir(filepath.Join(root, "ai-specs", "recipes", "recipeA", "overrides")) {
+		t.Fatalf("expected a partial destination after the failed migration")
+	}
+
+	// Retries: the destination exists but completeness is unproven -> warn and
+	// preserve, run after run.
+	for i := 2; i <= 3; i++ {
+		var out, errBuf bytes.Buffer
+		RemoveLegacyOrigin(root, home, &out, &errBuf)
+		if !isDir(legacy) {
+			t.Fatalf("run %d removed .recipe; stdout=%q stderr=%q", i, out.String(), errBuf.String())
+		}
+		if !strings.Contains(errBuf.String(), "already has overrides at ai-specs/recipes/recipeA/overrides/") {
+			t.Errorf("run %d stderr = %q, want the existing-destination warning", i, errBuf.String())
+		}
+		if strings.Contains(out.String(), "removed leftover ai-specs/.recipe/") {
+			t.Errorf("run %d claimed to remove .recipe; stdout=%q", i, out.String())
+		}
+		if _, err := os.Lstat(filepath.Join(overrides, "dangling")); err != nil {
+			t.Errorf("run %d lost the uncopied legacy entry: %v", i, err)
+		}
+	}
+}
+
+// TestRemoveLegacyOriginExistingDestPreservesSourceAndUserContent: a
+// pre-existing destination (possibly partial from a failed run) must never be
+// overwritten or deleted, and the legacy source is retained for verification.
+func TestRemoveLegacyOriginExistingDestPreservesSourceAndUserContent(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	overrides := filepath.Join(root, "ai-specs", ".recipe", "recipeA", "overrides")
+	pcWrite(t, filepath.Join(overrides, "legacy.md"), "legacy\n", 0o644)
+	dest := filepath.Join(root, "ai-specs", "recipes", "recipeA", "overrides")
+	pcWrite(t, filepath.Join(dest, "user.md"), "user sentinel\n", 0o600)
+
+	var out, errBuf bytes.Buffer
+	RemoveLegacyOrigin(root, home, &out, &errBuf)
+
+	if !isDir(filepath.Join(root, "ai-specs", ".recipe")) {
+		t.Fatalf("removed .recipe with an unverified existing destination; stderr=%q", errBuf.String())
+	}
+	if got, err := os.ReadFile(filepath.Join(overrides, "legacy.md")); err != nil || string(got) != "legacy\n" {
+		t.Errorf("legacy source not preserved: %q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dest, "user.md")); err != nil || string(got) != "user sentinel\n" {
+		t.Errorf("destination user content not preserved: %q err=%v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "legacy.md")); err == nil {
+		t.Errorf("existing destination was overwritten with the legacy content")
+	}
+	if strings.Contains(out.String(), "removed leftover ai-specs/.recipe/") {
+		t.Errorf("claimed to remove .recipe; stdout=%q", out.String())
+	}
+	if !strings.Contains(errBuf.String(), "already has overrides at ai-specs/recipes/recipeA/overrides/") {
+		t.Errorf("stderr = %q, want the existing-destination warning", errBuf.String())
+	}
+}
+
+// TestRemoveLegacyOriginPartialMultiRecipeNoRemovalOnRetry: one recipe migrates
+// fresh while another already has a destination; the retry must not remove
+// .recipe/ just because one destination exists.
+func TestRemoveLegacyOriginPartialMultiRecipeNoRemovalOnRetry(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	legacy := filepath.Join(root, "ai-specs", ".recipe")
+	pcWrite(t, filepath.Join(legacy, "recipeA", "overrides", "a.md"), "a\n", 0o644)
+	pcWrite(t, filepath.Join(legacy, "recipeB", "overrides", "b.md"), "b\n", 0o644)
+	pcWrite(t, filepath.Join(root, "ai-specs", "recipes", "recipeB", "overrides", "keep.md"), "keep\n", 0o644)
+
+	for i := 1; i <= 2; i++ {
+		var out, errBuf bytes.Buffer
+		RemoveLegacyOrigin(root, home, &out, &errBuf)
+		if !isDir(legacy) {
+			t.Fatalf("run %d removed .recipe/ although recipeB has an unverified destination; stdout=%q stderr=%q", i, out.String(), errBuf.String())
+		}
+		if !strings.Contains(errBuf.String(), "already has overrides at ai-specs/recipes/recipeB/overrides/") {
+			t.Errorf("run %d stderr = %q, want recipeB's existing-destination warning", i, errBuf.String())
+		}
+		if strings.Contains(out.String(), "removed leftover ai-specs/.recipe/") {
+			t.Errorf("run %d claimed to remove .recipe/; stdout=%q", i, out.String())
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "ai-specs", "recipes", "recipeB", "overrides", "keep.md")); err != nil || string(got) != "keep\n" {
+		t.Errorf("recipeB destination user content not preserved: %q err=%v", got, err)
+	}
+	if !isFile(filepath.Join(legacy, "recipeA", "overrides", "a.md")) {
+		t.Errorf("legacy source for the fresh-migrated recipe was not retained")
+	}
+}
+
+// TestRemoveLegacyOriginFreshMigrationRemovesDotRecipe: when every migration
+// genuinely succeeds in this invocation, .recipe/ is still removed normally.
+func TestRemoveLegacyOriginFreshMigrationRemovesDotRecipe(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	legacy := filepath.Join(root, "ai-specs", ".recipe")
+	pcWrite(t, filepath.Join(legacy, "recipeA", "overrides", "a.md"), "a\n", 0o644)
+	pcWrite(t, filepath.Join(legacy, "recipeB", "overrides", "b.md"), "b\n", 0o644)
+
+	var out, errBuf bytes.Buffer
+	RemoveLegacyOrigin(root, home, &out, &errBuf)
+	if isDir(legacy) {
+		t.Fatalf(".recipe/ not removed after fully successful migrations; stderr=%q", errBuf.String())
+	}
+	if !strings.Contains(out.String(), "removed leftover ai-specs/.recipe/") {
+		t.Errorf("stdout = %q, want the removal confirmation", out.String())
+	}
+	if strings.Contains(errBuf.String(), "failed to migrate") || strings.Contains(errBuf.String(), "already has overrides") {
+		t.Errorf("unexpected migration warning: %q", errBuf.String())
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "ai-specs", "recipes", "recipeA", "overrides", "a.md")); err != nil || string(got) != "a\n" {
+		t.Errorf("fresh migration content wrong: %q err=%v", got, err)
+	}
+}
+
 // ============================================================================
 // Commit B: full differential against the real Python module
 // ============================================================================
@@ -366,6 +514,13 @@ type pcCase struct {
 	goErrContains   string
 	stderrPrefix    string
 
+	// safetyException marks the single user-authorized divergence from the
+	// frozen Python oracle: RemoveLegacyOrigin preserves an existing overrides
+	// destination (and ai-specs/.recipe/) instead of treating it as proof of a
+	// complete migration. The differential still runs both legs; the harness
+	// pins the exact divergence rather than requiring byte parity.
+	safetyException bool
+
 	// refDivergence pins the user-decided Python reference gap (R3-001): Go
 	// follows the epic's <=3.13 pathlib semantics, the local 3.14 oracle
 	// changed leading-dot handling. Both legs still run; everything outside the
@@ -417,6 +572,11 @@ func TestProjectCacheDifferential(t *testing.T) {
 			pcSeedLeg(t, T, root, home, tc)
 			goOut, goErr, goRC, goResult := pcRunGo(t, spec, root, home)
 			goFiles, goModes, goDirs, goLinks := pcSnapshot(t, T)
+
+			if tc.safetyException {
+				pcAssertSafetyException(t, ref, goOut, goErr, goFiles, goModes, goDirs, goLinks)
+				return
+			}
 
 			if tc.refDivergence != nil {
 				pcAssertRefDivergence(t, tc, ref, goOut, goErr, goFiles, goModes, goDirs, goLinks, goResult)
@@ -851,6 +1011,70 @@ func pcTreeDiff(a, b map[string]string) string {
 	return sb.String()
 }
 
+// pcAssertSafetyException pins the one authorized parity exception: the real
+// Python oracle treats an existing overrides destination as proof of a complete
+// migration, deletes ai-specs/.recipe/ after a retry and silently drops the
+// entries a failed first run never copied; the Go port preserves .recipe/,
+// warns, and leaves the existing destination untouched. Everything outside
+// ai-specs/.recipe/ must still match the oracle byte-for-byte.
+func pcAssertSafetyException(t *testing.T, ref pcRef, goOut, goErr string, goFiles map[string]string, goModes map[string]int, goDirs []string, goLinks map[string]string) {
+	t.Helper()
+	const legacy = "project/ai-specs/.recipe"
+	if !strings.Contains(ref.Stdout, "removed leftover ai-specs/.recipe/") {
+		t.Errorf("expected the Python oracle to remove ai-specs/.recipe/ (the unsafe behavior this exception replaces); stdout=%q", ref.Stdout)
+	}
+	if strings.Contains(goOut, "removed leftover ai-specs/.recipe/") {
+		t.Errorf("Go claimed to remove ai-specs/.recipe/; stdout=%q", goOut)
+	}
+	if !strings.Contains(goErr, "already has overrides at ai-specs/recipes/") {
+		t.Errorf("Go did not warn about the existing destination; stderr=%q", goErr)
+	}
+	if !strings.Contains(goErr, "skipping removal of ai-specs/.recipe/") {
+		t.Errorf("Go did not warn about preserving ai-specs/.recipe/; stderr=%q", goErr)
+	}
+	if !pcTreeEqual(pcDropLegacy(goFiles), ref.Files) {
+		t.Errorf("files outside ai-specs/.recipe/ differ from the oracle:\n%s", pcTreeDiff(pcDropLegacy(goFiles), ref.Files))
+	}
+	if !pcModesEqual(pcDropLegacy(goModes), ref.Modes) {
+		t.Errorf("modes outside ai-specs/.recipe/ differ:\n  go:  %v\n  ref: %v", pcDropLegacy(goModes), ref.Modes)
+	}
+	if !pcStringsEqual(pcDropLegacyDirs(goDirs), ref.Dirs) {
+		t.Errorf("dirs outside ai-specs/.recipe/ differ:\n  go:  %v\n  ref: %v", pcDropLegacyDirs(goDirs), ref.Dirs)
+	}
+	if !pcTreeEqual(pcDropLegacy(goLinks), ref.Links) {
+		t.Errorf("links outside ai-specs/.recipe/ differ:\n  go:  %v\n  ref: %v", pcDropLegacy(goLinks), ref.Links)
+	}
+	if _, ok := goFiles[legacy+"/recipeB/overrides/ov.md"]; !ok {
+		t.Error("Go did not retain the unmigrated legacy overrides under ai-specs/.recipe/")
+	}
+}
+
+// pcDropLegacy returns m without the ai-specs/.recipe/ subtree.
+func pcDropLegacy[T any](m map[string]T) map[string]T {
+	const legacy = "project/ai-specs/.recipe"
+	out := make(map[string]T, len(m))
+	for k, v := range m {
+		if k == legacy || strings.HasPrefix(k, legacy+"/") {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// pcDropLegacyDirs returns dirs without the ai-specs/.recipe/ subtree.
+func pcDropLegacyDirs(dirs []string) []string {
+	const legacy = "project/ai-specs/.recipe"
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if d == legacy || strings.HasPrefix(d, legacy+"/") {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
 // pcAssertRefDivergence pins the R3-001 reference gap. Both legs ran on the
 // same tree; only the leading-dot names in tc.refDivergence may differ. The
 // pin records (never branches on) the oracle interpreter version.
@@ -1270,8 +1494,14 @@ func pcCases(t *testing.T) []pcCase {
 				"path_template": "ai-specs/commands/{name}.md", "recursive": false}},
 
 		// ---- remove_legacy_origin ----
+		// SAFETY EXCEPTION (user-authorized, GO-07.S6): the only differential case
+		// that exercises an EXISTING overrides destination. Python deletes
+		// ai-specs/.recipe/ after the retry; Go preserves it. The harness asserts
+		// that exact divergence (see pcAssertSafetyException) and keeps every
+		// byte outside ai-specs/.recipe/ strict.
 		{name: "remove legacy origin", fn: "remove_legacy_origin",
-			args: map[string]any{"project_root": "."},
+			args:            map[string]any{"project_root": "."},
+			safetyException: true,
 			seed: func(t *testing.T, root, home string) {
 				pcSeedBundled(t, home)
 				ai := filepath.Join(root, "ai-specs")

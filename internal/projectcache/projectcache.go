@@ -800,7 +800,22 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 				continue
 			}
 			dest := filepath.Join(aiSpecs, "recipes", name, "overrides")
+			// SAFETY EXCEPTION to frozen Python parity (user-authorized,
+			// GO-07.S6). project-cache.py L497-531 treats an existing destination
+			// as proof of a successful migration and then deletes
+			// ai-specs/.recipe/. A first run that failed mid-copy leaves a PARTIAL
+			// destination, so that policy silently discards the entries it never
+			// copied. The port diverges on purpose: an existing destination whose
+			// completeness cannot be proven marks the migration incomplete and
+			// preserves the legacy originals for a human to verify. Never overwrite
+			// the existing destination.
 			if exists(dest) {
+				warn(stderr, fmt.Sprintf(
+					"recipe '%s' already has overrides at ai-specs/recipes/%s/overrides/; "+
+						"cannot verify the migration is complete, keeping ai-specs/.recipe/%s/overrides/ "+
+						"\u2014 verify the existing overrides before removing the legacy copy",
+					name, name, name))
+				migrationFailed = true
 				continue
 			}
 			if err := os.MkdirAll(filepath.Dir(dest), 0o777); err != nil {
@@ -822,7 +837,8 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 	if exists(legacyRecipe) {
 		if migrationFailed {
 			warn(stderr, "skipping removal of ai-specs/.recipe/ \u2014 "+
-				"one or more override migrations failed; re-run ai-specs sync to retry")
+				"one or more override migrations failed or could not be verified as complete; "+
+				"verify the affected destinations before removing the legacy copy")
 		} else if err := removeTreePy(legacyRecipe); err != nil {
 			warn(stderr, fmt.Sprintf("failed to remove leftover ai-specs/.recipe/: %s", err))
 		} else {
