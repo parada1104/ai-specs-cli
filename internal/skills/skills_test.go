@@ -30,6 +30,13 @@ func buildSkillTree(t *testing.T) (string, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	home := t.TempDir()
+	return root, home, buildSkillTreeAt(t, root, home)
+}
+
+// buildSkillTreeAt seeds the four-tier tree into existing root/home dirs and
+// returns the cache root.
+func buildSkillTreeAt(t *testing.T, root, home string) string {
+	t.Helper()
 	cache := projectcache.CacheRoot(root, home)
 
 	writeSkill(t, filepath.Join(root, "ai-specs", "skills", "shared"))
@@ -46,7 +53,7 @@ func buildSkillTree(t *testing.T) (string, string, string) {
 	writeSkill(t, filepath.Join(cache, ".bundled", "skills", "shared"))
 	writeSkill(t, filepath.Join(cache, ".bundled", "skills", "bundledonly"))
 
-	return root, home, cache
+	return cache
 }
 
 func TestCollectSkillsPrecedence(t *testing.T) {

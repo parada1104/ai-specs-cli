@@ -372,11 +372,11 @@ func warn(w io.Writer, msg string) {
 
 // --- Commit B: mutations, git-aware remediation, merge, CLI -----------------
 
-// removeTreePy mirrors shutil.rmtree: it refuses a symbolic link (shutil's
+// RemoveTreePy mirrors shutil.rmtree: it refuses a symbolic link (shutil's
 // guard so a symlink-to-directory is never silently unlinked) and refuses a
 // non-directory (a regular file raises NotADirectoryError). os.RemoveAll would
 // remove either silently.
-func removeTreePy(path string) error {
+func RemoveTreePy(path string) error {
 	info, err := os.Lstat(path)
 	if err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -511,7 +511,7 @@ func RemoveBundledSkillLeftovers(aiSpecs, cliHome string, lockSkills map[string]
 					"(differs from CLI-bundled source and lock; resolve manually)", name))
 			continue
 		}
-		if err := removeTreePy(child); err != nil {
+		if err := RemoveTreePy(child); err != nil {
 			warn(stderr, fmt.Sprintf("failed to remove leftover ai-specs/skills/%s/: %s", name, err))
 			continue
 		}
@@ -822,7 +822,7 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 				migrationFailed = true
 				continue
 			}
-			if err := copyTree(legacyOverrides, dest); err != nil {
+			if err := CopyTree(legacyOverrides, dest); err != nil {
 				warn(stderr, fmt.Sprintf("failed to migrate overrides for '%s': %s", name, err))
 				migrationFailed = true
 				continue
@@ -838,7 +838,7 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 			warn(stderr, "skipping removal of ai-specs/.recipe/ \u2014 "+
 				"one or more override migrations failed or could not be verified as complete; "+
 				"verify the affected destinations before removing the legacy copy")
-		} else if err := removeTreePy(legacyRecipe); err != nil {
+		} else if err := RemoveTreePy(legacyRecipe); err != nil {
 			warn(stderr, fmt.Sprintf("failed to remove leftover ai-specs/.recipe/: %s", err))
 		} else {
 			fmt.Fprintln(stdout, "  \u2713 removed leftover ai-specs/.recipe/")
@@ -853,7 +853,7 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 		if !exists(path) {
 			continue
 		}
-		if err := removeTreePy(path); err != nil {
+		if err := RemoveTreePy(path); err != nil {
 			warn(stderr, fmt.Sprintf("failed to remove leftover ai-specs/%s/: %s", item.label, err))
 			continue
 		}
@@ -889,7 +889,7 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 // recipe-managed -> local hand-authored. Returns the file count in dest.
 func MergeCommands(projectRoot, destDir, cliHome string, stdout, stderr io.Writer) (int, error) {
 	if exists(destDir) {
-		if err := removeTreePy(destDir); err != nil {
+		if err := RemoveTreePy(destDir); err != nil {
 			return 0, err
 		}
 	}
@@ -1025,14 +1025,14 @@ func copyStat(src, dst string) error {
 	return os.Chtimes(dst, info.ModTime(), info.ModTime())
 }
 
-// copyTree mirrors shutil.copytree(src, dst) with the default symlinks=False:
+// CopyTree mirrors shutil.copytree(src, dst) with the default symlinks=False:
 // the tree is recreated as real directories and regular files. A symlink to a
 // file copies its target CONTENT (copy2 semantics: mode/mtime), a symlink to a
 // directory recurses the TARGET as a real directory, and a dangling symlink is
 // collected as a failure. Like shutil.copytree, per-entry failures accumulate
 // and the tree is raised only after the walk (and the final copystat) finish,
 // so the destination keeps everything copied before the failure.
-func copyTree(src, dst string) error {
+func CopyTree(src, dst string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
@@ -1052,7 +1052,7 @@ func copyTree(src, dst string) error {
 				continue
 			}
 			if info.IsDir() {
-				if err := copyTree(s, d); err != nil {
+				if err := CopyTree(s, d); err != nil {
 					appendCopyErr(&errs, s, d, err)
 				}
 			} else {
@@ -1061,7 +1061,7 @@ func copyTree(src, dst string) error {
 				}
 			}
 		case entry.IsDir():
-			if err := copyTree(s, d); err != nil {
+			if err := CopyTree(s, d); err != nil {
 				appendCopyErr(&errs, s, d, err)
 			}
 		default:
