@@ -241,6 +241,25 @@ func TestFlattenRequiresHome(t *testing.T) {
 	}
 }
 
+// TestFlattenRefusesEmptyDest pins the S7 safety exception: Python resolves an
+// empty dest to the cwd and rmtree's it; the port refuses before any write.
+func TestFlattenRefusesEmptyDest(t *testing.T) {
+	root, home, _ := buildSkillTree(t)
+	t.Setenv("AI_SPECS_HOME", home)
+	t.Chdir(root)
+	before := snapshotTree(t, root)
+	var stdout, stderr bytes.Buffer
+	if rc := Flatten(root, "", "", &stdout, &stderr); rc != 1 {
+		t.Fatalf("rc = %d, want 1", rc)
+	}
+	if stdout.Len() != 0 || stderr.String() != "error: empty destination directory\n" {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	if after := snapshotTree(t, root); !reflect.DeepEqual(after, before) {
+		t.Fatalf("cwd changed:\n before %v\n after  %v", before, after)
+	}
+}
+
 func symlinkT(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {

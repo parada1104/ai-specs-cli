@@ -54,6 +54,13 @@ skill in sorted id order, print `  ✓ flattened N skill(s) to <dest>`.
   (S5/S6 traceback mode — rc, stdout and written tree are pinned).
 - `AI_SPECS_HOME` unset → `error: AI_SPECS_HOME is not set`, rc 1, nothing
   written (S6 accepted deviation; the shim always pins it).
+- **Safety exception (user-authorized, review `review-15a2e1d531f5c93a`
+  finding `R3-empty-dest-wipes-cwd`)**: an empty `destDir` is refused with
+  `error: empty destination directory`, rc 1, before any filesystem access.
+  Python resolves `""` to the cwd and rmtree's it; `sync-agent.sh` cannot pass
+  `""` (the path comes from `project-cache.py` under `set -e`), but a Go caller
+  easily could. Pinned by `TestFlattenRefusesEmptyDest` (RED without the guard:
+  the temp cwd was wiped). This is the only divergence from the Python.
 
 ## Evidence
 

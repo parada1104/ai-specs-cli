@@ -21,7 +21,15 @@ import (
 // no Go source-layout equivalent). Tracebacks are not byte-reproducible, so a
 // failure writes one "error: <msg>" line instead. The argv usage branch
 // (exit 2) stays with the caller.
+//
+// Safety exception (user-authorized, S7 R3-empty-dest-wipes-cwd): an empty
+// destDir is refused. Python resolves "" to the cwd and rmtree's it; the Bash
+// caller cannot pass "", but a Go caller easily could.
 func Flatten(projectRoot, destDir, cliHome string, stdout, stderr io.Writer) int {
+	if destDir == "" {
+		fmt.Fprintln(stderr, "error: empty destination directory")
+		return 1
+	}
 	if projectcache.AISpecsHome(cliHome) == "" {
 		fmt.Fprintln(stderr, "error: AI_SPECS_HOME is not set")
 		return 1
