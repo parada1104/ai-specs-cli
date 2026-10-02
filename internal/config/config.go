@@ -513,3 +513,9 @@ func readBindings(data *toml.Table) any {
 	}
 	return out
 }
+
+// PyStr exposes pyStr (Python str() of a tomllib value) to other packages.
+func PyStr(v any) string { return pyStr(v) }
+
+// Truthy exposes truthy (Python truthiness of a tomllib value).
+func Truthy(v any) bool { return truthy(v) }
