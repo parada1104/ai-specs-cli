@@ -276,6 +276,24 @@ func TestResolvePathMatchesPythonRealpath(t *testing.T) {
 	mustSymlink(t, filepath.Join(dir, "loop_b"), filepath.Join(dir, "loop_a"))
 	mustSymlink(t, filepath.Join(dir, "loop_a"), filepath.Join(dir, "loop_b"))
 
+	// R3-realpath-nonfinal-symlink shapes (X1 review-a6ac5ceb6e6867a1):
+	// non-final symlinks with absolute/multi-component targets, links to files,
+	// targets containing '..', chained links, and a dangling mid-path.
+	if err := os.MkdirAll(filepath.Join(dir, "other", "place"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pcWrite(t, filepath.Join(dir, "other", "target.txt"), "o\n", 0o644)
+	pcWrite(t, filepath.Join(dir, "file.txt"), "f\n", 0o644)
+	mustSymlink(t, filepath.Join(dir, "other", "place"), filepath.Join(dir, "d", "abslink"))
+	mustSymlink(t, filepath.Join("..", "other", "place"), filepath.Join(dir, "d", "rellink"))
+	mustSymlink(t, filepath.Join(dir, "file.txt"), filepath.Join(dir, "filelink"))
+	mustSymlink(t, filepath.Join(dir, "d", "..", "other", "place"), filepath.Join(dir, "dotlink"))
+	mustSymlink(t, filepath.Join(dir, "chain2"), filepath.Join(dir, "chain1"))
+	mustSymlink(t, filepath.Join(dir, "other", "place"), filepath.Join(dir, "chain2"))
+
 	candidates := []string{
 		dir + "/abslink/../target.txt",
 		dir + "/rellink/../target.txt",
@@ -286,6 +304,14 @@ func TestResolvePathMatchesPythonRealpath(t *testing.T) {
 		dir + "/deep/a/b/c/../../target.txt",
 		dir + "/deep/a/./b//c",
 		dir,
+		dir + "/d/abslink/../target.txt",
+		dir + "/d/rellink/../target.txt",
+		dir + "/filelink/../file.txt",
+		dir + "/dotlink/../target.txt",
+		dir + "/chain1/../target.txt",
+		dir + "/dangling/../target.txt",
+		dir + "/loop_a/x",
+		dir + "/loop_a/../x",
 	}
 	want := pyRealpaths(t, candidates)
 	for i, p := range candidates {

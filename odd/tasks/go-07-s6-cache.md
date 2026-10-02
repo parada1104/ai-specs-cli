@@ -106,6 +106,7 @@ Native review checkpoints:
 - C2 `review-8d76bff593c59383`: escalated after failed validation, NOT approved.
   The new F safety fix addresses its unresolved loss-of-overrides finding; F review is pending.
 - C3 `review-544ae236bc2f3aa0`: corrected candidate `2e81099` approved and acknowledged-burned.
+- X1 `review-a6ac5ceb6e6867a1`: escalated; reviewer false positive on the `R3-realpath-nonfinal-symlink-wrong` BLOCKER, DISPOSITIONED as no-fix (see "Reviewer false positive — R3-realpath-nonfinal-symlink"). The escalated lineage stays as the documented record (native refuses abandoning escalated authority).
 - Remaining fixes (C/D/E) and F require separate reviews before delivery.
 
 Independent verification: full suite at pre-harness-fix `4043434` passed
@@ -509,6 +510,58 @@ Evidence:
   ./internal/projectcache/ ./internal/skills/`; `go test ./... -count=1`;
   `python3 -m unittest tests.test_project_cache`; `python3 tests/parity/run.py`
   (19 fixtures, zero deltas both modes) — all pass.
+
+### Reviewer false positive — R3-realpath-nonfinal-symlink (native lineage `review-a6ac5ceb6e6867a1`, escalated)
+
+Native review X1 returned **R3-realpath-nonfinal-symlink-wrong (BLOCKER)**:
+`realpathPy` allegedly mishandles a non-final symlink whose target is absolute
+(or multi-component) followed by more components — claimed probe
+`d/abslink -> <root>/other/place`, `ResolvePath(<root>/d/abslink/../target.txt)`
+returning `<root>/d/target.txt` instead of `<root>/other/target.txt`.
+
+Disposition: **reviewer false positive; no production change.** The frozen
+resolver is parity-correct, and the original probe was INVALID. It built the
+query with `filepath.Join(<root>/d/abslink, "..", "target.txt")`, and
+`filepath.Join` cleans `..` LEXICALLY before `ResolvePath` runs, so the probe
+exercised the symlink-free path `<root>/d/target.txt` and never traversed
+`abslink`. That is the known friction pitfall (lexical clean before
+symlink-aware resolution); only a raw-string query is a valid probe.
+
+Valid measurement — a temporary raw-string fuzz (removed after capture; no repo
+artifact) over a 14-link tree (absolute/relative/multi-component/dangling/
+chained/loop targets, `..` before AND after the link) compared Go against BOTH
+oracles:
+- `python3` 3.14.7 (iterative `realpath`) and
+  `/opt/homebrew/bin/python3.13` 3.13.15 (epic reference; its
+  `pathlib.Path.resolve()` and `os.path.realpath(strict=False)` are the same
+  function): 104,976 four-component paths, `go-vs-py3.13 = 0` divergences,
+  `py3.13-vs-py3.14 = 0` divergences.
+- The exact claimed probe returns `<root>/other/target.txt` in Go, matching
+  Python. The claimed `<root>/d/target.txt` is the signature of a Clean-first
+  resolver (`filepath.Abs`/`Clean`), not the current iterative port.
+
+The reviewer's root-cause framing (iterative handler vs recursive
+`_joinrealpath`) is a non-issue: CPython 3.14 replaced `_joinrealpath` with
+exactly this iterative algorithm, and the two are behaviorally identical over
+the fuzzed space.
+
+The real, lesser issue was a COVERAGE gap, now closed by test-only regression
+cases in `internal/projectcache/projectcache_test.go` and the mirrored
+`internal/skills/resolve_test.go` twin:
+`<root>/d/abslink/../target.txt` (absolute non-final + `..`),
+`<root>/d/rellink/../target.txt` (relative non-final + `..`),
+`<root>/filelink/../file.txt` (symlink-to-file mid-path),
+`<root>/dotlink/../target.txt` (target containing `..`),
+`<root>/chain1/../target.txt` (chained link->link->dir + `..`),
+`<root>/dangling/../target.txt` (dangling mid-path + `..`), plus the loop shape
+with a trailing component (`<root>/loop_a/x`, `<root>/loop_a/../x`; the loop
+path is returned unresolved). All pass before and after; the 9 prior cases and
+the loop-return behavior are unchanged. No `realpathPy` edit was made in either
+package.
+
+The escalated lineage `review-a6ac5ceb6e6867a1` remains the documented record
+(native refuses abandoning escalated authority); this entry is the disposition,
+not a correction or a fix.
 
 ### Accepted (not closed)
 
