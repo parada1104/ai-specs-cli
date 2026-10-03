@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // applyEnvelope builds the --apply-orphans stdin envelope: the plan input
@@ -45,9 +47,9 @@ func runApplyCLI(t *testing.T, stdin string) (int, string, string) {
 }
 
 // decodeApplyOutcome parses the structured outcome JSON from stdout.
-func decodeApplyOutcome(t *testing.T, stdout string) orphanApplyOutcome {
+func decodeApplyOutcome(t *testing.T, stdout string) shared.OrphanApplyOutcome {
 	t.Helper()
-	var outcome orphanApplyOutcome
+	var outcome shared.OrphanApplyOutcome
 	if err := json.Unmarshal([]byte(stdout), &outcome); err != nil {
 		t.Fatalf("stdout is not a valid apply outcome: %v\nraw: %s", err, stdout)
 	}
@@ -82,13 +84,13 @@ func TestApplyOrphansRemovesOrphanedDirectoriesAcrossScopes(t *testing.T) {
 		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
 	}
 	outcome := decodeApplyOutcome(t, stdout)
-	wantRemoved := []orphanApplyEntry{
+	wantRemoved := []shared.OrphanApplyEntry{
 		{Scope: "recipe_skills", Name: "orphan-a"},
 		{Scope: "deps_skills", Name: "orphan-b"},
 		{Scope: "inproject_deps", Name: "orphan-c"},
 	}
-	if outcome.Status != statusApplied {
-		t.Errorf("status = %q, want %q (error: %s)", outcome.Status, statusApplied, outcome.Error)
+	if outcome.Status != shared.StatusApplied {
+		t.Errorf("status = %q, want %q (error: %s)", outcome.Status, shared.StatusApplied, outcome.Error)
 	}
 	if !reflect.DeepEqual(outcome.Removed, wantRemoved) {
 		t.Errorf("removed = %+v, want %+v", outcome.Removed, wantRemoved)
@@ -141,8 +143,8 @@ func TestApplyOrphansPreservesNonDirectoryChildren(t *testing.T) {
 		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
 	}
 	outcome := decodeApplyOutcome(t, stdout)
-	if outcome.Status != statusApplied {
-		t.Errorf("status = %q, want %q (error: %s)", outcome.Status, statusApplied, outcome.Error)
+	if outcome.Status != shared.StatusApplied {
+		t.Errorf("status = %q, want %q (error: %s)", outcome.Status, shared.StatusApplied, outcome.Error)
 	}
 	if len(outcome.Removed) != 0 {
 		t.Errorf("removed = %+v, want empty (non-directory children are preserved)", outcome.Removed)
@@ -173,8 +175,8 @@ func TestApplyOrphansTreatsMissingChildrenAsApplied(t *testing.T) {
 		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
 	}
 	outcome := decodeApplyOutcome(t, stdout)
-	if outcome.Status != statusApplied {
-		t.Errorf("status = %q, want %q (error: %s)", outcome.Status, statusApplied, outcome.Error)
+	if outcome.Status != shared.StatusApplied {
+		t.Errorf("status = %q, want %q (error: %s)", outcome.Status, shared.StatusApplied, outcome.Error)
 	}
 	if len(outcome.Removed) != 0 || len(outcome.Remaining) != 0 {
 		t.Errorf("removed/remaining = %+v/%+v, want both empty", outcome.Removed, outcome.Remaining)
@@ -197,8 +199,8 @@ func TestApplyOrphansRejectsPathTraversalWithoutSideEffects(t *testing.T) {
 		t.Fatalf("exit = %d, want 3", code)
 	}
 	outcome := decodeApplyOutcome(t, stdout)
-	if outcome.Status != statusPreApplyFailed {
-		t.Errorf("status = %q, want %q", outcome.Status, statusPreApplyFailed)
+	if outcome.Status != shared.StatusPreApplyFailed {
+		t.Errorf("status = %q, want %q", outcome.Status, shared.StatusPreApplyFailed)
 	}
 	if outcome.Error == "" {
 		t.Errorf("error = empty, want a validation reason")
@@ -224,9 +226,9 @@ func TestApplyOrphansStopsOnFirstRemovalFailure(t *testing.T) {
 	} {
 		mustMkdir(t, dir)
 	}
-	in := applyOrphansInput{
-		Roots: orphanApplyRoots{RecipeSkills: recipeRoot, DepsSkills: depsRoot},
-		orphanPlanInput: orphanPlanInput{
+	in := shared.ApplyOrphansInput{
+		Roots: shared.OrphanApplyRoots{RecipeSkills: recipeRoot, DepsSkills: depsRoot},
+		OrphanPlanInput: shared.OrphanPlanInput{
 			RecipeSkills:     []string{"a-first", "b-fail", "c-after"},
 			DepsSkills:       []string{"d-deps"},
 			EnabledRecipeIDs: []string{},
@@ -241,15 +243,15 @@ func TestApplyOrphansStopsOnFirstRemovalFailure(t *testing.T) {
 		}
 		return os.RemoveAll(path)
 	}
-	outcome := applyOrphans(in, remove)
-	if outcome.Status != statusPartial {
-		t.Errorf("status = %q, want %q (error: %s)", outcome.Status, statusPartial, outcome.Error)
+	outcome := shared.ApplyOrphans(in, remove)
+	if outcome.Status != shared.StatusPartial {
+		t.Errorf("status = %q, want %q (error: %s)", outcome.Status, shared.StatusPartial, outcome.Error)
 	}
-	wantRemoved := []orphanApplyEntry{{Scope: "recipe_skills", Name: "a-first"}}
+	wantRemoved := []shared.OrphanApplyEntry{{Scope: "recipe_skills", Name: "a-first"}}
 	if !reflect.DeepEqual(outcome.Removed, wantRemoved) {
 		t.Errorf("removed = %+v, want %+v", outcome.Removed, wantRemoved)
 	}
-	wantRemaining := []orphanApplyEntry{
+	wantRemaining := []shared.OrphanApplyEntry{
 		{Scope: "recipe_skills", Name: "b-fail", Uncertain: true},
 		{Scope: "recipe_skills", Name: "c-after"},
 		{Scope: "deps_skills", Name: "d-deps"},
@@ -269,9 +271,9 @@ func TestApplyOrphansValidationFailureIsPreApply(t *testing.T) {
 	tmp := t.TempDir()
 	// A relative root with a planned orphan is a pre-apply contract failure:
 	// nothing may be attempted and every planned entry stays in remaining.
-	in := applyOrphansInput{
-		Roots: orphanApplyRoots{RecipeSkills: filepath.Join(tmp, "recipe")},
-		orphanPlanInput: orphanPlanInput{
+	in := shared.ApplyOrphansInput{
+		Roots: shared.OrphanApplyRoots{RecipeSkills: filepath.Join(tmp, "recipe")},
+		OrphanPlanInput: shared.OrphanPlanInput{
 			RecipeSkills:     []string{"orphan"},
 			EnabledRecipeIDs: []string{},
 		},
@@ -281,11 +283,11 @@ func TestApplyOrphansValidationFailureIsPreApply(t *testing.T) {
 		t.Errorf("remover must not be called on a validation failure; got %s", path)
 		return nil
 	}
-	outcome := applyOrphans(in, remove)
-	if outcome.Status != statusPreApplyFailed {
-		t.Errorf("status = %q, want %q", outcome.Status, statusPreApplyFailed)
+	outcome := shared.ApplyOrphans(in, remove)
+	if outcome.Status != shared.StatusPreApplyFailed {
+		t.Errorf("status = %q, want %q", outcome.Status, shared.StatusPreApplyFailed)
 	}
-	wantRemaining := []orphanApplyEntry{{Scope: "recipe_skills", Name: "orphan"}}
+	wantRemaining := []shared.OrphanApplyEntry{{Scope: "recipe_skills", Name: "orphan"}}
 	if !reflect.DeepEqual(outcome.Remaining, wantRemaining) {
 		t.Errorf("remaining = %+v, want %+v", outcome.Remaining, wantRemaining)
 	}

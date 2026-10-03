@@ -10,3 +10,11 @@
 module ai-specs.dev/ai-specs
 
 go 1.24.13
+
+// SX0a: the root binary invokes the gate's authoritative orphans decision
+// in-process through the importable shared package instead of shelling out
+// to the worktree-gate binary. The replace pins the import to the nested
+// gate module in this repository (never a published release).
+require ai-specs.dev/worktree-gate v0.0.0
+
+replace ai-specs.dev/worktree-gate => ./catalog/recipes/worktree-flow/gate

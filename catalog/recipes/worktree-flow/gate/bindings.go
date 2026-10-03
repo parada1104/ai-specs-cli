@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"sort"
 	"strings"
 	"time"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // Capability binding resolution and capability conflict grading, moved from the
@@ -142,7 +143,7 @@ func capabilityConflicts(idx capabilityIndex, explicit []manifestBinding) []capa
 			return []capabilityConflict{{
 				Type:     "capability",
 				ID:       binding.Capability,
-				Recipes:  sortedUnique([]string{boundRecipe[binding.Capability], binding.Recipe}),
+				Recipes:  shared.SortedUnique([]string{boundRecipe[binding.Capability], binding.Recipe}),
 				Severity: "fatal",
 			}}
 		}
@@ -160,7 +161,7 @@ func capabilityConflicts(idx capabilityIndex, explicit []manifestBinding) []capa
 			conflicts = append(conflicts, capabilityConflict{
 				Type:     "capability",
 				ID:       cap,
-				Recipes:  sortedUnique(providers),
+				Recipes:  shared.SortedUnique(providers),
 				Severity: "warning",
 			})
 		}
@@ -266,20 +267,4 @@ func runResolveBindings(opts bindingsOptions, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, string(payload))
 	return 0
-}
-
-// sortedUnique returns values as a sorted, deduplicated copy. It is the shape
-// both conflict graders emit, so a set-like recipe group has one stable order.
-func sortedUnique(values []string) []string {
-	unique := make(map[string]bool, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if unique[value] {
-			continue
-		}
-		unique[value] = true
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
 }

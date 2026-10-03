@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 func entry(id string, table map[string]any) manifestEntry {
@@ -221,10 +223,10 @@ func TestRunPlanResolvedConfigMissingManifestFailsClosed(t *testing.T) {
 }
 
 func TestResolvedConfigSubmodulesSorted(t *testing.T) {
-	got := sortedUnique([]string{"b", "a", "a", "c"})
+	got := shared.SortedUnique([]string{"b", "a", "a", "c"})
 	want := []string{"a", "b", "c"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("sortedUnique = %#v, want %#v", got, want)
+		t.Fatalf("SortedUnique = %#v, want %#v", got, want)
 	}
 }
 
