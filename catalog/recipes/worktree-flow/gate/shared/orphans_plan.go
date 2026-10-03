@@ -1,4 +1,4 @@
-package main
+package shared
 
 import (
 	"encoding/json"
@@ -15,10 +15,13 @@ import (
 // The command is pure set arithmetic over a JSON envelope on stdin: no
 // filesystem access, no TOML parsing. One materialized name is orphaned when it
 // is absent from the set of ids the manifest still expects.
+//
+// This package is the SX0a in-process extraction: the gate main package
+// dispatches to it and the root ai-specs binary imports it directly.
 
-// orphanPlanInput is the stdin contract. Every field is a set of names; a
+// OrphanPlanInput is the stdin contract. Every field is a set of names; a
 // missing or null field is the empty set.
-type orphanPlanInput struct {
+type OrphanPlanInput struct {
 	RecipeSkills     []string `json:"recipe_skills"`
 	DepsSkills       []string `json:"deps_skills"`
 	InprojectDeps    []string `json:"inproject_deps"`
@@ -27,20 +30,20 @@ type orphanPlanInput struct {
 	ExpectedDepIDs   []string `json:"expected_dep_ids"`
 }
 
-// orphanPlan is the stdout contract. Every field is always present and sorted;
+// OrphanPlan is the stdout contract. Every field is always present and sorted;
 // an absent orphan set is an empty list, never null.
-type orphanPlan struct {
+type OrphanPlan struct {
 	OrphanedRecipes       []string `json:"orphaned_recipes"`
 	OrphanedDeps          []string `json:"orphaned_deps"`
 	OrphanedInprojectDeps []string `json:"orphaned_inproject_deps"`
 	StaleLockRecipes      []string `json:"stale_lock_recipes"`
 }
 
-// planOrphans is the pure decision core. The recipe-skill and lock-recipe
+// PlanOrphans is the pure decision core. The recipe-skill and lock-recipe
 // scopes are compared against the enabled recipe ids; the cached dep-skill and
 // in-project dep scopes are both compared against the expected dep ids.
-func planOrphans(in orphanPlanInput) orphanPlan {
-	return orphanPlan{
+func PlanOrphans(in OrphanPlanInput) OrphanPlan {
+	return OrphanPlan{
 		OrphanedRecipes:       absentFrom(in.RecipeSkills, in.EnabledRecipeIDs),
 		OrphanedDeps:          absentFrom(in.DepsSkills, in.ExpectedDepIDs),
 		OrphanedInprojectDeps: absentFrom(in.InprojectDeps, in.ExpectedDepIDs),
@@ -49,7 +52,7 @@ func planOrphans(in orphanPlanInput) orphanPlan {
 }
 
 // absentFrom returns the values not present in expected, sorted and
-// deduplicated via the shared sortedUnique helper. A nil input yields a
+// deduplicated via the shared SortedUnique helper. A nil input yields a
 // non-nil empty slice, so JSON emits [] and never null.
 func absentFrom(values, expected []string) []string {
 	expectedSet := make(map[string]bool, len(expected))
@@ -62,15 +65,15 @@ func absentFrom(values, expected []string) []string {
 			absent = append(absent, value)
 		}
 	}
-	return sortedUnique(absent)
+	return SortedUnique(absent)
 }
 
-// runPlanOrphans is the --plan-orphans command: decode the JSON envelope from
+// RunPlanOrphans is the --plan-orphans command: decode the JSON envelope from
 // stdin, plan the orphan sets, print one JSON object on stdout. A malformed
 // envelope is a process-level failure (exit 2); an empty stdin or an absent
 // field is the empty set.
-func runPlanOrphans(stdin io.Reader, stdout, stderr io.Writer) int {
-	var in orphanPlanInput
+func RunPlanOrphans(stdin io.Reader, stdout, stderr io.Writer) int {
+	var in OrphanPlanInput
 	raw, err := io.ReadAll(stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --plan-orphans: read stdin: %v\n", err)
@@ -82,7 +85,7 @@ func runPlanOrphans(stdin io.Reader, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	payload, err := json.Marshal(planOrphans(in))
+	payload, err := json.Marshal(PlanOrphans(in))
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --plan-orphans: %v\n", err)
 		return 2

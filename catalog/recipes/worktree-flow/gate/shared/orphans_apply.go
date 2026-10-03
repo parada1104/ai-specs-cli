@@ -1,4 +1,4 @@
-package main
+package shared
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 // Orphan cache deletion for recipe materialization (GO-06 WU1). Go owns the
 // DELETION actuator behind --apply-orphans: it consumes the same stdin
 // envelope as --plan-orphans plus the three already-resolved cache roots,
-// reuses the authoritative planOrphans decision, and removes only validated
+// reuses the authoritative PlanOrphans decision, and removes only validated
 // direct child directories under those roots. Python keeps cache-root
 // acquisition, the lock-file serialization (remove_recipe_lock_entries +
 // write_lock) and its printed messages; this command never touches any lock.
@@ -23,48 +23,48 @@ import (
 // removal, remaining targets reported, the failing one flagged uncertain) so
 // a partially applied deletion is never replayed blindly.
 
-// orphanApplyStatus values for orphanApplyOutcome.Status.
+// Orphan apply status values for OrphanApplyOutcome.Status.
 const (
-	statusApplied        = "applied"
-	statusPreApplyFailed = "pre_apply_failed"
-	statusPartial        = "partial"
+	StatusApplied        = "applied"
+	StatusPreApplyFailed = "pre_apply_failed"
+	StatusPartial        = "partial"
 )
 
-// orphanApplyRoots holds the three resolved cache-root paths. They must be
+// OrphanApplyRoots holds the three resolved cache-root paths. They must be
 // absolute; Go never resolves, creates, or widens them.
-type orphanApplyRoots struct {
+type OrphanApplyRoots struct {
 	RecipeSkills  string `json:"recipe_skills"`
 	DepsSkills    string `json:"deps_skills"`
 	InprojectDeps string `json:"inproject_deps"`
 }
 
-// applyOrphansInput is the --apply-orphans stdin contract: the orphan plan
+// ApplyOrphansInput is the --apply-orphans stdin contract: the orphan plan
 // input (whose decision is reused verbatim) plus the resolved roots. The
 // stale-lock part of the plan is computed but ignored here — lock pruning
 // stays in Python.
-type applyOrphansInput struct {
-	orphanPlanInput
-	Roots orphanApplyRoots `json:"roots"`
+type ApplyOrphansInput struct {
+	OrphanPlanInput
+	Roots OrphanApplyRoots `json:"roots"`
 }
 
-// orphanApplyEntry is one planned child: which scope root it belongs to and
+// OrphanApplyEntry is one planned child: which scope root it belongs to and
 // its direct-child name. Uncertain is set only on the entry whose removal
 // failed, because a failed RemoveAll leaves unknown filesystem state.
-type orphanApplyEntry struct {
+type OrphanApplyEntry struct {
 	Scope     string `json:"scope"`
 	Name      string `json:"name"`
 	Uncertain bool   `json:"uncertain,omitempty"`
 }
 
-// orphanApplyOutcome is the structured stdout contract. Removed/remaining are
+// OrphanApplyOutcome is the structured stdout contract. Removed/remaining are
 // always present (empty lists, never null). Status applied means every
 // planned directory was removed (missing or non-directory children were
 // skipped without error); pre_apply_failed means nothing was attempted;
 // partial means at least one completed removal before the first failure.
-type orphanApplyOutcome struct {
+type OrphanApplyOutcome struct {
 	Status    string             `json:"status"`
-	Removed   []orphanApplyEntry `json:"removed"`
-	Remaining []orphanApplyEntry `json:"remaining"`
+	Removed   []OrphanApplyEntry `json:"removed"`
+	Remaining []OrphanApplyEntry `json:"remaining"`
 	Error     string             `json:"error"`
 }
 
@@ -89,13 +89,13 @@ func validateOrphanChild(name string) error {
 	return nil
 }
 
-// applyOrphans is the destructive core. remove is injected so tests can force
+// ApplyOrphans is the destructive core. remove is injected so tests can force
 // deterministic failures; the CLI passes os.RemoveAll. Validation of every
 // scope happens before the first removal, so a malformed envelope can never
 // half-apply. The first filesystem failure stops the run.
-func applyOrphans(in applyOrphansInput, remove func(path string) error) orphanApplyOutcome {
-	outcome := orphanApplyOutcome{Status: statusApplied, Removed: []orphanApplyEntry{}, Remaining: []orphanApplyEntry{}}
-	plan := planOrphans(in.orphanPlanInput)
+func ApplyOrphans(in ApplyOrphansInput, remove func(path string) error) OrphanApplyOutcome {
+	outcome := OrphanApplyOutcome{Status: StatusApplied, Removed: []OrphanApplyEntry{}, Remaining: []OrphanApplyEntry{}}
+	plan := PlanOrphans(in.OrphanPlanInput)
 	scopes := []applyScope{
 		{"recipe_skills", in.Roots.RecipeSkills, plan.OrphanedRecipes},
 		{"deps_skills", in.Roots.DepsSkills, plan.OrphanedDeps},
@@ -104,26 +104,26 @@ func applyOrphans(in applyOrphansInput, remove func(path string) error) orphanAp
 
 	// Pre-apply validation: roots must be absolute and every planned name a
 	// safe direct child. Nothing has been attempted yet on failure.
-	var planned []orphanApplyEntry
+	var planned []OrphanApplyEntry
 	for _, sc := range scopes {
 		if len(sc.names) == 0 {
 			continue
 		}
 		root := filepath.Clean(sc.root)
 		if !filepath.IsAbs(root) {
-			outcome.Status = statusPreApplyFailed
+			outcome.Status = StatusPreApplyFailed
 			outcome.Error = fmt.Sprintf("scope %s: cache root %q is not absolute", sc.scope, sc.root)
 			outcome.Remaining = allPlannedEntries(scopes)
 			return outcome
 		}
 		for _, name := range sc.names {
 			if err := validateOrphanChild(name); err != nil {
-				outcome.Status = statusPreApplyFailed
+				outcome.Status = StatusPreApplyFailed
 				outcome.Error = fmt.Sprintf("scope %s: %v", sc.scope, err)
 				outcome.Remaining = allPlannedEntries(scopes)
 				return outcome
 			}
-			planned = append(planned, orphanApplyEntry{Scope: sc.scope, Name: name})
+			planned = append(planned, OrphanApplyEntry{Scope: sc.scope, Name: name})
 		}
 	}
 
@@ -141,7 +141,7 @@ func applyOrphans(in applyOrphansInput, remove func(path string) error) orphanAp
 		if filepath.Dir(target) != root {
 			outcome.Status = preApplyOrPartial(&outcome)
 			outcome.Error = fmt.Sprintf("scope %s: target %q is not a direct child of the root", entry.Scope, target)
-			outcome.Remaining = append(outcome.Remaining, orphanApplyEntry{Scope: entry.Scope, Name: entry.Name, Uncertain: true})
+			outcome.Remaining = append(outcome.Remaining, OrphanApplyEntry{Scope: entry.Scope, Name: entry.Name, Uncertain: true})
 			outcome.Remaining = append(outcome.Remaining, restPlannedEntries(planned, entry)...)
 			return outcome
 		}
@@ -154,7 +154,7 @@ func applyOrphans(in applyOrphansInput, remove func(path string) error) orphanAp
 			}
 			outcome.Status = preApplyOrPartial(&outcome)
 			outcome.Error = fmt.Sprintf("scope %s: stat %s: %v", entry.Scope, target, err)
-			outcome.Remaining = append(outcome.Remaining, orphanApplyEntry{Scope: entry.Scope, Name: entry.Name, Uncertain: true})
+			outcome.Remaining = append(outcome.Remaining, OrphanApplyEntry{Scope: entry.Scope, Name: entry.Name, Uncertain: true})
 			outcome.Remaining = append(outcome.Remaining, restPlannedEntries(planned, entry)...)
 			return outcome
 		}
@@ -163,9 +163,9 @@ func applyOrphans(in applyOrphansInput, remove func(path string) error) orphanAp
 		}
 		if err := remove(target); err != nil {
 			// RemoveAll may have partially deleted the tree: uncertain state.
-			outcome.Status = statusPartial
+			outcome.Status = StatusPartial
 			outcome.Error = fmt.Sprintf("scope %s: remove %s: %v", entry.Scope, target, err)
-			outcome.Remaining = append(outcome.Remaining, orphanApplyEntry{Scope: entry.Scope, Name: entry.Name, Uncertain: true})
+			outcome.Remaining = append(outcome.Remaining, OrphanApplyEntry{Scope: entry.Scope, Name: entry.Name, Uncertain: true})
 			outcome.Remaining = append(outcome.Remaining, restPlannedEntries(planned, entry)...)
 			return outcome
 		}
@@ -176,27 +176,27 @@ func applyOrphans(in applyOrphansInput, remove func(path string) error) orphanAp
 
 // preApplyOrPartial returns the status for a failure with zero completed
 // removals (pre-apply) versus one after completed removals (partial).
-func preApplyOrPartial(outcome *orphanApplyOutcome) string {
+func preApplyOrPartial(outcome *OrphanApplyOutcome) string {
 	if len(outcome.Removed) > 0 {
-		return statusPartial
+		return StatusPartial
 	}
-	return statusPreApplyFailed
+	return StatusPreApplyFailed
 }
 
 // allPlannedEntries flattens every planned (scope, name) pair in apply order,
 // for the remaining list of a pre-apply validation failure.
-func allPlannedEntries(scopes []applyScope) []orphanApplyEntry {
-	var entries []orphanApplyEntry
+func allPlannedEntries(scopes []applyScope) []OrphanApplyEntry {
+	var entries []OrphanApplyEntry
 	for _, sc := range scopes {
 		for _, name := range sc.names {
-			entries = append(entries, orphanApplyEntry{Scope: sc.scope, Name: name})
+			entries = append(entries, OrphanApplyEntry{Scope: sc.scope, Name: name})
 		}
 	}
 	return entries
 }
 
 // restPlannedEntries returns the entries after the given one in apply order.
-func restPlannedEntries(planned []orphanApplyEntry, done orphanApplyEntry) []orphanApplyEntry {
+func restPlannedEntries(planned []OrphanApplyEntry, done OrphanApplyEntry) []OrphanApplyEntry {
 	for i, entry := range planned {
 		if entry.Scope == done.Scope && entry.Name == done.Name {
 			return planned[i+1:]
@@ -205,12 +205,12 @@ func restPlannedEntries(planned []orphanApplyEntry, done orphanApplyEntry) []orp
 	return nil
 }
 
-// runApplyOrphans is the --apply-orphans command: decode the envelope from
+// RunApplyOrphans is the --apply-orphans command: decode the envelope from
 // stdin, apply the orphan deletions, print one structured outcome JSON object
 // on stdout. Exit 0 = applied; 2 = malformed input (consistent with
 // --plan-orphans); 3 = pre-apply or partial failure (see the outcome JSON).
-func runApplyOrphans(stdin io.Reader, stdout, stderr io.Writer) int {
-	var in applyOrphansInput
+func RunApplyOrphans(stdin io.Reader, stdout, stderr io.Writer) int {
+	var in ApplyOrphansInput
 	raw, err := io.ReadAll(stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --apply-orphans: read stdin: %v\n", err)
@@ -222,14 +222,14 @@ func runApplyOrphans(stdin io.Reader, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	outcome := applyOrphans(in, os.RemoveAll)
+	outcome := ApplyOrphans(in, os.RemoveAll)
 	payload, err := json.Marshal(outcome)
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --apply-orphans: %v\n", err)
 		return 2
 	}
 	fmt.Fprintln(stdout, string(payload))
-	if outcome.Status == statusApplied {
+	if outcome.Status == StatusApplied {
 		return 0
 	}
 	return 3

@@ -141,7 +141,12 @@
 # dep content-hash section, byte-identical with lib/_internal/lock.py; no new
 # asset, no second trust root), with the canonical go1.24.13 toolchain via the
 # same command above.
-36d203cf6064525742442069c244d0c26805b4b01e4eaa9c644c75d296e28e3f  worktree-gate-darwin-amd64
-c9b8d35cfd1ed72e21a679c38b5c242f6e71dda709bc0c192da296d65085004d  worktree-gate-darwin-arm64
-4ae219f5f179b679f4b855836e5f836163fa452e71da59ddb1c538c910b74644  worktree-gate-linux-amd64
-b3a990c1482edc680afea6e8500f63e96c8c5e96ffeac0c59255ed51bb7d3113  worktree-gate-linux-arm64
+#
+# Regenerated for the SX0a shared-package extraction (the gate main package now
+# invokes the orphans planner and deletion actuator in-process through the
+# importable shared package; no behavior change, no new asset, no second trust
+# root), with the canonical go1.24.13 toolchain via the same command above.
+107c466c57d43c176ecd21601a97f518f9a164bda661cdd4919673d24a01330c  worktree-gate-darwin-amd64
+83109bc24c861fdbaa68feb79d80f11ab60f0e12fdde864979b025000fa08764  worktree-gate-darwin-arm64
+23eca62f25bd90a42eea6e31b5be014c157b9b2d99f1b79eb5f22602ae0b0607  worktree-gate-linux-amd64
+3668aa8cc5b417c0180fc98598474098b95fda06432a41955938768aa7acf8d7  worktree-gate-linux-arm64

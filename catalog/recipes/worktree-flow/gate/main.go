@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // version is injected at build time with
@@ -218,9 +220,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			recipeIDs:  bindingsRecipeIDs.values,
 		}, stdout, stderr)
 	case *planOrphansCmd:
-		return runPlanOrphans(stdin, stdout, stderr)
+		return shared.RunPlanOrphans(stdin, stdout, stderr)
 	case *applyOrphansCmd:
-		return runApplyOrphans(stdin, stdout, stderr)
+		return shared.RunApplyOrphans(stdin, stdout, stderr)
 	case *planResolvedConfigCmd:
 		root := *resolvedProjectRoot
 		if root == "" {

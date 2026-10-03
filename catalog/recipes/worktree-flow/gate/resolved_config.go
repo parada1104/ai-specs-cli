@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // Resolved-config projection, moved from the Python authority
@@ -206,7 +208,7 @@ func detectSubmodules(root string) (bool, []string, error) {
 			initialized = append(initialized, path)
 		}
 	}
-	return true, sortedUnique(initialized), nil
+	return true, shared.SortedUnique(initialized), nil
 }
 
 // resolveRepoTopology resolves one configured value against the worktree. The

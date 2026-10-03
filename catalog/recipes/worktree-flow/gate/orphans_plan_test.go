@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // runPlanCLI invokes run() with the given stdin and returns exit code, stdout
@@ -20,8 +22,8 @@ func runPlanCLI(t *testing.T, stdin string, args ...string) (int, string, string
 
 // emptyOrphanPlan is the all-empty result every scope must carry when nothing
 // is orphaned. It is a helper so the "not orphaned" cases stay readable.
-func emptyOrphanPlan() orphanPlan {
-	return orphanPlan{
+func emptyOrphanPlan() shared.OrphanPlan {
+	return shared.OrphanPlan{
 		OrphanedRecipes:       []string{},
 		OrphanedDeps:          []string{},
 		OrphanedInprojectDeps: []string{},
@@ -32,12 +34,12 @@ func emptyOrphanPlan() orphanPlan {
 func TestPlanOrphansSemantics(t *testing.T) {
 	tests := []struct {
 		name string
-		in   orphanPlanInput
-		want orphanPlan
+		in   shared.OrphanPlanInput
+		want shared.OrphanPlan
 	}{
 		{
 			name: "orphan in every scope",
-			in: orphanPlanInput{
+			in: shared.OrphanPlanInput{
 				RecipeSkills:     []string{"a", "b"},
 				DepsSkills:       []string{"x", "y"},
 				InprojectDeps:    []string{"p", "q"},
@@ -45,7 +47,7 @@ func TestPlanOrphansSemantics(t *testing.T) {
 				EnabledRecipeIDs: []string{"a"},
 				ExpectedDepIDs:   []string{"x", "p"},
 			},
-			want: orphanPlan{
+			want: shared.OrphanPlan{
 				OrphanedRecipes:       []string{"b"},
 				OrphanedDeps:          []string{"y"},
 				OrphanedInprojectDeps: []string{"q"},
@@ -54,7 +56,7 @@ func TestPlanOrphansSemantics(t *testing.T) {
 		},
 		{
 			name: "nothing orphaned when every id is expected",
-			in: orphanPlanInput{
+			in: shared.OrphanPlanInput{
 				RecipeSkills:     []string{"a"},
 				DepsSkills:       []string{"x"},
 				InprojectDeps:    []string{"y"},
@@ -66,16 +68,16 @@ func TestPlanOrphansSemantics(t *testing.T) {
 		},
 		{
 			name: "empty inputs yield an empty plan",
-			in:   orphanPlanInput{},
+			in:   shared.OrphanPlanInput{},
 			want: emptyOrphanPlan(),
 		},
 		{
 			name: "stale lock recipe not enabled",
-			in: orphanPlanInput{
+			in: shared.OrphanPlanInput{
 				LockRecipes:      []string{"keep", "stale"},
 				EnabledRecipeIDs: []string{"keep"},
 			},
-			want: orphanPlan{
+			want: shared.OrphanPlan{
 				OrphanedRecipes:       []string{},
 				OrphanedDeps:          []string{},
 				OrphanedInprojectDeps: []string{},
@@ -84,7 +86,7 @@ func TestPlanOrphansSemantics(t *testing.T) {
 		},
 		{
 			name: "output is sorted and deduplicated",
-			in: orphanPlanInput{
+			in: shared.OrphanPlanInput{
 				RecipeSkills:     []string{"c", "a", "b", "a"},
 				DepsSkills:       []string{"z", "m", "m"},
 				InprojectDeps:    []string{"q", "n"},
@@ -92,7 +94,7 @@ func TestPlanOrphansSemantics(t *testing.T) {
 				EnabledRecipeIDs: nil,
 				ExpectedDepIDs:   nil,
 			},
-			want: orphanPlan{
+			want: shared.OrphanPlan{
 				OrphanedRecipes:       []string{"a", "b", "c"},
 				OrphanedDeps:          []string{"m", "z"},
 				OrphanedInprojectDeps: []string{"n", "q"},
@@ -101,12 +103,12 @@ func TestPlanOrphansSemantics(t *testing.T) {
 		},
 		{
 			name: "in-project dep orphans independent of cached dep skills",
-			in: orphanPlanInput{
+			in: shared.OrphanPlanInput{
 				DepsSkills:     []string{"cached"},
 				InprojectDeps:  []string{"inproject"},
 				ExpectedDepIDs: []string{"cached"},
 			},
-			want: orphanPlan{
+			want: shared.OrphanPlan{
 				OrphanedRecipes:       []string{},
 				OrphanedDeps:          []string{},
 				OrphanedInprojectDeps: []string{"inproject"},
@@ -116,9 +118,9 @@ func TestPlanOrphansSemantics(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := planOrphans(tt.in)
+			got := shared.PlanOrphans(tt.in)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("planOrphans() = %#v, want %#v", got, tt.want)
+				t.Fatalf("PlanOrphans() = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
@@ -134,11 +136,11 @@ func TestPlanOrphansCLIEmitsEnvelope(t *testing.T) {
 	if stderr != "" {
 		t.Fatalf("--plan-orphans stderr = %q, want empty", stderr)
 	}
-	var got orphanPlan
+	var got shared.OrphanPlan
 	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
 		t.Fatalf("--plan-orphans stdout is not JSON: %v (%q)", err, stdout)
 	}
-	want := orphanPlan{
+	want := shared.OrphanPlan{
 		OrphanedRecipes:       []string{"b"},
 		OrphanedDeps:          []string{},
 		OrphanedInprojectDeps: []string{"y"},

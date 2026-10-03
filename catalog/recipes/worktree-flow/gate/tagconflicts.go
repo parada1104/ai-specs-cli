@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"slices"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // Advisory tag-conflict grading, moved from the Python authority
@@ -100,7 +102,7 @@ func checkTagConflicts(recipes []recipeTagMetadata) []tagConflict {
 		conflicts = append(conflicts, tagConflict{
 			Type:     "tag_conflict",
 			Tag:      tag,
-			Recipes:  sortedUnique(ids),
+			Recipes:  shared.SortedUnique(ids),
 			Severity: severity,
 		})
 	}

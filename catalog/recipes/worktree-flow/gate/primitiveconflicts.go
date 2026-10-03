@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // Primitive-conflict grading, moved from the Python authority
@@ -90,7 +92,7 @@ func checkPrimitiveConflicts(recipes []recipePrimitives) []primitiveConflict {
 				conflicts = append(conflicts, primitiveConflict{
 					Type:     claim.primitiveType,
 					ID:       claim.id,
-					Recipes:  sortedUnique([]string{owner, recipe.Name}),
+					Recipes:  shared.SortedUnique([]string{owner, recipe.Name}),
 					Severity: "fatal",
 				})
 				break

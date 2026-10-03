@@ -344,7 +344,10 @@ bin/ai-specs ──sync.sh──┬─ target-resolve.py        [Go ✔ internal
    conflicts, classify, template actuator, hook gate, copy-apply, lock write,
    resolved config, orphans, merge config, bindings) without refactoring the
    gate into a library package. This is the single largest architectural
-   decision in this card — see (c) and (g).
+   decision in this card — see (c) and (g). **Resolution: slice SX0** removes
+   this blocker before S10–S13 by extracting the S10–S13 decision/actuator
+   logic into an importable `shared` package inside the gate module (human
+   decision 2026-10-03, see the Q2 resolution in section (g)).
 
 ---
 
@@ -609,10 +612,20 @@ structural change to a released artifact plus `SHA256SUMS` regeneration;
 and fail-open semantics, and the CLI grows a Go port of `gate_binary.py`;
 (c) let the root binary own those decisions outright and retire them from the
 gate (risk: hook paths that run without the CLI lose the grader).
-Recommendation: **(b) now, (a) as a card-16/structural decision**, because (a)
-changes a released artifact mid-epic and (b) preserves the existing verified
-contract. Requires the human's call because it fixes the epic's end-state
-architecture.
+Recommendation at planning time was **(b) now, (a) as a card-16/structural
+decision**. **RESOLVED 2026-10-03, human decision (supersedes the
+recommendation): option (a) is pulled forward as slice SX0.** One authoritative
+importable Go package inside `ai-specs.dev/worktree-gate`, sibling of `ledger`;
+the root binary invokes it in-process; `gate_binary.py` is NOT ported; the gate
+keeps a thin `main` with existing flags, dispatch and byte behavior. Root module
+imports via `require ai-specs.dev/worktree-gate v0.0.0` +
+`replace => ./catalog/recipes/worktree-flow/gate`. Constraints: extract only
+the decision/actuator logic required by S10–S13; gate stays standalone (zero
+external dependencies, go1.22 floor); checksum regeneration is local
+(`scripts/build-gate.sh` + committed `SHA256SUMS` regen +
+`scripts/verify-gate-sums.sh`), not a release. Tracked as [Go 07.SX0]
+(card `6ac06c7a0d9b0e444869419b`, https://trello.com/c/aIusguGP; feature doc
+`odd/tasks/go-07-sx0.md`).
 
 **Q3 — What happens to the 768 lines of duplicated Python fallback authority
 (`_python_*`)?**
