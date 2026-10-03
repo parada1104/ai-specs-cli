@@ -78,41 +78,54 @@ shelling out to the gate executable.
       record per-domain files, call sites in main dispatch, contracts to preserve.
 - [x] T2 — Reconcile plan doc `odd/tasks/go-07-sync-plan.md`: Q2(b) → approved
       shared-package decision; SX0 dependency note for S10–S13 (docs-only edit).
-- [ ] T3 — SX0a (current candidate): move U1 orphans (orphans_plan.go,
+- [x] T3 — SX0a (current candidate): move U1 orphans (orphans_plan.go,
       orphans_apply.go) into `gate/shared`; thin main dispatch references;
       root require/replace; small import test. Later candidates SX0b (U2),
       SX0c (U6), SX0d+ (remaining units) stay untouched until authorized.
       UNBLOCKED: Option 1 approved for sortedUnique (see SX0a finding).
-- [ ] T4 — Wire root `go.mod`: `require ai-specs.dev/worktree-gate v0.0.0` +
+      Completed; checkbox reconciled per judgment round 1 INFO-1.
+- [x] T4 — Wire root `go.mod`: `require ai-specs.dev/worktree-gate v0.0.0` +
       `replace` to the nested module; keep go1.22 floor; no external deps.
+      Completed; checkbox reconciled per judgment round 1 INFO-1.
 - [x] T5 — Tests: in-process import evidence (root test importing the shared
       package at `internal/sync/gateshared_import_test.go` — parent-extended
       surface, small import/contract test only), gate focused tests green, root
       tests green. Test-first where the change is behavioral; mechanical moves
       get structural + differential evidence with the reason recorded.
-- [ ] T6 — Checksums: `scripts/build-gate.sh` (Go1.24.13), regenerate committed
+- [x] T6 — Checksums: `scripts/build-gate.sh` (Go1.24.13), regenerate committed
       `catalog/recipes/worktree-flow/bin/SHA256SUMS`, `scripts/verify-gate-sums.sh`.
+      Completed; checkbox reconciled per judgment round 1 INFO-1.
 - [x] T7 — Full checks: focused gate tests, root tests, `./tests/validate.sh`,
       both parity modes (gate-absent + gate-present). CONCLUSIVE on attempt 3
       (verifier-supervised detached run): `VALIDATE_EXIT:0` captured;
       parity PASS both modes; unittest `Ran 2482 tests` → OK. Details in
       Evidence.
-- [ ] T8 — RDD native review to approved verdict (or approved independent
+- [x] T8 — RDD native review to approved verdict (or approved independent
       verifier per effective policy); consent lifecycle respected; no fabricated
-      approval. **BLOCKED at first START (2026-10-03): verified 18-path
-      candidate (base_tree == HEAD tree = 0db6c2f epic tip, no drift, exact
-      SX0a surface); START refused consent-binding-stale for a binding bound
-      to the old 13-path selectorless target — the 18-path target was never
-      invoked, no lineage created. Store inventory: 11 entries (8 escalated,
-      2 approved, 1 correction_required). CORRECTED (parent): no S10–S13
-      workers have been launched; the entries CANNOT be attributed to them,
-      and inventory existence alone does not prove the cause of the stale
-      binding — cause unproven. Reported to parent; option A selected
-      (committed-range review after parent commit-normalization). HOLD:
-      no source/doc mutations and no native START until the parent supplies
-      the commit SHA; all current changes preserved.**
-- [ ] T9 — Report to parent: task count, tracker identity, owned files, check
-      evidence, review result, downstream import API.
+      approval. **TERMINAL: native review UNAVAILABLE for this candidate.**
+      History: (1) selectorless inspect + verified 18-path uncommitted
+      candidate → START refused consent-binding-stale (binding for the old
+      13-path target, never relayed); (2) after parent commit 8e6c8af,
+      committed-range inspect verified (base-diff kind, base_tree == 0db6c2f
+      tree, candidate_tree == HEAD tree, 18 paths) → START with explicit
+      baseRef + committedOnly refused consent-binding-stale AGAIN and its own
+      envelope exposed the wide ambient drift: base e773514 (bootstrap base),
+      ~250 paths, target 0b671693, native_invocation_attempted:false,
+      lineage_created:false on every attempt. No unchanged retry per parent.
+      **ASSESS (explicit unavailable, outcome_source explicit): risk MEDIUM
+      (executable_change: SHA256SUMS), 18 paths / 1178 lines, candidate
+      consumed:false, reviewDue slice_budget_reached, writerProfile large
+      (runtime). Returned plan: writerSelfVerification true,
+      independentVerifier FALSE — "the writer's self-verification stands and
+      no separate verifier is required" (risk-gated RDD-off path).** The
+      self-verification record is T5–T7's evidence below. Failed START ≠
+      waiting on human approval: native was never invoked; no consent was ever
+      relayed. ZERO lineages created by this session; the 11 pre-existing
+      store entries are unrelated (attribution unproven) and untouched. Parent
+      retains Judgment Day and delivery decisions.
+- [x] T9 — Report to parent: task count, tracker identity, owned files, check
+      evidence, review result, downstream import API. Parent received the final
+      report and independently verified the committed source.
 
 ## Risks / traps
 
@@ -171,6 +184,16 @@ export renames of run/options/option-structs, cross-references); git rename
 detection should show most as moves. main.go keeps flags/dispatch and byte
 behavior; handlers become thin `shared.RunX(...)` calls; single `os.Exit` site
 (main.go:35) untouched; no init() in moving files (extract.go:26 stays in main).
+
+## Judgment
+
+JUDGMENT APPROVED (parent, 2026-10-03) for immutable commit `8e6c8af`: round 1,
+confirmed severe 0, suspect severe 0, contradictions severe 0, info 3, no
+fixes, no re-judgment. Verifier `musfz00w-2-2tvq` PASS; blind JD judges
+`musfzig1-4-t7ln` / `musfziam-3-jkjl`. Frozen ledger:
+`odd/tasks/go-07-sx0-judgment.md`. RDD unavailable, zero lineage, no native
+approval inferred. Delivery tasks (held doc delta commit, push/PR/merge,
+release sequencing) are parent-owned; no release authorized.
 
 ## Evidence
 
