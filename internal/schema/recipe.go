@@ -25,6 +25,9 @@ type ValidationError struct{ msg string }
 
 func (e *ValidationError) Error() string { return e.msg }
 
+// NewValidationError builds a RecipeValidationError with a literal message.
+func NewValidationError(msg string) *ValidationError { return &ValidationError{msg} }
+
 func ve(format string, args ...any) *ValidationError {
 	return &ValidationError{fmt.Sprintf(format, args...)}
 }
