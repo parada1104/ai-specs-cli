@@ -173,8 +173,13 @@ capabilities = [{ id = "vault" }]
 					}
 				}
 			}
-			norm(&legacy)
-			norm(&port)
+			norm(&legacy) // port slices are never nil (asserted below)
+			if port.Capability == nil || port.Tag == nil || (port.PrimitiveError == "" && port.Primitive == nil) {
+				t.Fatal("port returned a nil slice; JSON would be null, not []")
+			}
+			if port.PrimitiveError != "" {
+				port.Primitive = []Conflict{}
+			}
 			if legacy.PrimitiveError != "" {
 				legacy.Primitive = []Conflict{}
 			}

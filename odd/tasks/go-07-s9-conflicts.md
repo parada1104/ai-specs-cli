@@ -31,3 +31,12 @@ Branch: `change/go-07-s9-conflicts` · Base: `4b1d512` (S8 merge)
   same-recipe duplicate tag, never-fatal tag, duplicate binding continues,
   skipped dir check).
 - `go vet ./... && go test ./...` rc 0; `./tests/validate.sh` → see PR.
+
+## Review
+
+`review-f4f67a06d6fd26c5` (395 lines, reliability): `R3-nil-vs-empty` (CRITICAL)
+— no-conflict paths returned nil slices (JSON `null` vs Python `[]`) and the
+test normalized it away. Fixed: every grader returns a non-nil slice and the
+test asserts it. Advisories (python3 skip, `..` in recipe ids) are not changed:
+the epic's differentials all skip without python3, and ids come from the
+manifest exactly as in Python.

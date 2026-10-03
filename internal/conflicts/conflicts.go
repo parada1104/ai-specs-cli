@@ -44,7 +44,7 @@ func isDir(p string) bool {
 // registration of its remaining primitives.
 func CheckRecipeConflicts(catalogDir string, recipeIDs []string) ([]Conflict, error) {
 	claimed := map[string]map[string]string{}
-	var out []Conflict
+	out := []Conflict{} // never nil: JSON [] like the Python list
 	for _, rid := range recipeIDs {
 		recipeDir := filepath.Join(catalogDir, rid)
 		if !isDir(recipeDir) {
@@ -95,7 +95,7 @@ func CheckTagConflicts(recipes []*schema.Recipe) []Conflict {
 			groups[tag] = append(groups[tag], r)
 		}
 	}
-	var out []Conflict
+	out := []Conflict{}
 	for _, tag := range order {
 		group := groups[tag]
 		ids := map[string]bool{}
@@ -159,7 +159,7 @@ func CheckCapabilityConflicts(catalogDir string, recipeIDs []string, bindings []
 		bound[cap] = rec
 	}
 
-	var out []Conflict
+	out := []Conflict{}
 	for _, cap := range order {
 		if _, ok := bound[cap]; ok {
 			continue
