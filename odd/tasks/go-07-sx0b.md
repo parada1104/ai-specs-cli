@@ -66,8 +66,32 @@ lock half of S10's needs (writer side; prune stays S10-owned).
       1993.125s` → OK; 36m44s. Note: bridge-fallback lines show the Python
       lock-write authority in gate-absent fixtures (expected; the Go writer
       path is covered by gate-present parity + the lock unit tests).
-- [ ] T5 — RDD per current protocol (prefer native; no indefinite failed-START
-      retries; no resets; parent decides JD) + parent report.
+- [x] T5 — RDD per current protocol (prefer native; no indefinite failed-START
+      retries; no resets; parent decides JD) + parent report. **TERMINAL:
+      native review UNAVAILABLE — no lineage, no native approval.** Chain:
+      parent committed the exact candidate as
+      `0a1f25dfeb47a0733e9342f1df0a9b30f43556de` (clean tree; 10 stat
+      entries / 11 path endpoints, R084 lockwrite.go → shared/lockwrite.go,
+      342+/126−); committed-range inspect VERIFIED (base-diff kind,
+      base_tree == 7dfbc38 tree, candidate_tree == HEAD tree, 11 paths); one
+      START attempt with explicit baseRef + committedOnly — provider ignored
+      the input and offered the wide ambient candidate (bootstrap base
+      `e773514`, ~250 paths, target `4dd9bc30`, stale binding `7bc6e0e4`,
+      `native_invocation_attempted:false`, `lineage_created:false`); unchanged
+      retries stopped per instruction. ASSESS (explicit unavailable):
+      risk medium (executable_change: SHA256SUMS), 11 paths / 1184 lines,
+      candidate `consumed:false`, writerProfile large (runtime); its
+      `independentVerifier:false` does NOT reduce the human's mandatory
+      verifier bar. **Fallback SATISFIED: independent verifier
+      `mut4mtxt-7-xtun` PASS** (scope/source/functional evidence, pre-commit,
+      this exact candidate: exact body comparison, fresh focused/vet/format,
+      digest reproduction, full suite corroborated). This is NOT native
+      approval. Binding limits: the full-suite log
+      (`/tmp/sx0b-validate.log`, `VALIDATE_EXIT:0`, parity both modes zero
+      deltas, 2482 tests OK) predates the commit and carries no tree hash;
+      log-to-commit equivalence rests on the clean tree and the parent
+      verifier's corroboration. Zero lineages created by this session.
+      JD and delivery: parent (push/PR/merge of `0a1f25d`).
 
 ## Dependency finding (T1, reported before edits)
 
