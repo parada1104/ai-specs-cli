@@ -358,6 +358,39 @@ A rewrite most easily breaks these.
 9. **`errexit` stays off inside `run_step`** until captured output is replayed —
    restoring it earlier lets a failing `cat` replace the wrapped status.
 
+### Locale-collation exception — TOLERANT (narrow, human-accepted 2026-10-04)
+
+The ORDER of the `! preserved non-managed file <dir>/<base> (move it to
+ai-specs/commands/ to manage it)` warning lines — and only their order — is
+**TOLERANT** when a non-C locale collates differently from byte order. The
+lines come from the `for extra in "$dest"/*` glob traversal in
+`sync_one_agent`'s commands fan-out; Bash iterates in `strcoll` order while
+the Go port sorts bytes (Go's stdlib has no strcoll).
+
+Scope of the tolerance — everything else stays **FROZEN**:
+
+- The message text, the per-file set, and the NUMBER of warning lines.
+- The exit code, the banner/footer framing, and the resulting tree (the
+  preserved files and the D3' in-place managed overwrite are file
+  operations, not ordering).
+- The managed-copy glob behavior (`for src in "$COMMANDS_SOURCE"/*.md` is
+  count-only in output; its order is not user-visible).
+- Nothing else about error or content formatting is normalized by this
+  entry; it covers no other glob, stream, or surface.
+
+Under `LC_ALL=C` (which the parity harness pins in `tests/parity/parity.py`
+BASE_ENV) strcoll and byte order coincide, so the corpus remains zero-delta:
+both implementations emit `B, Z, _x, a`.
+
+Evidence (macOS, BSD glob + strcoll, measured 2026-10-04, reproduced twice):
+temp project with `[agents] enabled = ['cursor']`, seeded `AGENTS.md`, and
+unmanaged `.cursor/commands/{B,a,_x,Z}.md`; `LC_ALL=en_US.UTF-8
+LANG=en_US.UTF-8 bash bin/ai-specs sync-agent . --all` prints the warnings as
+`_x, a, B, Z` while the Go binary prints `B, Z, _x, a` (identical lines,
+count, rc and tree). Decision: the human explicitly accepted the different
+warning ordering under non-C locales as a narrow TOLERANT classification,
+recorded here instead of being deferred to S16.
+
 ---
 
 ## 11. Environment variables
