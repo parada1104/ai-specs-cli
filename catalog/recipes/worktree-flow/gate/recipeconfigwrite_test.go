@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // requireRecipeConfigSeam skips the end-to-end parity tests when the standard
@@ -122,8 +124,8 @@ func TestPyJSONStringEscaping(t *testing.T) {
 		{"plain", `"plain"`},
 	}
 	for _, tc := range cases {
-		if got := pyJSONString(tc.in); got != tc.want {
-			t.Errorf("pyJSONString(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := shared.PyJSONString(tc.in); got != tc.want {
+			t.Errorf("PyJSONString(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

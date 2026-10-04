@@ -15,6 +15,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // Recipe-config TOML writer core, ported 1:1 from the Python authority
@@ -192,7 +194,7 @@ func tomlKey(key string) string {
 	if isBareTOMLKey(key) {
 		return key
 	}
-	return pyJSONString(key)
+	return shared.PyJSONString(key)
 }
 
 func isBareTOMLKey(key string) bool {
@@ -208,43 +210,6 @@ func isBareTOMLKey(key string) bool {
 	return true
 }
 
-// pyJSONString reproduces json.dumps(s) with ensure_ascii=True: named escapes
-// for the CPython escape set, lowercase 4-digit hex for remaining control
-// characters and everything >= 0x7f, surrogate pairs above the BMP.
-func pyJSONString(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch {
-		case r == '"':
-			b.WriteString(`\"`)
-		case r == '\\':
-			b.WriteString(`\\`)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r == '\b':
-			b.WriteString(`\b`)
-		case r == '\f':
-			b.WriteString(`\f`)
-		case r < 0x20 || r >= 0x7f:
-			if r > 0xFFFF {
-				r -= 0x10000
-				fmt.Fprintf(&b, `\u%04x\u%04x`, 0xD800+(r>>10), 0xDC00+(r&0x3FF))
-			} else {
-				fmt.Fprintf(&b, `\u%04x`, r)
-			}
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
-}
-
 // tomlValue is toml_write.toml_value: bool first, numbers as their text,
 // JSON-quoted strings, inline lists and tables, and the exact serialization
 // refusal for unserializable values (JSON null decodes as None).
@@ -258,7 +223,7 @@ func tomlValue(v any) (string, error) {
 	case json.Number:
 		return t.String(), nil
 	case string:
-		return pyJSONString(t), nil
+		return shared.PyJSONString(t), nil
 	case []any:
 		parts := make([]string, 0, len(t))
 		for _, item := range t {
@@ -560,7 +525,7 @@ func matchKeyLine(line, key string) (string, bool) {
 	keyText := ""
 	if strings.HasPrefix(rest, key) {
 		keyText = key
-	} else if quoted := pyJSONString(key); strings.HasPrefix(rest, quoted) {
+	} else if quoted := shared.PyJSONString(key); strings.HasPrefix(rest, quoted) {
 		keyText = quoted
 	} else {
 		return "", false
@@ -1155,7 +1120,7 @@ func runWriteRecipeConfig(stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if refusal != "" {
-		fmt.Fprintln(stdout, `{"error": `+pyJSONString(refusal)+`}`)
+		fmt.Fprintln(stdout, `{"error": `+shared.PyJSONString(refusal)+`}`)
 		return 2
 	}
 	appliedText := "false"

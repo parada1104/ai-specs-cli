@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // lockWriteEnvelope decodes the CLI stdout contract: {"written": true} on
@@ -31,7 +33,7 @@ func decodeLockWriteEnvelope(t *testing.T, out string) lockWriteEnvelope {
 func runWriteLockCLI(t *testing.T, envelopeJSON string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := runWriteLock(strings.NewReader(envelopeJSON), &stdout, &stderr)
+	code := shared.RunWriteLock(strings.NewReader(envelopeJSON), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -49,8 +51,8 @@ func TestLockHeaderByteIdentity(t *testing.T) {
 		"# it is not a general content-integrity manifest. git covers the committed\n" +
 		"# project surface; dep content hashes ([deps.*]) are tracked for drift\n" +
 		"# detection; recipe/skill content hashes are not tracked.\n"
-	if lockHeader != want {
-		t.Fatalf("lockHeader diverges from lib/_internal/lock.py:9-15\n--- got ---\n%q\n--- want ---\n%q", lockHeader, want)
+	if shared.LockHeader != want {
+		t.Fatalf("LockHeader diverges from lib/_internal/lock.py:9-15\n--- got ---\n%q\n--- want ---\n%q", shared.LockHeader, want)
 	}
 }
 
@@ -76,37 +78,37 @@ func TestLockTOMLString(t *testing.T) {
 		{"caf\xc3\xa9", `"café"`},
 	}
 	for _, tc := range cases {
-		if got := lockTOMLString(tc.in); got != tc.want {
-			t.Errorf("lockTOMLString(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := shared.LockTOMLString(tc.in); got != tc.want {
+			t.Errorf("LockTOMLString(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
-	if escaped := lockTOMLString("x\ny"); strings.Contains(escaped, `\n`) || strings.Contains(escaped, `\t`) {
-		t.Errorf("lockTOMLString emitted a control-character escape: %q", escaped)
+	if escaped := shared.LockTOMLString("x\ny"); strings.Contains(escaped, `\n`) || strings.Contains(escaped, `\t`) {
+		t.Errorf("LockTOMLString emitted a control-character escape: %q", escaped)
 	}
 }
 
 // --- exact-byte emission pins (mirroring tests/test_lock.py fixtures) ---
 
 func TestRenderLockMetaOnly(t *testing.T) {
-	out := renderLock(&lockWriteRequest{
+	out := shared.RenderLock(&shared.LockWriteRequest{
 		Meta: map[string]string{"cli_version": "0.14.0", "synced_at": "2026-07-01T00:00:00Z"},
 	})
-	want := lockHeader +
+	want := shared.LockHeader +
 		"\n" +
 		"[meta]\n" +
 		"cli_version = \"0.14.0\"\n" +
 		"synced_at = \"2026-07-01T00:00:00Z\"\n"
 	if out != want {
-		t.Fatalf("renderLock\n--- got ---\n%q\n--- want ---\n%q", out, want)
+		t.Fatalf("RenderLock\n--- got ---\n%q\n--- want ---\n%q", out, want)
 	}
 }
 
 // TestRenderLockEmpty is the empty lock: only the header, single trailing
 // newline (Python: "\n".join([LOCK_HEADER]).rstrip("\n") + "\n").
 func TestRenderLockEmpty(t *testing.T) {
-	out := renderLock(&lockWriteRequest{})
-	if out != lockHeader {
-		t.Fatalf("renderLock(empty) = %q, want the header only", out)
+	out := shared.RenderLock(&shared.LockWriteRequest{})
+	if out != shared.LockHeader {
+		t.Fatalf("RenderLock(empty) = %q, want the header only", out)
 	}
 	if !strings.HasSuffix(out, ".\n") || strings.HasSuffix(out, "\n\n") {
 		t.Errorf("empty lock must end with exactly one newline, got %q", out)
@@ -117,15 +119,15 @@ func TestRenderLockEmpty(t *testing.T) {
 // sorted by path, entries without sha256 skipped, empty/missing optional
 // values skipped, keys in the fixed order sha256, recipe, source, kind, policy.
 func TestRenderLockManagedSortedSkipsEmpty(t *testing.T) {
-	out := renderLock(&lockWriteRequest{
-		Managed: map[string]lockManagedEntry{
+	out := shared.RenderLock(&shared.LockWriteRequest{
+		Managed: map[string]shared.LockManagedEntry{
 			"zz/late.md":    {SHA256: "zzz"},
 			"aa/first.md":   {SHA256: "aaa", Recipe: "worktree-flow", Source: "tpl.md", Kind: "template", Policy: "auto"},
 			"mm/nosha.md":   {Recipe: "no-sha-here"},
 			"bb/partial.md": {SHA256: "bbb"},
 		},
 	})
-	want := lockHeader +
+	want := shared.LockHeader +
 		"\n" +
 		"[managed.\"aa/first.md\"]\n" +
 		"sha256 = \"aaa\"\n" +
@@ -140,7 +142,7 @@ func TestRenderLockManagedSortedSkipsEmpty(t *testing.T) {
 		"[managed.\"zz/late.md\"]\n" +
 		"sha256 = \"zzz\"\n"
 	if out != want {
-		t.Fatalf("renderLock\n--- got ---\n%q\n--- want ---\n%q", out, want)
+		t.Fatalf("RenderLock\n--- got ---\n%q\n--- want ---\n%q", out, want)
 	}
 	if strings.Contains(out, "mm/nosha.md") {
 		t.Errorf("entry without sha256 must be skipped, got %q", out)
@@ -151,13 +153,13 @@ func TestRenderLockManagedSortedSkipsEmpty(t *testing.T) {
 // nested {harness: {filename: hash}}, harnesses sorted, filenames sorted, all
 // quoted per _toml_string.
 func TestRenderLockAgentsSortedNested(t *testing.T) {
-	out := renderLock(&lockWriteRequest{
+	out := shared.RenderLock(&shared.LockWriteRequest{
 		Agents: map[string]map[string]string{
 			"zsh-agent": {"README.md": "readmehash"},
 			"claude":    {"AGENTS.md": "agenthash", "CLAUDE.md": "claudehash"},
 		},
 	})
-	want := lockHeader +
+	want := shared.LockHeader +
 		"\n" +
 		"[agents.\"claude\"]\n" +
 		"\"AGENTS.md\" = \"agenthash\"\n" +
@@ -166,23 +168,23 @@ func TestRenderLockAgentsSortedNested(t *testing.T) {
 		"[agents.\"zsh-agent\"]\n" +
 		"\"README.md\" = \"readmehash\"\n"
 	if out != want {
-		t.Fatalf("renderLock\n--- got ---\n%q\n--- want ---\n%q", out, want)
+		t.Fatalf("RenderLock\n--- got ---\n%q\n--- want ---\n%q", out, want)
 	}
 }
 
 // TestRenderLockFullLock is the full-lock pin: meta → managed → agents in the
 // fixed section order with blank lines between sections.
 func TestRenderLockFullLock(t *testing.T) {
-	out := renderLock(&lockWriteRequest{
+	out := shared.RenderLock(&shared.LockWriteRequest{
 		Meta: map[string]string{"cli_version": "0.24.0", "synced_at": "2026-07-14T00:00:00Z"},
-		Managed: map[string]lockManagedEntry{
+		Managed: map[string]shared.LockManagedEntry{
 			"ai-specs/recipes/worktree-flow/hooks/gate": {SHA256: "gatehash", Recipe: "worktree-flow", Source: "hooks/gate", Kind: "gate", Policy: "auto"},
 		},
 		Agents: map[string]map[string]string{
 			"claude": {"AGENTS.md": "agenthash"},
 		},
 	})
-	want := lockHeader +
+	want := shared.LockHeader +
 		"\n" +
 		"[meta]\n" +
 		"cli_version = \"0.24.0\"\n" +
@@ -198,7 +200,7 @@ func TestRenderLockFullLock(t *testing.T) {
 		"[agents.\"claude\"]\n" +
 		"\"AGENTS.md\" = \"agenthash\"\n"
 	if out != want {
-		t.Fatalf("renderLock\n--- got ---\n%q\n--- want ---\n%q", out, want)
+		t.Fatalf("RenderLock\n--- got ---\n%q\n--- want ---\n%q", out, want)
 	}
 }
 
@@ -206,12 +208,12 @@ func TestRenderLockFullLock(t *testing.T) {
 // object that is present but whose known keys are empty still emits the
 // [meta] header (lock.py `if meta:`), with no key lines.
 func TestRenderLockMetaHeaderOnly(t *testing.T) {
-	out := renderLock(&lockWriteRequest{
+	out := shared.RenderLock(&shared.LockWriteRequest{
 		Meta: map[string]string{"cli_version": "", "synced_at": ""},
 	})
-	want := lockHeader + "\n[meta]\n"
+	want := shared.LockHeader + "\n[meta]\n"
 	if out != want {
-		t.Fatalf("renderLock = %q, want %q", out, want)
+		t.Fatalf("RenderLock = %q, want %q", out, want)
 	}
 }
 
@@ -219,15 +221,15 @@ func TestRenderLockMetaHeaderOnly(t *testing.T) {
 // paths and agent harness names go through the same _toml_string quoting as
 // Python's f'[managed."{path}"]' emission.
 func TestRenderLockEscapedSectionKeys(t *testing.T) {
-	out := renderLock(&lockWriteRequest{
-		Managed: map[string]lockManagedEntry{
+	out := shared.RenderLock(&shared.LockWriteRequest{
+		Managed: map[string]shared.LockManagedEntry{
 			`we"ird\path`: {SHA256: "aaa"},
 		},
 		Agents: map[string]map[string]string{
 			`my "agent"`: {`file\name.md`: `ha"sh`},
 		},
 	})
-	want := lockHeader +
+	want := shared.LockHeader +
 		"\n" +
 		"[managed.\"we\\\"ird\\\\path\"]\n" +
 		"sha256 = \"aaa\"\n" +
@@ -235,7 +237,7 @@ func TestRenderLockEscapedSectionKeys(t *testing.T) {
 		"[agents.\"my \\\"agent\\\"\"]\n" +
 		"\"file\\\\name.md\" = \"ha\\\"sh\"\n"
 	if out != want {
-		t.Fatalf("renderLock\n--- got ---\n%q\n--- want ---\n%q", out, want)
+		t.Fatalf("RenderLock\n--- got ---\n%q\n--- want ---\n%q", out, want)
 	}
 }
 
@@ -243,7 +245,7 @@ func TestRenderLockEscapedSectionKeys(t *testing.T) {
 // end to end: a value containing a newline is emitted with the raw newline
 // byte (Python has no tomllib validation on write, parity over validity).
 func TestRenderLockRawControlCharsInValues(t *testing.T) {
-	out := renderLock(&lockWriteRequest{
+	out := shared.RenderLock(&shared.LockWriteRequest{
 		Meta: map[string]string{"cli_version": "0.1\n0\t0"},
 	})
 	if !strings.Contains(out, "cli_version = \"0.1\n0\t0\"\n") {
@@ -259,9 +261,9 @@ func TestRenderLockRawControlCharsInValues(t *testing.T) {
 // [commands] or [opted-out]. [deps.*] is NOT legacy anymore: D17 re-extends
 // it for dep content hashes (pinned by TestWriteLockCLISuccess).
 func TestRenderLockNoLegacySections(t *testing.T) {
-	out := renderLock(&lockWriteRequest{
+	out := shared.RenderLock(&shared.LockWriteRequest{
 		Meta:    map[string]string{"cli_version": "0.14.0"},
-		Managed: map[string]lockManagedEntry{"a.md": {SHA256: "aaa"}},
+		Managed: map[string]shared.LockManagedEntry{"a.md": {SHA256: "aaa"}},
 		Agents:  map[string]map[string]string{"claude": {"AGENTS.md": "agenthash"}},
 	})
 	for _, legacy := range []string{"[skills.", "[recipes.", "[commands]", "[opted-out]"} {
@@ -287,7 +289,7 @@ func TestWriteLockCLISuccess(t *testing.T) {
 	if envelopeOut := decodeLockWriteEnvelope(t, out); !envelopeOut.Written {
 		t.Fatalf("envelope = %#v, want written true", envelopeOut)
 	}
-	want := lockHeader +
+	want := shared.LockHeader +
 		"\n" +
 		"[meta]\n" +
 		"cli_version = \"0.24.0\"\n" +
@@ -411,7 +413,7 @@ func TestWriteLockCLIAcceptsControlCharFreeEnvelope(t *testing.T) {
 	if envelopeOut := decodeLockWriteEnvelope(t, out); !envelopeOut.Written {
 		t.Fatalf("envelope = %#v, want written true", envelopeOut)
 	}
-	assertFileBytes(t, lockPath, lockHeader+"\n[meta]\ncli_version = \"0.1\\\"x\\\\y\"\n\n[managed.\"a.md\"]\nsha256 = \"abc\"\n\n[agents.\"claude\"]\n\"AGENTS.md\" = \"agenthash\"\n")
+	assertFileBytes(t, lockPath, shared.LockHeader+"\n[meta]\ncli_version = \"0.1\\\"x\\\\y\"\n\n[managed.\"a.md\"]\nsha256 = \"abc\"\n\n[agents.\"claude\"]\n\"AGENTS.md\" = \"agenthash\"\n")
 }
 
 // TestWriteLockCLIInfraFailure pins the infra-failure contract: an I/O error
@@ -450,7 +452,7 @@ func TestWriteLockCLIInfraFailure(t *testing.T) {
 func TestWriteLockAtomicReplace(t *testing.T) {
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, ".ai-specs.lock")
-	original := lockHeader + "\n[meta]\ncli_version = \"old\"\n"
+	original := shared.LockHeader + "\n[meta]\ncli_version = \"old\"\n"
 	if err := os.WriteFile(lockPath, []byte(original), 0o600); err != nil {
 		t.Fatalf("seed lock: %v", err)
 	}
@@ -463,22 +465,22 @@ func TestWriteLockAtomicReplace(t *testing.T) {
 			t.Fatalf("chmod dir: %v", err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
-		req := &lockWriteRequest{LockPath: lockPath, Meta: map[string]string{"cli_version": "new"}}
-		if err := writeLockFile(req); err == nil {
+		req := &shared.LockWriteRequest{LockPath: lockPath, Meta: map[string]string{"cli_version": "new"}}
+		if err := shared.WriteLockFile(req); err == nil {
 			t.Fatalf("write into a read-only directory must fail")
 		}
 		assertFileBytes(t, lockPath, original)
 	})
 
 	t.Run("success replaces bytes entirely", func(t *testing.T) {
-		req := &lockWriteRequest{
+		req := &shared.LockWriteRequest{
 			LockPath: lockPath,
 			Meta:     map[string]string{"cli_version": "new"},
 		}
-		if err := writeLockFile(req); err != nil {
-			t.Fatalf("writeLockFile: %v", err)
+		if err := shared.WriteLockFile(req); err != nil {
+			t.Fatalf("WriteLockFile: %v", err)
 		}
-		want := lockHeader + "\n[meta]\ncli_version = \"new\"\n"
+		want := shared.LockHeader + "\n[meta]\ncli_version = \"new\"\n"
 		assertFileBytes(t, lockPath, want)
 		assertNoTempFiles(t, dir)
 	})
