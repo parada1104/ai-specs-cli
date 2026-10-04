@@ -909,3 +909,352 @@ func TestCachePathOracleMatchesProjectCachePy(t *testing.T) {
 		}
 	}
 }
+
+// ── Remediation batch 2 (JD follow-ups, human-authorized) ─────────────────
+
+// TestAgentsReadLoopSplitting pins the full enabled-agents pipeline:
+// toml-read strip → print(a) per element → `while IFS= read -r`. Measured
+// against the actual bash read loop over the printed bytes: internal blank
+// lines are dropped, a CR is retained inside a piece, whitespace-only
+// INTERNAL pieces survive, and the information separators strip like space.
+func TestAgentsReadLoopSplitting(t *testing.T) {
+	raw := []any{
+		"a\n\nb", "x\n", "a\r\nb", "a\n  \nb",
+		"\x1cclaude", "pad ", "a b", "q\r", "  ",
+	}
+	want := []string{"a", "b", "x", "a\r", "b", "a", "  ", "b", "claude", "pad", "a b", "q"}
+	got := normalizedStringList(raw)
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("normalizedStringList = %q, want %q (measured while-read oracle)", got, want)
+	}
+}
+
+// TestPyStrStripSeparators pins Python str.strip()'s isspace set: the
+// information separators U+001C–U+001F strip like space (measured RED:
+// "\x1cclaude" synced in legacy but reached platformGet unstripped in Go).
+func TestPyStrStripSeparators(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"\x1cclaude", "claude"},
+		{"\x1d\x1ex\x1f", "x"},
+		{"\u0085x\u00a0", "x"},
+		{"a\x1cb", "a\x1cb"}, // internal separator survives (strip trims ends only)
+	} {
+		if got := pyStrStrip(tc.in); got != tc.want {
+			t.Errorf("pyStrStrip(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestMCPCountMatrix pins mcpServerCount's recipe-mcp len/catch behavior to
+// the measured oracle (lib/sync-agent.sh:412-425): missing file and
+// malformed/empty JSON count as empty; dict/list/string contribute their
+// len (string in code points); number/bool/null and non-ENOENT read errors
+// (directory) are UNCAUGHT in the oracle — the script dies rc 1.
+func TestMCPCountMatrix(t *testing.T) {
+	run := newAgentRun(t, t.TempDir())
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	cases := []struct {
+		name    string
+		path    string
+		want    int
+		wantErr bool
+	}{
+		{"missing", filepath.Join(dir, "nope.json"), 0, false},
+		{"malformed", write("bad.json", "not json"), 0, false},
+		{"empty", write("empty.json", ""), 0, false},
+		{"object", write("obj.json", `{"r":{"s":1}}`), 1, false},
+		{"list", write("list.json", "[1,2]"), 2, false},
+		{"string", write("str.json", `"abc"`), 3, false},
+		{"string-runes", write("runes.json", `"aé"`), 2, false},
+		{"number", write("num.json", "123"), 0, true},
+		{"bool", write("bool.json", "true"), 0, true},
+		{"null", write("null.json", "null"), 0, true},
+		{"directory", dir, 0, true},
+	}
+	for _, tc := range cases {
+		run.recipeMCP = tc.path
+		got, err := run.mcpServerCount()
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%s: want death (uncaught in oracle), got count %d", tc.name, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: unexpected error %v", tc.name, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: count = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestEnsureTargetWorkspaceMkdirAbortShape pins the measured oracle bytes for
+// the bare `mkdir -p "$TARGET_AI_SPECS"` at top level (RED probe P4):
+// `mkdir: <path>: File exists` and rc 1 — not a generic error line.
+func TestEnsureTargetWorkspaceMkdirAbortShape(t *testing.T) {
+	root := t.TempDir()
+	run := newAgentRun(t, root)
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "ai-specs"), []byte("occupied\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run.targetPath = sub
+	run.sourceRoot = root
+	var out, errOut bytes.Buffer
+	if rc := run.ensureTargetWorkspace(&out, &errOut); rc != 1 {
+		t.Fatalf("rc = %d, want 1", rc)
+	}
+	if errOut.String() != "mkdir: "+filepath.Join(sub, "ai-specs")+": File exists\n" {
+		t.Errorf("stderr = %q", errOut.String())
+	}
+}
+
+// TestMirrorRmAbortShape pins the measured oracle bytes for mirror_directory's
+// bare `rm -rf` at top level (RED probe P6 + the fixture's two-line delta):
+// the child's Permission denied line AND the parent's `Directory not empty`
+// line, rc 1.
+func TestMirrorRmAbortShape(t *testing.T) {
+	base := t.TempDir()
+	dest := filepath.Join(base, "skills", "child")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "f.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(base, "skills"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.Join(base, "skills"), 0o755) })
+	var errOut bytes.Buffer
+	if rc := removeTree(filepath.Join(base, "skills"), &errOut); rc != 1 {
+		t.Fatalf("rc = %d, want 1", rc)
+	}
+	want := "rm: " + dest + ": Permission denied\nrm: " + filepath.Join(base, "skills") + ": Directory not empty\n"
+	if errOut.String() != want {
+		t.Errorf("stderr = %q, want %q", errOut.String(), want)
+	}
+}
+
+// TestSyncCommandsCpAbortShape pins the measured oracle bytes for the managed
+// `cp ... || return $?` (RED probe P5): `cp: <dest>: Permission denied` and
+// rc 1 — the cp binary names the DEST when open-for-write fails.
+func TestSyncCommandsCpAbortShape(t *testing.T) {
+	run := newAgentRun(t, t.TempDir())
+	cmdDir := filepath.Join(run.targetPath, ".claude", "commands")
+	if err := os.MkdirAll(cmdDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(cmdDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(cmdDir, 0o755) })
+	var out, errOut bytes.Buffer
+	if rc := run.syncOneAgent("claude", &out, &errOut); rc != 1 {
+		t.Fatalf("rc = %d, want 1", rc)
+	}
+	want := "cp: " + filepath.Join(cmdDir, "demo.md") + ": Permission denied\n"
+	if errOut.String() != want {
+		t.Errorf("stderr = %q, want %q", errOut.String(), want)
+	}
+}
+
+// TestMktempFailureReplaysStderr pins the fallback mktemp's death behavior:
+// the oracle's `$(mktemp ...)` lets the child's stderr pass through before
+// the set -e death (rc 1, nothing else runs). The live trigger is
+// unreachable on this platform (macOS `mktemp -t` ignores TMPDIR), so this
+// uses the established PATH-stub seam — stub/oracle justification recorded
+// here, NOT claimed as a live RED.
+func TestMktempFailureReplaysStderr(t *testing.T) {
+	bin := t.TempDir()
+	stub := filepath.Join(bin, "mktemp")
+	script := "#!/bin/sh\necho 'mktemp: failed to create file via template: stub-die' >&2\nexit 1\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "ai-specs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ai-specs", "ai-specs.toml"), []byte("[project]\nname = 't'\n\n[agents]\nenabled = ['claude']\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// exec.Command resolves via the process PATH, so the stub is seeded with
+	// t.Setenv (both LookPath and the child env see it first).
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	r := &runner{home: root, env: childEnv(root)}
+	opts := agentOptions{sourceRoot: root, target: root, selectAll: true}
+	var out, errOut bytes.Buffer
+	if _, rc := buildAgentRun(r, opts, agentStreams{out: &out, errW: &errOut}, false); rc != 1 {
+		t.Fatalf("rc = %d, want 1", rc)
+	}
+	if !strings.Contains(errOut.String(), "mktemp: failed to create file via template: stub-die\n") {
+		t.Errorf("stderr = %q (want mktemp's own diagnostic replayed)", errOut.String())
+	}
+	if strings.Contains(out.String(), "  syncing flatten resolved skills") {
+		t.Errorf("death must happen before any step work: %q", out.String())
+	}
+}
+
+// TestStandalonePlanDiagnostics pins the STABLE PORTABLE diagnostics for the
+// standalone plan extraction (PATH-stubbed python3; human decision
+// 2026-10-04): a malformed plan body dies with the JSONDecodeError-class
+// diagnostic, a plan without "root" dies with the KeyError-class diagnostic,
+// both BEFORE any write or banner. The bytes are environment-independent by
+// design — the portability guard below rejects any local python install
+// path, version string or traceback frame leak.
+func TestStandalonePlanDiagnostics(t *testing.T) {
+	stubDir := t.TempDir()
+	stub := filepath.Join(stubDir, "python3")
+	writeStub := func(payload string) {
+		script := "#!/bin/sh\nif printf '%s\\n' \"$*\" | grep -q target-resolve.py; then\ncat <<'PYEOF'\n" + payload + "\nPYEOF\nexit 0\nfi\nexit 0\n"
+		if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runWithStub := func(t *testing.T, payload string) (int, string, string) {
+		writeStub(payload)
+		root := t.TempDir()
+		var out, errOut bytes.Buffer
+		t.Setenv("PATH", stubDir+":"+os.Getenv("PATH"))
+		rc := RunAgent([]string{"sync-agent", root}, root, nil, &out, &errOut)
+		return rc, out.String(), errOut.String()
+	}
+	assertPortable := func(t *testing.T, stderr string) {
+		t.Helper()
+		for _, banned := range []string{"/opt/homebrew", "/usr/local", "/Library/", "Cellar", "Frameworks", "Traceback", "3.14", "3.13", "3.9"} {
+			if strings.Contains(stderr, banned) {
+				t.Errorf("diagnostic leaks environment-specific bytes %q: %q", banned, stderr)
+			}
+		}
+	}
+
+	t.Run("malformed plan body", func(t *testing.T) {
+		rc, out, errOut := runWithStub(t, "not json")
+		if rc != 1 {
+			t.Fatalf("rc = %d, want 1", rc)
+		}
+		if errOut != pyJSONDecodeErrPlanBytes {
+			t.Errorf("stderr = %q\nwant = %q", errOut, pyJSONDecodeErrPlanBytes)
+		}
+		assertPortable(t, errOut)
+		if strings.Contains(out, "ai-specs sync-agent") {
+			t.Errorf("banner must not print: %q", out)
+		}
+	})
+	t.Run("missing root", func(t *testing.T) {
+		rc, out, errOut := runWithStub(t, `{"targets":[{"path":"x"},{"path":"y"}]}`)
+		if rc != 1 {
+			t.Fatalf("rc = %d, want 1", rc)
+		}
+		if errOut != pyKeyErrRootBytes {
+			t.Errorf("stderr = %q\nwant = %q", errOut, pyKeyErrRootBytes)
+		}
+		assertPortable(t, errOut)
+		if strings.Contains(out, "syncing") {
+			t.Errorf("no writes may happen: %q", out)
+		}
+	})
+	t.Run("classes are distinguishable", func(t *testing.T) {
+		if pyJSONDecodeErrPlanBytes == pyKeyErrRootBytes {
+			t.Errorf("the two failure classes must stay distinguishable")
+		}
+	})
+}
+
+// TestMarkerTempPathOracleBytes pins markerTempPath against the MEASURED
+// bash pipeline `$(grep '^RECIPE_MCP_TEMP:' f | cut -d: -f2-)` (command
+// substitution strips trailing newlines only): trailing blank lines vanish,
+// an unterminated file still matches, multiple markers join with \n, and a
+// trailing space is KEPT (cut only splits on colons).
+func TestMarkerTempPathOracleBytes(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"plain", "RECIPE_MCP_TEMP:/x/a.json\n", "/x/a.json"},
+		{"trailing blanks", "RECIPE_MCP_TEMP:/x/a.json\n\n\n", "/x/a.json"},
+		{"no trailing newline", "RECIPE_MCP_TEMP:/x/a.json", "/x/a.json"},
+		{"two markers", "warn\nRECIPE_MCP_TEMP:/x/a.json\nRECIPE_MCP_TEMP:/x/b.json\n", "/x/a.json\n/x/b.json"},
+		{"trailing space kept", "RECIPE_MCP_TEMP:/x/a.json \n", "/x/a.json "},
+	}
+	for _, tc := range cases {
+		p := filepath.Join(dir, tc.name)
+		if err := os.WriteFile(p, []byte(tc.content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := markerTempPath(p); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestPrintStepOutputOracleBytes pins printStepOutput and replayRaw against
+// the MEASURED bash print_step_output + `[[ -s ]] && cat` oracle over crafted
+// capture files (including the judge-B empty/blank-line cases): verbose is
+// cat, compact drops blank and ✓·⇢▸ lines, a final unterminated line gains
+// its newline, an all-blank capture prints nothing, and the failure replay
+// prints empty captures as nothing and blank-only captures as the bare
+// newline.
+func TestPrintStepOutputOracleBytes(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"label", "  syncing x\n"},
+		{"blanks-then-warn", "\n\n  ! warn\n"},
+		{"no-trailing-newline", "no-trailing"},
+		{"blank-only", "\n"},
+		{"empty", ""},
+		{"success-detail", "    ✓ ok\n    · noise\n  ✗ keep\n"},
+	}
+	for _, tc := range cases {
+		p := filepath.Join(dir, tc.name)
+		if err := os.WriteFile(p, []byte(tc.content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var got bytes.Buffer
+		printStepOutput(&got, p, true)
+		if got.String() != tc.content {
+			t.Errorf("%s verbose: got %q, want verbatim %q", tc.name, got.String(), tc.content)
+		}
+	}
+	// Compact: blanks and ✓/· lines dropped, ✗ and content lines kept, a
+	// final unterminated line gains its newline.
+	p := filepath.Join(dir, "mixed")
+	content := "\n  syncing x\n    ✓ ok\n  ✗ keep\n\nno-eol"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var got bytes.Buffer
+	printStepOutput(&got, p, false)
+	want := "  syncing x\n  ✗ keep\nno-eol\n"
+	if got.String() != want {
+		t.Errorf("compact: got %q, want %q", got.String(), want)
+	}
+	// Failure replay: empty capture prints nothing, blank-only prints "\n".
+	var out, errOut bytes.Buffer
+	replayRaw(&out, filepath.Join(dir, "empty"))
+	if out.Len() != 0 {
+		t.Errorf("empty replay: %q", out.String())
+	}
+	replayRaw(&errOut, filepath.Join(dir, "blank-only"))
+	if errOut.String() != "\n" {
+		t.Errorf("blank replay: %q", errOut.String())
+	}
+}

@@ -32,6 +32,8 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"unicode"
+	"unicode/utf8"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/skills"
@@ -152,9 +154,30 @@ func RunAgent(args []string, home string, stdin io.Reader, stdout, stderr io.Wri
 			fmt.Fprintln(stderr, "ERROR: target resolution failed before any writes.")
 			return 1
 		}
+		// The shell's ROOT_PATH/RESOLVED_TARGETS extraction dies on a
+		// malformed plan (json.JSONDecodeError traceback, measured bytes
+		// pinned below) and on a plan without "root" (KeyError: 'root').
+		// Both deaths happen BEFORE any write; stderr is FROZEN, so the port
+		// reproduces the measured diagnostic bytes instead of a generic line.
+		var rawPlan map[string]json.RawMessage
+		if err := json.Unmarshal(planJSON, &rawPlan); err != nil {
+			fmt.Fprint(stderr, pyJSONDecodeErrPlanBytes)
+			return 1
+		}
+		rawRoot, ok := rawPlan["root"]
+		if !ok {
+			fmt.Fprint(stderr, pyKeyErrRootBytes)
+			return 1
+		}
 		var p plan
 		if err := json.Unmarshal(planJSON, &p); err != nil {
+			fmt.Fprint(stderr, pyJSONDecodeErrPlanBytes)
 			return 1
+		}
+		if p.Root == "" && string(bytes.TrimSpace(rawRoot)) == "null" {
+			// json["root"] → None prints as `None`, which the shell then uses
+			// verbatim as ROOT_PATH (no KeyError). Reproduced faithfully.
+			p.Root = "None"
 		}
 		if len(p.Targets) > 1 {
 			return r.runAgentStandaloneFanout(p.Root, opts, p, s)
@@ -180,6 +203,19 @@ func RunAgent(args []string, home string, stdin io.Reader, stdout, stderr io.Wri
 func nestedFromEnv() bool {
 	return os.Getenv("AI_SPECS_SYNC_NESTED") == "1"
 }
+
+// pyJSONDecodeErrPlanBytes / pyKeyErrRootBytes are the STABLE PORTABLE
+// diagnostics for the standalone plan extraction (human decision
+// 2026-10-04: pinned local Python traceback constants were REJECTED — the
+// interpreter/install-anchored bytes under /usr/bin/python3 3.9.6 vs
+// 3.13/3.14 proved them non-portable). They preserve the oracle's FROZEN
+// diagnostic meaning — exit 1, the exception-class distinction
+// (JSONDecodeError vs KeyError: 'root'), no banner and no writes before the
+// failure — while the traceback formatting, interpreter paths and frames
+// are TOLERANT by contract (docs/go-migration-parity-contract.md).
+const pyJSONDecodeErrPlanBytes = "ERROR: resolver plan is not valid JSON (json.JSONDecodeError)\n"
+
+const pyKeyErrRootBytes = "ERROR: resolver plan is missing the \"root\" key (KeyError: 'root')\n"
 
 // resolvePlanStandalone runs target-resolve.py with stderr inherited and
 // stdout captured, mirroring PLAN_JSON="$(python3 ...)".
@@ -211,8 +247,9 @@ func (r *runner) runAgentStandaloneFanout(root string, opts agentOptions, p plan
 	// Resolved-config for subrepo AGENTS.md enrichment: deliberately
 	// copy-free/hook-free/lock-free (--resolved-config-only), merged onto the
 	// script's stdout by the shell's `2>&1` (one fd, kernel write order).
-	resolvedConfigTemp, ok := r.mktemp("-t", "ai-specs-resolved-config-XXXXXX.json")
+	resolvedConfigTemp, mkErrText, ok := r.mktempCapture("-t", "ai-specs-resolved-config-XXXXXX.json")
 	if !ok {
+		fmt.Fprint(s.errW, mkErrText)
 		return 1
 	}
 	defer removeIfSet(resolvedConfigTemp)
@@ -330,10 +367,13 @@ func buildAgentRun(r *runner, opts agentOptions, s agentStreams, nested bool) (*
 	// Materialize fallback (lib/sync-agent.sh:191-202): when --recipe-mcp is
 	// absent, run materialize now with both streams captured to one temp file
 	// and parse RECIPE_MCP_TEMP: out of it. Failure prints the full output
-	// minus the marker line and exits 1.
+	// minus the marker line and exits 1. A mktemp failure replays mktemp's
+	// OWN stderr (the oracle's `$(mktemp ...)` lets the child's stderr pass
+	// through before the set -e death) and exits 1.
 	if a.recipeMCP == "" {
-		outPath, ok := r.mktemp("-t", "ai-specs-materialize-XXXXXX")
+		outPath, mkErrText, ok := r.mktempCapture("-t", "ai-specs-materialize-XXXXXX")
 		if !ok {
+			fmt.Fprint(s.errW, mkErrText)
 			return nil, 1
 		}
 		defer removeIfSet(outPath)
@@ -425,18 +465,42 @@ func readEnabledAgents(tomlPath string, errW io.Writer) ([]string, int) {
 // are dropped, never repr'd. The canonical Go port lives in
 // internal/config (normalizedStringList); it is unexported, so the exact
 // semantics are reproduced here rather than widening that package's
-// surface. Pinned against the Python oracle by
-// TestReadEnabledAgentsNormalizesLikeTomlRead.
+// surface.
+//
+// The value is then printed by the shell (`print(a)` per element) and read
+// back through `while IFS= read -r` (lib/sync-agent.sh:391-394), so an
+// element's EMBEDDED newlines split it into several agent entries; only
+// non-empty lines survive the `[[ -n "$agent" ]]` guard, and \r is retained
+// inside a piece (read splits on \n only). Measured RED probes:
+// "\u001cclaude" strips to claude (Python isspace includes the information
+// separators U+001C–U+001F; Go unicode.IsSpace does not), and "a\nb" yields
+// agents a and b. Internal blank lines, a trailing newline and a CR are all
+// verified against the while-read oracle (TestAgentsReadLoopSplitting).
 func normalizedStringList(raw any) []string {
 	out := []string{}
 	for _, item := range plainList(raw) {
-		if s, ok := item.(string); ok {
-			if s = strings.TrimSpace(s); s != "" {
-				out = append(out, s)
+		s, ok := item.(string)
+		if !ok {
+			continue
+		}
+		s = pyStrStrip(s)
+		for _, piece := range strings.Split(s, "\n") {
+			if piece != "" {
+				out = append(out, piece)
 			}
 		}
 	}
 	return out
+}
+
+// pyStrStrip mirrors Python str.strip() with no arguments: every character
+// where str.isspace() is true. Python's isspace INCLUDES U+001C–U+001F
+// (information separators); Go's unicode.IsSpace does not, so the predicate
+// adds them explicitly. Measured oracle: "\u001cclaude" → "claude".
+func pyStrStrip(s string) string {
+	return strings.TrimFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || (r >= 0x001C && r <= 0x001F)
+	})
 }
 
 // plainList mirrors doctor's asPlainList: the TOML array forms a plain list.
@@ -543,11 +607,29 @@ func (a *agentRun) mcpServerCount() (int, error) {
 	}
 	if a.recipeMCP != "" {
 		raw, rerr := os.ReadFile(a.recipeMCP)
-		if rerr == nil {
-			var m map[string]any
-			if json.Unmarshal(raw, &m) == nil {
-				count += len(m)
+		if rerr != nil {
+			if os.IsNotExist(rerr) {
+				return count, nil // FileNotFoundError → pass
 			}
+			// IsADirectoryError / EACCES … are UNCAUGHT in the oracle: the
+			// script dies rc 1 (measured RED: --recipe-mcp <dir> → traceback).
+			return 0, rerr
+		}
+		var v any
+		if jerr := json.Unmarshal(raw, &v); jerr != nil {
+			return count, nil // JSONDecodeError (malformed/empty) → pass
+		}
+		switch x := v.(type) {
+		case map[string]any:
+			count += len(x)
+		case []any:
+			count += len(x) // measured RED: "[1,2]" → 2 server(s)
+		case string:
+			count += utf8.RuneCountInString(x) // Python len(str): code points; "abc" → 3
+		default:
+			// number/bool/null: len() raises TypeError, uncaught → death rc 1
+			// (measured RED: "123" → traceback, rc 1).
+			return 0, fmt.Errorf("object of unsized type")
 		}
 	}
 	return count, nil
@@ -565,8 +647,11 @@ func (a *agentRun) ensureTargetWorkspace(out, errW io.Writer) int {
 	}
 
 	targetAiSpecs := filepath.Join(a.targetPath, "ai-specs")
-	if err := os.MkdirAll(targetAiSpecs, 0o777); err != nil {
-		fmt.Fprintf(errW, "error: %s\n", err)
+	// `mkdir -p "$TARGET_AI_SPECS"` runs bare at top level (set -e): the
+	// mkdir binary prints its coreutils shape — an occupied leaf is File
+	// exists — and the script dies rc 1 (measured RED probe P4).
+	if err := mkdirPMirror(targetAiSpecs); err != nil {
+		printChildErr(errW, "mkdir", err)
 		return 1
 	}
 	// Subrepo/fan-out side-output: the gitignore render goes through run_step
@@ -705,9 +790,10 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 		targetFile := filepath.Join(dest, name)
 		if info, err := os.Lstat(targetFile); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
-				// Never write through a symlink occupying a managed name.
+				// Never write through a symlink occupying a managed name;
+				// `rm -f ... || return $?` aborts with rm's own shape.
 				if err := os.Remove(targetFile); err != nil {
-					fmt.Fprintf(errW, "error: %s\n", err)
+					printChildErr(errW, "rm", err)
 					return 1
 				}
 			} else if !info.Mode().IsRegular() {
@@ -716,8 +802,12 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 				}
 			}
 		}
+		// `cp "$src" "$target_file" || return $?`: the cp binary prints its
+		// own shape — `cp: <destpath>: <strerror>` (measured RED probe P5:
+		// a 0555 commands dir yields Permission denied naming the DEST) —
+		// and the step aborts with cp's rc.
 		if err := copyFileCp(src, targetFile); err != nil {
-			fmt.Fprintf(errW, "error: %s\n", err)
+			printChildErr(errW, "cp", err)
 			return 1
 		}
 		managed[name] = true
@@ -1064,20 +1154,22 @@ func mkdirPMirror(path string) error {
 
 // ── Filesystem helpers mirroring the shell's cp/rm semantics ──────────────
 
-// mirrorDirectory is mirror_directory (lib/sync-agent.sh:298-308).
+// mirrorDirectory is mirror_directory (lib/sync-agent.sh:298-308). Its bare
+// `mkdir -p`/`rm -rf`/`cp -R` run at top level (set -e): failures print the
+// coreutils shape and die rc 1.
 func mirrorDirectory(src, dest string, errW io.Writer) int {
 	if rc := removeTree(dest, errW); rc != 0 {
 		return rc
 	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o777); err != nil {
-		fmt.Fprintf(errW, "error: %s\n", err)
+	if err := mkdirPMirror(filepath.Dir(dest)); err != nil {
+		printChildErr(errW, "mkdir", err)
 		return 1
 	}
 	if isDirPath(src) {
 		return copyTreeCp(src, dest, errW)
 	}
-	if err := os.MkdirAll(dest, 0o777); err != nil {
-		fmt.Fprintf(errW, "error: %s\n", err)
+	if err := mkdirPMirror(dest); err != nil {
+		printChildErr(errW, "mkdir", err)
 		return 1
 	}
 	return 0
@@ -1091,35 +1183,35 @@ func mirrorDirectory(src, dest string, errW io.Writer) int {
 func copyTreeCp(src, dest string, errW io.Writer) int {
 	info, err := os.Lstat(src)
 	if err != nil {
-		fmt.Fprintf(errW, "error: %s\n", err)
+		printChildErr(errW, "cp", err)
 		return 1
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		link, err := os.Readlink(src)
 		if err != nil {
-			fmt.Fprintf(errW, "error: %s\n", err)
+			printChildErr(errW, "cp", err)
 			return 1
 		}
 		if err := os.Symlink(link, dest); err != nil {
-			fmt.Fprintf(errW, "error: %s\n", err)
+			printChildErr(errW, "cp", err)
 			return 1
 		}
 		return 0
 	}
 	if !info.IsDir() {
 		if err := copyFileCp(src, dest); err != nil {
-			fmt.Fprintf(errW, "error: %s\n", err)
+			printChildErr(errW, "cp", err)
 			return 1
 		}
 		return 0
 	}
 	if err := os.MkdirAll(dest, 0o777); err != nil {
-		fmt.Fprintf(errW, "error: %s\n", err)
+		printChildErr(errW, "cp", err)
 		return 1
 	}
 	entries, err := os.ReadDir(src)
 	if err != nil {
-		fmt.Fprintf(errW, "error: %s\n", err)
+		printChildErr(errW, "cp", err)
 		return 1
 	}
 	for _, entry := range entries {
@@ -1128,7 +1220,7 @@ func copyTreeCp(src, dest string, errW io.Writer) int {
 		}
 	}
 	if err := os.Chmod(dest, info.Mode().Perm()); err != nil {
-		fmt.Fprintf(errW, "error: %s\n", err)
+		printChildErr(errW, "cp", err)
 		return 1
 	}
 	return 0
@@ -1162,10 +1254,38 @@ func copyFileCp(src, dest string) error {
 	return out.Close()
 }
 
-// removeTree mirrors `rm -rf` (and `rm -f` on a single path).
+// removeTree mirrors `rm -rf` with rm's OWN traversal and reporting
+// semantics (measured RED probe P6 + fixture delta): depth-first removal;
+// every failed unlink/rmdir prints `rm: <path>: <strerror>` and removal
+// CONTINUES (a child that cannot be removed still yields the parent's
+// `Directory not empty` line afterwards); a missing path is ignored; the rc
+// is 1 when anything failed. Call sites keep their oracle semantics (bare
+// call at top level → set -e death; `|| return $?` sites → step abort).
 func removeTree(path string, errW io.Writer) int {
-	if err := os.RemoveAll(path); err != nil {
-		fmt.Fprintf(errW, "error: %s\n", err)
+	return removeRf(path, errW)
+}
+
+func removeRf(path string, errW io.Writer) int {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0 // rm -rf ignores missing operands
+		}
+		printChildErr(errW, "rm", err)
+		return 1
+	}
+	if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		entries, rdErr := os.ReadDir(path)
+		if rdErr != nil {
+			printChildErr(errW, "rm", rdErr)
+		} else {
+			for _, entry := range entries {
+				removeRf(filepath.Join(path, entry.Name()), errW)
+			}
+		}
+	}
+	if err := os.Remove(path); err != nil {
+		printChildErr(errW, "rm", err)
 		return 1
 	}
 	return 0
@@ -1224,6 +1344,25 @@ func globStarNames(dir string) []string {
 }
 
 // ── Child execution with the shell's stream shapes ────────────────────────
+
+// mktempCapture runs the real mktemp binary and additionally captures its
+// stderr, so a failure can replay mktemp's OWN diagnostic — the oracle's
+// `$(mktemp ...)` lets the child's stderr pass through before the set -e
+// death (rc 1, no other output). macOS `mktemp -t` ignores TMPDIR, so the
+// live trigger is unreachable on this platform; the behavior is pinned by a
+// PATH-stubbed mktemp in the unit tests (the same seam
+// test_sync_run_step_errexit.py established for the S1 spine).
+func (r *runner) mktempCapture(args ...string) (string, string, bool) {
+	cmd := exec.Command("mktemp", args...)
+	cmd.Env = r.env
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return "", errBuf.String(), false
+	}
+	return strings.TrimRight(outBuf.String(), "\n"), "", true
+}
 
 // execMerged runs argv with stdout and stderr sharing one descriptor (the
 // shell's `2>&1`), copying the merged bytes to w in kernel write order.

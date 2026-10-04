@@ -726,8 +726,11 @@ def _setup_sync_agent_arg_contract(project: Path) -> None:
     whitespace-padded string, a padded valid agent, an int, a bool and an
     empty string: toml-read.py's _normalize_string_list keeps only stripped
     non-empty strings, so exactly claude and pi must sync (the int/bool are
-    dropped, never repr'd as agent names). The trailing value-taking flag
-    steps pin the `shift 2` failure: rc 1, no output, no writes (D20 class)."""
+    dropped, never repr'd as agent names). Remediation batch 2 extends the
+    mix with an information-separator prefix (U+001C strips like space) and
+    an embedded newline (the print + while-read loop splits it into two
+    unknown-agent notices). The trailing value-taking flag steps pin the
+    `shift 2` failure: rc 1, no output, no writes (D20 class)."""
     _write(project, "ai-specs/ai-specs.toml",
            "[project]\n"
            "name = 'parity-fixture'\n"
@@ -736,6 +739,60 @@ def _setup_sync_agent_arg_contract(project: Path) -> None:
     _write(project, "AGENTS.md", "# hand-seeded root brief\n")
     (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
     (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+
+
+def _setup_sync_agent_recipe_mcp_matrix(project: Path) -> None:
+    """JD remediation batch 2 (recipe-mcp count) regression fixture: the
+    byte-comparable len cases of the MCP_COUNT oracle — top-level list (len 2),
+    string (len 3), object (len 1), malformed body (0) and a missing file (0)
+    — each as its own `--recipe-mcp` invocation so the banner's `mcp:` line
+    pins the count. The DEATH cases (a directory path / a number / bool /
+    null: uncaught IsADirectoryError, TypeError tracebacks in legacy) are NOT
+    fixtureable here — the tracebacks embed the platform python's frames —
+    they are unit-gated by TestMCPCountMatrix with the documented deviation."""
+    _write(project, "ai-specs/ai-specs.toml",
+           "[project]\n"
+           "name = 'parity-fixture'\n"
+           "\n[agents]\n"
+           "enabled = ['claude']\n")
+    _write(project, "AGENTS.md", "# hand-seeded root brief\n")
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    (project / "sub-a").mkdir(exist_ok=True)
+    (project / "recipe-mcp").mkdir(exist_ok=True)
+    _write(project, "recipe-mcp/list.json", "[1,2]\n")
+    _write(project, "recipe-mcp/str.json", '"abc"\n')
+    _write(project, "recipe-mcp/obj.json", '{"only": {}}\n')
+    _write(project, "recipe-mcp/bad.json", "not json\n")
+
+
+def _setup_sync_agent_abort_shapes(project: Path) -> None:
+    """JD remediation batch 2 (aborting coreutils shapes) regression fixture:
+    three sequential single-target invocations, each aborting at a different
+    bare/`|| return` site with the measured coreutils stderr and rc 1 —
+    (1) managed `cp` into a 0555 .claude/commands (Permission denied naming
+    the destination), (2) mirror_directory's `rm -rf` over a 0555 skills
+    directory holding a child, (3) `mkdir -p` over an existing ai-specs FILE
+    (File exists). Message text, target path and rc are FROZEN; the fixture
+    covers all three shapes in one deterministic setup."""
+    _write(project, "ai-specs/ai-specs.toml",
+           "[project]\n"
+           "name = 'parity-fixture'\n"
+           "subrepos = ['subA', 'subB', 'subC']\n"
+           "\n[agents]\n"
+           "enabled = ['claude']\n")
+    _write(project, "AGENTS.md", "# hand-seeded root brief\n")
+    (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+    _write(project, "ai-specs/commands/demo.md", "# managed command\n")
+    (project / ".claude" / "commands").mkdir(parents=True, exist_ok=True)
+    (project / ".claude" / "commands").chmod(0o555)
+    (project / "subA").mkdir(exist_ok=True)
+    skills_b = project / "subB" / "ai-specs" / "skills" / "child"
+    skills_b.mkdir(parents=True, exist_ok=True)
+    (skills_b / "f.md").write_text("x\n")
+    skills_b.parent.chmod(0o555)
+    (project / "subC").mkdir(exist_ok=True)
+    _write(project, "subC/ai-specs", "occupied\n")
 
 
 def _setup_sync_agent_occupied_paths(project: Path) -> None:
@@ -1011,15 +1068,54 @@ CORPUS: tuple[Fixture, ...] = (
     Fixture(
         name="sync-agent-arg-contract",
         description="JD-A-001/JD-A-002 regression: [agents].enabled mixes "
-                    "whitespace-padded strings, an int, a bool and an empty "
-                    "string — toml-read normalization keeps exactly claude and "
-                    "pi; then trailing `--target`/`--source-root` invocations "
-                    "die rc 1 with no output and no writes.",
+                    "whitespace-padded strings, an information-separator "
+                    "prefix, an embedded newline, an int, a bool and an empty "
+                    "string — normalization keeps exactly claude, pi, claude2, "
+                    "x and y; then trailing `--target`/`--source-root` "
+                    "invocations die rc 1 with no output and no writes.",
         setup=_setup_sync_agent_arg_contract,
         steps=(
             Step(("sync-agent", "--all")),
             Step(("sync-agent", "--target"), append_root=False),
             Step(("sync-agent", "--source-root"), append_root=False),
+        ),
+    ),
+    Fixture(
+        name="sync-agent-recipe-mcp-matrix",
+        description="Remediation batch 2 (recipe-mcp count) regression: the "
+                    "byte-comparable MCP_COUNT cases — top-level list (2), "
+                    "string (3), object (1), malformed (0) and missing file "
+                    "(0) — each pinned by the banner's `mcp:` line. The "
+                    "uncaught-death cases (directory/number/bool/null) stay "
+                    "unit-gated: their tracebacks embed the platform python's "
+                    "frames and cannot byte-compare.",
+        setup=_setup_sync_agent_recipe_mcp_matrix,
+        steps=(
+            Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
+                  "--recipe-mcp", "recipe-mcp/list.json"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
+                  "--recipe-mcp", "recipe-mcp/str.json"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
+                  "--recipe-mcp", "recipe-mcp/obj.json"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
+                  "--recipe-mcp", "recipe-mcp/bad.json"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
+                  "--recipe-mcp", "recipe-mcp/missing.json"), append_root=False),
+        ),
+    ),
+    Fixture(
+        name="sync-agent-abort-shapes",
+        description="Remediation batch 2 (aborting coreutils shapes) "
+                    "regression: three sequential single-target invocations "
+                    "aborting at the managed `cp` into a 0555 commands dir, "
+                    "the mirror `rm -rf` over a 0555 skills dir with a child, "
+                    "and `mkdir -p` over an existing ai-specs file — the "
+                    "measured coreutils stderr shapes and rc 1 are FROZEN.",
+        setup=_setup_sync_agent_abort_shapes,
+        steps=(
+            Step(("sync-agent", "--source-root", ".", "--target", "subA", "--all"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "subB", "--all"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "subC", "--all"), append_root=False),
         ),
     ),
     Fixture(

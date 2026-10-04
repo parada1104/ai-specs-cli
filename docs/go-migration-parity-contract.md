@@ -391,6 +391,26 @@ count, rc and tree). Decision: the human explicitly accepted the different
 warning ordering under non-C locales as a narrow TOLERANT classification,
 recorded here instead of being deferred to S16.
 
+### Resolver-plan diagnostic framing — TOLERANT (narrow, human-accepted 2026-10-04)
+
+When the standalone `sync-agent` plan extraction dies on a malformed or
+root-less target-resolve plan (`python3 -c '…["root"]'`), the stderr
+TRACEBACK FORMATTING is **TOLERANT**: interpreter paths, json module frames,
+caret annotations and version-specific layout (they differ across
+installations and interpreter versions — measured: 3.9.6 vs 3.13/3.14) may
+be replaced by a stable portable Go diagnostic.
+
+FROZEN and unchanged:
+
+- Exit code 1, raised BEFORE any banner, write or target work.
+- The failure-class distinction: a malformed plan body (legacy
+  `json.JSONDecodeError`) is reported differently from a plan without
+  `"root"` (legacy `KeyError: 'root'`); the two must stay distinguishable.
+- The deterministic diagnostic meaning: the reader learns WHICH class
+  failed.
+- No other error surface is normalized by this entry; the existing
+  locale-collation exception above remains narrow and separate.
+
 ---
 
 ## 11. Environment variables
