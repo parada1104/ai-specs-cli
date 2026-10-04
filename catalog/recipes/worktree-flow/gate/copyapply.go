@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // Copy actuator for the materialize blind copiers (GO-08 WU2, strangler
@@ -273,7 +275,7 @@ func runApplyCopy(stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	var req copyRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
-		fmt.Fprintln(stdout, `{"error": `+pyJSONString("copy apply: invalid input JSON: "+err.Error())+`}`)
+		fmt.Fprintln(stdout, `{"error": `+shared.PyJSONString("copy apply: invalid input JSON: "+err.Error())+`}`)
 		return 2
 	}
 	results := make([]copyResult, 0, len(req.Items))
@@ -281,12 +283,12 @@ func runApplyCopy(stdin io.Reader, stdout, stderr io.Writer) int {
 		item := &req.Items[i]
 		result, err := applyCopyDecision(item)
 		if err != nil {
-			fmt.Fprintln(stdout, `{"error": `+pyJSONString(err.Error())+`}`)
+			fmt.Fprintln(stdout, `{"error": `+shared.PyJSONString(err.Error())+`}`)
 			return 2
 		}
 		if result.Status == "ok" {
 			if err := executeCopyItem(item); err != nil {
-				fmt.Fprintln(stdout, `{"error": `+pyJSONString(fmt.Sprintf("copy apply: item %s: %v", item.ID, err))+`}`)
+				fmt.Fprintln(stdout, `{"error": `+shared.PyJSONString(fmt.Sprintf("copy apply: item %s: %v", item.ID, err))+`}`)
 				return 2
 			}
 		}

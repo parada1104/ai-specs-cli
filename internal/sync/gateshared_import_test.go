@@ -2,6 +2,8 @@ package sync
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -91,5 +93,85 @@ func TestSharedSortedUniqueSemantics(t *testing.T) {
 	}
 	if got := shared.SortedUnique(nil); got == nil || len(got) != 0 {
 		t.Fatalf("SortedUnique(nil) = %#v, want non-nil empty slice", got)
+	}
+}
+
+// TestSharedRunWriteLockContract drives the lock-writer command surface
+// in-process (SX0b): one JSON envelope on stdin, {"written":true} on stdout,
+// exit 0, byte-exact emitted lock, mode 0600 (mkstemp parity).
+func TestSharedRunWriteLockContract(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), ".ai-specs.lock")
+	envelope := `{"lock_path": "` + lockPath + `", "meta": {"cli_version": "0.24.0", "synced_at": "2026-07-14T00:00:00Z"}, "managed": {"AGENTS.md": {"sha256": "abc", "recipe": "worktree-flow", "source": "tpl.md", "kind": "template", "policy": "auto"}}, "agents": {"claude": {"AGENTS.md": "agenthash"}}}`
+	var stdout, stderr bytes.Buffer
+	code := shared.RunWriteLock(strings.NewReader(envelope), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("RunWriteLock exit = %d, want 0; stderr: %s; stdout: %s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"written"`) {
+		t.Fatalf("RunWriteLock stdout = %q, want a written envelope", stdout.String())
+	}
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("lock file was not written: %v", err)
+	}
+	want := shared.LockHeader +
+		"\n[meta]\n" +
+		"cli_version = \"0.24.0\"\n" +
+		"synced_at = \"2026-07-14T00:00:00Z\"\n" +
+		"\n[managed.\"AGENTS.md\"]\n" +
+		"sha256 = \"abc\"\n" +
+		"recipe = \"worktree-flow\"\n" +
+		"source = \"tpl.md\"\n" +
+		"kind = \"template\"\n" +
+		"policy = \"auto\"\n" +
+		"\n[agents.\"claude\"]\n" +
+		"\"AGENTS.md\" = \"agenthash\"\n"
+	if string(data) != want {
+		t.Fatalf("emitted lock bytes diverge\n--- got ---\n%q\n--- want ---\n%q", data, want)
+	}
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatalf("stat lock: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("lock mode = %o, want 600 (tempfile.mkstemp parity)", got)
+	}
+}
+
+// TestSharedRunWriteLockRefusesControlCharacters pins the envelope-boundary
+// refusal from the root side: a control character in any key or value is a
+// structured {"error": ...} refusal with exit 2 and no bytes written.
+func TestSharedRunWriteLockRefusesControlCharacters(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), ".ai-specs.lock")
+	envelope := `{"lock_path": "` + lockPath + `", "meta": {"cli_version": "0.1\n0"}}`
+	var stdout, stderr bytes.Buffer
+	code := shared.RunWriteLock(strings.NewReader(envelope), &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("RunWriteLock exit = %d, want 2", code)
+	}
+	if !strings.Contains(stdout.String(), "contains a control character") {
+		t.Fatalf("stdout = %q, want a control-character refusal", stdout.String())
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Errorf("a refused envelope must not write the lock")
+	}
+}
+
+// TestSharedPyJSONStringSemantics pins the relocated JSON string helper the
+// root side now consumes: CPython json.dumps(ensure_ascii=True) semantics —
+// named escapes, lowercase 4-digit hex for control chars and >=0x7f,
+// surrogate pairs above the BMP.
+func TestSharedPyJSONStringSemantics(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`plain`, `"plain"`},
+		{"a\nb", `"a\nb"`},
+		{"café", `"caf\u00e9"`},
+		{"\x7f", `"\u007f"`},
+		{"€", `"\u20ac"`},
+	}
+	for _, tc := range cases {
+		if got := shared.PyJSONString(tc.in); got != tc.want {
+			t.Errorf("PyJSONString(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

@@ -236,7 +236,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case *writeRecipeConfigCmd:
 		return runWriteRecipeConfig(stdin, stdout, stderr)
 	case *writeLockCmd:
-		return runWriteLock(stdin, stdout, stderr)
+		return shared.RunWriteLock(stdin, stdout, stderr)
 	case *applyCopyCmd:
 		return runApplyCopy(stdin, stdout, stderr)
 	case *materializeTemplateCmd:

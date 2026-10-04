@@ -1,4 +1,4 @@
-package main
+package shared
 
 import (
 	"encoding/json"
@@ -33,11 +33,14 @@ import (
 // errors) report a diagnostic on stderr with exit 2. All values arrive as
 // strings (the Python bridge pre-stringifies); the nested agents shape
 // matches the Python lock dict {harness: {filename: hash}} byte for byte.
+//
+// This package is the SX0b in-process extraction: the gate main package
+// dispatches to it and the root ai-specs binary imports it directly.
 
-// lockHeader is LOCK_HEADER from lib/_internal/lock.py:9-15, copied
+// LockHeader is LOCK_HEADER from lib/_internal/lock.py:9-15, copied
 // character-for-character. TestLockHeaderByteIdentity pins it; a divergence
 // must fail the test.
-const lockHeader = `# Managed by ai-specs. Do not edit by hand.
+const LockHeader = `# Managed by ai-specs. Do not edit by hand.
 # Provenance stamp: [meta] records the CLI version and timestamp of the last
 # sync. [managed.*] records integrity only for CLI-owned override targets;
 # it is not a general content-integrity manifest. git covers the committed
@@ -45,21 +48,21 @@ const lockHeader = `# Managed by ai-specs. Do not edit by hand.
 # detection; recipe/skill content hashes are not tracked.
 `
 
-// lockWriteRequest is the stdin envelope. Values are typed as strings so a
+// LockWriteRequest is the stdin envelope. Values are typed as strings so a
 // non-string value in the JSON becomes an UnmarshalTypeError, which the CLI
 // reports as a structured refusal (the future Python bridge pre-stringifies
 // everything with str() parity).
-type lockWriteRequest struct {
+type LockWriteRequest struct {
 	LockPath string                                  `json:"lock_path"`
 	Meta     map[string]string                       `json:"meta"`
-	Managed  map[string]lockManagedEntry             `json:"managed"`
+	Managed  map[string]LockManagedEntry             `json:"managed"`
 	Deps     map[string]map[string]map[string]string `json:"deps"`
 	Agents   map[string]map[string]string            `json:"agents"`
 }
 
-// lockManagedEntry is one [managed."<path>"] record; empty values are
+// LockManagedEntry is one [managed."<path>"] record; empty values are
 // skipped on emission (Python: `value is not None and value != ""`).
-type lockManagedEntry struct {
+type LockManagedEntry struct {
 	SHA256 string `json:"sha256"`
 	Recipe string `json:"recipe"`
 	Source string `json:"source"`
@@ -67,10 +70,10 @@ type lockManagedEntry struct {
 	Policy string `json:"policy"`
 }
 
-// lockTOMLString is _toml_string (lib/_internal/lock.py:81-83): escape the
+// LockTOMLString is _toml_string (lib/_internal/lock.py:81-83): escape the
 // backslash first, then the double quote. Control characters are emitted raw
 // — never \n, \t or any other escape sequence.
-func lockTOMLString(value string) string {
+func LockTOMLString(value string) string {
 	escaped := strings.ReplaceAll(value, `\`, `\\`)
 	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
 	return `"` + escaped + `"`
@@ -90,7 +93,7 @@ func hasControlChar(s string) bool {
 // firstControlCharLocator walks every envelope key and value in the emitter's
 // deterministic order and returns a locator naming the first string that
 // contains a control character; "" when the envelope is clean.
-func firstControlCharLocator(req *lockWriteRequest) string {
+func firstControlCharLocator(req *LockWriteRequest) string {
 	metaKeys := make([]string, 0, len(req.Meta))
 	for key := range req.Meta {
 		metaKeys = append(metaKeys, key)
@@ -188,7 +191,7 @@ func firstControlCharLocator(req *lockWriteRequest) string {
 	return ""
 }
 
-// renderLock is the write_lock body (lib/_internal/lock.py:86-122): fixed
+// RenderLock is the write_lock body (lib/_internal/lock.py:86-122): fixed
 // section order [meta] → [managed."<path>"] (sorted, empty values skipped) →
 // [deps."<dep_id>".skills."<skill>"] (sorted, empty file maps skipped) →
 // [agents."<harness>"] (sorted, filenames sorted), assembled as
@@ -198,8 +201,8 @@ func firstControlCharLocator(req *lockWriteRequest) string {
 // stamp, and D17 re-extends deps only (recipes stay collapsed) for dep
 // content-hash drift detection, byte-format identical to the Python
 // fallback writer.
-func renderLock(req *lockWriteRequest) string {
-	lines := []string{lockHeader}
+func RenderLock(req *LockWriteRequest) string {
+	lines := []string{LockHeader}
 
 	if len(req.Meta) > 0 {
 		lines = append(lines, "[meta]")
@@ -207,10 +210,10 @@ func renderLock(req *lockWriteRequest) string {
 		// `if meta.get("cli_version")`). Unknown meta keys are ignored,
 		// matching the reference's fixed key emission.
 		if req.Meta["cli_version"] != "" {
-			lines = append(lines, "cli_version = "+lockTOMLString(req.Meta["cli_version"]))
+			lines = append(lines, "cli_version = "+LockTOMLString(req.Meta["cli_version"]))
 		}
 		if req.Meta["synced_at"] != "" {
-			lines = append(lines, "synced_at = "+lockTOMLString(req.Meta["synced_at"]))
+			lines = append(lines, "synced_at = "+LockTOMLString(req.Meta["synced_at"]))
 		}
 		lines = append(lines, "")
 	}
@@ -225,7 +228,7 @@ func renderLock(req *lockWriteRequest) string {
 		if entry.SHA256 == "" {
 			continue
 		}
-		lines = append(lines, "[managed."+lockTOMLString(path)+"]")
+		lines = append(lines, "[managed."+LockTOMLString(path)+"]")
 		// Fixed key order sha256, recipe, source, kind, policy; empty
 		// values skipped exactly like the reference.
 		for _, kv := range []struct{ key, value string }{
@@ -236,7 +239,7 @@ func renderLock(req *lockWriteRequest) string {
 			{"policy", entry.Policy},
 		} {
 			if kv.value != "" {
-				lines = append(lines, kv.key+" = "+lockTOMLString(kv.value))
+				lines = append(lines, kv.key+" = "+LockTOMLString(kv.value))
 			}
 		}
 		lines = append(lines, "")
@@ -261,14 +264,14 @@ func renderLock(req *lockWriteRequest) string {
 			if len(files) == 0 {
 				continue
 			}
-			lines = append(lines, "[deps."+lockTOMLString(depID)+".skills."+lockTOMLString(skill)+"]")
+			lines = append(lines, "[deps."+LockTOMLString(depID)+".skills."+LockTOMLString(skill)+"]")
 			rels := make([]string, 0, len(files))
 			for rel := range files {
 				rels = append(rels, rel)
 			}
 			sort.Strings(rels)
 			for _, rel := range rels {
-				lines = append(lines, lockTOMLString(rel)+" = "+lockTOMLString(files[rel]))
+				lines = append(lines, LockTOMLString(rel)+" = "+LockTOMLString(files[rel]))
 			}
 			lines = append(lines, "")
 		}
@@ -284,14 +287,14 @@ func renderLock(req *lockWriteRequest) string {
 		if len(files) == 0 {
 			continue
 		}
-		lines = append(lines, "[agents."+lockTOMLString(harness)+"]")
+		lines = append(lines, "[agents."+LockTOMLString(harness)+"]")
 		names := make([]string, 0, len(files))
 		for name := range files {
 			names = append(names, name)
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			lines = append(lines, lockTOMLString(name)+" = "+lockTOMLString(files[name]))
+			lines = append(lines, LockTOMLString(name)+" = "+LockTOMLString(files[name]))
 		}
 		lines = append(lines, "")
 	}
@@ -299,7 +302,7 @@ func renderLock(req *lockWriteRequest) string {
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
 }
 
-// writeLockFile replaces lockPath with the rendered lock via a temp file in
+// WriteLockFile replaces lockPath with the rendered lock via a temp file in
 // the lock's parent directory plus rename, mirroring the Python reference
 // (lock.py:123-136): the parent is created first, a failed write removes the
 // temp and leaves the original untouched. The temp file keeps CreateTemp's
@@ -311,7 +314,7 @@ func renderLock(req *lockWriteRequest) string {
 // where it is told (--write-lock's lock_path, --write-recipe-config's
 // target, ...) — so envelope paths are trusted exactly like the flag's other
 // inputs; there is deliberately no path confinement.
-func writeLockFile(req *lockWriteRequest) error {
+func WriteLockFile(req *LockWriteRequest) error {
 	parent := filepath.Dir(req.LockPath)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
@@ -321,7 +324,7 @@ func writeLockFile(req *lockWriteRequest) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	if _, err := tmp.WriteString(renderLock(req)); err != nil {
+	if _, err := tmp.WriteString(RenderLock(req)); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
 		return err
@@ -337,17 +340,17 @@ func writeLockFile(req *lockWriteRequest) error {
 	return nil
 }
 
-// runWriteLock is the --write-lock command: one JSON envelope on stdin, one
+// RunWriteLock is the --write-lock command: one JSON envelope on stdin, one
 // JSON envelope on stdout. Exit 0 on success, exit 2 on a structured refusal
 // ({"error": ...} on stdout) or an infrastructure failure (diagnostic on
 // stderr).
-func runWriteLock(stdin io.Reader, stdout, stderr io.Writer) int {
+func RunWriteLock(stdin io.Reader, stdout, stderr io.Writer) int {
 	raw, err := io.ReadAll(stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --write-lock: read stdin: %v\n", err)
 		return 2
 	}
-	var req lockWriteRequest
+	var req LockWriteRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		var typeErr *json.UnmarshalTypeError
 		if errors.As(err, &typeErr) {
@@ -358,9 +361,9 @@ func runWriteLock(stdin io.Reader, stdout, stderr io.Writer) int {
 			if field == "" {
 				field = "envelope"
 			}
-			fmt.Fprintln(stdout, `{"error": `+pyJSONString("lock write: non-string value at "+field)+`}`)
+			fmt.Fprintln(stdout, `{"error": `+PyJSONString("lock write: non-string value at "+field)+`}`)
 		} else {
-			fmt.Fprintln(stdout, `{"error": `+pyJSONString("lock write: invalid input JSON: "+err.Error())+`}`)
+			fmt.Fprintln(stdout, `{"error": `+PyJSONString("lock write: invalid input JSON: "+err.Error())+`}`)
 		}
 		return 2
 	}
@@ -378,10 +381,10 @@ func runWriteLock(stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if locator := firstControlCharLocator(&req); locator != "" {
-		fmt.Fprintln(stdout, `{"error": `+pyJSONString("value for "+locator+" contains a control character")+`}`)
+		fmt.Fprintln(stdout, `{"error": `+PyJSONString("value for "+locator+" contains a control character")+`}`)
 		return 2
 	}
-	if err := writeLockFile(&req); err != nil {
+	if err := WriteLockFile(&req); err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --write-lock: %v\n", err)
 		return 2
 	}
