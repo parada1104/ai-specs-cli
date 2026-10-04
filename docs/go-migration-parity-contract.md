@@ -411,6 +411,27 @@ FROZEN and unchanged:
 - No other error surface is normalized by this entry; the existing
   locale-collation exception above remains narrow and separate.
 
+### Recipe-mcp fatal-error framing — TOLERANT (narrow, human-accepted final bounded round 2026-10-04)
+
+When the MCP_COUNT oracle (the inline python heredoc of `sync_one_agent`'s
+caller) dies on a recipe-mcp JSON that cannot be read or has no len, the
+stderr TRACEBACK FORMATTING is **TOLERANT**: interpreter paths, frames and
+version-specific layout may be replaced by a stable portable Go diagnostic
+that names the exception class.
+
+FROZEN and unchanged:
+
+- Exit code 1, raised BEFORE the banner and before any write.
+- The failure-class distinction: a non-ENOENT read error (e.g. a directory
+  path — legacy `IsADirectoryError`; permission — `PermissionError`) is
+  reported differently from an unsized JSON body (number/bool/null — legacy
+  `TypeError` for `len()`); the two classes must stay distinguishable and
+  the diagnostic must name the correct class (no invented text).
+- The len semantics of the non-fatal cases (missing file and malformed/empty
+  JSON count as empty; dict/list/string lengths as measured).
+- The existing locale-collation and resolver-plan exceptions remain narrow
+  and separate; nothing else is normalized.
+
 ---
 
 ## 11. Environment variables

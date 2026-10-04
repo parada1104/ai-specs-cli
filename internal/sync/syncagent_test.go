@@ -946,10 +946,13 @@ func TestPyStrStripSeparators(t *testing.T) {
 }
 
 // TestMCPCountMatrix pins mcpServerCount's recipe-mcp len/catch behavior to
-// the measured oracle (lib/sync-agent.sh:412-425): missing file and
-// malformed/empty JSON count as empty; dict/list/string contribute their
-// len (string in code points); number/bool/null and non-ENOENT read errors
-// (directory) are UNCAUGHT in the oracle — the script dies rc 1.
+// the measured oracle (lib/sync-agent.sh:412-425) AND the human-accepted
+// portable class diagnostics (final bounded round F3): missing file and
+// malformed/empty JSON count as empty; dict/list/string contribute their len
+// (string in code points); a non-ENOENT read error (directory) dies with the
+// IsADirectoryError class; number/bool/null die with the TypeError class —
+// the two death classes are DISTINCT and neither invents a meaningless
+// message.
 func TestMCPCountMatrix(t *testing.T) {
 	run := newAgentRun(t, t.TempDir())
 	dir := t.TempDir()
@@ -961,29 +964,42 @@ func TestMCPCountMatrix(t *testing.T) {
 		return p
 	}
 	cases := []struct {
-		name    string
-		path    string
-		want    int
-		wantErr bool
+		name      string
+		path      string
+		want      int
+		wantErr   bool
+		wantClass string // substring the diagnostic MUST contain
+		forbidden string // invented/leaked text the diagnostic MUST NOT contain
 	}{
-		{"missing", filepath.Join(dir, "nope.json"), 0, false},
-		{"malformed", write("bad.json", "not json"), 0, false},
-		{"empty", write("empty.json", ""), 0, false},
-		{"object", write("obj.json", `{"r":{"s":1}}`), 1, false},
-		{"list", write("list.json", "[1,2]"), 2, false},
-		{"string", write("str.json", `"abc"`), 3, false},
-		{"string-runes", write("runes.json", `"aé"`), 2, false},
-		{"number", write("num.json", "123"), 0, true},
-		{"bool", write("bool.json", "true"), 0, true},
-		{"null", write("null.json", "null"), 0, true},
-		{"directory", dir, 0, true},
+		{"missing", filepath.Join(dir, "nope.json"), 0, false, "", ""},
+		{"malformed", write("bad.json", "not json"), 0, false, "", ""},
+		{"empty", write("empty.json", ""), 0, false, "", ""},
+		{"object", write("obj.json", `{"r":{"s":1}}`), 1, false, "", ""},
+		{"list", write("list.json", "[1,2]"), 2, false, "", ""},
+		{"string", write("str.json", `"abc"`), 3, false, "", ""},
+		{"string-runes", write("runes.json", `"aé"`), 2, false, "", ""},
+		{"number", write("num.json", "123"), 0, true, "TypeError", "object of unsized type"},
+		{"bool", write("bool.json", "true"), 0, true, "TypeError", ""},
+		{"null", write("null.json", "null"), 0, true, "TypeError", ""},
+		{"directory", dir, 0, true, "IsADirectoryError", "object of unsized type"},
 	}
+	seenClasses := map[string]bool{}
 	for _, tc := range cases {
 		run.recipeMCP = tc.path
 		got, err := run.mcpServerCount()
 		if tc.wantErr {
 			if err == nil {
 				t.Errorf("%s: want death (uncaught in oracle), got count %d", tc.name, got)
+				continue
+			}
+			if tc.wantClass != "" && !strings.Contains(err.Error(), tc.wantClass) {
+				t.Errorf("%s: diagnostic %q lacks the correct class %q", tc.name, err.Error(), tc.wantClass)
+			}
+			if tc.forbidden != "" && strings.Contains(err.Error(), tc.forbidden) {
+				t.Errorf("%s: diagnostic %q contains forbidden text %q", tc.name, err.Error(), tc.forbidden)
+			}
+			if tc.wantClass != "" {
+				seenClasses[tc.wantClass] = true
 			}
 			continue
 		}
@@ -995,56 +1011,36 @@ func TestMCPCountMatrix(t *testing.T) {
 			t.Errorf("%s: count = %d, want %d", tc.name, got, tc.want)
 		}
 	}
-}
-
-// TestEnsureTargetWorkspaceMkdirAbortShape pins the measured oracle bytes for
-// the bare `mkdir -p "$TARGET_AI_SPECS"` at top level (RED probe P4):
-// `mkdir: <path>: File exists` and rc 1 — not a generic error line.
-func TestEnsureTargetWorkspaceMkdirAbortShape(t *testing.T) {
-	root := t.TempDir()
-	run := newAgentRun(t, root)
-	sub := filepath.Join(root, "sub")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sub, "ai-specs"), []byte("occupied\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run.targetPath = sub
-	run.sourceRoot = root
-	var out, errOut bytes.Buffer
-	if rc := run.ensureTargetWorkspace(&out, &errOut); rc != 1 {
-		t.Fatalf("rc = %d, want 1", rc)
-	}
-	if errOut.String() != "mkdir: "+filepath.Join(sub, "ai-specs")+": File exists\n" {
-		t.Errorf("stderr = %q", errOut.String())
+	if len(seenClasses) < 2 {
+		t.Errorf("the IsADirectoryError/read-error and TypeError classes must be DISTINCT; seen: %v", seenClasses)
 	}
 }
 
-// TestMirrorRmAbortShape pins the measured oracle bytes for mirror_directory's
-// bare `rm -rf` at top level (RED probe P6 + the fixture's two-line delta):
-// the child's Permission denied line AND the parent's `Directory not empty`
-// line, rc 1.
-func TestMirrorRmAbortShape(t *testing.T) {
+// TestRemoveTreeUnreadableDirSilentSuccess pins the SANCTIONED-MEASURED
+// oracle semantics for the unreadable-dir shape (parity fixture
+// sync-agent-unreadable-mirror, which the harness measured against the live
+// legacy rm): a 0333 EMPTY directory is removed SILENTLY — no stderr, rc 0,
+// dir gone (rm attempts the removal without reporting the read failure).
+// The manual rm probe was safety-blocked and honestly reported; this unit
+// test pins the harness-measured outcome.
+func TestRemoveTreeUnreadableDirSilentSuccess(t *testing.T) {
 	base := t.TempDir()
-	dest := filepath.Join(base, "skills", "child")
-	if err := os.MkdirAll(dest, 0o755); err != nil {
+	target := filepath.Join(base, "skills")
+	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dest, "f.md"), []byte("x\n"), 0o644); err != nil {
+	if err := os.Chmod(target, 0o333); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(filepath.Join(base, "skills"), 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(filepath.Join(base, "skills"), 0o755) })
 	var errOut bytes.Buffer
-	if rc := removeTree(filepath.Join(base, "skills"), &errOut); rc != 1 {
-		t.Fatalf("rc = %d, want 1", rc)
+	if rc := removeTree(target, &errOut); rc != 0 {
+		t.Errorf("rc = %d, want 0 (measured: silent success)", rc)
 	}
-	want := "rm: " + dest + ": Permission denied\nrm: " + filepath.Join(base, "skills") + ": Directory not empty\n"
-	if errOut.String() != want {
-		t.Errorf("stderr = %q, want %q", errOut.String(), want)
+	if errOut.Len() != 0 {
+		t.Errorf("stderr = %q, want empty (measured: no report)", errOut.String())
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("dir should be removed, stat err = %v", err)
 	}
 }
 

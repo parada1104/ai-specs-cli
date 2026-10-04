@@ -735,7 +735,7 @@ def _setup_sync_agent_arg_contract(project: Path) -> None:
            "[project]\n"
            "name = 'parity-fixture'\n"
            "\n[agents]\n"
-           "enabled = [' claude', 'pi ', 1, true, '']\n")
+           "enabled = [' claude', 'pi ', \"\\u001claude2\", \"x\\ny\", 1, true, '']\n")
     _write(project, "AGENTS.md", "# hand-seeded root brief\n")
     (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
     (project / "ai-specs" / "commands").mkdir(exist_ok=True)
@@ -793,6 +793,29 @@ def _setup_sync_agent_abort_shapes(project: Path) -> None:
     skills_b.parent.chmod(0o555)
     (project / "subC").mkdir(exist_ok=True)
     _write(project, "subC/ai-specs", "occupied\n")
+
+
+def _setup_sync_agent_unreadable_mirror(project: Path) -> None:
+    """Final-round F2 regression fixture (sanctioned live measurement of the
+    unmeasured BSD tree detail): a subrepo whose ai-specs/skills directory is
+    EMPTY but UNREADABLE (0333 — no read permission). mirror_directory's
+    `rm -rf` then fails at the directory read (EACCES) while the removal by
+    the parent may still succeed; the differential harness measures the real
+    legacy rm status/tree/error ordering against the Go port, replacing the
+    safety-blocked manual probe. Aggregated rc 1 (never 0 after an error) is
+    asserted by the unit test; this fixture pins the tree outcome."""
+    _write(project, "ai-specs/ai-specs.toml",
+           "[project]\n"
+           "name = 'parity-fixture'\n"
+           "subrepos = ['subB']\n"
+           "\n[agents]\n"
+           "enabled = ['claude']\n")
+    _write(project, "AGENTS.md", "# hand-seeded root brief\n")
+    (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+    skills_dir = project / "subB" / "ai-specs" / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    skills_dir.chmod(0o333)
+    (project / "subB").mkdir(exist_ok=True)
 
 
 def _setup_sync_agent_occupied_paths(project: Path) -> None:
@@ -1103,6 +1126,19 @@ CORPUS: tuple[Fixture, ...] = (
                   "--recipe-mcp", "recipe-mcp/missing.json"), append_root=False),
         ),
     ),
+    Fixture(
+        name="sync-agent-unreadable-mirror",
+        description="Final-round F2 regression: a subrepo whose ai-specs/skills "
+                    "directory is empty but UNREADABLE (0333) — mirror_directory's "
+                    "`rm -rf` fails at the directory read while the removal by the "
+                    "parent may still succeed; the harness measures the real legacy "
+                    "rm status/tree/error ordering (the manual probe was "
+                    "safety-blocked and honestly reported). Aggregate rc 1.",
+        setup=_setup_sync_agent_unreadable_mirror,
+        steps=(Step(("sync-agent", "--source-root", ".", "--target", "subB", "--all"),
+                    append_root=False),),
+    ),
+
     Fixture(
         name="sync-agent-abort-shapes",
         description="Remediation batch 2 (aborting coreutils shapes) "

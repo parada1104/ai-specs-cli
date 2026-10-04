@@ -538,7 +538,11 @@ func (a *agentRun) runBody() int {
 	// gate. The shell's inline python dies rc 1 on a malformed manifest.
 	count, err := a.mcpServerCount()
 	if err != nil {
-		fmt.Fprintf(a.errW, "error: %s\n", err)
+		// The oracle's inline python dies with an uncaught traceback (rc 1);
+		// the port prints the stable portable class-correct diagnostic
+		// (contract: recipe-mcp fatal-error framing — formatting/frames
+		// TOLERANT, class distinction and exit 1 FROZEN).
+		fmt.Fprintln(a.errW, err.Error())
 		return 1
 	}
 	a.mcpCount = count
@@ -611,9 +615,10 @@ func (a *agentRun) mcpServerCount() (int, error) {
 			if os.IsNotExist(rerr) {
 				return count, nil // FileNotFoundError → pass
 			}
-			// IsADirectoryError / EACCES … are UNCAUGHT in the oracle: the
-			// script dies rc 1 (measured RED: --recipe-mcp <dir> → traceback).
-			return 0, rerr
+			// Other read errors are UNCAUGHT in the oracle (script dies rc 1).
+			// Portable class-correct diagnostic (final bounded round F3): the
+			// Python exception class is named, no interpreter paths/frames.
+			return 0, fmt.Errorf("ERROR: recipe-mcp read failed (%s): %s", mcpReadClass(rerr), a.recipeMCP)
 		}
 		var v any
 		if jerr := json.Unmarshal(raw, &v); jerr != nil {
@@ -628,11 +633,29 @@ func (a *agentRun) mcpServerCount() (int, error) {
 			count += utf8.RuneCountInString(x) // Python len(str): code points; "abc" → 3
 		default:
 			// number/bool/null: len() raises TypeError, uncaught → death rc 1
-			// (measured RED: "123" → traceback, rc 1).
-			return 0, fmt.Errorf("object of unsized type")
+			// (measured RED: "123" → traceback, rc 1). Class-correct portable
+			// diagnostic (F3) — the previous text ("object of unsized type")
+			// was invented without meaning.
+			return 0, fmt.Errorf("ERROR: recipe-mcp JSON has no len (TypeError)")
 		}
 	}
 	return count, nil
+}
+
+// mcpReadClass maps a recipe-mcp read error to the Python exception class the
+// oracle would raise for it (open() semantics): EISDIR → IsADirectoryError,
+// EACCES → PermissionError, otherwise OSError.
+func mcpReadClass(err error) string {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		switch errno {
+		case syscall.EISDIR:
+			return "IsADirectoryError"
+		case syscall.EACCES:
+			return "PermissionError"
+		}
+	}
+	return "OSError"
 }
 
 // ensureTargetWorkspace is lib/sync-agent.sh:357-386.
@@ -1265,7 +1288,15 @@ func removeTree(path string, errW io.Writer) int {
 	return removeRf(path, errW)
 }
 
+// removeTree mirrors `rm -rf` with the MEASURED BSD semantics (both shapes
+// sanctioned-measured): (1) 0555 readable dir with child — the child rmdir
+// fails EACCES AND the parent rmdir fails ENOTEMPTY: BOTH lines print, rc 1
+// (child failures propagate but never stop the parent removal attempt);
+// (2) 0333 unreadable EMPTY dir — rm does NOT report the read failure:
+// it goes straight to the removal, which succeeds → SILENT rc 0. Reported
+// errors are removal failures only; rc is 1 exactly when one was printed.
 func removeRf(path string, errW io.Writer) int {
+	rc := 0
 	info, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1275,20 +1306,29 @@ func removeRf(path string, errW io.Writer) int {
 		return 1
 	}
 	if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
-		entries, rdErr := os.ReadDir(path)
-		if rdErr != nil {
-			printChildErr(errW, "rm", rdErr)
-		} else {
+		// A read failure is NOT reported (measured: 0333 empty dir → silent
+		// success); rm falls through to the removal attempt either way. A child
+		// removal failure is printed by the child call and propagates (P6:
+		// the child's EACCES line AND the parent's `Directory not empty` line
+		// both print — rm continues to the parent attempt after a failure),
+		// but it does NOT skip the parent's own removal attempt.
+		childFailed := false
+		if entries, rdErr := os.ReadDir(path); rdErr == nil {
 			for _, entry := range entries {
-				removeRf(filepath.Join(path, entry.Name()), errW)
+				if rc := removeRf(filepath.Join(path, entry.Name()), errW); rc != 0 {
+					childFailed = true
+				}
 			}
+		}
+		if childFailed {
+			rc = 1
 		}
 	}
 	if err := os.Remove(path); err != nil {
 		printChildErr(errW, "rm", err)
 		return 1
 	}
-	return 0
+	return rc
 }
 
 func isRegularFilePath(path string) bool {
