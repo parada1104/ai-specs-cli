@@ -392,26 +392,24 @@ func (r *runner) run(opts options) int {
 		return rc
 	}
 
-	// Fan-out: AI_SPECS_SYNC_NESTED=1 is exported from here on (never for
-	// steps a-g). Any target failure is exit 1, not the step's rc.
+	// Fan-out: AI_SPECS_SYNC_NESTED=1 is exported from here on in the shell;
+	// the native runner takes the nested flag directly. Any target failure is
+	// exit 1, not the step's rc.
 	for i := range paths {
 		target := paths[i]
 		label := labels[i]
-		argv := []string{"bash", filepath.Join(r.home, "lib", "sync-agent.sh"),
-			"--source-root", root,
-			"--target", target,
-			"--all",
-			"--recipe-mcp", recipeMcpTemp,
-			"--resolved-config", resolvedConfigTemp,
-			"--resolved-hooks", resolvedHooksTemp}
-		if opts.adoptBrief {
-			argv = append(argv, "--adopt-brief")
-		}
-		if opts.verbose {
-			argv = append(argv, "--verbose")
+		agentOpts := agentOptions{
+			sourceRoot:     root,
+			target:         target,
+			selectAll:      true,
+			recipeMCP:      recipeMcpTemp,
+			resolvedConfig: resolvedConfigTemp,
+			resolvedHooks:  resolvedHooksTemp,
+			adoptBrief:     opts.adoptBrief,
+			verbose:        opts.verbose,
 		}
 		rc := r.runStep(label+" → "+target, func(out, errW io.Writer) int {
-			return r.execNested(argv, out, errW)
+			return runAgentSingle(r, agentOpts, agentStreams{out: out, errW: errW}, true)
 		})
 		if rc != 0 {
 			fmt.Fprintf(r.stderr, "ERROR: sync failed for target %s (%s). Stopped on first failure; previous writes are not rolled back.\n", target, label)

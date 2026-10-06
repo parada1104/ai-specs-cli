@@ -659,6 +659,210 @@ def _setup_brief_render_false(project: Path) -> None:
     (project / "ai-specs" / "commands").mkdir(exist_ok=True)
 
 
+def _setup_sync_agent_standalone(project: Path) -> None:
+    """Standalone `sync-agent --all` (no --source-root/--target) on a declared
+    multi-target root that was never synced: the public-root fan-out banner,
+    the --resolved-config-only seam, three nested children (each running its
+    own materialize fallback — D22: no hooks without --resolved-hooks), child
+    banner/footer suppression, and one parent footer. AGENTS.md is seeded by
+    hand: the same-root workspace guard requires it, and the root child never
+    renders it (only subrepo children render through ensure_target_workspace).
+    """
+    _write(project, "ai-specs/ai-specs.toml",
+           "[project]\n"
+           "name = 'parity-fixture'\n"
+           "subrepos = ['sub-a', 'sub-b']\n"
+           "\n[agents]\n"
+           "enabled = ['claude', 'pi']\n")
+    _write(project, "AGENTS.md", "# hand-seeded root brief\n")
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    (project / "sub-a").mkdir(exist_ok=True)
+    (project / "sub-b").mkdir(exist_ok=True)
+
+
+def _setup_nested_fanout_suppression(project: Path) -> None:
+    """Declared multi-target root: `sync` fans out to nested children (their
+    banner/footer is suppressed by AI_SPECS_SYNC_NESTED=1 inside the parent's
+    captured step), then standalone `sync-agent --all` re-runs the same targets
+    with full framing. A suppression leak in the native fan-out changes stdout
+    in the sync step; a framing leak in the standalone path changes it in the
+    second step."""
+    _write(project, "ai-specs/ai-specs.toml",
+           "[project]\n"
+           "name = 'parity-fixture'\n"
+           "subrepos = ['sub-a', 'sub-b']\n"
+           "\n[agents]\n"
+           "enabled = ['claude', 'pi']\n")
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    (project / "sub-a").mkdir(exist_ok=True)
+    (project / "sub-b").mkdir(exist_ok=True)
+
+
+def _setup_fanout_matrix(project: Path) -> None:
+    """All eight agent selectors with claude LAST behind a real CLAUDE.md file
+    (the relative instructions symlink must refuse, rc 1) and a user-owned
+    file inside .cursor/commands (D3': never rm -rf the commands dir; managed
+    names are overwritten in place, the user file is preserved with a
+    warning). `sync` fails at the root child's claude step after everything
+    before it succeeded; `sync-agent --all` fails the same way standalone —
+    both legs must agree on rc, streams and the partial tree, including the
+    relative/absolute symlink kinds of the seven agents that did sync."""
+    _write(project, "ai-specs/ai-specs.toml", _manifest(
+        agents=("cursor", "opencode", "codex", "copilot", "gemini", "pi",
+                "omp", "claude"),
+    ))
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    # Non-symlink occupancy on claude's instructions path: hard refusal.
+    _write(project, "CLAUDE.md", "manual file — not a symlink\n")
+    # User-owned command file in the cursor commands dir: preserved (D3').
+    _write(project, ".cursor/commands/user-own.md", "# mine\n")
+
+
+def _setup_sync_agent_arg_contract(project: Path) -> None:
+    """JD-A-001 + JD-A-002 regression fixture. [agents].enabled carries a
+    whitespace-padded string, a padded valid agent, an int, a bool and an
+    empty string: toml-read.py's _normalize_string_list keeps only stripped
+    non-empty strings, so exactly claude and pi must sync (the int/bool are
+    dropped, never repr'd as agent names). Remediation batch 2 extends the
+    mix with an information-separator prefix (U+001C strips like space, so
+    the entry normalizes to laude2 — an unknown agent) and an embedded
+    newline (the print + while-read loop splits it into x and y — two more
+    unknown-agent notices; three total beyond claude/pi). The trailing
+    value-taking flag steps pin the
+    `shift 2` failure: rc 1, no output, no writes (D20 class)."""
+    _write(project, "ai-specs/ai-specs.toml",
+           "[project]\n"
+           "name = 'parity-fixture'\n"
+           "\n[agents]\n"
+           "enabled = [' claude', 'pi ', \"\\u001claude2\", \"x\\ny\", 1, true, '']\n")
+    _write(project, "AGENTS.md", "# hand-seeded root brief\n")
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+
+
+def _setup_sync_agent_recipe_mcp_matrix(project: Path) -> None:
+    """JD remediation batch 2 (recipe-mcp count) regression fixture: the
+    byte-comparable len cases of the MCP_COUNT oracle — top-level list (len 2),
+    string (len 3), object (len 1), malformed body (0) and a missing file (0)
+    — each as its own `--recipe-mcp` invocation so the banner's `mcp:` line
+    pins the count. The DEATH cases (a directory path / a number / bool /
+    null: uncaught IsADirectoryError, TypeError tracebacks in legacy) are NOT
+    fixtureable here — the tracebacks embed the platform python's frames —
+    they are unit-gated by TestMCPCountMatrix with the documented deviation."""
+    _write(project, "ai-specs/ai-specs.toml",
+           "[project]\n"
+           "name = 'parity-fixture'\n"
+           "\n[agents]\n"
+           "enabled = ['claude']\n")
+    _write(project, "AGENTS.md", "# hand-seeded root brief\n")
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    (project / "sub-a").mkdir(exist_ok=True)
+    (project / "recipe-mcp").mkdir(exist_ok=True)
+    _write(project, "recipe-mcp/list.json", "[1,2]\n")
+    _write(project, "recipe-mcp/str.json", '"abc"\n')
+    _write(project, "recipe-mcp/obj.json", '{"only": {}}\n')
+    _write(project, "recipe-mcp/bad.json", "not json\n")
+
+
+def _setup_sync_agent_abort_shapes(project: Path) -> None:
+    """JD remediation batch 2 (aborting coreutils shapes) regression fixture:
+    three sequential single-target invocations, each aborting at a different
+    bare/`|| return` site with the measured coreutils stderr and rc 1 —
+    (1) managed `cp` into a 0555 .claude/commands (Permission denied naming
+    the destination), (2) mirror_directory's `rm -rf` over a 0555 skills
+    directory holding a child, (3) `mkdir -p` over an existing ai-specs FILE
+    (File exists). Message text, target path and rc are FROZEN; the fixture
+    covers all three shapes in one deterministic setup."""
+    _write(project, "ai-specs/ai-specs.toml",
+           "[project]\n"
+           "name = 'parity-fixture'\n"
+           "subrepos = ['subA', 'subB', 'subC']\n"
+           "\n[agents]\n"
+           "enabled = ['claude']\n")
+    _write(project, "AGENTS.md", "# hand-seeded root brief\n")
+    (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+    _write(project, "ai-specs/commands/demo.md", "# managed command\n")
+    (project / ".claude" / "commands").mkdir(parents=True, exist_ok=True)
+    (project / ".claude" / "commands").chmod(0o555)
+    (project / "subA").mkdir(exist_ok=True)
+    skills_b = project / "subB" / "ai-specs" / "skills" / "child"
+    skills_b.mkdir(parents=True, exist_ok=True)
+    (skills_b / "f.md").write_text("x\n")
+    skills_b.parent.chmod(0o555)
+    (project / "subC").mkdir(exist_ok=True)
+    _write(project, "subC/ai-specs", "occupied\n")
+
+
+def _setup_sync_agent_unreadable_mirror(project: Path) -> None:
+    """Final-round F2 regression fixture (sanctioned live measurement of the
+    unmeasured BSD tree detail): a subrepo whose ai-specs/skills directory is
+    EMPTY but UNREADABLE (0333 — no read permission). MEASURED OUTCOME (the
+    differential harness against the live legacy rm, replacing the
+    safety-blocked manual probe): rm -rf does NOT report the read failure —
+    it removes the empty dir SILENTLY (no stderr, rc 0, directory gone) and
+    the run continues to full success; the Go port matches. The removal-
+    failure shapes (child EACCES + parent `Directory not empty`, rc 1) are
+    pinned by sync-agent-abort-shapes and the unit tests."""
+    _write(project, "ai-specs/ai-specs.toml",
+           "[project]\n"
+           "name = 'parity-fixture'\n"
+           "subrepos = ['subB']\n"
+           "\n[agents]\n"
+           "enabled = ['claude']\n")
+    _write(project, "AGENTS.md", "# hand-seeded root brief\n")
+    (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+    skills_dir = project / "subB" / "ai-specs" / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    skills_dir.chmod(0o333)
+    (project / "subB").mkdir(exist_ok=True)
+
+
+def _setup_sync_agent_occupied_paths(project: Path) -> None:
+    """JD-A-003 regression fixture: .pi and .omp exist as REGULAR FILES while
+    pi and omp are enabled. The symlink helpers run bare inside run_step's
+    set +e, so mkdir -p (<occupied leaf>: File exists) and ln (Not a
+    directory) print coreutils-shaped stderr, the ✓ symlink created line is
+    still emitted, the run completes rc 0 with the footer, and claude (no
+    occupancy) syncs normally. Byte-compares the error shapes."""
+    _write(project, "ai-specs/ai-specs.toml", _manifest(
+        agents=("claude", "pi", "omp"),
+    ))
+    _write(project, "AGENTS.md", "# hand-seeded root brief\n")
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    _write(project, ".pi", "occupied\n")
+    _write(project, ".omp", "occupied\n")
+
+
+def _setup_sync_agent_ro_mirror(project: Path) -> None:
+    """JD-A-004 regression fixture: a local skill directory is read-only
+    (0555) when flatten copies it into the cache, and the subrepo mirror then
+    copies FROM the read-only cache directory. cp -R writes the contents
+    first and applies the source mode afterwards, so the mirror succeeds and
+    the destination ends 0555. The explicit single-target form (--source-root
+    . --target sub-a) is required: with a multi-target fan-out the SECOND
+    child's flatten re-rmtree's the 0555 cache dir and dies in BOTH legs with
+    an unnormalizable Python traceback (the deviation documented on the
+    Flatten port), which would make the fixture undecidable."""
+    _write(project, "ai-specs/ai-specs.toml",
+           "[project]\n"
+           "name = 'parity-fixture'\n"
+           "subrepos = ['sub-a']\n"
+           "\n[agents]\n"
+           "enabled = ['claude', 'pi']\n")
+    _write(project, "AGENTS.md", "# hand-seeded root brief\n")
+    (project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
+    skill_dir = project / "ai-specs" / "skills" / "ro-skill"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text("# read-only skill\n")
+    skill_dir.chmod(0o555)
+    (project / "sub-a").mkdir(exist_ok=True)
+
+
 def _setup_doctor_healthy(project: Path) -> None:
     """Synced project: sync + sync-agent --all, then doctor must agree on the
     generated surface.
@@ -853,6 +1057,130 @@ CORPUS: tuple[Fixture, ...] = (
                     "while preserving foreign config and stale adapters.",
         setup=_setup_hooks_five_runtimes,
         steps=(Step(("sync",)), Step(("sync-agent", "--all"))),
+    ),
+    Fixture(
+        name="sync-agent-standalone",
+        description="Standalone `sync-agent --all` (no --source-root/--target) "
+                    "on a declared multi-target root that was never synced: "
+                    "public-root fan-out banner, the --resolved-config-only "
+                    "seam, three nested children each running its own "
+                    "materialize fallback (D22: no hooks), child suppression, "
+                    "one parent footer.",
+        setup=_setup_sync_agent_standalone,
+        steps=(Step(("sync-agent", "--all")),),
+    ),
+    Fixture(
+        name="nested-fanout-suppression",
+        description="Declared multi-target root: `sync` fans out to nested "
+                    "children whose banner/footer is suppressed "
+                    "(AI_SPECS_SYNC_NESTED=1) inside the parent's captured "
+                    "step, then standalone `sync-agent --all` re-runs the same "
+                    "targets with full framing.",
+        setup=_setup_nested_fanout_suppression,
+        steps=(Step(("sync",)), Step(("sync-agent", "--all"))),
+    ),
+    Fixture(
+        name="fanout-matrix",
+        description="All eight agent selectors with claude LAST behind a real "
+                    "CLAUDE.md (hard refusal on non-symlink occupancy, rc 1) "
+                    "and a user-owned file in .cursor/commands (D3' "
+                    "preservation): `sync` then `sync-agent --all` must fail "
+                    "identically in both legs on rc, streams and the partial "
+                    "tree, including the relative/absolute symlink kinds of "
+                    "the seven agents that did sync.",
+        setup=_setup_fanout_matrix,
+        steps=(Step(("sync",)), Step(("sync-agent", "--all"))),
+    ),
+    Fixture(
+        name="sync-agent-arg-contract",
+        description="JD-A-001/JD-A-002 regression: [agents].enabled mixes "
+                    "whitespace-padded strings, an information-separator "
+                    "prefix, an embedded newline, an int, a bool and an empty "
+                    "string — normalization keeps exactly claude, pi, laude2, "
+                    "x and y; then trailing `--target`/`--source-root` "
+                    "invocations die rc 1 with no output and no writes.",
+        setup=_setup_sync_agent_arg_contract,
+        steps=(
+            Step(("sync-agent", "--all")),
+            Step(("sync-agent", "--target"), append_root=False),
+            Step(("sync-agent", "--source-root"), append_root=False),
+        ),
+    ),
+    Fixture(
+        name="sync-agent-recipe-mcp-matrix",
+        description="Remediation batch 2 (recipe-mcp count) regression: the "
+                    "byte-comparable MCP_COUNT cases — top-level list (2), "
+                    "string (3), object (1), malformed (0) and missing file "
+                    "(0) — each pinned by the banner's `mcp:` line. The "
+                    "uncaught-death cases (directory/number/bool/null) stay "
+                    "unit-gated with stable portable class diagnostics "
+                    "(IsADirectoryError/TypeError); the legacy tracebacks embed "
+                    "platform-python frames, so they are not fixtureable.",
+        setup=_setup_sync_agent_recipe_mcp_matrix,
+        steps=(
+            Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
+                  "--recipe-mcp", "recipe-mcp/list.json"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
+                  "--recipe-mcp", "recipe-mcp/str.json"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
+                  "--recipe-mcp", "recipe-mcp/obj.json"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
+                  "--recipe-mcp", "recipe-mcp/bad.json"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
+                  "--recipe-mcp", "recipe-mcp/missing.json"), append_root=False),
+        ),
+    ),
+    Fixture(
+        name="sync-agent-unreadable-mirror",
+        description="Final-round F2 regression: a subrepo whose ai-specs/skills "
+                    "directory is empty but UNREADABLE (0333) — MEASURED via this "
+                    "harness: legacy `rm -rf` reports nothing and removes the "
+                    "empty dir silently (rc 0, full run success), and the Go port "
+                    "matches byte-for-byte. Removal-failure shapes live in "
+                    "sync-agent-abort-shapes.",
+        setup=_setup_sync_agent_unreadable_mirror,
+        steps=(Step(("sync-agent", "--source-root", ".", "--target", "subB", "--all"),
+                    append_root=False),),
+    ),
+
+    Fixture(
+        name="sync-agent-abort-shapes",
+        description="Remediation batch 2 (aborting coreutils shapes) "
+                    "regression: three sequential single-target invocations "
+                    "aborting at the managed `cp` into a 0555 commands dir, "
+                    "the mirror `rm -rf` over a 0555 skills dir with a child, "
+                    "and `mkdir -p` over an existing ai-specs file — the "
+                    "measured coreutils stderr shapes and rc 1 are FROZEN.",
+        setup=_setup_sync_agent_abort_shapes,
+        steps=(
+            Step(("sync-agent", "--source-root", ".", "--target", "subA", "--all"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "subB", "--all"), append_root=False),
+            Step(("sync-agent", "--source-root", ".", "--target", "subC", "--all"), append_root=False),
+        ),
+    ),
+    Fixture(
+        name="sync-agent-occupied-paths",
+        description="JD-A-003 regression: .pi/.omp exist as regular files "
+                    "while pi/omp are enabled — the bare mkdir/ln inside the "
+                    "symlink helpers print coreutils-shaped errors, the ✓ "
+                    "symlink created line is still emitted, and the run "
+                    "completes rc 0 with the footer.",
+        setup=_setup_sync_agent_occupied_paths,
+        steps=(Step(("sync-agent", "--all")),),
+    ),
+    Fixture(
+        name="sync-agent-ro-mirror",
+        description="JD-A-004 regression: a 0555 local skill directory flows "
+                    "through flatten into the cache and the subrepo mirror "
+                    "then copies FROM the read-only directory — cp -R writes "
+                    "contents first and applies the mode after, so the mirror "
+                    "succeeds and the destination ends 0555. Single explicit "
+                    "target: the second child of a multi-target fan-out would "
+                    "re-rmtree the 0555 cache dir and die in both legs with "
+                    "an unnormalizable traceback.",
+        setup=_setup_sync_agent_ro_mirror,
+        steps=(Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all"),
+                    append_root=False),),
     ),
 )
 

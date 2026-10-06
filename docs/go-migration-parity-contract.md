@@ -358,6 +358,99 @@ A rewrite most easily breaks these.
 9. **`errexit` stays off inside `run_step`** until captured output is replayed —
    restoring it earlier lets a failing `cat` replace the wrapped status.
 
+### Locale-collation exception — TOLERANT (narrow, human-accepted 2026-10-04)
+
+The ORDER of the `! preserved non-managed file <dir>/<base> (move it to
+ai-specs/commands/ to manage it)` warning lines — and only their order — is
+**TOLERANT** when a non-C locale collates differently from byte order. The
+lines come from the `for extra in "$dest"/*` glob traversal in
+`sync_one_agent`'s commands fan-out; Bash iterates in `strcoll` order while
+the Go port sorts bytes (Go's stdlib has no strcoll).
+
+Scope of the tolerance — everything else stays **FROZEN**:
+
+- The message text, the per-file set, and the NUMBER of warning lines.
+- The exit code, the banner/footer framing, and the resulting tree (the
+  preserved files and the D3' in-place managed overwrite are file
+  operations, not ordering).
+- The managed-copy glob behavior (`for src in "$COMMANDS_SOURCE"/*.md` is
+  count-only in output; its order is not user-visible).
+- Nothing else about error or content formatting is normalized by this
+  entry; it covers no other glob, stream, or surface.
+
+Under `LC_ALL=C` (which the parity harness pins in `tests/parity/parity.py`
+BASE_ENV) strcoll and byte order coincide, so the corpus remains zero-delta:
+both implementations emit `B, Z, _x, a`.
+
+Evidence (macOS, BSD glob + strcoll, measured 2026-10-04, reproduced twice):
+temp project with `[agents] enabled = ['cursor']`, seeded `AGENTS.md`, and
+unmanaged `.cursor/commands/{B,a,_x,Z}.md`; `LC_ALL=en_US.UTF-8
+LANG=en_US.UTF-8 bash bin/ai-specs sync-agent . --all` prints the warnings as
+`_x, a, B, Z` while the Go binary prints `B, Z, _x, a` (identical lines,
+count, rc and tree). Decision: the human explicitly accepted the different
+warning ordering under non-C locales as a narrow TOLERANT classification,
+recorded here instead of being deferred to S16.
+
+### Resolver-plan diagnostic framing — TOLERANT (narrow, human-accepted 2026-10-04)
+
+When the standalone `sync-agent` plan extraction dies on a malformed or
+root-less target-resolve plan (`python3 -c '…["root"]'`), the stderr
+TRACEBACK FORMATTING is **TOLERANT**: interpreter paths, json module frames,
+caret annotations and version-specific layout (they differ across
+installations and interpreter versions — measured: 3.9.6 vs 3.13/3.14) may
+be replaced by a stable portable Go diagnostic.
+
+FROZEN and unchanged:
+
+- Exit code 1, raised BEFORE any banner, write or target work.
+- The failure-class distinction: a malformed plan body (legacy
+  `json.JSONDecodeError`) is reported differently from a plan without
+  `"root"` (legacy `KeyError: 'root'`); the two must stay distinguishable.
+- The deterministic diagnostic meaning: the reader learns WHICH class
+  failed.
+- No other error surface is normalized by this entry; the existing
+  locale-collation exception above remains narrow and separate.
+
+### Manifest fatal-error framing — TOLERANT (narrow, human-accepted 2026-10-05)
+
+When the MCP_COUNT oracle dies on a MANIFEST that cannot be read or parsed
+(`os.ReadFile` failure or a `tomllib`-equivalent parse error), the stderr
+TRACEBACK FORMATTING is **TOLERANT**: interpreter paths, frames and
+version-specific layout may be replaced by the stable portable `error: …`
+diagnostic the port already emits (explicitly accepted by the human in place
+of the Python traceback).
+
+FROZEN and unchanged:
+
+- Exit code 1, raised BEFORE the banner and before any write.
+- The error MEANING: the diagnostic reports the manifest read/parse failure
+  (the established `error: ` prefix is part of this pinned shape).
+- The recipe-mcp fatal-error exception above (class distinction,
+  IsADirectoryError/TypeError) remains separate and narrow, as do the
+  locale-collation and resolver-plan exceptions.
+- Nothing else is normalized; no logic change accompanies this entry.
+
+### Recipe-mcp fatal-error framing — TOLERANT (narrow, human-accepted final bounded round 2026-10-04)
+
+When the MCP_COUNT oracle (the inline python heredoc of `sync_one_agent`'s
+caller) dies on a recipe-mcp JSON that cannot be read or has no len, the
+stderr TRACEBACK FORMATTING is **TOLERANT**: interpreter paths, frames and
+version-specific layout may be replaced by a stable portable Go diagnostic
+that names the exception class.
+
+FROZEN and unchanged:
+
+- Exit code 1, raised BEFORE the banner and before any write.
+- The failure-class distinction: a non-ENOENT read error (e.g. a directory
+  path — legacy `IsADirectoryError`; permission — `PermissionError`) is
+  reported differently from an unsized JSON body (number/bool/null — legacy
+  `TypeError` for `len()`); the two classes must stay distinguishable and
+  the diagnostic must name the correct class (no invented text).
+- The len semantics of the non-fatal cases (missing file and malformed/empty
+  JSON count as empty; dict/list/string lengths as measured).
+- The existing locale-collation and resolver-plan exceptions remain narrow
+  and separate; nothing else is normalized.
+
 ---
 
 ## 11. Environment variables

@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -24,14 +23,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _go_cli  # noqa: E402
 import _sync_stub  # noqa: E402
 
-# The native Go binary: these suites must exercise the `sync` route, not the
-# legacy Bash launcher (kept only for the parity harness's legacy leg).
+# The native Go binary: these suites must exercise the `sync`/`sync-agent`
+# routes, not the legacy Bash launcher (kept only for the parity harness's
+# legacy leg).
 CLI = _go_cli.cli()
-SYNC_AGENT_SH = ROOT / "lib" / "sync-agent.sh"
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
-
-BODY_NEEDLE = 'TOML_PATH="$SOURCE_ROOT/ai-specs/ai-specs.toml"'
 
 
 def _sync_env(extra: dict | None = None) -> dict:
@@ -128,153 +125,125 @@ class _WorkspaceMixin:
         plan = json.loads(proc.stdout)
         return len(plan["targets"])
 
-    def instrumented_sync_agent_home(self, log_path: Path) -> Path:
-        """AI_SPECS_HOME with sync-agent.sh logging INVOKE/BODY entries."""
-        home = Path(tempfile.mkdtemp(prefix="ai-specs-home-"))
-        for name in os.listdir(ROOT):
-            src = ROOT / name
-            dst = home / name
-            if name == "lib":
-                dst.mkdir()
-                for lib_name in os.listdir(src):
-                    if lib_name == "sync-agent.sh":
-                        continue
-                    (dst / lib_name).symlink_to(src / lib_name)
-            else:
-                dst.symlink_to(src)
+    def resolved_target_paths(self, workspace: Path) -> list[str]:
+        import json
 
-        real = SYNC_AGENT_SH.read_text()
-        if BODY_NEEDLE not in real:
-            raise AssertionError(f"expected {BODY_NEEDLE!r} in sync-agent.sh")
-        instrumented = real.replace(
-            "set -euo pipefail\n",
-            "set -euo pipefail\n"
-            f'printf "INVOKE %s\\n" "$*" >> "{log_path}"\n',
-            1,
+        proc = subprocess.run(
+            [
+                "python3",
+                str(ROOT / "lib" / "_internal" / "target-resolve.py"),
+                str(workspace),
+            ],
+            text=True,
+            capture_output=True,
+            check=True,
         )
-        instrumented = instrumented.replace(
-            BODY_NEEDLE,
-            BODY_NEEDLE + f'\nprintf "BODY %s\\n" "$*" >> "{log_path}"',
-            1,
-        )
-        target = home / "lib" / "sync-agent.sh"
-        target.write_text(instrumented)
-        target.chmod(target.stat().st_mode | stat.S_IEXEC)
-        return home
+        plan = json.loads(proc.stdout)
+        return [t["path"] for t in plan["targets"]]
 
 
 class FanOutTerminationTests(_WorkspaceMixin, unittest.TestCase):
-    """P1 — public-root fan-out must terminate after dispatching children."""
+    """P1 — public-root fan-out must terminate after dispatching children.
+
+    Both tests observe the fan-out through the CLI boundary only: the parent's
+    per-target step lines, the framing blocks, and the resulting tree. The old
+    sync-agent.sh INVOKE/BODY instrumentation measured the Bash child-process
+    boundary, which stops being authoritative once the fan-out runs natively
+    inside the binary.
+    """
 
     def test_t1_1_public_root_fanout_invokes_exactly_n_children_no_parent_body(
         self,
     ):
-        """T1.1: N resolved targets → N child invocations; parent must not
-        fall through into a silent materialize/render pass."""
+        """T1.1: N resolved targets → N per-target passes; the parent must not
+        fall through into a single-target body against the workspace root."""
         workspace = self.make_workspace()
-        log_path = Path(tempfile.mkdtemp()) / "sync-agent.log"
-        home = None
         try:
             self.init_workspace(workspace)
-            n_targets = self.resolved_target_count(workspace)
-            self.assertGreater(n_targets, 1)
+            targets = self.resolved_target_paths(workspace)
+            self.assertGreater(len(targets), 1)
 
-            home = self.instrumented_sync_agent_home(log_path)
             proc = subprocess.run(
                 [str(CLI), "sync-agent", str(workspace), "--all"],
                 text=True,
                 capture_output=True,
                 check=False,
-                env=_sync_env({"AI_SPECS_HOME": str(home)}),
+                env=_sync_env(),
             )
             self.assertEqual(
                 proc.returncode,
                 0,
                 f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}",
             )
-
-            log = log_path.read_text() if log_path.exists() else ""
-            invokes = [
-                line[len("INVOKE ") :]
-                for line in log.splitlines()
-                if line.startswith("INVOKE ")
-            ]
-            bodies = [
-                line[len("BODY ") :]
-                for line in log.splitlines()
-                if line.startswith("BODY ")
-            ]
-            child_invokes = [args for args in invokes if "--source-root" in args]
-
+            out = proc.stdout
+            # The parent announces exactly one per-target pass per resolved
+            # target (its step lines carry the absolute target path; child
+            # step labels never do).
+            for target in targets:
+                found = len(
+                    re.findall(rf"(?m)^  syncing {re.escape(target)}$", out)
+                )
+                self.assertEqual(
+                    found,
+                    1,
+                    f"expected exactly one fan-out pass for {target}, "
+                    f"got {found}:\n{out}",
+                )
+            # One parent header and one footer: a parent that fell through
+            # into the single-target body would add a second framing pair.
+            header_count = len(re.findall(r"(?m)^ai-specs sync-agent$", out))
             self.assertEqual(
-                len(child_invokes),
-                n_targets,
-                f"expected {n_targets} child sync-agent invocations, got "
-                f"{len(child_invokes)}: {child_invokes}\nfull log:\n{log}",
+                header_count,
+                1,
+                f"parent header must appear exactly once; got {header_count}:\n{out}",
             )
-            self.assertEqual(
-                len(bodies),
-                n_targets,
-                f"parent must not enter the single-target body after fan-out; "
-                f"expected {n_targets} BODY entries, got {len(bodies)}.\n"
-                f"full log:\n{log}\nstdout:\n{proc.stdout}",
-            )
+            self.assertEqual(out.count("✓ sync-agent complete"), 1, out)
+            # Every resolved target received its derived artifact set.
+            for target in targets:
+                self.assertTrue(
+                    (Path(target) / "ai-specs" / ".gitignore").exists(),
+                    f"target {target} has no ai-specs/.gitignore:\n{out}",
+                )
         finally:
             shutil.rmtree(workspace.parent, ignore_errors=True)
-            if home is not None:
-                shutil.rmtree(home, ignore_errors=True)
-            if log_path.parent.exists():
-                shutil.rmtree(log_path.parent, ignore_errors=True)
 
     def test_t1_3_first_child_failure_stops_fanout_and_names_target(self):
         """T1.3: first child failure stops the loop, exits non-zero, names target."""
         workspace = self.make_workspace()
-        log_path = Path(tempfile.mkdtemp()) / "sync-agent.log"
-        home = None
         try:
             self.init_workspace(workspace, agents=["claude"])
-            n_targets = self.resolved_target_count(workspace)
-            self.assertGreater(n_targets, 1)
+            targets = self.resolved_target_paths(workspace)
+            self.assertGreater(len(targets), 1)
 
             # Fail the first resolved target (root) by planting a non-symlink
-            # at the claude instructions path so make_relative_symlink refuses.
+            # at the claude instructions path so the relative symlink refuses.
             claude_md = workspace / "CLAUDE.md"
             if claude_md.is_symlink() or claude_md.exists():
                 claude_md.unlink()
             claude_md.write_text("manual file — not a symlink\n")
 
-            home = self.instrumented_sync_agent_home(log_path)
             proc = subprocess.run(
                 [str(CLI), "sync-agent", str(workspace), "--all"],
                 text=True,
                 capture_output=True,
                 check=False,
-                env=_sync_env({"AI_SPECS_HOME": str(home)}),
+                env=_sync_env(),
             )
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("sync-agent failed for target:", proc.stderr)
             self.assertIn(str(workspace.resolve()), proc.stderr)
-
-            log = log_path.read_text() if log_path.exists() else ""
-            child_invokes = [
-                line
-                for line in log.splitlines()
-                if line.startswith("INVOKE ") and "--source-root" in line
-            ]
-            self.assertEqual(
-                len(child_invokes),
-                1,
-                f"second child must not run after first failure; "
-                f"child invokes:\n{child_invokes}\nlog:\n{log}",
+            self.assertIn(
+                "refuse to overwrite non-symlink", proc.stdout + proc.stderr
             )
-            # Later subrepo must not have been written by a subsequent child.
-            self.assertFalse((workspace / "packages" / "b" / "AGENTS.md").exists())
+            # Later subrepos must not have been written by a subsequent child.
+            for target in targets[1:]:
+                self.assertFalse(
+                    (Path(target) / "ai-specs" / ".gitignore").exists(),
+                    f"later target {target} was processed after the first "
+                    f"failure:\n{proc.stdout}\n{proc.stderr}",
+                )
         finally:
             shutil.rmtree(workspace.parent, ignore_errors=True)
-            if home is not None:
-                shutil.rmtree(home, ignore_errors=True)
-            if log_path.parent.exists():
-                shutil.rmtree(log_path.parent, ignore_errors=True)
 
 
 
@@ -415,15 +384,19 @@ class VerboseFlagIntegrationTests(_WorkspaceMixin, unittest.TestCase):
     """P2 — flag parsing and -v fan-out forwarding."""
 
     def test_t2_6_verbose_forwarded_through_fanout_only_when_set(self):
-        """T2.6: children get --verbose iff the parent was invoked with -v."""
+        """T2.6: children render full detail iff the parent was invoked with -v.
+
+        The old version asserted the literal --verbose token on instrumented
+        child argv; the behavioral equivalent is the child detail itself: each
+        nested child prints its full step output (✓ flattened / ✓ merged) only
+        when -v reaches it, and compact mode filters exactly those lines."""
         for with_verbose in (False, True):
             with self.subTest(verbose=with_verbose):
                 workspace = self.make_workspace()
-                log_path = Path(tempfile.mkdtemp()) / "sync-agent.log"
-                home = None
                 try:
                     self.init_workspace(workspace, agents=["claude"])
-                    home = self.instrumented_sync_agent_home(log_path)
+                    n_targets = self.resolved_target_count(workspace)
+                    self.assertGreater(n_targets, 1)
                     cmd = [str(CLI), "sync-agent", str(workspace), "--all"]
                     if with_verbose:
                         cmd.append("--verbose")
@@ -432,39 +405,45 @@ class VerboseFlagIntegrationTests(_WorkspaceMixin, unittest.TestCase):
                         text=True,
                         capture_output=True,
                         check=False,
-                        env=_sync_env({"AI_SPECS_HOME": str(home)}),
+                        env=_sync_env(),
                     )
                     self.assertEqual(
                         proc.returncode,
                         0,
                         f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}",
                     )
-                    log = log_path.read_text()
-                    child_invokes = [
-                        line[len("INVOKE ") :]
-                        for line in log.splitlines()
-                        if line.startswith("INVOKE ") and "--source-root" in line
-                    ]
-                    self.assertGreaterEqual(len(child_invokes), 2)
-                    for args in child_invokes:
-                        if with_verbose:
-                            self.assertRegex(
-                                args,
-                                r"(^|\s)--verbose(\s|$)",
-                                f"missing --verbose in child args: {args}",
-                            )
-                        else:
-                            self.assertNotRegex(
-                                args,
-                                r"(^|\s)--verbose(\s|$)",
-                                f"unexpected --verbose in child args: {args}",
-                            )
+                    flat_count = len(
+                        re.findall(r"(?m)^\s*✓\s+flattened\b", proc.stdout)
+                    )
+                    merge_count = len(
+                        re.findall(r"(?m)^\s*✓\s+merged\b", proc.stdout)
+                    )
+                    if with_verbose:
+                        self.assertGreaterEqual(
+                            flat_count,
+                            n_targets,
+                            f"-v must reach every child (flatten detail); "
+                            f"got {flat_count} of {n_targets}:\n{proc.stdout}",
+                        )
+                        self.assertGreaterEqual(
+                            merge_count,
+                            n_targets,
+                            f"-v must reach every child (merge detail); "
+                            f"got {merge_count} of {n_targets}:\n{proc.stdout}",
+                        )
+                    else:
+                        self.assertEqual(
+                            flat_count,
+                            0,
+                            f"compact mode must filter child detail:\n{proc.stdout}",
+                        )
+                        self.assertEqual(
+                            merge_count,
+                            0,
+                            f"compact mode must filter child detail:\n{proc.stdout}",
+                        )
                 finally:
                     shutil.rmtree(workspace.parent, ignore_errors=True)
-                    if home is not None:
-                        shutil.rmtree(home, ignore_errors=True)
-                    if log_path.parent.exists():
-                        shutil.rmtree(log_path.parent, ignore_errors=True)
 
     def test_h2_sync_verbose_shows_parent_and_child_detail(self):
         """H2(a): `ai-specs sync -v` on a public root shows detail from parent AND every child."""
@@ -923,25 +902,49 @@ class ErrexitInteractionTests(_WorkspaceMixin, _CliSyncStubMixin, unittest.TestC
         )
 
     def test_t4_1_project_cache_failure_in_the_fanout_propagates(self):
-        """A failing child step in the fan-out exits non-zero with no footer."""
-        proc, stubs = self.run_stubbed_sync(
-            intercepts=[
-                ("brief-render-policy.py", {"rc": 0, "stdout": "true\n"}),
-                ("project-cache.py", {"rc": 1, "stderr": "ERREXIT_PROBE\n"}),
-            ]
-        )
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("ERREXIT_PROBE", proc.stdout + proc.stderr)
-        self.assertNotIn("✓ ai-specs sync complete", proc.stdout)
-        self.assertNotIn("✓ ai-specs sync complete", proc.stderr)
-        # The flow reached both the policy gate and the fan-out's failing step.
-        invocations = stubs.invocations()
-        self.assertTrue(
-            any("brief-render-policy.py" in line for line in invocations), invocations
-        )
-        self.assertTrue(
-            any("project-cache.py" in line for line in invocations), invocations
-        )
+        """A failing cache derivation in the fan-out exits non-zero, no footer.
+
+        The old version PATH-stubbed project-cache.py inside the sync fan-out;
+        the native fan-out derives cache paths itself, so the stub can no
+        longer reach this seam. The fault is injected at the real seam instead:
+        a read-only isolated-home cache directory makes ensure_cache fail
+        exactly where the shell's command substitution died, and sync-agent
+        must die with it before any footer."""
+        import _blackbox as bb  # noqa: E402  (tests-dir helper, not lib code)
+
+        workspace = self.make_workspace()
+        base = Path(tempfile.mkdtemp(prefix="ai-specs-cache-fault-"))
+        cache = base / "cli-home" / "cache"
+        try:
+            self.init_workspace(workspace, agents=["claude"], subrepos=[])
+            home = bb.isolated_home(base)
+            cache = home / "cache"
+            os.chmod(cache, 0o555)
+            recipe_mcp = base / "recipe-mcp.json"
+            recipe_mcp.write_text("{}\n")
+            proc = subprocess.run(
+                [
+                    str(CLI), "sync-agent",
+                    "--source-root", str(workspace),
+                    "--target", str(workspace),
+                    "--recipe-mcp", str(recipe_mcp),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=_sync_env({"AI_SPECS_HOME": str(home)}),
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            combined = proc.stdout + proc.stderr
+            self.assertIn("cache not writable", combined)
+            self.assertNotIn("✓ sync-agent complete", combined)
+            # The failure fired at the derivation seam, before any step work.
+            self.assertNotIn("  syncing flatten resolved skills", combined)
+        finally:
+            if cache.exists():
+                os.chmod(cache, 0o755)
+            shutil.rmtree(workspace.parent, ignore_errors=True)
+            shutil.rmtree(base, ignore_errors=True)
 
     def test_t4_2_sync_one_agent_return_sites_propagate_symlink_failure(self):
         """T4.2: make_relative_symlink failure exits sync-agent via || return $?."""

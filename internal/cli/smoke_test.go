@@ -159,6 +159,17 @@ func TestDifferentialSmoke(t *testing.T) {
 		{"hub-uninitialized-nontty", []string{"hub"}, "", false},
 		{"rules-audit-missing-path", []string{"rules-audit", "does-not-exist"}, "", false},
 		{"sync-missing-path", []string{"sync", "does-not-exist"}, "", false},
+		// sync-agent usage surfaces: the heredoc, the exit-2 contract, and the
+		// pre-write cd failure (no writes happen before the diagnostic).
+		{"sync-agent-help", []string{"sync-agent", "--help"}, "", false},
+		{"sync-agent-unknown-flag", []string{"sync-agent", "--bogus"}, "", false},
+		{"sync-agent-second-positional", []string{"sync-agent", "a", "b"}, "", false},
+		{"sync-agent-missing-path", []string{"sync-agent", "does-not-exist"}, "", false},
+		// Trailing value-taking flags die rc 1 with NO output and no writes
+		// (JD-A-002, the D20 defect class): `shift 2` fails under set -e
+		// before the flag loop ends.
+		{"sync-agent-flag-last-target", []string{"sync-agent", "--target"}, "", false},
+		{"sync-agent-flag-last-source-root", []string{"sync-agent", "--source-root"}, "", false},
 		// The repo root is an initialized ai-specs project; without a TTY
 		// config_wizard.py exits 3 right after the read-only pre-checks.
 		{"configure-recipes-nontty", []string{"configure-recipes"}, root, false},
