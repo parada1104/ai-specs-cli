@@ -599,11 +599,13 @@ func (a *agentRun) runBody() int {
 func (a *agentRun) mcpServerCount() (int, error) {
 	data, err := os.ReadFile(a.tomlPath)
 	if err != nil {
-		return 0, err
+		// Manifest fatal path: the ESTABLISHED contract (outside the
+		// recipe-mcp tolerance) keeps the `error: ` prefix (MC2 pin).
+		return 0, fmt.Errorf("error: %s", err)
 	}
 	manifest, err := toml.Parse(data)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("error: %s", err)
 	}
 	count := 0
 	if mcp, ok := manifest.Table("mcp"); ok {
@@ -643,15 +645,18 @@ func (a *agentRun) mcpServerCount() (int, error) {
 }
 
 // mcpReadClass maps a recipe-mcp read error to the Python exception class the
-// oracle would raise for it (open() semantics): EISDIR → IsADirectoryError,
-// EACCES → PermissionError, otherwise OSError.
+// oracle would raise for it (open() semantics, maintainer closure MC1):
+// EISDIR → IsADirectoryError, ENOTDIR → NotADirectoryError, EACCES and EPERM
+// → PermissionError, otherwise OSError.
 func mcpReadClass(err error) string {
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
 		switch errno {
 		case syscall.EISDIR:
 			return "IsADirectoryError"
-		case syscall.EACCES:
+		case syscall.ENOTDIR:
+			return "NotADirectoryError"
+		case syscall.EACCES, syscall.EPERM:
 			return "PermissionError"
 		}
 	}

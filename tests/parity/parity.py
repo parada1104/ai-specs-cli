@@ -727,9 +727,11 @@ def _setup_sync_agent_arg_contract(project: Path) -> None:
     empty string: toml-read.py's _normalize_string_list keeps only stripped
     non-empty strings, so exactly claude and pi must sync (the int/bool are
     dropped, never repr'd as agent names). Remediation batch 2 extends the
-    mix with an information-separator prefix (U+001C strips like space) and
-    an embedded newline (the print + while-read loop splits it into two
-    unknown-agent notices). The trailing value-taking flag steps pin the
+    mix with an information-separator prefix (U+001C strips like space, so
+    the entry normalizes to laude2 — an unknown agent) and an embedded
+    newline (the print + while-read loop splits it into x and y — two more
+    unknown-agent notices; three total beyond claude/pi). The trailing
+    value-taking flag steps pin the
     `shift 2` failure: rc 1, no output, no writes (D20 class)."""
     _write(project, "ai-specs/ai-specs.toml",
            "[project]\n"
@@ -798,12 +800,13 @@ def _setup_sync_agent_abort_shapes(project: Path) -> None:
 def _setup_sync_agent_unreadable_mirror(project: Path) -> None:
     """Final-round F2 regression fixture (sanctioned live measurement of the
     unmeasured BSD tree detail): a subrepo whose ai-specs/skills directory is
-    EMPTY but UNREADABLE (0333 — no read permission). mirror_directory's
-    `rm -rf` then fails at the directory read (EACCES) while the removal by
-    the parent may still succeed; the differential harness measures the real
-    legacy rm status/tree/error ordering against the Go port, replacing the
-    safety-blocked manual probe. Aggregated rc 1 (never 0 after an error) is
-    asserted by the unit test; this fixture pins the tree outcome."""
+    EMPTY but UNREADABLE (0333 — no read permission). MEASURED OUTCOME (the
+    differential harness against the live legacy rm, replacing the
+    safety-blocked manual probe): rm -rf does NOT report the read failure —
+    it removes the empty dir SILENTLY (no stderr, rc 0, directory gone) and
+    the run continues to full success; the Go port matches. The removal-
+    failure shapes (child EACCES + parent `Directory not empty`, rc 1) are
+    pinned by sync-agent-abort-shapes and the unit tests."""
     _write(project, "ai-specs/ai-specs.toml",
            "[project]\n"
            "name = 'parity-fixture'\n"
@@ -1093,7 +1096,7 @@ CORPUS: tuple[Fixture, ...] = (
         description="JD-A-001/JD-A-002 regression: [agents].enabled mixes "
                     "whitespace-padded strings, an information-separator "
                     "prefix, an embedded newline, an int, a bool and an empty "
-                    "string — normalization keeps exactly claude, pi, claude2, "
+                    "string — normalization keeps exactly claude, pi, laude2, "
                     "x and y; then trailing `--target`/`--source-root` "
                     "invocations die rc 1 with no output and no writes.",
         setup=_setup_sync_agent_arg_contract,
@@ -1110,8 +1113,9 @@ CORPUS: tuple[Fixture, ...] = (
                     "string (3), object (1), malformed (0) and missing file "
                     "(0) — each pinned by the banner's `mcp:` line. The "
                     "uncaught-death cases (directory/number/bool/null) stay "
-                    "unit-gated: their tracebacks embed the platform python's "
-                    "frames and cannot byte-compare.",
+                    "unit-gated with stable portable class diagnostics "
+                    "(IsADirectoryError/TypeError); the legacy tracebacks embed "
+                    "platform-python frames, so they are not fixtureable.",
         setup=_setup_sync_agent_recipe_mcp_matrix,
         steps=(
             Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all",
@@ -1129,11 +1133,11 @@ CORPUS: tuple[Fixture, ...] = (
     Fixture(
         name="sync-agent-unreadable-mirror",
         description="Final-round F2 regression: a subrepo whose ai-specs/skills "
-                    "directory is empty but UNREADABLE (0333) — mirror_directory's "
-                    "`rm -rf` fails at the directory read while the removal by the "
-                    "parent may still succeed; the harness measures the real legacy "
-                    "rm status/tree/error ordering (the manual probe was "
-                    "safety-blocked and honestly reported). Aggregate rc 1.",
+                    "directory is empty but UNREADABLE (0333) — MEASURED via this "
+                    "harness: legacy `rm -rf` reports nothing and removes the "
+                    "empty dir silently (rc 0, full run success), and the Go port "
+                    "matches byte-for-byte. Removal-failure shapes live in "
+                    "sync-agent-abort-shapes.",
         setup=_setup_sync_agent_unreadable_mirror,
         steps=(Step(("sync-agent", "--source-root", ".", "--target", "subB", "--all"),
                     append_root=False),),

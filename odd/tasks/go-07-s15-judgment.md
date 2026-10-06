@@ -2,8 +2,20 @@
 
 Status: FINAL BOUNDED REMEDIATION ROUND IMPLEMENTED AND VERIFIED (F1–F5,
 verifier muue9ehz-7-1l8i VERDICT PASS: validate.sh EXIT:0, parity PASS 28
-fixtures × both gate modes, 56 zero-delta lines). Awaiting the parent's commit
-of the corrected delta and the bounded scoped re-judgment disposition. This
+fixtures × both gate modes, 56 zero-delta lines). TERMINAL DISPOSITION:
+JUDGMENT ESCALATED for delivery (both re-judgment rounds complete, correction
+budget exhausted, no severe) — the escalated state remains ON 587f64f. A
+SEPARATE, DISTINCT human MAINTAINER-CLOSURE authorization (2026-10-04) permits
+a narrow maintenance round (errno subclasses, manifest-path contract pin,
+description truth, docs reconciliation) — it is NOT a new JD approval, NOT a
+native receipt, and does NOT reopen or reset the exhausted judgment.
+SUBSEQUENT human acceptance (2026-10-05): the manifest fatal-read/parse
+portable diagnostic framing was explicitly accepted and recorded as a narrow
+TOLERANT contract entry (manifest fatal-error framing); the arg-contract
+fixture descriptions were corrected to laude2 (the TOML escape \u001c
+consumes the C, so the separator entry strips to laude2, not claude2). The
+ESCALATED disposition remains ON 587f64f for the JD history; these are
+distinct maintenance acceptances, not JD outcomes. This
 document records the review/judgment facts of the slice; it is frozen history,
 not a task list.
 

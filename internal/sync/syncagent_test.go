@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
@@ -1252,5 +1253,64 @@ func TestPrintStepOutputOracleBytes(t *testing.T) {
 	replayRaw(&errOut, filepath.Join(dir, "blank-only"))
 	if errOut.String() != "\n" {
 		t.Errorf("blank replay: %q", errOut.String())
+	}
+}
+
+// ── Maintainer closure round (distinct human authorization) ───────────────
+
+// TestMCPReadClass pins the errno→Python-exception-class mapping for the
+// recipe-mcp fatal diagnostic (maintainer closure MC1): the OSError
+// subclasses open() actually raises — EISDIR → IsADirectoryError, ENOTDIR →
+// NotADirectoryError, EACCES and EPERM → PermissionError — with any other
+// errno falling back to OSError. RED at closure time: ENOTDIR and EPERM were
+// unmapped and fell through to "OSError".
+func TestMCPReadClass(t *testing.T) {
+	cases := []struct {
+		errno syscall.Errno
+		want  string
+	}{
+		{syscall.EISDIR, "IsADirectoryError"},
+		{syscall.ENOTDIR, "NotADirectoryError"},
+		{syscall.EACCES, "PermissionError"},
+		{syscall.EPERM, "PermissionError"},
+	}
+	for _, tc := range cases {
+		if got := mcpReadClass(tc.errno); got != tc.want {
+			t.Errorf("mcpReadClass(%s) = %q, want %q", tc.errno, got, tc.want)
+		}
+	}
+	if got := mcpReadClass(syscall.EIO); got != "OSError" {
+		t.Errorf("mcpReadClass(EIO) = %q, want OSError (fallback)", got)
+	}
+}
+
+// TestManifestFatalPathContractPinned pins the manifest fatal-error path
+// OUTSIDE the recipe-mcp tolerance (maintainer closure MC2): a malformed
+// MANIFEST kills the run rc 1 with the ESTABLISHED `error: …` prefix/format —
+// the pre-existing documented deviation for Python tracebacks — before any
+// banner or write. This is a CONTRACT PIN of current behavior, not a RED:
+// byte-exact reproduction of the manifest traceback format was judged to
+// need a new product decision and is reported blocked, not invented.
+func TestManifestFatalPathContractPinned(t *testing.T) {
+	root := t.TempDir()
+	run := newAgentRun(t, root)
+	// Overwrite AFTER the constructor so the malformed manifest is what the
+	// run actually reads.
+	if err := os.WriteFile(filepath.Join(root, "ai-specs", "ai-specs.toml"), []byte("[agents\nenabled = ['claude']\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	run.out, run.errW = &out, &errOut
+	if rc := run.runBody(); rc != 1 {
+		t.Fatalf("rc = %d, want 1", rc)
+	}
+	if !strings.HasPrefix(errOut.String(), "error: ") {
+		t.Errorf("stderr = %q, want the established `error: ` prefix", errOut.String())
+	}
+	if strings.Contains(out.String(), "ai-specs sync-agent") {
+		t.Errorf("banner must not print: %q", out.String())
+	}
+	if strings.Contains(out.String(), "  syncing ") {
+		t.Errorf("no step work may happen: %q", out.String())
 	}
 }
