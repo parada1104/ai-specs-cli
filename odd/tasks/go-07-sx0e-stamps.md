@@ -8,7 +8,8 @@ Preserve gate acquisition until its Python retirement slice.
 ## Tracker
 - **card_id**: `6ac5c1b7947ff3696e25fd14`
 - **url**: https://trello.com/c/lUGb2KwH
-- **list**: In Progress
+- **list**: Review
+- **ledger_item**: `a6ca0242030bb825`
 
 ## Scope
 - Base: epic/go-single-binary at 6bb8e4b.
@@ -39,8 +40,8 @@ Preserve gate acquisition until its Python retirement slice.
 - [x] T1: Extract pure stamp planner and adapt tests. Baseline and post-move checks passed.
 - [x] T2: Expose the existing TOML normalizer with RED and GREEN evidence. All focused checks passed.
 - [x] T3: Rebuild gate artifacts and verify canonical checksums and focused suites. All checks passed.
-- [ ] T4: Run full validation, independent verification, and applicable native review. **In progress**.
-- [ ] T5: Commit, publish, merge into the epic, close the tracker, and clean the worktree.
+- [x] T4: Run full validation, independent verification, and applicable native review. All passed.
+- [ ] T5: Commit, publish, merge into the epic, close the tracker, and clean the worktree. **In progress**.
 
 ## Acceptance criteria
 - Planner order, used-field defaults, and JSON shape stay unchanged.
@@ -82,7 +83,9 @@ Preserve gate acquisition until its Python retirement slice.
 - LSP confirmed six files clean. Semgrep flagged the unchanged interpreter call at recipe_toml.go:386; acquisition remains outside this slice.
 - Work-unit commit: 0cc5eacb30e1acbefe69ffbe3611931bf5bb15e0. Authored diff: 708 lines.
 - Rollback restores main planner and tests, removes the normalizer wrapper and its test, and restores the prior trust manifest.
-- Native review remains pending.
+- Native review review-7244b03445f6f5bf approved the committed candidate. Exact acknowledgement consumed its authority.
+- Tracker bind and pre-merge grade returned allow. This passive delivery record does not change source or checksum bytes.
+- Non-blocking advisories: R3-command-path-unproved at reconcilestamps.go:32; R3-shared-zero-value-unpinned at shared/reconcilestamp.go:58.
 
 ## Python retirement boundary
 - This slice enables S11 to use shared planning with root-native TOML values.
@@ -91,4 +94,4 @@ Preserve gate acquisition until its Python retirement slice.
 - S14 connects orchestration. S16 removes verified legacy paths.
 
 ## Next step
-Commit the verified work unit and run native review against base 6bb8e4b. Freeze source and trust-manifest bytes.
+Publish the verified branch and create a refactor PR against the epic. Require provider checks and tracker approval before merge.
