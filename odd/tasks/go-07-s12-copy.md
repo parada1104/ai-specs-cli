@@ -9,7 +9,8 @@ Keep the sync CLI unwired until S14.
 ## Tracker
 - **card_id**: `6ac693bcdb52008d3a0bc0af`
 - **url**: https://trello.com/c/VXiZ3bKa
-- **list**: In Progress
+- **list**: Review
+- **ledger_item**: `92da5c339806685b`
 
 ## Scope
 - Base: epic/go-single-binary at b36ba7e.
@@ -94,12 +95,18 @@ Keep the sync CLI unwired until S14.
 - Differential limits recorded honestly: the envelope commands_dir, apply-result statuses, cross-recipe order, and the doc-exists preservation policy are pinned natively rather than differentially.
 - Authored total: 882 lines including this document. Commits and native review remain pending.
 
+## Deferred scope and follow-ups
+- Native review review-6bd1a6b97d3b9104 classified the candidate high risk because the change touches a process boundary, then admitted all four lenses: risk, resilience, readability, and reliability. Exact acknowledgement consumed its authority.
+- Eight informational advisories, no correction requested. The load-bearing ones: declared source, doc destination, and item id are joined without containment checks at copyapply.go:56-66; the doc-exists boundary at :61-67; and the silent recipe skip at :36-39.
+- The containment advisories match today's Python behavior, which performs the same joins. Record them as non-blocking follow-ups for the S14 wiring instead of hiding them.
+- The doc-exists preservation policy stays with the Python call site until S14, so the differential compares a fresh project only.
+- Rollback removes the two new files. No Python source, gate source, or trust manifest changes exist to revert.
+
 ## Python retirement boundary
 - sync.go and syncagent.go still invoke Python materialize. S14 replaces those exec seams.
 - The copy bridge and its Python fallbacks remain the oracle until their verified retirement.
 - Template and hook actuators still need a shared classify extraction before their own units.
 - S13, S14, and S16 still cover the remaining materialize paths.
 
-## Next step
 ## Next step
 Commit the verified work unit and run native review against base b36ba7e. Freeze source bytes.
