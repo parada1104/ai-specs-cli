@@ -80,7 +80,9 @@ Preserve gate acquisition until its Python retirement slice.
 - An external probe confirmed per-field normalization feeds the shared planner. Raw maps silently omit used defaults; S11 must commit a call-site regression test.
 - Parent fresh PlainValue test passed. Writer vet and native selftest evidence stands; the verifier did not rerun those commands.
 - LSP confirmed six files clean. Semgrep flagged the unchanged interpreter call at recipe_toml.go:386; acquisition remains outside this slice.
-- Commits and native review remain pending.
+- Work-unit commit: 0cc5eacb30e1acbefe69ffbe3611931bf5bb15e0. Authored diff: 708 lines.
+- Rollback restores main planner and tests, removes the normalizer wrapper and its test, and restores the prior trust manifest.
+- Native review remains pending.
 
 ## Python retirement boundary
 - This slice enables S11 to use shared planning with root-native TOML values.
