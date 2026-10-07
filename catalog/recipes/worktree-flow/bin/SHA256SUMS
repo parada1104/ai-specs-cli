@@ -161,7 +161,16 @@
 # imports the shared pure reconcile-stamp planner instead of its local copy and
 # consumes the exported source type; no behavior change, no new asset, no second
 # trust root), with the canonical go1.24.13 toolchain via the same command above.
-24af51df04f542d661d40d720520fd5c65993f7f5961947f123cc090775fa169  worktree-gate-darwin-amd64
-15bf15660a552afd99774f9122171a612971435829c096089520a21c1760e14b  worktree-gate-darwin-arm64
-2ba1bef0c8bde1d388784d621bef553646e0f09480b67073cdd7588aa8583f03  worktree-gate-linux-amd64
-9000ca0506cd24c4ac2685d720ee239140369a912e39735569f347bd2f4e6f96  worktree-gate-linux-arm64
+# Regenerated for the SX0c.1 copy-primitive extraction. SX0c.1 moves statMode,
+# copyFileStat and copyTree into the shared package. The gate command layer now
+# calls one copy authority. No behavior changes. No new asset and no second
+# trust root. The canonical go1.24.13 toolchain ran the same command above.
+# Regenerated for the SX0c.2 copy-apply command-layer extraction. SX0c.2 moves
+# the copy-apply types, the decision, the execution and the command entry point
+# into the shared package, and the gate dispatch calls the exported entry point.
+# No behavior change, no new asset and no second trust root. The canonical
+# go1.24.13 toolchain ran the same command above.
+dc87acefd312cff98b16c8507233671a3bae0f1486a7077576ef84499df5378d  worktree-gate-darwin-amd64
+1035754358ce6bb4e955a65faf03ff4131d3cd99063ff5fc18ce332c869e51d1  worktree-gate-darwin-arm64
+b34699f1d77f053f3ebd8bf9186856e1eb9a86d227f1e95368ca0a2c4cdaf38b  worktree-gate-linux-amd64
+5b1b4ddb23ba38aa91f602c16ded8d785fe918e9bff6aa03f54b0284190f8887  worktree-gate-linux-arm64
