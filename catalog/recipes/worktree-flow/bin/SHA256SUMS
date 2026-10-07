@@ -151,7 +151,12 @@
 # invokes the lock writer in-process through the importable shared package;
 # no behavior change, no new asset, no second trust root), with the canonical
 # go1.24.13 toolchain via the same command above.
-4cd6df04bb4af83b9887bf7e1abb5bf2330136b41df26ef3dc05971771d20312  worktree-gate-darwin-amd64
-3a77ff71c29218fb8eb554e22b33cb32704a444f6d40d65c425ca1953b291113  worktree-gate-darwin-arm64
-795c1e1b17718bf9776b3aa8734bb6a80966745e2ab064d69f5c4b3ad21ff313  worktree-gate-linux-amd64
-8c9bc72e2bdb793c83f2210098ce5e155f9b92ba1a4c88caaadfb2482a0fef66  worktree-gate-linux-arm64
+#
+# Regenerated for the SX0d shared-package extraction (the gate main package now
+# imports the pure tag and primitive conflict graders from the importable shared
+# package; no behavior change, no new asset, no second trust root), with the
+# canonical go1.24.13 toolchain via the same command above.
+799a5b3cd568b9ae27884bbeba1479f9aa93771d389994af95bb33ad9da73b8e  worktree-gate-darwin-amd64
+4af1ca526002f4864ed36f97921e754336d8c3f0e0d0e98a78fbe9e27653098b  worktree-gate-darwin-arm64
+4f4308679ff069d112777a969ce7bcdf65b1de1b646f1e0edd235c326936b6ea  worktree-gate-linux-amd64
+e651dd88cb199bba66aa0aebf2bf5ec41143efd5e8dd4ed8d82d66ce1890aab4  worktree-gate-linux-arm64
