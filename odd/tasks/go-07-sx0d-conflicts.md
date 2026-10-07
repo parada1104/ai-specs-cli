@@ -68,7 +68,9 @@ This prerequisite does not retire Python yet.
 - Ten moved declarations and six pure tests match the base modulo exported names. Four Python reader constants remain byte-identical.
 - Parent fresh shared test passed. Verified authored diff was 1116 lines before this passive evidence update.
 - LSP confirmed seven files clean. Semgrep flagged the unchanged interpreter call at recipe_toml.go:386, identical to base line 395.
-- The existing acquisition finding remains outside this extraction scope. Commit and native review remain pending.
+- The existing acquisition finding remains outside this extraction scope. Native review remains pending.
+- Work-unit commit: 4abf79d8f1770def8909ee00af26467ca2715139. Authored change: 1121 lines.
+- Rollback removes shared conflict extraction and restores main graders, tests, and the prior trust manifest.
 
 ## Python retirement boundary
 - recipe_toml.go still executes Python for four readers.
