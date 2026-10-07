@@ -8,7 +8,8 @@ This prerequisite does not retire Python yet.
 ## Tracker
 - **card_id**: `6ac5a9f026b568a5fbead392`
 - **url**: https://trello.com/c/ho2xO00d
-- **list**: In Progress
+- **list**: Review
+- **ledger_item**: `3605800205ded6ec`
 
 ## Scope
 - Base: epic/go-single-binary at 3ab9d2e.
@@ -34,8 +35,8 @@ This prerequisite does not retire Python yet.
 ## Tasks
 - [x] T1: Extract pure conflict graders and adapt their tests. Baseline and post-move checks passed.
 - [x] T2: Rebuild the gate and verify checksums, gate tests, and root tests. Canonical reproducible digests passed.
-- [ ] T3: Run full validation, both parity modes, independent checks, and applicable native review. **In progress**.
-- [ ] T4: Commit, publish, merge into the epic, close the tracker, and clean the worktree.
+- [x] T3: Run full validation, both parity modes, independent checks, and applicable native review. All passed.
+- [ ] T4: Commit, publish, merge into the epic, close the tracker, and clean the worktree. **In progress**.
 
 ## Acceptance criteria
 - Shared graders preserve order, conflict outcomes, and JSON shape.
@@ -68,7 +69,9 @@ This prerequisite does not retire Python yet.
 - Ten moved declarations and six pure tests match the base modulo exported names. Four Python reader constants remain byte-identical.
 - Parent fresh shared test passed. Verified authored diff was 1116 lines before this passive evidence update.
 - LSP confirmed seven files clean. Semgrep flagged the unchanged interpreter call at recipe_toml.go:386, identical to base line 395.
-- The existing acquisition finding remains outside this extraction scope. Native review remains pending.
+- The existing acquisition finding remains outside this extraction scope.
+- Native review review-30f4ce8d78dd344e approved the committed candidate. Exact acknowledgement consumed its authority.
+- Tracker bind and pre-merge grade returned allow. This passive delivery record does not change reviewed source or checksum bytes.
 - Work-unit commit: 4abf79d8f1770def8909ee00af26467ca2715139. Authored change: 1121 lines.
 - Rollback removes shared conflict extraction and restores main graders, tests, and the prior trust manifest.
 
@@ -79,4 +82,4 @@ This prerequisite does not retire Python yet.
 - S14 connects materialize orchestration. S16 removes legacy Python after route checks.
 
 ## Next step
-Commit the verified work unit and run native review against base 3ab9d2e. Freeze gate source and checksum bytes.
+Publish the verified branch and create a refactor PR against the epic. Require provider checks and tracker approval before merge.
