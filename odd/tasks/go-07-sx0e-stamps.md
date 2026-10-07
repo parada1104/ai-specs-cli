@@ -41,7 +41,7 @@ Preserve gate acquisition until its Python retirement slice.
 - [x] T2: Expose the existing TOML normalizer with RED and GREEN evidence. All focused checks passed.
 - [x] T3: Rebuild gate artifacts and verify canonical checksums and focused suites. All checks passed.
 - [x] T4: Run full validation, independent verification, and applicable native review. All passed.
-- [ ] T5: Commit, publish, merge into the epic, close the tracker, and clean the worktree. **In progress**.
+- [x] T5: Commit, publish, merge into the epic, close the tracker, and clean the worktree. Merged and closed.
 
 ## Acceptance criteria
 - Planner order, used-field defaults, and JSON shape stay unchanged.
@@ -86,6 +86,9 @@ Preserve gate acquisition until its Python retirement slice.
 - Native review review-7244b03445f6f5bf approved the committed candidate. Exact acknowledgement consumed its authority.
 - Tracker bind and pre-merge grade returned allow. This passive delivery record does not change source or checksum bytes.
 - Non-blocking advisories: R3-command-path-unproved at reconcilestamps.go:32; R3-shared-zero-value-unpinned at shared/reconcilestamp.go:58.
+- Delivery closure: PR331 merged into the epic as a5392c8be9b9f3368fe0760c3a47fd7fae95adc6.
+- Card 6ac5c1b7947ff3696e25fd14 is Done and ledger item a6ca0242030bb825 is closed.
+- The feature worktree and its local branch are removed; the remote branch is absent.
 
 ## Python retirement boundary
 - This slice enables S11 to use shared planning with root-native TOML values.
