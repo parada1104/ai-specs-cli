@@ -238,7 +238,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case *writeLockCmd:
 		return shared.RunWriteLock(stdin, stdout, stderr)
 	case *applyCopyCmd:
-		return runApplyCopy(stdin, stdout, stderr)
+		return shared.RunApplyCopy(stdin, stdout, stderr)
 	case *materializeTemplateCmd:
 		return runMaterializeTemplate(stdin, stdout, stderr)
 	case *materializeHookCmd:

@@ -1,4 +1,4 @@
-package main
+package shared
 
 import (
 	"encoding/json"
@@ -7,9 +7,122 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
-	"ai-specs.dev/worktree-gate/shared"
 )
+
+// Copy primitives for the materialize blind copiers (GO-08 WU2, strangler
+// slice 5). Moved verbatim from the gate main package in SX0c.1 — the same
+// shutil.copy2 / shutil.copytree parity semantics, exported so the gate
+// command layer calls them in process and the root native sync authority can
+// reuse the same single authority. No behavior change; the main-package
+// copies were deleted with this move.
+
+// StatMode mirrors Python's stat.S_IMODE: permission bits plus setuid/setgid/
+// sticky, which copystat preserves and plain Perm() drops. The special bits
+// are returned as Go FileMode flags (os.ModeSetuid, ...) — not raw 0o4000-
+// style bits — so os.Chmod and os.WriteFile re-apply them through
+// syscallMode; raw bits in the FileMode would be silently dropped.
+func StatMode(info os.FileInfo) os.FileMode {
+	mode := info.Mode()
+	perm := mode.Perm()
+	if mode&os.ModeSetuid != 0 {
+		perm |= os.ModeSetuid
+	}
+	if mode&os.ModeSetgid != 0 {
+		perm |= os.ModeSetgid
+	}
+	if mode&os.ModeSticky != 0 {
+		perm |= os.ModeSticky
+	}
+	return perm
+}
+
+// CopyFileStat mirrors shutil.copy2: copy the content, then copystat — the
+// source's S_IMODE permission bits and its mtime. The atime is set to the
+// mtime rather than preserved: every later read refreshes it anyway, and
+// nothing in the CLI consumes atimes (mtime is what copy2 parity needs).
+// The content is read into memory in one piece: the copiers' inputs are
+// bounded config/skill files, and this keeps the byte copy identical to
+// copy2's read-then-write without streaming plumbing.
+func CopyFileStat(src, dest string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(dest, data, StatMode(info)); err != nil {
+		return err
+	}
+	if err := os.Chmod(dest, StatMode(info)); err != nil {
+		return err
+	}
+	mtime := info.ModTime()
+	return os.Chtimes(dest, mtime, mtime)
+}
+
+// CopyTree mirrors shutil.copytree(src, dest) with the default symlinks=False:
+// dest must not exist; directories are recreated with the source's S_IMODE
+// bits and, after their children, their mtime (copystat runs after children
+// in the reference too); files go through CopyFileStat. Symlinks are
+// followed: a symlinked directory is recursed into, a symlinked file is
+// copied as its target's content.
+//
+// Dir-mode parity: copytree creates each directory with makedirs' default
+// mode (0o777 filtered by the process umask) and copystat applies the
+// source's S_IMODE bits only after the children are copied. So the creation
+// mode here is 0o777 (umask applies exactly as in Python) and the source's
+// bits are chmod'ed on after the children — creating with the source bits
+// directly would leave them umask-filtered and diverge from the reference.
+// Child errors propagate immediately (first-error parity with copytree's
+// default collect_errors=False).
+func CopyTree(src, dest string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		// Defensive parity with copytree raising on a non-directory source;
+		// ApplyCopyDecision already screens the item's source, so this only
+		// fires for direct/internal misuse.
+		return fmt.Errorf("copy tree: %s is not a directory", src)
+	}
+	if err := os.Mkdir(dest, 0o777); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		childSrc := filepath.Join(src, entry.Name())
+		childDest := filepath.Join(dest, entry.Name())
+		childInfo, err := os.Stat(childSrc) // follow symlinks, like the reference
+		if err != nil {
+			return err
+		}
+		if childInfo.IsDir() {
+			if err := CopyTree(childSrc, childDest); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := CopyFileStat(childSrc, childDest); err != nil {
+			return err
+		}
+	}
+	// copystat for the directory itself, after the children: the source's
+	// S_IMODE bits (including setgid) are applied now, umask-independent.
+	if err := os.Chmod(dest, StatMode(info)); err != nil {
+		return err
+	}
+	mtime := info.ModTime()
+	if err := os.Chtimes(dest, mtime, mtime); err != nil {
+		return err
+	}
+	return nil
+}
 
 // Copy actuator for the materialize blind copiers (GO-08 WU2, strangler
 // slice 5). Go owns the COPY DECISION + EXECUTION for the three copiers whose
@@ -49,8 +162,8 @@ import (
 // envelope parity with the pinned contract but is informational: "dest" is
 // authoritative.
 
-// copyItem is one stdin envelope entry.
-type copyItem struct {
+// CopyItem is one stdin envelope entry.
+type CopyItem struct {
 	Kind        string `json:"kind"`
 	ID          string `json:"id"`
 	Src         string `json:"src"`
@@ -58,156 +171,52 @@ type copyItem struct {
 	CommandsDir string `json:"commands_dir"`
 }
 
-// copyRequest is the stdin envelope.
-type copyRequest struct {
-	Items []copyItem `json:"items"`
+// CopyRequest is the stdin envelope.
+type CopyRequest struct {
+	Items []CopyItem `json:"items"`
 }
 
-// copyResult is one stdout result entry. Overwrite is omitted when false.
-type copyResult struct {
+// CopyResult is one stdout result entry. Overwrite is omitted when false.
+type CopyResult struct {
 	ID        string `json:"id"`
 	Status    string `json:"status"`
 	Overwrite bool   `json:"overwrite,omitempty"`
 }
 
-// statMode mirrors Python's stat.S_IMODE: permission bits plus setuid/setgid/
-// sticky, which copystat preserves and plain Perm() drops. The special bits
-// are returned as Go FileMode flags (os.ModeSetuid, ...) — not raw 0o4000-
-// style bits — so os.Chmod and os.WriteFile re-apply them through
-// syscallMode; raw bits in the FileMode would be silently dropped.
-func statMode(info os.FileInfo) os.FileMode {
-	mode := info.Mode()
-	perm := mode.Perm()
-	if mode&os.ModeSetuid != 0 {
-		perm |= os.ModeSetuid
-	}
-	if mode&os.ModeSetgid != 0 {
-		perm |= os.ModeSetgid
-	}
-	if mode&os.ModeSticky != 0 {
-		perm |= os.ModeSticky
-	}
-	return perm
-}
+// The copy primitives themselves (StatMode, CopyFileStat, CopyTree) sit above
+// in this file: SX0c.1 moved them here verbatim so the gate command layer and
+// the root native sync authority share one copy authority.
 
-// copyFileStat mirrors shutil.copy2: copy the content, then copystat — the
-// source's S_IMODE permission bits and its mtime. The atime is set to the
-// mtime rather than preserved: every later read refreshes it anyway, and
-// nothing in the CLI consumes atimes (mtime is what copy2 parity needs).
-// The content is read into memory in one piece: the copiers' inputs are
-// bounded config/skill files, and this keeps the byte copy identical to
-// copy2's read-then-write without streaming plumbing.
-func copyFileStat(src, dest string) error {
-	info, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(dest, data, statMode(info)); err != nil {
-		return err
-	}
-	if err := os.Chmod(dest, statMode(info)); err != nil {
-		return err
-	}
-	mtime := info.ModTime()
-	return os.Chtimes(dest, mtime, mtime)
-}
-
-// copyTree mirrors shutil.copytree(src, dest) with the default symlinks=False:
-// dest must not exist; directories are recreated with the source's S_IMODE
-// bits and, after their children, their mtime (copystat runs after children
-// in the reference too); files go through copyFileStat. Symlinks are
-// followed: a symlinked directory is recursed into, a symlinked file is
-// copied as its target's content.
-//
-// Dir-mode parity: copytree creates each directory with makedirs' default
-// mode (0o777 filtered by the process umask) and copystat applies the
-// source's S_IMODE bits only after the children are copied. So the creation
-// mode here is 0o777 (umask applies exactly as in Python) and the source's
-// bits are chmod'ed on after the children — creating with the source bits
-// directly would leave them umask-filtered and diverge from the reference.
-// Child errors propagate immediately (first-error parity with copytree's
-// default collect_errors=False).
-func copyTree(src, dest string) error {
-	info, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		// Defensive parity with copytree raising on a non-directory source;
-		// applyCopyDecision already screens the item's source, so this only
-		// fires for direct/internal misuse.
-		return fmt.Errorf("copy tree: %s is not a directory", src)
-	}
-	if err := os.Mkdir(dest, 0o777); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		childSrc := filepath.Join(src, entry.Name())
-		childDest := filepath.Join(dest, entry.Name())
-		childInfo, err := os.Stat(childSrc) // follow symlinks, like the reference
-		if err != nil {
-			return err
-		}
-		if childInfo.IsDir() {
-			if err := copyTree(childSrc, childDest); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := copyFileStat(childSrc, childDest); err != nil {
-			return err
-		}
-	}
-	// copystat for the directory itself, after the children: the source's
-	// S_IMODE bits (including setgid) are applied now, umask-independent.
-	if err := os.Chmod(dest, statMode(info)); err != nil {
-		return err
-	}
-	mtime := info.ModTime()
-	if err := os.Chtimes(dest, mtime, mtime); err != nil {
-		return err
-	}
-	return nil
-}
-
-// applyCopyDecision is the Go COPY DECISION for one item: validate the
+// ApplyCopyDecision is the Go COPY DECISION for one item: validate the
 // envelope entry, decide source presence and (for commands) the overwrite
 // condition. It performs no filesystem mutation, so callers can observe the
 // decision even when the execution that follows would fail (dest is a
-// directory → Python's fallback re-runs the item; see runApplyCopy).
-func applyCopyDecision(item *copyItem) (copyResult, error) {
+// directory → Python's fallback re-runs the item; see RunApplyCopy).
+func ApplyCopyDecision(item *CopyItem) (CopyResult, error) {
 	if item.Kind != "bundled-skill" && item.Kind != "command" && item.Kind != "doc" {
-		return copyResult{}, fmt.Errorf("copy apply: unknown item kind %q", item.Kind)
+		return CopyResult{}, fmt.Errorf("copy apply: unknown item kind %q", item.Kind)
 	}
 	if item.ID == "" || item.Src == "" || item.Dest == "" {
-		return copyResult{}, errors.New("copy apply: item requires non-empty id, src and dest")
+		return CopyResult{}, errors.New("copy apply: item requires non-empty id, src and dest")
 	}
 	info, err := os.Stat(item.Src)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return copyResult{ID: item.ID, Status: "source-missing"}, nil
+			return CopyResult{ID: item.ID, Status: "source-missing"}, nil
 		}
-		return copyResult{}, fmt.Errorf("copy apply: stat %s: %w", item.Src, err)
+		return CopyResult{}, fmt.Errorf("copy apply: stat %s: %w", item.Src, err)
 	}
 	switch item.Kind {
 	case "bundled-skill":
 		if !info.IsDir() {
-			return copyResult{ID: item.ID, Status: "source-missing"}, nil
+			return CopyResult{ID: item.ID, Status: "source-missing"}, nil
 		}
 	case "command", "doc":
 		if !info.Mode().IsRegular() {
-			return copyResult{ID: item.ID, Status: "source-missing"}, nil
+			return CopyResult{ID: item.ID, Status: "source-missing"}, nil
 		}
 	}
-	result := copyResult{ID: item.ID, Status: "ok"}
+	result := CopyResult{ID: item.ID, Status: "ok"}
 	if item.Kind == "command" {
 		// Python: dest.exists() and (not dest.is_file() or dest.read_bytes() != src.read_bytes())
 		if destInfo, err := os.Stat(item.Dest); err == nil {
@@ -216,11 +225,11 @@ func applyCopyDecision(item *copyItem) (copyResult, error) {
 			} else {
 				srcBytes, err := os.ReadFile(item.Src)
 				if err != nil {
-					return copyResult{}, fmt.Errorf("copy apply: read %s: %w", item.Src, err)
+					return CopyResult{}, fmt.Errorf("copy apply: read %s: %w", item.Src, err)
 				}
 				destBytes, err := os.ReadFile(item.Dest)
 				if err != nil {
-					return copyResult{}, fmt.Errorf("copy apply: read %s: %w", item.Dest, err)
+					return CopyResult{}, fmt.Errorf("copy apply: read %s: %w", item.Dest, err)
 				}
 				result.Overwrite = string(srcBytes) != string(destBytes)
 			}
@@ -234,7 +243,7 @@ func applyCopyDecision(item *copyItem) (copyResult, error) {
 // dest.parent.mkdir + copytree); command and doc are copy2 with a
 // dest.parent.mkdir first. The parent is created with 0o777 so the process
 // umask filters it exactly like Python's default mkdir(parents=True) mode.
-func executeCopyItem(item *copyItem) error {
+func executeCopyItem(item *CopyItem) error {
 	switch item.Kind {
 	case "bundled-skill":
 		if info, err := os.Lstat(item.Dest); err == nil && info.IsDir() {
@@ -249,17 +258,17 @@ func executeCopyItem(item *copyItem) error {
 		if err := os.MkdirAll(filepath.Dir(item.Dest), 0o755); err != nil {
 			return err
 		}
-		return copyTree(item.Src, item.Dest)
+		return CopyTree(item.Src, item.Dest)
 	case "command", "doc":
 		if err := os.MkdirAll(filepath.Dir(item.Dest), 0o755); err != nil {
 			return err
 		}
-		return copyFileStat(item.Src, item.Dest)
+		return CopyFileStat(item.Src, item.Dest)
 	}
 	return fmt.Errorf("copy apply: unknown item kind %q", item.Kind)
 }
 
-// runApplyCopy is the --apply-copy command: one JSON envelope on stdin, one
+// RunApplyCopy is the --apply-copy command: one JSON envelope on stdin, one
 // JSON envelope on stdout. Exit 0 when every item was decided (ok or
 // source-missing); exit 2 with {"error": ...} on stdout for an invalid
 // envelope or an item execution failure. Items execute in envelope order.
@@ -267,28 +276,28 @@ func executeCopyItem(item *copyItem) error {
 // Trust model: the gate binary is caller-privileged — every flag writes
 // where it is told — so the item src/dest paths are trusted exactly like the
 // other flag inputs; there is deliberately no path confinement.
-func runApplyCopy(stdin io.Reader, stdout, stderr io.Writer) int {
+func RunApplyCopy(stdin io.Reader, stdout, stderr io.Writer) int {
 	raw, err := io.ReadAll(stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --apply-copy: read stdin: %v\n", err)
 		return 2
 	}
-	var req copyRequest
+	var req CopyRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
-		fmt.Fprintln(stdout, `{"error": `+shared.PyJSONString("copy apply: invalid input JSON: "+err.Error())+`}`)
+		fmt.Fprintln(stdout, `{"error": `+PyJSONString("copy apply: invalid input JSON: "+err.Error())+`}`)
 		return 2
 	}
-	results := make([]copyResult, 0, len(req.Items))
+	results := make([]CopyResult, 0, len(req.Items))
 	for i := range req.Items {
 		item := &req.Items[i]
-		result, err := applyCopyDecision(item)
+		result, err := ApplyCopyDecision(item)
 		if err != nil {
-			fmt.Fprintln(stdout, `{"error": `+shared.PyJSONString(err.Error())+`}`)
+			fmt.Fprintln(stdout, `{"error": `+PyJSONString(err.Error())+`}`)
 			return 2
 		}
 		if result.Status == "ok" {
 			if err := executeCopyItem(item); err != nil {
-				fmt.Fprintln(stdout, `{"error": `+shared.PyJSONString(fmt.Sprintf("copy apply: item %s: %v", item.ID, err))+`}`)
+				fmt.Fprintln(stdout, `{"error": `+PyJSONString(fmt.Sprintf("copy apply: item %s: %v", item.ID, err))+`}`)
 				return 2
 			}
 		}
