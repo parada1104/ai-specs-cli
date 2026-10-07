@@ -650,6 +650,92 @@ def _setup_cache_layout(project: Path) -> None:
     _write(project, "ai-specs/commands/local-only.md", "# local only\n")
 
 
+def _leg_cache_root(project: Path) -> Path:
+    """The leg's REAL per-project CLI cache root (project-cache.py layout).
+
+    run_leg builds the isolated install home at <scratch>/home/cli-home
+    (bb.isolated_home appends 'cli-home') and the per-project cache lives at
+    <home>/cache/projects/<sha256(realpath)[:12]>-<basename>. A fixture setup
+    runs BEFORE any CLI step, so it must create that root itself; mirroring the
+    documented cache_key shape here puts the seeds at the exact paths the CLI
+    scans, never at a guessed lookalike the cleanup would silently miss.
+    """
+    home = project.parent / "home" / "cli-home"
+    if not home.is_dir():
+        # Loud rather than vacuous: a changed harness layout would otherwise
+        # leave the seeds unseen and the fixture would compare two no-ops.
+        raise RuntimeError(
+            f"parity fixture layout changed: expected isolated home at {home}")
+    resolved = project.resolve()
+    key = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
+    return home / "cache" / "projects" / f"{key}-{resolved.name}"
+
+
+def _setup_orphan_cleanup(project: Path) -> None:
+    """Stale materialized artifacts in ALL THREE cleanup scopes, live dirs,
+    stray files and a stale recipe lock entry, then one verbose `sync`.
+
+    Verbose is REQUIRED, not cosmetic: sync's compact step printer drops every
+    line whose first char is a success marker, so the `✓ removed orphaned ...`
+    lines (the only evidence the two cache scopes are cleaned, since the cache
+    lives OUTSIDE the project tree the harness snapshots) would be filtered
+    out and the fixture would compare two no-ops.
+
+    The stale recipe lock entry is pruned by the earlier bundled-refresh step
+    (refresh-bundled.py), whose unconditional lock write drops the legacy
+    [recipes.*] section BEFORE clean_orphans ever reads it (lock.py's writer
+    emits only meta/managed/deps/agents). The fixture therefore pins the
+    effective lock outcome: no [recipes.*] entry survives sync. The
+    clean_orphans `_prune_stale_lock` branch is only reachable when nothing
+    rewrote the lock first (see tests/test_materialize_bridge.py), so it is
+    NOT observable here.
+
+    The `[[deps]]` source is a plain LOCAL tree copied by vendor-skills.clone
+    (no network), and it is RELATIVE so the rendered skill metadata embeds a
+    stable string: an absolute source path would change the raw file hash that
+    the lock records and split the two legs.
+    """
+    _write(project, "ai-specs/ai-specs.toml", _manifest(
+        agents=("claude",),
+        recipes=("tdd-flow", "session-context"),
+        extra=(
+            "\n[[deps]]\n"
+            'id = "vendor-one"\n'
+            'source = "../dep-src"\n'
+            "scope = ['root']\n"
+        ),
+    ))
+    (project / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
+    (project / "ai-specs" / "commands").mkdir(exist_ok=True)
+    # Plain local dep tree OUTSIDE the project (not snapshotted; deterministic).
+    dep_src = project.parent / "dep-src"
+    dep_src.mkdir(parents=True, exist_ok=True)
+    (dep_src / "SKILL.md").write_text(
+        "---\ndescription: vendored fixture skill\n---\n# vendored\n")
+    # Stale recipe lock entry (legacy [recipes.*] shape load_lock reads back).
+    _write(project, "ai-specs/.ai-specs.lock",
+           "# Managed by ai-specs. Do not edit by hand.\n\n"
+           "[recipes.obsolete-recipe.skills.some-skill]\n"
+           'SKILL.md = "deadbeef"\n')
+    # In-project scope (inside the snapshotted tree): stale orphan + stray file.
+    (project / "ai-specs" / ".deps" / "obsolete-dep").mkdir(parents=True)
+    _write(project, "ai-specs/.deps/obsolete-dep/SKILL.md", "stale\n")
+    _write(project, "ai-specs/.deps/stray.txt", "keep me\n")
+    # Cache scopes (outside the project tree): stale + live dirs + stray files.
+    cache = _leg_cache_root(project)
+    for scope in (".recipe", ".deps"):
+        (cache / scope).mkdir(parents=True, exist_ok=True)
+        (cache / scope / "stray.txt").write_text("keep me\n")
+    (cache / ".recipe" / "tdd-flow").mkdir()          # live (enabled recipe)
+    _write(cache, ".recipe/tdd-flow/SKILL.md", "live\n")
+    (cache / ".recipe" / "obsolete-recipe").mkdir()   # stale orphan
+    _write(cache, ".recipe/obsolete-recipe/SKILL.md", "stale\n")
+    (cache / ".deps" / "vendor-one").mkdir()          # live (expected dep)
+    _write(cache, ".deps/vendor-one/SKILL.md", "live\n")
+    (cache / ".deps" / "obsolete-dep").mkdir()        # stale orphan
+    _write(cache, ".deps/obsolete-dep/SKILL.md", "stale\n")
+
+
 def _setup_brief_render_false(project: Path) -> None:
     """[brief].render = false: sync's policy gate must skip the AGENTS.md step
     entirely (no file written, skip notice on stdout)."""
@@ -1046,6 +1132,20 @@ CORPUS: tuple[Fixture, ...] = (
                     "precedence (colliding `tdd.md` warns).",
         setup=_setup_cache_layout,
         steps=(Step(("sync",)), Step(("sync-agent", "--all"))),
+    ),
+    Fixture(
+        name="orphan-cleanup",
+        description="Stale materialized artifacts in all three cleanup scopes "
+                    "(cache/.recipe, cache/.deps, ai-specs/.deps) plus a stale "
+                    "recipe lock entry, with live dirs and stray files that "
+                    "must SURVIVE, then one `sync --verbose`. Verbose is "
+                    "load-bearing: the `✓ removed orphaned ...` lines are the "
+                    "only harness-visible evidence for the two cache scopes, "
+                    "because the cache lives outside the snapshotted project "
+                    "tree. Oracle pinning: the legacy CLI still owns sync "
+                    "until S14 connects the native materialize orchestration.",
+        setup=_setup_orphan_cleanup,
+        steps=(Step(("sync", "--verbose")),),
     ),
     Fixture(
         name="hooks-five-runtimes",
