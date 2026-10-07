@@ -8,7 +8,8 @@ Preserve the Python oracle until S14 connects orchestration.
 ## Tracker
 - **card_id**: `6ac681095f3e34bc5b0664f4`
 - **url**: https://trello.com/c/2v7tC2pY
-- **list**: In Progress
+- **list**: Review
+- **ledger_item**: `f07c0ba359f8fbe6`
 
 ## Scope
 - Base: epic/go-single-binary at 1c2cc32.
@@ -44,7 +45,7 @@ Preserve the Python oracle until S14 connects orchestration.
 - [x] T1: Move the copy primitives and their focused tests into gate/shared. Baseline and post-move checks passed with normalized body identity.
 - [x] T2: Move the gate copy-apply command layer into gate/shared, export its entry point, and update the dispatch. Baseline and post-move checks passed with normalized body identity.
 - [x] T3: Rebuild gate artifacts with the canonical toolchain and verify checksums, gate tests, and root tests. Four-platform digests regenerated and verified twice.
-- [x] T4: Run full validation, independent verification, and applicable native review. Functional verification passed; its PARTIAL verdict was a declared-scope mismatch, now corrected below.
+- [x] T4: Run full validation, independent verification, and applicable native review. Functional verification passed; its PARTIAL verdict was a declared-scope mismatch, now corrected below. Native review approved the candidate.
 - [ ] T5: Commit, publish, merge into the epic, close the tracker, and clean the worktree. **In progress**.
 
 ## Acceptance criteria
@@ -93,6 +94,9 @@ Preserve the Python oracle until S14 connects orchestration.
 - Full validation on 1d6e4a8: exit 0 after 40m27s, 2482 tests with no skips, 29 fixtures per gate mode, zero deltas in all 58 runs.
 - Independent verification: normalized bodies identical, main dispatch is a one-line change, eleven command tests and three primitive tests exist with no weakening, digests match, and the built binary answers --apply-copy with the documented envelope and exit codes.
 - Verifier measured 964 authored lines with --no-renames against the parent's 959. Both are inside the 1200 budget.
+- Native review review-fa216f2ee6b36829 approved the committed candidate after one reliability run and listed no advisories. Exact acknowledgement consumed its authority.
+- Work-unit commit: 1d6e4a8e587202619cebd087f0a1d81ee7ea77fe. Scope-correction commit: 243619d09c605120c1a01e71b3ced636ec7ae4b7.
+- Rollback restores the gate copy-apply file and its dispatch, removes the shared copy files, and restores the prior trust manifest. No Python source changes exist to revert.
 
 ## Python retirement boundary
 - sync.go and syncagent.go still invoke Python materialize. S14 replaces those exec seams.
