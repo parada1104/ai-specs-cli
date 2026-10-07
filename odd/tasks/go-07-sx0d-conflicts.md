@@ -8,7 +8,7 @@ This prerequisite does not retire Python yet.
 ## Tracker
 - **card_id**: `6ac5a9f026b568a5fbead392`
 - **url**: https://trello.com/c/ho2xO00d
-- **list**: Review
+- **list**: Done
 - **ledger_item**: `3605800205ded6ec`
 
 ## Scope
@@ -36,7 +36,7 @@ This prerequisite does not retire Python yet.
 - [x] T1: Extract pure conflict graders and adapt their tests. Baseline and post-move checks passed.
 - [x] T2: Rebuild the gate and verify checksums, gate tests, and root tests. Canonical reproducible digests passed.
 - [x] T3: Run full validation, both parity modes, independent checks, and applicable native review. All passed.
-- [ ] T4: Commit, publish, merge into the epic, close the tracker, and clean the worktree. **In progress**.
+- [x] T4: Commit, publish, merge into the epic, close the tracker, and clean the worktree. Merged and closed.
 
 ## Acceptance criteria
 - Shared graders preserve order, conflict outcomes, and JSON shape.
@@ -74,6 +74,9 @@ This prerequisite does not retire Python yet.
 - Tracker bind and pre-merge grade returned allow. This passive delivery record does not change reviewed source or checksum bytes.
 - Work-unit commit: 4abf79d8f1770def8909ee00af26467ca2715139. Authored change: 1121 lines.
 - Rollback removes shared conflict extraction and restores main graders, tests, and the prior trust manifest.
+- Delivery observed at 6bb8e4bdc0426e18341a5b90a35e35484a03e376: PR330 merged.
+- Card 6ac5a9f026b568a5fbead392 is Done and ledger item 3605800205ded6ec is closed.
+- The feature worktree and its local branch are removed. The remote branch is absent.
 
 ## Python retirement boundary
 - recipe_toml.go still executes Python for four readers.
@@ -82,4 +85,4 @@ This prerequisite does not retire Python yet.
 - S14 connects materialize orchestration. S16 removes legacy Python after route checks.
 
 ## Next step
-Publish the verified branch and create a refactor PR against the epic. Require provider checks and tracker approval before merge.
+This task is closed. No further action stays open on this slice.

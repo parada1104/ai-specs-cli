@@ -251,6 +251,74 @@ func mustGetString(t *testing.T, tbl *Table, key string) string {
 	return v
 }
 
+// TestPlainValue pins the public normalizer the native planner seam uses: a
+// raw parsed value becomes the JSON-marshalable shape shared's planner
+// consumes, with scalars unchanged. Raw array-of-tables entries (the
+// [[reconcile.expectations]] shape) convert to []any of map[string]any.
+// Arbitrary Go maps are not recursively normalized.
+func TestPlainValue(t *testing.T) {
+	src := `[[reconcile.expectations]]
+config_field = "base_branch"
+config_field_when_set = "feature_branch"
+required = true
+max_age_seconds = 3600
+aliases = ["dev", "trunk"]
+
+[reconcile.expectations.defaults]
+base_branch = "development"
+`
+	root, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	reconcile, ok := root.Table("reconcile")
+	if !ok {
+		t.Fatalf("reconcile table missing")
+	}
+	raw, ok := reconcile.Get("expectations")
+	if !ok {
+		t.Fatalf("expectations missing")
+	}
+	if _, isRaw := raw.([]*Table); !isRaw {
+		t.Fatalf("expectations raw type = %T, want []*toml.Table", raw)
+	}
+
+	arr, ok := PlainValue(raw).([]any)
+	if !ok {
+		t.Fatalf("PlainValue(%T) = %T, want []any", raw, PlainValue(raw))
+	}
+	if len(arr) != 1 {
+		t.Fatalf("PlainValue len = %d, want 1", len(arr))
+	}
+	entry, ok := arr[0].(map[string]any)
+	if !ok {
+		t.Fatalf("entry = %T, want map[string]any", arr[0])
+	}
+	want := map[string]any{
+		"config_field":          "base_branch",
+		"config_field_when_set": "feature_branch",
+		"required":              true,
+		"max_age_seconds":       int64(3600),
+		"aliases":               []any{"dev", "trunk"},
+		"defaults":              map[string]any{"base_branch": "development"},
+	}
+	if !reflect.DeepEqual(entry, want) {
+		t.Fatalf("entry = %#v, want %#v", entry, want)
+	}
+
+	// A parsed table normalizes to map[string]any.
+	tbl, ok := PlainValue(root).(map[string]any)
+	if !ok || tbl["reconcile"] == nil {
+		t.Fatalf("PlainValue(root) = %#v, want map with reconcile", PlainValue(root))
+	}
+
+	// Arbitrary Go maps pass through unchanged: no recursive normalization.
+	pass := map[string]any{"nested": map[string]any{"k": int64(1)}}
+	if out := PlainValue(pass); !reflect.DeepEqual(out, pass) {
+		t.Fatalf("PlainValue(map) = %#v, want pass-through %#v", out, pass)
+	}
+}
+
 // --- Serializer ------------------------------------------------------------
 
 func TestTOMLValue(t *testing.T) {

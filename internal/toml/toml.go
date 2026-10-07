@@ -118,6 +118,16 @@ func (t *Table) Any() map[string]any {
 	return out
 }
 
+// PlainValue returns a raw parsed value as plain nested Go values
+// (map[string]any, []any, and scalars), suitable for JSON marshaling and for
+// the shared planner seam. It exposes the same normalization Table.Any uses:
+// *Table and []*Table convert recursively; []any converts element-wise;
+// every other value passes through unchanged, including arbitrary
+// map[string]any values, which are not recursively normalized.
+func PlainValue(v any) any {
+	return plainValue(v)
+}
+
 func plainValue(v any) any {
 	switch x := v.(type) {
 	case *Table:
