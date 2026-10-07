@@ -156,7 +156,12 @@
 # imports the pure tag and primitive conflict graders from the importable shared
 # package; no behavior change, no new asset, no second trust root), with the
 # canonical go1.24.13 toolchain via the same command above.
-799a5b3cd568b9ae27884bbeba1479f9aa93771d389994af95bb33ad9da73b8e  worktree-gate-darwin-amd64
-4af1ca526002f4864ed36f97921e754336d8c3f0e0d0e98a78fbe9e27653098b  worktree-gate-darwin-arm64
-4f4308679ff069d112777a969ce7bcdf65b1de1b646f1e0edd235c326936b6ea  worktree-gate-linux-amd64
-e651dd88cb199bba66aa0aebf2bf5ec41143efd5e8dd4ed8d82d66ce1890aab4  worktree-gate-linux-arm64
+#
+# Regenerated for the SX0e shared-package extraction (the gate main package now
+# imports the shared pure reconcile-stamp planner instead of its local copy and
+# consumes the exported source type; no behavior change, no new asset, no second
+# trust root), with the canonical go1.24.13 toolchain via the same command above.
+24af51df04f542d661d40d720520fd5c65993f7f5961947f123cc090775fa169  worktree-gate-darwin-amd64
+15bf15660a552afd99774f9122171a612971435829c096089520a21c1760e14b  worktree-gate-darwin-arm64
+2ba1bef0c8bde1d388784d621bef553646e0f09480b67073cdd7588aa8583f03  worktree-gate-linux-amd64
+9000ca0506cd24c4ac2685d720ee239140369a912e39735569f347bd2f4e6f96  worktree-gate-linux-arm64

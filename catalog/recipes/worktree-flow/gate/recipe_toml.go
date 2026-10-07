@@ -316,7 +316,7 @@ func runRecipeTagMetadataParser(catalogDir string, recipeIDs []string) (map[stri
 // enabled order so the emitted stamps list is deterministic.
 type acquiredReconcileStamp struct {
 	RecipeID string
-	Source   reconcileStampSource
+	Source   shared.ReconcileStampSource
 }
 
 // loadReconcileStampSources acquires every enabled recipe's reconcile stamp
@@ -348,7 +348,7 @@ func loadReconcileStampSources(catalogDir string, recipeIDs []string) ([]acquire
 	// trip instead of degrading them to float64.
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
-	var byRecipe map[string]reconcileStampSource
+	var byRecipe map[string]shared.ReconcileStampSource
 	if err := decoder.Decode(&byRecipe); err != nil {
 		return nil, fmt.Errorf("deserialized reconcile stamps: %w", err)
 	}
