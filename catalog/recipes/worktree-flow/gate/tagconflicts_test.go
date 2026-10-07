@@ -5,97 +5,14 @@ import (
 	"os/exec"
 	"reflect"
 	"testing"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // tagConflictOf builds one expected graded tag conflict matching the JSON
 // contract emitted on stdout.
-func tagConflictOf(tag, severity string, recipes ...string) tagConflict {
-	return tagConflict{Type: "tag_conflict", Tag: tag, Recipes: recipes, Severity: severity}
-}
-
-// TestCheckTagConflicts mirrors recipe-conflicts.check_tag_conflicts: group the
-// enabled recipes by tag in first-seen order, skip any tag held by fewer than two
-// recipes or fewer than two distinct ids, and grade the overlap fatal only when a
-// sharing recipe lists another sharing recipe in conflicts_with.
-func TestCheckTagConflicts(t *testing.T) {
-	cases := []struct {
-		name    string
-		recipes []recipeTagMetadata
-		want    []tagConflict
-	}{
-		{
-			name:    "shared tag without conflicts_with warns",
-			recipes: []recipeTagMetadata{{ID: "alpha", Tags: []string{"vcs"}}, {ID: "beta", Tags: []string{"vcs"}}},
-			want:    []tagConflict{tagConflictOf("vcs", "warning", "alpha", "beta")},
-		},
-		{
-			name:    "one-sided conflicts_with is fatal",
-			recipes: []recipeTagMetadata{{ID: "alpha", Tags: []string{"vcs"}, ConflictsWith: []string{"beta"}}, {ID: "beta", Tags: []string{"vcs"}}},
-			want:    []tagConflict{tagConflictOf("vcs", "fatal", "alpha", "beta")},
-		},
-		{
-			name:    "conflicts_with is symmetric across the pair",
-			recipes: []recipeTagMetadata{{ID: "alpha", Tags: []string{"vcs"}}, {ID: "beta", Tags: []string{"vcs"}, ConflictsWith: []string{"alpha"}}},
-			want:    []tagConflict{tagConflictOf("vcs", "fatal", "alpha", "beta")},
-		},
-		{
-			name:    "conflicts_with naming a recipe outside the tag group stays a warning",
-			recipes: []recipeTagMetadata{{ID: "alpha", Tags: []string{"vcs"}, ConflictsWith: []string{"ghost"}}, {ID: "beta", Tags: []string{"vcs"}}},
-			want:    []tagConflict{tagConflictOf("vcs", "warning", "alpha", "beta")},
-		},
-		{
-			name:    "recipes sharing no tag produce no conflict",
-			recipes: []recipeTagMetadata{{ID: "alpha", Tags: []string{"vcs"}}, {ID: "beta", Tags: []string{"tracker"}}},
-			want:    []tagConflict{},
-		},
-		{
-			name:    "a single recipe holding a tag is not a conflict",
-			recipes: []recipeTagMetadata{{ID: "alpha", Tags: []string{"vcs"}}},
-			want:    []tagConflict{},
-		},
-		{
-			name:    "one recipe listing the same tag twice is not a conflict",
-			recipes: []recipeTagMetadata{{ID: "alpha", Tags: []string{"vcs", "vcs"}}},
-			want:    []tagConflict{},
-		},
-		{
-			name:    "three recipes sharing a tag report every id sorted",
-			recipes: []recipeTagMetadata{{ID: "gamma", Tags: []string{"infra"}}, {ID: "alpha", Tags: []string{"infra"}}, {ID: "beta", Tags: []string{"infra"}}},
-			want:    []tagConflict{tagConflictOf("infra", "warning", "alpha", "beta", "gamma")},
-		},
-		{
-			name:    "empty input is an empty conflict list",
-			recipes: nil,
-			want:    []tagConflict{},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := checkTagConflicts(tc.recipes)
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("checkTagConflicts() = %#v, want %#v", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestCheckTagConflictsTagOrderIsFirstSeen checks that conflict output follows
-// the first-seen tag order rather than Go map iteration order.
-func TestCheckTagConflictsTagOrderIsFirstSeen(t *testing.T) {
-	got := checkTagConflicts([]recipeTagMetadata{
-		{ID: "alpha", Tags: []string{"z-tag", "a-tag"}},
-		{ID: "beta", Tags: []string{"z-tag", "a-tag"}},
-	})
-	wantTags := []string{"z-tag", "a-tag"}
-	if len(got) != len(wantTags) {
-		t.Fatalf("conflicts = %#v, want %d entries", got, len(wantTags))
-	}
-	for i, tag := range wantTags {
-		if got[i].Tag != tag {
-			t.Fatalf("conflict[%d].Tag = %q, want %q", i, got[i].Tag, tag)
-		}
-	}
+func tagConflictOf(tag, severity string, recipes ...string) shared.TagConflict {
+	return shared.TagConflict{Type: "tag_conflict", Tag: tag, Recipes: recipes, Severity: severity}
 }
 
 // TestLoadRecipeTagMetadata acquires the top-level [recipe] id, tags and
@@ -146,7 +63,7 @@ tags = "not a list"
 	if err != nil {
 		t.Fatalf("loadRecipeTagMetadata: %v", err)
 	}
-	want := []recipeTagMetadata{
+	want := []shared.RecipeTagMetadata{
 		{ID: "alpha", Tags: []string{"vcs", "pr-flow"}, ConflictsWith: []string{"beta"}},
 		{ID: "beta", Tags: []string{"vcs"}, ConflictsWith: []string{}},
 	}
@@ -178,23 +95,6 @@ func TestLoadRecipeTagMetadataOrderPreserved(t *testing.T) {
 	}
 }
 
-// TestTagConflictPlanJSONShape pins the exact stdout contract the later Python
-// bridge consumes: one JSON object with a conflicts list.
-func TestTagConflictPlanJSONShape(t *testing.T) {
-	plan := tagConflictPlan{Conflicts: checkTagConflicts([]recipeTagMetadata{
-		{ID: "alpha", Tags: []string{"vcs"}},
-		{ID: "beta", Tags: []string{"vcs"}},
-	})}
-	payload, err := json.Marshal(plan)
-	if err != nil {
-		t.Fatalf("json.Marshal: %v", err)
-	}
-	want := `{"conflicts":[{"type":"tag_conflict","tag":"vcs","recipes":["alpha","beta"],"severity":"warning"}]}`
-	if string(payload) != want {
-		t.Fatalf("payload = %s, want %s", payload, want)
-	}
-}
-
 // TestRunResolveTagConflictsCommand exercises the flag wiring end to end: the
 // command prints one JSON object and exits 0 for advisory and fatal tag
 // conflicts alike, while an unusable invocation exits 2. It runs the real TOML
@@ -223,11 +123,11 @@ func TestRunResolveTagConflictsCommand(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("code = %d stderr = %q, want 0", code, stderr)
 		}
-		var got tagConflictPlan
+		var got shared.TagConflictPlan
 		if err := json.Unmarshal([]byte(stdout), &got); err != nil {
 			t.Fatalf("stdout %q is not the plan JSON: %v", stdout, err)
 		}
-		want := tagConflictPlan{Conflicts: []tagConflict{tagConflictOf("vcs", "fatal", "alpha", "beta")}}
+		want := shared.TagConflictPlan{Conflicts: []shared.TagConflict{tagConflictOf("vcs", "fatal", "alpha", "beta")}}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("plan = %#v, want %#v", got, want)
 		}

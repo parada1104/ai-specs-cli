@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // recipeTomlReader is the whole recipe.toml capability boundary: the Python
@@ -167,17 +169,6 @@ for rid in sys.argv[2:]:
 print(json.dumps(out))
 `
 
-// recipePrimitives is the acquired primitive declaration one enabled recipe
-// makes: the TOML recipe id, the [recipe].name that owns claims in the conflict
-// registry, and the ordered skill, command and mcp ids under [provides].
-type recipePrimitives struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Skills   []string `json:"skills"`
-	Commands []string `json:"commands"`
-	MCP      []string `json:"mcp"`
-}
-
 // loadRecipePrimitives acquires every enabled recipe's primitive claims in one
 // bounded parser run, preserving the enabled order so conflict ordering is
 // reproducible downstream, and deduplicating repeated recipe ids like the
@@ -185,7 +176,7 @@ type recipePrimitives struct {
 // pre-check: a recipe whose recipe.toml is missing or unparseable must reach
 // the parser and fail, because the Python authority raises for the same shapes
 // and the calling bridge falls back to it on the exit 2 this loader produces.
-func loadRecipePrimitives(catalogDir string, recipeIDs []string) ([]recipePrimitives, error) {
+func loadRecipePrimitives(catalogDir string, recipeIDs []string) ([]shared.RecipePrimitives, error) {
 	seen := make(map[string]bool, len(recipeIDs))
 	unique := make([]string, 0, len(recipeIDs))
 	for _, rid := range recipeIDs {
@@ -196,17 +187,17 @@ func loadRecipePrimitives(catalogDir string, recipeIDs []string) ([]recipePrimit
 		unique = append(unique, rid)
 	}
 	if len(unique) == 0 {
-		return []recipePrimitives{}, nil
+		return []shared.RecipePrimitives{}, nil
 	}
 	raw, err := runRecipeTomlReader(catalogDir, unique, recipePrimitivesReader)
 	if err != nil {
 		return nil, err
 	}
-	var byRecipe map[string]recipePrimitives
+	var byRecipe map[string]shared.RecipePrimitives
 	if err := json.Unmarshal(raw, &byRecipe); err != nil {
 		return nil, fmt.Errorf("deserialized recipe primitives: %w", err)
 	}
-	ordered := make([]recipePrimitives, 0, len(unique))
+	ordered := make([]shared.RecipePrimitives, 0, len(unique))
 	for _, rid := range unique {
 		if recipe, ok := byRecipe[rid]; ok {
 			ordered = append(ordered, recipe)
@@ -279,7 +270,7 @@ func runRecipeTomlParser(catalogDir string, recipeIDs []string) (map[string][]st
 // recipe whose recipe.toml is missing or is not a plain file is never handed to
 // the parser and is absent from the result, matching the Python wrapper that
 // skips a recipe without a readable recipe.toml.
-func loadRecipeTagMetadata(catalogDir string, recipeIDs []string) ([]recipeTagMetadata, error) {
+func loadRecipeTagMetadata(catalogDir string, recipeIDs []string) ([]shared.RecipeTagMetadata, error) {
 	readable := make([]string, 0, len(recipeIDs))
 	seen := make(map[string]bool, len(recipeIDs))
 	for _, rid := range recipeIDs {
@@ -292,13 +283,13 @@ func loadRecipeTagMetadata(catalogDir string, recipeIDs []string) ([]recipeTagMe
 		}
 	}
 	if len(readable) == 0 {
-		return []recipeTagMetadata{}, nil
+		return []shared.RecipeTagMetadata{}, nil
 	}
 	byRecipe, err := runRecipeTagMetadataParser(catalogDir, readable)
 	if err != nil {
 		return nil, err
 	}
-	ordered := make([]recipeTagMetadata, 0, len(readable))
+	ordered := make([]shared.RecipeTagMetadata, 0, len(readable))
 	for _, rid := range readable {
 		if metadata, ok := byRecipe[rid]; ok {
 			ordered = append(ordered, metadata)
@@ -309,12 +300,12 @@ func loadRecipeTagMetadata(catalogDir string, recipeIDs []string) ([]recipeTagMe
 
 // runRecipeTagMetadataParser runs the [recipe] metadata reader under the bounded
 // TOML execution and deserializes its JSON object.
-func runRecipeTagMetadataParser(catalogDir string, recipeIDs []string) (map[string]recipeTagMetadata, error) {
+func runRecipeTagMetadataParser(catalogDir string, recipeIDs []string) (map[string]shared.RecipeTagMetadata, error) {
 	raw, err := runRecipeTomlReader(catalogDir, recipeIDs, recipeTagMetadataReader)
 	if err != nil {
 		return nil, err
 	}
-	var metadata map[string]recipeTagMetadata
+	var metadata map[string]shared.RecipeTagMetadata
 	if err := json.Unmarshal(raw, &metadata); err != nil {
 		return nil, fmt.Errorf("deserialized tag metadata: %w", err)
 	}
