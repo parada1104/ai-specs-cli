@@ -9,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // Hook/gate actuator for runtime hook scripts (GO-10, strangler slice 7). Go
 // owns the hook actuation DECISION + EXECUTION: rendering (the 8 hook
 // placeholders), the ownership classification (the shared
-// classifyManagedOverride core behind --plan-classify — never re-ported), the
+// shared.ClassifyManagedOverride core behind --plan-classify — never re-ported), the
 // write + chmod 0755, and the refresh backup/rollback. Python keeps the lock
 // load/write (set_gate_baseline + write_lock), ALL printing, the refresh
 // backup-path precomputation (project-cache ownership) and the gate-version
@@ -114,7 +116,7 @@ func hookRelPathEscapes(recipeID, script string) bool {
 // value); the two tracker-home tokens become empty strings without a CLI
 // home, which makes the host skip evidence acquisition (fail open). Rendering
 // is string surgery only: CRLF bytes are never normalized (normalization
-// happens only inside sha256Bytes).
+// happens only inside Sha256Bytes).
 func renderHookGateContent(src []byte, cfg map[string]any, cliHome string, gateVersion string) (string, error) {
 	content := string(src)
 	replace := func(token, value string) {
@@ -166,7 +168,7 @@ func renderHookGateContent(src []byte, cfg map[string]any, cliHome string, gateV
 }
 
 // hookBackupComplete reports whether the snapshot at path holds exactly the
-// bytes its content-hash key names (sha256Bytes(bytes) == the digest encoded
+// bytes its content-hash key names (shared.Sha256Bytes(bytes) == the digest encoded
 // in the file name); a missing or partial file is never complete, so a
 // truncated write cannot masquerade as the immutable snapshot.
 func hookBackupComplete(path string) bool {
@@ -175,7 +177,7 @@ func hookBackupComplete(path string) bool {
 		return false
 	}
 	want := strings.TrimSuffix(filepath.Base(path), filepath.Ext(filepath.Base(path)))
-	return want != "" && sha256Bytes(data) == want
+	return want != "" && shared.Sha256Bytes(data) == want
 }
 
 // writeHookBackupSnapshot writes the refresh snapshot atomically: a temp file
@@ -215,16 +217,16 @@ func writeHookBackupSnapshot(path string, content []byte) error {
 // is the Python-precomputed immutable refresh snapshot path (empty when the
 // destination does not exist yet).
 type hookActuatorRequest struct {
-	ProjectRoot  string                `json:"project_root"`
-	RecipeDir    string                `json:"recipe_dir"`
-	RecipeID     string                `json:"recipe_id"`
-	Script       string                `json:"script"`
-	Config       map[string]any        `json:"config,omitempty"`
-	CLIHome      string                `json:"cli_home,omitempty"`
-	GateVersion  string                `json:"gate_version,omitempty"`
-	Refresh      bool                  `json:"refresh,omitempty"`
-	ManagedEntry *classifyManagedEntry `json:"managed_entry,omitempty"`
-	BackupPath   string                `json:"backup_path,omitempty"`
+	ProjectRoot  string                       `json:"project_root"`
+	RecipeDir    string                       `json:"recipe_dir"`
+	RecipeID     string                       `json:"recipe_id"`
+	Script       string                       `json:"script"`
+	Config       map[string]any               `json:"config,omitempty"`
+	CLIHome      string                       `json:"cli_home,omitempty"`
+	GateVersion  string                       `json:"gate_version,omitempty"`
+	Refresh      bool                         `json:"refresh,omitempty"`
+	ManagedEntry *shared.ClassifyManagedEntry `json:"managed_entry,omitempty"`
+	BackupPath   string                       `json:"backup_path,omitempty"`
 }
 
 // hookActuatorRecord is the lock payload the Python bridge hands to
@@ -350,20 +352,20 @@ func runMaterializeHook(stdin io.Reader, stdout, stderr io.Writer) int {
 		})
 	}
 
-	present, disk, err := readRegularFile(dest)
+	present, disk, err := shared.ReadRegularFile(dest)
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --materialize-hook: dest %s: %v\n", dest, err)
 		return 2
 	}
-	// The SHARED classification port (classify.go): never re-ported in
+	// The SHARED classification port (shared/classify.go): never re-ported in
 	// slice 7. The hook path passes the exact rendered content as would-write.
 	wouldWrite := content
-	state := classifyManagedOverride(present, disk, in.ManagedEntry, &wouldWrite).State
+	state := shared.ClassifyManagedOverride(present, disk, in.ManagedEntry, &wouldWrite).State
 	out := hookActuatorOutput{Rel: rel, Dest: dest, Warnings: []string{}}
 	switch state {
-	case classifyMissing, classifyManagedStale:
+	case shared.ClassifyMissing, shared.ClassifyManagedStale:
 		verb := "✓ hook script"
-		if state == classifyManagedStale {
+		if state == shared.ClassifyManagedStale {
 			// Baseline matches current bytes: the CLI rendered this gate, so an
 			// ordinary sync may force-update it and re-record the baseline.
 			verb = "✓ hook refreshed (baseline matched)"
@@ -372,18 +374,18 @@ func runMaterializeHook(stdin io.Reader, stdout, stderr io.Writer) int {
 			return refuse(hookWriteRefusal(rel, dest, err))
 		}
 		out.Wrote = true
-		out.Record = hookRecord(sha256Bytes(contentBytes))
+		out.Record = hookRecord(shared.Sha256Bytes(contentBytes))
 		out.Message = fmt.Sprintf("%s %s", verb, rel)
-	case classifyManagedCurrent:
+	case shared.ClassifyManagedCurrent:
 		// Backfill provenance without rewriting the target (idempotent pair).
-		out.Record = hookRecord(sha256Bytes(contentBytes))
+		out.Record = hookRecord(shared.Sha256Bytes(contentBytes))
 		out.Message = fmt.Sprintf("· hook skipped (current) %s", rel)
-	case classifyUserModified:
+	case shared.ClassifyUserModified:
 		out.Warnings = append(out.Warnings, fmt.Sprintf(
 			"hook %s is user-modified; preserving existing bytes. Refresh with:\n"+
 				"  rm %s && ai-specs sync  (or: ai-specs sync --refresh-gates)", rel, rel))
 		out.Message = fmt.Sprintf("· hook skipped (user-modified) %s", rel)
-	case classifyUntracked:
+	case shared.ClassifyUntracked:
 		// No provenance: preserve, NEVER seed (unlike the template actuator).
 		out.Warnings = append(out.Warnings, fmt.Sprintf(
 			"hook %s has no recorded provenance; preserving existing bytes. "+
@@ -470,7 +472,7 @@ func runHookGateRefresh(c hookRefreshCall) int {
 		Rel:      c.rel,
 		Dest:     c.dest,
 		Wrote:    true,
-		Record:   c.record(sha256Bytes(c.contentBytes)),
+		Record:   c.record(shared.Sha256Bytes(c.contentBytes)),
 		Message:  fmt.Sprintf("✓ hook refreshed %s", c.rel),
 		Warnings: []string{},
 		Backup:   backup,

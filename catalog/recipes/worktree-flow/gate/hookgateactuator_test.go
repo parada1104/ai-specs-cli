@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // RED contract suite for strangler slice 7 (GO-10): the Go hook/gate actuator
@@ -20,7 +22,7 @@ import (
 // to compile until the implementation work unit lands hookgateactuator.go.
 // These tests ARE the contract: the implementation must make them pass
 // byte-for-byte and string-for-string, and must REUSE the already-ported
-// classifyManagedOverride pure core (classify.go) for the state machine — the
+// shared.ClassifyManagedOverride pure core (shared/classify.go) for the state machine — the
 // ownership classification is never re-ported in slice 7 (single shared port
 // with slice 6, util.py:651/808 via --plan-classify).
 //
@@ -61,7 +63,7 @@ type hookGateInput struct {
 }
 
 // hookGateManagedEntry is the subset of [managed.<path>] lock metadata the
-// actuator reads (same shape as classifyManagedEntry).
+// actuator reads (same shape as shared.ClassifyManagedEntry).
 type hookGateManagedEntry struct {
 	SHA256 string `json:"sha256"`
 }
@@ -385,8 +387,8 @@ func TestHookGateActuatorFreshWrite(t *testing.T) {
 	if !out.Wrote {
 		t.Errorf("wrote = false, want true")
 	}
-	if out.Record == nil || *out.Record != *wantGateRecord(in, sha256Bytes([]byte(hookFixtureRendered))) {
-		t.Errorf("record = %#v, want %#v", out.Record, wantGateRecord(in, sha256Bytes([]byte(hookFixtureRendered))))
+	if out.Record == nil || *out.Record != *wantGateRecord(in, shared.Sha256Bytes([]byte(hookFixtureRendered))) {
+		t.Errorf("record = %#v, want %#v", out.Record, wantGateRecord(in, shared.Sha256Bytes([]byte(hookFixtureRendered))))
 	}
 	if out.Message != fmt.Sprintf("✓ hook script %s", out.Rel) {
 		t.Errorf("message = %q", out.Message)
@@ -419,7 +421,7 @@ func TestHookGateActuatorManagedCurrent(t *testing.T) {
 	if err := os.WriteFile(dest, []byte(hookFixtureRendered), 0o755); err != nil {
 		t.Fatalf("write dest: %v", err)
 	}
-	in.ManagedEntry = &hookGateManagedEntry{SHA256: sha256Bytes([]byte(hookFixtureRendered))}
+	in.ManagedEntry = &hookGateManagedEntry{SHA256: shared.Sha256Bytes([]byte(hookFixtureRendered))}
 	code, out, stderr := runHookGateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -427,7 +429,7 @@ func TestHookGateActuatorManagedCurrent(t *testing.T) {
 	if out.Wrote {
 		t.Errorf("wrote = true, want skip without rewrite")
 	}
-	if out.Record == nil || out.Record.SHA256 != sha256Bytes([]byte(hookFixtureRendered)) {
+	if out.Record == nil || out.Record.SHA256 != shared.Sha256Bytes([]byte(hookFixtureRendered)) {
 		t.Errorf("record = %#v, want baseline backfill", out.Record)
 	}
 	if out.Message != fmt.Sprintf("· hook skipped (current) %s", out.Rel) {
@@ -448,7 +450,7 @@ func TestHookGateActuatorManagedStaleRefresh(t *testing.T) {
 	if err := os.WriteFile(dest, []byte(stale), 0o755); err != nil {
 		t.Fatalf("write dest: %v", err)
 	}
-	in.ManagedEntry = &hookGateManagedEntry{SHA256: sha256Bytes([]byte(stale))}
+	in.ManagedEntry = &hookGateManagedEntry{SHA256: shared.Sha256Bytes([]byte(stale))}
 	code, out, stderr := runHookGateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -456,7 +458,7 @@ func TestHookGateActuatorManagedStaleRefresh(t *testing.T) {
 	if !out.Wrote {
 		t.Errorf("wrote = false, want force-update")
 	}
-	if out.Record == nil || out.Record.SHA256 != sha256Bytes([]byte(hookFixtureRendered)) {
+	if out.Record == nil || out.Record.SHA256 != shared.Sha256Bytes([]byte(hookFixtureRendered)) {
 		t.Errorf("record = %#v, want re-recorded render sha", out.Record)
 	}
 	if out.Message != fmt.Sprintf("✓ hook refreshed (baseline matched) %s", out.Rel) {
@@ -480,7 +482,7 @@ func TestHookGateActuatorUserModifiedPreserved(t *testing.T) {
 	if err := os.WriteFile(dest, []byte(userBytes), 0o755); err != nil {
 		t.Fatalf("write dest: %v", err)
 	}
-	in.ManagedEntry = &hookGateManagedEntry{SHA256: sha256Bytes([]byte("#!/bin/sh\n# original baseline\n"))}
+	in.ManagedEntry = &hookGateManagedEntry{SHA256: shared.Sha256Bytes([]byte("#!/bin/sh\n# original baseline\n"))}
 	code, out, stderr := runHookGateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -546,7 +548,7 @@ func TestHookGateActuatorRefreshBacksUpAndRewrites(t *testing.T) {
 		t.Fatalf("write dest: %v", err)
 	}
 	in.Refresh = true
-	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", sha256Bytes([]byte(prior))+".sh")
+	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", shared.Sha256Bytes([]byte(prior))+".sh")
 	code, out, stderr := runHookGateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -564,7 +566,7 @@ func TestHookGateActuatorRefreshBacksUpAndRewrites(t *testing.T) {
 	if string(backup) != prior {
 		t.Errorf("backup bytes = %q, want prior %q", backup, prior)
 	}
-	if out.Record == nil || out.Record.SHA256 != sha256Bytes([]byte(hookFixtureRendered)) {
+	if out.Record == nil || out.Record.SHA256 != shared.Sha256Bytes([]byte(hookFixtureRendered)) {
 		t.Errorf("record = %#v, want refreshed render sha", out.Record)
 	}
 	if out.Message != fmt.Sprintf("✓ hook refreshed %s", out.Rel) {
@@ -593,7 +595,7 @@ func TestHookGateActuatorRefreshRepairsPartialBackup(t *testing.T) {
 		t.Fatalf("write dest: %v", err)
 	}
 	in.Refresh = true
-	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", sha256Bytes([]byte(prior))+".sh")
+	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", shared.Sha256Bytes([]byte(prior))+".sh")
 	if err := os.MkdirAll(filepath.Dir(in.BackupPath), 0o755); err != nil {
 		t.Fatalf("mkdir backups: %v", err)
 	}
@@ -618,8 +620,8 @@ func TestHookGateActuatorRefreshRepairsPartialBackup(t *testing.T) {
 		t.Errorf("backup bytes = %q, want repaired prior %q", backup, prior)
 	}
 	nameDigest := strings.TrimSuffix(filepath.Base(in.BackupPath), filepath.Ext(in.BackupPath))
-	if sha256Bytes(backup) != nameDigest {
-		t.Errorf("backup sha256 = %q, want path digest %q", sha256Bytes(backup), nameDigest)
+	if shared.Sha256Bytes(backup) != nameDigest {
+		t.Errorf("backup sha256 = %q, want path digest %q", shared.Sha256Bytes(backup), nameDigest)
 	}
 }
 
@@ -634,7 +636,7 @@ func TestHookGateActuatorRefreshKeepsCompleteBackup(t *testing.T) {
 		t.Fatalf("write dest: %v", err)
 	}
 	in.Refresh = true
-	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", sha256Bytes([]byte(prior))+".sh")
+	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", shared.Sha256Bytes([]byte(prior))+".sh")
 	if err := os.MkdirAll(filepath.Dir(in.BackupPath), 0o755); err != nil {
 		t.Fatalf("mkdir backups: %v", err)
 	}
@@ -675,7 +677,7 @@ func TestHookGateActuatorRefreshRollback(t *testing.T) {
 		t.Fatalf("chmod dest: %v", err)
 	}
 	in.Refresh = true
-	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", sha256Bytes([]byte(prior))+".sh")
+	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", shared.Sha256Bytes([]byte(prior))+".sh")
 	code, out, stderr := runHookGateActuatorCLI(t, in)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2 (stderr %q, out %#v)", code, stderr, out)
@@ -711,7 +713,7 @@ func TestHookGateActuatorRefreshMissingDestNoBackup(t *testing.T) {
 	if !out.Wrote || out.Backup != "" {
 		t.Errorf("wrote = %v backup = %q, want plain write without backup", out.Wrote, out.Backup)
 	}
-	if out.Record == nil || out.Record.SHA256 != sha256Bytes([]byte(hookFixtureRendered)) {
+	if out.Record == nil || out.Record.SHA256 != shared.Sha256Bytes([]byte(hookFixtureRendered)) {
 		t.Errorf("record = %#v, want gate baseline", out.Record)
 	}
 	if out.Message != fmt.Sprintf("✓ hook refreshed %s", out.Rel) {
@@ -808,7 +810,7 @@ func TestHookGateActuatorRefreshRollbackNeverWritesThroughSymlink(t *testing.T) 
 	}
 	t.Cleanup(func() { hookGateRefreshWrite = realWrite })
 	in.Refresh = true
-	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", sha256Bytes([]byte(prior))+".sh")
+	in.BackupPath = filepath.Join(t.TempDir(), "backups", "relkey", shared.Sha256Bytes([]byte(prior))+".sh")
 	code, out, stderr := runHookGateActuatorCLI(t, in)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2 (stderr %q, out %#v)", code, stderr, out)

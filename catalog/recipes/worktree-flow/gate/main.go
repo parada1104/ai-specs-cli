@@ -230,7 +230,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return runPlanResolvedConfig(root, stdout, stderr)
 	case *planClassifyCmd:
-		return runPlanClassify(stdin, stdout, stderr)
+		return shared.RunPlanClassify(stdin, stdout, stderr)
 	case *planMergeConfigCmd:
 		return runPlanMergeConfig(stdin, stdout, stderr)
 	case *writeRecipeConfigCmd:
