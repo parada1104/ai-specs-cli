@@ -11,12 +11,14 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // Template actuator for the governed-template materializer (GO-09, strangler
 // slice 6). Go owns the template actuation DECISION + EXECUTION: git-path
 // destination resolution, rendering, the ownership classification (the shared
-// classifyManagedOverride core behind --plan-classify — never re-ported), the
+// shared.ClassifyManagedOverride core behind --plan-classify — never re-ported), the
 // write + chmod, and the managed-override record payload. Python keeps the
 // lock load/write (set_managed_override + write_lock), all printing, and the
 // fail-open fallback (GO_TEMPLATE_ACTUATOR_BRIDGE_FALLBACK).
@@ -71,15 +73,15 @@ const (
 // ManagedEntry is the lock's managed[target] subset — only sha256 is read;
 // nil means untracked.
 type templateActuatorRequest struct {
-	ProjectRoot  string                `json:"project_root"`
-	RecipeDir    string                `json:"recipe_dir"`
-	RecipeID     string                `json:"recipe_id"`
-	Source       string                `json:"source"`
-	Target       string                `json:"target"`
-	Condition    string                `json:"condition,omitempty"`
-	UpdatePolicy string                `json:"update_policy,omitempty"`
-	Config       map[string]any        `json:"config,omitempty"`
-	ManagedEntry *classifyManagedEntry `json:"managed_entry,omitempty"`
+	ProjectRoot  string                       `json:"project_root"`
+	RecipeDir    string                       `json:"recipe_dir"`
+	RecipeID     string                       `json:"recipe_id"`
+	Source       string                       `json:"source"`
+	Target       string                       `json:"target"`
+	Condition    string                       `json:"condition,omitempty"`
+	UpdatePolicy string                       `json:"update_policy,omitempty"`
+	Config       map[string]any               `json:"config,omitempty"`
+	ManagedEntry *shared.ClassifyManagedEntry `json:"managed_entry,omitempty"`
 }
 
 // templateActuatorRecord is the lock payload the Python bridge hands to
@@ -173,7 +175,7 @@ func templateConfigOr(config map[string]any, key, fallback string) string {
 // cleanup stamps with `or default` semantics. With a nil config the cleanup
 // tokens stay LITERAL (the Python early return fires after the shared
 // render). Rendering is byte surgery only: CRLF bytes are never normalized
-// (normalization happens only inside sha256Bytes).
+// (normalization happens only inside shared.Sha256Bytes).
 func renderTemplateBytes(src []byte, config map[string]any) []byte {
 	data := src
 	token := []byte(templateTopologyToken)
@@ -495,13 +497,13 @@ func runMaterializeTemplate(stdin io.Reader, stdout, stderr io.Writer) int {
 
 	if in.Condition == templateConditionNotExists {
 		if _, existsErr := os.Stat(dest); existsErr == nil {
-			present, disk, readErr := readRegularFile(dest)
+			present, disk, readErr := shared.ReadRegularFile(dest)
 			if readErr != nil {
 				fmt.Fprintf(stderr, "worktree-gate: --materialize-template: dest %s: %v\n", dest, readErr)
 				return 2
 			}
 			wouldWrite := string(content)
-			state := classifyManagedOverride(present, disk, in.ManagedEntry, &wouldWrite).State
+			state := shared.ClassifyManagedOverride(present, disk, in.ManagedEntry, &wouldWrite).State
 			// The Python reference prints the skip line at the end of the
 			// exists branch regardless of the decision (fall-through).
 			out := templateActuatorOutput{
@@ -510,12 +512,12 @@ func runMaterializeTemplate(stdin io.Reader, stdout, stderr io.Writer) int {
 				Warnings: []string{},
 			}
 			switch state {
-			case classifyUntracked:
-				diskSHA := sha256Bytes(disk)
+			case shared.ClassifyUntracked:
+				diskSHA := shared.Sha256Bytes(disk)
 				// Existing projects may contain a pre-render placeholder copy
 				// still carrying the raw catalog tokens; seed its actual bytes
 				// and let the next sync reconcile it.
-				if diskSHA == sha256Bytes(content) || diskSHA == sha256Bytes(srcBytes) {
+				if diskSHA == shared.Sha256Bytes(content) || diskSHA == shared.Sha256Bytes(srcBytes) {
 					out.Record = record(diskSHA)
 				} else {
 					out.Warnings = append(out.Warnings, fmt.Sprintf(
@@ -523,27 +525,27 @@ func runMaterializeTemplate(stdin io.Reader, stdout, stderr io.Writer) int {
 							"To preserve this local file, leave it unchanged. To replace it with the current recipe version, "+
 							"remove it and run sync again:\n  rm %s && ai-specs sync", in.Target, in.Target))
 				}
-			case classifyManagedStale:
+			case shared.ClassifyManagedStale:
 				if policy == templatePolicyAuto {
 					if err := writeTemplateContent(dest, content, sourceMode); err != nil {
 						return refuse(writeTemplateRefusal(in.Target, dest, err))
 					}
 					out.Wrote = true
-					out.Record = record(sha256Bytes(content))
+					out.Record = record(shared.Sha256Bytes(content))
 					out.Info = fmt.Sprintf("refreshed managed template %s", in.Target)
 				} else {
 					out.Warnings = append(out.Warnings, fmt.Sprintf(
 						"override managed-stale (%s-required): %s was not refreshed. "+
 							"Refresh with:\n  rm %s && ai-specs sync", policy, in.Target, in.Target))
 				}
-			case classifyUserModified:
+			case shared.ClassifyUserModified:
 				out.Warnings = append(out.Warnings, fmt.Sprintf(
 					"override user-modified: %s was not refreshed. "+
 						"Refresh with:\n  rm %s && ai-specs sync", in.Target, in.Target))
-			case classifyManagedCurrent:
+			case shared.ClassifyManagedCurrent:
 				// Backfill provenance fields without rewriting the target.
-				out.Record = record(sha256Bytes(content))
-			case classifyMissing:
+				out.Record = record(shared.Sha256Bytes(content))
+			case shared.ClassifyMissing:
 				// The destination exists but is not a regular file: the
 				// Python reference matches no branch, records nothing, and
 				// still prints the skip line.
@@ -558,7 +560,7 @@ func runMaterializeTemplate(stdin io.Reader, stdout, stderr io.Writer) int {
 	return emit(templateActuatorOutput{
 		Dest:     dest,
 		Wrote:    true,
-		Record:   record(sha256Bytes(content)),
+		Record:   record(shared.Sha256Bytes(content)),
 		Message:  fmt.Sprintf("✓ template %s", in.Target),
 		Warnings: []string{},
 	})

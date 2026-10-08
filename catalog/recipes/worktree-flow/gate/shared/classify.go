@@ -1,4 +1,4 @@
-package main
+package shared
 
 import (
 	"bytes"
@@ -24,35 +24,41 @@ import (
 //  4. no would-write bytes                         -> managed_current
 //  5. disk sha256 equals the would-write sha256    -> managed_current
 //     otherwise                                    -> managed_stale
+//
+// Moved verbatim from the gate main package (classify.go) as part of slice
+// SX0f.1: the classify decision core and its helpers live in the shared,
+// importable package. Only the declaration names gained their exported form;
+// the decision bodies, the JSON tags, and the emitted envelope are unchanged.
+// The --plan-classify flag surface stays in the gate main package.
 
 const (
-	classifyMissing        = "missing"
-	classifyUntracked      = "untracked"
-	classifyUserModified   = "user_modified"
-	classifyManagedCurrent = "managed_current"
-	classifyManagedStale   = "managed_stale"
+	ClassifyMissing        = "missing"
+	ClassifyUntracked      = "untracked"
+	ClassifyUserModified   = "user_modified"
+	ClassifyManagedCurrent = "managed_current"
+	ClassifyManagedStale   = "managed_stale"
 )
 
-// classifyInput is the --plan-classify stdin contract. ManagedEntry is the lock
+// ClassifyInput is the --plan-classify stdin contract. ManagedEntry is the lock
 // metadata table; only its sha256 member is read, and a nil/absent table is the
 // untracked case. WouldWrite is the exact post-render text that sync would
 // write; a nil pointer means the caller has no candidate bytes.
-type classifyInput struct {
+type ClassifyInput struct {
 	Dest         string                `json:"dest"`
-	ManagedEntry *classifyManagedEntry `json:"managed_entry"`
+	ManagedEntry *ClassifyManagedEntry `json:"managed_entry"`
 	WouldWrite   *string               `json:"would_write"`
 }
 
-// classifyManagedEntry is the subset of [managed.<path>] lock metadata the
+// ClassifyManagedEntry is the subset of [managed.<path>] lock metadata the
 // classifier reads. A missing or empty sha256 means the path is untracked.
-type classifyManagedEntry struct {
+type ClassifyManagedEntry struct {
 	SHA256 string `json:"sha256"`
 }
 
-// classifyResult is the --plan-classify stdout contract. The SHA members are
+// ClassifyResult is the --plan-classify stdout contract. The SHA members are
 // omitted when the state has no such input: no disk hash on missing, no managed
 // hash on untracked, no would-write hash when it was absent.
-type classifyResult struct {
+type ClassifyResult struct {
 	State            string `json:"state"`
 	Dest             string `json:"dest"`
 	DiskSHA256       string `json:"disk_sha256,omitempty"`
@@ -60,52 +66,52 @@ type classifyResult struct {
 	WouldWriteSHA256 string `json:"would_write_sha256,omitempty"`
 }
 
-// sha256Bytes mirrors Python util.sha256_bytes: SHA-256 over CRLF-normalized
+// Sha256Bytes mirrors Python util.sha256_bytes: SHA-256 over CRLF-normalized
 // bytes, hex encoded. Both authorities must hash identically or the parity
 // contract between the Python fallback and the Go grader breaks.
-func sha256Bytes(data []byte) string {
+func Sha256Bytes(data []byte) string {
 	normalized := bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 	sum := sha256.Sum256(normalized)
 	return hex.EncodeToString(sum[:])
 }
 
-// classifyManagedOverride is the pure decision core. disk holds the destination
+// ClassifyManagedOverride is the pure decision core. disk holds the destination
 // bytes and present reports whether the destination is a regular file; a
 // non-regular or absent destination is missing regardless of disk. It performs
 // no I/O and never writes.
-func classifyManagedOverride(present bool, disk []byte, managed *classifyManagedEntry, wouldWrite *string) classifyResult {
-	result := classifyResult{State: classifyMissing}
+func ClassifyManagedOverride(present bool, disk []byte, managed *ClassifyManagedEntry, wouldWrite *string) ClassifyResult {
+	result := ClassifyResult{State: ClassifyMissing}
 	if !present {
 		return result
 	}
-	diskSHA := sha256Bytes(disk)
+	diskSHA := Sha256Bytes(disk)
 	result.DiskSHA256 = diskSHA
 	if managed == nil || managed.SHA256 == "" {
-		result.State = classifyUntracked
+		result.State = ClassifyUntracked
 		return result
 	}
 	result.ManagedSHA256 = managed.SHA256
 	if diskSHA != managed.SHA256 {
-		result.State = classifyUserModified
+		result.State = ClassifyUserModified
 		return result
 	}
 	if wouldWrite == nil {
-		result.State = classifyManagedCurrent
+		result.State = ClassifyManagedCurrent
 		return result
 	}
-	result.WouldWriteSHA256 = sha256Bytes([]byte(*wouldWrite))
+	result.WouldWriteSHA256 = Sha256Bytes([]byte(*wouldWrite))
 	if diskSHA == result.WouldWriteSHA256 {
-		result.State = classifyManagedCurrent
+		result.State = ClassifyManagedCurrent
 	} else {
-		result.State = classifyManagedStale
+		result.State = ClassifyManagedStale
 	}
 	return result
 }
 
-// readRegularFile mirrors Python Path.is_file(): any stat error or a non-regular
+// ReadRegularFile mirrors Python Path.is_file(): any stat error or a non-regular
 // entry reports present=false (the "missing" case). A read failure on a regular
 // file is a process-level error, never a silent missing.
-func readRegularFile(path string) (bool, []byte, error) {
+func ReadRegularFile(path string) (bool, []byte, error) {
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return false, nil, nil
@@ -117,12 +123,12 @@ func readRegularFile(path string) (bool, []byte, error) {
 	return true, data, nil
 }
 
-// runPlanClassify is the --plan-classify command: decode one JSON envelope from
+// RunPlanClassify is the --plan-classify command: decode one JSON envelope from
 // stdin, classify the destination, and print one JSON object on stdout. A
 // malformed envelope, a missing dest, or an unreadable destination is a
 // process-level failure (exit 2, no stdout). It never writes.
-func runPlanClassify(stdin io.Reader, stdout, stderr io.Writer) int {
-	var in classifyInput
+func RunPlanClassify(stdin io.Reader, stdout, stderr io.Writer) int {
+	var in ClassifyInput
 	raw, err := io.ReadAll(stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --plan-classify: read stdin: %v\n", err)
@@ -141,12 +147,12 @@ func runPlanClassify(stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "worktree-gate: --plan-classify: missing dest")
 		return 2
 	}
-	present, disk, err := readRegularFile(in.Dest)
+	present, disk, err := ReadRegularFile(in.Dest)
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: --plan-classify: dest %s: %v\n", in.Dest, err)
 		return 2
 	}
-	result := classifyManagedOverride(present, disk, in.ManagedEntry, in.WouldWrite)
+	result := ClassifyManagedOverride(present, disk, in.ManagedEntry, in.WouldWrite)
 	result.Dest = in.Dest
 	payload, err := json.Marshal(result)
 	if err != nil {

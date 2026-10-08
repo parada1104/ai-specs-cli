@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // RED contract suite for strangler slice 6 (GO-09): the Go template actuator
@@ -22,7 +24,7 @@ import (
 // to compile until the implementation work unit lands templateactuator.go.
 // These tests ARE the contract: the implementation must make them pass
 // byte-for-byte and string-for-string, and must REUSE the already-ported
-// classifyManagedOverride pure core (classify.go) for the not_exists
+// shared.ClassifyManagedOverride pure core (shared/classify.go) for the not_exists
 // decision — the ownership classification is never re-ported in slice 6
 // (single shared port with slice 7, util.py:651/808 via --plan-classify).
 //
@@ -50,7 +52,7 @@ type templateInput struct {
 }
 
 // templateManagedEntry is the subset of [managed.<path>] lock metadata the
-// actuator reads (same shape as classifyManagedEntry).
+// actuator reads (same shape as shared.ClassifyManagedEntry).
 type templateManagedEntry struct {
 	SHA256 string `json:"sha256"`
 }
@@ -394,7 +396,7 @@ func TestTemplateActuatorFreshWrite(t *testing.T) {
 	if !out.Wrote {
 		t.Errorf("wrote = false, want true")
 	}
-	wantSHA := sha256Bytes([]byte(body))
+	wantSHA := shared.Sha256Bytes([]byte(body))
 	if out.Record == nil || *out.Record != *wantRecord(in, wantSHA) {
 		t.Errorf("record = %#v, want %#v", out.Record, wantRecord(in, wantSHA))
 	}
@@ -445,7 +447,7 @@ func TestTemplateActuatorNotExistsSeedsRenderedCopy(t *testing.T) {
 	if out.Wrote {
 		t.Errorf("wrote = true, want seeding without rewrite")
 	}
-	if out.Record == nil || out.Record.SHA256 != sha256Bytes([]byte(body)) {
+	if out.Record == nil || out.Record.SHA256 != shared.Sha256Bytes([]byte(body)) {
 		t.Errorf("record = %#v, want seeded sha", out.Record)
 	}
 	if out.Message != fmt.Sprintf("· template skipped (exists) %s", in.Target) {
@@ -469,7 +471,7 @@ func TestTemplateActuatorNotExistsSeedsLegacyPlaceholder(t *testing.T) {
 	if out.Wrote {
 		t.Errorf("wrote = true, want seeding without rewrite")
 	}
-	if out.Record == nil || out.Record.SHA256 != sha256Bytes([]byte(body)) {
+	if out.Record == nil || out.Record.SHA256 != shared.Sha256Bytes([]byte(body)) {
 		t.Errorf("record = %#v, want the legacy placeholder sha", out.Record)
 	}
 	got, err := os.ReadFile(dest)
@@ -519,7 +521,7 @@ func TestTemplateActuatorManagedStaleAutoRefresh(t *testing.T) {
 	in := writeTemplateSource(t, body, 0o644)
 	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
 	seedDest(t, dest, []byte("echo old\n"))
-	in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte("echo old\n"))}
+	in.ManagedEntry = &templateManagedEntry{SHA256: shared.Sha256Bytes([]byte("echo old\n"))}
 	code, out, stderr := runTemplateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -527,7 +529,7 @@ func TestTemplateActuatorManagedStaleAutoRefresh(t *testing.T) {
 	if !out.Wrote {
 		t.Errorf("wrote = false, want refresh")
 	}
-	if out.Record == nil || out.Record.SHA256 != sha256Bytes([]byte(body)) {
+	if out.Record == nil || out.Record.SHA256 != shared.Sha256Bytes([]byte(body)) {
 		t.Errorf("record = %#v, want refreshed sha", out.Record)
 	}
 	if out.Info != fmt.Sprintf("refreshed managed template %s", in.Target) {
@@ -551,7 +553,7 @@ func TestTemplateActuatorStaleRefusalPolicies(t *testing.T) {
 			in.UpdatePolicy = policy
 			dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
 			seedDest(t, dest, []byte("echo old\n"))
-			in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte("echo old\n"))}
+			in.ManagedEntry = &templateManagedEntry{SHA256: shared.Sha256Bytes([]byte("echo old\n"))}
 			code, out, stderr := runTemplateActuatorCLI(t, in)
 			if code != 0 {
 				t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -579,7 +581,7 @@ func TestTemplateActuatorUserModifiedRefusal(t *testing.T) {
 	in := writeTemplateSource(t, "echo new\n", 0o644)
 	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
 	seedDest(t, dest, []byte("user edited\n"))
-	in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte("echo old\n"))}
+	in.ManagedEntry = &templateManagedEntry{SHA256: shared.Sha256Bytes([]byte("echo old\n"))}
 	code, out, stderr := runTemplateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -602,7 +604,7 @@ func TestTemplateActuatorManagedCurrentBackfill(t *testing.T) {
 	in := writeTemplateSource(t, body, 0o644)
 	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
 	seedDest(t, dest, []byte(body))
-	in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte(body))}
+	in.ManagedEntry = &templateManagedEntry{SHA256: shared.Sha256Bytes([]byte(body))}
 	code, out, stderr := runTemplateActuatorCLI(t, in)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr %q, out %#v", code, stderr, out)
@@ -610,7 +612,7 @@ func TestTemplateActuatorManagedCurrentBackfill(t *testing.T) {
 	if out.Wrote {
 		t.Errorf("wrote = true, want backfill only")
 	}
-	if out.Record == nil || out.Record.SHA256 != sha256Bytes([]byte(body)) {
+	if out.Record == nil || out.Record.SHA256 != shared.Sha256Bytes([]byte(body)) {
 		t.Errorf("record = %#v, want backfilled record", out.Record)
 	}
 	if out.Message != fmt.Sprintf("· template skipped (exists) %s", in.Target) {
@@ -628,7 +630,7 @@ func TestTemplateActuatorCRLFShaParity(t *testing.T) {
 		in := writeTemplateSource(t, "echo same\n", 0o644)
 		dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(in.Target))
 		seedDest(t, dest, []byte("echo same\r\n"))
-		in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte("echo same\n"))}
+		in.ManagedEntry = &templateManagedEntry{SHA256: shared.Sha256Bytes([]byte("echo same\n"))}
 		code, out, _ := runTemplateActuatorCLI(t, in)
 		if code != 0 {
 			t.Fatalf("exit = %d, out %#v", code, out)
@@ -652,7 +654,7 @@ func TestTemplateActuatorCRLFShaParity(t *testing.T) {
 		if err != nil || string(got) != body {
 			t.Errorf("dest = %q (%v), want literal CRLF %q", got, err, body)
 		}
-		if out.Record == nil || out.Record.SHA256 != sha256Bytes([]byte(body)) {
+		if out.Record == nil || out.Record.SHA256 != shared.Sha256Bytes([]byte(body)) {
 			t.Errorf("record = %#v, want normalized sha", out.Record)
 		}
 	})
@@ -673,7 +675,7 @@ func TestTemplateActuatorAlwaysConditionOverwrites(t *testing.T) {
 	if !out.Wrote {
 		t.Errorf("wrote = false, want overwrite")
 	}
-	if out.Record == nil || out.Record.SHA256 != sha256Bytes([]byte(body)) {
+	if out.Record == nil || out.Record.SHA256 != shared.Sha256Bytes([]byte(body)) {
 		t.Errorf("record = %#v, want written sha", out.Record)
 	}
 	if out.Message != fmt.Sprintf("✓ template %s", in.Target) {
@@ -774,7 +776,7 @@ func TestTemplateActuatorSymlinkDestRefused(t *testing.T) {
 		in := writeTemplateSource(t, "echo new\n", 0o644)
 		targetPath := filepath.Join(in.ProjectRoot, "victim.sh")
 		dest := plant(t, in, targetPath, true)
-		in.ManagedEntry = &templateManagedEntry{SHA256: sha256Bytes([]byte(linkBody))}
+		in.ManagedEntry = &templateManagedEntry{SHA256: shared.Sha256Bytes([]byte(linkBody))}
 		code, out, stderr := runTemplateActuatorCLI(t, in)
 		if code != 2 {
 			t.Fatalf("exit = %d (want 2), stderr %q, out %#v", code, stderr, out)
