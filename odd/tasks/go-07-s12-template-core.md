@@ -33,7 +33,7 @@ This is delivery A of S12.2. The root authority follows in delivery B.
 ## Tasks
 - [x] T1: Isolate the extraction without changing its existing behavior. **Done**. Delivery A copied both gate files byte-exact. Self-checks passed at 1042 code lines.
 - [x] T2: Regenerate gate checksums, verify the isolated candidate, and rerun full validation. **Done**; full validation exit 0 with durable logs.
-- [ ] T3: Commit the work unit and complete applicable native review.
+- [ ] T3: Commit the work unit and complete applicable native review. **Commit done as `75231bb`; the native review could not complete: the `review-resilience` slot failed five times in the host relay with no artifact. The human decided to close delivery A with the independent verification instead.**
 - [ ] T4: Publish and merge into the epic. Preserve delivery B and close this worktree safely.
 
 ## Acceptance criteria
@@ -89,6 +89,13 @@ This is delivery A of S12.2. The root authority follows in delivery B.
 - Full validation passed in a matched environment: `./tests/validate.sh` exit 0, `Ran 2380 tests in 1575.058s` -> `OK (skipped=164)`. Durable evidence: /Users/robert/.cache/s12-A-validate6.log and .exit.
 - Earlier runs in the pre-restoration environment failed only on environment defects (bash 3.2 empty-array expansion in `lib/skills-list.sh`, and the absent direnv desynchronizing the init TUI prompt); both reproduced on the pristine base tree at the same commit and disappeared once the tools were reinstalled.
 - T3 and T4 remain pending: commit, review, and delivery.
+- Work unit committed as `75231bb` — `refactor(gate): extract the template actuator into a shared package` — 4 files, 649 additions and 496 deletions, inside the 1200 budget; working tree clean.
+- Native review started on the exact slice base `8b16d11` (lineage `review-e84515b5410c08c0`, tier high, four lenses required, correction budget 200). It reviewed the slice's four paths, not the epic stack.
+- `review-risk` was captured and admitted (`rart1_6c0c528d…`, sha256 `6c61da8a…`, admission completed). `review-resilience` failed five times in the host relay: one `terminated` inside the four-lens group and four `reviewer-empty-output` with the reviewer stop reason `length` (430-607s elapsed), every attempt reporting `mutation_performed: false` and zero submissions.
+- Lowering the session reasoning level did not change the outcome, and the pinned gentle-pi bundle exposes no relay model or effort knob; the failure is reproducible, not transient. The remaining two lenses were never reached.
+- Human decision: stop retrying and close delivery A with the independent verification already recorded (2380 Python tests with exit 0, root and gate Go suites, parity 29 fixtures with zero deltas in both gate modes, and the four rebuilt trust-root digests).
+- No acknowledgement was issued and no native input was invented, so this candidate has no reviewed authority; the review switch stays a human decision, and delivery follows ordinary repository policy.
+- T4 remains: publish and merge into the epic.
 
 ## Rollback
 Revert this delivery's gate extraction, its four checksum entries, and its task document together.
