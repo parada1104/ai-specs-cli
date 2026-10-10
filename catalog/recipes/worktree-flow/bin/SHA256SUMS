@@ -176,7 +176,7 @@
 # shared package, and the gate main package and both actuators call the exported
 # forms. No behavior change, no new asset and no second trust root. The canonical
 # go1.24.13 toolchain ran the same command above.
-0b9e2aca2dd0b29c4e9dfa430ff8806438c5b31e4bfeed153020abe36bbfbd65  worktree-gate-darwin-amd64
-295a44b5ddcf2e7cbcd8a40d9b38807be3f8176e06d1556742d2298f29471f14  worktree-gate-darwin-arm64
-ec756ecb36bdbdb8e4d54d8d5f14495c3b6e704a7f53ceb9e25d6e7028d55bc5  worktree-gate-linux-amd64
-654056d6147698366e1bfd49e564ad8f17560ba0cb9e26cd0dae22a182db4661  worktree-gate-linux-arm64
+6f1b5eb505cb8072fc26f983b7d53af88118d2468b66fe8e876a95b0cc036dcf  worktree-gate-darwin-amd64
+a004ba611e34b238955a29c9b4bf7ee47013b5cb560fb40d333325a342c48798  worktree-gate-darwin-arm64
+cb0c1381f5ccf481128e7cec6425656b39acfc2f7b8ea46c884ddc596a9cc4bf  worktree-gate-linux-amd64
+aa36ff88586f9cb64d2d4f8503497e04811c7c5f87ffce790afbaff6360038b2  worktree-gate-linux-arm64
