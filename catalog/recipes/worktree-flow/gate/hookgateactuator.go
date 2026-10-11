@@ -6,22 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"ai-specs.dev/worktree-gate/shared"
 )
 
-// Hook/gate actuator for runtime hook scripts (GO-10, strangler slice 7). Go
-// owns the hook actuation DECISION + EXECUTION: rendering (the 8 hook
-// placeholders), the ownership classification (the shared
-// shared.ClassifyManagedOverride core behind --plan-classify — never re-ported), the
-// write + chmod 0755, and the refresh backup/rollback. Python keeps the lock
-// load/write (set_gate_baseline + write_lock), ALL printing, the refresh
-// backup-path precomputation (project-cache ownership) and the gate-version
-// resolution (the envelope carries the resolved value), plus the TEMPORARY
-// fail-open fallback (GO_HOOK_GATE_BRIDGE_FALLBACK).
+// --materialize-hook, the thin JSON wrapper over the shared hook actuator core
+// (shared/hookactuator.go, GO-07 S12.3). The decision + execution live in
+// ai-specs.dev/worktree-gate/shared so the gate binary and (in delivery B) the
+// root native sync authority share one shell; this file only decodes the
+// stdin envelope, maps the result, and prints the stdout envelope / exit
+// codes.
 //
 // Command surface: --materialize-hook reads one JSON envelope on stdin
 //
@@ -43,229 +38,46 @@ import (
 // INPUT/INFRASTRUCTURE failures print a stderr diagnostic and NO envelope
 // (Python fails open); DECISION refusals emit the error envelope (Python
 // fails closed).
-//
-// Unlike the template actuator there is no seeding path: a destination
-// without a lock baseline is NEVER claimed (provenance only from a render).
-// Gate files always carry mode 0755 (source mode is never copied).
 
-// The 8 hook placeholders, rendered in this order, each only when the token
-// is present in the source bytes. The two gate-mode tokens share the
-// "gate_mode" config key with different defaults (GATE_MODE_PLACEHOLDERS).
-const (
-	hookGateModeToken     = "__WORKTREE_GATE_MODE__"
-	hookCardGateModeToken = "__TRACKER_CARD_GATE_MODE__"
-	hookGateScopeToken    = "__WORKTREE_GATE_SCOPE__"
-	hookTopologyToken     = "__WORKTREE_REPO_TOPOLOGY__"
-	hookGateImplToken     = "__WORKTREE_GATE_IMPL__"
-	hookGateVersionToken  = "__WORKTREE_GATE_VERSION__"
-	hookCLIHomeToken      = "__TRACKER_CLI_HOME__"
-	hookLibInternalToken  = "__TRACKER_LIB_INTERNAL__"
+// Thin aliases keep this package's call sites and tests on the historical
+// local names while the core lives in the shared package. errDestSymlink is
+// already aliased alongside the template actuator (templateactuator.go) and is
+// reused here.
+var (
+	hookScriptRelPath     = shared.HookScriptRelPath
+	hookRelPathEscapes    = shared.HookRelPathEscapes
+	renderHookGateContent = shared.RenderHookGateContent
 )
 
-// hookGateModeTokens pairs each gate-mode token with its default: unlike the
-// validated tokens below, a configured value is used verbatim (Python's
-// str(merged_cfg.get("gate_mode", default)) has no `or default` fallback).
-var hookGateModeTokens = [...]struct{ token, fallback string }{
-	{hookGateModeToken, "always"},
-	{hookCardGateModeToken, "warn"},
-}
+// hookGateRefreshWrite is the historical refresh write seam. The shared
+// MaterializeHook receives it per call, so an in-process rollback test can
+// still substitute the write step while the default resolves to the shared
+// production writer.
+var hookGateRefreshWrite = shared.HookGateRefreshWrite
 
-// hookConfigGet mirrors Python str(merged_cfg.get(key, default)): an absent
-// key falls back, a present key is stringified verbatim (None -> "None"),
-// with no emptiness check.
-func hookConfigGet(config map[string]any, key, fallback string) string {
-	if v, ok := config[key]; ok {
-		return pyConfigString(v)
-	}
-	return fallback
-}
-
-// hookScriptRelPath is the harness-neutral materialized path for a hook
-// script: fixed ai-specs/recipes/{recipe_id}/hooks/ prefix with the script
-// BASENAME, so nested recipe scripts flatten into the hook directory.
-func hookScriptRelPath(recipeID, script string) string {
-	return fmt.Sprintf("ai-specs/recipes/%s/hooks/%s", recipeID, filepath.Base(script))
-}
-
-// hookRelPathEscapes reports whether the rel path built from recipe_id +
-// script would leave the managed ai-specs/recipes tree: recipe_id is
-// interpolated verbatim into the prefix (R1-hook-rel-path-unsanitized), so a
-// separator or dot segment in it escapes the recipes directory, and a script
-// whose basename is a dot segment joins to a parent directory. Recipe ids are
-// catalog slugs, so refusing these inputs never rejects a real recipe.
-func hookRelPathEscapes(recipeID, script string) bool {
-	if recipeID == "" || recipeID == "." || recipeID == ".." {
-		return true
-	}
-	if strings.ContainsAny(recipeID, `/\`) {
-		return true
-	}
-	switch filepath.Base(script) {
-	case ".", "..":
-		return true
-	}
-	return false
-}
-
-// renderHookGateContent is the pure hook renderer: the eight placeholders in
-// the documented order, each replaced only when its token is present. The
-// three validated tokens (gate_scope, repo_topology, gate_impl) raise the
-// exact historical refusal when the configured value is not allowed; an
-// absent/empty value falls back to "auto" (Python's `or default`). The gate
-// version is Python-resolved and substituted verbatim (Go never invents a
-// value); the two tracker-home tokens become empty strings without a CLI
-// home, which makes the host skip evidence acquisition (fail open). Rendering
-// is string surgery only: CRLF bytes are never normalized (normalization
-// happens only inside Sha256Bytes).
-func renderHookGateContent(src []byte, cfg map[string]any, cliHome string, gateVersion string) (string, error) {
-	content := string(src)
-	replace := func(token, value string) {
-		content = strings.ReplaceAll(content, token, value)
-	}
-	for _, gm := range hookGateModeTokens {
-		if strings.Contains(content, gm.token) {
-			replace(gm.token, hookConfigGet(cfg, "gate_mode", gm.fallback))
-		}
-	}
-	if strings.Contains(content, hookGateScopeToken) {
-		scope := templateConfigOr(cfg, "gate_scope", "auto")
-		if scope != "auto" && scope != "superrepo" && scope != "subrepo" {
-			return "", fmt.Errorf("invalid gate_scope '%s'; allowed: auto | superrepo | subrepo", scope)
-		}
-		replace(hookGateScopeToken, scope)
-	}
-	if strings.Contains(content, hookTopologyToken) {
-		topology := templateConfigOr(cfg, "repo_topology", "auto")
-		switch topology {
-		case "auto", "standalone", "monorepo-apps", "monorepo-submodules":
-		default:
-			return "", fmt.Errorf(
-				"invalid repo_topology '%s'; allowed: auto | standalone | monorepo-apps | monorepo-submodules", topology)
-		}
-		replace(hookTopologyToken, topology)
-	}
-	if strings.Contains(content, hookGateImplToken) {
-		impl := templateConfigOr(cfg, "gate_impl", "auto")
-		if impl != "auto" && impl != "go" {
-			return "", fmt.Errorf("invalid gate_impl '%s'; bash has been removed; allowed: auto | go", impl)
-		}
-		replace(hookGateImplToken, impl)
-	}
-	if strings.Contains(content, hookGateVersionToken) {
-		replace(hookGateVersionToken, gateVersion)
-	}
-	if strings.Contains(content, hookCLIHomeToken) {
-		replace(hookCLIHomeToken, cliHome)
-	}
-	if strings.Contains(content, hookLibInternalToken) {
-		internal := ""
-		if cliHome != "" {
-			internal = filepath.Join(cliHome, "lib", "_internal")
-		}
-		replace(hookLibInternalToken, internal)
-	}
-	return content, nil
-}
-
-// hookBackupComplete reports whether the snapshot at path holds exactly the
-// bytes its content-hash key names (shared.Sha256Bytes(bytes) == the digest encoded
-// in the file name); a missing or partial file is never complete, so a
-// truncated write cannot masquerade as the immutable snapshot.
-func hookBackupComplete(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	want := strings.TrimSuffix(filepath.Base(path), filepath.Ext(filepath.Base(path)))
-	return want != "" && shared.Sha256Bytes(data) == want
-}
-
-// writeHookBackupSnapshot writes the refresh snapshot atomically: a temp file
-// in the SAME directory, written + Sync'd + closed, chmod 0644, then renamed
-// onto the final path, so a crash or short write can never leave a partial
-// file at the content-hash key. The temp file is removed on every failure
-// path (a no-op after a successful rename).
-func writeHookBackupSnapshot(path string, content []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".hookgate-backup-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer tmp.Close()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write(content); err != nil {
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
-}
-
-// hookActuatorRequest is the --materialize-hook stdin contract. Config
-// carries the merged recipe config (only gate_mode, gate_scope,
-// repo_topology, and gate_impl are read); nil means render with defaults
-// only. CLIHome is the Python-RESOLVED cli home (Python owns resolution, the
-// same division as gate_version). ManagedEntry is the lock's managed[rel]
-// subset — only sha256 is read; nil means no recorded provenance. BackupPath
-// is the Python-precomputed immutable refresh snapshot path (empty when the
-// destination does not exist yet).
-type hookActuatorRequest struct {
-	ProjectRoot  string                       `json:"project_root"`
-	RecipeDir    string                       `json:"recipe_dir"`
-	RecipeID     string                       `json:"recipe_id"`
-	Script       string                       `json:"script"`
-	Config       map[string]any               `json:"config,omitempty"`
-	CLIHome      string                       `json:"cli_home,omitempty"`
-	GateVersion  string                       `json:"gate_version,omitempty"`
-	Refresh      bool                         `json:"refresh,omitempty"`
-	ManagedEntry *shared.ClassifyManagedEntry `json:"managed_entry,omitempty"`
-	BackupPath   string                       `json:"backup_path,omitempty"`
-}
-
-// hookActuatorRecord is the lock payload the Python bridge hands to
-// lock.set_gate_baseline: target is the project-relative rel path, sha256 is
-// the normalized (CRLF-folded) sha of the bytes the actuation produced, kind
-// is always "gate", policy always "auto". A nil record means "write nothing
-// to the lock".
-type hookActuatorRecord struct {
-	Target string `json:"target"`
-	SHA256 string `json:"sha256"`
-	Recipe string `json:"recipe"`
-	Source string `json:"source"`
-	Kind   string `json:"kind"`
-	Policy string `json:"policy"`
-}
-
-// hookActuatorOutput is the --materialize-hook stdout contract. Message is
-// the detail line WITHOUT the print indentation; warnings carry the exact
-// warn() strings (Python adds the "  ! " prefix); Backup is the refresh
-// snapshot Go wrote (empty otherwise, omitted from the envelope).
+// hookActuatorOutput is the stdout contract.
+//   - rel: the project-relative materialized path
+//     (ai-specs/recipes/{recipe_id}/hooks/{basename(script)}).
+//   - dest: the absolute destination.
+//   - wrote: Go wrote the file itself (mkdir -p parent, rendered bytes,
+//     chmod 0755). Python never re-writes.
+//   - record: the gate-baseline payload, nil when nothing is recorded.
+//   - message: the detail line WITHOUT the print indentation ("✓ hook script
+//     {rel}", "· hook skipped (current) {rel}", …).
+//   - warnings: exact warn() strings, in emission order (Python adds the
+//     "  ! " prefix).
+//   - backup: the backup path Go wrote for a refresh (empty otherwise); on
+//     failure Go removes a backup it created itself.
+//   - error: set with exit 2; no file is touched on refusal paths.
 type hookActuatorOutput struct {
-	Rel      string              `json:"rel"`
-	Dest     string              `json:"dest"`
-	Wrote    bool                `json:"wrote"`
-	Record   *hookActuatorRecord `json:"record"`
-	Message  string              `json:"message"`
-	Warnings []string            `json:"warnings"`
-	Backup   string              `json:"backup,omitempty"`
-	Error    *string             `json:"error"`
-}
-
-// hookWriteRefusal maps a hook write failure to its refusal string. The
-// symlink guard reuses the template actuator's shared refusal (both
-// authorities — Go and the Python fallback — spell it verbatim).
-func hookWriteRefusal(rel, dest string, err error) string {
-	if errors.Is(err, errDestSymlink) {
-		return templateSymlinkRefusal(rel)
-	}
-	return fmt.Sprintf("write hook %s: %v", dest, err)
+	Rel      string                     `json:"rel"`
+	Dest     string                     `json:"dest"`
+	Wrote    bool                       `json:"wrote"`
+	Record   *shared.HookActuatorRecord `json:"record"`
+	Message  string                     `json:"message"`
+	Warnings []string                   `json:"warnings"`
+	Backup   string                     `json:"backup,omitempty"`
+	Error    *string                    `json:"error"`
 }
 
 // runMaterializeHook is the --materialize-hook command: one JSON envelope on
@@ -276,7 +88,7 @@ func runMaterializeHook(stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "worktree-gate: --materialize-hook: read stdin: %v\n", err)
 		return 2
 	}
-	var in hookActuatorRequest
+	var in shared.HookActuatorRequest
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	if err := decoder.Decode(&in); err != nil {
@@ -296,185 +108,29 @@ func runMaterializeHook(stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, string(payload))
 		return 0
 	}
-	refuse := func(message string) int {
-		// A refusal is the error envelope emit already knows how to print; the
-		// only difference is the exit code (2 either way — emit's 2 is its
-		// marshal-failure diagnostic, a refusal's 2 is the decision).
-		if code := emit(hookActuatorOutput{Error: &message}); code != 0 {
-			return code
-		}
-		return 2
-	}
-	if hookRelPathEscapes(in.RecipeID, in.Script) {
-		return refuse(fmt.Sprintf(
-			"hook rel path would escape ai-specs/recipes/: recipe_id %q, script %q",
-			in.RecipeID, in.Script))
-	}
-
-	rel := hookScriptRelPath(in.RecipeID, in.Script)
-	dest := filepath.Join(in.ProjectRoot, filepath.FromSlash(rel))
-	srcPath := filepath.Join(in.RecipeDir, filepath.FromSlash(in.Script))
-	srcInfo, statErr := os.Stat(srcPath)
-	if statErr != nil || !srcInfo.Mode().IsRegular() {
-		return refuse(fmt.Sprintf("hook script not found: %s", srcPath))
-	}
-	srcBytes, err := os.ReadFile(srcPath)
+	result, err := shared.MaterializeHook(&in, hookGateRefreshWrite)
 	if err != nil {
-		fmt.Fprintf(stderr, "worktree-gate: --materialize-hook: read source: %v\n", err)
-		return 2
-	}
-	content, renderErr := renderHookGateContent(srcBytes, in.Config, in.CLIHome, in.GateVersion)
-	if renderErr != nil {
-		return refuse(renderErr.Error())
-	}
-	contentBytes := []byte(content)
-	hookRecord := func(sha string) *hookActuatorRecord {
-		return &hookActuatorRecord{
-			Target: rel,
-			SHA256: sha,
-			Recipe: in.RecipeID,
-			Source: in.Script,
-			Kind:   "gate",
-			Policy: "auto",
-		}
-	}
-
-	if in.Refresh {
-		return runHookGateRefresh(hookRefreshCall{
-			in:           in,
-			rel:          rel,
-			dest:         dest,
-			contentBytes: contentBytes,
-			record:       hookRecord,
-			emit:         emit,
-			refuse:       refuse,
-			stderr:       stderr,
-		})
-	}
-
-	present, disk, err := shared.ReadRegularFile(dest)
-	if err != nil {
-		fmt.Fprintf(stderr, "worktree-gate: --materialize-hook: dest %s: %v\n", dest, err)
-		return 2
-	}
-	// The SHARED classification port (shared/classify.go): never re-ported in
-	// slice 7. The hook path passes the exact rendered content as would-write.
-	wouldWrite := content
-	state := shared.ClassifyManagedOverride(present, disk, in.ManagedEntry, &wouldWrite).State
-	out := hookActuatorOutput{Rel: rel, Dest: dest, Warnings: []string{}}
-	switch state {
-	case shared.ClassifyMissing, shared.ClassifyManagedStale:
-		verb := "✓ hook script"
-		if state == shared.ClassifyManagedStale {
-			// Baseline matches current bytes: the CLI rendered this gate, so an
-			// ordinary sync may force-update it and re-record the baseline.
-			verb = "✓ hook refreshed (baseline matched)"
-		}
-		if err := writeTemplateContent(dest, contentBytes, 0o755); err != nil {
-			return refuse(hookWriteRefusal(rel, dest, err))
-		}
-		out.Wrote = true
-		out.Record = hookRecord(shared.Sha256Bytes(contentBytes))
-		out.Message = fmt.Sprintf("%s %s", verb, rel)
-	case shared.ClassifyManagedCurrent:
-		// Backfill provenance without rewriting the target (idempotent pair).
-		out.Record = hookRecord(shared.Sha256Bytes(contentBytes))
-		out.Message = fmt.Sprintf("· hook skipped (current) %s", rel)
-	case shared.ClassifyUserModified:
-		out.Warnings = append(out.Warnings, fmt.Sprintf(
-			"hook %s is user-modified; preserving existing bytes. Refresh with:\n"+
-				"  rm %s && ai-specs sync  (or: ai-specs sync --refresh-gates)", rel, rel))
-		out.Message = fmt.Sprintf("· hook skipped (user-modified) %s", rel)
-	case shared.ClassifyUntracked:
-		// No provenance: preserve, NEVER seed (unlike the template actuator).
-		out.Warnings = append(out.Warnings, fmt.Sprintf(
-			"hook %s has no recorded provenance; preserving existing bytes. "+
-				"A baseline is recorded only when the CLI renders the gate. Refresh with:\n"+
-				"  rm %s && ai-specs sync  (or: ai-specs sync --refresh-gates)", rel, rel))
-		out.Message = fmt.Sprintf("· hook skipped (no provenance) %s", rel)
-	}
-	return emit(out)
-}
-
-// hookRefreshCall bundles one --refresh-gates invocation: the stdin envelope,
-// the derived identity (rel/dest/rendered bytes/record constructor), and the
-// I/O sinks. The previous eight-parameter signature flattened into one
-// readable value (R2-refresh-signature).
-type hookRefreshCall struct {
-	in           hookActuatorRequest
-	rel, dest    string
-	contentBytes []byte
-	record       func(sha string) *hookActuatorRecord
-	emit         func(hookActuatorOutput) int
-	refuse       func(message string) int
-	stderr       io.Writer
-}
-
-// hookGateRefreshWrite is the refresh write step. It is a package variable so
-// the rollback path can be exercised in-process: a destination swapped to a
-// symlink between the entry guard and the write cannot be injected through
-// the filesystem alone. Production always uses writeTemplateContent.
-var hookGateRefreshWrite = writeTemplateContent
-
-// runHookGateRefresh is the --refresh-gates path: cache backup -> gate write,
-// all-or-nothing. Classification is skipped — a refresh replaces even a
-// user-modified gate after its exact pre-refresh bytes land in the
-// Python-precomputed immutable backup. On ANY Go-side failure before success
-// the prior bytes are restored (best effort), the backup is removed, and the
-// actuator refuses with exit 2 so Python never writes a lock record.
-func runHookGateRefresh(c hookRefreshCall) int {
-	if info, statErr := os.Lstat(c.dest); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return c.refuse(templateSymlinkRefusal(c.rel))
-	}
-	var prior []byte
-	hadPrior := false
-	if info, statErr := os.Stat(c.dest); statErr == nil && info.Mode().IsRegular() {
-		data, readErr := os.ReadFile(c.dest)
-		if readErr != nil {
-			fmt.Fprintf(c.stderr, "worktree-gate: --materialize-hook: dest %s: %v\n", c.dest, readErr)
-			return 2
-		}
-		prior = data
-		hadPrior = true
-	}
-	backup := ""
-	if hadPrior && c.in.BackupPath != "" {
-		// The path is content-hash keyed (immutable): a COMPLETE snapshot is
-		// never rewritten. A missing or PARTIAL one (a crash or short write can
-		// leave truncated bytes at the key) is (re)written atomically so a
-		// partial file never appears at the final path.
-		if err := os.MkdirAll(filepath.Dir(c.in.BackupPath), 0o755); err != nil {
-			fmt.Fprintf(c.stderr, "worktree-gate: --materialize-hook: backup %s: %v\n", c.in.BackupPath, err)
-			return 2
-		}
-		if !hookBackupComplete(c.in.BackupPath) {
-			if err := writeHookBackupSnapshot(c.in.BackupPath, prior); err != nil {
-				fmt.Fprintf(c.stderr, "worktree-gate: --materialize-hook: backup %s: %v\n", c.in.BackupPath, err)
-				return 2
+		var refusal *shared.Refusal
+		if errors.As(err, &refusal) {
+			// A refusal is the error envelope emit already knows how to print;
+			// the only difference is the exit code (2 either way — emit's 2 is
+			// its marshal-failure diagnostic, a refusal's 2 is the decision).
+			message := refusal.Message
+			if code := emit(hookActuatorOutput{Error: &message}); code != 0 {
+				return code
 			}
+			return 2
 		}
-		backup = c.in.BackupPath
+		fmt.Fprintf(stderr, "worktree-gate: --materialize-hook: %v\n", err)
+		return 2
 	}
-	if err := hookGateRefreshWrite(c.dest, c.contentBytes, 0o755); err != nil {
-		if hadPrior {
-			// The rollback goes through the SAME guarded writer as the primary
-			// path: a destination swapped to a symlink mid-refresh is refused
-			// (Lstat + O_NOFOLLOW), never written through (R4-002). Best effort —
-			// the refusal below already hands the decision back to Python.
-			_ = writeTemplateContent(c.dest, prior, 0o755)
-		}
-		if backup != "" {
-			_ = os.Remove(backup)
-		}
-		return c.refuse(hookWriteRefusal(c.rel, c.dest, err))
-	}
-	return c.emit(hookActuatorOutput{
-		Rel:      c.rel,
-		Dest:     c.dest,
-		Wrote:    true,
-		Record:   c.record(shared.Sha256Bytes(c.contentBytes)),
-		Message:  fmt.Sprintf("✓ hook refreshed %s", c.rel),
-		Warnings: []string{},
-		Backup:   backup,
+	return emit(hookActuatorOutput{
+		Rel:      result.Rel,
+		Dest:     result.Dest,
+		Wrote:    result.Wrote,
+		Record:   result.Record,
+		Message:  result.Message,
+		Warnings: result.Warnings,
+		Backup:   result.Backup,
 	})
 }
