@@ -176,7 +176,13 @@
 # shared package, and the gate main package and both actuators call the exported
 # forms. No behavior change, no new asset and no second trust root. The canonical
 # go1.24.13 toolchain ran the same command above.
-735ad88d150737de9a00a8058c5ce833b92bc0cfb1a95fff14b32edd9892e329  worktree-gate-darwin-amd64
-cca74321edd5d0a1cbdc91c8943097de33c527811336ba1f7a80dfe506ce07da  worktree-gate-darwin-arm64
-502c26f6854623e3b8ecd3cb9a4aba8a3af061195113b982105c4b627556b7ce  worktree-gate-linux-amd64
-b9497d2747878a72c881942f8ee3f0a57f149cc050180a439fb085cc9013fa9e  worktree-gate-linux-arm64
+# Regenerated for the go-07 S13 PR1 bindings + durable tracker witness
+# shared-package extraction (the gate main package now imports the capability
+# binding decision core and the durable tracker witness writer from the
+# importable shared package, and the root native sync authority consumes the same
+# core; no gate behavior change, no new asset, no second trust root), with the
+# canonical go1.24.13 toolchain via the same command above.
+0db401d206e137a75e594f443b3f436821cf0f9aeb54f47dfa1d4232be52a0b2  worktree-gate-darwin-amd64
+0adef29e7bf5ecc027642ddc9788412982d0ea1cec9c8778107e96a74cf0109e  worktree-gate-darwin-arm64
+93d34eced49a920337542971ef5677dd9202fa576fa13c7d4376925a733781c6  worktree-gate-linux-amd64
+a4225a200fcd8a35cfbece84142aaf1c44b01e3488975d2bb0b6fcf9dc6a2b1a  worktree-gate-linux-arm64
