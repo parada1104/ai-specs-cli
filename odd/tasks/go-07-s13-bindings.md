@@ -128,8 +128,8 @@ three chained PRs:
 - Full validation: `./tests/validate.sh` reported exit 0 with `Ran 2482 tests in 1609.092s`
   then `OK`, and zero `FAIL:`/`ERROR:` lines. Durable evidence:
   `~/.cache/s13-pr1-validate.log` and `~/.cache/s13-pr1-validate.exit`.
-- Work unit commit: `72425a4` — `feat(sync): add the native binding authority over the shared
-  gate core` (13 files, 1317 insertions and 394 deletions; the slice's authored churn without
+- Work unit commit: `3792313` — `feat(sync): add the native binding authority over the shared
+  gate core` (13 files, 1319 insertions and 394 deletions; the slice's authored churn without
   this document is 1548). Native review candidate for this slice; base `36b5405`.
 
 ## Follow-ups (verifier findings)
