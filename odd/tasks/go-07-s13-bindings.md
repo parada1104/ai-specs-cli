@@ -131,34 +131,63 @@ three chained PRs:
 - Work unit commit: `3792313` — `feat(sync): add the native binding authority over the shared
   gate core` (13 files, 1319 insertions and 394 deletions; the slice's authored churn without
   this document is 1548). Native review candidate for this slice; base `36b5405`.
+- Native review: lineage `review-4244d619b602f106`, tier **high**, four lenses (risk, resilience,
+  readability, reliability); the risk reason was `process_boundary` — `gate/shared/gitcommon.go`
+  starts processes. The four-lens group capture failed once on `review-resilience`
+  (`reviewer-empty-output`, `stopReason: length`, 604 s, zero submissions, no mutation). Per the
+  provider instruction a fresh STATUS reoffered the same four slots; the three healthy lenses were
+  captured one slot at a time and the `review-resilience` single-slot retry then emitted, closing the
+  capture as **approved** on the last admitted event with **15 non-blocking advisories** (none opened
+  a correction and no correction transition was offered). Authority burned with
+  `gentle-ai.review-acknowledged/v1`; delivery stays under ordinary repository policy.
+  Note for later slices: the `review-resilience` profile is `nan/glm5.3-flash`, which exhausted its
+  32768-token output budget on the 94 KB prompt when run inside the four-lens group and only
+  emitted on the isolated retry.
 
 ## Follow-ups (verifier findings)
-These are recorded, not fixed here: each is either pre-existing in the moved code or inert on
-current paths. The final S13 register is created with PR3.
+These are recorded, not fixed here: each is either pre-existing in the moved code, inert on current
+paths, or explicitly deferred to S14/S16. This register is authoritative and is reconciled with the
+approved review advisories; the native ids are the authority and the verifier initials map onto them.
 
-- **V1 — witness bytes diverge from Python for non-ASCII values.** Python
-  `json.dump(..., ensure_ascii=True)` escapes non-ASCII as `\uXXXX`; the Go writer emits raw
-  UTF-8 (`gate/shared/witness.go` marshaler). Demonstrated with `café`. Pre-existing in the
-  moved code, unreachable with the ASCII identifiers in the fixtures, and no test covers it.
-  Needs a test before any fix; the root authority is not wired yet, so exposure is unchanged.
-- **V2 — the witness write no longer uses the memoized git fact.** The pre-image called the
-  memoized `gitCommon` (`gate/gitfacts.go:13-19` states the invocation memoization contract);
-  `gate/shared/witness.go` now calls the unmemoized shared resolution. Verdict-neutral and
-  inert on the `--resolve-bindings` path, where no memoized fact precedes the write. Fix shape
-  if wanted: forward the fact function as a value, as the S12.3-A refresh seam does.
-- **V3 — conflict-grader parity is asserted only where the Python grader does not raise.**
-  `_python_check_capability_conflicts` has no try/except, so it raises on an unreadable recipe
-  while both Go authorities grade from their swallowing acquisition. The differential documents
-  and skips that comparison (`internal/sync/bindings_test.go:141-150`). Pre-existing
-  gate-vs-Python divergence; no silent pass is claimed.
-- **V4 — root `BindingRequest` does not default `ProjectRoot`.** `gate/bindings.go` defaults an
-  empty root to `.`; the root authority does not (`internal/sync/bindings.go`), so an S14 wiring
-  mistake that leaves it empty would read `openspec/config.yaml` from the cwd and silently skip
-  the witness write. Python parity holds; the wiring must set it explicitly.
+- `R3-witness-nonascii-bytes` (SUGGESTION, `catalog/recipes/worktree-flow/gate/shared/witness.go:104-118`)
+  — was verifier **V1**. Witness bytes diverge from Python for non-ASCII values: Python
+  `json.dump(..., ensure_ascii=True)` escapes as `\uXXXX` while the Go writer emits raw UTF-8
+  (demonstrated with `café`). Pre-existing in the moved code, ASCII-only fixtures, no test covers it;
+  needs a test before any fix.
+- `R3-unmemoized-gitcommon` and `R4-witness-unmemoized-gitfact` (SUGGESTION,
+  `catalog/recipes/worktree-flow/gate/shared/witness.go:128-147`) — was verifier **V2**. The witness
+  write bypasses the invocation git-fact memo (`gate/gitfacts.go:13-19` states the contract).
+  Verdict-neutral and inert on the `--resolve-bindings` path, where no memoized fact precedes the
+  write. Fix shape if wanted: forward the fact function as a value, as the S12.3-A refresh seam does.
+- `R3-conflict-parity-skipped` (SUGGESTION, `internal/sync/bindings_test.go:138-152`) — was verifier
+  **V3**. Conflict-grader parity is asserted only where the Python grader does not raise;
+  `_python_check_capability_conflicts` has no try/except on an unreadable recipe. Pre-existing
+  gate-vs-Python divergence; the test documents it and claims no silent pass.
+- `R3-empty-projectroot-witness` (WARNING, `internal/sync/bindings.go:57-64`) and
+  `R4-project-root-unguarded` (SUGGESTION, `internal/sync/bindings.go:35-41`) — was verifier **V4**.
+  The root `BindingRequest` does not default `ProjectRoot`; `gate/bindings.go` defaults an empty root
+  to `.`, so an S14 wiring mistake that leaves it empty would read `openspec/config.yaml` from the cwd
+  and silently skip the witness write. Python parity holds; S14 must set it explicitly.
+- `R4-acquisition-skip-unobservable` (SUGGESTION, `internal/sync/bindings.go:86-94`) — a skipped
+  unreadable recipe is not observable in the result, so a caller cannot tell a silent skip from a
+  recipe that declared nothing.
+- `R4-gitfact-failure-collapse` (SUGGESTION,
+  `catalog/recipes/worktree-flow/gate/shared/gitcommon.go:38-45`) — a failed git fact collapses to the
+  empty string, so "no repository" and "git failed" are indistinguishable.
+- `R4-witness-crash-stale-revert` (SUGGESTION,
+  `catalog/recipes/worktree-flow/gate/shared/witness.go:185-189`) — a crash between the temp write and
+  the rename leaves a stale temp file behind.
+- Readability advisories: `R2-001` and `R2-002` (WARNING, `internal/sync/bindings_test.go:158-167`,
+  `:175-178`), `R2-005` (SUGGESTION, `internal/sync/bindings_test.go:312-318`), `R2-003`
+  (SUGGESTION, `odd/tasks/go-07-s13-bindings.md:152` — a line of this document), `R2-004`
+  (SUGGESTION, `catalog/recipes/worktree-flow/gate/gitfacts.go:101`) and `R2-006` (SUGGESTION,
+  `catalog/recipes/worktree-flow/gate/shared/witness.go:55-69`).
 
-Minor, pre-existing and not separately tracked: `TrackingDeclared` splits on `\n` where Python
-uses `splitlines()`, and Python `read_text()` can raise `UnicodeDecodeError` outside its
-`except OSError`._
+Minor, pre-existing and not separately tracked: `TrackingDeclared` splits on `\n` where Python uses
+`splitlines()`, and Python `read_text()` can raise `UnicodeDecodeError` outside its `except OSError`.
+
+S13 PR2 and PR3 must not fix these opportunistically; they are later work, and the approved review
+for this candidate is not reopened by them.
 
 ## Rollback
 Revert this PR's gate extraction, its four checksum entries, the root authority, the tests
