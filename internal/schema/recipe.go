@@ -8,6 +8,8 @@
 package schema
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -156,6 +158,67 @@ type ConfigField struct {
 type ConfigTable struct {
 	Shape  any // declarative authority (mirrors STRUCTURED_CONFIG_SHAPES)
 	Values map[string]any
+}
+
+// ShapeJSON renders the declarative shape of a structured (table) config
+// section as JSON with its keys in declaration order. Python's shape is an
+// insertion-ordered dict the merge-config envelope crosses verbatim, and
+// recipe_schema checks shape keys in that order; encoding/json cannot marshal
+// the unexported *shapeTable (it yields {}), and a Go map would lose the order,
+// so the ordered walk lives here. Nothing smaller suffices: exporting the
+// unexported *shapeTable or its fields would widen the surface far past the one
+// consumer, and a package-level lookup would still need this encoder.
+func (t *ConfigTable) ShapeJSON() (json.RawMessage, error) {
+	var buf bytes.Buffer
+	if err := writeShapeJSON(&buf, t.Shape); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(buf.Bytes()), nil
+}
+
+// writeShapeJSON encodes the tiny shape grammar (a scalar type name, a
+// one-element array of a sub-shape, or an ordered table of sub-shapes) in
+// declaration order.
+func writeShapeJSON(buf *bytes.Buffer, shape any) error {
+	switch s := shape.(type) {
+	case string:
+		data, err := json.Marshal(s)
+		if err != nil {
+			return err
+		}
+		buf.Write(data)
+	case []any:
+		buf.WriteByte('[')
+		for i, item := range s {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := writeShapeJSON(buf, item); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte(']')
+	case *shapeTable:
+		buf.WriteByte('{')
+		for i, key := range s.order {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			keyData, err := json.Marshal(key)
+			if err != nil {
+				return err
+			}
+			buf.Write(keyData)
+			buf.WriteByte(':')
+			if err := writeShapeJSON(buf, s.entries[key]); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte('}')
+	default:
+		return fmt.Errorf("invalid shape declaration: %T", shape)
+	}
+	return nil
 }
 
 type ConfigSchema struct {
