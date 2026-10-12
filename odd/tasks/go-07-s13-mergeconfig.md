@@ -165,7 +165,18 @@ override :4025-4026.
 - Full validation: `./tests/validate.sh` reported exit 0 with `Ran 2482 tests in 1598.572s` then `OK`,
   and zero `FAIL:`/`ERROR:` lines. Durable evidence: `~/.cache/s13-pr2a-validate.log` and
   `~/.cache/s13-pr2a-validate.exit`.
-- Work unit commit: recorded below.
+- Work unit commit: `2c5de4b` — `refactor(gate): extract the merge-config core into the shared
+  package` (7 files, 846 insertions and 588 deletions including this document; the slice's authored
+  churn without it is 1260). Native review candidate for this delivery; base `7384c65`.
+- Native review: lineage `review-c3c0685c7afcc4b7`, tier **medium**, one consolidated lens
+  (`review-reliability`; the risk reason was `executable_change` on `bin/SHA256SUMS`). Captured and
+  **approved** on the first admitted event with **one non-blocking advisory**: `R3-aliased-accessors`
+  (SUGGESTION, `shared/orderedmap.go:34-41`) — `Keys()`/`Values()` expose the aliased storage rather
+  than a copy, harmless for today's read-only callers but a latent footgun for the PR2b consumer.
+  Authority burned with `gentle-ai.review-acknowledged/v1`; delivery stays under ordinary repository
+  policy.
+- Review-vs-verifier convergence: the advisory is the same latent footgun the independent verifier
+  reported, and both reviewers agreed the merge itself is behavior-neutral.
 
 ## Rollback
 Revert this PR's extraction, the mechanical recipeconfigwrite updates, the four checksum entries and
