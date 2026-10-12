@@ -133,6 +133,25 @@ step), so ordering matters for S14 and must not change.
   failure the verifier observed once did not reproduce in this run, consistent with its own two clean
   re-runs of the untouched gate module. Evidence: `~/.cache/s13-pr4a-validate.log` and
   `~/.cache/s13-pr4a-validate.exit`.
+- Native review: lineage `review-c61c0746cb253a5e`, tier **medium**, one consolidated lens
+  (`review-reliability`; risk reason `executable_change` on `internal/sync/hooksrunner.go`). Captured
+  and **approved** on the first admitted event. Authority burned with `gentle-ai.review-acknowledged/v1`;
+  delivery stays under ordinary repository policy.
+- Review advisories (all non-blocking; none opened a correction and none reopens this review):
+  - `R3-regex-wrapper-paren-injection` (WARNING, `internal/sync/hooksrunner.go:178`) — the fullmatch
+    emulation wraps the pattern in `(?:...)`, so a pattern that interacts with that grouping can behave
+    differently from `re.fullmatch`. Same family as the regex divergence already registered.
+  - `R3-failure-paths-untested` (SUGGESTION, `internal/sync/hooksrunner.go:166-168`) — the regex
+    compile-failure and marker-write failure paths are not pinned by a focused test.
+  - `R3-nil-pystr-untested` (SUGGESTION, `internal/sync/hooksrunner.go:212-214`) — the top-level
+    `nil`→`"None"` mapping is implemented but not exercised by a fixture (TOML has no null), which is
+    also why the nested-value gap above could only be pinned from the test side.
+  - `R3-python-version-coupled-tripwires` (SUGGESTION, `internal/sync/hooksrunner_test.go:1`) — several
+    new assertions pin Python 3.14.7 behavior (for example `[[:alpha:]]` compiling with a
+    `FutureWarning`), so a CPython change would trip them deliberately.
+- Work unit commit: `2d26bd5` — `feat(sync): add the native recipe hooks runner` (4 files, 978
+  insertions including this document; the authored churn without it is 824). Native review candidate
+  for this delivery; base `de50ef5`.
 
 ## Follow-ups (registered here, not fixed in this delivery)
 - **Regex engine differences are a recorded divergence, not parity.** RE2 cannot express every Python
