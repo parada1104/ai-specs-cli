@@ -152,7 +152,25 @@ differential must use as its oracle.
   previous slice worktrees reported, so the binary-backed classes are genuinely included. Evidence:
   `~/.cache/s13-pr2b-validate2.log` and `~/.cache/s13-pr2b-validate2.exit` (the earlier binary-absent
   run is kept at `~/.cache/s13-pr2b-validate.{log,exit}` as the floor).
-- Work unit commit: recorded below.
+- Work unit commit: `673e61f` — `feat(sync): add the native merge-config authority over the
+  shared core` (6 files, 1237 insertions; 1078 of them are code and 159 this document). Native review
+  candidate for this delivery; base `fe6e7cf`.
+- Native review: lineage `review-52f40ff65badb921`, tier **medium**, one consolidated lens
+  (`review-reliability`; the risk reason was `executable_change` on `internal/schema/recipe.go`).
+  Captured and **approved** on the first admitted event. Authority burned with
+  `gentle-ai.review-acknowledged/v1`; delivery stays under ordinary repository policy.
+- Review advisories (both non-blocking; neither opened a correction and neither reopens this review):
+  - `R3-float-repr-untested` (WARNING, `internal/sync/mergeconfig.go:262-317`) — the Python-compatible
+    float formatter is exercised by the differential but has no focused table test of its own
+    thresholds. Note that the independent verifier DID confirm parity on a 34-literal sweep outside
+    the committed suite (1e15/1e16 boundary, `12345678901234567.0`, `5e-324`, `-0.0`,
+    `0.30000000000000004`), so the behavior is evidenced; the committed coverage is what is thin.
+    Close it with a `pyJSONFloat` table test in the next delivery that touches this file.
+  - `R3-acquisition-error-paths-untested` (SUGGESTION, `internal/sync/mergeconfig.go:76-165`) — the
+    acquisition error paths (missing or unreadable `recipe.toml`, manifest read failure) are not
+    pinned by a focused test.
+- Advisories are recorded here as later work: the review receipt for `673e61f` stands, and neither
+  finding is a reason to re-run review on this candidate.
 
 ## Rollback
 Revert this delivery's root authority, the additive `internal/schema` accessor, its tests and this
