@@ -117,7 +117,7 @@ func runRecipeConfigPython(root, program string, args []string, stdin []byte) ([
 // the manifest text through the standard parser. A manifest that fails TOML
 // parsing yields an empty table ({}), exactly as the Python reference does;
 // every other failure is returned.
-func readRecipeConfigTable(root string, manifestText []byte, recipeID string) (*orderedMap, error) {
+func readRecipeConfigTable(root string, manifestText []byte, recipeID string) (*shared.OrderedMap, error) {
 	out, err := runRecipeConfigPython(root, recipeConfigReader, []string{recipeID}, manifestText)
 	if err != nil {
 		return nil, err
@@ -136,9 +136,9 @@ func readRecipeConfigTable(root string, manifestText []byte, recipeID string) (*
 	if err != nil {
 		return nil, fmt.Errorf("deserialized recipe config: %w", err)
 	}
-	config, ok := decoded.(*orderedMap)
+	config, ok := decoded.(*shared.OrderedMap)
 	if !ok {
-		config = newOrderedMap()
+		config = shared.NewOrderedMap()
 	}
 	return config, nil
 }
@@ -234,10 +234,10 @@ func tomlValue(v any) (string, error) {
 			parts = append(parts, encoded)
 		}
 		return "[" + strings.Join(parts, ", ") + "]", nil
-	case *orderedMap:
-		parts := make([]string, 0, len(t.keys))
-		for _, k := range t.keys {
-			encoded, err := tomlValue(t.values[k])
+	case *shared.OrderedMap:
+		parts := make([]string, 0, len(t.Keys()))
+		for _, k := range t.Keys() {
+			encoded, err := tomlValue(t.Values()[k])
 			if err != nil {
 				return "", err
 			}
@@ -280,14 +280,14 @@ func pyValueEqual(a, b any) bool {
 			}
 		}
 		return true
-	case *orderedMap:
-		bv, ok := b.(*orderedMap)
-		if !ok || len(av.keys) != len(bv.keys) {
+	case *shared.OrderedMap:
+		bv, ok := b.(*shared.OrderedMap)
+		if !ok || len(av.Keys()) != len(bv.Keys()) {
 			return false
 		}
-		for _, k := range av.keys {
-			other, exists := bv.values[k]
-			if !exists || !pyValueEqual(av.values[k], other) {
+		for _, k := range av.Keys() {
+			other, exists := bv.Values()[k]
+			if !exists || !pyValueEqual(av.Values()[k], other) {
 				return false
 			}
 		}
@@ -600,14 +600,14 @@ func (o *orderedPairs) get(key string) (any, bool) {
 
 // nestedGet is _nested_get: the value at a dotted path, or absent when any
 // segment is missing or non-table.
-func nestedGet(m *orderedMap, path []string) (any, bool) {
+func nestedGet(m *shared.OrderedMap, path []string) (any, bool) {
 	node := any(m)
 	for _, part := range path {
-		asMap, ok := node.(*orderedMap)
+		asMap, ok := node.(*shared.OrderedMap)
 		if !ok {
 			return nil, false
 		}
-		v, exists := asMap.get(part)
+		v, exists := asMap.Get(part)
 		if !exists {
 			return nil, false
 		}
@@ -618,25 +618,25 @@ func nestedGet(m *orderedMap, path []string) (any, bool) {
 
 // nestedSet is _nested_set: set a dotted path, replacing non-table
 // intermediates with fresh tables (existing keys keep their position).
-func nestedSet(m *orderedMap, path []string, value any) {
+func nestedSet(m *shared.OrderedMap, path []string, value any) {
 	if len(path) == 0 {
 		return
 	}
 	node := m
 	for _, part := range path[:len(path)-1] {
-		child, _ := node.get(part)
-		childMap, isMap := child.(*orderedMap)
+		child, _ := node.Get(part)
+		childMap, isMap := child.(*shared.OrderedMap)
 		if !isMap {
-			childMap = newOrderedMap()
-			node.set(part, childMap)
+			childMap = shared.NewOrderedMap()
+			node.Set(part, childMap)
 		}
 		node = childMap
 	}
-	node.set(path[len(path)-1], value)
+	node.Set(path[len(path)-1], value)
 }
 
-func dottedPairsToInlineTable(pairs []recipeConfigDottedPair) *orderedMap {
-	table := newOrderedMap()
+func dottedPairsToInlineTable(pairs []recipeConfigDottedPair) *shared.OrderedMap {
+	table := shared.NewOrderedMap()
 	for _, pair := range pairs {
 		nestedSet(table, pair.path[1:], pair.value)
 	}
@@ -800,7 +800,7 @@ func setInlinePaths(state *recipeConfigWriteState, idx int, rootKey string, pair
 	if err != nil {
 		return fmt.Errorf("cannot read the existing value for '%s': %v", rootKey, err)
 	}
-	table, ok := parsed.(*orderedMap)
+	table, ok := parsed.(*shared.OrderedMap)
 	if !ok {
 		return fmt.Errorf("cannot update '%s': its value is not an inline table", rootKey)
 	}
@@ -866,8 +866,8 @@ type recipeConfigWriteState struct {
 
 // applyRecipeConfigWrite is update_recipe_config. It returns whether the
 // manifest changed and, for refusals, the exact reference error string.
-func applyRecipeConfigWrite(manifestPath, recipeID string, values *orderedMap) (bool, string, error) {
-	if values == nil || len(values.keys) == 0 {
+func applyRecipeConfigWrite(manifestPath, recipeID string, values *shared.OrderedMap) (bool, string, error) {
+	if values == nil || len(values.Keys()) == 0 {
 		return false, "", nil
 	}
 	manifestDir := filepath.Dir(manifestPath)
@@ -884,18 +884,18 @@ func applyRecipeConfigWrite(manifestPath, recipeID string, values *orderedMap) (
 
 	plain := newOrderedPairs()
 	dotted := newOrderedPairs()
-	for _, key := range values.keys {
+	for _, key := range values.Keys() {
 		if strings.Contains(key, ".") {
-			dotted.set(key, values.values[key])
+			dotted.set(key, values.Values()[key])
 		} else {
-			plain.set(key, values.values[key])
+			plain.set(key, values.Values()[key])
 		}
 	}
 
 	pendingPlain := newOrderedPairs()
 	for _, key := range plain.keys {
 		value := plain.vals[key]
-		cur, ok := current.get(key)
+		cur, ok := current.Get(key)
 		if !ok || !pyValueEqual(cur, value) {
 			pendingPlain.set(key, value)
 		}
@@ -1098,7 +1098,7 @@ func runWriteRecipeConfig(stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "worktree-gate: --write-recipe-config: invalid input JSON: %v\n", err)
 		return 2
 	}
-	var values *orderedMap
+	var values *shared.OrderedMap
 	if len(req.Values) > 0 {
 		decoded, err := decodeOrdered(req.Values)
 		if err != nil {
@@ -1106,7 +1106,7 @@ func runWriteRecipeConfig(stdin io.Reader, stdout, stderr io.Writer) int {
 			return 2
 		}
 		if decoded != nil {
-			m, ok := decoded.(*orderedMap)
+			m, ok := decoded.(*shared.OrderedMap)
 			if !ok {
 				fmt.Fprintf(stderr, "worktree-gate: --write-recipe-config: values must be a JSON object\n")
 				return 2

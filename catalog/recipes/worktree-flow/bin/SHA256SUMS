@@ -182,7 +182,13 @@
 # importable shared package, and the root native sync authority consumes the same
 # core; no gate behavior change, no new asset, no second trust root), with the
 # canonical go1.24.13 toolchain via the same command above.
-0db401d206e137a75e594f443b3f436821cf0f9aeb54f47dfa1d4232be52a0b2  worktree-gate-darwin-amd64
-0adef29e7bf5ecc027642ddc9788412982d0ea1cec9c8778107e96a74cf0109e  worktree-gate-darwin-arm64
-93d34eced49a920337542971ef5677dd9202fa576fa13c7d4376925a733781c6  worktree-gate-linux-amd64
-a4225a200fcd8a35cfbece84142aaf1c44b01e3488975d2bb0b6fcf9dc6a2b1a  worktree-gate-linux-arm64
+# Regenerated for the go-07 S13 PR2 merge-config shared-package extraction (the
+# gate main package now imports the ordered container and the merge-config
+# decision core, including the CPython repr parity helpers, from the importable
+# shared package, and the recipe-config writer consumes the shared ordered
+# container with no behavior change; no new asset and no second trust root), with
+# the canonical go1.24.13 toolchain via the same command above.
+a0c9d35f3911b4e7b2e958e54c97622d74bf35ca8fef1b9ac013c0d98f728e0c  worktree-gate-darwin-amd64
+b1dd4f476e118d1d11bb84e0c589ece21ea7436b4d713227804e9751226fc4bc  worktree-gate-darwin-arm64
+0cdc6d02697b6824019708392d3cfa6742c117d796e395715767fc11b388d89e  worktree-gate-linux-amd64
+d879b4348b442d5ec79940ccacc62100dbdb2b1179ed6392408f6a2acc768827  worktree-gate-linux-arm64
