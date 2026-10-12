@@ -181,6 +181,16 @@ No new reader is expected; the root authority is a thin assembly (~110 lines) mi
   and Python preserves document order; semantically equivalent). The datetime boundary is also unpinned:
   the root rejects at TOML parse while Python fails at serialization, so both refuse to emit an envelope
   by different mechanisms.
+- Native review: lineage `review-32aaed1d5717ae8e`, tier **medium**, one consolidated lens
+  (`review-reliability`; risk reason `executable_change` on `bin/SHA256SUMS`). Captured and **approved**
+  on the first admitted event with two non-blocking WARNING advisories that are exactly the two
+  pre-existing divergences registered above (`R3-empty-recipe-table-dropped`,
+  `R3-flat-config-collision-nondeterminism`): the native reviewer and the independent verifier converged
+  independently on the same pair. Authority burned with `gentle-ai.review-acknowledged/v1`; delivery
+  stays under ordinary repository policy.
+- Work unit commit: `83441c1` — `feat(sync): add the native resolved-config authority over the shared
+  core` (7 files, 1149 insertions and 268 deletions including this document; the authored churn without
+  it is 1226). Native review candidate for this delivery; base `64f9217`.
 
 ## Rollback
 Revert this PR's gate extraction, its four checksum entries, the root authority, the tests and this
