@@ -146,16 +146,16 @@ func TestTomlValueSerialization(t *testing.T) {
 		{"escaped string", "a \"quoted\" # value", `"a \"quoted\" # value"`},
 		{"empty list", []any{}, "[]"},
 		{"list", []any{json.Number("1"), "a", true}, `[1, "a", true]`},
-		{"empty dict", newOrderedMap(), "{  }"},
+		{"empty dict", shared.NewOrderedMap(), "{  }"},
 		{"dict", func() any {
-			m := newOrderedMap()
-			m.set("a", json.Number("1"))
-			m.set("b", "x")
+			m := shared.NewOrderedMap()
+			m.Set("a", json.Number("1"))
+			m.Set("b", "x")
 			return m
 		}(), `{ a = 1, b = "x" }`},
 		{"nested", func() any {
-			inner := newOrderedMap()
-			inner.set("k", []any{json.Number("1")})
+			inner := shared.NewOrderedMap()
+			inner.Set("k", []any{json.Number("1")})
 			outer := []any{inner}
 			return outer
 		}(), `[{ k = [1] }]`},
@@ -202,21 +202,21 @@ func TestPyValueEqual(t *testing.T) {
 		{"list vs bool element", []any{json.Number("1")}, []any{true}, true},
 		{"list length", []any{json.Number("1")}, []any{}, false},
 		{"dict equal", func() any {
-			m := newOrderedMap()
-			m.set("a", json.Number("1"))
-			m.set("b", "x")
+			m := shared.NewOrderedMap()
+			m.Set("a", json.Number("1"))
+			m.Set("b", "x")
 			return m
 		}(), func() any {
-			m := newOrderedMap()
-			m.set("b", "x")
-			m.set("a", json.Number("1"))
+			m := shared.NewOrderedMap()
+			m.Set("b", "x")
+			m.Set("a", json.Number("1"))
 			return m
 		}(), true},
 		{"dict differs", func() any {
-			m := newOrderedMap()
-			m.set("a", json.Number("1"))
+			m := shared.NewOrderedMap()
+			m.Set("a", json.Number("1"))
 			return m
-		}(), newOrderedMap(), false},
+		}(), shared.NewOrderedMap(), false},
 	}
 	for _, tc := range cases {
 		if got := pyValueEqual(tc.a, tc.b); got != tc.want {
@@ -308,8 +308,8 @@ func TestMatchKeyLine(t *testing.T) {
 // TestNestedGetSet covers the dotted-path helpers: absent segments, non-table
 // intermediates, and the reference's replace-non-table-with-table semantics.
 func TestNestedGetSet(t *testing.T) {
-	m := newOrderedMap()
-	m.set("a", json.Number("1"))
+	m := shared.NewOrderedMap()
+	m.Set("a", json.Number("1"))
 	if v, ok := nestedGet(m, []string{"a"}); !ok || v != json.Number("1") {
 		t.Errorf("nestedGet existing = (%v, %v)", v, ok)
 	}
@@ -321,15 +321,15 @@ func TestNestedGetSet(t *testing.T) {
 	}
 
 	nestedSet(m, []string{"a", "b"}, "x") // scalar 'a' is replaced by a table
-	table, ok := m.get("a")
+	table, ok := m.Get("a")
 	if !ok {
 		t.Fatalf("nestedSet: key 'a' missing")
 	}
-	asMap, isMap := table.(*orderedMap)
+	asMap, isMap := table.(*shared.OrderedMap)
 	if !isMap {
 		t.Fatalf("nestedSet: scalar intermediate not replaced by a table: %T", table)
 	}
-	if v, _ := asMap.get("b"); v != "x" {
+	if v, _ := asMap.Get("b"); v != "x" {
 		t.Errorf("nestedSet leaf = %v, want x", v)
 	}
 	nestedSet(m, nil, "ignored") // empty path is a no-op
@@ -825,9 +825,9 @@ func TestRecipeConfigWriteMalformedEnvelope(t *testing.T) {
 // divergence from the Python reference: inline-table keys that are not bare
 // TOML keys must be emitted quoted, including nested dicts.
 func TestTomlValueInlineNonBareKeysQuoted(t *testing.T) {
-	inner := newOrderedMap()
-	inner.set("my key", json.Number("1"))
-	inner.set("a.b", "x")
+	inner := shared.NewOrderedMap()
+	inner.Set("my key", json.Number("1"))
+	inner.Set("a.b", "x")
 	got, err := tomlValue(inner)
 	if err != nil {
 		t.Fatalf("tomlValue: %v", err)
@@ -837,10 +837,10 @@ func TestTomlValueInlineNonBareKeysQuoted(t *testing.T) {
 		t.Errorf("tomlValue(inline) = %q, want %q", got, want)
 	}
 
-	deep := newOrderedMap()
-	deep.set("opts", []any{func() any {
-		m := newOrderedMap()
-		m.set("a b", true)
+	deep := shared.NewOrderedMap()
+	deep.Set("opts", []any{func() any {
+		m := shared.NewOrderedMap()
+		m.Set("a b", true)
 		return m
 	}()})
 	got, err = tomlValue(deep)
