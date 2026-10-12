@@ -4,17 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
+	"ai-specs.dev/ai-specs/internal/provider"
 	"ai-specs.dev/ai-specs/internal/schema"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
@@ -279,147 +277,10 @@ func intTupleCompare(a, b []int) int {
 	return 0
 }
 
-// --- github-release provider resolution ------------------------------------
-//
-// The doctor-facing subset of provider_install.resolve_provider, which the
-// github-release installer branch of _check_one calls. Read-only and offline:
-// PATH probe, then a trust-checked scan of the managed cache. It exists here
-// because provider_install.py has no Go port yet; a future port should
-// replace this helper with a shared implementation.
-
-const providerRepository = "parada1104/jinna-provider"
-
-// providerVersionRe mirrors provider_install.VERSION_RE's capture, without the
-// lookaround RE2 rejects; providerVersionTuple enforces the digit boundaries.
-var providerVersionRe = regexp.MustCompile(`\d+(?:\.\d+)+`)
-
-type providerResolution struct {
-	version  string
-	source   string
-	path     string
-	hasPath  bool
-	target   [2]string
-	verified bool
-}
-
-var providerPlatforms = map[[2]string]bool{
-	{"darwin", "arm64"}:  true,
-	{"darwin", "amd64"}:  true,
-	{"linux", "arm64"}:   true,
-	{"linux", "amd64"}:   true,
-	{"windows", "amd64"}: true,
-}
-
-// detectProviderPlatform mirrors provider_install.detect_platform, mapping the
-// Go runtime's OS/arch onto the supported release targets.
-func detectProviderPlatform() [2]string {
-	goos := map[string]string{"darwin": "darwin", "linux": "linux", "windows": "windows"}[runtime.GOOS]
-	goarch := map[string]string{"arm64": "arm64", "amd64": "amd64"}[runtime.GOARCH]
-	target := [2]string{goos, goarch}
-	if !providerPlatforms[target] {
-		return [2]string{}
-	}
-	return target
-}
-
-func expectedProviderBinary(goos string) string {
-	if goos == "windows" {
-		return "jinna.exe"
-	}
-	return "jinna"
-}
-
-// providerVersionTuple mirrors provider_install._version_tuple (requires at
-// least one '.', and rejects a version whose digits are part of a longer run).
-func providerVersionTuple(text string) []int {
-	for _, loc := range providerVersionRe.FindAllStringIndex(text, -1) {
-		start, end := loc[0], loc[1]
-		if start > 0 && text[start-1] >= '0' && text[start-1] <= '9' {
-			continue
-		}
-		if end < len(text) && text[end] >= '0' && text[end] <= '9' {
-			continue
-		}
-		parts := strings.Split(text[start:end], ".")
-		out := make([]int, 0, len(parts))
-		for _, part := range parts {
-			n, _ := strconv.Atoi(part)
-			out = append(out, n)
-		}
-		return out
-	}
-	return nil
-}
-
-// runProviderVersion mirrors provider_install._run_version: run
-// `<path> version`, 5s timeout, parse the version, and fail on a non-zero exit
-// or an unparseable output.
-func runProviderVersion(binaryPath string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binaryPath, "version")
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return "", fmt.Errorf("provider version check timed out")
-		}
-		return "", fmt.Errorf("provider version check failed: %w", err)
-	}
-	version := providerVersionTuple(stdout.String() + stderr.String())
-	if len(version) == 0 {
-		return "", fmt.Errorf("provider version check returned no usable version")
-	}
-	return joinVersion(version), nil
-}
-
-func providerVersionAtLeast(have, minimum string) bool {
-	want := providerVersionTuple(minimum)
-	current := providerVersionTuple(have)
-	if len(want) == 0 {
-		return true
-	}
-	if len(current) == 0 {
-		return false
-	}
-	return intTupleCompare(current, want) >= 0
-}
-
-// readProviderReceipt mirrors provider_install._read_receipt.
-func readProviderReceipt(candidate string) map[string]any {
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(candidate), "install.json"))
-	if err != nil {
-		return nil
-	}
-	var data map[string]any
-	if err := json.Unmarshal(raw, &data); err != nil {
-		return nil
-	}
-	return data
-}
-
-// managedProviderCandidates mirrors provider_install._managed_candidates.
-func managedProviderCandidates(root, goos, goarch string) []string {
-	if !isDir(root) {
-		return nil
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
-	target := goos + "-" + goarch
-	expected := expectedProviderBinary(goos)
-	var paths []string
-	for _, entry := range entries {
-		candidate := filepath.Join(root, entry.Name(), target, expected)
-		if isFile(candidate) {
-			paths = append(paths, candidate)
-		}
-	}
-	return paths
-}
-
+// fileSHA256 is provider_install._sha256, kept here because the gate binary
+// verification (gatebinary.go) also hashes an on-disk candidate. The provider
+// resolver hashes through internal/provider; this stays the doctor-local helper
+// for the gate path.
 func fileSHA256(filePath string) (string, error) {
 	raw, err := os.ReadFile(filePath)
 	if err != nil {
@@ -429,79 +290,17 @@ func fileSHA256(filePath string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// resolveProvider mirrors provider_install.resolve_provider: PATH first, then
-// the newest trust-checked managed candidate.
-func resolveProvider(dep *schema.CliDep, home string) (providerResolution, error) {
-	target := detectProviderPlatform()
-	binary := dep.Binary
-	if binary == "" {
-		binary = "jinna"
-	}
-	if candidate, err := exec.LookPath(binary); err == nil {
-		if version, verr := runProviderVersion(candidate); verr == nil &&
-			providerVersionAtLeast(version, dep.MinVersion) {
-			return providerResolution{
-				version: version, source: "path", path: candidate,
-				hasPath: true, target: target, verified: true,
-			}, nil
-		}
-	}
-	root := filepath.Join(home, "cache", "bin", "jinna")
-	type managedCandidate struct {
-		version []int
-		path    string
-	}
-	var best *managedCandidate
-	for _, candidate := range managedProviderCandidates(root, target[0], target[1]) {
-		receipt := readProviderReceipt(candidate)
-		if status, _ := receipt["status"].(string); status != "verified" {
-			continue
-		}
-		if repository, _ := receipt["repository"].(string); repository != providerRepository {
-			continue
-		}
-		if receiptTarget, _ := receipt["target"].(string); receiptTarget != target[0]+"-"+target[1] {
-			continue
-		}
-		tag, _ := receipt["release_tag"].(string)
-		tagVersion := providerVersionTuple(tag)
-		if len(tagVersion) == 0 {
-			continue
-		}
-		digest, _ := receipt["binary_sha256"].(string)
-		if digest == "" {
-			continue
-		}
-		sum, err := fileSHA256(candidate)
-		if err != nil || sum != digest {
-			continue
-		}
-		version, err := runProviderVersion(candidate)
-		if err != nil || !providerVersionAtLeast(version, dep.MinVersion) {
-			continue
-		}
-		if intTupleCompare(providerVersionTuple(version), tagVersion) != 0 {
-			continue
-		}
-		v := providerVersionTuple(version)
-		if best == nil || intTupleCompare(v, best.version) > 0 {
-			best = &managedCandidate{version: v, path: candidate}
-		}
-	}
-	if best != nil {
-		version, err := runProviderVersion(best.path)
-		if err != nil {
-			return providerResolution{target: target, source: "unresolved"}, nil
-		}
-		return providerResolution{
-			version: version, source: "managed", path: best.path,
-			hasPath: true, target: target, verified: true,
-		}, nil
-	}
-	return providerResolution{target: target, source: "unresolved"}, nil
-}
+// --- github-release provider resolution ------------------------------------
+//
+// _check_one's github-release branch delegates to the shared provider package
+// (the native port of provider_install.resolve_provider, internal/provider),
+// which the recipe-MCP materializer consumes too — never a second port.
 
-// resolveProviderDep maps a provider resolution onto a DepResult.
+// resolveProviderDep maps a provider resolution onto a DepResult, mirroring
+// dep_check._check_one's github-release branch: an exception becomes
+// "provider check failed: <exc>" with source "unresolved"; a verified
+// resolution carries its source and resolved path; otherwise it stays
+// unresolved with the "not found for goos/goarch" detail.
 func resolveProviderDep(dep *schema.CliDep, recipeID, home string) depResult {
 	res := depResult{
 		Binary:     dep.Binary,
@@ -510,24 +309,24 @@ func resolveProviderDep(dep *schema.CliDep, recipeID, home string) depResult {
 		Required:   dep.Required,
 		RecipeID:   recipeID,
 	}
-	resolution, err := resolveProvider(dep, home)
+	resolution, err := provider.Resolve(dep, &home)
 	if err != nil {
 		res.Detail = "provider check failed: " + err.Error()
 		res.Source = "unresolved"
 		return res
 	}
-	if resolution.verified && resolution.hasPath {
+	if resolution.Verified && resolution.Path != nil {
 		res.Found = true
-		res.Version = resolution.version
+		res.Version = resolution.Version
 		res.OK = true
-		res.Detail = "using " + resolution.source + " provider"
-		res.Source = resolution.source
-		res.ResolvedPath = resolution.path
+		res.Detail = "using " + resolution.Source + " provider"
+		res.Source = resolution.Source
+		res.ResolvedPath = *resolution.Path
 		return res
 	}
-	res.Version = resolution.version
+	res.Version = resolution.Version
 	res.Source = "unresolved"
-	res.Detail = "not found for " + orQuestion(resolution.target[0]) + "/" + orQuestion(resolution.target[1])
+	res.Detail = "not found for " + orQuestion(resolution.Target[0]) + "/" + orQuestion(resolution.Target[1])
 	return res
 }
 
