@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // gitMemo caches every git fact by (resolved dir, args): repository root, git
@@ -83,24 +85,18 @@ func gitMemo(dir string, args ...string) string {
 	return v
 }
 
+// gitCommon resolves the Git common dir through the memoized gitMemo seam. The
+// resolution rule itself lives in the shared package
+// (shared.GitCommonDirWith) so the gate and the root native sync authority
+// share it; the memoization stays here.
 func gitCommon(root string) string {
-	return gitCommonWith(root, gitMemo)
+	return shared.GitCommonDirWith(root, gitMemo)
 }
 
 func gitCommonFresh(root string, fact func(string, ...string) string) string {
-	return gitCommonWith(root, fact)
+	return shared.GitCommonDirWith(root, fact)
 }
 
 func gitCommonWith(root string, fact func(string, ...string) string) string {
-	v := fact(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if v == "" {
-		v = fact(root, "rev-parse", "--git-common-dir")
-	}
-	if v == "" {
-		return ""
-	}
-	if !filepath.IsAbs(v) {
-		v = filepath.Join(root, v)
-	}
-	return filepath.Clean(v)
+	return shared.GitCommonDirWith(root, fact)
 }
