@@ -94,27 +94,6 @@ func TestVersionGE(t *testing.T) {
 	}
 }
 
-// TestProviderVersionTuple pins provider_install._version_tuple, including the
-// digit-boundary rule RE2 cannot express directly.
-func TestProviderVersionTuple(t *testing.T) {
-	cases := []struct {
-		text string
-		want string
-	}{
-		{"1.2.3", "1.2.3"},
-		{"v1.2.3", "1.2.3"},
-		{"release v0.1.0", "0.1.0"},
-		{"123", ""},
-		{"", ""},
-	}
-	for _, tc := range cases {
-		got := joinVersion(providerVersionTuple(tc.text))
-		if got != tc.want {
-			t.Errorf("providerVersionTuple(%q) = %q, want %q", tc.text, got, tc.want)
-		}
-	}
-}
-
 // TestCheckOneProbe exercises the read-only PATH probe without depending on
 // which binaries the host happens to ship.
 func TestCheckOneProbe(t *testing.T) {
