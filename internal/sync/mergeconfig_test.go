@@ -251,158 +251,70 @@ scope_field = "x"
 max_age_seconds = 5
 `
 
-// mergeConfigDivergenceEmptyKey records the one scenario the parity differential
-// cannot assert equal: a config key that is the empty string. The shared gate
-// core rejects a keyless envelope entry as a malformed request, while
-// _python_merge_config tolerates it — it warns and continues for a keyless
-// manifest pair and silently keeps a keyless recipe field. Both envelope
-// builders carry the empty key verbatim, so this is a pre-existing
-// gate-core-versus-Python-fallback divergence, NOT something this delivery
-// introduced and NOT a parity claim. The differential excludes the case from
-// its equality assertion and pins both observed behaviors instead
-// (assertMergeConfigEmptyKeyDivergence), so a future fix must update the test
-// deliberately. Follow-up: decide whether the empty key is rejected at the
-// bridge envelope boundary or tolerated by the shared core.
-const mergeConfigDivergenceEmptyKey = "empty config key: root reports a process failure while Python warns and continues (recorded divergence, follow-up pending)"
-
-// assertMergeConfigEmptyKeyDivergence pins the recorded empty-key divergence in
-// place of the parity assertion. The adapter request must still equal the real
-// Python envelope (the adapter is faithful: it sends exactly what the Python
-// envelope builder sends), and then each authority's own behavior is pinned:
-// the shared core returns the process error naming the keyless entry, while
-// _python_merge_config continues — warning for a keyless manifest pair, and
-// silently returning the keyless field. The side is derived from the request,
-// so one helper covers the manifest-side and field-side inversion.
-func assertMergeConfigEmptyKeyDivergence(t *testing.T, python, driver, authority, catalog, projectRoot, recipePath, manifestPath string) {
-	t.Helper()
-	request := MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: "alpha"}
-
-	goReq, err := acquireMergeConfigRequest(request)
-	if err != nil {
-		t.Fatalf("acquireMergeConfigRequest: %v", err)
-	}
-	envRaw := runMergeConfigRef(t, python, driver, "envelope", authority, catalog, "alpha", projectRoot)
-	var envRef mergeConfigEnvelopeRef
-	if err := json.Unmarshal(envRaw, &envRef); err != nil {
-		t.Fatalf("decode envelope ref %s: %v", envRaw, err)
-	}
-	assertMergeConfigRequestParity(t, goReq, envRef)
-
-	planRaw := runMergeConfigRef(t, python, driver, "plan", authority, catalog, "alpha", projectRoot)
-	var planRef mergeConfigRefResult
-	if err := json.Unmarshal(planRaw, &planRef); err != nil {
-		t.Fatalf("decode plan ref %s: %v", planRaw, err)
-	}
-	pyConfig, err := shared.DecodeOrdered(planRef.Config)
-	if err != nil {
-		t.Fatalf("decode python config %s: %v", planRef.Config, err)
-	}
-	pyMap, ok := pyConfig.(*shared.OrderedMap)
-	if !ok {
-		t.Fatalf("python config is %T, want an object: %s", pyConfig, planRef.Config)
-	}
-
-	side, wantNative := "field", "field entry missing key"
-	for _, pair := range goReq.Manifest {
-		if pair.Key == "" {
-			side, wantNative = "manifest", "manifest entry missing key"
-		}
-	}
-
-	if side == "manifest" {
-		wantWarnings := []string{"recipe 'Alpha': unknown config key '' in manifest (ignored)"}
-		if !reflect.DeepEqual(planRef.Warnings, wantWarnings) {
-			t.Fatalf("python warnings = %#v, want %#v", planRef.Warnings, wantWarnings)
-		}
-		if planRef.Error != nil {
-			t.Fatalf("python error = %q, want the warning-only continuation", *planRef.Error)
-		}
-		if _, present := pyMap.Get(""); present {
-			t.Fatalf("python config kept the ignored empty manifest key: %s", planRef.Config)
-		}
-	} else {
-		if len(planRef.Warnings) != 0 || planRef.Error != nil {
-			t.Fatalf("python warnings=%#v error=%v, want a clean continuation", planRef.Warnings, planRef.Error)
-		}
-		if got, present := pyMap.Get(""); !present {
-			t.Fatalf("python config dropped the empty field: %s", planRef.Config)
-		} else if got != "empty-key-default" {
-			t.Fatalf("python config[\"\"] = %#v, want the declared default", got)
-		}
-	}
-
-	if _, err := PlanMergeConfig(request); err == nil || err.Error() != wantNative {
-		t.Fatalf("native error = %v, want the shared core's %q process failure", err, wantNative)
-	}
-}
-
 // TestNativeMergeConfigDifferentialAgainstPython pins the adapter and the shared
 // core against the real Python envelope builder and the temporary Python
-// authority for the ordering, float, semantic-error and gate_scope boundaries.
-// The two empty-key cases at the end are explicitly excluded from the equality
-// assertion and pin the recorded divergence (mergeConfigDivergenceEmptyKey)
-// instead of claiming parity.
+// authority for the ordering, float, semantic-error and gate_scope boundaries,
+// including the empty-key cases the core used to reject as malformed: an empty
+// manifest key is an ordinary unknown key (Python warns and ignores it) and an
+// empty recipe field key is an ordinary field (Python keeps its default).
 func TestNativeMergeConfigDifferentialAgainstPython(t *testing.T) {
 	python, authority := syncPythonAuthority(t)
 	driver := mergeConfigRefPath(t)
 
 	cases := []struct {
-		name       string
-		manifest   string
-		body       string // empty means mergeRecipeBody
-		divergence string // non-empty excludes the case from the parity assertion
+		name     string
+		manifest string
+		body     string // empty means mergeRecipeBody
 	}{
 		{
 			"defaults in field order with a manifest override",
 			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\n",
-			"", "",
+			"",
 		},
 		{
 			"override keeps position, unknown warns, table appends",
 			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nmode = \"b\"\nmystery = 1\nreconcile = { scope_field = \"y\", max_age_seconds = 9 }\n",
-			"", "",
+			"",
 		},
 		{
 			"manifest int stays int and float stays float",
 			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nratio = 2\ncount = 2.0\n",
-			"", "",
+			"",
 		},
 		{
 			"blank gate_scope resolves to auto",
 			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\ngate_scope = \"   \"\n",
-			"", "",
+			"",
 		},
 		{
 			"enum violation is a semantic error",
 			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nmode = \"z\"\n",
-			"", "",
+			"",
 		},
 		{
 			"missing required field is a semantic error",
 			"[recipes.alpha]\nenabled = true\n",
-			"", "",
+			"",
 		},
 		{
 			"nested structured shape order drives the error",
 			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nreconcile = { expectations = [{ property = 1, event = 2 }] }\n",
-			"", "",
+			"",
 		},
 		{
 			"structured scalar type error after unknown-key check",
 			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nreconcile = { max_age_seconds = 1.5 }\n",
-			"", "",
+			"",
 		},
 		{
-			"recorded divergence: empty manifest key warns in Python but fails the core",
+			"empty manifest key warns and is ignored",
 			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\n\"\" = \"x\"\nboard_id = \"b1\"\n",
 			mergeRecipeBody,
-			mergeConfigDivergenceEmptyKey,
 		},
 		{
-			"recorded divergence: empty recipe field key continues in Python but fails the core",
+			"empty recipe field key keeps its default",
 			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\n",
 			mergeRecipeBody + "\n[config.\"\"]\nrequired = false\ntype = \"string\"\ndefault = \"empty-key-default\"\n",
-			mergeConfigDivergenceEmptyKey,
 		},
 	}
 
@@ -413,10 +325,6 @@ func TestNativeMergeConfigDifferentialAgainstPython(t *testing.T) {
 				body = mergeRecipeBody
 			}
 			catalog, projectRoot, recipePath, manifestPath := mergeConfigFixture(t, "alpha", body, tc.manifest)
-			if tc.divergence != "" {
-				assertMergeConfigEmptyKeyDivergence(t, python, driver, authority, catalog, projectRoot, recipePath, manifestPath)
-				return
-			}
 			assertMergeConfigCase(t, python, driver, authority, catalog, "alpha", projectRoot, recipePath, manifestPath)
 		})
 	}

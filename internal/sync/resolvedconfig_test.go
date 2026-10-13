@@ -286,111 +286,139 @@ func TestNativeResolvedConfigGitmodulesPresentUninitialized(t *testing.T) {
 	}
 }
 
-// TestNativeResolvedConfigNonStringBindingDivergence records the one binding
-// shape the native projection does not share with the Python authority: a
-// non-string capability is coerced by Python into a JSON object key, while the
-// shared core keeps its str-keyed envelope contract and skips it. This is a
-// pre-existing divergence between the gate and the fail-open Python fallback,
-// NOT something this delivery introduced and NOT a parity claim; it is pinned
-// deliberately (like the merge-config empty-key divergence) so a future fix
-// must update the test.
-func TestNativeResolvedConfigNonStringBindingDivergence(t *testing.T) {
+// TestNativeResolvedConfigNonStringBindingCoercion pins the scalar coercion the
+// Python authority applies: _python_build_resolved_config keys
+// bindings_out[capability] with any truthy value and json.dumps renders the
+// object key, so an integer capability 5 keys as "5" and a boolean true as
+// "true". The native projection coerces the same way instead of skipping the
+// entry. A truthy integer recipe value is kept as well; the native envelope
+// contract is {capability: recipe} with string values (the gate bridge's
+// _is_str_keyed_mapping(bindings, str) requires it), so the recipe is rendered
+// with Python str() where the raw Python fallback would keep the number.
+func TestNativeResolvedConfigNonStringBindingCoercion(t *testing.T) {
 	python, authority := syncPythonAuthority(t)
 	driver := resolvedConfigRefPath(t)
-	root := t.TempDir()
-	writeResolvedConfigManifest(t, root, "[recipes.a]\nenabled = true\n\n[[bindings]]\ncapability = 5\nrecipe = \"a\"\n")
 
-	raw := runBindingsRefRaw(t, python, driver, "project", authority, root)
-	var ref resolvedConfigRefResult
-	if err := json.Unmarshal(raw, &ref); err != nil {
-		t.Fatalf("decode ref %s: %v", raw, err)
-	}
-	if !ref.OK {
-		t.Fatalf("python authority raised: %s: %s", ref.ExcType, ref.Message)
-	}
-	pyBindings, _ := decodeGeneric(t, ref.Result)["bindings"].(map[string]any)
-	if pyBindings["5"] != "a" {
-		t.Fatalf("python bindings = %#v, want the coerced key \"5\"", pyBindings)
-	}
+	t.Run("integer capability keys as json.dumps renders 5", func(t *testing.T) {
+		root := t.TempDir()
+		writeResolvedConfigManifest(t, root, "[recipes.a]\nenabled = true\n\n[[bindings]]\ncapability = 5\nrecipe = \"a\"\n")
+		got := assertResolvedConfigParity(t, python, driver, authority, root)
+		if got.Bindings["5"] != "a" {
+			t.Fatalf("native bindings = %#v, want the coerced key \"5\"", got.Bindings)
+		}
+	})
 
-	got, err := BuildResolvedConfig(ResolvedConfigRequest{ProjectRoot: root})
-	if err != nil {
-		t.Fatalf("BuildResolvedConfig: %v", err)
-	}
-	if len(got.Bindings) != 0 {
-		t.Fatalf("go bindings = %#v, want the str-keyed contract to skip the non-string capability", got.Bindings)
-	}
+	t.Run("boolean capability keys as json.dumps renders true", func(t *testing.T) {
+		root := t.TempDir()
+		writeResolvedConfigManifest(t, root, "[recipes.a]\nenabled = true\n\n[[bindings]]\ncapability = true\nrecipe = \"a\"\n")
+		got := assertResolvedConfigParity(t, python, driver, authority, root)
+		if got.Bindings["true"] != "a" {
+			t.Fatalf("native bindings = %#v, want the coerced key \"true\"", got.Bindings)
+		}
+	})
+
+	t.Run("integer recipe is kept and str-coerced", func(t *testing.T) {
+		root := t.TempDir()
+		writeResolvedConfigManifest(t, root, "[recipes.a]\nenabled = true\n\n[[bindings]]\ncapability = \"tracker\"\nrecipe = 5\n")
+		raw := runBindingsRefRaw(t, python, driver, "project", authority, root)
+		var ref resolvedConfigRefResult
+		if err := json.Unmarshal(raw, &ref); err != nil {
+			t.Fatalf("decode ref %s: %v", raw, err)
+		}
+		if !ref.OK {
+			t.Fatalf("python authority raised: %s: %s", ref.ExcType, ref.Message)
+		}
+		pyBindings, _ := decodeGeneric(t, ref.Result)["bindings"].(map[string]any)
+		if pyBindings["tracker"] != float64(5) {
+			t.Fatalf("python bindings = %#v, want the raw integer recipe 5", pyBindings)
+		}
+		got, err := BuildResolvedConfig(ResolvedConfigRequest{ProjectRoot: root})
+		if err != nil {
+			t.Fatalf("BuildResolvedConfig: %v", err)
+		}
+		if got.Bindings["tracker"] != "5" {
+			t.Fatalf("native bindings = %#v, want the str-coerced recipe \"5\"", got.Bindings)
+		}
+	})
 }
 
-// TestNativeResolvedConfigEmptyRecipeTableDivergence records a pre-existing
-// divergence in the moved shared decision core (gate/shared/resolvedconfig.go),
-// NOT introduced by this delivery and NOT a parity claim. An empty
-// [recipes.foo] table (a header with no keys) is kept by the Python authority
-// as recipes["foo"] = {} while the shared core's ProjectRecipes skips every
-// zero-length table. This mirrors the mergeConfigDivergenceEmptyKey /
-// conflicts_error registration precedent in this repository: both observable
-// behaviors are pinned here so a future fix must update this test deliberately.
-//
-// The shared core's ProjectRecipes doc comment claims that skipping "a nil or
-// empty table" mirrors the Python recipes loop; for the empty-table shape that
-// claim is wrong. The comment lives in the shared core, which this slice is not
-// allowed to edit, so the finding is registered here instead of fixed.
-// Follow-up: decide whether ProjectRecipes keeps an empty recipe table (as
-// Python does) or the drop is the intended native contract, and correct the
-// comment.
-func TestNativeResolvedConfigEmptyRecipeTableDivergence(t *testing.T) {
+// TestNativeResolvedConfigEmptyRecipeTableParity pins the empty-table shape: a
+// [recipes.foo] header with no keys survives as recipes["foo"] = {} in both the
+// native projection and the Python authority, exactly as
+// _python_build_resolved_config assigns recipes_out[rid] = config
+// unconditionally.
+func TestNativeResolvedConfigEmptyRecipeTableParity(t *testing.T) {
 	python, authority := syncPythonAuthority(t)
 	driver := resolvedConfigRefPath(t)
 	root := t.TempDir()
 	writeResolvedConfigManifest(t, root, "[recipes.foo]\n")
 
-	raw := runBindingsRefRaw(t, python, driver, "project", authority, root)
-	var ref resolvedConfigRefResult
-	if err := json.Unmarshal(raw, &ref); err != nil {
-		t.Fatalf("decode ref %s: %v", raw, err)
-	}
-	if !ref.OK {
-		t.Fatalf("python authority raised: %s: %s", ref.ExcType, ref.Message)
-	}
-	pyRecipes, _ := decodeGeneric(t, ref.Result)["recipes"].(map[string]any)
-	pyFoo, present := pyRecipes["foo"]
-	if !present {
-		t.Fatalf("python recipes = %#v, want the empty recipe table kept as foo:{}", pyRecipes)
-	}
-	pyFooMap, ok := pyFoo.(map[string]any)
-	if !ok || len(pyFooMap) != 0 {
-		t.Fatalf("python recipes.foo = %#v, want the empty table {}", pyFoo)
-	}
-
-	got, err := BuildResolvedConfig(ResolvedConfigRequest{ProjectRoot: root})
-	if err != nil {
-		t.Fatalf("BuildResolvedConfig: %v", err)
-	}
-	if _, present := got.Recipes["foo"]; present {
-		t.Fatalf("native recipes = %#v kept the empty recipe table; the recorded divergence was fixed, update this test", got.Recipes)
+	got := assertResolvedConfigParity(t, python, driver, authority, root)
+	if goFoo, present := got.Recipes["foo"]; !present || len(goFoo) != 0 {
+		t.Fatalf("native recipes = %#v, want the empty recipe table kept as foo:{}", got.Recipes)
 	}
 }
 
-// TestNativeResolvedConfigFlatConfigCollisionNondeterminism records a
-// pre-existing nondeterminism in the moved shared decision core's ProjectRecipes,
-// NOT introduced by this delivery and NOT a parity claim. When a flat
-// [recipes.<id>] key collides with the same key inside [recipes.<id>.config],
-// ProjectRecipes iterates the Go map and whichever source is visited last wins,
-// so the native value is nondeterministic; the Python authority iterates the
-// tomllib dict in document order and always returns the [config] value. The
-// verifier observed twelve runs returning foo:2 and one returning foo:1.
-//
-// The test pins the Python document-ordered result and asserts every native run
-// is one of the two observable values (1 or 2), so it cannot flake under either
-// iteration order. Mirrors the mergeConfigDivergenceEmptyKey / conflicts_error
-// registration precedent. Follow-up: make ProjectRecipes merge the flat keys and
-// [config] in document order as the Python authority does.
-func TestNativeResolvedConfigFlatConfigCollisionNondeterminism(t *testing.T) {
+// TestNativeResolvedConfigFlatConfigCollisionIsDeterministic pins the
+// flat-versus-[config] collision. TOML requires the flat keys of [recipes.<id>]
+// to be declared before the [recipes.<id>.config] header, and Python's document
+// walk therefore always applies the nested table last, so the [config] value
+// wins. The native projection applies the flat keys first and the config
+// sub-table last, reproducing that outcome deterministically (the winner used to
+// be decided by Go map iteration order).
+func TestNativeResolvedConfigFlatConfigCollisionIsDeterministic(t *testing.T) {
 	python, authority := syncPythonAuthority(t)
 	driver := resolvedConfigRefPath(t)
 	root := t.TempDir()
 	writeResolvedConfigManifest(t, root, "[recipes.a]\nfoo = 1\n\n[recipes.a.config]\nfoo = 2\n")
 
+	got := assertResolvedConfigParity(t, python, driver, authority, root)
+	if n, ok := got.Recipes["a"]["foo"].(int64); !ok || n != 2 {
+		t.Fatalf("native recipes.a.foo = %#v, want the document-ordered 2", got.Recipes["a"]["foo"])
+	}
+
+	const runs = 64
+	for i := 0; i < runs; i++ {
+		again, err := BuildResolvedConfig(ResolvedConfigRequest{ProjectRoot: root})
+		if err != nil {
+			t.Fatalf("BuildResolvedConfig: %v", err)
+		}
+		if n, ok := again.Recipes["a"]["foo"].(int64); !ok || n != 2 {
+			t.Fatalf("run %d: native recipes.a.foo = %#v, want the deterministic 2", i, again.Recipes["a"]["foo"])
+		}
+	}
+}
+
+// TestNativeResolvedConfigInlineConfigBeforeFlatKeyDivergence pins the one
+// document shape the native two-pass resolution cannot reproduce: an inline
+// [recipes.<id>] config table declared BEFORE a colliding flat key, e.g.
+//
+//	[recipes.a]
+//	config = { foo = 2 }
+//	foo = 1
+//
+// Python walks the document in order, so the later flat `foo = 1` wins and the
+// authority reports foo = 1. The native projection applies the flat keys first
+// and the nested config sub-table last (the fix for the header-form collision
+// above), so it reports foo = 2. The direction is therefore explicit: Python is
+// document-ordered, Go is two-pass deterministic; the two rules agree for the
+// `[recipes.<id>.config]` header form and diverge only for this inline form.
+// That divergence is the pinned boundary, not parity claimed and not a missed
+// branch.
+//
+// No shipped recipe uses this shape: a scoped grep over catalog/ for a TOML
+// inline `config = {` assignment returns nothing, and every real recipe uses
+// the `[recipes.<id>.config]` header. Exact parity would require document order
+// to survive TOML parsing end to end, but internal/toml represents tables as Go
+// maps, so the order is lost at parse time — a structural limit of the reader,
+// out of scope for this unit.
+func TestNativeResolvedConfigInlineConfigBeforeFlatKeyDivergence(t *testing.T) {
+	python, authority := syncPythonAuthority(t)
+	driver := resolvedConfigRefPath(t)
+	root := t.TempDir()
+	writeResolvedConfigManifest(t, root, "[recipes.a]\nconfig = { foo = 2 }\nfoo = 1\n")
+
+	// Python authority: document order, so the later flat foo = 1 wins.
 	raw := runBindingsRefRaw(t, python, driver, "project", authority, root)
 	var ref resolvedConfigRefResult
 	if err := json.Unmarshal(raw, &ref); err != nil {
@@ -400,24 +428,19 @@ func TestNativeResolvedConfigFlatConfigCollisionNondeterminism(t *testing.T) {
 		t.Fatalf("python authority raised: %s: %s", ref.ExcType, ref.Message)
 	}
 	pyRecipes, _ := decodeGeneric(t, ref.Result)["recipes"].(map[string]any)
-	pyA, _ := pyRecipes["a"].(map[string]any)
-	if pyA["foo"] != float64(2) {
-		t.Fatalf("python recipes.a.foo = %#v, want the document-ordered 2", pyA["foo"])
+	pyRecipe, _ := pyRecipes["a"].(map[string]any)
+	if pyRecipe["foo"] != float64(1) {
+		t.Fatalf("python recipes.a.foo = %#v, want the document-ordered 1; the mixed inline-config-before-flat-key divergence is deliberate and pinned, update this assertion only if the Python authority changes", pyRecipe["foo"])
 	}
+	t.Logf("python authority recipes.a.foo = %#v (document-ordered)", pyRecipe["foo"])
 
-	const runs = 64
-	observed := map[int64]int{}
-	for i := 0; i < runs; i++ {
-		got, err := BuildResolvedConfig(ResolvedConfigRequest{ProjectRoot: root})
-		if err != nil {
-			t.Fatalf("BuildResolvedConfig: %v", err)
-		}
-		value := got.Recipes["a"]["foo"]
-		n, ok := value.(int64)
-		if !ok || (n != 1 && n != 2) {
-			t.Fatalf("native recipes.a.foo = %#v, want one of the two observable values 1 or 2", value)
-		}
-		observed[n]++
+	// Native authority: two-pass, the nested config table applied last wins.
+	got, err := BuildResolvedConfig(ResolvedConfigRequest{ProjectRoot: root})
+	if err != nil {
+		t.Fatalf("BuildResolvedConfig: %v", err)
 	}
-	t.Logf("native foo over %d runs: %v (recorded nondeterminism, Python is always 2)", runs, observed)
+	if n, ok := got.Recipes["a"]["foo"].(int64); !ok || n != 2 {
+		t.Fatalf("native recipes.a.foo = %#v, want the two-pass 2; the mixed inline-config-before-flat-key divergence is deliberate and pinned, update this assertion only if the native resolution changes", got.Recipes["a"]["foo"])
+	}
+	t.Logf("native authority recipes.a.foo = %#v (two-pass)", got.Recipes["a"]["foo"])
 }

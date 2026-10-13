@@ -292,23 +292,10 @@ func checkShapeScalar(context string, value any, kind string) error {
 func PlanMergeConfig(req MergeConfigRequest) (MergeConfigResult, error) {
 	result := MergeConfigResult{Config: NewOrderedMap(), Warnings: []string{}}
 
-	// Envelope entries are keyed; a keyless entry is a malformed request.
-	for _, f := range req.Fields {
-		if f.Key == "" {
-			return result, fmt.Errorf("field entry missing key")
-		}
-	}
-	for _, tb := range req.Tables {
-		if tb.Key == "" {
-			return result, fmt.Errorf("table entry missing key")
-		}
-	}
-	for _, pair := range req.Manifest {
-		if pair.Key == "" {
-			return result, fmt.Errorf("manifest entry missing key")
-		}
-	}
-
+	// Envelope entries are not required to be keyed: _python_merge_config
+	// treats the empty string as an ordinary key (an empty field keeps its
+	// default, an empty manifest key is an unknown key that only warns), so a
+	// keyless entry flows through the same lookup as any other.
 	fields := map[string]MergeConfigField{}
 	for _, f := range req.Fields {
 		fields[f.Key] = f

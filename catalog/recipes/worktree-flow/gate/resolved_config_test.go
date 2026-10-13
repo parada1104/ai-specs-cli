@@ -43,6 +43,34 @@ func TestProjectRecipesSkipsNonTableEntry(t *testing.T) {
 	}
 }
 
+// TestProjectRecipesKeepsEmptyTable pins the empty [recipes.<id>] table: a
+// header with no keys is a present, empty config, not a dropped entry, matching
+// _python_build_resolved_config's unconditional recipes_out[rid] = config.
+func TestProjectRecipesKeepsEmptyTable(t *testing.T) {
+	got := projectRecipes([]manifestEntry{entry("empty", map[string]any{})})
+	want := map[string]map[string]any{"empty": {}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("projectRecipes = %#v, want %#v", got, want)
+	}
+}
+
+// TestProjectRecipesFlatConfigCollisionConfigWins pins the collision order: TOML
+// declares the flat keys of [recipes.<id>] before the [recipes.<id>.config]
+// header, so the nested table is applied last and always wins, deterministically
+// (Python's document walk does the same). The old map-range merge left the
+// winner to Go's iteration order.
+func TestProjectRecipesFlatConfigCollisionConfigWins(t *testing.T) {
+	want := map[string]map[string]any{"a": {"foo": int64(2)}}
+	for i := 0; i < 64; i++ {
+		got := projectRecipes([]manifestEntry{
+			entry("a", map[string]any{"foo": int64(1), "config": map[string]any{"foo": int64(2)}}),
+		})
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("run %d: projectRecipes = %#v, want the [config] value %#v", i, got, want)
+		}
+	}
+}
+
 func TestProjectEnabledManifestOrder(t *testing.T) {
 	got := projectEnabled([]manifestEntry{
 		entry("c", map[string]any{"enabled": true}),
@@ -66,6 +94,26 @@ func TestProjectBindingsExplicitOnly(t *testing.T) {
 		{"capability": "flow", "recipe": "worktree-flow"},
 	})
 	want := map[string]string{"tracker": "jinna-tracker", "flow": "worktree-flow"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("projectBindings = %#v, want %#v", got, want)
+	}
+}
+
+// TestProjectBindingsCoercesNonStringScalars pins the Python-key coercion:
+// _python_build_resolved_config keys bindings_out[capability] with any truthy
+// value and json.dumps renders the object key, so 5 keys as "5" and true as
+// "true". The recipe is str()-coerced because the shared envelope contract is
+// {capability: recipe} with string values; a falsy scalar is skipped, as
+// Python's `if cap and rec` guard does.
+func TestProjectBindingsCoercesNonStringScalars(t *testing.T) {
+	got := projectBindings([]map[string]any{
+		{"capability": float64(5), "recipe": "a"},
+		{"capability": true, "recipe": "b"},
+		{"capability": "tracker", "recipe": float64(5)},
+		{"capability": false, "recipe": "dropped"},
+		{"capability": float64(0), "recipe": "dropped"},
+	})
+	want := map[string]string{"5": "a", "true": "b", "tracker": "5"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("projectBindings = %#v, want %#v", got, want)
 	}
