@@ -488,7 +488,6 @@ func TestMergeConfigMalformedInputExitsTwo(t *testing.T) {
 		{"missing recipe_name", `{"fields":[]}`},
 		{"blank recipe_name", `{"recipe_name":"  "}`},
 		{"fields wrong type", `{"recipe_name":"r","fields":{}}`},
-		{"manifest entry missing key", `{"recipe_name":"r","manifest":[{"value":1}]}`},
 		{"truncated json", `{"recipe_name":"r","fields":[`},
 	}
 	for _, tc := range cases {
@@ -503,4 +502,40 @@ func TestMergeConfigMalformedInputExitsTwo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMergeConfigKeylessEntriesAreOrdinaryKeys pins the empty-key flow the core
+// used to reject as a malformed request. _python_merge_config treats the empty
+// string as an ordinary key: a keyless manifest entry is an unknown key (warned
+// and ignored) and a keyless recipe field keeps its declared default, both with
+// exit 0.
+func TestMergeConfigKeylessEntriesAreOrdinaryKeys(t *testing.T) {
+	t.Run("keyless manifest entry warns and is ignored", func(t *testing.T) {
+		code, got, _ := runMergeConfigCLI(t, `{"recipe_name":"r","manifest":[{"value":1}]}`)
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0", code)
+		}
+		if want := []string{"recipe 'r': unknown config key '' in manifest (ignored)"}; !reflect.DeepEqual(got.Warnings, want) {
+			t.Fatalf("warnings = %#v, want %#v", got.Warnings, want)
+		}
+		if got.Error != "" {
+			t.Fatalf("error = %q, want the warning-only continuation", got.Error)
+		}
+	})
+
+	t.Run("keyless recipe field keeps its default", func(t *testing.T) {
+		input := mergeInput("r",
+			[]string{fieldJSON("", false, true, `"empty-key-default"`, nil)},
+			[]string{},
+			[]string{},
+		)
+		code, got, out := runMergeConfigCLI(t, input)
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0", code)
+		}
+		if len(got.Warnings) != 0 || got.Error != "" {
+			t.Fatalf("warnings=%#v error=%q, want a clean continuation", got.Warnings, got.Error)
+		}
+		assertConfigEqual(t, out, `{"":"empty-key-default"}`)
+	})
 }

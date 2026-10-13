@@ -197,7 +197,14 @@
 # wrapper the gate still needs keeps its historical name as a thin alias over the
 # shared core. No gate JSON contract change, no new asset, no second trust root,
 # with the canonical go1.24.13 toolchain via the same command above.
-33bb180371f35ee5ed96ad7ca8992df9688fe5eaea68e89d36af3696ae723d9f  worktree-gate-darwin-amd64
-c48c3a964c3d14c28176f8863a664e4c672aea06c055fdd4e67b43542b8add75  worktree-gate-darwin-arm64
-94500712cd09827ec8667c545dad402a5c738c5b08bb182e5e0e03975484f031  worktree-gate-linux-amd64
-90856b31585defd937a35f4b1e0e4281e17bcb3ffc33cc22d4b6f9a9ba363269  worktree-gate-linux-arm64
+# Regenerated for the go-07 S14 PR1 divergence closure (the same four-arch asset's
+# shared merge-config core no longer rejects a keyless field/table/manifest entry,
+# and the resolved-config projection keeps an empty [recipes.<id>] table, resolves
+# a flat-versus-[config] collision deterministically to the nested value, and
+# coerces a truthy non-string [[bindings]] capability/recipe as Python does; no new
+# asset, no second trust root), with the canonical go1.24.13 toolchain via the same
+# command above.
+a5d45bdb1a6c18e356a53362fec16228e339447f08596e210ce6c75bba356097  worktree-gate-darwin-amd64
+55a93200c633988ffb7c8390a97f675d598dc3177336011e5f61f78ccc33cb37  worktree-gate-darwin-arm64
+e02ce3e24b041a4724a577b97cb8d683128ec763168f289ceb9309b2c8cfc380  worktree-gate-linux-amd64
+dcbc2a73e2983b9f596b4c864c10242317870cb634cd80ddb3e043702e6d5586  worktree-gate-linux-arm64

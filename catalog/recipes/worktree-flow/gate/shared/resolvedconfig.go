@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -77,27 +78,37 @@ type ResolvedConfig struct {
 
 // ProjectRecipes mirrors the Python recipes loop: config merges the
 // [recipes.<id>.config] table with flat keys, drops enabled/version, and
-// preserves any other flat key. A nil or empty table is skipped.
+// preserves any other flat key. A nil table (a non-table recipe value Python
+// skips with isinstance(val, dict)) is dropped, but a present empty table is
+// kept as {}, exactly as _python_build_resolved_config assigns
+// recipes_out[rid] = config unconditionally.
+//
+// The flat keys are applied first and the config sub-table last. TOML requires
+// the flat keys of [recipes.<id>] to be declared before the [recipes.<id>.config]
+// header, so a name collision always resolves to the nested value in Python's
+// document walk; applying the sub-table last reproduces that outcome without
+// depending on Go's map iteration order.
 func ProjectRecipes(entries []ManifestEntry) map[string]map[string]any {
 	out := make(map[string]map[string]any, len(entries))
 	for _, e := range entries {
-		if len(e.Table) == 0 {
+		if e.Table == nil {
 			continue
 		}
 		config := make(map[string]any, len(e.Table))
+		nested, hasNested := e.Table["config"].(map[string]any)
 		for key, value := range e.Table {
 			if key == "enabled" || key == "version" {
 				continue
 			}
-			if key == "config" {
-				if table, ok := value.(map[string]any); ok {
-					for innerKey, innerValue := range table {
-						config[innerKey] = innerValue
-					}
-					continue
-				}
+			if key == "config" && hasNested {
+				continue
 			}
 			config[key] = value
+		}
+		if hasNested {
+			for innerKey, innerValue := range nested {
+				config[innerKey] = innerValue
+			}
 		}
 		out[e.ID] = config
 	}
@@ -117,18 +128,69 @@ func ProjectEnabled(entries []ManifestEntry) []string {
 }
 
 // ProjectBindings builds {capability: recipe} from the explicit manifest
-// bindings. An entry missing either non-empty string is skipped.
+// bindings. An entry whose capability or recipe is falsy is skipped, exactly as
+// _python_build_resolved_config's `if cap and rec` guard does; a truthy
+// non-string scalar is coerced instead of dropped. The capability is rendered
+// the way json.dumps renders a non-string dict key (an integer 5 keys as "5",
+// a boolean true as "true") and the recipe is rendered with Python str(),
+// because the shared envelope contract is a str-valued mapping.
 func ProjectBindings(bindings []map[string]any) map[string]string {
 	out := make(map[string]string, len(bindings))
 	for _, binding := range bindings {
-		capability, capOK := binding["capability"].(string)
-		recipe, recipeOK := binding["recipe"].(string)
-		if !capOK || !recipeOK || capability == "" || recipe == "" {
+		capability, capOK := pyBindingScalar(binding["capability"], true)
+		recipe, recipeOK := pyBindingScalar(binding["recipe"], false)
+		if !capOK || !recipeOK {
 			continue
 		}
 		out[capability] = recipe
 	}
 	return out
+}
+
+// pyBindingScalar renders one [[bindings]] scalar and reports whether Python's
+// `if capability and recipe` guard would keep it. Every falsy value (None,
+// False, 0, 0.0, "", an empty container) is skipped. jsonKey selects Python's
+// json.dumps object-key rendering (bools lowercase as true/false, matching the
+// JSON envelope the bridge decodes) over the str() rendering used for values.
+func pyBindingScalar(value any, jsonKey bool) (string, bool) {
+	switch t := value.(type) {
+	case nil:
+		return "", false
+	case bool:
+		if !t {
+			return "", false
+		}
+		if jsonKey {
+			return "true", true
+		}
+		return "True", true
+	case string:
+		if t == "" {
+			return "", false
+		}
+		return t, true
+	case int:
+		if t == 0 {
+			return "", false
+		}
+		return strconv.Itoa(t), true
+	case int64:
+		if t == 0 {
+			return "", false
+		}
+		return strconv.FormatInt(t, 10), true
+	case float64:
+		if t == 0 {
+			return "", false
+		}
+		return pyString(t), true
+	case json.Number:
+		if !pyTruthy(t) {
+			return "", false
+		}
+		return t.String(), true
+	}
+	return "", false
 }
 
 // TopologyConfigured returns the configured topology and where it came from.
