@@ -112,6 +112,18 @@ pipeline wiring. This mirrors S13 PR4a (`internal/sync/hooksrunner.go`), where t
   `TestBuildRecipeMCPDivergenceBigInteger` and `TestBuildRecipeMCPDivergenceDatetime`.
 - Native authority behavior is unchanged by the pins: `gofmt -l internal/sync`, `go test ./internal/sync/
   -count=1`, `go vet ./internal/...` and `git diff --check` all exit 0.
+- Work unit commit: `8351dfc` — `feat(sync): add the native recipe-MCP authority (S13 PR4b-2)`. Native
+  review candidate; base `da7e370`.
+- Full validation with the gate binary present: `./tests/validate.sh` exit 0, `Ran 2482 tests in
+  1575.102s` then `OK`, zero `FAIL:`/`ERROR:` lines. Evidence: `~/.cache/s13-pr4b2-validate.{log,exit}`.
+  `SHA256SUMS`, the gate module, `internal/provider`, `internal/doctor`, `lib/`, `scripts/` and `go.mod`
+  are untouched.
+- Native review (approved, authority burned): `inspect` with `baseRef=da7e370` plus `committedOnly` bound
+  the four-file target `f2de34ad…`, and the single `start` created lineage `review-386468da95332b93`
+  (tier medium, one lens `review-reliability`, 1042 changed lines, correction budget 200) with no consent
+  stall this time. The first capture closed it as `approved` (`store_revision: c904968c…`) and the exact
+  acknowledgement burned the authority (`gentle-ai.review-acknowledged/v1`). Two advisory findings, both
+  non-blocking and recorded under Follow-ups.
 
 ## Follow-ups
 - S14: wire this authority into the sync pipeline behind the `GO_SYNC_STEP_*` flag and retire the Python
@@ -124,6 +136,9 @@ pipeline wiring. This mirrors S13 PR4a (`internal/sync/hooksrunner.go`), where t
   directions here; widening the reader belongs to `internal/toml` and to its own slice.
 - `internal/toml` error messages are documented as not byte-parity with `tomllib`, so a TOML syntax error
   surfaces a different text through `cannot read recipe for provider resolution (<exc>)`.
+- Advisory findings of the native review, both informational and non-blocking (no correction was opened):
+  - `R3-build-with-home-untested` reliability WARNING, `internal/sync/buildrecipemcp.go:180-190`.
+  - `R3-brittle-toml-message-pins` reliability SUGGESTION, `internal/sync/buildrecipemcp_test.go:440-480`.
 - The advisory findings of S13 PR4b-1 that touch `internal/provider` (they are recorded in
   `odd/tasks/go-07-s13-provider.md`).
 
