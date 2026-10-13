@@ -13,6 +13,8 @@ Modes:
       re-check does).
   runversion <authority> <path> [timeout]
       ``_run_version`` -> ``{"version": ...}`` or ``{"error": str(exc)}``.
+  candidates <authority> <root> <goos> <goarch>
+      ``_managed_candidates`` -> ``{"candidates": [str(path), ...]}`` in order.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from pathlib import Path
 
 AUTHORITY = sys.argv[2]
 spec = importlib.util.spec_from_file_location("provider_install_oracle", AUTHORITY)
+assert spec is not None and spec.loader is not None
 mod = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = mod
 spec.loader.exec_module(mod)
@@ -70,6 +73,9 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 - the oracle reports the message
             return dump({"error": str(exc)})
         return dump({"version": version})
+    if mode == "candidates":
+        paths = [str(p) for p in mod._managed_candidates(Path(sys.argv[3]), sys.argv[4], sys.argv[5])]
+        return dump({"candidates": paths})
     print(f"unknown mode {mode!r}", file=sys.stderr)
     return 2
 

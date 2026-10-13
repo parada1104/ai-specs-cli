@@ -7,12 +7,6 @@
 // recipe-MCP materializer (PR4b-2) share, so the two never diverge.
 //
 // Faithfulness notes (divergences pinned by the tests, never claimed as parity):
-//   - _managed_candidates order: Python's Path.iterdir follows listdir order,
-//     while os.ReadDir sorts names. Observable only when two candidates tie on
-//     their version tuple, because max/`>` then keeps the first.
-//   - _version_tuple overflow: Python ints are unbounded; strconv.Atoi
-//     saturates an out-of-range component at math.MaxInt64, so a component past
-//     2^63 is mis-ordered rather than rejected.
 //   - _run_version error text: the timeout and no-usable-version messages are
 //     reproduced byte for byte; an OS error is reproduced for the errno families
 //     Go surfaces, and otherwise falls back to Go's wording.
@@ -29,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +33,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"ai-specs.dev/ai-specs/internal/schema"
 )
@@ -116,46 +113,102 @@ func ExpectedBinaryName(goos string) string {
 	return "jinna"
 }
 
-// providerVersionRe is VERSION_RE's `v?(\d+(?:\.\d+)+)` body (anchored) without
-// the lookarounds RE2 rejects; VersionTuple enforces the digit boundaries by
-// hand. Python's `\d` also matches non-ASCII decimal digits while `[0-9]` does
-// not, a divergence pinned by TestVersionTupleUnicodeDigiDivergence.
-var providerVersionRe = regexp.MustCompile(`^v?[0-9]+(?:\.[0-9]+)+`)
+// providerVersionRe is VERSION_RE's `v?(\d+(?:\.\d+)+)` body (anchored) with the
+// Unicode `\d` class spelled `[\p{Nd}]` and the lookarounds RE2 rejects
+// applied by hand in versionTupleAt.
+var providerVersionRe = regexp.MustCompile(`^v?[\p{Nd}]+(?:\.[\p{Nd}]+)+`)
 
 // VersionTuple mirrors provider_install._version_tuple, including the
 // `(?<!\d)`/`(?!\d)` digit boundaries and the leading optional `v`. At least
-// one `.` is required; an unmatched text yields nil (Python's ()).
-func VersionTuple(text string) []int {
-	for i := 0; i < len(text); i++ {
-		if i > 0 && isASCIIDigit(text[i-1]) {
-			continue
+// one `.` is required; an unmatched text yields nil (Python's ()). Components
+// are arbitrary precision, matching Python's unbounded int.
+func VersionTuple(text string) []*big.Int {
+	for i := range text {
+		if tuple, ok := versionTupleAt(text, i); ok {
+			return tuple
 		}
-		loc := providerVersionRe.FindStringIndex(text[i:])
-		if loc == nil {
-			continue
-		}
-		end := i + loc[1]
-		if end < len(text) && isASCIIDigit(text[end]) {
-			continue
-		}
-		match := text[i:end]
-		if match[0] == 'v' {
-			match = match[1:]
-		}
-		parts := strings.Split(match, ".")
-		out := make([]int, 0, len(parts))
-		for _, part := range parts {
-			// Overflow saturates at math.MaxInt64 (Python ints are unbounded): a pinned
-			// divergence, since the value is not rejected.
-			n, _ := strconv.Atoi(part)
-			out = append(out, n)
-		}
-		return out
 	}
 	return nil
 }
 
-func isASCIIDigit(b byte) bool { return b >= '0' && b <= '9' }
+// versionTupleAt is one anchored re.search(VERSION_RE, text[start:]): it matches
+// only at byte offset start and enforces Python's (?<!\d) lookbehind (the rune
+// before start is not an Nd digit) and (?!\d) lookahead (the rune after the
+// match is not an Nd digit).
+func versionTupleAt(text string, start int) ([]*big.Int, bool) {
+	if start > 0 {
+		if prev, _ := utf8.DecodeLastRuneInString(text[:start]); isDecimalDigit(prev) {
+			return nil, false
+		}
+	}
+	loc := providerVersionRe.FindStringIndex(text[start:])
+	if loc == nil {
+		return nil, false
+	}
+	end := start + loc[1]
+	if end < len(text) {
+		if next, _ := utf8.DecodeRuneInString(text[end:]); isDecimalDigit(next) {
+			return nil, false
+		}
+	}
+	match := text[start:end]
+	if match[0] == 'v' {
+		match = match[1:]
+	}
+	parts := strings.Split(match, ".")
+	out := make([]*big.Int, 0, len(parts))
+	for _, part := range parts {
+		n, ok := parseDecimalInt(part)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, true
+}
+
+// isDecimalDigit is Python's `\d`, the Unicode decimal-digit category Nd.
+func isDecimalDigit(r rune) bool { return unicode.Is(unicode.Nd, r) }
+
+// parseDecimalInt is Python's int() for a run of Nd digits: each digit maps to
+// its numeric value and the result is an arbitrary-precision integer.
+func parseDecimalInt(digits string) (*big.Int, bool) {
+	var b strings.Builder
+	b.Grow(len(digits))
+	for _, r := range digits {
+		value, ok := decimalDigitValue(r)
+		if !ok {
+			return nil, false
+		}
+		b.WriteByte(byte('0' + value))
+	}
+	n, ok := new(big.Int).SetString(b.String(), 10)
+	if !ok {
+		return nil, false
+	}
+	return n, true
+}
+
+// decimalDigitValue returns an Nd digit's numeric value. Unicode lays the digits
+// of each set out contiguously, so the value is the code point's offset inside
+// its Nd range, modulo ten for the mathematical blocks that merge several sets
+// into one range.
+func decimalDigitValue(r rune) (int, bool) {
+	if !isDecimalDigit(r) {
+		return 0, false
+	}
+	for _, rng := range unicode.Nd.R16 {
+		if rune(rng.Lo) <= r && r <= rune(rng.Hi) {
+			return int((r-rune(rng.Lo))/rune(rng.Stride)) % 10, true
+		}
+	}
+	for _, rng := range unicode.Nd.R32 {
+		if rune(rng.Lo) <= r && r <= rune(rng.Hi) {
+			return int((r-rune(rng.Lo))/rune(rng.Stride)) % 10, true
+		}
+	}
+	return 0, false
+}
 
 // versionAtLeast is provider_install._version_at_least: raw Python tuple
 // comparison (a shorter prefix tuple is smaller). This is deliberately NOT the
@@ -169,22 +222,19 @@ func versionAtLeast(have, minimum string) bool {
 	if len(current) == 0 {
 		return false
 	}
-	return compareIntTuples(current, want) >= 0
+	return compareVersionTuples(current, want) >= 0
 }
 
-// compareIntTuples mirrors Python's tuple comparison for int tuples: the
+// compareVersionTuples mirrors Python's tuple comparison for int tuples: the
 // shorter equal-prefix tuple is smaller.
-func compareIntTuples(a, b []int) int {
+func compareVersionTuples(a, b []*big.Int) int {
 	n := len(a)
 	if len(b) < n {
 		n = len(b)
 	}
 	for i := 0; i < n; i++ {
-		if a[i] != b[i] {
-			if a[i] < b[i] {
-				return -1
-			}
-			return 1
+		if c := a[i].Cmp(b[i]); c != 0 {
+			return c
 		}
 	}
 	switch {
@@ -196,10 +246,10 @@ func compareIntTuples(a, b []int) int {
 	return 0
 }
 
-func joinVersion(parts []int) string {
+func joinVersion(parts []*big.Int) string {
 	out := make([]string, len(parts))
 	for i, part := range parts {
-		out[i] = strconv.Itoa(part)
+		out[i] = part.String()
 	}
 	return strings.Join(out, ".")
 }
@@ -383,18 +433,24 @@ func readReceipt(candidate string) map[string]any {
 	return data
 }
 
-// managedCandidates mirrors provider_install._managed_candidates. See the
-// package comment for the listdir-order divergence.
+// managedCandidates mirrors provider_install._managed_candidates, including its
+// listdir order: Readdirnames preserves the raw OS order that Python's
+// Path.iterdir follows, where os.ReadDir would impose a sort Python never does.
 func managedCandidates(root, goos, goarch string) []string {
-	entries, err := os.ReadDir(root)
+	fh, err := os.Open(root)
+	if err != nil {
+		return nil
+	}
+	names, err := fh.Readdirnames(-1)
+	fh.Close()
 	if err != nil {
 		return nil
 	}
 	target := goos + "-" + goarch
 	expected := ExpectedBinaryName(goos)
 	var paths []string
-	for _, entry := range entries {
-		candidate := filepath.Join(root, entry.Name(), target, expected)
+	for _, name := range names {
+		candidate := filepath.Join(root, name, target, expected)
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			paths = append(paths, candidate)
 		}
@@ -443,7 +499,7 @@ func Resolve(dep *schema.CliDep, aiSpecsHome *string) (Resolution, error) {
 
 	root := CacheRoot(aiSpecsHome)
 	target := goos + "-" + goarch
-	var bestVersion []int
+	var bestVersion []*big.Int
 	var bestPath, bestTag string
 	for _, candidate := range managedCandidates(root, goos, goarch) {
 		receipt := readReceipt(candidate)
@@ -472,12 +528,12 @@ func Resolve(dep *schema.CliDep, aiSpecsHome *string) (Resolution, error) {
 		if err != nil || !versionAtLeast(version, dep.MinVersion) {
 			continue
 		}
-		if compareIntTuples(VersionTuple(version), VersionTuple(tag)) != 0 {
+		if compareVersionTuples(VersionTuple(version), VersionTuple(tag)) != 0 {
 			// A receipt that disagrees with the executable is not a trust anchor.
 			continue
 		}
 		v := VersionTuple(version)
-		if bestPath == "" || compareIntTuples(v, bestVersion) > 0 {
+		if bestPath == "" || compareVersionTuples(v, bestVersion) > 0 {
 			bestVersion, bestPath, bestTag = v, candidate, tag
 		}
 	}
