@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -195,6 +196,209 @@ func TestParseNumbers(t *testing.T) {
 	}
 }
 
+// TestParseDateTimes pins all four TOML date/time forms. tomllib returns
+// datetime.datetime for the two datetime kinds and datetime.date / datetime.time
+// for the other two, and internal/toml keeps the same distinction.
+func TestParseDateTimes(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want DateTime
+	}{
+		{"offset zulu", "a = 1979-05-27T07:32:00Z\n",
+			DateTime{Kind: DateTimeOffset, Year: 1979, Month: 5, Day: 27, Hour: 7, Minute: 32, HasOffset: true}},
+		{"offset lower z", "a = 1979-05-27t07:32:00z\n",
+			DateTime{Kind: DateTimeOffset, Year: 1979, Month: 5, Day: 27, Hour: 7, Minute: 32, HasOffset: true}},
+		{"offset seconds", "a = 1979-05-27T07:32:00+05:30\n",
+			DateTime{Kind: DateTimeOffset, Year: 1979, Month: 5, Day: 27, Hour: 7, Minute: 32, HasOffset: true, OffsetSeconds: 19800}},
+		{"offset negative", "a = 1979-05-27T07:32:00-00:30\n",
+			DateTime{Kind: DateTimeOffset, Year: 1979, Month: 5, Day: 27, Hour: 7, Minute: 32, HasOffset: true, OffsetSeconds: -1800}},
+		{"local datetime", "a = 1979-05-27T07:32:00\n",
+			DateTime{Kind: DateTimeLocal, Year: 1979, Month: 5, Day: 27, Hour: 7, Minute: 32}},
+		{"local datetime space", "a = 1979-05-27 07:32:00\n",
+			DateTime{Kind: DateTimeLocal, Year: 1979, Month: 5, Day: 27, Hour: 7, Minute: 32}},
+		{"fractional truncation", "a = 07:32:00.123456789\n",
+			DateTime{Kind: TimeLocal, Hour: 7, Minute: 32, Micros: 123456}},
+		{"local date", "a = 1979-05-27\n",
+			DateTime{Kind: DateLocal, Year: 1979, Month: 5, Day: 27}},
+		{"local time", "a = 07:32:00\n",
+			DateTime{Kind: TimeLocal, Hour: 7, Minute: 32}},
+	}
+	for _, c := range cases {
+		root, err := Parse([]byte(c.src))
+		if err != nil {
+			t.Fatalf("%s: Parse(%q): %v", c.name, c.src, err)
+		}
+		got, ok := root.Get("a")
+		if !ok {
+			t.Fatalf("%s: key a missing", c.name)
+		}
+		dt, isDT := got.(DateTime)
+		if !isDT {
+			t.Fatalf("%s: a = %T, want DateTime", c.name, got)
+		}
+		if dt != c.want {
+			t.Fatalf("%s: a = %+v, want %+v", c.name, dt, c.want)
+		}
+		if dt.PyTypeName() != c.want.PyTypeName() {
+			t.Fatalf("%s: PyTypeName = %q, want %q", c.name, dt.PyTypeName(), c.want.PyTypeName())
+		}
+	}
+
+	// An impossible calendar date matches the grammar but must be rejected.
+	for _, bad := range []string{"1979-02-30", "1900-02-29", "0000-01-01"} {
+		if _, err := Parse([]byte("a = " + bad + "\n")); err == nil {
+			t.Fatalf("Parse accepted the invalid date %q", bad)
+		}
+	}
+}
+
+const pyDateTimeScript = `import sys,json,tomllib; v=tomllib.loads(sys.stdin.read())["a"]; print(json.dumps([repr(v), str(v)]))`
+
+// TestDateTimePythonParity pins PyRepr/PyStr against the real tomllib objects:
+// every datetime/date/time literal is read by both readers and the Go repr/str
+// match CPython's exactly.
+func TestDateTimePythonParity(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 not available: %v", err)
+	}
+	literals := []string{
+		"1979-05-27T07:32:00Z",
+		"1979-05-27T07:32:00",
+		"1979-05-27 07:32:00",
+		"1979-05-27T00:32:00.999999-07:00",
+		"1979-05-27T07:32:00+05:30",
+		"1979-05-27T07:32:00-00:30",
+		"1979-05-27",
+		"07:32:00",
+		"07:32:00.123456789",
+	}
+	for _, lit := range literals {
+		t.Run(lit, func(t *testing.T) {
+			doc := "a = " + lit + "\n"
+			root, err := Parse([]byte(doc))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			got, _ := root.Get("a")
+			dt, isDT := got.(DateTime)
+			if !isDT {
+				t.Fatalf("a = %T, want DateTime", got)
+			}
+			cmd := exec.Command("python3", "-c", pyDateTimeScript)
+			cmd.Stdin = strings.NewReader(doc)
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("python3: %v", err)
+			}
+			var want []string
+			if err := json.Unmarshal(bytes.TrimSpace(out), &want); err != nil {
+				t.Fatalf("decode python %q: %v", out, err)
+			}
+			if got := dt.PyRepr(); got != want[0] {
+				t.Fatalf("PyRepr = %q, python repr = %q", got, want[0])
+			}
+			if got := dt.PyStr(); got != want[1] {
+				t.Fatalf("PyStr = %q, python str = %q", got, want[1])
+			}
+		})
+	}
+}
+
+// TestParseBigIntegers pins that an integer that fits int64 stays int64 and a
+// wider one becomes a canonical-decimal BigInt, in every base tomllib accepts.
+func TestParseBigIntegers(t *testing.T) {
+	cases := []struct {
+		src  string
+		want any
+	}{
+		{"a = 9223372036854775807\n", int64(math.MaxInt64)},
+		{"a = -9223372036854775808\n", int64(math.MinInt64)},
+		{"a = 9223372036854775808\n", BigInt("9223372036854775808")},
+		{"a = -9223372036854775809\n", BigInt("-9223372036854775809")},
+		{"a = 123456789012345678901234567890\n", BigInt("123456789012345678901234567890")},
+		{"a = -123456789012345678901234567890\n", BigInt("-123456789012345678901234567890")},
+		{"a = 0xFFFFFFFFFFFFFFFFFFFFFFFF\n", BigInt("79228162514264337593543950335")},
+		{"a = -0xFFFFFFFFFFFFFFFFFFFFFFFF\n", BigInt("-79228162514264337593543950335")},
+	}
+	for _, c := range cases {
+		root, err := Parse([]byte(c.src))
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", c.src, err)
+		}
+		got, _ := root.Get("a")
+		if got != c.want {
+			t.Fatalf("Parse(%q) a = %#v, want %#v", c.src, got, c.want)
+		}
+	}
+}
+
+const pyBigIntScript = `import sys,json,tomllib; print(json.dumps(tomllib.loads(sys.stdin.read())["a"]))`
+
+// TestBigIntPythonParity pins that a wide integer reads and renders exactly like
+// Python's arbitrary-precision int, in every base. json.dumps emits the exact
+// decimal digits, which is what internal/toml's BigInt carries and what the
+// TOML literal writer emits.
+func TestBigIntPythonParity(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 not available: %v", err)
+	}
+	literals := []string{
+		"9223372036854775807",
+		"9223372036854775808",
+		"-9223372036854775809",
+		"123456789012345678901234567890",
+		"-123456789012345678901234567890",
+		"0xFFFFFFFFFFFFFFFFFFFFFFFF",
+		"0o1777777777777777777777",
+		"0b1000000000000000000000000000000000000000000000000000000000000000",
+	}
+	for _, lit := range literals {
+		t.Run(lit, func(t *testing.T) {
+			doc := "a = " + lit + "\n"
+			root, err := Parse([]byte(doc))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			v, _ := root.Get("a")
+			var goDec string
+			switch x := v.(type) {
+			case int64:
+				goDec = strconv.FormatInt(x, 10)
+			case BigInt:
+				goDec = string(x)
+			default:
+				t.Fatalf("a = %T, want int64 or BigInt", v)
+			}
+			cmd := exec.Command("python3", "-c", pyBigIntScript)
+			cmd.Stdin = strings.NewReader(doc)
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("python3: %v", err)
+			}
+			if got := strings.TrimSpace(string(out)); got != goDec {
+				t.Fatalf("decimal: go=%q python=%q", goDec, got)
+			}
+		})
+	}
+}
+
+// TestBigIntAnyJSON pins that Any()/PlainValue keep their "suitable for JSON
+// marshaling" contract for a wide integer: the value reaches encoding/json as
+// a decimal number, never a quoted string.
+func TestBigIntAnyJSON(t *testing.T) {
+	root, err := Parse([]byte("a = 123456789012345678901234567890\n"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := strings.TrimSpace(string(mustJSON(t, root.Any()))); got != `{"a":123456789012345678901234567890}` {
+		t.Fatalf("Any() JSON = %s", got)
+	}
+	if _, ok := PlainValue(BigInt("1")).(json.Number); !ok {
+		t.Fatalf("PlainValue(BigInt) = %T, want json.Number", PlainValue(BigInt("1")))
+	}
+}
+
 func TestParseArrayOfTablesNested(t *testing.T) {
 	src := `[[a]]
 x = 1
@@ -344,6 +548,7 @@ func TestTOMLValue(t *testing.T) {
 		{"nested list", []any{[]any{int64(1)}, "y"}, `[[1], "y"]`},
 		{"dict sorted", map[string]any{"b": int64(1), "a": "x"}, `{ a = "x", b = 1 }`},
 		{"dict nested", map[string]any{"k": []string{"v"}}, `{ k = ["v"] }`},
+		{"bigint digits", BigInt("123456789012345678901234567890"), "123456789012345678901234567890"},
 	}
 	for _, c := range cases {
 		got, err := TOMLValue(c.in)
@@ -470,7 +675,6 @@ func TestParseErrors(t *testing.T) {
 		{"bad escape", "a = \"b\\qc\"\n", "escape"},
 		{"unterminated string", "a = \"abc\n", "unterminated"},
 		{"unterminated array", "a = [1, 2\n", "unterminated"},
-		{"datetime", "a = 1979-05-27\n", "datetime"},
 		{"non-table redefinition", "a = 1\n[a.b]\n", "redefin"},
 		{"aot over table", "[a]\n[[a]]\n", "redefin"},
 		{"bad int", "a = 01\n", "invalid"},
@@ -483,6 +687,26 @@ func TestParseErrors(t *testing.T) {
 		}
 		if !strings.Contains(strings.ToLower(err.Error()), c.want) {
 			t.Fatalf("%s: error %q does not mention %q", c.name, err, c.want)
+		}
+	}
+}
+
+// TestTOMLValueRefusesDateTime pins the TOML-literal writer's refusal: the
+// Python toml_write.toml_value chain has no datetime branch, so it raises
+// TypeError("cannot serialize <name> to TOML") and internal/toml matches it.
+func TestTOMLValueRefusesDateTime(t *testing.T) {
+	cases := []struct {
+		kind DateTimeKind
+		want string
+	}{
+		{DateTimeOffset, "cannot serialize datetime to TOML"},
+		{DateTimeLocal, "cannot serialize datetime to TOML"},
+		{DateLocal, "cannot serialize date to TOML"},
+		{TimeLocal, "cannot serialize time to TOML"},
+	}
+	for _, c := range cases {
+		if _, err := TOMLValue(DateTime{Kind: c.kind}); err == nil || err.Error() != c.want {
+			t.Fatalf("TOMLValue(kind %d) error = %v, want %q", c.kind, err, c.want)
 		}
 	}
 }

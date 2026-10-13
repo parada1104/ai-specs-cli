@@ -816,6 +816,14 @@ func pyStr(v any) string {
 	if s, ok := v.(string); ok {
 		return s
 	}
+	if bi, ok := v.(toml.BigInt); ok {
+		// Python str(int) for a wide integer is its exact decimal digits.
+		return string(bi)
+	}
+	if dt, ok := v.(toml.DateTime); ok {
+		// Python str(datetime/date/time) is the ISO form, not repr().
+		return dt.PyStr()
+	}
 	return pyRepr(v)
 }
 
@@ -837,6 +845,10 @@ func pyRepr(v any) string {
 		return strconv.Itoa(x)
 	case int64:
 		return strconv.FormatInt(x, 10)
+	case toml.BigInt:
+		return string(x)
+	case toml.DateTime:
+		return x.PyRepr()
 	case float64:
 		return formatPyFloat(x)
 	case []any:

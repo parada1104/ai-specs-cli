@@ -417,18 +417,27 @@ func TestNativeMergeConfigNonFiniteFloatIsRejected(t *testing.T) {
 	}
 }
 
-// TestNativeMergeConfigDatetimeIsABoundary pins the datetime boundary the Go
-// toml reader makes explicit: tomllib carries a datetime into the envelope and
-// json.dumps(allow_nan=False) raises TypeError (the bridge falls back), while
-// internal/toml rejects the value at acquisition so the native authority never
-// silently learns a datetime's text.
+// TestNativeMergeConfigDatetimeIsABoundary pins the widened internal/toml value
+// subset at the envelope boundary: tomllib and internal/toml both read the
+// datetime/date, and the envelope serialization then fails on both sides with
+// Python's TypeError. Python's json.dumps(allow_nan=False) raises it; the Go
+// acquisition rejects the same value with the same message, wrapped in the
+// manifest-key context (the same wrapper shape the non-finite float boundary
+// uses).
 func TestNativeMergeConfigDatetimeIsABoundary(t *testing.T) {
 	python, authority := syncPythonAuthority(t)
 	driver := mergeConfigRefPath(t)
 
-	for _, literal := range []string{"2024-01-02T03:04:05", "2024-01-02"} {
-		t.Run(literal, func(t *testing.T) {
-			manifest := "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nstarts = " + literal + "\n"
+	cases := []struct {
+		literal  string
+		typeName string
+	}{
+		{"2024-01-02T03:04:05", "datetime"},
+		{"2024-01-02", "date"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.literal, func(t *testing.T) {
+			manifest := "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nstarts = " + tc.literal + "\n"
 			catalog, projectRoot, recipePath, manifestPath := mergeConfigFixture(t, "alpha", mergeRecipeBody, manifest)
 
 			envRaw := runMergeConfigRef(t, python, driver, "envelope", authority, catalog, "alpha", projectRoot)
@@ -436,12 +445,18 @@ func TestNativeMergeConfigDatetimeIsABoundary(t *testing.T) {
 			if err := json.Unmarshal(envRaw, &envRef); err != nil {
 				t.Fatalf("decode envelope ref %s: %v", envRaw, err)
 			}
-			if envRef.OK || envRef.ExcType != "TypeError" {
-				t.Fatalf("python envelope = %+v, want a TypeError for %s", envRef, literal)
+			wantMsg := "Object of type " + tc.typeName + " is not JSON serializable"
+			if envRef.OK || envRef.ExcType != "TypeError" || envRef.Message != wantMsg {
+				t.Fatalf("python envelope = %+v, want a TypeError %q", envRef, wantMsg)
 			}
 
-			if _, err := PlanMergeConfig(MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: "alpha"}); err == nil {
-				t.Fatalf("PlanMergeConfig accepted the datetime %s", literal)
+			_, err := PlanMergeConfig(MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: "alpha"})
+			if err == nil {
+				t.Fatalf("PlanMergeConfig accepted the datetime %s", tc.literal)
+			}
+			wantErr := `manifest "starts" value: ` + wantMsg
+			if err.Error() != wantErr {
+				t.Fatalf("native error = %q, want %q", err.Error(), wantErr)
 			}
 		})
 	}

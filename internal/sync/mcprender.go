@@ -90,6 +90,16 @@ func mcpToOrdered(v any) any {
 			arr[i] = mcpToOrdered(e)
 		}
 		return arr
+	case toml.BigInt:
+		// internal/toml.BigInt and the JSON reader's mcpBigInt represent the
+		// same concept — an integer wider than int64 kept as canonical decimal
+		// digits — for the two different readers; unify them at this seam so
+		// the ordered model has one wide-integer type.
+		return mcpBigInt(x)
+	case toml.DateTime:
+		// A date/time is not a JSON value; keep it typed so the JSON writer can
+		// raise Python's TypeError instead of silently emitting null.
+		return x
 	default:
 		return v
 	}
@@ -481,11 +491,41 @@ func mcpDecodeRune(s string) (rune, int) {
 
 // mcpJSONDumpsIndent2 renders v exactly like json.dumps(v, indent=2): default
 // ", "/": " separators under indent, key insertion order, empty {} / [] and
-// ensure_ascii=True escaping.
-func mcpJSONDumpsIndent2(v any) string {
+// ensure_ascii=True escaping. It returns Python's TypeError text for a value
+// json.dumps cannot serialize (a TOML date/time), where the Python caller
+// raises instead of writing a document; the scan runs first so the datetime
+// never reaches the shared scalar writer and becomes null.
+func mcpJSONDumpsIndent2(v any) (string, error) {
+	if err := mcpJSONUnserializable(v); err != nil {
+		return "", err
+	}
 	var sb strings.Builder
 	mcpWriteJSONIndent(&sb, v, 0)
-	return sb.String()
+	return sb.String(), nil
+}
+
+// mcpJSONUnserializable returns the TypeError json.dumps raises for the first
+// value it cannot serialize (a TOML date/time), or nil. It mirrors Python's
+// recursive encoder, which raises at the first unserializable value in
+// document order.
+func mcpJSONUnserializable(v any) error {
+	switch x := v.(type) {
+	case *mcpObj:
+		for _, k := range x.keys {
+			if err := mcpJSONUnserializable(x.vals[k]); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, e := range x {
+			if err := mcpJSONUnserializable(e); err != nil {
+				return err
+			}
+		}
+	case toml.DateTime:
+		return fmt.Errorf("Object of type %s is not JSON serializable", x.PyTypeName())
+	}
+	return nil
 }
 
 func mcpWriteJSONIndent(sb *strings.Builder, v any, depth int) {
@@ -548,10 +588,14 @@ func mcpWriteJSONCompact(sb *strings.Builder, v any) {
 		sb.WriteString(strconv.FormatInt(x, 10))
 	case mcpBigInt:
 		sb.WriteString(string(x))
+	case toml.BigInt:
+		// Defensive: mcpToOrdered normalizes toml.BigInt to mcpBigInt.
+		sb.WriteString(string(x))
 	case float64:
 		sb.WriteString(mcpJSONFloat(x))
 	default:
-		// Unreachable: composites are always handled by mcpWriteJSONIndent.
+		// Unreachable: composites are always handled by mcpWriteJSONIndent,
+		// and mcpJSONDumpsIndent2 rejects a date/time before this writer runs.
 		sb.WriteString("null")
 	}
 }
@@ -730,9 +774,11 @@ func mcpNormalizeServer(raw any) *mcpObj {
 	normalized.set("env", mcpNormalizeEnv(env))
 
 	if timeout, ok := server.get("timeout"); ok {
-		if t, isInt := timeout.(int64); isInt {
-			normalized.set("timeout", t)
-		} else {
+		switch timeout.(type) {
+		case int64, mcpBigInt:
+			// Python keeps any int (bool excluded); a wide integer survives.
+			normalized.set("timeout", timeout)
+		default:
 			normalized.set("timeout", nil)
 		}
 	} else {
@@ -1089,7 +1135,11 @@ func mcpMergeIntoJSON(targetPath, mcpKey string, servers *mcpObj, agent string) 
 	}
 
 	existing.set(mcpKey, servers)
-	return mcpJSONDumpsIndent2(existing) + "\n", nil
+	document, err := mcpJSONDumpsIndent2(existing)
+	if err != nil {
+		return "", err
+	}
+	return document + "\n", nil
 }
 
 // mcpMergeIntoTOML mirrors merge_into_toml: strip prior [<mcp_key>.*] blocks,

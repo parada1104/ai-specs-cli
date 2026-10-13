@@ -281,10 +281,19 @@ func asPlainList(raw any) []any {
 	return nil
 }
 
-// pyStrValue mirrors Python str(value) for the TOML value types.
+// pyStrValue mirrors Python str(value) for the TOML value types: strings pass
+// through, a wide integer is its exact decimal digits, and a date/time is the
+// ISO form. Only composites fall back to repr composition (Python str(list)
+// == repr(list)).
 func pyStrValue(v any) string {
 	if s, ok := v.(string); ok {
 		return s
+	}
+	if bi, ok := v.(toml.BigInt); ok {
+		return string(bi)
+	}
+	if dt, ok := v.(toml.DateTime); ok {
+		return dt.PyStr()
 	}
 	return pythonRepr(v)
 }

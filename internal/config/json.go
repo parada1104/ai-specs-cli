@@ -30,14 +30,17 @@ func (o *Obj) set(key string, v any) {
 }
 
 // encodeJSON renders v exactly like Python json.dumps(payload) with default
-// separators (", " / ": ") and ensure_ascii=True.
-func encodeJSON(v any) string {
+// separators (", " / ": ") and ensure_ascii=True. A value json.dumps cannot
+// serialize (a TOML date/time) is returned as the Python TypeError text.
+func encodeJSON(v any) (string, error) {
 	var sb strings.Builder
-	encodeJSONInto(&sb, v)
-	return sb.String()
+	if err := encodeJSONInto(&sb, v); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }
 
-func encodeJSONInto(sb *strings.Builder, v any) {
+func encodeJSONInto(sb *strings.Builder, v any) error {
 	switch x := v.(type) {
 	case nil:
 		sb.WriteString("null")
@@ -53,6 +56,11 @@ func encodeJSONInto(sb *strings.Builder, v any) {
 		sb.WriteString(strconv.FormatInt(int64(x), 10))
 	case int64:
 		sb.WriteString(strconv.FormatInt(x, 10))
+	case toml.BigInt:
+		// Python json.dumps renders an arbitrary-precision int in full.
+		sb.WriteString(string(x))
+	case toml.DateTime:
+		return jsonUnserializableError{TypeName: x.PyTypeName()}
 	case float64:
 		sb.WriteString(jsonFloat(x))
 	case []any:
@@ -61,7 +69,9 @@ func encodeJSONInto(sb *strings.Builder, v any) {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
-			encodeJSONInto(sb, e)
+			if err := encodeJSONInto(sb, e); err != nil {
+				return err
+			}
 		}
 		sb.WriteByte(']')
 	case []string:
@@ -79,11 +89,13 @@ func encodeJSONInto(sb *strings.Builder, v any) {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
-			encodeTableInto(sb, e)
+			if err := encodeTableInto(sb, e); err != nil {
+				return err
+			}
 		}
 		sb.WriteByte(']')
 	case *toml.Table:
-		encodeTableInto(sb, x)
+		return encodeTableInto(sb, x)
 	case *Obj:
 		sb.WriteByte('{')
 		for i, k := range x.keys {
@@ -92,7 +104,9 @@ func encodeJSONInto(sb *strings.Builder, v any) {
 			}
 			sb.WriteString(jsonString(k))
 			sb.WriteString(": ")
-			encodeJSONInto(sb, x.vals[k])
+			if err := encodeJSONInto(sb, x.vals[k]); err != nil {
+				return err
+			}
 		}
 		sb.WriteByte('}')
 	default:
@@ -100,9 +114,20 @@ func encodeJSONInto(sb *strings.Builder, v any) {
 		// the reader in this package or parsed by internal/toml.
 		sb.WriteString("null")
 	}
+	return nil
 }
 
-func encodeTableInto(sb *strings.Builder, t *toml.Table) {
+// jsonUnserializableError is the Python TypeError json.dumps raises for a value
+// it cannot serialize. The encoder mirrors Python's json.dumps, which raises
+// for these types, so callers receive it as an ordinary error instead of a
+// panic.
+type jsonUnserializableError struct{ TypeName string }
+
+func (e jsonUnserializableError) Error() string {
+	return "Object of type " + e.TypeName + " is not JSON serializable"
+}
+
+func encodeTableInto(sb *strings.Builder, t *toml.Table) error {
 	sb.WriteByte('{')
 	for i, k := range t.Keys() {
 		if i > 0 {
@@ -111,9 +136,12 @@ func encodeTableInto(sb *strings.Builder, t *toml.Table) {
 		sb.WriteString(jsonString(k))
 		sb.WriteString(": ")
 		v, _ := t.Get(k)
-		encodeJSONInto(sb, v)
+		if err := encodeJSONInto(sb, v); err != nil {
+			return err
+		}
 	}
 	sb.WriteByte('}')
+	return nil
 }
 
 // jsonString renders s exactly like Python json.dumps(s) with defaults:

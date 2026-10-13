@@ -85,7 +85,7 @@ func ReadSectionJSON(data *toml.Table, section string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return encodeJSON(payload), nil
+	return encodeJSON(payload)
 }
 
 // --- helpers -------------------------------------------------------------
@@ -151,6 +151,12 @@ func pyStr(v any) string {
 		return "False"
 	case int64:
 		return formatPyInt(x)
+	case toml.BigInt:
+		// Python str(int) for a wide integer is its exact decimal digits.
+		return string(x)
+	case toml.DateTime:
+		// Python str(datetime/date/time) is the ISO form, not repr().
+		return x.PyStr()
 	case float64:
 		return formatPyFloat(x)
 	case []any:
@@ -176,6 +182,13 @@ func pyStr(v any) string {
 func pyRepr(v any) string {
 	if s, ok := v.(string); ok {
 		return pyReprString(s)
+	}
+	if bi, ok := v.(toml.BigInt); ok {
+		return string(bi)
+	}
+	if dt, ok := v.(toml.DateTime); ok {
+		// repr() keeps the constructor form; only str() uses the ISO form.
+		return dt.PyRepr()
 	}
 	return pyStr(v)
 }
@@ -378,11 +391,15 @@ func normalizeMcpServer(raw *toml.Table) *Obj {
 	}
 	out.set("env", normalizeEnv(envVal, hasEnv))
 
-	// timeout: int (bool is NOT int in Python) or null.
+	// timeout: int (bool is NOT int in Python) or null. Python's int is
+	// arbitrary precision, so a toml.BigInt is kept with its exact digits.
 	if tv, ok := getKey(raw, "timeout"); ok {
-		if n, isInt := tv.(int64); isInt {
+		switch n := tv.(type) {
+		case int64:
 			out.set("timeout", n)
-		} else {
+		case toml.BigInt:
+			out.set("timeout", n)
+		default:
 			out.set("timeout", nil)
 		}
 	} else {

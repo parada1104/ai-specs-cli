@@ -326,14 +326,18 @@ func rawTableMap(t *toml.Table) map[string]any {
 // --- Python str()/repr()/type-name emulation ---
 
 // pyTypeName maps a Go TOML value kind to the Python type name tomllib
-// values would report (FROZEN message surface).
+// values would report (FROZEN message surface). Python reports the short
+// __name__: a datetime value is "datetime", a date "date", a time "time",
+// and a wide integer is still "int".
 func pyTypeName(v any) string {
-	switch v.(type) {
+	switch x := v.(type) {
 	case nil:
 		return "NoneType"
 	case string:
 		return "str"
 	case int64:
+		return "int"
+	case toml.BigInt:
 		return "int"
 	case float64:
 		return "float"
@@ -343,6 +347,8 @@ func pyTypeName(v any) string {
 		return "list"
 	case *toml.Table:
 		return "dict"
+	case toml.DateTime:
+		return x.PyTypeName()
 	default:
 		return "str"
 	}
@@ -384,6 +390,10 @@ func pyReprDepth(v any, depth int, active map[*toml.Table]bool) (string, error) 
 		return "False", nil
 	case int64:
 		return strconv.FormatInt(x, 10), nil
+	case toml.BigInt:
+		return string(x), nil
+	case toml.DateTime:
+		return x.PyRepr(), nil
 	case float64:
 		return pyFloatStr(x), nil
 	case []any:
@@ -518,6 +528,13 @@ func pyUnicodeEscape(r rune) string {
 func pyStr(v any) (string, error) {
 	if s, ok := v.(string); ok {
 		return s, nil
+	}
+	if bi, ok := v.(toml.BigInt); ok {
+		// Python str(int) for a wide integer is its exact decimal digits.
+		return string(bi), nil
+	}
+	if dt, ok := v.(toml.DateTime); ok {
+		return dt.PyStr(), nil
 	}
 	return pyReprDepth(v, 0, nil)
 }
@@ -1197,8 +1214,9 @@ func checkShapeScalar(context string, value any, kind string) error {
 		}
 	case "integer":
 		_, isInt := value.(int64)
+		_, isBig := value.(toml.BigInt)
 		_, isBool := value.(bool)
-		if !isInt || isBool {
+		if !isInt && !isBig || isBool {
 			return ve("%s: expected integer, got %s", context, pyTypeName(value))
 		}
 	case "boolean":

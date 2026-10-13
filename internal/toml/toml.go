@@ -4,10 +4,11 @@
 // The parser mirrors python3 stdlib tomllib's observable value types for the
 // subset documented in docs/go-adr/0002-toml-line-editor.md: tables and
 // array-of-tables, dotted and quoted keys, basic / literal / multi-line
-// strings, integers (dec/hex/oct/bin), floats, booleans, arrays, and inline
-// tables. Datetime values are outside the subset and produce a descriptive
-// error, matching the Python pipeline where json.dumps cannot serialize the
-// datetime objects tomllib returns.
+// strings, integers (dec/hex/oct/bin, at arbitrary precision), floats,
+// booleans, arrays, inline tables, and the four TOML date/time forms. A
+// date/time parses into DateTime and then fails at the JSON boundary exactly
+// where tomllib's datetime objects fail in json.dumps; an integer wider than
+// int64 parses into BigInt and round-trips its exact decimal digits.
 //
 // This is a reader for parsed values only; manifest writes are surgical text
 // operations owned by the line/segment editor (internal/config). Error text
@@ -16,16 +17,148 @@
 package toml
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 )
 
+// BigInt is a TOML integer whose magnitude does not fit int64. It carries the
+// canonical decimal digits (a leading "-" for negatives), the text Python's
+// arbitrary-precision int renders through str() and json.dumps. Integers that
+// fit int64 stay int64, so only the overflow case uses this type.
+type BigInt string
+
+// DateTimeKind classifies a parsed TOML date/time by the Python type tomllib
+// returns for it.
+type DateTimeKind int
+
+const (
+	// DateTimeOffset is an offset date-time (1979-05-27T07:32:00Z); tomllib
+	// returns datetime.datetime.
+	DateTimeOffset DateTimeKind = iota
+	// DateTimeLocal is a local date-time (1979-05-27T07:32:00); tomllib returns
+	// datetime.datetime.
+	DateTimeLocal
+	// DateLocal is a local date (1979-05-27); tomllib returns datetime.date.
+	DateLocal
+	// TimeLocal is a local time (07:32:00); tomllib returns datetime.time.
+	TimeLocal
+)
+
+// DateTime is a parsed TOML date/time value. internal/toml keeps the four
+// syntactic forms distinct and records the components so the Python repr/str
+// and the json.dumps "Object of type X is not JSON serializable" failure can
+// both be reproduced exactly instead of degrading to null.
+type DateTime struct {
+	Kind   DateTimeKind
+	Year   int
+	Month  int
+	Day    int
+	Hour   int
+	Minute int
+	Second int
+	Micros int
+	// HasOffset reports whether the literal carried Z/z or \u00b1HH:MM, and
+	// OffsetSeconds is that offset east of UTC.
+	HasOffset     bool
+	OffsetSeconds int
+}
+
+// PyTypeName returns the Python type name json.dumps names for the value:
+// "datetime" for both datetime kinds, "date" for a local date and "time" for
+// a local time.
+func (d DateTime) PyTypeName() string {
+	switch d.Kind {
+	case DateLocal:
+		return "date"
+	case TimeLocal:
+		return "time"
+	default:
+		return "datetime"
+	}
+}
+
+// PyRepr renders the value as Python repr() of the corresponding
+// datetime.datetime / datetime.date / datetime.time object.
+func (d DateTime) PyRepr() string {
+	switch d.Kind {
+	case DateLocal:
+		return fmt.Sprintf("datetime.date(%d, %d, %d)", d.Year, d.Month, d.Day)
+	case TimeLocal:
+		return "datetime.time(" + fmt.Sprintf("%d, %d", d.Hour, d.Minute) + pySecondMicros(d) + ")"
+	default:
+		args := fmt.Sprintf("%d, %d, %d, %d, %d", d.Year, d.Month, d.Day, d.Hour, d.Minute) + pySecondMicros(d)
+		if d.HasOffset {
+			args += ", tzinfo=" + pyTZInfo(d.OffsetSeconds)
+		}
+		return "datetime.datetime(" + args + ")"
+	}
+}
+
+// PyStr renders the value as Python str() of the datetime/date/time object.
+func (d DateTime) PyStr() string {
+	switch d.Kind {
+	case DateLocal:
+		return fmt.Sprintf("%04d-%02d-%02d", d.Year, d.Month, d.Day)
+	case TimeLocal:
+		return fmt.Sprintf("%02d:%02d:%02d%s", d.Hour, d.Minute, d.Second, pyMicrosSuffix(d.Micros))
+	default:
+		s := fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d%s", d.Year, d.Month, d.Day, d.Hour, d.Minute, d.Second, pyMicrosSuffix(d.Micros))
+		if d.HasOffset {
+			s += pyOffsetSuffix(d.OffsetSeconds)
+		}
+		return s
+	}
+}
+
+// pySecondMicros renders the trailing ", second[, micros]" arguments Python's
+// datetime/date/time repr emits only when they are non-zero.
+func pySecondMicros(d DateTime) string {
+	if d.Micros != 0 {
+		return fmt.Sprintf(", %d, %d", d.Second, d.Micros)
+	}
+	if d.Second != 0 {
+		return fmt.Sprintf(", %d", d.Second)
+	}
+	return ""
+}
+
+func pyMicrosSuffix(micros int) string {
+	if micros == 0 {
+		return ""
+	}
+	return fmt.Sprintf(".%06d", micros)
+}
+
+func pyOffsetSuffix(offset int) string {
+	sign := "+"
+	if offset < 0 {
+		sign = "-"
+		offset = -offset
+	}
+	return fmt.Sprintf("%s%02d:%02d", sign, offset/3600, (offset%3600)/60)
+}
+
+// pyTZInfo renders the tzinfo= argument of a datetime repr: Z and \u00b100:00
+// both collapse to datetime.timezone.utc, any other offset to
+// datetime.timezone(datetime.timedelta(...)).
+func pyTZInfo(offset int) string {
+	if offset == 0 {
+		return "datetime.timezone.utc"
+	}
+	if offset > 0 {
+		return fmt.Sprintf("datetime.timezone(datetime.timedelta(seconds=%d))", offset)
+	}
+	return fmt.Sprintf("datetime.timezone(datetime.timedelta(days=-1, seconds=%d))", offset+86400)
+}
+
 // Table is an ordered TOML table. Keys iterate in document order (order of
 // first appearance), mirroring tomllib's dict insertion order.
 //
-// Values are one of: string, int64, float64, bool, []any (array),
-// *Table (table or inline table), or []*Table (array of tables).
+// Values are one of: string, int64, BigInt (an integer wider than int64),
+// float64, bool, DateTime (a TOML date/time), []any (array), *Table (table or
+// inline table), or []*Table (array of tables).
 type Table struct {
 	order   []string
 	entries map[string]any
@@ -109,7 +242,9 @@ func (t *Table) Tables(key string) ([]*Table, bool) {
 }
 
 // Any returns the table as plain nested Go values (map[string]any, []any,
-// and scalars), suitable for JSON marshaling and differential comparison.
+// and scalars), suitable for JSON marshaling and differential comparison. A
+// BigInt becomes a json.Number so encoding/json emits its exact decimal digits
+// (a bare BigInt string would be quoted).
 func (t *Table) Any() map[string]any {
 	out := make(map[string]any, len(t.entries))
 	for k, v := range t.entries {
@@ -121,9 +256,9 @@ func (t *Table) Any() map[string]any {
 // PlainValue returns a raw parsed value as plain nested Go values
 // (map[string]any, []any, and scalars), suitable for JSON marshaling and for
 // the shared planner seam. It exposes the same normalization Table.Any uses:
-// *Table and []*Table convert recursively; []any converts element-wise;
-// every other value passes through unchanged, including arbitrary
-// map[string]any values, which are not recursively normalized.
+// *Table and []*Table convert recursively; []any converts element-wise; BigInt
+// becomes a json.Number; every other value passes through unchanged, including
+// arbitrary map[string]any values, which are not recursively normalized.
 func PlainValue(v any) any {
 	return plainValue(v)
 }
@@ -144,6 +279,11 @@ func plainValue(v any) any {
 			arr[i] = plainValue(e)
 		}
 		return arr
+	case BigInt:
+		// json.Number marshals through encoding/json as the exact decimal
+		// digits, where a BigInt string would be quoted; both carry the same
+		// canonical digits.
+		return json.Number(x)
 	default:
 		return v
 	}

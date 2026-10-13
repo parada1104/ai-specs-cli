@@ -54,8 +54,8 @@ type MergeConfigRequest struct {
 // PlanMergeConfig acquires the native inputs, builds the ordered request the
 // shared core decodes, and delegates the decision. A non-nil error is an
 // acquisition/serialization failure — an unreadable recipe or manifest, a TOML
-// datetime internal/toml cannot represent, or a non-finite float Python's
-// json.dumps(allow_nan=False) rejects. A semantic validation failure is
+// date/time the envelope's json.dumps cannot serialize, or a non-finite float
+// Python's json.dumps(allow_nan=False) rejects. A semantic validation failure is
 // result.Error with a nil error, exactly as the gate envelope reports it.
 func PlanMergeConfig(req MergeConfigRequest) (shared.MergeConfigResult, error) {
 	sreq, err := acquireMergeConfigRequest(req)
@@ -169,9 +169,10 @@ func acquireManifestConfig(manifestPath, recipeID string) ([]shared.MergeConfigP
 
 // pyJSONValue renders one native TOML value the way Python's
 // json.dumps(..., allow_nan=False) would: floats keep their float form ("1.0",
-// never "1"), tables and array-of-tables keep document order, and a non-finite
-// float or an unsupported type is rejected so int/float survives the shared
-// json.Number path.
+// never "1"), a wide integer keeps its exact decimal digits, tables and
+// array-of-tables keep document order, and a non-finite float or a date/time
+// is rejected with Python's serialization error so int/float survives the
+// shared json.Number path and a datetime never silently becomes null.
 func pyJSONValue(value any) (json.RawMessage, error) {
 	var buf bytes.Buffer
 	if err := writePyJSON(&buf, value); err != nil {
@@ -194,6 +195,11 @@ func writePyJSON(buf *bytes.Buffer, value any) error {
 		return writeJSONString(buf, v)
 	case int64:
 		buf.WriteString(strconv.FormatInt(v, 10))
+	case toml.BigInt:
+		// Python json.dumps renders an arbitrary-precision int in full.
+		buf.WriteString(string(v))
+	case toml.DateTime:
+		return fmt.Errorf("Object of type %s is not JSON serializable", v.PyTypeName())
 	case float64:
 		text, err := pyJSONFloat(v)
 		if err != nil {
@@ -239,7 +245,7 @@ func writePyJSON(buf *bytes.Buffer, value any) error {
 		}
 		buf.WriteByte('}')
 	default:
-		return fmt.Errorf("value of type %T is not JSON serializable", value)
+		return fmt.Errorf("Object of type %T is not JSON serializable", value)
 	}
 	return nil
 }

@@ -3,12 +3,14 @@ package rulesaudit
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
+	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 func writeFileT(t *testing.T, path, content string) {
@@ -218,6 +220,137 @@ func TestEmptyProjectPayload(t *testing.T) {
 	want := fmt.Sprintf(emptyProjectJSON, projectcache.ResolvePath(root))
 	if stdout.String() != want {
 		t.Fatalf("payload mismatch:\n--- got ---\n%s\n--- want ---\n%s", stdout.String(), want)
+	}
+}
+
+// TestEncodeIndentWidenedValueKinds pins the compact/indent writer's value
+// kinds: a toml.BigInt renders its exact decimal digits, like Python
+// json.dumps(int), while the previously-working scalar kinds are unchanged.
+func TestEncodeIndentWidenedValueKinds(t *testing.T) {
+	big := toml.BigInt("123456789012345678901234567890")
+	payload := newObj()
+	payload.set("big", big)
+	payload.set("narrow", int64(-5))
+	payload.set("str", "x")
+	payload.set("flag", true)
+	payload.set("list", []any{big, "y"})
+
+	got, err := encodeIndent(payload)
+	if err != nil {
+		t.Fatalf("encodeIndent error: %v", err)
+	}
+	want := "{\n" +
+		"  \"big\": 123456789012345678901234567890,\n" +
+		"  \"narrow\": -5,\n" +
+		"  \"str\": \"x\",\n" +
+		"  \"flag\": true,\n" +
+		"  \"list\": [\n" +
+		"    123456789012345678901234567890,\n" +
+		"    \"y\"\n" +
+		"  ]\n" +
+		"}"
+	if got != want {
+		t.Errorf("encodeIndent:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// TestEncodeIndentDateTimeErrors pins that a toml.DateTime is returned as the
+// Python json.dumps TypeError (not the retired silent "null"), at a top-level
+// slot and nested inside an object/array. The type name follows Python: both
+// datetime kinds are "datetime", a local date is "date", a local time is
+// "time".
+func TestEncodeIndentDateTimeErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   any
+		wantMsg string
+	}{
+		{"offset datetime", toml.DateTime{Kind: toml.DateTimeOffset}, "Object of type datetime is not JSON serializable"},
+		{"local datetime", toml.DateTime{Kind: toml.DateTimeLocal}, "Object of type datetime is not JSON serializable"},
+		{"local date", toml.DateTime{Kind: toml.DateLocal}, "Object of type date is not JSON serializable"},
+		{"local time", toml.DateTime{Kind: toml.TimeLocal}, "Object of type time is not JSON serializable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			nested := newObj()
+			nested.set("nested", []any{tc.value})
+			for _, payload := range []any{tc.value, nested} {
+				got, err := encodeIndent(payload)
+				if err == nil {
+					t.Fatalf("encodeIndent(%T) = %q, want error", payload, got)
+				}
+				if err.Error() != tc.wantMsg {
+					t.Errorf("err = %q, want %q", err.Error(), tc.wantMsg)
+				}
+			}
+		})
+	}
+}
+
+// TestRunRejectsDateTimeLikePython drives the datetime failure through the Run
+// boundary: the raw TOML date/time in [agents].enabled must fail with the
+// Python-compatible TypeError text on stderr, empty stdout, and exit 1 --
+// exactly the path lib/_internal/rules-inventory.py takes when json.dumps
+// raises and main's except prints "ERROR: ..." and returns 1.
+func TestRunRejectsDateTimeLikePython(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	writeFileT(t, filepath.Join(root, "ai-specs", "ai-specs.toml"),
+		"[agents]\nenabled = [\"claude\", 1979-05-27T07:32:00Z]\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run(root, home, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr = %s", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", stdout.String())
+	}
+	if got, want := stderr.String(), "ERROR: Object of type datetime is not JSON serializable\n"; got != want {
+		t.Errorf("stderr = %q, want %q", got, want)
+	}
+}
+
+// TestEncodeIndentFloatMatchesPython pins that writeCompact renders every
+// float64 the way Python json.dumps(..., indent=2) does under its default
+// allow_nan=True: the shortest round-trip float.__repr__ for finite values
+// (scientific notation when the decimal point position is <= -4 or > 16, a
+// forced ".0" on integral values, "-0.0" for negative zero) and the literal
+// NaN / Infinity / -Infinity spellings. Expectations come from CPython 3.14
+// json.dumps and are cross-checked end-to-end by the differential harness'
+// manifest-float-widened case, which compares stdout bytes against
+// lib/_internal/rules-inventory.py.
+func TestEncodeIndentFloatMatchesPython(t *testing.T) {
+	cases := []struct {
+		name string
+		in   float64
+		want string
+	}{
+		{"fraction", 2.5, "2.5"},
+		{"integral float keeps .0", 2.0, "2.0"},
+		{"negative zero", math.Copysign(0, -1), "-0.0"},
+		{"decimal at the lower threshold", 0.0001, "0.0001"},
+		{"scientific below -4", 1e-5, "1e-05"},
+		{"large integral decimal", 1e15, "1000000000000000.0"},
+		{"scientific at 1e16", 1e16, "1e+16"},
+		{"large scientific", 1e22, "1e+22"},
+		{"infinity", math.Inf(1), "Infinity"},
+		{"negative infinity", math.Inf(-1), "-Infinity"},
+		{"nan", math.NaN(), "NaN"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := newObj()
+			payload.set("v", tc.in)
+			got, err := encodeIndent(payload)
+			if err != nil {
+				t.Fatalf("encodeIndent error: %v", err)
+			}
+			want := "{\n  \"v\": " + tc.want + "\n}"
+			if got != want {
+				t.Errorf("encodeIndent = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

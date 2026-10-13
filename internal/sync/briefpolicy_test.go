@@ -73,6 +73,18 @@ func TestBriefRenderPolicy(t *testing.T) {
 			wantEnabled:  true,
 			wantValidate: "[brief].render must be a boolean (true or false); got dict",
 		},
+		{
+			name:         "big int is fail-safe enabled",
+			manifest:     "[project]\nname = 'x'\n\n[brief]\nrender = 123456789012345678901234567890\n",
+			wantEnabled:  true,
+			wantValidate: "[brief].render must be a boolean (true or false); got int",
+		},
+		{
+			name:         "date is fail-safe enabled",
+			manifest:     "[project]\nname = 'x'\n\n[brief]\nrender = 1979-05-27\n",
+			wantEnabled:  true,
+			wantValidate: "[brief].render must be a boolean (true or false); got date",
+		},
 	}
 
 	for _, tc := range cases {

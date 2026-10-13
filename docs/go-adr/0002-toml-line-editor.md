@@ -3,6 +3,7 @@
 - **Status**: Accepted
 - **Card**: [Go 05] Port the config layer: TOML, manifest, lock, schema (Go single-binary migration epic)
 - **Context**: root Go module `ai-specs.dev/ai-specs`, go 1.24.13, zero third-party dependencies
+- **Revised**: 2026-10-13 — the value subset now includes the four TOML date/time forms and arbitrary-precision integers. This supersedes the earlier exclusion of both, which argued that the Python pipeline also fails at `json.dumps`; the reader now accepts everything `tomllib` accepts and reproduces the downstream failure exactly.
 
 ## Context
 
@@ -31,20 +32,34 @@ has no TOML parser.
 Two purpose-built components under the root module, no third-party code:
 
 1. **A TOML value parser** (`internal/toml`) — a line-oriented reader for the
-   TOML 1.0 subset that ai-specs manifests, recipe manifests, and lock files
+   TOML 1.0 value set that ai-specs manifests, recipe manifests, and lock files
    actually use: tables and array-of-tables, dotted and quoted keys, basic /
-   literal / multi-line strings, integers (dec/hex/oct/bin), floats, booleans,
-   arrays (including multi-line), and inline tables. Line endings follow
+   literal / multi-line strings, integers (dec/hex/oct/bin) at arbitrary
+   precision, floats, booleans, arrays (including multi-line), inline tables,
+   and the four TOML date/time forms (offset date-time, local date-time, local
+   date, local time). Line endings follow
    tomllib's empirically pinned semantics: `\r\n` is accepted as a line ending
    everywhere (key/value pairs, table headers, comments, blank lines, and
    multi-line strings), a lone `\r` is rejected everywhere, and CRLF inside
    multi-line string values is normalized to `\n`, as tomllib does. It is a
    *reader only*:
    nothing in the ported layer ever re-serializes a parsed document, so
-   round-trip fidelity of the writer question does not arise. Datetime values
-   are out of the subset: ai-specs manifests never contain them, and Python's
-   `json.dumps` cannot serialize the `datetime` objects `tomllib` returns, so
-   a manifest with a datetime fails in both implementations.
+   round-trip fidelity of the writer question does not arise. The former
+   exclusion of dates/times and of integers outside `int64` (see the revision
+   note above) no longer holds:
+   - **Date/time.** `tomllib` returns `datetime.datetime` / `datetime.date` /
+     `datetime.time`; `internal/toml.DateTime` keeps the four syntactic forms
+     distinct so the failure names the same kind. A date/time is not a JSON
+     value, so it then fails at the JSON boundary with Python's exact
+     `TypeError: Object of type <datetime|date|time> is not JSON serializable`,
+     precisely where `json.dumps` fails on the Python leg. The TOML-literal
+     writer (`serialize.go`) keeps refusing it with the Python-shaped
+     `TypeError("cannot serialize <name> to TOML")` from
+     `lib/_internal/toml_write.py`.
+   - **Arbitrary-precision integers.** An integer wider than `int64` parses
+     into `internal/toml.BigInt` carrying the canonical decimal digits and
+     round-trips exactly in JSON and in every TOML-literal writer, matching
+     Python's arbitrary-precision `int` and the full digits `json.dumps` emits.
 2. **A line/segment editor** (`internal/config`) — the write surface is
    surgical text operations over raw file bytes, mirroring the Python heredocs:
    - append a rendered block at EOF (`skills add` pattern, values rendered by
@@ -73,11 +88,13 @@ Rationale:
 2. **Round-trip fidelity is structural, not incidental.** Because the editor
    never re-serializes, untouched bytes are preserved by definition — the
    strongest possible round-trip guarantee.
-3. **The reader only needs the manifest subset.** A full TOML 1.0
+3. **The reader mirrors `tomllib`'s observable value types.** A full TOML 1.0
    implementation is justified only if something re-serializes; nothing does.
-   The parser mirrors `tomllib`'s observable value types for the subset above,
-   which is what every differential consumer (section JSON, schema
-   validation, lock load) actually sees.
+   The parser reads everything `tomllib` reads — including the four date/time
+   forms and arbitrary-precision integers — because the divergence changed the
+   resolver outcome, not only the message. `tomllib`'s own value set is the
+   subset boundary, and it is what every differential consumer (section JSON,
+   schema validation, lock load) actually sees.
 4. **Zero deps is the existing posture** (ADR 0001); `github.com/pelletier/go-toml`
    or `BurntSushi/toml` would both violate it *and* fail §3, since they are
    document marshallers at heart.

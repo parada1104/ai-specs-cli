@@ -3,6 +3,7 @@ package toml
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 )
@@ -38,6 +39,11 @@ func (p *parser) parseValue() (any, error) {
 			return false, nil
 		}
 	}
+	// TOML date/times are tried before numbers, mirroring tomllib's
+	// RE_DATETIME/RE_LOCALTIME-before-RE_NUMBER order.
+	if dt, matched, err := p.tryParseDateTime(); matched || err != nil {
+		return dt, err
+	}
 	return p.parseNumberOrToken()
 }
 
@@ -52,8 +58,7 @@ func (p *parser) valueDelimited(n int) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' || c == ']' || c == '}' || c == '#'
 }
 
-// parseNumberOrToken scans a bare token and classifies it as integer, float,
-// or — outside the supported subset — datetime.
+// parseNumberOrToken scans a bare token and classifies it as integer or float.
 func (p *parser) parseNumberOrToken() (any, error) {
 	start := p.pos
 	for p.pos < len(p.data) {
@@ -69,12 +74,6 @@ func (p *parser) parseNumberOrToken() (any, error) {
 		return nil, p.errf("expected a value, found %q", string(p.peek()))
 	}
 	tok := string(p.data[start:p.pos])
-
-	// Datetimes are out of the subset: date, time, and offset-date-time.
-	if len(tok) >= 7 && isDigits(tok[0:4]) && tok[4] == '-' ||
-		len(tok) >= 3 && isDigits(tok[0:2]) && tok[2] == ':' {
-		return nil, p.errf("datetime values (%q) are not supported", tok)
-	}
 
 	neg := false
 	body := tok
@@ -122,6 +121,178 @@ func isDigits(s string) bool {
 	return len(s) > 0
 }
 
+// --- TOML date/time (mirrors tomllib RE_DATETIME / RE_LOCALTIME) -----------
+
+// matchFixedDigits consumes exactly n ASCII digits, returning their value.
+func (p *parser) matchFixedDigits(n int) (int, bool) {
+	if p.pos+n > len(p.data) {
+		return 0, false
+	}
+	v := 0
+	for i := 0; i < n; i++ {
+		c := p.data[p.pos+i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		v = v*10 + int(c-'0')
+	}
+	p.pos += n
+	return v, true
+}
+
+// matchDate matches tomllib's date prefix
+// `[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])`.
+func (p *parser) matchDate() (year, month, day int, ok bool) {
+	save := p.pos
+	year, ok = p.matchFixedDigits(4)
+	if !ok || p.peek() != '-' {
+		p.pos = save
+		return 0, 0, 0, false
+	}
+	p.pos++
+	month, ok = p.matchFixedDigits(2)
+	if !ok || month < 1 || month > 12 || p.peek() != '-' {
+		p.pos = save
+		return 0, 0, 0, false
+	}
+	p.pos++
+	day, ok = p.matchFixedDigits(2)
+	if !ok || day < 1 || day > 31 {
+		p.pos = save
+		return 0, 0, 0, false
+	}
+	return year, month, day, true
+}
+
+// matchTime matches tomllib's `_TIME_RE_STR`
+// `([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])(?:\.[0-9]{1,6}[0-9]*)?`,
+// truncating the fractional part to microseconds exactly as tomllib does.
+func (p *parser) matchTime() (hour, minute, second, micros int, ok bool) {
+	save := p.pos
+	hour, ok = p.matchFixedDigits(2)
+	if !ok || hour > 23 || p.peek() != ':' {
+		p.pos = save
+		return 0, 0, 0, 0, false
+	}
+	p.pos++
+	minute, ok = p.matchFixedDigits(2)
+	if !ok || minute > 59 || p.peek() != ':' {
+		p.pos = save
+		return 0, 0, 0, 0, false
+	}
+	p.pos++
+	second, ok = p.matchFixedDigits(2)
+	if !ok || second > 59 {
+		p.pos = save
+		return 0, 0, 0, 0, false
+	}
+	if p.peek() == '.' {
+		fracSave := p.pos
+		p.pos++
+		acc, count := 0, 0
+		for p.pos < len(p.data) && p.data[p.pos] >= '0' && p.data[p.pos] <= '9' {
+			if count < 6 {
+				acc = acc*10 + int(p.data[p.pos]-'0')
+				count++
+			}
+			p.pos++
+		}
+		if count == 0 {
+			p.pos = fracSave
+			return 0, 0, 0, 0, false
+		}
+		for count < 6 {
+			acc *= 10
+			count++
+		}
+		micros = acc
+	}
+	return hour, minute, second, micros, true
+}
+
+// matchOffset matches tomllib's `(?:([Zz])|([+-])([01][0-9]|2[0-3]):([0-5][0-9]))`,
+// returning the offset east of UTC in seconds. When ok is false the position
+// is unchanged so the caller can treat the sign character as leftover text.
+func (p *parser) matchOffset() (seconds int, ok bool) {
+	if p.peek() == 'Z' || p.peek() == 'z' {
+		p.pos++
+		return 0, true
+	}
+	if p.peek() != '+' && p.peek() != '-' {
+		return 0, false
+	}
+	save := p.pos
+	sign := 1
+	if p.data[p.pos] == '-' {
+		sign = -1
+	}
+	p.pos++
+	oh, ok := p.matchFixedDigits(2)
+	if !ok || oh > 23 || p.peek() != ':' {
+		p.pos = save
+		return 0, false
+	}
+	p.pos++
+	om, ok := p.matchFixedDigits(2)
+	if !ok || om > 59 {
+		p.pos = save
+		return 0, false
+	}
+	return sign * (oh*3600 + om*60), true
+}
+
+// tryParseDateTime matches a TOML date-time, local date or local time at the
+// current position. matched is false when the input is not a date/time at all;
+// a shape that matched but names an impossible calendar date returns an error,
+// mirroring tomllib's "Invalid date or datetime".
+func (p *parser) tryParseDateTime() (value any, matched bool, err error) {
+	start := p.pos
+	if year, month, day, dateOK := p.matchDate(); dateOK {
+		if !validDate(year, month, day) {
+			return nil, false, p.errf("invalid date or datetime")
+		}
+		if sep := p.peek(); sep == 'T' || sep == 't' || sep == ' ' {
+			save := p.pos
+			p.pos++
+			if hour, minute, second, micros, timeOK := p.matchTime(); timeOK {
+				offset, hasOffset := p.matchOffset()
+				kind := DateTimeLocal
+				if hasOffset {
+					kind = DateTimeOffset
+				}
+				return DateTime{
+					Kind: kind, Year: year, Month: month, Day: day,
+					Hour: hour, Minute: minute, Second: second, Micros: micros,
+					HasOffset: hasOffset, OffsetSeconds: offset,
+				}, true, nil
+			}
+			// No valid time after the separator: the regex matches the date
+			// alone and the separator becomes leftover text (a parse error).
+			p.pos = save
+		}
+		return DateTime{Kind: DateLocal, Year: year, Month: month, Day: day}, true, nil
+	}
+	if hour, minute, second, micros, timeOK := p.matchTime(); timeOK {
+		return DateTime{Kind: TimeLocal, Hour: hour, Minute: minute, Second: second, Micros: micros}, true, nil
+	}
+	p.pos = start
+	return nil, false, nil
+}
+
+// validDate mirrors datetime.date's range check: year 1-9999 with the real
+// length of the month (leap years included), so 1979-02-30 is rejected exactly
+// where tomllib raises "Invalid date or datetime".
+func validDate(year, month, day int) bool {
+	if year < 1 || year > 9999 {
+		return false
+	}
+	days := [...]int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}[month-1]
+	if month == 2 && (year%4 == 0 && year%100 != 0 || year%400 == 0) {
+		days = 29
+	}
+	return day >= 1 && day <= days
+}
+
 // validateUnderscores enforces TOML's rule: underscores appear only between
 // alphanumeric characters.
 func validateUnderscores(s string) error {
@@ -149,14 +320,7 @@ func (p *parser) parseIntBase(tok string, neg bool, body string, base int) (any,
 	if digits == "" {
 		return nil, p.errf("invalid integer %q", tok)
 	}
-	n, err := strconv.ParseInt(digits, base, 64)
-	if err != nil {
-		return nil, p.errf("invalid integer %q", tok)
-	}
-	if neg {
-		n = -n
-	}
-	return n, nil
+	return canonicalInt(digits, base, neg, p, tok)
 }
 
 func (p *parser) parseIntDec(tok string, neg bool, body string) (any, error) {
@@ -170,14 +334,24 @@ func (p *parser) parseIntDec(tok string, neg bool, body string) (any, error) {
 	if len(digits) > 1 && digits[0] == '0' {
 		return nil, p.errf("invalid integer %q: leading zeros are not allowed", tok)
 	}
-	n, err := strconv.ParseInt(digits, 10, 64)
-	if err != nil {
+	return canonicalInt(digits, 10, neg, p, tok)
+}
+
+// canonicalInt parses digits in the given base at arbitrary precision,
+// returning int64 when the value fits and a decimal-digit BigInt otherwise,
+// mirroring Python's int (whose str()/json.dumps form is always decimal).
+func canonicalInt(digits string, base int, neg bool, p *parser, tok string) (any, error) {
+	n, ok := new(big.Int).SetString(digits, base)
+	if !ok {
 		return nil, p.errf("invalid integer %q", tok)
 	}
 	if neg {
-		n = -n
+		n.Neg(n)
 	}
-	return n, nil
+	if n.IsInt64() {
+		return n.Int64(), nil
+	}
+	return BigInt(n.String()), nil
 }
 
 func (p *parser) parseFloat(tok string, neg bool, body string) (any, error) {

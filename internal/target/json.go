@@ -48,13 +48,17 @@ func (o *obj) set(key string, v any) {
 func (o *obj) empty() bool { return len(o.keys) == 0 }
 
 // encodeCompact renders v like Python json.dumps(v) with default separators.
-func encodeCompact(v any) string {
+// A value json.dumps cannot serialize (a TOML date/time) is returned as the
+// Python TypeError text.
+func encodeCompact(v any) (string, error) {
 	var sb strings.Builder
-	writeCompact(&sb, v)
-	return sb.String()
+	if err := writeCompact(&sb, v); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }
 
-func writeCompact(sb *strings.Builder, v any) {
+func writeCompact(sb *strings.Builder, v any) error {
 	switch x := v.(type) {
 	case nil:
 		sb.WriteString("null")
@@ -70,6 +74,11 @@ func writeCompact(sb *strings.Builder, v any) {
 		sb.WriteString(strconv.Itoa(x))
 	case int64:
 		sb.WriteString(strconv.FormatInt(x, 10))
+	case toml.BigInt:
+		// Python json.dumps renders an arbitrary-precision int in full.
+		sb.WriteString(string(x))
+	case toml.DateTime:
+		return jsonUnserializableError{TypeName: x.PyTypeName()}
 	case float64:
 		sb.WriteString(formatPyFloat(x))
 	case []any:
@@ -78,7 +87,9 @@ func writeCompact(sb *strings.Builder, v any) {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
-			writeCompact(sb, e)
+			if err := writeCompact(sb, e); err != nil {
+				return err
+			}
 		}
 		sb.WriteByte(']')
 	case []string:
@@ -96,13 +107,15 @@ func writeCompact(sb *strings.Builder, v any) {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
-			writeCompact(sb, e)
+			if err := writeCompact(sb, e); err != nil {
+				return err
+			}
 		}
 		sb.WriteByte(']')
 	case *obj:
 		if x == nil || x.empty() {
 			sb.WriteString("{}")
-			return
+			return nil
 		}
 		sb.WriteByte('{')
 		for i, k := range x.keys {
@@ -111,66 +124,83 @@ func writeCompact(sb *strings.Builder, v any) {
 			}
 			sb.WriteString(jsonString(k))
 			sb.WriteString(": ")
-			writeCompact(sb, x.vals[k])
+			if err := writeCompact(sb, x.vals[k]); err != nil {
+				return err
+			}
 		}
 		sb.WriteByte('}')
 	default:
 		// Unreachable: plan values are strings, bools, string lists, and obj.
 		sb.WriteString("null")
 	}
+	return nil
+}
+
+// jsonUnserializableError is the Python TypeError json.dumps raises for a value
+// it cannot serialize. The encoder mirrors Python's json.dumps, which raises
+// for these types, so callers receive it as an ordinary error instead of a
+// panic.
+type jsonUnserializableError struct{ TypeName string }
+
+func (e jsonUnserializableError) Error() string {
+	return "Object of type " + e.TypeName + " is not JSON serializable"
 }
 
 // encodeIndent renders v like Python json.dumps(v, indent=2).
-func encodeIndent(v any) string {
+func encodeIndent(v any) (string, error) {
 	var sb strings.Builder
-	writeIndent(&sb, v, 0)
-	return sb.String()
+	if err := writeIndent(&sb, v, 0); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }
 
-func writeIndent(sb *strings.Builder, v any, depth int) {
+func writeIndent(sb *strings.Builder, v any, depth int) error {
 	switch x := v.(type) {
 	case *obj:
 		if x == nil || x.empty() {
 			sb.WriteString("{}")
-			return
+			return nil
 		}
-		writeBlock(sb, "{", "}", len(x.keys), depth, func(i int) {
+		return writeBlock(sb, "{", "}", len(x.keys), depth, func(i int) error {
 			sb.WriteString(jsonString(x.keys[i]))
 			sb.WriteString(": ")
-			writeIndent(sb, x.vals[x.keys[i]], depth+1)
+			return writeIndent(sb, x.vals[x.keys[i]], depth+1)
 		})
 	case []any:
 		if len(x) == 0 {
 			sb.WriteString("[]")
-			return
+			return nil
 		}
-		writeBlock(sb, "[", "]", len(x), depth, func(i int) {
-			writeIndent(sb, x[i], depth+1)
+		return writeBlock(sb, "[", "]", len(x), depth, func(i int) error {
+			return writeIndent(sb, x[i], depth+1)
 		})
 	case []*obj:
 		if len(x) == 0 {
 			sb.WriteString("[]")
-			return
+			return nil
 		}
-		writeBlock(sb, "[", "]", len(x), depth, func(i int) {
-			writeIndent(sb, x[i], depth+1)
+		return writeBlock(sb, "[", "]", len(x), depth, func(i int) error {
+			return writeIndent(sb, x[i], depth+1)
 		})
 	case []string:
 		if len(x) == 0 {
 			sb.WriteString("[]")
-			return
+			return nil
 		}
-		writeBlock(sb, "[", "]", len(x), depth, func(i int) {
+		return writeBlock(sb, "[", "]", len(x), depth, func(i int) error {
 			sb.WriteString(jsonString(x[i]))
+			return nil
 		})
 	default:
-		writeCompact(sb, v)
+		return writeCompact(sb, v)
 	}
 }
 
 // writeBlock emits a non-empty JSON array/object in indent=2 style:
-// entries at depth+1 separated by ",\n", closed at depth.
-func writeBlock(sb *strings.Builder, open, closeCh string, n int, depth int, entry func(i int)) {
+// entries at depth+1 separated by ",\n", closed at depth. An error from an
+// entry (an unserializable nested value) stops emission and is returned.
+func writeBlock(sb *strings.Builder, open, closeCh string, n int, depth int, entry func(i int) error) error {
 	pad := strings.Repeat("  ", depth)
 	padIn := strings.Repeat("  ", depth+1)
 	sb.WriteString(open)
@@ -180,11 +210,14 @@ func writeBlock(sb *strings.Builder, open, closeCh string, n int, depth int, ent
 			sb.WriteString(",\n")
 		}
 		sb.WriteString(padIn)
-		entry(i)
+		if err := entry(i); err != nil {
+			return err
+		}
 	}
 	sb.WriteString("\n")
 	sb.WriteString(pad)
 	sb.WriteString(closeCh)
+	return nil
 }
 
 // jsonString renders s like Python json.dumps(s) with ensure_ascii=True.
@@ -235,6 +268,14 @@ func pyStr(v any) (string, error) {
 	if s, ok := v.(string); ok {
 		return s, nil
 	}
+	if bi, ok := v.(toml.BigInt); ok {
+		// Python str(int) for a wide integer is its exact decimal digits.
+		return string(bi), nil
+	}
+	if dt, ok := v.(toml.DateTime); ok {
+		// Python str(datetime/date/time) is the ISO form, not the repr.
+		return dt.PyStr(), nil
+	}
 	return pyReprDepth(v, 0, nil)
 }
 
@@ -265,6 +306,10 @@ func pyReprDepth(v any, depth int, active map[*toml.Table]bool) (string, error) 
 		return strconv.Itoa(x), nil
 	case int64:
 		return strconv.FormatInt(x, 10), nil
+	case toml.BigInt:
+		return string(x), nil
+	case toml.DateTime:
+		return x.PyRepr(), nil
 	case float64:
 		return formatPyFloat(x), nil
 	case []any:

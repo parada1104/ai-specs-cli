@@ -71,7 +71,7 @@ func ValidateBriefRender(tomlPath string) error {
 // pyTypeName mirrors Python type(value).__name__ for the manifest value kinds
 // reachable from a TOML document.
 func pyTypeName(v any) string {
-	switch v.(type) {
+	switch x := v.(type) {
 	case nil:
 		return "NoneType"
 	case bool:
@@ -80,12 +80,17 @@ func pyTypeName(v any) string {
 		return "str"
 	case int, int64:
 		return "int"
+	case toml.BigInt:
+		// Python's arbitrary-precision int still reports __name__ "int".
+		return "int"
 	case float64:
 		return "float"
 	case []any:
 		return "list"
 	case *toml.Table, map[string]any:
 		return "dict"
+	case toml.DateTime:
+		return x.PyTypeName()
 	default:
 		return "object"
 	}
