@@ -90,8 +90,9 @@ Recorded because two of them reverse a documented decision and two loosen a guar
       check sets; native review; PR and squash-merge. Digests regenerated and verified; the focused checks,
       the full suite and the native review are done, and the PR and the squash-merge are the remaining
       closing step.
-- [ ] T6 (D5): align the provider port (candidate order, arbitrary-precision version tuple, Unicode digits)
-      and add the missing tie-case pin.
+- [x] T6 (D5): align the provider port (candidate order, arbitrary-precision version tuple, Unicode digits)
+      and add the missing tie-case pin. Done: 294 insertions and 62 deletions across `provider.go`,
+      `provider_test.go` and the differential driver's new `candidates` mode.
 - [ ] T7 (D6): widen `internal/toml` (datetime and arbitrary-precision integers), revise ADR-0002, flip the
       two `internal/sync/buildrecipemcp_test.go` pins and the `internal/toml` pins.
 
@@ -157,6 +158,33 @@ Recorded because two of them reverse a documented decision and two loosen a guar
   and S14c; `go` as the only materialize route; all three call sites.
 - Reconnaissance established every Go and Python location, the digest procedure and the test surfaces to
   flip, and corrected two register inaccuracies (see Follow-ups).
+- D5 implemented by a delegated writer in its own worktree: the candidate order reads the directory unsorted
+  (`os.Open` plus `Readdirnames`), so Go stops adding an order Python does not impose; the version tuple is
+  arbitrary precision (`VersionTuple` now returns `[]*big.Int`, an in-package signature change with every
+  caller updated); and the version parsing is `Nd`-aware, mapping each Unicode decimal digit to its value.
+  The candidate-order divergence finally has a pin, plus a tie case where two candidates share a tuple.
+- Two claims in the D5 brief were wrong and the writer proved it rather than following them: Python's
+  `(?<!\d)`/`(?!\d)` lookarounds are not observable through `_version_tuple` (an exhaustive probe over
+  short strings plus 300k random ones found no difference), and the candidate-order pin has to compare
+  against the raw directory listing to stay filesystem-independent.
+- D5 residual, enumerated and pinned instead of silently carried: the Go toolchain's `unicode.Nd` table
+  (Unicode 15.0.0, 680 code points) is narrower than CPython 3.14.7's `\d` (Unicode 16.0.0, 760), so 80
+  decimal digits added in the newer release are accepted by the authority and rejected by the port. No
+  realistic version string uses them, and a future Go carrying the newer table closes the gap by itself, so
+  hard-coding the delta would only add a table that ages. Pinned by `TestVersionTupleUnicode16NdResidual`,
+  one representative per missing block, both sides asserted.
+- D5 focused checks, all exit 0: `go test ./internal/provider/ -count=1`, `go test ./cmd/...
+  ./internal/... -count=1`, `python3 -m unittest tests.test_jinna_provider_recipe tests.test_dep_check`
+  (78 tests OK), `gofmt -l`, `go vet`, `git diff --check`.
+- D5 full validation with the gate binary rebuilt in its worktree: `./tests/validate.sh` exit 0,
+  `Ran 2482 tests in 1930.356s` then `OK`, zero `FAIL:`/`ERROR:` lines. Evidence:
+  `~/.cache/s14-provider-validate.{log,exit}`. The gate module is untouched by this unit, so its digests
+  still verify (`verify-gate-sums.sh` reports four matching entries).
+- D5 native review (approved, authority burned): `inspect` with `baseRef=08f1174` plus `committedOnly`
+  bound the four-file target `b0fbf61f…`, and the single `start` created lineage `review-00a23e21e966006a`
+  (tier medium, one lens `review-reliability`, 435 changed lines). The first capture closed it as
+  `approved` (`store_revision: ee6bd2f8…`) and the acknowledgement burned the authority. One advisory,
+  recorded below.
 
 ## Follow-ups
 - Advisory findings of the native review, both informational and non-blocking (no correction was opened):
@@ -168,9 +196,18 @@ Recorded because two of them reverse a documented decision and two loosen a guar
 - The inline `config = { ... }` shape of D3 stays divergent by construction (see Progress). Closing it for
   real would need an ordered TOML representation end to end, which is a separate architectural unit; no
   shipped catalog recipe uses the shape.
+- Advisory finding of the D5 native review, informational and non-blocking:
+  - `R3-unicode16-pin-env-coupled` reliability WARNING, `internal/provider/provider_test.go:223-225`: the
+    Unicode-generation pin is coupled to the toolchain, so it fails deliberately when Go or CPython updates
+    its Unicode tables. That is the intended loud failure; the pin must then be removed on purpose.
+- The Unicode-generation residual of D5 (see Progress) closes by itself once the Go toolchain carries a
+  newer Unicode table; the pin must then be removed deliberately.
+- `managedCandidates` tests `!info.IsDir()` where Python tests `is_file()`, so a FIFO or a device entry in
+  the managed cache directory would be treated differently. Pre-existing and outside this unit.
 - Amend `odd/tasks/go-07-s13-followups.md` section 2: its provider bullet claims the candidate-order
-  divergence is pinned in the `internal/provider` differential, and no such test exists — only the package
-  comment does. The two PR3 advisory rows also record "location not recorded in source"; the locations are
+  divergence is pinned in the `internal/provider` differential, which was untrue when the register was
+  written and became true once D5 added the pin, so the sentence needs rewording rather than a new test. The
+  two PR3 advisory rows also record "location not recorded in source"; the locations are
   `shared/resolvedconfig.go:87-89` and `:92-99`.
 - ADR-0002 must carry the revised rationale in the D6 PR, not only in the code.
 
