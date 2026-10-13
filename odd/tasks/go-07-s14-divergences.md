@@ -87,8 +87,9 @@ Recorded because two of them reverse a documented decision and two loosen a guar
 - [x] T4 (D4): coerce non-string binding values; flip `TestNativeResolvedConfigNonStringBindingDivergence`
       and add the two unpinned siblings (integer `recipe`, boolean `capability`).
 - [ ] T5: regenerate `catalog/recipes/worktree-flow/bin/SHA256SUMS` and verify it; run the focused and full
-      check sets; native review; PR and squash-merge. Digests regenerated and verified; the check sets and
-      the full suite are done, and the native review, PR and merge are the remaining closing step.
+      check sets; native review; PR and squash-merge. Digests regenerated and verified; the focused checks,
+      the full suite and the native review are done, and the PR and the squash-merge are the remaining
+      closing step.
 - [ ] T6 (D5): align the provider port (candidate order, arbitrary-precision version tuple, Unicode digits)
       and add the missing tie-case pin.
 - [ ] T7 (D6): widen `internal/toml` (datetime and arbitrary-precision integers), revise ADR-0002, flip the
@@ -140,6 +141,15 @@ Recorded because two of them reverse a documented decision and two loosen a guar
   three packages ok), `go test ./cmd/... ./internal/... -count=1`, `python3 -m unittest
   tests.test_merge_config_bridge tests.test_resolved_config_bridge` (49 tests OK), `gofmt -l`, `go vet`,
   `git diff --check`.
+- Full validation with the gate binary rebuilt in this worktree: `./tests/validate.sh` exit 0,
+  `Ran 2482 tests in 1678.630s` then `OK`, zero `FAIL:`/`ERROR:` lines. Evidence:
+  `~/.cache/s14-divergences-validate.{log,exit}`. The parity harness ran in both gate modes, which is the
+  evidence that matters here because the gate module changed.
+- Native review (approved, authority burned): `inspect` with `baseRef=8fd5914` plus `committedOnly` bound
+  the eight-file target `fa738900…`, and the single `start` created lineage `review-e8731bd6a869d98f`
+  (tier medium, one lens `review-reliability`, 720 changed lines, correction budget 200). The first capture
+  closed it as `approved` (`store_revision: 0501eb93…`) and the acknowledgement burned the authority
+  (`gentle-ai.review-acknowledged/v1`). Two advisory findings, both non-blocking and recorded below.
 - Environment note: the package's Go tests load the Python authority, so they fail under the system
   Python 3.9 (`No module named 'tomllib'`); the real 3.14.7 binary must be prefixed. This is pre-existing
   and was reproduced on an untouched test before any edit.
@@ -149,6 +159,12 @@ Recorded because two of them reverse a documented decision and two loosen a guar
   flip, and corrected two register inaccuracies (see Follow-ups).
 
 ## Follow-ups
+- Advisory findings of the native review, both informational and non-blocking (no correction was opened):
+  - `R3-keyless-table-untested` reliability WARNING,
+    `catalog/recipes/worktree-flow/gate/shared/mergeconfig.go:295-298`: the removed keyless *table* guard
+    has no direct test.
+  - `R3-inline-config-divergence-open` reliability SUGGESTION,
+    `odd/tasks/go-07-s14-divergences.md`: the residual inline-config divergence described above.
 - The inline `config = { ... }` shape of D3 stays divergent by construction (see Progress). Closing it for
   real would need an ordered TOML representation end to end, which is a separate architectural unit; no
   shipped catalog recipe uses the shape.
