@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/provider"
+	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 // --- differential harness ---------------------------------------------------
@@ -90,8 +91,15 @@ func mustOrderedMCP(t *testing.T, raw string) *mcpObj {
 }
 
 // nativeMCPDocument serializes the merged mapping exactly as the caller does.
+// A serialization failure (a TOML date/time) is surfaced as an ERROR sentinel
+// so a test comparing it against the Python document fails loudly; the
+// dedicated boundary test asserts the error text directly.
 func nativeMCPDocument(merged *mcpObj) string {
-	return mcpJSONDumpsIndent2(merged) + "\n"
+	document, err := mcpJSONDumpsIndent2(merged)
+	if err != nil {
+		return "ERROR: " + err.Error()
+	}
+	return document + "\n"
 }
 
 func mustJSONArg(t *testing.T, v any) string {
@@ -391,34 +399,13 @@ func TestResolveProviderMarkersDifferentialAgainstPython(t *testing.T) {
 	})
 }
 
-// --- recorded divergences (not parity) --------------------------------------
+// --- widened internal/toml value subset (parity) ----------------------------
 
-// buildRecipeMCPDivergenceBigInteger records the internal/toml value-subset
-// divergence on an integer outside int64. Python's tomllib accepts the literal
-// and build_recipe_mcp serializes it in full; internal/toml refuses the whole
-// document. In the resolver leg Python therefore resolves the marker while the
-// native authority warns and leaves the literal. This is an OUTCOME divergence
-// on a recipe Python accepts, not a message-text difference: it is the
-// pre-existing internal/toml subset limit, NOT something this delivery
-// introduced and NOT a parity claim. The test below pins both observed sides so
-// a future internal/toml change must update it deliberately.
-const buildRecipeMCPDivergenceBigInteger = "big integer: tomllib accepts it and Python resolves the marker, while internal/toml refuses the document and the native resolver warns and leaves the literal (recorded divergence, NOT parity)"
-
-// buildRecipeMCPDivergenceDatetime records the same subset divergence on a TOML
-// datetime. Python's tomllib reads the value, the resolver leg resolves the
-// marker, and the build leg only fails later at json.dump ("Object of type
-// datetime is not JSON serializable"); internal/toml refuses the document at
-// parse time. This is a pre-existing internal/toml subset limit, NOT something
-// this delivery introduced and NOT a parity claim. The test below pins both
-// observed sides so a future internal/toml change must update it deliberately.
-const buildRecipeMCPDivergenceDatetime = "datetime: tomllib reads it and Python resolves the marker (build leg then fails at json.dump), while internal/toml refuses at parse time and the native resolver warns and leaves the literal (recorded divergence, NOT parity)"
-
-// TestBuildRecipeMCPDivergenceBigInteger pins buildRecipeMCPDivergenceBigInteger.
-// It asserts both observed sides directly instead of claiming parity: Python
-// resolves the marker, while Go warns on the unreadable recipe and keeps the
-// {dep:jinna} literal. The build leg additionally pins that Python serializes
-// the full integer while Go refuses the document.
-func TestBuildRecipeMCPDivergenceBigInteger(t *testing.T) {
+// TestBuildRecipeMCPBigIntegerParity pins that an integer outside int64 is a
+// parity case now that internal/toml reads arbitrary-precision integers: both
+// legs read the recipe and serialize the exact decimal digits, and both
+// resolve the provider marker. The build leg compares the serialized document.
+func TestBuildRecipeMCPBigIntegerParity(t *testing.T) {
 	python, authority := syncPythonAuthority(t)
 	driver := buildRecipeMCPRefPath(t)
 	catalog := t.TempDir()
@@ -426,21 +413,21 @@ func TestBuildRecipeMCPDivergenceBigInteger(t *testing.T) {
 		"[[deps.cli]]\nbinary = \"jinna\"\npurpose = \"p\"\nmin_version = \"0.1.0\"\n"+
 		"[[provides.mcp]]\nid = \"jinna\"\ncommand = \"{dep:jinna}\"\ntimeout = 123456789012345678901234567890\n")
 
-	// Build leg: Python serializes the full integer; Go cannot read the recipe.
+	// Build leg: both sides read the recipe and emit the full integer.
 	buildRef := runBuildRecipeMCPRef(t, python, driver, "build", authority, catalog,
 		mustJSONArg(t, []string{"bigint"}), `{}`, "-")
 	if buildRef.Error != "" || buildRef.Stderr != "" {
 		t.Fatalf("python build raised or warned: error=%q stderr=%q", buildRef.Error, buildRef.Stderr)
 	}
-	wantPyBuild := "{\n  \"jinna\": {\n    \"command\": \"{dep:jinna}\",\n    \"timeout\": 123456789012345678901234567890\n  }\n}\n"
-	if buildRef.Document != wantPyBuild {
-		t.Fatalf("python build document = %q, want the full integer %q", buildRef.Document, wantPyBuild)
+	merged, err := BuildRecipeMCP(catalog, []string{"bigint"}, newMCPObj(), nil, io.Discard)
+	if err != nil {
+		t.Fatalf("Go build failed to read a big integer: %v", err)
 	}
-	if _, goBuildErr := BuildRecipeMCP(catalog, []string{"bigint"}, newMCPObj(), nil, io.Discard); goBuildErr == nil {
-		t.Fatalf("Go build accepted a big integer; want the internal/toml refusal")
+	if goDoc := nativeMCPDocument(merged); goDoc != buildRef.Document {
+		t.Fatalf("big integer document:\n go=%q\n py=%q", goDoc, buildRef.Document)
 	}
 
-	// Resolver leg: Python resolves the marker; Go warns and leaves the literal.
+	// Resolver leg: both sides resolve the marker, no warning either side.
 	fakeDir := t.TempDir()
 	writeFakeJinna(t, fakeDir, "#!/bin/sh\necho jinna 1.2.3\n")
 	t.Setenv("PATH", fakeDir)
@@ -451,48 +438,45 @@ func TestBuildRecipeMCPDivergenceBigInteger(t *testing.T) {
 	if resolveRef.Error != "" || resolveRef.Stderr != "" {
 		t.Fatalf("python resolve raised or warned: error=%q stderr=%q", resolveRef.Error, resolveRef.Stderr)
 	}
-	wantPyResolve := "{\n  \"jinna\": {\n    \"command\": \"jinna\"\n  }\n}\n"
-	if resolveRef.Document != wantPyResolve {
-		t.Fatalf("python resolve document = %q, want the resolved marker %q", resolveRef.Document, wantPyResolve)
-	}
-
-	merged := mustOrderedMCP(t, mergedJSON)
+	resolved := mustOrderedMCP(t, mergedJSON)
 	var buf bytes.Buffer
-	resolveProviderMarkers(merged, catalog, []string{"bigint"}, home, &buf)
-	wantWarn := "  ! recipe 'bigint': cannot read recipe for provider resolution (toml: line 13: invalid integer \"123456789012345678901234567890\")\n"
-	if buf.String() != wantWarn {
-		t.Fatalf("%s: go stderr = %q, want %q", buildRecipeMCPDivergenceBigInteger, buf.String(), wantWarn)
+	resolveProviderMarkers(resolved, catalog, []string{"bigint"}, home, &buf)
+	if buf.String() != "" {
+		t.Fatalf("Go resolver warned on a readable recipe: %q", buf.String())
 	}
-	wantGoLiteral := "{\n  \"jinna\": {\n    \"command\": \"{dep:jinna}\"\n  }\n}\n"
-	if got := nativeMCPDocument(merged); got != wantGoLiteral {
-		t.Fatalf("%s: go resolve document = %q, want the unresolved literal %q", buildRecipeMCPDivergenceBigInteger, got, wantGoLiteral)
+	if goDoc := nativeMCPDocument(resolved); goDoc != resolveRef.Document {
+		t.Fatalf("big integer resolve document:\n go=%q\n py=%q", goDoc, resolveRef.Document)
 	}
 }
 
-// TestBuildRecipeMCPDivergenceDatetime pins buildRecipeMCPDivergenceDatetime.
-// It asserts both observed sides directly instead of claiming parity: Python
-// resolves the marker (and its build leg fails only at json.dump), while Go
-// warns on the unreadable recipe and keeps the {dep:jinna} literal.
-func TestBuildRecipeMCPDivergenceDatetime(t *testing.T) {
+// TestBuildRecipeMCPDatetimeParity pins that a TOML date/time is a parity case:
+// both legs read it, and both fail at the JSON boundary with Python's exact
+// TypeError text. The resolver leg never serializes the recipe value, so both
+// sides resolve the marker.
+func TestBuildRecipeMCPDatetimeParity(t *testing.T) {
 	python, authority := syncPythonAuthority(t)
 	driver := buildRecipeMCPRefPath(t)
 	catalog := t.TempDir()
 	writeSyncCatalogRecipe(t, catalog, "datetime", syncRecipeHeader("datetime", "DateTime")+
 		"[[deps.cli]]\nbinary = \"jinna\"\npurpose = \"p\"\nmin_version = \"0.1.0\"\n"+
 		"[[provides.mcp]]\nid = \"jinna\"\ncommand = \"{dep:jinna}\"\nrelease = 1979-05-27T07:32:00Z\n")
+	const wantMsg = "Object of type datetime is not JSON serializable"
 
-	// Build leg: Python parses the datetime but cannot serialize it; Go cannot
-	// read the recipe at all.
+	// Build leg: both sides read the datetime, then both fail at json.dumps.
 	buildRef := runBuildRecipeMCPRef(t, python, driver, "build", authority, catalog,
 		mustJSONArg(t, []string{"datetime"}), `{}`, "-")
-	if buildRef.Error != "Object of type datetime is not JSON serializable" || buildRef.Document != "" {
+	if buildRef.Error != wantMsg || buildRef.Document != "" {
 		t.Fatalf("python build = error %q document %q, want the json.dump TypeError", buildRef.Error, buildRef.Document)
 	}
-	if _, goBuildErr := BuildRecipeMCP(catalog, []string{"datetime"}, newMCPObj(), nil, io.Discard); goBuildErr == nil {
-		t.Fatalf("Go build accepted a datetime; want the internal/toml refusal")
+	merged, err := BuildRecipeMCP(catalog, []string{"datetime"}, newMCPObj(), nil, io.Discard)
+	if err != nil {
+		t.Fatalf("Go build failed to read the datetime: %v", err)
+	}
+	if _, serr := mcpJSONDumpsIndent2(merged); serr == nil || serr.Error() != wantMsg {
+		t.Fatalf("Go JSON boundary = %v, want %q", serr, wantMsg)
 	}
 
-	// Resolver leg: Python resolves the marker; Go warns and leaves the literal.
+	// Resolver leg: no serialization, so both sides resolve the marker.
 	fakeDir := t.TempDir()
 	writeFakeJinna(t, fakeDir, "#!/bin/sh\necho jinna 1.2.3\n")
 	t.Setenv("PATH", fakeDir)
@@ -503,21 +487,42 @@ func TestBuildRecipeMCPDivergenceDatetime(t *testing.T) {
 	if resolveRef.Error != "" || resolveRef.Stderr != "" {
 		t.Fatalf("python resolve raised or warned: error=%q stderr=%q", resolveRef.Error, resolveRef.Stderr)
 	}
-	wantPyResolve := "{\n  \"jinna\": {\n    \"command\": \"jinna\"\n  }\n}\n"
-	if resolveRef.Document != wantPyResolve {
-		t.Fatalf("python resolve document = %q, want the resolved marker %q", resolveRef.Document, wantPyResolve)
-	}
-
-	merged := mustOrderedMCP(t, mergedJSON)
+	resolved := mustOrderedMCP(t, mergedJSON)
 	var buf bytes.Buffer
-	resolveProviderMarkers(merged, catalog, []string{"datetime"}, home, &buf)
-	wantWarn := "  ! recipe 'datetime': cannot read recipe for provider resolution (toml: line 13: datetime values (\"1979-05-27T07:32:00Z\") are not supported)\n"
-	if buf.String() != wantWarn {
-		t.Fatalf("%s: go stderr = %q, want %q", buildRecipeMCPDivergenceDatetime, buf.String(), wantWarn)
+	resolveProviderMarkers(resolved, catalog, []string{"datetime"}, home, &buf)
+	if buf.String() != "" {
+		t.Fatalf("Go resolver warned on a readable recipe: %q", buf.String())
 	}
-	wantGoLiteral := "{\n  \"jinna\": {\n    \"command\": \"{dep:jinna}\"\n  }\n}\n"
-	if got := nativeMCPDocument(merged); got != wantGoLiteral {
-		t.Fatalf("%s: go resolve document = %q, want the unresolved literal %q", buildRecipeMCPDivergenceDatetime, got, wantGoLiteral)
+	if goDoc := nativeMCPDocument(resolved); goDoc != resolveRef.Document {
+		t.Fatalf("datetime resolve document:\n go=%q\n py=%q", goDoc, resolveRef.Document)
+	}
+}
+
+// TestMCPJSONBoundaryRejectsDatetime is the focused JSON-boundary pin: a TOML
+// date/time now reaches mcpJSONDumpsIndent2 (formerly it could not leave
+// internal/toml at all), and it must fail with the Python TypeError naming its
+// own kind instead of rendering null.
+func TestMCPJSONBoundaryRejectsDatetime(t *testing.T) {
+	cases := []struct {
+		name string
+		dt   toml.DateTime
+		want string
+	}{
+		{"offset datetime", toml.DateTime{Kind: toml.DateTimeOffset}, "Object of type datetime is not JSON serializable"},
+		{"local datetime", toml.DateTime{Kind: toml.DateTimeLocal}, "Object of type datetime is not JSON serializable"},
+		{"local date", toml.DateTime{Kind: toml.DateLocal}, "Object of type date is not JSON serializable"},
+		{"local time", toml.DateTime{Kind: toml.TimeLocal}, "Object of type time is not JSON serializable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			merged := newMCPObj()
+			inner := newMCPObj()
+			inner.set("when", tc.dt)
+			merged.set("srv", inner)
+			if _, err := mcpJSONDumpsIndent2(merged); err == nil || err.Error() != tc.want {
+				t.Fatalf("mcpJSONDumpsIndent2 = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -542,7 +547,10 @@ func TestBuildRecipeMCPWarningStrings(t *testing.T) {
 		}
 		// Manifest values win; the recipe-only key is appended.
 		alpha, _ := merged.get("alpha")
-		got := mcpJSONDumpsIndent2(alpha)
+		got, err := mcpJSONDumpsIndent2(alpha)
+		if err != nil {
+			t.Fatalf("mcpJSONDumpsIndent2(alpha): %v", err)
+		}
 		want := "{\n  \"command\": \"m\",\n  \"timeout\": 1,\n  \"args\": [\n    \"-y\",\n    \"pkg\"\n  ]\n}"
 		if got != want {
 			t.Fatalf("alpha = %s, want %s", got, want)

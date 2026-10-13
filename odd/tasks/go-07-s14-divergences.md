@@ -93,8 +93,11 @@ Recorded because two of them reverse a documented decision and two loosen a guar
 - [x] T6 (D5): align the provider port (candidate order, arbitrary-precision version tuple, Unicode digits)
       and add the missing tie-case pin. Done: 294 insertions and 62 deletions across `provider.go`,
       `provider_test.go` and the differential driver's new `candidates` mode.
-- [ ] T7 (D6): widen `internal/toml` (datetime and arbitrary-precision integers), revise ADR-0002, flip the
-      two `internal/sync/buildrecipemcp_test.go` pins and the `internal/toml` pins.
+- [x] T7 (D6): widen `internal/toml` (datetime and arbitrary-precision integers), revise ADR-0002, flip the
+      two `internal/sync/buildrecipemcp_test.go` pins and the `internal/toml` pins. Landed as ONE atomic PR
+      by explicit human decision, at ~1800 authored lines across 28 files: widening the reader without the
+      consumer updates in the same change would open a window where a new kind parses and then renders
+      `null` where Python fails.
 
 ## Acceptance criteria
 - No test in the repository asserts a recorded Go-versus-Python divergence for these six items any more;
@@ -185,6 +188,39 @@ Recorded because two of them reverse a documented decision and two loosen a guar
   (tier medium, one lens `review-reliability`, 435 changed lines). The first capture closed it as
   `approved` (`store_revision: ee6bd2f8…`) and the acknowledgement burned the authority. One advisory,
   recorded below.
+- D6 implemented across six bounded passes in its own worktree: `internal/toml` now reads the four TOML
+  date/time forms and arbitrary-precision integers; `internal/toml.BigInt` carries canonical decimal digits
+  and `internal/toml.DateTime` carries its Python type name, repr and string; the JSON encoders that used to
+  render an unknown value as `null` now fail loudly with Python's `TypeError`; and the TOML-literal writer
+  keeps refusing a datetime, as `lib/_internal/toml_write.py` does.
+- ADR-0002 (`docs/go-adr/0002-toml-line-editor.md`, the normative record) was revised in place together with
+  its derivative comment in `internal/toml/toml.go`: the subset is now `tomllib`'s own value set, a datetime
+  parses and then fails at the JSON boundary exactly where Python fails, and a big integer round-trips
+  exactly. The revision carries its date and states that it supersedes the earlier exclusion.
+- Chasing the class closed more than the two recorded divergences. Every consumer that could see a new kind
+  was audited and fixed (`internal/sync`, `internal/config`, `internal/target`, `internal/doctor`,
+  `internal/rulesaudit`, `internal/schema`); two library panics were replaced by propagated errors; and a
+  pre-existing defect surfaced on the way: `internal/rulesaudit/json.go` had no `float64` case at all, so
+  every float — including a finite `2.5` — was written as `null`. It now reproduces CPython's `json.dumps`
+  float text (including `Infinity`, `-Infinity` and `NaN`) and is pinned differentially.
+- Size and decision: the unit reached ~1800 authored lines across 28 files and 8 packages, 2.6 times the
+  plan's ~700-line cap. Asked and decided: one atomic PR, because the intermediate state of a split would be
+  worse than either end state.
+- D6 focused checks, all exit 0: the package sets `internal/toml internal/sync internal/config internal/target
+  internal/schema internal/doctor internal/rulesaudit`, `go test ./cmd/... ./internal/... -count=1`, and
+  `python3 -m unittest tests.test_recipe_materialize tests.test_jinna_provider_recipe tests.test_sync_pipeline
+  tests.test_dep_check` (334 tests across the passes); `gofmt -l`, `go vet`, `git diff --check` clean.
+- D6 full validation with the gate binary rebuilt in its worktree: `./tests/validate.sh` exit 0,
+  `Ran 2482 tests in 1669.500s` then `OK`, zero `FAIL:`/`ERROR:` lines. Evidence:
+  `~/.cache/s14-toml-validate.{log,exit}`. The gate module is not involved by this unit, so its committed
+  digests still verify.
+- D6 native review (approved, authority burned): `inspect` with `baseRef=5a99fc7` plus `committedOnly` bound
+  the twenty-nine-path target `b98c280d…`, and the single `start` created lineage `review-1fa8bba160dd9fad`
+  (tier medium, one lens, 1900 changed lines). The capture closed it as `approved`
+  (`store_revision: 34487445…`) and the acknowledgement burned the authority. One advisory, recorded below.
+  The first acknowledged submission was rejected because the binding was transcribed by hand and corrupted;
+  the tool refused it without mutating anything, and the exact binding from a fresh STATUS was resent. That
+  is the rule the contract states: never reconstruct an opaque binding.
 
 ## Follow-ups
 - Advisory findings of the native review, both informational and non-blocking (no correction was opened):
@@ -209,7 +245,22 @@ Recorded because two of them reverse a documented decision and two loosen a guar
   written and became true once D5 added the pin, so the sentence needs rewording rather than a new test. The
   two PR3 advisory rows also record "location not recorded in source"; the locations are
   `shared/resolvedconfig.go:87-89` and `:92-99`.
-- ADR-0002 must carry the revised rationale in the D6 PR, not only in the code.
+- Advisory finding of the D6 native review, informational and non-blocking:
+  - `R3-plainvalue-datetime-passthrough` reliability WARNING, `internal/toml/toml.go:282-286`: the plain-value
+    conversion maps a big integer to `json.Number` but lets a datetime pass through as the struct, so a
+    consumer that hands it to `encoding/json` would emit an object instead of failing as Python does. The
+    reviewed encoders all reject it explicitly, so this is the remaining generic hole. The obvious systemic
+    fix is a `MarshalJSON` on the datetime type that returns the Python error, which would cover every
+    `encoding/json` path at once; it is deliberately deferred because the provider's own closure states that
+    advisories are later work and never a reason to re-run a review on the same candidate.
+- Two residuals of the D6 audit, deliberately not chased because no shipped artifact can reach them:
+  `internal/lock` was left untouched (its documents are Go-generated, so a datetime cannot reach it today),
+  and `TestParseDifferentialCorpus` treats any Python `json.dumps` failure as invalid TOML, so a future
+  corpus file containing a datetime would be misclassified — dedicated datetime parity coverage exists
+  instead.
+- Amendment still owed to the earlier S13 register: it claims the provider candidate-order divergence is
+  pinned in the `internal/provider` differential (now true), and it needs the same treatment for the three
+  divergences this series closed.
 
 ## Rollback
 Revert the three PRs as a batch; each is self-contained and no wired production path observes them yet.

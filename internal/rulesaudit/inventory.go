@@ -116,7 +116,15 @@ func Run(projectRoot, home string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	fmt.Fprint(stdout, encodeIndent(payload))
+	encoded, err := encodeIndent(payload)
+	if err != nil {
+		// Same boundary the scan errors use above: an unserializable value
+		// (a raw TOML date/time) fails the process the way the Python
+		// authority does, instead of emitting a silent "null".
+		fmt.Fprintf(stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	fmt.Fprint(stdout, encoded)
 	fmt.Fprint(stdout, "\n")
 	return 0
 }

@@ -159,13 +159,18 @@ func legacyRecipeVersions(data *toml.Table) []string {
 // pyTypeName mirrors Python's type(v).__name__ for the value types
 // internal/toml produces.
 func pyTypeName(v any) string {
-	switch v.(type) {
+	switch x := v.(type) {
 	case nil:
 		return "NoneType"
 	case bool:
 		return "bool"
 	case int64:
 		return "int"
+	case toml.BigInt:
+		// Python's arbitrary-precision int still reports __name__ "int".
+		return "int"
+	case toml.DateTime:
+		return x.PyTypeName()
 	case float64:
 		return "float"
 	case string:
@@ -191,6 +196,11 @@ func pythonRepr(v any) string {
 		return "False"
 	case int64:
 		return strconv.FormatInt(x, 10)
+	case toml.BigInt:
+		// Python repr(int) for a wide integer is its exact decimal digits.
+		return string(x)
+	case toml.DateTime:
+		return x.PyRepr()
 	case float64:
 		return pyFloatRepr(x)
 	case string:

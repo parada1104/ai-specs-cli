@@ -92,6 +92,35 @@ func differentialTrees() []treeCase {
 			},
 		},
 		{
+			name: "manifest-widened-bigint",
+			build: func(t *testing.T, root, home string) {
+				writeFileT(t, filepath.Join(root, "ai-specs", "ai-specs.toml"),
+					"[agents]\nenabled = [\"claude\", 123456789012345678901234567890]\n")
+			},
+		},
+		{
+			// Floats in a mirrored raw section: finite values keep their
+			// Python repr (shortest round-trip, exponent thresholds) and the
+			// TOML inf/-inf/nan literals render Infinity/-Infinity/NaN under
+			// json.dumps' default allow_nan=True rather than a silent null.
+			name: "manifest-float-widened",
+			build: func(t *testing.T, root, home string) {
+				writeFileT(t, filepath.Join(root, "ai-specs", "ai-specs.toml"),
+					"[agents]\nenabled = [2.5, 2.0, 0.0001, 1e-5, 1e16, 1e22, inf, -inf, nan]\n")
+			},
+		},
+		{
+			// A raw TOML date/time in a mirrored raw section: json.dumps raises
+			// TypeError and rules-inventory's main prints ERROR: to stderr and
+			// exits 1, so exit code, empty stdout, and stderr must all match.
+			name:       "manifest-datetime",
+			compareErr: true,
+			build: func(t *testing.T, root, home string) {
+				writeFileT(t, filepath.Join(root, "ai-specs", "ai-specs.toml"),
+					"[agents]\nenabled = [\"claude\", 1979-05-27T07:32:00Z]\n")
+			},
+		},
+		{
 			name: "mode-b-stack-hints",
 			build: func(t *testing.T, root, home string) {
 				writeFileT(t, filepath.Join(root, "package-lock.json"), "{}\n")

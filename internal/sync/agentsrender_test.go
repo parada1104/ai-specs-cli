@@ -450,6 +450,20 @@ workflow_rules_mode = 'merge'
 			resolved: emptyResolved,
 			wantErr:  true,
 		},
+		{
+			// A date/time mode value drives pyRepr through the ValueError
+			// message (agents-render.py:180 uses {val!r}); the differential
+			// pins Go's repr to the real Python authority.
+			name: "invalid brief mode date raises",
+			manifest: `[project]
+name = 'bad-date'
+
+[brief]
+workflow_rules_mode = 1979-05-27
+`,
+			resolved: emptyResolved,
+			wantErr:  true,
+		},
 	}
 }
 
@@ -807,5 +821,38 @@ func TestRenderAgentsStepPolicyGate(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "# gate Runtime Brief") {
 		t.Errorf("AGENTS.md missing the rendered heading:\n%s", data)
+	}
+}
+
+// TestAgentsRenderWidenedValueKinds pins the D6 value kinds in the Python
+// formatting mirrors: pyRepr renders the datetime constructor form and pyStr
+// the ISO str() form (agents-render.py interpolates with f-strings), while
+// arbitrary-precision ints render as their exact decimal digits. The
+// already-working scalar kinds are asserted unchanged.
+func TestAgentsRenderWidenedValueKinds(t *testing.T) {
+	const big = toml.BigInt("123456789012345678901234567890123456789")
+	date := toml.DateTime{Kind: toml.DateLocal, Year: 1979, Month: 5, Day: 27}
+	dt := toml.DateTime{Kind: toml.DateTimeOffset, Year: 1979, Month: 5, Day: 27, Hour: 7, Minute: 32, HasOffset: true}
+
+	cases := []struct {
+		name     string
+		value    any
+		wantRepr string
+		wantStr  string
+	}{
+		{"bigint", big, string(big), string(big)},
+		{"date", date, "datetime.date(1979, 5, 27)", "1979-05-27"},
+		{"datetime", dt, "datetime.datetime(1979, 5, 27, 7, 32, tzinfo=datetime.timezone.utc)", "1979-05-27 07:32:00+00:00"},
+		{"int64-unchanged", int64(5), "5", "5"},
+		{"string-unchanged", "x", "'x'", "x"},
+		{"bool-unchanged", true, "True", "True"},
+	}
+	for _, tc := range cases {
+		if got := pyRepr(tc.value); got != tc.wantRepr {
+			t.Errorf("%s: pyRepr = %q, want %q", tc.name, got, tc.wantRepr)
+		}
+		if got := pyStr(tc.value); got != tc.wantStr {
+			t.Errorf("%s: pyStr = %q, want %q", tc.name, got, tc.wantStr)
+		}
 	}
 }

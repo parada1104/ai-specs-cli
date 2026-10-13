@@ -344,13 +344,23 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		if errors.As(err, &resErr) {
 			envelope := newObj()
 			envelope.set("error", resErr.AsDict())
-			fmt.Fprintln(stderr, encodeCompact(envelope))
+			line, encErr := encodeCompact(envelope)
+			if encErr != nil {
+				fmt.Fprintf(stderr, "error: %v\n", encErr)
+				return 1
+			}
+			fmt.Fprintln(stderr, line)
 			return 1
 		}
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 
-	fmt.Fprintln(stdout, encodeIndent(plan))
+	line, err := encodeIndent(plan)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, line)
 	return 0
 }

@@ -27,7 +27,9 @@ import (
 //
 // Anything else raises an error naming the Go type, mirroring the Python
 // TypeError("cannot serialize ... to TOML") so malformed defaults fail
-// loudly at the write site.
+// loudly at the write site. A DateTime raises the same Python TypeError with
+// its own Python type name (datetime/date/time), because toml_write.py's
+// isinstance chain has no datetime branch.
 func TOMLValue(v any) (string, error) {
 	switch x := v.(type) {
 	case bool:
@@ -35,6 +37,11 @@ func TOMLValue(v any) (string, error) {
 			return "true", nil
 		}
 		return "false", nil
+	case BigInt:
+		// Python str(int): exact decimal digits.
+		return string(x), nil
+	case DateTime:
+		return "", fmt.Errorf("cannot serialize %s to TOML", x.PyTypeName())
 	case int:
 		return strconv.FormatInt(int64(x), 10), nil
 	case int8:
