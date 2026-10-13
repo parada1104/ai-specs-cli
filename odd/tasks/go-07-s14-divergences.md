@@ -176,6 +176,15 @@ Recorded because two of them reverse a documented decision and two loosen a guar
 - D5 focused checks, all exit 0: `go test ./internal/provider/ -count=1`, `go test ./cmd/...
   ./internal/... -count=1`, `python3 -m unittest tests.test_jinna_provider_recipe tests.test_dep_check`
   (78 tests OK), `gofmt -l`, `go vet`, `git diff --check`.
+- D5 full validation with the gate binary rebuilt in its worktree: `./tests/validate.sh` exit 0,
+  `Ran 2482 tests in 1930.356s` then `OK`, zero `FAIL:`/`ERROR:` lines. Evidence:
+  `~/.cache/s14-provider-validate.{log,exit}`. The gate module is untouched by this unit, so its digests
+  still verify (`verify-gate-sums.sh` reports four matching entries).
+- D5 native review (approved, authority burned): `inspect` with `baseRef=08f1174` plus `committedOnly`
+  bound the four-file target `b0fbf61f…`, and the single `start` created lineage `review-00a23e21e966006a`
+  (tier medium, one lens `review-reliability`, 435 changed lines). The first capture closed it as
+  `approved` (`store_revision: ee6bd2f8…`) and the acknowledgement burned the authority. One advisory,
+  recorded below.
 
 ## Follow-ups
 - Advisory findings of the native review, both informational and non-blocking (no correction was opened):
@@ -187,6 +196,10 @@ Recorded because two of them reverse a documented decision and two loosen a guar
 - The inline `config = { ... }` shape of D3 stays divergent by construction (see Progress). Closing it for
   real would need an ordered TOML representation end to end, which is a separate architectural unit; no
   shipped catalog recipe uses the shape.
+- Advisory finding of the D5 native review, informational and non-blocking:
+  - `R3-unicode16-pin-env-coupled` reliability WARNING, `internal/provider/provider_test.go:223-225`: the
+    Unicode-generation pin is coupled to the toolchain, so it fails deliberately when Go or CPython updates
+    its Unicode tables. That is the intended loud failure; the pin must then be removed on purpose.
 - The Unicode-generation residual of D5 (see Progress) closes by itself once the Go toolchain carries a
   newer Unicode table; the pin must then be removed deliberately.
 - `managedCandidates` tests `!info.IsDir()` where Python tests `is_file()`, so a FIFO or a device entry in
