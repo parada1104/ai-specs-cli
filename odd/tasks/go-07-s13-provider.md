@@ -42,16 +42,18 @@ budget, and this extraction de-risks the trust-check seam that PR4b-2 depends on
 7. Version tuple overflow maps to 0 in Go (arbitrary precision in Python).
 
 ## Tasks
-- [ ] T1: Create `internal/provider` with a Python-faithful `Resolve` (result struct with every
+- [x] T1: Create `internal/provider` with a Python-faithful `Resolve` (result struct with every
       field, error return mirroring `InstallError`, `CacheRoot` with the env/default fallback and
       symlink resolution), closing gaps 1-5 and pinning 6-7 as documented divergences.
-- [ ] T2: Switch `internal/doctor` to the shared package, deleting the local helpers, keeping the
+- [x] T2: Switch `internal/doctor` to the shared package, deleting the local helpers, keeping the
       `depResult` mapping of `dep_check._check_one` (including `provider check failed: <exc>`), and
       moving/keeping the existing doctor tests green.
-- [ ] T3: Focused tests for the shared package (path source, managed source with verified receipt,
+- [x] T3: Focused tests for the shared package (path source, managed source with verified receipt,
       receipt rejections, min_version, winner re-check failure, cache_root fallbacks), with a Python
       differential driver under `internal/provider/testdata/` importing the real `resolve_provider`.
 - [ ] T4: Full check set with real exit codes; native review; PR and squash-merge to the epic.
+      Checks done (exit 0 for every set), review approved and its authority burned; the PR and the
+      squash-merge to `epic/go-single-binary` are the remaining closing step.
 
 ## Acceptance criteria
 - `internal/provider.Resolve` matches the Python authority on every covered scenario: result fields,
@@ -89,12 +91,43 @@ budget, and this extraction de-risks the trust-check seam that PR4b-2 depends on
   1617.570s` then `OK`, zero `FAIL:`/`ERROR:` lines. Evidence: `~/.cache/s13-pr4b1-validate.{log,exit}`.
   `SHA256SUMS`, the gate module, `internal/sync`, `lib/`, `scripts/` and `go.mod` are untouched.
 
+- Work unit commit: `112dd7c` — `refactor(doctor): extract a Python-faithful shared provider resolver
+  (S13 PR4b-1)`. Native review candidate; base `24c4ca1`.
+- Native review (approved, authority burned): `inspect` with `baseRef=24c4ca1` plus `committedOnly`
+  bound the correct six-file target `06e07da…`. The first `start` returned `consent-binding-stale`
+  (the host consent binding had expired on its 10-minute TTL without an answer and no lineage was
+  created); a second `start` minted a fresh envelope, which the host resolved, and created lineage
+  `review-2f6c9c0f71d806e2` (tier high, 4 lenses, 1541 changed lines, correction budget 200). The final
+  admitted lens captured as `approved` (`store_revision: 5394ce0b…`) and the exact acknowledgement
+  burned the authority (`gentle-ai.review-acknowledged/v1`). Seven advisory findings, all non-blocking,
+  recorded under Follow-ups.
+- Incident of the earlier session (no lineage created): an `inspect` without `baseRef` bound the
+  whole-epic target (`247ba91…`, base `e773514`), and three `start` calls with `baseRef=24c4ca1` replayed
+  that target and returned `consent-binding-expired` (`native_invocation_attempted: false`). The fix is to
+  pass `baseRef` to `inspect` from the first call.
+- Reviewer transport incident: the `review-resilience` slot failed six times with
+  `reviewer-empty-output` (`stopReason: length`) on `nan/glm5.3-flash` and then on `nan/qwen3.8-flash`
+  (131 000-token output ceiling); both models exhausted their output budget reasoning and emitted no
+  text. The group capture aborts wholesale when one lens fails, so the four lenses were captured one
+  slot at a time and that lens was routed to `anthropic/claude-sonnet-5-5`, which emitted on the first
+  run. The host relay reads `~/.pi/gentle-ai/models.json` (`gentlePiConfigHome()`), never the subagent
+  `model_profiles` in `subagents.json`.
+
 ## Follow-ups
 - `resolveProviderDep` (`internal/doctor/depcheck.go:304-333`) has no direct test of its `DepResult`
-  mapping and detail strings; only the shared package is tested (verifier finding, non-blocking).
+  mapping and detail strings; only the shared package is tested (verifier finding, non-blocking). The
+  native review raised the same gap as `R3-doctor-mapping-untested` (`internal/doctor/depcheck.go:312`).
 - `resolveProviderDep` passes a non-nil home, so an empty home resolves to the cwd where Python `None`
   falls back to `AI_SPECS_HOME`; both real callers pass a resolved home, so no path observes it.
 - PR4b-2: native `build_recipe_mcp` plus `_resolve_provider_markers` over `internal/provider`.
+- Advisory findings of the native review, all informational and non-blocking (no correction was opened):
+  - `R2-1` readability WARNING, `internal/provider/provider.go:61-72`.
+  - `R2-2` readability WARNING, `internal/provider/provider.go:309-313`.
+  - `R2-3` readability SUGGESTION, `internal/doctor/depcheck.go:280-283`.
+  - `R2-4` readability SUGGESTION, `internal/provider/provider.go:175-177`.
+  - `R3-doctor-mapping-untested` reliability SUGGESTION, `internal/doctor/depcheck.go:312`.
+  - `R3-runversion-grandchild-pipe-hang` reliability WARNING, `internal/provider/provider.go:220-245`.
+  - `R4-runversion-waitdelay` resilience WARNING, `internal/provider/provider.go:216`.
 
 ## Rollback
 Revert this delivery as one commit; doctor returns to its local helpers.
