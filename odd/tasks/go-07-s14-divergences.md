@@ -210,6 +210,17 @@ Recorded because two of them reverse a documented decision and two loosen a guar
   internal/schema internal/doctor internal/rulesaudit`, `go test ./cmd/... ./internal/... -count=1`, and
   `python3 -m unittest tests.test_recipe_materialize tests.test_jinna_provider_recipe tests.test_sync_pipeline
   tests.test_dep_check` (334 tests across the passes); `gofmt -l`, `go vet`, `git diff --check` clean.
+- D6 full validation with the gate binary rebuilt in its worktree: `./tests/validate.sh` exit 0,
+  `Ran 2482 tests in 1669.500s` then `OK`, zero `FAIL:`/`ERROR:` lines. Evidence:
+  `~/.cache/s14-toml-validate.{log,exit}`. The gate module is not involved by this unit, so its committed
+  digests still verify.
+- D6 native review (approved, authority burned): `inspect` with `baseRef=5a99fc7` plus `committedOnly` bound
+  the twenty-nine-path target `b98c280d…`, and the single `start` created lineage `review-1fa8bba160dd9fad`
+  (tier medium, one lens, 1900 changed lines). The capture closed it as `approved`
+  (`store_revision: 34487445…`) and the acknowledgement burned the authority. One advisory, recorded below.
+  The first acknowledged submission was rejected because the binding was transcribed by hand and corrupted;
+  the tool refused it without mutating anything, and the exact binding from a fresh STATUS was resent. That
+  is the rule the contract states: never reconstruct an opaque binding.
 
 ## Follow-ups
 - Advisory findings of the native review, both informational and non-blocking (no correction was opened):
@@ -234,6 +245,14 @@ Recorded because two of them reverse a documented decision and two loosen a guar
   written and became true once D5 added the pin, so the sentence needs rewording rather than a new test. The
   two PR3 advisory rows also record "location not recorded in source"; the locations are
   `shared/resolvedconfig.go:87-89` and `:92-99`.
+- Advisory finding of the D6 native review, informational and non-blocking:
+  - `R3-plainvalue-datetime-passthrough` reliability WARNING, `internal/toml/toml.go:282-286`: the plain-value
+    conversion maps a big integer to `json.Number` but lets a datetime pass through as the struct, so a
+    consumer that hands it to `encoding/json` would emit an object instead of failing as Python does. The
+    reviewed encoders all reject it explicitly, so this is the remaining generic hole. The obvious systemic
+    fix is a `MarshalJSON` on the datetime type that returns the Python error, which would cover every
+    `encoding/json` path at once; it is deliberately deferred because the provider's own closure states that
+    advisories are later work and never a reason to re-run a review on the same candidate.
 - Two residuals of the D6 audit, deliberately not chased because no shipped artifact can reach them:
   `internal/lock` was left untouched (its documents are Go-generated, so a datetime cannot reach it today),
   and `TestParseDifferentialCorpus` treats any Python `json.dumps` failure as invalid TOML, so a future
