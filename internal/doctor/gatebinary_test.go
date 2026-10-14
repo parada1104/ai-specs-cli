@@ -60,10 +60,12 @@ func TestResolveVerifiedGateBinaryCache(t *testing.T) {
 		t.Fatalf("candidate without receipt = %q, want empty", got)
 	}
 
-	// Receipt and no committed SHA256SUMS: the historical receipt acceptance.
+	// Receipt and no committed SHA256SUMS: fails closed (one grader with
+	// internal/gatebinary; a deliberate divergence from doctor.py, which keeps
+	// the historical receipt acceptance).
 	writeFile(t, binary+".verified", "status=verified\n")
-	if got := resolveVerifiedGateBinary(home); got != binary {
-		t.Fatalf("receipted candidate without trust root = %q, want %q", got, binary)
+	if got := resolveVerifiedGateBinary(home); got != "" {
+		t.Fatalf("receipted candidate without trust root = %q, want empty", got)
 	}
 
 	// Receipt plus a matching committed digest: selected.
@@ -76,6 +78,17 @@ func TestResolveVerifiedGateBinaryCache(t *testing.T) {
 	writeFile(t, sums, digest+"  "+asset+"\n")
 	if got := resolveVerifiedGateBinary(home); got != binary {
 		t.Fatalf("verified candidate = %q, want %q", got, binary)
+	}
+
+	// A group-writable cache component breaks the same-user boundary.
+	if err := os.Chmod(filepath.Dir(binary), 0o775); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if got := resolveVerifiedGateBinary(home); got != "" {
+		t.Fatalf("shared-writable cache = %q, want empty", got)
+	}
+	if err := os.Chmod(filepath.Dir(binary), 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
 	}
 
 	// Receipt plus a stale digest: the bytes are rejected.

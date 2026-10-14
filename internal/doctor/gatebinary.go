@@ -1,115 +1,47 @@
 package doctor
 
-// Native port of the read-only subset of lib/_internal/gate_binary.py the gate
-// doctor checks share: platform detection, the version-keyed cache layout, the
-// committed digest trust root, verified-binary resolution with its fail-closed
-// receipt checks, the binary --version/--selftest probes, the cache-size report
-// and the recorded digest-mismatch location. It also carries the native
-// managed-override classifier (the decision the gate binary would otherwise own
-// through --plan-classify) so no other doctor file keeps a second copy and no
-// host shells out for the decision.
+// The gate doctor checks' read-only view of lib/_internal/gate_binary.py. The
+// version-keyed cache layout, the committed digest trust root, verified-binary
+// resolution and the --version/--selftest probes all delegate to
+// internal/gatebinary, the single grader shared with acquisition; this file
+// keeps only thin names for the checks plus the doctor-only cache-size report.
+// It also carries the native managed-override classifier (the decision the
+// gate binary would otherwise own through --plan-classify) so no other doctor
+// file keeps a second copy and no host shells out for the decision.
+//
+// Delegating resolution is a deliberate divergence from doctor.py: a receipt
+// without a committed digest, or a cache that breaks the same-user boundary,
+// fails closed here (see the internal/gatebinary trust model).
 //
 // Acquisition is deliberately absent: doctor is read-only and must never
-// download, build, chmod, quarantine or write a receipt. Where the Python
-// module acquires, this port only reads.
+// download, build, chmod, quarantine or write a receipt.
 
 import (
-	"bytes"
-	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strings"
-	"time"
-	"unicode"
-	"unicode/utf8"
 
+	"ai-specs.dev/ai-specs/internal/gatebinary"
 	"ai-specs.dev/ai-specs/internal/lock"
 )
 
-// gateCLIVersion mirrors gate_binary.cli_version: <home>/VERSION stripped, or
-// "unknown".
-func gateCLIVersion(home string) string {
-	path := filepath.Join(home, "VERSION")
-	if !isFile(path) {
-		return "unknown"
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "unknown"
-	}
-	text := strings.TrimSpace(string(raw))
-	if text == "" {
-		return "unknown"
-	}
-	return text
-}
+// detectGatePlatform is the host (goos, goarch) pair; "" for anything outside
+// darwin/linux + arm64/amd64.
+func detectGatePlatform() (string, string) { return gatebinary.DetectHostPlatform() }
 
-// detectGatePlatform mirrors gate_binary.detect_platform for the Go runtime's
-// OS/arch pair (darwin/linux + arm64/amd64; anything else is no binary).
-func detectGatePlatform() (string, string) {
-	goos := ""
-	switch runtime.GOOS {
-	case "darwin":
-		goos = "darwin"
-	case "linux":
-		goos = "linux"
-	}
-	goarch := ""
-	switch runtime.GOARCH {
-	case "arm64":
-		goarch = "arm64"
-	case "amd64":
-		goarch = "amd64"
-	}
-	return goos, goarch
-}
-
-// gateCacheBinPath mirrors gate_binary.cache_bin_path.
+// gateCacheBinPath is the version-keyed cache path for the installed CLI.
 func gateCacheBinPath(home, goos, goarch string) string {
-	return filepath.Join(home, "cache", "bin", "worktree-gate", gateCLIVersion(home),
-		goos+"-"+goarch, "worktree-gate")
+	return gatebinary.CacheBinPath(home, "", goos, goarch)
 }
 
-// gateDigestMismatchRecordPath mirrors gate_binary.digest_mismatch_record_path.
+// gateDigestMismatchRecordPath is the last recorded acquisition mismatch.
 func gateDigestMismatchRecordPath(home string) string {
-	return filepath.Join(home, "cache", "bin", "worktree-gate", gateCLIVersion(home),
-		"last-digest-mismatch.txt")
+	return gatebinary.DigestMismatchRecordPath(home, "")
 }
 
-// loadExpectedGateDigests mirrors gate_binary.load_expected_digests. ok is
-// false when the trust root exists but cannot be read or decoded, the legacy
-// fail-closed branch.
+// loadExpectedGateDigests parses the committed SHA256SUMS trust root; ok is
+// false when it exists but cannot be read or decoded.
 func loadExpectedGateDigests(home string) (map[string]string, bool) {
-	sumsPath := filepath.Join(home, "catalog", "recipes", "worktree-flow", "bin", "SHA256SUMS")
-	digests := map[string]string{}
-	if !isFile(sumsPath) {
-		return digests, true
-	}
-	raw, err := os.ReadFile(sumsPath)
-	if err != nil {
-		return nil, false
-	}
-	if !utf8.Valid(raw) {
-		return nil, false
-	}
-	for _, line := range pySplitLines(string(raw)) {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		idx := strings.IndexFunc(line, unicode.IsSpace)
-		if idx < 0 {
-			continue
-		}
-		digest := line[:idx]
-		name := strings.TrimSpace(line[idx:])
-		if len(digest) == 64 && strings.HasPrefix(name, "worktree-gate-") {
-			digests[name] = strings.ToLower(digest)
-		}
-	}
-	return digests, true
+	return gatebinary.LoadExpectedDigests(home)
 }
 
 // isExecutable mirrors os.access(path, os.X_OK) via the mode bits.
@@ -121,81 +53,14 @@ func isExecutable(path string) bool {
 	return info.Mode().Perm()&0o111 != 0
 }
 
-// resolveVerifiedGateBinary mirrors gate_binary.resolve_verified_binary: the
-// $WORKTREE_GATE_BIN override, else the version-keyed cache candidate accepted
-// only with its .verified receipt and a matching committed trust-root digest.
-func resolveVerifiedGateBinary(home string) string {
-	if override := os.Getenv("WORKTREE_GATE_BIN"); override != "" {
-		if isFile(override) && isExecutable(override) {
-			return override
-		}
-		return ""
-	}
-	goos, goarch := detectGatePlatform()
-	if goos == "" || goarch == "" {
-		return ""
-	}
-	candidate := gateCacheBinPath(home, goos, goarch)
-	if !isFile(candidate) || !isExecutable(candidate) || !isFile(candidate+".verified") {
-		return ""
-	}
-	expected, ok := loadExpectedGateDigests(home)
-	if !ok {
-		return ""
-	}
-	if digest, present := expected["worktree-gate-"+goos+"-"+goarch]; present {
-		observed, err := fileSHA256(candidate)
-		if err != nil {
-			return ""
-		}
-		if observed != digest {
-			return ""
-		}
-	}
-	return candidate
-}
+// resolveVerifiedGateBinary is the shared verified-binary resolution, or "".
+func resolveVerifiedGateBinary(home string) string { return gatebinary.ResolveVerifiedBinary(home) }
 
-// gateBinaryVersion mirrors gate_binary.binary_version: the stripped --version
-// stdout, or "" on any failure (including a non-zero exit).
-func gateBinaryVersion(binary string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, binary, "--version").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
+// gateBinaryVersion is the stripped --version stdout, "" on any failure.
+func gateBinaryVersion(binary string) string { return gatebinary.BinaryVersion(binary) }
 
-// gateSelftest mirrors gate_binary._run_selftest: "" success, else the failure
-// text (stderr, then stdout, then the literal fallback).
-func gateSelftest(binary string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, "--selftest")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err == nil {
-		return ""
-	}
-	if _, isExit := err.(*exec.ExitError); isExit {
-		detail := stderr.String()
-		if detail == "" {
-			detail = stdout.String()
-		}
-		if detail == "" {
-			detail = "selftest failed"
-		}
-		return strings.TrimSpace(detail)
-	}
-	// The legacy formats the exception type and message here; the Go timeout
-	// and start errors have no byte-identical Python counterpart, so the port
-	// reports the Go error text. The check only reaches this after the binary
-	// was proven present and executable.
-	return strings.TrimSpace(err.Error())
-}
+// gateSelftest is "" on a passing --selftest, else the failure text.
+func gateSelftest(binary string) string { return gatebinary.Selftest(binary) }
 
 // gateCacheSize mirrors gate_binary.cache_size: the total regular-file bytes
 // under the whole version-keyed cache root (all versions), following symlinks

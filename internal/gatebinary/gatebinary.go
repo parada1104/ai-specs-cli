@@ -32,8 +32,7 @@
 // This package is the single read/verify/acquire authority. It deliberately
 // does not reuse internal/upgrade (whose Acquire has another contract: no
 // self-test, no receipt, no quarantine, and a different trust-root parser) nor
-// internal/doctor (which keeps read-only twins and, in a later commit, will
-// delegate to this package).
+// internal/doctor (whose read-only gate checks delegate to this package).
 package gatebinary
 
 import (
