@@ -14,7 +14,7 @@ import (
 
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/schema"
-	"ai-specs.dev/ai-specs/internal/target"
+	"ai-specs.dev/ai-specs/internal/sync"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
 
@@ -143,18 +143,16 @@ func renderOverrideBytes(catalogSrc string, mergedCfg map[string]any) ([]byte, e
 }
 
 // projectOwnedRecipeConfig mirrors util.project_owned_recipe_config: the recipe
-// config with the project-owned repo_topology applied for worktree-flow.
+// config with the project-owned repo_topology applied for worktree-flow. The
+// decision lives once in internal/sync.ProjectOwnedRecipeConfig (GO-07 S14a
+// WU2); this wrapper only adapts doctor's *toml.Table config to the promoted
+// function's map, so sync and doctor share one grader.
 func projectOwnedRecipeConfig(projectRoot string, data *toml.Table, recipeID string, config *toml.Table) map[string]any {
-	merged := map[string]any{}
+	var merged map[string]any
 	if config != nil {
-		for key, value := range config.Any() {
-			merged[key] = value
-		}
+		merged = config.Any()
 	}
-	if recipeID == "worktree-flow" {
-		merged["repo_topology"] = target.ProjectRepoTopology(projectRoot, data).Configured
-	}
-	return merged
+	return sync.ProjectOwnedRecipeConfig(projectRoot, data, recipeID, merged)
 }
 
 // posixAsPosix mirrors Path(p).as_posix(): drop empty and "." components,

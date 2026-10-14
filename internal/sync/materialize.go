@@ -1,9 +1,9 @@
 package sync
 
-// Native materializer spine (GO-07 S14a WU1), added and NOT wired: no pipeline
+// Native materializer spine (GO-07 S14a). Added and NOT wired: no pipeline
 // call site invokes MaterializeRecipes yet (S14c owns the wiring), and the
 // frozen stdout markers stay byte-identical to the Python authority
-// lib/_internal/recipe-materialize.py materialize_recipes (:3858-4142).
+// lib/_internal/recipe-materialize.py materialize_recipes (:3858-4147).
 //
 // WU1 owns the orchestration order up to and including the temp-document
 // writes: cache ensure, manifest load and enabled filter, legacy-origin
@@ -13,12 +13,13 @@ package sync
 // per-recipe frame (print + legacy-version warning + config merge) and the
 // recipe-MCP / resolved-config / resolved-hooks documents.
 //
-// The per-recipe artifact actuation (skills, commands, templates, docs, hooks,
-// runtime hooks, gate-binary acquisition) is WU2 (T4) and is deliberately
-// absent here. The two known non-ported steps are documented in the handoff:
-// dependency-skill vendoring (its own card) and the worktree-flow gate-binary
-// acquisition (WU2's loop; internal/doctor exposes no acquisition entry point
-// and the WU1 edit surface forbids extending it).
+// WU2 (T4) owns the per-recipe artifact actuation inside that frame, in
+// materialize_loop.go: the project-owned config pass, bundled/dep skills,
+// commands, templates, docs, sync-time hooks, runtime-hooks collection and the
+// worktree-flow gate-binary acquisition. The two deliberate non-native steps
+// are the documented delegations in materialize_loop.go: dependency-skill
+// vendoring (its own card) and the worktree-flow gate-binary acquisition
+// (replaced natively by WU3/T7).
 //
 // The only decision logic in this file is the orchestration itself; every
 // grader is the merged native authority: ResolveBindings, PlanReconcileStamps
@@ -132,8 +133,8 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 	}
 
 	// Runtime hooks collected across enabled recipes (for hooks-render.py).
-	// WU2 fills this from the per-recipe runtime-hook loop; WU1 writes the
-	// empty list the spine starts with.
+	// The per-recipe loop appends one entry per runtime hook; the no-enabled
+	// branch above still writes the empty list the spine starts with.
 	resolvedHooks := []any{}
 
 	expectedDepIDs := materializeStringSet(loadManifestDepIDs(manifest))
@@ -276,10 +277,23 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 		if merge.Error != "" {
 			return result, materializeFatal(stderr, merge.Error)
 		}
-		// WU2 (T4) owns the per-recipe artifact actuation here: bundled/dep
-		// skills, commands, templates, docs, hooks, runtime-hooks collection
-		// and the worktree-flow gate-binary acquisition. The merged config is
-		// consumed only by those steps, so WU1 stops at the config decision.
+		// WU2 (T4): the per-recipe artifact actuation — project-owned config
+		// pass, bundled/dep skills, commands, templates, docs, sync-time hooks,
+		// runtime-hooks collection and the worktree-flow gate acquisition.
+		hooks, err := materializeRecipeArtifacts(materializeArtifactRequest{
+			ProjectRoot:  req.ProjectRoot,
+			AISpecsHome:  cliHome,
+			CatalogDir:   catalogDir,
+			Recipe:       recipe,
+			Merge:        merge,
+			RefreshGates: req.RefreshGates,
+			Stdout:       stdout,
+			Stderr:       stderr,
+		})
+		if err != nil {
+			return result, materializeFatal(stderr, err.Error())
+		}
+		resolvedHooks = append(resolvedHooks, hooks...)
 	}
 
 	recipeMCPDocument, err := mcpJSONDumpsIndent2(recipeMCP)

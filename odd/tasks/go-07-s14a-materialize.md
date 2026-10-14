@@ -38,6 +38,11 @@ behaviour change, and the frozen stdout markers stay byte-identical. S14c owns t
    explicit, documented delegation for it (a named function, not a route), to be closed with that card.
    The gate-binary acquisition is covered by projecting what already exists in
    `internal/doctor/gatebinary.go` rather than writing a second one.
+   **Revised for WU2 (with the human):** the WU2 reconnaissance proved that premise wrong.
+   `internal/doctor/gatebinary.go` only reads and verifies; the Python `acquire()`
+   (`lib/_internal/gate_binary.py:437-681`: download, local build, quarantine, digest records) has no Go
+   twin. WU2 therefore keeps a second named, documented delegation, `acquire` through Python, exactly like
+   the dependency-skill one, and **WU3 ports `acquire` natively before S14c wires anything**.
 3. **The prints stay verbatim while unwired.** `  ▸ recipe <id>`, the `✓ …` lines and `RECIPE_MCP_TEMP:`
    are the spine's current API and are frozen until S16 (`docs/go-migration-parity-contract.md:204-207`,
    `odd/tasks/go-07-sync-plan.md:497`). Their collapse into return values is S16 work.
@@ -90,12 +95,16 @@ becoming a failure with return 1.
       marker rule with and without an output path, the fatal primitive conflict, the advisory tag conflict,
       the stamp manifest bytes (four cases, including the no-op that must not rewrite), and two
       schema-invalid recipes.
-- [ ] T4 (WU2): the per-recipe loop: copies, skill-hash registration, the shared lock-write helper,
+- [x] T4 (WU2): the per-recipe loop: copies, skill-hash registration, the shared lock-write helper,
       template/doc/hook actuation with their diagnostics, runtime-hooks collection, and the resolved-hooks
       dump, including the single documented dependency-skill delegation.
-- [ ] T5 (WU2): the loop's differential coverage, plus the parity corpus remaining zero-delta.
-- [ ] T6: full check set with real exit codes; native review; PR and squash-merge per unit. WU1: checks and
-      native review done; PR pending.
+- [x] T5 (WU2): the loop's differential coverage, plus the parity corpus remaining zero-delta. Done in
+      `6ac0a83` (11 scenarios; parity 58 legs zero deltas).
+- [ ] T6: full check set with real exit codes; native review; PR and squash-merge per unit. WU1: done, PR
+      #352 squash-merged as `2de231d`. WU2: worktree `.worktrees/go-07-s14a-loop`, branch
+      `change/go-07-s14a-loop`, base `2de231d`.
+- [ ] T7 (WU3): port the gate-binary `acquire` to Go (one grader, shared with the doctor's read/verify
+      primitives) and replace the WU2 delegation; its own differential against `gate_binary.py`.
 
 ## Acceptance criteria
 - The unwired core reproduces the Python orchestration on every covered scenario: step order, the exact
@@ -159,9 +168,53 @@ becoming a failure with return 1.
   zero deltas, 2482 Python tests OK), logs in `~/.cache/s14a-validate.{log,exit}`. The suite needs a
   Python with `tomllib` (3.11+) as `python3`: with macOS `/usr/bin/python3` 3.9 first on `PATH` the gate's
   TOML reader fails and 104 gate test cases fail, which is an environment prerequisite, not a regression.
+- WU2 implemented. The loop is `materialize_loop.go`; the project-owned grader is promoted to
+  `internal/sync/projectowned.go` and doctor now delegates to it (one grader, doctor tests untouched).
+  The differential table is `materialize_loop_test.go`: eleven scenarios (bundled skill + command with an
+  overwrite warning and the lock bytes; templates and docs fresh / managed-current / user-modified; runtime
+  hooks fresh / current / user-modified / refresh-gates; the UPPER-only env projection including `A1_B`,
+  `1_A`, `a_B` and `A-B`; the dep delegation; an `execute_hooks` failure; and the worktree-flow gate
+  acquisition). Each scenario runs the Python oracle and the Go loop on the SAME project/home paths with the
+  project tree and CLI cache rebuilt between legs, comparing rc, stdout, stderr, the documents, the lock
+  bytes and the whole materialized tree. RED was observed by disabling the WU2 call: all eleven scenarios
+  fail, then all pass with it restored.
+- Two WU2 facts the pass proved. First, the differential driver had a latent defect — its
+  `except BaseException` handler called `mod.fail`, which prints to the restored stderr and raises
+  `SystemExit` past `main`, so any Python exception (as opposed to an in-authority `fail()`) lost the
+  captured fatal line and exited nonzero; the handler now writes `  ✗ {exc}` into the captured buffer. The
+  bug only surfaced because the `execute_hooks` failure is the first scenario that reaches a deep exception.
+  Second, the resolved-config document WITH enabled recipes is the one document the bare spine cannot yet
+  match: Python adds `brief_fragments` (and catalog defaults), which is S14b by decision 6, so the WU2
+  differential does not pin it and the WU1 no-enabled scenario keeps covering that writer.
+- WU2 checks, all exit 0: `go test ./internal/sync/ -count=1`, `go test ./internal/doctor/ ./internal/lock/
+  -count=1`, `go test ./cmd/... ./internal/... -count=1`, `gofmt -l cmd internal`, `go vet ./...`,
+  `git diff --check`, and `python3 -m unittest tests.test_recipe_materialize tests.test_sync_pipeline
+  tests.test_sync_recipe_capture` (174 tests). `scripts/build-gate.sh` was NOT run: it writes the tracked
+  gate binary outside the WU2 edit surfaces, and the differential builds its own gate binary in a temp dir.
+- WU2 size, disclosed: about 1370 authored lines — `materialize_loop.go` (722, including the two embedded
+  delegation scripts and their doc comments), `materialize_loop_test.go` (571), `projectowned.go` (35), and
+  the small edits to `materialize.go`, the ref driver and doctor. That is above the plan's ~1200 soft cap;
+  the split, if the reviewer wants one, is the differential table (`materialize_loop_test.go`) as its own
+  follow-up commit, since the implementation and its coverage are otherwise inseparable.
+- WU2 non-native steps, the exact two the revised decision 2 permits: `delegateDepSkillToPython`
+  (vendor-skills.py `sync_dep_target`, closed with the deps card) and `delegateGateAcquireToPython`
+  (gate_binary.py `acquire`, replaced natively by WU3/T7). Both resolve their module through
+  `<AI_SPECS_HOME>/lib/_internal/`, the same sibling layout the Python authority uses.
+- WU2 review: `6ac0a83` reviewed against `2de231d` as `review-03a4bff3b005d59b` (high, four lenses, because
+  the delegations start processes), approved and acknowledged. One `review-readability` capture failed with
+  a transport error (`Stream ended without finish_reason`); fresh STATUS reoffered the same slot and the
+  retry captured. Six informational advisories, listed under Follow-ups.
+- WU2 full check set at `d6106ed`, all exit 0: `scripts/build-gate.sh`, then `./tests/validate.sh` (gate and
+  root Go packages ok, parity harness 58 legs with zero deltas in both gate modes, 2482 Python tests OK),
+  logs in `~/.cache/s14a-wu2-{build,validate}.log`; the tree stayed clean.
 
 ## Follow-ups
 - Review advisories of WU1 (C1, C3, C4 above), to be triaged into the follow-up register.
+- Review advisories of WU2 (`review-03a4bff3b005d59b`): R1-python-import-shadowing
+  (`materialize_loop.go:715-716`), R2-dup-lock-record (`:323-330`), R2-fake-runtime-error (`:691`),
+  R2-truthy-parse-error (`:563-565`), R3-silent-skip-and-swallowed-walk-errors
+  (`materialize_loop_test.go:190-200`), R3-untested-failure-paths (`:420-571`). The import-shadowing one is
+  the first to look at when WU3 removes the gate delegation.
 - The differential driver pins `WORKTREE_GATE_BIN`, so the bridge-backed sub-steps compare the orchestration
   against Python calling the same Go bridges. That is orchestration coverage, not authority coverage: the
   native authorities have their own suites, and the wiring unit should revisit whether the differential

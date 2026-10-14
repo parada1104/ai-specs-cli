@@ -24,6 +24,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -53,6 +54,7 @@ def main() -> int:
 
     out, err = io.StringIO(), io.StringIO()
     rc = 0
+    refresh_gates = os.environ.get("MATERIALIZE_REFRESH_GATES") == "1"
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rc = mod.materialize_recipes(
@@ -61,12 +63,16 @@ def main() -> int:
                 None if recipe_mcp_out == "-" else Path(recipe_mcp_out),
                 None if resolved_config_out == "-" else Path(resolved_config_out),
                 None if resolved_hooks_out == "-" else Path(resolved_hooks_out),
+                refresh_gates=refresh_gates,
             )
     except SystemExit as exc:
         code = exc.code
         rc = code if isinstance(code, int) else 1
     except BaseException as exc:  # noqa: BLE001 - mirror main()'s fail()
-        mod.fail(str(exc))
+        # The redirect contexts have already exited, so fail() would print to the
+        # process stderr and raise SystemExit past this handler. Emit the fatal
+        # line into the captured buffer instead, exactly as fail() would.
+        err.write(f"  ✗ {exc}\n")
         rc = 1
 
     payload = {
