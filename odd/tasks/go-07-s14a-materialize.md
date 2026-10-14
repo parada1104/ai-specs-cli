@@ -95,10 +95,11 @@ becoming a failure with return 1.
       marker rule with and without an output path, the fatal primitive conflict, the advisory tag conflict,
       the stamp manifest bytes (four cases, including the no-op that must not rewrite), and two
       schema-invalid recipes.
-- [ ] T4 (WU2): the per-recipe loop: copies, skill-hash registration, the shared lock-write helper,
+- [x] T4 (WU2): the per-recipe loop: copies, skill-hash registration, the shared lock-write helper,
       template/doc/hook actuation with their diagnostics, runtime-hooks collection, and the resolved-hooks
       dump, including the single documented dependency-skill delegation.
-- [ ] T5 (WU2): the loop's differential coverage, plus the parity corpus remaining zero-delta.
+- [x] T5 (WU2): the loop's differential coverage, plus the parity corpus remaining zero-delta. Done in
+      `6ac0a83` (11 scenarios; parity 58 legs zero deltas).
 - [ ] T6: full check set with real exit codes; native review; PR and squash-merge per unit. WU1: done, PR
       #352 squash-merged as `2de231d`. WU2: worktree `.worktrees/go-07-s14a-loop`, branch
       `change/go-07-s14a-loop`, base `2de231d`.
@@ -199,9 +200,21 @@ becoming a failure with return 1.
   (vendor-skills.py `sync_dep_target`, closed with the deps card) and `delegateGateAcquireToPython`
   (gate_binary.py `acquire`, replaced natively by WU3/T7). Both resolve their module through
   `<AI_SPECS_HOME>/lib/_internal/`, the same sibling layout the Python authority uses.
+- WU2 review: `6ac0a83` reviewed against `2de231d` as `review-03a4bff3b005d59b` (high, four lenses, because
+  the delegations start processes), approved and acknowledged. One `review-readability` capture failed with
+  a transport error (`Stream ended without finish_reason`); fresh STATUS reoffered the same slot and the
+  retry captured. Six informational advisories, listed under Follow-ups.
+- WU2 full check set at `d6106ed`, all exit 0: `scripts/build-gate.sh`, then `./tests/validate.sh` (gate and
+  root Go packages ok, parity harness 58 legs with zero deltas in both gate modes, 2482 Python tests OK),
+  logs in `~/.cache/s14a-wu2-{build,validate}.log`; the tree stayed clean.
 
 ## Follow-ups
 - Review advisories of WU1 (C1, C3, C4 above), to be triaged into the follow-up register.
+- Review advisories of WU2 (`review-03a4bff3b005d59b`): R1-python-import-shadowing
+  (`materialize_loop.go:715-716`), R2-dup-lock-record (`:323-330`), R2-fake-runtime-error (`:691`),
+  R2-truthy-parse-error (`:563-565`), R3-silent-skip-and-swallowed-walk-errors
+  (`materialize_loop_test.go:190-200`), R3-untested-failure-paths (`:420-571`). The import-shadowing one is
+  the first to look at when WU3 removes the gate delegation.
 - The differential driver pins `WORKTREE_GATE_BIN`, so the bridge-backed sub-steps compare the orchestration
   against Python calling the same Go bridges. That is orchestration coverage, not authority coverage: the
   native authorities have their own suites, and the wiring unit should revisit whether the differential
