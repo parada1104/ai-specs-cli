@@ -94,7 +94,8 @@ becoming a failure with return 1.
       template/doc/hook actuation with their diagnostics, runtime-hooks collection, and the resolved-hooks
       dump, including the single documented dependency-skill delegation.
 - [ ] T5 (WU2): the loop's differential coverage, plus the parity corpus remaining zero-delta.
-- [ ] T6: full check set with real exit codes; native review; PR and squash-merge per unit.
+- [ ] T6: full check set with real exit codes; native review; PR and squash-merge per unit. WU1: checks and
+      native review done; PR pending.
 
 ## Acceptance criteria
 - The unwired core reproduces the Python orchestration on every covered scenario: step order, the exact
@@ -144,8 +145,23 @@ becoming a failure with return 1.
   Four times the plan's per-slice cap and by far the largest change of the epic. It stays one PR because the
   spine's stamp step cannot exist without the promoted writer, so splitting them would only create a broken
   intermediate state.
+- Review: the single-candidate review was refused with `lens_context_budget_exceeded`, so WU1 was cut into
+  five chained commits and each code commit was reviewed against its predecessor (`baseRef..sha`):
+  C1 `8201616` (`review-707ca81115aa9700`, high, four lenses, 12 advisories), C2 `ee1061e`
+  (`review-21765fa01b8333c1`, medium, no advisories), C3 `67d98e3` (`review-312eb284be465fba`, medium,
+  advisory R3-001 on `gate/shared/recipe_toml.go:120-209`), C4 `e834d20` (`review-023c27cb7ce57a0c`, medium,
+  advisories R3-coverage-gaps, R3-gate-build-skip, R3-pystr-fidelity, R3-ref-fail-uncaptured,
+  R3-shared-state-order). All four approved and acknowledged; C5 is documentation only. Every advisory is
+  informational and is carried as follow-up work, not as a reason to reopen review.
+- Full check set at `7fedfec`, all exit 0: `scripts/build-gate.sh`; the regenerated digests byte-identical
+  to `catalog/recipes/worktree-flow/bin/SHA256SUMS` and `scripts/verify-gate-sums.sh`; `gofmt -l`,
+  `go vet ./...`, `git diff --check`; and `./tests/validate.sh` (gate and root Go packages ok, parity harness
+  zero deltas, 2482 Python tests OK), logs in `~/.cache/s14a-validate.{log,exit}`. The suite needs a
+  Python with `tomllib` (3.11+) as `python3`: with macOS `/usr/bin/python3` 3.9 first on `PATH` the gate's
+  TOML reader fails and 104 gate test cases fail, which is an environment prerequisite, not a regression.
 
 ## Follow-ups
+- Review advisories of WU1 (C1, C3, C4 above), to be triaged into the follow-up register.
 - The differential driver pins `WORKTREE_GATE_BIN`, so the bridge-backed sub-steps compare the orchestration
   against Python calling the same Go bridges. That is orchestration coverage, not authority coverage: the
   native authorities have their own suites, and the wiring unit should revisit whether the differential
