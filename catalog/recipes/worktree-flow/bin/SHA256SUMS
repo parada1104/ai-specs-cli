@@ -208,7 +208,11 @@
 # importable shared package gains the recipe-config TOML writer core that the next
 # commit wires the gate binary to; no behavior change yet, no new asset, no second
 # trust root), with the canonical go1.24.13 toolchain via the same command above.
-ff91830bd5b3b47f44ccff3c4d424849555967209ee1d5c6e74c172a9d40e47f  worktree-gate-darwin-amd64
-7bb9b4eec734221534877919ca9494494689b40abc4d44d26bcaf676d66184ae  worktree-gate-darwin-arm64
-02d186776d9bfccad1591717818ec5fb645327983ce53a80f409e9d8fb39dece  worktree-gate-linux-amd64
-52da70e90005217ccb1b48b49897fd21e89c65cbd3d3d62c156492747fc13460  worktree-gate-linux-arm64
+# Regenerated for the go-07 S14a materialize writer promotion, step 2 of 2 (the gate
+# binary now calls the shared writer core and its local copy is deleted, so the gate
+# and the materialize spine share one grader; no behavior change, no new asset, no
+# second trust root), with the canonical go1.24.13 toolchain via the same command above.
+e76c09f0878a9dd9aadff22f26044c80ef493b82130de8e264217939199c46e5  worktree-gate-darwin-amd64
+b0b58545b01766081ba79266209286e541d3374d8c64038f101e9d279e3c9384  worktree-gate-darwin-arm64
+114fe3a9b4cc7f9cd93270f1d2fb9fa92cf451e600c3918ae799f68280c58336  worktree-gate-linux-amd64
+46c41b0408f2407476a0fa94d2b16ecda6a4a9df9305aae654bc484bd2718727  worktree-gate-linux-arm64
