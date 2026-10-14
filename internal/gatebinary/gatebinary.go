@@ -9,11 +9,18 @@
 // local build, and a fail-open degradation for every failure. Acquire never
 // returns an error; it returns a status the caller turns into warnings.
 //
-// Trust model: the cache directory (<home>/cache/bin/worktree-gate/...) is NOT
-// trusted. Another process may write there at any time, planting symlinks or
-// swapping files between operations, so candidate bytes are never hashed,
-// probed or executed in place: a private O_NOFOLLOW copy is made first and only
-// that copy is verified and, on acceptance, renamed into position. The
+// Trust model: the security boundary is the current user. Every cache component
+// from <home>/cache down to the platform directory must be a real directory
+// (never a symlink) owned by the current user and not writable by group or
+// others; new components are created 0700. Acquire refuses a cache that breaks
+// this before downloading anything, and ResolveVerifiedBinary returns "". A
+// process already running as the same user is out of scope: it can rewrite
+// <home>, the trust root and PATH directly, so no cache check could stop it.
+// <home> itself is assumed private to the user: it holds the trust root, so a
+// <home> writable by others is outside what this package can defend.
+// Inside the boundary the cache bytes are still never hashed, probed or
+// executed in place (defense in depth): a private O_NOFOLLOW copy is made first
+// and only that copy is verified and, on acceptance, renamed into position. The
 // committed trust root
 // <home>/catalog/recipes/worktree-flow/bin/SHA256SUMS and an explicit
 // $WORKTREE_GATE_BIN pin ARE trusted. When the trust root commits no digest for
@@ -179,7 +186,7 @@ func DigestMismatchRecordPath(home, version string) string {
 // it describes.
 func RecordDigestMismatch(message, home, version string) {
 	path := DigestMismatchRecordPath(home, version)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return
 	}
 	_ = os.WriteFile(path, []byte(message+"\n"), 0o644)
@@ -288,6 +295,9 @@ func ResolveVerifiedBinary(home string) string {
 	if !isFile(candidate) || !isExecutable(candidate) || !isFile(VerificationRecordPath(candidate)) {
 		return ""
 	}
+	if err := checkPrivateCache(home, candidate); err != nil {
+		return ""
+	}
 	expected, ok := LoadExpectedDigests(home)
 	if !ok {
 		return ""
@@ -309,7 +319,7 @@ func ResolveVerifiedBinary(home string) string {
 func WriteVerificationRecord(binaryPath, version, digest string) error {
 	path := VerificationRecordPath(binaryPath)
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
@@ -508,7 +518,7 @@ func QuarantineCachedCandidate(binaryPath string) string {
 		digest = "unknown"
 	}
 	rejectedDir := filepath.Join(filepath.Dir(binaryPath), "rejected")
-	if err := os.MkdirAll(rejectedDir, 0o755); err != nil {
+	if err := os.MkdirAll(rejectedDir, 0o700); err != nil {
 		return ""
 	}
 	rejected := filepath.Join(rejectedDir, filepath.Base(binaryPath)+"-"+digest)
@@ -540,7 +550,7 @@ func LocalBuild(binaryPath, home, version, goos, goarch string, lookPath func(st
 	if err != nil {
 		return false, "go toolchain not found on PATH"
 	}
-	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o700); err != nil {
 		return false, fmt.Sprintf("OSError: %v", err)
 	}
 	buildDir, err := os.MkdirTemp(filepath.Dir(binaryPath), ".worktree-gate-build-")
@@ -720,6 +730,13 @@ func Acquire(opts AcquireOptions) AcquireStatus {
 	out.CachePath = binaryPath
 	out.Attempted = true
 
+	if err := ensurePrivateCache(home, binaryPath); err != nil {
+		out.Warn = strPtr(fmt.Sprintf(
+			"worktree-gate: gate cache is not private to the current user (%v); candidate never executed; %s",
+			err, DegradationHint(opts.GateImpl)))
+		return out
+	}
+
 	assetName := AssetName(goos, goarch)
 	expected, expectedPresent := expectedDigest(home, assetName)
 	cacheRejection := ""
@@ -828,7 +845,7 @@ func Acquire(opts AcquireOptions) AcquireStatus {
 	}
 
 	url := baseURL + "/v" + version + "/" + assetName
-	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o700); err != nil {
 		out.Warn = strPtr(fmt.Sprintf("worktree-gate: download failed from %s (%v); %s",
 			url, err, DegradationHint(opts.GateImpl)))
 		return out
@@ -922,6 +939,56 @@ func Acquire(opts AcquireOptions) AcquireStatus {
 }
 
 // --- helpers ----------------------------------------------------------------
+
+// ensurePrivateCache creates the binary's cache directory 0700 and then checks
+// the same-user boundary over every component (see the package trust model).
+func ensurePrivateCache(home, binaryPath string) error {
+	if err := checkPrivateCache(home, binaryPath); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o700); err != nil {
+		return err
+	}
+	return checkPrivateCache(home, binaryPath)
+}
+
+// checkPrivateCache walks <home>/cache down to the binary's directory. Each
+// existing component must be a non-symlink directory owned by the current user
+// with no group/other write bit; a missing component ends the walk (nothing
+// below it can exist yet).
+func checkPrivateCache(home, binaryPath string) error {
+	root := filepath.Join(home, "cache")
+	rel, err := filepath.Rel(root, filepath.Dir(binaryPath))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s is outside %s", binaryPath, root)
+	}
+	dir := root
+	parts := []string{""}
+	if rel != "." {
+		parts = append(parts, strings.Split(rel, string(filepath.Separator))...)
+	}
+	uid := os.Getuid()
+	for _, part := range parts {
+		dir = filepath.Join(dir, part)
+		info, err := os.Lstat(dir)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("%s is not a real directory", dir)
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != uid {
+			return fmt.Errorf("%s is owned by uid %d, not %d", dir, st.Uid, uid)
+		}
+		if info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("%s is writable by group or others (mode %o)", dir, info.Mode().Perm())
+		}
+	}
+	return nil
+}
 
 // downloadTo streams the asset into a fresh private staging file. The flags are
 // deliberately exclusive and non-world-writable (hardening beyond the Python

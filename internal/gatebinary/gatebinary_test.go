@@ -973,3 +973,110 @@ func overrideHostPlatform(fn func() (string, string)) func() {
 	detectHostPlatform = fn
 	return func() { detectHostPlatform = old }
 }
+
+// --- same-user cache boundary ----------------------------------------------
+
+// A cache component writable by group or others breaks the same-user boundary:
+// Acquire refuses before any download, and nothing is installed.
+func TestAcquireRefusesSharedWritableCache(t *testing.T) {
+	home := newHome(t)
+	asset := gateScript()
+	writeSums(t, home, sha256Hex(asset), "worktree-gate-darwin-arm64")
+	srv, hits := assetServer(t, asset)
+	shared := filepath.Join(home, "cache", "bin")
+	if err := os.MkdirAll(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o777); err != nil {
+		t.Fatal(err)
+	}
+
+	status := Acquire(withBaseURL(darwinOpts(home, "auto"), srv.URL))
+
+	if status.Installed {
+		t.Fatalf("installed into a shared-writable cache: %+v", status)
+	}
+	warn := deref(t, status.Warn)
+	mustContain(t, warn, "gate cache is not private to the current user")
+	mustContain(t, warn, shared)
+	if *hits != 0 {
+		t.Fatalf("download attempted %d times despite the refused cache", *hits)
+	}
+	if exists(status.CachePath) {
+		t.Fatal("binary written into the refused cache")
+	}
+}
+
+// A symlinked cache component is refused rather than followed.
+func TestAcquireRefusesSymlinkedCacheComponent(t *testing.T) {
+	home := newHome(t)
+	asset := gateScript()
+	writeSums(t, home, sha256Hex(asset), "worktree-gate-darwin-arm64")
+	srv, hits := assetServer(t, asset)
+	elsewhere := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "cache", "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, "cache", "bin", "worktree-gate")
+	if err := os.Symlink(elsewhere, link); err != nil {
+		t.Fatal(err)
+	}
+
+	status := Acquire(withBaseURL(darwinOpts(home, "auto"), srv.URL))
+
+	if status.Installed {
+		t.Fatalf("installed through a symlinked cache: %+v", status)
+	}
+	mustContain(t, deref(t, status.Warn), "gate cache is not private to the current user")
+	if *hits != 0 {
+		t.Fatalf("download attempted %d times", *hits)
+	}
+	entries, _ := os.ReadDir(elsewhere)
+	if len(entries) != 0 {
+		t.Fatalf("symlink target was written: %v", entries)
+	}
+}
+
+// Fresh cache directories are created private (0700).
+func TestAcquireCreatesPrivateCacheDirectories(t *testing.T) {
+	home := newHome(t)
+	asset := gateScript()
+	writeSums(t, home, sha256Hex(asset), "worktree-gate-darwin-arm64")
+	srv, _ := assetServer(t, asset)
+
+	status := Acquire(withBaseURL(darwinOpts(home, "auto"), srv.URL))
+
+	if !status.Installed {
+		t.Fatalf("not installed: %+v", status)
+	}
+	for dir := filepath.Dir(status.CachePath); dir != home; dir = filepath.Dir(dir) {
+		info, err := os.Lstat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o700 {
+			t.Fatalf("%s mode = %o, want 700", dir, perm)
+		}
+	}
+}
+
+// The resolver refuses an otherwise verified binary in a shared-writable cache.
+func TestResolveVerifiedBinaryRefusesSharedWritableCache(t *testing.T) {
+	t.Setenv("WORKTREE_GATE_BIN", "")
+	home := newHome(t)
+	goos, goarch := DetectHostPlatform()
+	body := "#!/bin/sh\nexit 0\n"
+	cache := CacheBinPath(home, "9.9.9", goos, goarch)
+	writeExec(t, cache, body)
+	writeFile(t, VerificationRecordPath(cache), "status=verified\ndigest="+sha256Hex([]byte(body))+"\n")
+	writeSums(t, home, sha256Hex([]byte(body)), "worktree-gate-"+goos+"-"+goarch)
+	if got := ResolveVerifiedBinary(home); got != cache {
+		t.Fatalf("baseline verified candidate = %q, want %q", got, cache)
+	}
+	if err := os.Chmod(filepath.Dir(filepath.Dir(cache)), 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveVerifiedBinary(home); got != "" {
+		t.Fatalf("shared-writable cache = %q, want empty", got)
+	}
+}

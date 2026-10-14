@@ -124,8 +124,14 @@ becoming a failure with return 1.
         `review-a35ede353bc9dc90`, `review-53df2adaf4e4ad6b`): every round confirms new CRITICAL findings for
         an attacker who can write into the user's own cache directory (latest: symlink-following mismatch
         record, resolve-then-exec race, staging-parent rename). The bounded-correction route is unusable on
-        committed-only candidates (it ends in `captured_artifacts_unverifiable`). Open decision for the
-        human: the security boundary for a same-user cache writer (see Follow-ups).
+        committed-only candidates (it ends in `captured_artifacts_unverifiable`). Decided with the human
+        (2026-10-15): "dejar fuera al atacante del mismo usuario" — the boundary is the current user.
+        Every cache component from `<home>/cache` down must be a real directory owned by the user with no
+        group/other write bit, new ones are created 0700, Acquire refuses before downloading and the
+        resolver returns "" otherwise; a same-user writer is documented out of scope, and `<home>` is
+        assumed user-private. C1 closes with an independent verify (S1-S4 pass, no cross-user path) instead
+        of a fifth native round. Divergence: Python creates the cache with the umask default, so a cache
+        left group-writable by Python is refused by Go.
 
 ## Acceptance criteria
 - The unwired core reproduces the Python orchestration on every covered scenario: step order, the exact
