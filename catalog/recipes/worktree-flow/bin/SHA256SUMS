@@ -204,7 +204,11 @@
 # coerces a truthy non-string [[bindings]] capability/recipe as Python does; no new
 # asset, no second trust root), with the canonical go1.24.13 toolchain via the same
 # command above.
-a5d45bdb1a6c18e356a53362fec16228e339447f08596e210ce6c75bba356097  worktree-gate-darwin-amd64
-55a93200c633988ffb7c8390a97f675d598dc3177336011e5f61f78ccc33cb37  worktree-gate-darwin-arm64
-e02ce3e24b041a4724a577b97cb8d683128ec763168f289ceb9309b2c8cfc380  worktree-gate-linux-amd64
-dcbc2a73e2983b9f596b4c864c10242317870cb634cd80ddb3e043702e6d5586  worktree-gate-linux-arm64
+# Regenerated for the go-07 S14a materialize writer promotion, step 1 of 2 (the
+# importable shared package gains the recipe-config TOML writer core that the next
+# commit wires the gate binary to; no behavior change yet, no new asset, no second
+# trust root), with the canonical go1.24.13 toolchain via the same command above.
+ff91830bd5b3b47f44ccff3c4d424849555967209ee1d5c6e74c172a9d40e47f  worktree-gate-darwin-amd64
+7bb9b4eec734221534877919ca9494494689b40abc4d44d26bcaf676d66184ae  worktree-gate-darwin-arm64
+02d186776d9bfccad1591717818ec5fb645327983ce53a80f409e9d8fb39dece  worktree-gate-linux-amd64
+52da70e90005217ccb1b48b49897fd21e89c65cbd3d3d62c156492747fc13460  worktree-gate-linux-arm64
