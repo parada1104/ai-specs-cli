@@ -262,6 +262,11 @@ func ResolveVerifiedBinary(home string) string {
 		}
 		return ""
 	}
+	resolved, ok := resolveHome(home)
+	if !ok {
+		return ""
+	}
+	home = resolved
 	goos, goarch := detectHostPlatform()
 	if goos == "" || goarch == "" {
 		return ""
@@ -571,6 +576,22 @@ func AssetURL(version, assetName string) string {
 	return DefaultBaseURL + "/v" + version + "/" + assetName
 }
 
+// resolveHome resolves the ai-specs home: the explicit value, else
+// $AI_SPECS_HOME; empty means unresolved and a resolved home is absolute. This
+// deliberately diverges from Python's _ai_specs_home, which falls back to its
+// install root via __file__: with no Go equivalent, this fails closed instead
+// of trusting the attacker-controllable process working directory.
+func resolveHome(explicit string) (string, bool) {
+	if explicit == "" {
+		explicit = os.Getenv("AI_SPECS_HOME")
+	}
+	abs, err := filepath.Abs(explicit)
+	if explicit == "" || err != nil {
+		return "", false
+	}
+	return abs, true
+}
+
 // AcquireOptions is the injection boundary. Empty Home falls back to
 // $AI_SPECS_HOME; empty GOOS/GOARCH fall back to the host platform; an empty
 // BaseURL is the canonical GitHub release base; a nil HTTP client is a 60 s
@@ -603,9 +624,10 @@ type AcquireStatus struct {
 // error and never raises: every failure warns and degrades, `auto` and `go`
 // both fail open with a recorded doctor ERROR, and there is no Bash fallback.
 func Acquire(opts AcquireOptions) AcquireStatus {
-	home := opts.Home
-	if home == "" {
-		home = os.Getenv("AI_SPECS_HOME")
+	home, homeOK := resolveHome(opts.Home)
+	if !homeOK {
+		return AcquireStatus{Warn: strPtr("cannot resolve the ai-specs home (AI_SPECS_HOME is unset); " +
+			"gate binary acquisition skipped — " + DegradationHint(opts.GateImpl))}
 	}
 	version := CLIVersion(home)
 	goos, goarch := detectHostPlatform()

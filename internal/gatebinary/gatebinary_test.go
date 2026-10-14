@@ -714,6 +714,33 @@ func TestResolveVerifiedBinaryOverride(t *testing.T) {
 	}
 }
 
+func TestUnresolvedHomeFailsClosedAgainstCwdHijack(t *testing.T) {
+	t.Setenv("AI_SPECS_HOME", "")
+	t.Chdir(t.TempDir())
+	goos, goarch := DetectHostPlatform()
+	body := "#!/bin/sh\n: > executed\ncase \"$1\" in\n" +
+		"  --version) printf '9.9.9\\n' ;;\n  --selftest) exit 0 ;;\nesac\nexit 0\n"
+	writeFile(t, "VERSION", "9.9.9\n")
+	cache := CacheBinPath("", "9.9.9", goos, goarch)
+	writeExec(t, cache, body)
+	writeFile(t, VerificationRecordPath(cache), "status=verified\ndigest="+sha256Hex([]byte(body))+"\n")
+	writeSums(t, "", sha256Hex([]byte(body)), "worktree-gate-"+goos+"-"+goarch)
+
+	status := Acquire(AcquireOptions{GateImpl: "auto", Home: "", GOOS: goos, GOARCH: goarch})
+	if status.Attempted || status.Installed {
+		t.Fatalf("unresolved home was not skipped: %+v", status)
+	}
+	warn := deref(t, status.Warn)
+	mustContain(t, warn, "cannot resolve the ai-specs home")
+	mustContain(t, warn, DegradationHint("auto"))
+	if exists("executed") {
+		t.Fatal("cwd-relative cached binary was executed")
+	}
+	if ResolveVerifiedBinary("") != "" {
+		t.Fatal("ResolveVerifiedBinary did not fail closed")
+	}
+}
+
 func TestBinaryVersionAndSelftest(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "gate.sh")
 	writeExec(t, bin, "#!/bin/sh\ncase \"$1\" in\n"+
