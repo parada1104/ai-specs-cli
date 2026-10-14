@@ -249,6 +249,11 @@ func VerificationRecordPath(binaryPath string) string { return binaryPath + Veri
 //     receipt AND — when the committed trust root is readable — a sha256 that
 //     still matches it. An unreadable or undecodable trust root fails closed.
 //
+// When the trust root commits no digest for the host asset this is a deliberate
+// hardening beyond Python's resolve_verified_binary, which accepts any receipt
+// there: the sidecar must itself attest status=verified with a non-empty digest
+// equal to the candidate's current sha256.
+//
 // It never warns or errors: each caller decides its own fail-open posture.
 func ResolveVerifiedBinary(home string) string {
 	if override := os.Getenv(GateBinEnv); override != "" {
@@ -269,14 +274,17 @@ func ResolveVerifiedBinary(home string) string {
 	if !ok {
 		return ""
 	}
-	if digest, present := expected[AssetName(goos, goarch)]; present {
-		observed, err := Sha256Of(candidate)
-		if err != nil {
+	digest, present := expected[AssetName(goos, goarch)]
+	if !present {
+		record := ReadVerificationRecord(candidate)
+		if record["status"] != "verified" || record["digest"] == "" {
 			return ""
 		}
-		if observed != digest {
-			return ""
-		}
+		digest = record["digest"]
+	}
+	observed, err := Sha256Of(candidate)
+	if err != nil || observed != digest {
+		return ""
 	}
 	return candidate
 }
@@ -746,12 +754,17 @@ func Acquire(opts AcquireOptions) AcquireStatus {
 			url, err, DegradationHint(opts.GateImpl)))
 		return out
 	}
-	tmp := filepath.Join(filepath.Dir(binaryPath), "."+filepath.Base(binaryPath)+".download")
-	defer func() {
-		if exists(tmp) {
-			_ = os.Remove(tmp)
-		}
-	}()
+	// Hardening beyond Python's predictable ".<name>.download" temp path: the
+	// artifact is staged inside a private 0700 directory and renamed into place
+	// only after the digest/version/self-test probes pass.
+	tmpDir, err := os.MkdirTemp(filepath.Dir(binaryPath), "."+filepath.Base(binaryPath)+".download-")
+	if err != nil {
+		out.Warn = strPtr(fmt.Sprintf("worktree-gate: download failed from %s (%v); %s",
+			url, err, DegradationHint(opts.GateImpl)))
+		return out
+	}
+	defer os.RemoveAll(tmpDir)
+	tmp := filepath.Join(tmpDir, filepath.Base(binaryPath))
 
 	if err := downloadTo(client, url, tmp); err != nil {
 		out.Warn = strPtr(fmt.Sprintf("worktree-gate: download failed from %s (%v); %s",
@@ -774,7 +787,7 @@ func Acquire(opts AcquireOptions) AcquireStatus {
 		out.Warn = &mismatch
 		return out
 	}
-	if err := os.Chmod(tmp, 0o755); err != nil {
+	if err := os.Chmod(tmp, 0o700); err != nil {
 		out.Warn = strPtr(fmt.Sprintf("worktree-gate: download failed from %s (%v); %s",
 			url, err, DegradationHint(opts.GateImpl)))
 		return out
@@ -835,6 +848,9 @@ func Acquire(opts AcquireOptions) AcquireStatus {
 
 // --- helpers ----------------------------------------------------------------
 
+// downloadTo streams the asset into a fresh private staging file. The flags are
+// deliberately exclusive and non-world-writable (hardening beyond the Python
+// port's truncating open) so the caller's private temp dir is the only writer.
 func downloadTo(client *http.Client, url, dest string) error {
 	resp, err := client.Get(url)
 	if err != nil {
@@ -844,7 +860,7 @@ func downloadTo(client *http.Client, url, dest string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP Error %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
-	file, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	file, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}

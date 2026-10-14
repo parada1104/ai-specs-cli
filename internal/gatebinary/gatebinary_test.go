@@ -352,9 +352,41 @@ func TestPartialDownloadNeverInstalled(t *testing.T) {
 		t.Fatalf("cache path exists after partial download: %q", status.CachePath)
 	}
 	mustContain(t, deref(t, status.Warn), "download failed")
-	leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(status.CachePath), ".*.download"))
+	leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(status.CachePath), ".*.download-*"))
 	if len(leftovers) != 0 {
 		t.Fatalf("partial download temp left behind: %v", leftovers)
+	}
+}
+
+func TestDownloadStagesInPrivateTempDir(t *testing.T) {
+	home := newHome(t)
+	asset := gateScript()
+	writeSums(t, home, sha256Hex(asset), "worktree-gate-darwin-arm64")
+	cache := CacheBinPath(home, "9.9.9", "darwin", "arm64")
+	dir := filepath.Dir(cache)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
+	}
+	// A symlink planted at the former predictable temp path must never be
+	// followed, so its target stays untouched.
+	victim := filepath.Join(t.TempDir(), "victim")
+	writeFile(t, victim, "untouched")
+	if err := os.Symlink(victim, filepath.Join(dir, ".worktree-gate.download")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	srv, _ := assetServer(t, asset)
+
+	status := Acquire(withBaseURL(darwinOpts(home, "auto"), srv.URL))
+
+	if !status.Installed {
+		t.Fatalf("not installed: %+v", status)
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "untouched" {
+		t.Fatalf("pre-planted symlink target was written: %q", got)
+	}
+	leftovers, _ := filepath.Glob(filepath.Join(dir, ".*.download-*"))
+	if len(leftovers) != 0 {
+		t.Fatalf("download temp leftovers remain: %v", leftovers)
 	}
 }
 
@@ -632,7 +664,17 @@ func TestResolveVerifiedBinary(t *testing.T) {
 	if got := ResolveVerifiedBinary(home); got != "" {
 		t.Fatalf("candidate without receipt = %q, want empty", got)
 	}
+	// No committed digest: the receipt itself must attest a matching digest.
 	writeFile(t, VerificationRecordPath(cache), "status=verified\n")
+	if got := ResolveVerifiedBinary(home); got != "" {
+		t.Fatalf("digestless receipt = %q, want empty", got)
+	}
+	writeFile(t, VerificationRecordPath(cache), "status=verified\ndigest="+strings.Repeat("b", 64)+"\n")
+	if got := ResolveVerifiedBinary(home); got != "" {
+		t.Fatalf("mismatched receipt digest = %q, want empty", got)
+	}
+	writeFile(t, VerificationRecordPath(cache),
+		"status=verified\ndigest="+sha256Hex([]byte("#!/bin/sh\nexit 0\n"))+"\n")
 	if got := ResolveVerifiedBinary(home); got != cache {
 		t.Fatalf("receipted candidate without trust root = %q, want %q", got, cache)
 	}
