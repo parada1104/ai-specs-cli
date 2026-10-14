@@ -105,6 +105,27 @@ becoming a failure with return 1.
       `change/go-07-s14a-loop`, base `2de231d`.
 - [ ] T7 (WU3): port the gate-binary `acquire` to Go (one grader, shared with the doctor's read/verify
       primitives) and replace the WU2 delegation; its own differential against `gate_binary.py`.
+      WU2 merged as PR #353 (`5933bb6`). WU3: worktree `.worktrees/go-07-s14a-gate-acquire`, branch
+      `change/go-07-s14a-gate-acquire`, base `5933bb6`. Plan, from a read-only reconnaissance:
+      - C1: new `internal/gatebinary` package porting `lib/_internal/gate_binary.py` in full (paths,
+        platform, trust root, verification and receipts, mismatch records, quarantine, local build,
+        `Acquire`), with unit tests mirroring `tests/test_gate_binary_dist.py`. Not shared with
+        `internal/upgrade`: its `Acquire` has another contract (no self-test, receipts or quarantine) and its
+        `ParseTrustRoot` validates differently.
+      - C2: the doctor delegates its read-only twins to `internal/gatebinary`; `materialize_loop.go` calls
+        the native `Acquire` instead of `delegateGateAcquireToPython`, keeping both frozen messages; a
+        differential against Python `acquire` on temp homes (local HTTP server, fake `go`, offline mode).
+      - Deliberate divergence: Python's `urlretrieve` has no timeout; Go uses 60 s, like `internal/upgrade`.
+        Tests never reach the network.
+      - State (C1 only, C2 not started): `2fecbcc` (port), `d0998ae` (receipt/download hardening),
+        `f3614d9` (unresolved home fails closed), `637c171` (untrusted-cache threat model, decided with the
+        human: private O_NOFOLLOW verify copies, install by rename, no-digest fails closed). Native review
+        did not converge in four high-tier rounds (`review-870228bb459afd27`, `review-cdd02e2b042ca0f3`,
+        `review-a35ede353bc9dc90`, `review-53df2adaf4e4ad6b`): every round confirms new CRITICAL findings for
+        an attacker who can write into the user's own cache directory (latest: symlink-following mismatch
+        record, resolve-then-exec race, staging-parent rename). The bounded-correction route is unusable on
+        committed-only candidates (it ends in `captured_artifacts_unverifiable`). Open decision for the
+        human: the security boundary for a same-user cache writer (see Follow-ups).
 
 ## Acceptance criteria
 - The unwired core reproduces the Python orchestration on every covered scenario: step order, the exact
@@ -207,6 +228,28 @@ becoming a failure with return 1.
 - WU2 full check set at `d6106ed`, all exit 0: `scripts/build-gate.sh`, then `./tests/validate.sh` (gate and
   root Go packages ok, parity harness 58 legs with zero deltas in both gate modes, 2482 Python tests OK),
   logs in `~/.cache/s14a-wu2-{build,validate}.log`; the tree stayed clean.
+- WU3 C1 (worktree `.worktrees/go-07-s14a-gate-acquire`, branch
+  `change/go-07-s14a-gate-acquire`, base `5933bb6`): `internal/gatebinary` ports
+  `lib/_internal/gate_binary.py` in full — `CLIVersion`, `DetectPlatform`/`DetectHostPlatform`,
+  `SupportedPlatforms`, `AssetName`, `CacheBinPath`, the mismatch record, `LoadExpectedDigests`
+  (fail-closed on an unreadable/undecodable trust root, the doctor twin's deliberate divergence),
+  `Sha256Of`, the atomic verification receipt and its reader, `ResolveVerifiedBinary` (with
+  `WORKTREE_GATE_BIN`), `VerifyCachedBinary` (all reasons verbatim, joined with `; `),
+  `QuarantineCachedCandidate`, `LocalBuild`, `BinaryVersion`/`Selftest`, `DegradationHint`,
+  `AssetURL`, and `Acquire` (never errors; unsupported → cache revalidation → local build → offline
+  → missing digest → download, with temp-then-rename and a receipt that deletes the binary when the
+  receipt write fails). `gatebinary_test.go` mirrors `tests/test_gate_binary_dist.py` symptom by
+  symptom via `httptest` and fixture shell binaries; no test reaches the network. RED was the new
+  package failing to build; GREEN is `go test ./internal/gatebinary/ -count=1` exit 0 (19 tests).
+  The package has no importer yet: C2 rewires the doctor twins and `materialize_loop.go`, so
+  `internal/doctor/**` and `internal/sync/**` are untouched here. Checks: `gofmt -l cmd internal`,
+  `go vet ./...` and `git diff --check` all exit 0; `go test ./cmd/... ./internal/... -count=1`
+  exits 1 only on pre-existing environment failures (the `python3` on `PATH` is 3.9 without
+  `tomllib`, and `internal/projectcache`, `internal/provider`, `internal/sync`, `internal/target`
+  pin Python 3.14 / recursion behavior), none in a package that imports `internal/gatebinary`.
+  Size, disclosed: 931 lines of implementation plus 758 of tests (1689 authored), above the plan's
+  ~1300 soft stop; if the reviewer wants a split, the natural cut is the test table as its own
+  follow-up commit, as in WU2.
 
 ## Follow-ups
 - Review advisories of WU1 (C1, C3, C4 above), to be triaged into the follow-up register.
