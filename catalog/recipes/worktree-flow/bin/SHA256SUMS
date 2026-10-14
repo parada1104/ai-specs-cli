@@ -212,7 +212,15 @@
 # binary now calls the shared writer core and its local copy is deleted, so the gate
 # and the materialize spine share one grader; no behavior change, no new asset, no
 # second trust root), with the canonical go1.24.13 toolchain via the same command above.
-e76c09f0878a9dd9aadff22f26044c80ef493b82130de8e264217939199c46e5  worktree-gate-darwin-amd64
-b0b58545b01766081ba79266209286e541d3374d8c64038f101e9d279e3c9384  worktree-gate-darwin-arm64
-114fe3a9b4cc7f9cd93270f1d2fb9fa92cf451e600c3918ae799f68280c58336  worktree-gate-linux-amd64
-46c41b0408f2407476a0fa94d2b16ecda6a4a9df9305aae654bc484bd2718727  worktree-gate-linux-arm64
+# Regenerated for the go-07 S14a materialize reader promotion (the same four-arch
+# asset no longer carries local copies of the tag-metadata and primitive-claim TOML
+# readers: both moved into the importable shared package behind
+# shared.LoadRecipeTagMetadata and shared.LoadRecipePrimitives, so the gate binary and
+# the root native materializer acquire through one implementation; the gate's tag and
+# primitive commands delegate to the shared readers and their JSON contracts are
+# unchanged; no behavior change, no new asset, no second trust root), with the
+# canonical go1.24.13 toolchain via the same command above.
+309d76dd7e6d5eafb482a219ec77a01687b84ebda6fe1d45815bd7f0e4428618  worktree-gate-darwin-amd64
+e6f6fbcb0e83bf90b88f8d159dfb1bf134fa0cd8d662036228c97bbd0fbb9422  worktree-gate-darwin-arm64
+48b2e62a75ed97f3a971a965d688df83528f3f57f1754f66dc293915d3179b8d  worktree-gate-linux-amd64
+84d7c0ebeed6a3252aaad70b1d54c1f49e2d9ad39ef5c4ab770a7726ca4580aa  worktree-gate-linux-arm64
