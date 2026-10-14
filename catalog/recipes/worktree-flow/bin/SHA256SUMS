@@ -204,7 +204,23 @@
 # coerces a truthy non-string [[bindings]] capability/recipe as Python does; no new
 # asset, no second trust root), with the canonical go1.24.13 toolchain via the same
 # command above.
-a5d45bdb1a6c18e356a53362fec16228e339447f08596e210ce6c75bba356097  worktree-gate-darwin-amd64
-55a93200c633988ffb7c8390a97f675d598dc3177336011e5f61f78ccc33cb37  worktree-gate-darwin-arm64
-e02ce3e24b041a4724a577b97cb8d683128ec763168f289ceb9309b2c8cfc380  worktree-gate-linux-amd64
-dcbc2a73e2983b9f596b4c864c10242317870cb634cd80ddb3e043702e6d5586  worktree-gate-linux-arm64
+# Regenerated for the go-07 S14a materialize writer promotion, step 1 of 2 (the
+# importable shared package gains the recipe-config TOML writer core that the next
+# commit wires the gate binary to; no behavior change yet, no new asset, no second
+# trust root), with the canonical go1.24.13 toolchain via the same command above.
+# Regenerated for the go-07 S14a materialize writer promotion, step 2 of 2 (the gate
+# binary now calls the shared writer core and its local copy is deleted, so the gate
+# and the materialize spine share one grader; no behavior change, no new asset, no
+# second trust root), with the canonical go1.24.13 toolchain via the same command above.
+# Regenerated for the go-07 S14a materialize reader promotion (the same four-arch
+# asset no longer carries local copies of the tag-metadata and primitive-claim TOML
+# readers: both moved into the importable shared package behind
+# shared.LoadRecipeTagMetadata and shared.LoadRecipePrimitives, so the gate binary and
+# the root native materializer acquire through one implementation; the gate's tag and
+# primitive commands delegate to the shared readers and their JSON contracts are
+# unchanged; no behavior change, no new asset, no second trust root), with the
+# canonical go1.24.13 toolchain via the same command above.
+309d76dd7e6d5eafb482a219ec77a01687b84ebda6fe1d45815bd7f0e4428618  worktree-gate-darwin-amd64
+e6f6fbcb0e83bf90b88f8d159dfb1bf134fa0cd8d662036228c97bbd0fbb9422  worktree-gate-darwin-arm64
+48b2e62a75ed97f3a971a965d688df83528f3f57f1754f66dc293915d3179b8d  worktree-gate-linux-amd64
+84d7c0ebeed6a3252aaad70b1d54c1f49e2d9ad39ef5c4ab770a7726ca4580aa  worktree-gate-linux-arm64

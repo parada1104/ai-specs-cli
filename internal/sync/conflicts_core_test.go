@@ -12,11 +12,12 @@ import (
 	"ai-specs.dev/worktree-gate/shared"
 )
 
-// tagConflictOracle imports the real Python materialize authority and runs its
-// temporary tag authority (_python_check_tag_conflicts), which skips only a
-// recipe.toml that is not a regular file and otherwise calls the
-// recipe-conflicts.py load path without a try/except. It reports the graded
-// conflicts, or the raised exception type when the load path raises.
+// tagConflictOracle imports the real Python materialize authority and runs the
+// PRIMARY tag authority (check_tag_conflicts, which grades through the gate
+// binary pinned by WORKTREE_GATE_BIN). The gate's reader omits a recipe it
+// cannot fully acquire, so this is the exact authority the materialize call site
+// uses; it reports the graded conflicts, or the raised exception type when the
+// primary authority raises.
 const tagConflictOracle = `
 import importlib.util, json, sys
 from pathlib import Path
@@ -29,7 +30,7 @@ out = {}
 try:
     out["conflicts"] = [
         {"type": "tag_conflict", "tag": c.tag, "recipes": sorted(c.recipes), "severity": c.severity}
-        for c in mod._python_check_tag_conflicts(catalog, ids)
+        for c in mod.check_tag_conflicts(catalog, ids)
     ]
 except Exception as exc:
     out["error"] = type(exc).__name__
@@ -37,13 +38,15 @@ print(json.dumps(out, sort_keys=True, separators=(",", ":")))
 `
 
 // TestNativeConflictTagDifferentialAgainstPython pins PlanTagConflicts against the
-// real Python tag authority (_python_check_tag_conflicts). The valid case
-// carries an absent ghost directory and must grade the same conflicts in the
-// same first-seen tag order. The unparsable and the [recipe]-less files must
-// raise on both sides: the Python load path has no try/except, so the native
-// boundary propagates the loader error instead of inventing a skip.
+// real Python materialize tag authority (check_tag_conflicts, graded through the
+// gate binary). The valid case carries an absent ghost directory and must grade
+// the same conflicts in the same first-seen tag order. The unparsable and the
+// [recipe]-less files are omitted by the gate's reader on both sides, because the
+// materialize call site uses that same lax acquisition.
 func TestNativeConflictTagDifferentialAgainstPython(t *testing.T) {
 	python, authority := syncPythonAuthority(t)
+	gate := materializeGateBinary(t)
+	t.Setenv("WORKTREE_GATE_BIN", gate)
 	driver := filepath.Join(t.TempDir(), "tag_conflict_oracle.py")
 	if err := os.WriteFile(driver, []byte(tagConflictOracle), 0o600); err != nil {
 		t.Fatal(err)
@@ -68,8 +71,8 @@ func TestNativeConflictTagDifferentialAgainstPython(t *testing.T) {
 	}{
 		{"shared tags with an absent directory skipped", []string{"ghost", "a", "b", "c"}, true},
 		{"absent recipe.toml is skipped", []string{"empty", "a", "b", "c"}, true},
-		{"unparsable recipe.toml raises", []string{"a", "dir-broken"}, false},
-		{"recipe.toml without [recipe] raises", []string{"a", "dir-norecipe"}, false},
+		{"unparsable recipe.toml is omitted", []string{"a", "dir-broken"}, false},
+		{"recipe.toml without [recipe] is omitted", []string{"a", "dir-norecipe"}, false},
 	}
 
 	for _, tc := range cases {
@@ -151,14 +154,13 @@ skills = [{ id = "s1", source = "bundled" }]
 	}
 }
 
-// TestNativeConflictTagBoundary pins the native tag acquisition boundary: a
-// recipe.toml that is missing or is not a regular file is skipped, while a
-// present file the loader cannot validate propagates its error. First-seen tag
-// order and severity survive, and an all-skipped grade is a non-nil empty JSON
-// list. The Python authority (_python_check_tag_conflicts at
-// lib/_internal/recipe-materialize.py:635) skips only `not recipe_toml.is_file()`
-// and calls load_recipe_toml without try/except, so an invalid or structurally
-// invalid recipe.toml raises at the materialize call site.
+// TestNativeConflictTagBoundary pins the native tag acquisition boundary as the
+// gate's lax reader defines it: a recipe.toml that is missing, is not a regular
+// file, is unparsable, or lacks a valid [recipe] table is omitted, while shared
+// tags still grade with first-seen order and severity. The Python materialize
+// call site reaches this same shared acquisition through the gate's
+// --resolve-tag-conflicts command, so an invalid or structurally invalid
+// recipe.toml never aborts the tag phase.
 func TestNativeConflictTagBoundary(t *testing.T) {
 	catalog := t.TempDir()
 	writeSyncCatalogRecipe(t, catalog, "a", syncRecipeHeader("zeta", "Zeta")+"tags = [\"tracker\", \"vcs\"]\n")
@@ -184,11 +186,11 @@ func TestNativeConflictTagBoundary(t *testing.T) {
 		t.Fatalf("PlanTagConflicts = %#v, want %#v", got, want)
 	}
 
-	if _, err := PlanTagConflicts(catalog, []string{"a", "broken"}); err == nil {
-		t.Fatal("an unparseable recipe.toml must propagate the loader error")
+	if _, err := PlanTagConflicts(catalog, []string{"a", "broken"}); err != nil {
+		t.Fatalf("an unparseable recipe.toml must be omitted, got err=%v", err)
 	}
-	if _, err := PlanTagConflicts(catalog, []string{"a", "norecipe"}); err == nil {
-		t.Fatal("a recipe.toml without [recipe] must propagate the loader error")
+	if _, err := PlanTagConflicts(catalog, []string{"a", "norecipe"}); err != nil {
+		t.Fatalf("a recipe.toml without [recipe] must be omitted, got err=%v", err)
 	}
 
 	empty, err := PlanTagConflicts(catalog, []string{"ghost", "dir-recipe"})
