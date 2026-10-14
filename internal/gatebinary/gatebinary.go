@@ -9,6 +9,19 @@
 // local build, and a fail-open degradation for every failure. Acquire never
 // returns an error; it returns a status the caller turns into warnings.
 //
+// Trust model: the cache directory (<home>/cache/bin/worktree-gate/...) is NOT
+// trusted. Another process may write there at any time, planting symlinks or
+// swapping files between operations, so candidate bytes are never hashed,
+// probed or executed in place: a private O_NOFOLLOW copy is made first and only
+// that copy is verified and, on acceptance, renamed into position. The
+// committed trust root
+// <home>/catalog/recipes/worktree-flow/bin/SHA256SUMS and an explicit
+// $WORKTREE_GATE_BIN pin ARE trusted. When the trust root commits no digest for
+// the host asset this package fails closed (the resolver returns "" and the
+// verifier rejects) instead of accepting a receipt. That is a deliberate
+// divergence from lib/_internal/gate_binary.py, which trusts the cache and
+// keeps the historical receipt acceptance.
+//
 // This package is the single read/verify/acquire authority. It deliberately
 // does not reuse internal/upgrade (whose Acquire has another contract: no
 // self-test, no receipt, no quarantine, and a different trust-root parser) nor
@@ -29,6 +42,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -246,13 +260,12 @@ func VerificationRecordPath(binaryPath string) string { return binaryPath + Veri
 //  1. $WORKTREE_GATE_BIN when it is a file and executable — the documented
 //     debugging/pinning escape that never silently falls through.
 //  2. the version-keyed cache candidate, accepted only with its .verified
-//     receipt AND — when the committed trust root is readable — a sha256 that
-//     still matches it. An unreadable or undecodable trust root fails closed.
+//     receipt and a sha256 that matches the committed trust root. A missing,
+//     unreadable or undecodable trust root, and a trust root that commits no
+//     digest for the host asset, all fail closed.
 //
-// When the trust root commits no digest for the host asset this is a deliberate
-// hardening beyond Python's resolve_verified_binary, which accepts any receipt
-// there: the sidecar must itself attest status=verified with a non-empty digest
-// equal to the candidate's current sha256.
+// The no-committed-digest refusal is a deliberate hardening beyond Python's
+// resolve_verified_binary, which accepts any receipt there.
 //
 // It never warns or errors: each caller decides its own fail-open posture.
 func ResolveVerifiedBinary(home string) string {
@@ -281,11 +294,7 @@ func ResolveVerifiedBinary(home string) string {
 	}
 	digest, present := expected[AssetName(goos, goarch)]
 	if !present {
-		record := ReadVerificationRecord(candidate)
-		if record["status"] != "verified" || record["digest"] == "" {
-			return ""
-		}
-		digest = record["digest"]
+		return ""
 	}
 	observed, err := Sha256Of(candidate)
 	if err != nil || observed != digest {
@@ -366,15 +375,17 @@ type VerifyOptions struct {
 	// RequireReceipt also validates the .verified sidecar's status, version,
 	// digest and self-test.
 	RequireReceipt bool
-	// AllowMissingDigest accepts bytes with no committed digest (the local
-	// build path).
-	AllowMissingDigest bool
 }
 
 // VerifyCachedBinary revalidates cache bytes against the committed digest, the
 // expected version and a self-test, joining every failure reason with "; ".
-// The version/self-test probes only run after the trust-root digest matches: a
-// stale or unknown executable is never executed merely to inspect it.
+// Bytes with no committed digest are rejected: a receipt can never bridge a
+// trust-root gap. The candidate is first copied into a private O_NOFOLLOW
+// staging file; only that copy is hashed and probed, and on acceptance it is
+// renamed back onto binaryPath so the installed byte stream is the verified
+// one. The version/self-test probes only run after the trust-root digest
+// matches: a stale or unknown executable is never executed merely to inspect
+// it.
 func VerifyCachedBinary(binaryPath, home, version, goos, goarch string, opts VerifyOptions) VerificationEvidence {
 	assetName := AssetName(goos, goarch)
 	expected, present := expectedDigest(home, assetName)
@@ -384,38 +395,31 @@ func VerifyCachedBinary(binaryPath, home, version, goos, goarch string, opts Ver
 		Selftest:       "not_run",
 		Receipt:        VerificationRecordPath(binaryPath),
 	}
-	reasons := []string{}
 	if !isFile(binaryPath) || !isExecutable(binaryPath) {
 		evidence.Reason = "cache candidate is missing or not executable"
 		return evidence
 	}
-	observed, err := Sha256Of(binaryPath)
+	dir, staged, observed, err := stagePrivateCopy(binaryPath)
 	if err != nil {
-		evidence.Reason = fmt.Sprintf("cache digest read failed: %v", err)
+		evidence.Reason = fmt.Sprintf("cache copy failed: %v", err)
 		return evidence
 	}
+	defer os.RemoveAll(dir)
 	evidence.ObservedDigest = observed
-	if !present && !opts.AllowMissingDigest {
+	if !present {
 		evidence.Reason = fmt.Sprintf("no committed digest for %s", assetName)
 		return evidence
 	}
-	if present && observed != expected {
+	if observed != expected {
 		evidence.Reason = fmt.Sprintf("digest mismatch: expected %s, got %s", expected, observed)
 		return evidence
 	}
 
-	reportedVersion := probeBinaryVersion(binaryPath)
-	selftest := probeSelftest(binaryPath)
+	reportedVersion := probeBinaryVersion(staged)
+	selftest := probeSelftest(staged)
 	evidence.Version = reportedVersion
 	evidence.Selftest = selftestOrPassed(selftest)
-	// The two re-checks below are unreachable: the early returns above already
-	// handled both cases. They are kept for line-for-line fidelity with the
-	// Python legacy.
-	if !present && !opts.AllowMissingDigest {
-		reasons = append(reasons, fmt.Sprintf("no committed digest for %s", assetName))
-	} else if present && observed != expected {
-		reasons = append(reasons, fmt.Sprintf("digest mismatch: expected %s, got %s", expected, observed))
-	}
+	reasons := []string{}
 	if reportedVersion != version {
 		reasons = append(reasons, fmt.Sprintf("version mismatch: expected %s, got %s", version, orUnknown(reportedVersion)))
 	}
@@ -439,11 +443,57 @@ func VerifyCachedBinary(binaryPath, home, version, goos, goarch string, opts Ver
 	}
 	if len(reasons) > 0 {
 		evidence.Reason = strings.Join(reasons, "; ")
-	} else {
-		evidence.Reason = "digest, version, and self-test verified"
+		return evidence
 	}
-	evidence.Verified = len(reasons) == 0
+	if err := os.Rename(staged, binaryPath); err != nil {
+		evidence.Reason = fmt.Sprintf("cache install failed: %v", err)
+		return evidence
+	}
+	evidence.Reason = "digest, version, and self-test verified"
+	evidence.Verified = true
 	return evidence
+}
+
+// stagePrivateCopy copies src into a fresh 0700 directory beside it and returns
+// that directory, the copy's path and the copy's sha256. The source is opened
+// O_NOFOLLOW so a symlink planted at src is never followed, the copy is created
+// O_WRONLY|O_CREATE|O_EXCL 0600 while being hashed, and the copy is chmod 0700.
+// The caller owns dir and must defer os.RemoveAll(dir); the copy is the only
+// artifact ever hashed, probed, or renamed into place.
+func stagePrivateCopy(src string) (dir, path, digest string, err error) {
+	dir, err = os.MkdirTemp(filepath.Dir(src), ".worktree-gate-verify-")
+	if err != nil {
+		return "", "", "", err
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	source, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer source.Close()
+	dst := filepath.Join(dir, filepath.Base(src))
+	target, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", "", "", err
+	}
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(target, h), source); err != nil {
+		_ = target.Close()
+		return "", "", "", err
+	}
+	if err := target.Close(); err != nil {
+		return "", "", "", err
+	}
+	if err := os.Chmod(dst, 0o700); err != nil {
+		return "", "", "", err
+	}
+	cleanup = false
+	return dir, dst, hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // QuarantineCachedCandidate moves rejected cache bytes aside so the executable
@@ -475,7 +525,9 @@ func QuarantineCachedCandidate(binaryPath string) string {
 // LocalBuild builds the in-repo Go source into the destination and returns
 // (ok, detail). It never touches the network. lookPath resolves the toolchain
 // (nil means exec.LookPath); CGO is disabled and GOOS/GOARCH are pinned so the
-// output matches the release matrix.
+// output matches the release matrix. The toolchain writes into a fresh private
+// directory (never a predictable name in the cache) and the artifact is renamed
+// into the destination only after a successful build.
 func LocalBuild(binaryPath, home, version, goos, goarch string, lookPath func(string) (string, error)) (bool, string) {
 	gateDir := filepath.Join(home, "catalog", "recipes", "worktree-flow", "gate")
 	if !isFile(filepath.Join(gateDir, "go.mod")) {
@@ -491,7 +543,12 @@ func LocalBuild(binaryPath, home, version, goos, goarch string, lookPath func(st
 	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
 		return false, fmt.Sprintf("OSError: %v", err)
 	}
-	tmp := filepath.Join(filepath.Dir(binaryPath), "."+filepath.Base(binaryPath)+".build-tmp")
+	buildDir, err := os.MkdirTemp(filepath.Dir(binaryPath), ".worktree-gate-build-")
+	if err != nil {
+		return false, fmt.Sprintf("OSError: %v", err)
+	}
+	defer os.RemoveAll(buildDir)
+	tmp := filepath.Join(buildDir, "worktree-gate")
 	ctx, cancel := context.WithTimeout(context.Background(), buildTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, goBin, "build", "-trimpath", "-buildvcs=false",
@@ -502,7 +559,6 @@ func LocalBuild(binaryPath, home, version, goos, goarch string, lookPath func(st
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		_ = os.Remove(tmp)
 		if ctx.Err() == context.DeadlineExceeded {
 			return false, "TimeoutExpired: go build timed out after 300 seconds"
 		}
@@ -516,11 +572,9 @@ func LocalBuild(binaryPath, home, version, goos, goarch string, lookPath func(st
 		return false, detail
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
-		_ = os.Remove(tmp)
 		return false, fmt.Sprintf("OSError: %v", err)
 	}
 	if err := os.Rename(tmp, binaryPath); err != nil {
-		_ = os.Remove(tmp)
 		return false, fmt.Sprintf("OSError: %v", err)
 	}
 	return true, ""
@@ -711,14 +765,17 @@ func Acquire(opts AcquireOptions) AcquireStatus {
 		goOnPath = true
 	}
 	if wantBuild || (opts.Offline && goOnPath) {
+		if !expectedPresent {
+			out.Warn = strPtr(fmt.Sprintf(
+				"worktree-gate: no committed digest for %s in "+
+					"catalog/recipes/worktree-flow/bin/SHA256SUMS; locally built binary not installed; %s",
+				assetName, DegradationHint(opts.GateImpl)))
+			return out
+		}
 		ok, detail := LocalBuild(binaryPath, home, version, goos, goarch, lookPath)
 		if ok {
-			evidence := VerifyCachedBinary(binaryPath, home, version, goos, goarch,
-				VerifyOptions{AllowMissingDigest: true})
-			localDigestOK := !expectedPresent || evidence.ObservedDigest == expected
-			localVersionOK := evidence.Version == version
-			localSelftestOK := evidence.Selftest == "passed"
-			if localDigestOK && localVersionOK && localSelftestOK {
+			evidence := VerifyCachedBinary(binaryPath, home, version, goos, goarch, VerifyOptions{})
+			if evidence.Verified {
 				if err := WriteVerificationRecord(binaryPath, version, evidence.ObservedDigest); err != nil {
 					mismatch := fmt.Sprintf(
 						"worktree-gate: local verification receipt write failed at %s: %v; candidate never executed",
@@ -793,14 +850,15 @@ func Acquire(opts AcquireOptions) AcquireStatus {
 			url, err, DegradationHint(opts.GateImpl)))
 		return out
 	}
-	actual, err := Sha256Of(tmp)
+	verifyDir, staged, actual, err := stagePrivateCopy(tmp)
 	if err != nil {
 		out.Warn = strPtr(fmt.Sprintf("worktree-gate: download failed from %s (%v); %s",
 			url, err, DegradationHint(opts.GateImpl)))
 		return out
 	}
+	defer os.RemoveAll(verifyDir)
 	if actual != expected {
-		_ = os.Remove(tmp)
+		_ = os.Remove(staged)
 		mismatch := fmt.Sprintf(
 			"worktree-gate: digest mismatch for %s: expected %s, got %s; artifact deleted and never executed",
 			assetName, expected, actual)
@@ -809,13 +867,8 @@ func Acquire(opts AcquireOptions) AcquireStatus {
 		out.Warn = &mismatch
 		return out
 	}
-	if err := os.Chmod(tmp, 0o700); err != nil {
-		out.Warn = strPtr(fmt.Sprintf("worktree-gate: download failed from %s (%v); %s",
-			url, err, DegradationHint(opts.GateImpl)))
-		return out
-	}
-	selftest := probeSelftest(tmp)
-	reportedVersion := probeBinaryVersion(tmp)
+	selftest := probeSelftest(staged)
+	reportedVersion := probeBinaryVersion(staged)
 	if selftest != "" || reportedVersion != version {
 		mismatch := fmt.Sprintf(
 			"worktree-gate: downloaded binary rejected for %s: version=%s expected_version=%s; "+
@@ -834,7 +887,7 @@ func Acquire(opts AcquireOptions) AcquireStatus {
 		}
 		return out
 	}
-	if err := os.Rename(tmp, binaryPath); err != nil {
+	if err := os.Rename(staged, binaryPath); err != nil {
 		out.Warn = strPtr(fmt.Sprintf("worktree-gate: download failed from %s (%v); %s",
 			url, err, DegradationHint(opts.GateImpl)))
 		return out

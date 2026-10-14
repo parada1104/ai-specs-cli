@@ -390,6 +390,109 @@ func TestDownloadStagesInPrivateTempDir(t *testing.T) {
 	}
 }
 
+// (c) A symlink planted at the cache binary path is never followed or
+// executed, and its target is left untouched.
+func TestCacheSymlinkIsNeverFollowedOrExecuted(t *testing.T) {
+	home := newHome(t)
+	marker := filepath.Join(t.TempDir(), "executed")
+	victim := filepath.Join(t.TempDir(), "victim")
+	body := "#!/bin/sh\n: > \"" + marker + "\"\ncase \"$1\" in\n" +
+		"  --version) printf '9.9.9\\n' ;;\n  --selftest) exit 0 ;;\nesac\nexit 0\n"
+	asset := []byte(body)
+	writeSums(t, home, sha256Hex(asset), "worktree-gate-darwin-arm64")
+	cache := CacheBinPath(home, "9.9.9", "darwin", "arm64")
+	if err := os.MkdirAll(filepath.Dir(cache), 0o755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
+	}
+	writeExec(t, victim, body)
+	if err := os.Symlink(victim, cache); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	// The download cannot satisfy the committed digest, so any execution can
+	// only have come from following the cache symlink.
+	srv, _ := assetServer(t, []byte("corrupted bytes"))
+
+	status := Acquire(withBaseURL(darwinOpts(home, "auto"), srv.URL))
+
+	if status.Installed {
+		t.Fatalf("accepted a symlinked cache candidate: %+v", status)
+	}
+	if got, err := os.ReadFile(victim); err != nil || string(got) != body {
+		t.Fatalf("symlink target was modified: %q, %v", got, err)
+	}
+	if exists(marker) {
+		t.Fatal("symlinked cache candidate was executed")
+	}
+}
+
+// (e) Acceptance installs the private staged copy by rename: the installed
+// artifact carries the staged 0700 mode and no private verify dir survives.
+func TestInstallUsesRenameFromPrivateCopy(t *testing.T) {
+	home := newHome(t)
+	asset := gateScript()
+	writeSums(t, home, sha256Hex(asset), "worktree-gate-darwin-arm64")
+	cache := CacheBinPath(home, "9.9.9", "darwin", "arm64")
+	writeExec(t, cache, string(asset))
+	if err := os.Chmod(cache, 0o755); err != nil {
+		t.Fatalf("chmod cache: %v", err)
+	}
+
+	status := Acquire(darwinOpts(home, "auto"))
+
+	if !status.Installed {
+		t.Fatalf("not installed: %+v", status)
+	}
+	info, err := os.Stat(cache)
+	if err != nil {
+		t.Fatalf("stat cache: %v", err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("installed mode = %v, want 0700 from the private staged copy", info.Mode().Perm())
+	}
+	leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(cache), ".worktree-gate-verify-*"))
+	if len(leftovers) != 0 {
+		t.Fatalf("private verify dirs left behind: %v", leftovers)
+	}
+}
+
+// (d) A local build never writes through a symlink planted at the legacy
+// predictable build temp name.
+func TestLocalBuildIgnoresSymlinkAtLegacyBuildTmp(t *testing.T) {
+	home := newHome(t)
+	asset := gateScript()
+	writeSums(t, home, sha256Hex(asset), "worktree-gate-darwin-arm64")
+	gateDir := filepath.Join(home, "catalog", "recipes", "worktree-flow", "gate")
+	writeFile(t, filepath.Join(gateDir, "go.mod"), "module example.com/fake\n")
+	fakeGo := filepath.Join(home, "fake-go")
+	writeExec(t, fakeGo, fakeGoScript)
+	cacheDir := filepath.Dir(CacheBinPath(home, "9.9.9", "darwin", "arm64"))
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	writeFile(t, victim, "untouched")
+	if err := os.Symlink(victim, filepath.Join(cacheDir, ".worktree-gate.build-tmp")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	t.Setenv("AI_SPECS_GATE_BUILD", "1")
+
+	opts := darwinOpts(home, "auto")
+	opts.LookPath = func(name string) (string, error) {
+		if name == "go" {
+			return fakeGo, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	status := Acquire(opts)
+
+	if !status.Installed {
+		t.Fatalf("local build not installed: %+v", status)
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "untouched" {
+		t.Fatalf("legacy build-tmp symlink target was written: %q", got)
+	}
+}
+
 // --- local build ------------------------------------------------------------
 
 // fakeGoScript parses `-o <out>` and writes the fixture gate script there.
@@ -407,6 +510,7 @@ const fakeGoScript = "#!/bin/sh\nout=\"\"\n" +
 
 func TestOptInLocalBuildPopulatesCache(t *testing.T) {
 	home := newHome(t)
+	writeSums(t, home, sha256Hex(gateScript()), "worktree-gate-darwin-arm64")
 	gateDir := filepath.Join(home, "catalog", "recipes", "worktree-flow", "gate")
 	writeFile(t, filepath.Join(gateDir, "go.mod"), "module example.com/fake\n")
 	fakeGo := filepath.Join(home, "fake-go")
@@ -657,34 +761,28 @@ func TestResolveVerifiedBinary(t *testing.T) {
 	t.Setenv("WORKTREE_GATE_BIN", "")
 	home := newHome(t)
 	goos, goarch := DetectHostPlatform()
+	asset := "worktree-gate-" + goos + "-" + goarch
+	body := "#!/bin/sh\nexit 0\n"
 	cache := CacheBinPath(home, "9.9.9", goos, goarch)
-	writeExec(t, cache, "#!/bin/sh\nexit 0\n")
+	writeExec(t, cache, body)
 
 	// No receipt: never selected.
 	if got := ResolveVerifiedBinary(home); got != "" {
 		t.Fatalf("candidate without receipt = %q, want empty", got)
 	}
-	// No committed digest: the receipt itself must attest a matching digest.
-	writeFile(t, VerificationRecordPath(cache), "status=verified\n")
-	if got := ResolveVerifiedBinary(home); got != "" {
-		t.Fatalf("digestless receipt = %q, want empty", got)
-	}
-	writeFile(t, VerificationRecordPath(cache), "status=verified\ndigest="+strings.Repeat("b", 64)+"\n")
-	if got := ResolveVerifiedBinary(home); got != "" {
-		t.Fatalf("mismatched receipt digest = %q, want empty", got)
-	}
+	// No committed digest: fails closed even with a well-formed, matching receipt.
 	writeFile(t, VerificationRecordPath(cache),
-		"status=verified\ndigest="+sha256Hex([]byte("#!/bin/sh\nexit 0\n"))+"\n")
-	if got := ResolveVerifiedBinary(home); got != cache {
-		t.Fatalf("receipted candidate without trust root = %q, want %q", got, cache)
+		"status=verified\ndigest="+sha256Hex([]byte(body))+"\n")
+	if got := ResolveVerifiedBinary(home); got != "" {
+		t.Fatalf("receipt without a committed digest = %q, want empty", got)
 	}
 	// Receipt plus a matching committed digest: selected.
-	writeSums(t, home, sha256Hex([]byte("#!/bin/sh\nexit 0\n")), "worktree-gate-"+goos+"-"+goarch)
+	writeSums(t, home, sha256Hex([]byte(body)), asset)
 	if got := ResolveVerifiedBinary(home); got != cache {
 		t.Fatalf("verified candidate = %q, want %q", got, cache)
 	}
-	// Receipt plus a stale digest: rejected.
-	writeSums(t, home, strings.Repeat("b", 64), "worktree-gate-"+goos+"-"+goarch)
+	// Receipt plus a stale committed digest: rejected.
+	writeSums(t, home, strings.Repeat("b", 64), asset)
 	if got := ResolveVerifiedBinary(home); got != "" {
 		t.Fatalf("stale digest = %q, want empty", got)
 	}
@@ -695,6 +793,56 @@ func TestResolveVerifiedBinary(t *testing.T) {
 	}
 	if got := ResolveVerifiedBinary(home); got != "" {
 		t.Fatalf("undecodable trust root = %q, want empty", got)
+	}
+}
+
+// (a) A committed-digest gap is not bridged by a receipt, and the verifier
+// names the missing committed digest.
+func TestResolveAndVerifyFailClosedWithoutCommittedDigest(t *testing.T) {
+	t.Setenv("WORKTREE_GATE_BIN", "")
+	home := newHome(t)
+	goos, goarch := DetectHostPlatform()
+	body := "#!/bin/sh\nexit 0\n"
+	cache := CacheBinPath(home, "9.9.9", goos, goarch)
+	writeExec(t, cache, body)
+	writeFile(t, VerificationRecordPath(cache),
+		"status=verified\nversion=9.9.9\ndigest="+sha256Hex([]byte(body))+"\nselftest=passed\n")
+
+	if got := ResolveVerifiedBinary(home); got != "" {
+		t.Fatalf("resolver accepted a receipt with no committed digest: %q", got)
+	}
+	evidence := VerifyCachedBinary(cache, home, "9.9.9", goos, goarch, VerifyOptions{})
+	if evidence.Verified {
+		t.Fatal("VerifyCachedBinary accepted bytes with no committed digest")
+	}
+	mustContain(t, evidence.Reason, "no committed digest for "+AssetName(goos, goarch))
+}
+
+// (b) A local build is only installable against a committed digest; without
+// one it is rejected outright and names the missing committed digest.
+func TestLocalBuildWithoutCommittedDigestIsNotInstalled(t *testing.T) {
+	home := newHome(t)
+	gateDir := filepath.Join(home, "catalog", "recipes", "worktree-flow", "gate")
+	writeFile(t, filepath.Join(gateDir, "go.mod"), "module example.com/fake\n")
+	fakeGo := filepath.Join(home, "fake-go")
+	writeExec(t, fakeGo, fakeGoScript)
+	t.Setenv("AI_SPECS_GATE_BUILD", "1")
+
+	opts := darwinOpts(home, "auto")
+	opts.LookPath = func(name string) (string, error) {
+		if name == "go" {
+			return fakeGo, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	status := Acquire(opts)
+
+	if status.Installed {
+		t.Fatalf("local build installed without a committed digest: %+v", status)
+	}
+	mustContain(t, deref(t, status.Warn), "no committed digest for worktree-gate-darwin-arm64")
+	if exists(status.CachePath) {
+		t.Fatalf("cache path exists after a digestless local build: %q", status.CachePath)
 	}
 }
 
