@@ -9,9 +9,9 @@
 // (gitignore render, brief policy, agents/mcp/hooks render, flatten,
 // merge-commands, cache paths) call them directly; the recipe materializer runs
 // in-process since S14c too (both the resolved-config-only seam and the
-// per-target fallback), while target-resolve.py is still exec'd (the
-// target-resolver port is its own card), and every python3 child runs with the
-// same argv/cwd/env as the shell did.
+// per-target fallback), and since S17 the resolver plan comes from
+// internal/target in process as well; every remaining python3 child runs with
+// the same argv/cwd/env as the shell did.
 //
 // Shell facts reproduced deliberately (each pinned by a test or verified
 // against bash under set -e): a failing command substitution inside [[ ]]
@@ -151,35 +151,20 @@ func RunAgent(args []string, home string, stdin io.Reader, stdout, stderr io.Wri
 	// keeping the ORIGINAL paths (it never adopts the resolved root for the
 	// single-target body).
 	if !opts.explicitSourceRoot && !opts.explicitTarget {
-		planJSON, ok := r.resolvePlanStandalone(absTarget, stderr)
+		planJSON, ok := r.resolvePlan(absTarget)
 		if !ok {
 			fmt.Fprintln(stderr, "ERROR: target resolution failed before any writes.")
 			return 1
 		}
-		// The shell's ROOT_PATH/RESOLVED_TARGETS extraction dies on a
-		// malformed plan (json.JSONDecodeError traceback, measured bytes
-		// pinned below) and on a plan without "root" (KeyError: 'root').
-		// Both deaths happen BEFORE any write; stderr is FROZEN, so the port
-		// reproduces the measured diagnostic bytes instead of a generic line.
-		var rawPlan map[string]json.RawMessage
-		if err := json.Unmarshal(planJSON, &rawPlan); err != nil {
-			fmt.Fprint(stderr, pyJSONDecodeErrPlanBytes)
-			return 1
-		}
-		rawRoot, ok := rawPlan["root"]
+		// The shell's ROOT_PATH/RESOLVED_TARGETS extraction (the two inline
+		// python heredocs of lib/sync-agent.sh:121-127) dies on a malformed plan
+		// (json.JSONDecodeError) and on a plan without "root" (KeyError:
+		// 'root'), both BEFORE any write, with FROZEN stderr bytes. Since S17
+		// the plan is produced in process, so this path is defensive only — and
+		// it stays pinned by TestStandalonePlanDiagnostics.
+		p, ok := extractStandalonePlan(planJSON, stderr)
 		if !ok {
-			fmt.Fprint(stderr, pyKeyErrRootBytes)
 			return 1
-		}
-		var p plan
-		if err := json.Unmarshal(planJSON, &p); err != nil {
-			fmt.Fprint(stderr, pyJSONDecodeErrPlanBytes)
-			return 1
-		}
-		if p.Root == "" && string(bytes.TrimSpace(rawRoot)) == "null" {
-			// json["root"] → None prints as `None`, which the shell then uses
-			// verbatim as ROOT_PATH (no KeyError). Reproduced faithfully.
-			p.Root = "None"
 		}
 		if len(p.Targets) > 1 {
 			return r.runAgentStandaloneFanout(p.Root, opts, p, s)
@@ -219,15 +204,32 @@ const pyJSONDecodeErrPlanBytes = "ERROR: resolver plan is not valid JSON (json.J
 
 const pyKeyErrRootBytes = "ERROR: resolver plan is missing the \"root\" key (KeyError: 'root')\n"
 
-// resolvePlanStandalone runs target-resolve.py with stderr inherited and
-// stdout captured, mirroring PLAN_JSON="$(python3 ...)".
-func (r *runner) resolvePlanStandalone(target string, stderr io.Writer) ([]byte, bool) {
-	argv := []string{"python3", filepath.Join(r.home, "lib", "_internal", "target-resolve.py"), target}
-	var buf bytes.Buffer
-	if rc := r.exec(argv, &buf, stderr); rc != 0 {
-		return nil, false
+// extractStandalonePlan mirrors the shell's ROOT_PATH/RESOLVED_TARGETS
+// extraction from the resolver plan. A malformed body and a body without
+// "root" are two distinct failure classes, each with its own STABLE PORTABLE
+// diagnostic: the report is written to stderr and ok is false.
+func extractStandalonePlan(planJSON []byte, stderr io.Writer) (plan, bool) {
+	var rawPlan map[string]json.RawMessage
+	if err := json.Unmarshal(planJSON, &rawPlan); err != nil {
+		fmt.Fprint(stderr, pyJSONDecodeErrPlanBytes)
+		return plan{}, false
 	}
-	return buf.Bytes(), true
+	rawRoot, ok := rawPlan["root"]
+	if !ok {
+		fmt.Fprint(stderr, pyKeyErrRootBytes)
+		return plan{}, false
+	}
+	var p plan
+	if err := json.Unmarshal(planJSON, &p); err != nil {
+		fmt.Fprint(stderr, pyJSONDecodeErrPlanBytes)
+		return plan{}, false
+	}
+	if p.Root == "" && string(bytes.TrimSpace(rawRoot)) == "null" {
+		// json["root"] → None prints as `None`, which the shell then uses
+		// verbatim as ROOT_PATH (no KeyError). Reproduced faithfully.
+		p.Root = "None"
+	}
+	return p, true
 }
 
 // runAgentStandaloneFanout is lib/sync-agent.sh's multi-target branch: the

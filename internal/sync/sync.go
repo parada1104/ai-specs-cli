@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"unicode"
 	"unicode/utf8"
+
+	"ai-specs.dev/ai-specs/internal/target"
 )
 
 // syncUsage is the byte-exact body of usage() in lib/sync.sh (a quoted
@@ -147,8 +149,9 @@ func stepKey(name string) string {
 	return "GO_SYNC_STEP_" + strings.ToUpper(b.String())
 }
 
-// plan is the subset of target-resolve.py's JSON the spine consumes. Target
-// resolution itself is never reimplemented.
+// plan is the subset of the resolver plan the spine consumes. Target
+// resolution itself is owned by internal/target and is never reimplemented
+// here.
 type plan struct {
 	Root         string `json:"root"`
 	PlanningRoot string `json:"planning_root"`
@@ -428,12 +431,21 @@ func (r *runner) run(opts options) int {
 	return 0
 }
 
-// resolvePlan runs target-resolve.py with its stderr inherited and stdout
-// captured, mirroring PLAN_JSON="$(python3 ...)".
-func (r *runner) resolvePlan(target string) ([]byte, bool) {
-	argv := []string{"python3", filepath.Join(r.home, "lib", "_internal", "target-resolve.py"), target}
+// resolvePlan mirrors `PLAN_JSON="$(python3 lib/_internal/target-resolve.py
+// <target>)"` — the shell's two call sites are lib/sync.sh:177 (the spine) and
+// lib/sync-agent.sh:112 (the standalone agent plan). Since GO-07 S17 the
+// resolver runs IN PROCESS: the native port owns the plan bytes, the stderr and
+// the exit code, so no Go path execs target-resolve.py any more. The shell
+// route keeps its own python call until the dispatcher cutover.
+func (r *runner) resolvePlan(projectRoot string) ([]byte, bool) {
+	// The port's diagnostics go to the writer the exec used to inherit; a nil
+	// writer discards them, exactly as a nil exec stderr did.
+	errW := r.stderr
+	if errW == nil {
+		errW = io.Discard
+	}
 	var buf bytes.Buffer
-	if rc := r.exec(argv, &buf, r.stderr); rc != 0 {
+	if rc := target.Run([]string{projectRoot}, &buf, errW); rc != 0 {
 		return nil, false
 	}
 	return buf.Bytes(), true

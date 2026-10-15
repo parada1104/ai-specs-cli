@@ -412,6 +412,16 @@ caret annotations and version-specific layout (they differ across
 installations and interpreter versions — measured: 3.9.6 vs 3.13/3.14) may
 be replaced by a stable portable Go diagnostic.
 
+Since GO-07 S17 the plan is produced IN PROCESS by the native resolver
+(`internal/target`, whose stdout bytes, stderr and exit code are differentially
+pinned against `target-resolve.py`), so the Go route spawns
+`target-resolve.py` at neither call site and no stub can inject a plan body.
+This classification therefore governs (a) the shell route, which keeps its own
+python call until the dispatcher cutover, and (b) the defensive extraction the
+Go route keeps for a plan body it did not produce — that extraction still
+distinguishes the two failure classes and prints the portable diagnostics, and
+both are pinned directly by `TestStandalonePlanDiagnostics`.
+
 FROZEN and unchanged:
 
 - Exit code 1, raised BEFORE any banner, write or target work.
