@@ -57,9 +57,13 @@ type MaterializeRequest struct {
 	Stderr            io.Writer
 }
 
-// MaterializeResult carries the paths and serialized documents the caller
-// needs. A document is empty when its output path was absent (the recipe-MCP
-// document is always serialized because the marker prints its temp path).
+// MaterializeResult carries the paths, documents and names the caller needs. A
+// document is empty when its output path was absent (the recipe-MCP document is
+// always serialized because the marker prints its temp path). PrintedRecipeIDs
+// is the recipes that actually reached their `  ▸ recipe <id>` line, in print
+// order: it is what the spine's RECIPE_NAMES line reports (Python greps the
+// partial stdout for the same set), so a recipe that fails before the loop
+// prints is enabled but NOT named.
 type MaterializeResult struct {
 	RecipeMCPPath          string
 	RecipeMCPDocument      string
@@ -69,6 +73,7 @@ type MaterializeResult struct {
 	ResolvedHooksDocument  string
 	ResolvedBindings       map[string]string
 	EnabledRecipeIDs       []string
+	PrintedRecipeIDs       []string
 }
 
 // materializeFatal mirrors the Python fail() helper: "  ✗ <msg>" on stderr,
@@ -262,6 +267,7 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 
 	for _, recipe := range enabled {
 		fmt.Fprintf(stdout, "  ▸ recipe %s\n", recipe.ID)
+		result.PrintedRecipeIDs = append(result.PrintedRecipeIDs, recipe.ID)
 		if recipe.Version != "" {
 			warnf(stderr, "recipe '%s' has legacy version='%s' in ai-specs.toml; pins are ignored — sync uses the installed CLI catalog", recipe.ID, recipe.Version)
 		}

@@ -14,7 +14,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"unicode"
@@ -164,10 +163,6 @@ type plan struct {
 		Rel  string `json:"rel"`
 	} `json:"targets"`
 }
-
-// recipeNameRe is the `▸ recipe ([^ \n]+)` extraction RECIPE_NAMES depends on
-// (lib/sync.sh's grep|sed|paste pipeline).
-var recipeNameRe = regexp.MustCompile(`▸ recipe ([^ \n]+)`)
 
 // run executes the pipeline after flags were parsed.
 func (r *runner) run(opts options) int {
@@ -327,6 +322,7 @@ func (r *runner) run(opts options) int {
 	}
 
 	recipeRC := 0
+	var materialized MaterializeResult
 	if outF, err := os.Create(recipeOutFile); err != nil {
 		recipeRC = 1
 	} else if errF, err := os.Create(recipeErrFile); err != nil {
@@ -334,9 +330,12 @@ func (r *runner) run(opts options) int {
 		recipeRC = 1
 	} else {
 		// GO-07 S14c: the materializer runs in-process. The two capture files
-		// keep the shell's observable pair, so the RECIPE_NAMES extraction, the
-		// failure replay and the compact/verbose filtering below are untouched.
-		if _, err := MaterializeRecipes(MaterializeRequest{
+		// keep the shell's observable pair, so the failure replay and the
+		// compact/verbose filtering below are untouched; GO-07 S16 takes the
+		// recipe names from the return value instead of re-reading the stdout
+		// capture with the shell's grep pipeline.
+		var materializeErr error
+		materialized, materializeErr = MaterializeRecipes(MaterializeRequest{
 			ProjectRoot:       root,
 			AISpecsHome:       r.home,
 			RecipeMCPOut:      &recipeMcpTemp,
@@ -345,21 +344,17 @@ func (r *runner) run(opts options) int {
 			RefreshGates:      opts.refreshGates,
 			Stdout:            outF,
 			Stderr:            errF,
-		}); err != nil {
+		})
+		if materializeErr != nil {
 			recipeRC = 1
 		}
 		outF.Close()
 		errF.Close()
 	}
 
-	// RECIPE_NAMES: `grep -oE '▸ recipe [^ ]+' | sed | paste -sd, -` (|| true).
-	names := []string{}
-	if data, err := os.ReadFile(recipeOutFile); err == nil {
-		for _, m := range recipeNameRe.FindAllStringSubmatch(string(data), -1) {
-			names = append(names, m[1])
-		}
-	}
-	if recipeNames := strings.Join(names, ","); recipeNames != "" {
+	// `  syncing recipes → a, b`: the names are the recipes that reached their
+	// `▸ recipe <id>` line (the shell greps the partial stdout for the same set).
+	if recipeNames := strings.Join(materialized.PrintedRecipeIDs, ","); recipeNames != "" {
 		fmt.Fprintf(r.stdout, "  syncing recipes → %s\n", strings.ReplaceAll(recipeNames, ",", ", "))
 	} else {
 		fmt.Fprintln(r.stdout, "  syncing recipes")

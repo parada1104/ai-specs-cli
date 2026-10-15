@@ -385,12 +385,17 @@ func buildAgentRun(r *runner, opts agentOptions, s agentStreams, nested bool) (*
 			return nil, 1
 		}
 		defer removeIfSet(outPath)
-		if rc := r.materializeMerged(a.sourceRoot, outPath); rc != 0 {
+		// GO-07 S16: the recipe-MCP temp path comes from the materializer's
+		// return value, not from grepping the merged capture for the marker
+		// (the marker line itself is still printed, because the coexisting shell
+		// route greps it).
+		recipeMCPTemp, rc := r.materializeMerged(a.sourceRoot, outPath)
+		if rc != 0 {
 			fmt.Fprintln(s.errW, "ERROR: recipe materialize failed")
 			replayExceptMarker(s.errW, outPath)
 			return nil, 1
 		}
-		a.recipeMCP = markerTempPath(outPath)
+		a.recipeMCP = recipeMCPTemp
 	}
 
 	// Cache derivation (lib/sync-agent.sh:291-296). The shell's command
@@ -1417,22 +1422,22 @@ func (r *runner) mktempCapture(args ...string) (string, string, bool) {
 }
 
 // materializeMerged runs the native materializer with both streams merged into
-// one file (`>"$out" 2>&1`). A Python child with both streams redirected has a
-// line-buffered stderr and a block-buffered stdout (measured with 3.14.7: the
+// one file (`>"$out" 2>&1`) and returns the recipe-MCP temp path the step
+// produced plus its exit status. A Python child with both streams redirected has
+// a line-buffered stderr and a block-buffered stdout (measured with 3.14.7: the
 // stderr lines land immediately, the stdout content at exit), so stderr is
 // written through as it is produced and stdout is flushed once the step
-// returns. Returns the exit status the caller maps: 0, 1 on a materializer
-// failure, 126 when the capture file cannot be created (the shell's redirect
-// failure).
-func (r *runner) materializeMerged(projectRoot, path string) int {
+// returns. Status: 0, 1 on a materializer failure, 126 when the capture file
+// cannot be created (the shell's redirect failure).
+func (r *runner) materializeMerged(projectRoot, path string) (string, int) {
 	f, err := os.Create(path)
 	if err != nil {
 		fmt.Fprintf(r.stderr, "%s: %s\n", "ai-specs", strerrorText(err))
-		return 126
+		return "", 126
 	}
 	defer f.Close()
 	var stdout bytes.Buffer
-	_, materializeErr := MaterializeRecipes(MaterializeRequest{
+	result, materializeErr := MaterializeRecipes(MaterializeRequest{
 		ProjectRoot: projectRoot,
 		AISpecsHome: r.home,
 		Stdout:      &stdout,
@@ -1440,9 +1445,9 @@ func (r *runner) materializeMerged(projectRoot, path string) int {
 	})
 	f.Write(stdout.Bytes())
 	if materializeErr != nil {
-		return 1
+		return "", 1
 	}
-	return 0
+	return result.RecipeMCPPath, 0
 }
 
 // mapExecErr translates an exec result into a process exit code the way
@@ -1477,24 +1482,6 @@ func isNotFoundExec(err error) bool {
 	}
 	var errno syscall.Errno
 	return errors.As(err, &errno) && errno == syscall.ENOENT
-}
-
-// markerTempPath is `grep '^RECIPE_MCP_TEMP:' file | cut -d: -f2-` joined by
-// the shell's command substitution: the marker prefixes stripped, multiple
-// matches newline-joined, empty when nothing matched.
-func markerTempPath(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	var matches []string
-	for _, line := range lines {
-		if strings.HasPrefix(line, "RECIPE_MCP_TEMP:") {
-			matches = append(matches, strings.TrimPrefix(line, "RECIPE_MCP_TEMP:"))
-		}
-	}
-	return strings.Join(matches, "\n")
 }
 
 // replayExceptMarker is `grep -v '^RECIPE_MCP_TEMP:' file >&2 || true`.

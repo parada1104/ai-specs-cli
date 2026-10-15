@@ -1171,35 +1171,6 @@ func TestStandalonePlanDiagnostics(t *testing.T) {
 	})
 }
 
-// TestMarkerTempPathOracleBytes pins markerTempPath against the MEASURED
-// bash pipeline `$(grep '^RECIPE_MCP_TEMP:' f | cut -d: -f2-)` (command
-// substitution strips trailing newlines only): trailing blank lines vanish,
-// an unterminated file still matches, multiple markers join with \n, and a
-// trailing space is KEPT (cut only splits on colons).
-func TestMarkerTempPathOracleBytes(t *testing.T) {
-	dir := t.TempDir()
-	cases := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{"plain", "RECIPE_MCP_TEMP:/x/a.json\n", "/x/a.json"},
-		{"trailing blanks", "RECIPE_MCP_TEMP:/x/a.json\n\n\n", "/x/a.json"},
-		{"no trailing newline", "RECIPE_MCP_TEMP:/x/a.json", "/x/a.json"},
-		{"two markers", "warn\nRECIPE_MCP_TEMP:/x/a.json\nRECIPE_MCP_TEMP:/x/b.json\n", "/x/a.json\n/x/b.json"},
-		{"trailing space kept", "RECIPE_MCP_TEMP:/x/a.json \n", "/x/a.json "},
-	}
-	for _, tc := range cases {
-		p := filepath.Join(dir, tc.name)
-		if err := os.WriteFile(p, []byte(tc.content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if got := markerTempPath(p); got != tc.want {
-			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
-		}
-	}
-}
-
 // TestPrintStepOutputOracleBytes pins printStepOutput and replayRaw against
 // the MEASURED bash print_step_output + `[[ -s ]] && cat` oracle over crafted
 // capture files (including the judge-B empty/blank-line cases): verbose is
