@@ -10,6 +10,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"ai-specs.dev/ai-specs/internal/sync"
 )
@@ -84,8 +85,7 @@ func Route(args []string) route {
 // Run executes the CLI and returns the process exit code.
 func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) int {
 	r := Route(args)
-	switch r.kind {
-	case routeVersion:
+	switch r.kind {	case routeVersion:
 		return runVersion(home, stdout)
 	case routeHelp:
 		return runHelp(stdout)
@@ -104,6 +104,19 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
 		return 2
 	default:
-		return runShim(r, args, home, stdin, stdout, stderr)
+		return runShim(r, args, home, stdin, stdout, stderr, selfPath())
 	}
+}
+
+// selfPath is the running dispatcher's own absolute path, exported to shimmed
+// children as AI_SPECS_GO_BIN (GO-07 S19a) so a legacy script can reach a
+// ported subcommand instead of its legacy Python route. A resolution failure
+// leaves the seam unset: the script then keeps its legacy route, which is the
+// fail-open direction this seam requires.
+func selfPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return exe
 }
