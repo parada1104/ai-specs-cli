@@ -107,3 +107,50 @@ Python suite moves 2484 → **2487**: the three route tests are the only additio
 accounted for rather than assumed. The parity `fresh-init` fixture now diffs the legacy Python chain
 (the legacy leg never sets the seam) against the native one (the Go leg's shim sets it), which is the
 differential S5 asks for.
+
+## Native review (high tier, four lenses)
+- Lineage `review-1bf072a18b4e15cf`, target `sha256:cd1da4de43537a0c76a26d52a0ac17f3f5595dcf99aebee64db381eddaafc045`,
+  candidate `54cabc98d1ac9f10fb5f818e27b54df41f411571..7d01f56` (committed-only), 7 paths / 629
+  changed lines, correction budget 200. Risk `high` (`process_boundary` **and** `shell_source` on
+  `lib/init.sh`). Consent was resolved by the host.
+- The group capture was **refused at admission**: the readability reviewer's first finding carried no
+  proof reference (`at least one proof reference is required`). The provider did **not** consume that
+  lens slot — 2/4 had been submitted (risk, resilience) and the rejected payload is preserved under
+  `.git/gentle-ai/rejected-results/review-1bf072a18b4e15cf/`. Continuation, exactly as the refusal
+  instructed: a fresh bound STATUS reoffered only the two missing slots, each was captured one at a
+  time (forecast → acknowledgement → run), and the last admitted event closed the review
+  **approved**. Authority burned (`gentle-ai.review-acknowledged/v1`); the refused bytes were never
+  resubmitted.
+- 7 advisory findings, all informational and non-blocking. See Follow-ups.
+
+## Independent verification
+The high-risk plan requires a separate verifier; the delegated `gentle-ai-verify` subagent is
+reported **unavailable** (the same 30-minute bash stall as S18, not retried). The obligation was
+discharged inline by a different method than the unit's own tests: a differential against the very
+Python scripts the two verbs replace.
+
+| Check | Result |
+| --- | --- |
+| `brief-render-policy` vs `brief-render-policy.py` over render unset / true / false / invalid | **4/4 MATCH**: same exit code and same stdout on every case, including the fail-safe `true` for the invalid value |
+| the same gate on a missing manifest | rc 1 both, stdout empty both, stderr prefix `error: ` both — the diagnostic text itself is the recorded TOLERANT class |
+| `baseline-brief` vs `materialize --resolved-config-out && agents-render` on a fixture project | rc 0 both, `AGENTS.md` **byte-identical** (272 bytes) |
+| the intermediate resolved-config document both legs wrote | identical except `project_root`, which is the directory each leg was given (both 330 bytes, same keys, values and order) — the one diff is the fixture itself, not a divergence |
+
+## Size
+Disclosed: about 160 authored lines of product code (the two verbs and their routes, the shell helper
+branches, and the `RenderBaselineBrief` composition), about 300 of tests (the verb matrix and the
+three route tests with their stubs), and this document. Inside the plan's ~700-line cap.
+
+## Follow-ups (recorded, not done here)
+- Native review advisories, all informational: `R2-duplicated-seam-guard` (`lib/init.sh:247`, the seam
+  guard repeated in the two helpers), `R2-duplicated-usage-literals` (`internal/cli/brief.go:63-79`),
+  `R2-status-comment-disagrees-with-code` (`internal/sync/baselinebrief.go:31-33`),
+  `R2-unexplained-decision-token` (`internal/sync/baselinebrief.go:59-60`),
+  `R2-unknown-tokens-become-project-root` (`internal/cli/brief.go:70-75`, an unknown flag is taken as
+  the positional root), `R3-adopt-and-usage-unproved` (`internal/sync/baselinebrief.go:56-66`,
+  `--adopt-brief` is not covered by a test) and `R3-materialize-error-dropped`
+  (`internal/sync/baselinebrief.go:52-54`). The two worth a pass together are the arg parser (unknown
+  token → root) and the missing `--adopt-brief` coverage.
+- S20 (the human's): flip `bin/ai-specs` to the native dispatcher and delete the three modules. After
+  this unit no init caller needs them; what still does is the shell route of `sync.sh` / `doctor.sh`
+  and the parity legacy leg.
