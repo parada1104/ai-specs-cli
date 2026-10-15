@@ -112,9 +112,17 @@ becoming a failure with return 1.
         `Acquire`), with unit tests mirroring `tests/test_gate_binary_dist.py`. Not shared with
         `internal/upgrade`: its `Acquire` has another contract (no self-test, receipts or quarantine) and its
         `ParseTrustRoot` validates differently.
-      - C2: the doctor delegates its read-only twins to `internal/gatebinary`; `materialize_loop.go` calls
-        the native `Acquire` instead of `delegateGateAcquireToPython`, keeping both frozen messages; a
-        differential against Python `acquire` on temp homes (local HTTP server, fake `go`, offline mode).
+      - C2 (done): `6d69ab6` delegates the doctor's read-only twins to `internal/gatebinary` (one grader;
+        resolution now fails closed without a committed digest and honors the same-user cache boundary — a
+        deliberate divergence from doctor.py, its tests updated to seed `SHA256SUMS`). `ec305c3` wires
+        `materializeWorktreeGateAcquisition` to the native `Acquire` and deletes
+        `delegateGateAcquireToPython` with its inline script; the loop differential's offline scenario now
+        seeds a committed trust root so both graders take the shared local-build branch. `eef60a0` adds the
+        dedicated acquire differential (`internal/gatebinary/differential_test.go`): five shared branches
+        (offline without a toolchain, local build without gate source, verified download, digest-mismatch
+        download, unsupported platform) compare the status projection and the cache tree byte for byte
+        against Python on the same temp home; the decided same-user divergences are excluded and covered by
+        the package tests.
       - Deliberate divergence: Python's `urlretrieve` has no timeout; Go uses 60 s, like `internal/upgrade`.
         Tests never reach the network.
       - State (C1 only, C2 not started): `2fecbcc` (port), `d0998ae` (receipt/download hardening),
