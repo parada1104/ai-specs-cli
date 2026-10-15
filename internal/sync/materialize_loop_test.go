@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-specs.dev/ai-specs/internal/gatebinary"
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 )
@@ -475,6 +476,14 @@ url = "__DEP_SRC__"
 		body:  syncRecipeHeader("worktree-flow", "Worktree Flow") + "\n",
 		files: map[string]string{},
 	}
+	// The offline gate-acquisition scenario seeds a committed trust root: since
+	// WU3 the native acquisition fails closed without a committed digest (the
+	// decided same-user boundary), a branch where Python instead attempts the
+	// local build. The digest pins both graders to the shared local-build
+	// branch, whose failure warning stays byte-identical.
+	gateGoos, gateGoarch := gatebinary.DetectHostPlatform()
+	gateRecipe.files["bin/SHA256SUMS"] = strings.Repeat("a", 64) + "  worktree-gate-" +
+		gateGoos + "-" + gateGoarch + "\n"
 
 	return []materializeLoopScenario{
 		{
@@ -561,7 +570,7 @@ url = "__DEP_SRC__"
 			recipeMCPOut: false,
 		},
 		{
-			name:          "worktree-flow gate acquisition delegation degrades offline",
+			name:          "worktree-flow gate acquisition degrades offline",
 			recipes:       map[string]materializeLoopRecipe{"worktree-flow": gateRecipe},
 			manifest:      "[recipes.worktree-flow]\nenabled = true\n",
 			addLibSymlink: true,

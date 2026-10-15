@@ -12,13 +12,12 @@ package sync
 // Every decision stays in the merged native authority (shared actuators, the
 // copy authority, lock mutation helpers, RunRecipeHooks, MaterializeHook); this
 // file only sequences those calls, prints their messages verbatim and writes
-// the lock through ONE shared helper (applyLockRecord). Two steps are the
-// deliberate, documented, single non-native delegations:
+// the lock through ONE shared helper (applyLockRecord). One step is the
+// deliberate, documented, single non-native delegation (the gate-binary
+// acquisition runs natively through internal/gatebinary):
 //
 //   - delegateDepSkillToPython: dependency-skill vendoring stays in
 //     vendor-skills.py's sync_dep_target, closed with the deps-layer card.
-//   - delegateGateAcquireToPython: gate_binary.acquire has no Go twin yet;
-//     replaced natively by WU3 (T7) before S14c wires anything.
 //
 // The Python authority is lib/_internal/recipe-materialize.py
 // materialize_recipes (:4013-4096 for the loop, :4139-4147 for the dump).
@@ -38,6 +37,7 @@ import (
 	"unicode"
 
 	"ai-specs.dev/ai-specs/internal/cliversion"
+	"ai-specs.dev/ai-specs/internal/gatebinary"
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/schema"
@@ -540,7 +540,7 @@ func materializeWorktreeGateAcquisition(req materializeArtifactRequest, mergedCf
 	if impl != "auto" && impl != "go" {
 		return nil
 	}
-	warning, err := delegateGateAcquireToPython(req.AISpecsHome, impl)
+	warning, err := acquireGateBinary(req.AISpecsHome, impl)
 	if err != nil {
 		warnf(req.Stderr, "worktree-flow: gate binary acquisition failed (%s); gate degrades per gate_impl (see 'ai-specs doctor')", err.Error())
 		return nil
@@ -575,7 +575,7 @@ func materializeConfigTruthy(value any) bool {
 	return true
 }
 
-// --- the two deliberate delegations -----------------------------------------
+// --- the deliberate delegation ----------------------------------------------
 
 // depSkillDelegationScript loads vendor-skills.py the same way
 // materialize_dep_skill does (sibling import with lib/_internal on sys.path)
@@ -645,64 +645,22 @@ func delegateDepSkillToPython(aiSpecsHome, projectRoot string, skill *schema.Ski
 	return nil
 }
 
-// gateAcquireDelegationScript loads gate_binary.py from the CLI home and calls
-// acquire(gate_impl, ai_specs_home, offline) exactly as the Python loop does,
-// emitting the status as JSON. `acquire` is documented never to raise, so the
-// except branch only covers loading; it returns the exception type name and
-// message so the root can print Python's exact degradation warning.
-const gateAcquireDelegationScript = `import importlib.util, json, sys
-from pathlib import Path
-try:
-    module_path = Path(sys.argv[1])
-    spec = importlib.util.spec_from_file_location("gate_binary_internal", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("unable to load gate_binary.py at %s" % module_path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    status = mod.acquire(
-        gate_impl=sys.argv[2],
-        ai_specs_home=Path(sys.argv[3]),
-        offline=sys.argv[4] == "1",
-    )
-    print(json.dumps({"warn": status.get("warn")}))
-except BaseException as exc:
-    print(json.dumps({"type": type(exc).__name__, "message": str(exc)}))
-`
-
-// delegateGateAcquireToPython is the second deliberate non-native step: the
-// gate-binary acquisition (download / local build / quarantine / digest
-// records) has no Go twin yet, so gate_binary.acquire runs through python3 with
-// the same arguments. It is replaced natively by WU3 (T7) before S14c wires the
-// materializer. On success it returns the status warning (empty when none); a
-// delegation failure is returned as "<Type>: <message>" and the caller degrades
-// instead of failing the sync.
-func delegateGateAcquireToPython(aiSpecsHome, impl string) (string, error) {
-	modulePath := filepath.Join(aiSpecsHome, "lib", "_internal", "gate_binary.py")
-	if _, err := os.Stat(modulePath); err != nil {
-		return "", fmt.Errorf("unable to load gate_binary.py at %s", modulePath)
-	}
-	offline := "0"
-	if os.Getenv("AI_SPECS_GATE_OFFLINE") == "1" {
-		offline = "1"
-	}
-	stdoutText, _, runErr := materializeRunPython(gateAcquireDelegationScript, []string{
-		modulePath, impl, aiSpecsHome, offline,
+// acquireGateBinary runs the native gatebinary.Acquire with the arguments the
+// Python loop passes (gate_impl, the CLI home, AI_SPECS_GATE_OFFLINE) and
+// returns the status warning ("" when none). Acquire never errors; a panic is
+// the only failure left, reported as "<Type>: <message>" so the caller prints
+// the frozen degradation warning instead of failing the sync.
+func acquireGateBinary(aiSpecsHome, impl string) (warning string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("RuntimeError: %v", r)
+		}
+	}()
+	status := gatebinary.Acquire(gatebinary.AcquireOptions{
+		GateImpl: impl,
+		Home:     aiSpecsHome,
+		Offline:  os.Getenv("AI_SPECS_GATE_OFFLINE") == "1",
 	})
-	if runErr != nil {
-		return "", fmt.Errorf("RuntimeError: %s", runErr.Error())
-	}
-	var status struct {
-		Warn    *string `json:"warn"`
-		Type    string  `json:"type"`
-		Message string  `json:"message"`
-	}
-	if err := json.Unmarshal([]byte(stdoutText), &status); err != nil {
-		return "", fmt.Errorf("RuntimeError: unreadable acquire status: %v", err)
-	}
-	if status.Type != "" {
-		return "", errors.New(status.Type + ": " + status.Message)
-	}
 	if status.Warn != nil {
 		return *status.Warn, nil
 	}
