@@ -24,7 +24,8 @@ silently normalized during the port.
 recorded in full below:
 
 1. A whole-document Go TOML library is **not viable** for manifest writes.
-2. The pipeline passes data between modules by grepping human-readable stdout.
+2. The pipeline passed data between modules by grepping human-readable stdout.
+   (Resolved for the Go route by GO-07 S16: it consumes return values — see §5.)
 3. Three commands documented as read-only are not.
 
 ---
@@ -212,6 +213,15 @@ RECIPE_MCP_JSON=$(grep '^RECIPE_MCP_TEMP:' … | cut -d: -f2-)
 The print format of one module is the API of another. In Go this collapses into
 a return value, but **while both implementations coexist**, any cosmetic change
 to materialize's output silently breaks sync.
+
+**GO-07 S16 state.** The Go route no longer parses its own output: `sync` takes
+the names from `MaterializeResult.PrintedRecipeIDs` and `sync-agent` takes the
+recipe-MCP temp path from `MaterializeResult.RecipeMCPPath`. Those two fields
+carry exactly what the greps would have found — the names are the recipes that
+reached their `▸ recipe <id>` line, so a run that fails before the loop prints
+names nothing (Python greps the partial stdout for the same set). The printed
+lines themselves stay byte-identical and FROZEN (see §12) because the bash route
+above still greps them; the freeze ends with that route, not with this collapse.
 
 ### The compact filter is load-bearing
 
@@ -477,6 +487,10 @@ FROZEN and unchanged:
 - Manifest write formatting, via a line editor — never a marshaller (§3).
 - Cache key derivation and every ownership rule in §4.
 - The four compact-filter glyphs (§5).
+- The two stdout couplings of §5, `▸ recipe <id>` and `RECIPE_MCP_TEMP:`, while
+  the bash route coexists. The Go route already consumes them as return values
+  and never parses its own output (GO-07 S16); the lines stay frozen only for
+  the shell consumers.
 - Symlink kinds and the non-symlink refusal (§4).
 - The TTY matrices in §7, including `hub`'s never-launch-Python guarantee.
 - `git clone --depth 1` argv, and the absence of pinning (§8) until D16 is fixed.
