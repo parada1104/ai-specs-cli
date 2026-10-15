@@ -103,6 +103,30 @@ Log: `~/.cache/s19a-evidence.log` (chained go test → build-gate → parity →
 suite count moves from the historical 2482 to **2484**: the two new route tests are the only
 addition, so the delta is accounted for rather than assumed.
 
+## Native review (high tier, four lenses)
+Bound STATUS → group capture of all four reviewers → last-event closure:
+
+- Lineage `review-bf26b39cd805e27c`, target `sha256:db915c554b95ccb692437758e69a975ec8869da8576402e01a85990ce880ae40`,
+  candidate `8f992cf90dc7b399dbe4b7841c850d94783ed7a3..0ce597c` (committed-only), 6 paths / 289
+  changed lines, correction budget 145. Risk `high` with both `process_boundary` and
+  `shell_source` on `lib/skills-add.sh`. Consent was resolved by the host.
+- Group capture over `pi_host_relay`: 4/4 reviewers submitted, closure `approved` on the last
+  admitted event (no correction offered), authority burned (`gentle-ai.review-acknowledged/v1`).
+- 8 advisory findings, all informational and non-blocking (readability R2-001..R2-005, reliability
+  R3-001 / R3-002, resilience R4-gofmt-switch-join). See Follow-ups.
+
+## Independent verification
+The high-risk plan requires a separate verifier. The delegated `gentle-ai-verify` subagent is
+reported **unavailable** (it timed out once in S18 with the same 30-minute bash stall and is not
+retried), so the obligation was discharged inline by a different method: end to end through the
+built binary, with the environment poisoned, which is stronger than any of the unit's own tests.
+
+| Check | Command (temp dirs only) | Result |
+| --- | --- | --- |
+| A stale inherited value never reaches the child | `AI_SPECS_GO_BIN=<recording stub> <built binary> add-dep <kepano url> <project> --subdir skills/defuddle` | rc 0, banner once, **the stub was never executed**, native sync completed offline |
+| The fallback still runs when the seam is absent | same command with `AI_SPECS_GO_BIN` unset | rc 0, banner once, legacy `sync.sh` completed offline |
+| The offline vendoring leg is real | `AI_SPECS_VENDOR_FIXTURE_ROOT=tests/fixtures/kepano-obsidian-skills` | no network, no `✗`/`ERROR` line in either run |
+
 ## Size
 Disclosed: about 25 authored lines of product code (`selfPath()` and the child-env seam in
 `internal/cli`, the nine-line route branch in `lib/skills-add.sh`), about 100 of tests (the Go seam
@@ -110,6 +134,13 @@ matrix and the two Python route tests with their hermetic stubs), and this docum
 plan's ~700-line cap.
 
 ## Follow-ups (recorded, not done here)
+- Native review advisories, all non-blocking and none reopening the candidate: `R2-001`
+  (`internal/cli/cli.go:88`), `R2-002` (`internal/cli/shim.go:24`), `R2-003`
+  (`lib/skills-add.sh:208-214`), `R2-004` (`tests/test_skills_add.py:234`), `R2-005`
+  (`internal/cli/shim.go:65`) — readability, informational; `R3-001` (`internal/cli/cli.go:88`) and
+  `R3-002` (`tests/test_skills_add.py:245-269`) — reliability; `R4-gofmt-switch-join`
+  (`internal/cli/cli.go:88`) — resilience. The `cli.go:88` pair is worth one pass together: it is
+  the `default:` arm that now carries the extra argument.
 - S19b: `lib/init.sh:235-262` needs a native surface for "materialize the resolved config to a temp
   file, then render AGENTS.md with `--preserve-if-runtime-brief`/`--adopt-brief`". The pieces exist
   (`EvaluateBriefRender`, the materializer's resolved-config output, `RenderAgentsFile`), but no CLI
