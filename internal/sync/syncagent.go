@@ -7,9 +7,11 @@
 // flatten/merge, ensure_target_workspace, per-agent fan-out) with the
 // recorded D3/D22/D24 semantics. Steps that already have byte-exact Go ports
 // (gitignore render, brief policy, agents/mcp/hooks render, flatten,
-// merge-commands, cache paths) call them directly; recipe-materialize.py and
-// target-resolve.py are still exec'd (S14 owns the materialize port), and
-// every python3 child runs with the same argv/cwd/env as the shell did.
+// merge-commands, cache paths) call them directly; the recipe materializer runs
+// in-process since S14c too (both the resolved-config-only seam and the
+// per-target fallback), while target-resolve.py is still exec'd (the
+// target-resolver port is its own card), and every python3 child runs with the
+// same argv/cwd/env as the shell did.
 //
 // Shell facts reproduced deliberately (each pinned by a test or verified
 // against bash under set -e): a failing command substitution inside [[ ]]
@@ -253,10 +255,16 @@ func (r *runner) runAgentStandaloneFanout(root string, opts agentOptions, p plan
 		return 1
 	}
 	defer removeIfSet(resolvedConfigTemp)
-	matArgs := []string{"python3", filepath.Join(r.home, "lib", "_internal", "recipe-materialize.py"), root, r.home,
-		"--resolved-config-out", resolvedConfigTemp,
-		"--resolved-config-only"}
-	if rc := r.execMerged(matArgs, s.out); rc != 0 {
+	// GO-07 S14c: the resolved-config-only mode runs in-process. Its stderr is
+	// merged onto s.out exactly like the shell's `2>&1`, and a failure keeps the
+	// caller's own advisory warning on s.errW.
+	if err := BuildResolvedConfigOnly(ResolvedConfigOnlyRequest{
+		ProjectRoot: root,
+		AISpecsHome: r.home,
+		Out:         resolvedConfigTemp,
+		Stdout:      s.out,
+		Stderr:      s.out,
+	}); err != nil {
 		fmt.Fprintln(s.errW, "WARNING: resolved-config generation failed; subrepo AGENTS.md will be rendered without structured fields.")
 	}
 
@@ -377,8 +385,7 @@ func buildAgentRun(r *runner, opts agentOptions, s agentStreams, nested bool) (*
 			return nil, 1
 		}
 		defer removeIfSet(outPath)
-		matArgs := []string{"python3", filepath.Join(r.home, "lib", "_internal", "recipe-materialize.py"), a.sourceRoot, r.home}
-		if rc := r.execToFileMerged(matArgs, outPath); rc != 0 {
+		if rc := r.materializeMerged(a.sourceRoot, outPath); rc != 0 {
 			fmt.Fprintln(s.errW, "ERROR: recipe materialize failed")
 			replayExceptMarker(s.errW, outPath)
 			return nil, 1
@@ -1409,46 +1416,33 @@ func (r *runner) mktempCapture(args ...string) (string, string, bool) {
 	return strings.TrimRight(outBuf.String(), "\n"), "", true
 }
 
-// execMerged runs argv with stdout and stderr sharing one descriptor (the
-// shell's `2>&1`), copying the merged bytes to w in kernel write order.
-func (r *runner) execMerged(argv []string, w io.Writer) int {
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		fmt.Fprintf(r.stderr, "%s: %s\n", argv[0], strerrorText(err))
-		return 126
-	}
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Stdin = r.stdin
-	cmd.Env = r.env
-	cmd.Stdout = pw
-	cmd.Stderr = pw
-	startErr := cmd.Start()
-	pw.Close()
-	if startErr == nil {
-		io.Copy(w, pr)
-	}
-	pr.Close()
-	if startErr != nil {
-		return mapExecErr(startErr, r.stderr, argv[0])
-	}
-	return mapExecErr(cmd.Wait(), r.stderr, argv[0])
-}
-
-// execToFileMerged runs argv with both streams redirected into one file
-// (`>"$out" 2>&1`), preserving kernel write order.
-func (r *runner) execToFileMerged(argv []string, path string) int {
+// materializeMerged runs the native materializer with both streams merged into
+// one file (`>"$out" 2>&1`). A Python child with both streams redirected has a
+// line-buffered stderr and a block-buffered stdout (measured with 3.14.7: the
+// stderr lines land immediately, the stdout content at exit), so stderr is
+// written through as it is produced and stdout is flushed once the step
+// returns. Returns the exit status the caller maps: 0, 1 on a materializer
+// failure, 126 when the capture file cannot be created (the shell's redirect
+// failure).
+func (r *runner) materializeMerged(projectRoot, path string) int {
 	f, err := os.Create(path)
 	if err != nil {
-		fmt.Fprintf(r.stderr, "%s: %s\n", argv[0], strerrorText(err))
+		fmt.Fprintf(r.stderr, "%s: %s\n", "ai-specs", strerrorText(err))
 		return 126
 	}
 	defer f.Close()
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Stdin = r.stdin
-	cmd.Env = r.env
-	cmd.Stdout = f
-	cmd.Stderr = f
-	return runExitCode(cmd, r.stderr, argv[0])
+	var stdout bytes.Buffer
+	_, materializeErr := MaterializeRecipes(MaterializeRequest{
+		ProjectRoot: projectRoot,
+		AISpecsHome: r.home,
+		Stdout:      &stdout,
+		Stderr:      f,
+	})
+	f.Write(stdout.Bytes())
+	if materializeErr != nil {
+		return 1
+	}
+	return 0
 }
 
 // mapExecErr translates an exec result into a process exit code the way

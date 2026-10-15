@@ -1,9 +1,11 @@
 package sync
 
-// Native materializer spine (GO-07 S14a). Added and NOT wired: no pipeline
-// call site invokes MaterializeRecipes yet (S14c owns the wiring), and the
-// frozen stdout markers stay byte-identical to the Python authority
-// lib/_internal/recipe-materialize.py materialize_recipes (:3858-4147).
+// Native materializer spine (GO-07 S14a, wired by S14c). The sync spine
+// (sync.go), the standalone sync-agent fan-out and the per-target sync-agent
+// fallback all call it in-process since S14c, so no pipeline call site spawns
+// lib/_internal/recipe-materialize.py any more. The frozen stdout markers stay
+// byte-identical to the Python authority lib/_internal/recipe-materialize.py
+// materialize_recipes (:3858-4147) until S16 collapses them.
 //
 // WU1 owns the orchestration order up to and including the temp-document
 // writes: cache ensure, manifest load and enabled filter, legacy-origin

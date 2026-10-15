@@ -326,13 +326,6 @@ func (r *runner) run(opts options) int {
 		return 1
 	}
 
-	matArgs := []string{"python3", internal("recipe-materialize.py"), root, r.home,
-		"--recipe-mcp-out", recipeMcpTemp,
-		"--resolved-config-out", resolvedConfigTemp,
-		"--resolved-hooks-out", resolvedHooksTemp}
-	if opts.refreshGates {
-		matArgs = append(matArgs, "--refresh-gates")
-	}
 	recipeRC := 0
 	if outF, err := os.Create(recipeOutFile); err != nil {
 		recipeRC = 1
@@ -340,7 +333,21 @@ func (r *runner) run(opts options) int {
 		outF.Close()
 		recipeRC = 1
 	} else {
-		recipeRC = r.exec(matArgs, outF, errF)
+		// GO-07 S14c: the materializer runs in-process. The two capture files
+		// keep the shell's observable pair, so the RECIPE_NAMES extraction, the
+		// failure replay and the compact/verbose filtering below are untouched.
+		if _, err := MaterializeRecipes(MaterializeRequest{
+			ProjectRoot:       root,
+			AISpecsHome:       r.home,
+			RecipeMCPOut:      &recipeMcpTemp,
+			ResolvedConfigOut: &resolvedConfigTemp,
+			ResolvedHooksOut:  &resolvedHooksTemp,
+			RefreshGates:      opts.refreshGates,
+			Stdout:            outF,
+			Stderr:            errF,
+		}); err != nil {
+			recipeRC = 1
+		}
 		outF.Close()
 		errF.Close()
 	}

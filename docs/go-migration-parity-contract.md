@@ -110,7 +110,9 @@ path (raw bash `cd:` error — `doctor.sh` lacks the `-d` guard that
 - `2` — unknown flag or unexpected positional, in every shell wrapper.
 - `sync` collapses any per-target failure to `1`, and collapses
   `cli_version.py check-sync`'s `2` into `1`.
-- `recipe-materialize.py`'s own rc is passed through unchanged by `sync`.
+- The materializer step runs in-process (`sync` and `sync-agent`, GO-07 S14c), so its status
+  is `0` or `1`: a failure collapses to `1` with the fatal `  ✗ <msg>` line on stderr and, at
+  `sync`, the captured partial output replayed raw on both streams.
 
 ---
 
@@ -203,7 +205,7 @@ cache**. Non-negotiable.
 stdout**:
 
 ```sh
-RECIPE_NAMES=$(grep -oE '▸ recipe [^ ]+' …)          # from recipe-materialize.py
+RECIPE_NAMES=$(grep -oE '▸ recipe [^ ]+' …)          # from the materializer step
 RECIPE_MCP_JSON=$(grep '^RECIPE_MCP_TEMP:' … | cut -d: -f2-)
 ```
 

@@ -36,6 +36,7 @@ _MKTEMP_WRAPPER = """#!/bin/bash
 # macOS mktemp honours neither TMPDIR nor -t templates, so the spine execs the
 # binary; shadowing it is the only portable way to control the temp sequence.
 PROBE="{probe}"
+printf '%s\\n' "$*" >> "$PROBE/args.log"
 CNT="$PROBE/.count"
 n=$(( $(cat "$CNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$CNT"
@@ -124,6 +125,19 @@ class SyncStubs:
         if not counter.exists():
             return 0
         return int(counter.read_text().strip() or "0")
+
+    def mktemp_calls(self) -> list[str]:
+        """Every ``mktemp`` argument line, in execution order.
+
+        The probe path the wrapper handed out for the call at index ``i`` is
+        ``probe/temp{i + 1}``, so this log is what locates a specific temp in
+        the sequence without depending on any implementation detail of the
+        caller.
+        """
+        log = self.probe / "args.log"
+        if not log.exists():
+            return []
+        return log.read_text(encoding="utf-8").splitlines()
 
     # ── environment ──────────────────────────────────────────────────────
 
