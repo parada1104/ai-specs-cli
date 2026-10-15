@@ -1,12 +1,15 @@
 package sync
 
-// GO-07 S14c: the standalone fan-out resolves its resolved-config natively.
+// GO-07 S14c/S17: the standalone fan-out resolves both its resolved-config and
+// its target plan natively.
 //
 // The discrimination is exact and needs no network: a PATH-stubbed python3
 // records every invocation and delegates to the real interpreter, so the stub
 // log shows which steps are still delegated and which are native. Before the
-// wiring the resolved-config step spawns recipe-materialize.py; after it, the
-// stub never sees that module.
+// S14c wiring the resolved-config step spawns recipe-materialize.py; before the
+// S17 wiring the standalone plan spawns target-resolve.py. The fan-out itself
+// is driven by the manifest's declared subrepos, which is the only plan shape a
+// real resolver emits.
 
 import (
 	"bytes"
@@ -19,11 +22,12 @@ import (
 
 func TestStandaloneMaterializeRunsNatively(t *testing.T) {
 	scenarios := []struct {
-		name    string
-		targets []string
+		name     string
+		targets  []string
+		subrepos []string
 	}{
 		{name: "single-target body"},
-		{name: "standalone fan-out", targets: []string{"one", "two"}},
+		{name: "standalone fan-out", targets: []string{"one", "two"}, subrepos: []string{"one", "two"}},
 	}
 
 	for _, scenario := range scenarios {
@@ -41,8 +45,17 @@ func TestStandaloneMaterializeRunsNatively(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(root, "ai-specs"), 0o755); err != nil {
 				t.Fatal(err)
 			}
+			manifest := "[project]\nname = \"t\"\n"
+			if len(scenario.subrepos) > 0 {
+				quoted := make([]string, 0, len(scenario.subrepos))
+				for _, rel := range scenario.subrepos {
+					quoted = append(quoted, "\""+rel+"\"")
+				}
+				manifest += "subrepos = [" + strings.Join(quoted, ", ") + "]\n"
+			}
+			manifest += "\n[recipes.alpha]\nenabled = true\n"
 			if err := os.WriteFile(filepath.Join(root, "ai-specs", "ai-specs.toml"),
-				[]byte("[recipes.alpha]\nenabled = true\n"), 0o644); err != nil {
+				[]byte(manifest), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			recipeDir := filepath.Join(root, "catalog", "recipes", "alpha")
@@ -104,8 +117,8 @@ func TestStandaloneMaterializeRunsNatively(t *testing.T) {
 				t.Fatalf("stub log: %v", err)
 			}
 			log := string(logged)
-			if !strings.Contains(log, "target-resolve.py") {
-				t.Fatalf("the stub was never consulted, so the test proves nothing:\n%s", log)
+			if strings.Contains(log, "target-resolve.py") {
+				t.Fatalf("the plan still spawns target-resolve.py:\n%s", log)
 			}
 			if strings.Contains(log, "recipe-materialize.py") {
 				t.Fatalf("the materializer still spawns recipe-materialize.py:\n%s", log)

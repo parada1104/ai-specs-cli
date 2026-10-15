@@ -886,15 +886,30 @@ class ErrexitInteractionTests(_WorkspaceMixin, _CliSyncStubMixin, unittest.TestC
     """
 
     def test_t4_1_target_resolution_failure_aborts_before_the_header(self):
-        """A failing target-resolve must abort before any writes or header."""
-        proc, stubs = self.run_stubbed_sync(
-            intercepts=[("target-resolve.py", {"rc": 1, "stderr": "ERREXIT_PROBE\n"})]
+        """A failing target resolution must abort before any writes or header.
+
+        The fault is injected at the REAL seam since GO-07 S17: the native
+        resolver owns the plan, so PATH-stubbing `target-resolve.py` can no
+        longer reach it. A target directory without a manifest is the
+        resolver's own failure."""
+        base = Path(tempfile.mkdtemp(prefix="ai-specs-verb-"))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        stubs = _sync_stub.SyncStubs(base)
+        project = base / "no-manifest"
+        project.mkdir()
+        proc = subprocess.run(
+            [str(CLI), "sync", str(project)],
+            env=stubs.env(),
+            text=True,
+            capture_output=True,
+            check=False,
         )
         self.assertEqual(proc.returncode, 1, proc.stderr)
         self.assertIn(
             "ERROR: target resolution failed before any writes.", proc.stderr
         )
-        self.assertIn("ERREXIT_PROBE", proc.stderr)
+        # The resolver's own diagnostic precedes the spine's framing line.
+        self.assertTrue(proc.stderr.startswith("error: "), proc.stderr)
         self.assertNotIn("ai-specs sync", proc.stdout)
         self.assertFalse(
             any("project-cache.py" in line for line in stubs.invocations()),

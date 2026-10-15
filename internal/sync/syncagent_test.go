@@ -1106,29 +1106,18 @@ func TestMktempFailureReplaysStderr(t *testing.T) {
 }
 
 // TestStandalonePlanDiagnostics pins the STABLE PORTABLE diagnostics for the
-// standalone plan extraction (PATH-stubbed python3; human decision
-// 2026-10-04): a malformed plan body dies with the JSONDecodeError-class
-// diagnostic, a plan without "root" dies with the KeyError-class diagnostic,
-// both BEFORE any write or banner. The bytes are environment-independent by
-// design — the portability guard below rejects any local python install
-// path, version string or traceback frame leak.
+// standalone plan extraction (human decision 2026-10-04): a malformed body dies
+// with the JSONDecodeError-class diagnostic, a body without "root" with the
+// KeyError-class one, a wrong-typed root with the JSONDecodeError class again,
+// and a null root collapses to the shell's None without dying. The bytes are
+// environment-independent by design — the portability guard below rejects any
+// local python install path, version string or traceback frame leak.
+//
+// Since GO-07 S17 the plan is produced in process, so the extraction is driven
+// directly here (no stub can inject a plan body any more) and the end-to-end
+// ordering — a resolution failure precedes any banner or write — is pinned by
+// the "resolution failure precedes the banner" subtest.
 func TestStandalonePlanDiagnostics(t *testing.T) {
-	stubDir := t.TempDir()
-	stub := filepath.Join(stubDir, "python3")
-	writeStub := func(payload string) {
-		script := "#!/bin/sh\nif printf '%s\\n' \"$*\" | grep -q target-resolve.py; then\ncat <<'PYEOF'\n" + payload + "\nPYEOF\nexit 0\nfi\nexit 0\n"
-		if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	runWithStub := func(t *testing.T, payload string) (int, string, string) {
-		writeStub(payload)
-		root := t.TempDir()
-		var out, errOut bytes.Buffer
-		t.Setenv("PATH", stubDir+":"+os.Getenv("PATH"))
-		rc := RunAgent([]string{"sync-agent", root}, root, nil, &out, &errOut)
-		return rc, out.String(), errOut.String()
-	}
 	assertPortable := func(t *testing.T, stderr string) {
 		t.Helper()
 		for _, banned := range []string{"/opt/homebrew", "/usr/local", "/Library/", "Cellar", "Frameworks", "Traceback", "3.14", "3.13", "3.9"} {
@@ -1139,30 +1128,60 @@ func TestStandalonePlanDiagnostics(t *testing.T) {
 	}
 
 	t.Run("malformed plan body", func(t *testing.T) {
-		rc, out, errOut := runWithStub(t, "not json")
-		if rc != 1 {
-			t.Fatalf("rc = %d, want 1", rc)
+		var errOut bytes.Buffer
+		if _, ok := extractStandalonePlan([]byte("not json"), &errOut); ok {
+			t.Fatal("a malformed plan body must fail the extraction")
 		}
-		if errOut != pyJSONDecodeErrPlanBytes {
-			t.Errorf("stderr = %q\nwant = %q", errOut, pyJSONDecodeErrPlanBytes)
+		if errOut.String() != pyJSONDecodeErrPlanBytes {
+			t.Errorf("stderr = %q\nwant = %q", errOut.String(), pyJSONDecodeErrPlanBytes)
 		}
-		assertPortable(t, errOut)
-		if strings.Contains(out, "ai-specs sync-agent") {
-			t.Errorf("banner must not print: %q", out)
-		}
+		assertPortable(t, errOut.String())
 	})
 	t.Run("missing root", func(t *testing.T) {
-		rc, out, errOut := runWithStub(t, `{"targets":[{"path":"x"},{"path":"y"}]}`)
+		var errOut bytes.Buffer
+		planBody := `{"targets":[{"path":"x"},{"path":"y"}]}`
+		if _, ok := extractStandalonePlan([]byte(planBody), &errOut); ok {
+			t.Fatal("a plan without \"root\" must fail the extraction")
+		}
+		if errOut.String() != pyKeyErrRootBytes {
+			t.Errorf("stderr = %q\nwant = %q", errOut.String(), pyKeyErrRootBytes)
+		}
+		assertPortable(t, errOut.String())
+	})
+	t.Run("untyped root", func(t *testing.T) {
+		var errOut bytes.Buffer
+		if _, ok := extractStandalonePlan([]byte(`{"root":[]}`), &errOut); ok {
+			t.Fatal("a root of the wrong type must fail the extraction")
+		}
+		if errOut.String() != pyJSONDecodeErrPlanBytes {
+			t.Errorf("stderr = %q\nwant = %q", errOut.String(), pyJSONDecodeErrPlanBytes)
+		}
+	})
+	t.Run("null root adopts the shell's None", func(t *testing.T) {
+		var errOut bytes.Buffer
+		p, ok := extractStandalonePlan([]byte(`{"root":null}`), &errOut)
+		if !ok {
+			t.Fatalf("a null root is not a key error: %q", errOut.String())
+		}
+		if p.Root != "None" {
+			t.Errorf("Root = %q, want %q", p.Root, "None")
+		}
+	})
+	t.Run("resolution failure precedes the banner", func(t *testing.T) {
+		logPath := failingPythonStub(t)
+		root := t.TempDir() // no ai-specs/ai-specs.toml: the resolver fails
+		var out, errOut bytes.Buffer
+		rc := RunAgent([]string{"sync-agent", root}, root, nil, &out, &errOut)
 		if rc != 1 {
-			t.Fatalf("rc = %d, want 1", rc)
+			t.Fatalf("rc = %d, want 1 (%s)", rc, errOut.String())
 		}
-		if errOut != pyKeyErrRootBytes {
-			t.Errorf("stderr = %q\nwant = %q", errOut, pyKeyErrRootBytes)
+		if !strings.HasSuffix(errOut.String(), "ERROR: target resolution failed before any writes.\n") {
+			t.Errorf("stderr = %q, want the port's own framing last", errOut.String())
 		}
-		assertPortable(t, errOut)
-		if strings.Contains(out, "syncing") {
-			t.Errorf("no writes may happen: %q", out)
+		if strings.Contains(out.String(), "ai-specs sync-agent") {
+			t.Errorf("banner must not print: %q", out.String())
 		}
+		assertNoPythonInvocation(t, logPath)
 	})
 	t.Run("classes are distinguishable", func(t *testing.T) {
 		if pyJSONDecodeErrPlanBytes == pyKeyErrRootBytes {

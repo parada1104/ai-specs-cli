@@ -93,5 +93,9 @@ Well inside the plan's ~700-line cap.
   `agents-render._render_lines`/`brief_effective_state` and `brief-render-policy.has_dead_recipe_fragments`),
   `lib/init.sh:242-245` replaced, and the parity legacy leg retired or re-based (`tests/parity/parity.py:1371`).
 - `lib/_internal/target-resolve.py`: needs a native resolver (`internal/sync/syncagent.go:225` still execs it).
+  **Closed by S17** (`odd/tasks/go-07-s17-target-resolve.md`): both Go call sites — the spine
+  (`internal/sync/sync.go:433`) and the standalone agent plan (`internal/sync/syncagent.go:225`) —
+  now run `internal/target` in process, so no Go path execs the module. The shell route still does,
+  until the dispatcher cutover.
 - `gitignore-root-refresh.py`, `mcp-render.py`, `hooks-render.py`, `flatten-resolved-skills.py`: each has
   exactly one exec caller inside `lib/sync.sh`/`lib/sync-agent.sh`, so they fall with those scripts.
