@@ -26,7 +26,15 @@ Second unit of the S14 series. Base `7f19c65` on `epic/go-single-binary` (S14a c
 
 ## Tasks
 - T1 — S2-S6: ordered resolved-config writer + catalog enrichment + differential scenarios. Route: inline,
-  test-first. Commit: pending.
+  test-first. Commit: `c312f0f`.
+
+## Close-out
+- Work-unit commit `c312f0f` (code, differentials and this document), branch
+  `change/go-07-s14b-resolved-catalog`, base `7f19c65`.
+- Native assess over the committed range `7f19c65..c312f0f` (6 paths, 243 changed lines, writer profile
+  `large` from runtime evidence): `risk: medium`, `reviewDue: false` (`under_budget`), plan
+  `writerSelfVerification: true` / `independentVerifier: false`. No native review transaction was started,
+  per the entry rule; the differentials above are the candidate's own verification.
 
 ## Evidence
 Run from this worktree at base `7f19c65`, with the real toolchains first on `PATH`
