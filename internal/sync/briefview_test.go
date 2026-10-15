@@ -22,6 +22,7 @@ type briefRefOut struct {
 	Error        *string `json:"error"`
 	State        *string `json:"state"`
 	WouldWriteSH string  `json:"would_write_sha"`
+	RenderStdout string  `json:"render_stdout"`
 	Dead         *bool   `json:"dead"`
 }
 
@@ -89,6 +90,22 @@ version = "1.0"
 description = "A probe recipe without brief fragments."
 `
 
+// briefRecipeBoundToml is a catalog recipe that declares the VCS capability,
+// so an explicit [[bindings]] entry resolves and reaches the rendered brief.
+// Its id is a known VCS label, so the renderer emits no unknown-VCS warning.
+const briefRecipeBoundToml = `[recipe]
+id = "git-pr-flow"
+name = "GitHub PR Flow"
+version = "1.0"
+description = "A probe recipe that declares the VCS capability."
+
+[[capabilities]]
+id = "vcs-pr-flow"
+
+[provides.brief]
+workflow_rules = ["always run the focused tests"]
+`
+
 // briefRecipeInvalidToml is a recipe the loader rejects (a required field is
 // missing): both legs skip it silently, exactly like Python's per-recipe
 // `except Exception: pass`.
@@ -104,6 +121,13 @@ workflow_rules = ["never attached"]
 // recipeToml is non-empty, the alpha catalog recipe under a fresh CLI home.
 func newBriefProject(t *testing.T, manifest, recipeToml string) (root, home string) {
 	t.Helper()
+	return newBriefProjectRecipe(t, manifest, "alpha", recipeToml)
+}
+
+// newBriefProjectRecipe is newBriefProject with an explicit catalog recipe id
+// (the auto-binding scenarios need an id the VCS label table knows).
+func newBriefProjectRecipe(t *testing.T, manifest, recipeID, recipeToml string) (root, home string) {
+	t.Helper()
 	root = t.TempDir()
 	home = t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "ai-specs"), 0o755); err != nil {
@@ -113,7 +137,7 @@ func newBriefProject(t *testing.T, manifest, recipeToml string) (root, home stri
 		t.Fatal(err)
 	}
 	if recipeToml != "" {
-		dir := filepath.Join(home, "catalog", "recipes", "alpha")
+		dir := filepath.Join(home, "catalog", "recipes", recipeID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -217,6 +241,37 @@ func TestBuildBriefViewDifferentialAgainstPython(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("explicit bindings reach the rendered brief", func(t *testing.T) {
+		// The auto-binding step belongs to the provenance chain: an explicit
+		// [[bindings]] entry must reach the render on both legs. The recipe id is
+		// a known VCS label, so the renderer emits no unknown-VCS warning — that
+		// warning goes to stdout, which the legacy bridge used for its JSON
+		// response (a bridge defect recorded as a follow-up in the unit doc).
+		boundManifest := "[project]\nname = \"probe\"\n\n[recipes.git-pr-flow]\nenabled = true\n\n[agents]\nenabled = [\"claude\"]\n\n[[bindings]]\ncapability = \"vcs-pr-flow\"\nrecipe = \"git-pr-flow\"\n"
+		boundRoot, boundHome := newBriefProjectRecipe(t, boundManifest, "git-pr-flow", briefRecipeBoundToml)
+		boundRef := runBriefRef(t, python, driver, lib, boundRoot, boundHome)
+		if boundRef.Error != nil {
+			t.Fatalf("oracle reported %s", *boundRef.Error)
+		}
+		if boundRef.RenderStdout != "" {
+			t.Errorf("the fixture must render without a stdout warning, got %q", boundRef.RenderStdout)
+		}
+		boundView, boundErr := BuildBriefView(BriefViewRequest{ProjectRoot: boundRoot, AISpecsHome: boundHome})
+		if boundErr != nil {
+			t.Fatalf("BuildBriefView: %v", boundErr)
+		}
+		if got := lock.Sha256Bytes(boundView.WouldWrite); got != boundRef.WouldWriteSH {
+			t.Errorf("would-write sha = %s, want %s\nbytes:\n%s", got, boundRef.WouldWriteSH, boundView.WouldWrite)
+		}
+		if boundView.State != *boundRef.State {
+			t.Errorf("state = %q, want %q", boundView.State, *boundRef.State)
+		}
+		// Non-vacuous: the resolved binding must show up in the rendered bytes.
+		if !strings.Contains(string(boundView.WouldWrite), "GitHub") {
+			t.Errorf("the bound VCS label is missing from the rendered brief:\n%s", boundView.WouldWrite)
+		}
+	})
 
 	t.Run("invalid brief mode fails on both sides", func(t *testing.T) {
 		// _render_lines validates the [brief] mode keys first and raises, which

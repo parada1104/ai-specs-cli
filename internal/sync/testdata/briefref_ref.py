@@ -15,8 +15,10 @@ Prints one JSON object: {"error", "state", "would_write_sha", "dead"}.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import sys
 import tomllib
@@ -40,6 +42,7 @@ def main() -> int:
         "error": None,
         "state": None,
         "would_write_sha": None,
+        "render_stdout": None,
         "dead": None,
     }
     try:
@@ -64,7 +67,13 @@ def main() -> int:
             if auto_bindings:
                 resolved["bindings"] = auto_bindings
         resolved.setdefault("project_root", str(root))
-        would_write = "\n".join(renderer._render_lines(manifest, resolved)).encode()
+        # The renderer prints the unknown-VCS warning to stdout, which is the
+        # same stream this oracle's JSON uses; capture it instead of emitting it
+        # so the report stays readable (recorded in the JSON for evidence).
+        render_stdout = io.StringIO()
+        with contextlib.redirect_stdout(render_stdout):
+            would_write = "\n".join(renderer._render_lines(manifest, resolved)).encode()
+        out["render_stdout"] = render_stdout.getvalue()
         out["would_write_sha"] = hashlib.sha256(would_write).hexdigest()
         out["state"] = renderer.brief_effective_state(
             manifest_path, root / "AGENTS.md", would_write
