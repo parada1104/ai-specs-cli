@@ -168,14 +168,32 @@ def _norm_help_stderr(text: str, ctx: dict) -> str:
 
 
 # The legacy Python modules announce their degraded Python authority on stderr
-# when no verified worktree-gate binary is present in the install. Anchored to
-# the two exact notice prefixes; nothing else is touched.
+# when no verified worktree-gate binary is present in the install. The
+# sync-agent route merges the child's stderr into its stdout, so the same
+# announcement also reaches the stdout surface there. Anchored to the two exact
+# notice prefixes; nothing else is touched.
 _BRIDGE_FALLBACK_NOTICE_RE = re.compile(
     r"^(?:  ! )?GO_[A-Z_]+_BRIDGE_FALLBACK: .*$\n?", re.MULTILINE)
 
 
+# The legacy Python hook bridge, when its Go envelope is unusable, runs the
+# Python body and then reconciles the lock itself, announcing the reason and the
+# reconciliation outcome. The Go port materializes hooks natively and never
+# reconciles a lock against a bridge envelope.
+_HOOK_BRIDGE_RECONCILE_RE = re.compile(
+    r"^  ! (?:the Go bridge produced no usable output|wrote without a record); "
+    r"(?:reconciled the lock with the on-disk gate bytes|"
+    r"the on-disk bytes are not proven CLI-rendered, .*)$\n?",
+    re.MULTILINE,
+)
+
+
 def _norm_bridge_fallback_notice(text: str, ctx: dict) -> str:
     return _BRIDGE_FALLBACK_NOTICE_RE.sub("", text)
+
+
+def _norm_hook_bridge_reconcile_notice(text: str, ctx: dict) -> str:
+    return _HOOK_BRIDGE_RECONCILE_RE.sub("", text)
 
 
 NORMALIZATIONS = (
@@ -278,9 +296,10 @@ NORMALIZATIONS = (
     ),
     Normalization(
         rule_id="N7-legacy-bridge-fallback-notice",
-        surfaces=("stderr",),
+        surfaces=("stdout", "stderr"),
         description="Remove only the legacy GO_*_BRIDGE_FALLBACK announcement "
-                    "lines, with or without the '  ! ' prefix, from stderr.",
+                    "lines, with or without the '  ! ' prefix, from stdout and "
+                    "stderr.",
         justification="The legacy Python modules announce their degraded "
                       "Python authority on stderr when no verified "
                       "worktree-gate binary is present in the install "
@@ -289,11 +308,39 @@ NORMALIZATIONS = (
                       "`GO_*_BRIDGE_FALLBACK` notices). The Go port performs "
                       "those projections and classifications natively, so it "
                       "has no temporary authority to announce and must never "
-                      "claim to be using Python. Only the announcement lines "
-                      "are removed; the check roster, severities, messages, "
-                      "exit codes and report formatting stay compared "
-                      "verbatim.",
+                      "claim to be using Python. The stdout surface is "
+                      "included because `sync-agent` runs its resolved-config "
+                      "child with BOTH streams on one descriptor (the shell's "
+                      "`2>&1`), so the same legacy announcement lands on "
+                      "stdout there (GO-07 S14c; measured in "
+                      "sync-agent-standalone and nested-fanout-suppression, "
+                      "gate-absent only). Only the announcement lines are "
+                      "removed; the check roster, severities, messages, exit "
+                      "codes and report formatting stay compared verbatim.",
         fn=_norm_bridge_fallback_notice,
+    ),
+    Normalization(
+        rule_id="N8-legacy-hook-bridge-reconcile-notice",
+        surfaces=("stderr",),
+        description="Remove only the legacy `  ! <reason>; reconciled the lock "
+                    "with the on-disk gate bytes` / `…; the on-disk bytes are "
+                    "not proven CLI-rendered, …` announcement lines, where "
+                    "<reason> is one of the two bridge-envelope reasons.",
+        justification="When the legacy Python hook bridge gets no usable "
+                      "envelope from the gate, it runs the Python body and "
+                      "then reconciles the lock itself, announcing why "
+                      "(`lib/_internal/recipe-materialize.py:2041-2085`: "
+                      "`the Go bridge produced no usable output` or `wrote "
+                      "without a record`, each with one of three "
+                      "reconciliation outcomes). The Go port materializes "
+                      "hooks natively, so there is no bridge envelope to "
+                      "reconcile and no such notice to print (GO-07 S14c; "
+                      "measured in all-recipes-enabled, cache-layout, "
+                      "hooks-five-runtimes and doctor-healthy, gate-absent "
+                      "only). Anchored to the two exact reasons and the "
+                      "reconciliation prefixes — never a blanket pattern — "
+                      "so every other warning stays compared verbatim.",
+        fn=_norm_hook_bridge_reconcile_notice,
     ),
 )
 
