@@ -100,6 +100,13 @@ Run from this worktree at base `3ae502a`, with the real toolchains first on `PAT
 
 Log: `~/.cache/s17-evidence.log` (chained go test → build-gate → parity → validate).
 
+## Assessment
+`gentle_review assess` over the committed range `3ae502a..3e8ede1` (committedOnly, this
+worktree): risk **medium** (`executable_change`), writer profile `large` (runtime), 9 changed
+paths / 480 changed lines, `reviewDue: false` (`under_budget`) → no native review transaction was
+started, which is the tier's own path. Plan: writer self-verification stands, no separate
+verifier required; the evidence table above is that self-verification.
+
 ## Size
 Disclosed: about 45 authored lines of product code (one native `resolvePlan`, the extraction
 helper move, the call site, the package comment), about 100 of test changes (three new pins plus
