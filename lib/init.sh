@@ -236,13 +236,35 @@ fi
 #     Best-effort: any failure falls back to the placeholder written below.
 #     The if-guard consumes the exit code so set -e cannot abort init.
 #     Mirrors sync.sh agents-render block for byte-stability.
-if [[ "$(python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH")" == "true" ]]; then
+#
+#     GO-07 S19b: both call sites prefer the native dispatcher when the seam
+#     names one — AI_SPECS_GO_BIN, which the Go shim exports to a script it
+#     execs. Without it (a direct `bash lib/init.sh`, or the bash launcher that
+#     never runs the Go binary) the Python route runs, unchanged. The gate keeps
+#     its shape: a failing command substitution yields empty output INSIDE
+#     [[ ]], so set -e cannot abort init where it did not before.
+brief_render_policy() {
+    if [[ -n "${AI_SPECS_GO_BIN:-}" && -x "$AI_SPECS_GO_BIN" ]]; then
+        "$AI_SPECS_GO_BIN" brief-render-policy "$TOML_PATH"
+    else
+        python3 "$BRIEF_RENDER_POLICY_PY" "$TOML_PATH"
+    fi
+}
+baseline_brief_render() {
+    if [[ -n "${AI_SPECS_GO_BIN:-}" && -x "$AI_SPECS_GO_BIN" ]]; then
+        "$AI_SPECS_GO_BIN" baseline-brief "$TARGET_PATH" \
+            --resolved-config-out "$RESOLVED_CONFIG_TEMP" $ADOPT_BRIEF
+    else
+        python3 "$RECIPE_MATERIALIZE_PY" "$TARGET_PATH" "$AI_SPECS_HOME" \
+               --resolved-config-out "$RESOLVED_CONFIG_TEMP" \
+            && python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$AGENTS_PATH" \
+               --preserve-if-runtime-brief $ADOPT_BRIEF --resolved-config "$RESOLVED_CONFIG_TEMP"
+    fi
+}
+if [[ "$(brief_render_policy)" == "true" ]]; then
     RESOLVED_CONFIG_TEMP="$(mktemp -t ai-specs-resolved-config-XXXXXX.json)"
     trap '_ai_specs_init_cleanup' EXIT
-    if python3 "$RECIPE_MATERIALIZE_PY" "$TARGET_PATH" "$AI_SPECS_HOME" \
-           --resolved-config-out "$RESOLVED_CONFIG_TEMP" \
-       && python3 "$AGENTS_RENDER_PY" "$TOML_PATH" "$AGENTS_PATH" \
-           --preserve-if-runtime-brief $ADOPT_BRIEF --resolved-config "$RESOLVED_CONFIG_TEMP"; then
+    if baseline_brief_render; then
         echo "  ✓ render AGENTS.md (baseline brief)"
     else
         # Fallback: if render failed, write a one-line placeholder.

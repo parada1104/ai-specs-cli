@@ -27,6 +27,8 @@ const (
 	routeSyncAgent                       // native sync-agent fan-out (card [Go 07.S15])
 	routeDoctor                          // native: `doctor` health diagnostic (card [Go 08])
 	routeRulesAudit                      // native: `rules-audit` legacy rules inventory (card [Go 08])
+	routeBriefRenderPolicy               // native internal seam: lib/init.sh's policy gate (S19b)
+	routeBaselineBrief                   // native internal seam: lib/init.sh's baseline render (S19b)
 	routeUnknown                         // unknown command: usage error, exit 2
 )
 
@@ -52,18 +54,25 @@ var shims = map[string]route{
 // native maps the native verbs and their aliases to their route kind.
 // Like the legacy dispatcher, version and help ignore any extra arguments
 // (the verb runs and the rest is dropped).
+//
+// brief-render-policy and baseline-brief are INTERNAL seams: legacy scripts
+// reach them through AI_SPECS_GO_BIN (S19a), so they are routed here and
+// deliberately absent from help.txt.
 var native = map[string]route{
 	// sync and sync-agent are native (cards [Go 07.S1] and [Go 07.S15]).
-	"refresh-bundled": {kind: routeRefreshBundled},
-	"sync":            {kind: routeSync},
-	"sync-agent":      {kind: routeSyncAgent},
-	"doctor":          {kind: routeDoctor},
-	"rules-audit":     {kind: routeRulesAudit}, "version": {kind: routeVersion},
-	"-v":        {kind: routeVersion},
-	"--version": {kind: routeVersion},
-	"help":      {kind: routeHelp},
-	"-h":        {kind: routeHelp},
-	"--help":    {kind: routeHelp},
+	"refresh-bundled":     {kind: routeRefreshBundled},
+	"sync":                {kind: routeSync},
+	"sync-agent":          {kind: routeSyncAgent},
+	"doctor":              {kind: routeDoctor},
+	"rules-audit":         {kind: routeRulesAudit},
+	"brief-render-policy": {kind: routeBriefRenderPolicy},
+	"baseline-brief":      {kind: routeBaselineBrief},
+	"version":             {kind: routeVersion},
+	"-v":                  {kind: routeVersion},
+	"--version":           {kind: routeVersion},
+	"help":                {kind: routeHelp},
+	"-h":                  {kind: routeHelp},
+	"--help":              {kind: routeHelp},
 }
 
 // Route resolves the dispatcher decision for args. Bare invocation (no args)
@@ -99,6 +108,10 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		return runDoctor(args, home, stdout, stderr)
 	case routeRulesAudit:
 		return runRulesAudit(args, home, stdout, stderr)
+	case routeBriefRenderPolicy:
+		return runBriefRenderPolicy(args, stdout, stderr)
+	case routeBaselineBrief:
+		return runBaselineBrief(args, home, stdout, stderr)
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
