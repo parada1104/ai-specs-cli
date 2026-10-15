@@ -299,10 +299,6 @@ func TestMaterializeLoopDifferential(t *testing.T) {
 				assertDocumentEqual(t, "recipe-mcp", result.RecipeMCPDocument, ref.RecipeMCP)
 			}
 			if scenario.resolvedConfigOut {
-				// A resolved-config document WITH enabled recipes is not compared
-				// here: catalog defaults and brief fragments are S14b additions at
-				// that call site (decision 6), so it is the one document the bare
-				// spine does not yet match. WU1's no-enabled scenario covers it.
 				assertDocumentEqual(t, "resolved-config", result.ResolvedConfigDocument, ref.ResolvedConfig)
 			}
 			if scenario.resolvedHooksOut {

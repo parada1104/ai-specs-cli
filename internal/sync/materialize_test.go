@@ -253,6 +253,52 @@ func TestMaterializeSpineDifferential(t *testing.T) {
 			recipeMCPDoc: false,
 		},
 		{
+			// S14b: catalog [config] defaults fill absent keys (manifest wins)
+			// and [provides.brief] fragments attach per enabled recipe; a recipe
+			// without a brief block gets {}.
+			name: "resolved-config carries catalog defaults and brief fragments",
+			recipes: map[string]string{
+				"alpha": materializeRecipeBodyWith(syncRecipeHeader("alpha", "Alpha") +
+					"\n[config.base_branch]\nrequired = false\ntype = \"string\"\ndefault = \"development\"\n" +
+					"\n[config.mode]\nrequired = false\ntype = \"string\"\ndefault = \"strict\"\n" +
+					"\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 2.0\n" +
+					"\n[config.label]\nrequired = false\ntype = \"string\"\n" +
+					"\n[provides.brief]\nworkflow_rules = [\"Rule one\", \"Rule two\"]\nuseful_commands = [{key = \"run\", text = \"make run\"}]\n"),
+				"beta": materializeRecipeBody("beta", "Beta"),
+			},
+			manifest:          "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nmode = \"loose\"\n\n[recipes.beta]\nenabled = true\n",
+			recipeMCPDoc:      true,
+			resolvedConfigOut: true,
+		},
+		{
+			// S14b value fidelity at this writer: the projected manifest values
+			// keep the Go envelope's rendering (Python decodes that envelope, so a
+			// manifest 1.0 is 1 on both legs), while catalog defaults keep Python's
+			// own tomllib types (a default 2.0 stays 2.0 and a wide integer keeps
+			// its digits).
+			name: "resolved-config renders catalog default value types",
+			recipes: map[string]string{
+				"alpha": materializeRecipeBodyWith(syncRecipeHeader("alpha", "Alpha") +
+					"\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 2.0\n" +
+					"\n[config.huge]\nrequired = false\ntype = \"int\"\ndefault = 123456789012345678901234567890\n"),
+			},
+			manifest:          "[recipes.alpha]\nenabled = true\nweight = 1.0\n",
+			recipeMCPDoc:      true,
+			resolvedConfigOut: true,
+		},
+		{
+			// S14b: the no-enabled branch stays the raw projection (Python does
+			// not enrich it), even when the disabled recipe declares defaults.
+			name: "no-enabled resolved-config is not enriched",
+			recipes: map[string]string{
+				"alpha": materializeRecipeBodyWith(syncRecipeHeader("alpha", "Alpha") +
+					"\n[config.base_branch]\nrequired = false\ntype = \"string\"\ndefault = \"development\"\n" +
+					"\n[provides.brief]\nworkflow_rules = [\"Rule one\"]\n"),
+			},
+			manifest:          "[recipes.alpha]\nenabled = false\nweight = 1.0\n",
+			resolvedConfigOut: true,
+		},
+		{
 			name: "advisory tag conflict",
 			recipes: map[string]string{
 				"alpha": materializeRecipeBodyWith(syncRecipeHeader("alpha", "Alpha") + "tags = [\"vcs\"]\n"),

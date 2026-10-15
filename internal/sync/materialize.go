@@ -328,7 +328,7 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 			return result, materializeFatal(stderr, err.Error())
 		}
 		resolved.Bindings = binding.Bindings
-		document, err := materializeResolvedConfigDocument(resolved)
+		document, err := materializeEnrichedResolvedConfigDocument(resolved, catalogDir)
 		if err != nil {
 			return result, materializeFatal(stderr, err.Error())
 		}
