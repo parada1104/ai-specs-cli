@@ -125,7 +125,7 @@ becoming a failure with return 1.
         the package tests.
       - Deliberate divergence: Python's `urlretrieve` has no timeout; Go uses 60 s, like `internal/upgrade`.
         Tests never reach the network.
-      - State (C1 only, C2 not started): `2fecbcc` (port), `d0998ae` (receipt/download hardening),
+      - State (C1 and C2 complete): `2fecbcc` (port), `d0998ae` (receipt/download hardening),
         `f3614d9` (unresolved home fails closed), `637c171` (untrusted-cache threat model, decided with the
         human: private O_NOFOLLOW verify copies, install by rename, no-digest fails closed). Native review
         did not converge in four high-tier rounds (`review-870228bb459afd27`, `review-cdd02e2b042ca0f3`,

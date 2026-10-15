@@ -16,10 +16,10 @@ package sync
 // WU2 (T4) owns the per-recipe artifact actuation inside that frame, in
 // materialize_loop.go: the project-owned config pass, bundled/dep skills,
 // commands, templates, docs, sync-time hooks, runtime-hooks collection and the
-// worktree-flow gate-binary acquisition. The two deliberate non-native steps
-// are the documented delegations in materialize_loop.go: dependency-skill
-// vendoring (its own card) and the worktree-flow gate-binary acquisition
-// (replaced natively by WU3/T7).
+// worktree-flow gate-binary acquisition. One step is the deliberate
+// non-native delegation documented in materialize_loop.go: dependency-skill
+// vendoring (its own card); the gate-binary acquisition runs natively through
+// internal/gatebinary since WU3/T7.
 //
 // The only decision logic in this file is the orchestration itself; every
 // grader is the merged native authority: ResolveBindings, PlanReconcileStamps

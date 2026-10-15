@@ -575,7 +575,7 @@ func materializeConfigTruthy(value any) bool {
 	return true
 }
 
-// --- the two deliberate delegations -----------------------------------------
+// --- the deliberate delegation ----------------------------------------------
 
 // depSkillDelegationScript loads vendor-skills.py the same way
 // materialize_dep_skill does (sibling import with lib/_internal on sys.path)
