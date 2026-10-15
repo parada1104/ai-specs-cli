@@ -57,13 +57,6 @@ func (d *Doctor) manifestData() *toml.Table {
 	return d.manifest.data
 }
 
-// manifestHasContent mirrors `if not manifest` for the brief-render check: an
-// absent, empty or unparseable manifest is falsy.
-func (d *Doctor) manifestHasContent() bool {
-	data := d.manifestData()
-	return data != nil && len(data.Keys()) > 0
-}
-
 // truthy mirrors Python truthiness for the value types internal/toml produces.
 func truthy(v any) bool {
 	switch x := v.(type) {

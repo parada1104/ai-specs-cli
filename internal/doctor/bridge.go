@@ -12,17 +12,19 @@ import (
 )
 
 // The one Go->Python seam of this port. It exists because one dependency stack
-// behind doctor is not ported yet (recipe-materialize/agents-render for the
-// brief provenance chain) and porting it is another card's scope. Every check,
+// behind doctor is not ported yet, and cannot be: tomllib's own manifest
+// diagnostic, whose text is owned by the interpreter version. Every check,
 // severity, message, ordering and exit code stays in Go; the bridge only
-// returns raw analysis results, and each op degrades exactly the way the legacy
-// in-process call did.
+// returns raw analysis results, and its one op degrades exactly the way the
+// legacy in-process call did. The brief probes (`brief_state`,
+// `brief_dead_fragments`) ran here until GO-07 S18; they are native now, so a
+// healthy project needs no Python at all.
 
 //go:embed bridge.py
 var bridgeScript string
 
-// bridgeTimeout bounds one bridge call. The brief provenance op rebuilds the
-// whole resolved recipe graph, which is the slowest thing doctor does.
+// bridgeTimeout bounds one bridge call. Only the manifest diagnostic remains,
+// which imports tomllib and parses one file.
 const bridgeTimeout = 300 * time.Second
 
 // bridgeResponse holds one decoded result per requested op.
@@ -58,42 +60,21 @@ type tomlErrorResult struct {
 	Error *string `json:"error"`
 }
 
-// briefStateResult carries renderer.brief_effective_state.
-type briefStateResult struct {
-	State string `json:"state"`
-}
-
-// briefDeadResult carries has_dead_recipe_fragments; nil means the legacy
-// call site swallowed a failure and emitted no check.
-type briefDeadResult struct {
-	Dead *bool `json:"dead"`
-}
-
-// bridgeOps is the set of ops this run needs, derived from the same native
-// manifest read the checks use and listed in check order (the legacy warnings
-// reach stderr in that order).
+// bridgeOps is the set of ops this run needs. Only tomllib's own manifest
+// diagnostic is still interpreter-owned since GO-07 S18 (the brief probes run in
+// process), so an unreadable or unparseable manifest is the only reason to
+// spawn Python at all.
 func (d *Doctor) bridgeOps() []string {
 	d.loadManifest()
 	if !d.manifest.exists {
 		return nil
 	}
-	var ops []string
 	if d.manifest.data == nil {
 		// Unreadable or unparseable: _check_manifest renders tomllib's own
 		// diagnostic as guidance.
-		ops = append(ops, "toml_error")
+		return []string{"toml_error"}
 	}
-	enabled, err := briefRenderEnabled(d.manifest.data)
-	if err != nil || enabled {
-		// Render enabled (or an invalid render type, which
-		// _brief_render_disabled treats as enabled): _check_brief_provenance
-		// rebuilds the brief.
-		ops = append(ops, "brief_state")
-	} else if d.manifestHasContent() {
-		// _check_brief_render_policy returns early on a falsy manifest.
-		ops = append(ops, "brief_dead_fragments")
-	}
-	return ops
+	return nil
 }
 
 // runBridge performs the single batched Go->Python call for this run.

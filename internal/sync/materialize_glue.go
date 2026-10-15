@@ -255,31 +255,19 @@ func materializeResolvedConfigDocument(resolved shared.ResolvedConfig) (string, 
 	return materializeEnrichedResolvedConfigDocument(resolved, "")
 }
 
-// materializeEnrichedResolvedConfigDocument is materializeResolvedConfigDocument
-// plus the S14b catalog enrichment when catalogDir is non-empty. The JSON round
-// trip is deliberate: Python decodes the Go gate's envelope, so the projection's
-// values carry that envelope's rendering, while enrichment runs afterwards on
-// the ordered document with the catalog values' own types.
+// resolvedResolvedConfigDocument is materializeResolvedConfigDocument plus the S14b catalog enrichment when catalogDir is non-empty. The JSON round trip is deliberate: Python decodes the Go gate's envelope, so the projection's values carry that envelope's rendering, while enrichment runs afterwards on the ordered document with the catalog values' own types.
 func materializeEnrichedResolvedConfigDocument(resolved shared.ResolvedConfig, catalogDir string) (string, error) {
-	raw, err := json.Marshal(resolved)
-	if err != nil {
-		return "", err
-	}
-	decoded, err := mcpParseJSONOrdered(raw)
+	doc, err := orderedResolvedDocument(resolved)
 	if err != nil {
 		return "", err
 	}
 	if catalogDir != "" {
-		doc, ok := decoded.(*mcpObj)
-		if !ok {
-			return "", errNonObjectStamp
-		}
 		enrichResolvedConfig(doc, resolved.Enabled, catalogDir)
 		if err := mcpJSONUnserializable(doc); err != nil {
 			return "", err
 		}
 	}
-	return hooksJSONDumpsSorted(decoded) + "\n", nil
+	return hooksJSONDumpsSorted(doc) + "\n", nil
 }
 
 // materializeResolvedHooksDocument renders {"enabled_agents": [...], "hooks":
