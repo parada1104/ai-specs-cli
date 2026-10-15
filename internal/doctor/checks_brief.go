@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"ai-specs.dev/ai-specs/internal/sync"
 )
 
 // checkBriefRenderPolicy is doctor._check_brief_render_policy.
@@ -29,8 +31,11 @@ func (d *Doctor) checkBriefRenderPolicy() {
 				"runtime-brief marker present (redundant with render = false)")
 		}
 	}
-	var dead briefDeadResult
-	if err := d.op("brief_dead_fragments", &dead); err != nil || dead.Dead == nil || !*dead.Dead {
+	// The probe is native since GO-07 S18: the resolved-config chain, the
+	// render and the classification all run in process. A failure declares
+	// nothing, exactly like the op's null result.
+	dead, err := sync.BriefHasDeadRecipeFragments(sync.BriefViewRequest{ProjectRoot: d.Root, AISpecsHome: d.Home})
+	if err != nil || !dead {
 		return
 	}
 	d.add(WARN, "brief-fragments-unused",
@@ -49,10 +54,12 @@ func (d *Doctor) checkBriefProvenance() {
 			"set [brief].render = true when ai-specs should render AGENTS.md")
 		return
 	}
+	// The probe is native since GO-07 S18 (the bridge's brief ops are gone):
+	// the same resolved-config chain, render and classifier run in process. Any
+	// failure keeps the legacy "undetermined" answer.
 	state := "undetermined"
-	var res briefStateResult
-	if err := d.op("brief_state", &res); err == nil && res.State != "" {
-		state = res.State
+	if view, err := sync.BuildBriefView(sync.BriefViewRequest{ProjectRoot: d.Root, AISpecsHome: d.Home}); err == nil && view.State != "" {
+		state = view.State
 	}
 	switch state {
 	case "missing":
