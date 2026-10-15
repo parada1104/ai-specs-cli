@@ -1,6 +1,7 @@
 """Tests for ai-specs skills add (lib/skills-add.sh)."""
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -9,6 +10,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ADD_SCRIPT = ROOT / "lib" / "skills-add.sh"
+KEPANO_URL = "https://github.com/kepano/obsidian-skills"
+KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 
 
 class SkillsAddCliTests(unittest.TestCase):
@@ -202,6 +205,68 @@ class SkillsAddCliTests(unittest.TestCase):
                 self.assertIn("invalid dep id", proc.stderr)
                 # No manifest write: the [[deps]] block must be absent.
                 self.assertNotIn("[[deps]]", (ai / "ai-specs.toml").read_text(encoding="utf-8"))
+
+
+class AutoSyncRouteTests(unittest.TestCase):
+    """GO-07 S19a: which route the add-dep auto-sync takes.
+
+    The seam (`AI_SPECS_GO_BIN`) is set by the native dispatcher when it execs a
+    legacy script. Both directions are observed through a stub's own argv log, so
+    neither leg needs the network: with a usable seam the stub IS the sync, and
+    with an unusable one the shell route runs against the offline vendoring
+    fixture.
+    """
+
+    def _project(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        project = Path(tmp.name)
+        ai_specs = project / "ai-specs"
+        ai_specs.mkdir()
+        (ai_specs / "ai-specs.toml").write_text('[project]\nname = "test"\n', encoding="utf-8")
+        return project
+
+    def _stub(self, *, executable: bool) -> tuple[Path, Path]:
+        base = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        log = base / "argv.log"
+        stub = base / "ai-specs-stub"
+        stub.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> {log}\nexit 0\n', encoding="utf-8")
+        stub.chmod(0o755 if executable else 0o644)
+        return stub, log
+
+    def test_auto_sync_prefers_the_native_dispatcher(self):
+        """A usable seam means the ported spine runs and no Python does."""
+        project = self._project()
+        stub, log = self._stub(executable=True)
+        env = {**os.environ, "AI_SPECS_HOME": str(ROOT), "AI_SPECS_GO_BIN": str(stub)}
+        proc = subprocess.run(
+            ["bash", str(SKILLS_ADD_SCRIPT), KEPANO_URL, str(project), "--subdir", "skills/defuddle"],
+            capture_output=True, text=True, env=env, check=False, timeout=120,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("▸ ai-specs sync", proc.stdout)
+        self.assertTrue(log.exists(), "the native route must run when the seam names an executable")
+        self.assertEqual(log.read_text(encoding="utf-8").strip(), f"sync {project}")
+
+    def test_auto_sync_keeps_the_shell_route_without_a_usable_seam(self):
+        """An unset, empty or non-executable seam falls back, never fails."""
+        project = self._project()
+        stub, log = self._stub(executable=False)
+        env = {
+            **os.environ,
+            "AI_SPECS_HOME": str(ROOT),
+            "AI_SPECS_GO_BIN": str(stub),
+            "AI_SPECS_GATE_OFFLINE": "1",
+            "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
+        }
+        proc = subprocess.run(
+            ["bash", str(SKILLS_ADD_SCRIPT), KEPANO_URL, str(project), "--subdir", "skills/defuddle"],
+            capture_output=True, text=True, env=env, check=False, timeout=120,
+        )
+        self.assertFalse(log.exists(), "an unusable seam must never be executed")
+        self.assertIn("▸ ai-specs sync", proc.stdout, proc.stderr)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
 
 if __name__ == "__main__":

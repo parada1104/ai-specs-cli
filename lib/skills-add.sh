@@ -205,7 +205,17 @@ PY
 if [[ $RUN_SYNC -eq 1 ]]; then
     echo ""
     echo "▸ ai-specs sync $TARGET_PATH"
-    bash "$AI_SPECS_HOME/lib/sync.sh" "$TARGET_PATH"
+    # GO-07 S19a: prefer the native dispatcher when this script was reached
+    # through it. `AI_SPECS_GO_BIN` is set by the Go shim to its own path, and
+    # `sync` is already native there (internal/cli routeSync), so the ported
+    # spine needs no Python. With the seam unset, empty or not executable — a
+    # direct `bash lib/skills-add.sh`, or the Bash launcher — the legacy route
+    # stays, byte for byte.
+    if [[ -n "${AI_SPECS_GO_BIN:-}" && -x "$AI_SPECS_GO_BIN" ]]; then
+        "$AI_SPECS_GO_BIN" sync "$TARGET_PATH"
+    else
+        bash "$AI_SPECS_HOME/lib/sync.sh" "$TARGET_PATH"
+    fi
 else
     echo ""
     echo "✓ dep registered. Run 'ai-specs sync $TARGET_PATH' to vendor it."

@@ -21,7 +21,7 @@ import (
 // When the provided writers are *os.File, os/exec passes the real fds so TTY
 // detection inside the legacy scripts keeps working; non-file writers (tests)
 // get pipes/buffers.
-func runShim(r route, args []string, home string, stdin io.Reader, stdout, stderr io.Writer) int {
+func runShim(r route, args []string, home string, stdin io.Reader, stdout, stderr io.Writer, selfPath string) int {
 	// args[0] is the verb; the shim receives the post-verb shift. For a bare
 	// invocation (no args) Route rewrites to hub without executing the shift,
 	// so the shim receives the ORIGINAL (empty) argv — legacy no-shift
@@ -33,7 +33,7 @@ func runShim(r route, args []string, home string, stdin io.Reader, stdout, stder
 	argv := append([]string{filepath.Join(home, "lib", r.script)}, rest...)
 	cmd := exec.Command("bash", argv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	cmd.Env = childEnv(home, r.invokedAs)
+	cmd.Env = childEnv(home, r.invokedAs, selfPath)
 
 	if err := cmd.Run(); err != nil {
 		var ee *exec.ExitError
@@ -53,16 +53,21 @@ func runShim(r route, args []string, home string, stdin io.Reader, stdout, stder
 
 // childEnv builds the child environment: the parent environment with
 // AI_SPECS_HOME pinned to the resolved home (the legacy launcher exports it
-// after its own resolution) and, for add-dep, AI_SPECS_INVOKED_AS naming the
-// alias the user typed — the legacy error hints depend on it.
-func childEnv(home, invokedAs string) []string {
-	env := make([]string, 0, len(os.Environ())+2)
+// after its own resolution), AI_SPECS_GO_BIN carrying the running dispatcher's
+// own path so a legacy script can reach a ported subcommand (GO-07 S19a), and,
+// for add-dep, AI_SPECS_INVOKED_AS naming the alias the user typed — the legacy
+// error hints depend on it.
+func childEnv(home, invokedAs, selfPath string) []string {
+	env := make([]string, 0, len(os.Environ())+3)
 	for _, kv := range os.Environ() {
 		switch {
 		case strings.HasPrefix(kv, "AI_SPECS_HOME="),
-			strings.HasPrefix(kv, "AI_SPECS_INVOKED_AS="):
+			strings.HasPrefix(kv, "AI_SPECS_INVOKED_AS="),
+			strings.HasPrefix(kv, "AI_SPECS_GO_BIN="):
 			// Stale parent values must never leak: AI_SPECS_HOME is pinned
-			// below and AI_SPECS_INVOKED_AS is only set for add-dep.
+			// below, AI_SPECS_INVOKED_AS is only set for add-dep, and
+			// AI_SPECS_GO_BIN must name THIS dispatcher or stay unset so the
+			// script keeps its own legacy route.
 			continue
 		}
 		env = append(env, kv)
@@ -70,6 +75,9 @@ func childEnv(home, invokedAs string) []string {
 	env = append(env, "AI_SPECS_HOME="+home)
 	if invokedAs != "" {
 		env = append(env, "AI_SPECS_INVOKED_AS="+invokedAs)
+	}
+	if selfPath != "" {
+		env = append(env, "AI_SPECS_GO_BIN="+selfPath)
 	}
 	return env
 }
