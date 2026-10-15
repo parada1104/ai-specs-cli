@@ -252,6 +252,15 @@ func materializeStampOrdered(entry shared.ReconcileStampEntry) (*shared.OrderedM
 // and decoded into the ordered model so the sort-keys writer matches Python's
 // dict rendering exactly.
 func materializeResolvedConfigDocument(resolved shared.ResolvedConfig) (string, error) {
+	return materializeEnrichedResolvedConfigDocument(resolved, "")
+}
+
+// materializeEnrichedResolvedConfigDocument is materializeResolvedConfigDocument
+// plus the S14b catalog enrichment when catalogDir is non-empty. The JSON round
+// trip is deliberate: Python decodes the Go gate's envelope, so the projection's
+// values carry that envelope's rendering, while enrichment runs afterwards on
+// the ordered document with the catalog values' own types.
+func materializeEnrichedResolvedConfigDocument(resolved shared.ResolvedConfig, catalogDir string) (string, error) {
 	raw, err := json.Marshal(resolved)
 	if err != nil {
 		return "", err
@@ -259,6 +268,16 @@ func materializeResolvedConfigDocument(resolved shared.ResolvedConfig) (string, 
 	decoded, err := mcpParseJSONOrdered(raw)
 	if err != nil {
 		return "", err
+	}
+	if catalogDir != "" {
+		doc, ok := decoded.(*mcpObj)
+		if !ok {
+			return "", errNonObjectStamp
+		}
+		enrichResolvedConfig(doc, resolved.Enabled, catalogDir)
+		if err := mcpJSONUnserializable(doc); err != nil {
+			return "", err
+		}
 	}
 	return hooksJSONDumpsSorted(decoded) + "\n", nil
 }
