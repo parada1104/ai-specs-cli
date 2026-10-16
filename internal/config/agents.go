@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"ai-specs.dev/ai-specs/internal/toml"
 )
@@ -36,6 +38,12 @@ func SetEnabledAgents(manifestPath string, agents []string) error {
 	if err != nil {
 		return err
 	}
+	// The line editor splits through []rune, so an invalid byte would become
+	// U+FFFD and the corruption would be persisted. Refuse instead, leaving the
+	// file byte-identical.
+	if !utf8.ValidString(original) {
+		return fmt.Errorf("refusing to rewrite %s: contents are not valid UTF-8", manifestPath)
+	}
 
 	lines := splitLinesKeepEnds(original)
 	newLines := make([]string, 0, len(lines)+2)
@@ -51,9 +59,12 @@ func SetEnabledAgents(manifestPath string, agents []string) error {
 				insertEnabledLine(&newLines, value)
 				enabledWritten = true
 			}
-			inAgents = stripped == "[agents]"
+			// Match the table NAME, not the exact string: `[agents] # note` is
+			// the same table, and appending a second block would make the
+			// manifest invalid.
+			inAgents = tableName(stripped) == "agents"
 			agentsSeen = agentsSeen || inAgents
-		} else if inAgents && !enabledWritten && strings.HasPrefix(stripped, "enabled") {
+		} else if inAgents && !enabledWritten && isEnabledKey(stripped) {
 			newLines = append(newLines, "enabled = "+value+"\n")
 			enabledWritten = true
 			continue
@@ -74,7 +85,12 @@ func SetEnabledAgents(manifestPath string, agents []string) error {
 		newLines = append(newLines, "\n[agents]\nenabled = "+value+"\n")
 	}
 
-	return atomicWrite(manifestPath, strings.Join(newLines, ""))
+	newContent := strings.Join(newLines, "")
+	if err := guardValidToInvalid(original, newContent,
+		"ERROR: updating agents would produce invalid TOML: "); err != nil {
+		return err
+	}
+	return atomicWrite(manifestPath, newContent)
 }
 
 // insertEnabledLine appends the rendered `enabled = ...` line, forcing a
@@ -84,4 +100,26 @@ func insertEnabledLine(lines *[]string, value string) {
 		(*lines)[n-1] += "\n"
 	}
 	*lines = append(*lines, "enabled = "+value+"\n")
+}
+
+// tableName is the NAME of a TOML table header line: the text between the first
+// '[' and the first ']' or whitespace. `[agents]`, `[agents] # note` and
+// `[agents]  ` all name the same table; `[agents.foo]` and `[[deps]]` do not.
+func tableName(stripped string) string {
+	s := strings.TrimPrefix(stripped, "[")
+	if i := strings.IndexAny(s, "] \t"); i >= 0 {
+		s = s[:i]
+	}
+	return s
+}
+
+// isEnabledKey reports whether a non-header line assigns the `enabled` key: the
+// text before '=' must be exactly "enabled". A prefix match would also swallow
+// `enabled_extra`, silently dropping that key when the line is replaced.
+func isEnabledKey(stripped string) bool {
+	eq := strings.IndexByte(stripped, '=')
+	if eq < 0 {
+		return false
+	}
+	return strings.TrimSpace(stripped[:eq]) == "enabled"
 }

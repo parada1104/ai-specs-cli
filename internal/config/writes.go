@@ -128,12 +128,30 @@ func readManifestText(path string) (string, error) {
 // parent directory + rename, preserving the original file mode (0o7777
 // mask, mirroring mkstemp + chmod + os.replace in the heredocs).
 func atomicWrite(path, content string) error {
+	// Resolve a symlinked manifest to its target: renaming a temp file over the
+	// path would replace the link with a regular file. Only the final component
+	// is checked; a symlinked parent directory still routes the rename through
+	// the real directory on its own.
+	target := path
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		resolved, rerr := filepath.EvalSymlinks(path)
+		if rerr != nil {
+			return rerr
+		}
+		target = resolved
+	}
+
 	var mode os.FileMode = 0o644
-	if info, err := os.Stat(path); err == nil {
+	if info, err := os.Stat(target); err == nil {
 		m := info.Mode()
 		mode = m.Perm() | m&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky)
+		// Refuse to overwrite a manifest nobody can write: temp + rename would
+		// bypass the mode the user set. Root ignores the bit, so skip there.
+		if m.Perm()&0o200 == 0 && os.Geteuid() != 0 {
+			return fmt.Errorf("refusing to overwrite read-only manifest %s: %w", path, os.ErrPermission)
+		}
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".ai-specs.toml.*.tmp")
+	f, err := os.CreateTemp(filepath.Dir(target), ".ai-specs.toml.*.tmp")
 	if err != nil {
 		return err
 	}
@@ -151,7 +169,7 @@ func atomicWrite(path, content string) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := os.Rename(tmp, target); err != nil {
 		os.Remove(tmp)
 		return err
 	}
