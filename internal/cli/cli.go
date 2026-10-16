@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 
+	"ai-specs.dev/ai-specs/internal/hub"
 	"ai-specs.dev/ai-specs/internal/sync"
 	"ai-specs.dev/ai-specs/internal/upgrade"
 )
@@ -31,6 +32,7 @@ const (
 	routeBriefRenderPolicy               // native internal seam: lib/init.sh's policy gate (S19b)
 	routeBaselineBrief                   // native internal seam: lib/init.sh's baseline render (S19b)
 	routeUpgrade                         // native: `upgrade` legacy install upgrade (card [Go 12])
+	routeHub                             // native: `hub` front door, non-interactive half (GO-20 U3a)
 	routeUnknown                         // unknown command: usage error, exit 2
 )
 
@@ -44,7 +46,6 @@ type route struct {
 // shims maps every shimmed verb to its legacy lib script, mirroring the case
 // statement of bin/ai-specs exactly.
 var shims = map[string]route{
-	"hub":               {kind: routeShim, script: "hub.sh"},
 	"init":              {kind: routeShim, script: "init.sh"},
 	"add-dep":           {kind: routeShim, script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 	"skills":            {kind: routeShim, script: "skills.sh"},
@@ -69,6 +70,7 @@ var native = map[string]route{
 	"brief-render-policy": {kind: routeBriefRenderPolicy},
 	"baseline-brief":      {kind: routeBaselineBrief},
 	"upgrade":             {kind: routeUpgrade},
+	"hub":                 {kind: routeHub},
 	"version":             {kind: routeVersion},
 	"-v":                  {kind: routeVersion},
 	"--version":           {kind: routeVersion},
@@ -82,7 +84,7 @@ var native = map[string]route{
 // legacy launcher.
 func Route(args []string) route {
 	if len(args) == 0 {
-		return shims["hub"]
+		return native["hub"]
 	}
 	if r, ok := native[args[0]]; ok {
 		return r
@@ -126,6 +128,16 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 			UserHome:   os.Getenv("HOME"),
 			Executable: selfPath(),
 		}, stdout, stderr)
+	case routeHub:
+		rest := args
+		if len(rest) > 0 {
+			rest = rest[1:]
+		}
+		return hub.RunHub(hub.Options{
+			Args: rest,
+			Home: home,
+			TTY:  isTTY(stdin, stdout),
+		}, stdin, stdout, stderr)
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
@@ -133,6 +145,23 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	default:
 		return runShim(r, args, home, stdin, stdout, stderr, selfPath())
 	}
+}
+
+// isTTY mirrors the shell's `[[ -t 0 && -t 1 ]]` and hub.py's
+// `stdin.isatty() and stdout.isatty()`: a character device is a terminal. The
+// statistic is what keeps the hub dependency-free — no terminal library, and no
+// syscall per platform.
+func isTTY(stdin io.Reader, stdout io.Writer) bool {
+	return isCharDevice(stdin) && isCharDevice(stdout)
+}
+
+func isCharDevice(v any) bool {
+	f, ok := v.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 // selfPath is the running dispatcher's own absolute path, exported to shimmed

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -71,9 +72,35 @@ class CliReleaseTrustRootTests(unittest.TestCase):
         self.assertIn("build-cli.sh", header, "the header must say how to reproduce a digest")
 
     def test_host_platform_digest_is_reproducible_locally(self):
+        # The committed digests describe a RELEASED version's bytes, not any
+        # working tree: every Go change rebuilds to a different binary, so this
+        # comparison is only meaningful on the commit the digests were generated
+        # for. The release workflow performs it there — its checksum job runs
+        # scripts/verify-cli-sums.sh against the committed file — and a
+        # development tree skips with this reason instead of failing.
+        header = TRUST_ROOT.read_text(encoding="utf-8")
+        released = re.search(r"\(v([0-9][^)]*)\)", header)
+        if released is None:
+            self.fail("the trust root header must name the released version")
+        tag = subprocess.run(
+            ["git", "-C", str(ROOT), "describe", "--tags", "--exact-match", "HEAD"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if tag.returncode != 0 or tag.stdout.strip() != f"v{released.group(1)}":
+            self.skipTest(
+                f"the digests describe release v{released.group(1)} and this tree is not that "
+                "commit; the release workflow compares the built bytes on the tag"
+            )
+
         go = shutil.which("go")
         if go is None:
             self.skipTest("no Go toolchain: cannot reproduce the digest")
+        local = subprocess.run([go, "version"], capture_output=True, text=True, timeout=60)
+        if CANONICAL_GO not in local.stdout:
+            self.skipTest(
+                f"local toolchain is {local.stdout.strip()!r}, not {CANONICAL_GO}; the digests are "
+                "toolchain-specific, so another Go release compiles different bytes"
+            )
         goos, goarch = _host_platform()
         asset = f"ai-specs-{goos}-{goarch}"
         entries = _trust_root_entries()
