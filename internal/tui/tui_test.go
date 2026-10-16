@@ -28,6 +28,12 @@ func (s *scriptedKeys) NextKey() (Key, error) {
 
 func keys(ks ...Key) *scriptedKeys { return &scriptedKeys{keys: ks} }
 
+// keySourceFunc is a KeySource whose NextKey runs a callback, which is how a test
+// observes what the caller had already drawn when it asked for the first key.
+type keySourceFunc func() (Key, error)
+
+func (f keySourceFunc) NextKey() (Key, error) { return f() }
+
 func twoChoices() []Choice {
 	return []Choice{{Title: "Sync", Value: "sync"}, {Title: "Doctor", Value: "doctor"}, {Title: "Quit", Value: "quit"}}
 }
@@ -47,6 +53,20 @@ func TestSelectMovesAndConfirms(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("choice %q missing from output: %q", want, rendered)
 		}
+	}
+}
+
+// TestFrameKeepsQuestionaryMessageLine pins the exact bytes of the message line,
+// trailing space included. questionary renders `? <message> ` before its choices,
+// and two PTY acceptance stages wait for `b"Recipes: "` and `b"Skills: "`; without
+// that space those stages never fire and the suite TIMES OUT instead of failing.
+func TestFrameKeepsQuestionaryMessageLine(t *testing.T) {
+	var out bytes.Buffer
+	if _, ok := Select(&out, keys(KeyEnter), "Recipes:", twoChoices()); !ok {
+		t.Fatal("Select aborted, want confirmed")
+	}
+	if !strings.Contains(out.String(), "? Recipes: \n") {
+		t.Errorf("message line = %q, want it to carry questionary's `? Recipes: ` shape", out.String())
 	}
 }
 
@@ -96,6 +116,30 @@ func TestMultiSelectTogglesAndConfirms(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("MultiSelect = %v, want %v (order must follow the choices)", got, want)
 		}
+	}
+}
+
+// TestConfirmDrawsTheQuestionBeforeItReads pins the ORDER, which is not cosmetic:
+// questionary renders the question first, and a confirm that only prints once it has
+// been answered is invisible on a real terminal — and deadlocks any PTY stage that
+// waits for the question text before it types the answer. That is exactly how
+// tests/test_hub.py::test_confirm_action_returns_bool and
+// tests/test_hub.py::TestGatingDecision's offer-init stage caught it.
+func TestConfirmDrawsTheQuestionBeforeItReads(t *testing.T) {
+	var out bytes.Buffer
+	var onScreenWhenFirstKeyWasRead string
+	in := keySourceFunc(func() (Key, error) {
+		onScreenWhenFirstKeyWasRead = out.String()
+		return KeyEnter, nil
+	})
+	if _, ok := Confirm(&out, in, "Run the init wizard now?", true); !ok {
+		t.Fatal("Confirm aborted, want confirmed")
+	}
+	if !strings.Contains(onScreenWhenFirstKeyWasRead, "Run the init wizard now?") {
+		t.Errorf("the question was not on screen when the first key was read: %q", onScreenWhenFirstKeyWasRead)
+	}
+	if !strings.Contains(out.String(), "yes") {
+		t.Errorf("the submitted answer is missing from the drawn line: %q", out.String())
 	}
 }
 

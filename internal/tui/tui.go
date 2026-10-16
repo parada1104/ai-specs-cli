@@ -93,18 +93,24 @@ func MultiSelect(out io.Writer, in KeySource, message string, choices []Choice, 
 	return picked, true
 }
 
-// Confirm asks a yes/no question. Enter answers with def, y and n answer
-// explicitly, and everything else answers with def — questionary's behaviour.
+// Confirm asks a yes/no question. The question is drawn BEFORE any key is read —
+// the order questionary uses — so the prompt is visible while it waits, and the
+// answer is appended to that same line when Enter submits it. A confirm that only
+// printed once answered was invisible on a real terminal and deadlocked every PTY
+// stage that waits for the question text before typing the answer (GO-20 U3b-2).
+// Enter answers with def, y and n answer explicitly, everything else answers with def.
 func Confirm(out io.Writer, in KeySource, message string, def bool) (bool, bool) {
 	answer := def
+	fmt.Fprintf(out, "? %s (%s) ", message, defaultHint(def))
 	for {
 		key, err := in.NextKey()
 		if err != nil {
+			fmt.Fprintln(out)
 			return false, false
 		}
 		switch key {
 		case KeyEnter:
-			fmt.Fprintf(out, "%s %s\n", message, yesNo(answer))
+			fmt.Fprintf(out, "%s\n", yesNo(answer))
 			return answer, true
 		case KeyYes:
 			answer = true
@@ -115,6 +121,14 @@ func Confirm(out io.Writer, in KeySource, message string, def bool) (bool, bool)
 			return false, false
 		}
 	}
+}
+
+// defaultHint is questionary's hint: the defaulted answer is the capitalised one.
+func defaultHint(def bool) string {
+	if def {
+		return "Y/n"
+	}
+	return "y/N"
 }
 
 // Pause waits for Enter, which is hub.py's `input("Press Enter to return…")`. It
@@ -181,14 +195,15 @@ func navigate(out io.Writer, in KeySource, message string, choices []Choice, sta
 
 // renderList draws one frame of a list prompt. The redraw moves the cursor back up
 // over the frame it drew before, so a real terminal shows a single list; a buffer
-// just accumulates frames, which keeps the tests able to read them.
+// just accumulates frames, which keeps the tests able to read them. The message line
+// keeps questionary's trailing space: `? <message> `, then one line per choice.
 func renderList(message string, choices []Choice, state cursorState, multiselect bool) string {
 	var b strings.Builder
 	if state.rendered > 0 {
 		fmt.Fprintf(&b, "\x1b[%dA", state.rendered)
 	}
 	b.WriteString("\x1b[2K")
-	fmt.Fprintf(&b, "? %s\n", message)
+	fmt.Fprintf(&b, "? %s \n", message)
 	for i, choice := range choices {
 		b.WriteString("\x1b[2K")
 		marker := " "
