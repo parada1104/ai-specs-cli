@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # install.sh — Install ai-specs globally.
 #
-# Clones (or updates) this repo to $AI_SPECS_HOME (default: ~/.ai-specs),
-# then symlinks bin/ai-specs into $INSTALL_BIN (default: ~/.local/bin).
+# Clones (or updates) this repo to $AI_SPECS_HOME (default: ~/.ai-specs) — the
+# data home, the trust anchor (the committed digests) and where the still-shell
+# verbs live — then installs the compiled ai-specs binary as the entrypoint in
+# $INSTALL_BIN (default: ~/.local/bin), verifying a release asset against the
+# committed digests when one exists and building locally otherwise.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/parada1104/ai-specs-cli/main/install.sh | bash
@@ -10,9 +13,12 @@
 #
 # Env overrides:
 #   AI_SPECS_HOME=~/path        Where to clone the repo (default: ~/.ai-specs)
-#   INSTALL_BIN=~/path          Where to symlink the entrypoint (default: ~/.local/bin)
+#   INSTALL_BIN=~/path          Where to install the entrypoint (default: ~/.local/bin)
 #   AI_SPECS_REPO=git://...     Repo URL for first install (default: github.com/parada1104/ai-specs-cli)
 #   AI_SPECS_REF=tag-or-branch  Git ref to checkout (default: main)
+#   AI_SPECS_RELEASE_BASE=url   Release download base (default: this repo's releases for VERSION)
+#   AI_SPECS_TRUST_ROOT_FILE=p  Committed digests to verify against (default: <home>/bin/SHA256SUMS)
+#   AI_SPECS_SKIP_TUI_DEPS=1    Skip the still-Python TUI dependency step (tests)
 
 set -e
 
@@ -113,7 +119,10 @@ if [ -f "$AI_SPECS_HOME/lib/_internal/narrow-checkout.sh" ]; then
     bash "$AI_SPECS_HOME/lib/_internal/narrow-checkout.sh" "$AI_SPECS_HOME" || true
 fi
 
-chmod +x "$AI_SPECS_HOME/bin/ai-specs"
+# Nothing in lib/ is chmod-ed, and neither is bin/ai-specs any more: those files
+# are committed 100644 and touching their modes makes git report mode-only dirt,
+# which breaks later update runs. The entry is the installed binary below, and it
+# gets its executable bit when it is installed.
 # Bundled skill scripts (shipped to projects via init)
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.sh 2>/dev/null || true
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.py 2>/dev/null || true
@@ -125,7 +134,9 @@ _has_deps() {
     [ -d "$VENDOR_DIR" ] && python3 -c "import sys; sys.path.insert(0, '$VENDOR_DIR'); import rich, questionary" 2>/dev/null && return 0
     return 1
 }
-if _has_deps; then
+if [ -n "${AI_SPECS_SKIP_TUI_DEPS:-}" ]; then
+    echo "  skipping TUI deps (AI_SPECS_SKIP_TUI_DEPS is set)"
+elif _has_deps; then
     echo "  TUI deps (rich + questionary) already available"
 else
     echo -e "${YELLOW}[2/3]${NC} Installing TUI dependencies (rich + questionary)"
@@ -134,12 +145,87 @@ else
     }
 fi
 
-# 3. Symlink entrypoint
-echo -e "${YELLOW}[3/3]${NC} Symlinking entrypoint"
-mkdir -p "$INSTALL_BIN"
-ln -sf "$AI_SPECS_HOME/bin/ai-specs" "$INSTALL_BIN/ai-specs"
-
+# 3. Install the entrypoint as the compiled binary (GO-20 U1b-2b).
+#
+#    The checkout above stays the data home: the trust anchor (the committed
+#    digests), the catalogue and the still-shell verbs. What changes is the
+#    ENTRY — a real compiled file at $INSTALL_BIN/ai-specs instead of a symlink
+#    into the checkout. A verified release asset wins; a local `go build` is the
+#    fallback; either way the bytes land atomically, so a failure never leaves a
+#    broken or unverified entry behind.
 VERSION="$(cat "$AI_SPECS_HOME/VERSION" 2>/dev/null || echo "unknown")"
+echo -e "${YELLOW}[3/3]${NC} Installing the entrypoint"
+
+_platform_asset() {
+    case "$(uname -s)" in
+        Darwin) _asset_os="darwin" ;;
+        Linux)  _asset_os="linux" ;;
+        *)      return 1 ;;
+    esac
+    case "$(uname -m)" in
+        arm64|aarch64) _asset_arch="arm64" ;;
+        x86_64|amd64)  _asset_arch="amd64" ;;
+        *)             return 1 ;;
+    esac
+    printf 'ai-specs-%s-%s' "$_asset_os" "$_asset_arch"
+}
+
+_release_base() {
+    if [ -n "${AI_SPECS_RELEASE_BASE:-}" ]; then
+        printf '%s' "$AI_SPECS_RELEASE_BASE"
+    else
+        printf 'https://github.com/parada1104/ai-specs-cli/releases/download/v%s' "$VERSION"
+    fi
+}
+
+_sha256_of() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    elif command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
+mkdir -p "$INSTALL_BIN"
+ENTRY_TMP="$(mktemp "$INSTALL_BIN/.ai-specs.install.XXXXXX")"
+ENTRY_READY=0
+
+# Verify BEFORE installing: the network supplies only bytes, the checkout
+# supplies the expected digest. No committed digest means no download is used.
+ASSET="$(_platform_asset || true)"
+TRUST_ROOT="${AI_SPECS_TRUST_ROOT_FILE:-$AI_SPECS_HOME/bin/SHA256SUMS}"
+if [ -n "$ASSET" ] && [ -f "$TRUST_ROOT" ] && command -v curl >/dev/null 2>&1; then
+    EXPECTED="$(awk -v asset="$ASSET" '$2 == asset { print $1 }' "$TRUST_ROOT" | head -n 1)"
+    if [ -n "$EXPECTED" ] && curl -fsSL "$(_release_base)/$ASSET" -o "$ENTRY_TMP"; then
+        GOT="$(_sha256_of "$ENTRY_TMP" || true)"
+        if [ -n "$GOT" ] && [ "$GOT" = "$EXPECTED" ]; then
+            ENTRY_READY=1
+            echo "  verified release asset: $ASSET"
+        else
+            echo -e "${YELLOW}warning:${NC} $ASSET did not match the committed digest; discarding the download" >&2
+        fi
+    fi
+fi
+
+if [ "$ENTRY_READY" -ne 1 ] && command -v go >/dev/null 2>&1; then
+    echo "  no verified asset for this platform; building locally with go"
+    if (cd "$AI_SPECS_HOME" && go build -trimpath -buildvcs=false -o "$ENTRY_TMP" ./cmd/ai-specs); then
+        ENTRY_READY=1
+    fi
+fi
+
+if [ "$ENTRY_READY" -ne 1 ]; then
+    rm -f "$ENTRY_TMP"
+    echo -e "${RED}error: could not install the ai-specs binary${NC}" >&2
+    echo "  No verifiable release asset for this platform and no usable Go toolchain." >&2
+    echo "  Install Go (https://go.dev/dl) and re-run, or point AI_SPECS_RELEASE_BASE at a mirror." >&2
+    exit 1
+fi
+
+chmod 0755 "$ENTRY_TMP"
+mv -f "$ENTRY_TMP" "$INSTALL_BIN/ai-specs"
 
 echo ""
 echo -e "${GREEN}✓ Installed ai-specs $VERSION${NC}"

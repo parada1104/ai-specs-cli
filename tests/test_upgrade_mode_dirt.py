@@ -6,7 +6,9 @@ leaves the working tree appearing dirty (mode-bits only, no content changes).
 Both upgrade.sh and install.sh must auto-remediate this class of dirt so that
 users are not stuck in an update loop.
 """
+import hashlib
 import os
+import platform
 import stat
 import subprocess
 import tempfile
@@ -16,6 +18,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SH = ROOT / "install.sh"
+
+
+def _asset_os() -> str:
+    return {"Darwin": "darwin", "Linux": "linux"}[platform.system()]
+
+
+def _asset_arch() -> str:
+    return {
+        "arm64": "arm64", "aarch64": "arm64",
+        "x86_64": "amd64", "amd64": "amd64",
+    }[platform.machine().lower()]
 LIB_UPGRADE = ROOT / "lib" / "upgrade.sh"
 
 
@@ -63,6 +76,19 @@ def _make_fake_install(home: Path, version: str = "1.0.0"):
 
     # Mirror production .gitignore so pip --target lib/_vendor stays untracked.
     (ai_specs / ".gitignore").write_text("lib/_vendor\n")
+
+    # GO-20 U1b-2b: install.sh installs the COMPILED BINARY as the entry now, so
+    # the fixture has to look like a real installation — a committed trust root
+    # and a release asset for this platform to verify against. The asset lives
+    # OUTSIDE the checkout (only its digest is committed), as in production.
+    asset_name = "ai-specs-%s-%s" % (_asset_os(), _asset_arch())
+    asset_dir = home / "release-assets"
+    asset_dir.mkdir()
+    asset_payload = b"#!/bin/sh\necho ai-specs-stand-in\n"
+    (asset_dir / asset_name).write_bytes(asset_payload)
+    (bin_dir / "SHA256SUMS").write_text(
+        f"{hashlib.sha256(asset_payload).hexdigest()}  {asset_name}\n"
+    )
 
     # Symlink
     local_bin = home / ".local" / "bin"
@@ -289,6 +315,10 @@ class InstallModeOnlyDirtTests(unittest.TestCase):
         env["AI_SPECS_REF"] = "main"
         env["INSTALL_BIN"] = str(home / ".local" / "bin")
         env["PATH"] = str(home / ".local" / "bin") + ":" + env.get("PATH", "")
+        # GO-20 U1b-2b: a local release base (file://) runs the verified-asset
+        # path offline, and the still-Python TUI step is skipped.
+        env["AI_SPECS_RELEASE_BASE"] = "file://" + str(home / "release-assets")
+        env["AI_SPECS_SKIP_TUI_DEPS"] = "1"
         return env
 
     def test_install_sh_remediates_mode_only_dirt(self):
