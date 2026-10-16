@@ -148,5 +148,39 @@ cannot each be one PR.
   session an artifact was moved without first grepping every test that names it. The sharpened rule:
   enumerate every artifact the unit MOVES or renames (not only the ones it edits) and grep the test
   tree for each BY NAME before running the evidence chain.
+- L12 — U1c is DROPPED as obsolete, and the evidence is what makes it safe to drop: the slice's two
+  premises dissolved under a grep. `lib/upgrade.sh` does NOT call `lib/sync.sh` (only a comment at
+  `:70`; `grep "^[^#]*sync\.sh"` returns nothing), and the explicit legacy entry the slice was going to
+  build already exists (`tests/_go_cli.py:21`, `LEGACY_CLI = ROOT / "bin" / "ai-specs"`, documented at
+  the module header and used by the parity legacy leg). Its real residue — six suites that drive
+  `bin/ai-specs` plus the `bash -n` sweep in `validate.sh` — is not a unit of its own and folds into
+  U2/U8.
+- L13 — U2 is re-cut after a live-caller inventory (delegated, read-only): **nothing** in `lib/` is
+  deletable today. Every script and every `lib/_internal` module has at least one live caller, and the
+  whole set is sustained by `bin/ai-specs` itself (`parity.py:1508`, `_go_cli.py:43`, ~20 suites through
+  `_blackbox.py:18`) — precisely because the launcher does NOT delegate the already-native verbs to the
+  binary. Parity re-bases at `parity.py:1449`, where it copies `lib/` from the LIVE tree, so a frozen
+  snapshot has to exist before anything is removed. U2 is therefore not "delete the shell": it is flip
+  the launcher → re-base the parity snapshot → delete what the flip orphaned, which is why the human's
+  verbs-first decision puts the ports ahead of it.
+- L14 — The release trust root is VERSION-scoped, and that is a rule for every future unit: changing Go
+  source does NOT invalidate `bin/SHA256SUMS`, because that file describes the bytes of a RELEASED
+  version (v0.24.0), not the working tree. The comparison belongs ON the release tag, where the release
+  workflow's checksum job already performs it; off-tag a suite must skip with its own reason rather
+  than fail, and a non-canonical local toolchain must skip rather than blame the trust root. U3a
+  learned this by failing its first evidence chain on U1b-1's own test (that unit's document, L5).
 
-## Progress (to be completed by the implementation)
+## Progress
+
+| Unit | State | Evidence |
+| --- | --- | --- |
+| U1a — the `upgrade` verb native | delivered | `cd37c44` (PR #362); two divergences pinned, not fixed |
+| U1b-2a — the engine knows both install kinds | delivered | `5b603fb4` (PR #363) |
+| U1b-2b — `install.sh` installs the compiled entry | delivered | `a5bdce71` (PR #364); three follow-ups recorded |
+| U1b-1 — the CLI release channel | delivered | `20e653aa` (PR #365); review `review-bb12e5dc1d27de79` approved |
+| U1c — legacy entry + sync leg through the seam | **DROPPED** (obsolete) | L12 |
+| U3a — the hub's non-interactive contract | delivered | `c493744`; 2495 tests green |
+| U3b — the Go TUI and its dependency | pending | carries the three amendments (S2) |
+| U4..U7 — init, skills, recipes, substrate tail | pending | |
+| U2 — flip the launcher + parity snapshot + deletion | pending, AFTER the ports | L13 |
+| U8 — program closure | pending | |
