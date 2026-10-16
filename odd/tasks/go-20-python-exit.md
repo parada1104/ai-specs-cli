@@ -197,6 +197,19 @@ cannot each be one PR.
   lenses, which is what made them worth a differential experiment; the experiment is what turned a
   "readability warning" into a confirmed product defect and then into a unit. Reading the sites the
   review points at, and building the experiment that can refute it, is the whole verification job.
+- L19 — Requirement change, verbatim (2026-10-16), after the FIRST decision had already been made: the
+  human chose "Prompt layer propio, cero dependencias (recomendada)". What changed the decision was the
+  MEASURED cost of the alternative, not a preference: pterm v0.12.82 — the newest version compatible
+  with the canonical go1.24.13 toolchain, since v0.12.83 and newer require Go 1.26 — vendored 15
+  modules, 549 Go files, 334 049 lines and 15 MB, and introduced a 105-line `go.sum`. So D8's "zero
+  third-party dependencies" would have stopped being true, and six records would have needed amending
+  (`go.mod:8-9`, `release-binaries.yml:66-69`, `build-gate.sh:4`,
+  `test_worktree_gate_release_phase4.py:284-302`, `assets.go:6`,
+  `go-migration-parity-contract.md:509-511`). U3b now implements the prompt layer natively on
+  `internal/tty`, so no vendor tree, no `go.sum`, no amendment, and D8 and L14 stay intact; those six
+  sites become the record of what the program did NOT need. The estimate behind the first decision
+  ("~6 modules") was the DIRECT requirement list; the vendored closure was more than twice that. The
+  lesson for the next dependency question: measure the closure BEFORE asking, not after.
 
 ## Progress
 
@@ -209,7 +222,7 @@ cannot each be one PR.
 | U1c — legacy entry + sync leg through the seam | **DROPPED** (obsolete) | L12 |
 | U3a — the hub's non-interactive contract | **delivered, review approved** | `0ba47aa` (PR #366); 2495 tests green; `review-97428fc2534aa06c` burned |
 | U3a-fix — the confirmed advisories | **delivered** | `54197dd`; 2496 tests green; the isatty divergence proven fixed against the shell |
-| U3b — the Go TUI and its dependency | pending | carries the three amendments (S2) |
+| U3b — the interactive hub, native and dependency-free | pending | prompt layer in `internal/tui` on `internal/tty`; D8 intact (L19) |
 | U4..U7 — init, skills, recipes, substrate tail | pending | |
 | U2 — flip the launcher + parity snapshot + deletion | pending, AFTER the ports | L13 |
 | U8 — program closure | pending | |
