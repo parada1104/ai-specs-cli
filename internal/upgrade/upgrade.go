@@ -80,6 +80,10 @@ type Env struct {
 	UserHome   string // $HOME
 	Executable string // the running binary path
 	Git        Git
+	// ReleaseBase is where the platform assets live, without a trailing slash.
+	// Empty means the repository's own release downloads for the checked-out
+	// version; tests and mirrors set it.
+	ReleaseBase string
 }
 
 func (e Env) git() Git {
@@ -151,17 +155,63 @@ func ResolveBinary(start string) string {
 	return filepath.Join(dir, filepath.Base(source))
 }
 
-// Install is a detected global installation.
+// Install is a detected global installation, classified by Kind.
+//
+// InstallKind classifies the installation layout (GO-20 U1b-2a).
+type InstallKind int
+
+const (
+	// KindLegacy is the historical install: the entry is a launcher symlinked
+	// into the checkout, and the running executable lives inside that home.
+	KindLegacy InstallKind = iota
+	// KindBinary is the post-flip install: the entry is a REAL compiled file in
+	// $INSTALL_BIN, and the checkout is the data home and the trust anchor.
+	KindBinary
+)
+
+// String names the kind for diagnostics and tests.
+func (k InstallKind) String() string {
+	if k == KindBinary {
+		return "binary"
+	}
+	return "legacy"
+}
+
 type Install struct {
+	Kind         InstallKind
 	Home         string
 	ExpectedHome string
 	LocalBin     string
 	BinaryPath   string
 }
 
-// Detect ports the five lib/upgrade.sh install checks.
+// binaryEntry reports whether the running binary IS the installed entry: a real
+// executable file at LocalBin — not a symlink — that resolves to the same path
+// this process runs from. That is what separates a binary install from a legacy
+// one, whose entry is a symlink into the checkout.
+func binaryEntry(inst Install) bool {
+	fi, err := os.Lstat(inst.LocalBin)
+	if err != nil || fi.Mode()&os.ModeSymlink != 0 || !fi.Mode().IsRegular() {
+		return false
+	}
+	if fi.Mode().Perm()&0o111 == 0 {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(inst.LocalBin)
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(resolved) == filepath.Clean(inst.BinaryPath)
+}
+
+// Detect ports the five lib/upgrade.sh install checks and classifies the
+// layout. A binary install is recognised FIRST, because every one of those five
+// checks assumes the legacy shape (the entry resolving inside the home as a
+// symlink) and would refuse the post-flip install the installer is about to
+// produce. Every legacy failure keeps its exact message and exit code.
 func Detect(env Env, stderr io.Writer) (Install, int, bool) {
 	inst := Install{
+		Kind:         KindLegacy,
 		Home:         env.Home,
 		ExpectedHome: filepath.Join(env.UserHome, ".ai-specs"),
 		LocalBin:     filepath.Join(env.UserHome, ".local", "bin", "ai-specs"),
@@ -169,6 +219,13 @@ func Detect(env Env, stderr io.Writer) (Install, int, bool) {
 	}
 	if env.Home == "" {
 		return inst, abort(stderr, "AI_SPECS_HOME is not set. The installation appears broken. Re-run install.sh to repair.", ExitBroken), false
+	}
+	if binaryEntry(inst) {
+		if env.Home != inst.ExpectedHome {
+			return inst, abort(stderr, fmt.Sprintf("AI_SPECS_HOME (%s) does not match the expected global path (%s). Re-run install.sh to repair.", env.Home, inst.ExpectedHome), ExitBroken), false
+		}
+		inst.Kind = KindBinary
+		return inst, 0, true
 	}
 	if !strings.HasPrefix(inst.BinaryPath, inst.ExpectedHome+string(os.PathSeparator)) {
 		return inst, abort(stderr, fmt.Sprintf("This checkout is not the standard global installation (resolved path: %s). Use 'git pull' manually in the correct directory.", inst.BinaryPath), ExitNotStandard), false
@@ -370,6 +427,9 @@ func Run(args []string, env Env, stdout, stderr io.Writer) int {
 	inst, code, ok := Detect(env, stderr)
 	if !ok {
 		return code
+	}
+	if inst.Kind == KindBinary {
+		return binaryUpgrade(inst, o, env, stdout, stderr)
 	}
 	git := env.git()
 	if _, err := git(inst.Home, "rev-parse", "--verify", "origin/main"); err == nil {
