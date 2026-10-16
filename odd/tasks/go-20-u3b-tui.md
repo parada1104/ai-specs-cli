@@ -135,7 +135,15 @@ to `~/.cache/u3b-evidence.log`:
 | Acceptance (PTY) | `python3 -m unittest discover -s tests -p 'test_hub*.py'` | 47 tests, OK, 49.8s (197s of timeouts before the three fixes) |
 | Frozen non-interactive bytes | base `4e6da9d` (built from `git archive` in a scratch dir) vs this tree, 5 `hub` invocations: status, `--help`, uninitialized, unknown flag, bare | stdout, stderr and exit code byte-identical (rc 1/0/2/2/1) |
 | Focused packages | `go test ./internal/{hub,config,recipe,skills,tui} -count=1` + `go vet ./internal/...` | ok, vet clean |
-| Full validation | `./tests/validate.sh` | recorded in the closure commit that follows this one |
+| Full validation | `./tests/validate.sh` on `45e9544` | exit 0 · `Ran 2494 tests in 1538.569s` |
+
+Test-count accounting, so the delta is not a silent loss: the suite stood at 2496 after U3a-fix and reads
+2494 here, and the difference is exactly the two Python SOURCE invariants this unit retires
+(`TestNoOpenptyInHub.test_hub_py_has_no_openpty_or_termios` and
+`TestPauseOnlySite.test_no_bare_press_enter_input_outside_pause`). Their guarantees did not disappear;
+they are enforced now by `internal/hub/invariants_test.go`, which the Go test run counts in its own suite.
+`TestImportlibModuleScope.test_hub_has_importlib_at_module_scope` was renamed rather than removed, so it
+still counts once.
 
 ## Progress
 
