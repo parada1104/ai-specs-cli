@@ -136,6 +136,8 @@ to `~/.cache/u3b-evidence.log`:
 | Frozen non-interactive bytes | base `4e6da9d` (built from `git archive` in a scratch dir) vs this tree, 5 `hub` invocations: status, `--help`, uninitialized, unknown flag, bare | stdout, stderr and exit code byte-identical (rc 1/0/2/2/1) |
 | Focused packages | `go test ./internal/{hub,config,recipe,skills,tui} -count=1` + `go vet ./internal/...` | ok, vet clean |
 | Full validation | `./tests/validate.sh` on `45e9544` | exit 0 · `Ran 2494 tests in 1538.569s` |
+| PTY acceptance after the T7 fixes | `python3 -m unittest discover -s tests -p 'test_hub*.py'` | 47 tests, OK, 48.0s |
+| Re-validation after the T7 fixes | `./tests/validate.sh` on `e31bde1` | exit 0 · `Ran 2494 tests in 1532.801s` |
 
 Test-count accounting, so the delta is not a silent loss: the suite stood at 2496 after U3a-fix and reads
 2494 here, and the difference is exactly the two Python SOURCE invariants this unit retires
@@ -166,6 +168,46 @@ still counts once.
   plumbing is deliberately NOT unit-tested with a synthetic terminal; it is covered by the PTY suites in
   U3b-2, which drive the built binary through a real pty.
 
+### U3b-2 — independent verification (T7)
+
+Escalating item 1 (the manifest writer) turned the plan's independent verifier on, and that read-only
+verification reported three blockers plus several advisories. It ran with no shell at all — reading
+only — which is also why it could not compile or run anything and says so in its own report.
+
+FIXED here, each with its probe observed failing first (the parent re-proved it by stashing the fix and
+watching all four probes fail):
+
+- non-UTF-8 manifest → silent corruption, because the line editor splits through `[]rune`: now refused,
+  file byte-identical. The reference raised `UnicodeDecodeError`, so refusing is the faithful direction.
+- symlinked manifest → temp + rename destroyed the link and left the real target stale: `atomicWrite`
+  resolves the final component and writes the target the link points at.
+- read-only manifest → rename bypassed the mode the user had set: `atomicWrite` refuses when the target
+  has no owner-write bit (root, which ignores that bit, is exempt).
+- invalid TOML: a multi-line `enabled` array or a second `[agents]` table is now REFUSED through the
+  package's existing `guardValidToInvalid`; `enabled_extra` is no longer swallowed by a prefix match,
+  and `[agents] # note` is recognised by table NAME.
+- a failed `Terminal.Resume` → the hub stops instead of prompting a canonical terminal.
+
+RECORDED, deliberately not fixed (each is the reference's own behaviour and deserves its own unit with
+its own evidence; the verification left durable probes for them):
+
+- inputs where `hub.py` itself corrupts a manifest: a multi-line `enabled` array, a structural-looking
+  line inside a multi-line string, an inline comment on the enabled line, and CRLF normalization (the
+  last is a documented parity rule of `readManifestText`). This port now refuses those writes instead
+  of reproducing the corruption.
+- Python's `str.strip()` vs `strings.TrimSpace` for `\x1c`-`\x1f`; the guard catches the resulting
+  invalid TOML rather than writing it.
+- Ctrl-C at a pause: Python died with `KeyboardInterrupt`, this port exits 0 cleanly.
+- Ctrl-S freezing output (`IXON` is still set) and the bare-ESC abort that waits for the next keystroke.
+- an already-invalid manifest read: Python crashed before the picker, this port reads an empty
+  selection and edits under the package's documented "already invalid may still be edited" rule,
+  reporting the error to stderr instead of a traceback.
+
+Blast radius kept in view: the three `atomicWrite` protections are shared by every surgical manifest
+writer (recipe add/remove, dep add/remove), so those writers now refuse a read-only or symlinked
+manifest too. That is a fail-closed change in shared code, which is why the recipe/deps suites and the
+full validation had to be re-run rather than assumed.
+
 ### U3b-2 — commits (the slice boundary, per task)
 
 Base `4e6da9d` (epic tip). Each slice is one commit on `change/go-20-u3b-tui`, ordered so every
@@ -179,7 +221,9 @@ commit contains what the next one needs:
 | the manifest writer | `6721991` | T4c | `internal/config/{agents.go,agents_test.go}` |
 | the interactive port | `af98ab9` | T4c | `internal/hub/{interactive.go,interactive_test.go,invariants_test.go,hub.go,quirks_test.go}` |
 | the acceptance re-point | `547a350` | T5 | `tests/{test_hub.py,test_hub_tui.py}` |
-| this record | (the commit that carries this file) | T6 | `odd/tasks/go-20-u3b-tui.md` |
+| the data-safety fixes (verification round) | `8fa8ee9` | T7 | `internal/config/{agents.go,writes.go,agents_safety_test.go}` |
+| the failed-resume stop | `e31bde1` | T7 | `internal/hub/{interactive.go,interactive_safety_test.go}`, `internal/tui/tui.go` |
+| this record | (the commit that carries this file) | T6/T7 | `odd/tasks/go-20-u3b-tui.md` |
 
 The manifest writer is its own commit because a mistake there edits a user's stored manifest (Risk item
 1) and native review can then take it alone. The interactive port is ONE slice of ~1 280 changed lines
