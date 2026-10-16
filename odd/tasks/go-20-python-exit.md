@@ -141,5 +141,12 @@ cannot each be one PR.
   channel, and U1b splits into **U1b-1** (the channel: workflow + committed trust root) and **U1b-2**
   (the install flip itself, whose download path is fixture-testable and fails closed to the local
   build until U1b-1 lands).
+- L11 — U1b-1 renamed the release workflow `release-worktree-gate.yml` → `release-binaries.yml`,
+  because it now releases BOTH binaries. Two things about that rename are worth recording: L10's
+  reference to the old name is the reconnaissance record and stays as history, and the rename broke
+  three tests in `tests/test_worktree_gate_release_phase4.py` that pin that path — the THIRD time this
+  session an artifact was moved without first grepping every test that names it. The sharpened rule:
+  enumerate every artifact the unit MOVES or renames (not only the ones it edits) and grep the test
+  tree for each BY NAME before running the evidence chain.
 
 ## Progress (to be completed by the implementation)

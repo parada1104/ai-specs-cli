@@ -1,23 +1,31 @@
-name: Release worktree-gate
+name: Release binaries
 
-# Builds the worktree gate binary for every supported target on tag push,
-# runs the Go checks, and attaches the artifacts to the GitHub release.
+# Builds BOTH binaries for every supported target on tag push — the worktree
+# gate and the ai-specs CLI — runs the Go checks, verifies the built digests
+# against the two committed trust roots, and attaches every asset to the GitHub
+# release.
 #
-# The workflow follows the change's Phase 0/1 contracts
-# (openspec/changes/worktree-gate-go):
+# Two trust roots, one discipline:
+#   - catalog/recipes/worktree-flow/bin/SHA256SUMS for worktree-gate-<os>-<arch>,
+#     verified by scripts/verify-gate-sums.sh;
+#   - bin/SHA256SUMS for ai-specs-<os>-<arch>, verified by
+#     scripts/verify-cli-sums.sh. install.sh and `ai-specs upgrade` read exactly
+#     that file and verify a download BEFORE installing it, so shipping an asset
+#     whose digest differs from it means the installer refuses it (fail closed)
+#     — which is why the checksum gate below is the release's own contract.
+#
+# Shared invariants:
 #   - four supported targets: darwin/arm64, darwin/amd64, linux/amd64, linux/arm64
-#   - reproducible builds: CGO_ENABLED=0, -trimpath, -buildvcs=false,
-#     version stamped at link time (go test ./... then emits SHA256SUMS that
-#     must match the committed digests)
+#   - reproducible builds: CGO_ENABLED=0, -trimpath, -buildvcs=false
 #   - the toolchain is pinned to the CANONICAL version (go 1.24.13) that
-#     regenerated catalog/recipes/worktree-flow/bin/SHA256SUMS; a different
-#     Go release compiles different stdlib bytes, so the checksum gate
-#     requires CI and the digest generator to share one toolchain
-#   - the committed catalog/recipes/worktree-flow/bin/SHA256SUMS is the trust
-#     root; no binaries are ever committed
-#   - the checksum gate compares the CANONICAL digest entries only
-#     (scripts/verify-gate-sums.sh), so the header/order of the committed
-#     file never fails a release — only a real digest mismatch does
+#     regenerated both trust roots; a different Go release compiles different
+#     stdlib bytes, so the checksum gates require CI and the digest generators
+#     (scripts/build-gate.sh, scripts/build-cli.sh) to share one toolchain
+#   - no binaries are ever committed: the trust roots are the source-level
+#     manifests of assets that only CI produces
+#   - both checksum gates compare the CANONICAL digest entries only, so the
+#     header/order of the committed files never fails a release — only a real
+#     digest mismatch does
 
 on:
   push:
@@ -89,9 +97,59 @@ jobs:
           path: catalog/recipes/worktree-flow/gate/dist/worktree-gate-${{ matrix.goos }}-${{ matrix.goarch }}
           if-no-files-found: error
 
+  build-cli:
+    name: Build ai-specs CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # The same canonical pin as the gate job: bin/SHA256SUMS was
+          # regenerated with exactly go1.24.13 (scripts/build-cli.sh documents
+          # this) and the checksum gate compares the built bytes against it.
+          go-version: "1.24.13"
+
+      - name: Run go vet
+        run: go vet ./cmd/... ./internal/...
+
+      - name: Run go test
+        run: go test ./cmd/... ./internal/...
+
+      - name: Build target
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -trimpath -buildvcs=false \
+            -o "dist/ai-specs-${{ matrix.goos }}-${{ matrix.goarch }}" ./cmd/ai-specs
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-specs-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/ai-specs-${{ matrix.goos }}-${{ matrix.goarch }}
+          if-no-files-found: error
+
   checksum:
     name: Emit and verify SHA256SUMS
-    needs: build
+    needs: [build, build-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -106,7 +164,9 @@ jobs:
 
       - name: Emit SHA256SUMS
         working-directory: dist
-        run: sha256sum worktree-gate-* > SHA256SUMS
+        run: |
+          sha256sum worktree-gate-* > SHA256SUMS
+          sha256sum ai-specs-* > CLI-SHA256SUMS
 
       - name: Compare with committed digests (canonical)
         # scripts/verify-gate-sums.sh compares the CANONICAL form of both
@@ -122,10 +182,24 @@ jobs:
             exit 1
           fi
 
+      - name: Compare with committed CLI digests (canonical)
+        # The same contract for the CLI trust root: install.sh and
+        # `ai-specs upgrade` read bin/SHA256SUMS, so an asset whose digest
+        # differs from it would never install — the release would be useless
+        # and misleading at once.
+        run: |
+          if ! bash scripts/verify-cli-sums.sh dist/CLI-SHA256SUMS bin/SHA256SUMS; then
+            echo "error: built digests differ from the committed bin/SHA256SUMS;" \
+                 "regenerate bin/SHA256SUMS with scripts/build-cli.sh and commit it" >&2
+            exit 1
+          fi
+
       - name: Attach assets to release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/worktree-gate-*
+          files: |
+            dist/worktree-gate-*
+            dist/ai-specs-*
 
 
   parity:

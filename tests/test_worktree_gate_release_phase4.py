@@ -288,7 +288,7 @@ class WorktreeGateReleaseTests(unittest.TestCase):
         # stdlib bytes, so the checksum gate would fail every tag push — and
         # (b) not key setup-go's cache on a nonexistent go.sum (the module has
         # zero third-party deps and intentionally no go.sum, D8).
-        workflow = (ROOT / ".github" / "workflows" / "release-worktree-gate.yml").read_text(
+        workflow = (ROOT / ".github" / "workflows" / "release-binaries.yml").read_text(
             encoding="utf-8")
         self.assertIn("go-version:", workflow)
         match = re.search(r'go-version:\s*"([0-9]+\.[0-9]+\.[0-9]+)"', workflow)
@@ -307,7 +307,7 @@ class WorktreeGateReleaseTests(unittest.TestCase):
         # committed trust root and the release assets diverge. This test
         # fails loudly until digests are regenerated with the pinned Go
         # (or the pin and digests are moved together deliberately).
-        workflow = (ROOT / ".github" / "workflows" / "release-worktree-gate.yml").read_text(
+        workflow = (ROOT / ".github" / "workflows" / "release-binaries.yml").read_text(
             encoding="utf-8")
         match = re.search(r'go-version:\s*"([0-9]+\.[0-9]+\.[0-9]+)"', workflow)
         self.assertIsNotNone(match, "workflow must pin an exact Go version")
@@ -328,7 +328,7 @@ class WorktreeGateReleaseTests(unittest.TestCase):
         # (tests/test_worktree_gate_parity.py) exactly like ./tests/run.sh.
         # The previous `python3 -m pytest ...` relied on an undeclared
         # pytest dependency and failed on the stock GitHub runner.
-        workflow = (ROOT / ".github" / "workflows" / "release-worktree-gate.yml").read_text(
+        workflow = (ROOT / ".github" / "workflows" / "release-binaries.yml").read_text(
             encoding="utf-8")
         parity_tail = workflow.split("parity:", 1)[1]
         self.assertIn(
