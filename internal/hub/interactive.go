@@ -41,6 +41,10 @@ type interactive struct {
 	stdout  io.Writer
 	stderr  io.Writer
 	noColor bool
+	// resumeFailed records that a delegated child ran and Terminal.Resume
+	// could not re-enter raw mode afterwards. The terminal is canonical then,
+	// so every prompt below must stop instead of reading keys it cannot decode.
+	resumeFailed bool
 }
 
 // runInteractiveSession draws the hub for both interactive modes: ModeOfferInit
@@ -80,6 +84,11 @@ func runInteractiveSession(mode Mode, target string, opts Options, stdin io.Read
 // runLoop is hub.py's `_run_interactive_hub` while loop.
 func (s *interactive) runLoop() int {
 	for {
+		if s.resumeFailed {
+			// Raw mode was lost around a delegation: return the loop's exit code
+			// instead of prompting a terminal that cannot deliver keystrokes.
+			return 0
+		}
 		s.renderPanel()
 		value, ok := tui.Select(s.stdout, s.keys, "What do you want to do?", s.menuChoices())
 		if !ok {
@@ -171,6 +180,10 @@ func (s *interactive) printResult(rc int) {
 // pause is hub.py's module-level pause(). It is the ONE tui.Pause call site in
 // this package, which the source invariant test pins.
 func (s *interactive) pause() bool {
+	if s.resumeFailed {
+		// The terminal is canonical: drawing and reading would hang or misread.
+		return false
+	}
 	return tui.Pause(s.stdout, s.keys, "Press Enter to return…")
 }
 
@@ -200,6 +213,7 @@ func (s *interactive) delegate(action Action, extra []string) int {
 	if s.term != nil {
 		if rerr := s.term.Resume(); rerr != nil {
 			fmt.Fprintf(s.stderr, "ai-specs hub: %v\n", rerr)
+			s.resumeFailed = true
 		}
 	}
 	if err == nil {
@@ -226,12 +240,12 @@ func (s *interactive) offerInit() bool {
 	if !ok || !answer {
 		return false
 	}
-	if rc := s.delegate(ActionInit, nil); rc != 0 || !isInitialized(s.target) {
+	if rc := s.delegate(ActionInit, nil); s.resumeFailed || rc != 0 || !isInitialized(s.target) {
 		return false
 	}
 	// A successful init is followed by sync so the hub opens on a clean status.
 	fmt.Fprintln(s.stdout, "✓ init complete — running sync to generate agent configs…")
-	return s.delegate(ActionSync, nil) == 0
+	return s.delegate(ActionSync, nil) == 0 && !s.resumeFailed
 }
 
 // ── recipes submenu ──────────────────────────────────────────────────────────

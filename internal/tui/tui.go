@@ -98,7 +98,8 @@ func MultiSelect(out io.Writer, in KeySource, message string, choices []Choice, 
 // answer is appended to that same line when Enter submits it. A confirm that only
 // printed once answered was invisible on a real terminal and deadlocked every PTY
 // stage that waits for the question text before typing the answer (GO-20 U3b-2).
-// Enter answers with def, y and n answer explicitly, everything else answers with def.
+// Enter submits the current answer — def until y or n changes it; y and n set it
+// explicitly; any other key is ignored.
 func Confirm(out io.Writer, in KeySource, message string, def bool) (bool, bool) {
 	answer := def
 	fmt.Fprintf(out, "? %s (%s) ", message, defaultHint(def))
