@@ -14,8 +14,8 @@ type wantShim struct {
 	invokedAs string
 }
 
-// TestRouteTableCoversEveryVerb checks the full dispatcher table: 10 shimmed
-// verbs + 4 native verbs + their aliases, mirroring the case statement of
+// TestRouteTableCoversEveryVerb checks the full dispatcher table: the shimmed
+// verbs, the native verbs and their aliases, mirroring the case statement of
 // bin/ai-specs.
 func TestRouteTableCoversEveryVerb(t *testing.T) {
 	shims := map[string]wantShim{
@@ -25,7 +25,6 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 		"skills":            {script: "skills.sh"},
 		"recipe":            {script: "recipe.sh"},
 		"configure-recipes": {script: "recipe-config.sh"},
-		"upgrade":           {script: "upgrade.sh"},
 	}
 	for verb, want := range shims {
 		r := Route([]string{verb})
@@ -45,6 +44,7 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 		"refresh-bundled": routeRefreshBundled,
 		"sync":            routeSync,
 		"sync-agent":      routeSyncAgent,
+		"upgrade":         routeUpgrade,
 		"rules-audit":     routeRulesAudit, "version": routeVersion,
 		"-v":        routeVersion,
 		"--version": routeVersion,
@@ -68,6 +68,13 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 	// routeRulesAudit and must not be served by the legacy rules-audit.sh shim.
 	if got := Route([]string{"rules-audit"}).kind; got != routeRulesAudit {
 		t.Errorf("verb %q: kind = %v, want %v", "rules-audit", got, routeRulesAudit)
+	}
+
+	// `upgrade` is native now (GO-20 U1a): it must resolve to routeUpgrade and
+	// must not be served by the legacy upgrade.sh shim. The engine's exit codes
+	// and abort messages stay FROZEN (parity contract section 2).
+	if got := Route([]string{"upgrade"}).kind; got != routeUpgrade {
+		t.Errorf("verb %q: kind = %v, want %v", "upgrade", got, routeUpgrade)
 	}
 }
 

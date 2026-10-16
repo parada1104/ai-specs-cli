@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"ai-specs.dev/ai-specs/internal/sync"
+	"ai-specs.dev/ai-specs/internal/upgrade"
 )
 
 // routeKind classifies a dispatcher decision.
@@ -29,6 +30,7 @@ const (
 	routeRulesAudit                      // native: `rules-audit` legacy rules inventory (card [Go 08])
 	routeBriefRenderPolicy               // native internal seam: lib/init.sh's policy gate (S19b)
 	routeBaselineBrief                   // native internal seam: lib/init.sh's baseline render (S19b)
+	routeUpgrade                         // native: `upgrade` legacy install upgrade (card [Go 12])
 	routeUnknown                         // unknown command: usage error, exit 2
 )
 
@@ -48,7 +50,6 @@ var shims = map[string]route{
 	"skills":            {kind: routeShim, script: "skills.sh"},
 	"recipe":            {kind: routeShim, script: "recipe.sh"},
 	"configure-recipes": {kind: routeShim, script: "recipe-config.sh"},
-	"upgrade":           {kind: routeShim, script: "upgrade.sh"},
 }
 
 // native maps the native verbs and their aliases to their route kind.
@@ -67,6 +68,7 @@ var native = map[string]route{
 	"rules-audit":         {kind: routeRulesAudit},
 	"brief-render-policy": {kind: routeBriefRenderPolicy},
 	"baseline-brief":      {kind: routeBaselineBrief},
+	"upgrade":             {kind: routeUpgrade},
 	"version":             {kind: routeVersion},
 	"-v":                  {kind: routeVersion},
 	"--version":           {kind: routeVersion},
@@ -112,6 +114,18 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		return runBriefRenderPolicy(args, stdout, stderr)
 	case routeBaselineBrief:
 		return runBaselineBrief(args, home, stdout, stderr)
+	case routeUpgrade:
+		// The upgrade engine parses the args AFTER the verb, like the shim
+		// does; its exit codes are FROZEN (parity contract section 2).
+		rest := args
+		if len(rest) > 0 {
+			rest = rest[1:]
+		}
+		return upgrade.Run(rest, upgrade.Env{
+			Home:       home,
+			UserHome:   os.Getenv("HOME"),
+			Executable: selfPath(),
+		}, stdout, stderr)
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
