@@ -1,9 +1,10 @@
 """Interactive / PTY black-box tests for the ai-specs hub.
 
-Every test drives ``bin/ai-specs hub`` through its process boundary under a
-pseudo-terminal (isolated install root). No test may import ``lib/_internal``
-modules; questionary/rich behavior is exercised for real via the PTY instead
-of being mocked.
+Every test drives the built CLI (``cmd/ai-specs``, through ``tests/_go_cli.py``)
+under a pseudo-terminal against an isolated install root: GO-20 U3b-2 served the
+interactive hub natively, so this file is the product contract for the Go port.
+No test may import ``lib/_internal`` modules; the prompt behaviour is exercised
+for real over the PTY instead of being mocked.
 """
 from __future__ import annotations
 
@@ -27,11 +28,19 @@ from _blackbox import (  # noqa: E402
     isolated_home,
     populate_catalog,
 )
+import _go_cli  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
-# Source-text assertions only (see TestPauseOnlySite) — never imported.
-HUB_PY = ROOT / "lib" / "_internal" / "hub.py"
+
+
+def _pty_cli() -> Path:
+    """The CLI the interactive flows drive: the native binary, built once.
+
+    Driving ``bin/ai-specs`` would grade the shell script U2 retires. A machine
+    without a Go toolchain falls back to that launcher LOUDLY (see _go_cli), so the
+    suite still runs while telling the truth about what it gated.
+    """
+    return _go_cli.cli()
 
 MENU_TITLES = [
     "Sync",
@@ -109,7 +118,7 @@ def _spawn_pty(target: Path, home: Path, feed: bytes = b"",
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     env = _cli_env(home, target.parent)
     proc = subprocess.Popen(
-        [str(CLI), "hub", str(target)],
+        [str(_pty_cli()), "hub", str(target)],
         stdin=slave,
         stdout=slave,
         stderr=slave,
@@ -386,24 +395,14 @@ class TestHubPTYE2E(unittest.TestCase):
 
 
 class TestPauseOnlySite(unittest.TestCase):
-    """B.2 — every Press Enter pause goes through pause()."""
+    """B.2 — a pause that loses stdin ends the hub cleanly.
 
-    # TRIAGE: ai-specs hub — exclusivity of input()-pause call sites is a
-    # static source invariant with no CLI surface; the source-text check is
-    # kept without importing the module (the runtime pause behavior is
-    # covered black-box by test_aborted_pause_returns_zero).
-    def test_no_bare_press_enter_input_outside_pause(self):
-        text = HUB_PY.read_text(encoding="utf-8")
-        # Strip the pause() helper body so we only catch call sites.
-        stripped = re.sub(
-            r"def pause\(.*?(?=\n(?:def |class |\Z))",
-            "",
-            text,
-            count=1,
-            flags=re.DOTALL,
-        )
-        self.assertNotIn('input("Press Enter', stripped)
-        self.assertIn("def pause(", text)
+    The Python-side half of this contract ("every Press Enter pause goes through
+    pause()") moved to Go with the port: internal/hub/invariants_test.go pins that
+    the hub never reads stdin itself and has exactly ONE ``tui.Pause(`` call site,
+    which is the same guarantee in the language that now draws the prompts. What
+    stays here is what a real pty can observe.
+    """
 
     def test_aborted_pause_returns_zero(self):
         with tempfile.TemporaryDirectory() as tmp:

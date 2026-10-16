@@ -32,11 +32,23 @@ from _blackbox import (  # noqa: E402
     normalize_output,
     populate_catalog,
 )
+import _go_cli  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+# The NON-interactive flows below still run the legacy launcher: they are GO-20
+# U3a's parity leg, and U2 is the unit that flips bin/ai-specs.
 CLI = ROOT / "bin" / "ai-specs"
-# Source-text assertions only (see TestNoOpenptyInHub) — never imported.
-HUB_PY = ROOT / "lib" / "_internal" / "hub.py"
+
+
+def _pty_cli() -> Path:
+    """The CLI the interactive PTY flows drive: the native binary, built once.
+
+    GO-20 U3b-2 served the interactive hub natively, so the PTY flows grade the
+    built binary through _go_cli (the helper the sync contract suites use); driving
+    bin/ai-specs would grade the shell script U2 retires. A machine without a Go
+    toolchain falls back to that launcher LOUDLY (see _go_cli).
+    """
+    return _go_cli.cli()
 
 
 def _recipe_toml(rid: str, name: str) -> str:
@@ -149,7 +161,7 @@ def _spawn_hub_pty(target: Path, home: Path, feed: bytes = b"",
     env["TERM"] = "xterm"
     (target.parent / "home").mkdir(exist_ok=True)
     proc = subprocess.Popen(
-        [str(CLI), "hub", str(target)],
+        [str(_pty_cli()), "hub", str(target)],
         stdin=slave,
         stdout=slave,
         stderr=slave,
@@ -497,21 +509,22 @@ class TestNonInteractiveStatus(unittest.TestCase):
             self.assertIn("Usage: ai-specs hub", result.stdout)
 
 
-class TestNoOpenptyInHub(unittest.TestCase):
-    # TRIAGE: ai-specs hub — static source invariant (hub.py must never touch
-    # openpty/termios); no CLI surface can observe the absence of those calls,
-    # so the source-text check is kept without importing the module.
-    def test_hub_py_has_no_openpty_or_termios(self):
-        text = HUB_PY.read_text(encoding="utf-8")
-        self.assertNotIn("openpty", text)
-        self.assertNotIn("termios", text)
-
+# The source invariant that used to live here — hub.py must never touch openpty or
+# termios — moved to Go with the port (GO-20 U3b-2 / S6):
+# internal/hub/invariants_test.go pins that the hub never allocates a pty and never
+# reads stdin itself, which is the same guarantee in the language that draws the
+# prompts now.
 
 class TestImportlibModuleScope(unittest.TestCase):
-    """The Agents path needs importlib at hub module scope; a PTY run of the
-    Agents submenu is the black-box regression: it must open cleanly."""
+    """The Agents picker opens cleanly over a real pty.
 
-    def test_hub_has_importlib_at_module_scope(self):
+    It lived here because hub.py needed importlib at module scope; that Python-side
+    requirement retired with the bridge (GO-20 U3b-2). What the test still proves is
+    the product behaviour: the picker opens, names the supported agents, aborts on
+    Ctrl-C without a traceback and returns to the menu.
+    """
+
+    def test_agents_picker_opens_and_aborts(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             home = _make_home(base)
