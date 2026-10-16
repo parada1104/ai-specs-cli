@@ -81,6 +81,24 @@ func TestWorktreeFlowEnabledKeepsPythonIsTrueSemantics(t *testing.T) {
 	}
 }
 
+// TestFormatPanelTopology pins the panel's conditional topology label: an
+// unconfigured via is treated as "auto" (hub.py's `topology_via or "auto"`),
+// "auto" renders the auto→ form, and anything else renders `(via <x>)`.
+func TestFormatPanelTopology(t *testing.T) {
+	cases := []struct {
+		resolved, via, want string
+	}{
+		{"standalone", "", "standalone (auto→standalone)"},
+		{"standalone", "auto", "standalone (auto→standalone)"},
+		{"monorepo-submodules", "config", "monorepo-submodules (via config)"},
+	}
+	for _, tc := range cases {
+		if got := formatPanelTopology(tc.resolved, tc.via); got != tc.want {
+			t.Errorf("formatPanelTopology(%q, %q) = %q, want %q", tc.resolved, tc.via, got, tc.want)
+		}
+	}
+}
+
 // TestHubTopologyHidesTheDefaultResolution pins the other half of the conditional
 // line: a plain project says nothing about topology, so the summary has no
 // `topology:` line at all.
