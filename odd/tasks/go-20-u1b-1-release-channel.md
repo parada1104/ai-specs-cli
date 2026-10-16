@@ -130,3 +130,40 @@ After the rename retargets and the regeneration:
 | --- | --- | --- |
 | `python3 -m unittest tests.test_worktree_gate_release_phase4 tests.test_cli_release_trust_root tests.test_release_materialization` | `Ran 17 tests` → `OK` (the three rename breakages and the stale-digest failure are gone) | 0 |
 | `bash scripts/verify-cli-sums.sh <generated> bin/SHA256SUMS` | `ok — 4 digest entries match the committed trust root` | 0 |
+
+## Native review (high tier, four lenses)
+- Lineage `review-bb12e5dc1d27de79`, target `sha256:37e54cfcacec3a93037754b01f9ccd3da96d39d133d637b49a2b914c3eb3d4d0`,
+  candidate `a5bdce71eeef426089f155fcdcbb9d411f9ca096..3ed5c61` (committed-only), 13 paths / 841
+  changed lines, correction budget 200. Risk `high` with three signals: `executable_mode` on
+  `scripts/build-cli.sh` (the new file's 0755), `process_boundary` and `shell_source`. Consent was
+  resolved by the host.
+- Group capture over `pi_host_relay`: 4/4 reviewers submitted, closure `approved` on the last admitted
+  event, authority burned (`gentle-ai.review-acknowledged/v1`).
+- 7 advisory findings, all informational and non-blocking: `R2-1`
+  (`ai-specs/skills/release-flow/SKILL.md:195`), `R2-2` (`scripts/verify-cli-sums.sh:33-55`), `R2-3`
+  (`scripts/build-cli.sh:47-50`); `R3-host-digest-test-toolchain-coupled`
+  (`tests/test_cli_release_trust_root.py:73-95`), `R3-verifier-behavior-unproved` (`:97-101`);
+  `R4-release-coupling` (`.github/workflows/release-binaries.yml:152`), `R4-repro-test-toolchain`
+  (`tests/test_cli_release_trust_root.py:84-88`).
+
+## Independent verification
+The high-risk plan requires a separate verifier; the delegated `gentle-ai-verify` subagent is
+reported **unavailable** (the same stall as before, not retried). The obligation was discharged
+inline, aimed at the advisories rather than re-running the suite:
+
+| Case | Result |
+| --- | --- |
+| the verifier with matching digests but a different header and order | **PASSES** (rc 0) — the canonicalization is real, so the committed header and line order can never fail a release by themselves |
+| the verifier with one differing digest | **FAILS** rc 1 with the regeneration message |
+| the verifier with an entry missing from the generated file | **FAILS** rc 1 |
+| `R3-verifier-behavior-unproved` | **Refuted as a defect and confirmed as a missing assertion**: all three cases behave, but the suite only checks that the script exists and names the prefix. Follow-up: assert the three behaviors. |
+| `R3-host-digest-test-toolchain-coupled` / `R4-repro-test-toolchain` | **Confirmed**: the reproducibility test builds with the LOCAL `go` and compares against the committed digest, so on a contributor's newer toolchain it fails with a message that blames the trust root — which is correct for CI. Follow-up: skip with a clear message unless `go version` is the canonical one (phase 4's `test_local_toolchain_matches_pinned_release_toolchain` already owns the pin comparison). |
+| `R4-release-coupling` | **Confirmed as a deliberate trade-off, not a defect**: one release means a CLI build failure also blocks the gate's assets. The alternative — two independent release jobs — risks a half-published release, which is worse for a trust root. Recorded as a decision. |
+
+## Follow-ups (recorded, not done here)
+- Assert the verifier's three behaviors in the suite instead of its mere existence.
+- Guard the reproducibility test on the canonical toolchain, so it reports "toolchain" rather than
+  "trust root" when it cannot reproduce.
+- The readability advisories: the `SKILL.md` sentence, the verifier's internal structure, and the build
+  script's toolchain-warning block.
+- The CI-side workflow parse/lint step (L5) and the CLI parity corpus in CI (L6).
