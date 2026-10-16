@@ -120,3 +120,43 @@ the three functional tests are the only addition.
   "non-zero exit", which the broken entry step satisfied for the wrong reason. When a change adds a new
   failure mode to a command, every test that asserts "this fails" needs a re-read to check it still
   fails for its own reason.
+
+## Native review (high tier, four lenses)
+- Lineage `review-ab188aa2eb895f53`, target `sha256:48b74d24bb19bdeed076d7bd06bfa688e27f573091002aa8678612c86bde2bab`,
+  candidate `5b603fb487040030b425b83bb8ebd9aa36538821..b9ccf0c` (committed-only), 5 paths / 466
+  changed lines, correction budget 200. Risk `high` (`process_boundary` **and** `shell_source` on
+  `install.sh`). Consent was resolved by the host.
+- Group capture over `pi_host_relay`: 4/4 reviewers submitted, closure `approved` on the last admitted
+  event (no correction offered), authority burned (`gentle-ai.review-acknowledged/v1`).
+- 9 advisory findings, all informational and non-blocking: `R2-1-misleading-digest-warning`
+  (`install.sh:199-210`), `R2-2-removed-chmod-missing-invariant` (`:122-125`),
+  `R2-3-inconsistent-platform-helpers` (`tests/test_upgrade_mode_dirt.py:24-32`),
+  `R2-4-silent-download-path-fallthrough` (`install.sh:199`); `R3-curl-no-timeout` (`:201`),
+  `R3-mismatch-test-reason` (`tests/test_install_binary_entry.py:153-155`),
+  `R3-no-cleanup-trap` (`install.sh:192-193`), `R3-sums-binary-marker` (`:200`);
+  `R4-temp-entry-no-cleanup-trap` (`:193`).
+
+## Independent verification
+The high-risk plan requires a separate verifier; the delegated `gentle-ai-verify` subagent is
+reported **unavailable** (the same 30-minute bash stall as before, not retried). The obligation was
+discharged inline by a method different from the unit's tests — aimed at the ADVISORIES themselves, to
+confirm or refute them rather than re-run the suite:
+
+| Check | Result |
+| --- | --- |
+| Does the digest check really run? (`R3-mismatch-test-reason`) | The suspicion is **refuted as a defect and confirmed as a missing assertion**: with a correct committed digest and tampered served bytes the installer exits 1, installs nothing, and its stderr carries `did not match the committed digest`. The code reaches verification — but the unit's test only asserts "non-zero exit + no entry", so it could pass through another failure path. Follow-up: assert the warning. |
+| A binary-mode trust root (`<digest> *<asset>`, as `sha256sum -b` writes it) (`R3-sums-binary-marker`) | **Confirmed as a real gap**: `awk '$2 == asset'` never matches, so the download is skipped in silence and the installer falls back to building. Follow-up: accept the `*` marker. |
+| `curl` timeout (`R3-curl-no-timeout`) | **Confirmed**: neither `--max-time` nor `--connect-timeout` appears anywhere, so a mirror that accepts and never answers hangs the install. |
+| Cleanup trap for the temp entry (`R3-no-cleanup-trap`, `R4-temp-entry-no-cleanup-trap`) | **Confirmed — and the first check of it was WRONG**: `"trap " in install.sh` reported True because "Boos**trap** a project: " contains that substring; the line grep matched is the script's final `echo`. `install.sh` has no trap, so an interrupted install leaves `.ai-specs.install.XXXXXX` behind. |
+
+## Follow-ups (recorded, not done here)
+- The four confirmed gaps above: assert the mismatch warning in the functional test; accept the
+  binary-mode `*` marker in the digest lookup; give `curl` a connect/max timeout; and remove the temp
+  entry on interrupt (the success path is already covered by the no-leftovers test).
+- The remaining advisories are informational: the digest-warning wording, the comment carrying the
+  removed-chmod invariant, the two different platform helpers (the test file's and the script's), the
+  silent fall-through when the download path is skipped, and the install-time message for a skipped
+  download.
+- U1b-1 (the release channel) is what turns the download path from fail-closed into the default, and
+  it is also where the `*` marker question becomes practical: the workflow that emits the digests
+  decides their format.
