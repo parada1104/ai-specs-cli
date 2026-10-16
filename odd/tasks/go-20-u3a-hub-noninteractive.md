@@ -69,6 +69,73 @@ Unit of the program `odd/tasks/go-20-python-exit.md` (U3, first slice). Base `20
   `lib/_internal/hub.py` are untouched and the two PTY suites (1 448 lines) still pass. Nothing
   user-visible changed in this slice.
 
+- L7 — The review binding has three traps for this workflow, and all three were learned by failing.
+  (a) `assess` without `workspaceRoot` measures the SESSION CWD: here that was `development` in the main
+  checkout, so it reported 543 paths / 120 486 lines and a `high` tier justified by paths this unit
+  never touched, with the epic tip as the only sane reference — every call made from inside a worktree
+  must carry `workspaceRoot`. (b) The provider's default projection is "since the last release"
+  (`e773514a`, the 0.24.0 bump), so a unit whose candidate is the delta since the epic tip must pass an
+  explicit `baseRef` + `committedOnly`, which is what narrowed the projection to these 7 paths. (c) An
+  over-long `lensesReason` is rejected as `lenses-invalid` with `lineage_created: false` and no
+  mutation, which is safe to retry with a shorter reason — the lens NAMES were never the problem.
+- L8 — The advisories were verified instead of waved through, and that was the right call: three lenses
+  converged on the same eight lines (`internal/cli/cli.go:158-165`), and the differential in the
+  Verification section confirmed a real divergence rather than a style preference — under the same
+  `stdin=/dev/null` + `stdout=/dev/null` conditions the shell route prints the guard and exits 2 while
+  the Go route launches Python, which is exactly the state A4 is heading for. Per the contract the
+  approved receipt stands (it is not a reason to re-run review on this candidate); per this program a
+  confirmed defect is written down with its evidence and gets its own unit.
+- L9 — The fix is cut as **U3a-fix** rather than folded into U3b, so the reviewed bytes stay the
+  published bytes and the repair gets its own tier, tests and receipt. It carries four items: a real
+  `isatty` behind build tags (no dependency), the `shutil.which("git")` guard in the release-commit
+  scope, pinning the two format quirks and the `unknown` version fallback, and the four `R2-*`
+  readability suggestions if they survive reading.
+
+## Review
+
+- Lineage `review-97428fc2534aa06c`: tier `high`, four lenses (`review-risk`, `review-resilience`,
+  `review-readability`, `review-reliability`) over four host-relay reviewer runs (`pi_host_relay`,
+  53 277-53 323 prompt bytes each), against the provider-frozen trees (`base_tree 1d024831`,
+  `candidate_tree d1a537b1`, 7 paths / 790 lines). Closed `approved`
+  (`native-last-event-closure`), then acknowledged: authority **burned**
+  (`gentle-ai.review-acknowledged/v1`), delivery back to ordinary repository policy.
+- Ten advisory findings, all `informational`: none opened a correction and no correction transition was
+  offered. Three lenses converge on one site — `R1-001` (risk, `internal/cli/cli.go:158-165`),
+  `R3-istty-chardevice-not-isatty` (reliability, same site) and
+  `R4-istty-chardevice-defeats-antihang-guard` (resilience, same site) — two attack this unit's tests,
+  `R3-noninteractive-coverage-gaps` (`internal/hub/hub_test.go:60-105`) and
+  `R3-trust-root-git-missing` (`tests/test_cli_release_trust_root.py:85-88`), and five are readability
+  suggestions (`R2-1` `hub.go:251`, `R2-2` `hub.go:315-323`, `R2-3` `hub.go:195-203`, `R2-4`
+  `hub.go:140-142`, `R2-5` `test_cli_release_trust_root.py:85-93`).
+
+## Verification (inline; the delegated verifier is unavailable in this environment)
+
+The method is deliberately different from the unit's tests: those drive the Go functions with
+`bytes.Buffer`s, so the verification drove the BUILT BINARY and the SHELL LAUNCHER side by side under the
+same conditions, with a marker `python3` on `PATH` to DETECT a Python launch instead of inferring it.
+
+- **R1-001 / R3 / R4 — CONFIRMED, and it is a product divergence.** `/dev/null` IS a character device
+  (`stat.S_ISCHR = True`), so a char-device stat is not `isatty(3)`.
+  - Control A (`stdin=/dev/null`, `stdout` a pipe): the guard fires correctly — the two frozen lines,
+    exit 2.
+  - Control B (the shell launcher, same case): guard, exit 2, **no** Python launched.
+  - **Failure** (`stdin=/dev/null` AND `stdout=/dev/null`, uninitialized target): the Go route takes the
+    interactive branch and launches Python (`rc=9`, `PYTHON_WAS_LAUNCHED (argv: …/hub.py …)`) where the
+    shell route prints the guard and exits 2. With Python absent the user gets
+    `ai-specs hub: exec: "python3": executable file not found in $PATH` and exit 1 instead of the frozen
+    message and exit 2 — the exact state A4 aims for, so this matters beyond the corner case.
+- **R3-trust-root-git-missing — CONFIRMED.** With `git` absent from `PATH` the test errors with
+  `FileNotFoundError` instead of skipping: the release-commit scope calls `git describe` without the
+  `shutil.which` guard its sibling `go` lookup already has.
+- **R3-noninteractive-coverage-gaps — CONFIRMED and narrowed.** `TestNoninteractiveOutputShape` pins the
+  line shapes, the blank line before `Commands:`, the menu line count and `rc == DoctorExitCode`, but
+  nothing pins the two format quirks this port deliberately preserves — `{error} error(s)` staying
+  LITERAL while warnings pluralize, and the conditional topology line — nor the `unknown` version
+  fallback. Those are exactly the details a later refactor would "fix" without noticing.
+- **Two probes are reported as inconclusive, not as evidence**: `PATH=/bin` broke the launcher's own
+  `dirname`, and a `PATH` without `tail` broke the reporting pipeline. They tested nothing.
+- The five `R2-*` readability suggestions were not examined in substance and stay recorded as advisories.
+
 ## Progress
 - T1 (RED): `internal/hub/hub_test.go` was written first and observed failing — `undefined: Mode`,
   `ModeInteractiveHub`, `ModeNoninteractiveStatus`, `ModeOfferInit`, `ModeErrorUninitialized`,

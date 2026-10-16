@@ -169,6 +169,18 @@ cannot each be one PR.
   workflow's checksum job already performs it; off-tag a suite must skip with its own reason rather
   than fail, and a non-canonical local toolchain must skip rather than blame the trust root. U3a
   learned this by failing its first evidence chain on U1b-1's own test (that unit's document, L5).
+- L15 — The review binding needs three corrections when the work happens in a worktree of a stacked
+  epic, and every one of them was learned by failing (U3a's document, L7, has the details): pass
+  `workspaceRoot` on EVERY call or `assess` measures the session cwd and reports a tier for paths the
+  unit never touched; pass an explicit `baseRef` + `committedOnly`, because the provider's default
+  projection is "since the last release" (`e773514a`) and the unit's candidate is the delta since the
+  epic tip; and keep `lensesReason` SHORT, because an over-long one is rejected as `lenses-invalid`
+  with no lineage created and no mutation (safe to retry).
+- L16 — The review's advisories are an INPUT to verification, not a formality to acknowledge. In U3a
+  three lenses converged on eight lines, the differential confirmation turned them into a real
+  divergence from the shell contract, and the result was a follow-up unit (**U3a-fix**) instead of a
+  silently republished candidate: the reviewed bytes stay the published bytes, and the repair gets its
+  own tier, tests and receipt.
 
 ## Progress
 
@@ -179,7 +191,8 @@ cannot each be one PR.
 | U1b-2b — `install.sh` installs the compiled entry | delivered | `a5bdce71` (PR #364); three follow-ups recorded |
 | U1b-1 — the CLI release channel | delivered | `20e653aa` (PR #365); review `review-bb12e5dc1d27de79` approved |
 | U1c — legacy entry + sync leg through the seam | **DROPPED** (obsolete) | L12 |
-| U3a — the hub's non-interactive contract | delivered | `c493744`; 2495 tests green |
+| U3a — the hub's non-interactive contract | **delivered, review approved** | `c493744`; 2495 tests green; `review-97428fc2534aa06c` burned |
+| U3a-fix — the confirmed advisories | next | real `isatty`, the `git` guard, the two quirks pinned |
 | U3b — the Go TUI and its dependency | pending | carries the three amendments (S2) |
 | U4..U7 — init, skills, recipes, substrate tail | pending | |
 | U2 — flip the launcher + parity snapshot + deletion | pending, AFTER the ports | L13 |
