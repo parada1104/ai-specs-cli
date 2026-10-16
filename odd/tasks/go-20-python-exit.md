@@ -66,9 +66,19 @@ Two findings that shape the order:
   wired — which is what unlocks deleting `sync.sh`, `sync-agent.sh` and the sync-side Python.
 
 ## Tasks
-- T1 — **U1 (the flip)**: wire the `upgrade` route natively (`internal/upgrade` already exists; its
-  wiring is the recorded follow-up), install the binary as the entry point, add the explicit legacy
-  entry for the parity harness (C2), and route `upgrade.sh`'s sync leg through the seam. No deletion.
+- T1 — **U1 (the flip)**, sliced in three because it is three different risks; U1a is delivered:
+  - **U1a — DONE** (`cd37c44`, PR #362): the native `upgrade` route is wired, and the two shell
+    post-steps the port omits are recorded and pinned.
+  - **U1b-1 — the release channel for the CLI binary**: the workflow that already builds and attaches
+    the gate's four platform assets also builds and attaches `ai-specs-<os>-<arch>`, with the
+    committed trust root the native engine reads and the same local reproduction/verification scripts
+    the gate's digests have. Nothing can be verified before this exists.
+  - **U1b-2 — the install flip**: `install.sh` stops symlinking a shell launcher and installs the
+    binary as the entry (`$INSTALL_BIN/ai-specs`) — download + verify first, `go build` as the
+    fallback — with `AI_SPECS_HOME` as the data home, plus the binary install kind in the upgrade
+    engine (wiring `Acquire`/`SwapBinary`, today used by nothing).
+  - **U1c — the legacy entry for parity** (C2) and `upgrade.sh`'s sync leg through the seam, which is
+    what orphans the shell sync.
 - T2 — **U2 (the first deletion, after the audit)**: audit `lib/_internal/*.py` callers with the flip
   applied and delete what no live caller reaches (`doctor.py`, `rules-inventory.py`, the sync-side
   renderers and the substrate only the already-native routes used), keeping the parity evidence green.
@@ -120,5 +130,16 @@ cannot each be one PR.
   **U1a** wire the native `upgrade` route (its core already exists), **U1b** the install/release/data
   home change, **U1c** the explicit legacy entry for parity plus `upgrade.sh`'s sync leg through the
   seam (the change that orphans the shell sync).
+- L9 — U1a delivered (`cd37c44`, PR #362). Two facts it recorded rather than fixed: the port compares
+  physical paths where the shell compares logical ones, and the two shell post-steps it omits.
+- L10 — Reconnaissance for the flip, which re-slices it: the repository HAS releases and a workflow
+  that attaches assets (`.github/workflows/release-worktree-gate.yml`), but ONLY the gate's four
+  platform assets — there is no `ai-specs-<os>-<arch>` — and the gate's digests live in a committed
+  trust root whose discipline is "the network supplies only bytes, the repository supplies the
+  expected digest". `internal/upgrade.Acquire` (download, verify before any replacement, atomic swap)
+  is ported and tested but called by nothing. So the flip cannot go live before the CLI has a release
+  channel, and U1b splits into **U1b-1** (the channel: workflow + committed trust root) and **U1b-2**
+  (the install flip itself, whose download path is fixture-testable and fails closed to the local
+  build until U1b-1 lands).
 
 ## Progress (to be completed by the implementation)
