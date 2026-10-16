@@ -14,6 +14,7 @@ import (
 
 	"ai-specs.dev/ai-specs/internal/hub"
 	"ai-specs.dev/ai-specs/internal/sync"
+	"ai-specs.dev/ai-specs/internal/tty"
 	"ai-specs.dev/ai-specs/internal/upgrade"
 )
 
@@ -151,17 +152,12 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 // `stdin.isatty() and stdout.isatty()`: a character device is a terminal. The
 // statistic is what keeps the hub dependency-free — no terminal library, and no
 // syscall per platform.
+// isTTY is the dispatcher's view of the shell's `[[ -t 0 && -t 1 ]]`. It delegates
+// to internal/tty, which asks the KERNEL: a character-device stat is not the same
+// question, and answering it that way made the hub's anti-hang guard launch Python
+// instead of printing its frozen message (GO-20 U3a-fix).
 func isTTY(stdin io.Reader, stdout io.Writer) bool {
-	return isCharDevice(stdin) && isCharDevice(stdout)
-}
-
-func isCharDevice(v any) bool {
-	f, ok := v.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	return tty.IsTTY(stdin, stdout)
 }
 
 // selfPath is the running dispatcher's own absolute path, exported to shimmed

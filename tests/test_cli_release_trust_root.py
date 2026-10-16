@@ -14,6 +14,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -82,6 +83,8 @@ class CliReleaseTrustRootTests(unittest.TestCase):
         released = re.search(r"\(v([0-9][^)]*)\)", header)
         if released is None:
             self.fail("the trust root header must name the released version")
+        if shutil.which("git") is None:
+            self.skipTest("no git: cannot tell whether this tree is the digests' release commit")
         tag = subprocess.run(
             ["git", "-C", str(ROOT), "describe", "--tags", "--exact-match", "HEAD"],
             capture_output=True, text=True, timeout=60,
@@ -120,6 +123,36 @@ class CliReleaseTrustRootTests(unittest.TestCase):
             f"a canonical local build of {asset} must reproduce the committed digest; "
             f"regenerate bin/SHA256SUMS with scripts/build-cli.sh ({CANONICAL_GO}) and commit it",
         )
+
+    def test_reproducibility_skips_without_git(self):
+        """The release-commit scope must SKIP, not error, when git is unavailable.
+
+        A missing tool is not a finding about the trust root: the sibling toolchain
+        lookup already skips, and this runs the single test in a subprocess whose
+        PATH has no git, so what is asserted is the real behaviour under that PATH
+        rather than the shape of the source.
+        """
+        python_dir = Path(sys.executable).parent
+        env = {**os.environ, "PATH": str(python_dir)}
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "unittest",
+                "-v",
+                "tests.test_cli_release_trust_root.CliReleaseTrustRootTests"
+                ".test_host_platform_digest_is_reproducible_locally",
+            ],
+            cwd=str(ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        output = proc.stderr + proc.stdout
+        self.assertNotIn("FileNotFoundError", output, output)
+        self.assertIn("skipped", output.lower(), output)
+        self.assertEqual(proc.returncode, 0, output)
 
     def test_build_and_verify_scripts_exist_and_are_documented(self):
         self.assertTrue(BUILD_SCRIPT.is_file(), "scripts/build-cli.sh must exist")

@@ -182,6 +182,22 @@ cannot each be one PR.
   silently republished candidate: the reviewed bytes stay the published bytes, and the repair gets its
   own tier, tests and receipt.
 
+- L17 — An idiom that LOOKS equivalent to the primitive it replaces is a hypothesis, not a port. U3a's
+  review caught the most expensive instance of this class so far: a character-device stat standing in for
+  `isatty(3)`. It looks interchangeable, it passes every test whose streams are buffers or pipes, and it
+  silently falsifies the PREMISE of the guard built on top of it — with both streams at `/dev/null` the
+  hub launched Python where the shell printed its frozen message and exited 2. The family already had two
+  earlier members in this program: Python's `is True` versus Go truthiness (now pinned by
+  `TestWorktreeFlowEnabledKeepsPythonIsTrueSemantics`) and logical versus physical path comparison (U1a).
+  The rule that follows: for every primitive a port substitutes, name the language-specific semantics it
+  must preserve and write the ADVERSARIAL test — a device that is a character device but not a terminal,
+  a string that is truthy but not `True`, a path that resolves logically but not physically.
+- L18 — A review's advisories are worth more than the receipt they arrive with, but they arrive as IDS and
+  LOCATIONS, not as prose. U3a's ten advisories named `internal/cli/cli.go:158-165` three times from three
+  lenses, which is what made them worth a differential experiment; the experiment is what turned a
+  "readability warning" into a confirmed product defect and then into a unit. Reading the sites the
+  review points at, and building the experiment that can refute it, is the whole verification job.
+
 ## Progress
 
 | Unit | State | Evidence |
@@ -191,8 +207,8 @@ cannot each be one PR.
 | U1b-2b — `install.sh` installs the compiled entry | delivered | `a5bdce71` (PR #364); three follow-ups recorded |
 | U1b-1 — the CLI release channel | delivered | `20e653aa` (PR #365); review `review-bb12e5dc1d27de79` approved |
 | U1c — legacy entry + sync leg through the seam | **DROPPED** (obsolete) | L12 |
-| U3a — the hub's non-interactive contract | **delivered, review approved** | `c493744`; 2495 tests green; `review-97428fc2534aa06c` burned |
-| U3a-fix — the confirmed advisories | next | real `isatty`, the `git` guard, the two quirks pinned |
+| U3a — the hub's non-interactive contract | **delivered, review approved** | `0ba47aa` (PR #366); 2495 tests green; `review-97428fc2534aa06c` burned |
+| U3a-fix — the confirmed advisories | **delivered** | `54197dd`; 2496 tests green; the isatty divergence proven fixed against the shell |
 | U3b — the Go TUI and its dependency | pending | carries the three amendments (S2) |
 | U4..U7 — init, skills, recipes, substrate tail | pending | |
 | U2 — flip the launcher + parity snapshot + deletion | pending, AFTER the ports | L13 |
