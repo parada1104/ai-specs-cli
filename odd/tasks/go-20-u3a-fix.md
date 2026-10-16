@@ -56,6 +56,13 @@ evidence is repeated here because it is what this unit's tests must reproduce.
 - L3 — Why this is not folded into U3b: the reviewed bytes must stay the published bytes, and a confirmed
   product defect deserves its own tier, tests and receipt rather than riding along with the TUI
   dependency and its three amendments.
+- L4 — `assess` over `0ba47aa..HEAD` reports risk `medium` (one signal, `executable_change` on
+  `internal/cli/cli.go`), 12 paths / 589 lines, `reviewDue: false` with reason `under_budget`, and no
+  separate verifier required — so NO native review is due for this candidate and the proof that stands is
+  the evidence chain plus the end-to-end differential in T6. The first `assess` attempt returned
+  `unassessable` (`changedPaths: 0`, `candidate: null`) because the unit document was still untracked:
+  native refuses to guess a scope containing undeclared files, which is the right behaviour and worth
+  knowing before the next unit.
 
 ## Progress
 - T1 (RED): `internal/cli/isatty_test.go` observed failing against the published code —
@@ -90,5 +97,5 @@ evidence is repeated here because it is what this unit's tests must reproduce.
   document) now agrees with the shell: with `stdin=/dev/null`, `stdout=/dev/null` and an uninitialized
   target, the Go route reports the two frozen lines and exits 2, and with a marker `python3` first on
   `PATH` it launches nothing — where U3a's run of the same case exited 9 with `PYTHON_WAS_LAUNCHED`.
-- Commit: `54197dd` (code and tests); the document plus the program's record follows in the unit's docs
-  commit.
+- Commit: `54197dd` (code and tests), `d2ad90f` (this document and the program's record). `assess` then
+  reports `medium` / `reviewDue: false` (`under_budget`), so no review ran and none was due.
