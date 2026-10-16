@@ -137,8 +137,9 @@ Flags:
 type Options struct {
 	// Args are the arguments after the verb, parsed with lib/hub.sh's contract.
 	Args []string
-	// Target is a pre-resolved target. Empty means "take it from Args, else the
-	// working directory" — the shell's `TARGET_PATH` default.
+	// Target is a target the CALLER already resolved. Empty means "take it from
+	// Args, else the working directory" — the shell's `TARGET_PATH` default. The
+	// dispatcher leaves it empty; a test sets it to skip the flag contract.
 	Target string
 	// Home is the CLI install root ($AI_SPECS_HOME).
 	Home string
@@ -194,34 +195,37 @@ func RunHub(opts Options, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	switch mode := DecideMode(isInitialized(abs), opts.TTY); mode {
 	case ModeErrorUninitialized:
+		// No TTY and no manifest: report and exit 2 WITHOUT launching Python, and
+		// therefore without requiring its dependencies.
 		printUninitError(stderr, abs)
 		return 2
 	case ModeNoninteractiveStatus:
 		return RunNoninteractive(abs, opts.Home, stdout, stderr)
-	default:
+	case ModeInteractiveHub, ModeOfferInit:
+		// Both interactive states need the menu: the hub for its actions, the offer
+		// for onboarding. Until U3b draws them in Go, both are bridged to hub.py,
+		// which asks the same isatty question itself before it decides.
 		return runInteractiveBridge(abs, opts.Home, stdin, stdout, stderr)
 	}
+	return 1
+}
+
+// severityCounts is the doctor's tally. Named fields rather than five positional
+// return values, so the summary reads as data and a caller cannot swap two of them
+// without the compiler noticing (U3a advisory R2-1).
+type severityCounts struct {
+	OK    int
+	Info  int
+	Warn  int
+	Error int
 }
 
 // RunNoninteractive is hub.py's `_run_noninteractive`: the frozen summary lines,
 // and the DOCTOR's own exit code rather than 0 (the D5 fix).
 func RunNoninteractive(root, home string, stdout, stderr io.Writer) int {
-	rc, ok, info, warn, errCount := runDoctor(root, home, stderr)
+	rc, c := runDoctor(root, home, stderr)
 
-	headline := "healthy"
-	switch {
-	case errCount > 0:
-		// Quirk preserved from hub.py: errors say `error(s)` literally...
-		headline = fmt.Sprintf("%d error(s)", errCount)
-	case warn > 0:
-		// ...while warnings pluralize properly.
-		headline = fmt.Sprintf("%d warning", warn)
-		if warn != 1 {
-			headline += "s"
-		}
-	}
-
-	fmt.Fprintf(stdout, "ai-specs status — %s\n", headline)
+	fmt.Fprintf(stdout, "ai-specs status — %s\n", headlineForCounts(c))
 	fmt.Fprintf(stdout, "  version: %s\n", readVersion(home))
 	fmt.Fprintf(stdout, "  target: %s\n", root)
 	if topology, via := hubTopology(root); topology != "" {
@@ -230,7 +234,7 @@ func RunNoninteractive(root, home string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "  topology: %s (%s)\n", topology, via)
 	}
-	fmt.Fprintf(stdout, "  Summary: %d OK, %d INFO, %d WARN, %d ERROR\n", ok, info, warn, errCount)
+	fmt.Fprintf(stdout, "  Summary: %d OK, %d INFO, %d WARN, %d ERROR\n", c.OK, c.Info, c.Warn, c.Error)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Commands:")
 	for _, entry := range Menu() {
@@ -239,34 +243,52 @@ func RunNoninteractive(root, home string, stdout, stderr io.Writer) int {
 	return rc
 }
 
+// headlineForCounts is the frozen headline vocabulary, quirks included: errors say
+// `error(s)` LITERALLY and win over warnings, while warnings pluralize properly
+// (`1 warning` vs `2 warnings`). Both spellings are user-visible bytes of the
+// default verb, so they are pinned by TestHeadlineForCountsPinsTheFrozenWording.
+func headlineForCounts(c severityCounts) string {
+	switch {
+	case c.Error > 0:
+		return fmt.Sprintf("%d error(s)", c.Error)
+	case c.Warn == 1:
+		return "1 warning"
+	case c.Warn > 1:
+		return fmt.Sprintf("%d warnings", c.Warn)
+	default:
+		return "healthy"
+	}
+}
+
 // DoctorExitCode runs the same doctor the summary runs and returns its exit code;
 // it exists so a caller can check the "the hub exits with the doctor's code"
 // contract without parsing the summary.
 func DoctorExitCode(root, home string) int {
-	rc, _, _, _, _ := runDoctor(root, home, io.Discard)
+	rc, _ := runDoctor(root, home, io.Discard)
 	return rc
 }
 
 // runDoctor runs the native doctor in-process and counts its severities.
-func runDoctor(root, home string, stderr io.Writer) (rc, ok, info, warn, errCount int) {
+func runDoctor(root, home string, stderr io.Writer) (int, severityCounts) {
 	d := doctor.New(root, home)
 	if stderr != nil {
 		d.Stderr = stderr
 	}
-	rc = d.Run()
+	rc := d.Run()
+	var c severityCounts
 	for _, check := range d.Checks {
 		switch check.Severity {
 		case doctor.OK:
-			ok++
+			c.OK++
 		case doctor.INFO:
-			info++
+			c.Info++
 		case doctor.WARN:
-			warn++
+			c.Warn++
 		case doctor.ERROR:
-			errCount++
+			c.Error++
 		}
 	}
-	return rc, ok, info, warn, errCount
+	return rc, c
 }
 
 // readVersion is hub.py's `_read_version`: the CLI install root's VERSION, or
@@ -313,7 +335,10 @@ func worktreeFlowEnabled(manifest *toml.Table) bool {
 }
 
 // delegateArgv is hub.py's DelegateRunner argv: the verb, then any extra words,
-// then the target.
+// then the target. Nothing in production calls it yet — the interactive half is
+// bridged, and the U3a slice only pinned the argv SHAPE against hub.py's own
+// DelegateRunner — so U3b is the caller that turns the menu into delegation. It is
+// kept here, with its test, so that shape cannot drift before U3b needs it.
 func delegateArgv(cli string, action Action, extra []string, target string) []string {
 	argv := append([]string{cli, string(action)}, extra...)
 	if target != "" {
