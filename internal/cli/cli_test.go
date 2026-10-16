@@ -19,7 +19,6 @@ type wantShim struct {
 // bin/ai-specs.
 func TestRouteTableCoversEveryVerb(t *testing.T) {
 	shims := map[string]wantShim{
-		"hub":               {script: "hub.sh"},
 		"init":              {script: "init.sh"},
 		"add-dep":           {script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 		"skills":            {script: "skills.sh"},
@@ -45,6 +44,7 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 		"sync":            routeSync,
 		"sync-agent":      routeSyncAgent,
 		"upgrade":         routeUpgrade,
+		"hub":             routeHub,
 		"rules-audit":     routeRulesAudit, "version": routeVersion,
 		"-v":        routeVersion,
 		"--version": routeVersion,
@@ -80,16 +80,15 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 
 func TestRouteBareInvocationRewritesToHub(t *testing.T) {
 	r := Route(nil)
-	if r.kind != routeShim || r.script != "hub.sh" {
-		t.Fatalf("bare invocation must route to hub, got kind=%v script=%q", r.kind, r.script)
+	if r.kind != routeHub {
+		t.Fatalf("bare invocation must route to hub, got kind=%v", r.kind)
 	}
 }
 
 // TestRunBareInvocationRoutesToHub executes the bare-invocation path
-// end-to-end: Route(nil) rewrites to hub and runShim must pass the ORIGINAL
-// (empty) argv to hub.sh (legacy no-shift semantics) instead of panicking on
-// args[1:]. With an uninitialized temp cwd and buffered (non-TTY) writers,
-// hub.sh's pre-guard fires: exit 2, no Python launch.
+// end-to-end: Route(nil) rewrites to hub and the NATIVE hub (GO-20 U3a) must
+// report an uninitialized non-TTY target itself: exit 2 with the two frozen
+// stderr lines, no Python launch and no dependency on one.
 func TestRunBareInvocationRoutesToHub(t *testing.T) {
 	home, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -102,7 +101,7 @@ func TestRunBareInvocationRoutesToHub(t *testing.T) {
 		t.Errorf("exit = %d, want 2 (uninitialized + non-TTY pre-guard)", code)
 	}
 	if !strings.Contains(strings.ToLower(stderr.String()), "no ai-specs project at") {
-		t.Errorf("stderr = %q, want hub.sh pre-guard message\"no ai-specs project at ...\"", stderr.String())
+		t.Errorf("stderr = %q, want the hub's uninitialized message", stderr.String())
 	}
 }
 
