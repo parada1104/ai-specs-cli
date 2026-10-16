@@ -306,6 +306,23 @@ func printReleaseReport(home, current, new string, stdout io.Writer) {
 }
 
 // realUpgrade ports the fetch + fast-forward + release-report path.
+//
+// Two steps of lib/upgrade.sh are DELIBERATELY not reproduced here (GO-20 U1a),
+// because both belong to the shell layer this program retires and neither is a
+// behaviour the end state wants:
+//
+//   - the TUI-dependency refresh (`pip install --target lib/_vendor rich
+//     questionary`, lib/upgrade.sh:330). It exists only for the still-Python
+//     wizard, which the Go port replaces; the shell itself treats it as
+//     best-effort ("init will prompt on first use"), so a fresh machine now
+//     gets that prompt instead of a provisioned vendor directory.
+//   - `lib/_internal/narrow-checkout.sh` (lib/upgrade.sh:343), the best-effort
+//     pruning of subtrees the CLI never reads. It is a size cost, never a
+//     behaviour cost, and it becomes meaningless once the binary — not the
+//     checkout — is the installed artifact.
+//
+// Pinned both directions by TestUpgradeRunsNativelyAndSkipsTheShellPostSteps,
+// so an accidental reintroduction fails a test instead of passing silently.
 func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int {
 	if code := runStep(o, git, inst.Home, stdout, "fetching origin/main", "fetch", "origin", "main"); code != 0 {
 		return abort(stderr, "Failed to fetch from origin. Check your network connection.", ExitFetch)
