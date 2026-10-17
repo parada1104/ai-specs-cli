@@ -34,6 +34,7 @@ const (
 	routeBaselineBrief                   // native internal seam: lib/init.sh's baseline render (S19b)
 	routeUpgrade                         // native: `upgrade` legacy install upgrade (card [Go 12])
 	routeHub                             // native: `hub` front door, non-interactive half (GO-20 U3a)
+	routeInit                            // native: `init` classic bootstrap; the wizard delegates to the shim (GO-20 U4a)
 	routeUnknown                         // unknown command: usage error, exit 2
 )
 
@@ -47,7 +48,6 @@ type route struct {
 // shims maps every shimmed verb to its legacy lib script, mirroring the case
 // statement of bin/ai-specs exactly.
 var shims = map[string]route{
-	"init":              {kind: routeShim, script: "init.sh"},
 	"add-dep":           {kind: routeShim, script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 	"skills":            {kind: routeShim, script: "skills.sh"},
 	"recipe":            {kind: routeShim, script: "recipe.sh"},
@@ -72,6 +72,9 @@ var native = map[string]route{
 	"baseline-brief":      {kind: routeBaselineBrief},
 	"upgrade":             {kind: routeUpgrade},
 	"hub":                 {kind: routeHub},
+	// init is native for the classic path and delegates the wizard to the shim
+	// itself (odd/tasks/go-20-u4-init.md S6).
+	"init": {kind: routeInit},
 	"version":             {kind: routeVersion},
 	"-v":                  {kind: routeVersion},
 	"--version":           {kind: routeVersion},
@@ -139,6 +142,8 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 			Home: home,
 			TTY:  isTTY(stdin, stdout),
 		}, stdin, stdout, stderr)
+	case routeInit:
+		return runInit(args, home, stdin, stdout, stderr, selfPath())
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
