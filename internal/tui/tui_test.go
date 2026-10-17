@@ -34,14 +34,16 @@ type keySourceFunc func() (Key, error)
 
 func (f keySourceFunc) NextKey() (Key, error) { return f() }
 
-func twoChoices() []Choice {
+// threeChoices is the fixture list the select tests navigate: two real entries and a
+// Quit, which is the shape the hub's menu has.
+func threeChoices() []Choice {
 	return []Choice{{Title: "Sync", Value: "sync"}, {Title: "Doctor", Value: "doctor"}, {Title: "Quit", Value: "quit"}}
 }
 
 // TestSelectMovesAndConfirms pins navigation and the value a caller receives.
 func TestSelectMovesAndConfirms(t *testing.T) {
 	var out bytes.Buffer
-	got, ok := Select(&out, keys(KeyDown, KeyDown, KeyEnter), "What do you want to do?", twoChoices())
+	got, ok := Select(&out, keys(KeyDown, KeyDown, KeyEnter), "What do you want to do?", threeChoices())
 	if !ok || got != "quit" {
 		t.Errorf("Select = (%q, %v), want (\"quit\", true)", got, ok)
 	}
@@ -62,7 +64,7 @@ func TestSelectMovesAndConfirms(t *testing.T) {
 // that space those stages never fire and the suite TIMES OUT instead of failing.
 func TestFrameKeepsQuestionaryMessageLine(t *testing.T) {
 	var out bytes.Buffer
-	if _, ok := Select(&out, keys(KeyEnter), "Recipes:", twoChoices()); !ok {
+	if _, ok := Select(&out, keys(KeyEnter), "Recipes:", threeChoices()); !ok {
 		t.Fatal("Select aborted, want confirmed")
 	}
 	if !strings.Contains(out.String(), "? Recipes: \n") {
@@ -77,7 +79,7 @@ func TestSelectAbortsReturnNothing(t *testing.T) {
 	for name, key := range cases {
 		t.Run(name, func(t *testing.T) {
 			var out bytes.Buffer
-			got, ok := Select(&out, keys(key), "Pick:", twoChoices())
+			got, ok := Select(&out, keys(key), "Pick:", threeChoices())
 			if ok || got != "" {
 				t.Errorf("Select after %s = (%q, %v), want (\"\", false)", name, got, ok)
 			}
@@ -89,7 +91,7 @@ func TestSelectAbortsReturnNothing(t *testing.T) {
 // hub has to translate.
 func TestSelectReportsEOF(t *testing.T) {
 	var out bytes.Buffer
-	got, ok := Select(&out, keys(), "Pick:", twoChoices())
+	got, ok := Select(&out, keys(), "Pick:", threeChoices())
 	if ok || got != "" {
 		t.Errorf("Select on EOF = (%q, %v), want (\"\", false)", got, ok)
 	}
@@ -100,7 +102,7 @@ func TestSelectReportsEOF(t *testing.T) {
 // the order in which the user toggled things.
 func TestMultiSelectTogglesAndConfirms(t *testing.T) {
 	var out bytes.Buffer
-	choices := twoChoices()
+	choices := threeChoices()
 	// Start checked on the middle entry, toggle the first and the last on, and never
 	// touch the middle one again: it must come back checked, in its own position.
 	got, ok := MultiSelect(&out, keys(KeySpace, KeyDown, KeyDown, KeySpace, KeyEnter),
@@ -232,7 +234,7 @@ func TestPanelCarriesTheFrozenVocabulary(t *testing.T) {
 func TestKeySourceErrorsAreNotSwallowed(t *testing.T) {
 	failing := failingKeys{errors.New("terminal went away")}
 	var out bytes.Buffer
-	if _, ok := Select(&out, failing, "Pick:", twoChoices()); ok {
+	if _, ok := Select(&out, failing, "Pick:", threeChoices()); ok {
 		t.Error("Select with a failing key source = ok=true, want an abort")
 	}
 }

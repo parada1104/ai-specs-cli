@@ -6,8 +6,9 @@
 // version compatible with the canonical go1.24.13 toolchain) brought 15 modules, 549
 // Go files, 334 049 lines and 15 MB, plus a go.sum — which would have made D8's
 // "zero third-party dependencies" false and forced amendments in six records. Two
-// hundred lines of our own, on the terminal primitive `internal/tty` already owns,
-// keeps the module's identity AND the layer reviewable line by line.
+// hundred lines of our own keep the module's identity AND the layer reviewable line
+// by line. `internal/tty` owns only the kernel's answer to "is this a terminal"; the
+// raw-mode twins this package needs live beside it (`raw_darwin.go`, `raw_linux.go`).
 //
 // The testability seam is KeySource: a prompt never touches the terminal itself, it
 // asks for the next key. Production reads a real terminal in raw mode; a test feeds

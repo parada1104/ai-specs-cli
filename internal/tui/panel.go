@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Counts is the doctor's tally as both the summary and the panel display it.
@@ -64,16 +65,22 @@ func RenderPanel(d PanelData, noColor bool) string {
 		rows = append(rows, [2]string{check.Label, check.Text})
 	}
 
+	// fmt pads a string by RUNE count (`%-*s`), so the measurement has to be runes
+	// too: with len() a row carrying a non-ASCII rune overflowed the border
+	// (odd/tasks/go-20-u3b-advisories.md S5).
 	labelWidth, textWidth := 0, 0
 	for _, row := range rows {
-		if len(row[0]) > labelWidth {
-			labelWidth = len(row[0])
+		if n := utf8.RuneCountInString(row[0]); n > labelWidth {
+			labelWidth = n
 		}
-		if len(row[1]) > textWidth {
-			textWidth = len(row[1])
+		if n := utf8.RuneCountInString(row[1]); n > textWidth {
+			textWidth = n
 		}
 	}
 	inner := labelWidth + 2 + textWidth
+	// A row renders as `│ <label>  <text> │`: one rune of border and one of
+	// padding on each side of the two measured columns.
+	rowWidth := inner + 4
 
 	colour, reset := borderColour(d.Counts), ""
 	if !noColor && colour != "" {
@@ -83,11 +90,11 @@ func RenderPanel(d PanelData, noColor bool) string {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s╭─ ai-specs %s╮%s\n", colour, strings.Repeat("─", max(inner-12, 0)), reset)
+	fmt.Fprintf(&b, "%s╭─ ai-specs %s╮%s\n", colour, strings.Repeat("─", max(rowWidth-13, 0)), reset)
 	for _, row := range rows {
 		fmt.Fprintf(&b, "%s│%s %-*s  %-*s %s│%s\n", colour, reset, labelWidth, row[0], textWidth, row[1], colour, reset)
 	}
-	fmt.Fprintf(&b, "%s╰%s╯%s\n", colour, strings.Repeat("─", inner+2), reset)
+	fmt.Fprintf(&b, "%s╰%s╯%s\n", colour, strings.Repeat("─", rowWidth-2), reset)
 	return b.String()
 }
 
