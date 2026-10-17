@@ -43,23 +43,36 @@ func renderAiSpecsGitignoreBody() string {
 // line), create the output's parent directories, write the fixed body, print
 // the Python status line to stdout, and return the process exit code.
 func RenderAiSpecsGitignore(tomlPath, outputPath string, stdout io.Writer) int {
-	data, err := os.ReadFile(tomlPath)
+	deps, err := WriteAiSpecsGitignore(tomlPath, outputPath)
 	if err != nil {
 		return 1
+	}
+	fmt.Fprintf(stdout, "  ✓ wrote %s (%d dep(s))\n", outputPath, deps)
+	return 0
+}
+
+// WriteAiSpecsGitignore is the same render without the status line, for callers
+// whose own contract says the step is silent (`init`). It still reads and
+// parses the manifest first: the Python authority fails before writing
+// anything when the manifest cannot be read, and a silent caller must not
+// become the one place that swallows it.
+func WriteAiSpecsGitignore(tomlPath, outputPath string) (int, error) {
+	data, err := os.ReadFile(tomlPath)
+	if err != nil {
+		return 0, err
 	}
 	root, err := toml.Parse(data)
 	if err != nil {
-		return 1
+		return 0, err
 	}
 	deps, _ := root.Tables("deps")
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-		return 1
+		return 0, err
 	}
 	if err := os.WriteFile(outputPath, []byte(renderAiSpecsGitignoreBody()), 0o644); err != nil {
-		return 1
+		return 0, err
 	}
-	fmt.Fprintf(stdout, "  ✓ wrote %s (%d dep(s))\n", outputPath, len(deps))
-	return 0
+	return len(deps), nil
 }
 
 // gitignoreRootMarkerBegin / gitignoreRootMarkerEnd are MARKER_BEGIN /
