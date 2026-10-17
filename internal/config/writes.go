@@ -146,8 +146,11 @@ func atomicWrite(path, content string) error {
 		m := info.Mode()
 		mode = m.Perm() | m&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky)
 		// Refuse to overwrite a manifest nobody can write: temp + rename would
-		// bypass the mode the user set. Root ignores the bit, so skip there.
-		if m.Perm()&0o200 == 0 && os.Geteuid() != 0 {
+		// bypass the mode the user set. The test is every write bit, because that
+		// is what the message claims — a manifest whose write bit sits on group
+		// or other is writable by the rename, so refusing it would be a false
+		// refusal. Root ignores the bit, so skip there.
+		if m.Perm()&0o222 == 0 && os.Geteuid() != 0 {
 			return fmt.Errorf("refusing to overwrite read-only manifest %s: %w", path, os.ErrPermission)
 		}
 	}
