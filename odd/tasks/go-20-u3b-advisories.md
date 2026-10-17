@@ -123,6 +123,9 @@ declined with a recorded reason. Worktree `.worktrees/go-20-u3b-tui`, branch `ch
 - T8 (S2, S3) — Record the disposition table for all 14 findings in this document. — commit B
 
 Commit A = `f663949` "fix(config): stop the agents writer from corrupting multi-line strings".
+Commit B = `b234400` "fix(tui): measure the panel in runes and own the terminal's controls".
+The unit is two work units and ~250 authored lines; the branch's total against `origin/main` is the
+whole epic stacked under it, not this unit.
 
 ## Dispositions
 
