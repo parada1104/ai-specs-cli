@@ -187,13 +187,11 @@ func (s *interactive) pause() bool {
 	return tui.Pause(s.stdout, s.keys, "Press Enter to return…")
 }
 
-// pauseResult is the submenus' shared tail: `if not pause(): return 0`.
-// quit=true means the hub exits with 0; quit=false means back to the menu.
+// pauseResult is the submenus' shared tail: `if not pause(): return 0`. The exit code
+// is always 0 — leaving the hub and returning to the menu differ only in the bool,
+// which is the only part of this pair any caller reads.
 func (s *interactive) pauseResult() (int, bool) {
-	if s.pause() {
-		return 0, false
-	}
-	return 0, true
+	return 0, !s.pause()
 }
 
 // delegate is hub.py's DelegateRunner.run: argv from delegateArgv, child
@@ -517,8 +515,16 @@ func (s *interactive) agentsSubmenu() (int, bool) {
 		fmt.Fprintln(s.stdout, "Manifest not found — run ai-specs init first")
 		return 0, false
 	}
+	// A manifest nobody can parse is NOT "no agents enabled": opening the picker on an
+	// empty selection and saving it would drop the list the user already had
+	// (odd/tasks/go-20-u3b-advisories.md S6).
+	enabled, err := config.EnabledAgents(manifestPath)
+	if err != nil {
+		fmt.Fprintf(s.stderr, "ai-specs hub: cannot read %s: %v\n", manifestPath, err)
+		return 0, false
+	}
 	current := map[string]bool{}
-	for _, id := range config.EnabledAgents(manifestPath) {
+	for _, id := range enabled {
 		current[id] = true
 	}
 	choices := make([]tui.Choice, 0, len(supportedAgents))

@@ -35,14 +35,20 @@ func readBack(t *testing.T, path string) string {
 
 func TestEnabledAgentsReadsListInManifestOrder(t *testing.T) {
 	path := manifestAt(t, "[project]\nname = \"t\"\n\n[agents]\nenabled = [\"cursor\", \"pi\"]\n")
-	got := EnabledAgents(path)
+	got, err := EnabledAgents(path)
+	if err != nil {
+		t.Fatalf("EnabledAgents: %v", err)
+	}
 	if strings.Join(got, ",") != "cursor,pi" {
 		t.Errorf("EnabledAgents = %v, want [cursor pi]", got)
 	}
 }
 
 func TestEnabledAgentsMissingManifestIsEmpty(t *testing.T) {
-	got := EnabledAgents(filepath.Join(t.TempDir(), "nope", "ai-specs.toml"))
+	got, err := EnabledAgents(filepath.Join(t.TempDir(), "nope", "ai-specs.toml"))
+	if err != nil {
+		t.Fatalf("EnabledAgents over a missing manifest: %v", err)
+	}
 	if len(got) != 0 {
 		t.Errorf("EnabledAgents = %v, want empty", got)
 	}
@@ -55,7 +61,11 @@ func TestEnabledAgentsMissingTableOrKeyIsEmpty(t *testing.T) {
 		"non-list value":  "[agents]\nenabled = \"claude\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := EnabledAgents(manifestAt(t, body)); len(got) != 0 {
+			got, err := EnabledAgents(manifestAt(t, body))
+			if err != nil {
+				t.Fatalf("EnabledAgents: %v", err)
+			}
+			if len(got) != 0 {
 				t.Errorf("EnabledAgents = %v, want empty", got)
 			}
 		})
@@ -137,7 +147,11 @@ func TestSetEnabledAgentsRoundTrips(t *testing.T) {
 	if err := SetEnabledAgents(path, []string{"cursor", "pi"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := EnabledAgents(path); strings.Join(got, ",") != "cursor,pi" {
+	got, err := EnabledAgents(path)
+	if err != nil {
+		t.Fatalf("EnabledAgents: %v", err)
+	}
+	if strings.Join(got, ",") != "cursor,pi" {
 		t.Errorf("round-trip = %v, want [cursor pi]", got)
 	}
 }

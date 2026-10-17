@@ -181,27 +181,39 @@ watching all four probes fail):
   file byte-identical. The reference raised `UnicodeDecodeError`, so refusing is the faithful direction.
 - symlinked manifest → temp + rename destroyed the link and left the real target stale: `atomicWrite`
   resolves the final component and writes the target the link points at.
-- read-only manifest → rename bypassed the mode the user had set: `atomicWrite` refuses when the target
-  has no owner-write bit (root, which ignores that bit, is exempt).
+- read-only manifest → rename bypassed the mode the user had set: `atomicWrite` refuses when NOBODY has a
+  write bit on the target (root, which ignores that bit, is exempt). The test is every write bit, not
+  the owner's, because that is what the refusal claims — a group-writable manifest is writable by the
+  rename and must not be refused (`odd/tasks/go-20-u3b-advisories.md` S9).
 - invalid TOML: a multi-line `enabled` array or a second `[agents]` table is now REFUSED through the
   package's existing `guardValidToInvalid`; `enabled_extra` is no longer swallowed by a prefix match,
-  and `[agents] # note` is recognised by table NAME.
+  and `[agents] # note` is recognised by table NAME, while `[[agents]]` is recognised as an array of
+  tables and is therefore never the `[agents]` table.
+- a line that only looks structural because it sits inside a multi-line `"""`/`'''` string → it was
+  treated as a header, so the new value was written INSIDE the user's string and the real table kept
+  its old list, while the write reported success. The scan now tracks string state and those lines are
+  content.
+- a manifest the hub cannot READ or parse → the Agents picker opened on an empty selection, and saving
+  it replaced the user's `[agents].enabled` list. The read now reports the difference between "no list"
+  and "cannot read", and the picker refuses to open, printing why on stderr.
 - a failed `Terminal.Resume` → the hub stops instead of prompting a canonical terminal.
+- the terminal's own controls in raw mode (`IXON`, `IEXTEN`) → Ctrl-S could freeze the prompt's output
+  and literal-next stayed armed; both are cleared now, in both twins.
 
 RECORDED, deliberately not fixed (each is the reference's own behaviour and deserves its own unit with
 its own evidence; the verification left durable probes for them):
 
-- inputs where `hub.py` itself corrupts a manifest: a multi-line `enabled` array, a structural-looking
-  line inside a multi-line string, an inline comment on the enabled line, and CRLF normalization (the
-  last is a documented parity rule of `readManifestText`). This port now refuses those writes instead
-  of reproducing the corruption.
+- inputs where `hub.py` itself corrupts a manifest: a multi-line `enabled` array, an inline comment on
+  the enabled line, and CRLF normalization (the last is a documented parity rule of `readManifestText`,
+  which is why the rewrite normalizes the WHOLE file to LF and not only the edited line). This port
+  refuses the writes the valid→invalid guard can see.
 - Python's `str.strip()` vs `strings.TrimSpace` for `\x1c`-`\x1f`; the guard catches the resulting
   invalid TOML rather than writing it.
 - Ctrl-C at a pause: Python died with `KeyboardInterrupt`, this port exits 0 cleanly.
-- Ctrl-S freezing output (`IXON` is still set) and the bare-ESC abort that waits for the next keystroke.
-- an already-invalid manifest read: Python crashed before the picker, this port reads an empty
-  selection and edits under the package's documented "already invalid may still be edited" rule,
-  reporting the error to stderr instead of a traceback.
+- the bare-ESC abort that waits for the next keystroke.
+- an already-invalid manifest: `SetEnabledAgents` still edits it under the package's documented
+  "already invalid may still be edited" rule, which its own tests pin. The hub's picker is the layer
+  that refuses one it cannot parse — see the fixed list above.
 
 Blast radius kept in view: the three `atomicWrite` protections are shared by every surgical manifest
 writer (recipe add/remove, dep add/remove), so those writers now refuse a read-only or symlinked

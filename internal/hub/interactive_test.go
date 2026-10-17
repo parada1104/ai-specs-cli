@@ -528,6 +528,28 @@ func TestAgentsReplacesExistingEnabledLine(t *testing.T) {
 	}
 }
 
+// TestAgentsRefusesUnreadableManifest pins S6 on the hub side: a manifest that
+// exists but cannot be parsed is NOT "no agents enabled". The submenu refuses
+// before any picker — nothing is written — and says why on stderr, so an empty
+// selection can never be persisted over the user's real list.
+func TestAgentsRefusesUnreadableManifest(t *testing.T) {
+	body := "[project]\nname = \"t\"\n\n[agents]\nenabled = [\"claude\"]\nbroken = [\n"
+	root := hubTargetWithManifest(t, body)
+	home := hubHome(t)
+
+	// The submenu refuses before any picker, so no checklist keys are needed:
+	// enter the Agents entry, then quit from the re-prompted menu.
+	keys := keyseq(selectIndex(menuAgents), selectIndex(menuQuit))
+	_, _, errb := runHubInteractive(t, root, home, keys)
+
+	if got := readManifest(t, root); got != body {
+		t.Errorf("manifest was rewritten:\n got %q\nwant %q", got, body)
+	}
+	if !strings.Contains(errb, "cannot read") {
+		t.Errorf("stderr = %q, want it to contain %q", errb, "cannot read")
+	}
+}
+
 // ── offer-init ───────────────────────────────────────────────────────────────
 
 func TestOfferInitDeclineExitsWithoutMenu(t *testing.T) {

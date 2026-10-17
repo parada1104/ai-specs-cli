@@ -19,8 +19,12 @@ func enterRawMode(f *os.File) (func(), error) {
 		return nil, err
 	}
 	raw := saved
-	raw.Lflag &^= syscall.ICANON | syscall.ECHO | syscall.ISIG
-	raw.Iflag &^= syscall.ICRNL
+	// IEXTEN goes with ISIG (its literal-next and discard controls must not eat a
+	// keystroke), and IXON|IXOFF with it so the terminal's own Ctrl-S cannot freeze
+	// the prompt's output — the layer reads bytes itself, so it owns those keys
+	// (odd/tasks/go-20-u3b-advisories.md S8).
+	raw.Lflag &^= syscall.ICANON | syscall.ECHO | syscall.ISIG | syscall.IEXTEN
+	raw.Iflag &^= syscall.ICRNL | syscall.IXON | syscall.IXOFF
 	raw.Cc[syscall.VMIN] = 1
 	raw.Cc[syscall.VTIME] = 0
 	if err := ioctl(f.Fd(), syscall.TCSETS, unsafe.Pointer(&raw)); err != nil {
