@@ -1,27 +1,24 @@
 // Package hub is the native port of the `hub` verb — the interactive front door
-// that bare `ai-specs` runs — starting with its non-interactive half (GO-20 U3a).
-//
-// The verb has two halves and this package owns the dependency-free one:
+// that bare `ai-specs` runs. Both halves are native (GO-20 U3a for the
+// non-interactive one, U3b for the interactive one) and the package carries no
+// third-party dependency:
 //
 //   - the mode decision (`lib/_internal/hub.py`'s `decide_mode`) and the
 //     non-interactive status summary, whose bytes and exit code are frozen;
 //   - the flag contract and the anti-hang guard of `lib/hub.sh`;
-//   - the delegation argv shape.
+//   - the interactive menu, panel, submenus, agents write and delegation
+//     (interactive.go) on top of internal/tui, with `delegateArgv` keeping the
+//     argv shape hub.py's DelegateRunner used.
 //
-// The INTERACTIVE half is bridged to `lib/_internal/hub.py` until U3b, which is
-// where the Go TUI and its dependency land, together with the three amendments
-// that dependency requires (D8, the `assets.go` zero-dependency sentence and the
-// parity contract's FREE entry for rich/questionary rendering). Bridging is what
-// keeps the interactive UX — and the PTY suites that drive it — unchanged while
-// that happens, exactly as the doctor bridges what it still needs.
+// The interactive half no longer bridges to `lib/_internal/hub.py`: that bridge was
+// the last Python dependency of the default verb, and the pty and dependency-gate
+// concerns it carried went with it.
 package hub
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -30,6 +27,7 @@ import (
 	"ai-specs.dev/ai-specs/internal/doctor"
 	"ai-specs.dev/ai-specs/internal/target"
 	"ai-specs.dev/ai-specs/internal/toml"
+	"ai-specs.dev/ai-specs/internal/tui"
 )
 
 // Mode is which of the four states the hub runs in (hub.py's Mode).
@@ -145,6 +143,10 @@ type Options struct {
 	Home string
 	// TTY mirrors the shell's `[[ -t 0 && -t 1 ]]`.
 	TTY bool
+	// Keys overrides the terminal as the keyboard source. Production leaves it
+	// nil, so the hub reads a raw-mode tui.Terminal; a test injects scripted
+	// keys to drive the same loop without a pty.
+	Keys tui.KeySource
 }
 
 // RunHub executes the hub and returns the process exit code.
@@ -202,10 +204,9 @@ func RunHub(opts Options, stdin io.Reader, stdout, stderr io.Writer) int {
 	case ModeNoninteractiveStatus:
 		return RunNoninteractive(abs, opts.Home, stdout, stderr)
 	case ModeInteractiveHub, ModeOfferInit:
-		// Both interactive states need the menu: the hub for its actions, the offer
-		// for onboarding. Until U3b draws them in Go, both are bridged to hub.py,
-		// which asks the same isatty question itself before it decides.
-		return runInteractiveBridge(abs, opts.Home, stdin, stdout, stderr)
+		// Both interactive states draw their prompts natively; the offer opens
+		// with the init wizard, the hub goes straight to the menu.
+		return runInteractiveSession(mode, abs, opts, stdin, stdout, stderr)
 	}
 	return 1
 }
@@ -223,7 +224,8 @@ type severityCounts struct {
 // RunNoninteractive is hub.py's `_run_noninteractive`: the frozen summary lines,
 // and the DOCTOR's own exit code rather than 0 (the D5 fix).
 func RunNoninteractive(root, home string, stdout, stderr io.Writer) int {
-	rc, c := runDoctor(root, home, stderr)
+	run := doctorRunFor(root, home, stderr)
+	c := run.counts
 
 	fmt.Fprintf(stdout, "ai-specs status — %s\n", headlineForCounts(c))
 	fmt.Fprintf(stdout, "  version: %s\n", readVersion(home))
@@ -240,7 +242,7 @@ func RunNoninteractive(root, home string, stdout, stderr io.Writer) int {
 	for _, entry := range Menu() {
 		fmt.Fprintf(stdout, "  %-12s  %s\n", entry.Title, entry.Description)
 	}
-	return rc
+	return run.exitCode
 }
 
 // headlineForCounts is the frozen headline vocabulary, quirks included: errors say
@@ -264,31 +266,46 @@ func headlineForCounts(c severityCounts) string {
 // it exists so a caller can check the "the hub exits with the doctor's code"
 // contract without parsing the summary.
 func DoctorExitCode(root, home string) int {
-	rc, _ := runDoctor(root, home, io.Discard)
-	return rc
+	return doctorRunFor(root, home, io.Discard).exitCode
 }
 
-// runDoctor runs the native doctor in-process and counts its severities.
-func runDoctor(root, home string, stderr io.Writer) (int, severityCounts) {
+// doctorRun is one doctor run's observable outcome: the exit code, the severity
+// tally and the non-OK checks the panel shows. The interactive panel and the
+// non-interactive summary both consume this one run, which is what keeps them
+// from disagreeing about the project's health.
+type doctorRun struct {
+	exitCode int
+	counts   severityCounts
+	checks   []tui.PanelCheck
+}
+
+// doctorRunFor runs the native doctor in-process and maps its checks onto the
+// summary tally and the panel rows in one pass.
+func doctorRunFor(root, home string, stderr io.Writer) doctorRun {
 	d := doctor.New(root, home)
 	if stderr != nil {
 		d.Stderr = stderr
 	}
-	rc := d.Run()
-	var c severityCounts
+	run := doctorRun{exitCode: d.Run()}
 	for _, check := range d.Checks {
 		switch check.Severity {
 		case doctor.OK:
-			c.OK++
+			run.counts.OK++
 		case doctor.INFO:
-			c.Info++
+			run.counts.Info++
 		case doctor.WARN:
-			c.Warn++
+			run.counts.Warn++
 		case doctor.ERROR:
-			c.Error++
+			run.counts.Error++
+		}
+		if check.Severity != doctor.OK {
+			run.checks = append(run.checks, tui.PanelCheck{
+				Label: check.Severity.String(),
+				Text:  check.Name + ": " + check.Message,
+			})
 		}
 	}
-	return rc, c
+	return run
 }
 
 // readVersion is hub.py's `_read_version`: the CLI install root's VERSION, or
@@ -335,10 +352,8 @@ func worktreeFlowEnabled(manifest *toml.Table) bool {
 }
 
 // delegateArgv is hub.py's DelegateRunner argv: the verb, then any extra words,
-// then the target. Nothing in production calls it yet — the interactive half is
-// bridged, and the U3a slice only pinned the argv SHAPE against hub.py's own
-// DelegateRunner — so U3b is the caller that turns the menu into delegation. It is
-// kept here, with its test, so that shape cannot drift before U3b needs it.
+// then the target. The interactive hub is its caller; the argv shape is also
+// pinned directly by TestDelegateArgvShape so it cannot drift.
 func delegateArgv(cli string, action Action, extra []string, target string) []string {
 	argv := append([]string{cli, string(action)}, extra...)
 	if target != "" {
@@ -372,31 +387,8 @@ func resolveTarget(target string) (string, error) {
 	return filepath.Abs(target)
 }
 
-// runInteractiveBridge hands the interactive half to hub.py until U3b. The child
-// inherits the hub's streams, so the TUI keeps working unchanged.
-func runInteractiveBridge(target, home string, stdin io.Reader, stdout, stderr io.Writer) int {
-	script := filepath.Join(home, "lib", "_internal", "hub.py")
-	cmd := exec.Command("python3", script, target)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	cmd.Env = childEnv(home)
-	if err := cmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			if code := ee.ExitCode(); code >= 0 {
-				return code
-			}
-			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-				return 128 + int(ws.Signal())
-			}
-		}
-		fmt.Fprintf(stderr, "ai-specs hub: %v\n", err)
-		return 1
-	}
-	return 0
-}
-
-// childEnv pins AI_SPECS_HOME for the bridged child, mirroring what the shell
-// launcher exported before exec'ing Python.
+// childEnv pins AI_SPECS_HOME for a delegated child, mirroring what the shell
+// launcher exported before exec'ing the child.
 func childEnv(home string) []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, kv := range os.Environ() {
