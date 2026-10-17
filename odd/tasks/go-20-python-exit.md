@@ -222,7 +222,8 @@ cannot each be one PR.
 | U1c — legacy entry + sync leg through the seam | **DROPPED** (obsolete) | L12 |
 | U3a — the hub's non-interactive contract | **delivered, review approved** | `0ba47aa` (PR #366); 2495 tests green; `review-97428fc2534aa06c` burned |
 | U3a-fix — the confirmed advisories | **delivered** | `54197dd`; 2496 tests green; the isatty divergence proven fixed against the shell |
-| U3b — the interactive hub, native and dependency-free | pending | prompt layer in `internal/tui` on `internal/tty`; D8 intact (L19) |
+| U3b — the interactive hub, native and dependency-free | **delivered, review approved** | `b572a7d` (PR #368); 2494 tests green; `review-431359c0d529da28` approved, 0 blocking, 14 advisory |
+| U3b-2 advisories — the 14 review advisories closed | **delivered** | `55d235e` (PR #369); 10 fixed / 4 declined with a reason, 0 open; doc `go-20-u3b-advisories.md` |
 | U4..U7 — init, skills, recipes, substrate tail | pending | |
 | U2 — flip the launcher + parity snapshot + deletion | pending, AFTER the ports | L13 |
 | U8 — program closure | pending | |
