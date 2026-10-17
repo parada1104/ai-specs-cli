@@ -159,9 +159,20 @@ Verification of this unit, all run from `.worktrees/go-20-u3b-tui`:
 - Differential against the candidate commit `b302d3f` in a throwaway worktree: `go test ./internal/config/`
   gave the same 14 failures before and after (none caused by this unit); the panel dump differs only in
   the top border width; `go test ./...` gives the identical 26-failure set on both sides.
-- Full suite green with the repository's mise-managed interpreter (`python3` 3.14.7). With the system
-  `python3` 3.9 the differential pairs cannot even import `tomllib`, and with 3.11 the JSON/repr
-  differential pairs disagree on interpreter-specific text: both are environment, not this unit.
+- The interpreter is half of this suite's environment. Pointed at the mise SHIM, `python3` resolves back
+  to the system 3.9 under the tests' sanitized HOME, which has no `tomllib`, and that — not the hub —
+  turned 34 of the 47 hub/PTY tests red. The real `3.14.7` binary (`~/.local/share/mise/installs/python/
+  3.14.7/bin/python3.14`) is the interpreter these tests want: with it the hub + PTY pair is 47/47 `OK`.
+- `go test ./...` is green with that interpreter when it runs ALONE. Its differential pairs and
+  `internal/gatebinary` disagree when a second suite runs against the same worktree and `TMPDIR` at the
+  same time (observed: two concurrent runs reported failures in `sync`, `target`, `toml` and
+  `gatebinary` that a solo run does not reproduce). Treat concurrent runs of this suite as unsupported
+  rather than as evidence about the change.
+- The throwaway base worktree cannot carry the `test_topology_*` tests: topology is resolved from the
+  repository's own shape, and a detached temp worktree of the same clone resolves it differently. Those
+  three failures belong to the artifact, not to `b302d3f`, and this unit touches no topology code.
+- The PTY suite is the only place raw mode and the panel are exercised end to end (it spawns the real
+  binary on a pty), so it is the gate for T7 and T5, not the Go unit tests.
 
 ## Log
 
