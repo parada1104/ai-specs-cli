@@ -36,6 +36,12 @@ Worktree `.worktrees/go-20-u4a-init-core`, branch `change/go-20-u4a-init-core`, 
   assets are embedded) and the lock `[meta]` stamp. They run through the same legacy entry the shell
   used, exactly once, so a fresh `init` still produces the lock the rest of the system reads. T4c
   retires them.
+  - **Corrected during T4c (measured, not assumed):** `refresh-bundled --init` does NOT stamp
+    `[meta]`. Its docstring says it does, but `refresh()` only normalizes the lock
+    (`lib/_internal/refresh-bundled.py:100-131`), and a legacy `init` leaves the lock with no `[meta]`
+    at all — verified by running both routes against twin projects: the legacy lock has `[managed]`
+    only. So `init` has nothing to stamp, the seam step is pure flatten plus its three status lines,
+    and the native stamp belongs to `sync`, the route that really writes it.
 - S10 — Divergence, recorded not accidental: the legacy route renders the baseline brief through
   Python, whose thin bridges announce themselves on stderr (`GO_*_BRIDGE_FALLBACK: no verified
   worktree-gate binary; using the temporary Python <authority>`). The native route renders in process,
@@ -94,7 +100,8 @@ Worktree `.worktrees/go-20-u4a-init-core`, branch `change/go-20-u4a-init-core`, 
 | **T4a** | classic non-interactive `init` native: args, target resolution, directories, template manifest, `AGENTS.md` baseline brief, root `.gitignore` block, `ai-specs/.gitignore`, lock stamp, next steps; TUI gate delegates | `init.sh:35-120,195-233,235-282,284-325,327-348` shell orchestration |
 | T4b-1 | the wizard, native: text prompt, name, topology, agents, recipes, preview, confirm, manifest render, JSON sidecar, staging | `init_tui.py:234-400` minus the recipe-config step |
 | T4b-2 | per-recipe configuration prompts and the CLI-dep gate (`recipe-read.py` + `config_wizard.py`) | `init_tui.py:204-233` |
-| T4c | lock `[meta]` writer + `refresh-bundled` flatten retirement in both `init` and `sync` | `cli_version.py stamp-meta`, `refresh-bundled.py` |
+| T4c | the lock `[meta]` writer, native, wired into `sync` | `cli_version.py stamp-meta` (the `sync` call site) |
+| T4c-note | the `refresh-bundled` flatten is NOT retired here: the Python readers that consume `{cache}/.bundled/` outlive this unit, and `init`'s step stamps nothing (see S9's correction) | moves to U7 with those readers |
 | T4d | harness env write path (`ai-specs.env`, `ai-specs.env.example`, managed `.envrc`, `direnv allow`) | `env_scaffold.py` write subset, `envrc-scaffold.py` |
 
 ## Tasks
