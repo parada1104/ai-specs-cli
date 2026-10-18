@@ -117,12 +117,15 @@ platform_get() {
             esac
             ;;
         pi)
-            # Pi (pi.dev) — reads AGENTS.md natively, uses .mcp.json with mcpServers.
+            # Pi (pi.dev) — reads AGENTS.md natively, uses .pi/mcp.json with
+            # mcpServers. Pi resolves project MCP servers from
+            # <cwd>/.pi/mcp.json only; the root .mcp.json belongs to Claude
+            # Code and pi ignores it.
             case "$field" in
                 instructions_path) echo "" ;;
                 skills_dir)        echo ".pi/skills" ;;
                 agents_dir)        echo "" ;;
-                mcp_config_path)   echo ".mcp.json" ;;
+                mcp_config_path)   echo ".pi/mcp.json" ;;
                 mcp_key)           echo "mcpServers" ;;
                 native)            echo "true" ;;
                 commands_dir)      echo "" ;;  # pi has no slash commands
@@ -142,7 +145,7 @@ platform_get() {
                 instructions_path)    echo ".omp/AGENTS.md" ;;
                 skills_dir)           echo ".omp/skills" ;;
                 agents_dir)           echo "" ;;
-                mcp_config_path)      echo ".omp/mcp.json" ;;   # dedicated; avoids .mcp.json clash with pi
+                mcp_config_path)      echo ".omp/mcp.json" ;;   # dedicated; avoids the root .mcp.json owned by claude
                 mcp_key)              echo "mcpServers" ;;
                 native)               echo "true" ;;
                 commands_dir)         echo ".omp/commands" ;;   # KEY DELTA vs pi ("")

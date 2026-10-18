@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Pi MCP config target.** `sync-agent --pi` now renders `[mcp.*]` entries into
+  `.pi/mcp.json` instead of the root `.mcp.json`. Pi resolves project MCP
+  servers from `.pi/mcp.json` (project config dir) only, so a project synced for
+  pi alone got a config file pi never read and every declared MCP stayed
+  invisible. The root `.mcp.json` remains Claude Code's target and is unchanged.
+  `doctor` mirrors the new path, so a project synced before this fix reports
+  `mcp-pi .pi/mcp.json missing` with the `ai-specs sync` guidance.
+
 ## [0.24.0] — 2026-09-18
 
 ### Upgrade notes

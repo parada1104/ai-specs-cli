@@ -224,7 +224,7 @@ class AgentDiagnosticsTests(unittest.TestCase):
         self.assertIn("pi", doctor.Doctor.PLATFORM)
         plat = doctor.Doctor.PLATFORM["pi"]
         self.assertEqual(plat["skills_dir"], ".pi/skills")
-        self.assertEqual(plat["mcp_config_path"], ".mcp.json")
+        self.assertEqual(plat["mcp_config_path"], ".pi/mcp.json")
         self.assertEqual(plat["mcp_key"], "mcpServers")
         self.assertEqual(plat["commands_dir"], "")
 
@@ -716,7 +716,7 @@ class PlatformGetTests(unittest.TestCase):
     def test_pi_mcp_config_path(self):
         result = self._platform_get("pi", "mcp_config_path")
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), ".mcp.json")
+        self.assertEqual(result.stdout.strip(), ".pi/mcp.json")
 
     def test_pi_mcp_key(self):
         result = self._platform_get("pi", "mcp_key")
