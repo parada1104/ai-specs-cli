@@ -19,7 +19,6 @@ type wantShim struct {
 // bin/ai-specs.
 func TestRouteTableCoversEveryVerb(t *testing.T) {
 	shims := map[string]wantShim{
-		"init":              {script: "init.sh"},
 		"add-dep":           {script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 		"skills":            {script: "skills.sh"},
 		"recipe":            {script: "recipe.sh"},
@@ -45,6 +44,7 @@ func TestRouteTableCoversEveryVerb(t *testing.T) {
 		"sync-agent":      routeSyncAgent,
 		"upgrade":         routeUpgrade,
 		"hub":             routeHub,
+		"init":            routeInit,
 		"rules-audit":     routeRulesAudit, "version": routeVersion,
 		"-v":        routeVersion,
 		"--version": routeVersion,

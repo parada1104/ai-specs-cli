@@ -34,8 +34,8 @@ func EnabledAgents(manifestPath string) ([]string, error) {
 // editor — not a TOML re-serialization — so every other byte of the manifest,
 // comments included, survives. Two measured qualifications on "every byte": line
 // endings are normalized to LF first (readManifestText's documented parity rule, so a
-// CRLF manifest is rewritten throughout), and a line inside a multi-line """ or '''
-// string is content, never structure.
+// CRLF manifest is rewritten throughout), and a line inside a multi-line basic (""")
+// or literal (triple-single-quote) string is content, never structure.
 //
 // D12: it NEVER appends a second [agents] block. When the table already exists,
 // the key is inserted inside it (before the next header, or at EOF) or replaces
@@ -140,9 +140,9 @@ func tableName(stripped string) string {
 }
 
 // lineStartsInsideString reports, per line, whether that line BEGINS inside a TOML
-// multi-line string (`"""` or `'''`). Only multi-line strings can carry a line that
-// looks structural, so only they need tracking; single-line strings and comments are
-// consumed within their own line.
+// multi-line string (`"""` or triple-single-quote). Only multi-line strings can carry
+// a line that looks structural, so only they need tracking; single-line strings and
+// comments are consumed within their own line.
 func lineStartsInsideString(text string) []bool {
 	lines := splitLinesKeepEnds(text)
 	starts := make([]bool, len(lines))

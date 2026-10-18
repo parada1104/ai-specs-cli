@@ -22,19 +22,20 @@ import (
 type routeKind int
 
 const (
-	routeShim           routeKind = iota // exec bash <home>/lib/<script>
-	routeVersion                         // native: print <home>/VERSION
-	routeHelp                            // native: print embedded help.txt
-	routeRefreshBundled                  // native compatibility stub (card [Go 06]): reports embedded provenance
-	routeSync                            // native sync spine (card [Go 07.S1])
-	routeSyncAgent                       // native sync-agent fan-out (card [Go 07.S15])
-	routeDoctor                          // native: `doctor` health diagnostic (card [Go 08])
-	routeRulesAudit                      // native: `rules-audit` legacy rules inventory (card [Go 08])
-	routeBriefRenderPolicy               // native internal seam: lib/init.sh's policy gate (S19b)
-	routeBaselineBrief                   // native internal seam: lib/init.sh's baseline render (S19b)
-	routeUpgrade                         // native: `upgrade` legacy install upgrade (card [Go 12])
-	routeHub                             // native: `hub` front door, non-interactive half (GO-20 U3a)
-	routeUnknown                         // unknown command: usage error, exit 2
+	routeShim              routeKind = iota // exec bash <home>/lib/<script>
+	routeVersion                            // native: print <home>/VERSION
+	routeHelp                               // native: print embedded help.txt
+	routeRefreshBundled                     // native compatibility stub (card [Go 06]): reports embedded provenance
+	routeSync                               // native sync spine (card [Go 07.S1])
+	routeSyncAgent                          // native sync-agent fan-out (card [Go 07.S15])
+	routeDoctor                             // native: `doctor` health diagnostic (card [Go 08])
+	routeRulesAudit                         // native: `rules-audit` legacy rules inventory (card [Go 08])
+	routeBriefRenderPolicy                  // native internal seam: lib/init.sh's policy gate (S19b)
+	routeBaselineBrief                      // native internal seam: lib/init.sh's baseline render (S19b)
+	routeUpgrade                            // native: `upgrade` legacy install upgrade (card [Go 12])
+	routeHub                                // native: `hub` front door, non-interactive half (GO-20 U3a)
+	routeInit                               // native: `init` classic bootstrap; the wizard delegates to the shim (GO-20 U4a)
+	routeUnknown                            // unknown command: usage error, exit 2
 )
 
 // route is one dispatcher decision.
@@ -47,7 +48,6 @@ type route struct {
 // shims maps every shimmed verb to its legacy lib script, mirroring the case
 // statement of bin/ai-specs exactly.
 var shims = map[string]route{
-	"init":              {kind: routeShim, script: "init.sh"},
 	"add-dep":           {kind: routeShim, script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
 	"skills":            {kind: routeShim, script: "skills.sh"},
 	"recipe":            {kind: routeShim, script: "recipe.sh"},
@@ -72,12 +72,15 @@ var native = map[string]route{
 	"baseline-brief":      {kind: routeBaselineBrief},
 	"upgrade":             {kind: routeUpgrade},
 	"hub":                 {kind: routeHub},
-	"version":             {kind: routeVersion},
-	"-v":                  {kind: routeVersion},
-	"--version":           {kind: routeVersion},
-	"help":                {kind: routeHelp},
-	"-h":                  {kind: routeHelp},
-	"--help":              {kind: routeHelp},
+	// init is native for the classic path and delegates the wizard to the shim
+	// itself (odd/tasks/go-20-u4-init.md S6).
+	"init":      {kind: routeInit},
+	"version":   {kind: routeVersion},
+	"-v":        {kind: routeVersion},
+	"--version": {kind: routeVersion},
+	"help":      {kind: routeHelp},
+	"-h":        {kind: routeHelp},
+	"--help":    {kind: routeHelp},
 }
 
 // Route resolves the dispatcher decision for args. Bare invocation (no args)
@@ -99,7 +102,8 @@ func Route(args []string) route {
 // Run executes the CLI and returns the process exit code.
 func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) int {
 	r := Route(args)
-	switch r.kind {	case routeVersion:
+	switch r.kind {
+	case routeVersion:
 		return runVersion(home, stdout)
 	case routeHelp:
 		return runHelp(stdout)
@@ -139,6 +143,8 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 			Home: home,
 			TTY:  isTTY(stdin, stdout),
 		}, stdin, stdout, stderr)
+	case routeInit:
+		return runInit(args, home, stdin, stdout, stderr, selfPath())
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
