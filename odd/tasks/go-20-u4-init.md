@@ -151,6 +151,103 @@ writer with closed surfaces, then reviewed here.
 - Deliberately out (S27, named in the ported file): the prompts, `write_env`, the three legacy
   migrations and `direnv allow` — U4d-2, still on the Python seam.
 
+### T4d-2 / U4d-2 specs (the wizard's env offer)
+
+U4d-1 ported the non-interactive half. This slice closes the wizard's tail.
+
+- S28 — Gap being fixed, measured: `init_tui.py:390-391` calls
+  `env.collect_env_vars(target)` and, when it answers anything, `env.offer_harness_env(target)`. The
+  native wizard (U4b-1) does **not**, so a `--tui` run through the Go binary silently skips the env
+  offer the Python one makes. That is a behaviour gap, not a seam.
+- S29 — The offer, in order (`env_scaffold.py:572-641`), all soft-failing with the Python's
+  `… skipped` / `Could not …` lines instead of aborting the verb: migrate the legacy files, collect the
+  variables, prompt, write `ai-specs.env`, regenerate the example and the managed `.envrc` block, run
+  `direnv allow`.
+- S30 — `prompt_env_vars` (`:496-547`): a `Required environment variables` banner with each variable's
+  purpose and its `ENV_VAR_HELP` sentence, then `Configure these values now?` (default yes; declining
+  returns "nothing to write" and the offer continues to the example/`.envrc`/direnv steps). Per
+  variable, sorted: a select over the recipe's declared `env_allowed` values when it has them — with
+  `_select_default`'s three-step default (matching existing value, else matching example default, else
+  the first choice) — a HIDDEN prompt when the name looks like a secret
+  (`API_KEY`/`TOKEN`/`SECRET`/`PASSWORD`/`APIKEY`), and a text prompt otherwise. Cancelling any prompt
+  cancels the offer without writing `ai-specs.env`.
+  - The select PRESELECTS that default: questionary passes it as `initial_choice`, so Enter answers the
+    default without moving the cursor. The port needs a Select with an initial cursor for exactly this.
+  - Corrected: declining `Configure these values now?` is NOT "continue without values". `prompt_env_vars`
+    returns None for a decline and for a cancel alike, and `offer_harness_env` returns on None — so the
+    whole offer stops: no `ai-specs.env`, no example, no `.envrc` work, no `direnv allow`. The first
+    version of this line said the offer continued, which was a misread of the reference; the reference
+    wins (S3).
+  - The text prompt for a value returns the RAW buffer, not the stripped one: `questionary.text` does not
+    trim, and S14's `strip()` belongs to the project-name step only.
+- S31 — `write_env` (`:277-299`) merges and never destroys, with two DIFFERENT rules that this line
+  originally collapsed into one:
+  - a blank/whitespace answer is skipped, so re-prompting cannot wipe a secret;
+  - a NON-blank answer REPLACES the previous value — that is how a secret gets rotated — and every other
+    key in the file is kept.
+  The "only fill keys that are missing or empty" rule belongs to `_merge_into_harness_env`, which the
+  three migrations use, not to `write_env`. Corrected here against
+  `tests/test_env_scaffold.py::test_write_env_merges_preserves_extras` (an existing key takes the new
+  value and extra keys survive); the earlier wording would have forbidden re-prompting a secret at all.
+  The file keeps the Python's header and sorted `KEY=value` lines with `_quote_dotenv`'s quoting.
+- S32 — The three migrations rename, they do not delete: `ai-specs/.env` and `ai-specs/.envrc` are
+  parsed (dotenv, and export lines for the nested file), merged under the same never-wipe rule, and only
+  then renamed to `.bak` — and only when at least one key was parsed (JD-6). The nested dotenv runs
+  first so the export migration fills gaps only.
+- S33 — Deferred and named in code: when `direnv` is absent, the Python offers to INSTALL it through
+  the deps layer (`dep_install.py`); that belongs to the deps surface, not to init. The port prints the
+  Python's three-line "not installed" message and stops there.
+
+## T4d-2 — verification
+
+The wizard's env offer is native, and the gap S28 described is closed: a `--tui` run through the binary
+now offers the variables the enabled recipes need, exactly where the Python did.
+
+| gate | command | result |
+| --- | --- | --- |
+| the three touched packages | `go test ./internal/tui/ ./internal/sync/ ./internal/cli/` | `ok 0.430s` / `ok 30.790s` / `ok 3.377s` |
+| Go suite | `go test ./cmd/... ./internal/...` | 0 failing packages |
+| wizard PTY, end to end | `python3 -m unittest tests.test_init_tui` | **31 tests, OK** — including the harness-env case, now on the NATIVE binary: all seven PTY stages, the hidden prompt among them |
+| init contract | `python3 -m unittest tests.test_init_native tests.test_init_brief_route` | 16 tests, OK |
+| differential parity | `python3 tests/parity/run.py` | 29 fixtures, failing 0 |
+| formatting | `gofmt -l internal/` | empty |
+
+- **Two spec corrections, both against my own prose and in favour of the reference:**
+  - S30 said a decline of `Configure these values now?` continues without values. It does not:
+    `prompt_env_vars` answers `None` for a decline AND for a cancel, and the offer returns on `None`, so
+    the whole offer stops (no `ai-specs.env`, no example, no `.envrc` work, no `direnv allow`).
+  - S31 collapsed two different merge rules. `write_env` SKIPS a blank answer and REPLACES with any
+    non-blank one — that is how a secret is rotated — while "only fill keys that are missing or empty"
+    is `_merge_into_harness_env`'s rule, the one the three migrations use. The pinning test
+    (`test_write_env_merges_preserves_extras`) settles it.
+- **Preserved on purpose**, with new pins because shared code moved: `Text` still strips and keeps its
+  default (S14) while the new `TextRaw` returns the raw buffer the env values need, and `Select` renders
+  byte-identically while `SelectDefault` adds questionary's preselected `initial_choice`.
+- **Deferred, named in code (S33):** when `direnv` is missing the Python offers to install it through the
+  deps layer; the port prints the three-line message and stops.
+- **The PTY suite now reads honestly:** the harness-env case lost its "LEGACY launcher on purpose"
+  comment because the offer it exercises is native. The four per-recipe-configuration cases keep theirs,
+  with U4b-2 named as the slice that removes them.
+- S34 — Divergences found by the judgment round, each decided rather than fixed:
+  - `ai-specs.env` is created **0600**, not the 0644 Python's `write_text` leaves under the usual
+    umask (JD-ENV-A-002). The file holds the API keys and tokens the offer just collected, so the port
+    is deliberately stricter; nothing else about the file changes, an existing file keeps its own mode,
+    and a test pins it.
+  - The `writeTextFile` comment cost two rounds to get right, and both failures were mine: the first
+    rewrite said it wrote `ai-specs.env.example` (the example has its own writer inside
+    `generateEnvExample`), and the second said its only caller was "below" when that caller sits above the
+    function. The final text names the single caller without a direction word and explains why the two
+    neighbours are not routed through it; every sentence was then checked mechanically — call sites,
+    definition order, both file modes — instead of from memory. Both judges' re-judgment evidence named
+    the same defect class at the same place; judge B's landed on the superseded revision (it quotes the
+    `6578314` wording, which no longer exists at `4dbcd12`), which is the one caveat worth recording: a
+    resolution is bound to the revision it read, and the text it asked for is the text that shipped.
+  - A Ctrl-D on an empty hidden/raw prompt cancels the offer **silently**, where the Python lets
+    `prompt_toolkit` raise `EOFError` and prints `Could not configure environment variables: …`. Nothing
+    is written either way; the only difference is that one soft-fail line. Recorded, not fixed: plumbing
+    "cancelled by EOF" through the prompt interface would add a case to every prompt for a line no user
+    needs. If it ever matters, the fix is an EOF-specific error next to `ErrEnvOfferCancelled`.
+
 ## Slicing
 
 | slice | scope | retires |
@@ -161,7 +258,7 @@ writer with closed surfaces, then reviewed here.
 | T4c | the lock `[meta]` writer, native, wired into `sync` | `cli_version.py stamp-meta` (the `sync` call site) |
 | T4c-note | the `refresh-bundled` flatten is NOT retired here: the Python readers that consume `{cache}/.bundled/` outlive this unit, and `init`'s step stamps nothing (see S9's correction) | moves to U7 with those readers |
 | T4d-1 / U4d-1 | the env step `sync` runs, native: `ai-specs.env.example`, the managed `.envrc` block, the missing-value warnings | `env_scaffold.py`'s non-interactive half |
-| T4d-2 / U4d-2 | the wizard's env offer: prompts, `ai-specs.env` merge, the three legacy migrations, `direnv allow` | `env_scaffold.py`'s interactive half, `envrc-scaffold.py` |
+| T4d-2 / U4d-2 | the wizard's env offer: prompts (`select`/hidden/text), `ai-specs.env` merge, the three legacy migrations, `direnv allow`, wired after the wizard's staging | `env_scaffold.py`'s interactive half, `envrc-scaffold.py` |
 
 ## Tasks
 

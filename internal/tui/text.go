@@ -4,7 +4,10 @@ package tui
 // U4/T4b-1, S13) — a questionary.text port with a default. It lives beside
 // Select/MultiSelect/Confirm and obeys the same three rules: the question is
 // drawn before the first key is read, an abort answers ("", false), and the
-// prompt never touches the terminal itself.
+// prompt never touches the terminal itself. Since GO-20 U4d-2 the line
+// editor behind it also answers TextRaw (questionary.text's raw buffer, the
+// env offer's value prompt) and Password (questionary.password's masked
+// echo), so this file owns the shared engine and each wrapper one contract.
 //
 // KeySource alone cannot carry this: KeyKind classifies keystrokes (arrow,
 // space, enter), while a line of text needs the CHARACTER. TextSource is that
@@ -70,18 +73,55 @@ type TextSource interface {
 // init_tui.py's `answer.strip() or default` (S14). Ctrl-C, ESC, Ctrl-D on an
 // empty line, EOF and a read error all return ("", false).
 func Text(out io.Writer, in KeySource, message, defaultValue string) (string, bool) {
+	return textLine(out, in, textPrompt{message: message, prefill: defaultValue})
+}
+
+// TextRaw is the SAME editor answering questionary's own contract: the buffer
+// verbatim, no strip() and no default substitution (GO-20 U4d-2, S30's third
+// correction). questionary.text never trims — the default is RESET INTO the
+// buffer before the prompt runs, so what comes back is exactly what is on the
+// line, and only a prefill the user left alone survives as the answer. The env
+// offer's value prompt is this one; S14's strip() stays with the name step.
+func TextRaw(out io.Writer, in KeySource, message, defaultValue string) (string, bool) {
+	return textLine(out, in, textPrompt{message: message, prefill: defaultValue, verbatim: true})
+}
+
+// textPrompt is the one shape shared by Text, TextRaw and Password: the same
+// line editor over TextSource, differing only in how the line is echoed (mask)
+// and how Enter turns it into an answer (verbatim vs S14's strip+default).
+type textPrompt struct {
+	message     string
+	instruction string // drawn after the message, questionary's instruction token
+	prefill     string
+	mask        bool // echo one `*` per code point — PasswordProcessor's mask
+	verbatim    bool // answer with the buffer as-is (questionary.text/password)
+}
+
+// textLine runs the shared prompt. The prefix keeps questionary's token
+// layout: qmark, ` <message> `, and, when present, ` <instruction> `.
+func textLine(out io.Writer, in KeySource, p textPrompt) (string, bool) {
 	src, ok := in.(TextSource)
 	if !ok {
 		// Key kinds carry no characters: without the rune stream the answer
 		// would be invisible, so the prompt refuses rather than guesses.
 		return "", false
 	}
-	value := []rune(defaultValue)
+	prefix := "? " + p.message + " "
+	if p.instruction != "" {
+		prefix += " " + p.instruction + " "
+	}
+	value := []rune(p.prefill)
 	pos := len(value)
+	echo := func() string {
+		if p.mask {
+			return strings.Repeat("*", len(value))
+		}
+		return string(value)
+	}
 	// The line is `? <message> <value>`; with the cursor left of the end the
 	// redraw parks it back on the cursor's column.
 	draw := func() {
-		fmt.Fprintf(out, "\r\x1b[2K? %s %s", message, string(value))
+		fmt.Fprintf(out, "\r\x1b[2K%s%s", prefix, echo())
 		if n := len(value) - pos; n > 0 {
 			fmt.Fprintf(out, "\x1b[%dD", n)
 		}
@@ -95,10 +135,13 @@ func Text(out io.Writer, in KeySource, message, defaultValue string) (string, bo
 		}
 		switch ev.Kind {
 		case TextEnter:
-			fmt.Fprintf(out, "\r\x1b[2K? %s %s\n", message, string(value))
+			fmt.Fprintf(out, "\r\x1b[2K%s%s\n", prefix, echo())
+			if p.verbatim {
+				return string(value), true
+			}
 			answer := strings.TrimSpace(string(value))
 			if answer == "" {
-				answer = defaultValue
+				answer = p.prefill
 			}
 			return answer, true
 		case TextRune:

@@ -279,3 +279,74 @@ func TestTerminalTextKeyEOFAndEscapeSequence(t *testing.T) {
 		t.Errorf("NextTextKey at end of stream error = %v, want io.EOF", err)
 	}
 }
+
+// TestTextRawReturnsTheBufferVerbatim pins S30's third correction: the env
+// offer's value prompt is questionary.text, which does NOT trim — S14's
+// strip() belongs to the project-name step alone. TextRaw shares the same
+// draw-before-read editor over the same TextSource and answers with the
+// buffer as typed; questionary resets the buffer to the default instead of
+// substituting it afterwards, so a cleared prefill stays cleared.
+func TestTextRawReturnsTheBufferVerbatim(t *testing.T) {
+	t.Run("typed value is not stripped", func(t *testing.T) {
+		script := append(textRunes("  padded  "), TextKey{Kind: TextEnter})
+		var raw bytes.Buffer
+		got, ok := TextRaw(&raw, in2(script), "VAR:", "")
+		if !ok || got != "  padded  " {
+			t.Errorf("TextRaw = (%q, %v), want the raw buffer %q", got, ok, "  padded  ")
+		}
+		// The contrast that makes this a split and not a change: Text still
+		// strips, because the wizard's name step depends on it (S14).
+		var stripped bytes.Buffer
+		if got, ok := Text(&stripped, in2(append(textRunes("  padded  "), TextKey{Kind: TextEnter})), "VAR:", ""); !ok || got != "padded" {
+			t.Errorf("Text = (%q, %v), want %q (S14's strip must hold)", got, ok, "padded")
+		}
+	})
+
+	t.Run("immediate enter returns the prefill", func(t *testing.T) {
+		var out bytes.Buffer
+		got, ok := TextRaw(&out, in2([]TextKey{{Kind: TextEnter}}), "VAR:", "demo")
+		if !ok || got != "demo" {
+			t.Errorf("TextRaw = (%q, %v), want %q (the buffer carries the default)", got, ok, "demo")
+		}
+	})
+
+	t.Run("a cleared prefill stays cleared", func(t *testing.T) {
+		script := append(clearLine(), TextKey{Kind: TextEnter})
+		var raw bytes.Buffer
+		got, ok := TextRaw(&raw, in2(script), "VAR:", "demo")
+		if !ok || got != "" {
+			t.Errorf("TextRaw = (%q, %v), want %q (no default substitution)", got, ok, "")
+		}
+		// Text substitutes the default back — the name step's rule (S14).
+		var stripped bytes.Buffer
+		if got, ok := Text(&stripped, in2(append(clearLine(), TextKey{Kind: TextEnter})), "VAR:", "demo"); !ok || got != "demo" {
+			t.Errorf("Text = (%q, %v), want %q", got, ok, "demo")
+		}
+	})
+
+	t.Run("whitespace-only stays whitespace", func(t *testing.T) {
+		// write_env's own blank rule owns "never wipe a secret"; the prompt
+		// hands back exactly what was typed.
+		script := append(textRunes("   "), TextKey{Kind: TextEnter})
+		var out bytes.Buffer
+		got, ok := TextRaw(&out, in2(script), "VAR:", "")
+		if !ok || got != "   " {
+			t.Errorf("TextRaw = (%q, %v), want %q", got, ok, "   ")
+		}
+	})
+
+	t.Run("aborts answer nothing", func(t *testing.T) {
+		for name, script := range map[string][]TextKey{
+			"escape": {{Kind: TextAbort}},
+			"eof":    {},
+		} {
+			var out bytes.Buffer
+			if got, ok := TextRaw(&out, in2(script), "VAR:", ""); ok || got != "" {
+				t.Errorf("TextRaw(%s) = (%q, %v), want (\"\", false)", name, got, ok)
+			}
+			if !strings.HasSuffix(out.String(), "\n") {
+				t.Errorf("the aborted line was not terminated: %q", out.String())
+			}
+		}
+	})
+}
