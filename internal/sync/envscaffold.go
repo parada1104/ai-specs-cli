@@ -504,12 +504,14 @@ func ensureRootEnvrc(projectRoot string) error {
 
 // writeTextFile is target.write_text(..., encoding="utf-8") with the Python
 // open() mode: 0666 & ^umask for a new file, the existing file's mode kept by
-// the truncating open for a rewrite. It writes the files that carry no secrets
-// — the managed .envrc and ai-specs.env.example.
+// the truncating open for a rewrite.
 //
-// It does NOT write ai-specs.env: that file holds the API keys the offer just
-// collected, WriteHarnessEnv creates it 0600 through writeTextFileMode below,
-// and TestWriteHarnessEnvIsOwnerOnly pins the mode (S34, JD-ENV-A-002).
+// Its ONLY caller is ensureRootEnvrc below, so it writes the managed .envrc
+// block and nothing else. Two neighbours look similar and are deliberately NOT
+// routed through it: ai-specs.env.example has its own writer inside
+// generateEnvExample with the same mode, and ai-specs.env — the file holding the
+// API keys the offer collects — is created 0600 through writeTextFileMode,
+// pinned by TestWriteHarnessEnvIsOwnerOnly (S34, JD-ENV-A-002).
 func writeTextFile(path, text string) error {
 	return writeTextFileMode(path, text, 0o666)
 }
