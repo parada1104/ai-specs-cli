@@ -7,6 +7,7 @@
 package sync
 
 import (
+	"ai-specs.dev/ai-specs/internal/cliversion"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -422,8 +423,11 @@ func (r *runner) run(opts options) int {
 		}
 	}
 
-	if rc := r.exec([]string{"python3", internal("cli_version.py"), "stamp-meta", root, r.home}, r.stdout, r.stderr); rc != 0 {
-		return rc
+	// The lock's [meta] stamp, native since T4c (cli_version.py:206-223 used to
+	// run here). It prints nothing on success, exactly like the Python.
+	if err := cliversion.StampLockMetaNow(root, r.home); err != nil {
+		fmt.Fprintf(r.stderr, "ERROR: cannot stamp %s: %v\n", cliversion.LockMetaPath(root), err)
+		return 1
 	}
 
 	fmt.Fprintln(r.stdout, "")
