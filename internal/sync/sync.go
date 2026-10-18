@@ -282,8 +282,13 @@ func (r *runner) run(opts options) int {
 	}); rc != 0 {
 		return rc
 	}
+	// The env step, native since U4d-1 (S23): env_scaffold.py's
+	// non-interactive main() runs in process (envscaffold.go) — example,
+	// managed .envrc block, missing-value warnings, `Wrote <path>`. The
+	// interactive half keeps its Python seam until U4d-2 (S27), and nothing
+	// here runs direnv allow (S26).
 	if rc := r.runStep("harness env (.envrc + ai-specs.env.example)", func(out, errW io.Writer) int {
-		return r.exec([]string{"python3", internal("env_scaffold.py"), root}, out, errW)
+		return RunEnvScaffold(root, r.home, out, errW)
 	}); rc != 0 {
 		return rc
 	}
