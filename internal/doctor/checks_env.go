@@ -6,6 +6,12 @@ package doctor
 // declarations. Byte-identical message surface; the parser semantics are the
 // legacy ones (quoted values keep their body, inline comments are stripped only
 // for unquoted values, `$VAR` references only, declaration order preserved).
+//
+// The dotenv parsers, the managed-block markers and the env-reference regex are
+// DELEGATED to internal/sync as the single authority: sync's env step needs the
+// same code, and sync cannot import doctor (doctor already imports sync), so
+// the shared home is sync. The local names below are one-line wrappers keeping
+// every caller and every test unchanged.
 
 import (
 	"fmt"
@@ -14,50 +20,40 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
+	"ai-specs.dev/ai-specs/internal/sync"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 const (
-	managedStart = "# managed-by: ai-specs (do not remove block)"
-	managedEnd   = "# end managed-by: ai-specs"
-	managedBody  = "dotenv_if_exists .env\ndotenv_if_exists ai-specs.env"
+	// The managed block markers/body live in internal/sync; these aliases keep
+	// doctor's names (and its tests) byte-identical while the algorithm stays
+	// single-sourced. harnessEnvName names the file for the local tests.
+	managedStart = sync.ManagedStart
+	managedEnd   = sync.ManagedEnd
+	managedBody  = sync.ManagedBody
 
 	harnessEnvName = "ai-specs.env"
 )
 
 var (
 	// envExportRe mirrors env_scaffold._EXPORT_RE (leading whitespace, `export `,
-	// then a shell-style assignment).
+	// then a shell-style assignment); parseExports keeps it local for the
+	// export-line reads the U4d-2 migration ports still make.
 	envExportRe = regexp.MustCompile(`^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$`)
-	// envDotenvRe mirrors env_scaffold._DOTENV_RE.
-	envDotenvRe = regexp.MustCompile(`^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$`)
-	// envReferenceRe mirrors recipe-init.ENV_REFERENCE_RE: only a whole-value
-	// `$VAR` / `${env:VAR}` (with an optional stray closing brace) is a reference.
-	envReferenceRe = regexp.MustCompile(`^\$(?:\{env:)?([A-Za-z_][A-Za-z0-9_]*)\}?$`)
+	// envReferenceRe mirrors recipe-init.ENV_REFERENCE_RE (whole-value `$VAR` /
+	// `${env:VAR}` only), shared with the internal/sync authority.
+	envReferenceRe = sync.EnvReferenceRe
 )
 
-// harnessEnvPath mirrors env_scaffold.harness_env_path.
+// harnessEnvPath delegates to internal/sync, the single dotenv-path authority.
 func harnessEnvPath(projectRoot string) string {
-	return filepath.Join(projectRoot, harnessEnvName)
+	return sync.HarnessEnvPath(projectRoot)
 }
 
-// unquoteEnvValue mirrors env_scaffold._unquote.
+// unquoteEnvValue delegates to internal/sync, the single dotenv authority.
 func unquoteEnvValue(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if len(raw) >= 2 && raw[0] == raw[len(raw)-1] && (raw[0] == '"' || raw[0] == '\'') {
-		inner := raw[1 : len(raw)-1]
-		inner = strings.ReplaceAll(inner, `\"`, `"`)
-		inner = strings.ReplaceAll(inner, `\\`, `\`)
-		return inner
-	}
-	// strip inline comments for unquoted values
-	if idx := strings.IndexByte(raw, '#'); idx >= 0 {
-		raw = strings.TrimRightFunc(raw[:idx], unicode.IsSpace)
-	}
-	return raw
+	return sync.UnquoteEnvValue(raw)
 }
 
 // pySplitLines mirrors Python str.splitlines() for the line boundaries that can
@@ -100,21 +96,9 @@ func pyLineBreak(r rune) bool {
 	return false
 }
 
-// parseDotenv mirrors env_scaffold._parse_dotenv.
+// parseDotenv delegates to internal/sync, the single dotenv authority.
 func parseDotenv(text string) map[string]string {
-	out := map[string]string{}
-	for _, line := range pySplitLines(text) {
-		stripped := strings.TrimSpace(line)
-		if stripped == "" || strings.HasPrefix(stripped, "#") {
-			continue
-		}
-		match := envDotenvRe.FindStringSubmatch(line)
-		if match == nil {
-			continue
-		}
-		out[match[1]] = unquoteEnvValue(match[2])
-	}
-	return out
+	return sync.ParseDotenv(text)
 }
 
 // parseExports mirrors env_scaffold._parse_exports (used by the legacy
@@ -131,29 +115,14 @@ func parseExports(text string) map[string]string {
 	return out
 }
 
-// loadHarnessEnv mirrors env_scaffold.load_harness_env. An unreadable or
-// undecodable file is the caller's legacy exception branch ({}).
+// loadHarnessEnv delegates to internal/sync, the single dotenv authority.
 func loadHarnessEnv(projectRoot string) map[string]string {
-	path := harnessEnvPath(projectRoot)
-	if !isFile(path) {
-		return map[string]string{}
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return map[string]string{}
-	}
-	// The legacy read_text(encoding="utf-8") raises on invalid UTF-8; the check
-	// catches it and falls back to {}. Go strings tolerate arbitrary bytes, so
-	// the equivalent empty result is returned here explicitly.
-	if !utf8.Valid(raw) {
-		return map[string]string{}
-	}
-	return parseDotenv(string(raw))
+	return sync.LoadHarnessEnv(projectRoot)
 }
 
-// hasManagedBlock mirrors env_scaffold.has_managed_block.
+// hasManagedBlock delegates to internal/sync, the single managed-block authority.
 func hasManagedBlock(text string) bool {
-	return strings.Contains(text, managedStart) && strings.Contains(text, managedEnd)
+	return sync.HasManagedBlock(text)
 }
 
 // managedBlockIsCurrent mirrors env_scaffold.managed_block_is_current: the
