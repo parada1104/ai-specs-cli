@@ -45,6 +45,18 @@ func TestInitArgumentContract(t *testing.T) {
 			wantStderr: "ERROR: unexpected positional argument: second\n",
 		},
 		{
+			name:       "trailing --name has no value",
+			args:       []string{"--name"},
+			wantRC:     1,
+			wantStderr: errInitMissingNameValue,
+		},
+		{
+			name:       "bare dash is an unknown flag",
+			args:       []string{"-"},
+			wantRC:     2,
+			wantStderr: "ERROR: unknown flag: -\nRun 'ai-specs init --help' for usage.\n",
+		},
+		{
 			name:       "help wins",
 			args:       []string{"--help", "--bogus"},
 			wantRC:     0,
@@ -66,9 +78,15 @@ func TestInitArgumentContract(t *testing.T) {
 		})
 	}
 
+	// `--name=` with an empty value IS a value: the shell takes `${1#*=}`.
+	opts, rc, done := parseInitArgs([]string{"init", "--name=", "/p"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if done || rc != 0 || opts.name != "" || !opts.nameExplicit || opts.target != "/p" {
+		t.Errorf("parseInitArgs(--name= /p) = (%+v, %d, done=%v), want an explicit empty name and target /p", opts, rc, done)
+	}
+
 	// The shell `break`s at `--`: everything after it is dropped, so a flag
 	// there is never parsed and never becomes a usage error.
-	opts, rc, done := parseInitArgs([]string{"init", "--", "--bogus"}, &bytes.Buffer{}, &bytes.Buffer{})
+	opts, rc, done = parseInitArgs([]string{"init", "--", "--bogus"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if done || rc != 0 {
 		t.Fatalf("parseInitArgs(-- --bogus) = (%+v, %d, done=%v), want a parsed target-free run", opts, rc, done)
 	}
@@ -98,8 +116,28 @@ func TestInitTargetRules(t *testing.T) {
 	if got, rc := resolveInitTarget(dir, &bytes.Buffer{}); rc != 0 || got != dir {
 		t.Errorf("resolveInitTarget = (%q, %d), want (%q, 0)", got, rc, dir)
 	}
-	if base := filepath.Base(dir); base != "my-app" {
-		t.Fatalf("basename = %q, want my-app", base)
+	// The derived name is asserted through the verb, not through filepath.Base
+	// on a literal this test built itself (JD-A-006): a run with no --name must
+	// bake the directory's basename into the manifest. The home carries a stub
+	// refresh-bundled so the run reaches its end without a real CLI install.
+	home := t.TempDir()
+	stubDir := filepath.Join(home, "lib", "_internal")
+	if err := os.MkdirAll(stubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stubDir, "refresh-bundled.py"), []byte("import sys\nsys.exit(0)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errW bytes.Buffer
+	if rc := runInit([]string{"init", dir, "--no-tui"}, home, strings.NewReader(""), &out, &errW, ""); rc != 0 {
+		t.Fatalf("runInit = %d, want 0; stderr=%q", rc, errW.String())
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "ai-specs", "ai-specs.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `name = "my-app"`) {
+		t.Errorf("manifest does not carry the basename:\n%s", firstLines(string(body), 30))
 	}
 }
 
@@ -146,6 +184,49 @@ func TestInitManifestRendersTheNameLiterally(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "✓ wrote  ai-specs/ai-specs.toml") {
 		t.Errorf("stdout = %q, want the wrote line", out.String())
+	}
+}
+
+// TestInitManifestEscapesTheName pins the other half of S8: the name lands in a
+// TOML basic string, so a backslash, a quote or a control character must be
+// escaped or the manifest is invalid and, because init never overwrites it, the
+// damage is permanent (JD-A-003).
+func TestInitManifestEscapesTheName(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		`a\q`:  `name = "a\\q"`,
+		`a"b`:  `name = "a\"b"`,
+		"a\nb": `name = "a\nb"`,
+	}
+	for name, want := range cases {
+		path := filepath.Join(t.TempDir(), "ai-specs.toml")
+		var out, errW bytes.Buffer
+		if rc := writeInitManifest(name, path, &out, &errW); rc != 0 {
+			t.Fatalf("name %q: exit = %d; stderr=%q", name, rc, errW.String())
+		}
+		body := readFile(t, path)
+		if !strings.Contains(body, want) {
+			t.Errorf("name %q: manifest does not carry %q:\n%s", name, want, firstLines(body, 30))
+		}
+	}
+}
+
+// TestInitManifestDirectoryIsNotDestroyed pins the S4 invariant the verifier
+// probed: when ai-specs.toml is not a regular file, init fails and leaves the
+// path exactly as it found it.
+func TestInitManifestDirectoryIsNotDestroyed(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "ai-specs.toml")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out, errW bytes.Buffer
+	if rc := writeInitManifest("x", path, &out, &errW); rc != 1 {
+		t.Fatalf("exit = %d, want 1", rc)
+	}
+	fi, err := os.Stat(path)
+	if err != nil || !fi.IsDir() {
+		t.Fatalf("the directory was replaced: stat=%v err=%v", fi, err)
 	}
 }
 
@@ -252,16 +333,31 @@ func TestInitNextStepsNamesTheTargets(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	writeInitNextSteps("/p", "/p/ai-specs", &out)
-	text := out.String()
-	for _, want := range []string{
-		"\n✓ ai-specs initialized at /p\n",
-		"  1. Edit  /p/ai-specs/ai-specs.toml\n",
-		"  3. Run   ai-specs sync",
-		"gitignored — they are regenerated by 'ai-specs sync-agent' on every clone.\n",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("next steps missing %q:\n%s", want, text)
-		}
+	// Full equality, not a Contains per line: the heredoc is the contract and a
+	// dropped or reordered line must fail here (JD-A-006).
+	want := `
+✓ ai-specs initialized at /p
+
+Next steps:
+  1. Edit  /p/ai-specs/ai-specs.toml
+       - set [agents].enabled       (claude, cursor, opencode, codex, copilot, gemini)
+       - add [[deps]]               (vendored skills from git)
+       - add [mcp.*] sections       (MCP servers)
+  2. Optional: add recommended policy skills via [[deps]] (see catalog/README.md in the ai-specs-cli repo)
+  3. Run   ai-specs sync             (vendor deps + regenerate AGENTS.md + fan-out per agent)
+  4. Commit:
+       - ai-specs/ai-specs.toml
+       - ai-specs/skills/ (your LOCAL skills only — CLI-bundled skills resolve from the cache)
+       - ai-specs/recipes/*/overrides/ (declared recipe overrides only)
+       - ai-specs/commands/<your-local-commands>.md
+       - AGENTS.md   .gitignore   ai-specs/.ai-specs.lock
+     (ai-specs/.deps/ and the rest of ai-specs/recipes/ are gitignored.)
+
+Generated agent files (.claude/, .cursor/, opencode.json, .mcp.json, CLAUDE.md, ...) are
+gitignored — they are regenerated by 'ai-specs sync-agent' on every clone.
+`
+	if out.String() != want {
+		t.Errorf("next steps differ from the heredoc:\n--- got ---\n%s\n--- want ---\n%s", out.String(), want)
 	}
 }
 

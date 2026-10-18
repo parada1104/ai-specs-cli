@@ -95,11 +95,18 @@ class _Route:
             env.update(extra)
         return env
 
-    def run(self, cli: Path, *args: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
-        """Run ``<cli> init <args...>``; stdin is an empty pipe, never a TTY."""
+    def run(self, cli: Path, *args: str, extra_env: dict | None = None,
+            cwd: Path | None = None) -> subprocess.CompletedProcess:
+        """Run ``<cli> init <args...>``; stdin is an empty pipe, never a TTY.
+
+        ``cwd`` defaults to the repository only for cases that pass an explicit
+        target. A case whose argv has no positional makes the CLI read its own
+        cwd as the project, so it must pass ``cwd=self.target`` — otherwise the
+        legacy route would initialize the checkout the suite runs in.
+        """
         return subprocess.run(
             [str(cli), "init", *args],
-            cwd=str(ROOT),
+            cwd=str(cwd if cwd is not None else ROOT),
             env=self.env(extra_env),
             text=True,
             capture_output=True,
@@ -344,6 +351,52 @@ class InitNativeDifferentialTests(unittest.TestCase):
         self.assertIn('name = "R&D"', manifest)
         self.assertNotIn("R{{PROJECT_NAME}}D", manifest,
                          "the native route applied the legacy sed mangling")
+
+    def test_manifest_directory_is_never_destroyed_and_exits_1(self):
+        # S4 + S3, from the verifier's probe: when ai-specs/ai-specs.toml is not
+        # a regular file, BOTH routes must refuse, exit 1, and leave the path
+        # exactly as they found it. stderr text is exempt (the shell's message is
+        # bash's own redirection error, not a designed diagnostic — S12).
+        native_cli = self._native_cli()
+        fixture = _Fixture(self, "ai-specs-init-native-tomldir-")
+        leg, nat = fixture.legacy, fixture.native
+
+        for route in (leg, nat):
+            (route.target / "ai-specs" / "ai-specs.toml").mkdir(parents=True)
+
+        leg_proc = leg.run(LEGACY_CLI, str(leg.target))
+        nat_proc = nat.run(native_cli, str(nat.target))
+
+        self.assertEqual(leg_proc.returncode, 1, leg_proc.stderr)
+        self.assertEqual(nat_proc.returncode, 1, nat_proc.stderr)
+        for route, label in ((leg, "legacy"), (nat, "native")):
+            toml_path = route.target / "ai-specs" / "ai-specs.toml"
+            self.assertTrue(toml_path.is_dir(), f"{label}: the directory was replaced by a file")
+            self.assertEqual([], sorted(p.name for p in toml_path.iterdir()),
+                             f"{label}: something was written inside the directory")
+        self.assertEqual(leg.stdout(leg_proc), nat.stdout(nat_proc),
+                         _diff("stdout", leg.stdout(leg_proc), nat.stdout(nat_proc)))
+
+    def test_missing_name_value_refuses_without_writing(self):
+        # JD-B-001 (HIGH, converged with JD-A-001): a trailing `--name` aborts the
+        # shell verb at `shift 2` under `set -euo pipefail` — exit 1, nothing
+        # written. The port keeps the exit code; only the message text differs
+        # (bash's own "shift count out of range" is not a designed message, S12).
+        native_cli = self._native_cli()
+        fixture = _Fixture(self, "ai-specs-init-native-noname-")
+        leg, nat = fixture.legacy, fixture.native
+
+        # No positional: each route reads its own cwd as the project, so the cwd
+        # is the throwaway project and never the checkout.
+        leg_proc = leg.run(LEGACY_CLI, "--name", cwd=leg.target)
+        nat_proc = nat.run(native_cli, "--name", cwd=nat.target)
+
+        self.assertEqual(leg_proc.returncode, 1, leg_proc.stderr)
+        self.assertEqual(nat_proc.returncode, 1, nat_proc.stderr)
+        for route, label in ((leg, "legacy"), (nat, "native")):
+            written = sorted(p.relative_to(route.target) for p in route.target.rglob("*"))
+            self.assertEqual([], written, f"{label}: the aborted run wrote files")
+        self.assertIn("--name requires a value", nat_proc.stderr)
 
     def test_tui_gate_delegates_the_wizard_to_the_legacy_script(self):
         native_cli = self._native_cli()

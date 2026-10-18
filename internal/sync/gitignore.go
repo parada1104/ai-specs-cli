@@ -51,11 +51,13 @@ func RenderAiSpecsGitignore(tomlPath, outputPath string, stdout io.Writer) int {
 	return 0
 }
 
-// WriteAiSpecsGitignore is the same render without the status line, for callers
-// whose own contract says the step is silent (`init`). It still reads and
-// parses the manifest first: the Python authority fails before writing
-// anything when the manifest cannot be read, and a silent caller must not
-// become the one place that swallows it.
+// WriteAiSpecsGitignore is the same render without the status line; it is the
+// body RenderAiSpecsGitignore prints around, not a variant for silent callers.
+// `init` uses the PRINTING wrapper on purpose: lib/init.sh calls
+// gitignore-render.py directly, so that status line is part of init's stdout
+// (odd/tasks/go-20-u4-init.md S11). It reads and parses the manifest first: the
+// Python authority fails before writing anything when the manifest cannot be
+// read, and neither entry point may become the place that swallows it.
 func WriteAiSpecsGitignore(tomlPath, outputPath string) (int, error) {
 	data, err := os.ReadFile(tomlPath)
 	if err != nil {

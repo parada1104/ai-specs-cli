@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"ai-specs.dev/ai-specs"
 	"ai-specs.dev/ai-specs/internal/sync"
@@ -68,6 +69,11 @@ type initOptions struct {
 
 const errInitUnknownFlag = "ERROR: unknown flag: %s\nRun 'ai-specs init --help' for usage.\n"
 
+// errInitMissingNameValue is the port's message for a trailing `--name`: the
+// shell aborts with its own `shift: 2: shift count out of range` at exit 1, and
+// that text is an accident of bash, not a designed message (S12).
+const errInitMissingNameValue = "ERROR: --name requires a value\nRun 'ai-specs init --help' for usage.\n"
+
 // runInit is the native entry. args[0] is the verb.
 func runInit(args []string, home string, stdin io.Reader, stdout, stderr io.Writer, selfPath string) int {
 	opts, rc, done := parseInitArgs(args, stdout, stderr)
@@ -104,7 +110,7 @@ func runInit(args []string, home string, stdin io.Reader, stdout, stderr io.Writ
 	fmt.Fprintln(stdout, "  tui:     no")
 	fmt.Fprintln(stdout)
 
-	if rc := ensureInitDirs(aiSpecsDir, stdout); rc != 0 {
+	if rc := ensureInitDirs(aiSpecsDir, stdout, stderr); rc != 0 {
 		return rc
 	}
 	if rc := writeInitManifest(opts.name, tomlPath, stdout, stderr); rc != 0 {
@@ -135,13 +141,19 @@ func parseInitArgs(args []string, stdout, stderr io.Writer) (initOptions, int, b
 		arg := rest[i]
 		switch {
 		case arg == "--name":
-			// `${2:-}` of a trailing --name is the empty string, not an error.
-			opts.name = ""
-			if i+1 < len(rest) {
-				opts.name = rest[i+1]
-				i++
+			// A trailing `--name` with no value is NOT an empty name: the shell
+			// runs `shift 2` with one argument left, which fails under
+			// `set -euo pipefail` and aborts the whole verb with exit 1 before
+			// anything is written (JD-B-001). The port keeps the exit code and
+			// replaces the shell's own "shift count out of range" text with a
+			// message that names the flag.
+			if i+1 >= len(rest) {
+				fmt.Fprint(stderr, errInitMissingNameValue)
+				return opts, 1, true
 			}
+			opts.name = rest[i+1]
 			opts.nameExplicit = true
+			i++
 		case strings.HasPrefix(arg, "--name="):
 			opts.name = strings.TrimPrefix(arg, "--name=")
 			opts.nameExplicit = true
@@ -159,7 +171,9 @@ func parseInitArgs(args []string, stdout, stderr io.Writer) (initOptions, int, b
 		case arg == "--":
 			// The shell `break`s here: whatever follows -- is ignored.
 			return opts, 0, false
-		case strings.HasPrefix(arg, "-") && arg != "-":
+		case strings.HasPrefix(arg, "-"):
+			// `-` alone is an unknown flag on the shell route too: `-*` matches
+			// it before the positional branch (JD-A-002).
 			fmt.Fprintf(stderr, errInitUnknownFlag, arg)
 			return opts, 2, true
 		default:
@@ -221,16 +235,52 @@ func yesNo(v bool) string {
 	return "no"
 }
 
-// ensureInitDirs is `mkdir -p skills/ commands/` and its two status lines.
-func ensureInitDirs(aiSpecsDir string, stdout io.Writer) int {
+// ensureInitDirs is `mkdir -p skills/ commands/` and its two status lines. The
+// shell creates BOTH directories in one command and prints no status line when
+// either fails, and mkdir's own diagnostic goes to stderr (JD-B-005).
+func ensureInitDirs(aiSpecsDir string, stdout, stderr io.Writer) int {
 	for _, dir := range []string{"skills", "commands"} {
 		if err := os.MkdirAll(filepath.Join(aiSpecsDir, dir), 0o755); err != nil {
-			fmt.Fprintf(stdout, "ERROR: cannot create %s: %v\n", filepath.Join(aiSpecsDir, dir), err)
+			fmt.Fprintf(stderr, "ERROR: cannot create %s: %v\n", filepath.Join(aiSpecsDir, dir), err)
 			return 1
 		}
+	}
+	for _, dir := range []string{"skills", "commands"} {
 		fmt.Fprintf(stdout, "  ✓ ensure %s/%s/\n", aiSpecsDir, dir)
 	}
 	return 0
+}
+
+// tomlBasicStringBody escapes value for the body of a TOML basic string
+// (`"..."`): backslash, quote and the control characters TOML gives a short
+// escape to, and \uXXXX for the rest.
+func tomlBasicStringBody(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04X`, r)
+				continue
+			}
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // writeInitManifest renders the embedded template when the manifest is missing
@@ -250,9 +300,13 @@ func writeInitManifest(name, tomlPath string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "ERROR: cannot read the bundled manifest template: %v\n", err)
 		return 1
 	}
-	// S8: literal substitution. The shell's `sed s/{{PROJECT_NAME}}/<name>/g`
-	// mangles a name carrying &, / or a backslash; the port renders it verbatim.
-	body := strings.ReplaceAll(string(tmpl), "{{PROJECT_NAME}}", name)
+	// S8: literal substitution, ESCAPED for the TOML basic string the template
+	// puts it in (`name = "{{PROJECT_NAME}}"`). The shell's
+	// `sed s/{{PROJECT_NAME}}/<name>/g` mangles & and /, and a name carrying a
+	// backslash, a quote or a control character would produce a manifest that
+	// does not parse — which the never-overwrite rule would then make permanent
+	// (JD-A-003).
+	body := strings.ReplaceAll(string(tmpl), "{{PROJECT_NAME}}", tomlBasicStringBody(name))
 	if err := os.WriteFile(tomlPath, []byte(body), 0o644); err != nil {
 		fmt.Fprintf(stderr, "ERROR: cannot write %s: %v\n", tomlPath, err)
 		return 1
@@ -348,6 +402,11 @@ func applyInitGitignores(tomlPath, rootGitignore, aiGitignore string, force bool
 	// directly (not through the seam), so its status line IS part of init's
 	// stdout: the printing wrapper is the faithful call.
 	if rc := sync.RenderAiSpecsGitignore(tomlPath, aiGitignore, stdout); rc != 0 {
+		// The shell routes this step through gitignore-render.py, whose traceback
+		// names the manifest; the port prints one line with the same information
+		// (S12). Without it the user sees only the brief-policy error and a bare
+		// exit 1 (JD-A-004 / JD-B-004).
+		fmt.Fprintf(stderr, "ERROR: cannot render %s from %s: the manifest could not be read or parsed\n", aiGitignore, tomlPath)
 		return rc
 	}
 	return 0
@@ -396,6 +455,13 @@ func applyRootGitignoreBlock(path string, template []byte, force bool) (gitignor
 
 // appendGitignoreBlock is append_block: ensure the file ends with a newline
 // when it has content, then append the template bytes.
+//
+// The bytes are the shell's, the WRITE is not: the shell appends with `>>` and
+// its strip path goes through a temp file and `mv`, so a failure partway never
+// truncates content outside the managed block. os.WriteFile truncates first, so
+// an ENOSPC or a kill mid-write would lose the user's own lines (JD-B-003). The
+// port keeps the shell's bytes and adopts the shell's other tactic: write the
+// whole result beside the target and rename it into place.
 func appendGitignoreBlock(path, text string, template []byte) error {
 	out := text
 	if out != "" && !strings.HasSuffix(out, "\n") {
@@ -404,7 +470,35 @@ func appendGitignoreBlock(path, text string, template []byte) error {
 	if !strings.HasSuffix(string(template), "\n") {
 		template = append(template, '\n')
 	}
-	return os.WriteFile(path, append([]byte(out), template...), 0o644)
+	return replaceFileAtomically(path, append([]byte(out), template...))
+}
+
+// replaceFileAtomically writes body to a sibling temp file and renames it over
+// path, so a failed or interrupted write leaves the previous bytes intact. The
+// temp file inherits the target's mode when it exists (0o644 otherwise).
+func replaceFileAtomically(path string, body []byte) error {
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".ai-specs-gitignore-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(body); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // stripMarkedBlock is strip_block's awk program: drop every line from the begin
@@ -466,7 +560,15 @@ func refreshBundledAtInit(home, target string, stdout, stderr io.Writer) int {
 	if err := cmd.Run(); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			return ee.ExitCode()
+			// The shell's `set -e` reports 128+signal for a killed child, and so
+			// does runShim; ExitCode() alone would answer -1 and os.Exit would
+			// turn a SIGTERM into 255 (JD-B-006).
+			if code := ee.ExitCode(); code >= 0 {
+				return code
+			}
+			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+				return 128 + int(ws.Signal())
+			}
 		}
 		fmt.Fprintf(stderr, "ERROR: %v\n", err)
 		return 1
