@@ -93,6 +93,64 @@ Worktree `.worktrees/go-20-u4a-init-core`, branch `change/go-20-u4a-init-core`, 
   for every case that does not configure a recipe, and the four recipe-configuration cases stay on the
   legacy launcher until T4b-2, each named in the test file.
 
+### T4d / U4d specs (the harness env)
+
+The step `sync` runs today is `python3 lib/_internal/env_scaffold.py <root>`, which is the
+NON-interactive half of the module: it never prompts. The prompts (`prompt_env_vars`,
+`offer_harness_env`) belong to `init`'s wizard path. So U4d splits again.
+
+- S23 — The env step `sync` runs is a port of `env_scaffold.py`'s `main()`: refuse when
+  `ai-specs/ai-specs.toml` is missing (`Project not initialized: missing ai-specs/ai-specs.toml under
+  <root>` on stderr, exit 1), write `<root>/ai-specs.env.example`, ensure the managed block in
+  `<root>/.envrc`, warn once per required variable with no value, and print `Wrote <path>`.
+- S24 — `ai-specs.env.example` is generated from the `[[provides.mcp]]` env references of the ENABLED
+  recipes (`collect_env_vars`): one `VAR=default  # required by <preset> (<recipe>)` line per variable,
+  sorted, with the `ENV_VAR_HELP` sentence appended when the variable has one and the
+  `ENV_EXAMPLE_DEFAULTS` value pre-filled (never written to `ai-specs.env`). The header is
+  `_ENV_EXAMPLE_HEADER` verbatim, the no-variable case is the literal
+  `# (no env vars required by enabled recipes)`, and a changed file keeps the previous bytes in
+  `<root>/ai-specs.env.example.bak` while an unchanged one is not rewritten at all.
+- S25 — The root `.envrc` carries ONE managed block (`MANAGED_START`, the two `dotenv_if_exists` lines,
+  `MANAGED_END`): created with the two-line header when the file is absent, replaced in place when the
+  block is present, and appended after a blank line when it is not. Lines outside the block are the
+  user's and survive byte for byte.
+- S26 — `direnv allow` is NOT run by this step (the Python does not either); it stays in the wizard's
+  offer path (U4d-2), where the human is present.
+- S27 — Deferred to U4d-2, named in code: `prompt_env_vars`, `offer_harness_env`, `write_env` (the
+  merge that never wipes a non-empty secret with a blank answer), the three legacy migrations
+  (`migrate_nested_harness_env`, `migrate_legacy_envrc`, `migrate_legacy_harness_env`) and
+  `direnv allow`. Until it lands, `init`'s offer keeps its `env_scaffold.py` seam.
+
+## T4d-1 — verification
+
+The env step `sync` runs is native and `sync` no longer execs Python for it. Ported by a bounded
+writer with closed surfaces, then reviewed here.
+
+| gate | command | result |
+| --- | --- | --- |
+| the two touched packages | `go test -count=1 ./internal/doctor/ ./internal/sync/` | `ok 3.538s` / `ok 45.631s` |
+| Go suite | `go test ./cmd/... ./internal/...` | 0 failing packages |
+| init contract | `python3 -m unittest tests.test_init_native tests.test_init_brief_route` | 16 tests, OK |
+| differential parity | `python3 tests/parity/run.py` | 29 fixtures, failing 0 |
+| formatting | `gofmt -l internal/` | empty |
+
+- **Differential against the Python, hand-run on twins** (identical manifest and catalog, one driven by
+  `python3 lib/_internal/env_scaffold.py <root>`, the other by the built binary's `sync`):
+  `ai-specs.env.example` and `.envrc` are **byte-identical**, with the same four sorted warnings and the
+  same trailing `Wrote …` line. Zero divergence, so nothing had to be recorded.
+- **One authority for the dotenv surface.** The port needed the parsers doctor already had. `sync`
+  cannot import `doctor` (the arrow already points the other way), so the shared home is
+  `internal/sync` and doctor's private helpers became one-line delegations — the same move this repo
+  already made for `ProjectOwnedRecipeConfig`. Every doctor caller and every doctor test is unchanged;
+  the literal oracles live on both sides. `LoadHarnessEnv` kept doctor's exact semantics (a non-regular
+  file is never opened, invalid UTF-8 reads as empty).
+- **A finding worth keeping:** `tests/test_env_scaffold.py` and `tests/test_sync_env_scaffold.py` drive
+  `bin/ai-specs sync`, i.e. `lib/sync.sh`, which still execs the Python for this step. They are green
+  and they do **not** cover the native step; the Go differential is the only thing that can catch its
+  regressions. Repointing them belongs to the launcher flip (U2), not here.
+- Deliberately out (S27, named in the ported file): the prompts, `write_env`, the three legacy
+  migrations and `direnv allow` — U4d-2, still on the Python seam.
+
 ## Slicing
 
 | slice | scope | retires |
@@ -102,7 +160,8 @@ Worktree `.worktrees/go-20-u4a-init-core`, branch `change/go-20-u4a-init-core`, 
 | T4b-2 | per-recipe configuration prompts and the CLI-dep gate (`recipe-read.py` + `config_wizard.py`) | `init_tui.py:204-233` |
 | T4c | the lock `[meta]` writer, native, wired into `sync` | `cli_version.py stamp-meta` (the `sync` call site) |
 | T4c-note | the `refresh-bundled` flatten is NOT retired here: the Python readers that consume `{cache}/.bundled/` outlive this unit, and `init`'s step stamps nothing (see S9's correction) | moves to U7 with those readers |
-| T4d | harness env write path (`ai-specs.env`, `ai-specs.env.example`, managed `.envrc`, `direnv allow`) | `env_scaffold.py` write subset, `envrc-scaffold.py` |
+| T4d-1 / U4d-1 | the env step `sync` runs, native: `ai-specs.env.example`, the managed `.envrc` block, the missing-value warnings | `env_scaffold.py`'s non-interactive half |
+| T4d-2 / U4d-2 | the wizard's env offer: prompts, `ai-specs.env` merge, the three legacy migrations, `direnv allow` | `env_scaffold.py`'s interactive half, `envrc-scaffold.py` |
 
 ## Tasks
 
