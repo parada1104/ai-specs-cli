@@ -85,10 +85,12 @@ func TestRouteBareInvocationRewritesToHub(t *testing.T) {
 	}
 }
 
-// TestRouteSkillsListIsNativeBeforeTheShim pins the GO-20 U5a subcommand
-// interception: `skills list` resolves native (and only ever that
-// subcommand), while `skills add`, `skills remove`, `skills --help`, the bare
-// `skills` and unknown subcommands still fall through to lib/skills.sh.
+// TestRouteSkillsListIsNativeBeforeTheShim pins the GO-20 U5a/U5b subcommand
+// interceptions: `skills list` and `skills remove` resolve native (and only
+// ever those subcommands), while `skills add`, `skills --help`, the bare
+// `skills` and unknown subcommands still fall through to lib/skills.sh byte
+// for byte. The U5a rows are kept as they were; U5b extends the table with
+// the `remove` interception.
 func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 	cases := []struct {
 		args []string
@@ -97,9 +99,13 @@ func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 		{[]string{"skills", "list"}, routeSkillsList},
 		{[]string{"skills", "list", "--help"}, routeSkillsList},
 		{[]string{"skills", "list", "."}, routeSkillsList},
+		// U5b: `skills remove` is intercepted before the shim too.
+		{[]string{"skills", "remove"}, routeSkillsRemove},
+		{[]string{"skills", "remove", "some-id"}, routeSkillsRemove},
+		{[]string{"skills", "remove", "some-id", "."}, routeSkillsRemove},
+		{[]string{"skills", "remove", "--help"}, routeSkillsRemove},
 		{[]string{"skills"}, routeShim},
 		{[]string{"skills", "add", "https://example.com/r.git"}, routeShim},
-		{[]string{"skills", "remove", "some-id"}, routeShim},
 		{[]string{"skills", "--help"}, routeShim},
 		{[]string{"skills", "bogus"}, routeShim},
 		{[]string{"skills", "listx"}, routeShim},
