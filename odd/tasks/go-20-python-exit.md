@@ -227,7 +227,8 @@ cannot each be one PR.
 | U4a — the classic `init` path, native | **delivered, judgment approved** | `76d8b83` (PR #371); T4a of `go-20-u4-init.md`; Judgment Day 8/8 verified after a two-round fix, independent verify PASS, 44 init tests + parity 29/29 |
 | U4b-1 — the wizard, native | **delivered** | `9a57121` (PR #373); `tui.Text` + `internal/cli/initwizard.go`; the 7 PTY wizard flows now drive the built binary; assess: medium, review not due; verify unavailable (subagent timeout), raw-mode lifecycle covered by reading |
 | U4b-2 — per-recipe configuration prompts | pending | `init_tui.py:204-233`, needs `recipe-read.py` + `config_wizard.py` (U6 surface) |
-| U4c..U4d — the lock stamp, the harness env | pending | T4c-T4d of `go-20-u4-init.md` |
+| U4c — the lock `[meta]` stamp, native | **delivered** | `internal/cliversion.StampLockMeta` replaces `cli_version.py stamp-meta` in `sync`; the flatten stays (measured: `refresh-bundled.py` never wrote `[meta]`, its docstring lies); assess: medium, review not due |
+| U4d — the harness env write path | pending | T4d of `go-20-u4-init.md` |
 | U5..U7 — skills, recipes, substrate tail | pending | |
 | U2 — flip the launcher + parity snapshot + deletion | pending, AFTER the ports | L13 |
 | U8 — program closure | pending | |
