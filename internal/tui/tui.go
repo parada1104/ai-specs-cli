@@ -63,14 +63,33 @@ type Choice struct {
 // ("", false) when the user aborts — ESC, Ctrl-C, EOF or a read error. Callers
 // branch on that empty result exactly as they did on questionary's None.
 func Select(out io.Writer, in KeySource, message string, choices []Choice) (string, bool) {
+	return SelectDefault(out, in, message, choices, "")
+}
+
+// SelectDefault is Select with questionary's initial_choice (GO-20 U4d-2,
+// S30): the cursor STARTS on the choice whose Value equals initial, so a bare
+// Enter answers the default without moving — which is what makes
+// _select_default's three-step value observable at the prompt. An initial
+// that matches no choice (or is empty, which is how Select calls this)
+// leaves the cursor on the first row, byte-identical to Select's own frame.
+func SelectDefault(out io.Writer, in KeySource, message string, choices []Choice, initial string) (string, bool) {
 	if len(choices) == 0 {
 		return "", false
 	}
-	cursor, ok := navigate(out, in, message, choices, cursorState{current: 0}, false)
+	cursor := 0
+	if initial != "" {
+		for i, choice := range choices {
+			if choice.Value == initial {
+				cursor = i
+				break
+			}
+		}
+	}
+	selected, ok := navigate(out, in, message, choices, cursorState{current: cursor}, false)
 	if !ok {
 		return "", false
 	}
-	return choices[cursor].Value, true
+	return choices[selected].Value, true
 }
 
 // MultiSelect asks the user to toggle any number of options: space toggles, enter

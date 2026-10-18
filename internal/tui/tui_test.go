@@ -242,3 +242,68 @@ func TestKeySourceErrorsAreNotSwallowed(t *testing.T) {
 type failingKeys struct{ err error }
 
 func (f failingKeys) NextKey() (Key, error) { return 0, f.err }
+
+// TestSelectDefaultPreselectsTheInitialChoice pins S30's preselect: questionary
+// select hands _select_default's value to InquirerControl as initial_choice, so
+// the cursor STARTS on that row and Enter answers the default without moving it.
+// The port needs SelectDefault for exactly this — Select's own cursor behavior
+// is untouched and byte-identical (the empty-initial subtest pins that).
+func TestSelectDefaultPreselectsTheInitialChoice(t *testing.T) {
+	choices := threeChoices() // sync, doctor, quit
+
+	t.Run("enter with no movement answers the initial", func(t *testing.T) {
+		var out bytes.Buffer
+		got, ok := SelectDefault(&out, keys(KeyEnter), "Pick:", choices, "doctor")
+		if !ok || got != "doctor" {
+			t.Fatalf("SelectDefault = (%q, %v), want (\"doctor\", true)", got, ok)
+		}
+		// The first frame already marks the initial row: there is no walk from
+		// the first choice into place (which would answer the wrong value on a
+		// bare Enter and flash an extra frame).
+		rendered := out.String()
+		if !strings.Contains(rendered, "» Doctor\n") {
+			t.Errorf("the initial row is not marked in the first frame: %q", rendered)
+		}
+		if strings.Contains(rendered, "» Sync\n") {
+			t.Errorf("the cursor walked through the first choice: %q", rendered)
+		}
+	})
+
+	t.Run("navigation starts from the initial", func(t *testing.T) {
+		var down bytes.Buffer
+		got, ok := SelectDefault(&down, keys(KeyDown, KeyEnter), "Pick:", choices, "doctor")
+		if !ok || got != "quit" {
+			t.Errorf("down from the initial = (%q, %v), want (\"quit\", true)", got, ok)
+		}
+		var up bytes.Buffer
+		got, ok = SelectDefault(&up, keys(KeyUp, KeyEnter), "Pick:", choices, "doctor")
+		if !ok || got != "sync" {
+			t.Errorf("up from the initial = (%q, %v), want (\"sync\", true)", got, ok)
+		}
+	})
+
+	t.Run("an unknown initial falls back to the first row", func(t *testing.T) {
+		// questionary raises on a default outside the choices; the offer's
+		// _select_default always answers one of them, so the port falls back
+		// to Select's first-row cursor instead of refusing the prompt.
+		var out bytes.Buffer
+		got, ok := SelectDefault(&out, keys(KeyEnter), "Pick:", choices, "nope")
+		if !ok || got != "sync" {
+			t.Errorf("SelectDefault(unknown initial) = (%q, %v), want (\"sync\", true)", got, ok)
+		}
+	})
+
+	t.Run("an empty initial is byte-identical to Select", func(t *testing.T) {
+		var plain, viaDefault bytes.Buffer
+		gotSelect, okSelect := Select(&plain, keys(KeyEnter), "Pick:", choices)
+		gotDefault, okDefault := SelectDefault(&viaDefault, keys(KeyEnter), "Pick:", choices, "")
+		if !okSelect || !okDefault || gotSelect != gotDefault || gotSelect != "sync" {
+			t.Errorf("Select = (%q, %v), SelectDefault(\"\") = (%q, %v), both want (\"sync\", true)",
+				gotSelect, okSelect, gotDefault, okDefault)
+		}
+		if plain.String() != viaDefault.String() {
+			t.Errorf("Select with no initial must render byte-identically:\nSelect: %q\nSelectDefault: %q",
+				plain.String(), viaDefault.String())
+		}
+	})
+}
