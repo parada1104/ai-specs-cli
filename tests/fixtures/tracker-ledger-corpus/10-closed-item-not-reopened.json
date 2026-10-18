@@ -21,7 +21,7 @@
     "active": true,
     "conflict": false,
     "exit": 2,
-    "doctor": "OK"
+    "doctor": "WARN"
   },
   "kind": "verdict"
 }

@@ -14,8 +14,12 @@ import (
 // worktree gate flags are never read here: the ledger does not couple to
 // worktree semantics (D4/A1).
 type ledgerOptions struct {
-	checkpoint  string
-	mode        string
+	checkpoint string
+	mode       string
+	// gateMode is the raw stamped legacy tracker gate_mode hint. It is consulted
+	// only when --ledger-mode is omitted, and is never resolved against the
+	// worktree gate policy here.
+	gateMode    string
 	projectRoot string
 	witness     string
 	store       string
@@ -99,6 +103,20 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	binding := ledger.ReadBinding(witnessPath)
 	store, storeErr := ledger.LoadStore(storePath)
 
+	// The effective mode is the explicit --ledger-mode when given (an explicit
+	// normalized mode, unchanged for existing callers); otherwise Go resolves it
+	// from env, the bound recipe's configuration and the stamped legacy hint. An
+	// `off` resolution disables the checkpoint before any grading, matching the
+	// shell behavior this resolver takes ownership of.
+	mode := opts.mode
+	if mode == "" {
+		mode = resolveLedgerMode(dir, binding, opts.gateMode, stderr)
+		if mode == ledgerModeOff {
+			fmt.Fprintf(stderr, "worktree-gate: ledger_mode off; skipping %s\n", opts.checkpoint)
+			return 0
+		}
+	}
+
 	facts := ledger.Facts(gitMemo)
 	ident := ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, Facts: facts})
 	// A stored slug survives its folder being archived mid-item (A11): when the
@@ -156,7 +174,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	now := time.Now()
 	verdict := ledger.Grade(ledger.Input{
 		Checkpoint: opts.checkpoint,
-		Mode:       opts.mode,
+		Mode:       mode,
 		Binding:    binding,
 		Identity:   ident,
 		Store:      store,
@@ -226,22 +244,30 @@ func newLedgerOut(v ledger.Verdict, write *ledger.WriteOutcome, reconcile *ledge
 // ledgerIdentityWithStoredSlug re-derives the identity with the slug already
 // recorded on the single open item for its common dir and branch (A11). A stored
 // slug survives its folder being archived mid-item, and an explicit --write change
-// becomes the stored slug so the re-grade selects what the write recorded.
+// becomes the stored slug so the re-grade selects what the write recorded. A
+// branch-level bind deliberately stores an empty slug; that is still a found row
+// and must not fall back to the planning tree's current slug.
 func ledgerIdentityWithStoredSlug(ident ledger.Identity, store ledger.Store, storeErr error, dir string, facts ledger.Facts) ledger.Identity {
 	if !ident.Available() || storeErr != nil {
 		return ident
 	}
-	slug := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
-	if slug == "" || slug == ident.Change {
+	slug, found := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
+	if !found || (slug == ident.Change && ident.Collision == "") {
+		return ident
+	}
+	if slug == "" {
+		ident.Change = ""
+		ident.Collision = ""
+		ident.Key = ledger.IdentityKey(ident.CommonDir, ident.Branch, "")
 		return ident
 	}
 	return ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, StoredSlug: slug, Facts: facts})
 }
 
 // storedLedgerSlug returns the change slug already recorded on the single open
-// item for the common dir and branch, so a mid-item archive does not rewrite the
-// identity (A11).
-func storedLedgerSlug(store ledger.Store, common, branch string) string {
+// item for the common dir and branch, plus whether a row was found. The boolean
+// distinguishes a deliberate branch-level empty slug from no open row (A11).
+func storedLedgerSlug(store ledger.Store, common, branch string) (string, bool) {
 	var changes []string
 	for _, item := range store.Items {
 		if item.Status != ledger.StatusOpen {
@@ -253,9 +279,9 @@ func storedLedgerSlug(store ledger.Store, common, branch string) string {
 		changes = append(changes, item.Identity.Change)
 	}
 	if len(changes) == 1 {
-		return changes[0]
+		return changes[0], true
 	}
-	return ""
+	return "", false
 }
 
 // ledgerIdentityForClose re-derives the identity for an explicit close write,
@@ -270,11 +296,17 @@ func ledgerIdentityForClose(ident ledger.Identity, store ledger.Store, storeErr 
 	if !ident.Available() || storeErr != nil {
 		return ident
 	}
-	slug := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
-	if slug == "" {
+	slug, found := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
+	if !found {
 		slug = latestClosedSlug(store, ident.CommonDir, ident.Branch)
 	}
-	if slug == "" || slug == ident.Change {
+	if slug == ident.Change && ident.Collision == "" {
+		return ident
+	}
+	if slug == "" {
+		ident.Change = ""
+		ident.Collision = ""
+		ident.Key = ledger.IdentityKey(ident.CommonDir, ident.Branch, "")
 		return ident
 	}
 	return ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, StoredSlug: slug, Facts: facts})

@@ -216,9 +216,10 @@ func Grade(in Input) Verdict {
 		v.outcome(ev, ReasonConflict)
 	case errors.Is(err, ErrNoPrimary):
 		if in.Store.HasScopedOptOut(in.Identity.Key, in.Checkpoint) {
-			// A fresh binding answered this checkpoint with an explicit scoped
-			// opt-out (D19): the answered checkpoint proceeds and the next one asks
-			// again. No item exists, so nothing else can be satisfied implicitly.
+			// A fresh binding answered the ask prompt with an explicit opt-out
+			// (A5): the decline is remembered for the identity/change, so every
+			// checkpoint of this lifecycle proceeds. No item exists, so nothing
+			// else can be satisfied implicitly.
 			v.Decision, v.Reason = DecisionAllow, ReasonOptOut
 		} else {
 			v.outcome(ev, ReasonNeedsItem)
@@ -238,17 +239,25 @@ func Grade(in Input) Verdict {
 	return v
 }
 
-// resolve grades a selected primary item. A recorded exemption, a
-// checkpoint-scoped opt-out, or an adjudication for this checkpoint settles the
-// item; otherwise a disagreement is a conflict.
+// resolve grades a selected primary item. A recorded exemption, an opt-out, or
+// an adjudication for this checkpoint settles the item; a row that is not
+// provider-backed is a needs-item outcome; otherwise a disagreement is a
+// conflict.
 func (v *Verdict) resolve(item Item, ev Evidence, in Input) {
 	switch {
 	case item.Exemption != "":
 		v.Decision, v.Reason = DecisionAllow, ReasonExempt
-	case hasDecision(item, DecisionOptOut, in.Checkpoint):
+	case hasOptOut(item, in.Checkpoint):
 		v.Decision, v.Reason = DecisionAllow, ReasonOptOut
 	case hasDecision(item, DecisionAdjudicate, in.Checkpoint):
 		v.Decision, v.Reason = DecisionAllow, ReasonAdjudicated
+	case !item.ProviderBacked():
+		// A local-only row (opened or linked without a provider item) is never
+		// compliant: the lifecycle requires a real provider item, so the missing
+		// link is a needs-item outcome under the usual mode posture. The
+		// exemption and opt-out cases above are explicit human answers and
+		// therefore still settle the row.
+		v.outcome(ev, ReasonNeedsItem)
 	case ev.Conflict():
 		v.Conflict = newConflict(ev, in.Now)
 		v.outcome(ev, ReasonConflict)
@@ -300,11 +309,24 @@ func newConflict(ev Evidence, now time.Time) *Conflict {
 	return &Conflict{Sides: ev, RecordedAt: rfc3339Stamp(now)}
 }
 
-// hasDecision reports whether the item recorded kind at checkpoint. Opt-out and
-// adjudicate are both checkpoint-scoped (D19).
+// hasDecision reports whether the item recorded kind at checkpoint. An
+// adjudication resolves the conflict of one checkpoint only.
 func hasDecision(item Item, kind, checkpoint string) bool {
 	for _, d := range item.Decisions {
 		if d.Kind == kind && d.Checkpoint == checkpoint {
+			return true
+		}
+	}
+	return false
+}
+
+// hasOptOut reports whether the item carries an opt-out covering checkpoint. A
+// current opt-out is lifecycle-scoped and suppresses the remaining checkpoints
+// of the identity/change; a legacy scope-less record covers only its own
+// checkpoint (A5).
+func hasOptOut(item Item, checkpoint string) bool {
+	for _, d := range item.Decisions {
+		if d.Kind == DecisionOptOut && optOutCovers(d.Scope, d.Checkpoint, checkpoint) {
 			return true
 		}
 	}
@@ -333,10 +355,15 @@ func bindingDoctor(b Binding) DoctorFinding {
 	}
 }
 
-// verdictDoctor maps the graded state to the A10 severity.
+// verdictDoctor maps the graded state to the A10 severity. Warn never blocks,
+// but it must not report OK either: a missing provider-backed requirement is
+// advisory-visible at the doctor surface.
 func verdictDoctor(v Verdict) DoctorFinding {
 	if v.Conflict != nil {
 		return DoctorFinding{Severity: SeverityWarn, Name: CheckName, Message: "conflict recorded; adjudicate at the next checkpoint"}
+	}
+	if v.Reason == ReasonNeedsItem {
+		return DoctorFinding{Severity: SeverityWarn, Name: CheckName, Message: "no provider item linked; create or bind one to satisfy tracker tracking"}
 	}
 	return okayDoctor()
 }

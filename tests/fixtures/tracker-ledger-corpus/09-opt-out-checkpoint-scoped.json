@@ -1,5 +1,5 @@
 {
-  "label": "an ask opt-out covers only the answered checkpoint",
+  "label": "an ask opt-out covers the lifecycle",
   "witness": {
     "state": "bound"
   },
@@ -44,12 +44,12 @@
         "git": "T-1"
       },
       "expected": {
-        "decision": "ask",
-        "reason": "conflict",
+        "decision": "allow",
+        "reason": "opt-out",
         "active": true,
-        "conflict": true,
+        "conflict": false,
         "exit": 0,
-        "doctor": "WARN"
+        "doctor": "OK"
       }
     }
   ],

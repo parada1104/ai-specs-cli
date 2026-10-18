@@ -57,6 +57,12 @@ const (
 	WriteReasonUnchanged     = "unchanged"
 	WriteReasonAlreadyClosed = "already-closed"
 
+	// ScopeLifecycle is the scope of every opt-out this build writes: the human
+	// declined to track the change, so the decision covers the identity/change
+	// lifecycle and later checkpoints do not ask again. An empty scope marks a
+	// record written before lifecycle scoping, which stays checkpoint-scoped.
+	ScopeLifecycle = "lifecycle"
+
 	// lockAttempts/lockBackoff bound every store-lock acquisition (DW3): one
 	// budget for every checkpoint and caller, ~100 ms total. The kernel still
 	// releases the flock on close, so a crashed writer cannot wedge the ledger.
@@ -114,22 +120,27 @@ type ItemIdentity struct {
 func (i ItemIdentity) Key() string { return IdentityKey(i.CommonDir, i.Branch, i.Change) }
 
 // Decision is one append-only entry in an item's decisions[] (A6). A kind
-// opt-out applies only to its own Checkpoint (D19).
+// opt-out carries ScopeLifecycle, so it suppresses the remaining checkpoints of
+// the same identity/change; Checkpoint keeps the audit trail of where the human
+// answered.
 type Decision struct {
 	At         string `json:"at"`
 	Checkpoint string `json:"checkpoint"`
+	Scope      string `json:"scope,omitempty"`
 	Kind       string `json:"kind"`
 	Choice     string `json:"choice"`
 	Note       string `json:"note"`
 }
 
-// ScopedOptOut is a checkpoint-scoped human opt-out recorded for an identity that
-// has no open item yet (D19): a freshly bound project must be able to answer the
-// ask prompt before any tracked item exists. It is keyed by identity so the answer
-// stays durable and auditable, and it never synthesizes an item.
+// ScopedOptOut is a human opt-out recorded for an identity that has no open item
+// yet (A5): a freshly bound project must be able to answer the ask prompt before
+// any tracked item exists. It is keyed by identity so the answer stays durable
+// and auditable, it never synthesizes an item, and it is lifecycle-scoped like
+// every other opt-out (Checkpoint is the audit trail of where it was answered).
 type ScopedOptOut struct {
 	Key        string `json:"key"`
 	Checkpoint string `json:"checkpoint"`
+	Scope      string `json:"scope,omitempty"`
 	Choice     string `json:"choice"`
 	At         string `json:"at"`
 }
@@ -155,8 +166,14 @@ type Item struct {
 // Key is the item's identity key.
 func (i Item) Key() string { return i.Identity.Key() }
 
+// ProviderBacked reports whether the row satisfies the provider-backed item
+// contract: a provider item id and the bound provider id. A local-only row —
+// opened locally and never linked to a provider item — is never compliant, so
+// the predicate reports needs-item for it under the usual mode posture.
+func (i Item) ProviderBacked() bool { return i.ItemID != "" && i.ProviderID != "" }
+
 // Store is the on-disk ledger: one version, the item list, and the
-// checkpoint-scoped opt-outs recorded before an item existed (A5).
+// lifecycle-scoped opt-outs recorded before an item existed (A5).
 type Store struct {
 	V       int            `json:"v"`
 	Items   []Item         `json:"items"`
@@ -782,30 +799,40 @@ func (s Store) LatestClosed(key string) (Item, bool) {
 	return Item{}, false
 }
 
-// HasOptOut reports whether the primary item for key recorded an opt-out at
-// checkpoint. An opt-out covers only the checkpoint it was answered for (D19).
+// HasOptOut reports whether the primary item for key recorded an opt-out
+// covering checkpoint. A lifecycle-scoped opt-out covers every checkpoint of the
+// identity/change; a legacy scope-less record covers only its own checkpoint.
 func (s Store) HasOptOut(key, checkpoint string) bool {
 	item, err := s.Primary(key)
 	if err != nil {
 		return false
 	}
 	for _, d := range item.Decisions {
-		if d.Kind == DecisionOptOut && d.Checkpoint == checkpoint {
+		if d.Kind == DecisionOptOut && optOutCovers(d.Scope, d.Checkpoint, checkpoint) {
 			return true
 		}
 	}
 	return false
 }
 
-// HasScopedOptOut reports whether key recorded a checkpoint-scoped opt-out with
-// no open item. Like an item opt-out it covers only the checkpoint it answered.
+// HasScopedOptOut reports whether key recorded a scoped opt-out covering
+// checkpoint with no open item. Like an item opt-out, a lifecycle-scoped record
+// covers every checkpoint and a legacy scope-less one only its own.
 func (s Store) HasScopedOptOut(key, checkpoint string) bool {
 	for _, o := range s.OptOuts {
-		if o.Key == key && o.Checkpoint == checkpoint {
+		if o.Key == key && optOutCovers(o.Scope, o.Checkpoint, checkpoint) {
 			return true
 		}
 	}
 	return false
+}
+
+// optOutCovers reports whether an opt-out record covers checkpoint. A record with
+// no scope was written before lifecycle scoping and covers only the checkpoint it
+// names, so every old store keeps its exact old behavior; a lifecycle-scoped
+// record covers the remaining checkpoints of the identity/change.
+func optOutCovers(scope, recordCheckpoint, checkpoint string) bool {
+	return scope == ScopeLifecycle || recordCheckpoint == checkpoint
 }
 
 // OverCeiling reports whether the store exceeds the advisory item or byte

@@ -156,6 +156,13 @@ class WorktreeFlowRecipeTests(unittest.TestCase):
         self.assertIn("SDD artifact phases", text)
 
 
+    def test_repo_topology_config_is_documented_as_deprecated_alias(self):
+        """T4 — `[project].repo_topology` owns topology; the recipe key is legacy."""
+        text = (RECIPE_DIR / "recipe.toml").read_text()
+        self.assertIn("[config.repo_topology]", text)
+        self.assertIn("[project].repo_topology", text)
+        self.assertIn("deprecated", text.lower())
+
     def test_sync_defaults_repo_topology_to_auto(self):
         root = self._make_project()
         self.assertEqual(self.materialize.materialize_recipes(root, ROOT), 0)

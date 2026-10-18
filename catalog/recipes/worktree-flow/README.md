@@ -29,10 +29,22 @@ version = "1.6.0"
 worktrees_dir = ".worktrees"
 integration_branch = "main"
 auto_remove_merged = true
-repo_topology = "auto"
 gate_scope = "auto"
 gate_impl = "auto"
 ```
+
+Repository topology is CLI-owned and declared once on the project:
+
+```toml
+[project]
+repo_topology = "auto"   # auto | standalone | monorepo-apps | monorepo-submodules
+```
+
+Planning, sync stamping, the brief, `doctor`, and `status` all read that one
+value, and it keeps resolving even when this recipe is disabled.
+`recipes.worktree-flow.config.repo_topology` stays readable as a deprecated
+alias for one migration window (the project field wins; a recipe-only value is
+reported with a deprecation marker), and it is never written by new flows.
 
 Then run `ai-specs sync`. The cleanup launcher materializes to
 `ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` and uses the
@@ -155,7 +167,7 @@ harness — see the coverage matrix in `docs/runtime-hooks.md`.
 | `gate_scope` | `auto` | Scope policy: `auto`, `superrepo`, or `subrepo`; only proven superrepo `openspec/changes/**` planning paths receive an exception. |
 | `gate_impl` | `auto` | Gate implementation: `auto` / `go`. |
 | `WORKTREE_GATE_SCOPE` | — | Optional per-invocation override of the stamped scope; invalid values warn and fall back safely. |
-| `repo_topology` | `auto` | Repository topology: `auto` (initialized `.gitmodules` → `monorepo-submodules`, else `standalone`), `standalone`, `monorepo-apps` (naming-only; same mechanics as standalone), or `monorepo-submodules`. |
+| `repo_topology` | — | **Deprecated alias** of `[project].repo_topology`, read-only for one migration window. Declare topology on the project: `auto` (initialized `.gitmodules` → `monorepo-submodules`, else `standalone`), `standalone`, `monorepo-apps` (naming-only; same mechanics as standalone), or `monorepo-submodules`. |
 | `WORKTREE_GATE_PROTECTED` | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
 
 
@@ -235,7 +247,7 @@ the hook, the direct tracker host
 fallback.
 
 At sync the wrapper is stamped with the project's `worktrees_dir`,
-`integration_branch`, and `repo_topology`, and passes them to the launcher as
+`integration_branch`, and resolved `[project].repo_topology`, and passes them to the launcher as
 `--dir`, `--base`, and `--topology`. A customized project therefore never silently
 falls back to `.worktrees`/current HEAD during automatic cleanup. The
 `not_exists` policy preserves any pre-existing user hook at `.git/hooks/post-merge`;

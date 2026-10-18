@@ -1,5 +1,5 @@
 {
-  "label": "close then re-open inside one second keeps every item id unique (same-second)",
+  "label": "local-only close then re-open inside one second keeps ids unique (same-second)",
   "witness": {
     "state": "bound"
   },
@@ -15,12 +15,12 @@
         "kind": "open"
       },
       "expected": {
-        "decision": "allow",
-        "reason": "",
+        "decision": "block",
+        "reason": "needs-item",
         "active": true,
         "conflict": false,
-        "exit": 0,
-        "doctor": "OK",
+        "exit": 2,
+        "doctor": "WARN",
         "write": {
           "kind": "open",
           "applied": true,
@@ -35,12 +35,12 @@
         "kind": "close"
       },
       "expected": {
-        "decision": "allow",
-        "reason": "",
+        "decision": "block",
+        "reason": "needs-item",
         "active": true,
         "conflict": false,
-        "exit": 0,
-        "doctor": "OK",
+        "exit": 2,
+        "doctor": "WARN",
         "write": {
           "kind": "close",
           "applied": true,
@@ -55,12 +55,12 @@
         "kind": "open"
       },
       "expected": {
-        "decision": "allow",
-        "reason": "",
+        "decision": "block",
+        "reason": "needs-item",
         "active": true,
         "conflict": false,
-        "exit": 0,
-        "doctor": "OK",
+        "exit": 2,
+        "doctor": "WARN",
         "write": {
           "kind": "open",
           "applied": true,

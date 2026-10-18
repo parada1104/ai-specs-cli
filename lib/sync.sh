@@ -180,7 +180,7 @@ PLAN_JSON="$(python3 "$TARGET_RESOLVE_PY" "$TARGET_PATH")" || {
 }
 
 ROOT_PATH="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["root"])' <<<"$PLAN_JSON")"
-IFS=$'\t' read -r PLANNING_ROOT TOPOLOGY_RESOLVED TOPOLOGY_VIA <<< "$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print("\t".join([d["planning_root"], d["topology"]["resolved"], d["topology"]["via"]]))' <<<"$PLAN_JSON")"
+IFS=$'\t' read -r PLANNING_ROOT TOPOLOGY_RESOLVED TOPOLOGY_VIA TOPOLOGY_SOURCE <<< "$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); t=d["topology"]; print("\t".join([d["planning_root"], t["resolved"], t["via"], t.get("source", "")]))' <<<"$PLAN_JSON")"
 TOML_PATH="$ROOT_PATH/ai-specs/ai-specs.toml"
 AI_GITIGNORE="$ROOT_PATH/ai-specs/.gitignore"
 if [[ ! -f "$TOML_PATH" ]]; then
@@ -204,7 +204,10 @@ echo ""
 echo "ai-specs sync"
 echo "  root:    $ROOT_PATH"
 echo "  planning: $PLANNING_ROOT"
-echo "  topology: $TOPOLOGY_RESOLVED (via $TOPOLOGY_VIA)"
+echo "  topology: $TOPOLOGY_RESOLVED (via $TOPOLOGY_VIA; source: ${TOPOLOGY_SOURCE:-default})"
+if [[ "$TOPOLOGY_SOURCE" == "legacy-recipe" ]]; then
+    echo "  WARN: recipes.worktree-flow.config.repo_topology is deprecated; set [project].repo_topology" >&2
+fi
 echo "  targets: ${RESOLVED_TARGET_LABELS[*]}"
 echo "  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)"
 echo "  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs"

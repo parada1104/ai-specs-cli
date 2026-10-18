@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -174,11 +175,11 @@ func TestPersistDecisionFailsClosed(t *testing.T) {
 	}
 }
 
-// TestPersistScopedOptOutWithoutPrimaryIsScopedAndAllows pins the fresh-binding ask
-// path (A5/D19): with no open item yet, an explicit checkpoint-scoped opt-out is
-// recorded on its own, allows only the checkpoint it answered, and never
-// synthesizes a tracked item.
-func TestPersistScopedOptOutWithoutPrimaryIsScopedAndAllows(t *testing.T) {
+// TestPersistScopedOptOutWithoutPrimaryIsLifecycleScoped pins the fresh-binding
+// ask path (A5): with no open item yet, an explicit opt-out is recorded on its
+// own, allows its own checkpoint, suppresses the later checkpoints of the same
+// identity/change, and never synthesizes a tracked item.
+func TestPersistScopedOptOutWithoutPrimaryIsLifecycleScoped(t *testing.T) {
 	path := StorePath(filepath.Join(t.TempDir(), ".git"))
 	if err := SaveStore(path, Store{V: StoreVersion}); err != nil {
 		t.Fatal(err)
@@ -193,11 +194,12 @@ func TestPersistScopedOptOutWithoutPrimaryIsScopedAndAllows(t *testing.T) {
 		t.Fatalf("items = %+v, want no synthesized item", store.Items)
 	}
 	if len(store.OptOuts) != 1 {
-		t.Fatalf("opt_outs = %+v, want exactly one checkpoint-scoped opt-out", store.OptOuts)
+		t.Fatalf("opt_outs = %+v, want exactly one scoped opt-out", store.OptOuts)
 	}
 	got := store.OptOuts[0]
-	if got.Key != key || got.Checkpoint != CheckpointApplyStart || got.Choice != "continue" || got.At != vtNow.UTC().Format(time.RFC3339) {
-		t.Fatalf("scoped opt-out = %+v, want the human answer keyed, stamped and checkpoint-scoped", got)
+	if got.Key != key || got.Checkpoint != CheckpointApplyStart || got.Scope != ScopeLifecycle ||
+		got.Choice != "continue" || got.At != vtNow.UTC().Format(time.RFC3339) {
+		t.Fatalf("scoped opt-out = %+v, want the human answer keyed, stamped, lifecycle-scoped and audited at its checkpoint", got)
 	}
 
 	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Store: store, Now: vtNow}
@@ -207,7 +209,7 @@ func TestPersistScopedOptOutWithoutPrimaryIsScopedAndAllows(t *testing.T) {
 
 	pre := base
 	pre.Checkpoint = CheckpointPreMerge
-	assertVerdict(t, "pre-merge after scoped opt-out", Grade(pre), vWant{DecisionAsk, ReasonNeedsItem, 0, SeverityOK, true})
+	assertVerdict(t, "pre-merge after scoped opt-out", Grade(pre), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
 }
 
 // TestPersistWithoutPrimaryStaysClosedForUnrecordableAnswers pins the boundary of
@@ -244,11 +246,12 @@ func TestPersistConflictFailsClosedForCollision(t *testing.T) {
 	}
 }
 
-// TestPersistOptOutIsCheckpointScopedD19 pins that the persisted opt-out grants
-// exactly one checkpoint and the next checkpoint still prompts.
-func TestPersistOptOutIsCheckpointScopedD19(t *testing.T) {
+// TestPersistOptOutIsLifecycleScoped pins the revised opt-out lifecycle: the
+// persisted decline is remembered for the current change, so the answered
+// checkpoint allows and a later checkpoint no longer asks.
+func TestPersistOptOutIsLifecycleScoped(t *testing.T) {
 	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	if err := SaveStore(path, storeWithOpenItem("")); err != nil {
+	if err := SaveStore(path, storeWithOpenItem("local")); err != nil {
 		t.Fatal(err)
 	}
 	key := ident("").Key()
@@ -256,15 +259,64 @@ func TestPersistOptOutIsCheckpointScopedD19(t *testing.T) {
 		t.Fatalf("PersistDecision opt-out: %v", err)
 	}
 
-	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(),
-		Store: mustLoad(t, path), Evidence: Evidence{Remote: "remote"}, Now: vtNow}
+	store := mustLoad(t, path)
+	item, err := store.Primary(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := item.Decisions[len(item.Decisions)-1]
+	if last.Kind != DecisionOptOut || last.Scope != ScopeLifecycle || last.Checkpoint != CheckpointApplyStart {
+		t.Fatalf("persisted opt-out = %+v, want a lifecycle-scoped decision audited at apply-start", last)
+	}
+
+	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Store: store,
+		Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow}
 	apply := base
 	apply.Checkpoint = CheckpointApplyStart
 	assertVerdict(t, "apply-start opt-out", Grade(apply), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
 
 	pre := base
 	pre.Checkpoint = CheckpointPreMerge
-	assertVerdict(t, "pre-merge after opt-out", Grade(pre), vWant{DecisionAsk, ReasonConflict, 0, SeverityWarn, true})
+	assertVerdict(t, "pre-merge after opt-out", Grade(pre), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
+}
+
+// TestLegacyOptOutRecordsStayCheckpointScopedOnDisk pins on-disk backward
+// compatibility: a store written before lifecycle scoping carries no scope field,
+// loads unchanged, and keeps covering only its own checkpoint.
+func TestLegacyOptOutRecordsStayCheckpointScopedOnDisk(t *testing.T) {
+	path := StorePath(filepath.Join(t.TempDir(), ".git"))
+	id := ident("")
+	legacy := Store{V: StoreVersion}
+	legacy.OpenItem(id, "trello-mcp-workflow", t0)
+	legacy.Items[0].ItemID = "local"
+	legacy.Items[0].Decisions = append(legacy.Items[0].Decisions,
+		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"})
+	legacy.OptOuts = append(legacy.OptOuts,
+		ScopedOptOut{Key: id.Key(), Checkpoint: CheckpointApplyStart, Choice: "continue", At: t0.Format(time.RFC3339)})
+	if err := SaveStore(path, legacy); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"scope"`)) {
+		t.Fatalf("a legacy record must not carry a scope field: %s", raw)
+	}
+
+	loaded := mustLoad(t, path)
+	if got := loaded.Items[0].Decisions[len(loaded.Items[0].Decisions)-1].Scope; got != "" {
+		t.Fatalf("legacy decision scope = %q, want empty", got)
+	}
+	if loaded.OptOuts[0].Scope != "" {
+		t.Fatalf("legacy scoped opt-out = %+v, want no scope", loaded.OptOuts[0])
+	}
+	if !loaded.HasOptOut(id.Key(), CheckpointApplyStart) || loaded.HasOptOut(id.Key(), CheckpointPreMerge) {
+		t.Fatal("a legacy item opt-out must stay checkpoint-scoped")
+	}
+	if !loaded.HasScopedOptOut(id.Key(), CheckpointApplyStart) || loaded.HasScopedOptOut(id.Key(), CheckpointPreMerge) {
+		t.Fatal("a legacy scoped opt-out must stay checkpoint-scoped")
+	}
 }
 
 // mustLoad loads a store and fails on error.

@@ -251,25 +251,20 @@ def _section_project(manifest: dict, resolved: dict) -> list[str]:
     if integration_branch:
         lines.append(f"- **Integration branch**: `{integration_branch}`")
 
-    # Resolved repo topology (worktree-flow) — gate on enabled-ness like hub/doctor
+    # Repo topology is project-owned (CLI-resolved). It renders when the project
+    # declares it, or while worktree-flow is enabled (legacy recipe alias).
     enabled_recipes = resolved.get("enabled") or []
-    wf_for_topo = recipes.get(worktree_recipe_id, {}) if worktree_recipe_id else {}
-    if not wf_for_topo:
-        wf_for_topo = recipes.get("worktree-flow", {}) or {}
-    if "worktree-flow" in enabled_recipes or (
+    wf_enabled = "worktree-flow" in enabled_recipes or (
         bool(worktree_recipe_id) and worktree_recipe_id in enabled_recipes
-    ):
-        cfg_val = str(wf_for_topo.get("repo_topology") or "auto")
-        # project root: parent of ai-specs/ when available via resolved hint, else cwd
-        project_root = Path(resolved.get("project_root") or Path.cwd())
-        try:
-            util = _load_util()
-            res = util.resolve_repo_topology(project_root, cfg_val)
-            lines.append(
-                f"- **Repo topology**: `{res.resolved}` (via {res.via})"
-            )
-        except Exception:
-            pass
+    )
+    # project root: parent of ai-specs/ when available via resolved hint, else cwd
+    project_root = Path(resolved.get("project_root") or Path.cwd())
+    try:
+        topo = _load_util().project_repo_topology(project_root, manifest)
+        if topo.source != "default" or wf_enabled:
+            lines.append(f"- **Repo topology**: `{topo.resolved}` (via {topo.via})")
+    except Exception:
+        pass
 
     # vault_scope from canonical-store binding
     canonical_store_id = bindings.get("canonical-store", "")

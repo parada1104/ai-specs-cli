@@ -13,7 +13,9 @@
 #   exit 0 → allow.   exit 2 → block (stderr is surfaced to the agent).
 # Fail-open: any resolution failure warns once and exits 0, so a broken
 # installation can never wedge every edit. Override protected branches via
-# WORKTREE_GATE_PROTECTED. gate_mode off disables both path and shell gating.
+# WORKTREE_GATE_PROTECTED. gate_mode off disables both path and shell gating:
+# the raw stamped mode is forwarded to the binary, and Go's ResolveGateMode owns
+# env-over-stamp precedence and the fallbacks.
 # gate_scope/gate_impl are stamped by sync and may be overridden per
 # invocation (scope via WORKTREE_GATE_SCOPE; impl has no env override).
 #
@@ -52,23 +54,9 @@ case "$(uname -m)" in
   x86_64|amd64) _goarch="amd64" ;;
 esac
 
-# Resolve gate mode: env override beats stamped sync value; invalid values
-# warn and fall back (mirrors the legacy reference contract).
-_resolve_gate_mode() {
-  local candidate="${WORKTREE_GATE_MODE:-$stamped_gate_mode}"
-  case "$candidate" in always|ask|off) echo "$candidate" ; return ;;
-  esac
-  if [ -n "${WORKTREE_GATE_MODE:-}" ]; then
-    echo "worktree-gate: ignoring invalid WORKTREE_GATE_MODE='${WORKTREE_GATE_MODE}'; falling back to stamped mode." >&2
-  elif [ "$stamped_gate_mode" != always ] && [ "$stamped_gate_mode" != ask ] && [ "$stamped_gate_mode" != off ]; then
-    echo "worktree-gate: invalid stamped gate_mode='${stamped_gate_mode}'; falling back to always." >&2
-  fi
-  case "$stamped_gate_mode" in always|ask|off) echo "$stamped_gate_mode" ;;
-  *) echo always ;;
-  esac
-}
-gate_mode="$(_resolve_gate_mode)"
-
+# Forward the raw stamped gate mode to the binary; env/stamp precedence and the
+# invalid-value fallback are Go's ResolveGateMode (config.go). Scope resolution
+# stays here for transport; the binary re-resolves it idempotently.
 _resolve_gate_scope() {
   local override="${WORKTREE_GATE_SCOPE:-}"
   if [ -n "$override" ]; then
@@ -83,8 +71,8 @@ _resolve_gate_scope() {
   esac
 }
 
-# off → disable the gate entirely, before scope/topology evaluation.
-[ "$gate_mode" = off ] && exit 0
+# off → disable the gate entirely (the binary returns before scope/topology
+# evaluation on a raw stamped off).
 gate_scope="$(_resolve_gate_scope)"
 
 # Derive the physical installation root from BASH_SOURCE[0]. Prints the recipe
@@ -166,7 +154,7 @@ if [ -n "$bin" ]; then
       exit 0
     fi
   fi
-  exec "$bin" --gate-mode "$gate_mode" --gate-scope "$gate_scope" --repo-topology "$stamped_repo_topology" --protected "$protected"
+  exec "$bin" --gate-mode "$stamped_gate_mode" --gate-scope "$gate_scope" --repo-topology "$stamped_repo_topology" --protected "$protected"
 fi
 
 echo "worktree-gate: no usable gate binary resolved (gate_impl='$stamped_gate_impl'); gate is not enforcing. Run 'ai-specs sync', 'ai-specs sync --refresh-gates', or 'ai-specs doctor'." >&2

@@ -140,6 +140,114 @@ func moduleRecordsWithGit(superRoot string, gitFact func(string, ...string) stri
 	return records
 }
 
+// centralFromCommon derives the superproject root from an absorbed submodule
+// common dir (<super>/.git/modules/<rel>), mirroring the final-/modules/ marker
+// parsing in resolve_central_root() (plan-build-gate.sh:238-253). Any other
+// layout — including a nested modules prefix — is not a central-root signal.
+func centralFromCommon(common string) (string, bool) {
+	const marker = "/modules/"
+	i := strings.LastIndex(common, marker)
+	if i < 0 {
+		return "", false
+	}
+	pre, name := common[:i], common[i+len(marker):]
+	// Only an EARLIER /.git/modules/ marker makes the layout nested; a
+	// superproject whose own path merely contains a "modules" component is valid
+	// (plan-build-gate.sh:245-247 checks the same literal).
+	if name == "" || strings.Contains(pre, "/.git/modules/") {
+		return "", false
+	}
+	// pre must end in the superproject's own .git directory.
+	if filepath.Base(pre) != ".git" {
+		return "", false
+	}
+	cand := filepath.Dir(pre)
+	if cand == "" || cand == string(filepath.Separator) {
+		return "", false
+	}
+	return RealPath(cand), true
+}
+
+// resolveCentralRoot is the read-only topology proof behind
+// --resolve-central-root: run from the current repository/worktree root, it
+// returns the superproject root and the registered relative submodule path only
+// when moduleRecords() proves an initialized absorbed module whose common dir is
+// this repository's common dir. The linked submodule-worktree path works
+// because the shared common dir — not the registered module path — is the
+// signal (plan-build-gate.sh:229-231). When the absorbed layout is absent, the
+// bounded legacy fallback below applies; an absorbed layout that fails the
+// moduleRecords proof never falls through (the reference returns 1 there too).
+// Everything else fails closed.
+func resolveCentralRoot(cwd string) (string, string, bool) {
+	root := RealPath(cwd)
+	if top := git(cwd, "rev-parse", "--show-toplevel"); top != "" {
+		root = RealPath(top)
+	}
+	if root == "" {
+		return "", "", false
+	}
+	common := RealPath(gitCommon(root))
+	if cand, absorbed := centralFromCommon(common); absorbed {
+		if cand == root {
+			return "", "", false
+		}
+		for _, rec := range moduleRecords(cand) {
+			if RealPath(rec.common) != common {
+				continue
+			}
+			rel, err := filepath.Rel(cand, RealPath(rec.module))
+			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+				continue
+			}
+			return cand, filepath.ToSlash(rel), true
+		}
+		// The absorbed layout is authoritative: no legacy fallback here.
+		return "", "", false
+	}
+	return resolveCentralRootLegacy(root)
+}
+
+// resolveCentralRootLegacy is the bounded fallback for non-absorbed submodule
+// layouts (plan-build-gate.sh:254-286): git's own superproject fact plus the
+// superproject's .gitmodules and a live (non-empty, non-"-") submodule status.
+// It never guesses — any missing or ambiguous fact fails closed.
+func resolveCentralRootLegacy(root string) (string, string, bool) {
+	return legacyCentral(root, git)
+}
+
+func legacyCentral(root string, fact func(string, ...string) string) (string, string, bool) {
+	sup := fact(root, "rev-parse", "--show-superproject-working-tree")
+	if sup == "" {
+		return "", "", false
+	}
+	cand := RealPath(sup)
+	if cand == root || !Inside(root, cand) {
+		return "", "", false
+	}
+	if !isDir(filepath.Join(cand, ".git")) || !isFile(filepath.Join(cand, ".gitmodules")) {
+		return "", "", false
+	}
+	rel, err := filepath.Rel(cand, root)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return "", "", false
+	}
+	rel = filepath.ToSlash(rel)
+	subDir := RealPath(filepath.Join(cand, rel))
+	if !Inside(subDir, cand) || !pathExists(filepath.Join(subDir, ".git")) {
+		return "", "", false
+	}
+	status := fact(cand, "submodule", "status", "--", rel)
+	if status == "" || strings.HasPrefix(status, "-") {
+		return "", "", false
+	}
+	return cand, rel, true
+}
+
+func pathExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 func isFile(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && !fi.IsDir()

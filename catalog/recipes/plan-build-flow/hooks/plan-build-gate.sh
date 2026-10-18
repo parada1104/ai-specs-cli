@@ -3,17 +3,17 @@
 #
 # Enforces plan-before-build for production paths. Planning artifacts live under
 # openspec/changes/<slug>/ and are always writable. In an initialized submodule
-# worktree, the containing superproject is the canonical planning root; topology
-# discovery is read-only and fail-safe.
+# worktree, the containing superproject is the canonical planning root; the
+# topology proof is Go-owned (worktree-gate --resolve-central-root) and any
+# unproven answer fails closed.
 #
 # stdin: normalized JSON {event, tool_name, tool_input, cwd}
 # exit 0: allow; exit 2: block. Malformed or unrelated events fail open.
 # PLAN_BUILD_GATE_PATHS is scope only (default: src lib catalog).
-# __TRACKER_LIB_INTERNAL__ is stamped at sync with the CLI's lib/_internal, where
-# ledger_bridge.py ships; an empty or unstamped value skips the witness lookup
-# (fail open), exactly like a missing or unverified binary.
+# The ledger mode is Go-owned: this hook invokes `--ledger` with no mode flag and
+# Go resolves the effective mode from env, the witness-bound recipe config and
+# the warn default (see ledger_mode.go / ledger_cmd.go).
 
-stamped_lib_internal="__TRACKER_LIB_INTERNAL__"
 prod_dirs="${PLAN_BUILD_GATE_PATHS:-src lib catalog}"
 [ -n "${prod_dirs// /}" ] || prod_dirs="src lib catalog"
 
@@ -91,73 +91,10 @@ done
 # --- Ledger work-start checkpoint (acquisition + JSON bridge only) ------------
 # The five ledger checkpoints are graded by the verified Go `--ledger` mode on
 # the shared worktree-gate binary (one predicate, one trust root). This host
-# only resolves the A9 mode, acquires a verified binary, and maps the JSON
-# verdict. A missing/unverified binary, a parse error, or an IO failure fails
-# open (exit 0). `openspec/**` never reaches this point, so it is never blocked.
-
-_ledger_bridge() {
-  # The evidence bridge lives beside the CLI's other internals. An empty or
-  # unstamped value means the bridge is unavailable, so the witness recipe id is
-  # unresolved and the lookup keeps the warn-first default (fail open).
-  case "$stamped_lib_internal" in
-    ""|__*) return 1 ;;
-  esac
-  [ -f "$stamped_lib_internal/ledger_bridge.py" ] || return 1
-  printf '%s\n' "$stamped_lib_internal"
-}
-
-_ledger_recipe_id() {
-  # The bound recipe id from the durable witness (via the bridge), or nothing
-  # when the bridge is unstamped. Reading the witness is acquisition, not grading.
-  local lib
-  lib="$(_ledger_bridge)" || return 0
-  python3 - "$lib" "$1" <<'PY' 2>/dev/null || true
-import sys
-from pathlib import Path
-lib = sys.argv[1]
-sys.path.insert(0, lib)
-import ledger_bridge
-print(ledger_bridge.recipe_id(Path(sys.argv[2])))
-PY
-}
-
-_ledger_mode() {
-  # $1 root, $2 legacy gate-mode hint, $3 witness recipe id (may be empty). The
-  # config section is recipes.<recipe>; without a recipe id only the env override
-  # and the stamped hint apply, which keeps the warn-first default.
-  local root="$1"
-  local gate_hint="${2:-}"
-  local recipe="${3:-}"
-  python3 - "$root" "${TRACKER_LEDGER_MODE:-}" "$gate_hint" "$recipe" <<'PY' 2>/dev/null
-import sys, tomllib
-from pathlib import Path
-root, env_mode, gate_hint = sys.argv[1], sys.argv[2], sys.argv[3]
-recipe = sys.argv[4] if len(sys.argv) > 4 else ""
-ledger = gate = ""
-if recipe:
-    try:
-        data = tomllib.loads((Path(root) / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
-        cfg = ((data.get("recipes") or {}).get(recipe) or {}).get("config") or {}
-        ledger = cfg.get("ledger_mode") or ""
-        gate = cfg.get("gate_mode") or ""
-    except Exception:
-        pass
-if gate_hint in ("off", "warn", "always") and not gate:
-    # The bound recipe's own gate_mode wins; the stamped legacy hint fills in when
-    # that config section declares none (the pre-witness behavior).
-    gate = gate_hint
-if env_mode in ("always", "ask", "warn"):
-    print(env_mode)
-elif ledger in ("always", "ask", "warn"):
-    print(ledger)
-elif gate == "off":
-    print("off")
-elif gate == "always":
-    print("always")
-else:
-    print("warn")
-PY
-}
+# only acquires a verified binary and maps the JSON verdict; Go resolves the
+# effective mode from env, the witness-bound recipe config and the warn default.
+# A missing/unverified binary, a parse error, or an IO failure fails open
+# (exit 0). `openspec/**` never reaches this point, so it is never blocked.
 
 _ledger_binary() {
   if [ -n "${WORKTREE_GATE_BIN:-}" ] && [ -x "$WORKTREE_GATE_BIN" ]; then
@@ -196,8 +133,10 @@ else:
 }
 
 _ledger_ask() {
-  # $1 bin, $2 checkpoint, $3 mode, $4 root, $5 prefix; stdin: prompt JSON.
-  local bin="$1" checkpoint="$2" mode="$3" root="$4" prefix="$5"
+  # $1 bin, $2 checkpoint, $3 root, $4 prefix; stdin: prompt JSON. The follow-up
+  # `--decide` carries no mode: Go re-resolves the same effective mode it graded
+  # with.
+  local bin="$1" checkpoint="$2" root="$3" prefix="$4"
   python3 -c '
 import json, sys
 try:
@@ -219,7 +158,7 @@ print("  choices: " + ", ".join(prompt.get("choices") or []))
   exec 3<&-
   case "$answer" in
     y|Y|yes|YES|Yes)
-      if "$bin" --ledger --checkpoint "$checkpoint" --ledger-mode "$mode" --project-root "$root" \
+      if "$bin" --ledger --checkpoint "$checkpoint" --project-root "$root" \
           --decide "{\"checkpoint\":\"$checkpoint\",\"kind\":\"opt-out\",\"choice\":\"continue\"}" >/dev/null 2>&1; then
         echo "${prefix}: opt-out recorded for ${checkpoint}; proceeding." >&2
         return 0
@@ -233,12 +172,13 @@ print("  choices: " + ", ".join(prompt.get("choices") or []))
 }
 
 _ledger_grade() {
-  # $1 checkpoint, $2 mode, $3 root, $4 prefix. Returns 0 allow / 2 block.
-  local checkpoint="$1" mode="$2" root="$3" prefix="$4"
+  # $1 checkpoint, $2 root, $3 prefix. Returns 0 allow / 2 block. No mode flag is
+  # forwarded: Go resolves env, the witness-bound recipe config and the default.
+  local checkpoint="$1" root="$2" prefix="$3"
   local bin
   bin="$(_ledger_binary)" || return 0
   local out rc
-  out="$("$bin" --ledger --checkpoint "$checkpoint" --ledger-mode "$mode" --project-root "$root" 2>/dev/null)"
+  out="$("$bin" --ledger --checkpoint "$checkpoint" --project-root "$root" 2>/dev/null)"
   rc=$?
   [ -n "$out" ] || return 0
   local decision reason active
@@ -259,7 +199,7 @@ _ledger_grade() {
   fi
   if [ "$decision" = ask ]; then
     printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("prompt")))' 2>/dev/null \
-      | _ledger_ask "$bin" "$checkpoint" "$mode" "$root" "$prefix"
+      | _ledger_ask "$bin" "$checkpoint" "$root" "$prefix"
     return $?
   fi
   if [ "$active" = 1 ] && [ "$decision" != allow ]; then
@@ -269,10 +209,8 @@ _ledger_grade() {
 }
 
 _ledger_work_start() {
-  local mode
-  mode="$(_ledger_mode "$repo_root" "" "$(_ledger_recipe_id "$repo_root")")"
-  [ "$mode" = off ] && return 0
-  _ledger_grade "work-start" "$mode" "$repo_root" "plan-build-gate"
+  # `off` skipping is Go's short-circuit (runLedger returns before grading).
+  _ledger_grade "work-start" "$repo_root" "plan-build-gate"
 }
 
 # Work-start fires before the first non-read-only production write, whether or
@@ -284,67 +222,55 @@ has_active_plan() {
   local f
   shopt -s nullglob
   for f in "$1"/openspec/changes/*/tasks.md; do
+    [ -n "$f" ] || continue
     return 0
   done
   return 1
 }
 
-# Derive a central root only from a proven initialized submodule relationship.
-# The common git directory is the primary signal because linked submodule
-# worktrees report an empty --show-superproject-working-tree.
+# --- Central planning root (verified-Go bridge only) -------------------------
+# The submodule topology proof is Go-owned: this host only acquires the verified
+# binary, runs `--resolve-central-root` from the probe directory, and validates
+# the returned JSON against this repository. A missing or unverified binary, a
+# nonzero exit, a malformed or empty payload, or a central root that does not
+# contain the nearest repository root leaves the topology unproven, so the
+# nearest-root gate below fails closed. `submodule` is diagnostic only.
 central_root=""
 central_sub=""
-resolve_central_root() {
-  local gcd pre name cand rel_sub registered sub_dir status sup
-  gcd="$(git -C "$probe_dir" rev-parse --git-common-dir 2>/dev/null)" || return 1
-  gcd="$(cd "$probe_dir" 2>/dev/null && cd "$gcd" 2>/dev/null && pwd -P)" || return 1
+central_root_proof() {
+  local bin out parsed cand sub
+  bin="$(_ledger_binary)" || return 1
+  # Go resolves upward from the current directory, so the query must run from
+  # the probe directory (the target's nearest existing ancestor).
+  out="$(cd "$probe_dir" 2>/dev/null && "$bin" --resolve-central-root 2>/dev/null)" || return 1
+  [ -n "$out" ] || return 1
+  parsed="$(printf '%s' "$out" | python3 -c '
+import json, os, sys
 
-  case "$gcd" in
-    */.git/modules/*)
-      # Use the final /modules/ marker: superproject paths may contain that
-      # component, while an inner submodule has an earlier modules prefix.
-      pre="${gcd%/modules/*}"
-      name="${gcd##*/modules/}"
-      [ -n "$name" ] || return 1
-      case "$pre" in
-        */.git/modules/*) return 1 ;;
-      esac
-      [ "${pre##*/}" = ".git" ] || return 1
-      cand="${pre%/.git}"
-      ;;
-    *)
-      # Legacy non-absorbed layouts may provide this corroborating fact, but it
-      # is never the sole signal for the modern linked-worktree path.
-      sup="$(git -C "$probe_dir" rev-parse --show-superproject-working-tree 2>/dev/null)" || return 1
-      [ -n "$sup" ] || return 1
-      cand="$(cd "$sup" 2>/dev/null && pwd -P)" || return 1
-      is_under "$cand" "$repo_root" || return 1
-      rel_sub="${repo_root#"$cand"/}"
-      name=""
-      ;;
-  esac
-
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+if not isinstance(data, dict):
+    raise SystemExit(1)
+central = data.get("central_root")
+sub = data.get("submodule")
+if not isinstance(central, str) or not isinstance(sub, str):
+    raise SystemExit(1)
+if not central or not os.path.isabs(central):
+    raise SystemExit(1)
+if any(ch in central or ch in sub for ch in "\t\r\n"):
+    raise SystemExit(1)
+sys.stdout.write(central + "\t" + sub)
+' 2>/dev/null)" || return 1
+  [ -n "$parsed" ] || return 1
+  cand="${parsed%%$'\t'*}"
+  sub="${parsed#*$'\t'}"
+  cand="$(cd "$cand" 2>/dev/null && pwd -P)" || return 1
+  is_under "$cand" "$repo_root" || return 1
   [ "$cand" != "$repo_root" ] || return 1
-  [ -d "$cand/.git" ] || return 1
-  [ -f "$cand/.gitmodules" ] || return 1
-
-  if [ -n "$name" ]; then
-    registered="$(git -C "$cand" config -f "$cand/.gitmodules" --get "submodule.$name.path" 2>/dev/null)" || return 1
-    [ -n "$registered" ] || return 1
-    rel_sub="$registered"
-  else
-    [ -n "$rel_sub" ] || return 1
-  fi
-  sub_dir="$(cd "$cand/$rel_sub" 2>/dev/null && pwd -P)" || return 1
-  is_under "$cand" "$sub_dir" || return 1
-  [ -e "$sub_dir/.git" ] || return 1
-  status="$(git -C "$cand" submodule status -- "$rel_sub" 2>/dev/null)" || return 1
-  case "$status" in
-    "") return 1 ;;
-    -*) return 1 ;;
-  esac
   central_root="$cand"
-  central_sub="$rel_sub"
+  central_sub="$sub"
   return 0
 }
 
@@ -354,7 +280,7 @@ if has_active_plan "$repo_root"; then
   exit 0
 fi
 
-if resolve_central_root; then
+if central_root_proof; then
   if has_active_plan "$central_root"; then
     exit 0
   fi

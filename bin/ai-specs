@@ -12,6 +12,7 @@
 # recipe list [path] List available and installed recipes
 # recipe add <id> [path] Add a recipe to the manifest
 # recipe init <id> [path] Print a read-only recipe init brief
+# recipe configure <id> [path] Inspect or apply recipe config non-interactively
 # upgrade [--dry-run] [--force] Upgrade the global installation safely
 # version Print CLI version
 # hub [path] Interactive status + command menu (also bare `ai-specs`)
@@ -65,6 +66,7 @@ Commands:
   recipe list [path]          List available and installed recipes
   recipe add <id> [path]      Add a recipe to the manifest
   recipe init <id> [path]     Print a read-only recipe init brief
+  recipe configure <id> [path]  Inspect or apply recipe config non-interactively
   configure-recipes [path]    Configure recipe config, CLI deps, harness env
   upgrade [--dry-run] [--force] Upgrade the global installation safely
   version Print CLI version

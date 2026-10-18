@@ -5,8 +5,8 @@
 # project surface; skill/recipe/dep content hashes are not tracked.
 
 [meta]
-cli_version = "0.23.1"
-synced_at = "2026-09-18T14:20:00Z"
+cli_version = "0.24.0"
+synced_at = "2026-09-18T22:42:13Z"
 
 [managed."AGENTS.md"]
 sha256 = "fde95880f9477740eb62c0da846a3814cd7adfb2312945d0eb9efd2bc0eac14d"
@@ -77,7 +77,7 @@ kind = "template"
 policy = "auto"
 
 [managed."ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"]
-sha256 = "4e93c854fe0864ef5f84000fcacc8e4d6e7861a7613fab3f80560419dd5eec65"
+sha256 = "b9e550c9e0ee04dab235bf7e90831b2848dff081f281d6a5ee7dd58d46e65525"
 recipe = "worktree-flow"
 source = "hooks/worktree-gate.sh"
 kind = "gate"

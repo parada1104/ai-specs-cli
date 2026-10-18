@@ -304,6 +304,24 @@ class GateBinaryDistTests(unittest.TestCase):
         self.assertIsInstance(status, dict)
         self.assertIn("warn", status)
 
+    # --- trust root: committed SHA256SUMS -----------------------------------
+
+    def test_committed_trust_root_lists_the_release_matrix(self):
+        # A gate-source change forces a fresh SHA256SUMS regeneration; this pin
+        # fails if the trust root loses a matrix asset, carries a placeholder
+        # digest, or has a malformed entry.
+        digests = self.gb.load_expected_digests(ROOT)
+        for goos, goarch in self.gb.SUPPORTED_PLATFORMS:
+            name = f"worktree-gate-{goos}-{goarch}"
+            with self.subTest(asset=name):
+                digest = digests.get(name)
+                self.assertIsNotNone(digest, f"committed SHA256SUMS is missing {name}")
+                self.assertEqual(len(digest), 64)
+                self.assertFalse(
+                    digest.startswith("0" * 64),
+                    f"committed SHA256SUMS still holds a placeholder for {name}",
+                )
+
     # --- release blocker: canonical asset URL owner -------------------------
 
     def test_asset_url_uses_canonical_repository_owner(self):

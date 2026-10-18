@@ -64,6 +64,42 @@ recipe = "trello-mcp-workflow"
 See [`docs/recipe-schema.md`](recipe-schema.md) for the `[[capabilities]]` and
 [`docs/ai-specs-toml.md`](ai-specs-toml.md) for the `[[bindings]]` contracts.
 
+## Capability baselines
+
+A capability id is a contract between a foundational recipe and every provider
+that *provides* it. The **baseline** is the smallest provider-neutral surface
+that contract guarantees, stated once per capability here. A provider recipe is
+an **adapter**: it honors the baseline for one concrete tool. The baseline fixes
+*what* is shared, never *how* one vendor implements it.
+
+### The `vcs-pr-flow` baseline
+
+`vcs-pr-flow` is the branch → PR/MR → review → merge pattern. Its providers
+(`git-pr-flow`, `gitlab-mr-flow`, `bitbucket-pr-flow`) declare the same
+capability id and expose the same configuration keys, with the same
+provider-neutral meaning:
+
+| Baseline config key | Meaning |
+|---------------------|---------|
+| `base_branch` | The integration branch a PR/MR targets. |
+| `expected_owner` | The account/org the remote is expected to belong to; empty skips the check. |
+| `auto_switch_account` | Whether the provider may switch the active CLI account on a mismatch. |
+
+The baseline fixes the key names and their neutral meaning, not their defaults
+or support: `base_branch` defaults to `main` on GitHub and `development` on
+Bitbucket, and `auto_switch_account` is a no-op on a CLI with no auth switch.
+Those remain adapter-owned.
+
+Adapter assets stay adapter-specific. A provider's command and skill ids belong
+to the concrete tool, not to the capability: `pr-create` / `git-merge-workflow`
+on GitHub and `bb-pr-create` / `bitbucket-merge-workflow` on Bitbucket are
+interchangeable *because* they differ. The capability id `vcs-pr-flow` is never
+a command id, a skill id, or a config key, so swapping the provider swaps those
+ids and touches nothing in the foundational layer.
+
+A baseline is a documented contract, not a new manifest field: selection stays
+with `[[bindings]]`, and the schema keeps no `requires` field.
+
 ## Tracker lifecycle: the Tracker Ledger
 
 When a `tracker` capability is bound, its lifecycle is graded by **one Go

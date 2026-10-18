@@ -555,5 +555,38 @@ class TestTopologySurfacing(unittest.TestCase):
             self.assertEqual(summary.topology, "standalone")
             self.assertEqual(summary.topology_via, "config")
 
+    def _add_project_topology(self, root: Path, topology: str) -> None:
+        manifest = root / "ai-specs" / "ai-specs.toml"
+        lines = manifest.read_text().splitlines()
+        lines.insert(lines.index("[project]") + 1, f'repo_topology = "{topology}"')
+        manifest.write_text("\n".join(lines) + "\n")
+
+    def test_project_topology_surfaces_with_worktree_flow_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "prj"
+            root.mkdir()
+            self._write_wf_manifest(root, "standalone")
+            manifest = root / "ai-specs" / "ai-specs.toml"
+            manifest.write_text(
+                manifest.read_text().replace(
+                    "[recipes.worktree-flow]\nenabled = true",
+                    "[recipes.worktree-flow]\nenabled = false",
+                )
+            )
+            self._add_project_topology(root, "monorepo-apps")
+            summary = self.mod.status_summary(root)
+            self.assertEqual(summary.topology, "monorepo-apps")
+            self.assertEqual(summary.topology_via, "config")
+
+    def test_project_topology_wins_over_legacy_recipe_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "prj"
+            root.mkdir()
+            self._write_wf_manifest(root, "standalone")
+            self._add_project_topology(root, "monorepo-apps")
+            summary = self.mod.status_summary(root)
+            self.assertEqual(summary.topology, "monorepo-apps")
+            self.assertEqual(summary.topology_via, "config")
+
 if __name__ == "__main__":
     unittest.main()

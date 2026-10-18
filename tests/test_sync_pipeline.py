@@ -1310,6 +1310,64 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertFalse(pi_skills.exists(),
                              ".pi/skills/ must NOT exist when pi is disabled")
 
+    def test_pi_mcp_json_rendered_when_mcps_declared(self):
+        """--pi must write .pi/mcp.json with mcpServers when [mcp.*] exist.
+
+        Pi reads project MCP servers from .pi/mcp.json only; the root
+        .mcp.json belongs to Claude Code and is ignored by pi.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            (target / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-pi-mcp'\n\n"
+                "[agents]\n"
+                "enabled = ['pi']\n\n"
+                "[mcp.my-server]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@example/server']\n"
+            )
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--pi"],
+                check=True, text=True,
+            )
+            mcp_path = target / ".pi" / "mcp.json"
+            self.assertTrue(mcp_path.is_file(),
+                            ".pi/mcp.json must be created when [mcp.*] entries exist")
+            mcp_data = json.loads(mcp_path.read_text())
+            self.assertIn("my-server", mcp_data["mcpServers"])
+            self.assertFalse((target / ".mcp.json").exists(),
+                             "pi must not write Claude Code's root .mcp.json")
+
+    def test_claude_mcp_json_stays_at_root_when_pi_is_also_enabled(self):
+        """Claude keeps the root .mcp.json next to pi's .pi/mcp.json."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "prj"
+            target.mkdir()
+            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            (target / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\n"
+                "name = 'fixture-claude-pi-mcp'\n\n"
+                "[agents]\n"
+                "enabled = ['claude', 'pi']\n\n"
+                "[mcp.my-server]\n"
+                "command = 'npx'\n"
+                "args = ['-y', '@example/server']\n"
+            )
+            subprocess.run(
+                [str(CLI), "sync-agent", str(target), "--all"],
+                check=True, text=True,
+            )
+            claude_mcp = target / ".mcp.json"
+            pi_mcp = target / ".pi" / "mcp.json"
+            self.assertTrue(claude_mcp.is_file(),
+                            "claude must keep rendering the root .mcp.json")
+            self.assertTrue(pi_mcp.is_file(),
+                            "pi must render .pi/mcp.json alongside claude")
+            self.assertIn("my-server", json.loads(pi_mcp.read_text())["mcpServers"])
+
     # --- Omp flag and help tests ---
 
     def test_sync_agent_omp_flag_accepted(self):

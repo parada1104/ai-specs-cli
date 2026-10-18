@@ -867,16 +867,40 @@ class TopologyWizardNodeTests(unittest.TestCase):
         cls.mod = _load()
         cls.tw = cls.mod._load_toml_write()
 
-    def test_topology_merged_into_configured_when_worktree_flow_enabled(self):
+    def test_topology_renders_as_project_field_not_recipe_config(self):
         text = self.mod._render_manifest(
             self.tw,
             "demo",
             ["claude"],
             [{"id": "worktree-flow", "version": "1.3.0"}],
-            configured={"worktree-flow": {"repo_topology": "standalone"}},
+            configured={"worktree-flow": {"gate_mode": "always"}},
+            topology="standalone",
         )
-        self.assertIn("[recipes.worktree-flow.config]", text)
-        self.assertIn('repo_topology = "standalone"', text)
+        data = tomllib.loads(text)
+        self.assertEqual(data["project"]["repo_topology"], "standalone")
+        self.assertEqual(data["recipes"]["worktree-flow"]["config"], {"gate_mode": "always"})
+
+    def test_recipe_config_never_owns_repo_topology(self):
+        """A legacy caller passing repo_topology in recipe config must not write it there."""
+        text = self.mod._render_manifest(
+            self.tw,
+            "demo",
+            ["claude"],
+            [{"id": "worktree-flow", "version": "1.3.0"}],
+            configured={"worktree-flow": {"repo_topology": "standalone", "gate_mode": "ask"}},
+            topology="monorepo-submodules",
+        )
+        data = tomllib.loads(text)
+        self.assertEqual(data["project"]["repo_topology"], "monorepo-submodules")
+        self.assertEqual(data["recipes"]["worktree-flow"]["config"], {"gate_mode": "ask"})
+
+    def test_wizard_schema_excludes_project_owned_topology(self):
+        recipe_read = self.mod._load_sibling("recipe-read")
+        recipe = recipe_read.read_recipe(ROOT / "catalog" / "recipes", "worktree-flow")
+        filtered = self.mod._wizard_recipe(recipe)
+        self.assertIn("repo_topology", recipe.config_schema.fields)
+        self.assertNotIn("repo_topology", filtered.config_schema.fields)
+        self.assertIn("gate_mode", filtered.config_schema.fields)
 
     def test_run_wizard_asks_topology_and_writes_override(self):
         """Mock questionary select after project name; write repo_topology when wf enabled."""
@@ -970,7 +994,12 @@ class TopologyWizardNodeTests(unittest.TestCase):
             )
         self.assertEqual(rc, 0)
         self.assertTrue(out.is_file())
-        self.assertIn('repo_topology = "standalone"', out.read_text())
+        data = tomllib.loads(out.read_text())
+        self.assertEqual(data["project"]["repo_topology"], "standalone")
+        self.assertNotIn(
+            "repo_topology",
+            (data["recipes"]["worktree-flow"].get("config") or {}),
+        )
 
 
 
@@ -1070,8 +1099,12 @@ class TopologyWizardNodeTests(unittest.TestCase):
             )
         self.assertEqual(rc, 0)
         staged = out.read_text()
-        self.assertIn('repo_topology = "standalone"', staged)
-        self.assertNotIn('repo_topology = "monorepo-submodules"', staged)
+        data = tomllib.loads(staged)
+        self.assertEqual(data["project"]["repo_topology"], "standalone")
+        self.assertNotIn(
+            "repo_topology",
+            (data["recipes"]["worktree-flow"].get("config") or {}),
+        )
 
 
 if __name__ == "__main__":

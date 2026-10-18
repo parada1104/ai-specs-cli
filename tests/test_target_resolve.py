@@ -153,6 +153,22 @@ class TargetResolveTests(unittest.TestCase):
             self.assertEqual(plan["topology"]["resolved"], "monorepo-apps")
             self.assertEqual(plan["topology"]["via"], "config")
 
+    def test_plan_topology_prefers_project_field_over_legacy_recipe(self):
+        """T4 — `[project].repo_topology` owns the value; the recipe key is legacy."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ai-specs").mkdir()
+            (root / "ai-specs" / "ai-specs.toml").write_text(
+                "[project]\nname='apps'\nsubrepos=[]\nrepo_topology = 'monorepo-apps'\n\n"
+                "[agents]\nenabled=['claude']\n"
+                "[recipes.worktree-flow]\nenabled = true\n"
+                "[recipes.worktree-flow.config]\nrepo_topology = 'standalone'\n"
+            )
+            plan = self.mod.resolve_target_plan(root)
+            self.assertEqual(plan["topology"]["resolved"], "monorepo-apps")
+            self.assertEqual(plan["topology"]["via"], "config")
+            self.assertEqual(plan["topology"]["source"], "project")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -78,6 +78,7 @@ class ManifestContractDocsTests(unittest.TestCase):
             [
                 "| `[project]` | `name` | optional, default `\"\"` |",
                 "| `[project]` | `subrepos` | optional, default `[]`, validated as root-relative target paths |",
+                "| `[project]` | `repo_topology` | optional, default `auto`; `auto` / `standalone` / `monorepo-apps` / `monorepo-submodules` |",
                 "| `[agents]` | `enabled` | optional, default `[]` |",
                 "| `[[deps]]` | `id`, `source` | only required minimum fields |",
                 "| `[[deps]]` | `path`, `scope`, `auto_invoke`, `license`, `vendor_attribution`, `version` | optional passthrough fields consumed by vendoring/rendering |",
@@ -175,6 +176,7 @@ class ManifestContractDocsTests(unittest.TestCase):
                 "#   [recipes.<id>]  optional — named bundles of skills, commands, templates,",
                 "# name is optional; default: \"\"",
                 "# subrepos is optional; default: []. Accepts root-relative paths only.",
+                '# repo_topology is optional; default: "auto".',
                 "# enabled is optional; default: []. Only these agents receive configs.",
                 "#   id                  (req) target directory under skills/",
                 "#   source              (req) git URL (anything `git clone` accepts)",

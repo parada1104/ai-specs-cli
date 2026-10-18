@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import io
 import json
@@ -105,6 +106,35 @@ class RecipeMaterializeTests(unittest.TestCase):
         self.assertTrue(skill_dir.is_dir())
         self.assertTrue((skill_dir / "SKILL.md").is_file())
 
+    def test_tag_conflicts_stay_advisory_and_keep_todays_text(self):
+        # The bridge only changes who grades tag conflicts; the call site keeps
+        # its warning text and never lets an advisory conflict change the exit
+        # code. Pin both by grading a warning and a fatal through materialize.
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        tag_conflict = self.mod._load_conflict().TagConflict
+        conflicts = [
+            tag_conflict(tag="vcs", recipes={"b", "a"}, severity="warning"),
+            tag_conflict(tag="flow", recipes={"a", "b"}, severity="fatal"),
+        ]
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured), mock.patch.object(
+            self.mod, "check_tag_conflicts", return_value=conflicts
+        ):
+            code = self.mod.materialize_recipes(root, _home())
+        self.assertEqual(code, 0)
+        stderr = captured.getvalue()
+        self.assertIn(
+            "tag overlap: recipes a, b share tag 'vcs' (same capability category).",
+            stderr,
+        )
+        self.assertIn(
+            "tag conflict: recipes a, b share tag 'flow' and declare an explicit "
+            "conflicts_with. Review whether both should be enabled.",
+            stderr,
+        )
+
     def test_materializes_command(self):
         root = self._make_project(
             '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
@@ -194,6 +224,37 @@ class RecipeMaterializeTests(unittest.TestCase):
     def test_no_recipes_section_succeeds(self):
         root = self._make_project("")
         self.assertEqual(self.mod.materialize_recipes(root, _home()), 0)
+
+    # --- ai_specs_home forwarding regression --------------------------------
+
+    def _assert_home_forwarded(self, root: Path) -> None:
+        out = root / "resolved.json"
+        explicit_home = _home()
+        # The explicit home must not be the module default so a forwarded value
+        # is distinguishable from an implicit __file__-relative resolution.
+        default_home = Path(self.mod.__file__).resolve().parents[2]
+        self.assertNotEqual(explicit_home, default_home)
+        with mock.patch.object(
+            self.mod, "build_resolved_config", wraps=self.mod.build_resolved_config
+        ) as spy:
+            self.assertEqual(
+                self.mod.materialize_recipes(
+                    root, explicit_home, resolved_config_out=out
+                ),
+                0,
+            )
+        spy.assert_called_once()
+        self.assertEqual(spy.call_args.kwargs.get("ai_specs_home"), explicit_home)
+
+    def test_materialize_forwards_ai_specs_home_when_no_recipes_enabled(self):
+        root = self._make_project("")
+        self._assert_home_forwarded(root)
+
+    def test_materialize_forwards_ai_specs_home_when_recipes_enabled(self):
+        root = self._make_project(
+            '[recipes.test-fixture]\nenabled = true\nversion = "1.0.0"\n'
+        )
+        self._assert_home_forwarded(root)
 
     def test_recipe_does_not_overwrite_user_local_skill(self):
         root = self._make_project(
@@ -848,7 +909,7 @@ class ResolvedConfigContextTests(unittest.TestCase):
     def setUpClass(cls):
         cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_ctx")
 
-    def _project(self, *, topology: str | None = None) -> Path:
+    def _project(self, *, topology: str | None = None, project_topology: str | None = None) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
@@ -856,7 +917,10 @@ class ResolvedConfigContextTests(unittest.TestCase):
         ai_specs.mkdir()
         (ai_specs / "skills").mkdir()
         (ai_specs / "commands").mkdir()
-        text = "[project]\nname='ctx'\n\n[agents]\nenabled=['claude']\n"
+        text = "[project]\nname='ctx'\n"
+        if project_topology is not None:
+            text += f"repo_topology = '{project_topology}'\n"
+        text += "\n[agents]\nenabled=['claude']\n"
         if topology is not None:
             text += (
                 "[recipes.worktree-flow]\nenabled = true\n"
@@ -890,6 +954,29 @@ class ResolvedConfigContextTests(unittest.TestCase):
         data = json.loads(out.read_text())
         self.assertEqual(data["project_root"], str(root.resolve()))
         self.assertIn("topology", data)
+
+    def test_project_field_wins_in_resolved_config(self):
+        root = self._project(topology="standalone", project_topology="monorepo-apps")
+        out = root / "resolved.json"
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT, resolved_config_out=out), 0)
+        data = json.loads(out.read_text())
+        self.assertEqual(data["topology"]["resolved"], "monorepo-apps")
+        self.assertEqual(data["topology"]["configured"], "monorepo-apps")
+        self.assertEqual(data["topology"]["source"], "project")
+
+    def test_stamps_project_topology_into_gate_and_cleanup(self):
+        root = self._project(topology="standalone", project_topology="monorepo-apps")
+        self.assertEqual(self.mod.materialize_recipes(root, ROOT), 0)
+        hook = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "hooks"
+            / "worktree-gate.sh"
+        )
+        self.assertIn('stamped_repo_topology="monorepo-apps"', hook.read_text())
+        cleanup = (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "overrides" / "bin"
+            / "worktree-cleanup.sh"
+        )
+        self.assertIn('stamped_repo_topology="monorepo-apps"', cleanup.read_text())
 
 
 class RuntimeHookMaterializeTests(unittest.TestCase):

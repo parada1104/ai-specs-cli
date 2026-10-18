@@ -41,6 +41,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# Name of the explicit verified-binary override the launcher and every host
+# honors (debugging/tests); it is resolution step 1, before the cache.
+GATE_BIN_ENV = "WORKTREE_GATE_BIN"
+
 # Version-keyed cache root beneath the AI_SPECS_HOME cache.
 CACHE_REL = Path("cache") / "bin" / "worktree-gate"
 
@@ -197,6 +201,66 @@ def _sha256_of(path: Path) -> str:
 def verification_record_path(binary_path: Path) -> Path:
     """Sidecar carrying the latest acquisition verification receipt."""
     return binary_path.with_name(binary_path.name + VERIFICATION_SUFFIX)
+
+
+def resolve_verified_binary(ai_specs_home: Path | None = None) -> Path | None:
+    """Executable gate binary to run, or None when no verified one exists.
+
+    One resolution authority for every host that executes the gate (the binding
+    bridge, the doctor ledger check), so the cache layout is never re-derived:
+
+    1. ``$WORKTREE_GATE_BIN`` when it is executable — resolution step 1 of the
+       launcher, the documented debugging/pinning escape that must never
+       silently fall through to a different binary.
+    2. the version-keyed cache candidate, accepted only with its ``.verified``
+       acquisition receipt AND — when the committed SHA256SUMS trust root is
+       readable — a sha256 that still matches it, so a stale sidecar can never
+       bless bytes that were replaced after acquisition (an outdated cache
+       binary fail-opens on new flags instead of being refreshed by acquire).
+       An unreadable or undecodable trust root fails closed: the candidate is
+       not verified.
+
+    Never raises and never warns: an unusable candidate is simply not a usable
+    binary, and each caller decides its own fail-open posture.
+    """
+    override = os.environ.get(GATE_BIN_ENV, "")
+    if override:
+        candidate = Path(override)
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+        return None
+    home = ai_specs_home if ai_specs_home is not None else _ai_specs_home()
+    try:
+        goos, goarch = detect_platform()
+        candidate = cache_bin_path(home, goos=goos, goarch=goarch)
+    except Exception:  # noqa: BLE001 - an unresolvable platform is "no binary"
+        return None
+    if (
+        candidate.is_file()
+        and os.access(candidate, os.X_OK)
+        and verification_record_path(candidate).is_file()
+    ):
+        # The receipt is a point-in-time verdict; re-check the bytes against
+        # the committed trust root when one exists. No committed digest (no
+        # SHA256SUMS in this home) keeps the historical receipt acceptance.
+        try:
+            expected = load_expected_digests(home).get(
+                f"worktree-gate-{goos}-{goarch}"
+            )
+        except (OSError, UnicodeDecodeError):
+            # An unreadable or undecodable trust root is not evidence; fail
+            # closed instead of trusting the receipt (the doctor ledger check
+            # calls this resolver unguarded and must degrade, not crash).
+            return None
+        if expected is not None:
+            try:
+                observed = _sha256_of(candidate)
+            except OSError:
+                return None
+            if observed != expected:
+                return None
+        return candidate
+    return None
 
 
 def _write_verification_record(binary_path: Path, version: str, digest: str) -> None:

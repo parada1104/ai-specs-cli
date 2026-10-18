@@ -671,6 +671,103 @@ class ResolveSubrepoTests(unittest.TestCase):
         self.assertIn("path", msg)
 
 
+class ProjectTopologyOwnershipTests(unittest.TestCase):
+    """T4 — `[project].repo_topology` is CLI-owned; the recipe key is legacy."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.util = _load_util()
+
+    def _manifest(
+        self,
+        *,
+        project_topology: str | None = None,
+        recipe_topology: str | None = None,
+        enabled: bool = True,
+    ) -> str:
+        text = "[project]\nname = 'topo'\n"
+        if project_topology is not None:
+            text += f'repo_topology = "{project_topology}"\n'
+        text += "\n[agents]\nenabled = ['claude']\n\n"
+        text += f"[recipes.worktree-flow]\nenabled = {'true' if enabled else 'false'}\n"
+        if recipe_topology is not None:
+            text += (
+                "[recipes.worktree-flow.config]\n"
+                f'repo_topology = "{recipe_topology}"\n'
+            )
+        return text
+
+    def _root(self, text: str) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "prj"
+        (root / "ai-specs").mkdir(parents=True)
+        (root / "ai-specs" / "ai-specs.toml").write_text(text, encoding="utf-8")
+        return root
+
+    def test_project_field_wins_over_legacy_recipe_alias(self):
+        root = self._root(
+            self._manifest(project_topology="monorepo-apps", recipe_topology="standalone")
+        )
+        topo = self.util.project_repo_topology(root)
+        self.assertEqual(topo.resolved, "monorepo-apps")
+        self.assertEqual(topo.configured, "monorepo-apps")
+        self.assertEqual(topo.via, "config")
+        self.assertEqual(topo.source, "project")
+        self.assertIsNone(topo.deprecation)
+
+    def test_legacy_recipe_alias_still_resolves_with_deprecation(self):
+        root = self._root(self._manifest(recipe_topology="monorepo-apps"))
+        topo = self.util.project_repo_topology(root)
+        self.assertEqual(topo.resolved, "monorepo-apps")
+        self.assertEqual(topo.configured, "monorepo-apps")
+        self.assertEqual(topo.via, "config")
+        self.assertEqual(topo.source, "legacy-recipe")
+        self.assertIn("[project].repo_topology", topo.deprecation)
+        self.assertIn("deprecated", topo.deprecation)
+
+    def test_project_field_survives_disabled_worktree_flow(self):
+        root = self._root(
+            self._manifest(
+                project_topology="standalone",
+                recipe_topology="monorepo-apps",
+                enabled=False,
+            )
+        )
+        topo = self.util.project_repo_topology(root)
+        self.assertEqual(topo.resolved, "standalone")
+        self.assertEqual(topo.source, "project")
+
+    def test_unconfigured_defaults_to_auto_without_deprecation(self):
+        root = self._root(self._manifest())
+        topo = self.util.project_repo_topology(root)
+        self.assertEqual(topo.configured, "auto")
+        self.assertEqual(topo.source, "default")
+        self.assertIsNone(topo.deprecation)
+
+    def test_accessor_accepts_preloaded_manifest_data(self):
+        import tomllib
+
+        root = self._root(self._manifest(project_topology="monorepo-apps"))
+        data = tomllib.loads((root / "ai-specs" / "ai-specs.toml").read_text())
+        topo = self.util.project_repo_topology(root, data)
+        self.assertEqual(topo.resolved, "monorepo-apps")
+        self.assertEqual(topo.source, "project")
+
+    def test_project_owned_recipe_config_overrides_legacy_alias_in_place(self):
+        root = self._root(
+            self._manifest(project_topology="monorepo-apps", recipe_topology="standalone")
+        )
+        merged = self.util.project_owned_recipe_config(
+            root, None, "worktree-flow", {"repo_topology": "standalone", "gate_mode": "ask"}
+        )
+        self.assertEqual(merged["repo_topology"], "monorepo-apps")
+        self.assertEqual(merged["gate_mode"], "ask")
+        other = self.util.project_owned_recipe_config(
+            root, None, "other-recipe", {"repo_topology": "standalone"}
+        )
+        self.assertEqual(other["repo_topology"], "standalone")
+
 
 if __name__ == "__main__":
     unittest.main()

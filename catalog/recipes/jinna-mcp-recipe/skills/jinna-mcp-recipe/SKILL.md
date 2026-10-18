@@ -48,6 +48,15 @@ Use the existing ai-specs environment flow and user-owned ignored environment fi
 
 Use the recipe-provided local `jinna mcp` server. The official OpenProject remote `/mcp` endpoint is a separate operator-selected option with its own server configuration and authentication. Do not automatically proxy, switch, or replay writes between these protocols.
 
+## Runtime boundary
+
+`ai-specs sync` and `ai-specs doctor` are local materialization checks; they do not contact OpenProject. Live diagnostics are opt-in commands:
+
+- `jinna health`
+- `jinna whoami`
+
+Those commands make a live request to the configured service, and no passive command runs them automatically. The recipe's 30-second MCP timeout bounds local `jinna mcp` startup and transport, not the remote OpenProject API SLA. Keep slow or unavailable self-hosted service behavior visible: do not hide it with automatic retries, proxy fallback, endpoint switching, or write replay.
+
 ## Safe troubleshooting
 
 - Missing provider: configure interactively and accept the allowlisted GitHub Release plan, or follow the printed manual URL.

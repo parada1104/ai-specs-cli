@@ -55,8 +55,8 @@ Add configuration under `[recipes.trello-mcp-workflow.config]` in `ai-specs/ai-s
 | `board_id` | Yes | — | Trello board ID for the project. |
 | `default_list` | No | `In Progress` | List name where new cards are created. |
 | `epic_list` | No | `Epic` | List name where epic-type cards are placed. |
-| `gate_mode` | No | `warn` | Legacy vocabulary: `off` / `warn` / `always`. Consulted only when `ledger_mode` is unset. |
-| `ledger_mode` | No | `warn` | Ledger mode: `always` / `ask` / `warn`. `always` blocks missing or conflicted state; `ask` prompts per checkpoint (opt-out is checkpoint-scoped); `warn` reports on stderr and never blocks. Overrides `gate_mode`. |
+| `gate_mode` | No | `warn` | **Deprecated compatibility only.** Legacy `off` / `warn` / `always`; the Trello tracker is advisory and never blocks source changes. Consulted only when `ledger_mode` is unset; prefer `ledger_mode`. |
+| `ledger_mode` | No | `warn` | **Canonical** Tracker mode: `always` / `ask` / `warn`. `always` is the strictest verdict (the Plan Build `work-start` checkpoint may still block on it); `ask` prompts per checkpoint (opt-out is lifecycle-scoped); `warn` reports on stderr. Tracker checkpoints never block: a `block` / `ask` / `needs-item` verdict is reported and the host continues. Overrides `gate_mode`. |
 | `reconcile` | No | — | Declarative remote-reconciliation mapping (`scope_field`, `max_age_seconds`, `expectations`). The recipe schema validates the declared shape and sync carries the project's block through unchanged. The Go gate reads only the project manifest, so an unbound block means every comparison is `unconfigured`, never a default. |
 
 ### Example
@@ -115,11 +115,11 @@ Every active OpenSpec change must carry a `## Tracker` section in `proposal.md`
 ```
 
 The `## Tracker` section (and the `tracker.none` exemption) is presentation, not
-the grader. The ledger is the only authority: the `tracker-card-gate` hook sends
-`apply-start` / `pr-review` to the Go verdict, and `doctor` renders its finding.
-The only documented exemption is `openspec/changes/<slug>/tracker.none`
-(conceptual name `tracker:none`) with a one-line reason — logged and rare.
-Archives are grandfathered.
+the grader. The ledger is the only authority: the `tracker-card-gate` hook reports
+the `apply-start` / `pr-review` Go verdict (advisory, never blocking), and `doctor`
+renders its finding. The only documented exemption is
+`openspec/changes/<slug>/tracker.none` (conceptual name `tracker:none`) with a
+one-line reason — logged and rare. Archives are grandfathered.
 
 The global contract is also declared in `openspec/config.yaml` under `tracking:`
 (soft guidance for SDD agents). Operational `ledger_mode` / `gate_mode` /
@@ -131,12 +131,21 @@ The ledger is the only grader. The five checkpoints (`work-start`, `apply-start`
 `pr-review`, `pre-merge`, `archive-close`) all reach the same verified Go
 `--ledger` predicate; this recipe only supplies the mode and the hooks.
 
+**Every Tracker verdict is advisory.** The Trello-recipe hooks (path
+`apply-start`, shell `pr-review`) and the direct lifecycle host (`pre-merge`,
+`archive-close`) report a Go `block` / `ask` / `needs-item` on stderr and still
+exit `0` — they never block a source change or a lifecycle boundary. Only the
+Plan Build `work-start` host keeps its own blocking authorization, separately.
+A Tracker non-zero verdict is informational; do not stop unrelated source work
+on it.
+
 ### Tracker lifecycle host (`pre-merge`, `archive-close`)
 
 The `pre-merge` and `archive-close` checkpoints are Plan Build-independent: the
-shell host grades them with **no `openspec/` tree**. Run its direct host mode at
-the lifecycle boundary — it is the generic command a future Jira/Linear recipe
-reuses unchanged:
+shell host grades them with **no `openspec/` tree**. The host is also advisory —
+it reports every verdict and exits `0`, so a lifecycle check never blocks merge
+or close. Run its direct host mode at the lifecycle boundary — it is the generic
+command a future Jira/Linear recipe reuses unchanged:
 
 ```bash
 GATE=ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh
@@ -161,14 +170,16 @@ grade.
 
 | Mode | Behavior |
 |------|----------|
-| `off` (`gate_mode`) | Ledger checkpoints skip (doctor still reports the witness). |
+| `off` (`gate_mode`) | Tracker checkpoints skip (doctor still reports the witness). |
 | `warn` | stderr verdict, never blocks (dogfood default). |
-| `ask` | Prompt at each checkpoint; an explicit opt-out allows that checkpoint only. |
-| `always` | Block production writes and `gh pr create` on missing or conflicted state. |
+| `ask` | Prompt at each checkpoint; an explicit opt-out is lifecycle-scoped. |
+| `always` | Strictest verdict; the Plan Build `work-start` checkpoint may still block on it. Tracker checkpoints report only. |
 
-`ledger_mode` (enum `always|ask|warn`, default `warn`) wins whenever it is set.
-When it is unset the legacy `gate_mode` maps forward: `off`→skip, `warn`→`warn`,
-`always`→`always`. The config section is the **witness-bound** recipe
+`ledger_mode` (enum `always|ask|warn`, default `warn`) is canonical and wins
+whenever it is set. When it is unset the deprecated `gate_mode` maps forward for
+compatibility: `off`→skip, `warn`→`warn`, `always`→`always`. Neither value makes
+a Tracker checkpoint block: the strictest Tracker behavior is still a reported
+verdict, and `off` is not a `ledger_mode` value. The config section is the **witness-bound** recipe
 (`recipes.<witness recipe_id>.config`), so a non-legacy provider recipe drives the
 checkpoint; the `trello-mcp-workflow` literal is only the bridge's fallback when no
 witness resolves. The worktree gate mode is never read. One-shot env override:
@@ -266,7 +277,8 @@ vocabulary (board, lists, labels, card type) stays in `[config.*]` and out of th
 ledger core item fields and the `## Tracker` contract.
 
 Dual hooks share one script: `tracker-card-gate` (Edit/Write/…) and
-`tracker-card-gate-shell` (Bash/Shell/…).
+`tracker-card-gate-shell` (Bash/Shell/…). Both are declared `blocking = false`:
+their metadata is advisory, matching the host's advisory verdicts.
 
 ## Residual platform gaps
 

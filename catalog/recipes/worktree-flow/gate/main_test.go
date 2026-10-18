@@ -347,6 +347,143 @@ func TestRunCwdFidelityMatrix(t *testing.T) {
 	})
 }
 
+// centralRootProof is the read-only proof `--resolve-central-root` emits: the
+// absolute superproject root and the registered submodule path, or nothing at
+// all when the topology is standalone, uninitialized or ambiguous. Mirroring
+// the shell proof it replaces (plan-build-gate.sh resolve_central_root), the
+// submodule field carries the registered relative path used in diagnostics.
+type centralRootProof struct {
+	CentralRoot string `json:"central_root"`
+	Submodule   string `json:"submodule"`
+}
+
+func decodeCentralRootProof(t *testing.T, stdout string) centralRootProof {
+	t.Helper()
+	var proof centralRootProof
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &proof); err != nil {
+		t.Fatalf("--resolve-central-root stdout is not one JSON object: %v\nstdout: %q", err, stdout)
+	}
+	return proof
+}
+
+// requireNoCentralRootProof pins the negative contract: no proof means no
+// central_root on stdout. An empty or non-JSON diagnostic is fine; a JSON
+// object carrying a central_root is not.
+func requireNoCentralRootProof(t *testing.T, stdout string) {
+	t.Helper()
+	trimmed := strings.TrimSpace(stdout)
+	if trimmed == "" {
+		return
+	}
+	var proof centralRootProof
+	if json.Unmarshal([]byte(trimmed), &proof) == nil && proof.CentralRoot != "" {
+		t.Fatalf("unproven topology emitted a proof: central_root=%q submodule=%q", proof.CentralRoot, proof.Submodule)
+	}
+}
+
+// TestResolveCentralRootProvenSubmodule pins the positive read-only query: run
+// from a proven initialized submodule, it prints one JSON object with the
+// absolute central root and the registered submodule path and exits 0.
+func TestResolveCentralRootProvenSubmodule(t *testing.T) {
+	super := makeSuper(t, makeRemoteModule(t))
+	withCwd(t, filepath.Join(super, "apps", "api"))
+
+	code, stdout, stderr := runCLI(t, "--resolve-central-root")
+	if code != 0 {
+		t.Fatalf("--resolve-central-root exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	proof := decodeCentralRootProof(t, stdout)
+	if !filepath.IsAbs(proof.CentralRoot) {
+		t.Fatalf("central_root = %q, want an absolute path", proof.CentralRoot)
+	}
+	if got, want := RealPath(proof.CentralRoot), RealPath(super); got != want {
+		t.Fatalf("central_root = %q, want %q", got, want)
+	}
+	if proof.Submodule != "apps/api" {
+		t.Fatalf("submodule = %q, want %q", proof.Submodule, "apps/api")
+	}
+}
+
+// TestResolveCentralRootLinkedSubmoduleWorktree pins the production path: Plan
+// Build runs from a linked worktree of the submodule, where the worktree path
+// is not the registered module path, so only the absorbed .git/modules layout
+// proves the relationship.
+func TestResolveCentralRootLinkedSubmoduleWorktree(t *testing.T) {
+	super := makeSuper(t, makeRemoteModule(t))
+	sub := filepath.Join(super, "apps", "api")
+	linked := filepath.Join(t.TempDir(), "linked")
+	gitTest(t, sub, "worktree", "add", "-q", "-b", "feat", linked, "HEAD")
+	if got := RealPath(git(linked, "rev-parse", "--show-toplevel")); got != RealPath(linked) {
+		t.Fatalf("linked worktree top-level = %q, want %q", got, RealPath(linked))
+	}
+
+	withCwd(t, linked)
+	code, stdout, stderr := runCLI(t, "--resolve-central-root")
+	if code != 0 {
+		t.Fatalf("--resolve-central-root exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	proof := decodeCentralRootProof(t, stdout)
+	if got, want := RealPath(proof.CentralRoot), RealPath(super); got != want {
+		t.Fatalf("central_root = %q, want %q", got, want)
+	}
+	if proof.Submodule != "apps/api" {
+		t.Fatalf("submodule = %q, want %q", proof.Submodule, "apps/api")
+	}
+}
+
+// TestResolveCentralRootStandaloneFails pins the fail-closed negative: a
+// standalone repository proves nothing, so the query must not fabricate a
+// central root and must exit nonzero.
+func TestResolveCentralRootStandaloneFails(t *testing.T) {
+	withCwd(t, gitFixture(t, "main"))
+	code, stdout, stderr := runCLI(t, "--resolve-central-root")
+	if code == 0 {
+		t.Fatalf("standalone --resolve-central-root exit = 0, want nonzero; stdout: %q stderr: %q", stdout, stderr)
+	}
+	requireNoCentralRootProof(t, stdout)
+}
+
+// TestResolveCentralRootUninitializedSubmoduleFails pins the fail-closed
+// negative for an uninitialized registration: deinit leaves .gitmodules in
+// place but no backed module, so the relation is unproven.
+func TestResolveCentralRootUninitializedSubmoduleFails(t *testing.T) {
+	super := makeSuper(t, makeRemoteModule(t))
+	gitTest(t, super, "submodule", "deinit", "-f", "--", "apps/api")
+
+	withCwd(t, super)
+	code, stdout, stderr := runCLI(t, "--resolve-central-root")
+	if code == 0 {
+		t.Fatalf("uninitialized submodule exit = 0, want nonzero; stdout: %q stderr: %q", stdout, stderr)
+	}
+	requireNoCentralRootProof(t, stdout)
+}
+
+// TestResolveCentralRootAmbiguousRegistrationFails pins the fail-closed
+// negative for nested/duplicate registrations (worktree-gate-legacy.sh:431-434):
+// an overlapping pair makes the whole set unproven, so the query must not pick
+// either candidate.
+func TestResolveCentralRootAmbiguousRegistrationFails(t *testing.T) {
+	super := makeSuper(t, makeRemoteModule(t))
+	sub := filepath.Join(super, "apps", "api")
+
+	gm := filepath.Join(super, ".gitmodules")
+	f, err := os.OpenFile(gm, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("\n[submodule.duplicate]\n\tpath = apps/api\n[submodule.nested]\n\tpath = apps/api/nested\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	withCwd(t, sub)
+	code, stdout, stderr := runCLI(t, "--resolve-central-root")
+	if code == 0 {
+		t.Fatalf("ambiguous topology exit = 0, want nonzero; stdout: %q stderr: %q", stdout, stderr)
+	}
+	requireNoCentralRootProof(t, stdout)
+}
+
 func TestExplainRunCommandCwdSource(t *testing.T) {
 	primary := gitFixture(t, "main")
 	wt := filepath.Join(t.TempDir(), "wt")

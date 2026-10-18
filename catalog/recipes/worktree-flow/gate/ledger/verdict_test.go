@@ -110,9 +110,9 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 					Store: Store{V: StoreVersion}, Now: vtNow}
 			},
 			want: map[string]vWant{
-				ModeAlways: {DecisionBlock, ReasonNeedsItem, 2, SeverityOK, true},
-				ModeAsk:    {DecisionAsk, ReasonNeedsItem, 0, SeverityOK, true},
-				ModeWarn:   {DecisionAllow, ReasonNeedsItem, 0, SeverityOK, true},
+				ModeAlways: {DecisionBlock, ReasonNeedsItem, 2, SeverityWarn, true},
+				ModeAsk:    {DecisionAsk, ReasonNeedsItem, 0, SeverityWarn, true},
+				ModeWarn:   {DecisionAllow, ReasonNeedsItem, 0, SeverityWarn, true},
 			},
 		},
 		{
@@ -269,6 +269,7 @@ func TestGradeAlwaysBlocksPreMergeIdentityUnavailable(t *testing.T) {
 func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
 	var store Store
 	closed := store.OpenItem(ident(""), "trello-mcp-workflow", t0)
+	store.Items[0].ItemID = "card-1"
 	if err := store.CloseItem(closed.ID, Decision{At: "2026-09-13T13:00:00Z", Checkpoint: CheckpointArchiveClose}); err != nil {
 		t.Fatal(err)
 	}
@@ -301,24 +302,134 @@ func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
 	if got.Item == nil || got.Item.Status != StatusClosed {
 		t.Fatalf("reported close grade item = %+v, want the closed row", got.Item)
 	}
+
+	// An explicit report only makes a closed row selectable, never compliant: a
+	// local-only closed row still reports the missing provider item.
+	localOnly := store
+	localOnly.Items[0].ItemID = ""
+	unlinked, ok := localOnly.LatestClosed(availIdentity().Key)
+	if !ok {
+		t.Fatal("LatestClosed found no closed row")
+	}
+	input.ReportItem = &unlinked
+	if got := Grade(input); got.Decision != DecisionBlock || got.Reason != ReasonNeedsItem {
+		t.Fatalf("local-only reported close grade = %q/%q, want block/needs-item", got.Decision, got.Reason)
+	}
 }
 
-// TestGradeCheckpointScopedOptOutD19 pins D19: an ask opt-out allows only the
-// checkpoint that was answered; the next checkpoint asks again.
-func TestGradeCheckpointScopedOptOutD19(t *testing.T) {
-	s := storeWithOpenItem("")
+// TestGradeLegacyCheckpointOptOutStaysCheckpointScoped pins backward
+// compatibility for a record written before lifecycle scoping: a scope-less
+// opt-out still covers only the checkpoint it was answered for.
+func TestGradeLegacyCheckpointOptOutStaysCheckpointScoped(t *testing.T) {
+	s := storeWithOpenItem("local")
 	s.Items[0].Decisions = append(s.Items[0].Decisions,
 		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"})
 	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Store: s,
-		Evidence: Evidence{Remote: "remote"}, Now: vtNow}
+		Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow}
 
 	apply := base
 	apply.Checkpoint = CheckpointApplyStart
-	assertVerdict(t, "apply-start opt-out", Grade(apply), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
+	assertVerdict(t, "apply-start legacy opt-out", Grade(apply), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
 
 	pre := base
 	pre.Checkpoint = CheckpointPreMerge
-	assertVerdict(t, "pre-merge after apply-start opt-out", Grade(pre), vWant{DecisionAsk, ReasonConflict, 0, SeverityWarn, true})
+	assertVerdict(t, "pre-merge after apply-start legacy opt-out", Grade(pre), vWant{DecisionAsk, ReasonConflict, 0, SeverityWarn, true})
+}
+
+// TestGradeLifecycleOptOutSuppressesLaterCheckpoints pins the revised opt-out
+// lifecycle: an explicit ask decline is remembered for the current
+// identity/change, so the later checkpoints do not ask again.
+func TestGradeLifecycleOptOutSuppressesLaterCheckpoints(t *testing.T) {
+	s := storeWithOpenItem("local")
+	s.Items[0].Decisions = append(s.Items[0].Decisions,
+		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointApplyStart, Scope: ScopeLifecycle,
+			Kind: DecisionOptOut, Choice: "continue"})
+	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Store: s,
+		Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow}
+
+	for _, cp := range []string{CheckpointApplyStart, CheckpointPRReview, CheckpointPreMerge, CheckpointArchiveClose} {
+		in := base
+		in.Checkpoint = cp
+		assertVerdict(t, cp+" after lifecycle opt-out", Grade(in), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
+	}
+}
+
+// TestGradeScopedOptOutScopeCompatibility pins the no-item ask path: a legacy
+// scope-less scoped opt-out covers only its own checkpoint, while a
+// lifecycle-scoped one covers the remaining checkpoints of the change.
+func TestGradeScopedOptOutScopeCompatibility(t *testing.T) {
+	key := availIdentity().Key
+	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Now: vtNow}
+
+	legacy := base
+	legacy.Store = Store{V: StoreVersion, OptOuts: []ScopedOptOut{
+		{Key: key, Checkpoint: CheckpointApplyStart, Choice: "continue"}}}
+	legacy.Checkpoint = CheckpointApplyStart
+	assertVerdict(t, "legacy scoped opt-out answers apply-start", Grade(legacy), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
+	laterLegacy := legacy
+	laterLegacy.Checkpoint = CheckpointPreMerge
+	assertVerdict(t, "legacy scoped opt-out does not carry", Grade(laterLegacy), vWant{DecisionAsk, ReasonNeedsItem, 0, SeverityWarn, true})
+
+	lifecycle := base
+	lifecycle.Store = Store{V: StoreVersion, OptOuts: []ScopedOptOut{
+		{Key: key, Checkpoint: CheckpointApplyStart, Scope: ScopeLifecycle, Choice: "continue"}}}
+	later := lifecycle
+	later.Checkpoint = CheckpointPreMerge
+	assertVerdict(t, "lifecycle scoped opt-out carries", Grade(later), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
+}
+
+// TestGradeLocalOnlyRowIsNotCompliant pins the provider-backed contract: an open
+// row with no provider item id is a needs-item outcome under the usual mode
+// posture, never a silent allow.
+func TestGradeLocalOnlyRowIsNotCompliant(t *testing.T) {
+	cases := []struct {
+		name string
+		mode string
+		want vWant
+	}{
+		{"warn reports without blocking", ModeWarn, vWant{DecisionAllow, ReasonNeedsItem, 0, SeverityWarn, true}},
+		{"ask prompts", ModeAsk, vWant{DecisionAsk, ReasonNeedsItem, 0, SeverityWarn, true}},
+		{"always blocks", ModeAlways, vWant{DecisionBlock, ReasonNeedsItem, 2, SeverityWarn, true}},
+	}
+	for _, tc := range cases {
+		got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: tc.mode, Binding: boundBinding(),
+			Identity: availIdentity(), Store: storeWithOpenItem(""), Now: vtNow})
+		assertVerdict(t, tc.name, got, tc.want)
+		if got.Item == nil || got.Item.ItemID != "" {
+			t.Fatalf("%s: verdict must expose the local-only row, got %+v", tc.name, got.Item)
+		}
+	}
+}
+
+// TestGradeRowWithoutProviderIDIsNotCompliant pins the second half of the item
+// contract: a row that names a provider item but records no provider id is not
+// provider-backed either.
+func TestGradeRowWithoutProviderIDIsNotCompliant(t *testing.T) {
+	s := storeWithOpenItem("card-1")
+	s.Items[0].ProviderID = ""
+	got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: ModeAlways, Binding: boundBinding(),
+		Identity: availIdentity(), Store: s, Evidence: consistentEvidence("card-1"), Now: vtNow})
+	assertVerdict(t, "missing provider id", got, vWant{DecisionBlock, ReasonNeedsItem, 2, SeverityWarn, true})
+}
+
+// TestGradeWarnDoctorExposesMissingProviderItem pins that warn stays
+// non-blocking while doctor stops reporting OK: the advisory surface must expose
+// the missing provider-backed requirement instead of hiding it.
+func TestGradeWarnDoctorExposesMissingProviderItem(t *testing.T) {
+	got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: ModeWarn, Binding: boundBinding(),
+		Identity: availIdentity(), Store: storeWithOpenItem(""), Now: vtNow})
+	if got.Decision != DecisionAllow || got.ExitCode() != 0 {
+		t.Fatalf("warn decision = %q (exit %d), want allow/0", got.Decision, got.ExitCode())
+	}
+	if got.Reason != ReasonNeedsItem {
+		t.Fatalf("reason = %q, want %s", got.Reason, ReasonNeedsItem)
+	}
+	if got.Doctor.Severity != SeverityWarn {
+		t.Fatalf("doctor severity = %q, want %q for a missing provider item", got.Doctor.Severity, SeverityWarn)
+	}
+	if !strings.Contains(got.Doctor.Message, "provider item") {
+		t.Fatalf("doctor message = %q, want the missing provider item named", got.Doctor.Message)
+	}
 }
 
 // TestGradeAdjudicatedConflictAllows pins that a persisted human choice resolves

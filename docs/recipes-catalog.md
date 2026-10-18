@@ -70,7 +70,7 @@ never touches the foundational layer.
 | [`playwright-mcp`](#playwright-mcp) | Specific | Exploratory browser automation via `@playwright/mcp` (add-on) | — (augments base) | `playwright` | — (override via `[mcp.playwright]`) |
 | [`jinna-mcp-recipe`](#jinna-mcp-recipe) | Specific | Install and configure the local OpenProject provider | — | `jinna` | OpenProject env references |
 | [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | `artifact_store_default` |
-| [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup (standalone / monorepo-apps / monorepo-submodules) | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `repo_topology`, `gate_mode`, `gate_scope`, `WORKTREE_GATE_PROTECTED` |
+| [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup (standalone / monorepo-apps / monorepo-submodules) | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `repo_topology` (deprecated alias of `[project].repo_topology`), `gate_mode`, `gate_scope`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
 | [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
 | [`bitbucket-pr-flow`](#bitbucket-pr-flow) | Specific | Branch → PR → approval-gated merge (Bitbucket) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
@@ -373,7 +373,7 @@ ones, and never touches the main worktree.
   | `gate_scope` | string | `auto` | Scope policy: `auto` / `superrepo` / `subrepo`; only proven canonical `<superrepo>/openspec/changes/**` planning paths are excepted. |
   | `gate_impl` | string | `auto` | Gate implementation: `auto` / `go` (see "Gate implementation" above). |
   | `WORKTREE_GATE_SCOPE` | string | — | Optional invocation override; invalid values warn and fall back to the stamped scope. |
-  | `repo_topology` | string | `auto` | `auto` / `standalone` / `monorepo-apps` / `monorepo-submodules`. Auto detects initialized submodules; never auto-selects `monorepo-apps`. Shared `<worktrees_dir>/<subrepo>-<slug>` layout under submodules; cleanup enumerates per-module. |
+  | `repo_topology` | string | — | **Deprecated alias.** Topology is declared once in `[project].repo_topology` (`auto` / `standalone` / `monorepo-apps` / `monorepo-submodules`); the project field wins, and a recipe-only value still works for one migration window with a deprecation marker. Auto detects initialized submodules; never auto-selects `monorepo-apps`. Shared `<worktrees_dir>/<subrepo>-<slug>` layout under submodules; cleanup enumerates per-module. |
   | `WORKTREE_GATE_PROTECTED` | string | `main development` | Space-separated branch names where the `worktree-gate` hook blocks Edit/Write in the main worktree. Passed to the rendered hook as the `WORKTREE_GATE_PROTECTED` env var. |
 
 - **Full README:** [`catalog/recipes/worktree-flow/README.md`](../catalog/recipes/worktree-flow/README.md)
@@ -387,6 +387,12 @@ version = "1.6.0"
 integration_branch = "development"
 gate_mode = "always"
 gate_scope = "auto"
+```
+
+Declare topology on the project instead (CLI-owned, independent of worktree-flow):
+
+```toml
+[project]
 repo_topology = "auto"
 ```
 

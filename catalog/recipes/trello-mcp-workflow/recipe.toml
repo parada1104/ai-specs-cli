@@ -94,14 +94,14 @@ required = false
 type = "string"
 default = "warn"
 enum = ["off", "warn", "always"]
-help_text = "Legacy tracker card gate vocabulary: off (skip the ledger checkpoints), warn (report only), or always (block). Only consulted when ledger_mode is unset."
+help_text = "Deprecated compatibility only: the Trello tracker is advisory and never blocks source changes. Legacy off (skip the Tracker checkpoints), warn (report only), or always (strictest verdict). Consulted only when ledger_mode is unset; prefer ledger_mode."
 
 [config.ledger_mode]
 required = false
 type = "string"
 default = "warn"
 enum = ["always", "ask", "warn"]
-help_text = "Tracker ledger mode: always (block missing/conflicted state at the five checkpoints), ask (prompt at each checkpoint; an opt-out covers only that checkpoint), or warn (report on stderr, never block — default). Overrides gate_mode when set; gate_mode off still skips the checkpoints."
+help_text = "Canonical Tracker ledger mode: always (strictest verdict; the Plan Build work-start checkpoint may still block on it), ask (prompt at each checkpoint; an opt-out is lifecycle-scoped), or warn (report on stderr — default). Tracker checkpoints never block source changes: a block/ask/needs-item is reported and the host continues. Overrides gate_mode when set; gate_mode off still skips the Tracker checkpoints."
 
 # Remote reconciliation mapping (ledger remote reconciliation, T2). This is the
 # recipe's Tracker-domain adapter declaration: it maps native config values to
@@ -161,7 +161,7 @@ workflow_rules = [
     "Inspect the active Trello card before resuming work and keep card state in sync with actual progress.",
     "Before apply/production work on a structured change, create or link a Trello card and record it in the ## Tracker section of the change's proposal.md (or tasks.md) — card_id + url. openspec/** writes are never gated — write the link section there first.",
     "On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.",
-    "If the tracker gate warns or blocks, create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down.",
+    "The tracker gate is advisory: a warn/block/ask verdict is a prompt to create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down.",
     "Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare.",
     "Tracker lifecycle checkpoints are Plan Build-independent: grade them with the tracker gate's direct host mode `ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh --root <root> --checkpoint pre-merge|archive-close [slug]`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive.",
     "Provider tracker recipes only map native state through `[config.reconcile]`; they never enable, configure, or implement the ledger, and they never grade items.",
@@ -188,16 +188,16 @@ id = "tracker-card-gate"
 event = "pre-tool-use"
 script = "hooks/tracker-card-gate.sh"
 matcher = "Edit|Write|MultiEdit|NotebookEdit"
-blocking = true
-description = "Grade production edits at the apply-start ledger checkpoint through the verified Go predicate (mode=always blocks); fail open"
+blocking = false
+description = "Advisory: report a production edit's apply-start ledger verdict through the verified Go predicate; a block/ask/needs-item is reported and never blocks source work; fail open"
 
 [[provides.hooks]]
 id = "tracker-card-gate-shell"
 event = "pre-tool-use"
 script = "hooks/tracker-card-gate.sh"
 matcher = "Bash|Shell|Execute|Terminal"
-blocking = true
-description = "Grade gh pr create at the pr-review ledger checkpoint through the verified Go predicate; does not gate shell writes"
+blocking = false
+description = "Advisory: report a `gh pr create` pr-review ledger verdict through the verified Go predicate; never blocks; does not gate shell writes"
 
 [[provides.templates]]
 source = "templates/card-feature.md"
