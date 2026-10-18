@@ -85,6 +85,38 @@ func TestRouteBareInvocationRewritesToHub(t *testing.T) {
 	}
 }
 
+// TestRouteSkillsListIsNativeBeforeTheShim pins the GO-20 U5a subcommand
+// interception: `skills list` resolves native (and only ever that
+// subcommand), while `skills add`, `skills remove`, `skills --help`, the bare
+// `skills` and unknown subcommands still fall through to lib/skills.sh.
+func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
+	cases := []struct {
+		args []string
+		want routeKind
+	}{
+		{[]string{"skills", "list"}, routeSkillsList},
+		{[]string{"skills", "list", "--help"}, routeSkillsList},
+		{[]string{"skills", "list", "."}, routeSkillsList},
+		{[]string{"skills"}, routeShim},
+		{[]string{"skills", "add", "https://example.com/r.git"}, routeShim},
+		{[]string{"skills", "remove", "some-id"}, routeShim},
+		{[]string{"skills", "--help"}, routeShim},
+		{[]string{"skills", "bogus"}, routeShim},
+		{[]string{"skills", "listx"}, routeShim},
+		{[]string{"skills", "-list"}, routeShim},
+	}
+	for _, tc := range cases {
+		r := Route(tc.args)
+		if r.kind != tc.want {
+			t.Errorf("Route(%q) kind = %v, want %v", tc.args, r.kind, tc.want)
+			continue
+		}
+		if tc.want == routeShim && r.script != "skills.sh" {
+			t.Errorf("Route(%q) script = %q, want skills.sh", tc.args, r.script)
+		}
+	}
+}
+
 // TestRunBareInvocationRoutesToHub executes the bare-invocation path
 // end-to-end: Route(nil) rewrites to hub and the NATIVE hub (GO-20 U3a) must
 // report an uninitialized non-TTY target itself: exit 2 with the two frozen

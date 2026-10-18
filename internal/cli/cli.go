@@ -35,6 +35,7 @@ const (
 	routeUpgrade                            // native: `upgrade` legacy install upgrade (card [Go 12])
 	routeHub                                // native: `hub` front door, non-interactive half (GO-20 U3a)
 	routeInit                               // native: `init` classic bootstrap; the wizard delegates to the shim (GO-20 U4a)
+	routeSkillsList                         // native: `skills list`, port of lib/skills-list.sh (GO-20 U5a)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -93,6 +94,14 @@ func Route(args []string) route {
 	if r, ok := native[args[0]]; ok {
 		return r
 	}
+	// `skills list` is native (GO-20 U5a): the subcommand is intercepted HERE,
+	// before the skills shim, so `skills add`, `skills remove`, `skills --help`,
+	// the bare `skills` and unknown subcommands keep lib/skills.sh byte for
+	// byte — the dispatcher's `case list)` (lib/skills.sh:31-33) is what this
+	// replaces, and only for `list`.
+	if len(args) > 1 && args[0] == "skills" && args[1] == "list" {
+		return route{kind: routeSkillsList}
+	}
 	if r, ok := shims[args[0]]; ok {
 		return r
 	}
@@ -145,6 +154,10 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		}, stdin, stdout, stderr)
 	case routeInit:
 		return runInit(args, home, stdin, stdout, stderr, selfPath())
+	case routeSkillsList:
+		// args[0]=skills, args[1]=list: skills.sh shifts the subcommand before
+		// it execs skills-list.sh, so the verb's own loop sees args[2:].
+		return runSkillsList(args[2:], home, stdout, stderr)
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
