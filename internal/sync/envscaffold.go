@@ -503,15 +503,19 @@ func ensureRootEnvrc(projectRoot string) error {
 }
 
 // writeTextFile is target.write_text(..., encoding="utf-8") with the Python
-// open() mode: 0666 & ^umask for a new file, the existing file's mode kept
-// by the truncating open for a rewrite. It is the shared writer for the
-// Python's text writes — the managed .envrc and, since U4d-2, ai-specs.env.
+// open() mode: 0666 & ^umask for a new file, the existing file's mode kept by
+// the truncating open for a rewrite. It writes the files that carry no secrets
+// — the managed .envrc and ai-specs.env.example.
+//
+// It does NOT write ai-specs.env: that file holds the API keys the offer just
+// collected, WriteHarnessEnv creates it 0600 through writeTextFileMode below,
+// and TestWriteHarnessEnvIsOwnerOnly pins the mode (S34, JD-ENV-A-002).
 func writeTextFile(path, text string) error {
 	return writeTextFileMode(path, text, 0o666)
 }
 
 // writeTextFileMode is writeTextFile with an explicit mode, for the one file
-// that holds secrets.
+// that holds secrets: ai-specs.env.
 func writeTextFileMode(path, text string, perm os.FileMode) error {
 	if err := os.WriteFile(path, []byte(text), perm); err != nil {
 		return fmt.Errorf("cannot write %s: %w", path, err)
