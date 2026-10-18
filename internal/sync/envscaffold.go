@@ -1,22 +1,26 @@
 package sync
 
-// Native port of env_scaffold.py's NON-interactive half (Go 20 / U4d-1,
-// S23-S27 of odd/tasks/go-20-u4-init.md): the step `sync` runs — generate
+// Native port of env_scaffold.py (Go 20 / U4d-1 + U4d-2,
+// S23-S33 of odd/tasks/go-20-u4-init.md).
+//
+// U4d-1, the NON-interactive half `sync` runs — generate
 // <root>/ai-specs.env.example, ensure the managed block in <root>/.envrc,
 // warn once per required variable with no value, print "Wrote <path>".
 //
+// U4d-2, the interactive half the init wizard offers (S28-S33): the prompts
+// behind an injected EnvOfferPrompts interface (prompt_env_vars :496), the
+// orchestrator OfferHarnessEnv (:572) with the Python's soft-fail lines, the
+// WriteHarnessEnv merge that never wipes a secret (:277), the three legacy
+// migrations (:386-473) and DirenvAllow (:549). The non-interactive step
+// still never runs `direnv allow` (S26); only the offer does (S29).
+//
 // Ported module surface: main() (env_scaffold.py:644), generate_env_example
 // (:300), ensure_root_envrc (:355), collect_env_vars (:90),
-// _mcp_env_declarations (:118), _format_dotenv (:247), _quote_dotenv (:217),
-// missing_required_values (:266), load_harness_env (:258) and the constants
-// at :12-75.
-//
-// NOT ported, deferred to U4d-2 and named here so the seam is explicit (S27):
-// prompt_env_vars, offer_harness_env, write_env (the merge that never wipes a
-// non-empty secret with a blank answer), the three legacy migrations
-// (migrate_nested_harness_env, migrate_legacy_envrc, migrate_legacy_harness_env)
-// and direnv allow — this step never runs `direnv allow` (S26), the Python
-// main() does not either.
+// collect_env_allowed (:198), _mcp_env_declarations (:118), _format_dotenv
+// (:247), _quote_dotenv (:217), missing_required_values (:266),
+// load_harness_env (:258), write_env (:277), prompt_env_vars (:496),
+// offer_harness_env (:572), the migrations (:386-473), direnv_allow (:549),
+// _is_secret_var/_select_default (:474-495) and the constants at :12-75.
 //
 // The dotenv subset below (UnquoteEnvValue, ParseDotenv, LoadHarnessEnv,
 // HarnessEnvPath, HasManagedBlock and the managed-block constants) is the
@@ -29,13 +33,17 @@ package sync
 // names.
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -184,14 +192,17 @@ func HasManagedBlock(text string) bool {
 }
 
 // mcpEnvDeclaration mirrors one tuple from env_scaffold._mcp_env_declarations
-// (:118): (recipe_id, preset_id, declared) where declared maps each env
-// declaration key to the $VAR it references (only $VAR references, in
-// declaration order). env_allowed is not collected — U4d-1 never consumes it.
+// (:118): (recipe_id, preset_id, declared, allowed) where declared maps each
+// env declaration key to the $VAR it references (only $VAR references, in
+// declaration order) and allowed maps each referenced variable to the preset's
+// env_allowed values (U4d-2 — the offer's select reads it, S30).
 type mcpEnvDeclaration struct {
 	recipeID     string
 	presetID     string
 	declaredKeys []string
 	declared     map[string]string
+	allowedKeys  []string
+	allowed      map[string][]string
 }
 
 // mcpEnvDeclarations mirrors env_scaffold._mcp_env_declarations over the
@@ -242,32 +253,96 @@ func mcpEnvDeclarations(projectRoot, home string) []mcpEnvDeclaration {
 			if len(declared) == 0 {
 				continue
 			}
+			allowed := map[string][]string{}
+			var allowedKeys []string
+			if rawAllowed, ok := preset.config.get("env_allowed"); ok {
+				if allowedObj, isObj := rawAllowed.(*mcpObj); isObj {
+					for _, akey := range allowedObj.keys {
+						variable, referenced := declared[akey]
+						if !referenced {
+							continue
+						}
+						avalue, _ := allowedObj.get(akey)
+						list, isList := avalue.([]any)
+						if !isList {
+							continue
+						}
+						valid := []string{}
+						for _, item := range list {
+							if s, isStr := item.(string); isStr && strings.TrimSpace(s) != "" {
+								valid = append(valid, s)
+							}
+						}
+						if len(valid) == 0 {
+							continue
+						}
+						allowed[variable] = valid
+						allowedKeys = append(allowedKeys, variable)
+					}
+				}
+			}
 			declarations = append(declarations, mcpEnvDeclaration{
 				recipeID:     recipe.ID,
 				presetID:     preset.id,
 				declaredKeys: declaredKeys,
 				declared:     declared,
+				allowedKeys:  allowedKeys,
+				allowed:      allowed,
 			})
 		}
 	}
 	return declarations
 }
 
-// collectEnvVars mirrors env_scaffold.collect_env_vars (:90): {VAR_NAME:
-// purpose}, first declaration wins for the purpose text.
-func collectEnvVars(projectRoot, home string) map[string]string {
-	collected := map[string]string{}
+// collectEnvVarsInOrder mirrors collect_env_vars' dict semantics: position
+// from the FIRST declaration, purpose text updated in place by later ones
+// (U4d-2 — prompt_env_vars' banner iterates this order, S30).
+type envVarEntry struct {
+	name    string
+	purpose string
+}
+
+func collectEnvVarsInOrder(projectRoot, home string) []envVarEntry {
+	var ordered []envVarEntry
+	index := map[string]int{}
 	for _, decl := range mcpEnvDeclarations(projectRoot, home) {
 		for _, key := range decl.declaredKeys {
 			variable := decl.declared[key]
 			purpose := "required by " + decl.presetID + " (" + decl.recipeID + ")"
-			existing, ok := collected[variable]
-			if !ok {
-				collected[variable] = purpose
+			i, seen := index[variable]
+			if !seen {
+				index[variable] = len(ordered)
+				ordered = append(ordered, envVarEntry{name: variable, purpose: purpose})
 				continue
 			}
-			if !strings.Contains(existing, decl.recipeID) {
-				collected[variable] = existing + "; also " + decl.presetID + " (" + decl.recipeID + ")"
+			if !strings.Contains(ordered[i].purpose, decl.recipeID) {
+				ordered[i].purpose += "; also " + decl.presetID + " (" + decl.recipeID + ")"
+			}
+		}
+	}
+	return ordered
+}
+
+// CollectEnvVars mirrors env_scaffold.collect_env_vars (:90): {VAR_NAME:
+// purpose}, first declaration wins for the purpose text. The export is the
+// offer's S28 gate — init_tui.py:390 collects before it offers (U4d-2).
+func CollectEnvVars(projectRoot, home string) map[string]string {
+	collected := map[string]string{}
+	for _, entry := range collectEnvVarsInOrder(projectRoot, home) {
+		collected[entry.name] = entry.purpose
+	}
+	return collected
+}
+
+// collectEnvAllowed mirrors env_scaffold.collect_env_allowed (:198):
+// {VAR_NAME: [allowed values]} for vars whose recipe preset declares
+// env_allowed beside the env reference, first declaration wins (S30's select).
+func collectEnvAllowed(projectRoot, home string) map[string][]string {
+	collected := map[string][]string{}
+	for _, decl := range mcpEnvDeclarations(projectRoot, home) {
+		for _, variable := range decl.allowedKeys {
+			if _, ok := collected[variable]; !ok {
+				collected[variable] = decl.allowed[variable]
 			}
 		}
 	}
@@ -277,7 +352,7 @@ func collectEnvVars(projectRoot, home string) map[string]string {
 // missingRequiredValues mirrors env_scaffold.missing_required_values (:266):
 // the required MCP env vars with no non-empty value in ai-specs.env, sorted.
 func missingRequiredValues(projectRoot, home string) []string {
-	required := collectEnvVars(projectRoot, home)
+	required := CollectEnvVars(projectRoot, home)
 	configured := LoadHarnessEnv(projectRoot)
 	var missing []string
 	for variable := range required {
@@ -331,7 +406,7 @@ func formatDotenv(values map[string]string, headerLines []string) string {
 func generateEnvExample(projectRoot, home string) (string, error) {
 	target := harnessEnvExamplePath(projectRoot)
 
-	varsMap := collectEnvVars(projectRoot, home)
+	varsMap := CollectEnvVars(projectRoot, home)
 	var b strings.Builder
 	b.WriteString(strings.TrimRight(envExampleHeader, "\n"))
 	b.WriteString("\n\n")
@@ -387,7 +462,7 @@ func ensureRootEnvrc(projectRoot string) error {
 	block := ManagedStart + "\n" + ManagedBody + "\n" + ManagedEnd
 
 	if !isRegularFilePath(target) {
-		return writeEnvrcFile(target, envrcHeader+"\n"+block+"\n")
+		return writeTextFile(target, envrcHeader+"\n"+block+"\n")
 	}
 	raw, err := os.ReadFile(target)
 	if err != nil {
@@ -417,20 +492,21 @@ func ensureRootEnvrc(projectRoot string) error {
 		if !strings.HasSuffix(newText, "\n") {
 			newText += "\n"
 		}
-		return writeEnvrcFile(target, newText)
+		return writeTextFile(target, newText)
 	}
 
 	sep := "\n"
 	if strings.HasSuffix(text, "\n") {
 		sep = ""
 	}
-	return writeEnvrcFile(target, text+sep+"\n"+block+"\n")
+	return writeTextFile(target, text+sep+"\n"+block+"\n")
 }
 
-// writeEnvrcFile is target.write_text(..., encoding="utf-8") with the Python
+// writeTextFile is target.write_text(..., encoding="utf-8") with the Python
 // open() mode: 0666 & ^umask for a new file, the existing file's mode kept
-// by the truncating open for a rewrite.
-func writeEnvrcFile(path, text string) error {
+// by the truncating open for a rewrite. It is the shared writer for the
+// Python's text writes — the managed .envrc and, since U4d-2, ai-specs.env.
+func writeTextFile(path, text string) error {
 	if err := os.WriteFile(path, []byte(text), 0o666); err != nil {
 		return fmt.Errorf("cannot write %s: %w", path, err)
 	}
@@ -466,4 +542,385 @@ func RunEnvScaffold(projectRoot, home string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "Wrote %s\n", path)
 	return 0
+}
+
+// ---------------------------------------------------------------------------
+// U4d-2 (S28-S33): the interactive half — the wizard's env offer.
+// ---------------------------------------------------------------------------
+
+// ErrEnvOfferCancelled is questionary's None: a prompt that answered nothing,
+// or — per S30's amendment — the DECLINED offer question. env_scaffold.py
+// collapses decline and cancel alike into `return None` (:522) and
+// offer_harness_env returns on None (:631), so this error stops the whole
+// offer before anything is written.
+var ErrEnvOfferCancelled = errors.New("env offer cancelled")
+
+// EnvOfferPrompts is the injected prompt seam for the offer (S29):
+// internal/cli satisfies it with internal/tui over the wizard's own key
+// source, a test satisfies it with scripted answers. Every method answers
+// ErrEnvOfferCancelled for "questionary returned None" (Ctrl-C, EOF, decline)
+// and any other error for "questionary raised", which offer_harness_env
+// reports with the Python's `Could not configure environment variables: …`.
+type EnvOfferPrompts interface {
+	// Confirm asks the offer question (questionary.confirm).
+	Confirm(message string, def bool) (bool, error)
+	// Select asks a constrained choice with initial preselected on the cursor
+	// (questionary.select's default).
+	Select(message string, choices []string, initial string) (string, error)
+	// Password asks a hidden prompt (questionary.password's instruction token).
+	Password(message, instruction string) (string, error)
+	// Text asks a free-text prompt returning the raw buffer (questionary.text).
+	Text(message, defaultValue string) (string, error)
+}
+
+// promptEnvVars mirrors env_scaffold.prompt_env_vars (:496) — S30: the banner
+// in first-declaration order with each purpose and its ENV_VAR_HELP sentence,
+// the offer question (decline == cancel), then the prompts SORTED — a select
+// over the recipe's declared env_allowed values with _select_default's value
+// preselected, a hidden prompt when the name looks like a secret, a raw text
+// prompt otherwise — with the help sentence printed before each prompt it
+// belongs to. Answers come back verbatim; the never-wipe rule lives in
+// write_env's blank check, not in the prompt.
+func promptEnvVars(projectRoot, home string, prompts EnvOfferPrompts, stdout io.Writer) (map[string]string, error) {
+	varsMap := collectEnvVarsInOrder(projectRoot, home)
+	if len(varsMap) == 0 {
+		return map[string]string{}, nil
+	}
+
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Required environment variables")
+	for _, entry := range varsMap {
+		fmt.Fprintf(stdout, "  %s — %s\n", entry.name, entry.purpose)
+		if help, ok := envVarHelp[entry.name]; ok {
+			fmt.Fprintf(stdout, "    ℹ️  %s\n", help)
+		}
+	}
+	fmt.Fprintln(stdout)
+
+	confirmed, err := prompts.Confirm("Configure these values now?", true)
+	if err != nil {
+		return nil, err
+	}
+	if !confirmed {
+		// S30, amended: declining is NOT "continue without values" — the
+		// Python's `if not … : return None` (:522) returns None for a decline
+		// and for a cancel alike, and the offer returns on None.
+		return nil, ErrEnvOfferCancelled
+	}
+
+	existing := LoadHarnessEnv(projectRoot)
+	allowedMap := collectEnvAllowed(projectRoot, home)
+
+	variables := make([]string, 0, len(varsMap))
+	for _, entry := range varsMap {
+		variables = append(variables, entry.name)
+	}
+	sort.Strings(variables)
+
+	result := map[string]string{}
+	for _, variable := range variables {
+		if help, ok := envVarHelp[variable]; ok {
+			fmt.Fprintf(stdout, "ℹ️  %s\n", help)
+		}
+		var value string
+		choices := allowedMap[variable]
+		switch {
+		case len(choices) > 0:
+			value, err = prompts.Select(variable, choices, selectDefault(variable, choices, existing))
+		case isSecretVar(variable):
+			value, err = prompts.Password(variable, "(hidden input)")
+		default:
+			value, err = prompts.Text(variable, "")
+		}
+		if err != nil {
+			return nil, err
+		}
+		result[variable] = value
+	}
+	return result, nil
+}
+
+// selectDefault mirrors _select_default (:480) — S30's three steps: a matching
+// existing value (strip()ed, case-insensitive), else the matching example
+// default, else the first declared choice. A value that matches nothing (a
+// stale existing or example value) falls through instead of being answered,
+// so the select never offers a default outside its choices.
+func selectDefault(variable string, choices []string, existing map[string]string) string {
+	if len(choices) == 0 {
+		// questionary refuses an empty choice list outright; the prompt seam
+		// only reaches this helper with one, and a Go panic here would abort
+		// the offer instead of soft-failing.
+		return ""
+	}
+	canonical := map[string]string{}
+	for _, choice := range choices {
+		canonical[strings.ToLower(choice)] = choice // last wins, like the dict comprehension
+	}
+	if current := strings.TrimSpace(existing[variable]); current != "" {
+		if match, ok := canonical[strings.ToLower(current)]; ok {
+			return match
+		}
+	}
+	if example, ok := envExampleDefaults[variable]; ok {
+		if match, ok := canonical[strings.ToLower(example)]; ok {
+			return match
+		}
+	}
+	return choices[0]
+}
+
+// isSecretVar mirrors _is_secret_var (:474): the five keywords, uppercase,
+// substring match.
+func isSecretVar(variable string) bool {
+	upper := strings.ToUpper(variable)
+	for _, keyword := range []string{"API_KEY", "TOKEN", "SECRET", "PASSWORD", "APIKEY"} {
+		if strings.Contains(upper, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// WriteHarnessEnv mirrors env_scaffold.write_env (:277) — S31: merge into the
+// existing ai-specs.env and write it with the Python's header and formatDotenv's
+// sorted, quoted lines. The merge never destroys: a blank/whitespace answer is
+// skipped, so a re-prompt with Enter cannot wipe a non-empty secret (the file's
+// own docstring rule, pinned by tests/test_env_scaffold.py); a non-blank answer
+// replaces the previous value — that is the re-prompt that UPDATES a secret;
+// every other existing key keeps its own value. The project-root .env is never
+// touched: only ai-specs.env is written.
+func WriteHarnessEnv(projectRoot string, varValues map[string]string) (string, error) {
+	target := HarnessEnvPath(projectRoot)
+	existing := map[string]string{}
+	if isRegularFilePath(target) {
+		raw, err := os.ReadFile(target)
+		if err != nil {
+			return "", fmt.Errorf("cannot read %s: %w", target, err)
+		}
+		// Python read_text(encoding="utf-8") raises before any merge on
+		// invalid UTF-8; the observable result (fail, no write) is kept
+		// without porting the traceback.
+		if !utf8.Valid(raw) {
+			return "", fmt.Errorf("cannot read %s: invalid UTF-8", target)
+		}
+		existing = ParseDotenv(string(raw))
+	}
+	merged := make(map[string]string, len(existing)+len(varValues))
+	for key, value := range existing {
+		merged[key] = value
+	}
+	for key, value := range varValues {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		merged[key] = value
+	}
+	header := []string{
+		"# ai-specs.env — generated by ai-specs configure-recipes",
+		"# gitignored. Regenerate values via: ai-specs configure-recipes",
+	}
+	if err := writeTextFile(target, formatDotenv(merged, header)); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+// mergeIntoHarnessEnv mirrors _merge_into_harness_env (:386): non-empty
+// EXISTING values win and incoming only fills keys that are missing or empty —
+// the migrations' never-wipe rule (S32), which is the one place the incoming
+// map cannot replace a configured secret.
+func mergeIntoHarnessEnv(incoming, existing map[string]string) map[string]string {
+	writeValues := make(map[string]string, len(existing)+len(incoming))
+	for key, value := range existing {
+		writeValues[key] = value
+	}
+	for key, value := range incoming {
+		if current, ok := writeValues[key]; !ok || current == "" {
+			writeValues[key] = value
+		}
+	}
+	return writeValues
+}
+
+// parseNestedHarnessEnv mirrors _parse_nested_harness_file (:410): dotenv
+// first, then the export lines fill the gaps only (S32 — the export migration
+// that follows must never override a dotenv value).
+func parseNestedHarnessEnv(text string) map[string]string {
+	parsed := ParseDotenv(text)
+	for key, value := range ParseExports(text) {
+		if current, ok := parsed[key]; !ok || strings.TrimSpace(current) == "" {
+			parsed[key] = value
+		}
+	}
+	return parsed
+}
+
+// migrateEnvFile is the shared body of migrate_nested_harness_env (:414) and
+// migrate_legacy_envrc (:441): parse, refuse when nothing parsed (JD-6 — no
+// rename without a key to merge), merge under the never-wipe rule, write, and
+// only after a SUCCESSFUL write rename the source to .bak (S32). parse is the
+// per-file parser: nested parses dotenv+export, legacy parses export only.
+func migrateEnvFile(projectRoot, source, bak string, parse func(string) map[string]string) (bool, error) {
+	if !isRegularFilePath(source) {
+		return false, nil
+	}
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		return false, fmt.Errorf("cannot read %s: %w", source, err)
+	}
+	if !utf8.Valid(raw) {
+		return false, fmt.Errorf("cannot read %s: invalid UTF-8", source)
+	}
+	parsed := parse(string(raw))
+	if len(parsed) == 0 {
+		return false, nil
+	}
+	existing := LoadHarnessEnv(projectRoot)
+	writeValues := mergeIntoHarnessEnv(parsed, existing)
+	// Persist the merged map; write_env's blank omit keeps non-empty secrets
+	// from being wiped by an empty existing or incoming value.
+	if _, err := WriteHarnessEnv(projectRoot, writeValues); err != nil {
+		return false, err
+	}
+	if err := os.Remove(bak); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("cannot remove %s: %w", bak, err)
+	}
+	if err := os.Rename(source, bak); err != nil {
+		return false, fmt.Errorf("cannot rename %s: %w", source, err)
+	}
+	if err := ensureRootEnvrc(projectRoot); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// migrateNestedHarnessEnv mirrors migrate_nested_harness_env (:414): the
+// nested ai-specs/.env into the root ai-specs.env, renamed to .env.bak only
+// after a successful write and only when at least one key parsed (S32/JD-6).
+func migrateNestedHarnessEnv(projectRoot string) (bool, error) {
+	source := filepath.Join(projectRoot, "ai-specs", ".env")
+	return migrateEnvFile(projectRoot, source, source+".bak", parseNestedHarnessEnv)
+}
+
+// migrateLegacyEnvrc mirrors migrate_legacy_envrc (:441): the legacy
+// ai-specs/.envrc exports, renamed to .envrc.bak on the same two conditions.
+func migrateLegacyEnvrc(projectRoot string) (bool, error) {
+	source := filepath.Join(projectRoot, "ai-specs", ".envrc")
+	return migrateEnvFile(projectRoot, source, source+".bak", ParseExports)
+}
+
+// migrateLegacyHarnessEnv mirrors migrate_legacy_harness_env (:464): nested
+// dotenv FIRST so the export migration that follows fills gaps only (S32).
+func migrateLegacyHarnessEnv(projectRoot string) (bool, error) {
+	ran := false
+	if nestedRan, err := migrateNestedHarnessEnv(projectRoot); err != nil {
+		return ran, err
+	} else if nestedRan {
+		ran = true
+	}
+	if legacyRan, err := migrateLegacyEnvrc(projectRoot); err != nil {
+		return ran, err
+	} else if legacyRan {
+		ran = true
+	}
+	return ran, nil
+}
+
+// DirenvAllow mirrors env_scaffold.direnv_allow (:549): `direnv allow <root>`
+// with its output captured (never inherited), a 10s timeout, and Python's
+// error split: a non-zero exit, a missing binary (FileNotFoundError) and a
+// timeout (TimeoutExpired) answer (false, nil) — the caller prints the
+// three-line message — while any other start failure propagates, which is the
+// Python exception offer_harness_env reports as `direnv allow failed: …`.
+func DirenvAllow(projectRoot string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "direnv", "allow", projectRoot)
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return false, nil
+	}
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, context.DeadlineExceeded) {
+		return false, nil
+	}
+	return false, err
+}
+
+// harnessEnvWritePhase is offer_harness_env's single try block (:631-639): the
+// values write (skipped when there are none), the example regeneration and the
+// managed .envrc block. Any error stops the phase — the caller prints
+// `Could not write harness env: …` and skips the direnv step, exactly like the
+// Python's except → return.
+func harnessEnvWritePhase(root, home string, values map[string]string, stdout io.Writer) error {
+	if len(values) > 0 {
+		path, err := WriteHarnessEnv(root, values)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "✓ wrote %s\n", path)
+	}
+	if _, err := generateEnvExample(root, home); err != nil {
+		return err
+	}
+	if err := ensureRootEnvrc(root); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "✓ root .envrc managed block → %s\n", filepath.Join(root, ".envrc"))
+	return nil
+}
+
+// OfferHarnessEnv mirrors env_scaffold.offer_harness_env (:572) — S29: in
+// order, migrate the legacy files, collect the variables, prompt, write
+// ai-specs.env, regenerate the example and the managed .envrc block, run
+// direnv allow. Every branch soft-fails with the Python's own line on the
+// Python's stream instead of aborting the verb: migration and write failures
+// and prompt exceptions go to stdout (rich Console()'s default), the direnv
+// three-liner goes to stderr (print file=sys.stderr). A cancelled or declined
+// prompt returns silently, before anything is written (S30).
+//
+// S33, deferred and named here: when direnv is missing the Python offers to
+// INSTALL it through the deps layer (dep_install.offer_and_install). That
+// consent offer belongs to the deps surface, not to init, so this port skips
+// it and lets the failure below print the Python's three-line message.
+func OfferHarnessEnv(projectRoot, home string, prompts EnvOfferPrompts, stdout, stderr io.Writer) {
+	// Python: init_tui's main() resolves the target before run_wizard, so the
+	// offer's paths and ✓ lines carry Path.resolve()'s root — the same resolve
+	// the sync spine's env step applies.
+	root := resolveNonStrict(projectRoot)
+
+	if _, err := migrateLegacyHarnessEnv(root); err != nil {
+		fmt.Fprintf(stdout, "Legacy harness env migration skipped: %v\n", err)
+	}
+
+	if len(CollectEnvVars(root, home)) == 0 {
+		return
+	}
+
+	values, err := promptEnvVars(root, home, prompts, stdout)
+	if err != nil {
+		if errors.Is(err, ErrEnvOfferCancelled) {
+			return
+		}
+		fmt.Fprintf(stdout, "Could not configure environment variables: %v\n", err)
+		return
+	}
+
+	if err := harnessEnvWritePhase(root, home, values, stdout); err != nil {
+		fmt.Fprintf(stdout, "Could not write harness env: %v\n", err)
+		return
+	}
+
+	if ok, err := DirenvAllow(root); err != nil {
+		fmt.Fprintf(stdout, "direnv allow failed: %v\n", err)
+	} else if !ok {
+		fmt.Fprint(stderr, "  ! direnv is not installed or could not be run.\n")
+		fmt.Fprint(stderr, "    Install it with: brew install direnv\n")
+		fmt.Fprint(stderr, "    Then run: direnv allow\n")
+	} else {
+		fmt.Fprint(stdout, "  ✓ direnv allow — variables are now active in this terminal\n")
+	}
 }
