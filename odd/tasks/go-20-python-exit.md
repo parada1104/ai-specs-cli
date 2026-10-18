@@ -224,6 +224,8 @@ cannot each be one PR.
 | U3a-fix — the confirmed advisories | **delivered** | `54197dd`; 2496 tests green; the isatty divergence proven fixed against the shell |
 | U3b — the interactive hub, native and dependency-free | **delivered, review approved** | `b572a7d` (PR #368); 2494 tests green; `review-431359c0d529da28` approved, 0 blocking, 14 advisory |
 | U3b-2 advisories — the 14 review advisories closed | **delivered** | `55d235e` (PR #369); 10 fixed / 4 declined with a reason, 0 open; doc `go-20-u3b-advisories.md` |
-| U4..U7 — init, skills, recipes, substrate tail | pending | |
+| U4a — the classic `init` path, native | **delivered, judgment approved** | `76d8b83` (PR #371); T4a of `go-20-u4-init.md`; Judgment Day 8/8 verified after a two-round fix, independent verify PASS, 44 init tests + parity 29/29 |
+| U4b..U4d — the wizard, the lock stamp, the harness env | pending | T4b-T4d of `go-20-u4-init.md` |
+| U5..U7 — skills, recipes, substrate tail | pending | |
 | U2 — flip the launcher + parity snapshot + deletion | pending, AFTER the ports | L13 |
 | U8 — program closure | pending | |
