@@ -233,6 +233,12 @@ now offers the variables the enabled recipes need, exactly where the Python did.
     umask (JD-ENV-A-002). The file holds the API keys and tokens the offer just collected, so the port
     is deliberately stricter; nothing else about the file changes, an existing file keeps its own mode,
     and a test pins it.
+  - The `writeTextFile` comment cost two rounds to get right, and both failures were mine: the first
+    rewrite said it wrote `ai-specs.env.example` (the example has its own writer inside
+    `generateEnvExample`), and the second said its only caller was "below" when that caller sits above the
+    function. The final text names the single caller without a direction word and explains why the two
+    neighbours are not routed through it; every sentence was then checked mechanically — call sites,
+    definition order, both file modes — instead of from memory.
   - A Ctrl-D on an empty hidden/raw prompt cancels the offer **silently**, where the Python lets
     `prompt_toolkit` raise `EOFError` and prints `Could not configure environment variables: …`. Nothing
     is written either way; the only difference is that one soft-fail line. Recorded, not fixed: plumbing

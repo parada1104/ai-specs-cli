@@ -506,12 +506,12 @@ func ensureRootEnvrc(projectRoot string) error {
 // open() mode: 0666 & ^umask for a new file, the existing file's mode kept by
 // the truncating open for a rewrite.
 //
-// Its ONLY caller is ensureRootEnvrc below, so it writes the managed .envrc
-// block and nothing else. Two neighbours look similar and are deliberately NOT
-// routed through it: ai-specs.env.example has its own writer inside
-// generateEnvExample with the same mode, and ai-specs.env — the file holding the
-// API keys the offer collects — is created 0600 through writeTextFileMode,
-// pinned by TestWriteHarnessEnvIsOwnerOnly (S34, JD-ENV-A-002).
+// Its ONLY caller is ensureRootEnvrc, so it writes the managed .envrc block and
+// nothing else. Two neighbours look similar and are deliberately NOT routed
+// through it: ai-specs.env.example has its own writer inside generateEnvExample
+// with the same mode, and ai-specs.env — the file holding the API keys the offer
+// collects — is created 0600 through writeTextFileMode, pinned by
+// TestWriteHarnessEnvIsOwnerOnly (S34, JD-ENV-A-002).
 func writeTextFile(path, text string) error {
 	return writeTextFileMode(path, text, 0o666)
 }
