@@ -1,17 +1,19 @@
 package cli
 
-// The native `init` verb: the classic, non-interactive bootstrap of
-// odd/tasks/go-20-u4-init.md (slice T4a). It is a port of lib/init.sh's classic
-// path — argument contract, banner, directories, template manifest, baseline
-// AGENTS.md, both .gitignore files, the bundled-assets seam and the next-steps
-// text — and it delegates the WHOLE verb to the legacy script when the
-// interactive wizard is due, so the wizard keeps its behaviour until the native
-// one lands.
+// The native `init` verb: the bootstrap of odd/tasks/go-20-u4-init.md. It is
+// a port of lib/init.sh — argument contract, banner, directories, manifest,
+// baseline AGENTS.md, both .gitignore files, the bundled-assets seam and the
+// next-steps text — plus, since T4b-1, the interactive wizard itself: when
+// the TUI gate fires, runInitWizard drives the prompts in process, and only
+// the AI_SPECS_INIT_TUI_PY escape hatch still hands the whole verb to the
+// legacy script (the seam T4b-2's recipe-configuration prompts sit behind).
 //
 // The messages, their order and the exit codes are the legacy script's
-// contract (S3): 0 success, 1 unusable target or a failed step, 2 usage error.
+// contract (S3): 0 success, 1 unusable target, cancel or failed step, 2 usage
+// error, and 3 for the wizard's "unavailable → classic takes over" branch.
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -76,6 +78,14 @@ const errInitMissingNameValue = "ERROR: --name requires a value\nRun 'ai-specs i
 
 // runInit is the native entry. args[0] is the verb.
 func runInit(args []string, home string, stdin io.Reader, stdout, stderr io.Writer, selfPath string) int {
+	return runInitFlow(args, home, stdin, stdout, stderr, selfPath, openInitWizardKeys)
+}
+
+// runInitFlow is runInit with the wizard's input seam injected. The
+// dispatcher keeps calling runInit, which supplies the raw-mode terminal
+// opener; a test supplies scripted keys instead of a PTY (the seam mirrors
+// how internal/tui's prompts take their key source).
+func runInitFlow(args []string, home string, stdin io.Reader, stdout, stderr io.Writer, selfPath string, openKeys initWizardOpener) int {
 	opts, rc, done := parseInitArgs(args, stdout, stderr)
 	if done {
 		return rc
@@ -95,25 +105,69 @@ func runInit(args []string, home string, stdin io.Reader, stdout, stderr io.Writ
 	rootGitignore := filepath.Join(target, ".gitignore")
 	aiGitignore := filepath.Join(aiSpecsDir, ".gitignore")
 
-	// S6: the wizard is still the legacy script's, so the whole verb goes there.
-	// The predicate is init.sh's: --tui, or auto with both streams on a TTY, no
-	// explicit --name, no --force and no manifest yet.
+	// The gate is init.sh's (S6). With the gate fired: the escape hatch still
+	// hands the WHOLE verb to the legacy script (recorded seam for T4b-2's
+	// recipe-configuration prompts); an existing manifest is the shell's skip
+	// branch; otherwise the wizard runs natively (T4b-1).
+	var wizard *initWizardResult
 	if shouldInitTUI(opts, isTTY(stdin, stdout), tomlPath) {
-		return runShim(route{kind: routeShim, script: "init.sh"}, args, home, stdin, stdout, stderr, selfPath)
+		if os.Getenv("AI_SPECS_INIT_TUI_PY") != "" {
+			return runShim(route{kind: routeShim, script: "init.sh"}, args, home, stdin, stdout, stderr, selfPath)
+		}
+		if regularInitFile(tomlPath) {
+			// init.sh's `[[ -f "$TOML_PATH" ]]` skip branch, on stdout before
+			// the banner: the wizard never opens over a user-owned manifest.
+			fmt.Fprintln(stdout, "  · skip TUI — ai-specs.toml already exists (never overwritten by init)")
+		} else {
+			res, wrc := runInitWizard(initWizardRequest{
+				Target: target, Name: opts.name, Home: home,
+				Stdin: stdin, Stdout: stdout, Stderr: stderr,
+				OpenKeys: openKeys,
+			})
+			switch wrc {
+			case 0:
+				wizard = &res
+				// init.sh adopts the wizard's name from the JSON sidecar; the
+				// wizard returns the same value directly.
+				opts.name = res.Name
+			case 1:
+				fmt.Fprintln(stderr, "ai-specs init: cancelled")
+				return 1
+			case 3:
+				fmt.Fprintln(stderr, "  · TUI unavailable — falling back to classic init")
+			default:
+				// init.sh's non-{0,1,3} branch: name the code, keep the code.
+				fmt.Fprintf(stderr, "ERROR: interactive init failed (exit %d)\n", wrc)
+				return wrc
+			}
+		}
+	}
+	if wizard != nil {
+		// init.sh removes the staging set right after the manifest step; the
+		// deferred removal also covers every failure exit after a confirmed wizard.
+		defer cleanupInitStaging(wizard.Staged)
 	}
 
+	tuiRow := "no"
+	if wizard != nil {
+		tuiRow = "yes"
+	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "ai-specs init")
 	fmt.Fprintf(stdout, "  target:  %s\n", target)
 	fmt.Fprintf(stdout, "  name:    %s\n", opts.name)
 	fmt.Fprintf(stdout, "  force:   %s\n", yesNo(opts.force))
-	fmt.Fprintln(stdout, "  tui:     no")
+	fmt.Fprintf(stdout, "  tui:     %s\n", tuiRow)
 	fmt.Fprintln(stdout)
 
 	if rc := ensureInitDirs(aiSpecsDir, stdout, stderr); rc != 0 {
 		return rc
 	}
-	if rc := writeInitManifest(opts.name, tomlPath, stdout, stderr); rc != 0 {
+	if wizard != nil {
+		if rc := installInitStagedManifest(wizard.Staged, opts.name, tomlPath, stdout, stderr); rc != 0 {
+			return rc
+		}
+	} else if rc := writeInitManifest(opts.name, tomlPath, stdout, stderr); rc != 0 {
 		return rc
 	}
 	if rc := renderInitBrief(home, target, tomlPath, agentsPath, opts.adoptBrief, stdout, stderr); rc != 0 {
@@ -126,6 +180,44 @@ func runInit(args []string, home string, stdin io.Reader, stdout, stderr io.Writ
 		return rc
 	}
 	writeInitNextSteps(target, aiSpecsDir, stdout)
+	return 0
+}
+
+// regularInitFile is init.sh's `[[ -f <path> ]]` — a regular file, symlinks
+// followed. The wizard and its skip branch both ask this one question.
+func regularInitFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// installInitStagedManifest is init.sh's manifest step with a staged wizard
+// manifest: the staged bytes become the project's own, marked `(from TUI)`.
+// The shell reads `-f "$TOML_PATH"` first, and so does this — with one
+// refinement the shell never needed: bytes at the path that are NOT the staged
+// ones are the user's, and they win with the keep line (S4), because the
+// wizard only ever wrote this file itself.
+func installInitStagedManifest(staged, name, tomlPath string, stdout, stderr io.Writer) int {
+	stagedBytes, err := os.ReadFile(staged)
+	if err != nil {
+		// init.sh's `-f "$TUI_TOML"` fails the same way when the staging file
+		// is gone, and falls through to the template branch — with the wizard's
+		// name, which is the project name the user confirmed.
+		return writeInitManifest(name, tomlPath, stdout, stderr)
+	}
+	if regularInitFile(tomlPath) {
+		current, readErr := os.ReadFile(tomlPath)
+		if readErr == nil && bytes.Equal(current, stagedBytes) {
+			fmt.Fprintln(stdout, "  ✓ wrote  ai-specs/ai-specs.toml (from TUI)")
+			return 0
+		}
+		fmt.Fprintln(stdout, "  ✓ keep   ai-specs/ai-specs.toml")
+		return 0
+	}
+	if err := os.WriteFile(tomlPath, stagedBytes, 0o644); err != nil {
+		fmt.Fprintf(stderr, "ERROR: cannot write %s: %v\n", tomlPath, err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "  ✓ wrote  ai-specs/ai-specs.toml (from TUI)")
 	return 0
 }
 
