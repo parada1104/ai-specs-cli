@@ -294,6 +294,60 @@ func TestInitRootGitignoreBlock(t *testing.T) {
 	})
 }
 
+// TestInitRootGitignoreKeepsASymlink pins the round-two regression: the shell
+// appended with `>>`, which writes THROUGH a symlinked .gitignore. An atomic
+// rename must resolve the link and replace its target, or the link becomes a
+// regular file and the user's real one is stranded (JD-B-003).
+func TestInitRootGitignoreKeepsASymlink(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	real := filepath.Join(dir, "shared.gitignore")
+	if err := os.WriteFile(real, []byte("shared/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, ".gitignore")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	template := []byte(initGitignoreMarkerBegin + "\n.claude/\n" + initGitignoreMarkerEnd + "\n")
+	if _, err := applyRootGitignoreBlock(link, template, false); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced by a regular file")
+	}
+	body := readFile(t, real)
+	if body != "shared/\n"+string(template) {
+		t.Errorf("the link's target = %q, want the block appended through it", body)
+	}
+}
+
+// TestInitRootGitignoreCreatesADanglingLinksTarget pins the same rule for a
+// link whose target does not exist yet: `>>` would create it.
+func TestInitRootGitignoreCreatesADanglingLinksTarget(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	real := filepath.Join(dir, "not-yet.gitignore")
+	link := filepath.Join(dir, ".gitignore")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	template := []byte(initGitignoreMarkerBegin + "\n.claude/\n" + initGitignoreMarkerEnd + "\n")
+	if _, err := applyRootGitignoreBlock(link, template, false); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the dangling symlink was replaced: fi=%v err=%v", fi, err)
+	}
+	if body := readFile(t, real); body != string(template) {
+		t.Errorf("the created target = %q, want the template", body)
+	}
+}
+
 // TestInitTUIDecision pins the gate: --tui forces it, --no-tui suppresses it,
 // and auto needs both TTYs, no explicit name, no --force and no manifest.
 func TestInitTUIDecision(t *testing.T) {

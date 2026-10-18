@@ -474,14 +474,30 @@ func appendGitignoreBlock(path, text string, template []byte) error {
 }
 
 // replaceFileAtomically writes body to a sibling temp file and renames it over
-// path, so a failed or interrupted write leaves the previous bytes intact. The
-// temp file inherits the target's mode when it exists (0o644 otherwise).
+// the target, so a failed or interrupted write leaves the previous bytes intact.
+//
+// A SYMLINK is resolved first and its target is what gets replaced: the shell
+// appended with `>>`, which writes through the link, so renaming over the link
+// itself would quietly turn a symlinked .gitignore into a regular file and strand
+// the user's real one (JD-B-003 round two). A dangling link is resolved one level
+// by hand, because that is the file `>>` would have created.
 func replaceFileAtomically(path string, body []byte) error {
+	target := path
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if resolved, resolveErr := filepath.EvalSymlinks(path); resolveErr == nil {
+			target = resolved
+		} else if link, readErr := os.Readlink(path); readErr == nil {
+			if !filepath.IsAbs(link) {
+				link = filepath.Join(filepath.Dir(path), link)
+			}
+			target = link
+		}
+	}
 	mode := os.FileMode(0o644)
-	if fi, err := os.Stat(path); err == nil {
+	if fi, err := os.Stat(target); err == nil {
 		mode = fi.Mode().Perm()
 	}
-	dir := filepath.Dir(path)
+	dir := filepath.Dir(target)
 	tmp, err := os.CreateTemp(dir, ".ai-specs-gitignore-*")
 	if err != nil {
 		return err
@@ -498,7 +514,7 @@ func replaceFileAtomically(path string, body []byte) error {
 	if err := os.Chmod(tmpName, mode); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return os.Rename(tmpName, target)
 }
 
 // stripMarkedBlock is strip_block's awk program: drop every line from the begin
