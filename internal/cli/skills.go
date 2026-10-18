@@ -1,11 +1,11 @@
 package cli
 
-// Native `ai-specs skills list` (GO-20 U5a, T1) — the port of
-// lib/skills-list.sh (275 lines), which is the contract line for line (S4):
-// the usage() heredoc, the argument loop (`--`, unknown flags, the second
-// positional, both usage errors exit 2), the `=== ai-specs skills list ===`
-// header, the four sections with their exact vocabulary and indentation, and
-// the exit codes.
+// Native `ai-specs skills list` (GO-20 U5a, T1) and `ai-specs skills remove`
+// (GO-20 U5b, T3) — the ports of lib/skills-list.sh (275 lines) and
+// lib/skills-remove.sh (217 lines), which are the contract line for line (S4):
+// the usage() heredocs, the argument loops (`--`, unknown flags, extra
+// positionals, both usage errors exit 2), the exact output vocabulary and
+// indentation, and the exit codes.
 //
 // The verb is READ-ONLY (T1/S7): the bundled section resolves through
 // internal/projectcache — the ONE cache authority — by path computation only,
@@ -33,6 +33,7 @@ import (
 	"syscall"
 
 	"ai-specs.dev/ai-specs/internal/config"
+	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/skills"
 	"ai-specs.dev/ai-specs/internal/toml"
@@ -270,6 +271,201 @@ func runSkillsList(args []string, home string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "  (not found)")
 	}
 	return 0
+}
+
+// skillsRemoveUsage is lib/skills-remove.sh's usage() heredoc byte for byte:
+// a QUOTED heredoc (`cat <<'EOF'`), so the text is literal and the trailing
+// newline after the last line is part of the output (stdout for --help,
+// stderr after the missing-id error).
+const skillsRemoveUsage = `Usage: ai-specs skills remove <id> [path] [--help]
+Remove a vendored skill ([[deps]]) from ai-specs.toml.
+
+Removes the [[deps]] block and prunes the vendored copy under
+ai-specs/.deps/<id>/ (gitignored).
+
+Arguments:
+  id      Skill identifier matching [[deps]].id
+  path    Target project root (default: current directory)
+`
+
+// runSkillsRemove reproduces skills-remove.sh: the argument loop first (usage
+// errors exit 2 before anything reaches stdout), then the cd resolution, the
+// C2-style dep-id guard, the manifest existence check, the atomic [[deps]]
+// removal (config.RemoveDepSegment — the ONE manifest writer of this unit,
+// already owning the segmenter, the valid→invalid guard, the atomic write and
+// the frozen success/not-found lines), the .deps prune, and finally the lock
+// step (internal/lock — the port of the lock.py heredoc D17).
+//
+// Documented deviations from the script (pinned by tests, reported in the
+// unit document's Log):
+//   - a failing cd keeps exit 1 and the `cd: <path>: <reason>` shape but
+//     drops bash's `lib/skills-remove.sh: line N: ` prefix (the U5a/doctor
+//     S12 class) — TestSkillsRemoveMissingPathDeviation;
+//   - a READ-ONLY manifest: the script's mkstemp+os.replace bypasses the file
+//     mode (rename needs write on the directory) and completes the whole
+//     tail, while RemoveDepSegment's shared atomicWrite refuses it
+//     (R4-atomicwrite-readonly-refusal, pinned in internal/config) —
+//     TestSkillsRemoveReadOnlyDeviation records both behaviours. The refusal
+//     lives outside this unit's edit surface;
+//   - a corrupt lock file exits 1 like the script's traceback but prints the
+//     Go load error instead of Python's traceback text (diagnostic class,
+//     ADR 0002);
+//   - an rm/lock I/O failure prints Go's error text where rm/Python word
+//     their own; the frozen exit code 1 is preserved.
+func runSkillsRemove(args []string, stdout, stderr io.Writer) int {
+	// The script's while/case loop, in order: --help|-h wins wherever it
+	// appears, `--` makes every remaining argument positional (never a flag),
+	// an unknown flag prints two stderr lines, and a third positional is the
+	// other exit-2 usage error. The take_positional emptiness checks are
+	// mirrored literally: an empty-string positional leaves the slot empty, so
+	// `remove "" proj` makes proj the ID, exactly like the shell.
+	depID, target := "", ""
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--help" || arg == "-h":
+			fmt.Fprint(stdout, skillsRemoveUsage)
+			return 0
+		case arg == "--":
+			// Positionals after -- are real arguments, not discardable.
+			for i++; i < len(args); i++ {
+				rest := args[i]
+				if depID == "" {
+					depID = rest
+					continue
+				}
+				if target == "" {
+					target = rest
+					continue
+				}
+				fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", rest)
+				return 2
+			}
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(stderr, "ERROR: unknown flag: %s\n", arg)
+			fmt.Fprintln(stderr, "Run 'ai-specs skills remove --help' for usage.")
+			return 2
+		default:
+			if depID == "" {
+				depID = arg
+				continue
+			}
+			if target == "" {
+				target = arg
+				continue
+			}
+			fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", arg)
+			return 2
+		}
+	}
+	if depID == "" {
+		fmt.Fprintln(stderr, "ERROR: missing skill id")
+		fmt.Fprint(stderr, skillsRemoveUsage)
+		return 2
+	}
+	if target == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			target = cwd
+		}
+		// A failing `pwd` killed the script under set -e; the cd below
+		// reports the same frozen exit 1 instead.
+	}
+	resolved, err := cdSkillsTarget(target)
+	if err != nil {
+		fmt.Fprintf(stderr, "cd: %s: %s\n", target, cdReason(err))
+		return 1
+	}
+	target = resolved
+	tomlPath := filepath.Join(target, "ai-specs", "ai-specs.toml")
+
+	// C2-style guard, exactly the script's order: ids that could escape the
+	// managed ai-specs/.deps tree are refused BEFORE the manifest is touched
+	// (a hand-edited manifest can carry a traversal id; removal must never
+	// turn it into an rm -rf outside .deps/). The message runs the id through
+	// the script's `LC_ALL=C tr -c ' -~' '?'` sanitization: every byte outside
+	// 0x20–0x7E becomes '?'.
+	if sanitized, invalid := invalidDepID(depID); invalid {
+		fmt.Fprintf(stderr, "ERROR: refusing invalid dep id: '%s'\n", sanitized)
+		return 2
+	}
+
+	if !regularInitFile(tomlPath) {
+		fmt.Fprintf(stderr, "ERROR: %s not found.\n", tomlPath)
+		return 1
+	}
+
+	// The manifest step: the shared writer owns the segmenter, the
+	// valid→invalid guard, the atomic temp+rename and the frozen messages —
+	// not a byte of it is re-implemented here.
+	msg, err := config.RemoveDepSegment(tomlPath, depID)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprintln(stdout, msg)
+
+	// Prune the vendored copy (D18): the in-project .deps tree is
+	// regenerable from the declared source, so removal deletes it instead of
+	// orphaning it. `-d` follows symlinks; RemoveAll unlinks a symlink itself
+	// without recursing, like `rm -rf`.
+	depsDir := filepath.Join(target, "ai-specs", ".deps", depID)
+	if isDirectory(depsDir) {
+		if err := os.RemoveAll(depsDir); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "  ✓ pruned ai-specs/.deps/%s/\n", depID)
+	}
+
+	// Drop the dep's recorded content hashes from the lock (D17 schema). The
+	// script's heredoc exits silently when the lock is not a file, and
+	// writes+prints only when the entry was actually present — LoadLock's
+	// missing-file shape makes the same branches.
+	lockPath := filepath.Join(target, "ai-specs", ".ai-specs.lock")
+	lk, err := lock.LoadLock(lockPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if lock.RemoveDepLockEntries(lk, depID) {
+		if err := lock.WriteLock(lockPath, lk); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "  ✓ removed lock hashes for '%s'\n", depID)
+	}
+	return 0
+}
+
+// invalidDepID is the script's invalid_dep_id guard: empty, ".", "..", or
+// containing '/', '\\', or any byte outside 0x20–0x7E (the case pattern plus
+// `LC_ALL=C grep -q '[^ -~]'`). The returned sanitized id mirrors
+// `LC_ALL=C tr -c ' -~' '?'` byte for byte — non-ASCII UTF-8 becomes one '?'
+// per byte, like the shell sees it under the C locale.
+func invalidDepID(id string) (sanitized string, invalid bool) {
+	invalid = id == "" || id == "." || id == ".." ||
+		strings.Contains(id, "/") || strings.Contains(id, "\\")
+	b := []byte(id)
+	if !invalid {
+		for _, c := range b {
+			if c < 0x20 || c > 0x7e {
+				invalid = true
+				break
+			}
+		}
+	}
+	if !invalid {
+		return id, false
+	}
+	sb := make([]byte, len(b))
+	for i, c := range b {
+		if c < 0x20 || c > 0x7e {
+			sb[i] = '?'
+		} else {
+			sb[i] = c
+		}
+	}
+	return string(sb), true
 }
 
 // cdSkillsTarget is the script's `TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"`:

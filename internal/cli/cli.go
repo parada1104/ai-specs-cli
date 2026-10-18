@@ -36,6 +36,7 @@ const (
 	routeHub                                // native: `hub` front door, non-interactive half (GO-20 U3a)
 	routeInit                               // native: `init` classic bootstrap; the wizard delegates to the shim (GO-20 U4a)
 	routeSkillsList                         // native: `skills list`, port of lib/skills-list.sh (GO-20 U5a)
+	routeSkillsRemove                       // native: `skills remove`, port of lib/skills-remove.sh (GO-20 U5b)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -94,13 +95,17 @@ func Route(args []string) route {
 	if r, ok := native[args[0]]; ok {
 		return r
 	}
-	// `skills list` is native (GO-20 U5a): the subcommand is intercepted HERE,
-	// before the skills shim, so `skills add`, `skills remove`, `skills --help`,
-	// the bare `skills` and unknown subcommands keep lib/skills.sh byte for
-	// byte — the dispatcher's `case list)` (lib/skills.sh:31-33) is what this
-	// replaces, and only for `list`.
+	// `skills list` (GO-20 U5a) and `skills remove` (GO-20 U5b) are native: the
+	// subcommands are intercepted HERE, before the skills shim, so `skills add`,
+	// `skills --help`, the bare `skills` and unknown subcommands keep
+	// lib/skills.sh byte for byte — this replaces the dispatcher's `case list)`
+	// and `case remove)` (lib/skills.sh:31-35) for exactly those two, with
+	// `add` (and the script itself) untouched.
 	if len(args) > 1 && args[0] == "skills" && args[1] == "list" {
 		return route{kind: routeSkillsList}
+	}
+	if len(args) > 1 && args[0] == "skills" && args[1] == "remove" {
+		return route{kind: routeSkillsRemove}
 	}
 	if r, ok := shims[args[0]]; ok {
 		return r
@@ -158,6 +163,11 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		// args[0]=skills, args[1]=list: skills.sh shifts the subcommand before
 		// it execs skills-list.sh, so the verb's own loop sees args[2:].
 		return runSkillsList(args[2:], home, stdout, stderr)
+	case routeSkillsRemove:
+		// args[0]=skills, args[1]=remove: same shift as the list route — the
+		// verb's own loop sees args[2:] (skills.sh: `remove) … skills-remove.sh
+		// "$@"`).
+		return runSkillsRemove(args[2:], stdout, stderr)
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")

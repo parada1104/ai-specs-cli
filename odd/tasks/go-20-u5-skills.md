@@ -25,6 +25,26 @@ Unit document for T5 of the Python exit program (`odd/tasks/go-20-python-exit.md
 - S8 — `add-dep` still finishes by delegating to `sync` — the same seam the shell uses — and its exit
   code is the sync's exit code. It is the one step of this unit that stays a call into another verb.
 
+## U5b — the read-only divergence, decided
+
+`skills remove` on a manifest with mode 0444 is the one behavioural difference from the shell, and it is
+deliberate. Measured on the same project:
+
+| route | 0444 manifest | result |
+| --- | --- | --- |
+| `lib/skills-remove.sh` | `ai-specs.toml` | **removes the `[[deps]]` block, prunes `.deps/<id>/`, leaves mode 444** |
+| native | same file | **refuses** (`refusing to overwrite read-only manifest …: permission denied`), mutates nothing |
+
+The shell succeeds because `mkstemp` + `os.replace` only needs a writable DIRECTORY — the user's mode
+bits never enter the decision. That was found and fixed as a defect in U3b-2: `internal/config.atomicWrite`
+now refuses a manifest nobody can write, pinned by `TestSetEnabledAgentsRefusesReadOnlyManifest`, and the
+port inherits the same rule here because it goes through the same writer (S5).
+
+Keeping the refusal, for three reasons: it is the safer side of the same behaviour, it fails closed with a
+message that names the file and the mode, and weakening `atomicWrite` to match the shell would reopen the
+defect that U3b-2's review round closed. `TestSkillsRemoveReadOnlyDeviation` pins BOTH observed sides, so
+the difference is a recorded decision rather than a silent one.
+
 ## Slicing
 
 | slice | scope | retires |
@@ -71,3 +91,37 @@ The three share one manifest reader/writer; whichever slice lands first owns it.
   and the two Python modules they drag in (`project-cache.py` 679, `lock.py` 490) — both of which
   ALREADY have native cores in `internal/projectcache` and `internal/lock`. The slicing above follows
   from that: the verbs are wiring around cores that exist, not new algorithms.
+- L4 — Evidence (U5b), the differential and its environment: `skills remove` runs
+  `bash lib/skills-remove.sh` and the binary on byte-identical TWIN projects (the verb mutates, so one
+  shared project cannot serve both legs) under one shared env — isolated `AI_SPECS_HOME`, `LC_ALL=C`,
+  `PYTHONDONTWRITEBYTECODE=1`, and a LOUD tomllib probe that skips naming the fix when the machine's
+  python3 is too old (the suite runs with `PATH=/tmp/pybin:$PATH`) — comparing stdout, stderr and exit
+  code byte for byte after normalizing each leg's own project root out of the messages, PLUS the
+  resulting trees (manifest bytes, the pruned `.deps` copy, the lock file). Twelve cases all
+  byte-identical: a vendored dep (block removed, `ai-specs/.deps/<id>/` pruned with the sibling left,
+  lock hashes dropped and the rewritten lock byte-identical across legs), a dep that exists but was
+  never vendored (no prune and no lock line, lock bytes untouched), an absent dep, a missing id,
+  `--help`, an unknown flag, a third positional, a manifest whose only table is `[[deps]]` (the file
+  empties and stays valid TOML), a missing manifest (`ERROR: <path> not found.` exit 1), a traversal id
+  (the C2 guard fires before any write, exit 2), a positional after `--`, and the cwd default. The
+  lock leg rides the shell's `lock.py` → `worktree-gate --write-lock` bridge pinned through
+  `WORKTREE_GATE_BIN` to a freshly built gate; unpinned it fails open with a
+  `GO_LOCK_WRITE_BRIDGE_FALLBACK` stderr warning the native leg never prints, which would measure the
+  bridge instead of the verb. `RemoveDepSegment` matched the script exactly on both message lines
+  (`  ✓ removed [[deps]] …` to stdout, `  ✗ dep … not found` to stderr exit 1) and on the valid→invalid
+  guard; three behaviours are RECORDED rather than hidden: (1) READ-ONLY MANIFEST — the script's
+  `mkstemp`+`os.replace` bypasses the file mode (rename needs write on the DIRECTORY), so the legacy
+  leg completes block removal, prune AND lock while keeping the 0444 mode, whereas the native leg
+  refuses inside the shared `config.atomicWrite` with the pinned
+  `R4-atomicwrite-readonly-refusal` rule (odd/tasks/go-20-u3b-advisories.md), exit 1, nothing mutated —
+  the script is the contract and the refusal lives outside this unit's edit surface, so
+  `TestSkillsRemoveReadOnlyDeviation` pins both observed sides instead of a byte match; (2) a failing
+  `cd` keeps the U5a S12-class deviation: exit 1 and `cd: <path>: <reason>` without bash's
+  `lib/skills-remove.sh: line N:` prefix; (3) a corrupt lock file exits 1 like the script's traceback
+  but words the Go load error (ADR 0002 diagnostic class), and an rm/write I/O failure words its own
+  message. The script NEVER touches the cache — the home is snapshotted around the whole table to
+  prove the native verb writes nothing into it — and the routing proof (`skills remove` with PATH
+  emptied) pins that the verb no longer execs the shim, while bare `skills`, `skills add` and
+  `skills --help` still resolve to `lib/skills.sh` byte for byte. Spec note: the U5b slicing row does
+  not mention the D17 lock-hash step the script performs after the prune; it is ported here because
+  the script is the contract (T7's wrapper retirement will lose this Python caller).
