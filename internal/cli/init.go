@@ -655,11 +655,18 @@ func hasExactLine(text, marker string) bool {
 	return false
 }
 
-// refreshBundledAtInit is init.sh's step 7. Under the single binary the bundled
-// assets are embedded and the flattened cache is a compatibility surface, but
-// the same script also stamps the lock's [meta] provenance, which the rest of
-// the system reads; until the native stamp lands (T4c) the step keeps the
-// legacy entry, exactly once (S9).
+// refreshBundledAtInit is init.sh's step 7, unchanged.
+//
+// T4c LOOKED like it could retire this step: the assets are embedded, so the
+// flatten has nothing a native reader needs, and refresh-bundled.py's own
+// docstring claims it stamps the lock's [meta]. Measured, that claim is false:
+// refresh() only normalizes the lock (lib/_internal/refresh-bundled.py:100-131)
+// and a legacy init leaves the lock with NO [meta] at all. The step's whole
+// observable effect is the flatten into {cache}/.bundled/ plus three status
+// lines, and the Python readers that still consume that cache (recipe
+// materialization, the skills renderers) outlive this unit. So the step stays on
+// its seam until those readers go (U7); the stamp this unit ported lives in
+// sync, which is the route that actually stamps.
 func refreshBundledAtInit(home, target string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, "▸ refresh-bundled --init")
 	cmd := exec.Command("python3", filepath.Join(home, "lib", "_internal", "refresh-bundled.py"), target, home, "--init")
