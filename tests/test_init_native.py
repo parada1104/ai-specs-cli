@@ -398,7 +398,13 @@ class InitNativeDifferentialTests(unittest.TestCase):
             self.assertEqual([], written, f"{label}: the aborted run wrote files")
         self.assertIn("--name requires a value", nat_proc.stderr)
 
-    def test_tui_gate_delegates_the_wizard_to_the_legacy_script(self):
+    def test_init_tui_py_env_seam_keeps_legacy_wizard_delegation(self):
+        # T4b-1 escape hatch, recorded in the slice: with AI_SPECS_INIT_TUI_PY
+        # set, the native verb still delegates the whole wizard to lib/init.sh
+        # exactly as before, so the legacy seam (the recipe-configuration PTY
+        # cases, T4b-2) stays observable. The wizard that does NOT run through
+        # this seam is pinned natively by
+        # test_native_wizard_never_executes_init_tui_py below.
         native_cli = self._native_cli()
 
         # A wizard that cancels (rc 1) without writing: both routes must exit 1
@@ -442,6 +448,110 @@ class InitNativeDifferentialTests(unittest.TestCase):
         self.assertEqual(leg_out, nat_out, _diff("tui-success stdout", leg_out, nat_out))
         leg_err, nat_err = leg.stderr(leg_proc), nat.stderr(nat_proc)
         self.assertEqual(leg_err, nat_err, _diff("tui-success stderr", leg_err, nat_err))
+
+    def test_native_wizard_never_executes_init_tui_py(self):
+        # T4b-1, the nativity pin: the isolated home gets a REAL lib copy whose
+        # init_tui.py is a poison that records its own execution and exits 3.
+        # The legacy leg proves the poison fires (the shell runs the Python
+        # wizard); the native leg must leave its marker ABSENT — if
+        # `init --tui` still delegated the whole verb to lib/init.sh, the
+        # poison would run there too and this assertion fails.
+        native_cli = self._native_cli()
+        fixture = _Fixture(self, "ai-specs-init-native-poison-")
+
+        def poison_home(home: Path, marker: Path) -> None:
+            lib = home / "lib"
+            lib.unlink()
+            shutil.copytree(ROOT / "lib", lib, symlinks=True,
+                            ignore=shutil.ignore_patterns("_vendor"))
+            (lib / "_vendor").symlink_to(ROOT / "lib" / "_vendor")
+            (lib / "_internal" / "init_tui.py").write_text(
+                "import sys\n"
+                f"open({str(marker)!r}, 'w').write('ran')\n"
+                "sys.exit(3)\n",
+                encoding="utf-8",
+            )
+
+        leg_marker = fixture.base / "poison-ran-legacy"
+        nat_marker = fixture.base / "poison-ran-native"
+        poison_home(fixture.legacy.home, leg_marker)
+        poison_home(fixture.native.home, nat_marker)
+
+        leg_proc = fixture.legacy.run(LEGACY_CLI, "--tui", str(fixture.legacy.target))
+        nat_proc = fixture.native.run(native_cli, "--tui", str(fixture.native.target))
+
+        # The poison is effective on the legacy leg: the shell ran init_tui.py,
+        # got rc 3 and fell back to the classic path.
+        self.assertTrue(leg_marker.exists(),
+                        "the poison never ran: the legacy leg did not execute its wizard")
+        self.assertEqual(leg_proc.returncode, 0, leg_proc.stderr)
+        self.assertIn("falling back to classic init", leg_proc.stderr)
+
+        # The native leg did the same work WITHOUT the Python wizard: no
+        # marker, the same fallback line, the same classic result.
+        self.assertFalse(nat_marker.exists(),
+                         "the native route executed lib/_internal/init_tui.py — the wizard is not native")
+        self.assertEqual(nat_proc.returncode, 0, nat_proc.stderr)
+        self.assertIn("falling back to classic init", nat_proc.stderr)
+        self.assertTrue((fixture.native.target / "ai-specs" / "ai-specs.toml").is_file())
+        leg_out, nat_out = fixture.legacy.stdout(leg_proc), fixture.native.stdout(nat_proc)
+        self.assertEqual(leg_out, nat_out, _diff("poison stdout", leg_out, nat_out))
+        leg_err, nat_err = fixture.legacy.stderr(leg_proc), fixture.native.stderr(nat_proc)
+        self.assertEqual(leg_err, nat_err, _diff("poison stderr", leg_err, nat_err))
+
+    def test_forced_tui_without_a_tty_falls_back_to_classic_on_both_routes(self):
+        # S15/S6: --tui with pipes must refuse before any prompt (exit 3 from
+        # the wizard) and hand the run to the classic path with the legacy
+        # fallback line — identically on both routes.
+        native_cli = self._native_cli()
+        fixture = _Fixture(self, "ai-specs-init-native-tui-nontty-")
+        leg, nat = fixture.legacy, fixture.native
+
+        leg_proc = leg.run(LEGACY_CLI, "--tui", str(leg.target))
+        nat_proc = nat.run(native_cli, "--tui", str(nat.target))
+
+        self.assertEqual(leg_proc.returncode, 0, leg_proc.stderr)
+        self.assertEqual(nat_proc.returncode, 0, nat_proc.stderr)
+        self.assertIn("falling back to classic init", leg_proc.stderr)
+        self.assertIn("falling back to classic init", nat_proc.stderr)
+        self.assertNotIn("Project name", nat_proc.stdout + nat_proc.stderr)
+        leg_out, nat_out = leg.stdout(leg_proc), nat.stdout(nat_proc)
+        self.assertEqual(leg_out, nat_out, _diff("tui-nontty stdout", leg_out, nat_out))
+        leg_err, nat_err = leg.stderr(leg_proc), nat.stderr(nat_proc)
+        self.assertEqual(leg_err, nat_err, _diff("tui-nontty stderr", leg_err, nat_err))
+        self.assertTrue((nat.target / "ai-specs" / "ai-specs.toml").is_file())
+
+    def test_tui_over_an_existing_manifest_skips_on_both_routes(self):
+        # init.sh's skip branch, at the native verb: --tui over a user-owned
+        # manifest prints the skip line before the banner, runs classic with
+        # tui: no and keeps the bytes (S4) — identically on both routes.
+        native_cli = self._native_cli()
+        fixture = _Fixture(self, "ai-specs-init-native-tui-skip-")
+        leg, nat = fixture.legacy, fixture.native
+        user = b'# hand-edited\nname = "keepme"\n'
+        for route in (leg, nat):
+            path = route.target / "ai-specs" / "ai-specs.toml"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(user)
+
+        leg_proc = leg.run(LEGACY_CLI, "--tui", str(leg.target))
+        nat_proc = nat.run(native_cli, "--tui", str(nat.target))
+
+        self.assertEqual(leg_proc.returncode, 0, leg_proc.stderr)
+        self.assertEqual(nat_proc.returncode, 0, nat_proc.stderr)
+        skip = "  · skip TUI — ai-specs.toml already exists (never overwritten by init)"
+        self.assertIn(skip, leg_proc.stdout)
+        self.assertIn(skip, nat_proc.stdout)
+        self.assertLess(nat_proc.stdout.index(skip), nat_proc.stdout.index("ai-specs init\n"))
+        self.assertIn("tui:     no", nat_proc.stdout)
+        for route in (leg, nat):
+            path = route.target / "ai-specs" / "ai-specs.toml"
+            self.assertEqual(path.read_bytes(), user,
+                             f"{route.root.name}: the user's manifest changed")
+        leg_out, nat_out = leg.stdout(leg_proc), nat.stdout(nat_proc)
+        self.assertEqual(leg_out, nat_out, _diff("tui-skip stdout", leg_out, nat_out))
+        leg_err, nat_err = leg.stderr(leg_proc), nat.stderr(nat_proc)
+        self.assertEqual(leg_err, nat_err, _diff("tui-skip stderr", leg_err, nat_err))
 
 
 if __name__ == "__main__":
