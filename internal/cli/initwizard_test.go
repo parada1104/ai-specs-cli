@@ -589,3 +589,193 @@ func TestInitWizardStagingIsCleanedByTheCaller(t *testing.T) {
 		t.Errorf("after cleanup: staging entries = %v, want none", got)
 	}
 }
+
+// --- U4d-2: the env offer behind the wizard (S28-S33) ----------------------
+
+// envOfferRecipeBody is a catalog recipe whose MCP preset declares a $VAR
+// harness env reference: the S28 gate can only collect something when the
+// staged manifest's enabled recipes carry one (init_tui.py:390).
+func envOfferRecipeBody(id string) string {
+	return fmt.Sprintf(`[recipe]
+id = %q
+name = %q
+description = "d"
+version = "1.0.0"
+
+[[provides.mcp]]
+id = "test-mcp"
+command = "echo"
+env = { TRELLO_API_KEY = "$TRELLO_API_KEY" }
+`, id, id)
+}
+
+// wizardTyped turns a string into text-prompt events (the Enter is separate).
+func wizardTyped(s string) []tui.TextKey {
+	var out []tui.TextKey
+	for _, r := range s {
+		out = append(out, tui.TextKey{Kind: tui.TextRune, Rune: r})
+	}
+	return out
+}
+
+// wizardResolved is Path.resolve() for the fixture target — the offer's status
+// lines carry the resolved root, like the Python's.
+func wizardResolved(t *testing.T, path string) string {
+	t.Helper()
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
+// S28 end to end at the wizard: the manifest is staged first, then the offer
+// collects the enabled recipe's variable, prompts (hidden, per the secret
+// name), writes ai-specs.env, regenerates the example, ensures the managed
+// .envrc block and runs direnv allow — with the offer's lines on the env
+// module's own streams (stdout), the wizard's staged line still on stderr.
+// direnv is kept off PATH so no subprocess runs and the S33 branch shows.
+func TestInitWizardOffersHarnessEnvAfterStaging(t *testing.T) {
+	f := newWizardFixture(t)
+	f.seedRecipe(t, "env-one", envOfferRecipeBody("env-one"))
+	t.Setenv("PATH", t.TempDir())
+
+	text := enterText() // name: keep "demo"
+	text = append(text, wizardTyped("sekret")...)
+	text = append(text, enterText()...) // submit the hidden answer
+	res, rc := runInitWizard(f.request(wizardScript(text,
+		tui.KeyEnter, // topology: auto
+		tui.KeyEnter, // agents: defaults
+		tui.KeySpace, // recipes: toggle env-one on
+		tui.KeyEnter, // recipes: submit
+		tui.KeyEnter, // wizard confirm
+		tui.KeyEnter, // env offer confirm (default yes)
+	)))
+	if rc != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
+	}
+	if res.Staged == "" {
+		t.Fatal("the wizard returned no staged manifest")
+	}
+
+	resolved := wizardResolved(t, f.target)
+	out := f.stdout.String()
+	for _, want := range []string{
+		"Required environment variables",
+		"  TRELLO_API_KEY — required by test-mcp (env-one)",
+		"? TRELLO_API_KEY  (hidden input) ",
+		"✓ wrote " + filepath.Join(resolved, "ai-specs.env"),
+		"✓ root .envrc managed block → " + filepath.Join(resolved, ".envrc"),
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "sekret") {
+		t.Errorf("the typed secret was echoed through the hidden prompt:\n%s", out)
+	}
+
+	if got := readFile(t, filepath.Join(f.target, "ai-specs.env")); !strings.Contains(got, "TRELLO_API_KEY=sekret\n") {
+		t.Errorf("ai-specs.env = %q, want the scripted answer", got)
+	}
+	envrcPath := filepath.Join(f.target, ".envrc")
+	if _, err := os.Stat(envrcPath); err != nil {
+		t.Fatalf("the offer did not create the root .envrc: %v", err)
+	}
+	if !strings.Contains(readFile(t, envrcPath), "dotenv_if_exists ai-specs.env") {
+		t.Errorf(".envrc lacks the managed block:\n%s", readFile(t, envrcPath))
+	}
+	if !envExistsFile(filepath.Join(f.target, "ai-specs.env.example")) {
+		t.Error("the offer did not regenerate the example")
+	}
+
+	errOut := f.stderr.String()
+	if !strings.Contains(errOut, "✓ staged manifest → "+res.Staged) {
+		t.Errorf("stderr lacks the staged line:\n%s", errOut)
+	}
+	// S33: no direnv on PATH → the Python's three-line message on stderr.
+	if !strings.Contains(errOut, "direnv is not installed or could not be run.") {
+		t.Errorf("stderr lacks the S33 direnv line:\n%s", errOut)
+	}
+}
+
+// S30's amendment at the wizard: cancelling ANY prompt inside the offer —
+// declining the question, aborting it, or EOF at the hidden prompt — ends the
+// offer only. The wizard still returns 0 with its staged manifest, so the verb
+// continues into its classic phase exactly as today (goal: cancel inside the
+// offer must never fail the wizard).
+func TestInitWizardEnvOfferCancelKeepsTheWizardSucceeding(t *testing.T) {
+	cases := map[string][]tui.Key{
+		"declining the offer question": {
+			tui.KeyEnter, tui.KeyEnter, tui.KeySpace, tui.KeyEnter, tui.KeyEnter,
+			tui.KeyNo, tui.KeyEnter,
+		},
+		"aborting the offer question": {
+			tui.KeyEnter, tui.KeyEnter, tui.KeySpace, tui.KeyEnter, tui.KeyEnter,
+			tui.KeyEscape,
+		},
+		"eof at the hidden prompt": {
+			tui.KeyEnter, tui.KeyEnter, tui.KeySpace, tui.KeyEnter, tui.KeyEnter,
+			tui.KeyEnter, // offer question accepted, then the text source ends
+		},
+	}
+	for name, keys := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newWizardFixture(t)
+			f.seedRecipe(t, "env-one", envOfferRecipeBody("env-one"))
+			t.Setenv("PATH", t.TempDir())
+
+			res, rc := runInitWizard(f.request(wizardScript(enterText(), keys...)))
+			if rc != 0 {
+				t.Fatalf("exit = %d, want 0 (the offer's cancel must not fail the wizard); stderr=%q",
+					rc, f.stderr.String())
+			}
+			if res.Staged == "" || res.Sidecar == "" {
+				t.Errorf("the staged outputs are gone: %+v", res)
+			}
+			if !strings.Contains(f.stdout.String(), "Required environment variables") {
+				t.Errorf("the offer never ran:\n%s", f.stdout.String())
+			}
+			if strings.Contains(f.stderr.String(), "Cancelled") {
+				t.Errorf("the offer's cancel leaked into the wizard:\n%s", f.stderr.String())
+			}
+			for _, path := range []string{
+				filepath.Join(f.target, "ai-specs.env"),
+				filepath.Join(f.target, "ai-specs.env.example"),
+				filepath.Join(f.target, ".envrc"),
+			} {
+				if envExistsFile(path) {
+					t.Errorf("%s must not exist after a cancelled offer", path)
+				}
+			}
+		})
+	}
+}
+
+// S28's gate: with no enabled recipe answering any variable, the offer does
+// not run at all — no banner, no prompts, and the wizard's key script is
+// exactly the one it was before this slice.
+func TestInitWizardSkipsTheEnvOfferWhenNothingCollects(t *testing.T) {
+	f := newWizardFixture(t)
+	f.seedRecipe(t, "plain-one", wizardRecipeBody("plain-one", "1.0.0", "no env"))
+
+	res, rc := runInitWizard(f.request(wizardScript(enterText(),
+		tui.KeyEnter, tui.KeyEnter, tui.KeySpace, tui.KeyEnter, tui.KeyEnter)))
+	if rc != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
+	}
+	if res.Staged == "" {
+		t.Fatal("the wizard returned no staged manifest")
+	}
+	if strings.Contains(f.stdout.String(), "Required environment variables") {
+		t.Errorf("the env offer ran with nothing to collect:\n%s", f.stdout.String())
+	}
+	if envExistsFile(filepath.Join(f.target, "ai-specs.env")) {
+		t.Error("ai-specs.env was written with nothing to collect")
+	}
+}
+
+// envExistsFile reports whether path is a regular file.
+func envExistsFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}

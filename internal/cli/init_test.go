@@ -650,3 +650,88 @@ func firstLines(s string, n int) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// TestInitWizardEnvOfferDeclineKeepsTheVerbFlow pins the goal's cancel rule at
+// the VERB level: declining the env offer (S30's amendment — decline is a
+// cancel of the offer) leaves the wizard's staged manifest in place, never
+// writes ai-specs.env, and the classic continuation runs untouched — banner,
+// "(from TUI)" install, brief, gitignores, next steps — with exit 0.
+func TestInitWizardEnvOfferDeclineKeepsTheVerbFlow(t *testing.T) {
+	home := wizardTestHome(t)
+	// The catalog carries the env recipe the S28 gate collects.
+	writeSyncCatalogRecipeForTest(t, filepath.Join(home, "catalog", "recipes"), "env-one", envOfferRecipeBody("env-one"))
+	stagingDir := t.TempDir()
+	t.Setenv("TMPDIR", stagingDir)
+	dir := filepath.Join(t.TempDir(), "env-app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	keys := wizardScript(enterText(),
+		tui.KeyEnter, // topology: auto
+		tui.KeyEnter, // agents: defaults
+		tui.KeySpace, // recipes: toggle env-one on
+		tui.KeyEnter, // recipes: submit
+		tui.KeyEnter, // wizard confirm
+		tui.KeyNo,    // decline the env offer (a cancel of the offer, S30)
+		tui.KeyEnter,
+	)
+	var out, errW bytes.Buffer
+	rc := runInitFlow([]string{"init", "--tui", dir}, home, strings.NewReader(""),
+		&out, &errW, "", stubWizardOpener(keys))
+	if rc != 0 {
+		t.Fatalf("exit = %d, want 0 (the offer's cancel must not fail the verb); stderr=%q stdout=%q",
+			rc, errW.String(), out.String())
+	}
+
+	stdout := out.String()
+	for _, want := range []string{
+		"Required environment variables",               // the offer ran…
+		"  tui:     yes",                               // …and the wizard was adopted
+		"  ✓ wrote  ai-specs/ai-specs.toml (from TUI)", // …and its manifest installed
+		"✓ ai-specs initialized at ",                   // …and the classic continuation reached the end
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "✓ wrote "+filepath.Join(dir, "ai-specs.env")) {
+		t.Errorf("a declined offer printed the env write line:\n%s", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ai-specs.env")); err == nil {
+		t.Error("ai-specs.env was written after a declined offer")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".envrc")); err == nil {
+		t.Error(".envrc was written after a declined offer")
+	}
+	manifest := readFile(t, filepath.Join(dir, "ai-specs", "ai-specs.toml"))
+	if !strings.Contains(manifest, `name = "env-app"`) || !strings.Contains(manifest, "[recipes.env-one]") {
+		t.Errorf("the staged manifest did not install:\n%s", manifest)
+	}
+	for _, e := range mustReadDir(t, stagingDir) {
+		if strings.HasPrefix(e.Name(), "ai-specs-init-tui-") {
+			t.Errorf("staging temp survived the verb: %s", e.Name())
+		}
+	}
+}
+
+// writeSyncCatalogRecipeForTest seeds one catalog recipe for the verb tests.
+func writeSyncCatalogRecipeForTest(t *testing.T, catalogDir, id, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(catalogDir, id), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(catalogDir, id, "recipe.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// mustReadDir lists a directory the test just created.
+func mustReadDir(t *testing.T, dir string) []os.DirEntry {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return entries
+}

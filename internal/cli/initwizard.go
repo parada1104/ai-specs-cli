@@ -5,7 +5,10 @@ package cli
 // step, which stays deferred as S19 says). It runs on internal/tui's prompt
 // primitives — Select, MultiSelect, Confirm and the one new one, Text (S13) —
 // with no third-party dependency and no PTY-only code path beyond the raw-mode
-// terminal internal/tui already owns.
+// terminal internal/tui already owns. Since U4d-2 (S28-S33) it also carries
+// the wizard's tail: after staging, sync.OfferHarnessEnv prompts for the
+// harness env vars through wizardEnvPrompts below, exactly where init_tui.py
+// collects and offers (:390-391).
 //
 // The stream split is the legacy split: questionary prompts on stdout, the
 // rich console (banner, preview, status lines) on stderr. The exit codes are
@@ -26,6 +29,7 @@ import (
 
 	"ai-specs.dev/ai-specs/internal/recipe"
 	"ai-specs.dev/ai-specs/internal/schema"
+	"ai-specs.dev/ai-specs/internal/sync"
 	"ai-specs.dev/ai-specs/internal/target"
 	"ai-specs.dev/ai-specs/internal/toml"
 	"ai-specs.dev/ai-specs/internal/tui"
@@ -271,7 +275,69 @@ func runInitWizard(req initWizardRequest) (res initWizardResult, rc int) {
 		return fail(err)
 	}
 	fmt.Fprintf(req.Stderr, "✓ staged manifest → %s\n", staged)
+
+	// S28 (init_tui.py:390-391): prompt for MCP env vars → ai-specs.env +
+	// root .envrc + direnv allow, when the manifest's enabled recipes collect
+	// anything. The Python wraps both calls in try/except: pass — and every
+	// branch inside OfferHarnessEnv soft-fails with the Python's own line — so
+	// a declined or cancelled offer (S30) ends the OFFER only: the staged
+	// manifest stays, the wizard returns 0 and the verb's classic continuation
+	// runs exactly as it does today.
+	if len(sync.CollectEnvVars(req.Target, req.Home)) > 0 {
+		sync.OfferHarnessEnv(req.Target, req.Home,
+			&wizardEnvPrompts{out: req.Stdout, keys: keys}, req.Stdout, req.Stderr)
+	}
 	return initWizardResult{Name: projectName, Staged: staged, Sidecar: sidecar}, 0
+}
+
+// wizardEnvPrompts is internal/cli's half of sync.EnvOfferPrompts (S29): the
+// offer's questions on internal/tui over the wizard's own key source and
+// stdout — questionary's stream — while the wizard's rich console stays on
+// stderr (S20). questionary's None (Ctrl-C, EOF, a declined yes/no) answers
+// sync.ErrEnvOfferCancelled, which OfferHarnessEnv swallows as "cancelled".
+type wizardEnvPrompts struct {
+	out  io.Writer
+	keys tui.KeySource
+}
+
+var _ sync.EnvOfferPrompts = (*wizardEnvPrompts)(nil)
+
+func (p *wizardEnvPrompts) Confirm(message string, def bool) (bool, error) {
+	answer, ok := tui.Confirm(p.out, p.keys, message, def)
+	if !ok {
+		return false, sync.ErrEnvOfferCancelled
+	}
+	return answer, nil
+}
+
+func (p *wizardEnvPrompts) Select(message string, choices []string, initial string) (string, error) {
+	tuiChoices := make([]tui.Choice, len(choices))
+	for i, choice := range choices {
+		tuiChoices[i] = tui.Choice{Title: choice, Value: choice}
+	}
+	answer, ok := tui.SelectDefault(p.out, p.keys, message, tuiChoices, initial)
+	if !ok {
+		return "", sync.ErrEnvOfferCancelled
+	}
+	return answer, nil
+}
+
+func (p *wizardEnvPrompts) Password(message, instruction string) (string, error) {
+	answer, ok := tui.Password(p.out, p.keys, message, instruction)
+	if !ok {
+		return "", sync.ErrEnvOfferCancelled
+	}
+	return answer, nil
+}
+
+func (p *wizardEnvPrompts) Text(message, defaultValue string) (string, error) {
+	// TextRAW: questionary.text does not trim (S30's correction); the blank
+	// rule that protects a secret is write_env's own.
+	answer, ok := tui.TextRaw(p.out, p.keys, message, defaultValue)
+	if !ok {
+		return "", sync.ErrEnvOfferCancelled
+	}
+	return answer, nil
 }
 
 // cleanupInitStaging removes the wizard's staging set — the base temp, the
