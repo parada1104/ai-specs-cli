@@ -45,6 +45,12 @@ Worktree `.worktrees/go-20-u4a-init-core`, branch `change/go-20-u4a-init-core`, 
   `gitignore-render.py` directly, so its `  ✓ wrote <abs path> (N dep(s))` status line IS part of
   init's stdout. The native step prints it through the same wrapper.
 
+- S12 — The judgment round (below) found that the shell's own failure messages are not a contract: `shift 2`
+  out of range on a trailing `--name`, `mkdir`'s diagnostic, and `gitignore-render.py`'s traceback are
+  accidents of bash and Python. The port keeps their EXIT CODES and streams, and replaces their text
+  with one line that names the flag, the directory or the manifest. Each is pinned, and none of them
+  changes a successful run's bytes.
+
 ## Slicing
 
 | slice | scope | retires |
@@ -85,9 +91,55 @@ Worktree `.worktrees/go-20-u4a-init-core`, branch `change/go-20-u4a-init-core`, 
   (manifest template write, wizard, env write path, `[meta]` writer). The slicing table is the
   consequence of that measurement.
 
-## T4a — verification
+## T4a — judgment and fix round
 
-Evidence for this slice, run from `.worktrees/go-20-u4a-init-core` with
+Three independent reads of the frozen candidate (`266684e0` on base `f2cb80a1`) ran after the unit was
+written, because the native review of this candidate could not close (two of four lenses' models could
+not finish; recorded in the program's memory, not in this document):
+
+- **Judgment Day, judge A** — 8 rows: 4 WARNING, 4 SUGGESTION, 0 CRITICAL.
+- **Judgment Day, judge B** — 6 rows: 1 HIGH, 3 WARNING, 2 SUGGESTION. Its HIGH is the same defect
+  judge A filed as a WARNING at the same line, reproduced independently.
+- **Independent verifier** — `PASS`, S1-S11 met, S8/S10 real and singular, one advisory (stderr text
+  on the manifest-as-a-directory path), plus two regression tests to hand back.
+
+The fix batch, in one commit:
+
+| id | finding | fix |
+| --- | --- | --- |
+| C1 | a trailing `--name` bootstrapped the project where the shell aborts at `shift 2` with exit 1 and no writes | the parser refuses it before any write, exit 1, `--name requires a value` (S12) |
+| C2 | bare `-` was read as a target path; the shell's `-*` matches it as an unknown flag | it is an unknown flag again, exit 2 with the help hint |
+| C3 | the name was substituted into `name = "..."` unescaped, so a backslash or a quote produced a manifest that cannot parse — permanently, because init never overwrites it | `tomlBasicStringBody` escapes the TOML basic string; S8 grows this half and a test pins `a\q`, `a"b` and `a\nb` |
+| C4 | the `ai-specs/.gitignore` step failed silently where the shell printed a traceback naming the manifest | the step prints one line naming both paths (S12) |
+| C5 | `appendGitignoreBlock` truncated the user-owned root `.gitignore` before writing; the shell appended and renamed | the same bytes are written beside the target and renamed into place |
+| C6 | one test asserted `filepath.Base` on its own literal, and the parser cases sat exactly where the drift was | the basename is asserted through `runInit`; `--name`, `--name=` and `-` are pinned; the next-steps text is compared whole |
+| C7 | the new route constant broke `gofmt` alignment | `gofmt -w` on the touched files |
+| C8 | the silent writer's comment claimed `init` uses it, contradicting S11 | the comment names the printing wrapper as init's call |
+| C9 | `mkdir` failure was reported on stdout with a partial `✓` line already printed | both directories are created first, the diagnostic goes to stderr, and no `✓` is printed on failure |
+| C10 | a signal-killed `refresh-bundled` child returned `-1`, which `os.Exit` turns into 255; the shell reports 128+signal | the 128+signal rule `runShim` already implements |
+| C11 | the verifier's probe had no regression test | `test_manifest_directory_is_never_destroyed_and_exits_1` and `TestInitManifestDirectoryIsNotDestroyed` |
+
+Evidence after the batch (same interpreter, `/tmp/pybin/python3`):
+
+| gate | result |
+| --- | --- |
+| `go test ./internal/cli/ ./internal/sync/` | both packages `ok` |
+| `python3 -m unittest tests.test_init_native tests.test_init_brief_route tests.test_init_tui` | 44 tests, OK |
+| `python3 tests/parity/run.py` | 29 fixtures, failing 0 |
+
+One incident is recorded rather than hidden: writing the C11 regression test, a first version passed the
+project path to `--name`, which made the legacy route read its own cwd as the project and run a real
+`init` in the worktree. The only write it made was a re-stamp of `ai-specs/.ai-specs.lock`, restored
+with `git checkout`. The test now runs with `cwd` inside the throwaway project and its docstring says
+why.
+
+## T4a — verification of the first cut (superseded by the round above)
+
+Evidence gathered before the judgment round, kept because it records the RED and the manual
+differential that motivated the committed black-box test. The numbers below are pre-fix; the
+post-fix gate is the table in the section above.
+
+Run from `.worktrees/go-20-u4a-init-core` with
 `PATH=/tmp/pybin:$PATH` (the canonical 3.14.7 interpreter; the machine's `/usr/bin/python3` is 3.9
 and fails unrelated suites — recorded in the program's memory notes):
 
