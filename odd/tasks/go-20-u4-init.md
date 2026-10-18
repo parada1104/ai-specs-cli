@@ -228,6 +228,16 @@ now offers the variables the enabled recipes need, exactly where the Python did.
 - **The PTY suite now reads honestly:** the harness-env case lost its "LEGACY launcher on purpose"
   comment because the offer it exercises is native. The four per-recipe-configuration cases keep theirs,
   with U4b-2 named as the slice that removes them.
+- S34 — Divergences found by the judgment round, each decided rather than fixed:
+  - `ai-specs.env` is created **0600**, not the 0644 Python's `write_text` leaves under the usual
+    umask (JD-ENV-A-002). The file holds the API keys and tokens the offer just collected, so the port
+    is deliberately stricter; nothing else about the file changes, an existing file keeps its own mode,
+    and a test pins it.
+  - A Ctrl-D on an empty hidden/raw prompt cancels the offer **silently**, where the Python lets
+    `prompt_toolkit` raise `EOFError` and prints `Could not configure environment variables: …`. Nothing
+    is written either way; the only difference is that one soft-fail line. Recorded, not fixed: plumbing
+    "cancelled by EOF" through the prompt interface would add a case to every prompt for a line no user
+    needs. If it ever matters, the fix is an EOF-specific error next to `ErrEnvOfferCancelled`.
 
 ## Slicing
 

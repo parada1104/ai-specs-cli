@@ -1452,3 +1452,37 @@ func TestOfferHarnessEnvWithoutVarsIsSilent(t *testing.T) {
 		t.Error("no .envrc work may happen with nothing to collect")
 	}
 }
+
+// TestWriteHarnessEnvIsOwnerOnly pins JD-ENV-A-002: ai-specs.env holds secrets,
+// so a freshly created file is 0600 rather than the 0644 the Python leaves
+// under the usual umask. The example stays world-readable — it carries no
+// values — and an existing file keeps the mode it already has.
+func TestWriteHarnessEnvIsOwnerOnly(t *testing.T) {
+	t.Parallel()
+	root, _ := newEnvScaffoldWorkspace(t, "cfg-none", "", false)
+
+	path, err := WriteHarnessEnv(root, map[string]string{"TRELLO_API_KEY": "sekret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, statErr := os.Stat(path)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("ai-specs.env mode = %o, want 600", got)
+	}
+
+	// The example keeps the Python's mode: it is the committed template.
+	example, err := generateEnvExample(root, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	efi, statErr := os.Stat(example)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if got := efi.Mode().Perm(); got&0o400 == 0 {
+		t.Errorf("ai-specs.env.example mode = %o, want it readable by the owner", got)
+	}
+}
