@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.5] — 2026-10-18
+
+### Upgrade notes
+Run `ai-specs sync` in each project. `sync-agent` now renders declared MCP
+servers for pi into `.pi/mcp.json`; until you sync, a project that declared MCP
+servers but was synced for pi alone has no file pi reads, so its MCP servers stay
+invisible (`ai-specs doctor` reports `mcp-pi .pi/mcp.json missing`). No action is
+needed for Claude Code, whose `.mcp.json` is unchanged.
+
+### Added
+- **Go actuator bridges (GO-07–GO-10).** The recipe-config TOML writer core, the
+  lock writer and copy actuator, the template actuator, and the runtime hook-gate
+  actuator now run in Go behind a Python fail-open bridge, each with parity tests
+  at its seam (#291, #292, #293, #294).
+- **Go gate query migrations.** Orphan planning and application, resolved-config
+  projection, managed-override classification, tag-conflict planning, the
+  `merge_config` decision, primitive-conflict resolution, reconcile stamps,
+  capability bindings with the tracker witness, mode resolution, and the Plan
+  Build topology proof now resolve in Go (#274–#290).
+- **`qodana-pr-review` skill.** PR-mode Qodana scan that reports only problems new
+  relative to `development` before a pull request opens (#320).
+- **Jinna capability baseline.** Provider capability baseline and entrypoint
+  parity coverage (#271).
+- **Stale review-candidate cleanup skill.** Conservative sweep for orphaned native
+  review candidate views (#273).
+
+### Changed
+- **Tracker ledger is advisory.** The provider-backed ledger no longer gates
+  work; grading stays pure and the local lifecycle writers remain
+  provider-write-free (#272).
+
 ### Fixed
 - **Pi MCP config target.** `sync-agent --pi` now renders `[mcp.*]` entries into
   `.pi/mcp.json` instead of the root `.mcp.json`. Pi resolves project MCP
@@ -14,7 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pi alone got a config file pi never read and every declared MCP stayed
   invisible. The root `.mcp.json` remains Claude Code's target and is unchanged.
   `doctor` mirrors the new path, so a project synced before this fix reports
-  `mcp-pi .pi/mcp.json missing` with the `ai-specs sync` guidance.
+  `mcp-pi .pi/mcp.json missing` with the `ai-specs sync` guidance (#379).
+- **Advisory hardening (C1–C5).** Bridge advisories and template-guard parity
+  mirrors, TOML writer envelope/dedup/bounded coverage, hook relative-path
+  escapes and refresh rollback, template destination containment with symlink
+  refusal, and lock control-character guard-branch coverage (#296–#300).
 
 ## [0.24.0] — 2026-09-18
 
