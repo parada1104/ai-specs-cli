@@ -105,7 +105,7 @@ class Doctor:
         "pi": {
             "instructions_path": "",
             "skills_dir": ".pi/skills",
-            "mcp_config_path": ".mcp.json",
+            "mcp_config_path": ".pi/mcp.json",
             "mcp_key": "mcpServers",
             "commands_dir": "",
         },
