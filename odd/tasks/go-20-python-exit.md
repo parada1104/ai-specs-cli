@@ -225,7 +225,9 @@ cannot each be one PR.
 | U3b — the interactive hub, native and dependency-free | **delivered, review approved** | `b572a7d` (PR #368); 2494 tests green; `review-431359c0d529da28` approved, 0 blocking, 14 advisory |
 | U3b-2 advisories — the 14 review advisories closed | **delivered** | `55d235e` (PR #369); 10 fixed / 4 declined with a reason, 0 open; doc `go-20-u3b-advisories.md` |
 | U4a — the classic `init` path, native | **delivered, judgment approved** | `76d8b83` (PR #371); T4a of `go-20-u4-init.md`; Judgment Day 8/8 verified after a two-round fix, independent verify PASS, 44 init tests + parity 29/29 |
-| U4b..U4d — the wizard, the lock stamp, the harness env | pending | T4b-T4d of `go-20-u4-init.md` |
+| U4b-1 — the wizard, native | **delivered** | `9a57121` (PR #373); `tui.Text` + `internal/cli/initwizard.go`; the 7 PTY wizard flows now drive the built binary; assess: medium, review not due; verify unavailable (subagent timeout), raw-mode lifecycle covered by reading |
+| U4b-2 — per-recipe configuration prompts | pending | `init_tui.py:204-233`, needs `recipe-read.py` + `config_wizard.py` (U6 surface) |
+| U4c..U4d — the lock stamp, the harness env | pending | T4c-T4d of `go-20-u4-init.md` |
 | U5..U7 — skills, recipes, substrate tail | pending | |
 | U2 — flip the launcher + parity snapshot + deletion | pending, AFTER the ports | L13 |
 | U8 — program closure | pending | |
