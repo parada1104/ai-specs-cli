@@ -238,7 +238,10 @@ now offers the variables the enabled recipes need, exactly where the Python did.
     `generateEnvExample`), and the second said its only caller was "below" when that caller sits above the
     function. The final text names the single caller without a direction word and explains why the two
     neighbours are not routed through it; every sentence was then checked mechanically — call sites,
-    definition order, both file modes — instead of from memory.
+    definition order, both file modes — instead of from memory. Both judges' re-judgment evidence named
+    the same defect class at the same place; judge B's landed on the superseded revision (it quotes the
+    `6578314` wording, which no longer exists at `4dbcd12`), which is the one caveat worth recording: a
+    resolution is bound to the revision it read, and the text it asked for is the text that shipped.
   - A Ctrl-D on an empty hidden/raw prompt cancels the offer **silently**, where the Python lets
     `prompt_toolkit` raise `EOFError` and prints `Could not configure environment variables: …`. Nothing
     is written either way; the only difference is that one soft-fail line. Recorded, not fixed: plumbing
