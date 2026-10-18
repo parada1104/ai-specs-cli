@@ -51,12 +51,49 @@ Worktree `.worktrees/go-20-u4a-init-core`, branch `change/go-20-u4a-init-core`, 
   with one line that names the flag, the directory or the manifest. Each is pinned, and none of them
   changes a successful run's bytes.
 
+### T4b specs (the wizard, native)
+
+- S13 — The wizard is `internal/tui`'s, on the same prompt primitives the hub already uses
+  (`Select`, `MultiSelect`, `Confirm`, `Pause`) plus ONE new one: a text prompt with a default
+  (`lib/_internal/init_tui.py:261` is a `questionary.text`). No third-party dependency, no PTY-only
+  code path beyond what `internal/tui` already owns.
+- S14 — Flow, in this order (`init_tui.py:234-400`): banner panel and `target:` line; project name
+  (default = `--name` if given, else the target's basename; empty answer keeps the default; the value is
+  `strip()`ed); repo topology select (`auto → <detected> (detected)`, `standalone`,
+  `monorepo-apps`, `monorepo-submodules`, default `auto`); agents multi-select in `SUPPORTED_AGENTS`
+  order with `DEFAULT_AGENTS` pre-checked; recipes multi-select over the catalog in sorted order with
+  `DEFAULT_RECIPES` pre-checked (skipped entirely when the catalog is empty); preview panel with
+  `name`, `agents`, `recipes`, `config`, `mcp`; confirm (`default: true`).
+- S15 — Cancelling at ANY prompt — Ctrl-C, EOF, or a `false`-equivalent answer at the confirm — returns
+  exit 1 and writes NOTHING (no staged manifest, no sidecar, no project files). A non-TTY stdin or
+  stdout returns exit 3 before any prompt, so the classic path can take over.
+- S16 — Outputs, byte-for-byte the Python's shapes: the staged manifest at `--out`
+  (`init_tui.py:160-203`, header, `[project]` with `name`/`subrepos`/`repo_topology`, `[agents]`,
+  one `[recipes.<id>]` with `enabled = true` per selection, the `[recipes.<id>.config]` table when a
+  recipe carries values, and the trailing `# [[deps]]` / `# [mcp.*]` comment pair), the JSON sidecar at
+  `<out>.json` (`name`, `agents`, `recipes`, `configured`), and the manifest ALSO placed at
+  `<target>/ai-specs/ai-specs.toml` when that file does not exist yet — never overwriting one.
+- S17 — Recipe ids and config keys are emitted bare when they match `^[A-Za-z0-9_-]+$` and quoted as a
+  JSON-style basic string otherwise (`init_tui.py:130-142`), so `foo.bar` renders as
+  `[recipes."foo.bar"]`.
+- S18 — `repo_topology` is project-owned: a recipe-side answer is promoted to `[project].repo_topology`
+  and never written under `[recipes.<id>.config]`.
+- S19 — Deferred, with the reason in this document: the per-recipe configuration prompts
+  (`init_tui.py:204-233` → `recipe-read.py` + `config_wizard.py`, the U6 surface) are T4b-2; until then
+  the native wizard prints `  · configure <id> later: ai-specs recipe configure <id>` for a selected
+  recipe that declares config fields. The harness-env prompts (`env_scaffold.collect_env_vars` /
+  `offer_harness_env`) stay on their existing seam until T4d.
+- S20 — The PTY suite is the contract: `tests/test_init_tui.py` wizard flows move to the native binary
+  for every case that does not configure a recipe, and the four recipe-configuration cases stay on the
+  legacy launcher until T4b-2, each named in the test file.
+
 ## Slicing
 
 | slice | scope | retires |
 | --- | --- | --- |
 | **T4a** | classic non-interactive `init` native: args, target resolution, directories, template manifest, `AGENTS.md` baseline brief, root `.gitignore` block, `ai-specs/.gitignore`, lock stamp, next steps; TUI gate delegates | `init.sh:35-120,195-233,235-282,284-325,327-348` shell orchestration |
-| T4b | the wizard, native (`internal/tui`): name, topology, agents, recipes, confirm, manifest render, JSON sidecar | `init_tui.py` |
+| T4b-1 | the wizard, native: text prompt, name, topology, agents, recipes, preview, confirm, manifest render, JSON sidecar, staging | `init_tui.py:234-400` minus the recipe-config step |
+| T4b-2 | per-recipe configuration prompts and the CLI-dep gate (`recipe-read.py` + `config_wizard.py`) | `init_tui.py:204-233` |
 | T4c | lock `[meta]` writer + `refresh-bundled` flatten retirement in both `init` and `sync` | `cli_version.py stamp-meta`, `refresh-bundled.py` |
 | T4d | harness env write path (`ai-specs.env`, `ai-specs.env.example`, managed `.envrc`, `direnv allow`) | `env_scaffold.py` write subset, `envrc-scaffold.py` |
 
