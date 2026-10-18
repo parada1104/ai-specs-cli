@@ -164,20 +164,16 @@ U4d-1 ported the non-interactive half. This slice closes the wizard's tail.
   variables, prompt, write `ai-specs.env`, regenerate the example and the managed `.envrc` block, run
   `direnv allow`.
 - S30 — `prompt_env_vars` (`:496-547`): a `Required environment variables` banner with each variable's
-  purpose and its `ENV_VAR_HELP` sentence, then `Configure these values now?` (default yes; declining
-  returns "nothing to write" and the offer continues to the example/`.envrc`/direnv steps). Per
-  variable, sorted: a select over the recipe's declared `env_allowed` values when it has them — with
-  `_select_default`'s three-step default (matching existing value, else matching example default, else
-  the first choice) — a HIDDEN prompt when the name looks like a secret
-  (`API_KEY`/`TOKEN`/`SECRET`/`PASSWORD`/`APIKEY`), and a text prompt otherwise. Cancelling any prompt
-  cancels the offer without writing `ai-specs.env`.
+  purpose and its `ENV_VAR_HELP` sentence, then `Configure these values now?` (default yes). Declining
+  that confirm is a CANCEL of the whole offer: `prompt_env_vars` answers `None` for a decline and for a
+  cancel alike, and `offer_harness_env` returns on `None`, so nothing is written — no `ai-specs.env`, no
+  example, no `.envrc` work, no `direnv allow`. Per variable, sorted: a select over the recipe's declared
+  `env_allowed` values when it has them — with `_select_default`'s three-step default (matching existing
+  value, else matching example default, else the first choice) — a HIDDEN prompt when the name looks
+  like a secret (`API_KEY`/`TOKEN`/`SECRET`/`PASSWORD`/`APIKEY`), and a text prompt otherwise.
+  Cancelling any prompt cancels the offer without writing `ai-specs.env`.
   - The select PRESELECTS that default: questionary passes it as `initial_choice`, so Enter answers the
     default without moving the cursor. The port needs a Select with an initial cursor for exactly this.
-  - Corrected: declining `Configure these values now?` is NOT "continue without values". `prompt_env_vars`
-    returns None for a decline and for a cancel alike, and `offer_harness_env` returns on None — so the
-    whole offer stops: no `ai-specs.env`, no example, no `.envrc` work, no `direnv allow`. The first
-    version of this line said the offer continued, which was a misread of the reference; the reference
-    wins (S3).
   - The text prompt for a value returns the RAW buffer, not the stripped one: `questionary.text` does not
     trim, and S14's `strip()` belongs to the project-name step only.
 - S31 — `write_env` (`:277-299`) merges and never destroys, with two DIFFERENT rules that this line
@@ -242,6 +238,10 @@ now offers the variables the enabled recipes need, exactly where the Python did.
     the same defect class at the same place; judge B's landed on the superseded revision (it quotes the
     `6578314` wording, which no longer exists at `4dbcd12`), which is the one caveat worth recording: a
     resolution is bound to the revision it read, and the text it asked for is the text that shipped.
+  - An EXISTING `ai-specs.env` keeps whatever mode it already had: `os.WriteFile` does not chmod, so a
+    file created by an older build (or by the Python) stays 0644 while a fresh one is 0600
+    (JD-R1-existing-env-file-keeps-weak-mode, advisory). Recorded rather than "fixed": silently
+    narrowing a user's file on every sync is a bigger surprise than the mode they already chose.
   - A Ctrl-D on an empty hidden/raw prompt cancels the offer **silently**, where the Python lets
     `prompt_toolkit` raise `EOFError` and prints `Could not configure environment variables: …`. Nothing
     is written either way; the only difference is that one soft-fail line. Recorded, not fixed: plumbing
