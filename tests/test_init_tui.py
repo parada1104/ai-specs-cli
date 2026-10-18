@@ -28,10 +28,17 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _go_cli  # noqa: E402
 from _blackbox import CLIResult, invoke, isolated_home, normalize_output  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
+
+# S20 (odd/tasks/go-20-u4-init.md): the wizard is native, so the end-to-end PTY
+# flows drive the built binary. The cases that still need the LEGACY launcher are
+# named at their test: the four per-recipe-configuration flows (recipe-read.py +
+# config_wizard.py, T4b-2) and the harness-env offer (env_scaffold.py, T4d).
+NATIVE_CLI = _go_cli.cli()
 
 ANSI_RE = re.compile(rb"\x1b\[[0-9;?]*[a-zA-Z]")
 
@@ -107,7 +114,8 @@ def _seed_recipe(home: Path, rid: str, body: str) -> Path:
 
 def _spawn_pty(target: Path, home: Path, base: Path, *, feed: bytes = b"",
                timeout: float = 90, stages: list[tuple[bytes, bytes]] | None = None,
-               argv: list[str] | None = None) -> tuple[int, bytes]:
+               argv: list[str] | None = None,
+               cli: Path | None = None) -> tuple[int, bytes]:
     """Spawn a command under a PTY and drive it with staged input.
 
     ``stages`` is a list of (needle, payload): each payload is written once the
@@ -119,7 +127,7 @@ def _spawn_pty(target: Path, home: Path, base: Path, *, feed: bytes = b"",
     """
     master, slave = os.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-    cmd = argv if argv is not None else [str(CLI), "init", "--tui", str(target)]
+    cmd = argv if argv is not None else [str(cli or CLI), "init", "--tui", str(target)]
     proc = subprocess.Popen(
         cmd,
         stdin=slave,
@@ -290,6 +298,7 @@ class TestRenderManifest(unittest.TestCase):
         self.assertNotIn("version", data["recipes"]["foo.bar"])
         self.assertNotIn("version =", text)
 
+    # LEGACY launcher on purpose: per-recipe configuration prompts (T4b-2).
     def test_render_manifest_writes_config_block(self):
         base, home, target = _fresh_env(self)
         _seed_recipe(home, "cfg-one", _recipe_toml("cfg-one", "Cfg One", extra=(
@@ -340,6 +349,7 @@ class TestRenderManifest(unittest.TestCase):
 class TestConfigureRecipesStep(unittest.TestCase):
     """Step 3.5 (per-recipe configure), driven through the real wizard PTY."""
 
+    # LEGACY launcher on purpose: per-recipe configuration prompts (T4b-2).
     def test_configure_recipes_skip_later(self):
         base, home, target = _fresh_env(self)
         _seed_recipe(home, "cfg-later", _recipe_toml("cfg-later", "Cfg Later", extra=(
@@ -365,6 +375,7 @@ class TestConfigureRecipesStep(unittest.TestCase):
         # The config wizard never ran: its field help text was never rendered.
         self.assertNotIn("Base branch for PRs", plain)
 
+    # LEGACY launcher on purpose: the CLI-dep gate of per-recipe configuration (T4b-2).
     def test_configure_recipes_uses_dep_gate_for_cli_deps(self):
         """JD-3: init must offer TTY install via _dep_gate, not panel-only."""
         base, home, target = _fresh_env(self)
@@ -396,9 +407,16 @@ class TestConfigureRecipesStep(unittest.TestCase):
         self.assertNotIn(".config]", text)
 
 
+# S20: these flows still drive the LEGACY launcher on purpose, because the step
+# they exercise is not native yet — per-recipe configuration
+# (recipe-read.py + config_wizard.py, scheduled as T4b-2 of
+# odd/tasks/go-20-u4-init.md) and the harness-env offer (env_scaffold.py, T4d).
+# Moving them to NATIVE_CLI before those slices land would assert a feature the
+# port does not have. Each case below carries its own reason.
 class TestRunWizardHarnessEnv(unittest.TestCase):
     """JD-1: fresh init must spoon-feed harness env after staging write."""
 
+    # LEGACY launcher on purpose: the harness-env offer is env_scaffold.py (T4d).
     def test_fresh_init_writes_real_toml_and_offers_harness_env(self):
         base, home, target = _fresh_env(self)
         # A recipe whose MCP preset declares a $VAR harness env reference.
@@ -652,7 +670,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         """Enter through each question (defaults pre-checked) → TOML with defaults, including session-context recipe."""
         target, home, base = self._workspace()
         # name + topology + agents checkbox + recipes checkbox + confirm (default Yes)
-        rc, output = _spawn_pty(target, home, base, feed=b"\n\n\n\n\n", timeout=120)
+        rc, output = _spawn_pty(target, home, base, cli=NATIVE_CLI, feed=b"\n\n\n\n\n", timeout=120)
         self.assertEqual(rc, 0, f"output: {_strip_ansi(output)!r}")
         toml_path = target / "ai-specs" / "ai-specs.toml"
         self.assertTrue(toml_path.is_file(), f"no manifest; output: {_strip_ansi(output)!r}")
@@ -666,7 +684,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         """Custom name + Enter through checkboxes/confirm defaults → TOML with custom name and default recipes."""
         target, home, base = self._workspace()
         # Ctrl-A Ctrl-K clears questionary's default text, then type name; Enter through rest.
-        rc, output = _spawn_pty(target, home, base, feed=b"\x01\x0bmy-app\n\n\n\n\n", timeout=120)
+        rc, output = _spawn_pty(target, home, base, cli=NATIVE_CLI, feed=b"\x01\x0bmy-app\n\n\n\n\n", timeout=120)
         self.assertEqual(rc, 0, f"output: {_strip_ansi(output)!r}")
         data = tomllib.loads((target / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
         self.assertEqual(data["project"]["name"], "my-app")
@@ -676,7 +694,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
     def test_decline_confirm_no_toml(self):
         """Enter through prompts, then 'n' at confirm → rc=1 (cancel), no TOML file."""
         target, home, base = self._workspace()
-        rc, output = _spawn_pty(target, home, base, feed=b"\n\n\n\nn\n", timeout=120)
+        rc, output = _spawn_pty(target, home, base, cli=NATIVE_CLI, feed=b"\n\n\n\nn\n", timeout=120)
         self.assertEqual(rc, 1, f"output: {_strip_ansi(output)!r}")
         self.assertIn("cancelled", _strip_ansi(output).lower())
         self.assertFalse((target / "ai-specs" / "ai-specs.toml").exists(),
@@ -685,7 +703,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
     def test_ctrl_c_at_prompt_cancels_cleanly(self):
         """Ctrl-C via PTY (\\x03) at first prompt → rc=1, no TOML."""
         target, home, base = self._workspace()
-        rc, output = _spawn_pty(target, home, base, stages=[(N_NAME, b"\x03")], timeout=60)
+        rc, output = _spawn_pty(target, home, base, cli=NATIVE_CLI, stages=[(N_NAME, b"\x03")], timeout=60)
         self.assertEqual(rc, 1, f"output: {_strip_ansi(output)!r}")
         self.assertFalse((target / "ai-specs" / "ai-specs.toml").exists(),
                          f"TOML should not exist after Ctrl-C; output: {_strip_ansi(output)!r}")
@@ -694,7 +712,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         """EOF (Ctrl-D) at first prompt → rc=1 (cancel), no TOML — same as Ctrl-C."""
         target, home, base = self._workspace()
         # questionary/prompt_toolkit rejects EOF while default text remains; clear then Ctrl-D.
-        rc, output = _spawn_pty(target, home, base, feed=b"\x01\x0b\x04", timeout=60)
+        rc, output = _spawn_pty(target, home, base, cli=NATIVE_CLI, feed=b"\x01\x0b\x04", timeout=60)
         self.assertEqual(rc, 1, f"output: {_strip_ansi(output)!r}")
         self.assertFalse((target / "ai-specs" / "ai-specs.toml").exists(),
                          f"TOML should not exist after EOF; output: {_strip_ansi(output)!r}")
@@ -713,7 +731,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
             (N_RECIPES, b"\n"),
             (N_CONFIRM, b"\n"),
         ]
-        rc, output = _spawn_pty(target, home, base, stages=stages, timeout=120)
+        rc, output = _spawn_pty(target, home, base, cli=NATIVE_CLI, stages=stages, timeout=120)
         self.assertEqual(rc, 0, f"wizard failed; output captured during test")
         toml_path = target / "ai-specs" / "ai-specs.toml"
         self.assertTrue(toml_path.is_file(), f"no staged TOML; rc={rc}")
@@ -729,7 +747,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
             (N_TOPO, b"\n"),
             (N_AGENTS, b"\x03"),
         ]
-        rc, output = _spawn_pty(target, home, base, stages=stages, timeout=60)
+        rc, output = _spawn_pty(target, home, base, cli=NATIVE_CLI, stages=stages, timeout=60)
         self.assertEqual(rc, 1, f"output: {_strip_ansi(output)!r}")
         self.assertFalse((target / "ai-specs" / "ai-specs.toml").exists(),
                          f"TOML should not exist after Ctrl-C during checkbox; output: {_strip_ansi(output)!r}")
