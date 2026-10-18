@@ -37,7 +37,7 @@ CLI = ROOT / "bin" / "ai-specs"
 # S20 (odd/tasks/go-20-u4-init.md): the wizard is native, so the end-to-end PTY
 # flows drive the built binary. The cases that still need the LEGACY launcher are
 # named at their test: the four per-recipe-configuration flows (recipe-read.py +
-# config_wizard.py, T4b-2) and the harness-env offer (env_scaffold.py, T4d).
+# config_wizard.py, T4b-2). The harness-env offer moved to NATIVE_CLI with U4d-2.
 NATIVE_CLI = _go_cli.cli()
 
 ANSI_RE = re.compile(rb"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -407,16 +407,16 @@ class TestConfigureRecipesStep(unittest.TestCase):
         self.assertNotIn(".config]", text)
 
 
-# S20: these flows still drive the LEGACY launcher on purpose, because the step
-# they exercise is not native yet — per-recipe configuration
-# (recipe-read.py + config_wizard.py, scheduled as T4b-2 of
-# odd/tasks/go-20-u4-init.md) and the harness-env offer (env_scaffold.py, T4d).
-# Moving them to NATIVE_CLI before those slices land would assert a feature the
-# port does not have. Each case below carries its own reason.
+# S20: the harness-env flow below drives the built binary as of U4d-2 (its
+# offer is native: sync.OfferHarnessEnv behind the wizard). The flows that
+# still drive the LEGACY launcher on purpose are the per-recipe-configuration
+# cases (recipe-read.py + config_wizard.py, scheduled as T4b-2 of
+# odd/tasks/go-20-u4-init.md), each named at its own test — moving them to
+# NATIVE_CLI before that slice lands would assert a feature the port does not
+# have.
 class TestRunWizardHarnessEnv(unittest.TestCase):
     """JD-1: fresh init must spoon-feed harness env after staging write."""
 
-    # LEGACY launcher on purpose: the harness-env offer is env_scaffold.py (T4d).
     def test_fresh_init_writes_real_toml_and_offers_harness_env(self):
         base, home, target = _fresh_env(self)
         # A recipe whose MCP preset declares a $VAR harness env reference.
@@ -434,7 +434,7 @@ class TestRunWizardHarnessEnv(unittest.TestCase):
             (b"TRELLO_API_KEY", b"trello-harness-value\n"),
         ]
         rc, out = _spawn_pty(target, home, base, stages=stages,
-                             argv=[str(CLI), "init", "--tui", "--name", "demo", str(target)])
+                             argv=[str(NATIVE_CLI), "init", "--tui", "--name", "demo", str(target)])
         plain = _strip_ansi(out)
         self.assertEqual(rc, 0, f"output: {plain!r}")
         # The real manifest existed before the harness-env offer: the offer
