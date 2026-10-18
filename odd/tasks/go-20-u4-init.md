@@ -133,6 +133,30 @@ project path to `--name`, which made the legacy route read its own cwd as the pr
 with `git checkout`. The test now runs with `cwd` inside the throwaway project and its docstring says
 why.
 
+### Round two — the fix of the fix
+
+The scoped re-judgment returned 7 `verified` and one `regression`: **JD-B-003**. C5's atomic write
+renamed over the path, so a SYMLINKED root `.gitignore` became a regular file and the user's real file
+— the one `>>` would have written through — kept its old contents. Same trap the manifest writer hit in
+the previous unit. C5b resolves the link (and, for a dangling one, the target `>>` would have created)
+and renames over the target; `TestInitRootGitignoreKeepsASymlink` and
+`TestInitRootGitignoreCreatesADanglingLinksTarget` pin both, and the differential against `lib/init.sh`
+on a symlinked `.gitignore` now produces identical target bytes with the link intact.
+
+### Terminal judgment
+
+| round | judge A | judge B |
+| --- | --- | --- |
+| discovery | 8 rows, 0 CRITICAL | 6 rows, 1 HIGH |
+| scoped re-judgment | 7 `verified`, 1 `regression` (JD-B-003) | 8 `verified` |
+| round two (JD-B-003 only) | `verified` | — |
+
+**JUDGMENT: APPROVED.** No severe row survives, the final verification passes (the post-fix gate table
+above), and the observed divergences from the legacy route are the recorded ones — S8 (literal, escaped
+name substitution) and S10 (no Python bridge notices), plus S12's message texts that keep the shell's
+exit codes and streams. Judgment Day is an outside view only: it authorizes nothing about delivery,
+which stays ordinary repository policy.
+
 ## T4a — verification of the first cut (superseded by the round above)
 
 Evidence gathered before the judgment round, kept because it records the RED and the manual
