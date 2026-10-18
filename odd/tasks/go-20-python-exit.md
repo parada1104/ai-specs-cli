@@ -229,7 +229,7 @@ cannot each be one PR.
 | U4b-2 — per-recipe configuration prompts | pending | `init_tui.py:204-233`, needs `recipe-read.py` + `config_wizard.py` (U6 surface) |
 | U4c — the lock `[meta]` stamp, native | **delivered** | `internal/cliversion.StampLockMeta` replaces `cli_version.py stamp-meta` in `sync`; the flatten stays (measured: `refresh-bundled.py` never wrote `[meta]`, its docstring lies); assess: medium, review not due |
 | U4d-1 — the harness env step, native | **delivered** | `e13f3a6` (PR #377); `sync.RunEnvScaffold` replaces `env_scaffold.py`'s non-interactive half; the dotenv surface is single-sourced in `internal/sync` and doctor delegates; differential against the Python: byte-identical |
-| U4d-2 — the wizard's env offer | pending | prompts, `write_env`, the three legacy migrations, `direnv allow` |
+| U4d-2 — the wizard's env offer, native | **delivered, judgment approved** | `6fb58d1` (PR #382); `tui.Password`/`TextRaw`/`SelectDefault` + `sync.OfferHarnessEnv`; the env offer closes the gap S28 found; `ai-specs.env` created 0600 (S34); the harness-env PTY case now drives the binary |
 | U2 — flip the launcher + parity snapshot + deletion | pending, after the ports | L13 |
 | U5..U7 — skills, recipes, substrate tail | pending | |
 | U8 — program closure | pending | |
