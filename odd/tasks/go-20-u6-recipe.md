@@ -422,3 +422,21 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   entry; the `retires recipe-config-write.py for this route` claim reads through S9 unchanged —
   the BINARY no longer reaches that file (or the gate bridge) on this route, while the legacy
   python route still does, and physical deletion stays U7/U8.
+
+- L7 (U6d-1, post-review) — the native review's **risk** slot never admitted: the reviewer returned two
+  findings and gave the second (a positive observation) the `R2-` prefix while the risk lens requires
+  `R1-`, so admission refused the whole payload and the relay kept resubmitting the preserved result
+  (288 ms, no model run) instead of producing a new one. The refusal is a reviewer formatting defect,
+  not a code defect — but the payload is preserved under
+  `.git/gentle-ai/rejected-results/review-6b43808bb7fae376/`, so its findings were read and acted on:
+  - **`R1-path-traversal-parity` (WARNING), acted.** `configureRecipeDir` joined the user's `recipe_id`
+    verbatim, so `..` or an ABSOLUTE id resolved the recipe read outside the catalog root and
+    `--inspect` reported an arbitrary directory's `recipe.toml`. The reviewer itself judged the impact
+    limited (local CLI, `recipe.toml`-shaped files only) and the behaviour parity with
+    `recipe-configure.py`. The port now refuses an invalid id with the guard `skills remove` already
+    uses, before any read — a DELIBERATE fail-closed divergence, pinned by
+    `TestRecipeConfigureRefusesATraversingRecipeID`.
+  - **`R2-secret-literal-guard-ported` (SUGGESTION), no action.** It is an observation that the
+    secret-shaped-literal refusal was ported correctly, not a defect.
+  The candidate changed with the guard, so this lineage cannot close on it; the outside view for the
+  committed candidate is Judgment Day, recorded in its own section.

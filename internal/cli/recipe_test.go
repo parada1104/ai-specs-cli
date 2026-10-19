@@ -1574,3 +1574,32 @@ func TestRecipeConfigureNativeNeedsNoBashOrPython(t *testing.T) {
 		}
 	}
 }
+
+// TestRecipeConfigureRefusesATraversingRecipeID pins JD-R1-path-traversal-parity
+// from the review's risk lens: the script joins the id verbatim, so `..` or an
+// ABSOLUTE id resolved the recipe read outside the catalog root and --inspect
+// reported an arbitrary directory's recipe.toml. The port refuses before any
+// read, with the guard skills remove already uses — a deliberate fail-closed
+// divergence, recorded in the unit document.
+func TestRecipeConfigureRefusesATraversingRecipeID(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	home := t.TempDir()
+	project := t.TempDir()
+	skillsWriteFile(t, filepath.Join(project, "ai-specs", "ai-specs.toml"),
+		"[project]\nname = \"fixture\"\n")
+	env := skillsListEnv(home)
+
+	for _, id := range []string{"../escape", "a/b", "/etc/passwd", "..", "."} {
+		out, errOut, code := runOne(bin, []string{"recipe", "configure", id, project, "--inspect"},
+			env, t.TempDir())
+		if code != 2 {
+			t.Errorf("id %q: exit = %d, want 2; stderr=%q", id, code, errOut)
+		}
+		if !strings.Contains(string(errOut), "refusing invalid recipe id") {
+			t.Errorf("id %q: stderr = %q, want the refusal line", id, errOut)
+		}
+		if strings.Contains(string(out), "recipe.toml") {
+			t.Errorf("id %q: stdout = %q, want no report for a refused id", id, out)
+		}
+	}
+}

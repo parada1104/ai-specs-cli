@@ -2471,6 +2471,17 @@ func runRecipeConfigure(args []string, home string, stdout, stderr io.Writer) in
 		return emit(configureRejectedReport(opts.recipeID, reason, opts.ignoreCLIVersion), 3)
 	}
 
+	// JD-R1-path-traversal-parity (U6d-1): the Python joins the id verbatim, so an
+	// id carrying `..` or an absolute path resolved the recipe read OUTSIDE the
+	// catalog root and `--inspect` then reported an arbitrary directory's
+	// recipe.toml. skills remove already refuses an invalid id with the same
+	// guard; this verb does too, and the refusal is a deliberate fail-closed
+	// divergence from the script (S5's guard family), pinned by a test.
+	if sanitized, bad := invalidDepID(opts.recipeID); bad {
+		fmt.Fprintf(stderr, "ERROR: refusing invalid recipe id: '%s'\n", sanitized)
+		return 2
+	}
+
 	recipe, err := configureSchemaFor(home, opts.recipeID)
 	if err != nil {
 		return rejected(err.Error())
