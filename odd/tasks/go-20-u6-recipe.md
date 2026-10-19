@@ -40,7 +40,8 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
 | **U6a** | `recipe list` + the catalog reader the verbs share (home-first resolution, the internal-test-recipe filter) | the BINARY's use of `recipe-list.sh` (see S9) | no — it establishes the reader the rest uses |
 | **U6b** | `recipe add`: the `[recipes.<id>]` append with its config placeholder, the dup/internal guards, the non-TTY path. On a TTY the verb still delegates whole to `lib/recipe.sh` (the init-wizard seam pattern), because `recipe add` is one of the four TTY surfaces the parity contract freezes | the BINARY's non-TTY use of `recipe-add.sh`/`recipe-add.py`; the TTY leg flips in U6d+U6e | no |
 | **U6c** | `recipe remove`: route the already-ported `config.RemoveRecipeSegments` and port the lock-entry cleanup | `recipe-remove.sh` | no |
-| **U6d** | recipe config write (`internal/config.UpdateRecipeConfig`, promoted from the gate's shared file) + `recipe configure --inspect/--set/--dry-run` + the wizard core `run_config_wizard` on `internal/tui` | `recipe-config-write.py`, the write half of `config_wizard.py` | **yes** |
+| **U6d-1** | recipe config write: `internal/config.UpdateRecipeConfig` PROMOTED out of `catalog/recipes/worktree-flow/gate/shared/recipeconfigwrite.go` (one grader, S6) + the whole non-interactive `recipe configure` surface of `recipe-configure.py` (`--inspect`, `--set`, `--dry-run`, `--json`, `--sync`, `--ignore-cli-version`) | `recipe-config-write.py` for this route | no |
+| **U6d-2** | the wizard core `run_config_wizard` on `internal/tui` (enum→select, bool→confirm, regex validation, blank→omit) + the flip of `recipe add`'s "Configure now?" arm onto it (T3b, first half) | the interactive half of `config_wizard.py` | **yes** |
 | **U6e** | `configure-recipes`: the whole-project loop, the TTY gate (exit 3), the dep gate and the env offer; the dispatcher's usage/unknown arms; **and the flip of `recipe add`'s TTY seam onto the native wizard + env offer, which is what finally kills that seam**; the shim map goes empty | `recipe.sh`, `recipe-config.sh`, `config_wizard.py`, and the U6b seam | no (already unblocked) |
 
 ## Tasks
@@ -52,8 +53,12 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
 - T3b (U6d+U6e, S7) — the U6b seam's flip, owned explicitly: U6d wires the "Configure now?" leg to the
   native wizard core and U6e wires the env offer, and only then does the TTY delegation die. U6b's own
   record (L4) flagged that no row owned this; this task is that owner.
-- T4 (U6d, S5/S6/S7) — promote the config writer into `internal/config`, port `recipe configure`, port
-  the wizard core, and record that U4b-2 is unblocked.
+- T4 (U6d-1, S5/S6) — promote the config writer into `internal/config` and port `recipe configure`'s
+  non-interactive surface: the argument contract of `recipe-configure.py` (`--inspect`, `--set`,
+  `--dry-run`, `--json`, `--sync`, `--ignore-cli-version`), the report wording, and the
+  `PROJECT_OWNED_KEYS` routing — with its differential.
+- T4b (U6d-2, S6/S7) — port the wizard core onto `internal/tui`, flip `recipe add`'s "Configure now?"
+  arm onto it (T3b, first half), and record that U4b-2 is unblocked by THIS task.
 - T5 (U6e, S4) — `configure-recipes`, the dispatcher arms, and the shim map emptied.
 - T6 (all, S8) — update the program document per slice with what each one actually retired.
 
@@ -296,3 +301,255 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   branch, the binary's use of the script is fully retired by this route, so
   the row is honest already when read through S9 (physical deletion stays
   U7/U8).
+- L6 — Evidence (U6d-1, T4), `recipe configure` native + the promoted writer. THE INHERITED CORE:
+  `internal/config/recipeconfig.go` (the 1:1 port of the gate's `shared/recipeconfigwrite.go`, itself
+  ported from `recipe-config-write.py`, plus `_parse_assignment`, `_validate_values`, `_recipe_state`,
+  the one dotted-key reader, the Python `==` and `_write_project_key`) was judged KEEP with one fix:
+  `UpdateRecipeConfig` dereferenced a nil `*toml.Table` whenever the recipe block (or its config
+  table) did NOT exist yet — Python's `_existing_config` yields `{}` there and the append branch is
+  exactly the new-recipe case, so the inherited code PANICKED on `configure fresh --set k=v` (RED
+  captured by `TestUpdateRecipeConfig/a_missing_recipe_block_is_appended…`: SIGSEGV at
+  recipeconfig.go:1182). Fix: the empty-table guard at the read site (Python's `{}`), everything else
+  in the core stood as written — the unit tests for assignment parsing (incl. the str fallback, the
+  non-str no-detail refusal, the dotted/table TOML parses), validation (type/enum/secret/regex in
+  reference order, and the shared grader's exact `[config.reconcile]…` messages), the write with its
+  comments/multiline/conflict/valid-TOML guards and byte-untouched refusals, and the project-key
+  write (replace-with-comment / insert-before-next-header / append-fresh, verified against the
+  Python function's actual bytes) all pass as inherited.
+- L6 module graph / one grader (S6): the gate's writer lives in the separate module
+  `ai-specs.dev/worktree-gate` (replace ⇒ `./catalog/recipes/worktree-flow/gate`). The promotion
+  direction is FORCED: the gate module can never import `ai-specs.dev/ai-specs/internal/config`
+  (the go tool rejects another module's `internal/` tree, replace or not) while a reverse require
+  would close a root↔gate require cycle — so the authoritative copy for the native CLI is
+  `internal/config.UpdateRecipeConfig`, the gate keeps its own copy behind `--write-recipe-config`
+  as the Python route's bridge (both remain live: legacy recipe-configure.py reaches the gate,
+  the native verb reaches internal/config), and the two are pinned TOGETHER by
+  `TestUpdateRecipeConfigMatchesGateCopy` — five shared fixtures (inline write, dotted write into
+  an inline table and into a header table, the whole-table+dotted refusal, the new-recipe append)
+  run through BOTH implementations with identical bytes, changed flags and refusal strings (the
+  gate copy parses through its bounded embedded-Python seam, so the test probes tomllib LOUDLY and
+  runs under `PATH=/tmp/pybin:$PATH`). Structured-value validation routes to
+  `shared.ValidateStructured` — the shipped shape grader, fed by `schema.ConfigTable.ShapeJSON` —
+  with NO third checker added: `internal/schema`'s private validator grades recipe.toml LOAD, the
+  shared one grades the write route's envelope; both mirror `recipe_schema._check_shape_value`
+  byte-for-byte and existed before this slice, so unifying them is recorded as future work outside
+  this slice's edit surfaces. The promoted core's deliberate deltas from the gate copy are the ones
+  its header records: internal/toml instead of the embedded-Python tomllib seam for
+  reads (parse-error DETAIL text differs — ADR 0002; frozen framings byte-identical) and no
+  rewrite-on-refusal (a byte-level no-op for LF manifests); plus the WRITE SINK, undocumented until
+  this correction round (doc correction (b)): `internal/config.atomicWrite` keeps the manifest's
+  mode (0o7777 mask), RESOLVES a symlinked manifest to its target before the rename and REFUSES a
+  read-only manifest, where the gate copy's `atomicWriteFile` renames over the path as given
+  (replacing a symlink with a regular file) and forces 0o644 — both copies stay live (legacy bridge
+  vs native verb), so each sink is graded where it is used (`TestSkillsRemoveReadOnlyDeviation`
+  covers this package's read-only refusal); and the one value-domain divergence (B-003): a TOML
+  datetime inside a re-serialized inline table is silently CORRUPTED by the gate copy into a quoted
+  string (its bounded embedded-Python seam lowers tomllib's datetime through
+  `json.dumps(default=str)`), while the promoted copy refuses `cannot serialize datetime to TOML` —
+  the Python reference's own TypeError text from toml_write.py — with the bytes untouched. That
+  divergence is pinned as an explicit case, not as byte identity, by
+  `TestUpdateRecipeConfigRefusesADatetimeTheGateCopyCorrupts` (it runs BOTH copies and asserts the
+  promoted refusal plus the gate's corrupted bytes), and the five shared fixtures of
+  `TestUpdateRecipeConfigMatchesGateCopy` keep byte-identity over the domain where it holds.
+- L6 the verb: `runRecipeConfigure` in `internal/cli/recipe.go` ports `recipe-configure.py` main()
+  end to end. The SCRIPT is the contract: argparse's surface is EMULATED (help/usage through
+  argparse's width algorithm — COLUMNS → stdout TIOCGWINSZ → 80, minus 2 —, registration-order
+  prefix abbreviation, the ambiguous/expected-one-argument/ignored-explicit/unrecognized/required
+  messages and their precedence). The reference the port FOLLOWS is Python 3.14 — the interpreter
+  this machine's differential oracle runs (`PATH=/tmp/pybin/python3` is 3.14.7), so S3 measures the
+  port against it — and 3.11 was probed side by side: help/usage (default AND COLUMNS-pinned) and
+  the unknown/ambiguous/expected-one-argument/required arms are byte-identical, but ONE form
+  diverges: the interleaved trailing positional `recipe configure cfg --inspect /path` (and
+  `… --set k=v /path`) is `unrecognized arguments` + exit 2 on 3.11 and ACCEPTED on 3.14 (doc
+  correction (a) — the earlier claim of byte-identity between both interpreters was false). The
+  port accepts the 3.14 form; the differential case `interleaved positional fills the path slot`
+  pins it, and against a ≤3.11 oracle that case fails, which is how the divergence stays visible;
+  `_schema_for`'s `unknown recipe '<id>': …` wrapping (with Path-join semantics: an
+  absolute id replaces the catalogue root, interior `..` kept uncleaned); `manifest not found:` /
+  `invalid manifest:`; the two parser.error() arms; `PROJECT_OWNED_KEYS = {repo_topology}` routed to
+  `[project]` through `config.WriteProjectKey` BEFORE the recipe block write (unchanged-value
+  project keys skipped, exactly like the Python loop); report wording as data — a new ordered
+  `rcJSON` tree in this file emits `json.dumps(document, ensure_ascii=False, indent=2)` or the
+  compact `(",", ":")` separators under `--json` (the THIRD json.dumps variant in the tree is
+  unavoidable: internal/config's encoder is ensure_ascii=True with no indent mode and its `Obj`
+  constructor is unexported — so the report EMITTER lives with the verb that owns the output, while
+  every number still renders through the shared `config.FormatPythonJSONFloat`, one float
+  formatter). `--inspect`'s schema document re-reads recipe.toml for the [config] key ORDER
+  (fields first in declaration order, then tables — schema exposes maps; the same re-read pattern
+  buildrecipemcp.go uses for provides.mcp), the shape renders as nested document DATA at the
+  report's indent (the differential caught a pre-rendered compact fragment), and preflight.cli_version
+  is the FULL installed/pin/policy_ok/lock block (the differential caught the misread of
+  recipe-configure.py's misleadingly-named `lock_meta` local — both were found by RED runs before
+  GREEN, not absorbed as deviations). Path resolution is `Path.resolve()` (realpath with a
+  tolerated missing tail) so `manifest not found:` prints the same /private/var spelling on macOS.
+  Routing: cli.go intercepts `configure` in recipe.sh's own case order; `init`, the bare `recipe`,
+  `--help|-h|help` and unknown subcommands keep the shim (pinned in cli_test), no TTY seam (the
+  script's arm is a plain python3 exec), and no cd/pwd target resolution (neither recipe.sh nor the
+  script resolves one).
+- L6 the --sync leg, decided and ported IN FULL: apply_project's tail runs
+  `<home>/bin/ai-specs sync <root> [--ignore-cli-version]` and `<home>/bin/ai-specs doctor <root>`
+  as subprocesses and parses their CAPTURED output — the last `syncing …` line (failed_step) and
+  the last `Summary: N OK, N INFO, N WARN, N ERROR` line (verify, with doctor_exit). The native
+  leg spawns the SAME front-door command with the same cwd/env and the same regexes — never
+  Python directly (S1) — and both parse targets are printed identically by the native ports
+  (`internal/sync/step.go`, `internal/doctor/doctor.go`), so nothing is half-ported and nothing
+  stays on a legacy seam; what sits behind bin/ai-specs (bash → lib/*.sh today, the Go binary
+  after U2) is the sync/doctor slices' business, exactly as the script treats it. It is NOT in the
+  main differential (running the real spine there would measure sync's writes, not this verb's
+  report), so `TestRecipeConfigureSyncLegDifferential` pins it byte-for-byte against the Python
+  reference over a STUB front door: sync failure → `partial`, `failed_step: "recipes"`, exit 1 and
+  the frozen reason; sync ok + doctor ≠ 0 → `failed` + `doctor verification failed`, exit 1 with
+  the verify block still populated; both ok → the parsed counts, status `ok`, exit 0; a doctor
+  with no Summary → `parsed: false` with null counts, still `ok`. The stub ALSO asserts the FULL
+  spawn contract (B-004/A-002): invoked binary path (`$0`), cwd = the resolved project root
+  (`pwd -P`), the argv root positional, and the `--ignore-cli-version` presence — every violation
+  is appended to that leg's `$STUB_CONTRACT_LOG`, which the test reads back, and the stub exits 90,
+  so a wrong spawn fails on the log AND on the pinned exit codes even when BOTH legs would violate
+  identically (a shared wrong answer would otherwise still byte-match); a combined
+  `--sync --ignore-cli-version` case pins the flag as the sync argv's third argument (previously
+  unpinned). A front door that cannot be
+  spawned exits 1 with Go's exec error and NO report — Python's uncaught FileNotFoundError does
+  the same (no report), only the wording differs (ADR 0002).
+- L6 differential: `bash lib/recipe.sh configure <args>` vs the built binary on byte-identical
+  TWIN projects under one shared env — isolated AI_SPECS_HOME (fixture catalogue as a REAL
+  directory, lib/VERSION/bin symlinked), WORKTREE_GATE_BIN pinned to a freshly built gate
+  (skillsRemoveEnv/skillsRemoveGateBinary, U5b's pattern: without the pin the Python leg's write
+  bridge fails open with `GO_RECIPE_CONFIG_BRIDGE_FALLBACK` on stderr and the bytes would measure
+  the fail-open bridge), LC_ALL=C, PYTHONDONTWRITEBYTECODE=1, the LOUD tomllib probe (skillsOracle;
+  run with `PATH=/tmp/pybin:$PATH`), stdout/stderr/exit byte for byte after normalizing each leg's
+  own project root (both spellings — Python resolve() prints the realpath), PLUS the resulting
+  project trees and a home snapshot around the whole table. THIRTY cases, all
+  byte-identical: `--inspect` with a config block, without one, on a recipe absent from the
+  manifest, `--json`-compact, and with the cwd default; `--inspect` on a SECOND fixture recipe
+  (`mcporder`) whose two `[[provides.mcp]]` presets are declared OUT of sorted order (trello
+  before engram) with both ids in the manifest's `[mcp]` — `grounding.mcp.present` is the script's
+  `sorted(name for name in required_mcp if name in manifest_mcp)` and B-001 caught the port
+  emitting declaration order (RED was the two arrays flipped); `--inspect` on the interleaved
+  trailing positional `cfg --inspect <path>` (doc correction (a)); `--set` of an inline scalar, the str
+  raw-value fallback, a nested dotted key, a whole structured table, a `repo_topology` landing in
+  `[project]`, and a `--json` report; the unchanged-value no-op; an invalid enum and an unknown key
+  (both exit 3, project untouched); `--dry-run` (no write); the `[tool]` pin blocking with exit 4
+  and `--ignore-cli-version` bypassing it (write happens); a missing recipe; a missing manifest
+  (the resolved-path spelling); `--help` at the default width AND at COLUMNS=60 (both legs wrap
+  identically); an unknown flag; a missing recipe_id; the --inspect/--set conflict; neither flag;
+  an ambiguous abbreviation; `--set` without a value; and a positional after `--`. Plus
+  `TestRecipeConfigureNativeNeedsNoBashOrPython` (PATH emptied, home with only a catalogue: the
+  inspect document is built with no shim/bash/Python — S1) and, probed outside the table and
+  byte-identical, `--set=`/abbreviation/cwd/`--help=x` corners and COLUMNS=100.
+  Four refusals are recorded rather than hidden: (1) parse-error DETAIL inside `invalid manifest:`,
+  `invalid TOML value for …` and the write guard comes from internal/toml, not tomllib — the
+  framings and everything around the detail are byte-compared (ADR 0002, same move as L4/L5);
+  (2) an unspawnable front door prints Go's exec error where Python prints a traceback (same
+  exit 1, no report either way); (3) a TOML datetime in the recipe config dies in the REPORT
+  BUILDER on both routes but at different MOMENTS (corrected this round — the earlier text claimed
+  `both exit 1 uncaught`, which is wrong on both counts): the NATIVE verb refuses BEFORE any write —
+  `--set` over a config value that is a datetime prints Go's serialization error to stderr, emits NO
+  report, exits 1 and leaves the manifest bytes untouched (the failure happens while building
+  `applied.changed`), and `--inspect` reports exit 3 through `rejected(...)` with the serialization
+  error as the report's reason — while the PYTHON reference builds the report dict fine, WRITES the
+  manifest inside apply_project, and only then crashes in json.dumps (uncaught TypeError traceback,
+  exit 1, file already modified), and its `--inspect` dies the same way with exit 1 and NO report.
+  Verified against lib/_internal/recipe-configure.py directly (probe: `--set` → exit 1, empty
+  stdout, `board_id = "new"` on disk; `--inspect` → exit 1, empty stdout) and pinned native by
+  `TestRecipeConfigureDatetimePathsPinTheRecordedDeviation`; the write-TIME sibling (a datetime the
+  writer must RE-SERIALIZE) is B-003's divergence in the module-graph entry above; (4) argparse's help width is queried through
+  COLUMNS → TIOCGWINSZ → 80 like shutil.get_terminal_size, so on a real TTY the port matches the
+  legacy wrap; mixed leftover ordering (an unknown option AND a third positional together) follows
+  argument order here and is not pinned by any case (unexercised corner). The differential also
+  caught two of my own port bugs pre-GREEN (the compact shape fragment and the inspect preflight
+  block), which is the RED evidence for the report-emitter work; the inherited core's panic is the
+  RED evidence for the one core fix above.
+- L6 spec note: the U6d-1 slicing row and T4 listed only `--inspect/--set/--dry-run/--json`; the
+  slice ships the script's WHOLE non-interactive surface (`--sync`, `--ignore-cli-version`
+  included — the flags decide the report's preflight/ignore fields and the sync leg, so leaving
+  them out would leave them unowned by any row). The row and T4 were amended in place by this
+  entry; the `retires recipe-config-write.py for this route` claim reads through S9 unchanged —
+  the BINARY no longer reaches that file (or the gate bridge) on this route, while the legacy
+  python route still does, and physical deletion stays U7/U8.
+
+- L7 (U6d-1, post-review) — the native review's **risk** slot never admitted: the reviewer returned two
+  findings and gave the second (a positive observation) the `R2-` prefix while the risk lens requires
+  `R1-`, so admission refused the whole payload and the relay kept resubmitting the preserved result
+  (288 ms, no model run) instead of producing a new one. The refusal is a reviewer formatting defect,
+  not a code defect — but the payload is preserved under
+  `.git/gentle-ai/rejected-results/review-6b43808bb7fae376/`, so its findings were read and acted on:
+  - **`R1-path-traversal-parity` (WARNING), acted.** `configureRecipeDir` joined the user's `recipe_id`
+    verbatim, so `..` or an ABSOLUTE id resolved the recipe read outside the catalog root and
+    `--inspect` reported an arbitrary directory's `recipe.toml`. The reviewer itself judged the impact
+    limited (local CLI, `recipe.toml`-shaped files only) and the behaviour parity with
+    `recipe-configure.py`. The port now refuses an invalid id with the guard `skills remove` already
+    uses, before any read — a DELIBERATE fail-closed divergence, pinned by
+    `TestRecipeConfigureRefusesATraversingRecipeID`.
+  - **`R2-secret-literal-guard-ported` (SUGGESTION), no action.** It is an observation that the
+    secret-shaped-literal refusal was ported correctly, not a defect.
+  The candidate changed with the guard, so this lineage cannot close on it; the outside view for the
+  committed candidate is Judgment Day, recorded in its own section.
+
+- L8 (U6d-1, dual-blind review — ONE bounded correction round) — the completed two-judge review of
+  the committed candidate, findings resolved in one pass. No finding was judged wrong: all six were
+  reproduced before fixing (two as RED tests, one as a passing divergence assertion, three by probe
+  or source). B-003 and B-004/A-002 were PIN defects, not code defects — the behavior was already
+  correct and the tests did not say so:
+  - **B-001 (MAJOR) `grounding.mcp.present` order**, acted. The port appended present ids in the
+    recipe's DECLARATION order; `recipe-configure.py:225` emits `sorted(...)`, so a recipe
+    declaring `trello` then `engram` (both in the manifest's `[mcp]`) reported
+    `["trello","engram"]` natively and `["engram","trello"]` from the script. The 28-case table
+    could not catch it because `recipeConfigureFixtureRecipe` declares no `[[provides.mcp]]`.
+    Fix: `configureGrounding` sorts the filtered ids; pinned by the differential's new `mcporder`
+    fixture + case whose recipe declares the presets unsorted (RED: the two arrays flipped,
+    byte-compared stdout).
+  - **A-001/B-005 the validation regex was gated on `kind == "str"`**, acted.
+    `recipeconfig.go` gated `validation.regex` on the field kind where
+    `_validate_values` gates on `isinstance(value, str)`, so a field whose declared type maps to
+    neither str/int/bool (no `type`, a custom name like `float`, a typo) accepted a non-matching
+    string and wrote it where the script refuses exit 3 with `does not match its validation
+    pattern`. Fix: gate on the value — Python's exact predicate; pinned by the unit cases over
+    the `floaty` (custom name) and `untyped` (no type) fields (RED: both accepted the
+    non-matching strings) plus the isinstance-gate preservation case (a non-string skips the
+    pattern).
+  - **B-002 CRLF manifests got mixed endings**, acted. `UpdateRecipeConfig` read the manifest
+    RAW, so untouched lines kept CRLF while the rewritten line got LF; the reference's
+    `read_text` (universal newlines) normalizes in memory and writes the whole file LF. Fix: read
+    through the package's existing `readManifestText` — the one universal-newline reader the
+    package already shares (`_write_project_key`, the remove/add writers), not a second
+    implementation; pinned by `TestUpdateRecipeConfigNormalizesCRLFToLF` (a write returns the
+    whole file LF byte-for-byte; a no-op leaves the CRLF bytes untouched, like the reference's
+    early return) — RED: the mixed-endings bytes observed.
+  - **B-004/A-002 the `--sync` stub pinned nothing**, acted. The stub matched only `$1` — no
+    project-root, cwd, binary-path or flag assertion, and no case combined `--sync` with
+    `--ignore-cli-version`. The stub now asserts `$0`, `pwd -P`, the argv root positional and the
+    flag presence, appending every violation to that leg's `$STUB_CONTRACT_LOG` (read back by the
+    test) and exiting 90 — so even two identically wrong legs fail on their logs and the pinned
+    exit codes; a combined `--sync --ignore-cli-version` case pins the flag as the sync argv's
+    third argument. Both legs satisfied the strengthened contract on the first run: no code change
+    was needed, the defect was the missing pin.
+  - **B-003 the "one grader" pin did not hold over the real domain**, acted. Over the five shared
+    fixtures the gate copy and the promoted copy still agree byte for byte; with an inline table
+    holding a TOML datetime the gate copy CORRUPTS it into a quoted string (its bounded
+    embedded-Python seam lowers datetimes through `json.dumps(default=str)`), while the promoted
+    copy refuses `cannot serialize datetime to TOML` with the bytes untouched — the Python
+    reference's own answer (toml_write.py's TypeError). The pin is now honest: byte identity kept
+    over its domain, plus `TestUpdateRecipeConfigRefusesADatetimeTheGateCopyCorrupts` running BOTH
+    copies (native: refusal + untouched bytes; gate leg: the corrupted bytes asserted) with a
+    comment recording which copy corrupts. The promoted copy was NOT repaired to imitate the
+    gate; the divergence is documented in L6's module-graph entry and in recipeconfig.go's header.
+  - **L6/L7 doc corrections**, acted, each verified: (a) the argparse byte-identity claim was
+    false for interleaved positionals — `recipe configure cfg --inspect /path` (and
+    `--set k=v /path`) is `unrecognized arguments` + exit 2 on Python 3.11 and accepted on 3.14;
+    L6 now says the port follows 3.14 (the interpreter `PATH=/tmp/pybin` — this machine's
+    differential oracle — runs) and why, with every other probed surface byte-identical between
+    the two, and the accepted form is pinned by the new differential case (it fails against a
+    ≤3.11 oracle, keeping the divergence visible). (b) The write-sink divergence is now
+    documented in L6 and in recipeconfig.go's header: `internal/config.atomicWrite` keeps the
+    mode, resolves a symlinked manifest and refuses a read-only manifest, where the gate copy's
+    `atomicWriteFile` renames over (replacing a symlink) and forces 0o644. (c) The datetime
+    deviation described the write and the exit codes wrongly in both directions: the native verb
+    refuses BEFORE any write (exit 1, stderr, no report, bytes untouched) while the Python
+    reference WRITES the manifest and then crashes in json.dumps (exit 1, traceback, file
+    modified), and the `--inspect` path reports exit 3 through `rejected(...)` on the native side
+    where Python dies uncaught at exit 1 — corrected in L6 with the probe evidence and pinned
+    native by `TestRecipeConfigureDatetimePathsPinTheRecordedDeviation`.
+  Consequence for the differential: 28 → THIRTY cases (the `mcporder` fixture and the interleaved
+  positional), all byte-identical under `PATH=/tmp/pybin:$PATH` (3.14.7); the sync-leg table grew
+  the combined flag case. Candidate changed with these fixes, so this lineage cannot close on the
+  reviewed bytes — the same handoff rule L7 recorded.
