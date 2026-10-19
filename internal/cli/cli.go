@@ -44,6 +44,9 @@ const (
 	routeRecipeAdd                          // native: `recipe add`, port of lib/recipe-add.sh (GO-20 U6b)
 	routeRecipeRemove                       // native: `recipe remove`, port of lib/recipe-remove.sh (GO-20 U6c)
 	routeRecipeConfigure                    // native: `recipe configure`, port of lib/_internal/recipe-configure.py (GO-20 U6d-1)
+	routeConfigureRecipes                   // native: `configure-recipes`, port of lib/recipe-config.sh + config_wizard.py (GO-20 U6e)
+	routeRecipe                             // native: lib/recipe.sh's dispatcher remainder — usage/bare/unknown (GO-20 U6e)
+	routeRecipeInit                         // shim: `recipe init` straight to lib/recipe-init.sh (GO-20 U6e)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -55,14 +58,17 @@ type route struct {
 }
 
 // shims maps the verbs the Go dispatcher still forwards to their legacy lib
-// script (strangler pattern). add-dep and skills are deliberately NOT here:
-// since GO-20 U5c the whole skills surface is native and lib/skills.sh has no
-// work left for this dispatcher — only the pure-bash launcher (bin/ai-specs)
-// still routes to that script, until T7 turns the scripts into wrappers.
-var shims = map[string]route{
-	"recipe":            {kind: routeShim, script: "recipe.sh"},
-	"configure-recipes": {kind: routeShim, script: "recipe-config.sh"},
-}
+// script (strangler pattern). U6e EMPTIED it: every arm of lib/recipe.sh and
+// all of lib/recipe-config.sh this dispatcher reached now has a native route,
+// and `recipe init` — the one recipe subcommand no U6 slicing row ports
+// (recipe-init.py stays legacy) — routes STRAIGHT to recipe-init.sh from
+// Route's own switch, not through this map. The map and the mechanism stay:
+// runShim still execs legacy scripts (that init route and init.go's
+// AI_SPECS_INIT_TUI_PY whole-verb hatch), and the CLI-dep gate seam keeps
+// exec'ing its python3 driver directly — the strangler's exec path is alive
+// even though no verb resolves through the map anymore. add-dep and skills
+// have been out of it since GO-20 U5c.
+var shims = map[string]route{}
 
 // native maps the native verbs and their aliases to their route kind.
 // Like the legacy dispatcher, version and help ignore any extra arguments
@@ -73,6 +79,7 @@ var shims = map[string]route{
 // deliberately absent from help.txt.
 var native = map[string]route{
 	// sync and sync-agent are native (cards [Go 07.S1] and [Go 07.S15]).
+	"configure-recipes":   {kind: routeConfigureRecipes},
 	"refresh-bundled":     {kind: routeRefreshBundled},
 	"sync":                {kind: routeSync},
 	"sync-agent":          {kind: routeSyncAgent},
@@ -128,28 +135,33 @@ func Route(args []string) route {
 	}
 	// `recipe list` (GO-20 U6a), `recipe add` (GO-20 U6b), `recipe remove`
 	// (GO-20 U6c) and `recipe configure` (GO-20 U6d-1) are native: the
-	// subcommands are intercepted HERE, in lib/recipe.sh's own case order, and
-	// every OTHER arm of that case statement — `init`, `--help|-h|help`, the
-	// bare `recipe`, unknown subcommands — falls through to the shims map below
-	// and keeps exec'ing lib/recipe.sh byte for byte (U6e retires that script).
-	// Route cannot see the streams, so `recipe add`'s TTY seam lives in Run, not
-	// here: since U6d-2 the wizard half is native and the seam is NARROW — it
-	// delegates only a TTY run that would reach the env offer or the CLI-dep
-	// gate, both still U6e's (pinned by the seam test). `recipe remove` has no
-	// seam (its script has no interactive branch), and `recipe configure` has
-	// none either — recipe.sh's `configure` arm execs the Python script whole,
-	// with no TTY branch, and the port owns it end to end.
-	if args[0] == "recipe" && len(args) > 1 {
-		switch args[1] {
-		case "list":
-			return route{kind: routeRecipeList}
-		case "add":
-			return route{kind: routeRecipeAdd}
-		case "remove":
-			return route{kind: routeRecipeRemove}
-		case "configure":
-			return route{kind: routeRecipeConfigure}
+	// subcommands are intercepted HERE, in lib/recipe.sh's own case order.
+	// U6e finishes the case statement: `init` routes STRAIGHT to
+	// lib/recipe-init.sh (recipe-init.py is unported — no U6 row owns it —
+	// so the wrapper stays, but recipe.sh itself no longer runs for this
+	// binary), and every remaining arm (`--help|-h|help`, the bare `recipe`,
+	// unknown subcommands) resolves to the native dispatcher route — usage on
+	// stdout, usage on stderr exit 2, the two unknown lines exit 1 (S4).
+	// Route cannot see the streams, so `recipe add`'s TTY tail lives in Run:
+	// since U6e it is native end to end — wizard, dep gate and env offer all
+	// through their own seams, no delegation (pinned by
+	// TestRecipeAddTailIsNativeOnATerminal).
+	if args[0] == "recipe" {
+		if len(args) > 1 {
+			switch args[1] {
+			case "list":
+				return route{kind: routeRecipeList}
+			case "add":
+				return route{kind: routeRecipeAdd}
+			case "remove":
+				return route{kind: routeRecipeRemove}
+			case "configure":
+				return route{kind: routeRecipeConfigure}
+			case "init":
+				return route{kind: routeRecipeInit, script: "recipe-init.sh"}
+			}
 		}
+		return route{kind: routeRecipe}
 	}
 	if r, ok := shims[args[0]]; ok {
 		return r
@@ -230,12 +242,29 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		// args[0]=recipe, args[1]=list: recipe.sh shifts the subcommand before
 		// it execs recipe-list.sh, so the verb's own loop sees args[2:].
 		return runRecipeList(args[2:], home, selfPath(), stdout, stderr)
+	case routeConfigureRecipes:
+		// config_wizard.main's whole verb: the wrapper's argument loop (its
+		// own usage contract), then the guard, the TTY gate and the loop. The
+		// TTY decision needs the streams, so Run computes it like the other
+		// interactive routes.
+		return runConfigureRecipes(args[1:], home, stdin, stdout, stderr, isTTY(stdin, stdout))
+	case routeRecipe:
+		// args[0]=recipe: the dispatcher remainder of lib/recipe.sh's case
+		// statement, native since U6e — usage on stdout for --help/-h/help,
+		// usage on stderr exit 2 for the bare verb, the two unknown lines
+		// exit 1.
+		return runRecipeDispatch(args[1:], stdout, stderr)
+	case routeRecipeInit:
+		// args[0]=recipe, args[1]=init: recipe.sh's init arm is exactly
+		// `bash recipe-init.sh "$@"` after its subcommand shift, so the wrapper
+		// receives the id/path arguments — recipe-init.py is unported (no U6
+		// row owns it), and this route is what lets recipe.sh itself retire.
+		return runShim(r, args[1:], home, stdin, stdout, stderr, selfPath())
 	case routeRecipeAdd:
 		// args[0]=recipe, args[1]=add: recipe.sh shifts the subcommand before
-		// it execs recipe-add.sh, so the verb's own loop sees args[2:]. The
-		// TTY seam decides FIRST: on a terminal the whole verb stays on the
-		// legacy script (GO-20 U6b, option (a)), off it the port owns the
-		// verb end to end.
+		// it execs recipe-add.sh, so the verb's own loop sees args[2:]. No
+		// delegation since U6e: the TTY tail runs natively — wizard, dep-gate
+		// seam and env-offer seam (GO-20 U6e, T3b second half).
 		return runRecipeAdd(args, home, stdin, stdout, stderr, selfPath(), isTTY(stdin, stdout))
 	case routeRecipeRemove:
 		// args[0]=recipe, args[1]=remove: recipe.sh shifts the subcommand

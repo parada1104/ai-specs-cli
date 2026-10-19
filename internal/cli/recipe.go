@@ -29,12 +29,14 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,6 +49,7 @@ import (
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/recipe"
 	"ai-specs.dev/ai-specs/internal/schema"
+	"ai-specs.dev/ai-specs/internal/sync"
 	"ai-specs.dev/ai-specs/internal/target"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
@@ -157,31 +160,27 @@ func runRecipeList(args []string, home, exePath string, stdout, stderr io.Writer
 // duplicate refusal, the placeholder append with its restore-on-invalid
 // guard, the materialize listing and the non-TTY next-steps guidance).
 //
-// TTY DECISION — the NARROWED seam (U6d-2 / T3b first half): L4's option
-// (a) is narrowed by the native wizard core, not dropped. Off the TTY
-// (piped, CI, and both legs of the differential) the port owns the verb end
-// to end, unchanged. On a terminal the verb runs NATIVELY through
-// recipe-add.py:247-275's "Configure now?" leg — the confirm and the config
-// wizard are U6d-2's runConfigWizard on internal/tui — and the WHOLE verb
-// still delegates back to lib/recipe.sh through the documented seam only
-// when the run would reach a tail with no native side yet: the env offer
-// (env_scaffold.offer_harness_env — sync.OfferHarnessEnv exists but wiring
-// the add tail onto it is U6e) or the CLI-dep gate (recipe-add.py:258's
-// _run_cli_dep_gate and the same gate inside configure_selected_recipes —
-// config_wizard._dep_gate with its install offer, U6e's). The seam fires
-// BEFORE the write, so a delegated run leaves the manifest to the script
-// alone, and the pre-write guards met on the way print the same frozen
-// messages the differential pins off the TTY.
+// TTY DECISION — FLIPPED (U6e, T3b second half): there is no delegation
+// left. Off the TTY (piped, CI, and both legs of the differential) the port
+// owns the verb end to end, unchanged. On a terminal the whole tail runs
+// through the injected recipeTailSeams: recipe-add.py:247-275's "Configure
+// now?" confirm (U6d-2's runConfigWizard on internal/tui), the CLI dep gate
+// at the script's TWO positions (:258's own gate before the guidance block,
+// and the gate inside configure_selected_recipes before the wizard — both
+// S37's python3 driver seam, U6e's dep-gate decision recorded in L10), and
+// the env offer at :269 through sync.OfferHarnessEnv (U4d-2). lib/recipe.sh
+// never runs for this verb anymore — pinned by
+// TestRecipeAddTailIsNativeOnATerminal.
 //
 // The legacy PRE-write gate recipe-add.py:155-181 (ensure_deps' pip offer
 // for rich/questionary, then the questionary import) has NO native
 // counterpart and does not need one: the native wizard's only TUI dependency
 // is internal/tui itself, which cannot be missing from the running binary,
 // so nothing is vendored and no run is refused for Python packages (recorded
-// in L9). What retires for this route (S9): the BINARY's use of
-// recipe-add.sh/recipe-add.py on every TTY run the seam does not take —
-// while delegated runs still exec both files, and physical deletion stays
-// U7/U8.
+// in L9; the dep-gate driver's OWN late vendor answer inherits the same
+// rule — L10). What retires for this route (S9): the BINARY's use of
+// recipe-add.sh/recipe-add.py on EVERY run, TTY included — nothing in this
+// verb execs a legacy file anymore, and physical deletion stays U7/U8.
 //
 // Documented deviations (the S12/ADR 0002 class, pinned by tests): a `cd`
 // failure keeps exit 1 and the `cd: <path>: <reason>` shape but drops bash's
@@ -207,26 +206,23 @@ Flags:
 // runRecipeAdd is the native `recipe add` entry: recipe-add.sh's argument
 // loop first (usage errors exit 2 before anything touches the filesystem),
 // the missing-id arm, the cd/pwd target resolution, then add_recipe itself —
-// whose NARROWED TTY seam (T3b/U6d-2, see the header) lives inside the verb,
-// after the recipe is loaded and the tail's needs are known.
+// whose TTY tail (U6e-flipped, see the header) lives inside the verb, after
+// the recipe is loaded and the tail's needs are known.
 //
 // exePath is the running dispatcher's own path (selfPath());
 // recipe.CatalogHome anchors the catalogue resolver's second candidate on it.
 func runRecipeAdd(args []string, home string, stdin io.Reader, stdout, stderr io.Writer, exePath string, ttyNow bool) int {
-	return runRecipeAddFlow(args, home, stdin, stdout, stderr, exePath, ttyNow, openRecipeWizardPrompts)
+	return runRecipeAddFlow(args, home, stdin, stdout, stderr, exePath, ttyNow,
+		productionRecipeTailSeams(home, stdin, stdout, stderr))
 }
 
-// runRecipeAddFlow is runRecipeAdd with the TTY configure leg's prompt opener
-// injected — the runInit/openInitWizardKeys pattern: the dispatcher keeps
-// calling runRecipeAdd, which supplies openRecipeWizardPrompts (production
-// internal/tui over the raw-mode terminal), while a test scripts the wizard's
-// answers instead of driving a PTY.
-func runRecipeAddFlow(args []string, home string, stdin io.Reader, stdout, stderr io.Writer, exePath string, ttyNow bool, open recipeAddWizardOpener) int {
-	// The original argv, exactly as bin/ai-specs's shim would deliver it —
-	// what the narrowed seam hands recipe.sh below when the tail still needs
-	// it (args[0] "recipe" is stripped by runShim, so the legacy case
-	// statement sees `add …` and execs recipe-add.sh unchanged).
-	shimArgs := args
+// runRecipeAddFlow is runRecipeAdd with the TTY tail's seams injected — the
+// runInit/openInitWizardKeys pattern: the dispatcher keeps calling
+// runRecipeAdd, which supplies the PRODUCTION seams (the S37 dep-gate driver,
+// openRecipeWizardPrompts over the raw-mode terminal, and the
+// sync.OfferHarnessEnv offer), while a test scripts the gate answers, the
+// wizard's answers and the env offer instead of driving a PTY.
+func runRecipeAddFlow(args []string, home string, stdin io.Reader, stdout, stderr io.Writer, exePath string, ttyNow bool, seams recipeTailSeams) int {
 	// args[0]=recipe, args[1]=add: recipe.sh shifts the subcommand before it
 	// execs recipe-add.sh, so the verb's own loop sees args[2:].
 	args = args[2:]
@@ -292,28 +288,16 @@ func runRecipeAddFlow(args []string, home string, stdin io.Reader, stdout, stder
 		fmt.Fprintf(stderr, "cd: %s: %s\n", target, cdReason(err))
 		return 1
 	}
-	return runRecipeAddVerb(resolved, recipeID, home, exePath, stdin, stdout, stderr, ttyNow, open, shimArgs)
-}
-
-// recipeAddTailNeedsLegacy reads recipe-add.py's TTY tail (:247-275) for the
-// legs that still have no native side: the env offer (has_mcp_env →
-// offer_harness_env, U6e) and the CLI-dep gate (recipe.cli_deps with config
-// fields → the gate inside configure_selected_recipes, U6e — the tail's own
-// :258 gate only fires in the has_mcp_env case this already covers). Every
-// other TTY run — a config-only recipe, or a recipe with nothing to
-// configure — is native end to end.
-func recipeAddTailNeedsLegacy(hasConfig, hasMcpEnv bool, r *schema.Recipe) bool {
-	return hasMcpEnv || (hasConfig && len(r.CliDeps) > 0)
+	return runRecipeAddVerb(resolved, recipeID, home, exePath, stdin, stdout, stderr, ttyNow, seams)
 }
 
 // runRecipeAddVerb is add_recipe (recipe-add.py:115-296): the manifest guard
 // first, the internal-test refusal, the catalog read, the duplicate refusal,
 // the placeholder append through config.AppendRecipeSegments (the ONE
 // manifest writer, S6), the materialize listing, and — see the header — the
-// TTY tail: the narrowed seam first (delegating the WHOLE verb when the run
-// would reach the env offer or the dep gate), then the native "Configure
-// now?" leg (U6d-2) or the non-TTY next-steps guidance.
-func runRecipeAddVerb(target, recipeID, home, exePath string, stdin io.Reader, stdout, stderr io.Writer, ttyNow bool, open recipeAddWizardOpener, shimArgs []string) int {
+// TTY tail through the injected seams (confirm → gate → wizard → env offer,
+// each at the script's own position) or the non-TTY next-steps guidance.
+func runRecipeAddVerb(target, recipeID, home, exePath string, stdin io.Reader, stdout, stderr io.Writer, ttyNow bool, seams recipeTailSeams) int {
 	tomlPath := filepath.Join(target, "ai-specs", "ai-specs.toml")
 
 	// add_recipe's guard order, verbatim: `if not manifest_path.is_file()`
@@ -391,16 +375,6 @@ func runRecipeAddVerb(target, recipeID, home, exePath string, stdin io.Reader, s
 		}
 	}
 
-	// T3b (U6d-2 first half): the NARROWED TTY seam, in the script's own
-	// position — after the guards above and BEFORE the ensure_deps/write
-	// tail, so a delegated run writes nothing natively. The wizard leg is
-	// native now; what still has no native side is recipe-add.py:247-275's
-	// env offer (U6e) and the CLI-dep gate (U6e), which reaches the wizard
-	// leg whenever recipe.cli_deps is non-empty.
-	if ttyNow && recipeAddTailNeedsLegacy(hasConfig, hasMcpEnv, loaded) {
-		return runShim(route{kind: routeShim, script: "recipe.sh"}, shimArgs, home, stdin, stdout, stderr, exePath)
-	}
-
 	// The placeholder fields; the appender owns Python's sorted() order.
 	var fields []config.RecipeConfigField
 	if loaded.ConfigSchema != nil {
@@ -459,19 +433,15 @@ func runRecipeAddVerb(target, recipeID, home, exePath string, stdin io.Reader, s
 		fmt.Fprintln(stdout, "  (no primitives declared)")
 	}
 
-	// recipe-add.py:245-288's guidance split. On a TTY whose run survived the
-	// seam above, the configure leg runs natively (U6d-2): a blank line, the
-	// "Configure now?" confirm (default yes, a cancel/abort wording the same
-	// decline as questionary's None), the wizard over this recipe's fields
-	// and the write-back through config.UpdateRecipeConfig. The dep-gate arm
-	// (recipe-add.py:258) has no reachable form here — cli_deps WITH config
-	// fields delegated above, and without config fields the leg never opens
-	// (it needs has_mcp_env, also delegated) — and the env leg (:269) is the
-	// seam's (U6e). Off the TTY, or with nothing to configure, it is the
+	// recipe-add.py:245-275's guidance split, every leg native since U6e
+	// (see the header): a blank line, the "Configure now?" confirm — a
+	// cancel/abort wording the frozen decline — the gate at its two script
+	// positions, the wizard + write-back when config fields exist, and the
+	// env offer last. Off the TTY, or with nothing to configure, it is the
 	// frozen "Next steps:" block, unchanged.
 	if ttyNow && (hasConfig || hasMcpEnv) {
 		fmt.Fprintln(stdout)
-		prompts, closeKeys, rc := open(stdin, stdout)
+		prompts, closeKeys, rc := seams.openWizard(stdin, stdout)
 		if rc != 0 || prompts == nil || closeKeys == nil {
 			// The TUI cannot open: questionary's `.ask()` answers None at the
 			// same point, which the script words as a declined confirm — the
@@ -480,31 +450,88 @@ func runRecipeAddVerb(target, recipeID, home, exePath string, stdin io.Reader, s
 			fmt.Fprintln(stdout, "You can configure later with: ai-specs configure-recipes")
 			return 0
 		}
-		defer closeKeys()
-		if answer, ok := prompts.Confirm("Configure now?", true); !ok || !answer {
+		answer, ok := prompts.Confirm("Configure now?", true)
+		closeKeys()
+		if !ok || !answer {
 			fmt.Fprintln(stdout, "You can configure later with: ai-specs configure-recipes")
 			return 0
 		}
-		if hasConfig {
-			// configure_selected_recipes' existing-config read: the manifest
-			// exactly as the append above left it (Python re-reads it too).
-			existing := map[string]any{}
-			if data, lerr := config.LoadManifest(tomlPath); lerr == nil {
-				existing = wizardExistingConfig(data, recipeID)
-			}
-			values, wok, werr := runConfigWizard(recipeID, loaded.ConfigSchema, existing, prompts)
+
+		// The dep gate, at recipe-add.py's own positions: :258 gates in the
+		// tail itself when there are no config fields (a decline prints the
+		// guidance block), and configure_selected_recipes gates internally
+		// when there are (a decline prints ITS frozen Skipped line on stderr).
+		// An unreadable gate words each call site's own frozen catch; the
+		// driver's vendor rc 3 degrades to the dependency-skip framing (L10:
+		// recipe add never refuses a run for Python packages — L9 deviation
+		// 1 — so there is no pre-write ensure_deps for it to answer at).
+		configureNow := hasConfig
+		if len(loaded.CliDeps) > 0 {
+			outcome := seams.depGate(recipeID)
 			switch {
-			case werr != nil:
-				// recipe-add.py:266-267's `except Exception` prints this one
-				// line for ANY failure inside the wizard call.
-				fmt.Fprintln(stdout, "  ! could not open the configuration wizard")
-			case wok && len(values) > 0:
-				if _, refusal, uerr := config.UpdateRecipeConfig(tomlPath, recipeID, sortedWizardConfigValues(values)); uerr != nil || refusal != "" {
-					fmt.Fprintln(stdout, "  ! could not open the configuration wizard")
+			case outcome.Skip:
+				if hasConfig {
+					fmt.Fprintf(stderr, "Skipped %s (missing CLI deps)\n", recipeID)
+					configureNow = false
+				} else {
+					recipePrintCLIDepGuidance(loaded, stdout)
 				}
+			case outcome.Err != nil:
+				if hasConfig {
+					// recipe-add.py:266-267 wraps configure_selected_recipes in
+					// `except Exception` — one line, no detail.
+					fmt.Fprintln(stdout, "  ! could not open the configuration wizard")
+					configureNow = false
+				} else {
+					// recipe-add.py:76's _run_cli_dep_gate catch — its own line.
+					fmt.Fprintf(stdout, "  ! CLI dependency check skipped: %v\n", outcome.Err)
+				}
+			case outcome.Rc == 3:
+				fmt.Fprintln(stdout, "  ! CLI dependency check skipped: interactive dependencies are unavailable")
+				configureNow = false
+			case !outcome.Proceed:
+				// rc 11: the driver already printed its own read-failure line.
+				configureNow = false
 			}
-			// A cancelled or all-blank wizard is Python's falsy `values`:
-			// nothing written, nothing printed.
+		}
+
+		if configureNow {
+			prompts, closeKeys, rc = seams.openWizard(stdin, stdout)
+			if rc != 0 || prompts == nil || closeKeys == nil {
+				// questionary raising inside run_config_wizard: add's catch.
+				fmt.Fprintln(stdout, "  ! could not open the configuration wizard")
+			} else {
+				// configure_selected_recipes' existing-config read: the manifest
+				// exactly as the append above left it (Python re-reads it too).
+				existing := map[string]any{}
+				if data, lerr := config.LoadManifest(tomlPath); lerr == nil {
+					existing = wizardExistingConfig(data, recipeID)
+				}
+				values, wok, werr := runConfigWizard(recipeID, loaded.ConfigSchema, existing, prompts)
+				closeKeys()
+				switch {
+				case werr != nil:
+					// recipe-add.py:266-267's `except Exception` prints this one
+					// line for ANY failure inside the wizard call.
+					fmt.Fprintln(stdout, "  ! could not open the configuration wizard")
+				case wok && len(values) > 0:
+					if _, refusal, uerr := config.UpdateRecipeConfig(tomlPath, recipeID, sortedWizardConfigValues(values)); uerr != nil || refusal != "" {
+						fmt.Fprintln(stdout, "  ! could not open the configuration wizard")
+					}
+				}
+				// A cancelled or all-blank wizard is Python's falsy `values`:
+				// nothing written, nothing printed.
+			}
+		}
+
+		// recipe-add.py:269-274's env leg: collect+offer inside
+		// sync.OfferHarnessEnv (U4d-2, aggregate — the script scoped
+		// collection to this recipe id; recorded in L10), its failure
+		// wording this one frozen line and leaving the append standing.
+		if hasMcpEnv {
+			if err := seams.envOffer(target); err != nil {
+				fmt.Fprintln(stdout, "  ! could not configure environment variables")
+			}
 		}
 		return 0
 	}
@@ -2617,4 +2644,439 @@ func runRecipeConfigure(args []string, home string, stdout, stderr io.Writer) in
 		return 1
 	}
 	return emit(report, code)
+}
+
+// ── GO-20 U6e (T5): `configure-recipes` and the recipe dispatcher ──
+//
+// Native `ai-specs configure-recipes` — the port of lib/recipe-config.sh (49
+// lines, the wrapper's argument contract) plus lib/_internal/config_wizard.py's
+// main (the verb: the manifest guard, the TTY gate, the enabled-recipe
+// enumeration, the whole-project loop and the env offer). And the recipe
+// DISPATCHER: lib/recipe.sh's usage/bare/unknown arms natively (S4), with
+// `init` routed straight to recipe-init.sh — recipe-init.py is unported (no
+// U6 slicing row owns it), so that wrapper stays the brief's legacy route
+// while recipe.sh itself retires from the binary (S9).
+//
+// THE CLI-DEP GATE (U4b-2's S37 seam, goal 4): DECISION (b) — keep the same
+// named seam, runLegacyInitDepGate's python3 -c driver, now used by THREE
+// callers (init's wizard, this loop, recipe add's tail) and now OWNED BY U7,
+// which must port `_dep_gate` plus dep_install's OFFER half (the brew/apt
+// plans, the consent prompt, the network install through provider_install)
+// or retire the gate with the scripts (L10). Porting it inside this slice
+// would mean ~1 100 lines across surfaces outside its edit edges
+// (internal/doctor's dep probe is unexported; internal/provider carries only
+// the read-only resolution half), while the check half already exists. The
+// gate is not removed from any route: every path Python gated reaches the
+// driver now.
+//
+// NO ensure_deps (L9 deviation 1's class): nothing before the first gated
+// recipe needs Python in this port — the wizard is internal/tui, the env
+// offer is internal/sync, and the driver runs its OWN vendor bootstrap at the
+// first gated recipe (S37's recorded timing). config_wizard.main's
+// ensure_deps would exit 3 silently when rich/questionary are missing; this
+// port answers 3 the same way only when a gate actually fires (rc 3 below).
+//
+// Documented deviations (the S12/ADR 0002 class, pinned by tests): a `cd`
+// failure keeps exit 1 and the `cd: <path>: <reason>` shape but drops bash's
+// own `lib/recipe-config.sh: line N: ` prefix
+// (TestConfigureRecipesMissingPathDeviation); a manifest that does not parse
+// exits 1 on our own error line where Python printed a traceback; a wizard
+// prompt that cannot open skips that recipe (L9's deviation class) where
+// Python would traceback uncaught; rich's TTY colouring of the skip lines is
+// not reproduced (plain bytes, the init port's precedent); and `recipe add`'s
+// env offer prompts the project-wide variable set where recipe-add.py scoped
+// collection to the added id (internal/sync owns the scoping and is outside
+// this slice's edit edges). The TTY surface is pinned in-process through the
+// seams; only the wrapper, guard and gate bytes are differentially
+// byte-compared (no PTY in the table, L4's constraint unchanged).
+
+// configureRecipesUsage is lib/recipe-config.sh's usage() heredoc byte for
+// byte: a QUOTED heredoc (`cat <<'EOF'`), so the text is literal and the
+// trailing newline after the last line is part of the output.
+const configureRecipesUsage = `Usage: ai-specs configure-recipes [path] [--help]
+Configure enabled recipes (config fields, CLI deps, ai-specs.env + root .envrc).
+Arguments:
+  path    Target project root (default: current directory)
+Flags:
+  --help  Show this help
+`
+
+// recipeUsage is lib/recipe.sh's usage() heredoc byte for byte (stdout for
+// --help/-h/help, stderr after the bare-verb exit 2).
+const recipeUsage = `Usage: ai-specs recipe <subcommand> [args]
+Subcommands:
+  list [path]      List available and installed recipes
+  add <id> [path]  Add a recipe to the manifest
+  init <id> [path]   Print a read-only initialization brief
+  configure <id> [path] [options]  Inspect or apply recipe config non-interactively
+  remove <id> [path]  Remove a recipe from the manifest
+Path defaults to current directory.
+`
+
+// runRecipeDispatch is lib/recipe.sh's case statement REMAINDER (S4's three
+// dispatcher failure arms): `--help|-h|help` prints usage on stdout exit 0
+// and ignores the rest of the argv, the bare `recipe` prints the same usage
+// on stderr exit 2, and anything else is the two unknown lines on stderr exit
+// 1 — `subcmd="${1:-}"` then the `*` arm, argv[0] being the subcommand.
+func runRecipeDispatch(args []string, stdout, stderr io.Writer) int {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "--help", "-h", "help":
+		fmt.Fprint(stdout, recipeUsage)
+		return 0
+	case "":
+		fmt.Fprint(stderr, recipeUsage)
+		return 2
+	default:
+		fmt.Fprintf(stderr, "ai-specs recipe: unknown subcommand '%s'\n", sub)
+		fmt.Fprintln(stderr, "Run 'ai-specs recipe --help' for usage.")
+		return 1
+	}
+}
+
+// recipeTailSeams is U6e's injected TTY tail, shared by `recipe add`'s leg
+// and the configure-recipes loop (the runInit pattern): production wires the
+// three handlers below, a test scripts each one. The dep gate and the env
+// offer are what U6b's narrowed seam still delegated WHOLE to recipe.sh;
+// wiring both here is what lets the shim map go empty (L10).
+type recipeTailSeams struct {
+	// openWizard yields the config-wizard prompts over the streams
+	// (production openRecipeWizardPrompts); `recipe add`'s confirm uses the
+	// same opener, opening and closing per prompt like questionary does.
+	openWizard recipeAddWizardOpener
+	// depGate runs the CLI-dep gate for one recipe (production:
+	// runLegacyInitDepGate — S37's python3 driver, U7-owned decision in L10).
+	depGate func(recipeID string) wizardDepGateOutcome
+	// envOffer runs the harness env offer against the project root, returning
+	// the error its caller words (production: openInitWizardKeys +
+	// sync.OfferHarnessEnv — which soft-fails internally, so the error only
+	// surfaces when the terminal cannot be taken over or an exception
+	// escapes: Python's `_offer_envrc` outer `except Exception`).
+	envOffer func(root string) error
+}
+
+// productionRecipeTailSeams wires the tail for the running CLI over the
+// dispatcher's own streams.
+func productionRecipeTailSeams(home string, stdin io.Reader, stdout, stderr io.Writer) recipeTailSeams {
+	return recipeTailSeams{
+		openWizard: openRecipeWizardPrompts,
+		depGate: func(recipeID string) wizardDepGateOutcome {
+			// keys=nil: both callers run the gate with NO raw-mode window
+			// open (`recipe add` closes the confirm's window first,
+			// configure-recipes opens per recipe), so there is nothing to
+			// suspend around the child — it inherits a normal terminal,
+			// exactly like Python's questionary between prompts.
+			return runLegacyInitDepGate(initWizardRequest{
+				Home: home, Stdin: stdin, Stdout: stdout, Stderr: stderr,
+			}, nil, recipeID, recipe.CatalogDir(home))
+		},
+		envOffer: func(root string) (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					// Python's `except Exception` around offer_harness_env.
+					err = fmt.Errorf("%v", r)
+				}
+			}()
+			keys, closeKeys, rc := openInitWizardKeys(stdin, stdout)
+			if rc != 0 {
+				return errors.New("the interactive terminal is unavailable")
+			}
+			defer closeKeys()
+			sync.OfferHarnessEnv(root, home, &wizardEnvPrompts{out: stdout, keys: keys}, stdout, stderr)
+			return nil
+		},
+	}
+}
+
+// runConfigureRecipes is the native `configure-recipes` entry:
+// recipe-config.sh's argument loop first (usage errors exit 2 before anything
+// touches the filesystem), then config_wizard.main itself.
+func runConfigureRecipes(args []string, home string, stdin io.Reader, stdout, stderr io.Writer, ttyNow bool) int {
+	return runConfigureRecipesFlow(args, home, stdin, stdout, stderr, ttyNow,
+		productionRecipeTailSeams(home, stdin, stdout, stderr))
+}
+
+// runConfigureRecipesFlow is runConfigureRecipes with the TTY tail's seams
+// injected (and ttyNow, which the kernel detects in production — an
+// in-process test cannot fake a TTY) — the interactive loop is pinned here,
+// never through a PTY.
+func runConfigureRecipesFlow(args []string, home string, stdin io.Reader, stdout, stderr io.Writer, ttyNow bool, seams recipeTailSeams) int {
+	// recipe-config.sh's while/case loop, in order: --help|-h wins wherever
+	// it appears, `--` makes every remaining argument positional (never a
+	// flag), an unknown flag prints two stderr lines, and a second positional
+	// is the other exit-2 usage error. An empty-string positional keeps
+	// TARGET_PATH empty (`[[ -z ]]`), falling into the cwd default exactly
+	// like the script's take_positional.
+	target := ""
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--help" || arg == "-h":
+			fmt.Fprint(stdout, configureRecipesUsage)
+			return 0
+		case arg == "--":
+			for i++; i < len(args); i++ {
+				if target == "" {
+					target = args[i]
+					continue
+				}
+				fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", args[i])
+				return 2
+			}
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(stderr, "ERROR: unknown flag: %s\n", arg)
+			fmt.Fprintln(stderr, "Run 'ai-specs configure-recipes --help' for usage.")
+			return 2
+		default:
+			if target == "" {
+				target = arg
+			} else {
+				fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", arg)
+				return 2
+			}
+		}
+	}
+	if target == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			target = cwd
+		}
+		// A failing `pwd` killed the script under set -e; the cd below
+		// reports the same frozen exit 1 instead.
+	}
+	resolved, err := cdSkillsTarget(target)
+	if err != nil {
+		fmt.Fprintf(stderr, "cd: %s: %s\n", target, cdReason(err))
+		return 1
+	}
+	// config_wizard.main(): `Path(args.path).resolve()` — the physical
+	// spelling after the wrapper's cd/pwd (U6d-1's recipeConfigureResolve is
+	// Path.resolve() with a tolerated missing tail).
+	root := recipeConfigureResolve(resolved)
+	manifestPath := filepath.Join(root, "ai-specs", "ai-specs.toml")
+
+	// main's FIRST check — before ensure_deps, the TTY gate and the recipe
+	// enumeration (its frozen message, exit 1).
+	if !regularInitFile(manifestPath) {
+		fmt.Fprintf(stderr, "Project not initialized: missing %s\n", manifestPath)
+		return 1
+	}
+	if !ttyNow {
+		// main's TTY gate, its frozen message on stderr, exit 3 (config_wizard
+		// runs ensure_deps before it; this port has no equivalent need — the
+		// header).
+		fmt.Fprintln(stderr, "configure-recipes requires an interactive TTY")
+		return 3
+	}
+	// One manifest read standing in for Python's TWO (main's unguarded
+	// _enabled_recipe_ids, then configure_selected_recipes's try/except →
+	// {}): nothing writes between them, so one read feeds both identically.
+	// The unguarded load's failure is Python's traceback → exit 1; the exit
+	// code is kept, the wording is ours (ADR 0002).
+	data, lerr := config.LoadManifest(manifestPath)
+	if lerr != nil {
+		fmt.Fprintf(stderr, "ERROR: configure-recipes failed: %v\n", lerr)
+		return 1
+	}
+	ids := configureRecipesEnabledIDs(data)
+	if len(ids) == 0 {
+		// `_enabled_recipe_ids` empty → the frozen line on stdout (rich
+		// Console() default), exit 0, before the loop and the env offer.
+		fmt.Fprintln(stdout, "No enabled recipes found in the manifest.")
+		return 0
+	}
+	// configure_selected_recipes' existing_by_id — a PRE-loop snapshot (the
+	// loop's own writes never feed back into it, exactly like Python's dict).
+	existingByID := map[string]map[string]any{}
+	for _, rid := range ids {
+		existingByID[rid] = wizardExistingConfig(data, rid)
+	}
+
+	// The loop, in _enabled_recipe_ids' manifest order (the Python iterates
+	// read_recipes' insertion order — the prompt order is the contract).
+	for _, rid := range ids {
+		// read_recipe(catalog, rid): the Path join verbatim (an absolute id
+		// replaces the catalogue root, interior `..` kept) and the dir check
+		// before the parse — configureRecipeDir is U6d-1's shared helper for
+		// exactly this join. The catalogue is ai_specs_home()/catalog/recipes,
+		// the dispatcher's own home — this route has NO module-path fallback
+		// (recipe-add._resolve_catalog_dir's is_dir branch is a different
+		// function; Python's configure_selected_recipes does not use it).
+		recipeDir := configureRecipeDir(home, rid)
+		if info, serr := os.Stat(recipeDir); serr != nil || !info.IsDir() {
+			fmt.Fprintf(stderr, "skip %s: recipe directory not found: %s\n", rid, recipeDir)
+			continue
+		}
+		loaded, rerr := schema.LoadRecipeToml(recipeDir + "/recipe.toml")
+		if rerr != nil {
+			// `console.print(f"[yellow]skip {rid}: {exc}[/yellow]")` with the
+			// markup stripped — plain bytes, the init port's precedent.
+			fmt.Fprintf(stderr, "skip %s: %v\n", rid, rerr)
+			continue
+		}
+		// The gate BEFORE the fields check — configure_selected_recipes'
+		// order, even for a recipe that declares no config at all (S37).
+		if len(loaded.CliDeps) > 0 {
+			outcome := seams.depGate(rid)
+			switch {
+			case outcome.Err != nil:
+				// configure_selected_recipes is NOT wrapped in main (Python:
+				// traceback, exit 1) — our own line, same code.
+				fmt.Fprintf(stderr, "ERROR: configure-recipes failed: %v\n", outcome.Err)
+				return 1
+			case outcome.Rc == 3:
+				// _ensure_deps' own answer at the first gated recipe — main's
+				// ensure_deps position, shifted (S37's recorded timing) —
+				// silent exit 3 like Python's non-TTY vendor failure.
+				return 3
+			case outcome.Skip:
+				fmt.Fprintf(stderr, "Skipped %s (missing CLI deps)\n", rid)
+				continue
+			case !outcome.Proceed:
+				// rc 11: the driver already printed its own read-failure line.
+				continue
+			}
+		}
+		if loaded.ConfigSchema == nil || len(loaded.ConfigSchema.Fields) == 0 {
+			continue
+		}
+		prompts, closeKeys, rc := seams.openWizard(stdin, stdout)
+		if rc != 0 || prompts == nil || closeKeys == nil {
+			// Recorded L9-class deviation: questionary raising here would take
+			// main down with a traceback (exit 1); the port skips the recipe
+			// instead — never exercised on a real terminal, since the loop is
+			// behind the gate.
+			continue
+		}
+		values, wok, werr := runConfigWizard(rid, loaded.ConfigSchema, existingByID[rid], prompts)
+		closeKeys()
+		if werr != nil {
+			// Python's re.error escaping run_config_wizard → uncaught → exit 1.
+			fmt.Fprintf(stderr, "ERROR: configure-recipes failed: %v\n", werr)
+			return 1
+		}
+		if !wok || len(values) == 0 {
+			continue // Python's `if not values: continue`
+		}
+		// The write through the ONE writer (S6): update_recipe_config's
+		// refusal detail travels verbatim, exit 1 like the reference's
+		// RecipeConfigWriteError/traceback.
+		if _, refusal, werr := config.UpdateRecipeConfig(manifestPath, rid, sortedWizardConfigValues(values)); werr != nil {
+			fmt.Fprintf(stderr, "ERROR: configure-recipes failed: %v\n", werr)
+			return 1
+		} else if refusal != "" {
+			fmt.Fprintf(stderr, "ERROR: configure-recipes failed: %s\n", refusal)
+			return 1
+		}
+	}
+
+	// _offer_envrc, soft-failing like Python's `except Exception`: the loop's
+	// writes stand, the yellow line (rich Console() → stdout) prints, exit 0.
+	if serr := seams.envOffer(root); serr != nil {
+		fmt.Fprintf(stdout, "Harness env offer skipped: %v\n", serr)
+	}
+	return 0
+}
+
+// configureRecipesEnabledIDs is config_wizard._enabled_recipe_ids over the
+// already-loaded manifest: [recipes.*] TABLES in file order (read_recipes
+// preserves insertion order — the loop's prompt order), kept only when
+// `enabled` is a real boolean true. The predicate is the one internal/recipe's
+// enabledRecipes already grades for the list route (bool-only: `enabled =
+// "true"` stays disabled); this walks the table instead of collecting a map
+// because the ORDER is the contract here.
+func configureRecipesEnabledIDs(manifest *toml.Table) []string {
+	recipes, ok := manifest.Table("recipes")
+	if !ok || recipes == nil {
+		return nil
+	}
+	var out []string
+	for _, id := range recipes.Keys() {
+		table, ok := recipes.Table(id)
+		if !ok || table == nil {
+			continue // read_recipes skips non-dict values
+		}
+		if on, _ := table.Bool("enabled"); on {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// depInstallPackageMap is dep_install._PACKAGE_MAP: binary → (brew formula,
+// apt package). Empty strings mean guidance-only for that side.
+var depInstallPackageMap = map[string][2]string{
+	"gh":     {"gh", "gh"},
+	"glab":   {"glab", "glab"},
+	"jq":     {"jq", "jq"},
+	"direnv": {"direnv", "direnv"},
+	"git":    {"git", "git"},
+	"bb":     {"bb-cli", ""},
+}
+
+// depGuidanceOnly is dep_install._GUIDANCE_ONLY — always guidance, never a
+// blind Node install.
+var depGuidanceOnly = map[string]bool{"npx": true}
+
+// depGuidanceDisplay is dep_install.resolve_install_plan's GUIDANCE half for
+// `_print_cli_dep_guidance`'s one line: guidance-only or unknown binaries
+// fall to the install_url (or `install '<binary>' manually`), a known formula
+// renders `brew install <formula>` when brew is on PATH (Darwin/Linux) or
+// `sudo apt-get install -y <pkg>` on Linux when apt-get is. The OFFER half
+// (command execution, the GitHub-release install) is the S37 driver's side
+// and stays legacy — L10's dep-gate decision.
+func depGuidanceDisplay(binary, installURL string) string {
+	if depGuidanceOnly[binary] {
+		if installURL != "" {
+			return installURL
+		}
+		return "install '" + binary + "' manually"
+	}
+	formula, known := depInstallPackageMap[binary]
+	if !known {
+		if installURL != "" {
+			return installURL
+		}
+		return "install '" + binary + "' manually"
+	}
+	// platform.system() → runtime.GOOS; shutil.which → exec.LookPath.
+	if formula[0] != "" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
+		if _, err := exec.LookPath("brew"); err == nil {
+			return "brew install " + formula[0]
+		}
+	}
+	if formula[1] != "" && runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("apt-get"); err == nil {
+			return "sudo apt-get install -y " + formula[1]
+		}
+	}
+	if installURL != "" {
+		return installURL
+	}
+	return "install '" + binary + "' manually"
+}
+
+// recipePrintCLIDepGuidance is recipe-add.py:68-99
+// (_print_cli_dep_guidance): a blank line, one `  - <binary>: <target>` line
+// per REQUIRED dep (dep_install's display through depGuidanceDisplay above),
+// then the two frozen lines. Python's dep_install import failure falls back
+// to the raw install_url — in-process this port is the load's constant
+// success side, so only the display branch is reachable.
+func recipePrintCLIDepGuidance(r *schema.Recipe, stdout io.Writer) {
+	fmt.Fprintln(stdout)
+	for _, dep := range r.CliDeps {
+		if !dep.Required {
+			continue
+		}
+		target := depGuidanceDisplay(dep.Binary, dep.InstallURL)
+		if target != "" {
+			fmt.Fprintf(stdout, "  - %s: %s\n", dep.Binary, target)
+			continue
+		}
+		fmt.Fprintf(stdout, "  - %s\n", dep.Binary)
+	}
+	fmt.Fprintln(stdout, "required CLI dependencies are still missing; install them and re-run, or continue with:")
+	fmt.Fprintln(stdout, "  ai-specs configure-recipes")
 }
