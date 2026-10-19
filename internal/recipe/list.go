@@ -33,11 +33,42 @@ type Entry struct {
 	Status  string
 }
 
-// CatalogDir is the single catalogue location the CLI resolves: the install
-// root's catalog/recipes. recipe-list.py resolves the same path twice — from
-// AI_SPECS_HOME, then from its own module path — and both reduce to this one.
+// CatalogDir is the single catalogue path builder: <home>/catalog/recipes for
+// whichever home CatalogHome has chosen. recipe-list.py resolves the catalogue
+// twice — from AI_SPECS_HOME, then from its own module path (recipe-list.py:30-41)
+// — and once CatalogHome has picked the home, both candidates reduce to this
+// one path, so every reader (hub, init wizard, the recipe verbs) joins here.
 func CatalogDir(cliHome string) string {
 	return filepath.Join(cliHome, "catalog", "recipes")
+}
+
+// CatalogHome is recipe-list.py:30-41's home-first resolution, reduced to the
+// home it selects: AI_SPECS_HOME's home wins when its catalog/recipes exists
+// (the FIRST candidate — a directory test, symlinks followed, exactly
+// Path.is_dir()), otherwise the resolution falls to the CLI's own install
+// root — the module-path candidate. An empty home skips the first candidate
+// entirely, as Python's `if ai_specs_home:` does.
+//
+// ANCHOR of the second candidate: Python anchors on
+// Path(recipe-list.py).resolve() — the physical tree that holds lib/. This
+// port anchors on the RUNNING BINARY: callers pass home.ResolveHome of the
+// executable, which walks the launcher's symlink loop exactly like
+// bin/ai-specs, so <install>/bin/ai-specs → <install> — the same directory
+// Python's module path names in every production layout and in this
+// repository. The anchors diverge only when the binary is built outside
+// <root>/bin while lib/ physically lives in the root (the test harness's
+// smoke binary): there the port lists NOTHING where Python would list the
+// repo's catalogue through lib/'s symlinks. Pinned by
+// TestCatalogHomeFallsBackToInstallRoot and
+// TestRecipeListFallsBackToBinaryInstallRoot; the shell differential does not
+// byte-exercise this branch (its homes all carry a catalogue).
+func CatalogHome(home, installRoot string) string {
+	if home != "" {
+		if info, err := os.Stat(filepath.Join(home, "catalog", "recipes")); err == nil && info.IsDir() {
+			return home
+		}
+	}
+	return installRoot
 }
 
 // List scans the catalogue and compares it against the manifest's [recipes.*]

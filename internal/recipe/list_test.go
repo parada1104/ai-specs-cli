@@ -128,6 +128,52 @@ func TestListIsSortedByID(t *testing.T) {
 	}
 }
 
+// TestCatalogHomeIsHomeFirst pins recipe-list.py:30-41's FIRST candidate on the
+// shared resolver: AI_SPECS_HOME's home wins whenever its catalog/recipes
+// exists (symlinked or real), and an unset/empty home skips the candidate
+// entirely — Python's `if ai_specs_home:` — falling to the install root.
+func TestCatalogHomeIsHomeFirst(t *testing.T) {
+	installRoot := t.TempDir()
+	catalog(t, installRoot, "root-recipe", "Root", "1.0.0")
+
+	homeWith := t.TempDir()
+	catalog(t, homeWith, "home-recipe", "Home", "2.0.0")
+	if got := CatalogHome(homeWith, installRoot); got != homeWith {
+		t.Errorf("CatalogHome(home with a catalogue) = %q, want the home %q", got, homeWith)
+	}
+	if got := CatalogHome("", installRoot); got != installRoot {
+		t.Errorf(`CatalogHome("") = %q, want the install root %q`, got, installRoot)
+	}
+}
+
+// TestCatalogHomeFallsBackToInstallRoot pins the ANCHOR case of the second
+// candidate: a home WITHOUT catalog/recipes (an AI_SPECS_HOME that carries
+// lib/ but no catalogue) falls to the install root the CLI derives from the
+// RUNNING BINARY, and the listing then comes from THERE. Python anchors the
+// same candidate on Path(recipe-list.py).resolve() — the physical tree that
+// holds lib/; in every production layout (bin/ai-specs and lib/ side by side)
+// and in this repository the two anchors are the same directory, and they
+// diverge only when the binary is built outside <root>/bin (the test
+// harness's smoke binary) — the behaviour recipe_test.go's
+// TestRecipeListFallsBackToBinaryInstallRoot pins at the verb.
+func TestCatalogHomeFallsBackToInstallRoot(t *testing.T) {
+	installRoot := t.TempDir()
+	catalog(t, installRoot, "root-recipe", "Root", "1.0.0")
+	homeWithout := t.TempDir()
+
+	got := CatalogHome(homeWithout, installRoot)
+	if got != installRoot {
+		t.Fatalf("CatalogHome(home without a catalogue) = %q, want the install root %q", got, installRoot)
+	}
+	entries, err := List(t.TempDir(), got)
+	if err != nil {
+		t.Fatalf("List through the install root: %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != "root-recipe" {
+		t.Errorf("List = %v, want the install root's root-recipe", entries)
+	}
+}
+
 // TestListWithoutCatalogOrManifest pins the two empties: no catalogue directory and
 // no manifest both yield an empty list rather than an error or a panic — the state
 // every project starts in.
