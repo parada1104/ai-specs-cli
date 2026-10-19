@@ -12,7 +12,9 @@ package tui
 // KeySource alone cannot carry this: KeyKind classifies keystrokes (arrow,
 // space, enter), while a line of text needs the CHARACTER. TextSource is that
 // second seam — the production Terminal decodes the same byte stream either
-// way, and a test scripts the two independently.
+// way, and a test scripts the two independently. Since GO-20 U6d-2 the
+// engine also answers TextValidated (questionary's validate= — reject an
+// answer, show the message, re-prompt) for the config wizard.
 
 import (
 	"fmt"
@@ -86,6 +88,22 @@ func TextRaw(out io.Writer, in KeySource, message, defaultValue string) (string,
 	return textLine(out, in, textPrompt{message: message, prefill: defaultValue, verbatim: true})
 }
 
+// TextValidated is TextRaw's exact contract plus questionary's validate=
+// handler (GO-20 U6d-2, the config wizard's one new primitive): every Enter
+// first runs validate over the line AS TYPED — the raw buffer, before any
+// strip or default substitution, which is the value questionary hands the
+// validator — and on failure the validator's message is printed under the
+// settled line, the buffer is kept, and the prompt is drawn again for another
+// attempt. On success the buffer comes back verbatim like TextRaw. A nil
+// validate behaves as TextRaw. Ctrl-C, ESC, Ctrl-D on an empty line, EOF and a
+// read error all return (, false) without consulting the validator. Nothing
+// here changes what Text or TextRaw write for their existing callers — they
+// pass no validator and never enter this branch (pinned by
+// TestTextBytesAreUnchangedForExistingCallers).
+func TextValidated(out io.Writer, in KeySource, message, defaultValue string, validate func(string) error) (string, bool) {
+	return textLine(out, in, textPrompt{message: message, prefill: defaultValue, verbatim: true, validate: validate})
+}
+
 // textPrompt is the one shape shared by Text, TextRaw and Password: the same
 // line editor over TextSource, differing only in how the line is echoed (mask)
 // and how Enter turns it into an answer (verbatim vs S14's strip+default).
@@ -93,8 +111,9 @@ type textPrompt struct {
 	message     string
 	instruction string // drawn after the message, questionary's instruction token
 	prefill     string
-	mask        bool // echo one `*` per code point — PasswordProcessor's mask
-	verbatim    bool // answer with the buffer as-is (questionary.text/password)
+	mask        bool               // echo one `*` per code point — PasswordProcessor's mask
+	verbatim    bool               // answer with the buffer as-is (questionary.text/password)
+	validate    func(string) error // questionary's validate=; nil for Text/TextRaw/Password
 }
 
 // textLine runs the shared prompt. The prefix keeps questionary's token
@@ -135,6 +154,18 @@ func textLine(out io.Writer, in KeySource, p textPrompt) (string, bool) {
 		}
 		switch ev.Kind {
 		case TextEnter:
+			if p.validate != nil {
+				// questionary runs validate over the raw line before it
+				// accepts the answer: on failure the settled line is
+				// printed, the message under it, and the same buffer
+				// redrawn for another attempt.
+				if verr := p.validate(string(value)); verr != nil {
+					fmt.Fprintf(out, "\r\x1b[2K%s%s\n", prefix, echo())
+					fmt.Fprintln(out, verr.Error())
+					draw()
+					continue
+				}
+			}
 			fmt.Fprintf(out, "\r\x1b[2K%s%s\n", prefix, echo())
 			if p.verbatim {
 				return string(value), true
