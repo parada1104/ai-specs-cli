@@ -599,9 +599,17 @@ func runRecipeRemove(args []string, stdout, stderr io.Writer) int {
 // algorithm (COLUMNS → stdout TIOCGWINSZ → 80, minus 2), the registration
 // order drives prefix abbreviation and the ambiguous-option message, and the
 // parse-error precedence (help during the walk, then required, then
-// unrecognized) matches parser.parse_args. Verified byte-identical between
-// Python 3.11 and 3.14 on this machine; pinned differentially against the
-// legacy route below.
+// unrecognized) matches parser.parse_args. The reference the port FOLLOWS is
+// Python 3.14 — the interpreter the differential oracle runs on this machine
+// (PATH=/tmp/pybin/python3 is 3.14.7), so S3's byte comparison is measured
+// against it. Python 3.11 was probed side by side: help/usage (default and
+// COLUMNS-pinned), the unknown/ambiguous/expected-one-argument/required arms
+// are byte-identical, and ONE form diverges — an interleaved trailing
+// positional (`recipe configure cfg --inspect /path` and `… --set k=v /path`)
+// is `unrecognized arguments` + exit 2 on 3.11 and accepted on 3.14. The port
+// accepts the 3.14 form; the differential case "interleaved positional fills
+// the path slot" pins it (it fails against a ≤3.11 oracle, recording the
+// divergence). Pinned differentially against the legacy route below.
 //
 // The write half is ROUTED, not re-implemented (S5/S6): config.ParseConfigAssignment,
 // config.ValidateConfigValues, config.UpdateRecipeConfig (the promoted gate
@@ -1726,7 +1734,9 @@ func configureGrounding(root string, recipe *schema.Recipe, manifest *toml.Table
 	requiredMCP := make([]rcJSON, 0, len(recipe.MCP))
 	manifestMCP := configureManifestMCP(manifest)
 	envVars := map[string]bool{}
+	requiredIDs := make([]string, 0, len(recipe.MCP))
 	for _, preset := range recipe.MCP {
+		requiredIDs = append(requiredIDs, preset.ID)
 		requiredMCP = append(requiredMCP, rcString(preset.ID))
 		if env, ok := preset.Config["env"].(*toml.Table); ok && env != nil {
 			for _, name := range env.Keys() {
@@ -1734,11 +1744,21 @@ func configureGrounding(root string, recipe *schema.Recipe, manifest *toml.Table
 			}
 		}
 	}
-	present := []rcJSON{}
-	for _, id := range requiredMCP {
-		if manifestMCP[id.str] {
-			present = append(present, id)
+	// B-001 (dual-blind review): `present` is Python's
+	// sorted(name for name in required_mcp if name in manifest_mcp) —
+	// SORTED, never the recipe's declaration order (a fixture whose
+	// [[provides.mcp]] presets are declared unsorted pins it in the
+	// differential).
+	var presentIDs []string
+	for _, id := range requiredIDs {
+		if manifestMCP[id] {
+			presentIDs = append(presentIDs, id)
 		}
+	}
+	sort.Strings(presentIDs)
+	present := make([]rcJSON, 0, len(presentIDs))
+	for _, id := range presentIDs {
+		present = append(present, rcString(id))
 	}
 
 	grounding := rcNewObject()

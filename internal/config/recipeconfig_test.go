@@ -42,6 +42,13 @@ func recipeConfigUnitRecipe() *schema.Recipe {
 				"api_key": {Type: "string"},
 				"slug":    {Type: "string", Validation: map[string]any{"regex": "^[a-z][a-z0-9-]*$"}},
 				"legacy":  {Type: "boolean"}, // "boolean" is the catalog spelling
+				// A-001/B-005 (dual-blind review): fields whose declared type maps
+				// to NEITHER str/int/bool — a custom name and a missing `type` —
+				// carrying a validation.regex. Python's _validate_values gates the
+				// regex on isinstance(value, str), never on the field kind, so a
+				// non-matching string must be refused on these too.
+				"floaty":  {Type: "float", Validation: map[string]any{"regex": "^[0-9]+(\\.[0-9]+)?$"}},
+				"untyped": {Validation: map[string]any{"regex": "^#[0-9]+$"}},
 			},
 			Tables: map[string]*schema.ConfigTable{
 				"reconcile": {Shape: schema.StructuredConfigShapes["reconcile"]},
@@ -204,6 +211,15 @@ func TestValidateConfigValues(t *testing.T) {
 			[]ConfigValue{{"api_key", "sk-literal"}}, "secret-shaped literal rejected for config key: api_key"},
 		{"secret-shaped key accepts the interpolation form",
 			[]ConfigValue{{"api_key", "${env:API_KEY}"}}, ""},
+		// A-001/B-005: the regex gate follows isinstance(value, str), not kind.
+		{"a non-str/int/bool field still enforces its regex on a string value",
+			[]ConfigValue{{"floaty", "twelve"}}, "floaty does not match its validation pattern"},
+		{"a field with no declared type still enforces its regex",
+			[]ConfigValue{{"untyped", "x1"}}, "untyped does not match its validation pattern"},
+		{"a matching string passes a non-str/int/bool field's regex",
+			[]ConfigValue{{"floaty", "12.5"}}, ""},
+		{"the regex is not applied to a non-string value (isinstance gate)",
+			[]ConfigValue{{"floaty", float64(12.5)}}, ""},
 		{"unknown key", []ConfigValue{{"nope", "x"}}, "unknown config key: nope"},
 		{"dotted key with unknown root", []ConfigValue{{"nope.deep", int64(1)}}, "unknown config key: nope"},
 		{"dotted valid sub-key passes",
@@ -427,6 +443,50 @@ two
 	})
 }
 
+// TestUpdateRecipeConfigNormalizesCRLFToLF pins recipe-config-write.py's
+// universal-newline read (Path.read_text): the reference reads the manifest
+// through text mode, so a CRLF manifest is LF-normalized in memory BEFORE the
+// surgery and the whole rewritten file comes back LF. Reading the raw bytes
+// instead leaves every untouched line CRLF while the rewritten line gets LF —
+// mixed endings (B-002, dual-blind review).
+func TestUpdateRecipeConfigNormalizesCRLFToLF(t *testing.T) {
+	crlf := strings.ReplaceAll(recipeConfigUnitManifest, "\n", "\r\n")
+
+	t.Run("a write normalizes the whole file to LF", func(t *testing.T) {
+		path := writeUnitManifest(t, crlf)
+		changed, refusal, err := UpdateRecipeConfig(path, "demo",
+			[]ConfigValue{{"retries", int64(9)}})
+		if err != nil || refusal != "" || !changed {
+			t.Fatalf("changed/refusal/err = %v/%q/%v, want a clean write", changed, refusal, err)
+		}
+		got := readFile(t, path)
+		if strings.Contains(got, "\r") {
+			t.Errorf("manifest carries CR after the write (mixed endings): %q", got)
+		}
+		want := strings.ReplaceAll(recipeConfigUnitManifest,
+			"retries = 3  #", "retries = 9  #")
+		if got != want {
+			t.Errorf("manifest = %q, want the LF-normalized reference bytes %q", got, want)
+		}
+	})
+
+	t.Run("a no-op leaves the CRLF bytes untouched", func(t *testing.T) {
+		// Python returns before any write when nothing is pending, so the CRLF
+		// file must survive a no-op byte for byte — normalization happens on
+		// the WRITE, not on every call.
+		path := writeUnitManifest(t, crlf)
+		before := readFile(t, path)
+		changed, refusal, err := UpdateRecipeConfig(path, "demo",
+			[]ConfigValue{{"retries", int64(3)}})
+		if err != nil || refusal != "" || changed {
+			t.Fatalf("changed/refusal/err = %v/%q/%v, want an unchanged no-op", changed, refusal, err)
+		}
+		if after := readFile(t, path); after != before {
+			t.Errorf("no-op rewrote the CRLF manifest:\nbefore %q\nafter  %q", before, after)
+		}
+	})
+}
+
 // TestWriteProjectKey covers recipe-configure.py's _write_project_key: replace
 // the first matching assignment in [project] (comment preserved), insert before
 // the region's end when the key is absent, and append a fresh [project] table
@@ -490,16 +550,7 @@ func TestWriteProjectKey(t *testing.T) {
 // the SAME refusal strings. The gate copy parses through its bounded
 // embedded-Python seam, so this test skips LOUDLY without python3.
 func TestUpdateRecipeConfigMatchesGateCopy(t *testing.T) {
-	python3, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 unavailable (the gate copy parses TOML through its embedded-Python seam): %v", err)
-	}
-	probe := exec.Command(python3, "-c", "import tomllib")
-	probe.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	if out, perr := probe.CombinedOutput(); perr != nil {
-		t.Skipf("python3 CANNOT import tomllib, so the gate copy's parser seam is dead — probe `python3 -c 'import tomllib'` said %v: %s (run with a Python ≥3.11 on PATH, e.g. PATH=/tmp/pybin:$PATH go test ./internal/config/)", perr, out)
-	}
-
+	requireGatePython(t)
 	fixtures := []struct {
 		name     string
 		base     string
@@ -565,6 +616,101 @@ func TestUpdateRecipeConfigMatchesGateCopy(t *testing.T) {
 				t.Errorf("bytes diverge:\n internal/config = %q\n gate           = %q", gotA, gotB)
 			}
 		})
+	}
+}
+
+// TestUpdateRecipeConfigRefusesADatetimeTheGateCopyCorrupts is the honest
+// companion of TestUpdateRecipeConfigMatchesGateCopy (B-003, dual-blind
+// review): the byte-identity pin holds over the value domain BOTH copies
+// serialize, and a TOML datetime inside a re-serialized inline table is an
+// explicit, documented DIVERGENCE, not shared behavior:
+//
+//   - the GATE copy corrupts: its bounded embedded-Python seam lowers
+//     tomllib's datetime through json.dumps(default=str), so the round-tripped
+//     table carries `stamped = "1979-05-27 07:32:00+00:00"` — a quoted string
+//     where the manifest held an offset date-time literal;
+//   - the PROMOTED copy (this package) refuses `cannot serialize datetime to
+//     TOML` — byte-for-byte the Python reference's own answer
+//     (toml_write.py's toml_value raises TypeError with that text) — and
+//     leaves the manifest untouched.
+//
+// Do NOT repair the promoted copy to match the gate: the corruption is the
+// gate's defect and is recorded in odd/tasks/go-20-u6-recipe.md (L6's
+// one-grader paragraph and L8). The native subtest runs without python3; only
+// the gate leg needs the embedded-Python seam and skips LOUDLY without it.
+func TestUpdateRecipeConfigRefusesADatetimeTheGateCopyCorrupts(t *testing.T) {
+	base := `[project]
+name = "unit"
+
+[recipes.demo]
+enabled = true
+
+[recipes.demo.config]
+reconcile = { scope_field = "board_id", stamped = 1979-05-27T07:32:00Z }
+`
+	values := []ConfigValue{{"reconcile.max_age_seconds", int64(60)}}
+	envelope := `{"reconcile.max_age_seconds":60}`
+
+	t.Run("promoted copy refuses before any write", func(t *testing.T) {
+		path := writeUnitManifest(t, base)
+		changed, refusal, err := UpdateRecipeConfig(path, "demo", values)
+		if err != nil {
+			t.Fatalf("err = %v, want the refusal as a message, not an I/O error", err)
+		}
+		if changed {
+			t.Error("changed = true, want false (the datetime refusal fires before the write)")
+		}
+		if want := "cannot serialize datetime to TOML"; refusal != want {
+			t.Errorf("refusal = %q, want %q (the Python reference's TypeError text)", refusal, want)
+		}
+		if got := readFile(t, path); got != base {
+			t.Errorf("refusal modified the manifest:\n got %q\nwant %q", got, base)
+		}
+	})
+
+	t.Run("gate copy corrupts the datetime into a quoted string", func(t *testing.T) {
+		requireGatePython(t)
+		path := writeUnitManifest(t, base)
+		ordered, derr := shared.DecodeOrdered([]byte(envelope))
+		if derr != nil {
+			t.Fatalf("decode shared envelope: %v", derr)
+		}
+		om, ok := ordered.(*shared.OrderedMap)
+		if !ok {
+			t.Fatalf("decoded %T, want *shared.OrderedMap", ordered)
+		}
+		changed, refusal, err := shared.ApplyRecipeConfigWrite(path, "demo", om)
+		if err != nil || refusal != "" {
+			t.Fatalf("gate refusal/err = %q/%v, want it to accept the write", refusal, err)
+		}
+		if !changed {
+			t.Fatal("gate changed = false, want true (it silently writes the corruption)")
+		}
+		got := readFile(t, path)
+		const corrupt = `stamped = "1979-05-27 07:32:00+00:00"`
+		if !strings.Contains(got, corrupt) {
+			t.Errorf("gate manifest = %q, want the corrupted line %q", got, corrupt)
+		}
+		if strings.Contains(got, "1979-05-27T07:32:00Z") {
+			t.Errorf("gate manifest = %q, want the date-time literal replaced by the corruption", got)
+		}
+	})
+}
+
+// requireGatePython probes tomllib LOUDLY for the gate copy's bounded
+// embedded-Python parse seam (run with PATH=/tmp/pybin:$PATH on this machine,
+// whose plain python3 is 3.9 without tomllib). Extracted so the byte-identity
+// table and the documented-divergence case skip with one shared message.
+func requireGatePython(t *testing.T) {
+	t.Helper()
+	python3, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skipf("python3 unavailable (the gate copy parses TOML through its embedded-Python seam): %v", err)
+	}
+	probe := exec.Command(python3, "-c", "import tomllib")
+	probe.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	if out, perr := probe.CombinedOutput(); perr != nil {
+		t.Skipf("python3 CANNOT import tomllib, so the gate copy's parser seam is dead — probe `python3 -c 'import tomllib'` said %v: %s (run with a Python ≥3.11 on PATH, e.g. PATH=/tmp/pybin:$PATH go test ./internal/config/)", perr, out)
 	}
 }
 

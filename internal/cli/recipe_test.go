@@ -1182,6 +1182,28 @@ type = "string"
 help_text = "Deprecated alias of [project].repo_topology"
 `
 
+// recipeConfigureMCPFixtureRecipe declares TWO [[provides.mcp]] presets OUT OF
+// SORTED ORDER ("trello" before "engram") — B-001 (dual-blind review): the
+// script's grounding.mcp.present is
+// `sorted(name for name in required_mcp if name in manifest_mcp)`, so a port
+// that appends in declaration order flips the two ids, and only a fixture like
+// this makes the differential catch it (recipeConfigureFixtureRecipe declares
+// no [[provides.mcp]] at all).
+const recipeConfigureMCPFixtureRecipe = `[recipe]
+id = "mcporder"
+name = "mcporder recipe"
+description = "fixture recipe mcporder"
+version = "1.0.0"
+
+[[provides.mcp]]
+id = "trello"
+command = "npx"
+
+[[provides.mcp]]
+id = "engram"
+command = "npx"
+`
+
 // buildRecipeConfigureFixture materializes one case's project shape under proj.
 func buildRecipeConfigureFixture(t *testing.T, name, proj string) {
 	t.Helper()
@@ -1204,6 +1226,23 @@ reconcile = { scope_field = "board_id" }
 `)
 	case "nocfg":
 		manifest("[project]\nname = \"u6d1\"\n\n[recipes.cfg]\nenabled = true\n")
+	case "mcpmanifest":
+		// Both mcp presets present in the manifest's [mcp] table, declared
+		// there in sorted order — the fixture's own recipe declares them
+		// unsorted, so grounding.mcp.present can only match both legs if the
+		// report SORTS it.
+		manifest(`[project]
+name = "u6d1"
+
+[mcp.engram]
+command = "npx"
+
+[mcp.trello]
+command = "npx"
+
+[recipes.mcporder]
+enabled = true
+`)
 	case "absent":
 		manifest("[project]\nname = \"u6d1\"\n")
 	case "toolpin":
@@ -1238,6 +1277,10 @@ func TestRecipeConfigureDifferentialAgainstScript(t *testing.T) {
 	home := recipeFixtureHome(t, root, "alpha")
 	skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "cfg", "recipe.toml"),
 		recipeConfigureFixtureRecipe)
+	// B-001's fixture: a second recipe whose [[provides.mcp]] presets are
+	// declared out of sorted order (written before the home snapshot below).
+	skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "mcporder", "recipe.toml"),
+		recipeConfigureMCPFixtureRecipe)
 
 	type diffCase struct {
 		name      string
@@ -1259,6 +1302,19 @@ func TestRecipeConfigureDifferentialAgainstScript(t *testing.T) {
 			args: []string{"cfg", "<PROJ>", "--inspect", "--json"}, untouched: true},
 		{name: "inspect defaults to cwd", fixture: "cfg",
 			args: []string{"cfg", "--inspect"}, cwdProj: true, untouched: true},
+		// B-001: grounding.mcp.present must be SORTED (recipe-configure.py's
+		// `sorted(...)`), not the recipe's declaration order — the fixture
+		// recipe declares trello before engram, so removing the sort flips the
+		// two ids and this case fails.
+		{name: "mcp present is sorted, not declaration order", fixture: "mcpmanifest",
+			args: []string{"mcporder", "<PROJ>", "--inspect"}, untouched: true},
+		// L6 doc correction (a): the interleaved trailing positional
+		// (`cfg --inspect /path`) is accepted by Python 3.14 — the reference
+		// this differential runs on (PATH=/tmp/pybin) — and by the port;
+		// Python 3.11 rejects it with `unrecognized arguments` exit 2, so
+		// running this case against ≤3.11 fails on the recorded divergence.
+		{name: "interleaved positional fills the path slot", fixture: "cfg",
+			args: []string{"cfg", "--inspect", "<PROJ>"}, untouched: true},
 		// ── --set: inline, dotted, structured, project-owned ──
 		{name: "set inline scalar key", fixture: "cfg",
 			args: []string{"cfg", "<PROJ>", "--set", "retries=7"}},
@@ -1420,9 +1476,28 @@ func TestRecipeConfigureSyncLegDifferential(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "lib"), filepath.Join(home, "lib")); err != nil {
 		t.Fatal(err)
 	}
+	// B-004/A-002 (dual-blind review): the stub asserts the FULL spawn
+	// contract, not just `$1` — invoked binary path, cwd (the resolved
+	// project root), the argv root positional and the flag presence — and
+	// records every violation in $STUB_CONTRACT_LOG before exiting 90, so a
+	// leg that spawns the wrong command fails on its log AND on the pinned
+	// exit codes even if BOTH legs violated identically (a shared wrong
+	// answer would otherwise still byte-match).
 	skillsWriteFile(t, filepath.Join(home, "bin", "ai-specs"), `#!/bin/sh
+contract_fail() {
+  echo "$1" >> "${STUB_CONTRACT_LOG:-/dev/null}"
+  exit 90
+}
+[ "$0" = "${STUB_EXPECT_BIN:-}" ] || contract_fail "invoked as '$0', want '${STUB_EXPECT_BIN}'"
+[ "$(pwd -P)" = "${STUB_EXPECT_ROOT:-}" ] || contract_fail "cwd '$(pwd -P)', want '${STUB_EXPECT_ROOT}'"
 case "$1" in
 sync)
+  [ "$2" = "${STUB_EXPECT_ROOT:-}" ] || contract_fail "sync root '$2', want '${STUB_EXPECT_ROOT}'"
+  if [ "${STUB_EXPECT_IGNORE:-0}" = "1" ]; then
+    [ "$#" -eq 3 ] && [ "$3" = "--ignore-cli-version" ] || contract_fail "sync argv '$*' lacks --ignore-cli-version"
+  else
+    [ "$#" -eq 2 ] || contract_fail "sync argv '$*', want exactly 'sync <root>'"
+  fi
   echo "  syncing recipes"
   if [ "${STUB_SYNC_EXIT:-0}" != "0" ]; then
     echo "  x materialize failed" >&2
@@ -1430,10 +1505,15 @@ sync)
   fi
   ;;
 doctor)
+  [ "$2" = "${STUB_EXPECT_ROOT:-}" ] || contract_fail "doctor root '$2', want '${STUB_EXPECT_ROOT}'"
+  [ "$#" -eq 2 ] || contract_fail "doctor argv '$*', want exactly 'doctor <root>'"
   if [ -n "${STUB_DOCTOR_SUMMARY:-}" ]; then
     echo "${STUB_DOCTOR_SUMMARY}"
   fi
   exit "${STUB_DOCTOR_EXIT:-0}"
+  ;;
+*)
+  contract_fail "unexpected subcommand '$1'"
   ;;
 esac
 exit 0
@@ -1448,6 +1528,7 @@ exit 0
 	type syncCase struct {
 		name        string
 		env         []string
+		ignore      bool // --ignore-cli-version on the verb's own argv
 		wantExit    int
 		wantContent []string // substrings the report must carry (both legs)
 	}
@@ -1482,6 +1563,16 @@ exit 0
 				`"status": "ok"`, `"doctor_exit": 0`, `"parsed": false`,
 				"\"ok\": null",
 			}},
+		// A-002/B-004: no case used to combine --sync with
+		// --ignore-cli-version, so the flag's trip through the sync argv was
+		// unpinned. The stub now requires it as the THIRD argument.
+		{name: "sync with --ignore-cli-version passes the flag through",
+			env: []string{"STUB_DOCTOR_SUMMARY=" + summary}, ignore: true,
+			wantExit: 0,
+			wantContent: []string{
+				`"status": "ok"`, `"ignore_cli_version": true`,
+				`"exit_code": 0`, `"lock_stamped": true`,
+			}},
 	}
 	baseEnv := skillsRemoveEnv(home, gate)
 	homeBefore := skillsTreeSnapshot(t, home)
@@ -1494,13 +1585,49 @@ exit 0
 
 			env := append([]string{}, baseEnv...)
 			env = append(env, tc.env...)
+			ignoreVal := "0"
+			if tc.ignore {
+				ignoreVal = "1"
+			}
+			logA := filepath.Join(dirA, "front-door-contract.log")
+			logB := filepath.Join(dirB, "front-door-contract.log")
+			// The contract expectation is per leg: each leg's own project root
+			// (resolved, like both callers resolve it) and its own log.
+			envFor := func(proj, contractLog string) []string {
+				out := append([]string{}, env...)
+				resolved := proj
+				if r, err := filepath.EvalSymlinks(proj); err == nil && r != proj {
+					resolved = r
+				}
+				return append(out,
+					"STUB_EXPECT_BIN="+filepath.Join(home, "bin", "ai-specs"),
+					"STUB_EXPECT_ROOT="+resolved,
+					"STUB_EXPECT_IGNORE="+ignoreVal,
+					"STUB_CONTRACT_LOG="+contractLog)
+			}
 			args := func(proj string) []string {
-				return []string{"cfg", proj, "--sync", "--set", "retries=7"}
+				out := []string{"cfg", proj, "--sync"}
+				if tc.ignore {
+					out = append(out, "--ignore-cli-version")
+				}
+				return append(out, "--set", "retries=7")
 			}
 			legOut, legErr, legCode := runOne("bash",
-				append([]string{recipeScript, "configure"}, args(projA)...), env, dirA)
+				append([]string{recipeScript, "configure"}, args(projA)...), envFor(projA, logA), dirA)
 			goOut, goErr, goCode := runOne(bin,
-				append([]string{"recipe", "configure"}, args(projB)...), env, dirB)
+				append([]string{"recipe", "configure"}, args(projB)...), envFor(projB, logB), dirB)
+			for _, leg := range []struct {
+				name string
+				log  string
+			}{
+				{"bash", logA},
+				{"go", logB},
+			} {
+				if data, rerr := os.ReadFile(leg.log); rerr == nil && len(data) > 0 {
+					t.Errorf("%s leg violated the front-door contract (binary path/cwd/argv):\n%s",
+						leg.name, data)
+				}
+			}
 
 			normalize := func(b []byte, proj string) string {
 				s := string(b)
@@ -1602,4 +1729,88 @@ func TestRecipeConfigureRefusesATraversingRecipeID(t *testing.T) {
 			t.Errorf("id %q: stdout = %q, want no report for a refused id", id, out)
 		}
 	}
+}
+
+// TestRecipeConfigureDatetimePathsPinTheRecordedDeviation pins the NATIVE side
+// of L6's datetime deviation as the dual-blind review corrected it (doc
+// correction (c)): the datetime dies in the REPORT BUILDER, so the verb
+// refuses BEFORE any write —
+//
+//   - --set over a config value that is a TOML datetime: exit 1, Go's
+//     serialization error on stderr, NO report, manifest bytes untouched;
+//   - --inspect over such a config: the serialization error is a
+//     ConfigureError-shaped failure, so it reports exit 3 through
+//     rejected(...) with the reason inside the JSON report (NOT exit 1).
+//
+// The Python reference diverges on BOTH (recorded, not hidden): json.dumps
+// only runs at _emit, AFTER apply_project already wrote the manifest (exit 1
+// TypeError traceback, file modified) — and its --inspect dies in json.dumps
+// with an uncaught TypeError (exit 1, no report) where the port reports 3.
+// That side is verified against lib/_internal/recipe-configure.py and
+// recorded in the unit document; this pin guards the native behavior.
+func TestRecipeConfigureDatetimePathsPinTheRecordedDeviation(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	home := t.TempDir()
+	recipeSeedCatalog(t, home, "cfg")
+	skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "cfg", "recipe.toml"),
+		recipeConfigureFixtureRecipe)
+	manifestBytes := "[project]\nname = \"u6d1\"\n\n[recipes.cfg]\nenabled = true\n\n[recipes.cfg.config]\nboard_id = 1979-05-27T07:32:00Z\n"
+	const serializationError = "Object of type datetime is not JSON serializable"
+	env := skillsListEnv(home)
+
+	newFixtureProject := func(t *testing.T) string {
+		t.Helper()
+		proj := t.TempDir()
+		skillsWriteFile(t, filepath.Join(proj, "ai-specs", "ai-specs.toml"), manifestBytes)
+		return proj
+	}
+
+	t.Run("--set refuses before any write: exit 1, no report, bytes untouched", func(t *testing.T) {
+		proj := newFixtureProject(t)
+		out, errOut, code := runOne(bin,
+			[]string{"recipe", "configure", "cfg", proj, "--set", "board_id=new"}, env, t.TempDir())
+		if code != 1 {
+			t.Errorf("exit = %d, want 1", code)
+		}
+		if len(out) != 0 {
+			t.Errorf("stdout = %q, want NO report (the failure is fatal, before _emit)", out)
+		}
+		if !strings.Contains(string(errOut), serializationError) {
+			t.Errorf("stderr = %q, want the serialization error", errOut)
+		}
+		data, err := os.ReadFile(filepath.Join(proj, "ai-specs", "ai-specs.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != manifestBytes {
+			t.Errorf("manifest was modified before the refusal:\n got %q\nwant %q", data, manifestBytes)
+		}
+	})
+
+	t.Run("--inspect reports exit 3 through rejected(...)", func(t *testing.T) {
+		proj := newFixtureProject(t)
+		out, errOut, code := runOne(bin,
+			[]string{"recipe", "configure", "cfg", proj, "--inspect"}, env, t.TempDir())
+		if code != 3 {
+			t.Errorf("exit = %d, want 3 (rejected report, not an uncaught exit 1)", code)
+		}
+		if len(errOut) != 0 {
+			t.Errorf("stderr = %q, want empty (the reason travels inside the report)", errOut)
+		}
+		for _, want := range []string{
+			`"status": "rejected"`,
+			`"reason": "` + serializationError + `"`,
+		} {
+			if !strings.Contains(string(out), want) {
+				t.Errorf("stdout missing %q:\n%s", want, out)
+			}
+		}
+		data, err := os.ReadFile(filepath.Join(proj, "ai-specs", "ai-specs.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != manifestBytes {
+			t.Errorf("--inspect modified the manifest:\n got %q\nwant %q", data, manifestBytes)
+		}
+	})
 }

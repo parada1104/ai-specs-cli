@@ -20,12 +20,17 @@ package config
 // the authoritative copy the native CLI routes through, and
 // internal/config/recipeconfig_test.go proves the two implementations agree
 // byte for byte over shared fixtures (shared.ApplyRecipeConfigWrite runs the
-// same cases through the gate copy). The gate's copy stays a temporary
+// same cases through the gate copy) while pinning the ONE documented
+// divergence — a TOML datetime inside a re-serialized inline table — in
+// TestUpdateRecipeConfigRefusesADatetimeTheGateCopyCorrupts (B-003: the gate
+// copy corrupts it into a quoted string, this copy refuses like the Python
+// reference; recorded in odd/tasks/go-20-u6-recipe.md L6/L8). The gate's
+// copy stays a temporary
 // duplicate pinned by its own recipeconfigwrite_test.go until the promotion
 // (gate writer deleted, its --write-recipe-config surface re-homed on this
 // package) lands as follow-up outside this slice's edit surfaces.
 //
-// Deliberate deviations from the gate copy, both recorded in L6:
+// Deliberate deviations from the gate copy, all recorded in L6:
 //   - TOML parsing goes through internal/toml (the parser every writer in
 //     this package already uses for its guard) instead of the gate's bounded
 //     embedded-Python tomllib seam — the gate cannot import internal/toml for
@@ -39,6 +44,21 @@ package config
 //     the Python reference additionally rewrites the (universal-newline
 //     normalized) original on refusal, a byte-level no-op for LF manifests
 //     and an unexercised CRLF corner.
+//   - The WRITE SINK differs (L6 doc correction (b)): config.atomicWrite
+//     preserves the manifest's mode (0o7777 mask), resolves a symlinked
+//     manifest to its target before the rename and refuses a read-only
+//     manifest; the gate copy's atomicWriteFile renames over the path as
+//     given (replacing a symlink with a regular file) and forces 0o644. Both
+//     copies stay live (the legacy route reaches the gate bridge, the native
+//     verb reaches this package), so each sink is pinned where it is graded —
+//     TestSkillsRemoveReadOnlyDeviation covers this package's read-only
+//     refusal of the shared sink.
+//   - A TOML datetime inside a re-serialized inline table: THIS copy refuses
+//     `cannot serialize datetime to TOML` (the Python reference's own
+//     TypeError text) with the bytes untouched, while the gate copy silently
+//     corrupts it into a quoted string (its embedded-Python seam lowers
+//     datetimes through json.dumps(default=str)) — pinned as an explicit
+//     divergence by TestUpdateRecipeConfigRefusesADatetimeTheGateCopyCorrupts.
 // Non-bare inline-table keys render quoted (toTomlKey), the gate copy's
 // documented divergence from toml_write.py's raw keys, so the two Go
 // implementations stay identical.
@@ -46,7 +66,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -458,20 +477,22 @@ func ValidateConfigValues(r *schema.Recipe, values []ConfigValue) error {
 				return fmt.Errorf("%s must be one of: %s", key, strings.Join(field.Enum, ", "))
 			}
 		}
-		if kind == "str" {
-			if pattern, ok := field.Validation["regex"].(string); ok && pattern != "" {
-				if s, isStr := cv.Value.(string); isStr {
-					re, cerr := regexp.Compile("^(?:" + pattern + ")$")
-					if cerr != nil {
-						// Python raises re.error here (an uncaught traceback,
-						// exit 1); Go has no stable equivalent of that text,
-						// so the compile failure surfaces as this validation
-						// error instead (recorded deviation, L6).
-						return fmt.Errorf("%s: invalid validation pattern: %s", key, cerr)
-					}
-					if !re.MatchString(s) {
-						return fmt.Errorf("%s does not match its validation pattern", key)
-					}
+		// A-001/B-005: Python gates the regex on `isinstance(value, str)`,
+		// never on the field kind — a field whose declared type maps to
+		// neither str/int/bool (no `type`, a custom name) still enforces its
+		// pattern against a string value.
+		if pattern, ok := field.Validation["regex"].(string); ok && pattern != "" {
+			if s, isStr := cv.Value.(string); isStr {
+				re, cerr := regexp.Compile("^(?:" + pattern + ")$")
+				if cerr != nil {
+					// Python raises re.error here (an uncaught traceback,
+					// exit 1); Go has no stable equivalent of that text,
+					// so the compile failure surfaces as this validation
+					// error instead (recorded deviation, L6).
+					return fmt.Errorf("%s: invalid validation pattern: %s", key, cerr)
+				}
+				if !re.MatchString(s) {
+					return fmt.Errorf("%s does not match its validation pattern", key)
 				}
 			}
 		}
@@ -1160,11 +1181,15 @@ func UpdateRecipeConfig(manifestPath, recipeID string, values []ConfigValue) (bo
 	if len(values) == 0 {
 		return false, "", nil
 	}
-	original, err := os.ReadFile(manifestPath)
+	// B-002: read like the reference's Path.read_text — universal newlines,
+	// so a CRLF manifest is LF-normalized BEFORE the surgery and a write
+	// never leaves the mixed endings a raw read produces (untouched lines
+	// CRLF, the rewritten line LF); Python writes the whole normalized file.
+	// A no-op still returns above without touching the file, CRLF included.
+	originalText, err := readManifestText(manifestPath)
 	if err != nil {
 		return false, "", fmt.Errorf("read manifest: %w", err)
 	}
-	originalText := string(original)
 
 	current := readRecipeConfigTable(originalText, recipeID)
 	if current == nil {
