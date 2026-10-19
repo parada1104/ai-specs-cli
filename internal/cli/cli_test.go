@@ -139,9 +139,10 @@ func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 // `recipe configure` resolve native, while EVERY other arm of
 // lib/recipe.sh's case statement — `init`, the bare `recipe`,
 // `--help`/`-h`/`help` and unknown subcommands — keeps the recipe.sh shim
-// byte for byte (U6e retires that script, not this slice). On a TTY
-// `recipe add` still EXECUTES that shim through runRecipeAdd's documented
-// seam — Route cannot see the streams, so the seam itself is pinned by
+// byte for byte (U6e retires that script, not this slice). `recipe add`'s TTY
+// seam is NARROW since U6d-2: the wizard half is native, and only a TTY run that
+// would reach the env offer or the CLI-dep gate still executes the shim. Route
+// cannot see the streams, so that seam lives in runRecipeAdd and is pinned by
 // TestRecipeAddTTYSeamStaysOnLegacyScript. `recipe configure` has no seam:
 // recipe.sh's arm is a plain python3 exec with no TTY branch.
 func TestRouteRecipeListIsNativeBeforeTheShim(t *testing.T) {

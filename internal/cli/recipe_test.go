@@ -27,6 +27,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -340,10 +341,10 @@ func TestRecipeListFallsBackToBinaryInstallRoot(t *testing.T) {
 // The TTY legs are NOT exercised here: runOne captures both streams, so both
 // legs take the non-TTY path Python itself takes (recipe-add.py:151's
 // `tty = sys.stdin.isatty() and sys.stdout.isatty()` is false on both). The
-// TTY interactive branches (the ensure_deps pre-gate and recipe-add.py:262-275's
-// "Configure now?" wizard + env offer) stay on the legacy script through
-// runRecipeAdd's documented seam — pinned by
-// TestRecipeAddTTYSeamStaysOnLegacyScript and recorded in L4 (option (a)).
+// TTY tail is split since U6d-2 (L9): the "Configure now?" wizard leg is
+// native — pinned by TestRecipeAddTTYSeamStaysOnLegacyScript's configure-leg
+// subtests — while the legs the native side still cannot run (the env offer
+// and the CLI-dep gate, both U6e) keep delegating through that narrowed seam.
 
 // recipeAddRichRecipe is the fixture recipe that carries everything the verb
 // renders: six config fields (required / defaults of several TOML types /
@@ -592,66 +593,282 @@ func TestRecipeAddDifferentialAgainstShell(t *testing.T) {
 	}
 }
 
-// TestRecipeAddTTYSeamStaysOnLegacyScript pins the U6b TTY decision (option
-// (a), recorded in L4): on a terminal the WHOLE verb stays on the legacy
-// lib/recipe.sh → recipe-add.sh route through a documented seam, because
-// add_recipe's interactive branches (recipe-add.py:155-174's ensure_deps
-// pre-gate and :262-275's "Configure now?" wizard + env offer) are not
-// half-ported. Off the TTY — piped/CI, and both legs of the differential —
-// the native route owns the verb end to end: the stub script must not run
-// and the manifest append must come from the port.
+// recipeAddWizardFixture is the TTY-seam fixture: a recipe WITH config fields
+// (so the configure leg exists) plus the extra that decides how far the seam
+// reaches — nothing (native wizard), an mcp env (the env offer, U6e) or a
+// CLI dep (the dep gate, U6e). id/name/description/version are the four
+// strings both parsers demand.
+func recipeAddWizardFixture(id, extra string) string {
+	return "[recipe]\n" +
+		"id = \"" + id + "\"\n" +
+		"name = \"" + id + " recipe\"\n" +
+		"description = \"fixture recipe " + id + "\"\n" +
+		"version = \"1.0.0\"\n" +
+		"\n[config.board_id]\nrequired = true\ntype = \"string\"\n" +
+		"\n[config.default_list]\nrequired = false\ntype = \"string\"\ndefault = \"In Progress\"\n" +
+		"\n[config.note]\nrequired = false\n" +
+		extra
+}
+
+const (
+	// recipeAddMcpEnvTail makes has_mcp_env true: recipe-add.py's tail would
+	// reach env_scaffold.offer_harness_env — the leg U6e ports.
+	recipeAddMcpEnvTail = "\n[[provides.mcp]]\nid = \"m1\"\ncommand = \"m1\"\nenv = { M1_TOKEN = \"$M1_TOKEN\" }\n"
+	// recipeAddCliDepTail makes recipe.cli_deps non-empty: with config fields
+	// the tail's wizard leg would run config_wizard._dep_gate first — the
+	// gate U6e ports.
+	recipeAddCliDepTail = "\n[deps]\ncli = [{ binary = \"jinn\", purpose = \"provider CLI\" }]\n"
+)
+
+// TestRecipeAddTTYSeamStaysOnLegacyScript pins the NARROWED TTY seam (U6d-2,
+// T3b first half — L4's option (a) narrowed by the native wizard core, not
+// dropped): off the TTY the port owns the verb end to end, unchanged. On a
+// TTY the verb now runs NATIVELY through recipe-add.py:247-275's "Configure
+// now?" leg — the confirm and the config wizard are U6d-2's native core —
+// and the WHOLE verb still delegates to lib/recipe.sh only when the run would
+// reach what the native side cannot do yet: the env offer
+// (env_scaffold.offer_harness_env) or the CLI-dep gate
+// (config_wizard._dep_gate), both U6e's. The seam fires BEFORE the write, so
+// a delegated run leaves the manifest untouched; the pre-write guards met on
+// the way there print the same frozen messages the differential pins off the
+// TTY.
 func TestRecipeAddTTYSeamStaysOnLegacyScript(t *testing.T) {
 	home := t.TempDir()
 	skillsWriteFile(t, filepath.Join(home, "lib", "recipe.sh"),
 		"#!/usr/bin/env bash\nprintf 'legacy seam: %s\\n' \"$*\"\nprintf ran > \"$AI_SPECS_HOME/legacy-ran\"\n")
 	recipeSeedCatalog(t, home, "alpha")
-	project := t.TempDir()
-	skillsWriteFile(t, filepath.Join(project, "ai-specs", "ai-specs.toml"),
-		"[project]\nname = \"seam\"\n")
-	manifest := filepath.Join(project, "ai-specs", "ai-specs.toml")
+	for id, body := range map[string]string{
+		"plaincfg": recipeAddWizardFixture("plaincfg", ""),
+		"cfgenv":   recipeAddWizardFixture("cfgenv", recipeAddMcpEnvTail),
+		"cfgdep":   recipeAddWizardFixture("cfgdep", recipeAddCliDepTail),
+	} {
+		skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", id, "recipe.toml"), body)
+	}
 	marker := filepath.Join(home, "legacy-ran")
 
-	// TTY → recipe.sh's `add` arm runs, with the post-shift argv.
-	var stdout, stderr bytes.Buffer
-	code := runRecipeAdd([]string{"recipe", "add", "alpha", project}, home,
-		strings.NewReader(""), &stdout, &stderr, "", true)
-	if code != 0 {
-		t.Fatalf("tty leg exit = %d, want 0; stderr = %q", code, stderr.String())
+	// Every subtest starts from a fresh project and a clean marker.
+	setup := func(t *testing.T) (project, manifest string) {
+		t.Helper()
+		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		project = t.TempDir()
+		manifest = filepath.Join(project, "ai-specs", "ai-specs.toml")
+		skillsWriteFile(t, manifest, "[project]\nname = \"seam\"\n")
+		return project, manifest
 	}
-	if want := "legacy seam: add alpha " + project + "\n"; stdout.String() != want {
-		t.Errorf("tty stdout = %q, want %q", stdout.String(), want)
-	}
-	if _, err := os.Stat(marker); err != nil {
-		t.Errorf("the legacy script did not run on the TTY: %v", err)
-	}
-	if data, err := os.ReadFile(manifest); err != nil || strings.Contains(string(data), "[recipes.alpha]") {
-		t.Errorf("the seam stub must not append (err=%v, manifest=%q)", err, data)
+	legacyRan := func() bool { _, err := os.Stat(marker); return err == nil }
+	readManifest := func(t *testing.T, path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
 	}
 
-	// non-TTY → the seam never fires: the port appends the block itself.
-	if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-	stdout.Reset()
-	stderr.Reset()
-	code = runRecipeAdd([]string{"recipe", "add", "alpha", project}, home,
-		strings.NewReader(""), &stdout, &stderr, "", false)
-	if code != 0 {
-		t.Fatalf("non-tty leg exit = %d, want 0; stderr = %q", code, stderr.String())
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Errorf("the legacy script ran on a non-TTY (marker stat err=%v)", err)
-	}
-	if want := "Recipe 'alpha' added to the manifest.\nThe next sync will materialize:\n  (no primitives declared)\n"; stdout.String() != want {
-		t.Errorf("non-tty stdout = %q, want %q", stdout.String(), want)
-	}
-	data, err := os.ReadFile(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "[recipes.alpha]\nenabled = true\n") {
-		t.Errorf("manifest = %q, want the native [recipes.alpha] append", data)
-	}
+	// TTY + a configure leg (config fields, no env, no cli deps) → the seam
+	// must NOT fire: the native wizard runs over scripted answers, writes the
+	// answered value back, omits the blank one, and the configure leg takes
+	// the place of the non-TTY "Next steps" guidance (recipe-add.py:247).
+	t.Run("TTY with a configure leg runs the native wizard", func(t *testing.T) {
+		project, manifest := setup(t)
+		p := &scriptedWizardPrompts{t: t}
+		p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+		p.textQ = []scriptedTextAnswer{
+			{answers: []string{"B-7"}},         // board_id (required, sorted first)
+			{answers: []string{"In Progress"}}, // default_list (the prefill comes back)
+			{answers: []string{""}},            // note — blank → omitted
+		}
+		open := func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+			return p, func() {}, 0
+		}
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAddFlow([]string{"recipe", "add", "plaincfg", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true, open)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
+		}
+		if legacyRan() {
+			t.Errorf("the legacy seam fired for a native configure leg")
+		}
+		want := "Recipe 'plaincfg' added to the manifest.\n" +
+			"The next sync will materialize:\n  (no primitives declared)\n\n"
+		if stdout.String() != want {
+			t.Errorf("stdout = %q, want %q (the leg prints the blank line, then only scripted prompts)",
+				stdout.String(), want)
+		}
+		if stderr.Len() != 0 {
+			t.Errorf("stderr = %q, want empty", stderr.String())
+		}
+		transcript := strings.Join(p.transcript, "\n")
+		for _, want := range []string{
+			"confirm: Configure now? | def=true | answer=true ok=true",
+			`text: plaincfg.board_id (required, string) | def=""`,
+			`text: plaincfg.default_list (optional, string) | def="In Progress"`,
+			`text: plaincfg.note (optional, string) | def=""`,
+			`answer: "" ok=true`, // the blank note — accepted, then omitted
+		} {
+			if !strings.Contains(transcript, want) {
+				t.Errorf("wizard transcript missing %q:\n%s", want, transcript)
+			}
+		}
+		data := readManifest(t, manifest)
+		if !strings.Contains(data, `board_id = "B-7"`) {
+			t.Errorf("the wizard's answer was not written back: manifest = %q", data)
+		}
+		if !strings.Contains(data, `default_list = "In Progress"`) {
+			t.Errorf("the accepted default must survive: manifest = %q", data)
+		}
+		if !strings.Contains(data, `# note = ""  # optional`) {
+			t.Errorf("the blank answer must be omitted, keeping the placeholder comment: manifest = %q", data)
+		}
+		if strings.Contains(data, "Next steps") {
+			t.Errorf("the configure leg replaces the Next steps guidance: manifest = %q", data)
+		}
+	})
+
+	// Declining the confirm mirrors recipe-add.py:249-251 exactly: the frozen
+	// later line, exit 0, and no wizard write.
+	t.Run("TTY configure leg declined keeps the placeholders", func(t *testing.T) {
+		project, manifest := setup(t)
+		p := &scriptedWizardPrompts{t: t}
+		p.confirmQ = []scriptedConfirm{{answer: false, ok: true}}
+		open := func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+			return p, func() {}, 0
+		}
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAddFlow([]string{"recipe", "add", "plaincfg", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true, open)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0", code)
+		}
+		if legacyRan() {
+			t.Errorf("the legacy seam fired for a declined native confirm")
+		}
+		want := "Recipe 'plaincfg' added to the manifest.\n" +
+			"The next sync will materialize:\n  (no primitives declared)\n\n" +
+			"You can configure later with: ai-specs configure-recipes\n"
+		if stdout.String() != want {
+			t.Errorf("stdout = %q, want %q", stdout.String(), want)
+		}
+		if len(p.textQ) != 0 || len(p.transcript) != 1 {
+			t.Errorf("the wizard must not run after a declined confirm: transcript = %#v", p.transcript)
+		}
+		data := readManifest(t, manifest)
+		if !strings.Contains(data, `board_id = ""  # REQUIRED`) {
+			t.Errorf("placeholders must stay unwritten: manifest = %q", data)
+		}
+	})
+
+	// The PRODUCTION entry with a TTY flag whose streams cannot open a raw
+	// terminal: the seam decision happens before any prompt, so the native
+	// leg runs and the opener's refusal answers like a declined confirm
+	// (recorded in L9) — never the legacy script.
+	t.Run("TTY configure leg with an unopenable TUI stays native", func(t *testing.T) {
+		project, manifest := setup(t)
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAdd([]string{"recipe", "add", "plaincfg", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
+		}
+		if legacyRan() {
+			t.Errorf("the legacy seam fired although the native leg could run")
+		}
+		if !strings.HasSuffix(stdout.String(),
+			"You can configure later with: ai-specs configure-recipes\n") {
+			t.Errorf("stdout = %q, want the decline tail after the listing", stdout.String())
+		}
+		if data := readManifest(t, manifest); !strings.Contains(data, "[recipes.plaincfg]") {
+			t.Errorf("the native leg must append before the opener refuses: manifest = %q", data)
+		}
+	})
+
+	// TTY + mcp env → the run WOULD reach offer_harness_env (U6e), so the
+	// whole verb still delegates: the stub runs, the port writes nothing.
+	t.Run("TTY reaching the env offer still delegates to the script", func(t *testing.T) {
+		project, manifest := setup(t)
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAdd([]string{"recipe", "add", "cfgenv", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
+		}
+		if !legacyRan() {
+			t.Errorf("the legacy seam must fire for a run that reaches the env offer")
+		}
+		if want := "legacy seam: add cfgenv " + project + "\n"; stdout.String() != want {
+			t.Errorf("stdout = %q, want %q", stdout.String(), want)
+		}
+		if strings.Contains(readManifest(t, manifest), "[recipes.cfgenv]") {
+			t.Errorf("the seam stub must not append")
+		}
+	})
+
+	// TTY + config fields + cli deps → the wizard leg would run the Python
+	// dep gate first (config_wizard._dep_gate), which the native side cannot
+	// do — still the script.
+	t.Run("TTY reaching the dep gate still delegates to the script", func(t *testing.T) {
+		project, manifest := setup(t)
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAdd([]string{"recipe", "add", "cfgdep", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
+		}
+		if !legacyRan() {
+			t.Errorf("the legacy seam must fire for a run that reaches the dep gate")
+		}
+		if want := "legacy seam: add cfgdep " + project + "\n"; stdout.String() != want {
+			t.Errorf("stdout = %q, want %q", stdout.String(), want)
+		}
+		if strings.Contains(readManifest(t, manifest), "[recipes.cfgdep]") {
+			t.Errorf("the seam stub must not append")
+		}
+	})
+
+	// TTY with nothing to configure (no config fields, no mcp env): Python's
+	// tail takes its else branch, so the native route owns the whole run —
+	// the seam never fires and there is no confirm.
+	t.Run("TTY with nothing to configure is native", func(t *testing.T) {
+		project, manifest := setup(t)
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAdd([]string{"recipe", "add", "alpha", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
+		}
+		if legacyRan() {
+			t.Errorf("the legacy script ran although there is nothing interactive to delegate")
+		}
+		if want := "Recipe 'alpha' added to the manifest.\nThe next sync will materialize:\n  (no primitives declared)\n"; stdout.String() != want {
+			t.Errorf("stdout = %q, want %q", stdout.String(), want)
+		}
+		if !strings.Contains(readManifest(t, manifest), "[recipes.alpha]\nenabled = true\n") {
+			t.Errorf("manifest missing the native append")
+		}
+	})
+
+	// non-TTY → the seam never fires on any recipe: the port appends itself.
+	t.Run("non-TTY never fires the seam", func(t *testing.T) {
+		project, manifest := setup(t)
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAdd([]string{"recipe", "add", "alpha", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", false)
+		if code != 0 {
+			t.Fatalf("non-tty leg exit = %d, want 0; stderr = %q", code, stderr.String())
+		}
+		if legacyRan() {
+			t.Errorf("the legacy script ran on a non-TTY")
+		}
+		if want := "Recipe 'alpha' added to the manifest.\nThe next sync will materialize:\n  (no primitives declared)\n"; stdout.String() != want {
+			t.Errorf("non-tty stdout = %q, want %q", stdout.String(), want)
+		}
+		if !strings.Contains(readManifest(t, manifest), "[recipes.alpha]\nenabled = true\n") {
+			t.Errorf("manifest = %q, want the native [recipes.alpha] append", readManifest(t, manifest))
+		}
+	})
 }
 
 // TestRecipeAddNativeNeedsNoBashOrPython is the routing proof for the U6b
