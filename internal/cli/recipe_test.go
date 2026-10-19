@@ -735,3 +735,383 @@ func TestRecipeAddMissingPathDeviation(t *testing.T) {
 		}
 	}
 }
+
+// ── GO-20 U6c (T3): differential for the native `ai-specs recipe remove` ──
+//
+// Same discipline as the U5b remove table: the WRAPPER (`bash
+// lib/recipe-remove.sh <args>` — the argument loop, the heredoc surgery and
+// the lock cleanup that follows it) and the built binary (`<bin> recipe
+// remove <args>`) run against byte-identical TWIN projects (the verb
+// mutates, so one shared project cannot serve both legs), under one shared,
+// pinned environment, comparing stdout, stderr and the exit code after
+// normalizing each leg's own project root — PLUS the resulting project
+// trees, where the manifest bytes AND the lock bytes are the contract (S5:
+// the segment surgery is config.RemoveRecipeSegments, already
+// differential-tested against recipe_remove_ref.py in internal/config; the
+// lock step is recipe-remove.sh:167-203 through internal/lock), and a
+// snapshot of the CLI home around the whole table (the verb writes NOTHING
+// in the home).
+//
+// The shell leg's lock write goes through lock.py's worktree-gate bridge,
+// so WORKTREE_GATE_BIN is pinned to a freshly built gate binary
+// (skillsRemoveEnv + skillsRemoveGateBinary, the U5b pattern): with no pin
+// the bridge fails open with a GO_LOCK_WRITE_BRIDGE_FALLBACK warning on
+// stderr that the native leg never prints, and the byte comparison would
+// measure the fail-open bridge instead of the verb.
+
+// The manifest shapes: a recipe with a config sub-table (and a sibling whose
+// multi-line string with blank lines must survive byte-for-byte, D2's class),
+// a plain enabled recipe next to a sibling, a manifest without any
+// [recipes.*] table, and test_recipe_remove.py's valid→invalid guard fixture
+// (removing `foo` cuts a multi-line basic string open).
+const (
+	recipeRemoveManifestCfg = `[project]
+name = "u6c"
+
+[recipes.bar]
+enabled = true
+notes = """
+first
+
+third
+"""
+
+[recipes.alpha]
+enabled = true
+
+[recipes.alpha.config]
+key = "value"
+`
+	recipeRemoveManifestLocked = `[project]
+name = "u6c"
+
+[recipes.bar]
+enabled = true
+
+[recipes.alpha]
+enabled = true
+`
+	recipeRemoveManifestBarOnly = `[project]
+name = "u6c"
+
+[recipes.bar]
+enabled = true
+`
+	recipeRemoveManifestNoRecipes = `[project]
+name = "u6c"
+`
+	recipeRemoveManifestBreaks = `[project]
+name = "test"
+
+[recipes.bar]
+doc = """
+[recipes.foo]
+inner
+"""
+
+[recipes.foo]
+enabled = true
+`
+	// The lock fixtures: `alpha` carries the recipe entry the cleanup must
+	// drop while meta/managed/agents survive (parity contract D1's subject);
+	// `other` proves the lock is only REWRITTEN when something was removed —
+	// its leading comment would not survive a rewrite, and lockKept asserts
+	// the bytes too.
+	recipeRemoveLockAlpha = `# Managed by ai-specs. Do not edit by hand.
+
+[meta]
+cli_version = "0.24.0"
+synced_at = "2026-01-01T00:00:00Z"
+
+[recipes.alpha]
+"skills/a.md" = "deadbeef"
+
+[managed."AGENTS.md"]
+sha256 = "aaaa"
+recipe = "bar"
+kind = "runtime-brief"
+policy = "never-force"
+
+[agents."pi"]
+"AGENTS.md" = "cccc"
+`
+	recipeRemoveLockOther = `# Managed by ai-specs. Do not edit by hand.
+# a rewrite would drop this comment, so its survival pins "no rewrite"
+
+[recipes.other]
+"skills/a.md" = "deadbeef"
+
+[managed."AGENTS.md"]
+sha256 = "aaaa"
+kind = "runtime-brief"
+`
+)
+
+// buildRecipeRemoveFixture materializes one case's project shape under proj.
+func buildRecipeRemoveFixture(t *testing.T, name, proj string) {
+	t.Helper()
+	manifest := func(content string) {
+		skillsWriteFile(t, filepath.Join(proj, "ai-specs", "ai-specs.toml"), content)
+	}
+	switch name {
+	case "cfg":
+		manifest(recipeRemoveManifestCfg)
+	case "locked":
+		manifest(recipeRemoveManifestLocked)
+		skillsWriteFile(t, filepath.Join(proj, "ai-specs", ".ai-specs.lock"), recipeRemoveLockAlpha)
+	case "locked-other":
+		manifest(recipeRemoveManifestLocked)
+		skillsWriteFile(t, filepath.Join(proj, "ai-specs", ".ai-specs.lock"), recipeRemoveLockOther)
+	case "absent":
+		manifest(recipeRemoveManifestBarOnly)
+	case "norecipes":
+		manifest(recipeRemoveManifestNoRecipes)
+	case "breaks":
+		manifest(recipeRemoveManifestBreaks)
+	case "empty":
+		if err := os.MkdirAll(proj, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("unknown recipe-remove fixture %q", name)
+	}
+}
+
+// recipeRemoveGuardDetailRE normalizes the ONE thing the two parsers word
+// differently in the valid→invalid refusal: the embedded tomllib/Go
+// parse-error detail after the frozen framing (ADR 0002 — parse-error detail
+// is diagnostic; internal/config's differential compares the prefix through
+// "invalid TOML:" the same way). Everything else of the message — the id,
+// the framing — is byte-compared, and so is the untouched manifest.
+var recipeRemoveGuardDetailRE = regexp.MustCompile(`(?s)would produce invalid TOML: .*`)
+
+// TestRecipeRemoveDifferentialAgainstShell is T3's oracle: same case table,
+// both routes, byte-identical stdout/stderr/exit code over twin projects,
+// plus identical resulting trees (manifest AND lock bytes are part of the
+// contract) and a CLI home proven untouched around the whole table.
+func TestRecipeRemoveDifferentialAgainstShell(t *testing.T) {
+	skillsOracle(t, "lib/recipe-remove.sh")
+	bin, root := smokeSetup(t)
+	script := filepath.Join(root, "lib", "recipe-remove.sh")
+	if _, err := os.Stat(script); err != nil {
+		t.Skipf("legacy lib/recipe-remove.sh unavailable: %v", err)
+	}
+	gate := skillsRemoveGateBinary(t)
+	home := skillsListHome(t, root)
+	env := skillsRemoveEnv(home, gate)
+
+	type diffCase struct {
+		name        string
+		fixture     string
+		args        []string // "<PROJ>" is replaced by each leg's project root
+		cwdProj     bool     // run each leg with cwd = its own project dir
+		untouched   bool     // both legs must leave the project byte-identical
+		lockKept    bool     // the manifest changes, the lock must not
+		guardDetail bool     // normalize the embedded parse-error detail only
+	}
+	cases := []diffCase{
+		// ── the write: the segment surgery and the lock cleanup ──
+		{name: "recipe with config sub-table", fixture: "cfg",
+			args: []string{"alpha", "<PROJ>"}},
+		{name: "recipe with lock entries", fixture: "locked",
+			args: []string{"alpha", "<PROJ>"}},
+		{name: "lock keeps another recipe's entries, not rewritten", fixture: "locked-other",
+			args: []string{"alpha", "<PROJ>"}, lockKept: true},
+		// ── refusals: nothing may be written ──
+		{name: "recipe absent from manifest", fixture: "absent",
+			args: []string{"alpha", "<PROJ>"}, untouched: true},
+		{name: "manifest with no recipes tables", fixture: "norecipes",
+			args: []string{"alpha", "<PROJ>"}, untouched: true},
+		{name: "deletion breaking valid TOML refused", fixture: "breaks",
+			args: []string{"foo", "<PROJ>"}, untouched: true, guardDetail: true},
+		// ── the wrapper's argument contract ──
+		{name: "missing id", fixture: "cfg", untouched: true},
+		{name: "help", fixture: "cfg", args: []string{"--help"}, untouched: true},
+		{name: "unknown flag", fixture: "cfg", args: []string{"--bogus"}, untouched: true},
+		{name: "third positional", fixture: "cfg",
+			args: []string{"alpha", "<PROJ>", "extra"}, untouched: true},
+		{name: "positional after dashdash", fixture: "cfg",
+			args: []string{"--", "alpha", "<PROJ>"}},
+		{name: "manifest not found", fixture: "empty",
+			args: []string{"alpha", "<PROJ>"}, untouched: true},
+		{name: "target defaults to cwd", fixture: "cfg",
+			args: []string{"alpha"}, cwdProj: true},
+	}
+
+	homeBefore := skillsTreeSnapshot(t, home)
+	scratch := t.TempDir()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dirA, dirB := t.TempDir(), t.TempDir()
+			projA, projB := filepath.Join(dirA, "proj"), filepath.Join(dirB, "proj")
+			buildRecipeRemoveFixture(t, tc.fixture, projA)
+			buildRecipeRemoveFixture(t, tc.fixture, projB)
+			beforeA := skillsProjectTree(t, projA)
+			beforeB := skillsProjectTree(t, projB)
+			readLock := func(proj string) []byte {
+				data, err := os.ReadFile(filepath.Join(proj, "ai-specs", ".ai-specs.lock"))
+				if err != nil {
+					return nil
+				}
+				return data
+			}
+			lockA, lockB := readLock(projA), readLock(projB)
+
+			legArgs := func(proj string) []string {
+				out := make([]string, 0, len(tc.args))
+				for _, a := range tc.args {
+					out = append(out, strings.ReplaceAll(a, "<PROJ>", proj))
+				}
+				return out
+			}
+			dirLeg := func(proj string) string {
+				if tc.cwdProj {
+					return proj
+				}
+				return scratch
+			}
+
+			legOut, legErr, legCode := runOne("bash",
+				append([]string{script}, legArgs(projA)...), env, dirLeg(projA))
+			goOut, goErr, goCode := runOne(bin,
+				append([]string{"recipe", "remove"}, legArgs(projB)...), env, dirLeg(projB))
+
+			normalize := func(b []byte, proj string) string {
+				s := string(b)
+				// The shell resolves the cwd through getcwd (e.g. /var →
+				// /private/var on macOS) when a leg runs with cwd = project;
+				// replace the resolved spelling first so both spellings
+				// normalize to the same placeholder.
+				if resolved, err := filepath.EvalSymlinks(proj); err == nil && resolved != proj {
+					s = strings.ReplaceAll(s, resolved, "<PROJ>")
+				}
+				s = strings.ReplaceAll(s, proj, "<PROJ>")
+				if tc.guardDetail {
+					s = recipeRemoveGuardDetailRE.ReplaceAllString(s,
+						"would produce invalid TOML: <parse detail>")
+				}
+				return s
+			}
+			if got, want := normalize(goOut, projB), normalize(legOut, projA); got != want {
+				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", got, want)
+			}
+			if got, want := normalize(goErr, projB), normalize(legErr, projA); got != want {
+				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", got, want)
+			}
+			if goCode != legCode {
+				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
+			}
+
+			afterA := skillsProjectTree(t, projA)
+			afterB := skillsProjectTree(t, projB)
+			if !reflect.DeepEqual(afterA, afterB) {
+				t.Errorf("project trees diverge after the two legs:\n bash: %v\n go:   %v", afterA, afterB)
+			}
+			if tc.untouched {
+				if !reflect.DeepEqual(beforeA, afterA) {
+					t.Errorf("bash leg mutated a project that must stay untouched:\n before %v\n after  %v", beforeA, afterA)
+				}
+				if !reflect.DeepEqual(beforeB, afterB) {
+					t.Errorf("go leg mutated a project that must stay untouched:\n before %v\n after  %v", beforeB, afterB)
+				}
+			}
+			// The lock step must only REWRITE when something was removed
+			// (recipe-remove.sh:167-203): a lock whose entries do not match
+			// keeps its bytes, comment line included.
+			if tc.lockKept {
+				if got := readLock(projA); !bytes.Equal(got, lockA) {
+					t.Errorf("bash leg rewrote a lock that must stay untouched:\n before %q\n after  %q", lockA, got)
+				}
+				if got := readLock(projB); !bytes.Equal(got, lockB) {
+					t.Errorf("go leg rewrote a lock that must stay untouched:\n before %q\n after  %q", lockB, got)
+				}
+			}
+		})
+	}
+
+	if after := skillsTreeSnapshot(t, home); !reflect.DeepEqual(homeBefore, after) {
+		t.Errorf("the verb wrote into the CLI home:\n before %v\n after  %v", homeBefore, after)
+	}
+}
+
+// TestRecipeRemoveNativeNeedsNoBashOrPython is the routing proof for the U6c
+// goal: with PATH emptied the legacy route could not run at all (the shim
+// execs `bash lib/recipe.sh …` → recipe-remove.sh → python3), while the
+// native route performs the surgery itself — `recipe remove` no longer
+// execs the shim, and no bash and no Python run on it (S1).
+func TestRecipeRemoveNativeNeedsNoBashOrPython(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	home := t.TempDir()
+	project := t.TempDir()
+	skillsWriteFile(t, filepath.Join(project, "ai-specs", "ai-specs.toml"),
+		"[project]\nname = \"fixture\"\n\n[recipes.alpha]\nenabled = true\n")
+	env := skillsListEnv(home)
+	emptyPath := t.TempDir() // no bash, no python3 reachable for the CHILD
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			env[i] = "PATH=" + emptyPath
+		}
+	}
+
+	out, errOut, code := runOne(bin, []string{"recipe", "remove", "alpha", project}, env, t.TempDir())
+	if code != 0 {
+		t.Errorf("exit = %d (want 0 with an empty PATH), stderr = %q", code, errOut)
+	}
+	if len(errOut) != 0 {
+		t.Errorf("stderr = %q, want empty", errOut)
+	}
+	if !strings.Contains(string(out), "  ✓ removed 1 section(s) for recipe 'alpha' from ") {
+		t.Errorf("stdout = %q, want the frozen success line", out)
+	}
+	data, err := os.ReadFile(filepath.Join(project, "ai-specs", "ai-specs.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "[recipes.alpha]") {
+		t.Errorf("manifest = %q, want the [recipes.alpha] segment gone", data)
+	}
+}
+
+// TestRecipeRemoveMissingPathDeviation pins the frozen `cd` failure the way
+// the U5a/U6a/U6b tables do: exit 1 with the `cd: <path>: <reason>` shape,
+// WITHOUT bash's own `lib/recipe-remove.sh: line N: ` prefix (the S12/ADR
+// 0002 class — the shell's line-number noise is not fabricated). The legacy
+// leg is checked for the path and the strerror wording only, deliberately not
+// byte-matched.
+func TestRecipeRemoveMissingPathDeviation(t *testing.T) {
+	root, err := locateRoot()
+	if err != nil {
+		t.Skipf("repo root not located: %v", err)
+	}
+	script := filepath.Join(root, "lib", "recipe-remove.sh")
+	home := t.TempDir()
+	env := skillsListEnv(home)
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "does-not-exist")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"recipe", "remove", "alpha", missing}, home, nil, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("go exit = %d, want 1 (the frozen cd exit)", code)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("go stdout = %q, want empty", stdout.String())
+	}
+	want := "cd: " + missing + ": No such file or directory\n"
+	if stderr.String() != want {
+		t.Errorf("go stderr = %q, want %q", stderr.String(), want)
+	}
+
+	legOut, legErr, legCode := runOne("bash", []string{script, "alpha", missing}, env, dir)
+	if legCode != 1 {
+		t.Errorf("bash exit = %d, want 1", legCode)
+	}
+	if len(legOut) != 0 {
+		t.Errorf("bash stdout = %q, want empty", legOut)
+	}
+	for _, part := range []string{"cd:", missing, "No such file or directory"} {
+		if !strings.Contains(string(legErr), part) {
+			t.Errorf("bash stderr = %q, want it to contain %q", legErr, part)
+		}
+	}
+}
