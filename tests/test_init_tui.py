@@ -34,10 +34,12 @@ from _blackbox import CLIResult, invoke, isolated_home, normalize_output  # noqa
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "ai-specs"
 
-# S20 (odd/tasks/go-20-u4-init.md): the wizard is native, so the end-to-end PTY
-# flows drive the built binary. The cases that still need the LEGACY launcher are
-# named at their test: the four per-recipe-configuration flows (recipe-read.py +
-# config_wizard.py, T4b-2). The harness-env offer moved to NATIVE_CLI with U4d-2.
+# S20/S40 (odd/tasks/go-20-u4-init.md): the wizard is native, so the
+# end-to-end PTY flows drive the built binary. As of U4b-2 that INCLUDES the
+# per-recipe-configuration flows — their Configure-now confirm, field prompts
+# and staged config block are native, and the CLI-dep gate leg runs the legacy
+# script through the wizard's documented seam (spawned by the binary on the
+# same TTY; U6e retires it). The harness-env offer moved with U4d-2.
 NATIVE_CLI = _go_cli.cli()
 
 ANSI_RE = re.compile(rb"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -298,7 +300,8 @@ class TestRenderManifest(unittest.TestCase):
         self.assertNotIn("version", data["recipes"]["foo.bar"])
         self.assertNotIn("version =", text)
 
-    # LEGACY launcher on purpose: per-recipe configuration prompts (T4b-2).
+    # U4b-2: the per-recipe configuration step is native — this case drives
+    # the built binary end to end (confirm, both field prompts, config block).
     def test_render_manifest_writes_config_block(self):
         base, home, target = _fresh_env(self)
         _seed_recipe(home, "cfg-one", _recipe_toml("cfg-one", "Cfg One", extra=(
@@ -317,7 +320,7 @@ class TestRenderManifest(unittest.TestCase):
             (N_CONFIRM, b"\n"),
         ]
         rc, _ = _spawn_pty(target, home, base, stages=stages,
-                           argv=[str(CLI), "init", "--tui", "--name", "demo", str(target)])
+                           argv=[str(NATIVE_CLI), "init", "--tui", "--name", "demo", str(target)])
         self.assertEqual(rc, 0)
         toml_path = target / "ai-specs" / "ai-specs.toml"
         self.assertTrue(toml_path.is_file())
@@ -349,7 +352,8 @@ class TestRenderManifest(unittest.TestCase):
 class TestConfigureRecipesStep(unittest.TestCase):
     """Step 3.5 (per-recipe configure), driven through the real wizard PTY."""
 
-    # LEGACY launcher on purpose: per-recipe configuration prompts (T4b-2).
+    # U4b-2: the Configure-now decline is native — no field prompts, no help
+    # line, no config table, through the built binary.
     def test_configure_recipes_skip_later(self):
         base, home, target = _fresh_env(self)
         _seed_recipe(home, "cfg-later", _recipe_toml("cfg-later", "Cfg Later", extra=(
@@ -365,7 +369,7 @@ class TestConfigureRecipesStep(unittest.TestCase):
             (N_CONFIRM, b"\n"),
         ]
         rc, out = _spawn_pty(target, home, base, stages=stages,
-                             argv=[str(CLI), "init", "--tui", "--name", "demo", str(target)])
+                             argv=[str(NATIVE_CLI), "init", "--tui", "--name", "demo", str(target)])
         plain = _strip_ansi(out)
         self.assertEqual(rc, 0)
         text = (target / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8")
@@ -375,7 +379,11 @@ class TestConfigureRecipesStep(unittest.TestCase):
         # The config wizard never ran: its field help text was never rendered.
         self.assertNotIn("Base branch for PRs", plain)
 
-    # LEGACY launcher on purpose: the CLI-dep gate of per-recipe configuration (T4b-2).
+    # U4b-2: drives the BUILT binary; the gate's own leg is still scripted —
+    # config_wizard._dep_gate runs the legacy script through the wizard's
+    # documented seam (the binary spawns it over the same TTY, panel, install
+    # offer and "Configure anyway?" included). U6e lands the native dep gate
+    # and retires the seam; until then this case is what proves it works.
     def test_configure_recipes_uses_dep_gate_for_cli_deps(self):
         """JD-3: init must offer TTY install via _dep_gate, not panel-only."""
         base, home, target = _fresh_env(self)
@@ -392,7 +400,7 @@ class TestConfigureRecipesStep(unittest.TestCase):
             (N_CONFIRM, b"\n"),
         ]
         rc, out = _spawn_pty(target, home, base, stages=stages,
-                             argv=[str(CLI), "init", "--tui", "--name", "demo", str(target)])
+                             argv=[str(NATIVE_CLI), "init", "--tui", "--name", "demo", str(target)])
         plain = _strip_ansi(out)
         self.assertEqual(rc, 0)
         # The dep gate rendered the panel itself (binary visible with WARN).
@@ -407,13 +415,12 @@ class TestConfigureRecipesStep(unittest.TestCase):
         self.assertNotIn(".config]", text)
 
 
-# S20: the harness-env flow below drives the built binary as of U4d-2 (its
-# offer is native: sync.OfferHarnessEnv behind the wizard). The flows that
-# still drive the LEGACY launcher on purpose are the per-recipe-configuration
-# cases (recipe-read.py + config_wizard.py, scheduled as T4b-2 of
-# odd/tasks/go-20-u4-init.md), each named at its own test — moving them to
-# NATIVE_CLI before that slice lands would assert a feature the port does not
-# have.
+# S20/S40: every wizard flow below drives the built binary as of U4b-2 — the
+# harness-env offer with U4d-2, the per-recipe-configuration cases with this
+# slice. No case keeps the LEGACY launcher for a missing native feature any
+# more; the dep-gate case's scripted leg runs INSIDE the binary through the
+# seam named at its own test, and the runpy drivers below are TRIAGE
+# process-boundary contracts of the legacy module, not launcher cases.
 class TestRunWizardHarnessEnv(unittest.TestCase):
     """JD-1: fresh init must spoon-feed harness env after staging write."""
 
@@ -756,6 +763,9 @@ class TestInitTuiPTYE2E(unittest.TestCase):
 class TopologyWizardNodeTests(unittest.TestCase):
     """Topology is a project-owned manifest field, never recipe config."""
 
+    # U4b-2: native from end to end — the Configure-now confirm, the enum
+    # prompt, and repo_topology landing in [project] while the recipe config
+    # carries only gate_mode (S18).
     def test_topology_renders_as_project_field_not_recipe_config(self):
         base, home, target = _fresh_env(self)
         _seed_recipe(home, "worktree-flow", _recipe_toml("worktree-flow", "Worktree Flow", extra=(
@@ -772,7 +782,7 @@ class TopologyWizardNodeTests(unittest.TestCase):
             (N_CONFIRM, b"\n"),
         ]
         rc, _ = _spawn_pty(target, home, base, stages=stages,
-                           argv=[str(CLI), "init", "--tui", "--name", "demo", str(target)])
+                           argv=[str(NATIVE_CLI), "init", "--tui", "--name", "demo", str(target)])
         self.assertEqual(rc, 0)
         data = tomllib.loads((target / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
         self.assertEqual(data["project"]["repo_topology"], "standalone")
@@ -815,6 +825,8 @@ class TopologyWizardNodeTests(unittest.TestCase):
         self.assertNotIn("repo_topology", result["filtered"])
         self.assertIn("gate_mode", result["filtered"])
 
+    # U4b-2: native from end to end — the topology prompt, the Configure-now
+    # decline, and the project-owned routing of repo_topology (S18).
     def test_run_wizard_asks_topology_and_writes_override(self):
         """The topology prompt offers auto-detect first; the answer lands in [project]."""
         base, home, target = _fresh_env(self)
@@ -831,7 +843,7 @@ class TopologyWizardNodeTests(unittest.TestCase):
             (N_CONFIRM, b"\n"),
         ]
         rc, out = _spawn_pty(target, home, base, stages=stages,
-                             argv=[str(CLI), "init", "--tui", "--name", "demo", str(target)])
+                             argv=[str(NATIVE_CLI), "init", "--tui", "--name", "demo", str(target)])
         plain = _strip_ansi(out)
         self.assertEqual(rc, 0)
         # The topology question was asked with the detected default first.

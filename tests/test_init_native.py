@@ -399,11 +399,11 @@ class InitNativeDifferentialTests(unittest.TestCase):
         self.assertIn("--name requires a value", nat_proc.stderr)
 
     def test_init_tui_py_env_seam_keeps_legacy_wizard_delegation(self):
-        # T4b-1 escape hatch, recorded in the slice: with AI_SPECS_INIT_TUI_PY
-        # set, the native verb still delegates the whole wizard to lib/init.sh
-        # exactly as before, so the legacy seam (the recipe-configuration PTY
-        # cases, T4b-2) stays observable. The wizard that does NOT run through
-        # this seam is pinned natively by
+        # Reference/rollback hatch, not a step's seam: with AI_SPECS_INIT_TUI_PY
+        # set the native verb delegates the whole wizard to lib/init.sh. Since
+        # U4b-2 (per-recipe configuration native) no step of the wizard needs
+        # it, so it exists only to run the legacy script on demand. The wizard
+        # that does NOT run through it is pinned natively by
         # test_native_wizard_never_executes_init_tui_py below.
         native_cli = self._native_cli()
 
