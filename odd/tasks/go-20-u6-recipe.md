@@ -38,10 +38,10 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
 | slice | scope | retires | unblocks U4b-2 |
 | --- | --- | --- | --- |
 | **U6a** | `recipe list` + the catalog reader the verbs share (home-first resolution, the internal-test-recipe filter) | the BINARY's use of `recipe-list.sh` (see S9) | no — it establishes the reader the rest uses |
-| **U6b** | `recipe add`: the `[recipes.<id>]` append with its config placeholder, the dup/internal guards, the non-TTY path; the interactive legs stay recorded as such | `recipe-add.sh`, `recipe-add.py` | no |
+| **U6b** | `recipe add`: the `[recipes.<id>]` append with its config placeholder, the dup/internal guards, the non-TTY path. On a TTY the verb still delegates whole to `lib/recipe.sh` (the init-wizard seam pattern), because `recipe add` is one of the four TTY surfaces the parity contract freezes | the BINARY's non-TTY use of `recipe-add.sh`/`recipe-add.py`; the TTY leg flips in U6d+U6e | no |
 | **U6c** | `recipe remove`: route the already-ported `config.RemoveRecipeSegments` and port the lock-entry cleanup | `recipe-remove.sh` | no |
 | **U6d** | recipe config write (`internal/config.UpdateRecipeConfig`, promoted from the gate's shared file) + `recipe configure --inspect/--set/--dry-run` + the wizard core `run_config_wizard` on `internal/tui` | `recipe-config-write.py`, the write half of `config_wizard.py` | **yes** |
-| **U6e** | `configure-recipes`: the whole-project loop, the TTY gate (exit 3), the dep gate and the env offer; the dispatcher's usage/unknown arms; the shim map goes empty | `recipe.sh`, `recipe-config.sh`, `config_wizard.py` | no (already unblocked) |
+| **U6e** | `configure-recipes`: the whole-project loop, the TTY gate (exit 3), the dep gate and the env offer; the dispatcher's usage/unknown arms; **and the flip of `recipe add`'s TTY seam onto the native wizard + env offer, which is what finally kills that seam**; the shim map goes empty | `recipe.sh`, `recipe-config.sh`, `config_wizard.py`, and the U6b seam | no (already unblocked) |
 
 ## Tasks
 
@@ -49,6 +49,9 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
 - T2 (U6b, S4/S5) — `recipe add` and its differential, including the dup and internal-test refusals.
 - T3 (U6c, S5) — `recipe remove` over the existing segment remover, plus the lock cleanup and its
   differential.
+- T3b (U6d+U6e, S7) — the U6b seam's flip, owned explicitly: U6d wires the "Configure now?" leg to the
+  native wizard core and U6e wires the env offer, and only then does the TTY delegation die. U6b's own
+  record (L4) flagged that no row owned this; this task is that owner.
 - T4 (U6d, S5/S6/S7) — promote the config writer into `internal/config`, port `recipe configure`, port
   the wizard core, and record that U4b-2 is unblocked.
 - T5 (U6e, S4) — `configure-recipes`, the dispatcher arms, and the shim map emptied.
@@ -123,3 +126,85 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   read) or belongs with the verb's own output (the row format of recipe-list.py:120, printed in
   `internal/cli/recipe.go` like every other verb prints its own rows), so there is one home for the
   resolver, the scan and the manifest read: `internal/recipe/list.go`.
+- L4 — Evidence (U6b, T2), `recipe add` native: the wrapper's argument contract
+  and add_recipe's non-TTY path went native through TWO new cores —
+  `config.AppendRecipeSegments` beside `RemoveRecipeSegments` (the ONE
+  appender, S6: read → literal append → atomic write → parse → on failure
+  RESTORE the normalized original with recipe-add.py's frozen guard message —
+  parity contract §3's parse-validate-and-restore, pinned in
+  `internal/config/writes_test.go` including the restore-on-invalid path over
+  an already-invalid base, a valid base broken by a space id, and the CRLF
+  normalization the restore leaves behind; this guard is UNCONDITIONAL, unlike
+  the remove heredocs' valid→invalid-only `guardValidToInvalid`, so the shared
+  guard is deliberately not reused — one grader per behaviour) and
+  `runRecipeAdd`/`runRecipeAddVerb` in `internal/cli/recipe.go` (usage /
+  missing-id / unknown-flag arms, the cd/pwd resolution, add_recipe's guard
+  order manifest → internal-test → catalog → dup, the placeholder conversion,
+  the materialize listing and the non-TTY Next steps). Shared cores reused,
+  none re-implemented: `cdSkillsTarget`/`cdReason`, `recipe.CatalogHome`/
+  `CatalogDir`, `schema.LoadRecipeToml`, `config.LoadManifest`/`Truthy`,
+  `toml.TOMLValue` (toml_write.py's port), `atomicWrite`/`readManifestText`,
+  `runShim`, `tty.IsTTY`; the tests reuse skillsListEnv/Home, skillsWriteFile,
+  skillsTreeSnapshot, runOne, smokeSetup and skillsOracle.
+- L4 differential: `bash lib/recipe-add.sh <args>` vs the built binary on
+  byte-identical TWIN projects under one shared env — isolated AI_SPECS_HOME
+  (lib symlinked so the wrapper execs recipe-add.py; the catalogue seeded as
+  a REAL directory: `alpha`, the rich `cfg`, `test-fixture`, `bad id`),
+  LC_ALL=C, PYTHONDONTWRITEBYTECODE=1, the LOUD tomllib probe
+  (skillsOracle; run with PATH=/tmp/pybin:$PATH), stdout/stderr/exit byte for
+  byte after normalizing the twin project root, PLUS the resulting trees (the
+  appended manifest bytes are the contract) and a home snapshot proving the
+  verb writes NOTHING in the CLI home (no cache, no vendor, no bytecode).
+  Sixteen cases, all byte-identical: a catalogue recipe added to a manifest
+  without it; the rich `cfg` recipe (six config fields → the placeholder
+  bytes with Python's sorted() order and required-beats-default, five
+  provides primitives → the listing, BOTH Next steps lines); the
+  already-enabled duplicate; an id absent from the catalogue; the internal
+  `test-fixture` refusal; an id whose `../` must NOT be cleaned
+  (`nope/../alpha` — Path joins without normalizing, so lookup, message and
+  control flow carry the id as joined); an uninitialized project; the missing
+  id (two stderr lines + usage + exit 2); `--help`; an unknown flag; a second
+  positional; a positional after `--` (success) and a third after `--`
+  (exit 2); the cwd default; and TWO guard rows — an already-invalid
+  manifest (`flag = True`, test_recipe_add's rollback fixture) and a valid
+  manifest broken by the space-id append — both printing the frozen
+  `Error: adding '…' would produce an invalid TOML manifest (…).
+  ai-specs.toml was not modified.` with the original bytes restored. The
+  routing proof (`recipe add` with PATH emptied) pins that no shim, no bash
+  and no Python run on the non-TTY verb, and the route test pins `init`,
+  `configure`, `remove`, the bare `recipe`, `--help`/`-h`/`help` and the
+  unknown arms on `lib/recipe.sh`.
+- L4 TTY DECISION — option (a): the shell's own TTY test (`tty.IsTTY(stdin,
+  stdout)` — `[[ -t 0 && -t 1 ]]`, Python's `sys.stdin.isatty() and
+  sys.stdout.isatty()`) gates the route in Run: on a terminal the WHOLE verb
+  delegates back to `lib/recipe.sh` through the documented seam (runRecipeAdd
+  → runShim — the init wizard's AI_SPECS_INIT_TUI_PY pattern), so
+  add_recipe's two TTY branches (the ensure_deps/questionary PRE-write gate
+  at recipe-add.py:155-174 and the "Configure now?" wizard +
+  env_scaffold.offer_harness_env at :262-275) stay byte-for-byte legacy and
+  nothing interactive is half-ported. Reason for rejecting (b): dropping the
+  branch would silently remove an interactive surface no other slice
+  re-adds, AND would falsify docs/go-migration-parity-contract.md §7's
+  frozen TTY table (`recipe add` is one of its four TTY surfaces) — a
+  document outside this slice's edit surfaces; (a) keeps both true and keeps
+  S3 intact on BOTH routes (the legacy branch computes exactly what it
+  computes today). Pinned by TestRecipeAddTTYSeamStaysOnLegacyScript: TTY →
+  the legacy script runs with recipe.sh's `add` shift and appends nothing;
+  non-TTY → the seam never fires and the port appends. Consequence for the
+  slicing table's `retires recipe-add.sh, recipe-add.py` row, read through
+  S9: the BINARY's use is retired on the route this slice ports (everything
+  non-TTY — automation, CI, both differential legs), while the TTY route
+  still execs those two files through the seam; flipping the seam to U6d's
+  native wizard + the existing sync.OfferHarnessEnv is the follow-up, and
+  physical deletion stays U7/U8. Recorded rather than claimed — the row
+  overclaims until that flip, which is a spec gap this entry amends.
+- L4 deviations: (1) a `cd` failure keeps exit 1 and the `cd: <path>:
+  <reason>` shape but drops bash's own `lib/recipe-add.sh: line N: ` prefix
+  (U5a's S12 class, pinned by TestRecipeAddMissingPathDeviation); (2) the
+  guard message's embedded parse-error detail is diagnostic (ADR 0002) —
+  the differential normalizes ONLY that parenthesized detail
+  (recipeAddGuardDetailRE) and byte-compares the id, the framing and the
+  restored manifest around it; (3) the catalogue resolver's second candidate
+  keeps L3's deviation 3 verbatim (anchored on the running binary, not lib/'s
+  physical tree) — every differential home carries a catalogue, so it is not
+  byte-exercised here either.
