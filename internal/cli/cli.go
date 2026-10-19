@@ -41,6 +41,7 @@ const (
 	routeAddDep                             // native: `add-dep` — the same verb under bin/ai-specs's alias label (GO-20 U5c)
 	routeSkills                             // native: the lib/skills.sh dispatcher remainder (GO-20 U5c)
 	routeRecipeList                         // native: `recipe list`, port of lib/recipe-list.sh (GO-20 U6a)
+	routeRecipeAdd                          // native: `recipe add`, port of lib/recipe-add.sh (GO-20 U6b)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -123,13 +124,22 @@ func Route(args []string) route {
 	if args[0] == "add-dep" {
 		return route{kind: routeAddDep, invokedAs: "ai-specs add-dep"}
 	}
-	// `recipe list` (GO-20 U6a) is native: the subcommand is intercepted HERE,
-	// in lib/recipe.sh's own case order, and every OTHER arm of that case
-	// statement — `add`, `init`, `configure`, `remove`, `--help|-h|help`, the
-	// bare `recipe`, unknown subcommands — falls through to the shims map below
-	// and keeps exec'ing lib/recipe.sh byte for byte (U6e retires that script).
-	if args[0] == "recipe" && len(args) > 1 && args[1] == "list" {
-		return route{kind: routeRecipeList}
+	// `recipe list` (GO-20 U6a) and `recipe add` (GO-20 U6b) are native: the
+	// subcommands are intercepted HERE, in lib/recipe.sh's own case order, and
+	// every OTHER arm of that case statement — `init`, `configure`, `remove`,
+	// `--help|-h|help`, the bare `recipe`, unknown subcommands — falls through
+	// to the shims map below and keeps exec'ing lib/recipe.sh byte for byte
+	// (U6e retires that script). Route cannot see the streams, so
+	// `recipe add`'s TTY seam (on a terminal the verb delegates back to that
+	// shim — runRecipeAdd) lives in Run, pinned by
+	// TestRecipeAddTTYSeamStaysOnLegacyScript.
+	if args[0] == "recipe" && len(args) > 1 {
+		switch args[1] {
+		case "list":
+			return route{kind: routeRecipeList}
+		case "add":
+			return route{kind: routeRecipeAdd}
+		}
 	}
 	if r, ok := shims[args[0]]; ok {
 		return r
@@ -210,6 +220,13 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		// args[0]=recipe, args[1]=list: recipe.sh shifts the subcommand before
 		// it execs recipe-list.sh, so the verb's own loop sees args[2:].
 		return runRecipeList(args[2:], home, selfPath(), stdout, stderr)
+	case routeRecipeAdd:
+		// args[0]=recipe, args[1]=add: recipe.sh shifts the subcommand before
+		// it execs recipe-add.sh, so the verb's own loop sees args[2:]. The
+		// TTY seam decides FIRST: on a terminal the whole verb stays on the
+		// legacy script (GO-20 U6b, option (a)), off it the port owns the
+		// verb end to end.
+		return runRecipeAdd(args, home, stdin, stdout, stderr, selfPath(), isTTY(stdin, stdout))
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")

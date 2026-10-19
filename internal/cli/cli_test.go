@@ -134,25 +134,31 @@ func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 	}
 }
 
-// TestRouteRecipeListIsNativeBeforeTheShim pins the GO-20 U6a subcommand
-// interception: `recipe list` resolves native, while EVERY other arm of
-// lib/recipe.sh's case statement — `add`, `init`, `configure`, `remove`, the
-// bare `recipe`, `--help`/`-h`/`help` and unknown subcommands — keeps the
-// recipe.sh shim byte for byte (U6e retires that script, not this slice).
+// TestRouteRecipeListIsNativeBeforeTheShim pins the GO-20 U6a/U6b
+// subcommand interceptions: `recipe list` and `recipe add` resolve native,
+// while EVERY other arm of lib/recipe.sh's case statement — `init`,
+// `configure`, `remove`, the bare `recipe`, `--help`/`-h`/`help` and unknown
+// subcommands — keeps the recipe.sh shim byte for byte (U6e retires that
+// script, not this slice). On a TTY `recipe add` still EXECUTES that shim
+// through runRecipeAdd's documented seam — Route cannot see the streams, so
+// the seam itself is pinned by TestRecipeAddTTYSeamStaysOnLegacyScript.
 func TestRouteRecipeListIsNativeBeforeTheShim(t *testing.T) {
 	cases := []struct {
 		args   []string
 		want   routeKind
 		script string
 	}{
-		// The intercepted subcommand (native).
+		// The intercepted subcommands (native).
 		{[]string{"recipe", "list"}, routeRecipeList, ""},
 		{[]string{"recipe", "list", "."}, routeRecipeList, ""},
 		{[]string{"recipe", "list", "--help"}, routeRecipeList, ""},
 		{[]string{"recipe", "list", "--", "."}, routeRecipeList, ""},
+		{[]string{"recipe", "add"}, routeRecipeAdd, ""},
+		{[]string{"recipe", "add", "worktree-flow"}, routeRecipeAdd, ""},
+		{[]string{"recipe", "add", "worktree-flow", "."}, routeRecipeAdd, ""},
+		{[]string{"recipe", "add", "--help"}, routeRecipeAdd, ""},
 		// Everything else of lib/recipe.sh's case statement keeps the shim.
 		{[]string{"recipe"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "add", "worktree-flow"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "init", "worktree-flow"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "configure", "worktree-flow"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "remove", "worktree-flow"}, routeShim, "recipe.sh"},
