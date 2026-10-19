@@ -240,5 +240,52 @@ cannot each be one PR.
 | U6d-1 — recipe config write + `recipe configure`, native | **delivered, judgment approved** | `fc803bf` (PR #392); `internal/config` owns the writer; 30-case differential; Judgment Day found one MAJOR (`mcp.present` order) and six more, all closed, 10/10 verified |
 | U6d-2 — the wizard core + `recipe add`'s "Configure now?" flip | **delivered** | `dd57960` (PR #394); `tui.TextValidated` + `runConfigWizard`; the seam narrowed to the env offer and the dep gate |
 | U6e — `configure-recipes` + the dispatcher close | **delivered, review approved** | `f467fde` (PR #397); review `review-ea5e3ea49a8c6e1a` approved 4/4 lenses, 11 advisories triaged; **the shim map is EMPTY**; `recipe-init.py` and the native dep gate are U7's |
-| U7 — the substrate tail + retiring the dead shell scripts | pending | `util.py`, `recipe_schema.py`, `gate_binary.py`, the toml pair, and `lib/skills*.sh`
+| U7 — the native dep gate, `recipe-init`, the substrate tail and the physical retirement | **next** | scope and order in the `## Next` section below |
 | U8 — program closure | pending | |
+
+## Next — the resume plan for the next session
+
+Coordinates at hand-off: epic tip **`8dd87e6`**, `development` untouched at `afe04fb`, no program branches
+left open, and one worktree (`.worktrees/epic-go-single-binary`). Every delivery went to
+`epic/go-single-binary` through a PR; `development` never received a migration commit.
+
+**U7, in the order it should be built.** Each item names the seam or the file it retires, because a
+retirement without a name is how a program lies to itself:
+
+1. **The native CLI-dep gate** — `_dep_gate` + `dep_install` are the last interactive surface with no Go
+   side. Porting it retires **S37** (the `runLegacyInitDepGate` seam in `init`'s wizard) and the matching
+   seam in `configure-recipes`, which is the only reason `runShim` still exists.
+2. **`recipe-init.py`** — it belonged to **no unit row** (a gap in the U6 slicing, found by a worker);
+   `recipe init` routes straight to `lib/recipe-init.sh` today. It is a read-only brief (134 lines plus
+   its wrapper), the cheapest remaining verb.
+3. **The env offer's scoping** — `sync.OfferHarnessEnv` collects the project-wide variable set where
+   `recipe-add.py` scoped it to the added id (the review's `R3-EnvOfferScope`).
+4. **The three in-process-only pins** — the loop order (`R3-LoopOrderUnproved`), the dep-guidance bytes
+   (`R3-AptGuidanceUnproved`) and the tail-seam close (`R3-TailSeamClose`) are pinned without a PTY; the
+   differential is where they belong.
+5. **The rc-3 partial write** (`R3-Rc3PartialWrite`) — recorded, not fixed: a dep gate answering 3
+   mid-loop leaves the recipes configured before it written. Decide whether parity or all-or-nothing
+   wins before touching it.
+6. **The substrate tail** — `util.py` (864), `recipe_schema.py` (864, whose core `internal/schema`
+   already owns), `gate_binary.py` (739, native twin in `internal/gatebinary`) and the
+   `toml-read`/`toml-write` pair.
+7. **The physical retirement** — `lib/skills*.sh`, the `recipe*.sh` files and the modules the binary no
+   longer calls. **S9 stands**: those files leave only when `bin/ai-specs` stops calling them, which is
+   U2's flip, not U7's.
+
+**U2 and U8.** U2 flips `bin/ai-specs` to the compiled binary, snapshots the parity corpus and deletes the
+Python; U8 closes the program with the suite, the corpus and the end state proven together.
+
+**Debt carried, with owners:**
+
+- `docs/go-migration-parity-contract.md` §7 and its `D1`/`D13`/`D14` rows still describe the pre-port
+  world (`recipe add`'s frozen gate claim, `recipe remove`'s non-atomic write, the routing rows naming the
+  shell scripts). Update them in U2, when the flip makes the old text impossible to keep.
+- Two review lineages sit in `reviewing` with no way to close: `review-94651d04b40e9d0a` (U4a, 2/4 lenses)
+  and `review-6b43808bb7fae376` (U6d-1, admitted nothing). Their `ABANDON` needs the human's approval of
+  the binding the controller renders; leaving them costs nothing but noise in `review status`.
+- The reviewer roster: `review-risk` at `low` closed four lenses twice; `review-reliability` on
+  `opencode-go/mimo-v2.6-pro` is borderline at ~128 KB (one run hit the 16.8-minute relay bound, the retry
+  finished). If that becomes frequent, the human's `models.json` is the lever — `anthropic/claude-sonnet-5-5`
+  or `opencode-go/glm-5.3`.
+
