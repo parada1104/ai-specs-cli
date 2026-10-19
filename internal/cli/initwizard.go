@@ -1,10 +1,17 @@
 package cli
 
-// The native init wizard, T4b-1 of odd/tasks/go-20-u4-init.md: Go for
-// lib/_internal/init_tui.py:234-400 (run_wizard MINUS the recipe-configuration
-// step, which stays deferred as S19 says). It runs on internal/tui's prompt
-// primitives — Select, MultiSelect, Confirm and the one new one, Text (S13) —
-// with no third-party dependency and no PTY-only code path beyond the raw-mode
+// The native init wizard of odd/tasks/go-20-u4-init.md: T4b-1 ported
+// lib/_internal/init_tui.py:234-400 (run_wizard), and U4b-2 (S35-S40) ported
+// the step T4b-1 deferred — _configure_recipes (:204-233), the per-recipe
+// configuration — so S19's deferral line is gone. After the recipes prompt the
+// wizard reads each selected recipe, runs the CLI-dep gate through its
+// documented legacy seam (S37, runLegacyInitDepGate below), asks the
+// `Configure <id> now?` confirm and collects the field answers with
+// runConfigWizard (U6d-2's core); the values reach the staged manifest
+// through _render_manifest's configured tables (S16/S36), exactly where the
+// Python writes them. The wizard runs on internal/tui's prompt primitives —
+// Select, MultiSelect, Confirm and the one new one, Text (S13) — with no
+// third-party dependency and no PTY-only code path beyond the raw-mode
 // terminal internal/tui already owns. Since U4d-2 (S28-S33) it also carries
 // the wizard's tail: after staging, sync.OfferHarnessEnv prompts for the
 // harness env vars through wizardEnvPrompts below, exactly where init_tui.py
@@ -17,9 +24,11 @@ package cli
 // branch does.
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -46,8 +55,8 @@ var (
 
 // initWizardProjectOwnedConfigKey is init_tui._PROJECT_OWNED_KEYS: topology
 // belongs to [project] and is never prompted for or written under a recipe
-// (S18), so it also does not count as "the recipe declares config" for S19's
-// deferral line.
+// (S18), so the wizard's schema filter drops it before any field prompt and it
+// never counts as a promptable field.
 const initWizardProjectOwnedConfigKey = "repo_topology"
 
 // initWizardHeader is init_tui.TOML_HEADER verbatim — the staged manifest's
@@ -62,7 +71,9 @@ const initWizardHeader = `# ai-specs.toml — project root manifest (generated b
 // initWizardRequest is everything the wizard reads and writes: the resolved
 // target, the name prefill (init.sh passes the basename), the CLI home for
 // the catalog, and the three streams. OpenKeys produces the keystrokes — the
-// production seam opens a raw-mode terminal, a test scripts one.
+// production seam opens a raw-mode terminal, a test scripts one. DepGate is
+// the CLI-dep gate seam (S37); nil selects the production runner that spawns
+// the legacy script over the same TTY.
 type initWizardRequest struct {
 	Target   string
 	Name     string
@@ -71,6 +82,29 @@ type initWizardRequest struct {
 	Stdout   io.Writer
 	Stderr   io.Writer
 	OpenKeys initWizardOpener
+	DepGate  wizardDepGate
+}
+
+// wizardDepGate runs the CLI-dep gate for one selected recipe (S37).
+// config_wizard._dep_gate — check_cli_deps' panel, dep_install's TTY offer and
+// the "Configure anyway?" confirm — has no native side, so init keeps that leg
+// on the legacy script for recipes declaring [[deps.cli]] instead of
+// half-porting it or silently skipping them. U6e lands the native dep gate
+// (for configure-recipes), and this seam retires when init adopts it.
+type wizardDepGate func(recipeID string) wizardDepGateOutcome
+
+// wizardDepGateOutcome is how one gate run answered:
+//
+//	Proceed — configure the recipe;
+//	Skip    — declined: print the legacy `Skipped <id> (missing CLI deps)` line and go on;
+//	neither — the child already printed its own line (its read failure): continue quietly;
+//	Rc      — non-zero aborts the wizard with that code (Err, when set, is
+//	          worded through init_tui.py's `ERROR: interactive init failed`).
+type wizardDepGateOutcome struct {
+	Proceed bool
+	Skip    bool
+	Rc      int
+	Err     error
 }
 
 // initWizardResult is what a confirmed wizard hands back to the verb: the
@@ -214,27 +248,107 @@ func runInitWizard(req initWizardRequest) (res initWizardResult, rc int) {
 		}
 	}
 
-	// 3.5 S19: the per-recipe configuration prompts (init_tui.py:204-233) are
-	// T4b-2. Until then a selected recipe that declares config fields gets one
-	// deferral line instead of a prompt.
-	selected := make(map[string]bool, len(recipes))
-	for _, id := range recipes {
-		selected[id] = true
-	}
-	for _, entry := range catalog {
-		if selected[entry.ID] && wizardRecipeHasConfigFields(req.Home, entry) {
-			fmt.Fprintf(req.Stderr, "  · configure %s later: ai-specs recipe configure %s\n", entry.ID, entry.ID)
+	// 3.5 Configure selected recipes — U4b-2: init_tui.py:204-233's
+	// _configure_recipes in its exact order (read → CLI-dep gate → fields
+	// check → per-recipe confirm → wizard), collecting answers for the render
+	// below where S19 used to print a deferral line.
+	configured := map[string]map[string]any{}
+	depGate := req.DepGate
+	if depGate == nil {
+		depGate = func(rid string) wizardDepGateOutcome {
+			return runLegacyInitDepGate(req, keys, rid, recipe.CatalogDir(req.Home))
 		}
 	}
+	for _, rid := range recipes {
+		// Legacy read_recipe(<catalog>, id): a failure is Python's
+		// `skip config for <rid>: <exc>` on the rich console (stderr), then on
+		// to the next recipe. The path joins the id verbatim like Path does.
+		loaded, err := schema.LoadRecipeToml(filepath.Join(recipe.CatalogDir(req.Home), rid, "recipe.toml"))
+		if err != nil {
+			fmt.Fprintf(req.Stderr, "skip config for %s: %v\n", rid, err)
+			continue
+		}
+		// The gate fires BEFORE the fields check — _configure_recipes' order,
+		// even for a recipe that declares no config at all (S37).
+		if len(loaded.CliDeps) > 0 {
+			outcome := depGate(rid)
+			if outcome.Err != nil {
+				return fail(outcome.Err)
+			}
+			if outcome.Rc != 0 {
+				return initWizardResult{}, outcome.Rc
+			}
+			if outcome.Skip {
+				fmt.Fprintf(req.Stderr, "Skipped %s (missing CLI deps)\n", rid)
+				continue
+			}
+			if !outcome.Proceed {
+				// The child already printed its own line (its read failure).
+				continue
+			}
+		}
+		// The fields check reads the RAW schema, exactly like the Python
+		// (`if not recipe.config_schema.fields`): a recipe whose only field is
+		// repo_topology still gets the confirm, then the filtered schema below
+		// prompts nothing (S35).
+		if loaded.ConfigSchema == nil || len(loaded.ConfigSchema.Fields) == 0 {
+			continue
+		}
+		doNow, ok := tui.Confirm(req.Stdout, keys, "Configure "+rid+" now?", true)
+		if !ok {
+			// `do_now is None` → KeyboardInterrupt → Cancelled, exit 1 (S15).
+			return cancel()
+		}
+		if !doNow {
+			continue
+		}
+		// existing_config is init_tui's literal `{}`: the wizard only runs when
+		// no manifest exists yet (the shell's skip branch, S16/S4), so the
+		// existing-wins step has nothing to read on this route.
+		values, ok, werr := runConfigWizard(loaded.ID, wizardPromptSchema(loaded.ConfigSchema), map[string]any{},
+			tuiWizardPrompts{out: req.Stdout, keys: keys})
+		if werr != nil {
+			// Python's re.error escaping run_config_wizard reaches init_tui
+			// main's failure arm: `ERROR: interactive init failed: …`, exit 3.
+			return fail(werr)
+		}
+		if !ok || len(values) == 0 {
+			// A cancelled field prompt is Python's `return {}`: that recipe
+			// stays unconfigured and the loop CONTINUES (recorded EOF
+			// divergence in the unit document: legacy Ctrl-D surfaces
+			// EOFError and cancels the whole wizard instead).
+			continue
+		}
+		// init_tui.py's project-owned promotion (:266-270): the schema filter
+		// keeps repo_topology out of every prompt (S18), so nothing can reach
+		// this branch through the prompts — it mirrors the Python's post-loop
+		// pop for the values map all the same.
+		if promoted, has := values[initWizardProjectOwnedConfigKey]; has {
+			delete(values, initWizardProjectOwnedConfigKey)
+			if s, isStr := promoted.(string); isStr && s != "" {
+				topology = s
+			}
+		}
+		configured[rid] = values
+	}
 
-	// 4. Preview panel + confirm (S14). The config row is always the deferred
-	// summary in T4b-1, because nothing is ever configured in this slice.
+	// 4. Preview panel + confirm (S14). The config row is sorted(configured)
+	// when anything was configured, the deferred summary otherwise (S38).
+	configuredIDs := make([]string, 0, len(configured))
+	for id := range configured {
+		configuredIDs = append(configuredIDs, id)
+	}
+	sort.Strings(configuredIDs)
+	configSummary := "(defaults / later)"
+	if len(configuredIDs) > 0 {
+		configSummary = strings.Join(configuredIDs, ", ")
+	}
 	fmt.Fprintln(req.Stderr)
 	fmt.Fprint(req.Stderr, renderWizardPanel("Preview", []string{
 		"name     " + projectName,
 		"agents   " + wizardJoinOrNone(agents, "(none)"),
 		"recipes  " + wizardJoinOrNone(recipes, "(none)"),
-		"config   (defaults / later)",
+		"config   " + configSummary,
 		"mcp      configure later via ai-specs.toml",
 	}))
 	confirmed, ok := tui.Confirm(req.Stdout, keys, "Write ai-specs.toml with these choices?", true)
@@ -242,9 +356,11 @@ func runInitWizard(req initWizardRequest) (res initWizardResult, rc int) {
 		return cancel()
 	}
 
-	// Outputs (S16): staged manifest, the real manifest when it does not exist
-	// yet, the JSON sidecar, then the confirmation line — that order.
-	manifest, err := renderWizardManifest(projectName, agents, recipes, nil, topology)
+	// Outputs (S16): staged manifest — configured values rendered exactly as
+	// _render_manifest writes them (S36) —, the real manifest when it does not
+	// exist yet, the JSON sidecar with its configured list, then the
+	// confirmation line — that order.
+	manifest, err := renderWizardManifest(projectName, agents, recipes, configured, topology)
 	if err != nil {
 		return fail(err)
 	}
@@ -271,7 +387,7 @@ func runInitWizard(req initWizardRequest) (res initWizardResult, rc int) {
 			return fail(err)
 		}
 	}
-	if err := os.WriteFile(sidecar, []byte(renderWizardSidecar(projectName, agents, recipes)), 0o644); err != nil {
+	if err := os.WriteFile(sidecar, []byte(renderWizardSidecar(projectName, agents, recipes, configuredIDs)), 0o644); err != nil {
 		return fail(err)
 	}
 	fmt.Fprintf(req.Stderr, "✓ staged manifest → %s\n", staged)
@@ -460,29 +576,140 @@ func wizardMetaString(meta *toml.Table, key, fallback string) string {
 	}
 }
 
-// wizardRecipeHasConfigFields answers S19's "a selected recipe that declares
-// config fields": the schema after _wizard_recipe's filter — the project-owned
-// keys never count, or worktree-flow's topology alias would be prompted for
-// (S18). A recipe that does not load declares nothing.
-func wizardRecipeHasConfigFields(home string, entry initWizardRecipe) bool {
-	loaded, err := schema.LoadRecipeToml(filepath.Join(recipe.CatalogDir(home), entry.Dir, "recipe.toml"))
-	if err != nil || loaded.ConfigSchema == nil {
-		return false
+// wizardPromptSchema is init_tui._wizard_recipe: the schema WITHOUT the
+// project-owned keys, so runConfigWizard can never prompt for repo_topology
+// (S18). Everything else — Extra, Tables, the surviving fields — passes
+// through untouched, exactly like the Python's dataclasses.replace.
+func wizardPromptSchema(cs *schema.ConfigSchema) *schema.ConfigSchema {
+	if cs == nil {
+		return nil
 	}
-	for key := range loaded.ConfigSchema.Fields {
+	promptable := make(map[string]*schema.ConfigField, len(cs.Fields))
+	for key, field := range cs.Fields {
 		if key != initWizardProjectOwnedConfigKey {
-			return true
+			promptable[key] = field
 		}
 	}
-	return false
+	if len(promptable) == len(cs.Fields) {
+		return cs
+	}
+	return &schema.ConfigSchema{Fields: promptable, Extra: cs.Extra, Tables: cs.Tables}
+}
+
+// The dep-gate seam's own exit codes (S37): the language with the legacy
+// driver. 0/10/11/3 are the driver's; ANY other code is a crash — Python's
+// traceback already went to stderr, and the wizard words it through
+// init_tui main's failure arm instead of mistaking it for a decline.
+const (
+	initDepGatePass      = 0
+	initDepGateDeclined  = 10
+	initDepGateReadError = 11
+	initDepGateNoTUI     = 3
+)
+
+// initDepGateDriver is the seam's Python side, run as `python3 -c` against the
+// wizard's own install root. It loads init_tui.py at module level only (main
+// is guarded), runs the SAME vendor bootstrap the legacy wizard runs before
+// its first prompt (_ensure_deps — its offer lines land on the wizard's TTY,
+// late rather than at start: recorded in the unit document), reads the recipe
+// through recipe-read, and hands it to config_wizard._dep_gate — panel,
+// dep_install TTY offer and the "Configure anyway?" confirm all the legacy
+// script's own bytes. Exit codes: 0 configure, 10 declined, 11 read failed
+// (its `skip config for …` line already printed), 3 _ensure_deps' own rc.
+const initDepGateDriver = `import runpy, sys
+from pathlib import Path
+home = Path(sys.argv[1])
+recipe_id = sys.argv[2]
+catalog = Path(sys.argv[3])
+wizard = runpy.run_path(str(home / "lib" / "_internal" / "init_tui.py"), run_name="ai_specs_init_dep_gate")
+rc = wizard["_ensure_deps"]()
+if rc is not None:
+    sys.exit(rc)
+try:
+    recipe = wizard["_load_sibling"]("recipe-read").read_recipe(catalog, recipe_id)
+except Exception as exc:
+    print(f"skip config for {recipe_id}: {exc}", file=sys.stderr)
+    sys.exit(11)
+from rich.console import Console
+ok = wizard["_load_sibling"]("config_wizard")._dep_gate(recipe, Console(stderr=True))
+sys.exit(0 if ok else 10)`
+
+// runLegacyInitDepGate is S37's seam, the hub delegate's tactic applied to one
+// wizard step: raw mode is SUSPENDED around the child (internal/tui's
+// Terminal documents exactly this use), the child inherits the wizard's own
+// TTY streams so questionary prompts on the same terminal the Go prompts do,
+// and raw mode resumes before the next prompt. AI_SPECS_HOME is pinned to the
+// wizard's home through childEnv — the env builder shim.go already owns —
+// because the driver's _ensure_deps and _dep_gate resolve the install root
+// from it. A non-terminal stream answers the wizard's rc 3: the seam never
+// runs over pipes, where questionary could neither draw nor read.
+func runLegacyInitDepGate(req initWizardRequest, keys tui.KeySource, recipeID, catalogDir string) wizardDepGateOutcome {
+	failWith := func(err error) wizardDepGateOutcome {
+		return wizardDepGateOutcome{Rc: 3, Err: err}
+	}
+	stdin, ok := req.Stdin.(*os.File)
+	if !ok {
+		return failWith(fmt.Errorf("the CLI-dep gate for %s needs a terminal stdin", recipeID))
+	}
+	stdout, ok := req.Stdout.(*os.File)
+	if !ok {
+		return failWith(fmt.Errorf("the CLI-dep gate for %s needs a terminal stdout", recipeID))
+	}
+	term, _ := keys.(interface {
+		Suspend()
+		Resume() error
+	})
+	if term != nil {
+		term.Suspend()
+	}
+	cmd := exec.Command("python3", "-c", initDepGateDriver, req.Home, recipeID, catalogDir)
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = req.Stderr
+	cmd.Env = childEnv(req.Home, "", "")
+	runErr := cmd.Run()
+	if term != nil {
+		if resumeErr := term.Resume(); resumeErr != nil {
+			return failWith(resumeErr)
+		}
+	}
+	code := 0
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(runErr, &exitErr) {
+			return failWith(fmt.Errorf("the CLI-dep gate for %s did not start: %v", recipeID, runErr))
+		}
+		if code = exitErr.ExitCode(); code < 0 {
+			return failWith(fmt.Errorf("the CLI-dep gate for %s was killed before exiting", recipeID))
+		}
+	}
+	switch code {
+	case initDepGatePass:
+		return wizardDepGateOutcome{Proceed: true}
+	case initDepGateDeclined:
+		return wizardDepGateOutcome{Skip: true}
+	case initDepGateReadError:
+		return wizardDepGateOutcome{} // the driver printed `skip config for …`
+	case initDepGateNoTUI:
+		// _ensure_deps' own answer (vendor missing and declined): the legacy
+		// wizard returns 3 for it too and init.sh's rc-3 branch takes over,
+		// with no message of its own.
+		return wizardDepGateOutcome{Rc: 3}
+	default:
+		return failWith(fmt.Errorf("the CLI-dep gate for %s exited %d", recipeID, code))
+	}
 }
 
 // renderWizardManifest is init_tui._render_manifest (S16): header, [project]
 // with name/subrepos/repo_topology, [agents], one enabled table per selected
 // recipe with its config table when values exist, and the trailing comment
-// pair. configured is nil in T4b-1 (S19 defers every config prompt), and the
-// render keeps the rule S16/S18 pin anyway: project-owned keys never land
-// under a recipe.
+// pair. configured is _configure_recipes' collected map (U4b-2): keys sorted,
+// project-owned keys never landing under a recipe (S16/S18), values through
+// toml_write's renderer — the staged bytes the Python's own render produces
+// (S36), which is why this route does NOT write the config through
+// config.UpdateRecipeConfig: that surgery appends at the recipe region's END,
+// after the trailing comments for the last recipe, and would break the byte
+// order S16 pins.
 func renderWizardManifest(name string, agents, recipeIDs []string, configured map[string]map[string]any, topology string) (string, error) {
 	lines := []string{
 		initWizardHeader,
@@ -529,11 +756,12 @@ func renderWizardManifest(name string, agents, recipeIDs []string, configured ma
 }
 
 // renderWizardSidecar is `json.dumps(meta) + "\n"` with Python's insertion
-// order and separators — name, agents, recipes, configured (S16). init.sh
-// reads it back with json.load and adopts the name; the wizard returns the
-// same value directly, and the bytes stay the Python's for anything that
-// compares them.
-func renderWizardSidecar(name string, agents, recipeIDs []string) string {
+// order and separators — name, agents, recipes, configured (S16).
+// configuredIDs is sorted(configured): the ids the wizard actually got values
+// for (S38). init.sh reads it back with json.load and adopts the name; the
+// wizard returns the same value directly, and the bytes stay the Python's for
+// anything that compares them.
+func renderWizardSidecar(name string, agents, recipeIDs, configuredIDs []string) string {
 	list := func(ids []string) string {
 		parts := make([]string, len(ids))
 		for i, id := range ids {
@@ -545,7 +773,7 @@ func renderWizardSidecar(name string, agents, recipeIDs []string) string {
 		`"name": ` + pythonJSONString(name) + ", " +
 		`"agents": ` + list(agents) + ", " +
 		`"recipes": ` + list(recipeIDs) + ", " +
-		`"configured": []}` + "\n"
+		`"configured": ` + list(configuredIDs) + "}" + "\n"
 }
 
 // renderWizardPanel is rich's Panel.fit over plain rows: rounded box, rows

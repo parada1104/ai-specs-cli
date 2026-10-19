@@ -607,9 +607,10 @@ func TestInitWizardCancelThroughTheVerb(t *testing.T) {
 }
 
 // TestInitTUIEnvSeamKeepsLegacyDelegation pins the escape hatch this slice
-// records (AI_SPECS_INIT_TUI_PY → lib/init.sh owns the wizard, exactly as
-// before the native one landed): the seam is what keeps the recipe-config
-// PTY cases on the legacy launcher until T4b-2.
+// records (AI_SPECS_INIT_TUI_PY → lib/init.sh owns the whole verb, exactly as
+// before the native one landed): since U4b-2 no wizard STEP needs it — the
+// recipe configuration is native behind its own dep-gate seam — it stays as
+// the route back to the legacy wizard until U7.
 func TestInitTUIEnvSeamKeepsLegacyDelegation(t *testing.T) {
 	home := t.TempDir()
 	libDir := filepath.Join(home, "lib")
