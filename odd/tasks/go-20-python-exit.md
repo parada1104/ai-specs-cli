@@ -231,5 +231,9 @@ cannot each be one PR.
 | U4d-1 — the harness env step, native | **delivered** | `e13f3a6` (PR #377); `sync.RunEnvScaffold` replaces `env_scaffold.py`'s non-interactive half; the dotenv surface is single-sourced in `internal/sync` and doctor delegates; differential against the Python: byte-identical |
 | U4d-2 — the wizard's env offer, native | **delivered, judgment approved** | `6fb58d1` (PR #382); `tui.Password`/`TextRaw`/`SelectDefault` + `sync.OfferHarnessEnv`; the env offer closes the gap S28 found; `ai-specs.env` created 0600 (S34); the harness-env PTY case now drives the binary |
 | U2 — flip the launcher + parity snapshot + deletion | pending, after the ports | L13 |
-| U5..U7 — skills, recipes, substrate tail | pending | |
+| U5a — `skills list`, native | **delivered** | `98510a9` (PR #385); read-only, 10-case differential byte-identical |
+| U5b — `skills remove`, native | **delivered** | `a88d36f` (PR #386); rides `config.RemoveDepSegment`; 12-case differential; a 0444 manifest is refused where the shell rewrites it (the U3b-2 R4 rule, recorded) |
+| U5c — `skills add` + the dispatcher, native | **delivered** | `2316b31` (PR #387); 31-case differential; the shim map is down to `recipe` and `configure-recipes`; the shell scripts stay for `bin/ai-specs` until T7 |
+| U6 — recipe + configure-recipes | pending | the largest module: seven scripts, five Python modules |
+| U7 — the substrate tail + retiring the dead shell scripts | pending | `util.py`, `recipe_schema.py`, `gate_binary.py`, the toml pair, and `lib/skills*.sh`
 | U8 — program closure | pending | |
