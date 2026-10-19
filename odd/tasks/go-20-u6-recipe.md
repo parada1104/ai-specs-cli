@@ -33,6 +33,35 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   this unit because their callers are `env_scaffold.py`, `dep_check.py` and `recipe-materialize.py`,
   which die with U2/U7. Each slice names what it actually kills.
 
+## U6e — the native review, and what its advisories became
+
+The review (`review-ea5e3ea49a8c6e1a`, tier high, 2049 lines) **closed approved with four lenses and zero
+blocking findings**, and its authority is burned. Getting there is worth recording, because the first two
+attempts failed in different ways:
+
+1. The **group** capture ran all four reviewers concurrently and died at the relay bound (1 009 529 ms
+   against 1 009 502 for a 127 578-byte prompt) with `prepared_reviewers: 0` — **nothing** was consumed and
+   nothing admitted. Group is all-or-nothing: with four ~128 KB prompts, one slow reviewer discards the
+   three healthy runs. This is U3b-2's lesson re-measured, and it is why the remaining captures went one
+   at a time.
+2. **Sequentially**, `risk` (2 844 B), `resilience` (2 191 B) and `readability` (3 707 B) were admitted; then
+   `reliability` hit the same 16.8-minute bound and the provider declared the slot **unachievable** — a
+   mutation, not a reoffered failure. Its own `capture-unachievable --withdraw=true` continuation, run with
+   the native binary, returned `withdrawn: true` and the slot was reoffered; the **retry finished** and the
+   review closed. The wall is time, not content, so a second attempt was worth its 17 minutes.
+
+The eleven advisory findings, with dispositions — none blocks, and none is silently dropped:
+
+| id | severity | disposition |
+| --- | --- | --- |
+| `R2-stale-initwizard-finding` | WARNING | **FIXED here**: the document claimed `initwizard.go:92` still said "U6e lands the native dep gate"; the parent corrected that comment in the same slice, so the stale thing was the sentence denouncing it — the same shape as U4b-2's `R2-stale-spec-finding-d` |
+| `R2-fixture-comment-name-mismatch` | SUGGESTION | **FIXED here**: the fixture comment named a case it does not build |
+| `R3-Rc3PartialWrite` | WARNING | **RECORDED**: the dep gate's rc 3 returns mid-loop, so recipes configured before it keep their writes. The Python has the same partial-write shape (its `ensure_deps` sits at a different point), and "fix" would mean rolling back writes the user asked for; recorded as a known limitation instead |
+| `R3-EnvOfferScope` | WARNING | **RECORDED, owner U7**: `recipe add` offers the project-wide env set where `recipe-add.py` scoped collection to the added id; the scoping lives in `internal/sync.OfferHarnessEnv`, outside this slice's edges |
+| `R3-LoopOrderUnproved`, `R3-AptGuidanceUnproved`, `R3-TailSeamClose` | WARNING/SUGGESTION | **RECORDED, owner U7**: the loop order, the dep-guidance bytes and the tail-seam close are pinned in-process, not differentially; a PTY differential is where they belong and the table has none (L4's constraint) |
+| `R1-1`, `R1-2`, `R1-3` | WARNING | **RECORDED**: the risk lens's three notes on the write path are informational here — the pre-loop `existing_by_id` snapshot, the one-writer call and the catalogue join are each the Python's behaviour, quoted in the code at the cited lines |
+| `R2-dead-empty-shim-map` | SUGGESTION | **DECLINED**: the empty map is deliberate and its comment says why — `runShim` is still exercised by `recipe init`'s direct route and by the `AI_SPECS_INIT_TUI_PY` hatch, so the mechanism is not dead even though no verb is shimmed |
+
 ## Slicing
 
 | slice | scope | retires | unblocks U4b-2 |
@@ -738,8 +767,9 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   docs/go-migration-parity-contract.md's frozen tables still describe the old world (§7's
   `recipe add` row "the dependency gate runs before the manifest write", and the routing rows
   naming recipe.sh/recipe-config.sh for both verbs) — outside this slice's edit edges, for T6.
-  (f) initwizard.go:92 still says "U6e lands the native dep gate" — stale after decision (b);
-  initwizard.go is outside this slice's edit edges, for T6. (g) `recipe add`'s env offer now runs
+  (f) ~~initwizard.go:92 still says "U6e lands the native dep gate"~~ — the PARENT corrected that
+  comment in the same slice (it now names U7 as the native dep gate's owner), so this clause is closed;
+  the review read it before the correction landed. (g) `recipe add`'s env offer now runs
   through sync.OfferHarnessEnv's AGGREGATE collection where recipe-add.py passed
   `recipe_ids=[id]` (U4d-2's port has no scoping parameter and internal/sync is outside this
   slice's edges); the structural `has_mcp_env` gate still precedes it, so the divergence is the

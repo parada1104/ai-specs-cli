@@ -2241,7 +2241,7 @@ func TestRecipeConfigureDatetimePathsPinTheRecordedDeviation(t *testing.T) {
 // through the injected seams (no PTY in the table, L4's constraint
 // unchanged), pinned by TestConfigureRecipes* below.
 
-// configureRecipesUsageFixtures is lib/recipe-config.sh's usage() heredoc as
+// configureRecipesUsageFixture is lib/recipe-config.sh's usage() heredoc as
 // the LEGACY bytes (the production const mirrors it; the differential is what
 // pins the two together).
 const configureRecipesUsageFixture = `Usage: ai-specs configure-recipes [path] [--help]
