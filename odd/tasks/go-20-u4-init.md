@@ -229,10 +229,13 @@ The per-recipe configuration step is native (`_configure_recipes` runs inside
   route that exercises it. (c) This document skips S21/S22 (T4b ends at S20, T4d starts at S23) — a
   pre-existing numbering gap, which is why the new block starts at S35 instead of backfilling
   numbers other documents may already cite.
-  (d) `tests/test_init_native.py::test_init_tui_py_env_seam_keeps_legacy_wizard_delegation` still
-  says the hatch "keeps the recipe-configuration PTY cases … observable" — stale after this slice,
-  and that file is outside this slice's edit surfaces; flagged for T6's pass (same class as L9's
-  cli.go finding). (e) S20 said "the four recipe-configuration cases"; the file actually held FIVE
+  (d) The hatch's comment in
+  `tests/test_init_native.py::test_init_tui_py_env_seam_keeps_legacy_wizard_delegation` said the hatch
+  "keeps the recipe-configuration PTY cases … observable" — stale the moment this slice landed, and
+  that file is outside the worker's surfaces. The PARENT corrected it in the same slice (it now says
+  "Reference/rollback hatch, not a step's seam"), so this clause is closed, not deferred. The review's
+  readability lens flagged this clause as stale WITHOUT re-reading the file — a false positive worth
+  recording: the sentence describing a defect can outlive the defect. (e) S20 said "the four recipe-configuration cases"; the file actually held FIVE
   tests with a `Configure …` stage (the topology suite has two) and the fifth never carried the
   legacy comment — all five now drive the built binary.
 
