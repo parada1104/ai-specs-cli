@@ -333,16 +333,38 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   with NO third checker added: `internal/schema`'s private validator grades recipe.toml LOAD, the
   shared one grades the write route's envelope; both mirror `recipe_schema._check_shape_value`
   byte-for-byte and existed before this slice, so unifying them is recorded as future work outside
-  this slice's edit surfaces. The promoted core's only other deliberate deltas from the gate copy
-  are the ones its header records: internal/toml instead of the embedded-Python tomllib seam for
+  this slice's edit surfaces. The promoted core's deliberate deltas from the gate copy are the ones
+  its header records: internal/toml instead of the embedded-Python tomllib seam for
   reads (parse-error DETAIL text differs — ADR 0002; frozen framings byte-identical) and no
-  rewrite-on-refusal (a byte-level no-op for LF manifests).
+  rewrite-on-refusal (a byte-level no-op for LF manifests); plus the WRITE SINK, undocumented until
+  this correction round (doc correction (b)): `internal/config.atomicWrite` keeps the manifest's
+  mode (0o7777 mask), RESOLVES a symlinked manifest to its target before the rename and REFUSES a
+  read-only manifest, where the gate copy's `atomicWriteFile` renames over the path as given
+  (replacing a symlink with a regular file) and forces 0o644 — both copies stay live (legacy bridge
+  vs native verb), so each sink is graded where it is used (`TestSkillsRemoveReadOnlyDeviation`
+  covers this package's read-only refusal); and the one value-domain divergence (B-003): a TOML
+  datetime inside a re-serialized inline table is silently CORRUPTED by the gate copy into a quoted
+  string (its bounded embedded-Python seam lowers tomllib's datetime through
+  `json.dumps(default=str)`), while the promoted copy refuses `cannot serialize datetime to TOML` —
+  the Python reference's own TypeError text from toml_write.py — with the bytes untouched. That
+  divergence is pinned as an explicit case, not as byte identity, by
+  `TestUpdateRecipeConfigRefusesADatetimeTheGateCopyCorrupts` (it runs BOTH copies and asserts the
+  promoted refusal plus the gate's corrupted bytes), and the five shared fixtures of
+  `TestUpdateRecipeConfigMatchesGateCopy` keep byte-identity over the domain where it holds.
 - L6 the verb: `runRecipeConfigure` in `internal/cli/recipe.go` ports `recipe-configure.py` main()
   end to end. The SCRIPT is the contract: argparse's surface is EMULATED (help/usage through
   argparse's width algorithm — COLUMNS → stdout TIOCGWINSZ → 80, minus 2 —, registration-order
   prefix abbreviation, the ambiguous/expected-one-argument/ignored-explicit/unrecognized/required
-  messages and their precedence; byte-identical between this machine's Python 3.11 and 3.14, both
-  verified); `_schema_for`'s `unknown recipe '<id>': …` wrapping (with Path-join semantics: an
+  messages and their precedence). The reference the port FOLLOWS is Python 3.14 — the interpreter
+  this machine's differential oracle runs (`PATH=/tmp/pybin/python3` is 3.14.7), so S3 measures the
+  port against it — and 3.11 was probed side by side: help/usage (default AND COLUMNS-pinned) and
+  the unknown/ambiguous/expected-one-argument/required arms are byte-identical, but ONE form
+  diverges: the interleaved trailing positional `recipe configure cfg --inspect /path` (and
+  `… --set k=v /path`) is `unrecognized arguments` + exit 2 on 3.11 and ACCEPTED on 3.14 (doc
+  correction (a) — the earlier claim of byte-identity between both interpreters was false). The
+  port accepts the 3.14 form; the differential case `interleaved positional fills the path slot`
+  pins it, and against a ≤3.11 oracle that case fails, which is how the divergence stays visible;
+  `_schema_for`'s `unknown recipe '<id>': …` wrapping (with Path-join semantics: an
   absolute id replaces the catalogue root, interior `..` kept uncleaned); `manifest not found:` /
   `invalid manifest:`; the two parser.error() arms; `PROJECT_OWNED_KEYS = {repo_topology}` routed to
   `[project]` through `config.WriteProjectKey` BEFORE the recipe block write (unchanged-value
@@ -378,7 +400,14 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   reference over a STUB front door: sync failure → `partial`, `failed_step: "recipes"`, exit 1 and
   the frozen reason; sync ok + doctor ≠ 0 → `failed` + `doctor verification failed`, exit 1 with
   the verify block still populated; both ok → the parsed counts, status `ok`, exit 0; a doctor
-  with no Summary → `parsed: false` with null counts, still `ok`. A front door that cannot be
+  with no Summary → `parsed: false` with null counts, still `ok`. The stub ALSO asserts the FULL
+  spawn contract (B-004/A-002): invoked binary path (`$0`), cwd = the resolved project root
+  (`pwd -P`), the argv root positional, and the `--ignore-cli-version` presence — every violation
+  is appended to that leg's `$STUB_CONTRACT_LOG`, which the test reads back, and the stub exits 90,
+  so a wrong spawn fails on the log AND on the pinned exit codes even when BOTH legs would violate
+  identically (a shared wrong answer would otherwise still byte-match); a combined
+  `--sync --ignore-cli-version` case pins the flag as the sync argv's third argument (previously
+  unpinned). A front door that cannot be
   spawned exits 1 with Go's exec error and NO report — Python's uncaught FileNotFoundError does
   the same (no report), only the wording differs (ADR 0002).
 - L6 differential: `bash lib/recipe.sh configure <args>` vs the built binary on byte-identical
@@ -389,9 +418,14 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   the fail-open bridge), LC_ALL=C, PYTHONDONTWRITEBYTECODE=1, the LOUD tomllib probe (skillsOracle;
   run with `PATH=/tmp/pybin:$PATH`), stdout/stderr/exit byte for byte after normalizing each leg's
   own project root (both spellings — Python resolve() prints the realpath), PLUS the resulting
-  project trees and a home snapshot around the whole table. TWENTY-EIGHT cases, all
+  project trees and a home snapshot around the whole table. THIRTY cases, all
   byte-identical: `--inspect` with a config block, without one, on a recipe absent from the
-  manifest, `--json`-compact, and with the cwd default; `--set` of an inline scalar, the str
+  manifest, `--json`-compact, and with the cwd default; `--inspect` on a SECOND fixture recipe
+  (`mcporder`) whose two `[[provides.mcp]]` presets are declared OUT of sorted order (trello
+  before engram) with both ids in the manifest's `[mcp]` — `grounding.mcp.present` is the script's
+  `sorted(name for name in required_mcp if name in manifest_mcp)` and B-001 caught the port
+  emitting declaration order (RED was the two arrays flipped); `--inspect` on the interleaved
+  trailing positional `cfg --inspect <path>` (doc correction (a)); `--set` of an inline scalar, the str
   raw-value fallback, a nested dotted key, a whole structured table, a `repo_topology` landing in
   `[project]`, and a `--json` report; the unchanged-value no-op; an invalid enum and an unknown key
   (both exit 3, project untouched); `--dry-run` (no write); the `[tool]` pin blocking with exit 4
@@ -406,9 +440,19 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   `invalid TOML value for …` and the write guard comes from internal/toml, not tomllib — the
   framings and everything around the detail are byte-compared (ADR 0002, same move as L4/L5);
   (2) an unspawnable front door prints Go's exec error where Python prints a traceback (same
-  exit 1, no report either way); (3) a TOML datetime reaching the report dies with Go's
-  serialization error where json.dumps dies with a TypeError traceback (both exit 1 uncaught —
-  unexercised, no config fixture carries one); (4) argparse's help width is queried through
+  exit 1, no report either way); (3) a TOML datetime in the recipe config dies in the REPORT
+  BUILDER on both routes but at different MOMENTS (corrected this round — the earlier text claimed
+  `both exit 1 uncaught`, which is wrong on both counts): the NATIVE verb refuses BEFORE any write —
+  `--set` over a config value that is a datetime prints Go's serialization error to stderr, emits NO
+  report, exits 1 and leaves the manifest bytes untouched (the failure happens while building
+  `applied.changed`), and `--inspect` reports exit 3 through `rejected(...)` with the serialization
+  error as the report's reason — while the PYTHON reference builds the report dict fine, WRITES the
+  manifest inside apply_project, and only then crashes in json.dumps (uncaught TypeError traceback,
+  exit 1, file already modified), and its `--inspect` dies the same way with exit 1 and NO report.
+  Verified against lib/_internal/recipe-configure.py directly (probe: `--set` → exit 1, empty
+  stdout, `board_id = "new"` on disk; `--inspect` → exit 1, empty stdout) and pinned native by
+  `TestRecipeConfigureDatetimePathsPinTheRecordedDeviation`; the write-TIME sibling (a datetime the
+  writer must RE-SERIALIZE) is B-003's divergence in the module-graph entry above; (4) argparse's help width is queried through
   COLUMNS → TIOCGWINSZ → 80 like shutil.get_terminal_size, so on a real TTY the port matches the
   legacy wrap; mixed leftover ordering (an unknown option AND a third positional together) follows
   argument order here and is not pinned by any case (unexercised corner). The differential also
@@ -440,3 +484,72 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
     secret-shaped-literal refusal was ported correctly, not a defect.
   The candidate changed with the guard, so this lineage cannot close on it; the outside view for the
   committed candidate is Judgment Day, recorded in its own section.
+
+- L8 (U6d-1, dual-blind review — ONE bounded correction round) — the completed two-judge review of
+  the committed candidate, findings resolved in one pass. No finding was judged wrong: all six were
+  reproduced before fixing (two as RED tests, one as a passing divergence assertion, three by probe
+  or source). B-003 and B-004/A-002 were PIN defects, not code defects — the behavior was already
+  correct and the tests did not say so:
+  - **B-001 (MAJOR) `grounding.mcp.present` order**, acted. The port appended present ids in the
+    recipe's DECLARATION order; `recipe-configure.py:225` emits `sorted(...)`, so a recipe
+    declaring `trello` then `engram` (both in the manifest's `[mcp]`) reported
+    `["trello","engram"]` natively and `["engram","trello"]` from the script. The 28-case table
+    could not catch it because `recipeConfigureFixtureRecipe` declares no `[[provides.mcp]]`.
+    Fix: `configureGrounding` sorts the filtered ids; pinned by the differential's new `mcporder`
+    fixture + case whose recipe declares the presets unsorted (RED: the two arrays flipped,
+    byte-compared stdout).
+  - **A-001/B-005 the validation regex was gated on `kind == "str"`**, acted.
+    `recipeconfig.go` gated `validation.regex` on the field kind where
+    `_validate_values` gates on `isinstance(value, str)`, so a field whose declared type maps to
+    neither str/int/bool (no `type`, a custom name like `float`, a typo) accepted a non-matching
+    string and wrote it where the script refuses exit 3 with `does not match its validation
+    pattern`. Fix: gate on the value — Python's exact predicate; pinned by the unit cases over
+    the `floaty` (custom name) and `untyped` (no type) fields (RED: both accepted the
+    non-matching strings) plus the isinstance-gate preservation case (a non-string skips the
+    pattern).
+  - **B-002 CRLF manifests got mixed endings**, acted. `UpdateRecipeConfig` read the manifest
+    RAW, so untouched lines kept CRLF while the rewritten line got LF; the reference's
+    `read_text` (universal newlines) normalizes in memory and writes the whole file LF. Fix: read
+    through the package's existing `readManifestText` — the one universal-newline reader the
+    package already shares (`_write_project_key`, the remove/add writers), not a second
+    implementation; pinned by `TestUpdateRecipeConfigNormalizesCRLFToLF` (a write returns the
+    whole file LF byte-for-byte; a no-op leaves the CRLF bytes untouched, like the reference's
+    early return) — RED: the mixed-endings bytes observed.
+  - **B-004/A-002 the `--sync` stub pinned nothing**, acted. The stub matched only `$1` — no
+    project-root, cwd, binary-path or flag assertion, and no case combined `--sync` with
+    `--ignore-cli-version`. The stub now asserts `$0`, `pwd -P`, the argv root positional and the
+    flag presence, appending every violation to that leg's `$STUB_CONTRACT_LOG` (read back by the
+    test) and exiting 90 — so even two identically wrong legs fail on their logs and the pinned
+    exit codes; a combined `--sync --ignore-cli-version` case pins the flag as the sync argv's
+    third argument. Both legs satisfied the strengthened contract on the first run: no code change
+    was needed, the defect was the missing pin.
+  - **B-003 the "one grader" pin did not hold over the real domain**, acted. Over the five shared
+    fixtures the gate copy and the promoted copy still agree byte for byte; with an inline table
+    holding a TOML datetime the gate copy CORRUPTS it into a quoted string (its bounded
+    embedded-Python seam lowers datetimes through `json.dumps(default=str)`), while the promoted
+    copy refuses `cannot serialize datetime to TOML` with the bytes untouched — the Python
+    reference's own answer (toml_write.py's TypeError). The pin is now honest: byte identity kept
+    over its domain, plus `TestUpdateRecipeConfigRefusesADatetimeTheGateCopyCorrupts` running BOTH
+    copies (native: refusal + untouched bytes; gate leg: the corrupted bytes asserted) with a
+    comment recording which copy corrupts. The promoted copy was NOT repaired to imitate the
+    gate; the divergence is documented in L6's module-graph entry and in recipeconfig.go's header.
+  - **L6/L7 doc corrections**, acted, each verified: (a) the argparse byte-identity claim was
+    false for interleaved positionals — `recipe configure cfg --inspect /path` (and
+    `--set k=v /path`) is `unrecognized arguments` + exit 2 on Python 3.11 and accepted on 3.14;
+    L6 now says the port follows 3.14 (the interpreter `PATH=/tmp/pybin` — this machine's
+    differential oracle — runs) and why, with every other probed surface byte-identical between
+    the two, and the accepted form is pinned by the new differential case (it fails against a
+    ≤3.11 oracle, keeping the divergence visible). (b) The write-sink divergence is now
+    documented in L6 and in recipeconfig.go's header: `internal/config.atomicWrite` keeps the
+    mode, resolves a symlinked manifest and refuses a read-only manifest, where the gate copy's
+    `atomicWriteFile` renames over (replacing a symlink) and forces 0o644. (c) The datetime
+    deviation described the write and the exit codes wrongly in both directions: the native verb
+    refuses BEFORE any write (exit 1, stderr, no report, bytes untouched) while the Python
+    reference WRITES the manifest and then crashes in json.dumps (exit 1, traceback, file
+    modified), and the `--inspect` path reports exit 3 through `rejected(...)` on the native side
+    where Python dies uncaught at exit 1 — corrected in L6 with the probe evidence and pinned
+    native by `TestRecipeConfigureDatetimePathsPinTheRecordedDeviation`.
+  Consequence for the differential: 28 → THIRTY cases (the `mcporder` fixture and the interleaved
+  positional), all byte-identical under `PATH=/tmp/pybin:$PATH` (3.14.7); the sync-leg table grew
+  the combined flag case. Candidate changed with these fixes, so this lineage cannot close on the
+  reviewed bytes — the same handoff rule L7 recorded.
