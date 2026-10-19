@@ -5,13 +5,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 // Surgical manifest writes: byte-exact ports of the python3 heredocs in
-// lib/skills-add.sh, lib/recipe-remove.sh, and lib/skills-remove.sh.
+// lib/skills-add.sh, lib/recipe-remove.sh, and lib/skills-remove.sh, plus
+// recipe-add.py's own write step (AppendRecipeSegments — literal append and
+// parse-validate-and-restore, GO-20 U6b).
 //
 // All operations work on raw bytes and never re-serialize parsed TOML;
 // internal/toml.Parse is used only for the valid→invalid validate-guard.
@@ -331,4 +334,98 @@ func RemoveDepSegment(manifestPath, depID string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("  ✓ removed [[deps]] '%s' from %s", depID, manifestPath), nil
+}
+
+// RecipeConfigField is one [config.<key>] placeholder line of the
+// [recipes.<id>.config] block `recipe add` appends: the CLI converts the
+// parsed schema field (internal/schema owns that read, S6) and this file
+// owns the rendering, so the appended bytes have exactly one author — no
+// second writer in the CLI package.
+type RecipeConfigField struct {
+	Key      string
+	Required bool
+	// Default is field.default; nil mirrors `default is None` (TOML has no
+	// null, so an absent default and a nil default are the same fact).
+	Default any
+}
+
+// AppendRecipeSegments is the port of recipe-add.py's write step: the
+// literal append at EOF of "\n[recipes.<id>]\nenabled = true\n" plus the
+// [recipes.<id>.config] placeholder block (keys in Python's sorted() order;
+// required → `key = ""  # REQUIRED`, a default → key = toml_value(default),
+// otherwise the commented `# key = ""  # optional` line — required WINS
+// over a default, exactly what the if/elif chain decides), followed by the
+// parity contract §3 (docs/go-migration-parity-contract.md)
+// parse-validate-and-restore: the appended text is written atomically,
+// validated, and on failure the ORIGINAL text is restored atomically with
+// recipe-add.py's frozen guard message — including the universal-newline
+// normalization Path.read_text / write_text(original_text) leave behind, so
+// a malformed append never survives as the manifest.
+//
+// Unlike guardValidToInvalid this guard is UNCONDITIONAL: recipe-add.py
+// tomllib.loads the appended text whatever the base looks like (an
+// already-invalid base still refuses — test_recipe_add's rollback fixture),
+// which is why the remove heredocs' shared guard is not reused here (S6: one
+// grader per behaviour).
+func AppendRecipeSegments(manifestPath, recipeID string, fields []RecipeConfigField) error {
+	original, err := readManifestText(manifestPath)
+	if err != nil {
+		return err
+	}
+	block, err := renderRecipeSection(recipeID, fields)
+	if err != nil {
+		// A default toml_value cannot serialize: Python raises its TypeError
+		// at the same site, before anything is written.
+		return err
+	}
+	text := original
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	text += block
+	if err := atomicWrite(manifestPath, text); err != nil {
+		return err
+	}
+	if _, perr := toml.Parse([]byte(text)); perr != nil {
+		// Restore the original text (the normalized copy recipe-add.py
+		// holds), so the refusal leaves the manifest exactly where it was.
+		if rerr := atomicWrite(manifestPath, original); rerr != nil {
+			return fmt.Errorf("adding '%s' would produce an invalid TOML manifest, and restoring the original failed: %w", recipeID, rerr)
+		}
+		return fmt.Errorf("Error: adding '%s' would produce an invalid TOML manifest (%s). ai-specs.toml was not modified.", recipeID, perr)
+	}
+	return nil
+}
+
+// renderRecipeSection builds recipe-add.py's section string: the enabled
+// block, then — only when the recipe declares config fields (has_config is
+// `bool(config_schema.fields)`) — the placeholder table with the keys
+// sorted the way Python's sorted() orders them.
+func renderRecipeSection(recipeID string, fields []RecipeConfigField) (string, error) {
+	var sb strings.Builder
+	sb.WriteString("\n[recipes." + recipeID + "]\nenabled = true\n")
+	if len(fields) == 0 {
+		return sb.String(), nil
+	}
+	ordered := make([]RecipeConfigField, len(fields))
+	copy(ordered, fields)
+	slices.SortFunc(ordered, func(a, b RecipeConfigField) int {
+		return strings.Compare(a.Key, b.Key)
+	})
+	sb.WriteString("\n[recipes." + recipeID + ".config]\n")
+	for _, f := range ordered {
+		switch {
+		case f.Required:
+			sb.WriteString(f.Key + " = \"\"  # REQUIRED\n")
+		case f.Default != nil:
+			v, err := toml.TOMLValue(f.Default)
+			if err != nil {
+				return "", err
+			}
+			sb.WriteString(f.Key + " = " + v + "\n")
+		default:
+			sb.WriteString("# " + f.Key + " = \"\"  # optional\n")
+		}
+	}
+	return sb.String(), nil
 }
