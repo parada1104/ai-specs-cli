@@ -208,3 +208,91 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   keeps L3's deviation 3 verbatim (anchored on the running binary, not lib/'s
   physical tree) — every differential home carries a catalogue, so it is not
   byte-exercised here either.
+- L5 — Evidence (U6c, T3), `recipe remove` native: the wrapper's argument
+  contract and BOTH of the script's write steps went native without a second
+  remover. The manifest surgery is ROUTED, not re-written:
+  `config.RemoveRecipeSegments` — already ported and differential-tested
+  against `testdata/recipe_remove_ref.py` in
+  `internal/config/writes_differential_test.go` (segmenter, valid→invalid
+  guard, CRLF normalization, not-found message, repo-manifest sub-tables) —
+  is called from `runRecipeRemove` in `internal/cli/recipe.go`, which owns
+  only the shell contract around it: the `usage()` heredoc bytes, the
+  argument loop (`<id>` then optional `[path]`, `--` semantics, unknown flags,
+  `ERROR: missing recipe id` + usage on stderr + exit 2), the cd/pwd target
+  resolution, the `ERROR: <toml_path> not found.` guard, and the print sides
+  of the helper's frozen messages (`✓ removed N section(s) …` on stdout, the
+  `✗` and the guard error on stderr, exit 1). The lock cleanup
+  (recipe-remove.sh:167-203) is the second step through the EXISTING
+  `internal/lock` API — `LoadLock` (its missing/non-regular-file shape is the
+  script's `[[ -f "$LOCK_PATH" ]]`: nothing removed, nothing written),
+  `RemoveRecipeLockEntries` (the 1:1 port of
+  `remove_recipe_lock_entries`, already covered by lock_test.go's "Remove
+  helpers return presence") and `WriteLock` — so **`internal/lock needed NO
+  change this slice**: `mutation.go` is untouched and `mutation_test.go` was
+  deliberately not created (no new behaviour to grade — one grader per
+  behaviour, S6, and a surface is not filled for its own sake). `Run`
+  dispatches `routeRecipeRemove` with `args[2:]` (recipe.sh's own subcommand
+  shift). There is NO TTY seam, unlike U6b: recipe-remove.sh has no
+  interactive branch, so the whole verb is native end to end — which is what
+  retires the BINARY's use of recipe-remove.sh under S9 (the file itself
+  stays for U7/U8; no Python file was deleted).
+- L5 differential: `bash lib/recipe-remove.sh <args>` vs the built binary on
+  byte-identical TWIN projects under one shared env — isolated AI_SPECS_HOME
+  (skillsListHome, `lib` symlinked so the wrapper runs), LC_ALL=C,
+  PYTHONDONTWRITEBYTECODE=1, `WORKTREE_GATE_BIN` pinned to a freshly built
+  worktree-gate (skillsRemoveGateBinary + skillsRemoveEnv, U5b's pattern:
+  without the pin lock.py's bridge fails open with a
+  `GO_LOCK_WRITE_BRIDGE_FALLBACK` stderr line the native leg never prints and
+  the byte comparison would measure the bridge, not the verb), the LOUD
+  tomllib probe (skillsOracle; run with `PATH=/tmp/pybin:$PATH`),
+  stdout/stderr/exit byte for byte after normalizing each leg's own project
+  root, PLUS the resulting project trees — manifest bytes AND lock bytes —
+  and a home snapshot around the whole table (the verb writes nothing in the
+  CLI home). Thirteen cases, all byte-identical: (1) a recipe that exists
+  with its config sub-table (both segments dropped; the sibling multi-line
+  string with blank lines survives byte-for-byte, D2's class); (2) a recipe
+  with lock entries (entries dropped, meta/managed/agents preserved — D1's
+  subject —, the lock rewritten to byte-identical bytes across legs and
+  `  ✓ cleaned lock entries …` printed by both); (3) a lock carrying ONLY
+  another recipe's entries (NOT rewritten: the surviving comment line plus a
+  before/after byte assertion per leg pin "rewrite only when something was
+  removed"); (4) a recipe absent from the manifest (`  ✗ … not found`, exit 1,
+  project untouched); (5) a manifest with no `[recipes.*]` at all (same);
+  (6) a deletion that would break a valid TOML (frozen `ERROR: removing
+  recipe '…' would produce invalid TOML: …`, exit 1, bytes untouched — only
+  the embedded parse detail normalized, recipeRemoveGuardDetailRE, the same
+  ADR 0002 move as L4); (7) the missing id (two stderr lines + usage + exit
+  2); (8) `--help`; (9) an unknown flag; (10) a third positional; (11) a
+  positional after `--` (success); (12) a missing manifest (`ERROR: <path>
+  not found.`, exit 1); (13) the cwd default. The routing proof (`recipe
+  remove` with PATH emptied) pins that no shim, no bash and no Python run on
+  the verb, and the route test pins `init`, `configure`, the bare `recipe`,
+  `--help`/`-h`/`help` and the unknown arms on `lib/recipe.sh`.
+- L5 deviations: (1) a `cd` failure keeps exit 1 and the `cd: <path>:
+  <reason>` shape but drops bash's own `lib/recipe-remove.sh: line N: ` prefix
+  (U5a's S12 class, pinned by TestRecipeRemoveMissingPathDeviation); (2) the
+  guard message's embedded parse-error detail is diagnostic (ADR 0002),
+  normalized only inside that one message with the id, the framing and the
+  untouched manifest byte-compared around it; (3) a corrupt lock file exits 1
+  like the script's traceback but prints Go's load error instead of Python's
+  traceback text (the class U5b already recorded), not differentially
+  exercised here; (4) a READ-ONLY manifest would hit the shared
+  `config.atomicWrite` R4 refusal where the script's mkstemp+os.replace
+  completes — the same divergence TestSkillsRemoveReadOnlyDeviation pins for
+  `skills remove`, inherited through the shared writer (inside
+  internal/config, outside this slice's edit surfaces) and NOT differentially
+  exercised by this table.
+- L5 spec findings (reported, not silently absorbed): (a)
+  docs/go-migration-parity-contract.md §9 rows D1, D13 and D14 describe a
+  recipe-remove.sh that no longer exists — the current script writes
+  atomically (mkstemp + os.replace), validates before writing, and delegates
+  the lock to lock.py, which preserves `[managed.*]`, `[deps]` and
+  `[agents.*]`; D1 now holds only for the `[recipes]`/`[skills]` sections the
+  lock writer emits on NEITHER side (recorded-defect in internal/lock), and
+  D14's "no TOML validation" is exactly the guard this port reuses. Those rows
+  live outside this slice's edit surfaces, so they are reported for the
+  program document's own pass (T6), not edited here. (b) The slicing table's
+  U6c `retires recipe-remove.sh` row needs no L4-style amendment: with no TTY
+  branch, the binary's use of the script is fully retired by this route, so
+  the row is honest already when read through S9 (physical deletion stays
+  U7/U8).
