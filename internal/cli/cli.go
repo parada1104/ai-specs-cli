@@ -132,9 +132,10 @@ func Route(args []string) route {
 	// every OTHER arm of that case statement — `init`, `--help|-h|help`, the
 	// bare `recipe`, unknown subcommands — falls through to the shims map below
 	// and keeps exec'ing lib/recipe.sh byte for byte (U6e retires that script).
-	// Route cannot see the streams, so `recipe add`'s TTY seam (on a terminal
-	// the verb delegates back to that shim — runRecipeAdd) lives in Run, pinned
-	// by TestRecipeAddTTYSeamStaysOnLegacyScript; `recipe remove` has no such
+	// Route cannot see the streams, so `recipe add`'s TTY seam lives in Run, not
+	// here: since U6d-2 the wizard half is native and the seam is NARROW — it
+	// delegates only a TTY run that would reach the env offer or the CLI-dep
+	// gate, both still U6e's (pinned by the seam test). `recipe remove` has no
 	// seam (its script has no interactive branch), and `recipe configure` has
 	// none either — recipe.sh's `configure` arm execs the Python script whole,
 	// with no TTY branch, and the port owns it end to end.

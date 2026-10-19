@@ -8,8 +8,10 @@ package tui
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -349,4 +351,202 @@ func TestTextRawReturnsTheBufferVerbatim(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestTextBytesAreUnchangedForExistingCallers pins the EXACT byte contract
+// Text and TextRaw answer with today (GO-20 U6d-2): the validated prompt
+// TextValidated adds beside them must not move a single byte of either — the
+// draw before the first key, the per-keystroke redraw with its cursor park,
+// and the Enter settle are asserted here as literals, so any change to the
+// shared engine fails this test first. Preservation test: it is expected to
+// pass before and after the slice (PRESERVE baseline, captured pre-change).
+func TestTextBytesAreUnchangedForExistingCallers(t *testing.T) {
+	cases := map[string]struct {
+		prompt func(out *bytes.Buffer, in *scriptedText) (string, bool)
+		script []TextKey
+		want   string // the exact bytes the prompt must write
+		answer string // expected answer
+		ok     bool   // expected ok
+	}{
+		"Text immediate enter": {
+			prompt: func(out *bytes.Buffer, in *scriptedText) (string, bool) {
+				return Text(out, in, "Project name:", "demo")
+			},
+			script: []TextKey{{Kind: TextEnter}},
+			want: "\r\x1b[2K? Project name: demo" +
+				"\r\x1b[2K? Project name: demo\n",
+			answer: "demo", ok: true,
+		},
+		"Text typed append": {
+			prompt: func(out *bytes.Buffer, in *scriptedText) (string, bool) {
+				return Text(out, in, "Project name:", "demo")
+			},
+			script: append(textRunes("ab"), TextKey{Kind: TextEnter}),
+			want: "\r\x1b[2K? Project name: demo" +
+				"\r\x1b[2K? Project name: demoa" +
+				"\r\x1b[2K? Project name: demoab" +
+				"\r\x1b[2K? Project name: demoab\n",
+			answer: "demoab", ok: true,
+		},
+		"Text cursor park after Ctrl-A": {
+			prompt: func(out *bytes.Buffer, in *scriptedText) (string, bool) {
+				return Text(out, in, "Project name:", "demo")
+			},
+			script: append(append([]TextKey{{Kind: TextLineStart}}, textRunes("x")...), TextKey{Kind: TextEnter}),
+			want: "\r\x1b[2K? Project name: demo" +
+				"\r\x1b[2K? Project name: demo\x1b[4D" +
+				"\r\x1b[2K? Project name: xdemo\x1b[4D" +
+				"\r\x1b[2K? Project name: xdemo\n",
+			answer: "xdemo", ok: true,
+		},
+		"Text abort terminates the drawn line": {
+			prompt: func(out *bytes.Buffer, in *scriptedText) (string, bool) {
+				return Text(out, in, "Project name:", "demo")
+			},
+			script: []TextKey{{Kind: TextAbort}},
+			want:   "\r\x1b[2K? Project name: demo" + "\n",
+			answer: "", ok: false,
+		},
+		"TextRaw immediate enter": {
+			prompt: func(out *bytes.Buffer, in *scriptedText) (string, bool) {
+				return TextRaw(out, in, "VAR:", "demo")
+			},
+			script: []TextKey{{Kind: TextEnter}},
+			want: "\r\x1b[2K? VAR: demo" +
+				"\r\x1b[2K? VAR: demo\n",
+			answer: "demo", ok: true,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var out bytes.Buffer
+			got, ok := tc.prompt(&out, in2(tc.script))
+			if ok != tc.ok || got != tc.answer {
+				t.Errorf("answer = (%q, %v), want (%q, %v)", got, ok, tc.answer, tc.ok)
+			}
+			if out.String() != tc.want {
+				t.Errorf("bytes changed:\n got = %q\nwant = %q", out.String(), tc.want)
+			}
+		})
+	}
+}
+
+// TestTextValidatedRepromptsUntilTheValidatorAccepts is U6d-2's new primitive:
+// questionary's validate= behaviour. A failing Enter prints the validator's
+// message under the settled line, keeps the buffer, and draws the prompt
+// again; the next answer is accepted. The validator sees the buffer AS TYPED
+// (questionary validates the raw line, not a substituted answer).
+func TestTextValidatedRepromptsUntilTheValidatorAccepts(t *testing.T) {
+	var gotInputs []string
+	validate := func(answer string) error {
+		gotInputs = append(gotInputs, answer)
+		if len(answer) < 3 {
+			return errors.New("must be at least 3 characters")
+		}
+		return nil
+	}
+	script := append(textRunes("ab"), TextKey{Kind: TextEnter})
+	script = append(script, clearLine()...)
+	script = append(script, textRunes("abc")...)
+	script = append(script, TextKey{Kind: TextEnter})
+
+	var out bytes.Buffer
+	got, ok := TextValidated(&out, in2(script), "code:", "", validate)
+	if !ok || got != "abc" {
+		t.Fatalf("TextValidated = (%q, %v), want (\"abc\", true)", got, ok)
+	}
+	if !reflect.DeepEqual(gotInputs, []string{"ab", "abc"}) {
+		t.Errorf("validator inputs = %q, want [\"ab\" \"abc\"] (raw buffer each round)", gotInputs)
+	}
+	if !strings.Contains(out.String(), "must be at least 3 characters") {
+		t.Errorf("the failing message was never shown: %q", out.String())
+	}
+	// The prompt is drawn again AFTER the message: message line between two
+	// `? code: ` draws.
+	if strings.Count(out.String(), "? code: ") < 3 { // initial + per-key redraws + re-draw
+		t.Errorf("prompt not redrawn after the failure: %q", out.String())
+	}
+	if idxMsg := strings.Index(out.String(), "must be at least 3 characters"); idxMsg >= 0 {
+		if rest := out.String()[idxMsg:]; !strings.Contains(rest, "? code: ") {
+			t.Errorf("no prompt follows the message: %q", out.String())
+		}
+	}
+}
+
+// TestTextValidatedValidatesTheRawBuffer pins questionary's contract on the
+// corners: the pre-filled default is validated as the line stands, a cleared
+// line reaches the validator as "", and a passing answer comes back VERBATIM
+// (no strip, no substitution — config_wizard strips the blank itself).
+func TestTextValidatedValidatesTheRawBuffer(t *testing.T) {
+	t.Run("untouched prefill is the answer", func(t *testing.T) {
+		var inputs []string
+		validate := func(answer string) error {
+			inputs = append(inputs, answer)
+			return nil
+		}
+		var out bytes.Buffer
+		got, ok := TextValidated(&out, in2([]TextKey{{Kind: TextEnter}}), "code:", "demo", validate)
+		if !ok || got != "demo" {
+			t.Errorf("TextValidated = (%q, %v), want (\"demo\", true)", got, ok)
+		}
+		if !reflect.DeepEqual(inputs, []string{"demo"}) {
+			t.Errorf("validator inputs = %q, want [\"demo\"]", inputs)
+		}
+	})
+
+	t.Run("cleared line reaches the validator as empty", func(t *testing.T) {
+		var inputs []string
+		validate := func(answer string) error {
+			inputs = append(inputs, answer)
+			if answer == "" {
+				return errors.New("This field is required.")
+			}
+			return nil
+		}
+		script := append(clearLine(), TextKey{Kind: TextEnter})
+		script = append(script, textRunes("x")...)
+		script = append(script, TextKey{Kind: TextEnter})
+		var out bytes.Buffer
+		got, ok := TextValidated(&out, in2(script), "code:", "demo", validate)
+		if !ok || got != "x" {
+			t.Fatalf("TextValidated = (%q, %v), want (\"x\", true)", got, ok)
+		}
+		if !reflect.DeepEqual(inputs, []string{"", "x"}) {
+			t.Errorf("validator inputs = %q, want [\"\" \"x\"]", inputs)
+		}
+		if !strings.Contains(out.String(), "This field is required.") {
+			t.Errorf("the required message was never shown: %q", out.String())
+		}
+	})
+
+	t.Run("a passing answer is verbatim like TextRaw", func(t *testing.T) {
+		validate := func(string) error { return nil }
+		var out bytes.Buffer
+		got, ok := TextValidated(&out, in2(append(textRunes("  ok  "), TextKey{Kind: TextEnter})), "code:", "", validate)
+		if !ok || got != "  ok  " {
+			t.Errorf("TextValidated = (%q, %v), want the raw buffer %q", got, ok, "  ok  ")
+		}
+	})
+}
+
+// TestTextValidatedAbortsKeepTheSharedCancelSemantics: ESC and EOF answer
+// ("", false) with the drawn line terminated, exactly like Text/TextRaw — a
+// cancelled prompt never re-prompts and never invents an answer.
+func TestTextValidatedAbortsKeepTheSharedCancelSemantics(t *testing.T) {
+	for name, script := range map[string][]TextKey{
+		"escape": {{Kind: TextAbort}},
+		"eof":    {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var out bytes.Buffer
+			got, ok := TextValidated(&out, in2(script), "code:", "",
+				func(string) error { return errors.New("never reached") })
+			if ok || got != "" {
+				t.Errorf("TextValidated(%s) = (%q, %v), want (\"\", false)", name, got, ok)
+			}
+			if !strings.HasSuffix(out.String(), "\n") {
+				t.Errorf("the aborted line was not terminated: %q", out.String())
+			}
+		})
+	}
 }

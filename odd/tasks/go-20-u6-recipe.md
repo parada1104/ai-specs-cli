@@ -553,3 +553,95 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   positional), all byte-identical under `PATH=/tmp/pybin:$PATH` (3.14.7); the sync-leg table grew
   the combined flag case. Candidate changed with these fixes, so this lineage cannot close on the
   reviewed bytes — the same handoff rule L7 recorded.
+
+- L9 — Evidence (U6d-2, T4b + T3b first half), the wizard core and the NARROWED `recipe add` seam.
+  THE WIZARD CORE (goals 1/2): `internal/tui` gained ONE primitive, `TextValidated` — TextRaw's
+  verbatim-buffer contract plus questionary's `validate=`: every Enter first runs the validator
+  over the line AS TYPED (the raw buffer, before any strip/default substitution — the value
+  questionary hands the handler), and on failure the settled line is printed, the validator's
+  message under it, and the SAME buffer redrawn for another attempt; aborts keep the shared
+  ("", false). `Text`/`TextRaw` did not move a byte — pinned by the literals-golden
+  TestTextBytesAreUnchangedForExistingCallers, which was captured and GREEN BEFORE this slice's
+  implementation (the PRESERVE baseline) and still green after. The core is `runConfigWizard` in
+  `internal/cli/recipewizard.go`, a line-for-line port of `config_wizard.run_config_wizard` over
+  `internal/schema`'s ConfigSchema behind the injected `wizardPrompts` seam (production
+  `tuiWizardPrompts` → `tui.SelectDefault`/`Confirm`/`TextValidated` wired by
+  `openRecipeWizardPrompts` — isTTY + the raw-mode terminal, refusal rc 3, the
+  runInit/openInitWizardKeys pattern; tests script one ordered transcript): sorted(fields) only
+  (never .extra, never the structured tables), the field's help_text printed immediately before
+  its prompt, the `<recipe_id>.<key> (<required|optional>, <kind>)` message with kind = declared
+  type → else `enum` → else `string` (Python's `field.type or ("enum" if field.enum else
+  "string")` means a declared type WINS the message even on an enum field while `if field.enum:`
+  still picks the SELECT branch — both pinned; the slice handoff's paraphrase read kind as
+  "the field type, or enum when it carries one", which is true only when no type is declared),
+  `_field_default`'s four steps verbatim (existing_config → field.default → False-for-bool → ""),
+  Python's `str()` for the text prefill (bool → True/False, floats repr-shaped with the fixed
+  boundary at 1e16, list/table defaults through their repr: `['alpha', 'beta']`) and Python's
+  `bool()` for the confirm (bool("no") is True — pinned), the three validator shapes with the
+  re-prompt shown and the NEXT answer accepted (required-only `This field is required.`; regex-
+  only with empty ALWAYS passing and `Must match <pattern>` on a failed re.match — Go anchors
+  with `^(?:<pattern>)`, the grouped wrap keeping a leading `|` inside the anchor; composed
+  checking required FIRST, so whitespace and empty answer with the required message and never
+  `Must match`), blank → omit (the key stays out so write-back keeps the existing/default), and
+  cancel on ANY prompt → nothing (Python's `{}`, caller skips the write). The core NEVER writes:
+  an unparseable `validation.regex` surfaces as an error (Python's re.error escaping to the
+  `except Exception`) and the caller words recipe-add.py:266's exact
+  `  ! could not open the configuration wizard` line; answers are written by the verb through
+  `config.UpdateRecipeConfig` with `sortedWizardConfigValues` — the sorted key order IS Python's
+  dict insertion order, so new-key appends stay byte-stable.
+  THE FLIP (T3b, first half): the seam moved from the TOP of `runRecipeAdd` INTO the verb, at the
+  script's own position — after the guards, BEFORE the write — and `runRecipeAddFlow` injects the
+  prompt opener so tests drive the leg without a PTY. The narrowed truth, pinned both ways by
+  TestRecipeAddTTYSeamStaysOnLegacyScript (the pin keeps its name, which cli.go's and cli_test's
+  routing comments reference): off the TTY the port owns the whole verb (unchanged); on a TTY the
+  verb is native end to end when the run would NOT reach a tail without a native side — nothing to
+  configure (Python's else branch), or a config-only recipe, where the leg runs
+  blank line → `Configure now?` (default yes; decline/abort/cancel wording the frozen
+  `You can configure later with: ai-specs configure-recipes`, exit 0) → the wizard → the
+  write-back (declined leg leaves the placeholders untouched), and the configure leg REPLACES the
+  `Next steps:` guidance exactly as recipe-add.py:247 does. THE SEAM STILL CARRIES, and why:
+  `recipeAddTailNeedsLegacy = has_mcp_env || (has_config && recipe.cli_deps)` — the env offer
+  (env_scaffold.offer_harness_env) and the CLI-dep gate (recipe-add.py:258's `_run_cli_dep_gate`
+  and the same gate inside `configure_selected_recipes` — `config_wizard._dep_gate` with its
+  dep_install offer) have no native side yet and BOTH are U6e's declared scope, so any TTY run
+  that could reach either delegates the WHOLE verb to lib/recipe.sh before the write (the
+  manifest then untouched); with them that route still runs the legacy ensure_deps pre-gate and
+  the Python wizard, and physical deletion stays U7/U8 through S9. Native-leg deltas recorded in
+  the L4-deviation class: (1) recipe-add.py:155-181's ensure_deps/questionary PRE-write gate has
+  no native counterpart and needs none — the native wizard's only TUI dependency is internal/tui,
+  which cannot be missing from the running binary, so no run is refused (or pip-offered) for
+  Python packages; (2) a TTY whose raw-mode terminal cannot open answers the confirm like a
+  decline (legacy questionary would traceback uncaught post-write) — never exercised on a real
+  terminal, pinned by the unopenable-TUI subtest; (3) the TTY legs remain NOT differentially
+  byte-measured (runOne captures streams; no PTY in the table — L4's constraint unchanged):
+  the whole TTY surface is pinned in-process by the scripted seam/core/wiring tests instead.
+  **U4b-2 IS UNBLOCKED BY THIS TASK (S7)** — the pieces init's recipe-configuration step will
+  consume are named exactly: (a) `runConfigWizard(recipeID, *schema.ConfigSchema, existing,
+  wizardPrompts)` — the Go run_config_wizard, package `internal/cli`, callable from
+  initwizard.go directly — with its `wizardPrompts` interface so init can script or wire its own
+  prompts, and (b) `internal/schema`'s ConfigSchema/ConfigField (recipe.toml's parsed metadata out
+  of `schema.LoadRecipeToml`), plus the two caller-side helpers the recipe-add leg already proves
+  end to end: `sortedWizardConfigValues` feeding `config.UpdateRecipeConfig` (write-back) and
+  `tuiWizardPrompts`/`openRecipeWizardPrompts` (the internal/tui wiring, reusable as-is).
+  Nothing of recipe add's verb shell is needed. Test evidence: RED-1 (the core suite against the
+  absent file: `undefined: runConfigWizard` et al.), GREEN-1 (core + wiring green with the old
+  seam untouched), RED-2 (the rewritten pin on pre-flip code: the four native-leg subtests saw
+  the legacy marker and no wizard, the three kept-behaviour subtests passed), GREEN-2 (all seven
+  subtests; then `PATH=/tmp/pybin:$PATH go test ./internal/tui/ ./internal/cli/` and
+  `PATH=/tmp/pybin:$PATH go test ./cmd/... ./internal/...` green, `gofmt -l internal/` empty,
+  `git diff --quiet -- ai-specs/ai-specs.toml` exit 0).
+  Spec findings (reported, not absorbed): (a) the kind-paraphrase correction recorded in the
+  message entry above; (b) the wizard writes TEXT answers over typed defaults on BOTH routes:
+  `update_recipe_config` performs no type coercion, so accepting the untouched `retries = 3`
+  prefill rewrites it as the STRING `retries = "3"` — Python behaves identically, so the port
+  matches it rather than "fixing" it; anyone expecting typed round-trips is reading the wrong
+  contract; (c) cli.go:136-140 and cli_test.go:143-145 still describe the OLD whole-verb TTY
+  seam ("on a terminal the verb delegates back to that shim") — both live OUTSIDE this slice's
+  edit surfaces, so the narrowed truth is recorded here for T6's pass instead of edited there;
+  (d) docs/go-migration-parity-contract.md §7's frozen TTY table now has `recipe add` split
+  (native configure leg, script-retained env/dep legs) — same outside-surfaces situation L4
+  flagged, advanced one step for T6; (e) on the `recipe add` route the manifest read for
+  existing_config is behaviourally indistinguishable from the schema defaults (the placeholder
+  append mirrors `_field_default` exactly, and the dup refusal blocks any other config block),
+  so `wizardExistingConfig` is pinned by shape, not by a divergent-value case — configure-recipes
+  (U6e) and init (U4b-2) will exercise the existing-wins step for real.
