@@ -1,12 +1,16 @@
 package cli
 
-// The native init wizard's contract (odd/tasks/go-20-u4-init.md T4b-1):
-// S13's one new prompt primitive is exercised through the wizard, S14's flow
-// order, S15's cancel-writes-nothing, S16's byte-exact outputs (staged
-// manifest, JSON sidecar, the real manifest when missing and never over a
-// user's one), S17's key quoting, S19's deferred configuration line. The PTY
-// suite in tests/test_init_tui.py stays on the legacy launcher (S20), so these
-// scripted-key tests are the native wizard's own gate.
+// The native init wizard's contract (odd/tasks/go-20-u4-init.md T4b-1 +
+// T4b-2): S13's one new prompt primitive is exercised through the wizard,
+// S14's flow order, S15's cancel-writes-nothing, S16's byte-exact outputs
+// (staged manifest, JSON sidecar, the real manifest when missing and never
+// over a user's one), S17's key quoting, and since U4b-2 the per-recipe
+// configuration step (S35-S39): the Configure-now confirm, the scripted
+// field prompts whose values reach the staged manifest, the no-fields skip,
+// the repo_topology promotion (S18) and the CLI-dep gate's documented legacy
+// seam (S37). The PTY suite in tests/test_init_tui.py drives the built binary
+// for these flows too (S40); these scripted-key tests are the step's own
+// in-process gate.
 
 import (
 	"bytes"
@@ -55,11 +59,14 @@ func wizardScript(text []tui.TextKey, keys ...tui.Key) *scriptedWizardKeys {
 }
 
 type wizardFixture struct {
-	target string
-	home   string
-	tmp    string
-	stdout bytes.Buffer
-	stderr bytes.Buffer
+	target  string
+	home    string
+	tmp     string
+	stdout  bytes.Buffer
+	stderr  bytes.Buffer
+	depGate wizardDepGate
+
+	gateCalls int
 }
 
 // newWizardFixture builds an isolated target + CLI home and points TMPDIR at a
@@ -82,7 +89,8 @@ func newWizardFixture(t *testing.T) *wizardFixture {
 }
 
 // request builds the wizard request with a scripted key source standing in for
-// the production raw-mode terminal.
+// the production raw-mode terminal, and the fixture's scripted dep gate (nil
+// unless a test sets it, so the production legacy seam stays the default).
 func (f *wizardFixture) request(keys *scriptedWizardKeys) initWizardRequest {
 	return initWizardRequest{
 		Target: f.target,
@@ -94,6 +102,7 @@ func (f *wizardFixture) request(keys *scriptedWizardKeys) initWizardRequest {
 		OpenKeys: func(io.Reader, io.Writer) (tui.KeySource, func(), int) {
 			return keys, func() {}, 0
 		},
+		DepGate: f.depGate,
 	}
 }
 
@@ -495,18 +504,122 @@ func TestInitWizardCatalogScan(t *testing.T) {
 	}
 }
 
-// TestInitWizardDeferredConfigLine pins S19: a selected recipe that declares
-// config fields gets the one deferral line, and a recipe whose only field is
-// the project-owned repo_topology does not (the same filter the legacy
-// _wizard_recipe applies before prompting).
-func TestInitWizardDeferredConfigLine(t *testing.T) {
-	f := newWizardFixture(t)
-	f.seedRecipe(t, "cfg-one", wizardRecipeBody("cfg-one", "1.0.0", "configured")+`
+// --- U4b-2: the per-recipe configuration step (S35-S40) ---------------------
+
+// wizardBaseBranchField is one string field with help text: the shape every
+// per-field prompt assertion below leans on.
+const wizardBaseBranchField = `
 [config.base_branch]
 required = false
 type = "string"
 default = "main"
-`)
+help_text = "Base branch for PRs"
+`
+
+// wizardCfgOneFields is the three-prompt transcript: sorted(fields) asks the
+// bool confirm first, the text field second, the enum select last — and the
+// enum's message carries the DECLARED type ("string"), per the port's kind
+// rule (config_wizard._prompt_message: `field.type or "enum" ...`).
+const wizardCfgOneFields = `
+[config.auto_remove_merged]
+required = false
+type = "bool"
+default = true
+` + wizardBaseBranchField + `
+[config.gate_mode]
+required = false
+type = "string"
+enum = ["always", "ask", "off"]
+default = "always"
+`
+
+// TestInitWizardConfiguresSelectedRecipes pins the U4b-2 step end to end
+// (S35): the per-recipe confirm, every field asked in sorted(fields) order
+// with the help line before its prompt, and the answers landing in the staged
+// manifest, the real manifest and the sidecar's configured list — the exact
+// bytes _render_manifest writes for configured values, config table before
+// the trailing comment pair (S16/S36/S38).
+func TestInitWizardConfiguresSelectedRecipes(t *testing.T) {
+	f := newWizardFixture(t)
+	f.seedRecipe(t, "cfg-one", wizardRecipeBody("cfg-one", "1.0.0", "configured")+wizardCfgOneFields)
+
+	text := enterText()                 // name: keep "demo"
+	text = append(text, enterText()...) // base_branch: keep "main"
+	res, rc := runInitWizard(f.request(wizardScript(text,
+		tui.KeyEnter, // topology: auto (detected)
+		tui.KeyEnter, // agents: DEFAULT_AGENTS
+		tui.KeySpace, // recipes: toggle cfg-one on
+		tui.KeyEnter, // recipes: submit
+		tui.KeyEnter, // Configure cfg-one now? (default yes)
+		tui.KeyEnter, // auto_remove_merged bool confirm (default true)
+		tui.KeyEnter, // gate_mode select (default "always")
+		tui.KeyEnter, // wizard confirm
+	)))
+	if rc != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
+	}
+
+	// The prompt order is _configure_recipes' order and the wizard's sorted
+	// field order, with the help line immediately before its prompt.
+	out := f.stdout.String()
+	order := []string{
+		"? Project name:",
+		"Configure cfg-one now?",
+		"cfg-one.auto_remove_merged (optional, bool)",
+		"Base branch for PRs",
+		"cfg-one.base_branch (optional, string)",
+		"cfg-one.gate_mode (optional, string)",
+		"Write ai-specs.toml with these choices?",
+	}
+	prev := -1
+	for _, needle := range order {
+		idx := strings.Index(out, needle)
+		if idx < 0 {
+			t.Errorf("stdout never drew %q:\n%s", needle, out)
+			continue
+		}
+		if idx < prev {
+			t.Errorf("stdout drew %q out of order:\n%s", needle, out)
+		}
+		prev = idx
+	}
+
+	// S16/S36: the staged manifest carries the config table between the
+	// recipe table and the trailing comment pair, keys in sorted order.
+	wantCfg := "[recipes.cfg-one.config]\n" +
+		"auto_remove_merged = true\n" +
+		"base_branch = \"main\"\n" +
+		"gate_mode = \"always\"\n"
+	staged := readFile(t, res.Staged)
+	if !strings.Contains(staged, wantCfg) {
+		t.Errorf("staged manifest lacks the config table:\n--- got ---\n%s", staged)
+	}
+	if idx, comments := strings.Index(staged, wantCfg), strings.Index(staged, "# [[deps]]"); idx < 0 || idx > comments {
+		t.Errorf("the config table is not before the trailing comment pair (S16):\n%s", staged)
+	}
+	realPath := filepath.Join(f.target, "ai-specs", "ai-specs.toml")
+	if got := readFile(t, realPath); got != staged {
+		t.Errorf("real manifest = staged bytes? got:\n%s", got)
+	}
+
+	// S38: the sidecar's configured list and the preview's config row.
+	if got := readFile(t, res.Sidecar); !strings.Contains(got, `"configured": ["cfg-one"]`) {
+		t.Errorf("sidecar = %q, want the configured list to carry cfg-one", got)
+	}
+	if !strings.Contains(f.stderr.String(), "config   cfg-one") {
+		t.Errorf("preview lacks the config row for the configured recipe:\n%s", f.stderr.String())
+	}
+}
+
+// TestInitWizardSkipsRecipesWithoutPromptableFields pins the loop's skips:
+// a SELECTED recipe with no fields at all is never prompted for (no confirm,
+// no wizard — it lands enabled and unconfigured), a recipe whose ONLY field is
+// the project-owned repo_topology still gets the per-recipe confirm (the
+// legacy fields check reads the RAW schema) but then prompts nothing (the
+// filtered schema, S18), and S19's deferral line is gone.
+func TestInitWizardSkipsRecipesWithoutPromptableFields(t *testing.T) {
+	f := newWizardFixture(t)
+	f.seedRecipe(t, "cfg-one", wizardRecipeBody("cfg-one", "1.0.0", "configured")+wizardBaseBranchField)
 	f.seedRecipe(t, "plain-one", wizardRecipeBody("plain-one", "1.0.0", "no config"))
 	f.seedRecipe(t, "topo-only", wizardRecipeBody("topo-only", "1.0.0", "topology only")+`
 [config.repo_topology]
@@ -515,39 +628,343 @@ type = "string"
 default = "auto"
 `)
 
-	// sorted: cfg-one, plain-one, topo-only → select the first and the last.
-	_, rc := runInitWizard(f.request(wizardScript(enterText(),
+	text := enterText()                 // name: keep "demo"
+	text = append(text, enterText()...) // base_branch: keep "main"
+	res, rc := runInitWizard(f.request(wizardScript(text,
 		tui.KeyEnter, tui.KeyEnter,
-		tui.KeySpace, tui.KeyDown, tui.KeyDown, tui.KeySpace, tui.KeyEnter,
-		tui.KeyEnter)))
+		tui.KeySpace, tui.KeyDown, tui.KeySpace, tui.KeyDown, tui.KeySpace, tui.KeyEnter, // all three
+		tui.KeyEnter, // Configure cfg-one now? → yes
+		tui.KeyEnter, // Configure topo-only now? → yes (legacy order), then no fields to ask
+		tui.KeyEnter, // wizard confirm
+	)))
 	if rc != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
 	}
-	errOut := f.stderr.String()
-	want := "  · configure cfg-one later: ai-specs recipe configure cfg-one"
-	if !strings.Contains(errOut, want) {
-		t.Errorf("stderr lacks %q:\n%s", want, errOut)
+	out := f.stdout.String()
+	if !strings.Contains(out, "Configure topo-only now?") {
+		t.Errorf("stdout lacks the confirm whose raw fields check sees repo_topology:\n%s", out)
 	}
-	if strings.Contains(errOut, "configure plain-one later") {
-		t.Errorf("a recipe without config fields got a deferral line:\n%s", errOut)
+	if strings.Contains(out, "topo-only.repo_topology") {
+		t.Errorf("the project-owned key was prompted (S18):\n%s", out)
 	}
-	if strings.Contains(errOut, "configure topo-only later") {
-		t.Errorf("a recipe whose only field is repo_topology got a deferral line:\n%s", errOut)
+	if strings.Contains(out, "Configure plain-one now?") {
+		t.Errorf("a selected recipe without fields got the per-recipe confirm:\n%s", out)
 	}
-	// The deferral lines are status output: they land before the preview panel.
-	if idx, panel := strings.Index(errOut, want), strings.Index(errOut, "│ name"); idx < 0 || idx > panel {
-		t.Errorf("the deferral line is not before the preview panel:\n%s", errOut)
+	if strings.Contains(f.stderr.String(), "· configure") {
+		t.Errorf("S19's deferral line must be gone:\n%s", f.stderr.String())
 	}
-	// The selections landed in the manifest: both recipes, no config tables.
+
 	manifest := readFile(t, filepath.Join(f.target, "ai-specs", "ai-specs.toml"))
-	if !strings.Contains(manifest, "[recipes.cfg-one]") || !strings.Contains(manifest, "[recipes.topo-only]") {
-		t.Errorf("the selected recipes are missing:\n%s", manifest)
+	if !strings.Contains(manifest, "[recipes.cfg-one.config]\nbase_branch = \"main\"\n") {
+		t.Errorf("the configured recipe's values are missing:\n%s", manifest)
 	}
-	if strings.Contains(manifest, "[recipes.plain-one]") {
-		t.Errorf("an unselected recipe was written:\n%s", manifest)
+	if !strings.Contains(manifest, "[recipes.plain-one]\nenabled = true\n") {
+		t.Errorf("the selected no-fields recipe is missing:\n%s", manifest)
+	}
+	if !strings.Contains(manifest, "[recipes.topo-only]\nenabled = true\n") {
+		t.Errorf("the project-owned-only recipe is missing:\n%s", manifest)
+	}
+	if strings.Contains(manifest, "[recipes.plain-one.config]") || strings.Contains(manifest, "[recipes.topo-only.config]") {
+		t.Errorf("a skip wrote a config table:\n%s", manifest)
+	}
+	if got := readFile(t, res.Staged); !strings.Contains(got, "[recipes.cfg-one.config]\nbase_branch = \"main\"\n") {
+		t.Errorf("the staged manifest lacks the collected value:\n%s", got)
+	}
+}
+
+// TestInitWizardDecliningTheRecipeConfirmLeavesTheConfigAlone pins the
+// `Configure <id> now?` decline: no wizard prompts, no help line, no config
+// table — the recipe stays enabled with its defaults, and the flow continues.
+func TestInitWizardDecliningTheRecipeConfirmLeavesTheConfigAlone(t *testing.T) {
+	f := newWizardFixture(t)
+	f.seedRecipe(t, "cfg-one", wizardRecipeBody("cfg-one", "1.0.0", "configured")+wizardBaseBranchField)
+
+	res, rc := runInitWizard(f.request(wizardScript(enterText(),
+		tui.KeyEnter,               // topology: auto
+		tui.KeyEnter,               // agents: defaults
+		tui.KeySpace, tui.KeyEnter, // select cfg-one + submit
+		tui.KeyNo, tui.KeyEnter, // Configure cfg-one now? → no
+		tui.KeyEnter, // wizard confirm
+	)))
+	if rc != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
+	}
+	out := f.stdout.String()
+	if strings.Contains(out, "cfg-one.base_branch") || strings.Contains(out, "Base branch for PRs") {
+		t.Errorf("the wizard ran despite the decline:\n%s", out)
+	}
+	manifest := readFile(t, res.Staged)
+	if !strings.Contains(manifest, "[recipes.cfg-one]\nenabled = true\n") {
+		t.Errorf("the declined recipe is missing from the manifest:\n%s", manifest)
 	}
 	if strings.Contains(manifest, ".config]") {
-		t.Errorf("T4b-1 must never write a config table (S19):\n%s", manifest)
+		t.Errorf("a declined recipe must carry no config table:\n%s", manifest)
+	}
+	if !strings.Contains(f.stderr.String(), "config   (defaults / later)") {
+		t.Errorf("preview lacks the unconfigured summary:\n%s", f.stderr.String())
+	}
+	if got := readFile(t, res.Sidecar); !strings.Contains(got, `"configured": []`) {
+		t.Errorf("sidecar = %q, want an empty configured list", got)
+	}
+}
+
+// TestInitWizardCancelInsideTheConfigWizardKeepsTheManifestUnconfigured
+// pins the Python's cancel contract at a FIELD prompt: run_config_wizard
+// answers {} and _configure_recipes skips that recipe's write and CONTINUES,
+// so the wizard still confirms and stages — with this recipe unconfigured and
+// nothing partial left behind.
+func TestInitWizardCancelInsideTheConfigWizardKeepsTheManifestUnconfigured(t *testing.T) {
+	f := newWizardFixture(t)
+	f.seedRecipe(t, "cfg-one", wizardRecipeBody("cfg-one", "1.0.0", "configured")+wizardBaseBranchField)
+
+	text := enterText()                                   // name: keep "demo"
+	text = append(text, tui.TextKey{Kind: tui.TextAbort}) // Ctrl-C at the field prompt
+	res, rc := runInitWizard(f.request(wizardScript(text,
+		tui.KeyEnter,               // topology: auto
+		tui.KeyEnter,               // agents: defaults
+		tui.KeySpace, tui.KeyEnter, // select cfg-one + submit
+		tui.KeyEnter, // Configure cfg-one now? → yes
+		tui.KeyEnter, // wizard confirm (the wizard continues; {} skipped the write)
+	)))
+	if rc != 0 {
+		t.Fatalf("exit = %d, want 0 (the field prompt's cancel is that recipe's {}, not a wizard cancel); stderr=%q",
+			rc, f.stderr.String())
+	}
+	if strings.Contains(f.stderr.String(), "Cancelled") {
+		t.Errorf("a cancelled field prompt cancelled the whole wizard:\n%s", f.stderr.String())
+	}
+	manifest := readFile(t, res.Staged)
+	if !strings.Contains(manifest, "[recipes.cfg-one]\nenabled = true\n") {
+		t.Errorf("the recipe is missing from the staged manifest:\n%s", manifest)
+	}
+	if strings.Contains(manifest, ".config]") {
+		t.Errorf("a cancelled wizard left partial config values:\n%s", manifest)
+	}
+	if got := readFile(t, res.Sidecar); !strings.Contains(got, `"configured": []`) {
+		t.Errorf("sidecar = %q, want an empty configured list", got)
+	}
+}
+
+// TestInitWizardRepoTopologyStaysProjectOwned pins S18 at the prompt: the
+// project-owned key never reaches a field prompt, and the topology the human
+// answered at the identity step is what lands in [project] — exactly once.
+func TestInitWizardRepoTopologyStaysProjectOwned(t *testing.T) {
+	f := newWizardFixture(t)
+	f.seedRecipe(t, "topo-recipe", wizardRecipeBody("topo-recipe", "1.0.0", "topology alias")+`
+[config.repo_topology]
+required = false
+type = "string"
+default = "auto"
+
+[config.gate_mode]
+required = false
+type = "string"
+enum = ["always", "ask", "off"]
+default = "always"
+`)
+
+	_, rc := runInitWizard(f.request(wizardScript(enterText(),
+		tui.KeyDown, tui.KeyEnter, // topology: standalone (second choice)
+		tui.KeyEnter,               // agents: defaults
+		tui.KeySpace, tui.KeyEnter, // select topo-recipe + submit
+		tui.KeyEnter, // Configure topo-recipe now? → yes
+		tui.KeyEnter, // gate_mode select (default "always")
+		tui.KeyEnter, // wizard confirm
+	)))
+	if rc != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
+	}
+	if strings.Contains(f.stdout.String(), "topo-recipe.repo_topology") {
+		t.Errorf("the project-owned key was prompted (S18):\n%s", f.stdout.String())
+	}
+	manifest := readFile(t, filepath.Join(f.target, "ai-specs", "ai-specs.toml"))
+	if !strings.Contains(manifest, "repo_topology = \"standalone\"") {
+		t.Errorf("the identity answer did not land in [project]:\n%s", manifest)
+	}
+	if n := strings.Count(manifest, "repo_topology"); n != 1 {
+		t.Errorf("repo_topology appears %d times, want 1 (project-owned):\n%s", n, manifest)
+	}
+	if !strings.Contains(manifest, "[recipes.topo-recipe.config]\ngate_mode = \"always\"\n") {
+		t.Errorf("the promptable field did not reach the config table:\n%s", manifest)
+	}
+}
+
+// cliDepBlock is a recipe declaring the CLI-dep gate's subject.
+const wizardCliDepBlock = `
+[[deps.cli]]
+binary = "zzz-definitely-missing-binary"
+purpose = "test dep gate"
+required = true
+`
+
+// TestInitWizardDepGateSeam pins S37's documented legacy seam: the loop's
+// exact position (after the read, BEFORE the fields check — _configure_recipes'
+// order), the legacy Skipped line on a declined gate, the quiet continuation
+// when the child already printed its own line, the wizard abort on the gate's
+// rc, and that a recipe without cli_deps never reaches the seam at all.
+func TestInitWizardDepGateSeam(t *testing.T) {
+	t.Run("declined skips the recipe with the legacy line", func(t *testing.T) {
+		f := newWizardFixture(t)
+		f.seedRecipe(t, "cfg-deps", wizardRecipeBody("cfg-deps", "1.0.0", "gated")+wizardBaseBranchField+wizardCliDepBlock)
+		f.depGate = func(string) wizardDepGateOutcome {
+			f.gateCalls++
+			return wizardDepGateOutcome{Skip: true}
+		}
+		_, rc := runInitWizard(f.request(wizardScript(enterText(),
+			tui.KeyEnter, tui.KeyEnter,
+			tui.KeySpace, tui.KeyEnter, // select cfg-deps + submit
+			tui.KeyEnter, // wizard confirm — no Configure prompt: the gate declined first
+		)))
+		if rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
+		}
+		if f.gateCalls != 1 {
+			t.Errorf("gate calls = %d, want 1", f.gateCalls)
+		}
+		if !strings.Contains(f.stderr.String(), "Skipped cfg-deps (missing CLI deps)") {
+			t.Errorf("stderr lacks the legacy Skipped line:\n%s", f.stderr.String())
+		}
+		if strings.Contains(f.stdout.String(), "Configure cfg-deps now?") {
+			t.Errorf("a declined gate still reached the per-recipe confirm:\n%s", f.stdout.String())
+		}
+		manifest := readFile(t, filepath.Join(f.target, "ai-specs", "ai-specs.toml"))
+		if !strings.Contains(manifest, "[recipes.cfg-deps]\nenabled = true\n") || strings.Contains(manifest, ".config]") {
+			t.Errorf("the skipped recipe must stay enabled and unconfigured:\n%s", manifest)
+		}
+	})
+
+	t.Run("passed reaches the per-recipe confirm", func(t *testing.T) {
+		f := newWizardFixture(t)
+		f.seedRecipe(t, "cfg-deps", wizardRecipeBody("cfg-deps", "1.0.0", "gated")+wizardBaseBranchField+wizardCliDepBlock)
+		f.depGate = func(string) wizardDepGateOutcome {
+			f.gateCalls++
+			return wizardDepGateOutcome{Proceed: true}
+		}
+		_, rc := runInitWizard(f.request(wizardScript(enterText(),
+			tui.KeyEnter, tui.KeyEnter,
+			tui.KeySpace, tui.KeyEnter, // select cfg-deps + submit
+			tui.KeyNo, tui.KeyEnter, // Configure cfg-deps now? → no
+			tui.KeyEnter, // wizard confirm
+		)))
+		if rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
+		}
+		if f.gateCalls != 1 {
+			t.Errorf("gate calls = %d, want 1", f.gateCalls)
+		}
+		if !strings.Contains(f.stdout.String(), "Configure cfg-deps now?") {
+			t.Errorf("a passed gate never reached the confirm:\n%s", f.stdout.String())
+		}
+		if strings.Contains(f.stderr.String(), "Skipped cfg-deps") {
+			t.Errorf("a passed gate printed the Skipped line:\n%s", f.stderr.String())
+		}
+	})
+
+	t.Run("the child's own read-failure line continues quietly", func(t *testing.T) {
+		f := newWizardFixture(t)
+		f.seedRecipe(t, "cfg-deps", wizardRecipeBody("cfg-deps", "1.0.0", "gated")+wizardBaseBranchField+wizardCliDepBlock)
+		f.depGate = func(string) wizardDepGateOutcome {
+			f.gateCalls++
+			return wizardDepGateOutcome{} // exit 11: the child printed `skip config for …`
+		}
+		_, rc := runInitWizard(f.request(wizardScript(enterText(),
+			tui.KeyEnter, tui.KeyEnter,
+			tui.KeySpace, tui.KeyEnter,
+			tui.KeyEnter, // wizard confirm
+		)))
+		if rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
+		}
+		if f.gateCalls != 1 {
+			t.Errorf("gate calls = %d, want 1", f.gateCalls)
+		}
+		if strings.Contains(f.stderr.String(), "Skipped cfg-deps") {
+			t.Errorf("the quiet outcome must not print a second line:\n%s", f.stderr.String())
+		}
+		if strings.Contains(f.stdout.String(), "Configure cfg-deps now?") {
+			t.Errorf("the quiet outcome reached the confirm:\n%s", f.stdout.String())
+		}
+	})
+
+	t.Run("the gate's rc takes the wizard down before any write", func(t *testing.T) {
+		f := newWizardFixture(t)
+		f.seedRecipe(t, "cfg-deps", wizardRecipeBody("cfg-deps", "1.0.0", "gated")+wizardBaseBranchField+wizardCliDepBlock)
+		f.depGate = func(string) wizardDepGateOutcome {
+			f.gateCalls++
+			return wizardDepGateOutcome{Rc: 3}
+		}
+		_, rc := runInitWizard(f.request(wizardScript(enterText(),
+			tui.KeyEnter, tui.KeyEnter,
+			tui.KeySpace, tui.KeyEnter,
+		)))
+		if rc != 3 {
+			t.Fatalf("exit = %d, want the gate's rc 3; stderr=%q", rc, f.stderr.String())
+		}
+		if strings.Contains(f.stderr.String(), "Cancelled") {
+			t.Errorf("the gate's rc printed the cancel line:\n%s", f.stderr.String())
+		}
+		f.assertNoProjectWrites(t)
+	})
+
+	t.Run("the gate runs before the fields check", func(t *testing.T) {
+		f := newWizardFixture(t)
+		f.seedRecipe(t, "dep-only", wizardRecipeBody("dep-only", "1.0.0", "deps, no config")+wizardCliDepBlock)
+		f.depGate = func(string) wizardDepGateOutcome {
+			f.gateCalls++
+			return wizardDepGateOutcome{Skip: true}
+		}
+		_, rc := runInitWizard(f.request(wizardScript(enterText(),
+			tui.KeyEnter, tui.KeyEnter,
+			tui.KeySpace, tui.KeyEnter, // select dep-only + submit
+			tui.KeyEnter, // wizard confirm
+		)))
+		if rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
+		}
+		if f.gateCalls != 1 {
+			t.Errorf("gate calls = %d, want 1 — the gate fires even for a recipe without config fields (legacy order)", f.gateCalls)
+		}
+		if !strings.Contains(f.stderr.String(), "Skipped dep-only (missing CLI deps)") {
+			t.Errorf("stderr lacks the legacy Skipped line:\n%s", f.stderr.String())
+		}
+	})
+
+	t.Run("a recipe without cli_deps never reaches the seam", func(t *testing.T) {
+		f := newWizardFixture(t)
+		f.seedRecipe(t, "plain-cfg", wizardRecipeBody("plain-cfg", "1.0.0", "no deps")+wizardBaseBranchField)
+		f.depGate = func(string) wizardDepGateOutcome {
+			f.gateCalls++
+			return wizardDepGateOutcome{Proceed: true}
+		}
+		_, rc := runInitWizard(f.request(wizardScript(enterText(),
+			tui.KeyEnter, tui.KeyEnter,
+			tui.KeySpace, tui.KeyEnter, // select plain-cfg + submit
+			tui.KeyNo, tui.KeyEnter, // Configure plain-cfg now? → no
+			tui.KeyEnter, // wizard confirm
+		)))
+		if rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
+		}
+		if f.gateCalls != 0 {
+			t.Errorf("gate calls = %d, want 0 for a recipe without cli_deps", f.gateCalls)
+		}
+		if !strings.Contains(f.stdout.String(), "Configure plain-cfg now?") {
+			t.Errorf("the per-recipe confirm was skipped:\n%s", f.stdout.String())
+		}
+	})
+}
+
+// TestRunLegacyInitDepGateNeedsATerminal pins the production seam's refusal:
+// without file-backed TTY streams it answers the wizard's rc 3 with an error
+// instead of spawning the legacy script over pipes.
+func TestRunLegacyInitDepGateNeedsATerminal(t *testing.T) {
+	f := newWizardFixture(t)
+	out := runLegacyInitDepGate(initWizardRequest{
+		Target: f.target, Name: "demo", Home: f.home,
+		Stdin: strings.NewReader(""), Stdout: &f.stdout, Stderr: &f.stderr,
+	}, nil, "cfg-one", filepath.Join(f.home, "catalog", "recipes"))
+	if out.Rc == 0 || out.Err == nil {
+		t.Errorf("gate over pipes = %+v, want a non-zero rc and an error", out)
 	}
 }
 

@@ -6,7 +6,10 @@ package cli
 // next-steps text — plus, since T4b-1, the interactive wizard itself: when
 // the TUI gate fires, runInitWizard drives the prompts in process, and only
 // the AI_SPECS_INIT_TUI_PY escape hatch still hands the whole verb to the
-// legacy script (the seam T4b-2's recipe-configuration prompts sit behind).
+// legacy script (U4b-2 moved the last wizard step — the per-recipe
+// configuration — native behind its documented CLI-dep gate seam, so the
+// hatch now keeps the legacy wizard observable as the reference route until
+// U7).
 //
 // The messages, their order and the exit codes are the legacy script's
 // contract (S3): 0 success, 1 unusable target, cancel or failed step, 2 usage
@@ -106,9 +109,11 @@ func runInitFlow(args []string, home string, stdin io.Reader, stdout, stderr io.
 	aiGitignore := filepath.Join(aiSpecsDir, ".gitignore")
 
 	// The gate is init.sh's (S6). With the gate fired: the escape hatch still
-	// hands the WHOLE verb to the legacy script (recorded seam for T4b-2's
-	// recipe-configuration prompts); an existing manifest is the shell's skip
-	// branch; otherwise the wizard runs natively (T4b-1).
+	// hands the WHOLE verb to the legacy script (the recorded seam to the
+	// reference wizard, which U4b-2's recipe-configuration step no longer
+	// needs — its dep gate has its own seam inside the native wizard); an
+	// existing manifest is the shell's skip branch; otherwise the wizard runs
+	// natively (T4b-1, U4b-2).
 	var wizard *initWizardResult
 	if shouldInitTUI(opts, isTTY(stdin, stdout), tomlPath) {
 		if os.Getenv("AI_SPECS_INIT_TUI_PY") != "" {
