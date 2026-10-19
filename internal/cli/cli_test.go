@@ -134,14 +134,16 @@ func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 	}
 }
 
-// TestRouteRecipeListIsNativeBeforeTheShim pins the GO-20 U6a/U6b/U6c
-// subcommand interceptions: `recipe list`, `recipe add` and `recipe remove`
-// resolve native, while EVERY other arm of lib/recipe.sh's case statement —
-// `init`, `configure`, the bare `recipe`, `--help`/`-h`/`help` and unknown
-// subcommands — keeps the recipe.sh shim byte for byte (U6e retires that
-// script, not this slice). On a TTY `recipe add` still EXECUTES that shim
-// through runRecipeAdd's documented seam — Route cannot see the streams, so
-// the seam itself is pinned by TestRecipeAddTTYSeamStaysOnLegacyScript.
+// TestRouteRecipeListIsNativeBeforeTheShim pins the GO-20 U6a/U6b/U6c/U6d-1
+// subcommand interceptions: `recipe list`, `recipe add`, `recipe remove` and
+// `recipe configure` resolve native, while EVERY other arm of
+// lib/recipe.sh's case statement — `init`, the bare `recipe`,
+// `--help`/`-h`/`help` and unknown subcommands — keeps the recipe.sh shim
+// byte for byte (U6e retires that script, not this slice). On a TTY
+// `recipe add` still EXECUTES that shim through runRecipeAdd's documented
+// seam — Route cannot see the streams, so the seam itself is pinned by
+// TestRecipeAddTTYSeamStaysOnLegacyScript. `recipe configure` has no seam:
+// recipe.sh's arm is a plain python3 exec with no TTY branch.
 func TestRouteRecipeListIsNativeBeforeTheShim(t *testing.T) {
 	cases := []struct {
 		args   []string
@@ -164,10 +166,15 @@ func TestRouteRecipeListIsNativeBeforeTheShim(t *testing.T) {
 		{[]string{"recipe", "remove", "worktree-flow", "."}, routeRecipeRemove, ""},
 		{[]string{"recipe", "remove", "--help"}, routeRecipeRemove, ""},
 		{[]string{"recipe", "remove", "--", "worktree-flow"}, routeRecipeRemove, ""},
+		// U6d-1: `recipe configure` is intercepted before the dispatcher too
+		// (recipe.sh's configure arm has no TTY branch, so there is no seam).
+		{[]string{"recipe", "configure"}, routeRecipeConfigure, ""},
+		{[]string{"recipe", "configure", "worktree-flow"}, routeRecipeConfigure, ""},
+		{[]string{"recipe", "configure", "worktree-flow", "--inspect"}, routeRecipeConfigure, ""},
+		{[]string{"recipe", "configure", "--help"}, routeRecipeConfigure, ""},
 		// Everything else of lib/recipe.sh's case statement keeps the shim.
 		{[]string{"recipe"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "init", "worktree-flow"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "configure", "worktree-flow"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "--help"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "-h"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "help"}, routeShim, "recipe.sh"},

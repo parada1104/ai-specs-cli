@@ -28,17 +28,26 @@ package cli
 // printed a traceback — both keep the script's exit code.
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
+	"syscall"
+	"unsafe"
 
+	"ai-specs.dev/ai-specs/internal/cliversion"
 	"ai-specs.dev/ai-specs/internal/config"
 	homepkg "ai-specs.dev/ai-specs/internal/home"
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/recipe"
 	"ai-specs.dev/ai-specs/internal/schema"
+	"ai-specs.dev/ai-specs/internal/target"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
 
@@ -573,4 +582,1915 @@ func runRecipeRemove(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  ✓ cleaned lock entries for recipe '%s'\n", recipeID)
 	}
 	return 0
+}
+
+// ── GO-20 U6d-1 (T4): `recipe configure` ──
+//
+// Native `ai-specs recipe configure` — the port of lib/recipe.sh's
+// `configure` arm, which execs lib/_internal/recipe-configure.py directly, so
+// recipe-configure.py IS the contract end to end: argparse's argument surface
+// (`-h/--help`, `--inspect`, `--set KEY=VALUE` repeatable, `--dry-run`,
+// `--sync`, `--ignore-cli-version`, `--json`, two positional slots, and the
+// error arms), `_schema_for`'s wrapped messages, the PROJECT_OWNED_KEYS
+// routing of `repo_topology` to `[project]`, and the JSON report —
+// `json.dumps(document, ensure_ascii=False, …)` with `indent=2` or the
+// compact `(",", ":")` separators — byte for byte. The argparse surface is
+// emulated (not invoked): help/usage rendering reproduces argparse's width
+// algorithm (COLUMNS → stdout TIOCGWINSZ → 80, minus 2), the registration
+// order drives prefix abbreviation and the ambiguous-option message, and the
+// parse-error precedence (help during the walk, then required, then
+// unrecognized) matches parser.parse_args. Verified byte-identical between
+// Python 3.11 and 3.14 on this machine; pinned differentially against the
+// legacy route below.
+//
+// The write half is ROUTED, not re-implemented (S5/S6): config.ParseConfigAssignment,
+// config.ValidateConfigValues, config.UpdateRecipeConfig (the promoted gate
+// writer) and config.WriteProjectKey own the value domain and both writers —
+// this file owns only the verb's contract around them: the argument surface,
+// the report document, the preflight (internal/cliversion), the topology
+// grounding (internal/target) and the --sync leg.
+//
+// The --sync leg, decided (L6): apply_project runs `<home>/bin/ai-specs sync
+// <root> [--ignore-cli-version]` and then `<home>/bin/ai-specs doctor <root>`
+// as SUBPROCESSES and parses their captured output — the last `syncing …`
+// line for sync.failed_step, the last `Summary: N OK, N INFO, N WARN, N
+// ERROR` line for verify. The leg is therefore ported IN FULL by spawning the
+// SAME front-door command the script spawns (never Python directly, S1), and
+// both parse targets are printed identically by the native sync and doctor
+// ports (internal/sync/step.go's `  syncing <label>` and
+// internal/doctor/doctor.go's `Summary: %d OK, …`), so the regexes keep
+// working whatever implementation sits behind bin/ai-specs today (bash →
+// lib/*.sh, the Go binary after U2's launcher flip). It is NOT half-ported
+// and NOT moved to a legacy seam; the differential does not run --sync over
+// the real spine (that would measure sync's writes, not this verb's report),
+// so the leg's parsing, report and exit codes are pinned byte-for-byte
+// against the Python reference over a STUB front door by
+// TestRecipeConfigureSyncLegDifferential.
+//
+// Documented deviations (the S12/ADR 0002 class): parse-error DETAIL inside
+// `invalid manifest:` / `invalid TOML value for …` / `invalid TOML after
+// config write:` comes from internal/toml instead of tomllib (the frozen
+// framings are byte-identical; recipeconfig_test.go pins Go's own guard);
+// a front door that cannot be spawned prints Go's exec error and exits 1 with
+// no report, where Python dies with an uncaught FileNotFoundError traceback
+// (same exit code, no report either way); a value json.dumps cannot serialize
+// (a TOML datetime in config) prints Go's serialization error and exits 1
+// where Python dies with a TypeError traceback (both unexercised); and a
+// catalog id whose path spelling Python's Path keeps uncleaned (interior
+// `..`) is joined without cleaning here, so the `unknown recipe` message
+// carries Python's spelling.
+
+// recipeConfigureProg is recipe-configure.py's argparse `prog`.
+const recipeConfigureProg = "ai-specs recipe configure"
+
+// recipeConfigureProjectOwnedKeys is recipe-configure.py's
+// PROJECT_OWNED_KEYS: values the project manifest owns, written to [project]
+// through config.WriteProjectKey instead of the recipe's config block.
+var recipeConfigureProjectOwnedKeys = map[string]bool{"repo_topology": true}
+
+// recipeConfigureOption is one registered argparse option.
+type recipeConfigureOption struct {
+	name   string // canonical option string: "--set", "--inspect", …
+	joined string // the message spelling: argparse joins all option strings with "/"
+	value  bool   // takes one value (--set)
+	help   bool   // the -h/--help action
+	short  bool   // reachable as a single-dash group prefix ("-h…")
+}
+
+// recipeConfigureOptionOrder is argparse's registration order: -h/--help is
+// registered first (by ArgumentParser), then the add_argument calls in
+// recipe-configure.py's order. Prefix abbreviation candidates and the
+// ambiguous-option message read this order, and the help section prints
+// rows in it.
+var recipeConfigureOptionOrder = []recipeConfigureOption{
+	{name: "-h", joined: "-h/--help", help: true, short: true},
+	{name: "--help", joined: "-h/--help", help: true},
+	{name: "--inspect", joined: "--inspect"},
+	{name: "--set", joined: "--set", value: true},
+	{name: "--dry-run", joined: "--dry-run"},
+	{name: "--sync", joined: "--sync"},
+	{name: "--ignore-cli-version", joined: "--ignore-cli-version"},
+	{name: "--json", joined: "--json"},
+}
+
+func recipeConfigureExactOption(base string) (*recipeConfigureOption, bool) {
+	for i := range recipeConfigureOptionOrder {
+		opt := &recipeConfigureOptionOrder[i]
+		if opt.name == base {
+			return opt, true
+		}
+	}
+	return nil, false
+}
+
+// recipeConfigureOptionLike mirrors argparse's "looks like an option" test:
+// starts with a prefix character and is not the single "-" (a lone dash is a
+// positional; negative-number-looking tokens are positionals too).
+func recipeConfigureOptionLike(arg string) bool {
+	if len(arg) < 2 || arg[0] != '-' {
+		return false
+	}
+	return !recipeConfigureNegativeNumber(arg)
+}
+
+// recipeConfigureNegativeNumber mirrors argparse's
+// _negative_number_matcher (^-\d+$|^-\d*\.\d+$): such tokens are positionals.
+func recipeConfigureNegativeNumber(arg string) bool {
+	s := arg[1:]
+	isDigits := func(x string, allowEmpty bool) bool {
+		if x == "" {
+			return allowEmpty
+		}
+		for i := 0; i < len(x); i++ {
+			if x[i] < '0' || x[i] > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		if strings.Contains(s[i+1:], ".") {
+			return false
+		}
+		return isDigits(s[:i], true) && isDigits(s[i+1:], false)
+	}
+	return isDigits(s, false)
+}
+
+// recipeConfigureParseKind classifies the argument contract's outcomes.
+type recipeConfigureParseKind int
+
+const (
+	recipeConfigureParseRun recipeConfigureParseKind = iota
+	recipeConfigureParseHelp
+	recipeConfigureParseError
+)
+
+// recipeConfigureOptions is argparse's parsed namespace for the verb.
+type recipeConfigureOptions struct {
+	recipeID         string
+	path             string
+	hasPath          bool
+	inspect          bool
+	dryRun           bool
+	sync             bool
+	ignoreCLIVersion bool
+	asJSON           bool
+	assignments      []string
+}
+
+// recipeConfigureParse is one walk of the argument list.
+type recipeConfigureParse struct {
+	kind   recipeConfigureParseKind
+	opts   recipeConfigureOptions
+	errMsg string
+}
+
+// parseRecipeConfigure reproduces argparse's parse for this parser:
+// left-to-right consumption (help, ambiguity and the value-taking refusals
+// fire WHEN REACHED), then the required-positional check, then the
+// unrecognized-argument leftover — parser.parse_args' own precedence.
+// `--` makes every remaining argument positional; unknown option tokens are
+// leftovers, never consumed as values.
+func parseRecipeConfigure(args []string) recipeConfigureParse {
+	res := recipeConfigureParse{kind: recipeConfigureParseRun}
+	opts := &res.opts
+	type positional struct {
+		order int
+		text  string
+	}
+	type leftover struct {
+		order int
+		text  string
+	}
+	var pos []positional
+	var extras []leftover
+	fail := func(msg string) recipeConfigureParse {
+		res.kind = recipeConfigureParseError
+		res.errMsg = msg
+		return res
+	}
+	ignoredExplicit := func(joined, value string) recipeConfigureParse {
+		return fail(fmt.Sprintf("argument %s: ignored explicit argument '%s'", joined, value))
+	}
+
+	afterDash := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if afterDash {
+			pos = append(pos, positional{i, arg})
+			continue
+		}
+		if arg == "--" {
+			afterDash = true
+			continue
+		}
+		if !recipeConfigureOptionLike(arg) {
+			pos = append(pos, positional{i, arg})
+			continue
+		}
+
+		base, explicit, hasExplicit := strings.Cut(arg, "=")
+		opt, exact := recipeConfigureExactOption(base)
+		matchedByShort := false
+		if !exact {
+			var matches []string
+			if strings.HasPrefix(arg, "--") {
+				for _, cand := range recipeConfigureOptionOrder {
+					if strings.HasPrefix(cand.name, base) {
+						matches = append(matches, cand.name)
+					}
+				}
+				if len(matches) == 0 {
+					extras = append(extras, leftover{i, arg})
+					continue
+				}
+				if len(matches) > 1 {
+					return fail(fmt.Sprintf("ambiguous option: %s could match %s",
+						base, strings.Join(matches, ", ")))
+				}
+				opt, _ = recipeConfigureExactOption(matches[0])
+			} else {
+				// Single-dash group: "-h…" resolves through the two-character
+				// prefix (argparse's short_option_prefix); the tail is only a
+				// value when the action takes one, and -h is the only
+				// single-dash option this parser registers.
+				shortPrefix := arg[:2]
+				for i := range recipeConfigureOptionOrder {
+					cand := &recipeConfigureOptionOrder[i]
+					if cand.name == shortPrefix {
+						opt = cand
+						break
+					}
+				}
+				if opt == nil {
+					extras = append(extras, leftover{i, arg})
+					continue
+				}
+				matchedByShort = true
+			}
+		}
+		if opt.help {
+			if matchedByShort {
+				// argparse parses more single-dash options out of the tail;
+				// the help action fires first and exits.
+				res.kind = recipeConfigureParseHelp
+				return res
+			}
+			if hasExplicit {
+				return ignoredExplicit(opt.joined, explicit)
+			}
+			res.kind = recipeConfigureParseHelp
+			return res
+		}
+		if !opt.value {
+			if hasExplicit {
+				return ignoredExplicit(opt.joined, explicit)
+			}
+			switch opt.name {
+			case "--inspect":
+				opts.inspect = true
+			case "--dry-run":
+				opts.dryRun = true
+			case "--sync":
+				opts.sync = true
+			case "--ignore-cli-version":
+				opts.ignoreCLIVersion = true
+			case "--json":
+				opts.asJSON = true
+			}
+			continue
+		}
+		// --set: an explicit "=value" (possibly empty) or the next token when
+		// that token is a positional for argparse — never an option-like one.
+		if hasExplicit {
+			opts.assignments = append(opts.assignments, explicit)
+			continue
+		}
+		if i+1 >= len(args) || recipeConfigureOptionLike(args[i+1]) {
+			return fail("argument --set: expected one argument")
+		}
+		i++
+		opts.assignments = append(opts.assignments, args[i])
+	}
+
+	if len(pos) == 0 {
+		return fail("the following arguments are required: recipe_id")
+	}
+	// Leftovers beyond the two positional slots join the unknown options in
+	// argument order (argparse's `unrecognized arguments: ' '.join(argv)`).
+	for i := 2; i < len(pos); i++ {
+		extras = append(extras, leftover{pos[i].order, pos[i].text})
+	}
+	if len(extras) > 0 {
+		sort.SliceStable(extras, func(a, b int) bool { return extras[a].order < extras[b].order })
+		texts := make([]string, 0, len(extras))
+		for _, ex := range extras {
+			texts = append(texts, ex.text)
+		}
+		return fail("unrecognized arguments: " + strings.Join(texts, " "))
+	}
+	opts.recipeID = pos[0].text
+	if len(pos) > 1 {
+		opts.path = pos[1].text
+		opts.hasPath = true
+	}
+	return res
+}
+
+// recipeConfigureColumns mirrors shutil.get_terminal_size as argparse's
+// HelpFormatter reads it: a positive integer COLUMNS wins, else the stdout
+// terminal size (TIOCGWINSZ), else the 80-column fallback.
+func recipeConfigureColumns() int {
+	if c := os.Getenv("COLUMNS"); c != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(c)); err == nil && n > 0 {
+			return n
+		}
+	}
+	var ws struct {
+		Row, Col, Xpixel, Ypixel uint16
+	}
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, os.Stdout.Fd(),
+		uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
+	if errno == 0 && ws.Col > 0 {
+		return int(ws.Col)
+	}
+	return 80
+}
+
+// recipeConfigureUsageLines is argparse HelpFormatter's usage block for this
+// parser: `usage: ` + prog + the option parts + the positional parts, wrapped
+// by get_lines' greedy rule at textWidth = columns-2, with the prog-followed
+// indent when `len(prefix)+len(prog) <= 0.75*textWidth` and prog on its own
+// line otherwise. Lines carry no trailing newline.
+func recipeConfigureUsageLines(textWidth int) []string {
+	const prefix = "usage: "
+	prog := recipeConfigureProg
+	optParts := []string{"[-h]", "[--inspect]", "[--set ASSIGNMENTS]", "[--dry-run]",
+		"[--sync]", "[--ignore-cli-version]", "[--json]"}
+	posParts := []string{"recipe_id", "[path]"}
+	joined := strings.Join(append(append([]string{prog}, optParts...), posParts...), " ")
+	if len(prefix)+len(joined) <= textWidth {
+		return []string{prefix + joined}
+	}
+
+	getLines := func(parts []string, indent string, firstIsPrefix bool) []string {
+		var out []string
+		var line []string
+		lineLen := len(indent) - 1
+		if firstIsPrefix {
+			lineLen = len(prefix) - 1
+		}
+		for _, part := range parts {
+			if lineLen+1+len(part) > textWidth && len(line) > 0 {
+				content := strings.Join(line, " ")
+				if firstIsPrefix && len(out) == 0 {
+					out = append(out, prefix+content)
+				} else {
+					out = append(out, indent+content)
+				}
+				line = nil
+				lineLen = len(indent) - 1
+			}
+			line = append(line, part)
+			lineLen += len(part) + 1
+		}
+		if len(line) > 0 {
+			content := strings.Join(line, " ")
+			if firstIsPrefix && len(out) == 0 {
+				out = append(out, prefix+content)
+			} else {
+				out = append(out, indent+content)
+			}
+		}
+		return out
+	}
+
+	if float64(len(prefix)+len(prog)) <= 0.75*float64(textWidth) {
+		indent := strings.Repeat(" ", len(prefix)+len(prog)+1)
+		lines := getLines(append([]string{prog}, optParts...), indent, true)
+		return append(lines, getLines(posParts, indent, false)...)
+	}
+	indent := strings.Repeat(" ", len(prefix))
+	lines := getLines(append(append([]string{}, optParts...), posParts...), indent, false)
+	if len(lines) > 1 {
+		lines = append(getLines(optParts, indent, false), getLines(posParts, indent, false)...)
+	}
+	return append([]string{prog}, lines...)
+}
+
+// recipeConfigureWrapWords greedily wraps one help string (argparse routes
+// help text through textwrap.wrap; every word of this parser's only help
+// string is shorter than the minimum help width, so no long-word break is
+// reachable).
+func recipeConfigureWrapWords(text string, width int) []string {
+	var lines []string
+	cur := ""
+	for _, word := range strings.Fields(text) {
+		switch {
+		case cur == "":
+			cur = word
+		case len(cur)+1+len(word) <= width:
+			cur += " " + word
+		default:
+			lines = append(lines, cur)
+			cur = word
+		}
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
+// recipeConfigureHelpText is parser.format_help() byte for byte: the usage
+// block, a blank line, the `positional arguments:` section, a blank line and
+// the `options:` section (Python ≥3.10's group title), with the -h row padded
+// to argparse's help column (min(action_max_length+2, max_help_position),
+// where the group indent makes action_max_length the longest invocation + 2).
+func recipeConfigureHelpText(columns int) string {
+	textWidth := columns - 2
+	var sb strings.Builder
+	sb.WriteString(strings.Join(recipeConfigureUsageLines(textWidth), "\n"))
+	sb.WriteString("\n\n")
+	sb.WriteString("positional arguments:\n  recipe_id\n  path\n\n")
+	sb.WriteString("options:\n")
+	rows := []struct{ inv, help string }{
+		{"-h, --help", "show this help message and exit"},
+		{"--inspect", ""},
+		{"--set ASSIGNMENTS", ""},
+		{"--dry-run", ""},
+		{"--sync", ""},
+		{"--ignore-cli-version", ""},
+		{"--json", ""},
+	}
+	maxInvocation := len("recipe_id") // the positionals measure too
+	for _, r := range rows {
+		maxInvocation = max(maxInvocation, len(r.inv))
+	}
+	maxHelpPosition := min(24, max(textWidth-20, 4))
+	helpPosition := min(maxInvocation+2+2, maxHelpPosition)
+	actionWidth := helpPosition - 4 // group indent 2, then the two pad spaces
+	for _, r := range rows {
+		if r.help == "" {
+			sb.WriteString("  " + r.inv + "\n")
+			continue
+		}
+		if len(r.inv) <= actionWidth {
+			sb.WriteString("  " + r.inv + strings.Repeat(" ", actionWidth-len(r.inv)) + "  " + r.help + "\n")
+			continue
+		}
+		sb.WriteString("  " + r.inv + "\n")
+		helpWidth := max(textWidth-helpPosition, 11)
+		for _, line := range recipeConfigureWrapWords(r.help, helpWidth) {
+			sb.WriteString(strings.Repeat(" ", helpPosition) + line + "\n")
+		}
+	}
+	return sb.String()
+}
+
+// recipeConfigureErrorText is argparse's error() surface: the usage block on
+// its own (format_usage strips the trailing blank line) then the frozen
+// `prog: error: message` line, all to stderr with exit 2.
+func recipeConfigureErrorText(columns int, msg string) string {
+	return strings.Join(recipeConfigureUsageLines(columns-2), "\n") + "\n" +
+		recipeConfigureProg + ": error: " + msg + "\n"
+}
+
+// ── the report document ──
+//
+// recipe-configure.py builds plain dicts and prints them through
+// json.dumps(document, ensure_ascii=False, indent=2) — or the compact
+// (",", ":") separators with --json — with insertion order preserved
+// (sort_keys=False). rcJSON is that document: an insertion-ordered object,
+// an array, a pre-rendered number literal, a raw JSON fragment (the schema
+// shape, straight out of schema.ConfigTable.ShapeJSON) or a string; the
+// writer escapes only what json's ensure_ascii=False encoder escapes (the
+// quotes, the backslash and the control characters below 0x20) and leaves
+// every other rune — 0x7f included — raw.
+
+type rcJSONKind int
+
+const (
+	rcJSONNull rcJSONKind = iota
+	rcJSONBool
+	rcJSONNumber // pre-rendered literal
+	rcJSONString // value, escaped at write time
+	rcJSONArray
+	rcJSONObject
+)
+
+type rcJSON struct {
+	kind rcJSONKind
+	b    bool
+	num  string
+	str  string
+	arr  []rcJSON
+	keys []string
+	obj  map[string]rcJSON
+}
+
+func rcNull() rcJSON { return rcJSON{kind: rcJSONNull} }
+
+func rcBool(v bool) rcJSON { return rcJSON{kind: rcJSONBool, b: v} }
+
+func rcNumber(lit string) rcJSON { return rcJSON{kind: rcJSONNumber, num: lit} }
+
+func rcInt(v int) rcJSON { return rcJSON{kind: rcJSONNumber, num: strconv.Itoa(v)} }
+
+func rcString(v string) rcJSON { return rcJSON{kind: rcJSONString, str: v} }
+
+func rcNewArray(items ...rcJSON) rcJSON {
+	if items == nil {
+		items = []rcJSON{}
+	}
+	return rcJSON{kind: rcJSONArray, arr: items}
+}
+
+func rcNewObject() rcJSON {
+	return rcJSON{kind: rcJSONObject, obj: map[string]rcJSON{}}
+}
+
+// set stores a key, preserving Python dict semantics: an existing key keeps
+// its position, a new key is appended.
+func (n *rcJSON) set(key string, v rcJSON) {
+	if n.kind != rcJSONObject {
+		return
+	}
+	if _, exists := n.obj[key]; !exists {
+		n.keys = append(n.keys, key)
+	}
+	n.obj[key] = v
+}
+
+func (n rcJSON) get(key string) rcJSON {
+	if n.kind != rcJSONObject {
+		return rcNull()
+	}
+	v, ok := n.obj[key]
+	if !ok {
+		return rcNull()
+	}
+	return v
+}
+
+// rcQuoteJSON is json.dumps(s, ensure_ascii=False): the short escapes, \u00xx
+// for the remaining control characters (lowercase hex, like json's), raw
+// everything at or above 0x20 — including 0x7f and all non-ASCII.
+func rcQuoteJSON(s string) string {
+	var sb strings.Builder
+	sb.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			sb.WriteString(`\"`)
+		case '\\':
+			sb.WriteString(`\\`)
+		case '\b':
+			sb.WriteString(`\b`)
+		case '\f':
+			sb.WriteString(`\f`)
+		case '\n':
+			sb.WriteString(`\n`)
+		case '\r':
+			sb.WriteString(`\r`)
+		case '\t':
+			sb.WriteString(`\t`)
+		default:
+			if r < 0x20 {
+				sb.WriteString(fmt.Sprintf(`\u%04x`, r))
+			} else {
+				sb.WriteRune(r)
+			}
+		}
+	}
+	sb.WriteByte('"')
+	return sb.String()
+}
+
+// writeJSON renders the document like Python's json.dumps: compact with the
+// (",", ":") separators, or indent=2 with each entry on its own line (empty
+// containers stay `{}`/`[]`, like the C encoder).
+func writeJSON(sb *strings.Builder, n rcJSON, depth int, compact bool) {
+	switch n.kind {
+	case rcJSONNull:
+		sb.WriteString("null")
+	case rcJSONBool:
+		if n.b {
+			sb.WriteString("true")
+		} else {
+			sb.WriteString("false")
+		}
+	case rcJSONNumber:
+		sb.WriteString(n.num)
+	case rcJSONString:
+		sb.WriteString(rcQuoteJSON(n.str))
+	case rcJSONArray:
+		if len(n.arr) == 0 {
+			sb.WriteString("[]")
+			return
+		}
+		if compact {
+			sb.WriteByte('[')
+			for i, item := range n.arr {
+				if i > 0 {
+					sb.WriteByte(',')
+				}
+				writeJSON(sb, item, depth, true)
+			}
+			sb.WriteByte(']')
+			return
+		}
+		sb.WriteString("[\n")
+		for i, item := range n.arr {
+			sb.WriteString(strings.Repeat("  ", depth+1))
+			writeJSON(sb, item, depth+1, false)
+			if i < len(n.arr)-1 {
+				sb.WriteByte(',')
+			}
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(strings.Repeat("  ", depth) + "]")
+	case rcJSONObject:
+		if len(n.keys) == 0 {
+			sb.WriteString("{}")
+			return
+		}
+		if compact {
+			sb.WriteByte('{')
+			for i, k := range n.keys {
+				if i > 0 {
+					sb.WriteByte(',')
+				}
+				sb.WriteString(rcQuoteJSON(k))
+				sb.WriteByte(':')
+				writeJSON(sb, n.obj[k], depth, true)
+			}
+			sb.WriteByte('}')
+			return
+		}
+		sb.WriteString("{\n")
+		for i, k := range n.keys {
+			sb.WriteString(strings.Repeat("  ", depth+1))
+			sb.WriteString(rcQuoteJSON(k))
+			sb.WriteString(": ")
+			writeJSON(sb, n.obj[k], depth+1, false)
+			if i < len(n.keys)-1 {
+				sb.WriteByte(',')
+			}
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(strings.Repeat("  ", depth) + "}")
+	}
+}
+
+// rcFromTOML converts one TOML-domain value into the report's JSON domain the
+// way json.dumps serializes tomllib's dicts. A value json.dumps refuses (a
+// datetime) is an error here; Python dies with a TypeError traceback at emit
+// time (recorded deviation — same exit, no report).
+func rcFromTOML(v any) (rcJSON, error) {
+	switch t := v.(type) {
+	case nil:
+		return rcNull(), nil
+	case bool:
+		return rcBool(t), nil
+	case string:
+		return rcString(t), nil
+	case int:
+		return rcNumber(strconv.FormatInt(int64(t), 10)), nil
+	case int64:
+		return rcNumber(strconv.FormatInt(t, 10)), nil
+	case toml.BigInt:
+		return rcNumber(string(t)), nil
+	case float64:
+		return rcNumber(config.FormatPythonJSONFloat(t)), nil
+	case []any:
+		out := rcNewArray(make([]rcJSON, 0, len(t))...)
+		for _, item := range t {
+			converted, err := rcFromTOML(item)
+			if err != nil {
+				return rcNull(), err
+			}
+			out.arr = append(out.arr, converted)
+		}
+		return out, nil
+	case []*toml.Table:
+		out := rcNewArray(make([]rcJSON, 0, len(t))...)
+		for _, item := range t {
+			converted, err := rcFromTOML(item)
+			if err != nil {
+				return rcNull(), err
+			}
+			out.arr = append(out.arr, converted)
+		}
+		return out, nil
+	case *toml.Table:
+		out := rcNewObject()
+		if t != nil {
+			for _, k := range t.Keys() {
+				value, _ := t.Get(k)
+				converted, err := rcFromTOML(value)
+				if err != nil {
+					return rcNull(), err
+				}
+				out.set(k, converted)
+			}
+		}
+		return out, nil
+	case toml.DateTime:
+		return rcNull(), fmt.Errorf("Object of type %s is not JSON serializable", t.PyTypeName())
+	default:
+		return rcNull(), fmt.Errorf("Object of type %T is not JSON serializable", v)
+	}
+}
+
+// rcFromJSONFragment decodes the ordered JSON fragment
+// schema.ConfigTable.ShapeJSON produces into the report's document tree: the
+// shape is embedded as DATA (json.dumps renders the dict at the report's own
+// indent, or through the compact separators under --json), never as
+// pre-rendered text. The grammar is the shape serializer's own — objects,
+// arrays, strings and JSON literals — walked sequentially so declaration
+// order survives.
+func rcFromJSONFragment(s string) (rcJSON, error) {
+	d := &rcJSONDecoder{src: s}
+	v, err := d.decodeValue()
+	if err != nil {
+		return rcNull(), err
+	}
+	d.skipSpace()
+	if d.pos != len(d.src) {
+		return rcNull(), fmt.Errorf("trailing data after JSON fragment")
+	}
+	return v, nil
+}
+
+type rcJSONDecoder struct {
+	src string
+	pos int
+}
+
+func (d *rcJSONDecoder) skipSpace() {
+	for d.pos < len(d.src) {
+		switch d.src[d.pos] {
+		case ' ', '\t', '\n', '\r':
+			d.pos++
+		default:
+			return
+		}
+	}
+}
+
+func (d *rcJSONDecoder) decodeValue() (rcJSON, error) {
+	d.skipSpace()
+	if d.pos >= len(d.src) {
+		return rcNull(), fmt.Errorf("unexpected end of JSON fragment")
+	}
+	switch c := d.src[d.pos]; {
+	case c == '{':
+		return d.decodeObject()
+	case c == '[':
+		return d.decodeArray()
+	case c == '"':
+		s, err := d.decodeString()
+		if err != nil {
+			return rcNull(), err
+		}
+		return rcString(s), nil
+	case c == 't':
+		return d.decodeLiteral("true", rcBool(true))
+	case c == 'f':
+		return d.decodeLiteral("false", rcBool(false))
+	case c == 'n':
+		return d.decodeLiteral("null", rcNull())
+	default:
+		start := d.pos
+		for d.pos < len(d.src) && !strings.ContainsRune(",]} \t\n\r", rune(d.src[d.pos])) {
+			d.pos++
+		}
+		if d.pos == start {
+			return rcNull(), fmt.Errorf("invalid JSON token at %d", d.pos)
+		}
+		return rcNumber(d.src[start:d.pos]), nil
+	}
+}
+
+func (d *rcJSONDecoder) decodeLiteral(word string, v rcJSON) (rcJSON, error) {
+	if !strings.HasPrefix(d.src[d.pos:], word) {
+		return rcNull(), fmt.Errorf("invalid JSON literal at %d", d.pos)
+	}
+	d.pos += len(word)
+	return v, nil
+}
+
+func (d *rcJSONDecoder) decodeObject() (rcJSON, error) {
+	d.pos++ // '{'
+	out := rcNewObject()
+	d.skipSpace()
+	if d.pos < len(d.src) && d.src[d.pos] == '}' {
+		d.pos++
+		return out, nil
+	}
+	for {
+		d.skipSpace()
+		key, err := d.decodeString()
+		if err != nil {
+			return rcNull(), err
+		}
+		d.skipSpace()
+		if d.pos >= len(d.src) || d.src[d.pos] != ':' {
+			return rcNull(), fmt.Errorf("expected ':' at %d", d.pos)
+		}
+		d.pos++
+		value, err := d.decodeValue()
+		if err != nil {
+			return rcNull(), err
+		}
+		out.set(key, value)
+		d.skipSpace()
+		if d.pos >= len(d.src) {
+			return rcNull(), fmt.Errorf("unterminated JSON object")
+		}
+		switch d.src[d.pos] {
+		case ',':
+			d.pos++
+		case '}':
+			d.pos++
+			return out, nil
+		default:
+			return rcNull(), fmt.Errorf("expected ',' or '}' at %d", d.pos)
+		}
+	}
+}
+
+func (d *rcJSONDecoder) decodeArray() (rcJSON, error) {
+	d.pos++ // '['
+	out := rcNewArray()
+	d.skipSpace()
+	if d.pos < len(d.src) && d.src[d.pos] == ']' {
+		d.pos++
+		return out, nil
+	}
+	for {
+		value, err := d.decodeValue()
+		if err != nil {
+			return rcNull(), err
+		}
+		out.arr = append(out.arr, value)
+		d.skipSpace()
+		if d.pos >= len(d.src) {
+			return rcNull(), fmt.Errorf("unterminated JSON array")
+		}
+		switch d.src[d.pos] {
+		case ',':
+			d.pos++
+		case ']':
+			d.pos++
+			return out, nil
+		default:
+			return rcNull(), fmt.Errorf("expected ',' or ']' at %d", d.pos)
+		}
+	}
+}
+
+func (d *rcJSONDecoder) decodeString() (string, error) {
+	if d.pos >= len(d.src) || d.src[d.pos] != '"' {
+		return "", fmt.Errorf("expected string at %d", d.pos)
+	}
+	d.pos++
+	var sb strings.Builder
+	for d.pos < len(d.src) {
+		c := d.src[d.pos]
+		switch {
+		case c == '"':
+			d.pos++
+			return sb.String(), nil
+		case c == '\\':
+			d.pos++
+			if d.pos >= len(d.src) {
+				return "", fmt.Errorf("unterminated escape")
+			}
+			esc := d.src[d.pos]
+			d.pos++
+			switch esc {
+			case '"', '\\', '/':
+				sb.WriteByte(esc)
+			case 'b':
+				sb.WriteByte('\b')
+			case 'f':
+				sb.WriteByte('\f')
+			case 'n':
+				sb.WriteByte('\n')
+			case 'r':
+				sb.WriteByte('\r')
+			case 't':
+				sb.WriteByte('\t')
+			case 'u':
+				if d.pos+4 > len(d.src) {
+					return "", fmt.Errorf("short \\u escape")
+				}
+				code, err := strconv.ParseUint(d.src[d.pos:d.pos+4], 16, 32)
+				if err != nil {
+					return "", fmt.Errorf("invalid \\u escape: %v", err)
+				}
+				d.pos += 4
+				sb.WriteRune(rune(code))
+			default:
+				return "", fmt.Errorf("invalid escape %q", esc)
+			}
+		default:
+			sb.WriteByte(c)
+			d.pos++
+		}
+	}
+	return "", fmt.Errorf("unterminated string")
+}
+
+// ── recipe-configure.py's read surface ──
+
+// configureLoadManifest is _load_manifest: the path spelling Python's
+// Path.resolve() prints (recipeConfigureResolve owns the resolution) and the
+// two frozen messages — `manifest not found:` for a missing/non-file path,
+// `invalid manifest:` with diagnostic parse detail (ADR 0002) for a manifest
+// tomllib would reject.
+func configureLoadManifest(root string) (*toml.Table, error) {
+	path := filepath.Join(root, "ai-specs", "ai-specs.toml")
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		return nil, fmt.Errorf("manifest not found: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("manifest not found: %s", path)
+	}
+	parsed, perr := toml.Parse(data)
+	if perr != nil {
+		return nil, fmt.Errorf("invalid manifest: %s", perr)
+	}
+	return parsed, nil
+}
+
+// configureCatalogDir is _cli_home() / "catalog" / "recipes": the home
+// verbatim (recipe-configure.py reads ONLY this candidate — no install-root
+// fallback like recipe-list.py's second one).
+func configureCatalogDir(home string) string {
+	return filepath.Join(home, "catalog", "recipes")
+}
+
+// configureRecipeDir is `catalog_dir / recipe_id`: an absolute id replaces
+// the catalogue root (Path join semantics) and the id's own spelling is kept
+// uncleaned (interior `..` included), so messages carry Python's path text.
+func configureRecipeDir(home, recipeID string) string {
+	if filepath.IsAbs(recipeID) {
+		return recipeID
+	}
+	return configureCatalogDir(home) + "/" + recipeID
+}
+
+// configureSchemaFor is recipe-configure.py's _schema_for: every failure is
+// wrapped as `unknown recipe '<id>': <detail>`.
+func configureSchemaFor(home, recipeID string) (*schema.Recipe, error) {
+	dir := configureRecipeDir(home, recipeID)
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("unknown recipe '%s': recipe directory not found: %s", recipeID, dir)
+	}
+	recipe, err := schema.LoadRecipeToml(dir + "/recipe.toml")
+	if err != nil {
+		return nil, fmt.Errorf("unknown recipe '%s': %s", recipeID, err)
+	}
+	return recipe, nil
+}
+
+// configureConfigDeclarationOrder re-reads recipe.toml for the ORDER of the
+// [config] keys: schema.ConfigSchema exposes fields/tables as maps, but
+// _schema_document emits them in TOML declaration order (fields first, then
+// tables, each in relative declaration order) — the same re-read pattern
+// internal/sync/buildrecipemcp.go uses for [[provides.mcp]] key order. A
+// parse failure (impossible after configureSchemaFor succeeded) falls back to
+// sorted keys; any key the maps do not carry (extras) is skipped.
+func configureConfigDeclarationOrder(home, recipeID string) []string {
+	data, err := os.ReadFile(configureRecipeDir(home, recipeID) + "/recipe.toml")
+	if err != nil {
+		return nil
+	}
+	parsed, err := toml.Parse(data)
+	if err != nil {
+		return nil
+	}
+	cfg, ok := parsed.Table("config")
+	if !ok || cfg == nil {
+		return nil
+	}
+	return cfg.Keys()
+}
+
+// configurePreflight is recipe-configure.py's _preflight over
+// internal/cliversion (cli_version.py's port): the installed version, the
+// [tool] policy and its exact-message failure, the lock's cli_version and the
+// derived lock_state.
+type configurePreflight struct {
+	installed     string
+	pin           string
+	pinSet        bool
+	pinKind       string
+	pinKindSet    bool
+	policyOK      bool
+	lockCLI       string
+	lockCLISet    bool
+	lockState     string
+	blockedReason string
+}
+
+func configureBuildPreflight(root string, manifest *toml.Table, home string) configurePreflight {
+	pf := configurePreflight{installed: cliversion.ReadInstalledVersion(home), policyOK: true}
+	policy, policyErr := cliversion.ParseToolPolicy(manifest)
+	lockMeta := cliversion.ReadLockMeta(filepath.Join(root, "ai-specs", ".ai-specs.lock"))
+	reason := policyErr
+	if policyErr != "" {
+		pf.policyOK = false
+	}
+	if policy != nil {
+		pf.pin, pf.pinSet = policy.Version, true
+		pf.pinKind, pf.pinKindSet = policy.Kind, true
+		if policyErr == "" {
+			ok, checkReason := cliversion.CheckPolicy(pf.installed, policy)
+			pf.policyOK = ok
+			reason = checkReason
+		}
+	}
+	if v, ok := lockMeta["cli_version"]; ok {
+		pf.lockCLI, pf.lockCLISet = v, true
+		switch {
+		case v != pf.installed:
+			pf.lockState = "stale"
+		default:
+			pf.lockState = "current"
+		}
+	} else {
+		pf.lockState = "unknown"
+	}
+	if !pf.policyOK {
+		pf.blockedReason = reason
+	}
+	return pf
+}
+
+// configureCLIVersionNode is preflight["cli_version"]'s fixed key order.
+func (pf configurePreflight) configureCLIVersionNode() rcJSON {
+	node := rcNewObject()
+	node.set("installed", rcString(pf.installed))
+	if pf.pinSet {
+		node.set("pin", rcString(pf.pin))
+	} else {
+		node.set("pin", rcNull())
+	}
+	if pf.pinKindSet {
+		node.set("pin_kind", rcString(pf.pinKind))
+	} else {
+		node.set("pin_kind", rcNull())
+	}
+	node.set("policy_ok", rcBool(pf.policyOK))
+	if pf.lockCLISet {
+		node.set("lock_cli_version", rcString(pf.lockCLI))
+	} else {
+		node.set("lock_cli_version", rcNull())
+	}
+	node.set("lock_state", rcString(pf.lockState))
+	return node
+}
+
+// configureTopology is recipe-configure.py's _topology_grounding: nil (no
+// topology key in the recipe) or the grounding dict plus the assumptions in
+// their fixed order.
+func configureTopology(root string, recipe *schema.Recipe, manifest *toml.Table) (rcJSON, []string) {
+	if recipe.ConfigSchema == nil {
+		return rcNull(), nil
+	}
+	if _, ok := recipe.ConfigSchema.Fields["repo_topology"]; !ok {
+		return rcNull(), nil
+	}
+	pt := target.ProjectRepoTopology(root, manifest)
+	submodules := append([]string(nil), pt.Submodules...)
+	sort.Strings(submodules)
+	node := rcNewObject()
+	node.set("resolved", rcString(pt.Resolved))
+	node.set("configured", rcString(pt.Configured))
+	node.set("via", rcString(pt.Via))
+	node.set("source", rcString(pt.Source))
+	node.set("submodules", rcNewArray(func() []rcJSON {
+		out := make([]rcJSON, 0, len(submodules))
+		for _, s := range submodules {
+			out = append(out, rcString(s))
+		}
+		return out
+	}()...))
+	node.set("gitmodules_present", rcBool(pt.GitmodulesPresent))
+	var assumptions []string
+	if !pt.GitmodulesPresent && pt.Configured == "auto" {
+		assumptions = append(assumptions,
+			"auto detection cannot distinguish monorepo-apps from standalone; ask the user which topology applies")
+	}
+	if pt.Via == "auto" && !pt.GitmodulesPresent {
+		assumptions = append(assumptions,
+			"topology detection had no .gitmodules signal and may have degraded to standalone")
+	}
+	if pt.Deprecation != "" {
+		assumptions = append(assumptions, pt.Deprecation)
+	}
+	return node, assumptions
+}
+
+// configureManifestMCP is `manifest["mcp"] if isinstance(..., dict) else {}`:
+// only a [mcp] table counts — [[mcp]] array-of-tables (the list form) does
+// not, exactly like toml-read.py's read_mcp.
+func configureManifestMCP(manifest *toml.Table) map[string]bool {
+	out := map[string]bool{}
+	if manifest == nil {
+		return out
+	}
+	raw, ok := manifest.Get("mcp")
+	if !ok {
+		return out
+	}
+	tbl, isTable := raw.(*toml.Table)
+	if !isTable || tbl == nil {
+		return out
+	}
+	for _, name := range tbl.Keys() {
+		out[name] = true
+	}
+	return out
+}
+
+// configureGrounding is inspect_project's grounding block (mcp/init/cli_deps,
+// then topology when the recipe declares it) plus the assumptions list.
+func configureGrounding(root string, recipe *schema.Recipe, manifest *toml.Table) (rcJSON, []string) {
+	requiredMCP := make([]rcJSON, 0, len(recipe.MCP))
+	manifestMCP := configureManifestMCP(manifest)
+	envVars := map[string]bool{}
+	for _, preset := range recipe.MCP {
+		requiredMCP = append(requiredMCP, rcString(preset.ID))
+		if env, ok := preset.Config["env"].(*toml.Table); ok && env != nil {
+			for _, name := range env.Keys() {
+				envVars[name] = true
+			}
+		}
+	}
+	present := []rcJSON{}
+	for _, id := range requiredMCP {
+		if manifestMCP[id.str] {
+			present = append(present, id)
+		}
+	}
+
+	grounding := rcNewObject()
+	mcpNode := rcNewObject()
+	mcpNode.set("required", rcBool(len(requiredMCP) > 0))
+	mcpNode.set("present", rcNewArray(present...))
+	mcpNode.set("env_vars", rcNewArray(sortedStringKeys(envVars, func(k string) rcJSON { return rcString(k) })...))
+	grounding.set("mcp", mcpNode)
+
+	initNode := rcNewObject()
+	initNode.set("present", rcBool(recipe.Init != nil))
+	if recipe.Init != nil {
+		initNode.set("needs_manifest", rcBool(recipe.Init.NeedsManifest))
+		needsMCP := append([]string(nil), recipe.Init.NeedsMCP...)
+		sort.Strings(needsMCP)
+		initNode.set("needs_mcp", rcNewArray(func() []rcJSON {
+			out := make([]rcJSON, 0, len(needsMCP))
+			for _, s := range needsMCP {
+				out = append(out, rcString(s))
+			}
+			return out
+		}()...))
+	} else {
+		initNode.set("needs_manifest", rcBool(false))
+		initNode.set("needs_mcp", rcNewArray())
+	}
+	grounding.set("init", initNode)
+
+	cliDeps := append([]*schema.CliDep(nil), recipe.CliDeps...)
+	sort.SliceStable(cliDeps, func(i, j int) bool { return cliDeps[i].Binary < cliDeps[j].Binary })
+	depNodes := make([]rcJSON, 0, len(cliDeps))
+	for _, dep := range cliDeps {
+		node := rcNewObject()
+		node.set("name", rcString(dep.Binary))
+		_, presentErr := exec.LookPath(dep.Binary)
+		node.set("present", rcBool(presentErr == nil))
+		depNodes = append(depNodes, node)
+	}
+	grounding.set("cli_deps", rcNewArray(depNodes...))
+
+	topology, assumptions := configureTopology(root, recipe, manifest)
+	if topology.kind != rcJSONNull {
+		grounding.set("topology", topology)
+	}
+	return grounding, assumptions
+}
+
+// sortedStringKeys returns the map's keys sorted (Python's sorted()) through
+// the value mapper.
+func sortedStringKeys(set map[string]bool, to func(string) rcJSON) []rcJSON {
+	keys := make([]string, 0, len(set))
+	for k := range set {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]rcJSON, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, to(k))
+	}
+	return out
+}
+
+// configureSchemaDocument is _schema_document: every standard field in TOML
+// declaration order (fields first), then every structured table in its
+// declaration order, each row in the Python dict's fixed key order; the table
+// rows carry the declared shape verbatim (schema.ConfigTable.ShapeJSON — the
+// same JSON STRUCTURED_CONFIG_SHAPES serializes to on the Python side).
+func configureSchemaDocument(home, recipeID string, recipe *schema.Recipe) (rcJSON, error) {
+	fields := map[string]*schema.ConfigField{}
+	tables := map[string]*schema.ConfigTable{}
+	if recipe.ConfigSchema != nil {
+		fields = recipe.ConfigSchema.Fields
+		tables = recipe.ConfigSchema.Tables
+	}
+	order := configureConfigDeclarationOrder(home, recipeID)
+	appendSortedMissing := func(keys []string, present map[string]bool) []string {
+		var missing []string
+		for _, k := range keys {
+			if !present[k] {
+				missing = append(missing, k)
+			}
+		}
+		sort.Strings(missing)
+		return append(keys, missing...)
+	}
+	fieldKeys := make([]string, 0, len(fields))
+	tableKeys := make([]string, 0, len(tables))
+	inFields := map[string]bool{}
+	inTables := map[string]bool{}
+	for _, k := range order {
+		if _, ok := fields[k]; ok {
+			fieldKeys = append(fieldKeys, k)
+			inFields[k] = true
+		}
+		if _, ok := tables[k]; ok {
+			tableKeys = append(tableKeys, k)
+			inTables[k] = true
+		}
+	}
+	allFields := make([]string, 0, len(fields))
+	for k := range fields {
+		allFields = append(allFields, k)
+	}
+	allTables := make([]string, 0, len(tables))
+	for k := range tables {
+		allTables = append(allTables, k)
+	}
+	if order == nil {
+		sort.Strings(allFields)
+		sort.Strings(allTables)
+		fieldKeys, tableKeys = allFields, allTables
+	} else {
+		fieldKeys = appendSortedMissing(fieldKeys, inFields)
+		tableKeys = appendSortedMissing(tableKeys, inTables)
+	}
+
+	document := rcNewObject()
+	rows := make([]rcJSON, 0, len(fieldKeys)+len(tableKeys))
+	for _, key := range fieldKeys {
+		field := fields[key]
+		row := rcNewObject()
+		row.set("key", rcString(key))
+		row.set("type", rcString(config.RecipeConfigFieldType(field)))
+		row.set("required", rcBool(field.Required))
+		if field.Enum != nil {
+			enum := make([]rcJSON, 0, len(field.Enum))
+			for _, v := range field.Enum {
+				enum = append(enum, rcString(v))
+			}
+			row.set("enum", rcNewArray(enum...))
+		} else {
+			row.set("enum", rcNull())
+		}
+		def, err := rcFromTOML(field.Default)
+		if err != nil {
+			return rcNull(), err
+		}
+		row.set("default", def)
+		row.set("help_text", rcString(field.HelpText))
+		rows = append(rows, row)
+	}
+	for _, key := range tableKeys {
+		shape, err := tables[key].ShapeJSON()
+		if err != nil {
+			return rcNull(), err
+		}
+		row := rcNewObject()
+		row.set("key", rcString(key))
+		row.set("type", rcString("table"))
+		row.set("required", rcBool(false))
+		row.set("enum", rcNull())
+		row.set("default", rcNull())
+		row.set("help_text", rcString(""))
+		shapeTree, shapeErr := rcFromJSONFragment(string(shape))
+		if shapeErr != nil {
+			return rcNull(), shapeErr
+		}
+		row.set("shape", shapeTree)
+		rows = append(rows, row)
+	}
+	document.set("fields", rcNewArray(rows...))
+	return document, nil
+}
+
+// configureStateNode is _recipe_state rendered: the config table as the
+// sorted `current_config` dict.
+func configureCurrentConfig(current *toml.Table) (rcJSON, error) {
+	out := rcNewObject()
+	if current == nil {
+		return out, nil
+	}
+	keys := append([]string(nil), current.Keys()...)
+	sort.Strings(keys)
+	for _, k := range keys {
+		value, _ := current.Get(k)
+		converted, err := rcFromTOML(value)
+		if err != nil {
+			return rcNull(), err
+		}
+		out.set(k, converted)
+	}
+	return out, nil
+}
+
+// configureInspect is inspect_project: manifest, schema, state, grounding,
+// the lock meta, unknown keys and assumptions — the document dict in its
+// fixed key order.
+func configureInspect(root, recipeID, home string) (rcJSON, error) {
+	manifest, err := configureLoadManifest(root)
+	if err != nil {
+		return rcNull(), err
+	}
+	recipe, err := configureSchemaFor(home, recipeID)
+	if err != nil {
+		return rcNull(), err
+	}
+	present, enabled, current := config.RecipeConfigState(manifest, recipeID)
+
+	schemaDocument, err := configureSchemaDocument(home, recipeID, recipe)
+	if err != nil {
+		return rcNull(), err
+	}
+	currentConfig, err := configureCurrentConfig(current)
+	if err != nil {
+		return rcNull(), err
+	}
+	grounding, assumptions := configureGrounding(root, recipe, manifest)
+
+	// _preflight(project_root, manifest)["cli_version"] — the FULL
+	// cli_version block (the Python local that receives it is named
+	// `lock_meta`, but _preflight's dict is what it holds; the lock meta
+	// feeds it inside configureBuildPreflight).
+	pf := configureBuildPreflight(root, manifest, home)
+	preflightNode := rcNewObject()
+	preflightNode.set("cli_version", pf.configureCLIVersionNode())
+
+	unknown := []string{}
+	if current != nil {
+		addressable := map[string]bool{}
+		if recipe.ConfigSchema != nil {
+			for k := range recipe.ConfigSchema.Fields {
+				addressable[k] = true
+			}
+			for k := range recipe.ConfigSchema.Tables {
+				addressable[k] = true
+			}
+		}
+		for _, k := range current.Keys() {
+			if !addressable[k] {
+				unknown = append(unknown, k)
+			}
+		}
+	}
+	sort.Strings(unknown)
+	unknownNodes := make([]rcJSON, 0, len(unknown))
+	for _, k := range unknown {
+		unknownNodes = append(unknownNodes, rcString(k))
+	}
+	assumptionNodes := make([]rcJSON, 0, len(assumptions))
+	for _, a := range assumptions {
+		assumptionNodes = append(assumptionNodes, rcString(a))
+	}
+
+	doc := rcNewObject()
+	doc.set("schema_version", rcNumber("1"))
+	recipeNode := rcNewObject()
+	recipeNode.set("id", rcString(recipeID))
+	recipeNode.set("enabled", rcBool(enabled))
+	recipeNode.set("present_in_manifest", rcBool(present))
+	doc.set("recipe", recipeNode)
+	doc.set("schema", schemaDocument)
+	doc.set("current_config", currentConfig)
+	doc.set("grounding", grounding)
+	doc.set("preflight", preflightNode)
+	doc.set("unknown_keys", rcNewArray(unknownNodes...))
+	doc.set("assumptions", rcNewArray(assumptionNodes...))
+	return doc, nil
+}
+
+// ── recipe-configure.py's apply_project report ──
+
+// configureBaseReport is _base_report: the fixed key order (report_version …
+// gaps), with the preflight's cli_version object, the optional
+// blocked_reason key (the error paths' `{"cli_version": {}}` preflight does
+// NOT carry it — Python's dict literal lacks the key entirely) and
+// ignore_cli_version appended last inside preflight.
+func configureBaseReport(recipeID string, cliVersion rcJSON, blockedReason rcJSON, hasBlockedKey bool, ignore bool) rcJSON {
+	preflight := rcNewObject()
+	preflight.set("cli_version", cliVersion)
+	if hasBlockedKey {
+		preflight.set("blocked_reason", blockedReason)
+	}
+	preflight.set("ignore_cli_version", rcBool(ignore))
+
+	syncNode := rcNewObject()
+	syncNode.set("ran", rcBool(false))
+	syncNode.set("exit_code", rcNull())
+	syncNode.set("failed_step", rcNull())
+	syncNode.set("rolled_back", rcBool(false))
+	syncNode.set("lock_stamped", rcBool(false))
+
+	verifyNode := rcNewObject()
+	verifyNode.set("doctor_exit", rcNull())
+	verifyNode.set("parsed", rcBool(false))
+	verifyNode.set("ok", rcNull())
+	verifyNode.set("info", rcNull())
+	verifyNode.set("warn", rcNull())
+	verifyNode.set("error", rcNull())
+
+	applied := rcNewObject()
+	applied.set("changed", rcNewArray())
+	applied.set("unchanged", rcNewArray())
+	applied.set("preserved", rcNewArray())
+
+	report := rcNewObject()
+	report.set("report_version", rcNumber("1"))
+	report.set("status", rcString("rejected"))
+	report.set("recipe", rcString(recipeID))
+	report.set("applied", applied)
+	report.set("preflight", preflight)
+	report.set("sync", syncNode)
+	report.set("verify", verifyNode)
+	report.set("assumptions", rcNewArray())
+	report.set("drift", rcNewArray())
+	report.set("gaps", rcNewArray())
+	return report
+}
+
+// configureRejectedReport is every ConfigureError arm: the
+// `{"cli_version": {}}` preflight and the reason appended after gaps.
+func configureRejectedReport(recipeID, reason string, ignore bool) rcJSON {
+	report := configureBaseReport(recipeID, rcNewObject(), rcNull(), false, ignore)
+	report.set("reason", rcString(reason))
+	return report
+}
+
+// configureFrontDoor runs `<home>/bin/ai-specs <argv…>` exactly like
+// recipe-configure.py's _run_command: cwd = the project root, AI_SPECS_HOME
+// pinned to the CLI home, stdout and stderr captured separately and returned
+// as stdout+stderr concatenated (Python's `(proc.stdout or "") +
+// (proc.stderr or "")`). A process that cannot be spawned is a fatal error:
+// Python dies there with an uncaught traceback (exit 1, no report).
+func configureFrontDoor(home, root string, argv ...string) (int, string, error) {
+	cmd := exec.Command(filepath.Join(home, "bin", "ai-specs"), argv...)
+	cmd.Dir = root
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "AI_SPECS_HOME=") {
+			env = append(env, kv)
+		}
+	}
+	cmd.Env = append(env, "AI_SPECS_HOME="+home)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	combined := outBuf.String() + errBuf.String()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode(), combined, nil
+		}
+		return 0, "", err
+	}
+	return 0, combined, nil
+}
+
+// configureSummaryRE is recipe-configure.py's SUMMARY_RE.
+var configureSummaryRE = regexp.MustCompile(`(?i)Summary:\s*(\d+)\s+OK,\s*(\d+)\s+INFO,\s*(\d+)\s+WARN,\s*(\d+)\s+ERROR`)
+
+// configureFailedStepRE is recipe-configure.py's _failed_step pattern; the
+// LAST `syncing …` match names the step that stopped sync.
+var configureFailedStepRE = regexp.MustCompile(`(?i)syncing\s+([^\n\r]+)`)
+
+// configureVerifyNode is parse_doctor_summary + the doctor_exit stamp, in the
+// Python dict's key order.
+func configureVerifyNode(output string, doctorExit int) rcJSON {
+	node := rcNewObject()
+	node.set("doctor_exit", rcInt(doctorExit))
+	matches := configureSummaryRE.FindAllStringSubmatch(output, -1)
+	if len(matches) == 0 {
+		node.set("parsed", rcBool(false))
+		node.set("ok", rcNull())
+		node.set("info", rcNull())
+		node.set("warn", rcNull())
+		node.set("error", rcNull())
+		return node
+	}
+	last := matches[len(matches)-1]
+	node.set("parsed", rcBool(true))
+	for i, key := range []string{"ok", "info", "warn", "error"} {
+		node.set(key, rcNumber(last[i+1]))
+	}
+	return node
+}
+
+// configureFailedStep is _failed_step over the captured sync output.
+func configureFailedStep(output string) rcJSON {
+	matches := configureFailedStepRE.FindAllStringSubmatch(output, -1)
+	if len(matches) == 0 {
+		return rcNull()
+	}
+	return rcString(strings.TrimSpace(matches[len(matches)-1][1]))
+}
+
+// configureAssumptions is what apply_project's
+// `report["assumptions"] = inspect_project(...)["assumptions"]` reads: the
+// manifest re-read, the schema re-read and the topology grounding — the same
+// helpers inspect runs, so the two can never disagree (S6).
+func configureAssumptions(root, recipeID, home string) ([]string, error) {
+	manifest, err := configureLoadManifest(root)
+	if err != nil {
+		return nil, err
+	}
+	recipe, err := configureSchemaFor(home, recipeID)
+	if err != nil {
+		return nil, err
+	}
+	_, assumptions := configureGrounding(root, recipe, manifest)
+	return assumptions, nil
+}
+
+// configureApply is apply_project: validation → preflight (blocked exit 4) →
+// the changed/unchanged/preserved computation → the dry-run/no-op exits →
+// both writes (project-owned keys first, then the recipe config block) → the
+// --sync leg. The returned report is emitted by the caller; the third result
+// is the fatal front-door/spawn error Python would die on (no report).
+func configureApply(root, recipeID, home string, values []config.ConfigValue, sync, ignore, dryRun bool) (rcJSON, int, error) {
+	manifest, merr := configureLoadManifest(root)
+	recipe, rerr := configureSchemaFor(home, recipeID)
+	if merr != nil {
+		return configureRejectedReport(recipeID, merr.Error(), ignore), 3, nil
+	}
+	if rerr != nil {
+		return configureRejectedReport(recipeID, rerr.Error(), ignore), 3, nil
+	}
+	if verr := config.ValidateConfigValues(recipe, values); verr != nil {
+		return configureRejectedReport(recipeID, verr.Error(), ignore), 3, nil
+	}
+
+	pf := configureBuildPreflight(root, manifest, home)
+	blocked := rcNull()
+	if !pf.policyOK {
+		blocked = rcString(pf.blockedReason)
+	}
+	report := configureBaseReport(recipeID, pf.configureCLIVersionNode(), blocked, true, ignore)
+	if !pf.policyOK && !ignore {
+		report.set("status", rcString("blocked"))
+		return report, 4, nil
+	}
+	if pf.lockState == "stale" {
+		report.set("gaps", rcNewArray(rcString(fmt.Sprintf(
+			"lock cli_version %s != installed %s (next sync restamps)",
+			pf.lockCLI, pf.installed))))
+	}
+
+	_, _, current := config.RecipeConfigState(manifest, recipeID)
+	var project *toml.Table
+	if raw, ok := manifest.Get("project"); ok {
+		if tbl, isTable := raw.(*toml.Table); isTable {
+			project = tbl
+		}
+	}
+	getProject := func(key string) any {
+		if project == nil {
+			return nil
+		}
+		v, _ := project.Get(key)
+		return v
+	}
+	getCurrent := func(key string) (any, bool) {
+		if current == nil {
+			return nil, false
+		}
+		v, ok := current.Get(key)
+		return v, ok
+	}
+
+	sortedKeys := make([]string, 0, len(values))
+	valueOf := map[string]any{}
+	for _, cv := range values {
+		sortedKeys = append(sortedKeys, cv.Key)
+		valueOf[cv.Key] = cv.Value
+	}
+	sort.Strings(sortedKeys)
+
+	changed := rcNewArray()
+	unchanged := []rcJSON{}
+	for _, key := range sortedKeys {
+		value := valueOf[key]
+		var from any
+		equal := false
+		switch {
+		case recipeConfigureProjectOwnedKeys[key]:
+			from = getProject(key)
+			equal = config.EqualPythonValue(from, value)
+		case strings.Contains(key, "."):
+			var ok bool
+			from, ok = config.LookupNestedConfig(current, key)
+			equal = ok && config.EqualPythonValue(from, value)
+		default:
+			var ok bool
+			from, ok = getCurrent(key)
+			equal = ok && config.EqualPythonValue(from, value)
+		}
+		if equal {
+			unchanged = append(unchanged, rcString(key))
+			continue
+		}
+		fromNode, err := rcFromTOML(from)
+		if err != nil {
+			return rcNull(), 0, err
+		}
+		toNode, err := rcFromTOML(value)
+		if err != nil {
+			return rcNull(), 0, err
+		}
+		entry := rcNewObject()
+		entry.set("key", rcString(key))
+		entry.set("from", fromNode)
+		entry.set("to", toNode)
+		changed.arr = append(changed.arr, entry)
+	}
+
+	var recipeValues []config.ConfigValue
+	touched := map[string]bool{}
+	for _, cv := range values {
+		if recipeConfigureProjectOwnedKeys[cv.Key] {
+			continue
+		}
+		recipeValues = append(recipeValues, cv)
+		rootKey := strings.Split(cv.Key, ".")[0]
+		touched[rootKey] = true
+	}
+	preserved := []rcJSON{}
+	if current != nil {
+		keys := append([]string(nil), current.Keys()...)
+		sort.Strings(keys)
+		for _, k := range keys {
+			if !touched[k] {
+				preserved = append(preserved, rcString(k))
+			}
+		}
+	}
+	applied := report.get("applied")
+	applied.set("changed", changed)
+	applied.set("unchanged", rcNewArray(unchanged...))
+	applied.set("preserved", rcNewArray(preserved...))
+
+	assumptions, aerr := configureAssumptions(root, recipeID, home)
+	if aerr != nil {
+		// apply_project's assumptions line is outside its guarded block: the
+		// error reaches main()'s except and rebuilds the rejected report with
+		// the EMPTY preflight.
+		return configureRejectedReport(recipeID, aerr.Error(), ignore), 3, nil
+	}
+	assumptionNodes := make([]rcJSON, 0, len(assumptions))
+	for _, a := range assumptions {
+		assumptionNodes = append(assumptionNodes, rcString(a))
+	}
+	report.set("assumptions", rcNewArray(assumptionNodes...))
+
+	if len(changed.arr) == 0 || dryRun {
+		if len(changed.arr) == 0 {
+			report.set("status", rcString("no-op"))
+		} else {
+			report.set("status", rcString("ok"))
+		}
+		report.set("dry_run", rcBool(dryRun))
+		return report, 0, nil
+	}
+
+	// Write phase: project-owned keys first (sorted), then the recipe block.
+	manifestPath := filepath.Join(root, "ai-specs", "ai-specs.toml")
+	for _, key := range sortedKeys {
+		if !recipeConfigureProjectOwnedKeys[key] {
+			continue
+		}
+		if config.EqualPythonValue(getProject(key), valueOf[key]) {
+			continue
+		}
+		if werr := config.WriteProjectKey(manifestPath, key, valueOf[key]); werr != nil {
+			report.set("status", rcString("failed"))
+			report.set("reason", rcString(werr.Error()))
+			return report, 1, nil
+		}
+	}
+	_, refusal, werr := config.UpdateRecipeConfig(manifestPath, recipeID, recipeValues)
+	if werr != nil {
+		report.set("status", rcString("failed"))
+		report.set("reason", rcString(werr.Error()))
+		return report, 1, nil
+	}
+	if refusal != "" {
+		report.set("status", rcString("failed"))
+		report.set("reason", rcString(refusal))
+		return report, 1, nil
+	}
+
+	if !sync {
+		report.set("status", rcString("ok"))
+		return report, 0, nil
+	}
+
+	// The --sync leg: the same front-door command, env and parse seams the
+	// script uses (see the section header for the decision).
+	syncArgs := []string{"sync", root}
+	if ignore {
+		syncArgs = append(syncArgs, "--ignore-cli-version")
+	}
+	syncExit, syncOutput, ferr := configureFrontDoor(home, root, syncArgs...)
+	if ferr != nil {
+		return rcNull(), 0, ferr
+	}
+	syncNode := report.get("sync")
+	syncNode.set("ran", rcBool(true))
+	syncNode.set("exit_code", rcInt(syncExit))
+	if syncExit != 0 {
+		syncNode.set("failed_step", configureFailedStep(syncOutput))
+		report.set("status", rcString("partial"))
+		report.set("reason", rcString(
+			"sync failed; previous writes were not rolled back and lock CLI version was not stamped"))
+		return report, 1, nil
+	}
+	syncNode.set("lock_stamped", rcBool(true))
+
+	doctorExit, doctorOutput, derr := configureFrontDoor(home, root, "doctor", root)
+	if derr != nil {
+		return rcNull(), 0, derr
+	}
+	report.set("verify", configureVerifyNode(doctorOutput, doctorExit))
+	if doctorExit != 0 {
+		report.set("status", rcString("failed"))
+		report.set("reason", rcString("doctor verification failed"))
+		return report, 1, nil
+	}
+	report.set("status", rcString("ok"))
+	return report, 0, nil
+}
+
+// recipeConfigureResolve is Path.resolve(): absolute, symlinks resolved as
+// far as the path exists (Python's realpath semantics — the tail after a
+// missing component is appended unresolved), which is what puts the
+// macOS `/private/var/...` spelling into `manifest not found:`.
+func recipeConfigureResolve(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	cur := abs
+	var missing []string
+	for {
+		resolved, rerr := filepath.EvalSymlinks(cur)
+		if rerr == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return resolved
+		}
+		if !os.IsNotExist(rerr) {
+			return abs
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs
+		}
+		missing = append([]string{filepath.Base(cur)}, missing...)
+		cur = parent
+	}
+}
+
+// configureParseAssignments is `dict(_parse_assignment(recipe, item) for
+// item in args.assignments)`: parsed in order (a failure aborts before any
+// report is built), deduplicated Python-dict style — the LAST value at the
+// FIRST occurrence's position.
+func configureParseAssignments(recipe *schema.Recipe, assignments []string) ([]config.ConfigValue, error) {
+	var order []string
+	byKey := map[string]any{}
+	for _, assignment := range assignments {
+		cv, err := config.ParseConfigAssignment(recipe, assignment)
+		if err != nil {
+			return nil, err
+		}
+		if _, seen := byKey[cv.Key]; !seen {
+			order = append(order, cv.Key)
+		}
+		byKey[cv.Key] = cv.Value
+	}
+	values := make([]config.ConfigValue, 0, len(order))
+	for _, key := range order {
+		values = append(values, config.ConfigValue{Key: key, Value: byKey[key]})
+	}
+	return values, nil
+}
+
+// emitConfigureReport is recipe-configure.py's _emit: one line of JSON on
+// stdout — indent=2 by default, the compact separators under --json — and the
+// trailing newline print() adds.
+func emitConfigureReport(w io.Writer, doc rcJSON, compact bool) error {
+	var sb strings.Builder
+	writeJSON(&sb, doc, 0, compact)
+	sb.WriteByte('\n')
+	_, err := io.WriteString(w, sb.String())
+	return err
+}
+
+// runRecipeConfigure is the native `recipe configure` entry —
+// recipe-configure.py's main(): the argparse surface first (usage errors exit
+// 2 before anything touches the filesystem), then Path.resolve, then the two
+// parser.error() arm combinations, then _schema_for (every failure is the
+// rejected report, exit 3), then --inspect or the apply/report path.
+func runRecipeConfigure(args []string, home string, stdout, stderr io.Writer) int {
+	columns := recipeConfigureColumns()
+	parsed := parseRecipeConfigure(args)
+	switch parsed.kind {
+	case recipeConfigureParseHelp:
+		fmt.Fprint(stdout, recipeConfigureHelpText(columns))
+		return 0
+	case recipeConfigureParseError:
+		fmt.Fprint(stderr, recipeConfigureErrorText(columns, parsed.errMsg))
+		return 2
+	}
+	opts := parsed.opts
+
+	// parser.error() arms after parse_args + Path(args.path).resolve().
+	if opts.inspect && len(opts.assignments) > 0 {
+		fmt.Fprint(stderr, recipeConfigureErrorText(columns, "--inspect cannot be combined with --set"))
+		return 2
+	}
+	if !opts.inspect && len(opts.assignments) == 0 {
+		fmt.Fprint(stderr, recipeConfigureErrorText(columns, "one of --inspect or --set is required"))
+		return 2
+	}
+	pathArg := "."
+	if opts.hasPath {
+		pathArg = opts.path
+	}
+	root := recipeConfigureResolve(pathArg)
+
+	emit := func(doc rcJSON, code int) int {
+		if doc.kind == rcJSONNull {
+			return code
+		}
+		if err := emitConfigureReport(stdout, doc, opts.asJSON); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return code
+	}
+	rejected := func(reason string) int {
+		return emit(configureRejectedReport(opts.recipeID, reason, opts.ignoreCLIVersion), 3)
+	}
+
+	recipe, err := configureSchemaFor(home, opts.recipeID)
+	if err != nil {
+		return rejected(err.Error())
+	}
+	if opts.inspect {
+		doc, ierr := configureInspect(root, opts.recipeID, home)
+		if ierr != nil {
+			return rejected(ierr.Error())
+		}
+		return emit(doc, 0)
+	}
+	values, verr := configureParseAssignments(recipe, opts.assignments)
+	if verr != nil {
+		return rejected(verr.Error())
+	}
+	report, code, fatal := configureApply(root, opts.recipeID, home, values,
+		opts.sync, opts.ignoreCLIVersion, opts.dryRun)
+	if fatal != nil {
+		fmt.Fprintln(stderr, fatal)
+		return 1
+	}
+	return emit(report, code)
 }
