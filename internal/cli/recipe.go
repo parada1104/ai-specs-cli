@@ -17,8 +17,9 @@ package cli
 //
 // READ-ONLY (U6a goal 4, the `recipe list` section below): nothing there
 // creates a cache, a manifest or an `ai-specs/` tree — that verb only stats
-// and reads. The `recipe add` section (GO-20 U6b) is the file's ONE writer
-// and delegates every byte of the write to internal/config.
+// and reads. The `recipe add` section (GO-20 U6b) and the `recipe remove`
+// section (GO-20 U6c) are the file's writers, and every byte of both writes
+// is delegated to internal/config — no second manifest writer lives here.
 //
 // Documented deviations (the S12/ADR 0002 class, pinned by tests): a `cd`
 // failure keeps exit 1 and the `cd: <path>: <reason>` shape but drops bash's
@@ -35,6 +36,7 @@ import (
 
 	"ai-specs.dev/ai-specs/internal/config"
 	homepkg "ai-specs.dev/ai-specs/internal/home"
+	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/recipe"
 	"ai-specs.dev/ai-specs/internal/schema"
 	"ai-specs.dev/ai-specs/internal/toml"
@@ -417,6 +419,158 @@ func runRecipeAddVerb(target, recipeID, home, exePath string, stdout, stderr io.
 		if hasMcpEnv {
 			fmt.Fprintln(stdout, "  - Configure MCP environment variables: ai-specs configure-recipes")
 		}
+	}
+	return 0
+}
+
+// ── GO-20 U6c (T3): `recipe remove` ──
+//
+// Native `ai-specs recipe remove` — the port of lib/recipe-remove.sh (203
+// lines): the wrapper's argument loop (the usage() heredoc, `<id>` then
+// optional `[path]`, `--` semantics, unknown flags, the missing-id arm) and
+// the two steps that follow it in order — the manifest surgery through
+// config.RemoveRecipeSegments (the ONE remover, S6: the segmenter, the
+// valid→invalid guard, the atomic write and the frozen messages are all
+// already differential-tested against recipe_remove_ref.py in
+// internal/config) and the lock cleanup (recipe-remove.sh:167-203) through
+// internal/lock — LoadLock → RemoveRecipeLockEntries → WriteLock only when
+// something was removed → the frozen `✓ cleaned` line.
+//
+// No TTY seam: unlike `recipe add` (L4's option (a)) this script has no
+// interactive branch — its heredoc is pure surgery — so the whole verb is
+// native end to end, which is what retires the BINARY's use of
+// recipe-remove.sh (S9: the file itself stays until U7/U8).
+//
+// Documented deviations (the S12/ADR 0002 class, pinned by tests): a `cd`
+// failure keeps exit 1 and the `cd: <path>: <reason>` shape but drops bash's
+// own `lib/recipe-remove.sh: line N: ` prefix (TestRecipeRemoveMissingPathDeviation),
+// a corrupt lock file exits 1 like the script's traceback but prints Go's
+// load error instead of Python's traceback text, and the valid→invalid guard
+// message's embedded parse-error detail is diagnostic — the differential
+// normalizes that parenthesized detail only (recipeRemoveGuardDetailRE).
+
+// recipeRemoveUsage is lib/recipe-remove.sh's usage() heredoc byte for byte:
+// a QUOTED heredoc (`cat <<'EOF'`), so the text is literal and the trailing
+// newline after the last line is part of the output (stdout for --help,
+// stderr after the missing-id error).
+const recipeRemoveUsage = `Usage: ai-specs recipe remove <id> [path] [--help]
+Remove a recipe ([recipes.<id>]) from ai-specs.toml.
+Arguments:
+  id      Recipe identifier to remove
+  path    Target project root (default: current directory)
+Flags:
+  --help  Show this help
+`
+
+// runRecipeRemove is the native `recipe remove` entry: recipe-remove.sh's
+// argument loop first (usage errors exit 2 before anything touches the
+// filesystem), the missing-id arm, the cd/pwd target resolution, the
+// `ERROR: <toml> not found.` guard, then the two write steps in the script's
+// own order — manifest surgery, then lock cleanup.
+func runRecipeRemove(args []string, stdout, stderr io.Writer) int {
+	// The script's while/case loop, in order: --help|-h wins wherever it
+	// appears, `--` makes every remaining argument positional (never a flag),
+	// an unknown flag prints two stderr lines, and a third positional is the
+	// other exit-2 usage error. The take_positional emptiness checks are
+	// mirrored literally: an empty-string positional leaves the slot empty, so
+	// `remove "" proj` makes proj the ID, exactly like the shell.
+	recipeID, target := "", ""
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--help" || arg == "-h":
+			fmt.Fprint(stdout, recipeRemoveUsage)
+			return 0
+		case arg == "--":
+			// Positionals after -- are real arguments, not discardable.
+			for i++; i < len(args); i++ {
+				rest := args[i]
+				if recipeID == "" {
+					recipeID = rest
+					continue
+				}
+				if target == "" {
+					target = rest
+					continue
+				}
+				fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", rest)
+				return 2
+			}
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(stderr, "ERROR: unknown flag: %s\n", arg)
+			fmt.Fprintln(stderr, "Run 'ai-specs recipe remove --help' for usage.")
+			return 2
+		default:
+			if recipeID == "" {
+				recipeID = arg
+				continue
+			}
+			if target == "" {
+				target = arg
+				continue
+			}
+			fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", arg)
+			return 2
+		}
+	}
+	if recipeID == "" {
+		fmt.Fprintln(stderr, "ERROR: missing recipe id")
+		fmt.Fprint(stderr, recipeRemoveUsage)
+		return 2
+	}
+	if target == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			target = cwd
+		}
+		// A failing `pwd` killed the script under set -e; the cd below
+		// reports the same frozen exit 1 instead.
+	}
+	resolved, err := cdSkillsTarget(target)
+	if err != nil {
+		fmt.Fprintf(stderr, "cd: %s: %s\n", target, cdReason(err))
+		return 1
+	}
+	tomlPath := filepath.Join(resolved, "ai-specs", "ai-specs.toml")
+
+	// The script's `[[ ! -f "$TOML_PATH" ]]` guard, same message and exit.
+	if !regularInitFile(tomlPath) {
+		fmt.Fprintf(stderr, "ERROR: %s not found.\n", tomlPath)
+		return 1
+	}
+
+	// Step 1 — the manifest surgery: the shared remover owns the segmenter,
+	// the valid→invalid guard, the atomic temp+rename and the frozen messages
+	// (`✓ removed N section(s) …` on stdout, `✗ recipe '<id>' not found in …`
+	// and the guard error on stderr) — not a byte of it is re-implemented
+	// here. The script's `set -e` stops the tail on any of those failures, so
+	// this returns before the lock step, exactly like the heredoc's exit 1.
+	_, msg, err := config.RemoveRecipeSegments(tomlPath, recipeID)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprintln(stdout, msg)
+
+	// Step 2 — the lock cleanup (recipe-remove.sh:167-203): the script's
+	// `[[ -f "$LOCK_PATH" ]]` is LoadLock's missing-file shape (a missing or
+	// non-regular path loads an empty lock, so nothing is removed and the lock
+	// is never rewritten), and internal/lock owns the removal decision, the
+	// byte-exact writer and the atomicity. The frozen `✓ cleaned` line prints
+	// only when entries were actually dropped.
+	lockPath := filepath.Join(resolved, "ai-specs", ".ai-specs.lock")
+	lk, err := lock.LoadLock(lockPath)
+	if err != nil {
+		// The script's python dies with a traceback here (exit 1); the exit
+		// code survives, the wording is ours (ADR 0002).
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if lock.RemoveRecipeLockEntries(lk, recipeID) {
+		if err := lock.WriteLock(lockPath, lk); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "  ✓ cleaned lock entries for recipe '%s'\n", recipeID)
 	}
 	return 0
 }

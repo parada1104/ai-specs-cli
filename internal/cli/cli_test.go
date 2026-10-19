@@ -134,10 +134,10 @@ func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 	}
 }
 
-// TestRouteRecipeListIsNativeBeforeTheShim pins the GO-20 U6a/U6b
-// subcommand interceptions: `recipe list` and `recipe add` resolve native,
-// while EVERY other arm of lib/recipe.sh's case statement — `init`,
-// `configure`, `remove`, the bare `recipe`, `--help`/`-h`/`help` and unknown
+// TestRouteRecipeListIsNativeBeforeTheShim pins the GO-20 U6a/U6b/U6c
+// subcommand interceptions: `recipe list`, `recipe add` and `recipe remove`
+// resolve native, while EVERY other arm of lib/recipe.sh's case statement —
+// `init`, `configure`, the bare `recipe`, `--help`/`-h`/`help` and unknown
 // subcommands — keeps the recipe.sh shim byte for byte (U6e retires that
 // script, not this slice). On a TTY `recipe add` still EXECUTES that shim
 // through runRecipeAdd's documented seam — Route cannot see the streams, so
@@ -157,11 +157,17 @@ func TestRouteRecipeListIsNativeBeforeTheShim(t *testing.T) {
 		{[]string{"recipe", "add", "worktree-flow"}, routeRecipeAdd, ""},
 		{[]string{"recipe", "add", "worktree-flow", "."}, routeRecipeAdd, ""},
 		{[]string{"recipe", "add", "--help"}, routeRecipeAdd, ""},
+		// U6c: `recipe remove` is intercepted before the dispatcher too (the
+		// script has no interactive branch, so there is no TTY seam like add's).
+		{[]string{"recipe", "remove"}, routeRecipeRemove, ""},
+		{[]string{"recipe", "remove", "worktree-flow"}, routeRecipeRemove, ""},
+		{[]string{"recipe", "remove", "worktree-flow", "."}, routeRecipeRemove, ""},
+		{[]string{"recipe", "remove", "--help"}, routeRecipeRemove, ""},
+		{[]string{"recipe", "remove", "--", "worktree-flow"}, routeRecipeRemove, ""},
 		// Everything else of lib/recipe.sh's case statement keeps the shim.
 		{[]string{"recipe"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "init", "worktree-flow"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "configure", "worktree-flow"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "remove", "worktree-flow"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "--help"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "-h"}, routeShim, "recipe.sh"},
 		{[]string{"recipe", "help"}, routeShim, "recipe.sh"},
