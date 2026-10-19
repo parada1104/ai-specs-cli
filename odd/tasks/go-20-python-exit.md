@@ -226,7 +226,7 @@ cannot each be one PR.
 | U3b-2 advisories — the 14 review advisories closed | **delivered** | `55d235e` (PR #369); 10 fixed / 4 declined with a reason, 0 open; doc `go-20-u3b-advisories.md` |
 | U4a — the classic `init` path, native | **delivered, judgment approved** | `76d8b83` (PR #371); T4a of `go-20-u4-init.md`; Judgment Day 8/8 verified after a two-round fix, independent verify PASS, 44 init tests + parity 29/29 |
 | U4b-1 — the wizard, native | **delivered** | `9a57121` (PR #373); `tui.Text` + `internal/cli/initwizard.go`; the 7 PTY wizard flows now drive the built binary; assess: medium, review not due; verify unavailable (subagent timeout), raw-mode lifecycle covered by reading |
-| U4b-2 — per-recipe configuration prompts | pending | `init_tui.py:204-233`, needs `recipe-read.py` + `config_wizard.py` (U6 surface) |
+| U4b-2 — per-recipe configuration in the wizard | **delivered, review approved** | `81b0ff7` (PR #395); S19/S20 closed; review `review-c4c4127215310390` approved, 0 blocking; the CLI-dep gate remains a named seam owned by U6e |
 | U4c — the lock `[meta]` stamp, native | **delivered** | `internal/cliversion.StampLockMeta` replaces `cli_version.py stamp-meta` in `sync`; the flatten stays (measured: `refresh-bundled.py` never wrote `[meta]`, its docstring lies); assess: medium, review not due |
 | U4d-1 — the harness env step, native | **delivered** | `e13f3a6` (PR #377); `sync.RunEnvScaffold` replaces `env_scaffold.py`'s non-interactive half; the dotenv surface is single-sourced in `internal/sync` and doctor delegates; differential against the Python: byte-identical |
 | U4d-2 — the wizard's env offer, native | **delivered, judgment approved** | `6fb58d1` (PR #382); `tui.Password`/`TextRaw`/`SelectDefault` + `sync.OfferHarnessEnv`; the env offer closes the gap S28 found; `ai-specs.env` created 0600 (S34); the harness-env PTY case now drives the binary |
@@ -238,7 +238,7 @@ cannot each be one PR.
 | U6b — `recipe add`, native off the TTY | **delivered** | `8c7c733` (PR #390); `config.AppendRecipeSegments`; TTY leg stays on the script (the parity contract freezes it), its flip is T3b |
 | U6c — `recipe remove`, native | **delivered** | `aef0b64` (PR #391); `config.RemoveRecipeSegments` + lock cleanup through `internal/lock`, untouched |
 | U6d-1 — recipe config write + `recipe configure`, native | **delivered, judgment approved** | `fc803bf` (PR #392); `internal/config` owns the writer; 30-case differential; Judgment Day found one MAJOR (`mcp.present` order) and six more, all closed, 10/10 verified |
-| U6d-2 — the wizard core + `recipe add`'s "Configure now?" flip | pending | unblocks U4b-2 |
+| U6d-2 — the wizard core + `recipe add`'s "Configure now?" flip | **delivered** | `dd57960` (PR #394); `tui.TextValidated` + `runConfigWizard`; the seam narrowed to the env offer and the dep gate |
 | U6e — `configure-recipes`, the dispatcher close and the end of the `recipe add` seam | pending | the shim map goes empty |
 | U7 — the substrate tail + retiring the dead shell scripts | pending | `util.py`, `recipe_schema.py`, `gate_binary.py`, the toml pair, and `lib/skills*.sh`
 | U8 — program closure | pending | |
