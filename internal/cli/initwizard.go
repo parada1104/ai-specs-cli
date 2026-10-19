@@ -89,8 +89,8 @@ type initWizardRequest struct {
 // config_wizard._dep_gate — check_cli_deps' panel, dep_install's TTY offer and
 // the "Configure anyway?" confirm — has no native side, so init keeps that leg
 // on the legacy script for recipes declaring [[deps.cli]] instead of
-// half-porting it or silently skipping them. U6e lands the native dep gate
-// (for configure-recipes), and this seam retires when init adopts it.
+// half-porting it or silently skipping them. U6e kept the same decision on its
+// own route, so the native dep gate is U7's; this seam retires when that lands.
 type wizardDepGate func(recipeID string) wizardDepGateOutcome
 
 // wizardDepGateOutcome is how one gate run answered:

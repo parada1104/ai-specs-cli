@@ -8,44 +8,27 @@ import (
 	"testing"
 )
 
-// wantShim is the expected routing decision for a passthrough verb.
-type wantShim struct {
-	script    string
-	invokedAs string
-}
-
-// TestRouteTableCoversEveryVerb checks the full dispatcher table: the shimmed
-// verbs, the native verbs and their aliases, mirroring the case statement of
-// bin/ai-specs (U5c note: add-dep and skills are native now, so the shim map
-// holds only what bin/ai-specs still routes to a lib script from the Go
-// dispatcher).
+// TestRouteTableCoversEveryVerb checks the full dispatcher table: the shim
+// map (EMPTY since U6e), the native verbs and their aliases, mirroring the
+// case statement of bin/ai-specs. The map stays declared with its lookup —
+// the strangler mechanism itself — because runShim still execs legacy
+// scripts directly (the init TUI hatch, `recipe init`'s route to
+// recipe-init.sh, and the dep-gate seams' python3 -c), but no top-level verb
+// resolves through the map anymore.
 func TestRouteTableCoversEveryVerb(t *testing.T) {
-	shims := map[string]wantShim{
-		"recipe":            {script: "recipe.sh"},
-		"configure-recipes": {script: "recipe-config.sh"},
-	}
-	for verb, want := range shims {
-		r := Route([]string{verb})
-		if r.kind != routeShim {
-			t.Errorf("verb %q: kind = %v, want shim", verb, r.kind)
-			continue
-		}
-		if r.script != want.script {
-			t.Errorf("verb %q: script = %q, want %q", verb, r.script, want.script)
-		}
-		if r.invokedAs != want.invokedAs {
-			t.Errorf("verb %q: invokedAs = %q, want %q", verb, r.invokedAs, want.invokedAs)
-		}
+	if len(shims) != 0 {
+		t.Errorf("shims map = %v, want EMPTY — U6e retires every verb-level shim", shims)
 	}
 
 	natives := map[string]routeKind{
-		"refresh-bundled": routeRefreshBundled,
-		"sync":            routeSync,
-		"sync-agent":      routeSyncAgent,
-		"upgrade":         routeUpgrade,
-		"hub":             routeHub,
-		"init":            routeInit,
-		"rules-audit":     routeRulesAudit, "version": routeVersion,
+		"configure-recipes": routeConfigureRecipes,
+		"refresh-bundled":   routeRefreshBundled,
+		"sync":              routeSync,
+		"sync-agent":        routeSyncAgent,
+		"upgrade":           routeUpgrade,
+		"hub":               routeHub,
+		"init":              routeInit,
+		"rules-audit":       routeRulesAudit, "version": routeVersion,
 		"-v":        routeVersion,
 		"--version": routeVersion,
 		"help":      routeHelp,
@@ -134,17 +117,18 @@ func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 	}
 }
 
-// TestRouteRecipeListIsNativeBeforeTheShim pins the GO-20 U6a/U6b/U6c/U6d-1
+// TestRouteRecipeListIsNativeBeforeTheShim pins the GO-20 U6a/U6b/U6c/U6d-1/U6e
 // subcommand interceptions: `recipe list`, `recipe add`, `recipe remove` and
-// `recipe configure` resolve native, while EVERY other arm of
-// lib/recipe.sh's case statement — `init`, the bare `recipe`,
-// `--help`/`-h`/`help` and unknown subcommands — keeps the recipe.sh shim
-// byte for byte (U6e retires that script, not this slice). `recipe add`'s TTY
-// seam is NARROW since U6d-2: the wizard half is native, and only a TTY run that
-// would reach the env offer or the CLI-dep gate still executes the shim. Route
-// cannot see the streams, so that seam lives in runRecipeAdd and is pinned by
-// TestRecipeAddTTYSeamStaysOnLegacyScript. `recipe configure` has no seam:
-// recipe.sh's arm is a plain python3 exec with no TTY branch.
+// `recipe configure` resolve native, the dispatcher's REMAINING arms of
+// lib/recipe.sh's case statement — the bare `recipe`, `--help`/`-h`/`help`
+// and unknown subcommands — resolve to the native dispatcher route (U6e, S4),
+// and `init` routes STRAIGHT to lib/recipe-init.sh: recipe-init.py is
+// unported (no U6 slicing row owns it), so that wrapper stays alive, but
+// recipe.sh itself has no work left for this binary — the U6e retirement.
+// `recipe add` has NO delegation left either (U6e flipped its tail onto the
+// native wizard, the dep-gate seam and the env offer): Route cannot see the
+// streams, and the tail's wiring is pinned by
+// TestRecipeAddTailIsNativeOnATerminal.
 func TestRouteRecipeListIsNativeBeforeTheShim(t *testing.T) {
 	cases := []struct {
 		args   []string
@@ -173,16 +157,20 @@ func TestRouteRecipeListIsNativeBeforeTheShim(t *testing.T) {
 		{[]string{"recipe", "configure", "worktree-flow"}, routeRecipeConfigure, ""},
 		{[]string{"recipe", "configure", "worktree-flow", "--inspect"}, routeRecipeConfigure, ""},
 		{[]string{"recipe", "configure", "--help"}, routeRecipeConfigure, ""},
-		// Everything else of lib/recipe.sh's case statement keeps the shim.
-		{[]string{"recipe"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "init", "worktree-flow"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "--help"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "-h"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "help"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "bogus"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "listx"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "-list"}, routeShim, "recipe.sh"},
-		{[]string{"recipe", "List"}, routeShim, "recipe.sh"},
+		// The dispatcher remainder resolves natively (U6e): usage on stdout,
+		// bare on stderr, the unknown pair — never recipe.sh.
+		{[]string{"recipe"}, routeRecipe, ""},
+		{[]string{"recipe", "--help"}, routeRecipe, ""},
+		{[]string{"recipe", "-h"}, routeRecipe, ""},
+		{[]string{"recipe", "help"}, routeRecipe, ""},
+		{[]string{"recipe", "bogus"}, routeRecipe, ""},
+		{[]string{"recipe", "listx"}, routeRecipe, ""},
+		{[]string{"recipe", "-list"}, routeRecipe, ""},
+		{[]string{"recipe", "List"}, routeRecipe, ""},
+		// `init` skips recipe.sh and routes straight to its own wrapper —
+		// the one recipe subcommand no U6 row ports.
+		{[]string{"recipe", "init"}, routeRecipeInit, "recipe-init.sh"},
+		{[]string{"recipe", "init", "worktree-flow"}, routeRecipeInit, "recipe-init.sh"},
 		{[]string{"recipe", "list", "a", "b"}, routeRecipeList, ""},
 	}
 	for _, tc := range cases {
@@ -193,6 +181,24 @@ func TestRouteRecipeListIsNativeBeforeTheShim(t *testing.T) {
 		}
 		if r.script != tc.script {
 			t.Errorf("Route(%q) script = %q, want %q", tc.args, r.script, tc.script)
+		}
+	}
+}
+
+// TestRouteConfigureRecipesIsNative pins U6e's other retirement: the
+// `configure-recipes` verb resolves native, never the recipe-config.sh shim
+// (its whole shell wrapper is the verb's argument contract, now native).
+func TestRouteConfigureRecipesIsNative(t *testing.T) {
+	cases := [][]string{
+		{"configure-recipes"},
+		{"configure-recipes", "."},
+		{"configure-recipes", "--help"},
+		{"configure-recipes", "--", "."},
+	}
+	for _, args := range cases {
+		r := Route(args)
+		if r.kind != routeConfigureRecipes {
+			t.Errorf("Route(%q) kind = %v, want %v", args, r.kind, routeConfigureRecipes)
 		}
 	}
 }

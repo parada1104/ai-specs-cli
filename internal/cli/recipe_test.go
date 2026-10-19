@@ -27,12 +27,14 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -342,9 +344,9 @@ func TestRecipeListFallsBackToBinaryInstallRoot(t *testing.T) {
 // legs take the non-TTY path Python itself takes (recipe-add.py:151's
 // `tty = sys.stdin.isatty() and sys.stdout.isatty()` is false on both). The
 // TTY tail is split since U6d-2 (L9): the "Configure now?" wizard leg is
-// native — pinned by TestRecipeAddTTYSeamStaysOnLegacyScript's configure-leg
-// subtests — while the legs the native side still cannot run (the env offer
-// and the CLI-dep gate, both U6e) keep delegating through that narrowed seam.
+// native — pinned by TestRecipeAddTailIsNativeOnATerminal's configure-leg
+// subtests — while the env offer and the CLI-dep gate are U6e's, which flips
+// them onto their own native seams and ends the delegation entirely.
 
 // recipeAddRichRecipe is the fixture recipe that carries everything the verb
 // renders: six config fields (required / defaults of several TOML types /
@@ -593,10 +595,10 @@ func TestRecipeAddDifferentialAgainstShell(t *testing.T) {
 	}
 }
 
-// recipeAddWizardFixture is the TTY-seam fixture: a recipe WITH config fields
-// (so the configure leg exists) plus the extra that decides how far the seam
-// reaches — nothing (native wizard), an mcp env (the env offer, U6e) or a
-// CLI dep (the dep gate, U6e). id/name/description/version are the four
+// recipeAddWizardFixture is the TTY-tail fixture: a recipe WITH config fields
+// (so the configure leg exists) plus the extra that decides how far the tail
+// reaches — nothing (wizard only), an mcp env (the env-offer seam) or a
+// CLI dep (the dep-gate seam). id/name/description/version are the four
 // strings both parsers demand.
 func recipeAddWizardFixture(id, extra string) string {
 	return "[recipe]\n" +
@@ -611,28 +613,26 @@ func recipeAddWizardFixture(id, extra string) string {
 }
 
 const (
-	// recipeAddMcpEnvTail makes has_mcp_env true: recipe-add.py's tail would
-	// reach env_scaffold.offer_harness_env — the leg U6e ports.
+	// recipeAddMcpEnvTail makes has_mcp_env true: recipe-add.py's tail reaches
+	// env_scaffold.offer_harness_env — the leg U6e wires to sync.OfferHarnessEnv.
 	recipeAddMcpEnvTail = "\n[[provides.mcp]]\nid = \"m1\"\ncommand = \"m1\"\nenv = { M1_TOKEN = \"$M1_TOKEN\" }\n"
 	// recipeAddCliDepTail makes recipe.cli_deps non-empty: with config fields
-	// the tail's wizard leg would run config_wizard._dep_gate first — the
-	// gate U6e ports.
+	// the tail's wizard leg runs config_wizard._dep_gate first — the gate U6e
+	// keeps on the S37 seam.
 	recipeAddCliDepTail = "\n[deps]\ncli = [{ binary = \"jinn\", purpose = \"provider CLI\" }]\n"
 )
 
-// TestRecipeAddTTYSeamStaysOnLegacyScript pins the NARROWED TTY seam (U6d-2,
-// T3b first half — L4's option (a) narrowed by the native wizard core, not
-// dropped): off the TTY the port owns the verb end to end, unchanged. On a
-// TTY the verb now runs NATIVELY through recipe-add.py:247-275's "Configure
-// now?" leg — the confirm and the config wizard are U6d-2's native core —
-// and the WHOLE verb still delegates to lib/recipe.sh only when the run would
-// reach what the native side cannot do yet: the env offer
-// (env_scaffold.offer_harness_env) or the CLI-dep gate
-// (config_wizard._dep_gate), both U6e's. The seam fires BEFORE the write, so
-// a delegated run leaves the manifest untouched; the pre-write guards met on
-// the way there print the same frozen messages the differential pins off the
-// TTY.
-func TestRecipeAddTTYSeamStaysOnLegacyScript(t *testing.T) {
+// TestRecipeAddTailIsNativeOnATerminal pins the FLIPPED TTY tail (U6e, T3b
+// second half): off the TTY the port owns the verb end to end, unchanged. On
+// a TTY there is NO delegation left — U6e wires recipe-add.py:247-275's two
+// remaining legs onto their seams, the CLI dep gate (S37's python3 driver,
+// the runLegacyInitDepGate seam) and the env offer (sync.OfferHarnessEnv),
+// and the wizard runs natively — so lib/recipe.sh never executes for any
+// recipe anymore. Every subtest pins legacyRan() FALSE, the native manifest
+// result and the seam call in the script's own order: blank line →
+// "Configure now?" → gate (where configure_selected_recipes puts it, or the
+// tail's own pre-guidance position) → wizard → write → env offer.
+func TestRecipeAddTailIsNativeOnATerminal(t *testing.T) {
 	home := t.TempDir()
 	skillsWriteFile(t, filepath.Join(home, "lib", "recipe.sh"),
 		"#!/usr/bin/env bash\nprintf 'legacy seam: %s\\n' \"$*\"\nprintf ran > \"$AI_SPECS_HOME/legacy-ran\"\n")
@@ -685,7 +685,7 @@ func TestRecipeAddTTYSeamStaysOnLegacyScript(t *testing.T) {
 		}
 		var stdout, stderr bytes.Buffer
 		code := runRecipeAddFlow([]string{"recipe", "add", "plaincfg", project}, home,
-			strings.NewReader(""), &stdout, &stderr, "", true, open)
+			strings.NewReader(""), &stdout, &stderr, "", true, recipeTailSeams{openWizard: open})
 		if code != 0 {
 			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
 		}
@@ -739,7 +739,7 @@ func TestRecipeAddTTYSeamStaysOnLegacyScript(t *testing.T) {
 		}
 		var stdout, stderr bytes.Buffer
 		code := runRecipeAddFlow([]string{"recipe", "add", "plaincfg", project}, home,
-			strings.NewReader(""), &stdout, &stderr, "", true, open)
+			strings.NewReader(""), &stdout, &stderr, "", true, recipeTailSeams{openWizard: open})
 		if code != 0 {
 			t.Fatalf("exit = %d, want 0", code)
 		}
@@ -785,46 +785,241 @@ func TestRecipeAddTTYSeamStaysOnLegacyScript(t *testing.T) {
 		}
 	})
 
-	// TTY + mcp env → the run WOULD reach offer_harness_env (U6e), so the
-	// whole verb still delegates: the stub runs, the port writes nothing.
-	t.Run("TTY reaching the env offer still delegates to the script", func(t *testing.T) {
+	// TTY + mcp env: U6e flipped this leg — the verb never delegates anymore.
+	// The wizard runs over scripted answers, then the ENV OFFER seam takes the
+	// project root (production wires sync.OfferHarnessEnv through it), and the
+	// legacy script never executes.
+	t.Run("TTY reaching the env offer runs the native tail", func(t *testing.T) {
 		project, manifest := setup(t)
+		p := &scriptedWizardPrompts{t: t}
+		p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+		p.textQ = []scriptedTextAnswer{
+			{answers: []string{"B-7"}},         // board_id (required, sorted first)
+			{answers: []string{"In Progress"}}, // default_list (the prefill comes back)
+			{answers: []string{""}},            // note — blank → omitted
+		}
+		var envRoot string
+		seams := recipeTailSeams{
+			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+				return p, func() {}, 0
+			},
+			envOffer: func(root string) error {
+				envRoot = root
+				return nil
+			},
+		}
 		var stdout, stderr bytes.Buffer
-		code := runRecipeAdd([]string{"recipe", "add", "cfgenv", project}, home,
-			strings.NewReader(""), &stdout, &stderr, "", true)
+		code := runRecipeAddFlow([]string{"recipe", "add", "cfgenv", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true, seams)
 		if code != 0 {
 			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
 		}
-		if !legacyRan() {
-			t.Errorf("the legacy seam must fire for a run that reaches the env offer")
+		if legacyRan() {
+			t.Errorf("the legacy script ran although the env offer has a native seam now")
 		}
-		if want := "legacy seam: add cfgenv " + project + "\n"; stdout.String() != want {
-			t.Errorf("stdout = %q, want %q", stdout.String(), want)
+		if envRoot != project {
+			t.Errorf("env offer root = %q, want the project root %q", envRoot, project)
 		}
-		if strings.Contains(readManifest(t, manifest), "[recipes.cfgenv]") {
-			t.Errorf("the seam stub must not append")
+		data := readManifest(t, manifest)
+		if !strings.Contains(data, "[recipes.cfgenv]") {
+			t.Errorf("the native append is missing: manifest = %q", data)
+		}
+		if !strings.Contains(data, `board_id = "B-7"`) {
+			t.Errorf("the wizard's answer was not written back: manifest = %q", data)
 		}
 	})
 
-	// TTY + config fields + cli deps → the wizard leg would run the Python
-	// dep gate first (config_wizard._dep_gate), which the native side cannot
-	// do — still the script.
-	t.Run("TTY reaching the dep gate still delegates to the script", func(t *testing.T) {
-		project, manifest := setup(t)
+	// recipe-add.py:273-274: an exception escaping the env offer words ONE
+	// frozen line (no detail) and the verb still exits 0 — the append stands.
+	t.Run("env offer failure words the script's catch line", func(t *testing.T) {
+		project, _ := setup(t)
+		p := &scriptedWizardPrompts{t: t}
+		p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+		p.textQ = []scriptedTextAnswer{
+			{answers: []string{"B-7"}},
+			{answers: []string{"In Progress"}},
+			{answers: []string{""}},
+		}
+		seams := recipeTailSeams{
+			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+				return p, func() {}, 0
+			},
+			envOffer: func(string) error { return errors.New("boom") },
+		}
 		var stdout, stderr bytes.Buffer
-		code := runRecipeAdd([]string{"recipe", "add", "cfgdep", project}, home,
-			strings.NewReader(""), &stdout, &stderr, "", true)
+		code := runRecipeAddFlow([]string{"recipe", "add", "cfgenv", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true, seams)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0 (the offer soft-fails), stderr = %q", code, stderr.String())
+		}
+		if legacyRan() {
+			t.Errorf("the legacy script ran although the env offer soft-fails natively")
+		}
+		if !strings.Contains(stdout.String(), "  ! could not configure environment variables\n") {
+			t.Errorf("stdout = %q, want the script's frozen catch line", stdout.String())
+		}
+	})
+
+	// TTY + config fields + cli deps: U6e's dep-gate seam (S37's python3
+	// driver in production) sits where configure_selected_recipes puts it —
+	// after the confirm, BEFORE the wizard — so this leg stays native too.
+	t.Run("TTY reaching the dep gate runs the native tail", func(t *testing.T) {
+		project, manifest := setup(t)
+		p := &scriptedWizardPrompts{t: t}
+		p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+		p.textQ = []scriptedTextAnswer{
+			{answers: []string{"B-7"}},
+			{answers: []string{"In Progress"}},
+			{answers: []string{""}},
+		}
+		var gated []string
+		seams := recipeTailSeams{
+			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+				return p, func() {}, 0
+			},
+			depGate: func(id string) wizardDepGateOutcome {
+				gated = append(gated, id)
+				return wizardDepGateOutcome{Proceed: true}
+			},
+		}
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAddFlow([]string{"recipe", "add", "cfgdep", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true, seams)
 		if code != 0 {
 			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
 		}
-		if !legacyRan() {
-			t.Errorf("the legacy seam must fire for a run that reaches the dep gate")
+		if legacyRan() {
+			t.Errorf("the legacy script ran although the dep gate has a native seam now")
 		}
-		if want := "legacy seam: add cfgdep " + project + "\n"; stdout.String() != want {
-			t.Errorf("stdout = %q, want %q", stdout.String(), want)
+		if len(gated) != 1 || gated[0] != "cfgdep" {
+			t.Errorf("gate calls = %v, want [cfgdep] at configure_selected_recipes' position", gated)
 		}
-		if strings.Contains(readManifest(t, manifest), "[recipes.cfgdep]") {
-			t.Errorf("the seam stub must not append")
+		data := readManifest(t, manifest)
+		if !strings.Contains(data, `board_id = "B-7"`) {
+			t.Errorf("the wizard must run AFTER a proceeding gate: manifest = %q", data)
+		}
+	})
+
+	// A declined gate mirrors configure_selected_recipes' skip: the frozen
+	// Skipped line on stderr, no wizard, no write — and exit 0.
+	t.Run("dep gate declined skips the wizard write", func(t *testing.T) {
+		project, manifest := setup(t)
+		p := &scriptedWizardPrompts{t: t}
+		p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+		seams := recipeTailSeams{
+			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+				return p, func() {}, 0
+			},
+			depGate: func(string) wizardDepGateOutcome { return wizardDepGateOutcome{Skip: true} },
+		}
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAddFlow([]string{"recipe", "add", "cfgdep", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true, seams)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
+		}
+		if legacyRan() {
+			t.Errorf("the legacy script ran although the declined gate is handled natively")
+		}
+		if want := "Skipped cfgdep (missing CLI deps)\n"; stderr.String() != want {
+			t.Errorf("stderr = %q, want %q", stderr.String(), want)
+		}
+		if len(p.textQ) != 0 || len(p.transcript) != 1 {
+			t.Errorf("the wizard must not run after a declined gate: transcript = %#v", p.transcript)
+		}
+		if strings.Contains(readManifest(t, manifest), `board_id = "B-7"`) {
+			t.Errorf("a declined gate must leave the placeholders unwritten")
+		}
+	})
+
+	// The driver's vendor answer rc 3 (S37's recorded late bootstrap) has no
+	// legacy position inside the tail — recipe-add.py answered its vendor
+	// problems at a pre-write ensure_deps this port deliberately does not
+	// have (L9 deviation 1: no run is refused for Python packages). The tail
+	// words recipe-add.py's own catch framing and moves on.
+	t.Run("dep gate vendor decline degrades to the catch line", func(t *testing.T) {
+		project, _ := setup(t)
+		p := &scriptedWizardPrompts{t: t}
+		p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+		seams := recipeTailSeams{
+			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+				return p, func() {}, 0
+			},
+			depGate: func(string) wizardDepGateOutcome { return wizardDepGateOutcome{Rc: 3} },
+		}
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAddFlow([]string{"recipe", "add", "cfgdep", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true, seams)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0 (no run refused for Python packages); stderr = %q", code, stderr.String())
+		}
+		if legacyRan() {
+			t.Errorf("the legacy script ran although the vendor decline is handled natively")
+		}
+		if !strings.Contains(stdout.String(),
+			"  ! CLI dependency check skipped: interactive dependencies are unavailable\n") {
+			t.Errorf("stdout = %q, want the dependency-skip catch line", stdout.String())
+		}
+		if len(p.textQ) != 0 || len(p.transcript) != 1 {
+			t.Errorf("the wizard must not run when the gate could not answer: transcript = %#v", p.transcript)
+		}
+	})
+
+	// recipe-add.py:256-261's OTHER gate position: a recipe with NO config
+	// fields gates in the tail itself, and a decline prints the guidance block
+	// (the dep_install guidance half ported) before the env leg still runs.
+	t.Run("gate decline without config fields prints the guidance block", func(t *testing.T) {
+		project, manifest := setup(t)
+		skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "envdep", "recipe.toml"),
+			"[recipe]\n"+
+				"id = \"envdep\"\n"+
+				"name = \"envdep recipe\"\n"+
+				"description = \"fixture recipe envdep\"\n"+
+				"version = \"1.0.0\"\n"+
+				"\n[deps]\ncli = [{ binary = \"jinn\", purpose = \"provider CLI\" }]\n"+
+				recipeAddMcpEnvTail)
+		p := &scriptedWizardPrompts{t: t}
+		p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+		var gated []string
+		envCalled := false
+		seams := recipeTailSeams{
+			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+				return p, func() {}, 0
+			},
+			depGate: func(id string) wizardDepGateOutcome {
+				gated = append(gated, id)
+				return wizardDepGateOutcome{Skip: true}
+			},
+			envOffer: func(string) error {
+				envCalled = true
+				return nil
+			},
+		}
+		var stdout, stderr bytes.Buffer
+		code := runRecipeAddFlow([]string{"recipe", "add", "envdep", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true, seams)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
+		}
+		if legacyRan() {
+			t.Errorf("the legacy script ran although both tail legs are native now")
+		}
+		if len(gated) != 1 || gated[0] != "envdep" {
+			t.Errorf("gate calls = %v, want [envdep] at the tail's pre-guidance position", gated)
+		}
+		want := "Recipe 'envdep' added to the manifest.\n" +
+			"The next sync will materialize:\n  - mcp: m1\n\n\n" +
+			"  - jinn: install 'jinn' manually\n" +
+			"required CLI dependencies are still missing; install them and re-run, or continue with:\n" +
+			"  ai-specs configure-recipes\n"
+		if stdout.String() != want {
+			t.Errorf("stdout = %q, want %q (the script's guidance block)", stdout.String(), want)
+		}
+		if !envCalled {
+			t.Errorf("the env leg must still run after the guidance block (recipe-add.py:269)")
+		}
+		if !strings.Contains(readManifest(t, manifest), "[recipes.envdep]") {
+			t.Errorf("the native append is missing")
 		}
 	})
 
@@ -2030,4 +2225,790 @@ func TestRecipeConfigureDatetimePathsPinTheRecordedDeviation(t *testing.T) {
 			t.Errorf("--inspect modified the manifest:\n got %q\nwant %q", data, manifestBytes)
 		}
 	})
+}
+
+// ── GO-20 U6e (T5): `configure-recipes` and the recipe dispatcher remainder ──
+//
+// Same discipline as the U6a table above: the SHELL route (`bash
+// lib/recipe-config.sh <args>` / `bash lib/recipe.sh <args>`) and the built
+// binary run against the same project under one shared, pinned environment,
+// and stdout, stderr and the exit code must be byte for byte identical. What
+// is DIFFERENT here is which paths are reachable: config_wizard.main's TTY
+// gate sits BEFORE the recipe enumeration, so off a TTY every byte-comparable
+// path is the wrapper's argument contract, the manifest guard and the gate
+// message itself — the interactive loop (gate → wizard → write, the
+// no-enabled-recipes line and the env offer) is in-process only, driven
+// through the injected seams (no PTY in the table, L4's constraint
+// unchanged), pinned by TestConfigureRecipes* below.
+
+// configureRecipesUsageFixture is lib/recipe-config.sh's usage() heredoc as
+// the LEGACY bytes (the production const mirrors it; the differential is what
+// pins the two together).
+const configureRecipesUsageFixture = `Usage: ai-specs configure-recipes [path] [--help]
+Configure enabled recipes (config fields, CLI deps, ai-specs.env + root .envrc).
+Arguments:
+  path    Target project root (default: current directory)
+Flags:
+  --help  Show this help
+`
+
+// recipeDispatcherUsageFixture is lib/recipe.sh's usage() heredoc (the same
+// bytes the dispatcher's native arms print).
+const recipeDispatcherUsageFixture = `Usage: ai-specs recipe <subcommand> [args]
+Subcommands:
+  list [path]      List available and installed recipes
+  add <id> [path]  Add a recipe to the manifest
+  init <id> [path]   Print a read-only initialization brief
+  configure <id> [path] [options]  Inspect or apply recipe config non-interactively
+  remove <id> [path]  Remove a recipe from the manifest
+Path defaults to current directory.
+`
+
+// configureRecipesFixtures builds the project shapes the differential runs:
+// an initialized project (a manifest, no enabled recipes — enough to pass the
+// guard and measure the TTY gate) and a directory with no ai-specs/ tree.
+func configureRecipesFixtures(t *testing.T) (projInit, projNoManifest string) {
+	t.Helper()
+	base := t.TempDir()
+	projInit = filepath.Join(base, "initialized")
+	skillsWriteFile(t, filepath.Join(projInit, "ai-specs", "ai-specs.toml"),
+		"[project]\nname = \"u6e\"\n")
+	projNoManifest = filepath.Join(base, "no-manifest")
+	if err := os.MkdirAll(projNoManifest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return projInit, projNoManifest
+}
+
+// TestConfigureRecipesDifferentialAgainstShell is the U6e byte-parity net for
+// configure-recipes' NON-TTY paths: both legs are pipes, so the legacy route
+// reaches exactly the wrapper loop, the manifest guard and config_wizard
+// main's TTY gate — the gate message and exit 3, the guard message and exit
+// 1, the usage and both exit-2 usage errors. The interactive loop is NOT in
+// this table (it needs a terminal neither leg gets here); it is in-process,
+// pinned by TestConfigureRecipesFlow below. A tree snapshot proves the whole
+// table writes nothing.
+func TestConfigureRecipesDifferentialAgainstShell(t *testing.T) {
+	skillsOracle(t, "lib/recipe-config.sh")
+	bin, root := smokeSetup(t)
+	script := filepath.Join(root, "lib", "recipe-config.sh")
+	if _, err := os.Stat(script); err != nil {
+		t.Skipf("legacy lib/recipe-config.sh unavailable: %v", err)
+	}
+
+	home := skillsListHome(t, root)
+	projInit, projNoManifest := configureRecipesFixtures(t)
+
+	type diffCase struct {
+		name string
+		args []string // after `configure-recipes` (Go) / after the script name (bash)
+		dir  string   // working directory for both legs; "" → a fresh temp dir
+	}
+	cases := []diffCase{
+		{"help", []string{"--help"}, ""},
+		{"short help", []string{"-h"}, ""},
+		{"unknown flag", []string{"--bogus"}, ""},
+		{"second positional", []string{projInit, "extra"}, ""},
+		{"positional after dashdash", []string{"--", projInit}, ""},
+		{"missing manifest", []string{projNoManifest}, ""},
+		{"initialized project off the TTY", []string{projInit}, ""},
+		{"target defaults to cwd off the TTY", nil, projInit},
+	}
+
+	roots := []string{home, projInit, projNoManifest}
+	before := skillsTreeSnapshot(t, roots...)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := tc.dir
+			if dir == "" {
+				dir = t.TempDir()
+			}
+			env := skillsListEnv(home)
+
+			legOut, legErr, legCode := runOne("bash",
+				append([]string{script}, tc.args...), env, dir)
+			goOut, goErr, goCode := runOne(bin,
+				append([]string{"configure-recipes"}, tc.args...), env, dir)
+
+			if !bytes.Equal(goOut, legOut) {
+				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", goOut, legOut)
+			}
+			if !bytes.Equal(goErr, legErr) {
+				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", goErr, legErr)
+			}
+			if goCode != legCode {
+				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
+			}
+		})
+	}
+
+	after := skillsTreeSnapshot(t, roots...)
+	if !reflect.DeepEqual(before, after) {
+		for key, marker := range after {
+			if before[key] != marker {
+				t.Errorf("read-only violated: %s: %q -> %q", key, before[key], marker)
+			}
+		}
+		for key := range before {
+			if _, ok := after[key]; !ok {
+				t.Errorf("read-only violated: %s disappeared", key)
+			}
+		}
+	}
+}
+
+// TestConfigureRecipesNativeNeedsNoBashOrPython is the routing proof for the
+// U6e goal: with PATH emptied the legacy route could not run at all (the shim
+// execs bash lib/recipe-config.sh → python3), while the native route answers
+// the usage, the manifest guard and the TTY gate itself — no bash and no
+// Python run on the verb (S1).
+func TestConfigureRecipesNativeNeedsNoBashOrPython(t *testing.T) {
+	bin, root := smokeSetup(t)
+	home := skillsListHome(t, root)
+	projInit, projNoManifest := configureRecipesFixtures(t)
+	env := skillsListEnv(home)
+	emptyPath := t.TempDir() // no bash, no python3 reachable for the CHILD
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			env[i] = "PATH=" + emptyPath
+		}
+	}
+
+	t.Run("help", func(t *testing.T) {
+		out, errOut, code := runOne(bin, []string{"configure-recipes", "--help"}, env, t.TempDir())
+		if code != 0 {
+			t.Errorf("exit = %d (want 0 with an empty PATH), stderr = %q", code, errOut)
+		}
+		if string(out) != configureRecipesUsageFixture {
+			t.Errorf("stdout = %q, want the usage heredoc", out)
+		}
+		if len(errOut) != 0 {
+			t.Errorf("stderr = %q, want empty", errOut)
+		}
+	})
+	t.Run("initialized project off the TTY", func(t *testing.T) {
+		out, errOut, code := runOne(bin, []string{"configure-recipes", projInit}, env, t.TempDir())
+		if code != 3 {
+			t.Errorf("exit = %d, want 3 (the TTY gate), stderr = %q", code, errOut)
+		}
+		if len(out) != 0 {
+			t.Errorf("stdout = %q, want empty", out)
+		}
+		if string(errOut) != "configure-recipes requires an interactive TTY\n" {
+			t.Errorf("stderr = %q, want the frozen gate message", errOut)
+		}
+	})
+	t.Run("missing manifest", func(t *testing.T) {
+		out, errOut, code := runOne(bin, []string{"configure-recipes", projNoManifest}, env, t.TempDir())
+		if code != 1 {
+			t.Errorf("exit = %d, want 1 (the manifest guard), stderr = %q", code, errOut)
+		}
+		if len(out) != 0 {
+			t.Errorf("stdout = %q, want empty", out)
+		}
+		want := "Project not initialized: missing " +
+			filepath.Join(recipeConfigureResolve(projNoManifest), "ai-specs", "ai-specs.toml") + "\n"
+		if string(errOut) != want {
+			t.Errorf("stderr = %q, want %q", errOut, want)
+		}
+	})
+}
+
+// TestConfigureRecipesMissingPathDeviation pins the frozen `cd` failure the
+// way the U5a/U6a tables do: exit 1 with the `cd: <path>: <reason>` shape,
+// WITHOUT bash's own `lib/recipe-config.sh: line N: ` prefix (the S12/ADR
+// 0002 class). The legacy leg is checked for the path and the strerror
+// wording only, deliberately not byte-matched.
+func TestConfigureRecipesMissingPathDeviation(t *testing.T) {
+	root, err := locateRoot()
+	if err != nil {
+		t.Skipf("repo root not located: %v", err)
+	}
+	script := filepath.Join(root, "lib", "recipe-config.sh")
+	home := t.TempDir()
+	env := skillsListEnv(home)
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "does-not-exist")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"configure-recipes", missing}, home, nil, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("go exit = %d, want 1 (the frozen cd exit)", code)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("go stdout = %q, want empty", stdout.String())
+	}
+	want := "cd: " + missing + ": No such file or directory\n"
+	if stderr.String() != want {
+		t.Errorf("go stderr = %q, want %q", stderr.String(), want)
+	}
+
+	legOut, legErr, legCode := runOne("bash", []string{script, missing}, env, dir)
+	if legCode != 1 {
+		t.Errorf("bash exit = %d, want 1", legCode)
+	}
+	if len(legOut) != 0 {
+		t.Errorf("bash stdout = %q, want empty", legOut)
+	}
+	for _, part := range []string{"cd:", missing, "No such file or directory"} {
+		if !strings.Contains(string(legErr), part) {
+			t.Errorf("bash stderr = %q, want it to contain %q", legErr, part)
+		}
+	}
+}
+
+// TestRecipeDispatcherDifferentialAgainstShell byte-compares lib/recipe.sh's
+// OWN dispatcher arms against the native route: --help/-h/help on stdout
+// (exit 0), the bare `recipe` on stderr (exit 2), unknown subcommands (the
+// two lines, exit 1), and `recipe init` with its missing id — recipe-init.sh
+// is still the brief's wrapper (U6e routes straight to it), so its wrapper
+// contract is the shell contract here too.
+func TestRecipeDispatcherDifferentialAgainstShell(t *testing.T) {
+	skillsOracle(t, "lib/recipe.sh")
+	bin, root := smokeSetup(t)
+	script := filepath.Join(root, "lib", "recipe.sh")
+	if _, err := os.Stat(script); err != nil {
+		t.Skipf("legacy lib/recipe.sh unavailable: %v", err)
+	}
+	home := skillsListHome(t, root)
+
+	cases := []struct {
+		name string
+		args []string // after `recipe` (Go) / after the script name (bash)
+	}{
+		{"help flag", []string{"--help"}},
+		{"short help flag", []string{"-h"}},
+		{"help word", []string{"help"}},
+		{"bare recipe", nil},
+		{"unknown subcommand", []string{"bogus"}},
+		{"unknown flag as subcommand", []string{"-list"}},
+		{"near miss of a real subcommand", []string{"listx"}},
+		{"init without its id", []string{"init"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			env := skillsListEnv(home)
+
+			legOut, legErr, legCode := runOne("bash",
+				append([]string{script}, tc.args...), env, dir)
+			goOut, goErr, goCode := runOne(bin,
+				append([]string{"recipe"}, tc.args...), env, dir)
+
+			if !bytes.Equal(goOut, legOut) {
+				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", goOut, legOut)
+			}
+			if !bytes.Equal(goErr, legErr) {
+				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", goErr, legErr)
+			}
+			if goCode != legCode {
+				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
+			}
+		})
+	}
+}
+
+// TestRecipeDispatcherNativeNeedsNoBashOrPython is the routing proof that the
+// recipe DISPATCHER's own arms (usage, bare, unknown) are native: with PATH
+// emptied they must print their frozen bytes instead of failing to exec the
+// shim. `recipe init` is deliberately NOT in this table — that arm still
+// execs lib/recipe-init.sh (recipe-init.py is unported, owned by no U6 row),
+// pinned separately by the route test and the differential above.
+func TestRecipeDispatcherNativeNeedsNoBashOrPython(t *testing.T) {
+	bin, root := smokeSetup(t)
+	home := skillsListHome(t, root)
+	env := skillsListEnv(home)
+	emptyPath := t.TempDir()
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			env[i] = "PATH=" + emptyPath
+		}
+	}
+
+	t.Run("help on stdout", func(t *testing.T) {
+		out, errOut, code := runOne(bin, []string{"recipe", "--help"}, env, t.TempDir())
+		if code != 0 {
+			t.Errorf("exit = %d (want 0 with an empty PATH), stderr = %q", code, errOut)
+		}
+		if string(out) != recipeDispatcherUsageFixture {
+			t.Errorf("stdout = %q, want the usage heredoc", out)
+		}
+		if len(errOut) != 0 {
+			t.Errorf("stderr = %q, want empty", errOut)
+		}
+	})
+	t.Run("bare recipe on stderr", func(t *testing.T) {
+		out, errOut, code := runOne(bin, []string{"recipe"}, env, t.TempDir())
+		if code != 2 {
+			t.Errorf("exit = %d, want 2 (the frozen bare exit), stderr = %q", code, errOut)
+		}
+		if len(out) != 0 {
+			t.Errorf("stdout = %q, want empty", out)
+		}
+		if string(errOut) != recipeDispatcherUsageFixture {
+			t.Errorf("stderr = %q, want the usage heredoc on stderr", errOut)
+		}
+	})
+	t.Run("unknown subcommand", func(t *testing.T) {
+		out, errOut, code := runOne(bin, []string{"recipe", "bogus"}, env, t.TempDir())
+		if code != 1 {
+			t.Errorf("exit = %d, want 1 (the frozen unknown exit), stderr = %q", code, errOut)
+		}
+		if len(out) != 0 {
+			t.Errorf("stdout = %q, want empty", out)
+		}
+		want := "ai-specs recipe: unknown subcommand 'bogus'\nRun 'ai-specs recipe --help' for usage.\n"
+		if string(errOut) != want {
+			t.Errorf("stderr = %q, want %q", errOut, want)
+		}
+	})
+}
+
+// ── the configure-recipes loop, in-process ──
+
+// configureRecipesLoopSeams is the scripted tail for the loop: a recording
+// dep gate, a wizard opener handing out one shared scripted prompt set, and a
+// recording env offer. The production wiring (runLegacyInitDepGate's python3
+// driver, openRecipeWizardPrompts, sync.OfferHarnessEnv) lives behind the
+// same seams the init wizard and this slice's add tail already use — the loop
+// itself needs a terminal, so it is pinned HERE, never through a PTY.
+type configureRecipesLoopSeams struct {
+	seams       recipeTailSeams
+	gateOutcome wizardDepGateOutcome
+	gated       []string
+	opened      int
+	envRoots    []string
+	prompts     *scriptedWizardPrompts
+	envOfferErr error
+}
+
+func newConfigureRecipesLoopSeams(t *testing.T) *configureRecipesLoopSeams {
+	t.Helper()
+	c := &configureRecipesLoopSeams{prompts: &scriptedWizardPrompts{t: t}}
+	c.seams = recipeTailSeams{
+		openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+			c.opened++
+			return c.prompts, func() {}, 0
+		},
+		depGate: func(id string) wizardDepGateOutcome {
+			c.gated = append(c.gated, id)
+			return c.gateOutcome
+		},
+		envOffer: func(root string) error {
+			c.envRoots = append(c.envRoots, root)
+			return c.envOfferErr
+		},
+	}
+	return c
+}
+
+// TestConfigureRecipesFlow drives config_wizard.main + configure_selected_recipes
+// in-process through the injected seams — the loop needs a terminal, which
+// ttyNow stands in for (kernel TTY detection cannot be faked in-process, so
+// the interactive surface is pinned HERE and the non-TTY surface by the
+// differential above). Every subtest asserts the frozen bytes, the exit code
+// and the seam call ORDER the Python makes.
+func TestConfigureRecipesFlow(t *testing.T) {
+	home := t.TempDir()
+	recipeSeedCatalog(t, home, "wired", "nofields", "plain")
+	// wired: config fields + cli deps — the whole loop path (gate → wizard →
+	// write), with an EXISTING config value so the prefill step is exercised
+	// for real (L9 pinned it by shape only; this is its divergent-value case).
+	skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "wired", "recipe.toml"),
+		recipeAddWizardFixture("wired", recipeAddCliDepTail))
+	// nofields: cli deps and NO config fields — the gate fires BEFORE the
+	// fields check (configure_selected_recipes' order), then the wizard never
+	// opens.
+	skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "nofields", "recipe.toml"),
+		"[recipe]\n"+
+			"id = \"nofields\"\n"+
+			"name = \"nofields recipe\"\n"+
+			"description = \"fixture recipe nofields\"\n"+
+			"version = \"1.0.0\"\n"+
+			"\n[deps]\ncli = [{ binary = \"jinn\", purpose = \"provider CLI\" }]\n")
+	// plain: config fields, no cli deps — the gate must NOT be reached.
+	skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "plain", "recipe.toml"),
+		recipeAddWizardFixture("plain", ""))
+
+	// setup writes a fresh project manifest and returns its path.
+	setup := func(t *testing.T, body string) (project, manifest string) {
+		t.Helper()
+		project = t.TempDir()
+		manifest = filepath.Join(project, "ai-specs", "ai-specs.toml")
+		skillsWriteFile(t, manifest, body)
+		return project, manifest
+	}
+	readManifest := func(t *testing.T, path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	runFlow := func(t *testing.T, project string, ttyNow bool, c *configureRecipesLoopSeams) (int, string, string) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		code := runConfigureRecipesFlow([]string{project}, home,
+			strings.NewReader(""), &stdout, &stderr, ttyNow, c.seams)
+		return code, stdout.String(), stderr.String()
+	}
+
+	initializedManifest := "[project]\nname = \"u6e\"\n"
+
+	// The manifest guard is config_wizard.main's FIRST check: before the TTY
+	// gate, before the recipe enumeration — its frozen message, exit 1.
+	t.Run("missing manifest is the guard before anything else", func(t *testing.T) {
+		project := t.TempDir()
+		c := newConfigureRecipesLoopSeams(t)
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 1 {
+			t.Errorf("exit = %d, want 1 (the manifest guard)", code)
+		}
+		if out != "" {
+			t.Errorf("stdout = %q, want empty", out)
+		}
+		want := "Project not initialized: missing " +
+			filepath.Join(recipeConfigureResolve(project), "ai-specs", "ai-specs.toml") + "\n"
+		if errOut != want {
+			t.Errorf("stderr = %q, want %q", errOut, want)
+		}
+		if len(c.gated) != 0 || c.opened != 0 || len(c.envRoots) != 0 {
+			t.Errorf("no seam may run before the guard: %+v", c)
+		}
+	})
+
+	// config_wizard.main's TTY gate: the exact message on stderr, exit 3,
+	// nothing else touched (off a terminal the loop is unreachable).
+	t.Run("non-TTY stops at the gate", func(t *testing.T) {
+		project, _ := setup(t, initializedManifest)
+		c := newConfigureRecipesLoopSeams(t)
+		code, out, errOut := runFlow(t, project, false, c)
+		if code != 3 {
+			t.Errorf("exit = %d, want 3 (the TTY gate)", code)
+		}
+		if out != "" {
+			t.Errorf("stdout = %q, want empty", out)
+		}
+		if errOut != "configure-recipes requires an interactive TTY\n" {
+			t.Errorf("stderr = %q, want the frozen gate message", errOut)
+		}
+		if len(c.gated) != 0 || c.opened != 0 || len(c.envRoots) != 0 {
+			t.Errorf("no seam may run past a refused TTY gate: %+v", c)
+		}
+	})
+
+	// _enabled_recipe_ids is empty → the frozen stdout line, exit 0, and the
+	// env offer never runs (main returns before it).
+	t.Run("no enabled recipes is the frozen stdout line", func(t *testing.T) {
+		project, _ := setup(t, initializedManifest+"\n[recipes.off]\nenabled = false\n")
+		c := newConfigureRecipesLoopSeams(t)
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 0 {
+			t.Errorf("exit = %d, want 0", code)
+		}
+		if out != "No enabled recipes found in the manifest.\n" {
+			t.Errorf("stdout = %q, want the frozen line", out)
+		}
+		if errOut != "" {
+			t.Errorf("stderr = %q, want empty", errOut)
+		}
+		if len(c.gated) != 0 || c.opened != 0 || len(c.envRoots) != 0 {
+			t.Errorf("no seam may run with no enabled recipes: %+v", c)
+		}
+	})
+
+	// read_recipes' isinstance gate: `enabled = "true"` is NOT enabled — a
+	// string never counts, so the manifest still reports no enabled recipes.
+	t.Run("enabled as a string does not count", func(t *testing.T) {
+		project, _ := setup(t, initializedManifest+"\n[recipes.strbool]\nenabled = \"true\"\n")
+		c := newConfigureRecipesLoopSeams(t)
+		code, out, _ := runFlow(t, project, true, c)
+		if code != 0 {
+			t.Errorf("exit = %d, want 0", code)
+		}
+		if out != "No enabled recipes found in the manifest.\n" {
+			t.Errorf("stdout = %q, want the frozen line (bool-only enumeration)", out)
+		}
+	})
+
+	// A manifest that does not PARSE: _enabled_recipe_ids lets the load
+	// error escape (Python: traceback, exit 1). The exit code is kept; the
+	// wording is ours (ADR 0002), asserted by its frozen prefix.
+	t.Run("invalid manifest exits 1 on our own error line", func(t *testing.T) {
+		project, _ := setup(t, "[project\n")
+		c := newConfigureRecipesLoopSeams(t)
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 1 {
+			t.Errorf("exit = %d, want 1 (the reference dies uncaught)", code)
+		}
+		if out != "" {
+			t.Errorf("stdout = %q, want empty", out)
+		}
+		if !strings.HasPrefix(errOut, "ERROR: configure-recipes failed: ") {
+			t.Errorf("stderr = %q, want our own error line with that prefix", errOut)
+		}
+	})
+
+	// THE LOOP: gate → wizard → write, with the existing config value driving
+	// the prefill (L9's promised divergent-value case), then the env offer at
+	// the end. Blank answers omit; nothing else prints.
+	t.Run("gate wizard write with the existing-wins prefill", func(t *testing.T) {
+		project, manifest := setup(t, initializedManifest+
+			"\n[recipes.wired]\nenabled = true\n\n[recipes.wired.config]\nboard_id = \"OLD-GATE\"\n")
+		c := newConfigureRecipesLoopSeams(t)
+		c.gateOutcome = wizardDepGateOutcome{Proceed: true}
+		c.prompts.textQ = []scriptedTextAnswer{
+			{answers: []string{"NEW-GATE"}}, // board_id — the EXISTING value was the prefill
+			{answers: []string{""}},         // default_list — blank → omitted
+			{answers: []string{""}},         // note — blank → omitted
+		}
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 0 {
+			t.Errorf("exit = %d, want 0; stderr = %q", code, errOut)
+		}
+		if out != "" || errOut != "" {
+			t.Errorf("the loop prints nothing itself: stdout=%q stderr=%q", out, errOut)
+		}
+		if len(c.gated) != 1 || c.gated[0] != "wired" {
+			t.Errorf("gate calls = %v, want [wired]", c.gated)
+		}
+		if c.opened != 1 {
+			t.Errorf("wizard opens = %d, want 1", c.opened)
+		}
+		if len(c.envRoots) != 1 || c.envRoots[0] != recipeConfigureResolve(project) {
+			t.Errorf("env offer roots = %v, want the resolved project root %q",
+				c.envRoots, recipeConfigureResolve(project))
+		}
+		transcript := strings.Join(c.prompts.transcript, "\n")
+		for _, want := range []string{
+			`text: wired.board_id (required, string) | def="OLD-GATE"`,
+			`text: wired.default_list (optional, string) | def="In Progress"`,
+			`text: wired.note (optional, string) | def=""`,
+		} {
+			if !strings.Contains(transcript, want) {
+				t.Errorf("wizard transcript missing %q:\n%s", want, transcript)
+			}
+		}
+		data := readManifest(t, manifest)
+		if !strings.Contains(data, `board_id = "NEW-GATE"`) {
+			t.Errorf("the wizard's answer was not written back: manifest = %q", data)
+		}
+		if strings.Contains(data, `board_id = "OLD-GATE"`) {
+			t.Errorf("the existing value must be REPLACED by the answer (the preflight transcript pins the OLD prefill): manifest = %q", data)
+		}
+	})
+
+	// A declined gate: the frozen Skipped line on stderr, no wizard, no write
+	// — and the env offer STILL runs (main calls _offer_envrc after the loop
+	// whatever the loop did).
+	t.Run("gate declined keeps the manifest and still offers env", func(t *testing.T) {
+		project, manifest := setup(t, initializedManifest+
+			"\n[recipes.wired]\nenabled = true\n\n[recipes.wired.config]\nboard_id = \"OLD-GATE\"\n")
+		before := readManifest(t, manifest)
+		c := newConfigureRecipesLoopSeams(t)
+		c.gateOutcome = wizardDepGateOutcome{Skip: true}
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 0 {
+			t.Errorf("exit = %d, want 0; stderr = %q", code, errOut)
+		}
+		if errOut != "Skipped wired (missing CLI deps)\n" {
+			t.Errorf("stderr = %q, want the frozen Skipped line", errOut)
+		}
+		if out != "" {
+			t.Errorf("stdout = %q, want empty", out)
+		}
+		if c.opened != 0 {
+			t.Errorf("wizard opens = %d, want 0 after a declined gate", c.opened)
+		}
+		if len(c.envRoots) != 1 {
+			t.Errorf("env offer calls = %d, want 1 (main runs it after the loop)", len(c.envRoots))
+		}
+		if got := readManifest(t, manifest); got != before {
+			t.Errorf("a declined gate must leave the manifest untouched:\n got %q\nwant %q", got, before)
+		}
+	})
+
+	// The driver's vendor answer rc 3: config_wizard.main would have died at
+	// ITS ensure_deps with exit 3 and no message of its own (the S37 recorded
+	// timing shift moves that answer to the first gated recipe). Silent exit 3,
+	// no env offer.
+	t.Run("gate vendor decline exits 3 silently", func(t *testing.T) {
+		project, _ := setup(t, initializedManifest+"\n[recipes.wired]\nenabled = true\n")
+		c := newConfigureRecipesLoopSeams(t)
+		c.gateOutcome = wizardDepGateOutcome{Rc: 3}
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 3 {
+			t.Errorf("exit = %d, want 3 (ensure_deps' own rc)", code)
+		}
+		if out != "" || errOut != "" {
+			t.Errorf("the vendor answer prints nothing: stdout=%q stderr=%q", out, errOut)
+		}
+		if c.opened != 0 || len(c.envRoots) != 0 {
+			t.Errorf("no wizard, no env offer past an rc-3 abort: %+v", c)
+		}
+	})
+
+	// A gate that could not run: configure_selected_recipes does not catch it
+	// (Python: traceback, exit 1) — our own error line, same exit code.
+	t.Run("gate failure exits 1 on our own error line", func(t *testing.T) {
+		project, _ := setup(t, initializedManifest+"\n[recipes.wired]\nenabled = true\n")
+		c := newConfigureRecipesLoopSeams(t)
+		c.gateOutcome = wizardDepGateOutcome{Err: errors.New("boom")}
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 1 {
+			t.Errorf("exit = %d, want 1 (the reference dies uncaught)", code)
+		}
+		if out != "" {
+			t.Errorf("stdout = %q, want empty", out)
+		}
+		if want := "ERROR: configure-recipes failed: boom\n"; errOut != want {
+			t.Errorf("stderr = %q, want %q", errOut, want)
+		}
+		if c.opened != 0 || len(c.envRoots) != 0 {
+			t.Errorf("no wizard, no env offer past a failing gate: %+v", c)
+		}
+	})
+
+	// The gate fires BEFORE the fields check: a recipe with cli_deps and NO
+	// config fields is gated, then silently skipped by the wizard (no fields
+	// to prompt), and the env offer still runs.
+	t.Run("no config fields gates then skips the wizard", func(t *testing.T) {
+		project, manifest := setup(t, initializedManifest+"\n[recipes.nofields]\nenabled = true\n")
+		before := readManifest(t, manifest)
+		c := newConfigureRecipesLoopSeams(t)
+		c.gateOutcome = wizardDepGateOutcome{Proceed: true}
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 0 {
+			t.Errorf("exit = %d, want 0; stderr = %q", code, errOut)
+		}
+		if out != "" || errOut != "" {
+			t.Errorf("the loop prints nothing for a field-less recipe: stdout=%q stderr=%q", out, errOut)
+		}
+		if len(c.gated) != 1 || c.gated[0] != "nofields" {
+			t.Errorf("gate calls = %v, want [nofields] (the gate precedes the fields check)", c.gated)
+		}
+		if c.opened != 0 {
+			t.Errorf("wizard opens = %d, want 0 (no config fields)", c.opened)
+		}
+		if len(c.envRoots) != 1 {
+			t.Errorf("env offer calls = %d, want 1", len(c.envRoots))
+		}
+		if got := readManifest(t, manifest); got != before {
+			t.Errorf("nothing is written for a field-less recipe:\n got %q\nwant %q", got, before)
+		}
+	})
+
+	// A recipe without cli_deps never reaches the gate seam at all.
+	t.Run("recipe without cli deps never reaches the gate", func(t *testing.T) {
+		project, manifest := setup(t, initializedManifest+"\n[recipes.plain]\nenabled = true\n")
+		c := newConfigureRecipesLoopSeams(t)
+		c.prompts.textQ = []scriptedTextAnswer{
+			{answers: []string{"B-9"}},
+			{answers: []string{""}},
+			{answers: []string{""}},
+		}
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 0 {
+			t.Errorf("exit = %d, want 0; stderr = %q", code, errOut)
+		}
+		if out != "" || errOut != "" {
+			t.Errorf("the loop prints nothing itself: stdout=%q stderr=%q", out, errOut)
+		}
+		if len(c.gated) != 0 {
+			t.Errorf("gate calls = %v, want NONE for a recipe without cli deps", c.gated)
+		}
+		if c.opened != 1 {
+			t.Errorf("wizard opens = %d, want 1", c.opened)
+		}
+		if !strings.Contains(readManifest(t, manifest), `board_id = "B-9"`) {
+			t.Errorf("the wizard's answer was not written back")
+		}
+	})
+
+	// A cancelled prompt is Python's falsy `values`: the write is skipped,
+	// the env offer still runs, exit 0.
+	t.Run("cancelled wizard writes nothing", func(t *testing.T) {
+		project, manifest := setup(t, initializedManifest+"\n[recipes.plain]\nenabled = true\n")
+		before := readManifest(t, manifest)
+		c := newConfigureRecipesLoopSeams(t)
+		c.prompts.textQ = []scriptedTextAnswer{{answers: nil}} // an empty queue cancels
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 0 {
+			t.Errorf("exit = %d, want 0; stderr = %q", code, errOut)
+		}
+		if out != "" || errOut != "" {
+			t.Errorf("a cancelled wizard prints nothing itself: stdout=%q stderr=%q", out, errOut)
+		}
+		if len(c.envRoots) != 1 {
+			t.Errorf("env offer calls = %d, want 1 (the offer is outside the loop)", len(c.envRoots))
+		}
+		if got := readManifest(t, manifest); got != before {
+			t.Errorf("a cancelled wizard must not write:\n got %q\nwant %q", got, before)
+		}
+	})
+
+	// config_wizard._offer_envrc's outer soft-fail: an error escaping the
+	// offer words the yellow line (rich Console() → stdout) and configure-
+	// recipes still exits 0 — the loop's writes stand.
+	t.Run("env offer soft-fails on the Python's line", func(t *testing.T) {
+		project, _ := setup(t, initializedManifest+"\n[recipes.plain]\nenabled = true\n")
+		c := newConfigureRecipesLoopSeams(t)
+		c.prompts.textQ = []scriptedTextAnswer{
+			{answers: []string{"B-9"}},
+			{answers: []string{""}},
+			{answers: []string{""}},
+		}
+		c.envOfferErr = errors.New("boom")
+		code, out, errOut := runFlow(t, project, true, c)
+		if code != 0 {
+			t.Errorf("exit = %d, want 0 (the offer soft-fails); stderr = %q", code, errOut)
+		}
+		if want := "Harness env offer skipped: boom\n"; out != want {
+			t.Errorf("stdout = %q, want %q (rich Console() → stdout)", out, want)
+		}
+		if errOut != "" {
+			t.Errorf("stderr = %q, want empty", errOut)
+		}
+	})
+}
+
+// TestDepGuidanceDisplay pins dep_install.resolve_install_plan's guidance half
+// binary-by-binary: a known formula with brew on PATH renders the brew line
+// (shutil.which), without brew (or unknown/npx binaries) it falls to
+// `install '<binary>' manually`, and an install_url always wins the fallback.
+// The display is what _print_cli_dep_guidance puts on the `  - <binary>: ` line
+// (the block bytes themselves are pinned by the guidance subtest above, which
+// was RED before the port).
+func TestDepGuidanceDisplay(t *testing.T) {
+	// A PATH whose directory holds a fake brew: exec.LookPath finds it, like
+	// shutil.which. (PATH empty of brew → the guidance fallback.)
+	fakeBin := t.TempDir()
+	skillsWriteFile(t, filepath.Join(fakeBin, "brew"), "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(filepath.Join(fakeBin, "brew"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		if got, want := depGuidanceDisplay("jq", ""), "brew install jq"; got != want {
+			t.Errorf("brew branch: display = %q, want %q", got, want)
+		}
+	}
+
+	t.Setenv("PATH", t.TempDir()) // no brew reachable
+	if got, want := depGuidanceDisplay("jq", ""), "install 'jq' manually"; got != want {
+		t.Errorf("guidance fallback: display = %q, want %q", got, want)
+	}
+	if got, want := depGuidanceDisplay("npx", ""), "install 'npx' manually"; got != want {
+		t.Errorf("guidance-only binary: display = %q, want %q", got, want)
+	}
+	if got, want := depGuidanceDisplay("unknown-thing", "https://example.com/i"), "https://example.com/i"; got != want {
+		t.Errorf("install_url fallback: display = %q, want %q", got, want)
+	}
+	if got, want := depGuidanceDisplay("bb", ""), "install 'bb' manually"; got != want {
+		// bb has no apt package; without brew it is guidance-only too.
+		t.Errorf("map entry without brew: display = %q, want %q", got, want)
+	}
 }
