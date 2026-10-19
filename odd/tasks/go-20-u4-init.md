@@ -89,9 +89,152 @@ Worktree `.worktrees/go-20-u4a-init-core`, branch `change/go-20-u4a-init-core`, 
   the native wizard prints `  · configure <id> later: ai-specs recipe configure <id>` for a selected
   recipe that declares config fields. The harness-env prompts (`env_scaffold.collect_env_vars` /
   `offer_harness_env`) stay on their existing seam until T4d.
+  - **Closed by T4b-2 / U4b-2 (S35-S40):** the prompt clause and its deferral line are gone — the
+    step is native behind the documented CLI-dep gate seam (S37); the harness-env clause was already
+    closed by T4d-2 (S28-S33, recorded there). Nothing of S19 remains open.
 - S20 — The PTY suite is the contract: `tests/test_init_tui.py` wizard flows move to the native binary
   for every case that does not configure a recipe, and the four recipe-configuration cases stay on the
   legacy launcher until T4b-2, each named in the test file.
+  - **Resolved by T4b-2 / U4b-2 (S40):** every configuration case drives the built binary; the
+    dep-gate case's scripted leg runs INSIDE that binary through S37's seam. See S40 for what (honestly)
+    still exercises the legacy module directly.
+
+### T4b-2 / U4b-2 specs (the per-recipe configuration step)
+
+Landed after U6d-2 — L9 of `odd/tasks/go-20-u6-recipe.md` names the pieces this slice consumes and
+records S7's unblock (that unit's wizard core, prompt wiring and schema). S19's deferral is retired
+here; the new numbers start at S35 because S21/S22 are a pre-existing gap in this document.
+
+- S35 — Step 3.5 is native and follows `_configure_recipes` (init_tui.py:204-233) order and messages
+  exactly: for each selected recipe id (the picker's choice order, which is questionary's own —
+  `get_selected_values` iterates the CHOICES, so both routes prompt in catalog order) — read
+  `catalog/<id>/recipe.toml` through `schema.LoadRecipeToml` (failure → `skip config for <id>: <err>`
+  on stderr and on to the next recipe; the id joins the path verbatim like `Path` does, and the error
+  DETAIL is Go's where Python printed its exception text — ADR 0002, same class as U6's deviations);
+  the CLI-dep gate when the recipe declares `[[deps.cli]]` (S37) — BEFORE the fields check, as the
+  Python has it, even for a recipe with no config at all; the fields check over the RAW schema (a
+  recipe whose only field is `repo_topology` still gets the confirm, and then the filtered schema
+  prompts nothing — exactly the Python, whose fields check precedes `_wizard_recipe`'s filter); the
+  `Configure <id> now?` confirm (default yes; aborting it is the Python's `do_now is None` →
+  KeyboardInterrupt → the wizard's cancel, exit 1); `runConfigWizard` over the filtered schema
+  (project-owned keys removed, S18) with each field's help line on stdout immediately before its
+  prompt, the message built from the PARSED `recipe.id` while values are keyed by the picker id (both
+  are the Python's); blank answers omitted; a cancelled field prompt is Python's `return {}` — THAT
+  recipe stays unconfigured and the loop CONTINUES. Recorded divergence, decided not accidental:
+  legacy Ctrl-D inside a field prompt surfaces EOFError through questionary's `ask()` (which catches
+  only KeyboardInterrupt) and init_tui turns it into a whole-wizard cancel, while internal/tui's
+  prompt contract cannot tell Ctrl-C from EOF — the port answers the Ctrl-C leg, the one a hand
+  reaches for, and this entry carries the EOF leg.
+- S36 — The write path, decided against a plausible misreading of the handoff: the collected values
+  reach the staged manifest through `_render_manifest`'s configured tables — S16's byte order
+  (recipe table → config table → trailing comment pair) — NOT through `config.UpdateRecipeConfig`.
+  Legacy `_configure_recipes` never writes: it returns the map. The surgical writer inserts at the
+  recipe region's END (`_recipe_region_end` → `insert_at = region_end`), which for the last recipe is
+  AFTER the trailing comment pair — measured from both sources — so routing init's staged bytes
+  through it would break S16/S3 for no gain; `UpdateRecipeConfig` stays the authority it is on the
+  configure/add routes over EXISTING manifests. The differential below proves the choice: legacy and
+  native staged manifests are byte-identical on all four config cases.
+- S37 — The CLI-dep gate (`recipe.cli_deps` + `config_wizard._dep_gate`) has NO native side, and this
+  slice keeps that leg on the legacy script through a documented seam rather than half-porting it or
+  silently skipping recipes that have deps. When a selected recipe declares `[[deps.cli]]`, the
+  wizard suspends raw mode (`Terminal.Suspend/Resume` — the `internal/hub` delegate pattern this
+  terminal already documents), spawns `python3 -c` running init_tui's own `_ensure_deps`, recipe-read
+  and `config_wizard._dep_gate` over the SAME TTY streams (AI_SPECS_HOME pinned to the wizard's home
+  through the package's existing `childEnv`), resumes raw mode, and maps the driver's exit codes:
+  **0** configure; **10** declined → the legacy `Skipped <id> (missing CLI deps)` line on stderr;
+  **11** read failed → the driver's own `skip config for …` line, quiet continuation; **3** → the
+  wizard's rc 3 with NO message (legacy `_ensure_deps` semantics; the classic path takes over);
+  anything else — a Python traceback's own exit included → `ERROR: interactive init failed: …`,
+  exit 3, exactly init_tui main's failure arm. The panel, the `dep_install` TTY offer and the
+  `Configure anyway?` confirm are the legacy script's own bytes on the legacy route's own streams.
+  OWNER: **U6e** lands the native dep gate (for `configure-recipes`); this seam retires when init's
+  wizard adopts that gate. The seam is named in code at `runLegacyInitDepGate` and
+  `initDepGateDriver` in `internal/cli/initwizard.go`, and at the loop that calls it. Recorded
+  divergence: the vendor bootstrap runs at the FIRST gated recipe instead of at wizard start where
+  the Python runs it (the native wizard needs no Python deps otherwise, so nothing offered to install
+  before then), and a decline there exits 3 exactly as the legacy decline does.
+- S38 — Preview and sidecar carry the configuration: the preview's `config` row is
+  `", ".join(sorted(configured))`, the deferred `(defaults / later)` when nothing was configured; the
+  JSON sidecar's `configured` field is `sorted(configured)` — T4b-1 had hard-coded `[]` because T4b-1
+  configured nothing.
+- S39 — S19's deferral line (`  · configure <id> later: ai-specs recipe configure <id>`) is gone: the
+  step it deferred is here. The `AI_SPECS_INIT_TUI_PY` whole-verb hatch stays — now the route back to
+  the reference wizard, not any step's seam (no STEP needs it after this slice).
+- S40 — PTY coverage, stated honestly: the configuration cases in `tests/test_init_tui.py` drive the
+  BUILT BINARY end to end (per-recipe confirm, field prompts, staged config block, the decline, the
+  dep-gate skip, the topology routing) — five cases, all repointed from the legacy launcher with this
+  slice. The dep-gate case does so THROUGH the seam: its legacy leg (panel, install offer,
+  `Configure anyway?`) is spawned by that binary on the same PTY. The in-process Go tests script the
+  step and every gate outcome the PTY cases cannot reach (read failure, rc abort, gate-before-fields
+  order, no-cli_deps non-invocation, the seam's non-TTY refusal). The `runpy` drivers left on the
+  legacy module are the TRIAGE data-level contracts of init_tui.py itself (mocked
+  `_configure_recipes`/`_wizard_recipe`), not launcher cases — they are what still exercises the
+  legacy module directly, by design.
+
+## T4b-2 / U4b-2 — verification
+
+The per-recipe configuration step is native (`_configure_recipes` runs inside
+`internal/cli/initwizard.go`), its values reach the staged manifest through the Python's own render
+(S36), and the CLI-dep gate keeps its legacy leg behind the documented seam (S37). Gates, run from
+`.worktrees/go-20-u4b2-config` with `PATH=/tmp/pybin:$PATH`:
+
+| gate | command | result |
+| --- | --- | --- |
+| touched packages | `PATH=/tmp/pybin:$PATH go test ./internal/cli/ ./internal/tui/` | both `ok` |
+| Go suite | `PATH=/tmp/pybin:$PATH go test ./cmd/... ./internal/...` | exit 0 — 22 packages `ok`, 0 failing |
+| init contract + wizard PTY | `PATH=/tmp/pybin:$PATH python3 -m unittest tests.test_init_tui tests.test_init_native tests.test_init_brief_route` | **47 tests, OK** — including all five configuration cases on the NATIVE binary |
+| formatting | `gofmt -l internal/` | empty |
+| manifest untouched | `git diff --quiet -- ai-specs/ai-specs.toml` | exit 0 |
+| differential (S3) | twin PTY runs, legacy launcher vs built binary, byte-comparing `ai-specs/ai-specs.toml` and the exit codes across four config cases (block written, configure declined, topology+config yes, dep-gate declined) | all four manifests byte-identical, rc 0 on both routes |
+
+- RED, observed: the new scripted tests did not compile against the base (`undefined: wizardDepGate`,
+  `unknown field DepGate in struct literal`, `undefined: wizardDepGateOutcome`) — the seam's API did
+  not exist yet. GREEN: one implementation pass later every new test passed (six subtests of the
+  seam pin included), then the packages, the full Go suite and the three Python suites.
+- **What this closes:** all of S19 (prompt clause here, harness-env clause already closed by T4d-2)
+  and S20's "stay on the legacy launcher until T4b-2". Of S27, nothing was open for this slice:
+  U4d-2's section records its prompt/write/migration clauses closed; the only S27-class item still
+  deferred anywhere near init's code is S33's direnv-INSTALL offer, named in
+  `internal/sync/envscaffold.go` and retired with the deps surface, not here.
+- **What remains, named in code and here:** (1) the CLI-dep gate seam —
+  `runLegacyInitDepGate`/`initDepGateDriver` in `internal/cli/initwizard.go`, retired by **U6e**
+  (the dep gate for `configure-recipes`) when init adopts that gate; (2) the `refresh-bundled`
+  flatten seam (S9, moves to U7 with its readers); (3) the `AI_SPECS_INIT_TUI_PY` whole-verb hatch
+  (reference route until U7 — no step needs it any more); (4) S33's direnv-install offer. Physical
+  deletion of the legacy files stays U7/U8 through U6's S9.
+- **What U4b-2 leaves as the last border of `init`:** the verb now owns its whole flow natively
+  except those four named seams — of which the dep gate (S37) is the only one a normal interactive
+  run still REACHES (the others fire only with an env override, a missing cache consumer, or a
+  missing direnv). The wizard itself — every prompt, the staged bytes, the sidecar, the env offer —
+  is native end to end.
+- **The dep-gate decision: option (a)**, the documented legacy seam. Why not (b): the gate is an
+  interactive surface (panel + install offer + confirm + skip line) that (b) would silently DELETE
+  from the native route for every `[[deps.cli]]` recipe — no panel, no `Configure anyway?`, never the
+  skip — a live divergence removable only by U6e, with the PTY case stranded on the legacy launcher
+  meanwhile; the program rejected exactly that trade in go-20-u6-recipe.md L4 (dropping an
+  interactive surface no slice re-adds). Why (a) is affordable: the suspend/resume delegation of a
+  legacy Python child on the same TTY is production-proven in this very binary (`internal/hub`'s
+  `delegate`), and `init` already execs python3 every run (`refreshBundledAtInit`), so the seam adds
+  no dependency class — and it keeps every message byte-legacy through U6e.
+- **Spec findings (reported, not absorbed):** (a) The slice handoff's goal line says the values flow
+  `runConfigWizard → the same write path U6d-1 uses` (`config.UpdateRecipeConfig`). That conflicts
+  with S16/S3 and with the legacy source (S36 above): the surgical writer's region-end insert would
+  put the config table after the trailing comments. Specs are authoritative over the handoff
+  summary, so the render path shipped and the differential proves byte parity; if `UpdateRecipeConfig`
+  for init's staged manifest was really the intent, S16/S3 must be amended explicitly first.
+  (b) go-20-u6-recipe.md L9 claims "init (U4b-2) will exercise the existing-wins step for real". It
+  cannot: legacy passes `{}`, and the native wizard only ever runs when NO manifest exists (the
+  shell's skip branch), so `existing_config` is always empty on this route — recorded as a comment at
+  the call rather than a test that could only assert emptiness; configure-recipes (U6e) remains the
+  route that exercises it. (c) This document skips S21/S22 (T4b ends at S20, T4d starts at S23) — a
+  pre-existing numbering gap, which is why the new block starts at S35 instead of backfilling
+  numbers other documents may already cite.
+  (d) `tests/test_init_native.py::test_init_tui_py_env_seam_keeps_legacy_wizard_delegation` still
+  says the hatch "keeps the recipe-configuration PTY cases … observable" — stale after this slice,
+  and that file is outside this slice's edit surfaces; flagged for T6's pass (same class as L9's
+  cli.go finding). (e) S20 said "the four recipe-configuration cases"; the file actually held FIVE
+  tests with a `Configure …` stage (the topology suite has two) and the fifth never carried the
+  legacy comment — all five now drive the built binary.
 
 ### T4d / U4d specs (the harness env)
 
@@ -254,7 +397,7 @@ now offers the variables the enabled recipes need, exactly where the Python did.
 | --- | --- | --- |
 | **T4a** | classic non-interactive `init` native: args, target resolution, directories, template manifest, `AGENTS.md` baseline brief, root `.gitignore` block, `ai-specs/.gitignore`, lock stamp, next steps; TUI gate delegates | `init.sh:35-120,195-233,235-282,284-325,327-348` shell orchestration |
 | T4b-1 | the wizard, native: text prompt, name, topology, agents, recipes, preview, confirm, manifest render, JSON sidecar, staging | `init_tui.py:234-400` minus the recipe-config step |
-| T4b-2 | per-recipe configuration prompts and the CLI-dep gate (`recipe-read.py` + `config_wizard.py`) | `init_tui.py:204-233` |
+| T4b-2 | per-recipe configuration prompts, native (S35-S40): read → dep-gate seam → fields check → `Configure <id> now?` → `runConfigWizard` → the render; the CLI-dep gate itself stays on its documented legacy seam (S37), owned by U6e | `init_tui.py:204-233` MINUS `_dep_gate` — the gate leg survives on the seam until U6e lands the native gate |
 | T4c | the lock `[meta]` writer, native, wired into `sync` | `cli_version.py stamp-meta` (the `sync` call site) |
 | T4c-note | the `refresh-bundled` flatten is NOT retired here: the Python readers that consume `{cache}/.bundled/` outlive this unit, and `init`'s step stamps nothing (see S9's correction) | moves to U7 with those readers |
 | T4d-1 / U4d-1 | the env step `sync` runs, native: `ai-specs.env.example`, the managed `.envrc` block, the missing-value warnings | `env_scaffold.py`'s non-interactive half |
