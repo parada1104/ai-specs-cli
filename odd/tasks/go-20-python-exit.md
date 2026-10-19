@@ -234,6 +234,11 @@ cannot each be one PR.
 | U5a — `skills list`, native | **delivered** | `98510a9` (PR #385); read-only, 10-case differential byte-identical |
 | U5b — `skills remove`, native | **delivered** | `a88d36f` (PR #386); rides `config.RemoveDepSegment`; 12-case differential; a 0444 manifest is refused where the shell rewrites it (the U3b-2 R4 rule, recorded) |
 | U5c — `skills add` + the dispatcher, native | **delivered** | `2316b31` (PR #387); 31-case differential; the shim map is down to `recipe` and `configure-recipes`; the shell scripts stay for `bin/ai-specs` until T7 |
-| U6 — recipe + configure-recipes | pending | the largest module: seven scripts, five Python modules |
+| U6a — `recipe list`, native | **delivered** | `7dc9e7a` (PR #389); `recipe.CatalogHome` home-first + 10-case differential |
+| U6b — `recipe add`, native off the TTY | **delivered** | `8c7c733` (PR #390); `config.AppendRecipeSegments`; TTY leg stays on the script (the parity contract freezes it), its flip is T3b |
+| U6c — `recipe remove`, native | **delivered** | `aef0b64` (PR #391); `config.RemoveRecipeSegments` + lock cleanup through `internal/lock`, untouched |
+| U6d-1 — recipe config write + `recipe configure`, native | **delivered, judgment approved** | `fc803bf` (PR #392); `internal/config` owns the writer; 30-case differential; Judgment Day found one MAJOR (`mcp.present` order) and six more, all closed, 10/10 verified |
+| U6d-2 — the wizard core + `recipe add`'s "Configure now?" flip | pending | unblocks U4b-2 |
+| U6e — `configure-recipes`, the dispatcher close and the end of the `recipe add` seam | pending | the shim map goes empty |
 | U7 — the substrate tail + retiring the dead shell scripts | pending | `util.py`, `recipe_schema.py`, `gate_binary.py`, the toml pair, and `lib/skills*.sh`
 | U8 — program closure | pending | |
