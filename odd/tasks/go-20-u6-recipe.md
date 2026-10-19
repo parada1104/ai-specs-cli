@@ -42,7 +42,7 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
 | **U6c** | `recipe remove`: route the already-ported `config.RemoveRecipeSegments` and port the lock-entry cleanup | `recipe-remove.sh` | no |
 | **U6d-1** | recipe config write: `internal/config.UpdateRecipeConfig` PROMOTED out of `catalog/recipes/worktree-flow/gate/shared/recipeconfigwrite.go` (one grader, S6) + the whole non-interactive `recipe configure` surface of `recipe-configure.py` (`--inspect`, `--set`, `--dry-run`, `--json`, `--sync`, `--ignore-cli-version`) | `recipe-config-write.py` for this route | no |
 | **U6d-2** | the wizard core `run_config_wizard` on `internal/tui` (enum→select, bool→confirm, regex validation, blank→omit) + the flip of `recipe add`'s "Configure now?" arm onto it (T3b, first half) | the interactive half of `config_wizard.py` | **yes** |
-| **U6e** | `configure-recipes`: the whole-project loop, the TTY gate (exit 3), the dep gate and the env offer; the dispatcher's usage/unknown arms; **and the flip of `recipe add`'s TTY seam onto the native wizard + env offer, which is what finally kills that seam**; the shim map goes empty | `recipe.sh`, `recipe-config.sh`, `config_wizard.py`, and the U6b seam | no (already unblocked) |
+| **U6e** | `configure-recipes`: the whole-project loop, the TTY gate (exit 3), the dep gate and the env offer; the dispatcher's usage/unknown arms; **and the flip of `recipe add`'s TTY seam onto the native wizard + env offer, which is what finally kills that seam**; the shim map goes empty. Plus the two decisions L10 records: `recipe init`'s DIRECT route to recipe-init.sh (found gap — no slicing row owns recipe-init.py), and the dep gate kept on the S37 seam, U7-owned (decision (b)) | `recipe.sh`, `recipe-config.sh`, `config_wizard.py`, and the U6b seam | no (already unblocked) |
 
 ## Tasks
 
@@ -645,3 +645,120 @@ Unit document for T6 of the Python exit program (`odd/tasks/go-20-python-exit.md
   append mirrors `_field_default` exactly, and the dup refusal blocks any other config block),
   so `wizardExistingConfig` is pinned by shape, not by a divergent-value case — configure-recipes
   (U6e) and init (U4b-2) will exercise the existing-wins step for real.
+
+- L10 — Evidence (U6e, T5 + T3b second half), the last `recipe` slice: `configure-recipes`
+  native, the dispatcher's remainder native, `recipe add`'s tail flipped, the shim map EMPTY.
+  WHAT IT RETIRES (S9 — the binary stops using; every file stays for the launcher, deletion is
+  U7/U8): `recipe.sh` — every arm it had is native or (for `init`) routed STRAIGHT past it, so the
+  dispatcher never execs it; `recipe-config.sh` — wrapper contract and verb both native;
+  `config_wizard.py` as the `configure-recipes` verb (main, `configure_selected_recipes`,
+  `_enabled_recipe_ids`, `_offer_envrc`, `run_config_wizard` — the last already U6d-2's core); and
+  the U6b seam itself — `recipeAddTailNeedsLegacy` and its `runShim` call are DELETED, not narrowed,
+  so `recipe add` runs native end to end off AND on a TTY. The `shims` map is empty (one test
+  asserts `len(shims)==0`); `routeShim`/`runShim` stay with a comment saying why they live:
+  `recipe init`'s new direct route, init.go's `AI_SPECS_INIT_TUI_PY` whole-verb hatch (S39), and
+  the fact that the dep-gate seam execs its python3 driver directly — no verb resolves through the
+  map anymore, but the strangler's exec path is still in use.
+  THE DEP-GATE DECISION (goal 4): **(b), keep the same named seam** — `runLegacyInitDepGate` +
+  `initDepGateDriver` (S37), now with THREE callers (init's wizard, the `configure-recipes` loop,
+  `recipe add`'s tail) and now **owned by U7**, which must either port `_dep_gate`'s install offer
+  or retire the gate with the scripts. Size judgment (the reason, read before deciding):
+  `_dep_gate` itself is ~40 lines, but it stands on `dep_install.py` (240 — the package/guidance
+  plans, the consent prompt, the brew/apt SUBPROCESS installs) and on `provider_install.py`'s
+  install half (597 — network download, checksums, extraction; only its READ-ONLY resolution was
+  ported, into `internal/provider`), while its check half exists in Go only as `internal/doctor`'s
+  UNEXPORTED probe — promoting it edits a package outside this slice's edit edges, and copying it
+  would violate S6. So this slice ports exactly the half that has no install behind it
+  (`dep_install.resolve_install_plan`'s GUIDANCE rendering, for `_print_cli_dep_guidance`'s one
+  line) and keeps the gate itself on the seam. The gate was NOT removed from any route: the loop
+  gates cli-deps recipes BEFORE the fields check (its position, even for a config-less recipe —
+  pinned), `recipe add` gates at BOTH script positions (:258 before the guidance block, and
+  inside configure_selected_recipes before the wizard — each keeping its own frozen decline line:
+  the guidance block vs `Skipped <id> (missing CLI deps)`), and init's S37 path is untouched.
+  Gate failure mappings (recorded, pinned): in the loop an unrunnable driver is Python's uncaught
+  traceback → exit 1 on our own `ERROR: configure-recipes failed: <detail>` line, and the driver's
+  vendor rc 3 answers main's ensure_deps position — SILENT exit 3, before the env offer (S37's
+  recorded timing shift); in `recipe add` BOTH degrade to the script's catch framing
+  (`  ! CLI dependency check skipped: …`) and the run proceeds, because recipe add never refuses a
+  run for Python packages (L9 deviation 1 — there is no pre-write ensure_deps left to answer at)
+  and add wraps configure_selected_recipes in its own `except Exception` whose line is
+  `  ! could not open the configuration wizard`. `ensure_deps` has no native counterpart in this
+  verb either (same L9 argument: nothing before the first gated recipe needs Python — the wizard
+  is internal/tui, the offer internal/sync; the driver runs `_ensure_deps` itself at the first
+  gated recipe).
+  WHAT STAYS ALIVE, AND WHO KILLS IT (S8): `recipe-read.py` — the S37 driver reads the recipe
+  through it on every gated run, plus `recipe-configure.py`'s import and the callers S8 names
+  (`env_scaffold.py`, `dep_check.py`, `recipe-materialize.py`) → the launcher flip (U2) takes the
+  callers, U7 the driver; `recipe-conflicts.py` — only `recipe-materialize.py` and the test suite →
+  U2/U7 with the spine's callers; `recipe-init.sh` + `recipe-init.py` — now reached DIRECTLY by
+  this dispatcher's `routeRecipeInit` (and still by recipe.sh through bin/ai-specs) → an owner row
+  for the port or U7/U8 deletion; `config_wizard._dep_gate` — the driver imports it → U7 (above);
+  `lib/recipe.sh` + `lib/recipe-config.sh` + `bin/ai-specs`'s own case arms — the pure-bash
+  launcher still routes both verbs → U2/T7's launcher flip (the GO dispatcher is the thing emptied
+  here, not the shell launcher); `lib/_vendor` — the driver's and the scripts' Python packages →
+  dies with them.
+  PTY / DIFFERENTIAL HONESTY: the differential tables are the NON-TTY surface only — 8
+  `configure-recipes` cases (usage ×2, unknown flag, second positional, `--` positional, missing
+  manifest, the TTY-gate message+exit 3 on an initialized project, the cwd default) and 8 recipe
+  dispatcher cases (`--help`/`-h`/`help` on stdout, the bare verb, `bogus`, `-list`, `listx`,
+  `init` without its id) — all byte-identical against `bash lib/recipe-config.sh` /
+  `bash lib/recipe.sh` under `PATH=/tmp/pybin:$PATH`, plus the PATH-emptied routing proofs (no
+  bash, no Python) and the `cd`-failure deviation pin. **The interactive loop is in-process only**
+  (scripted seams through `runConfigureRecipesFlow`; no PTY in the Go table — L4's constraint
+  unchanged): the gate→wizard→write order with the existing-wins prefill (L9's promised
+  divergent-value case: the manifest starts `OLD-GATE`, the transcript shows `def="OLD-GATE"`, the
+  write lands `NEW-GATE`), the gate's decline/rc-3/error branches, the fields-check-after-gate
+  order, the no-clients non-invocation, wizard cancel, and both soft-fails (`Harness env offer
+  skipped: <err>` on stdout with exit 0 — `_offer_envrc`'s outer catch; add's
+  `  ! could not configure environment variables` with the append standing). ONE manual twin-PTY
+  probe (scratch: `/tmp/u6e_pty_probe.py`, outside the worktree) covered the two lines no pipe can
+  reach: `No enabled recipes found in the manifest.` + exit 0 is BYTE-EXACT legacy-vs-native, and
+  the `skip <rid>: …` framing + exit 0 match modulo rich's wrapping (below). NOT probed on a PTY:
+  the wizard prompt flow and the driver's install offer (child questionary) — that surface stays
+  the seam's, for U7.
+  Spec findings (reported, not absorbed): (a) **`recipe init` was owned by no U6 row** — recipe-init.py
+  (272 lines) appears in no slice, yet U6e claims recipe.sh retires and the shim map empties; this
+  slice resolves it by routing `init` STRAIGHT to lib/recipe-init.sh (byte-identical: recipe.sh's
+  arm is `bash recipe-init.sh "$@"` after its subcommand shift — pinned by the dispatcher
+  differential's `init without its id` case and the route table) and names the gap in cli.go's map
+  comment and the amended U6e row; recipe-init.py still needs an owner row (U7 tail or a U6f).
+  (b) The task's "non-TTY byte-comparable: no recipes" cannot exist: config_wizard.main checks
+  the TTY gate BEFORE `_enabled_recipe_ids`, so off a terminal every enabled-less project measures
+  the GATE message (that case is in the table and byte-matches); the `No enabled recipes…` LINE
+  itself is TTY-only and was PTY-probed (byte-exact, above). (c) rich Console WRAPS the loop's
+  console lines — `skip <rid>: …` and `Skipped …` print through `Console(stderr=True)`, which
+  soft-wraps at console width (80 off-terminal) and colours yellow on a TTY; the port prints the
+  single unwrapped plain line (the init port's precedent — `skip config for` is plain too).
+  Framing and exit codes are equal (the PTY probe compares modulo whitespace); colour and wrapping
+  are NOT reproduced, and cannot be differentially measured because the loop is unreachable off a
+  terminal. (d) L9 finding (c) is CLOSED here: cli.go's and cli_test's stale whole-verb-seam
+  comments landed inside this slice's edit edges and were rewritten, and
+  TestRecipeAddTTYSeamStaysOnLegacyScript — whose premise the flip kills — is renamed
+  TestRecipeAddTailIsNativeOnATerminal. (e) L9 finding (d) advanced but NOT closed:
+  docs/go-migration-parity-contract.md's frozen tables still describe the old world (§7's
+  `recipe add` row "the dependency gate runs before the manifest write", and the routing rows
+  naming recipe.sh/recipe-config.sh for both verbs) — outside this slice's edit edges, for T6.
+  (f) initwizard.go:92 still says "U6e lands the native dep gate" — stale after decision (b);
+  initwizard.go is outside this slice's edit edges, for T6. (g) `recipe add`'s env offer now runs
+  through sync.OfferHarnessEnv's AGGREGATE collection where recipe-add.py passed
+  `recipe_ids=[id]` (U4d-2's port has no scoping parameter and internal/sync is outside this
+  slice's edges); the structural `has_mcp_env` gate still precedes it, so the divergence is the
+  prompt SET (and the collect gate) on multi-recipe projects — TTY-only, in-process pinned, not
+  differentially measurable. (h) The `_dep_gate` panel stream differs at ONE position:
+  recipe-add.py:66 renders add's pre-gate panel on stdout (`Console()`) where the shared S37
+  driver prints stderr (`Console(stderr=True)`); on a terminal both reach the same screen, and the
+  driver is shared with init and the loop (a stdout variant was judged not worth a second driver).
+  Test evidence: RED-1 (Phase A against the shimming binary — the three configure-recipes
+  PATH-empty proofs, the cd-deviation pin and the three dispatcher PATH-empty proofs all failed
+  with `ai-specs: exec: "bash": executable file not found in $PATH` or bash's prefixed cd error,
+  while both new differentials passed through the shim, i.e. legacy-vs-legacy); RED-2 (the new
+  seam/route tests against the pre-implementation tree: `undefined: recipeTailSeams`,
+  `undefined: routeConfigureRecipes`, `undefined: routeRecipe`, `undefined: routeRecipeInit`,
+  `undefined: runConfigureRecipesFlow`); GREEN (both differential tables byte-identical, every
+  PATH-empty proof and every scripted loop/tail subtest passing) with
+  `PATH=/tmp/pybin:$PATH go test ./internal/cli/ ./internal/config/` ok/ok,
+  `PATH=/tmp/pybin:$PATH go test ./cmd/... ./internal/...` all ok (22 packages), `gofmt -l internal/`
+  empty, `git diff --quiet -- ai-specs/ai-specs.toml` exit 0, and the twin-PTY probe exit 0.
+  One `ai-specs/ai-specs.toml`-independent note: the Python test suites (tests/) were NOT part of
+  this slice's authorized commands — they drive bin/ai-specs, whose launcher is untouched, but the
+  pre-merge full validation remains the parent's gate (S3).
