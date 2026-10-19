@@ -239,6 +239,6 @@ cannot each be one PR.
 | U6c — `recipe remove`, native | **delivered** | `aef0b64` (PR #391); `config.RemoveRecipeSegments` + lock cleanup through `internal/lock`, untouched |
 | U6d-1 — recipe config write + `recipe configure`, native | **delivered, judgment approved** | `fc803bf` (PR #392); `internal/config` owns the writer; 30-case differential; Judgment Day found one MAJOR (`mcp.present` order) and six more, all closed, 10/10 verified |
 | U6d-2 — the wizard core + `recipe add`'s "Configure now?" flip | **delivered** | `dd57960` (PR #394); `tui.TextValidated` + `runConfigWizard`; the seam narrowed to the env offer and the dep gate |
-| U6e — `configure-recipes`, the dispatcher close and the end of the `recipe add` seam | pending | the shim map goes empty |
+| U6e — `configure-recipes` + the dispatcher close | **delivered, review approved** | `f467fde` (PR #397); review `review-ea5e3ea49a8c6e1a` approved 4/4 lenses, 11 advisories triaged; **the shim map is EMPTY**; `recipe-init.py` and the native dep gate are U7's |
 | U7 — the substrate tail + retiring the dead shell scripts | pending | `util.py`, `recipe_schema.py`, `gate_binary.py`, the toml pair, and `lib/skills*.sh`
 | U8 — program closure | pending | |
