@@ -16,11 +16,11 @@ type wantShim struct {
 
 // TestRouteTableCoversEveryVerb checks the full dispatcher table: the shimmed
 // verbs, the native verbs and their aliases, mirroring the case statement of
-// bin/ai-specs.
+// bin/ai-specs (U5c note: add-dep and skills are native now, so the shim map
+// holds only what bin/ai-specs still routes to a lib script from the Go
+// dispatcher).
 func TestRouteTableCoversEveryVerb(t *testing.T) {
 	shims := map[string]wantShim{
-		"add-dep":           {script: "skills-add.sh", invokedAs: "ai-specs add-dep"},
-		"skills":            {script: "skills.sh"},
 		"recipe":            {script: "recipe.sh"},
 		"configure-recipes": {script: "recipe-config.sh"},
 	}
@@ -85,31 +85,42 @@ func TestRouteBareInvocationRewritesToHub(t *testing.T) {
 	}
 }
 
-// TestRouteSkillsListIsNativeBeforeTheShim pins the GO-20 U5a/U5b subcommand
-// interceptions: `skills list` and `skills remove` resolve native (and only
-// ever those subcommands), while `skills add`, `skills --help`, the bare
-// `skills` and unknown subcommands still fall through to lib/skills.sh byte
-// for byte. The U5a rows are kept as they were; U5b extends the table with
-// the `remove` interception.
+// TestRouteSkillsListIsNativeBeforeTheShim pins the GO-20 U5a/U5b/U5c
+// subcommand interceptions: `skills list`, `skills remove` and `skills add`
+// resolve native, and the REMAINDER of lib/skills.sh's case statement (the
+// bare `skills`, `--help`/`-h`/`help` and unknown subcommands) resolves to
+// the native dispatcher route — nothing in the skills surface reaches the
+// skills.sh shim anymore (U5c). The add-dep alias carries its own label,
+// exactly the env var bin/ai-specs sets for its `add-dep)` arm.
 func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 	cases := []struct {
-		args []string
-		want routeKind
+		args      []string
+		want      routeKind
+		invokedAs string
 	}{
-		{[]string{"skills", "list"}, routeSkillsList},
-		{[]string{"skills", "list", "--help"}, routeSkillsList},
-		{[]string{"skills", "list", "."}, routeSkillsList},
-		// U5b: `skills remove` is intercepted before the shim too.
-		{[]string{"skills", "remove"}, routeSkillsRemove},
-		{[]string{"skills", "remove", "some-id"}, routeSkillsRemove},
-		{[]string{"skills", "remove", "some-id", "."}, routeSkillsRemove},
-		{[]string{"skills", "remove", "--help"}, routeSkillsRemove},
-		{[]string{"skills"}, routeShim},
-		{[]string{"skills", "add", "https://example.com/r.git"}, routeShim},
-		{[]string{"skills", "--help"}, routeShim},
-		{[]string{"skills", "bogus"}, routeShim},
-		{[]string{"skills", "listx"}, routeShim},
-		{[]string{"skills", "-list"}, routeShim},
+		{[]string{"skills", "list"}, routeSkillsList, ""},
+		{[]string{"skills", "list", "--help"}, routeSkillsList, ""},
+		{[]string{"skills", "list", "."}, routeSkillsList, ""},
+		// U5b: `skills remove` is intercepted before the dispatcher too.
+		{[]string{"skills", "remove"}, routeSkillsRemove, ""},
+		{[]string{"skills", "remove", "some-id"}, routeSkillsRemove, ""},
+		{[]string{"skills", "remove", "some-id", "."}, routeSkillsRemove, ""},
+		{[]string{"skills", "remove", "--help"}, routeSkillsRemove, ""},
+		// U5c: the add verb and its alias are native, each with its label.
+		{[]string{"skills", "add"}, routeSkillsAdd, "ai-specs skills add"},
+		{[]string{"skills", "add", "https://example.com/r.git"}, routeSkillsAdd, "ai-specs skills add"},
+		{[]string{"skills", "add", "--help"}, routeSkillsAdd, "ai-specs skills add"},
+		{[]string{"add-dep"}, routeAddDep, "ai-specs add-dep"},
+		{[]string{"add-dep", "https://example.com/r.git"}, routeAddDep, "ai-specs add-dep"},
+		// The dispatcher remainder: every non-add/list/remove arm of
+		// lib/skills.sh's case statement, resolved natively (U5c).
+		{[]string{"skills"}, routeSkills, ""},
+		{[]string{"skills", "--help"}, routeSkills, ""},
+		{[]string{"skills", "-h"}, routeSkills, ""},
+		{[]string{"skills", "help"}, routeSkills, ""},
+		{[]string{"skills", "bogus"}, routeSkills, ""},
+		{[]string{"skills", "listx"}, routeSkills, ""},
+		{[]string{"skills", "-list"}, routeSkills, ""},
 	}
 	for _, tc := range cases {
 		r := Route(tc.args)
@@ -117,8 +128,8 @@ func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 			t.Errorf("Route(%q) kind = %v, want %v", tc.args, r.kind, tc.want)
 			continue
 		}
-		if tc.want == routeShim && r.script != "skills.sh" {
-			t.Errorf("Route(%q) script = %q, want skills.sh", tc.args, r.script)
+		if r.invokedAs != tc.invokedAs {
+			t.Errorf("Route(%q) invokedAs = %q, want %q", tc.args, r.invokedAs, tc.invokedAs)
 		}
 	}
 }

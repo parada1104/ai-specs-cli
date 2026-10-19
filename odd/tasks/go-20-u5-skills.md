@@ -125,3 +125,80 @@ The three share one manifest reader/writer; whichever slice lands first owns it.
   `skills --help` still resolve to `lib/skills.sh` byte for byte. Spec note: the U5b slicing row does
   not mention the D17 lock-hash step the script performs after the prune; it is ported here because
   the script is the contract (T7's wrapper retirement will lose this Python caller).
+- L5 — Evidence (U5c), the differential and its environment: `skills add`, `add-dep` and the
+  `skills` dispatcher run the LEGACY route (`bash lib/skills.sh add …`, `bash lib/skills-add.sh …`
+  under `AI_SPECS_INVOKED_AS="ai-specs add-dep"` — the exact env bin/ai-specs's `add-dep)` arm
+  exports — and `bash lib/skills.sh …` for the dispatcher arms) and the binary on byte-identical TWIN
+  projects under one shared env: isolated `AI_SPECS_HOME`, `LC_ALL=C`, `PYTHONDONTWRITEBYTECODE=1`,
+  the same LOUD tomllib probe as L3/L4 (this machine's plain python3 is 3.9 without `tomllib`, so the
+  suite runs with `PATH=/tmp/pybin:$PATH` and skips naming the fix otherwise), `WORKTREE_GATE_BIN`
+  pinned to a freshly built gate (L4's rationale), `AI_SPECS_GO_BIN` stripped — the script's own
+  `bash $AI_SPECS_HOME/lib/sync.sh` fallback runs the full shell spine, i.e. the legacy sync as the
+  contract — and `AI_SPECS_VENDOR_FIXTURE_ROOT` pointing at `tests/fixtures/kepano-obsidian-skills` as
+  T6's stubbed fetcher, so no leg opens the network: every sync row names either a plain local
+  directory (vendor-skills copytrees it, no git) or the plain https kepano URL behind that fixture.
+  Thirty-one cases, all byte-identical on stdout, stderr and exit code after normalizing each leg's
+  own project root, PLUS identical rebased project trees (the appended manifest is S6's contract and
+  the `.deps` copy, AGENTS.md, gitignores and env files are what the delegation derives). The five
+  rows that REACH sync: plain `https://github.com/kepano/obsidian-skills` with `--subdir
+  skills/defuddle` (id/attribution derived from the URL, vendored through the fixture), a plain local
+  source end to end, a local source WITHOUT `SKILL.md` (sync dies at the vendor step with
+  `  ✗ src-noskill: SKILL.md not found at SKILL.md`, exit 1 — S8's failure propagated as the verb's
+  exit code), `--id my-override` (the override lands in `.deps/my-override/`), and `--trigger`. The
+  flag/append rows without sync cover `--no-sync` (the `✓ dep registered. Run 'ai-specs sync …'`
+  hint and no `▸ ai-specs sync` banner), a `.git` suffix (`id = "my-skill-repo"`), `--subdir`,
+  `--scope root,subrepo,docs`, the `--scope=` empty form (echo prints empty, writer falls back to
+  `["root"]`), `--license`, `--attribution`, `--ref`, and the `add-dep` alias with its label in every
+  message plus both `--help` labels. The error rows cover a third positional (exit 2), a third
+  positional AFTER `--` which the script silently DROPS and the port drops too (exit 0), an unknown
+  flag, a missing URL (two stderr lines + usage on STDOUT, exit 2), `https://github.com/obra/` →
+  `ERROR: refusing invalid dep id: ''`, a duplicate id, a corrupt manifest, a missing manifest, and
+  the cwd default; the six dispatcher rows are bare `skills` (usage → stderr exit 2), `--help`, the
+  `help` keyword (usage → stdout exit 0) and `bogus`/`listx`/`-list` (the two unknown-subcommand lines
+  exit 2). One normalization is required, and it is the parity corpus's own
+  (tests/parity/parity.py): the lock's `[meta].synced_at` is a second-granularity wall-clock stamp,
+  so the two legs of a sync row differ by one second through no behaviour of their own — every other
+  lock byte (cli_version, managed and dep hashes) still compares exactly; the home is snapshotted
+  around the table and may gain entries under `home/cache/` ONLY (the delegating sync's
+  refresh-bundled step writes them through the ONE cache authority, S7 — an add-specific
+  `skillsAddTree` scrub + containment assert; U5b's untouched-home rule cannot apply to a verb that
+  legitimately syncs). Five behaviours are RECORDED rather than hidden: (1) READ-ONLY MANIFEST is the
+  OPPOSITE of U5b's divergence — skills-add.sh appends with `pathlib.write_text()`, which needs the
+  FILE's write bit, so the legacy leg prints the full summary and then dies with a Python
+  `PermissionError` (exit 1, nothing written), while the port reaches the shared `config.atomicWrite`
+  R4 refusal — both legs exit 1 with byte-identical stdout and an untouched 0444 manifest, only the
+  failure wording differs (ADR 0002), and `TestSkillsAddReadOnlyDeviation` pins both sides; (2) a
+  trailing value-taking flag makes the script expand `$2` under `set -u` and die with
+  `lib/skills-add.sh: line 47: $2: unbound variable` at exit 1 — the port keeps the observed exit 1
+  and prints the script's OWN unreachable guard text `ERROR: --id requires a value` (init's JD-B-001
+  precedent: frozen exit code, authored text instead of bash's line-number artifact),
+  `TestSkillsAddTrailingFlagDeviation`; (3) a manifest whose `deps` is a TABLE crashes the script's
+  dup-check reader with a Python traceback at exit 1 — its `ERROR: failed to read manifest` branch is
+  dead for that shape too — and the port keeps exit 1, empty stdout and the untouched manifest while
+  wording that frozen line, `TestSkillsAddNonListDepsDeviation`; (4) a manifest that does not PARSE
+  dies SILENTLY at exit 2 in BOTH legs (the `existing="$(python3 …)"` substitution failure kills the
+  script under set -e with the child's status, so its designed read-error branch never runs) —
+  reproduced byte for byte as a table row rather than recorded as a deviation; (5) a failing `cd`
+  keeps the U5a/U5b S12-class deviation (exit 1, `cd: <path>: <reason>`, no script/line prefix),
+  `TestSkillsAddMissingPathDeviation`. `AppendDepsBlock` (internal/config — the ONE manifest writer
+  of this unit, already differential-tested against the python heredoc reference in
+  `writes_differential_test.go`) owns every success write: the scope CSV parsing, the `(none)` echo
+  fallbacks, the derived `auto_invoke`/`vendor_attribution`/`ref` lines — no second writer exists
+  here, and `skillsAddDupIDs` beside it is a READER shaped like the script's own heredoc (python
+  truthiness, list-of-tables, string-ids-only), deliberately NOT `readDeps`, which returns `[]` for a
+  non-list where this script crashes. The routing proof runs `skills add`, `add-dep` and bare
+  `skills` with PATH emptied: none execs the shim and no Python runs (S1). `lib/skills.sh` is dead FOR
+  THIS DISPATCHER — Route resolves all six of its case arms natively and the `shims` map no longer
+  holds `skills`/`add-dep` (cli.go says so in the code comment) — but the file is NOT dead in the
+  repo: `bin/ai-specs` lines 43–44 still route the pure-bash launcher's `add-dep` and `skills` verbs
+  to it, and `tests/test_skills_add.py` still exercises the script directly, so actual retirement is
+  T7's wrapper step; correspondingly no in-repo caller sets `AI_SPECS_GO_BIN` for skills-add.sh
+  anymore (a manual export still would take its S19a branch). Spec notes: the slicing row's promise
+  to retire `lib/skills.sh` (39) and T5/T6's "URL forms, block, attribution default, sync child's exit
+  code" are satisfied for the binary, but S4/S6 under-specify three bash realities — the script's
+  designed-but-unreachable error branches (rows 2–4 above), the trailing-flag artifact, and the
+  silent exit 2 — which are pinned as observed rather than as authored; the dispatcher usage heredoc
+  does NOT list `--ref` although skills-add.sh supports it (both frozen byte for byte, not "fixed");
+  and the required case named "a second positional" is this verb's ACCEPTED path argument (every
+  success row passes one) while its usage error is the THIRD positional — both covered, plus the
+  `--`-drop quirk the spec does not mention.
