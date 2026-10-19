@@ -134,6 +134,49 @@ func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 	}
 }
 
+// TestRouteRecipeListIsNativeBeforeTheShim pins the GO-20 U6a subcommand
+// interception: `recipe list` resolves native, while EVERY other arm of
+// lib/recipe.sh's case statement — `add`, `init`, `configure`, `remove`, the
+// bare `recipe`, `--help`/`-h`/`help` and unknown subcommands — keeps the
+// recipe.sh shim byte for byte (U6e retires that script, not this slice).
+func TestRouteRecipeListIsNativeBeforeTheShim(t *testing.T) {
+	cases := []struct {
+		args   []string
+		want   routeKind
+		script string
+	}{
+		// The intercepted subcommand (native).
+		{[]string{"recipe", "list"}, routeRecipeList, ""},
+		{[]string{"recipe", "list", "."}, routeRecipeList, ""},
+		{[]string{"recipe", "list", "--help"}, routeRecipeList, ""},
+		{[]string{"recipe", "list", "--", "."}, routeRecipeList, ""},
+		// Everything else of lib/recipe.sh's case statement keeps the shim.
+		{[]string{"recipe"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "add", "worktree-flow"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "init", "worktree-flow"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "configure", "worktree-flow"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "remove", "worktree-flow"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "--help"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "-h"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "help"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "bogus"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "listx"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "-list"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "List"}, routeShim, "recipe.sh"},
+		{[]string{"recipe", "list", "a", "b"}, routeRecipeList, ""},
+	}
+	for _, tc := range cases {
+		r := Route(tc.args)
+		if r.kind != tc.want {
+			t.Errorf("Route(%q) kind = %v, want %v", tc.args, r.kind, tc.want)
+			continue
+		}
+		if r.script != tc.script {
+			t.Errorf("Route(%q) script = %q, want %q", tc.args, r.script, tc.script)
+		}
+	}
+}
+
 // TestRunBareInvocationRoutesToHub executes the bare-invocation path
 // end-to-end: Route(nil) rewrites to hub and the NATIVE hub (GO-20 U3a) must
 // report an uninitialized non-TTY target itself: exit 2 with the two frozen

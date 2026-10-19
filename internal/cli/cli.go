@@ -40,6 +40,7 @@ const (
 	routeSkillsAdd                          // native: `skills add`, port of lib/skills-add.sh (GO-20 U5c)
 	routeAddDep                             // native: `add-dep` — the same verb under bin/ai-specs's alias label (GO-20 U5c)
 	routeSkills                             // native: the lib/skills.sh dispatcher remainder (GO-20 U5c)
+	routeRecipeList                         // native: `recipe list`, port of lib/recipe-list.sh (GO-20 U6a)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -122,6 +123,14 @@ func Route(args []string) route {
 	if args[0] == "add-dep" {
 		return route{kind: routeAddDep, invokedAs: "ai-specs add-dep"}
 	}
+	// `recipe list` (GO-20 U6a) is native: the subcommand is intercepted HERE,
+	// in lib/recipe.sh's own case order, and every OTHER arm of that case
+	// statement — `add`, `init`, `configure`, `remove`, `--help|-h|help`, the
+	// bare `recipe`, unknown subcommands — falls through to the shims map below
+	// and keeps exec'ing lib/recipe.sh byte for byte (U6e retires that script).
+	if args[0] == "recipe" && len(args) > 1 && args[1] == "list" {
+		return route{kind: routeRecipeList}
+	}
 	if r, ok := shims[args[0]]; ok {
 		return r
 	}
@@ -197,6 +206,10 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		// args[0]=skills: skills.sh shifts the verb before its case statement,
 		// so the dispatcher's own loop sees args[1:].
 		return runSkillsDispatch(args[1:], stdout, stderr)
+	case routeRecipeList:
+		// args[0]=recipe, args[1]=list: recipe.sh shifts the subcommand before
+		// it execs recipe-list.sh, so the verb's own loop sees args[2:].
+		return runRecipeList(args[2:], home, selfPath(), stdout, stderr)
 	case routeUnknown:
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
