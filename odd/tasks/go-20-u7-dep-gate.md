@@ -161,7 +161,9 @@ this suite's green: `/usr/bin/python3` is 3.9 and resurrects an unrelated Unicod
   and `TestInstallReleaseBelowMinVersion`, and disabling the missing-member check failed
   `TestExtractReleaseArchiveMissingMember` and `TestExtractReleaseArchiveMissingBinary` — each with its
   exact message — and restoring both went green. `go test ./internal/provider/`, `go vet` and `gofmt -l`
-  clean under `PATH=/tmp/pybin:$PATH`; `./tests/validate.sh` was launched on the final tree.
+  clean under `PATH=/tmp/pybin:$PATH`; `./tests/validate.sh` on the final tree: **exit 0**, `go test
+  ./cmd/... ./internal/...` green, `parity summary: gate-absent failing=0, gate-present failing=0 — PASS`,
+  `Ran 2405 tests … OK (skipped=165)`.
   METHOD note for the next delegation: say "write the tests first" AND "if you write the implementation
   first, reconstruct RED by mutation and report both mutations" — the writer reported the gap honestly,
   which is the only reason it was cheap to close.
